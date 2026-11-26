@@ -141,6 +141,28 @@ const storagePage = (kind, port) => {
       window.reaDebuggerAfter = true;
       document.querySelector("#debugger-state").textContent = String(window.reaDebuggerAfter);
     </script></body></html>`;
+  if (kind === "popup-opener")
+    return `<!doctype html><html><body>
+      <a id="open-cross" target="_blank" href="http://localhost:${port}/storage-popup">Open cross</a>
+      <a id="open-same" target="_blank" href="http://127.0.0.1:${port}/storage-popup">Open same</a>
+      <script>
+        console.log("root-first", JSON.stringify({
+          local: localStorage.getItem("rea_popup_probe"),
+          session: sessionStorage.getItem("rea_popup_probe"),
+        }));
+        localStorage.setItem("rea_popup_probe", "root-updated");
+        sessionStorage.setItem("rea_popup_probe", "root-session-updated");
+      </script>
+    </body></html>`;
+  if (kind === "popup-child")
+    return `<!doctype html><html><body><script>
+      const read = () => ({
+        local: localStorage.getItem("rea_popup_probe"),
+        session: sessionStorage.getItem("rea_popup_probe"),
+      });
+      console.log("popup-first", JSON.stringify(read()));
+      setTimeout(() => console.log("popup-later", JSON.stringify(read())), 200);
+    </script></body></html>`;
   return `<!doctype html><html><body><pre id="top-report"></pre><script>
     const state = { local: localStorage.getItem("rea_storage_probe"), session: sessionStorage.getItem("rea_storage_probe"), removed: localStorage.getItem("rea_storage_remove"), empty: sessionStorage.getItem("rea_storage_empty") };
     document.querySelector("#top-report").textContent = JSON.stringify(state);
@@ -162,7 +184,11 @@ export const startStorageSite = async () => {
               ? "debugger"
               : path === "/storage-top"
                 ? "top"
-                : undefined;
+                : path === "/storage-popup-opener"
+                  ? "popup-opener"
+                  : path === "/storage-popup"
+                    ? "popup-child"
+                    : undefined;
       if (kind === undefined) {
         response.writeHead(404).end();
         return;
@@ -206,6 +232,7 @@ export async function verifyScenarioStorage({
   const site = await startStorageSite();
   return withVerifierCleanup(async () => {
     await verifyLaunchStorage(executable, site.origin);
+    await verifyLaunchPopupStorage(executable, site.origin);
     await verifyConnectedStorage(endpoint, targetId, site.origin);
     return {
       mocked: false,
@@ -213,6 +240,7 @@ export async function verifyScenarioStorage({
       connect: true,
       oopifInitialization: true,
       firstInlineScriptSeeded: true,
+      popupFirstInlineScriptSeeded: true,
       updatesAndDeletesPersistAcrossNavigation: true,
       newScenarioGetsFreshSeed: true,
       externalTargetSurvives: true,
@@ -220,6 +248,108 @@ export async function verifyScenarioStorage({
     };
   }, [() => site.close()]);
 }
+
+const verifyLaunchPopupStorage = async (executable, origin) => {
+  const childOrigin = origin.replace("127.0.0.1", "localhost");
+  const runCase = async ({ selector, seededOrigin }) => {
+    const scenario = browserScenarioSchema.parse({
+      browser: { mode: "launch", executable_path: executable },
+      start_url: { url: `${origin}/storage-popup-opener` },
+      actions: [
+        {
+          step_id: "open-popup",
+          action: "click",
+          locator: { kind: "css", selector },
+          timeout_ms: 5_000,
+        },
+        {
+          step_id: "settle",
+          action: "wait_for_timeout",
+          duration_ms: 800,
+        },
+      ],
+      storage: {
+        local_storage: [
+          {
+            origin: seededOrigin,
+            entries: [
+              {
+                name: "rea_popup_probe",
+                value: { source: "literal", value: "seed-local" },
+              },
+            ],
+          },
+        ],
+        session_storage: [
+          {
+            origin: seededOrigin,
+            entries: [
+              {
+                name: "rea_popup_probe",
+                value: { source: "literal", value: "seed-session" },
+              },
+            ],
+          },
+        ],
+      },
+      capture: { at_end: ["url"], events: ["console", "popups"] },
+    });
+    const result = await runScenarioCli(scenario);
+    const capture = result.normalized_result;
+    assert.ok(
+      capture,
+      `Popup storage scenario (${selector}) returned no result`,
+    );
+    assert.equal(capture.completeness.status, "complete");
+    assert.equal(capture.completeness.equality_eligible, true);
+    const consoleLines = capture.events.items
+      .filter((event) => event.kind === "console")
+      .map((event) => event.text);
+    const first = consoleLines.find((line) => line.startsWith("popup-first "));
+    const later = consoleLines.find((line) => line.startsWith("popup-later "));
+    assert.ok(
+      first,
+      `Missing popup-first console log: ${JSON.stringify(consoleLines)}`,
+    );
+    assert.ok(
+      later,
+      `Missing popup-later console log: ${JSON.stringify(consoleLines)}`,
+    );
+    return {
+      first: JSON.parse(first.slice("popup-first ".length)),
+      later: JSON.parse(later.slice("popup-later ".length)),
+    };
+  };
+
+  const cross = await runCase({
+    selector: "#open-cross",
+    seededOrigin: childOrigin,
+  });
+  assert.deepEqual(cross.first, {
+    local: "seed-local",
+    session: "seed-session",
+  });
+  assert.deepEqual(cross.later, {
+    local: "seed-local",
+    session: "seed-session",
+  });
+
+  const same = await runCase({
+    selector: "#open-same",
+    seededOrigin: origin,
+  });
+  // Root already initialized and mutated first-party localStorage before opening
+  // the same-origin popup; the popup must keep root's updated localStorage and
+  // receive the declared sessionStorage seed in its own first inline script.
+  assert.deepEqual(same.first, {
+    local: "root-updated",
+    session: "seed-session",
+  });
+  assert.deepEqual(same.later, {
+    local: "root-updated",
+    session: "seed-session",
+  });
+};
 
 const verifyLaunchStorage = async (executable, origin) => {
   const scenario = scenarioFor(

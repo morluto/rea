@@ -11,8 +11,10 @@ import { resolveScenarioSecrets } from "../../tests/fixtures/browserScenarioSecr
 import {
   applyDeclaredBrowserStorageSeeds,
   declaredBrowserStorageSeedMark,
+  markDeclaredBrowserStorageSkip,
   type DeclaredBrowserStorageSeed,
-  type DeclaredBrowserStorageSeedCommand,
+  type DeclaredBrowserStorageSeedOutcome,
+  type DeclaredBrowserStorageSeedScript,
 } from "./declaredBrowserStorageSeed.js";
 import { PlaywrightScenarioStorage } from "./PlaywrightScenarioStorage.js";
 
@@ -284,7 +286,6 @@ it("seeds each local partition and each top-level session before resuming its sc
   }
   const local = '"local":[["local-seed","local-value"]]';
   const session = '"session":[["session-seed","session-value"]]';
-  const emptySession = '"session":[]';
   expect(rootWrites().map(({ params }) => params)).toMatchObject([
     {
       callFrameId: "seed-frame",
@@ -292,7 +293,7 @@ it("seeds each local partition and each top-level session before resuming its sc
     },
     {
       callFrameId: "seed-frame",
-      expression: expect.stringContaining(`${local},${emptySession}`),
+      expression: expect.stringContaining(`${local},${session}`),
     },
     {
       callFrameId: "seed-frame",
@@ -464,75 +465,76 @@ const memoryStorage = (fail = false) => {
   };
 };
 
-const createSeedBridge = (options?: {
-  readonly scope?: boolean;
-  readonly pageKey?: string;
-}) => {
-  const local = new Set<string>();
-  const session = new Set<string>();
-  let failed = false;
-  const pageKey = options?.pageKey ?? "page";
-  const bridge = (
-    command: DeclaredBrowserStorageSeedCommand,
-    area?: "local" | "session",
-    origin?: string,
-  ): boolean | void => {
-    if (command === "scope") return options?.scope !== false;
-    if (command === "fail") {
-      failed = true;
-      return;
-    }
-    if (origin === undefined || (area !== "local" && area !== "session"))
-      return false;
-    if (command === "was") {
-      if (area === "local") return local.has(origin);
-      return session.has(`${pageKey}\0${origin}`);
-    }
-    if (command === "mark") {
-      if (area === "local") local.add(origin);
-      else session.add(`${pageKey}\0${origin}`);
-    }
-  };
-  return { bridge, local, session, failed: () => failed };
-};
-
-const applySeeds = async (
+const applySeeds = (
   origin: string,
   seeds: readonly DeclaredBrowserStorageSeed[],
-  storage: {
-    local: ReturnType<typeof memoryStorage>;
-    session: ReturnType<typeof memoryStorage>;
-  } = { local: memoryStorage(), session: memoryStorage() },
-  bridgeState: ReturnType<typeof createSeedBridge> = createSeedBridge(),
-): Promise<{
+  options: {
+    readonly storage?: {
+      local: ReturnType<typeof memoryStorage>;
+      session: ReturnType<typeof memoryStorage>;
+    };
+    readonly isIframe?: boolean;
+    readonly skip?: true | readonly string[];
+  } = {},
+): {
   local: Map<string, string>;
   session: Map<string, string>;
-  failed: boolean;
-}> => {
+  notifications: readonly {
+    origin: string;
+    local: DeclaredBrowserStorageSeedOutcome;
+    session: DeclaredBrowserStorageSeedOutcome;
+  }[];
+  hasSkipPropertyAfterRun: boolean;
+} => {
+  const storage = options.storage ?? {
+    local: memoryStorage(),
+    session: memoryStorage(),
+  };
   const binding = "__reaStorageSeedTest";
+  const skipKey = "__reaStorageSkipTest";
+  const notifications: {
+    origin: string;
+    local: DeclaredBrowserStorageSeedOutcome;
+    session: DeclaredBrowserStorageSeedOutcome;
+  }[] = [];
   const context = vm.createContext({
     location: { origin },
     localStorage: storage.local,
     sessionStorage: storage.session,
-    [binding]: bridgeState.bridge,
+    [binding]: (
+      notifiedOrigin: string,
+      local: DeclaredBrowserStorageSeedOutcome,
+      session: DeclaredBrowserStorageSeedOutcome,
+    ) => {
+      notifications.push({ origin: notifiedOrigin, local, session });
+    },
   });
-  await vm.runInContext(
-    `(async () => await (${applyDeclaredBrowserStorageSeeds.toString()})(${JSON.stringify(
-      {
-        binding,
-        seeds,
-      },
-    )}))()`,
+  context.top = options.isIframe === true ? {} : context;
+  if (options.skip !== undefined)
+    vm.runInContext(
+      `(${markDeclaredBrowserStorageSkip.toString()})(${JSON.stringify({
+        skipKey,
+        value: options.skip,
+      })})`,
+      context,
+    );
+  vm.runInContext(
+    `(${applyDeclaredBrowserStorageSeeds.toString()})(${JSON.stringify({
+      binding,
+      skipKey,
+      seeds,
+    })})`,
     context,
   );
   return {
     local: storage.local.items,
     session: storage.session.items,
-    failed: bridgeState.failed(),
+    notifications,
+    hasSkipPropertyAfterRun: Object.hasOwn(context, skipKey),
   };
 };
 
-it("writes declared seeds once per area and keeps later page edits", async () => {
+it("writes declared seeds synchronously for top-level popups and skips iframes", () => {
   const seeds: DeclaredBrowserStorageSeed[] = [
     {
       origin: "http://child.example",
@@ -545,189 +547,285 @@ it("writes declared seeds once per area and keeps later page edits", async () =>
       session: [["probe", "root-session"]],
     },
   ];
-  const bridge = createSeedBridge();
-  const storage = { local: memoryStorage(), session: memoryStorage() };
-  await applySeeds("http://child.example", seeds, storage, bridge);
-  expect(storage.local.items.get("probe")).toBe("seed-local");
-  expect(storage.session.items.get("probe")).toBe("seed-session");
-  expect(storage.local.items.has(declaredBrowserStorageSeedMark)).toBe(false);
-  storage.local.items.set("probe", "page-updated");
-  storage.local.items.clear();
-  storage.local.items.set("probe", "page-updated");
-  storage.session.items.set("probe", "session-updated");
-  await applySeeds("http://child.example", seeds, storage, bridge);
-  expect(storage.local.items.get("probe")).toBe("page-updated");
-  expect(storage.session.items.get("probe")).toBe("session-updated");
+  const first = applySeeds("http://child.example", seeds);
+  expect(first.local.get("probe")).toBe("seed-local");
+  expect(first.session.get("probe")).toBe("seed-session");
+  expect(first.local.has(declaredBrowserStorageSeedMark)).toBe(false);
+  expect(first.hasSkipPropertyAfterRun).toBe(false);
+  expect(first.notifications).toEqual([
+    { origin: "http://child.example", local: "wrote", session: "wrote" },
+  ]);
 
-  const popupBridge = createSeedBridge({ pageKey: "popup" });
-  popupBridge.local.add("http://child.example");
-  const popup = { local: storage.local, session: memoryStorage() };
-  await applySeeds("http://child.example", seeds, popup, popupBridge);
-  expect(popup.local.items.get("probe")).toBe("page-updated");
-  expect(popup.session.items.get("probe")).toBe("seed-session");
+  // Third-party iframes must not write or report first-party initialization.
+  const iframe = applySeeds("http://child.example", seeds, { isIframe: true });
+  expect(iframe.local.size).toBe(0);
+  expect(iframe.session.size).toBe(0);
+  expect(iframe.notifications).toEqual([]);
 
-  const other = await applySeeds("http://other.example", seeds);
+  // Root pages marked with `skip: true` consume the marker and skip writing.
+  const rootSkipped = applySeeds("http://child.example", seeds, { skip: true });
+  expect(rootSkipped.local.size).toBe(0);
+  expect(rootSkipped.session.size).toBe(0);
+  expect(rootSkipped.hasSkipPropertyAfterRun).toBe(false);
+  expect(rootSkipped.notifications).toEqual([]);
+
+  // Reloading a popup after edits/clears preserves both areas when local is
+  // removed from the context payload and the page skip list includes the origin.
+  const reloadedStorage = {
+    local: memoryStorage(),
+    session: memoryStorage(),
+  };
+  reloadedStorage.local.items.set("probe", "page-updated");
+  reloadedStorage.session.items.set("probe", "session-updated");
+  const reloaded = applySeeds(
+    "http://child.example",
+    [{ origin: "http://child.example", local: [], session: seeds[0]!.session }],
+    { storage: reloadedStorage, skip: ["http://child.example"] },
+  );
+  expect(reloaded.local.get("probe")).toBe("page-updated");
+  expect(reloaded.session.get("probe")).toBe("session-updated");
+  expect(reloaded.hasSkipPropertyAfterRun).toBe(false);
+  expect(reloaded.notifications).toEqual([]);
+
+  const other = applySeeds("http://other.example", seeds);
   expect(other.local.size).toBe(0);
   expect(other.session.size).toBe(0);
-  const opaque = await applySeeds("null", seeds);
+  const opaque = applySeeds("null", seeds);
   expect(opaque.local.size).toBe(0);
   expect(opaque.session.size).toBe(0);
 });
 
-it("seeds a cloned popup session area and reports write failures", async () => {
+it("seeds a cloned popup session area and reports write failures", () => {
   const seeds: DeclaredBrowserStorageSeed[] = [
     {
       origin: "http://child.example",
-      local: [["probe", "seed-local"]],
+      local: [],
       session: [["probe", "seed-session"]],
     },
   ];
-  const openerBridge = createSeedBridge({ pageKey: "opener" });
-  const opener = { local: memoryStorage(), session: memoryStorage() };
-  await applySeeds("http://child.example", seeds, opener, openerBridge);
-  opener.session.items.set("probe", "opener-edited");
-
-  const popupBridge = createSeedBridge({ pageKey: "popup" });
-  const popup = {
-    local: opener.local,
+  const popupStorage = {
+    local: memoryStorage(),
     session: memoryStorage(),
   };
-  for (const [name, value] of opener.session.items)
-    popup.session.items.set(name, value);
-  await applySeeds("http://child.example", seeds, popup, popupBridge);
-  expect(popup.session.items.get("probe")).toBe("seed-session");
+  popupStorage.local.items.set("probe", "opener-edited-local");
+  popupStorage.session.items.set("probe", "opener-edited-session");
+  const popup = applySeeds("http://child.example", seeds, {
+    storage: popupStorage,
+  });
+  expect(popup.local.get("probe")).toBe("opener-edited-local");
+  expect(popup.session.get("probe")).toBe("seed-session");
+  expect(popup.notifications).toEqual([
+    { origin: "http://child.example", local: "skipped", session: "wrote" },
+  ]);
 
-  const failing = await applySeeds(
+  const failing = applySeeds(
     "http://child.example",
-    seeds,
-    { local: memoryStorage(true), session: memoryStorage() },
-    createSeedBridge(),
-  );
-  expect(failing.failed).toBe(true);
-  expect(failing.local.size).toBe(0);
-});
-
-it("skips seeding when the connect-mode bridge denies scope", async () => {
-  const seeds: DeclaredBrowserStorageSeed[] = [
+    [
+      {
+        origin: "http://child.example",
+        local: [["probe", "seed-local"]],
+        session: [["probe", "seed-session"]],
+      },
+    ],
     {
-      origin: "http://child.example",
-      local: [["probe", "seed-local"]],
-      session: [["probe", "seed-session"]],
+      storage: { local: memoryStorage(true), session: memoryStorage() },
     },
-  ];
-  const denied = await applySeeds(
-    "http://child.example",
-    seeds,
-    { local: memoryStorage(), session: memoryStorage() },
-    createSeedBridge({ scope: false }),
   );
-  expect(denied.local.size).toBe(0);
-  expect(denied.session.size).toBe(0);
+  expect(failing.local.size).toBe(0);
+  expect(failing.session.get("probe")).toBe("seed-session");
+  expect(failing.notifications).toEqual([
+    { origin: "http://child.example", local: "failed", session: "wrote" },
+  ]);
 });
 
-it.each(["launch", "connect"] as const)(
-  "seeds later popup documents before their scripts in %s mode",
-  async (mode) => {
-    const cdp = new FakeCdp();
-    const { page, contextApi } = fixture(cdp);
-    const installed: { script: unknown; payload: unknown }[] = [];
-    const bindings: string[] = [];
-    Object.assign(contextApi, {
-      exposeBinding: async (name: string) => {
-        bindings.push(name);
-      },
-      addInitScript: async (script: unknown, payload: unknown) => {
-        installed.push({ script, payload });
-      },
-    });
-    const input = browserScenarioSchema.parse({
-      ...scenario(),
-      ...(mode === "connect"
-        ? {
-            browser: {
-              mode: "connect",
-              cdp_endpoint: "http://127.0.0.1:9222",
-              target_id: "root-target",
-            },
-          }
-        : {}),
-    });
-    const owner = await createInitializedStorage(contextApi, page, input);
-    expect(bindings).toHaveLength(1);
-    expect(installed).toHaveLength(1);
-    expect(installed[0]?.script).toBe(applyDeclaredBrowserStorageSeeds);
-    expect(installed[0]?.payload).toEqual({
-      binding: bindings[0],
-      seeds: [
-        {
-          origin: "https://storage.example.test",
-          local: [["local-seed", "local-value"]],
-          session: [["session-seed", "session-value"]],
+it("installs synchronous popup seeds in launch mode and avoids shared connect contexts", async () => {
+  const launchCdp = new FakeCdp();
+  const { page: launchPage, contextApi: launchContext } = fixture(launchCdp);
+  const pageScripts: { script: unknown; payload: unknown }[] = [];
+  const contextScripts: {
+    script: unknown;
+    payload: DeclaredBrowserStorageSeedScript;
+    disposed: boolean;
+  }[] = [];
+  const bindings: string[] = [];
+  Object.assign(launchPage, {
+    addInitScript: async (script: unknown, payload: unknown) => {
+      pageScripts.push({ script, payload });
+      return { dispose: async () => undefined };
+    },
+  });
+  Object.assign(launchContext, {
+    exposeBinding: async (name: string) => {
+      bindings.push(name);
+    },
+    addInitScript: async (
+      script: unknown,
+      payload: DeclaredBrowserStorageSeedScript,
+    ) => {
+      const entry = { script, payload, disposed: false };
+      contextScripts.push(entry);
+      return {
+        dispose: async () => {
+          entry.disposed = true;
         },
-      ],
-    });
-    if (mode === "connect") page.emit("popup", new EventEmitter());
-    else contextApi.emit("page", new EventEmitter());
-    expect(owner?.limitations()).toEqual([]);
-    await owner?.close();
-  },
-);
+      };
+    },
+  });
+  const launchOwner = await createInitializedStorage(launchContext, launchPage);
+  expect(bindings).toHaveLength(1);
+  expect(pageScripts).toHaveLength(1);
+  expect(pageScripts[0]?.script).toBe(markDeclaredBrowserStorageSkip);
+  expect(contextScripts).toHaveLength(1);
+  expect(contextScripts[0]?.script).toBe(applyDeclaredBrowserStorageSeeds);
+  expect(contextScripts[0]?.payload.seeds).toEqual([
+    {
+      origin: "https://storage.example.test",
+      local: [["local-seed", "local-value"]],
+      session: [["session-seed", "session-value"]],
+    },
+  ]);
+  launchContext.emit("page", new EventEmitter());
+  expect(launchOwner?.limitations()).toEqual([]);
+  await launchOwner?.close();
+  expect(contextScripts[0]?.disposed).toBe(true);
 
-it("shares once-per-origin ownership between the init bridge and CDP seeder", async () => {
+  const connectCdp = new FakeCdp();
+  const { page: connectPage, contextApi: connectContext } = fixture(connectCdp);
+  const connectInstalled: unknown[] = [];
+  Object.assign(connectPage, {
+    addInitScript: async (script: unknown) => {
+      connectInstalled.push(script);
+    },
+  });
+  Object.assign(connectContext, {
+    exposeBinding: async (name: string) => {
+      connectInstalled.push(name);
+    },
+    addInitScript: async (script: unknown) => {
+      connectInstalled.push(script);
+    },
+  });
+  const connectInput = browserScenarioSchema.parse({
+    ...scenario(),
+    browser: {
+      mode: "connect",
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "root-target",
+    },
+  });
+  const connectOwner = await createInitializedStorage(
+    connectContext,
+    connectPage,
+    connectInput,
+  );
+  expect(connectInstalled).toEqual([]);
+  connectPage.emit("popup", new EventEmitter());
+  expect(connectOwner?.limitations()).toEqual([
+    expect.stringContaining("unknown for discovered popup top-level contexts"),
+  ]);
+  await connectOwner?.close();
+});
+
+it("shares once-per-origin ownership between popup notifications and CDP without colliding across partitions", async () => {
   const cdp = new FakeCdp();
   const { page, contextApi } = fixture(cdp);
-  let bridge:
+  let notify:
     | ((
         source: { readonly page: unknown },
-        command: DeclaredBrowserStorageSeedCommand,
-        area?: "local" | "session",
-        origin?: string,
-      ) => boolean | void)
+        origin: string,
+        localOutcome: DeclaredBrowserStorageSeedOutcome,
+        sessionOutcome: DeclaredBrowserStorageSeedOutcome,
+      ) => void)
     | undefined;
+  const contextPayloads: DeclaredBrowserStorageSeedScript[] = [];
+  const popupSkipPayloads: unknown[] = [];
+  Object.assign(page, {
+    addInitScript: async () => ({ dispose: async () => undefined }),
+  });
   Object.assign(contextApi, {
     exposeBinding: async (
       _name: string,
-      callback: NonNullable<typeof bridge>,
+      callback: NonNullable<typeof notify>,
     ) => {
-      bridge = callback;
+      notify = callback;
     },
-    addInitScript: async () => undefined,
+    addInitScript: async (
+      _script: unknown,
+      payload: DeclaredBrowserStorageSeedScript,
+    ) => {
+      contextPayloads.push(payload);
+      return { dispose: async () => undefined };
+    },
   });
   const owner = await createInitializedStorage(contextApi, page);
-  expect(bridge).toBeTypeOf("function");
-  const origin = "https://storage.example.test";
-  expect(bridge?.({ page }, "mark", "local", origin)).toBeUndefined();
-  expect(bridge?.({ page }, "mark", "session", origin)).toBeUndefined();
-  expect(bridge?.({ page }, "was", "local", origin)).toBe(true);
-  expect(bridge?.({ page }, "was", "session", origin)).toBe(true);
+  expect(notify).toBeTypeOf("function");
 
+  const origin = "https://storage.example.test";
+  // A third-party partitioned iframe uses a distinct StorageKey and must not
+  // remove first-party local seeds from the popup context script.
+  cdp.storageKey = `${origin}/^0https://other-site.example.test`;
   emitSeedPause(cdp);
   await owner?.settle();
   expect(
     cdp.calls.filter(({ method }) => method === "Debugger.evaluateOnCallFrame"),
-  ).toHaveLength(0);
+  ).toHaveLength(1);
+  expect(contextPayloads).toHaveLength(1);
+  expect(contextPayloads[0]?.seeds[0]?.local).toEqual([
+    ["local-seed", "local-value"],
+  ]);
+
+  // A popup notification marks first-party local storage initialized and
+  // installs a per-page session skip list for that popup.
+  const popupPage = {
+    isClosed: () => false,
+    addInitScript: async (_script: unknown, payload: unknown) => {
+      popupSkipPayloads.push(payload);
+      return { dispose: async () => undefined };
+    },
+  };
+  notify?.({ page: popupPage }, origin, "wrote", "wrote");
+  await owner?.settle();
+  expect(popupSkipPayloads).toHaveLength(1);
+  expect(contextPayloads.at(-1)?.seeds[0]?.local).toEqual([]);
+
+  // A later first-party CDP pause at `${origin}/` must not reseed localStorage.
+  cdp.storageKey = `${origin}/`;
+  emitSeedPause(cdp);
+  await owner?.settle();
+  const evals = cdp.calls.filter(
+    ({ method }) => method === "Debugger.evaluateOnCallFrame",
+  );
+  expect(evals).toHaveLength(2);
+  const expression = String(
+    (evals[1]?.params as { expression?: string })?.expression ?? "",
+  );
+  expect(expression).toContain('"local":[]');
+  expect(expression).toContain('"session":[["session-seed","session-value"]]');
+
+  // A popup write failure marks popup coverage unknown.
+  notify?.({ page: popupPage }, origin, "failed", "skipped");
+  expect(owner?.limitations()).toEqual([
+    expect.stringContaining("unknown for discovered popup top-level contexts"),
+  ]);
   await owner?.close();
 });
 
-it("treats Chrome's trailing-slash StorageKey as the init-script origin", async () => {
+it("drops first-party local seeds from the popup script before resuming CDP", async () => {
   const cdp = new FakeCdp();
   const { page, contextApi } = fixture(cdp);
-  let bridge:
-    | ((
-        source: { readonly page: unknown },
-        command: DeclaredBrowserStorageSeedCommand,
-        area?: "local" | "session",
-        origin?: string,
-      ) => boolean | void)
-    | undefined;
+  const contextPayloads: DeclaredBrowserStorageSeedScript[] = [];
+  Object.assign(page, {
+    addInitScript: async () => ({ dispose: async () => undefined }),
+  });
   Object.assign(contextApi, {
-    exposeBinding: async (
-      _name: string,
-      callback: NonNullable<typeof bridge>,
+    exposeBinding: async () => undefined,
+    addInitScript: async (
+      _script: unknown,
+      payload: DeclaredBrowserStorageSeedScript,
     ) => {
-      bridge = callback;
+      contextPayloads.push(payload);
+      return { dispose: async () => undefined };
     },
-    addInitScript: async () => undefined,
   });
   const owner = await createInitializedStorage(contextApi, page);
   const origin = "https://storage.example.test";
@@ -737,8 +835,10 @@ it("treats Chrome's trailing-slash StorageKey as the init-script origin", async 
   expect(
     cdp.calls.filter(({ method }) => method === "Debugger.evaluateOnCallFrame"),
   ).toHaveLength(1);
-  expect(bridge?.({ page }, "was", "local", origin)).toBe(true);
-  expect(bridge?.({ page }, "was", "session", origin)).toBe(true);
+  expect(contextPayloads.at(-1)?.seeds[0]?.local).toEqual([]);
+  expect(contextPayloads.at(-1)?.seeds[0]?.session).toEqual([
+    ["session-seed", "session-value"],
+  ]);
 
   emitSeedPause(cdp);
   await owner?.settle();
@@ -748,7 +848,7 @@ it("treats Chrome's trailing-slash StorageKey as the init-script origin", async 
   await owner?.close();
 });
 
-it("seeds session storage once per top-level origin", async () => {
+it("seeds session storage once per top-level storage partition", async () => {
   const cdp = new FakeCdp();
   const { page, contextApi } = fixture(cdp);
   const base = scenario();
@@ -768,10 +868,12 @@ it("seeds session storage once per top-level origin", async () => {
   cdp.storageKey = "https://storage.example.test/^0https://top-level.example";
   emitSeedPause(cdp);
   await owner?.settle();
+  emitSeedPause(cdp);
+  await owner?.settle();
 
   expect(
     cdp.calls.filter(({ method }) => method === "Debugger.evaluateOnCallFrame"),
-  ).toHaveLength(1);
+  ).toHaveLength(2);
   await owner?.close();
 });
 
