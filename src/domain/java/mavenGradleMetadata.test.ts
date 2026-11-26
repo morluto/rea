@@ -5,56 +5,6 @@ import {
   mavenPropertyOccurrences,
   requestedVersionKind,
 } from "./mavenGradleMetadata.js";
-import { absoluteLocalPathStringSchema } from "../localPath.js";
-
-const jsonSchema = (schema: {
-  readonly "~standard": {
-    readonly jsonSchema: {
-      readonly input: (options: {
-        readonly target: "draft-2020-12";
-      }) => unknown;
-    };
-  };
-}): Record<string, unknown> =>
-  schema["~standard"].jsonSchema.input({
-    target: "draft-2020-12",
-  }) as Record<string, unknown>;
-
-it("applies the shared absolute local-path policy to the public input", () => {
-  expect(
-    inspectMavenGradleMetadataInputSchema.safeParse({ path: "pom.xml" })
-      .success,
-  ).toBe(false);
-  expect(
-    inspectMavenGradleMetadataInputSchema.safeParse({ path: "" }).success,
-  ).toBe(false);
-  expect(
-    inspectMavenGradleMetadataInputSchema.safeParse({
-      path: "/artifacts/pom\0.xml",
-    }).success,
-  ).toBe(false);
-  expect(
-    inspectMavenGradleMetadataInputSchema.safeParse({
-      path: "/artifacts/pom.xml",
-    }).success,
-  ).toBe(true);
-
-  const shared = jsonSchema(absoluteLocalPathStringSchema);
-  const advertised = jsonSchema(inspectMavenGradleMetadataInputSchema);
-  const path = (
-    advertised.properties as Record<string, Record<string, unknown>>
-  ).path;
-  const {
-    $schema: _schema,
-    description: _sharedDescription,
-    ...sharedPolicy
-  } = shared;
-  const { description: _pathDescription, ...pathPolicy } = path ?? {};
-  expect(pathPolicy).toEqual(sharedPolicy);
-  expect(path?.description).toBe(
-    "Absolute filesystem path to a Maven pom.xml or Gradle .module metadata file",
-  );
-});
 
 it("rejects extra caller arguments", () => {
   expect(

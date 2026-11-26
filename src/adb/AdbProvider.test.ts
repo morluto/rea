@@ -76,6 +76,11 @@ vi.mock("./AdbProcess.js", async (importOriginal) => {
 
 import { AdbProvider } from "./AdbProvider.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
+import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
+import {
+  DARWIN_PROCESS_OWNERSHIP_REMEDIATION,
+  systemProcessOwnershipHost,
+} from "../process/ProcessOwnershipObservation.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { parseEvidence } from "../domain/evidence.js";
 import {
@@ -862,6 +867,69 @@ it("reports exhausted host capacity at the version probe as a retryable constrai
   }
 });
 
+it("reports a failed ownership helper build as adb unavailability, not unreadable output", async () => {
+  const { binary } = await writeAdbStub(() => VERSION_BLOCK);
+  const stderr = "xcrun: error: missing DEVELOPER_DIR path: /missing\n";
+  const prepare = vi.spyOn(systemProcessOwnershipHost, "prepare");
+  prepare.mockRejectedValue(
+    new DarwinProcessOwnershipInspectionError(
+      `macOS process ownership helper compilation failed via xcrun (compiler result: exit code 1): ${stderr}`,
+      {
+        compilerOutcome: {
+          outcome: "exited",
+          code: 1,
+          signal: null,
+          stderr,
+          stderrTruncated: false,
+          outputTruncated: false,
+          killed: false,
+        },
+        capturedOutput: {
+          stdout: "",
+          stderr,
+          stdout_bytes: 0,
+          stderr_bytes: Buffer.byteLength(stderr),
+          exit_code: 1,
+          signal: null,
+          truncated: false,
+        },
+      },
+    ),
+  );
+  onTestFinished(() => {
+    prepare.mockRestore();
+  });
+
+  const availability = await providerOver(binary).inspectAvailability();
+  expect(availability).toMatchObject({
+    status: "unavailable",
+    code: "runtime_unavailable",
+    remediation: DARWIN_PROCESS_OWNERSHIP_REMEDIATION,
+    diagnostics: {
+      stage: "ownership_preparation",
+      compiler_outcome: { outcome: "exited", code: 1 },
+    },
+  });
+  // adb never started, so the direct call names the prerequisite, not adb.
+  const projected = await refusedBy(providerOver(binary), {
+    operation: "inspect_adb_client",
+    input: {},
+  });
+  expect(projected).toMatchObject({
+    code: "execution_failure",
+    retryable: false,
+    details: {
+      provider_id: "adb",
+      operation: "inspect_adb_client",
+      diagnostics: {
+        stage: "ownership_preparation",
+        compiler_outcome: { outcome: "exited", code: 1 },
+      },
+      captured_output: { exit_code: 1, stderr },
+    },
+  });
+});
+
 it("reports relative adb configuration as an actionable refusal", async () => {
   const provider = new AdbProvider({
     environment: { REA_ADB_PATH: "relative/adb" },
@@ -1283,7 +1351,7 @@ exit 91`,
     expect(projected).toMatchObject({
       code: "unsupported_target",
       details: { operation, path, reason },
-      message: `Unsupported target for ${operation} at ${path}: ${reason}`,
+      message: `Unsupported android-device target for ${operation} at ${path}: ${reason}`,
     });
   },
 );

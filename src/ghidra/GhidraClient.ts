@@ -204,7 +204,17 @@ export class GhidraClient {
   #outputDrainIncomplete = false;
   #lastDiagnostics: Readonly<Record<string, JsonValue>> = {};
   #startupAttempt: GhidraStartupAttempt | undefined;
+  /**
+   * The last startup that ran out its deadline, with that deadline. Another
+   * import of the same target and profile under the same deadline would run
+   * it out again, so a later start returns this failure until the deadline
+   * changes or the client is closed.
+   */
+  #elapsedStartup:
+    | { readonly timeoutMs: number; readonly failure: GhidraSessionError }
+    | undefined;
   #closePromise: Promise<void> | undefined;
+  #closeForced = false;
   readonly #failure = bindGhidraSessionFailure(
     (scope) => this.#diagnostics(scope),
     (value, incomplete) => this.#redactAuthentication(value, incomplete),
@@ -357,6 +367,8 @@ export class GhidraClient {
         return this.#retryAfterAbortedStartup(current, signal);
       return this.#waitForStartup(current, signal);
     }
+    const elapsed = this.#repeatedElapsedStartup();
+    if (elapsed !== undefined) return Promise.resolve(err(elapsed));
     const attempt = new SharedStartupAttempt((signal) => this.#start(signal));
     const { promise } = attempt;
     this.#startupAttempt = attempt;
@@ -366,8 +378,16 @@ export class GhidraClient {
           !result.ok &&
           this.#startupAttempt === attempt &&
           result.error.cleanupFailure === undefined
-        )
+        ) {
           this.#startupAttempt = undefined;
+          const { kind, timeoutMs, message } = result.error;
+          if (
+            kind === "timeout" &&
+            timeoutMs !== undefined &&
+            message === GHIDRA_STARTUP_DEADLINE_ELAPSED
+          )
+            this.#elapsedStartup = { timeoutMs, failure: result.error };
+        }
       },
       (cause: unknown) => {
         this.#logger.debug(
@@ -378,6 +398,27 @@ export class GhidraClient {
       },
     );
     return this.#waitForStartup(attempt, signal);
+  }
+
+  /** The startup deadline in effect now: a runtime update, else the launch seed. */
+  #readStartupTimeout() {
+    return readRuntimeSetting(
+      () =>
+        this.#options.readStartupTimeoutMs?.() ??
+        this.#options.startupTimeoutMs,
+    );
+  }
+
+  /** The recorded deadline failure, while the effective deadline is unchanged. */
+  #repeatedElapsedStartup(): GhidraSessionError | undefined {
+    const elapsed = this.#elapsedStartup;
+    if (elapsed === undefined) return undefined;
+    // An unreadable setting is reported by the next startup attempt itself.
+    const current = this.#readStartupTimeout();
+    if (current.ok && current.value === elapsed.timeoutMs)
+      return elapsed.failure;
+    this.#elapsedStartup = undefined;
+    return undefined;
   }
 
   /** Preserve cleanup failures for the last caller leaving shared startup. */
@@ -877,6 +918,11 @@ export class GhidraClient {
       return ok(null);
     } catch (cause: unknown) {
       return err(this.#cleanupError(cause));
+    } finally {
+      // Closing is the caller's explicit retry: the next start imports again.
+      // Cleared after close settles, since a startup it waited for may have
+      // recorded its elapsed deadline meanwhile.
+      this.#elapsedStartup = undefined;
     }
   }
 
@@ -968,10 +1014,28 @@ export class GhidraClient {
   #requestClose(forceStop: boolean): Promise<void> {
     const starting = this.#startupAttempt;
     starting?.close();
-    this.#closePromise ??= Promise.resolve().then(() =>
-      this.#close(starting, forceStop),
-    );
-    return this.#closePromise;
+    const previous = this.#closePromise;
+    // Join an equal or stronger close. A forced stop requested during a
+    // graceful close interrupts that close's outstanding bridge requests (a
+    // stalled checkpoint or shutdown reply), then runs once it settles.
+    if (previous !== undefined && (!forceStop || this.#closeForced))
+      return previous;
+    if (previous !== undefined)
+      this.#failAll(
+        this.#failure("process", "Ghidra close escalated to a forced stop"),
+      );
+    this.#closeForced = forceStop;
+    const attempt: Promise<void> = (previous ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(() => this.#close(starting, forceStop))
+      .finally(() => {
+        if (this.#closePromise === attempt) {
+          this.#closePromise = undefined;
+          this.#closeForced = false;
+        }
+      });
+    this.#closePromise = attempt;
+    return attempt;
   }
 
   #stopAfterActiveCancellation(): Promise<Result<null, AnalysisError>> {
@@ -1050,11 +1114,7 @@ export class GhidraClient {
     this.#activeOutputCheckpoint = undefined;
     this.#outputDrainPromise = undefined;
     this.#outputDrainIncomplete = false;
-    const startupTimeout = readRuntimeSetting(
-      () =>
-        this.#options.readStartupTimeoutMs?.() ??
-        this.#options.startupTimeoutMs,
-    );
+    const startupTimeout = this.#readStartupTimeout();
     if (!startupTimeout.ok)
       return err(
         this.#failure(
@@ -1463,7 +1523,6 @@ export class GhidraClient {
     forceStop: boolean,
   ): Promise<void> {
     try {
-      // best-effort cleanup: a rejected startup must not mask close/cleanup.
       await starting?.promise.catch(() => undefined);
       await this.#cleanup(forceStop);
     } finally {
@@ -1472,7 +1531,6 @@ export class GhidraClient {
         (forceStop || this.#socket === undefined || this.#socket.destroyed)
       )
         this.#startupAttempt = undefined;
-      this.#closePromise = undefined;
     }
   }
 

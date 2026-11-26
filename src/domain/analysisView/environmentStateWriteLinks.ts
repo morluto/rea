@@ -1,6 +1,7 @@
 import type { StateRecordChronology } from "./StateRecordChronology.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
+  succeeded,
   ownMember,
   collectionPathOf,
   IDENTITY_NAMES,
@@ -33,9 +34,6 @@ const MIN_ID_LENGTH = 4;
 
 /** Identity names that describe an entity rather than number it, so its own suffix-named id may sit beside them. */
 const DESCRIPTIVE_NAMES: ReadonlySet<string> = new Set(["key", "slug", "name"]);
-
-const succeeded = (record: StateRecordFacts): boolean =>
-  record.status !== null && record.status >= 200 && record.status < 300;
 
 /** An object's identity-named scalar members. */
 const identityValues = (object: JsonValue | undefined): string[] =>

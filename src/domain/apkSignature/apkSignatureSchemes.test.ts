@@ -1,3 +1,4 @@
+import { u32 } from "../../../tests/fixtures/apkSignature/integers.js";
 import { describe, expect, it } from "vitest";
 import { apkSchemeValue } from "../../../tests/fixtures/apkSignature/signingScheme.js";
 
@@ -13,12 +14,6 @@ const MAX_LINEAGE_NODES = 32;
 
 const ATTR_ID = 0xbeeff00d;
 
-const u32 = (n: number): number[] => [
-  n & 0xff,
-  (n >> 8) & 0xff,
-  (n >> 16) & 0xff,
-  (n >>> 24) & 0xff,
-];
 /** length-prefixed chunk: uint32 LE length, then the bytes. */
 const lp = (bytes: readonly number[]): number[] => [
   ...u32(bytes.length),

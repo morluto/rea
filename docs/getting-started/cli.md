@@ -55,6 +55,11 @@ relative inputs, auxiliary files or output destinations. An empty string never
 selects the working directory; use an explicit `.` when selecting that directory
 is supported by the command.
 
+Command options use the kebab-case spelling that `rea <command> --help`
+lists, such as `--max-rows`. The camelCase spelling of an option, such as
+`--maxRows`, fails with `PARSE_ERROR` and names the documented flag:
+`Unknown flag: --maxRows. Did you mean --max-rows?`
+
 For a numeric option whose `--schema` also accepts decimal strings, the string
 branch carries the same numeric range as the integer branch, so a client that
 validates raw argv text rejects out-of-range tokens. Leading zeros remain
@@ -392,6 +397,17 @@ rea extract-artifact ./payload.bin --json
 See [Android OTA update payloads](../guides/firmware/android-ota-payload.md) for manifest
 facts, signature counting, REPLACE/ZERO reconstruction and delta limits.
 
+Inventory an Android sparse image and expand it to one raw partition image
+without `simg2img`:
+
+```sh
+rea inspect-artifact ./system.img --json
+rea extract-artifact ./system.img --json
+```
+
+See [Android sparse images](../guides/firmware/android-sparse-image.md) for chunk
+facts, DONT_CARE handling, unverified checksums and the expansion allowance.
+
 `inspect-artifact` and `extract-artifact` also read ZIP members compressed with
 Zstandard (standard method 93). They retain the shared ZIP CRC, declared-size,
 overlap and archive expansion checks. The native streaming decoder keeps the
@@ -438,6 +454,57 @@ rea extract-artifact ./vendor_boot.img --json
 See [Android boot images](../android-boot-image.md) for header versions 0 through
 4, vendor ramdisk table entries, stored compression, and the unverified AVB
 footer. `ANDROID!` does not record boot versus init_boot versus recovery.
+
+Inspect a standalone Android Verified Boot vbmeta image:
+
+```sh
+rea inspect-artifact ./vbmeta.img --json
+rea extract-artifact ./vbmeta.img --json
+```
+
+See [Android Verified Boot vbmeta images](../guides/firmware/android-vbmeta.md)
+for the header, descriptors, stored public key, and the fact that nothing is
+verified.
+
+Inventory and extract an ISO 9660 disc image without mounting it:
+
+```sh
+rea inspect-artifact ./installer.iso --detail summary --evidence_output installer.json --json
+rea extract-artifact ./installer.iso --json
+```
+
+See [ISO 9660 disc images](../guides/firmware/iso9660-images.md) for volume facts, Joliet
+names, multi-extent and interleaved files, and what is not decoded.
+
+Inventory and extract a Nintendo Switch NSO module or NRO executable:
+
+```sh
+rea inspect-artifact ./main.nso --json
+rea extract-artifact ./main.nso --json
+```
+
+See [Switch executables](../guides/firmware/switch-executables.md) for header facts, segment
+hashes, LZ4 decompression limits and NRO assets.
+
+Inventory and extract a uClinux bFLT flat executable:
+
+```sh
+rea inspect-artifact ./busybox.bflt --detail summary --evidence_output busybox.json --json
+rea extract-artifact ./busybox.bflt --json
+```
+
+See [uClinux bFLT flat executables](../bflt-executables.md) for header facts,
+segments, gzip and gzdata bodies, and the limitations kept beside the facts.
+
+Inventory and extract a Nintendo DS ROM's CPU binaries, overlays, and files:
+
+```sh
+rea inspect-artifact ./game.nds --detail summary --json
+rea extract-artifact ./game.nds --json
+```
+
+See [Nintendo DS ROMs](../guides/firmware/nds-roms.md) for header detection, member paths,
+checksum and range limitations, and what is not decoded.
 
 Inspect local model declarations without loading weights:
 
@@ -679,6 +746,19 @@ dependency groups with version ranges, and a ZIP contents inventory with
 path-derived folder roles. Missing or malformed `.nuspec` members still return
 the inventory with limitations. See [NuGet packages](../guides/managed/nuget-nupkg.md).
 
+Inspect an OCI image-layout directory without unpacking a tar, decompressing
+layers, or contacting a registry:
+
+```bash
+rea inspect-oci-image-layout /absolute/path/to/busybox.oci --json
+```
+
+The workflow reports layout version, index entries, image config facts, layers,
+and streamed digest verification of present referenced blobs. Missing blobs,
+digest mismatches, and similar defects are findings. Env values are kept
+unless `--no-include-env-values` is selected. Directory form only. See
+[OCI image layouts](../guides/artifacts/oci-image-layout.md).
+
 Complete `rea decompile --json` Evidence can be saved and inspected through
 `inspect-analysis-view` with an inline source and
 `view: {kind: "native", facet: "pseudocode", offset: 0, limit: 20000}`.
@@ -865,11 +945,21 @@ rea analyze /absolute/path/to/program --provider ghidra --snapshot /absolute/pat
 ```
 
 An exact CLI cache hit is normally read before starting a provider process.
-`decompile --provider ghidra --snapshot ...` also retains its single selected
-Program's pseudocode result, even without an explicit document selector. Old
+It returns the saved Evidence record itself, with the same `evidence_id` as the
+record in the snapshot's `evidence_bundle`.
+With Ghidra, every one-shot read-only query (for example `decompile`, `search`,
+`xrefs` and `procedure-references`) is retained for its
+single selected Program, even without an explicit document selector. Old
 snapshots that contain only the Evidence need one new query to add that replay
 entry. This does not retain every body from `decompile-all` or make a persistent
-session's implicit document replayable.
+session's implicit document replayable. `xrefs` with a symbol name resolves the
+name through the provider first, so pass the address to replay without starting
+it.
+
+A provider that declares its results live, such as Hopper, IDA and Kuna, is
+observed again on every call. With `--snapshot`, such a result carries the
+limitation `Not saved for snapshot replay: <provider> declares this result
+live ...`; the snapshot still records its Evidence.
 On Windows, Ghidra first admits the selected source through its native snapshot
 owner, so replay can start that provider.
 In MCP, `open_binary` accepts `snapshot_path` to import a snapshot atomically
@@ -939,6 +1029,23 @@ checks its binding to the target, provider and profile.
 
 ## Import, export and compare Evidence
 
+Evidence `provider` identifies the producer of the observation. Optional
+`provider_selection` records the captured selection of a fresh Hopper, Ghidra,
+IDA, or Kuna execution, including candidate availability, target support, and
+rejection codes. The execution must match the selected native provider and its
+known profile facts. Unknown version or profile facts remain unknown.
+
+Generic retention, imports, and snapshot replay preserve supplied metadata,
+including its absence; opening another provider does not rewrite history.
+Artifact, browser, managed, and capture output does not acquire native selection
+metadata. REA-derived summaries and views cite their attributed native sources
+without claiming to be native observations themselves.
+
+Selection metadata on an Evidence envelope does not change its `evidence_id`.
+A nested Evidence value remains the exact input captured by its parent: later
+admission metadata on the separately retained source does not rewrite that
+embedded value or the parent's commitment.
+
 Evidence records retain artifact identity, source locations, observations,
 inferences and unresolved findings. Validate an existing bundle, export its
 canonical form, or compare two supplied bundles:
@@ -950,8 +1057,7 @@ rea compare /absolute/path/to/evidence/left.json /absolute/path/to/evidence/righ
 rea compare left.json right.json --record_pairs '[{"left_evidence_id":"ev_<left-sha256>","right_evidence_id":"ev_<right-sha256>"}]' --json
 ```
 
-Migration: replace `rea compare-bundles` with `rea compare`; the former command
-has been removed. The MCP tool remains `compare_bundles`.
+`rea compare` is the CLI form of the MCP `compare_bundles` tool.
 
 `rea evidence-import` performs process-local bundle authentication and
 validation, reporting record and Unknown-revision counts. `unknowns_added`
@@ -1042,8 +1148,7 @@ supplying a bundle does not make incompatible Evidence valid for a workflow.
 [member inspection options](#managed-assemblies-net) it applies to both sides,
 and `compare-process-captures` keeps its two capture Evidence JSON paths. The bundle
 option above selects an input. Producers write a new bundle with
-`--evidence_output`; `inspect-managed-members` spelled that option
-`--evidence-bundle` in earlier releases.
+`--evidence_output`.
 File selectors remain available only on contracts that explicitly support them.
 
 Compare two artifact inventories with `compare-artifacts`. It takes the same
@@ -1237,8 +1342,8 @@ user permissions; consult the chosen guide for host requirements and effects.
 ## Start the MCP server
 
 Start REA's MCP server with `rea mcp` (or `rea --mcp`). The per-command
-`rea <command> --mcp` entry has been removed; it returns `MCP_MODE_REMOVED`
-and points to `rea mcp`. This is a breaking change from the earlier CLI.
+`rea <command> --mcp` form returns `MCP_MODE_REMOVED` and points to
+`rea mcp`.
 
 ## Serve MCP over streamable HTTP
 
@@ -1508,10 +1613,8 @@ does not fall back to global settings.
 
 `rea mcp add --command` accepts stdio launcher text. An HTTP(S) URL in the
 executable position is refused before any settings change; configure remote MCP
-transport in the client's own settings. Earlier delegated registration could
-interpret a URL as remote transport for some clients while storing it as an
-executable for Amp. That inconsistent URL interpretation and package acquisition
-are removed. Launcher arguments that happen to contain URLs remain arguments.
+transport in the client's own settings. Launcher arguments that happen to
+contain URLs remain arguments.
 
 `rea mcp doctor --json` checks production MCP startup and reports child logs in
 `diagnostics`. It drains stderr while retaining at most its first 64 KiB of raw
@@ -1541,7 +1644,10 @@ A document can exceed the runtime's string limit when each encoded line fits.
 Staging limits the encoded text kept in memory. The TOON encoder still
 normalizes the input tree before yielding lines, so working memory also
 depends on the size of the input and the longest encoded line.
-Token counting and token windows still require a complete formatted string.
+Token counting and token windows require a complete formatted string. For structured
+TOON output, every selected key and string must contain well-formed UTF-16,
+including values outside the requested token window. Use `--filter-output` to
+select a representable field, or JSON or YAML to retain unpaired surrogates.
 Use `--json` to stream the result without TOON staging or to save it for a
 JSON consumer. Valued output flags (`--format`, `--filter-output`,
 `--token-limit`, `--token-offset`) accept `--flag value` or `--flag=value`; a
@@ -1620,8 +1726,6 @@ Cutter when available. This is separate from `--format json`, which selects the
 CLI result representation; the global `--json` flag selects that same CLI
 representation.
 
-Cutter no longer accepts command-local `--json=true` or `--json=false`.
-Replace these with `--json-output=true` or `--json-output=false`, respectively.
 Combine `--json-output` with bare `--json` when both Cutter command output and
 the CLI result should use JSON; either argument order is accepted.
 
@@ -1719,8 +1823,7 @@ rea inspect-artifact ./app.asar --json | jq . > inspection.json
 `--token-count` reports a tokenx estimate for the selected emitted document,
 including a requested full-output envelope and metadata. JSON uses the same
 terminal indentation or compact piped representation as normal output; JSONL
-uses its emitted line representation. The final newline is included (tokenx
-assigns whitespace no tokens). This is an estimate, not a model tokenizer count.
+uses its emitted line representation. The estimate includes the final newline. Its token cost depends on the preceding text.
 Counting retains the existing bounded formatted-string allocation after capacity
 admission; omit the flag to stream large JSON documents without materializing
 the complete formatted text. Exhausted token windows display an empty range at

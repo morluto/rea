@@ -296,8 +296,8 @@ searchable. The offered per-file node capacity also bounds the producer's
 expression and operand collections before graph projection.
 Expression nodes and unknowns share the existing per-file graph admission
 budgets; omitted facts make graph coverage truncated and the trace partial.
-Consumers that previously treated `found` as compatible with a relevant
-unknown should handle `partial` and inspect the returned unknowns. Retained
+A relevant unknown makes the trace `partial`; inspect the returned unknowns.
+Retained
 graphs without `influences` edges remain readable but do not gain edges until
 the application is analyzed again.
 Global timer, `fetch`, `WebSocket`, `JSON.parse`, and coercion calls receive
@@ -380,8 +380,7 @@ shorter; smaller values keep their existing JSON key. This keeps large values
 out of identity and display metadata without expanding short values or
 truncating their Evidence.
 
-New analyses therefore produce different IDs for hashed literals from the
-earlier payload-bearing role keys. Use IDs returned by the selected parent
+Use IDs returned by the selected parent
 graph and read literal values from `properties.value`, rather than decoding
 role keys or labels. Previously stored graphs and their original IDs remain
 valid inputs.
@@ -400,7 +399,6 @@ shorter of the exact value and `<kind> endpoint`; semantic request/response
 labels use the shorter of the endpoint and operation method. These labels are
 display metadata, not endpoint lookup values.
 
-New analyses therefore change hashed endpoint IDs and longer endpoint labels.
 Use IDs from the selected graph and read the complete endpoint properties;
 previously stored graphs still support their original IDs. Literal endpoint
 search, semantic tracing, and version comparison use the preserved values.
@@ -410,9 +408,8 @@ Event and listener nodes likewise preserve the complete event name in
 digest rule, scoped to the emitter; repeated registrations, removals, and
 dispatches keep one event per exact emitter/name pair. Long event labels use
 `event`, and listener labels use the shorter of `<method>:<name>` and
-`<method>:listener`. Dynamic names remain `null` with explicit uncertainty. New analyses
-change hashed event IDs and longer event/listener labels; query the preserved
-name or select IDs from the parent graph. Previously stored graphs keep their
+`<method>:listener`. Dynamic names remain `null` with explicit uncertainty. Query
+the preserved name or select IDs from the parent graph. Previously stored graphs keep their
 original IDs and remain valid trace inputs.
 
 Empty string event names remain exact identities and can be selected with an
@@ -680,10 +677,8 @@ A partial comparison still records an unknown in the MCP session when matching
 uncertain projections produce no changes and `summary.unknown` is zero.
 
 The output includes exact selector candidates, omissions, Evidence links,
-coverage, and limitations; it does not execute JavaScript. When runtime
-semantics matter, run behavioral probes directly against the relevant
-application versions and capture them through the available browser, Electron,
-or process workflows.
+coverage, and limitations; it does not execute JavaScript. See
+[runtime evidence](#runtime-evidence) when runtime semantics matter.
 
 ## CLI and verification
 

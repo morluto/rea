@@ -42,16 +42,14 @@ it("retains exact selected map bytes and completed reads across failures", async
   onTestFinished(() => reader.close());
   const rejected = await load(invalid);
   if (rejected.ok) throw new Error("Accepted invalid UTF-8");
+  // Invalid UTF-8 is the selected map's fault, not the request's.
   expect(projectAnalysisError(rejected.error)).toMatchObject({
-    code: "invalid_request",
+    code: "unsupported_target",
+    retryable: false,
     details: {
-      issues: [
-        {
-          path: ["source_map", "path"],
-          reason: "invalid_format",
-          message: expect.stringContaining("UTF-8"),
-        },
-      ],
+      path: invalid,
+      failure_kind: "malformed",
+      reason: expect.stringContaining("UTF-8"),
     },
   });
   expect(rejected.error.partialObservation).toMatchObject({

@@ -1,6 +1,5 @@
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, writeFile } from "node:fs/promises";
 import { rizinDebugMcpServer } from "../../fixtures/debuggerMcp.js";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";

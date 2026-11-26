@@ -1,3 +1,4 @@
+import { write16, write32, writeWord } from "../BinaryInteger.fixture.js";
 import type { PrefixedByteSource } from "../../domain/byteSource.js";
 
 export const elfDependencyByteSource = (
@@ -24,42 +25,6 @@ export const elfHash = (name: string): number => {
 };
 
 const concat = (...parts: readonly Buffer[]): Buffer => Buffer.concat(parts);
-
-const write16 = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  little: boolean,
-): void => {
-  if (little) bytes.writeUInt16LE(value, offset);
-  else bytes.writeUInt16BE(value, offset);
-};
-
-const write32 = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  little: boolean,
-): void => {
-  if (little) bytes.writeUInt32LE(value, offset);
-  else bytes.writeUInt32BE(value, offset);
-};
-
-const writeWord = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  bits: 32 | 64,
-  little: boolean,
-): void => {
-  if (bits === 64) {
-    const wide = BigInt(value);
-    if (little) bytes.writeBigUInt64LE(wide, offset);
-    else bytes.writeBigUInt64BE(wide, offset);
-    return;
-  }
-  write32(bytes, offset, value, little);
-};
 
 export interface ElfDependencyImportSpec {
   readonly name: string;
@@ -139,6 +104,14 @@ export interface ElfDependencyFixtureOptions {
   readonly omitSymentTag?: boolean;
   /** Leaves DT_SYMTAB out of the dynamic table. */
   readonly omitSymtabTag?: boolean;
+  /** Leaves DT_VERNEED out of the dynamic table while keeping DT_VERNEEDNUM. */
+  readonly omitVerneedTag?: boolean;
+  /** Leaves DT_VERDEF out of the dynamic table while keeping DT_VERDEFNUM. */
+  readonly omitVerdefTag?: boolean;
+  /** Overrides or adds DT_VERNEEDNUM in the dynamic table. */
+  readonly verneedCount?: number;
+  /** Overrides or adds DT_VERDEFNUM in the dynamic table. */
+  readonly verdefCount?: number;
   /** Splits the identity PT_LOAD in two halfway through the .hash table. */
   readonly splitLoadAtHash?: boolean;
   /** Adds a one-byte zero-fill load alias at this offset into .gnu.version. */
@@ -433,6 +406,10 @@ interface FixtureConfig {
   readonly sectionEntrySizes: Readonly<Record<string, number>>;
   readonly omitSymentTag: boolean;
   readonly omitSymtabTag: boolean;
+  readonly omitVerneedTag: boolean;
+  readonly omitVerdefTag: boolean;
+  readonly verneedCount: number | undefined;
+  readonly verdefCount: number | undefined;
   readonly splitLoadAtHash: boolean;
   readonly versymZeroFillOffset: number | undefined;
 }
@@ -534,6 +511,10 @@ const fixtureConfig = (options: ElfDependencyFixtureOptions): FixtureConfig => {
     sectionEntrySizes: options.sectionEntrySizes ?? {},
     omitSymentTag: options.omitSymentTag === true,
     omitSymtabTag: options.omitSymtabTag === true,
+    omitVerneedTag: options.omitVerneedTag === true,
+    omitVerdefTag: options.omitVerdefTag === true,
+    verneedCount: options.verneedCount,
+    verdefCount: options.verdefCount,
     splitLoadAtHash: options.splitLoadAtHash === true,
     versymZeroFillOffset: options.versymZeroFillOffset,
   };
@@ -679,17 +660,22 @@ const buildDynamicTags = (
   if (!config.omitSymentTag) addTag(11, bits === 64 ? 24 : 16);
   addTag(0x6ffffff0, offsets.versymOff);
   if (tables.verneedBytes.length !== 0) {
-    addTag(0x6ffffffe, offsets.verneedOff);
+    if (!config.omitVerneedTag) addTag(0x6ffffffe, offsets.verneedOff);
     addTag(
       0x6fffffff,
-      config.earlyVersionLinkEnd === "verneed"
-        ? Math.max(config.verneed.length, 2)
-        : config.verneed.length,
+      config.verneedCount ??
+        (config.earlyVersionLinkEnd === "verneed"
+          ? Math.max(config.verneed.length, 2)
+          : config.verneed.length),
     );
+  } else if (config.verneedCount !== undefined) {
+    addTag(0x6fffffff, config.verneedCount);
   }
   if (tables.verdefBytes.length !== 0) {
-    addTag(0x6ffffffc, offsets.verdefOff);
-    addTag(0x6ffffffd, config.verdef.length);
+    if (!config.omitVerdefTag) addTag(0x6ffffffc, offsets.verdefOff);
+    addTag(0x6ffffffd, config.verdefCount ?? config.verdef.length);
+  } else if (config.verdefCount !== undefined) {
+    addTag(0x6ffffffd, config.verdefCount);
   }
   if (config.flags1 !== null) addTag(0x6ffffffb, config.flags1);
   addTag(0, 0);

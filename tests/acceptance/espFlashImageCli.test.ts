@@ -12,6 +12,7 @@ import {
   espFlashDump,
   otaData,
   otaRecord,
+  partitionTable,
 } from "../../src/domain/firmware/espFlash.fixture.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
@@ -162,5 +163,62 @@ cliTest(
       chip: { target: "esp32" },
       bootloader: { flash_address: 0x1000 },
     });
+  },
+);
+
+cliTest(
+  "reports unknown coverage through the CLI when the partition table precedes the located bootloader",
+  async ({ cli }) => {
+    const directory = await createTestTempDirectory(
+      "rea-esp-flash-cli-omitted-boot-",
+    );
+    const source = join(directory, "table-before-boot.bin");
+    const esp32 = espImage({
+      segments: ESP32C3_BOOTLOADER_SEGMENTS,
+      chipId: 0x0000,
+    });
+    await writeFile(
+      source,
+      espFlashDump({
+        size: 0x1_0000,
+        bootloader: { at: 0x1000, bytes: esp32 },
+        tableAt: 0x0,
+        table: partitionTable([
+          {
+            label: "data",
+            type: 0x01,
+            subtype: 0x82,
+            offset: 0x1000,
+            size: 0x3000,
+          },
+        ]),
+      }),
+    );
+    const inspected = await cli.run({
+      arguments: [
+        "inspect-artifact",
+        source,
+        "--target-format",
+        "esp-flash-image",
+        "--partition-table-offset",
+        "0x0",
+        "--json",
+      ],
+    });
+    expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
+    const { graph, root } = rootMetadata(inspected.json);
+    expect(graph.coverage).toEqual({
+      scope: "container-entries",
+      status: "unknown",
+    });
+    expect(root).toMatchObject({
+      chip: { target: "esp32" },
+      bootloader: null,
+      partition_table: { flash_address: 0x0, method: "caller" },
+      undescribed: [],
+    });
+    expect(graph.limitations).toContain(
+      "The partition table at 0x0 does not follow the bootloader at 0x1000; the bootloader region is not described.",
+    );
   },
 );

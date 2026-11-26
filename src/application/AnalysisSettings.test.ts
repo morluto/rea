@@ -266,6 +266,7 @@ it("exposes shared provider controls and preserves the explicit unbounded decomp
       .inspect({ operation: "inventory_artifact" })
       .settings.map(({ setting }) => setting),
   ).toEqual([
+    "artifact.member_count",
     "asar.max_listing_bytes",
     "asar.max_header_bytes",
     "windows.change_time_drift_ms",
@@ -561,4 +562,13 @@ it("retains an invalid capture heap seed through override and reset", () => {
     "REA_CAPTURE_DECODER_OLD_GENERATION_MIB",
   );
   expect(() => heap.source).toThrow("REA_CAPTURE_DECODER_OLD_GENERATION_MIB");
+});
+
+it("includes producer.output_bytes when filtering inspect_analysis_settings by sigrok-recording", () => {
+  const store = new AnalysisSettings({});
+  expect(
+    store
+      .inspect({ provider: "sigrok-recording" })
+      .settings.map(({ setting }) => setting),
+  ).toContain("producer.output_bytes");
 });

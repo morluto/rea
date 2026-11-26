@@ -1,4 +1,8 @@
-import { ArtifactReaderFailure } from "../resources/index.js";
+import {
+  ArtifactReaderFailure,
+  malformedArtifact,
+} from "../resources/index.js";
+import { InternalInvariantError } from "../domain/internalInvariant.js";
 
 /** Preserve cancellation at the ASAR boundary with its original abort reason. */
 export const asarCancellationFailure = (
@@ -19,16 +23,20 @@ export const asarFailure = (
   cause: unknown,
 ): ArtifactReaderFailure => {
   if (cause instanceof ArtifactReaderFailure) return cause;
+  // A broken REA assumption is a defect, never a fact about the archive.
+  if (cause instanceof InternalInvariantError) throw cause;
   if (isFilesystemFailure(cause))
     return new ArtifactReaderFailure(
       "io",
       `Could not ${operation} ASAR at ${path}: ${cause.message}`,
       { cause },
     );
-  return new ArtifactReaderFailure(
-    "format",
+  return malformedArtifact(
+    "asar",
     `Malformed ASAR during ${operation}: ${path}`,
-    { cause },
+    {
+      cause,
+    },
   );
 };
 

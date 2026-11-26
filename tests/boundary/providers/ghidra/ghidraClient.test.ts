@@ -10,6 +10,7 @@ import {
 } from "../../../../src/domain/analysisErrorCore.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
+import { sha256 as digest } from "../../../support/sha256.js";
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import {
@@ -124,6 +125,7 @@ const clientFor = (
   launcher: GhidraLauncher,
   options: {
     readonly startupTimeoutMs?: number;
+    readonly readStartupTimeoutMs?: () => number;
     readonly onDiagnostic?: (event: GhidraDiagnostic) => void;
     readonly transport?: GhidraTransportKind;
     readonly runId?: string;
@@ -141,6 +143,9 @@ const clientFor = (
     providerVersion: PROVIDER_VERSION,
     profileDigest: PROFILE_DIGEST,
     startupTimeoutMs: options.startupTimeoutMs ?? 1_000,
+    ...(options.readStartupTimeoutMs === undefined
+      ? {}
+      : { readStartupTimeoutMs: options.readStartupTimeoutMs }),
     ...(options.runId === undefined ? {} : { runId: options.runId }),
     ...(options.logger === undefined ? {} : { logger: options.logger }),
     ...(options.bridgeMaxReplyBytes === undefined
@@ -458,8 +463,6 @@ it("hashes snapshot section ranges in the same pass as the whole-file digest", a
     await client.close();
   });
   const bytes = readFileSync(fixturePath);
-  const digest = (chunk: Buffer): string =>
-    createHash("sha256").update(chunk).digest("hex");
   const result = await client.hashTargetSnapshotRanges([
     { start: 0, end: 4 },
     { start: 4, end: bytes.length },
@@ -1541,6 +1544,87 @@ it("applies one startup deadline and removes the private runtime", async () => {
   });
   await client.close();
   await expect(waitForExit(child)).resolves.toBe(true);
+});
+
+it("returns an elapsed startup again until its deadline changes or the client closes", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  let deadlineMs = 30;
+  const launcher = new FixtureLauncher("silent");
+  const client = clientFor(launcher, {
+    startupTimeoutMs: 30,
+    readStartupTimeoutMs: () => deadlineMs,
+  });
+  const elapse = async () => {
+    const pending = client.start();
+    await vi.advanceTimersByTimeAsync(deadlineMs);
+    return waitFor(() => pending);
+  };
+
+  const first = await elapse();
+  expect(first).toMatchObject({
+    ok: false,
+    error: { kind: "timeout", timeoutMs: 30 },
+  });
+  // The same target, profile and deadline would run it out again.
+  const repeated = await client.start();
+  expect(launcher.runtimeRoots).toHaveLength(1);
+  expect(repeated).toEqual(first);
+
+  deadlineMs = 40;
+  await expect(elapse()).resolves.toMatchObject({
+    ok: false,
+    error: { kind: "timeout", timeoutMs: 40 },
+  });
+  expect(launcher.runtimeRoots).toHaveLength(2);
+
+  await client.close();
+  await expect(elapse()).resolves.toMatchObject({
+    ok: false,
+    error: { kind: "timeout", timeoutMs: 40 },
+  });
+  vi.useRealTimers();
+  expect(launcher.runtimeRoots).toHaveLength(3);
+});
+
+it("forgets an elapsed startup that a close interrupted during its cleanup", async () => {
+  const fixture = new FixtureLauncher("silent");
+  const elapsedCleanup = phaseGate();
+  let launches = 0;
+  const launcher: GhidraLauncher = {
+    launch: async (session) => {
+      const launched = await fixture.launch(session);
+      if (!launched.ok) return launched;
+      const held = ++launches === 1;
+      return ok({
+        ...launched.value,
+        cleanup: async () => {
+          if (held) await elapsedCleanup.hold();
+          const child = launched.value.process;
+          if (child.exitCode === null && child.signalCode === null)
+            child.kill("SIGKILL");
+          await waitForChildExit(child, 5_000);
+          return { cleaned: true as const, signaled: true };
+        },
+      });
+    },
+  };
+  const client = clientFor(launcher, { startupTimeoutMs: 200 });
+  const pending = client.start();
+  await elapsedCleanup.reached(pending, "elapsed startup cleanup");
+  // The deadline already decided this startup; close lands during cleanup.
+  const closing = client.close();
+  elapsedCleanup.release();
+  const elapsed = await pending;
+  expect(elapsed).toMatchObject({ ok: false, error: { kind: "timeout" } });
+  await expect(closing).resolves.toEqual({ ok: true, value: null });
+
+  // The close is the caller's retry: the next start launches again instead
+  // of returning the failure the interrupted cleanup could have recorded.
+  const retry = await client.start();
+  if (elapsed.ok || retry.ok) throw new Error("Expected startup failures");
+  expect(retry.error).not.toBe(elapsed.error);
+  expect(retry.error.kind).toBe("timeout");
+  expect(fixture.runtimeRoots).toHaveLength(2);
 });
 
 it("cancels startup promptly and leaves no project or process", async () => {

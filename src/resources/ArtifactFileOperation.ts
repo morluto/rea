@@ -327,7 +327,10 @@ export const artifactParseFailure = (
       ...(boundary === undefined ? {} : { boundary }),
     });
   }
-  return new ArtifactReaderFailure(failure.kind, cause.message, { cause });
+  return new ArtifactReaderFailure(failure.kind, cause.message, {
+    cause,
+    parseFailure: failure,
+  });
 };
 
 /** Recognize only the originating caller's cancellation without discarding cleanup ownership. */

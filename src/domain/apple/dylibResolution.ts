@@ -1,5 +1,7 @@
 import { z } from "zod";
+import type { MachoReadFailure } from "./machoContainer.js";
 import { knownCoverageStatusSchema } from "../coverage.js";
+import { CoverageAccumulator } from "../coverageAccumulator.js";
 import { machoArchitectureFamily } from "./machoCpuIdentity.js";
 import { cancelledBy } from "../analysisErrorCore.js";
 
@@ -95,9 +97,14 @@ export const machoSliceSchema = z.strictObject({
   fat_alignment_exponent: z.int().nonnegative().nullable(),
   file_type: z.enum(["execute", "dylib", "bundle", "other"]),
   file_type_code: z.int().nonnegative(),
-  /** Raw LC_BUILD_VERSION platform number; null means no such command was observed. */
+  /**
+   * The one build platform the image declares. Null when no
+   * LC_BUILD_VERSION/version-min command was observed, or when the
+   * declarations name more than one platform (for example a zippered macOS
+   * and macCatalyst image); `platforms` distinguishes the two.
+   */
   platform: z.int().nonnegative().nullable(),
-  /** Every distinct build platform declared by LC_BUILD_VERSION/version-min commands. */
+  /** Each LC_BUILD_VERSION/version-min platform declaration, in load-command order. */
   platforms: z.array(z.int().nonnegative()),
   install_name: z.string().nullable(),
   dependencies: z.array(dependencySchema),
@@ -109,7 +116,7 @@ export const machoSliceSchema = z.strictObject({
 export type MachoDependency = z.infer<typeof dependencySchema>;
 export type MachoSlice = z.infer<typeof machoSliceSchema>;
 
-/** Header parse of one file; malformed and unsupported images keep their reason. */
+/** Header parse of one file; an unreadable image keeps the owner's failure. */
 export type MachoImageFacts =
   | {
       readonly status: "parsed";
@@ -117,10 +124,7 @@ export type MachoImageFacts =
       /** Apple lipo's ARM64 compatibility row, stored beyond raw nfat_arch. */
       readonly hiddenSlices?: readonly MachoSlice[];
     }
-  | {
-      readonly status: "malformed" | "unsupported";
-      readonly reason: string;
-    }
+  | { readonly status: "failed"; readonly failure: MachoReadFailure }
   | { readonly status: "not-mach-o" };
 
 /** Return every slice that can participate in architecture selection. */
@@ -379,7 +383,10 @@ const evaluateCandidate = async (
     return { ...base, outcome: "absent", resolved_path: null };
   const facts = await imageFacts(context, lookup.path);
   let outcome: Candidate["outcome"];
-  if (facts.status !== "parsed") outcome = facts.status;
+  if (facts.status === "not-mach-o") outcome = facts.status;
+  else if (facts.status === "failed")
+    outcome =
+      facts.failure.kind === "unsupported" ? "unsupported" : "malformed";
   else {
     const selection = compatibleSlice(
       machoImageSlices(facts),
@@ -712,12 +719,16 @@ const projectTraceResult = (input: {
     roots: input.roots,
     images: reported.map(([path, facts]) => ({
       path,
+      // The published status keeps its two refusal values: a form outside
+      // coverage, or bytes that cannot be read (broken, cut short or changed).
       parse_status:
-        facts.status === "not-mach-o" ? "unsupported" : facts.status,
-      reason:
-        facts.status === "parsed" || facts.status === "not-mach-o"
-          ? null
-          : facts.reason,
+        facts.status === "parsed"
+          ? "parsed"
+          : facts.status === "not-mach-o" ||
+              facts.failure.kind === "unsupported"
+            ? "unsupported"
+            : "malformed",
+      reason: facts.status === "failed" ? facts.failure.detail : null,
       slices:
         facts.status === "parsed"
           ? machoImageSlices(facts).map(withoutDependencies)
@@ -726,16 +737,23 @@ const projectTraceResult = (input: {
     edges: [...input.edges],
     findings: deriveFindings(input.edges, input.rootSlices),
     coverage: {
-      status:
-        unparsed.length === 0 &&
-        input.withoutArchitecture.length === 0 &&
-        input.environmentRoots.size === 0 &&
-        input.unknownArchitectureCandidates.size === 0 &&
-        input.unknownPlatformCandidates.size === 0 &&
-        input.undecodableSymlinkTargets.size === 0 &&
-        input.rootEnumeration?.status !== "unknown"
-          ? "complete"
-          : "partial",
+      status: (() => {
+        const acc = new CoverageAccumulator().recordComplete();
+        if (unparsed.length > 0) acc.recordOmission("unparsed images");
+        if (input.withoutArchitecture.length > 0)
+          acc.recordOmission("roots without architecture");
+        if (input.environmentRoots.size > 0)
+          acc.recordOmission("environment roots");
+        if (input.unknownArchitectureCandidates.size > 0)
+          acc.recordOmission("unknown architecture candidates");
+        if (input.unknownPlatformCandidates.size > 0)
+          acc.recordOmission("unknown platform candidates");
+        if (input.undecodableSymlinkTargets.size > 0)
+          acc.recordOmission("undecodable symlink targets");
+        if (input.rootEnumeration?.status === "unknown")
+          acc.recordOmission("root enumeration unknown");
+        return acc.finalizeKnown();
+      })(),
       unparsed_images: unparsed,
       roots_without_architecture: [...input.withoutArchitecture],
     },

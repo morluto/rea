@@ -89,11 +89,13 @@ const KNOWN_DIFFERENCES: Readonly<Record<string, readonly string[]>> = {
       ],
     ]),
   ),
-  // The MCP inspection records the delivery detail in Evidence parameters.
+  // The MCP inspection records the delivery detail and its selected path in
+  // Evidence parameters; the CLI records the path as `input_path`.
   inspect_artifact: [
     "evidence.evidence_id",
     "evidence.parameters.detail",
     "evidence.parameters.input_path",
+    "evidence.parameters.path",
   ],
   // `DirectAnalysis` shapes CLI failures in the application layer and adds
   // an `error: "Analysis failed"` marker MCP does not send.

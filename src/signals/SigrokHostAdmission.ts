@@ -1,4 +1,4 @@
-﻿import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
+import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 
 /** The only host profile with an enforceable native memory bound for sigrok. */
 export const sigrokHostSupported = (platform: NodeJS.Platform): boolean =>

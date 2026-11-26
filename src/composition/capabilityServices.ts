@@ -49,6 +49,7 @@ import { createElectronFuseService } from "./electronFuses.js";
 import { createReleaseExposureService } from "./releaseExposure.js";
 import { createPythonPycService } from "./pythonPyc.js";
 import { createNugetNupkgService } from "./nugetNupkg.js";
+import { createOciImageLayoutService } from "./ociImageLayout.js";
 import { createWebNetworkCaptureService } from "./webNetworkCaptures.js";
 import { createWebSourceLocationService } from "./webSourceLocations.js";
 import { createWebModuleTraceService } from "./webModules.js";
@@ -79,6 +80,7 @@ import {
 import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
 import { pcapCaptureHostSupported } from "../domain/pcap/pcapAnalysis.js";
 import { createPeLoadConfigService } from "./binaryDiagnostics/peLoadConfig.js";
+import { createPeUnwindRangesService } from "./binaryDiagnostics/peUnwindRanges.js";
 import { createBinaryHardeningService } from "./binaryDiagnostics/binaryHardening.js";
 import { createPeCertificatesService } from "./binaryDiagnostics/peCertificates.js";
 import { createPeImportsService } from "./binaryDiagnostics/peImports.js";
@@ -111,6 +113,7 @@ import type { ElectronFuseService } from "../application/electron/ElectronFuseSe
 import type { RustBinaryService } from "../application/rust/RustBinaryService.js";
 import type { PythonPycService } from "../application/python/PythonPycService.js";
 import type { NugetNupkgService } from "../application/nuget/NugetNupkgService.js";
+import type { OciImageLayoutService } from "../application/oci/OciImageLayoutService.js";
 import type { BeamService } from "../application/erlang/BeamService.js";
 import type { V8CodeCacheService } from "../application/v8CodeCache/V8CodeCacheService.js";
 import type { MavenGradleMetadataService } from "../application/java/MavenGradleMetadataService.js";
@@ -148,6 +151,7 @@ export interface CapabilityServiceOptions {
   readonly rustBinary?: RustBinaryService;
   readonly pythonPyc?: PythonPycService;
   readonly nugetNupkg?: NugetNupkgService;
+  readonly ociImageLayout?: OciImageLayoutService;
   readonly erlangBeam?: BeamService;
   readonly v8CodeCache?: V8CodeCacheService;
   readonly mavenGradleMetadata?: MavenGradleMetadataService;
@@ -406,6 +410,7 @@ const modules = {
   elfDependencies: service(() => createElfDependenciesService()),
   kernelBuildConfig: service(() => createKernelBuildConfigService()),
   peLoadConfig: service(() => createPeLoadConfigService()),
+  peUnwindRanges: service(() => createPeUnwindRangesService()),
   binaryHardening: service(() => createBinaryHardeningService()),
   peCertificates: service(() => createPeCertificatesService()),
   peImports: service(() => createPeImportsService()),
@@ -421,6 +426,9 @@ const modules = {
   ),
   nugetNupkg: service(
     ({ options }) => options.nugetNupkg ?? createNugetNupkgService(),
+  ),
+  ociImageLayout: service(
+    ({ options }) => options.ociImageLayout ?? createOciImageLayoutService(),
   ),
   webNetworkCapture: service(
     ({ environment, options, settings }) =>
@@ -791,6 +799,14 @@ export const createCapabilityServices = (context: CapabilityHostContext) => {
     createManagedBinarySession: async () => {
       const { createManagedBinarySession } = await import("./binary.js");
       return createManagedBinarySession();
+    },
+    createArtifactPathInspection: async () => {
+      const { createArtifactPathInspection } = await import("./binary.js");
+      return createArtifactPathInspection(
+        context.providerEnvironment,
+        context.platform,
+        context.settings,
+      );
     },
     close: () => scope.close(),
   };

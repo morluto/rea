@@ -59,6 +59,12 @@ Non-empty components become children:
 | `bootconfig`            | bootconfig                       |
 | `signature`             | version 4 boot signature         |
 
+The header and the version 4 ramdisk table are read as metadata, not
+children. Every other declared range of the image layout must be a child for
+coverage to be `complete`. A vendor ramdisk section that the version 4 table
+entries do not cover, or bytes between the sequential layout and a version 1
+or 2 `recovery_dtbo`, leave coverage `unknown` with a limitation naming them.
+
 A child whose first bytes match gzip (`1f 8b`), an lz4 frame (`04 22 4d 18`),
 legacy lz4 (`02 21 4c 18`), or zstd (`28 b5 2f fd`) records that compression.
 Other prefixes stay unknown, which does not prove the bytes are uncompressed.
@@ -71,8 +77,11 @@ stays a file; extract it and run `inspect-devicetree` on the extracted file.
 The reader checks the final 64 bytes for an `AVBf` footer when those bytes
 begin at or after the end of the last declared image component, even if they
 start before the page-rounded image end. A matching footer records its version,
-original image size, and vbmeta offset and size. The footer and vbmeta remain
-unverified metadata. If no footer is recognized, the reader reports undecoded
+original image size, and vbmeta offset and size. The footer and the embedded
+vbmeta remain unverified metadata; this reader does not decode that vbmeta.
+A standalone `vbmeta.img` is a separate `AVB0` image. See
+[Android Verified Boot vbmeta images](guides/firmware/android-vbmeta.md).
+If no footer is recognized, the reader reports undecoded
 trailing bytes beyond the page-rounded image end. A vbmeta range that overlaps
 the header, a component, or the footer is malformed.
 
@@ -82,8 +91,11 @@ The reader admits at most 4,096 vendor ramdisk table entries and an entry size
 of at most 4,096 bytes. It verifies that the table dimensions agree and the
 declared bytes fit in the image before applying those limits and reading the
 table. A vendor `header_size` above 1 MiB also exceeds a capacity limit. Unsupported
-header revisions return `unsupported_target`; truncated declared structures
-return `truncated`; malformed layouts return `invalid_request`. The page
+header revisions, truncated declared structures and malformed layouts all
+return `unsupported_target`. Truncated and malformed refusals carry
+`details.failure_kind` (`truncated` or `malformed`), `details.format`
+(`android-boot-image`) and, when the parser names them, `details.offset` and
+`details.field`. The page
 padding after the last component carries no data and may be absent. These refusals
 do not produce an empty successful inventory. Gaps inside a vendor ramdisk
 section, or bytes between the sequential layout and a recovery DTBO, are named

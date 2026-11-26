@@ -50,6 +50,7 @@ import {
   PE_CERTIFICATES_PROVIDER,
   PE_IMPORTS_PROVIDER,
   PE_LOAD_CONFIG_PROVIDER,
+  PE_UNWIND_RANGES_PROVIDER,
   PE_RESOURCES_PROVIDER,
   RELEASE_EXPOSURE_PROVIDER,
   WEB_SCRIPT_EXPORT_PROVIDER,
@@ -100,6 +101,7 @@ import { PWNTOOLS_PROVIDER_IDENTITY } from "../native/pwntools/PwntoolsProviderI
 import { OBJDUMP_PROVIDER_IDENTITY } from "../objdump/ObjdumpProviderIdentity.js";
 import { PCAP_PROVIDER_IDENTITY } from "../pcap/PcapProviderIdentity.js";
 import { NUGET_NUPKG_PROVIDER_IDENTITY } from "../nuget/NugetNupkgProviderIdentity.js";
+import { OCI_IMAGE_LAYOUT_PROVIDER_IDENTITY } from "../oci/OciImageLayoutProviderIdentity.js";
 import { PYTHON_PYC_PROVIDER_IDENTITY } from "../python/PythonPycProviderIdentity.js";
 import { RIZIN_DEBUGGER_PROVIDER_IDENTITY } from "../rizin/RizinDebuggerProviderIdentity.js";
 import { RIZIN_PROVIDER_IDENTITY } from "../rizin/RizinProviderIdentity.js";
@@ -484,6 +486,11 @@ export const CAPABILITY_DECLARATIONS = {
       providerBinding(PE_LOAD_CONFIG_PROVIDER, ["inspect_pe_load_config"]),
     ],
   },
+  peUnwindRanges: {
+    providers: [
+      providerBinding(PE_UNWIND_RANGES_PROVIDER, ["inspect_pe_unwind_ranges"]),
+    ],
+  },
   binaryHardening: {
     providers: [
       providerBinding(BINARY_HARDENING_PROVIDER, ["inspect_binary_hardening"]),
@@ -510,6 +517,13 @@ export const CAPABILITY_DECLARATIONS = {
     providers: [
       providerBinding(NUGET_NUPKG_PROVIDER_IDENTITY, {
         group: "NUGET_NUPKG_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  ociImageLayout: {
+    providers: [
+      providerBinding(OCI_IMAGE_LAYOUT_PROVIDER_IDENTITY, {
+        group: "OCI_IMAGE_LAYOUT_TOOL_CONTRACTS",
       }),
     ],
   },

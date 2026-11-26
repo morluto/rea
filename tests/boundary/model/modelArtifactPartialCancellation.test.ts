@@ -1,5 +1,4 @@
-import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { ModelArtifactProvider } from "../../../src/model/ModelArtifactProvider.js";

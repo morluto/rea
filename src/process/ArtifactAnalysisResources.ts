@@ -25,10 +25,6 @@ import {
   providerCleanupErrorFromFailures,
 } from "../domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import {
-  fixedAllowanceOptions,
-  fixedProducerInputAllowance,
-} from "../domain/fixedAllowanceRemediation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, type Result } from "../domain/result.js";
@@ -37,17 +33,17 @@ import {
   type LinuxResourceLimits,
 } from "./LinuxResourceLimits.js";
 import type { PrivateRuntimeRoot } from "./PrivateRuntimeRoot.js";
-import type {
-  ProviderProcessSnapshot,
-  ProviderProcessSupervisor,
-} from "./ProviderProcess.js";
+import type { ProviderProcessSupervisor } from "./ProviderProcess.js";
 import { OwnedCommandFailure, ownedCommandResources } from "./OwnedCommand.js";
-import { providerOutcomeOf } from "./ProviderOutcome.js";
+import type { ProviderOutcomeContext } from "./classifyProviderOutcome.js";
 import {
-  classifyProviderOutcome,
-  type ProviderOutcomeContext,
-} from "./classifyProviderOutcome.js";
-import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
+  deadlineParameterLimit,
+  MAX_NODE_TIMER_DELAY_MS,
+} from "../domain/analysisResourceLimits.js";
+import type {
+  AnalysisLimit,
+  AnalysisParameterLimit,
+} from "../domain/analysisSettings.js";
 
 /** Limitations shared by resource-limited artifact producer observations. */
 export const ARTIFACT_PRODUCER_LIMITATION =
@@ -61,11 +57,21 @@ export type ArtifactAnalysisRuntime = Pick<
 /** A selected input one resource-owned read admits. */
 export interface SelectedArtifactRead {
   readonly path: string;
-  readonly maximumBytes: number;
-  readonly allowanceName: string;
+  /** The per-call input budget; its effective value is the largest admitted read. */
+  readonly budget: AnalysisParameterLimit;
   readonly observedOutput: AnalysisCapturedOutput | undefined;
   readonly signal?: AbortSignal | undefined;
-  readonly budgetParameter?: "producer_limits.input_bytes";
+}
+
+/** The selected and omitted values of an owned producer command's per-call budgets. */
+export interface ProducerCommandLimits {
+  readonly selected: {
+    readonly command_timeout_ms: number;
+    readonly output_bytes: number;
+  };
+  readonly defaults: { readonly command_timeout_ms: number };
+  /** The control that raises the output budget: a parameter, or a setting backing it. */
+  readonly output: AnalysisLimit;
 }
 
 /** What a resource-owned read was doing when it failed. */
@@ -215,7 +221,11 @@ export class ArtifactAnalysisResources {
   async readSelectedArtifact(input: SelectedArtifactRead) {
     const operation = this.#artifacts.operation;
     try {
-      return await this.read(input.path, input.maximumBytes, input.signal);
+      return await this.read(
+        input.path,
+        input.budget.effective_value,
+        input.signal,
+      );
     } catch (cause: unknown) {
       throw this.classify(cause, { kind: "selected-input", operation, input });
     }
@@ -223,22 +233,22 @@ export class ArtifactAnalysisResources {
 
   /** The read budget and recovery for a selected input larger than it admits. */
   selectedFileSize(input: SelectedArtifactRead, operation: string) {
-    const { maximumBytes, allowanceName, budgetParameter } = input;
+    const { budget } = input;
     return (cause: ArtifactReaderFailure, details: AnalysisErrorOptions) =>
       new AnalysisResourceConstraintError(
         operation,
         "file-size",
         cause.message,
-        { input_bytes: maximumBytes },
+        { input_bytes: budget.effective_value },
         {
           ...details,
           cause,
-          ...(budgetParameter === undefined
-            ? fixedProducerInputAllowance(maximumBytes, allowanceName)
-            : {
-                retryable: false,
-                remediationAction: `Increase ${budgetParameter} above ${String(maximumBytes)} bytes on the next call to admit the same complete selected artifact; no REA restart is required. Do not truncate required input bytes. Output, parser, transport and inherited OS limits remain independent.`,
-              }),
+          limit:
+            cause.observedBytes === undefined ||
+            cause.observedBytes > BigInt(Number.MAX_SAFE_INTEGER)
+              ? budget
+              : { ...budget, required_value: Number(cause.observedBytes) },
+          retryable: false,
         },
       );
   }
@@ -312,6 +322,19 @@ export class ArtifactAnalysisResources {
           },
         }),
     });
+  }
+
+  /** Keep a failed command's cleanup owner with the workspace that acquired it. */
+  retainCommandCleanup(
+    root: ArtifactAnalysisRuntime | undefined,
+    cause: unknown,
+  ): void {
+    if (
+      root !== undefined &&
+      cause instanceof OwnedCommandFailure &&
+      cause.cleanupOwner !== undefined
+    )
+      this.retain(root, cause.cleanupOwner);
   }
 
   get pendingPaths(): readonly string[] {
@@ -456,31 +479,11 @@ export class ArtifactAnalysisResources {
       : analysisErrorWithCleanupDependencies(primary, failure, operation);
   }
 
-  commandFailure(
-    cause: OwnedCommandFailure,
-    limits: {
-      readonly command_timeout_ms: number;
-      readonly output_bytes: number;
-    },
-    effectiveLimits: LinuxResourceLimits | undefined,
-    operation = this.operation,
-    budgetParameter?: "producer_limits",
-  ): AnalysisError {
-    return classifyProviderOutcome(
-      providerOutcomeOf(cause),
-      this.commandContext(limits, effectiveLimits, operation, budgetParameter),
-    );
-  }
-
   /** How this provider's owned producer commands report, for the shared classifiers. */
   commandContext(
-    limits: {
-      readonly command_timeout_ms: number;
-      readonly output_bytes: number;
-    },
+    { selected: limits, defaults, output }: ProducerCommandLimits,
     effectiveLimits: LinuxResourceLimits | undefined,
-    operation = this.operation,
-    budgetParameter?: "producer_limits",
+    operation: string,
   ): ProviderOutcomeContext {
     return {
       providerId: this.providerId,
@@ -488,25 +491,19 @@ export class ArtifactAnalysisResources {
       capturedOutput: capturedProviderOutput,
       timeout: {
         ms: limits.command_timeout_ms,
+        limit: deadlineParameterLimit(
+          "producer_limits.command_timeout_ms",
+          limits.command_timeout_ms,
+          defaults.command_timeout_ms,
+        ),
         userMessage: `The owned producer command reached its ${String(limits.command_timeout_ms)} ms deadline. This is not a client-side timeout; extending only the MCP client's deadline does not change this budget.`,
-        remediationAction:
-          budgetParameter === undefined
-            ? `REA's fixed producer command deadline is ${String(limits.command_timeout_ms)} ms and this release has no runtime override. Inspect any partial output and cleanup before retrying. Repeating the unchanged request reaches the same deadline.`
-            : `${limits.command_timeout_ms < MAX_NODE_TIMER_DELAY_MS ? `Increase ${budgetParameter}.command_timeout_ms above ${String(limits.command_timeout_ms)} milliseconds on the next call (range 1..${String(MAX_NODE_TIMER_DELAY_MS)}); no restart is required.` : `${budgetParameter}.command_timeout_ms is already at the runtime timer maximum ${String(MAX_NODE_TIMER_DELAY_MS)} milliseconds; no higher deadline is supported. Narrow the selected work if that preserves the required observation.`} Inspect retained observations and confirm cleanup before retrying. This does not raise CPU, memory, output, parser or external client limits.`,
+        remediationAction: `${limits.command_timeout_ms < MAX_NODE_TIMER_DELAY_MS ? `Increase producer_limits.command_timeout_ms above ${String(limits.command_timeout_ms)} milliseconds on the next call (range 1..${String(MAX_NODE_TIMER_DELAY_MS)}); no restart is required.` : `producer_limits.command_timeout_ms is already at the runtime timer maximum ${String(MAX_NODE_TIMER_DELAY_MS)} milliseconds; no higher deadline is supported. Narrow the selected work if that preserves the required observation.`} Inspect retained observations and confirm cleanup before retrying. This does not raise CPU, memory, output, parser or external client limits.`,
       },
       outputLimit: {
         limits: { output_bytes: limits.output_bytes },
-        recovery:
-          budgetParameter === undefined
-            ? fixedAllowanceOptions(
-                `The retained command-output allowance of ${String(limits.output_bytes)} bytes (this release has no runtime override)`,
-                "capture",
-                { limit: limits.output_bytes, unit: "bytes" },
-              )
-            : {
-                retryable: false,
-                remediationAction: `Increase ${budgetParameter}.output_bytes above ${String(limits.output_bytes)} bytes on the next call; no restart is required. Inspect captured output and confirm cleanup before retrying. This controls collection, not parser, transport, host memory or inherited OS limits. Repeating the unchanged request cannot raise it.`,
-              },
+        limit: output,
+        // The capture stops at the budget, so the output it needs is unmeasured.
+        recovery: { retryable: false },
       },
       resourceSignal: (signal) => {
         const reported =
@@ -519,7 +516,7 @@ export class ArtifactAnalysisResources {
           limits: effectiveLimits === undefined ? null : { ...effectiveLimits },
           recovery: {
             retryable: true,
-            remediationAction: `${reported} REA retains the tighter inherited limit. ${budgetParameter === undefined ? "This release has no runtime override for that ceiling." : `Review ${budgetParameter}.${signal === "SIGXFSZ" ? "file_bytes" : "cpu_seconds"} for a new call; a higher requested policy cannot raise a tighter inherited soft or hard limit. No REA restart is needed for a per-call update.`} A smaller artifact may finish inside the retained limit. The signal does not prove that ceiling was exhausted, so an unchanged retry may succeed or may fail the same way.`,
+            remediationAction: `${reported} REA retains the tighter inherited limit. Review producer_limits.${signal === "SIGXFSZ" ? "file_bytes" : "cpu_seconds"} for a new call; a higher requested policy cannot raise a tighter inherited soft or hard limit. No REA restart is needed for a per-call update. A smaller artifact may finish inside the retained limit. The signal does not prove that ceiling was exhausted, so an unchanged retry may succeed or may fail the same way.`,
           },
         };
       },

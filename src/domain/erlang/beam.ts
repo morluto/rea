@@ -3,6 +3,11 @@ import { knownCoverageStatusSchema } from "../coverage.js";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import {
+  parameterBudgetLimitFor,
+  parameterBudgetSchema,
+  type ParameterBudget,
+} from "../parameterBudget.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const range = z.strictObject({ offset: uint, bytes: uint });
@@ -14,38 +19,61 @@ export const MAX_INSPECT_ERLANG_BEAM_CHUNKS = 256;
 /** Hard ceiling on decoded atom-table entries. */
 export const MAX_INSPECT_ERLANG_BEAM_ATOMS = 65536;
 /** Hard ceiling on export, import, and lambda rows combined. */
-export const MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS = 65536;
+export const MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS = 1_048_576;
+
+/** The per-call budgets of `inspect_erlang_beam`. */
+export const ERLANG_BEAM_BUDGETS = {
+  max_file_bytes: {
+    minimum: 16,
+    maximum: MAX_INSPECT_ERLANG_BEAM_FILE_BYTES,
+    default_value: 67108864,
+    unit: "bytes",
+  },
+  max_chunks: {
+    minimum: 1,
+    maximum: MAX_INSPECT_ERLANG_BEAM_CHUNKS,
+    default_value: 64,
+    unit: "count",
+  },
+  max_atoms: {
+    minimum: 1,
+    maximum: MAX_INSPECT_ERLANG_BEAM_ATOMS,
+    default_value: 4096,
+    unit: "count",
+  },
+  /** Export, import and lambda rows combined; each is retained in the report. */
+  max_table_rows: {
+    minimum: 1,
+    maximum: MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS,
+    default_value: 65536,
+    unit: "count",
+  },
+} as const satisfies Record<string, ParameterBudget>;
+export type ErlangBeamBudget = keyof typeof ERLANG_BEAM_BUDGETS;
+
+/** The per-call budget that stopped a BEAM inspection. */
+export const erlangBeamBudgetLimit =
+  parameterBudgetLimitFor<ErlangBeamBudget>(ERLANG_BEAM_BUDGETS);
 
 /** Complete bounded inspection of one Erlang BEAM IFF container. */
 export const inspectErlangBeamInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to a BEAM file",
   ),
-  max_file_bytes: z
-    .number()
-    .int()
-    .min(16)
-    .max(MAX_INSPECT_ERLANG_BEAM_FILE_BYTES)
-    .default(67108864)
-    .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
-  max_chunks: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_ERLANG_BEAM_CHUNKS)
-    .default(64)
-    .describe(
-      "Maximum IFF chunks to examine; exceeding the budget fails without partial success",
-    ),
-  max_atoms: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_ERLANG_BEAM_ATOMS)
-    .default(4096)
-    .describe(
-      "Maximum atom-table entries to decode; exceeding the budget fails without partial success",
-    ),
+  max_file_bytes: parameterBudgetSchema(
+    ERLANG_BEAM_BUDGETS.max_file_bytes,
+  ).describe("Maximum stable artifact bytes to read (default 64 MiB)"),
+  max_chunks: parameterBudgetSchema(ERLANG_BEAM_BUDGETS.max_chunks).describe(
+    "Maximum IFF chunks to examine; exceeding the budget fails without partial success",
+  ),
+  max_atoms: parameterBudgetSchema(ERLANG_BEAM_BUDGETS.max_atoms).describe(
+    "Maximum atom-table entries to decode; exceeding the budget fails without partial success",
+  ),
+  max_table_rows: parameterBudgetSchema(
+    ERLANG_BEAM_BUDGETS.max_table_rows,
+  ).describe(
+    "Maximum export, import and lambda rows combined (default 65536); exceeding the budget fails without partial success",
+  ),
 });
 
 const atomSchema = z.strictObject({

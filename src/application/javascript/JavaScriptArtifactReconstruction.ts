@@ -18,18 +18,24 @@ import { access, realpath, stat } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
 
 import {
-  ArtifactReaderFailure,
   type ArtifactResourceScope,
+  unsupportedArtifact,
 } from "../../resources/index.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
-  AnalysisUnsupportedTargetError,
+  unsupportedTarget,
+  unrecognizedTarget,
 } from "../../domain/analysisErrorCore.js";
 import { createJavaScriptArtifactReader as createReader } from "../../artifacts/javascript/JavaScriptArtifactReader.js";
 import type { JavaScriptApplicationGraph } from "../../domain/javascript/javascriptApplicationGraph.js";
 import type { JavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticGraph.js";
 import type { JavaScriptSourceSelection } from "../../domain/javascript/javascriptSourceSelection.js";
+import {
+  JAVASCRIPT_ABSENT_INPUT_OPERATIONS,
+  javaScriptAbsentInputDiagnostics,
+  javaScriptApplicationInputPresence,
+} from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
   parseOwnedJavaScriptApplicationAnalysisSteps,
   type AnalyzeJavaScriptApplicationInput,
@@ -48,7 +54,10 @@ import {
 import type { JavaScriptSourceAnalysisFactory } from "../../ports/javascript/JavaScriptSourceAnalysisFactory.js";
 import { JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS } from "../../domain/javascript/javascriptAnalysisResourceControls.js";
 import { createOwnedJavaScriptApplicationEvidenceCooperatively } from "./JavaScriptApplicationEvidence.js";
-import { readJavaScriptArtifactFiles } from "../../artifacts/javascript/JavaScriptArtifactFiles.js";
+import {
+  assertReconstructionActive,
+  readJavaScriptArtifactFiles,
+} from "../../artifacts/javascript/JavaScriptArtifactFiles.js";
 import { buildImmutableJavaScriptArtifactGraphSteps } from "./JavaScriptArtifactGraphBuilder.js";
 import { scanCanonicalArtifactInventoryInScope } from "../../artifacts/inventory/scanCanonical.js";
 import { createJavaScriptNextAppContext } from "./JavaScriptNextAppContext.js";
@@ -111,7 +120,7 @@ export const reconstructJavaScriptArtifact = async (
       });
       await checkpointJavaScriptAnalysis(signal);
     };
-    abortIfNeeded(signal);
+    assertReconstructionActive(signal);
     const selectedPath = absoluteCallerPath(input.input_path);
     const { path, metadata } = await resolveSelectedInput(selectedPath);
     const format = resolveFormat(path, metadata, input, selectedPath);
@@ -127,8 +136,8 @@ export const reconstructJavaScriptArtifact = async (
       selectedPath,
     );
     if (snapshot.manifest.root_format !== format)
-      throw new ArtifactReaderFailure(
-        "format",
+      throw unsupportedArtifact(
+        format,
         `Artifact inventory classified ${path} as ${snapshot.manifest.root_format}, not ${format}`,
       );
     const reader = createReader(
@@ -170,6 +179,17 @@ export const reconstructJavaScriptArtifact = async (
           kind: "artifact-inventory",
           inventory: snapshot,
         });
+      if (javaScriptApplicationInputPresence(files, snapshot) === "absent")
+        throw unrecognizedTarget(
+          OPERATION,
+          path,
+          snapshot.manifest.root_format,
+          "the complete inventory has entries but no JavaScript, HTML, package.json, source map, or nested ASAR inputs; details.diagnostics.entries_by_format lists what it holds",
+          {
+            diagnostics: javaScriptAbsentInputDiagnostics(files, snapshot),
+            related: { operations: [...JAVASCRIPT_ABSENT_INPUT_OPERATIONS] },
+          },
+        );
       await reportPhase(
         "parse_javascript_sources",
         `Processing ${String(files.files.length - (files.source_selection?.unselected_files ?? 0))} selected application files`,
@@ -235,7 +255,7 @@ export const reconstructJavaScriptArtifact = async (
           worker,
           semanticProjection,
           async (file, completed, total) => {
-            abortIfNeeded(signal);
+            assertReconstructionActive(signal);
             const ast =
               javascriptArtifactAnalysisScopes[file.kind]?.authority ===
               "ast-static-analysis";
@@ -247,21 +267,22 @@ export const reconstructJavaScriptArtifact = async (
               total: 1,
               message: `${ast ? "Parsing and projecting" : "Processing metadata for"} ${file.path} (${String(completed + 1)}/${String(total)})`,
             });
-            abortIfNeeded(signal);
+            assertReconstructionActive(signal);
           },
           signal,
           async (file, phase) => {
-            abortIfNeeded(signal);
+            assertReconstructionActive(signal);
             await progress?.report({
               phase: `javascript_worker_${phase}`,
               completed: 0,
               total: 1,
               message: `JavaScript worker ${phase}: ${file.path}`,
             });
-            abortIfNeeded(signal);
+            assertReconstructionActive(signal);
           },
           preloads.paths,
           preloads.limitations,
+          input.semantic_analysis === "structure-only",
         );
       } catch (cause: unknown) {
         analysisFailure = { cause };
@@ -551,14 +572,11 @@ const resolveFormat = (
       ? "asar"
       : undefined;
   if (observed === undefined)
-    throw new AnalysisUnsupportedTargetError(
+    throw unsupportedTarget(
       OPERATION,
       input.input_path,
-      "JavaScript application analysis accepts only a directory or an .asar file",
-      {
-        remediationAction:
-          "Select an extracted application directory, an app bundle, or an .asar file such as Contents/Resources/app.asar.",
-      },
+      "file",
+      "JavaScript application analysis accepts only a directory or an .asar file. Select an extracted application directory, an app bundle, or an .asar file such as Contents/Resources/app.asar.",
     );
   if (input.format !== "auto" && input.format !== observed)
     throw new AnalysisInputError(OPERATION, undefined, [
@@ -570,13 +588,4 @@ const resolveFormat = (
       },
     ]);
   return observed;
-};
-
-const abortIfNeeded = (signal?: AbortSignal): void => {
-  if (signal?.aborted === true)
-    throw new ArtifactReaderFailure(
-      "cancelled",
-      "JavaScript artifact reconstruction cancelled",
-      { cause: signal.reason },
-    );
 };

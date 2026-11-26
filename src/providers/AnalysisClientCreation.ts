@@ -29,22 +29,24 @@ import { closeAnalysisClient } from "./AnalysisClientCleanup.js";
 /** Own deferred client creation while callers wait independently and close joins it. */
 export class AnalysisClientCreation {
   readonly #inspectionResources = new ArtifactResourceScope();
-  readonly #inspectionOwner: RetainedResourceScope = {
-    retain: (owner, resource) =>
-      this.#inspectionResources.retain({
-        kind: "lease",
-        resource,
-        lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
-      }),
-    run: (operation) => this.#inspectionResources.run(operation),
-  };
+  readonly #inspectionOwner = this.#inspectionResources.forCloseOwners();
   #attempt:
     | SharedStartupAttempt<Result<AnalysisClient, AnalysisError>>
     | undefined;
   #client: AnalysisClient | undefined;
   #failure: AnalysisError | undefined;
   #closed = false;
-  #clientLease: AnalysisCleanupLease | undefined;
+  /**
+   * The close owner of one exact client, and the failure its last close
+   * produced. External cleanup can settle that failure without the lease.
+   */
+  #clientLease:
+    | {
+        readonly client: AnalysisClient;
+        readonly lease: AnalysisCleanupLease;
+        failure?: AnalysisError;
+      }
+    | undefined;
   #closing: Promise<Result<null, AnalysisError>> | undefined;
   #closeOptions: Parameters<AnalysisClient["close"]>[0];
 
@@ -71,7 +73,17 @@ export class AnalysisClientCreation {
       !this.#closed &&
       this.#attempt === undefined &&
       this.#failure === undefined &&
-      this.#clientLease?.released !== true
+      !this.#clientReleased()
+    );
+  }
+
+  /** Whether the leased client is gone: its lease or its settled close released it. */
+  #clientReleased(): boolean {
+    const entry = this.#clientLease;
+    return (
+      entry !== undefined &&
+      (entry.lease.released ||
+        (entry.failure !== undefined && !entry.failure.cleanupIncomplete))
     );
   }
   async acquire(
@@ -90,9 +102,8 @@ export class AnalysisClientCreation {
         ),
       );
     const ready = this.readyClient;
-    if (ready !== undefined && this.#clientLease?.released !== true)
-      return ok(ready);
-    if (this.#clientLease?.released === true) {
+    if (ready !== undefined && !this.#clientReleased()) return ok(ready);
+    if (this.#clientReleased()) {
       this.#client = undefined;
       this.#clientLease = undefined;
     }
@@ -221,7 +232,7 @@ export class AnalysisClientCreation {
         const inspectionFailure = inspections.ok
           ? undefined
           : inspections.error;
-        const closed = await this.#releaseClient(options);
+        const closed = await this.#releaseClient(this.#closeOptions);
         if (!closed.ok && inspectionFailure !== undefined)
           return err(
             analysisErrorWithCleanupDependencies(
@@ -245,20 +256,25 @@ export class AnalysisClientCreation {
   ): Promise<Result<null, AnalysisError>> {
     if (this.#client === undefined) return ok(null);
     const client = this.#client;
-    this.#closeOptions = options;
-    this.#clientLease ??= new AnalysisCleanupLease(async () => {
-      const result = await closeAnalysisClient(
-        client,
-        this.providerId,
-        this.#closeOptions,
-      );
-      if (!result.ok) throw result.error;
-    });
+    if (options !== undefined) this.#closeOptions = options;
+    if (this.#clientLease?.client !== client) this.#clientLease = undefined;
+    this.#clientLease ??= {
+      client,
+      lease: new AnalysisCleanupLease(async () => {
+        const result = await closeAnalysisClient(
+          client,
+          this.providerId,
+          this.#closeOptions,
+        );
+        if (!result.ok) throw result.error;
+      }),
+    };
+    const entry = this.#clientLease;
+    const clientLease = entry.lease;
     try {
-      await this.#clientLease.release();
+      await clientLease.release();
       return ok(null);
     } catch (cause: unknown) {
-      const clientLease = this.#clientLease;
       const failure = new ProviderCleanupError(
         this.providerId,
         cause instanceof AnalysisError && cause.cleanupResources.length > 0
@@ -290,6 +306,7 @@ export class AnalysisClientCreation {
         failure.bindCleanupResourceOwner(clientLease);
       }
       clientLease.bindCleanupError(failure);
+      entry.failure = failure;
       return err(failure);
     }
   }

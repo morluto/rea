@@ -12,7 +12,7 @@ import {
   inspectGoBinaryInputSchema,
 } from "../../domain/go/goBinary.js";
 import type { Result } from "../../domain/result.js";
-import type { AnalysisViewRetention } from "../analysisView/AnalysisViewService.js";
+import type { AnalysisViewRetention } from "../analysisView/AnalysisViewRetention.js";
 import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_go_binary";
