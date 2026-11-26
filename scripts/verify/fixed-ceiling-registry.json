@@ -17,9 +17,8 @@
   },
   "src/android/JadxSession.ts": {
     "`The external DEX ${failure.stage} representation allowance`": {
-      "class": "pending",
-      "issue": 14237,
-      "reason": "External DEX representation retained from the JADX worker is a resource policy without a per-call control."
+      "class": "protocol",
+      "reason": "One eighth of the JADX bridge's 8 MiB local MCP frame less its envelope, so the prototype and reference replies and their retained, Evidence and MCP copies fit together; raising it needs a paged bridge reply, not a larger allowance."
     }
   },
   "src/apkSignature/apkSignatureFailures.ts": {
@@ -53,13 +52,6 @@
     "\"The apktool version-output capture allowance (decode_timeout_ms does not raise it)\"": {
       "class": "protocol",
       "reason": "Bounds the reply to `apktool --version`, a short fixed-format banner; no analysis input passes through it."
-    }
-  },
-  "src/apktool/ApktoolProvider.ts": {
-    "\"The apktool output capture allowance (decode_timeout_ms does not raise it)\"": {
-      "class": "pending",
-      "issue": 14237,
-      "reason": "apktool output capture is a producer budget without a per-call control."
     }
   },
   "src/application/ntfs/NtfsJournalService.ts": {
@@ -99,13 +91,6 @@
       "class": "pending",
       "issue": 14236,
       "reason": "wxapkg directory, member-table and I/O allowances are resource policies."
-    }
-  },
-  "src/artifacts/apple/AppleAssetCatalogAnalysis.ts": {
-    "\"The assetutil capture allowance\"": {
-      "class": "pending",
-      "issue": 14237,
-      "reason": "assetutil output capture is a producer budget without a per-call control."
     }
   },
   "src/artifacts/deno/DenoSectionLayout.ts": {
@@ -469,9 +454,8 @@
   },
   "src/native/parsers/lipo.ts": {
     "\"The lipo field retention allowance\"": {
-      "class": "pending",
-      "issue": 14237,
-      "reason": "lipo field retention is a producer capture budget."
+      "class": "derived",
+      "reason": "lipo fields are sliced from its captured output, and their retention is bounded by the same native command output allowance; it changes only with that capture allowance."
     }
   },
   "src/native/parsers/plist.ts": {

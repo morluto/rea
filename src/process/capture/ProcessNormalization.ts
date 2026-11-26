@@ -1,6 +1,9 @@
 import { isIP } from "node:net";
 
-import type { ProcessScenario } from "../../domain/process/processScenario.js";
+import {
+  processOutputBytesLimit,
+  type ProcessScenario,
+} from "../../domain/process/processScenario.js";
 
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import type {
@@ -498,6 +501,7 @@ export const normalizeRetainedTerminalFrames = (
               : "terminal-sensitive-input-normalization",
         },
         {
+          limit: processOutputBytesLimit(maximumBytes),
           retryable: false,
           remediationAction:
             "Increase limits.output_bytes within its advertised range, or select a narrower scenario. Completed raw PTY chunks remain in partial observations; the corrected normalized representation did not fit.",

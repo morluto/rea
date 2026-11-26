@@ -150,12 +150,14 @@ rejected.
 | `inspect_evm_interface`                                      | `input_bytes` 4 MiB, `output_bytes` 16 MiB, `diagnostic_bytes` 1 MiB, `address_space_bytes` 3 GiB, `file_bytes` follows `output_bytes` (16 MiB), `cpu_seconds` 30                             |
 | `inspect_rust_binary`                                        | `input_bytes` 256 MiB, `output_bytes` 8 MiB                                                                                                                                                   |
 | `inspect_pcap_capture`                                       | `input_bytes` 2 GiB (the streamed capture snapshot), `output_bytes` 8 MiB of combined stdout and stderr per TShark JSON pass, at most 128 MiB (the fixed decoded-JSON allowance)              |
+| `decode_android_resources`                                   | `output_bytes` 4 MiB of retained `apktool d` stdout and stderr, at most the JavaScript string limit                                                                                           |
+| `inspect_asset_catalog`                                      | `output_bytes` 64 MiB for each assetutil stream and the JSON retained across all catalogs, at most 128 MiB (the in-process decode bound)                                                      |
 
 The pwntools and EVM operations take their wall-clock deadline from a separate
 argument (`pwntools_timeout_ms`, `timeout_ms`) instead of `command_timeout_ms`.
 Packet and signal results report the effective values as `limits`, where an
-inherited OS ceiling can appear as `0`. When pwntools, Rust or pcap work exhausts a
-budget, `details.limit` carries `control_kind: "parameter"`,
+inherited OS ceiling can appear as `0`. When pwntools, Rust, pcap, Apktool or
+assetutil work exhausts a budget, `details.limit` carries `control_kind: "parameter"`,
 `parameter: "producer_limits.<field>"`, `minimum: 1` and
 `applies_at: "next_call"`, as described under [failure and retry](#failure-and-retry);
 the other producers name the field to raise in their remediation. A pwntools

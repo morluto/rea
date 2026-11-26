@@ -1,7 +1,6 @@
 {
   "src/android/AndroidMappingFile.ts": 2,
   "src/android/JadxAnalysis.ts": 1,
-  "src/android/JadxSession.ts": 1,
   "src/apkSignature/apkSignatureFailures.ts": 1,
   "src/application/JsonAuthenticationHeadroom.ts": 1,
   "src/application/JsonInputFile.ts": 3,
@@ -68,7 +67,6 @@
   "src/native/pwntools/PwntoolsDecoder.ts": 1,
   "src/native/windows/WindowsShortcutProvider.ts": 2,
   "src/nuget/NugetNupkgProvider.ts": 1,
-  "src/process/capture/ProcessNormalization.ts": 1,
   "src/server/ErrorEvidenceTransport.ts": 2,
   "src/server/ProgressiveToolCatalog.ts": 1,
   "src/server/ToolResultDelivery.ts": 2,
