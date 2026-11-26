@@ -44,7 +44,10 @@ tools are unaffected.
 
 REA streams each rule file and the scanned file into an owned private temporary
 snapshot directory while computing each file's SHA-256 digest and verifying that
-the source file did not change during acquisition. It then runs:
+the source file did not change during acquisition. Relative `include "..."`
+directives in staged rule files are resolved against each selected rule file's
+directory so existing rule sets with relative includes continue to compile. It
+then runs:
 
 ```text
 yara -s -L -m -g -q [-f] rea:<snapshot_rule_path>... <snapshot_target_path>

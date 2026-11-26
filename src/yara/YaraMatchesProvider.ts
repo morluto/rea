@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { BigIntStats } from "node:fs";
-import { open } from "node:fs/promises";
+import { open, type FileHandle } from "node:fs/promises";
 import { join, posix, win32 } from "node:path";
 
 import { isQualifiedCallerPath } from "../filesystem/callerPath.js";
@@ -17,6 +17,12 @@ import {
   type YaraParsedMatches,
 } from "./YaraOutput.js";
 import {
+  createYaraIncludeRewriter,
+  type YaraIncludeRewriter,
+} from "./YaraRuleIncludeRewrite.js";
+import {
+  AnalysisCleanupLease,
+  ArtifactReaderFailure,
   ArtifactResourceScope,
   artifactFilePrimaryFacts,
   assertArtifactReadActive,
@@ -59,6 +65,7 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { decodeLimit } from "../domain/parseFailure.js";
 import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
@@ -112,6 +119,7 @@ export interface YaraMatchesProviderOptions {
   readonly createRuntime?: () => Promise<
     Pick<PrivateRuntimeRoot, "path" | "close">
   >;
+  readonly openSnapshotFile?: (path: string) => Promise<FileHandle>;
 }
 
 /** The selected file a failed phase was reading. */
@@ -431,6 +439,42 @@ const limitations = (
     : []),
 ];
 
+/**
+ * Per-scan cleanup owner: closes child file handles and any retained command
+ * before removing the private snapshot root, and retries in that order.
+ */
+class YaraScanSnapshot {
+  readonly files = new ArtifactResourceScope();
+  #rootClosed = false;
+
+  constructor(readonly root: Pick<PrivateRuntimeRoot, "path" | "close">) {}
+
+  get path(): string {
+    return this.root.path;
+  }
+
+  get hasPendingFiles(): boolean {
+    return this.files.hasPending;
+  }
+
+  get cleanupResources(): readonly string[] {
+    return [
+      ...new Set([
+        ...this.files.cleanupResources,
+        ...(this.#rootClosed ? [] : [this.root.path]),
+      ]),
+    ];
+  }
+
+  async close(): Promise<void> {
+    await this.files.close();
+    if (!this.#rootClosed) {
+      await this.root.close();
+      this.#rootClosed = true;
+    }
+  }
+}
+
 /** Runs caller-supplied YARA rules against one stable local file. */
 export class YaraMatchesProvider implements YaraMatchesPort {
   readonly identity = YARA_PROVIDER_IDENTITY;
@@ -464,7 +508,9 @@ export class YaraMatchesProvider implements YaraMatchesPort {
       | undefined;
     try {
       return await this.#resources.run(async () => {
-        const root = await this.#createRuntime(platform);
+        const snapshot = new YaraScanSnapshot(
+          await this.#createRuntime(platform),
+        );
         let outcome:
           | { readonly kind: "completed"; readonly value: YaraMatches }
           | { readonly kind: "failed"; readonly cause: unknown };
@@ -472,11 +518,12 @@ export class YaraMatchesProvider implements YaraMatchesPort {
           outcome = {
             kind: "completed",
             value: await this.#inspectInSnapshot(
-              root.path,
+              snapshot,
               command.value,
               input,
               settings,
               maxFileBytes,
+              platform,
               signal,
               (next) => {
                 phase = next;
@@ -489,20 +536,65 @@ export class YaraMatchesProvider implements YaraMatchesPort {
         } catch (cause: unknown) {
           outcome = { kind: "failed", cause };
         }
-        const release = await this.#resources.release({
-          kind: "private-runtime-root",
-          resource: root.path,
-          root,
-        });
+        const scanLease = AnalysisCleanupLease.forCloseOwner(
+          snapshot,
+          snapshot.path,
+        );
+        const scanOwner = {
+          kind: "lease" as const,
+          resource: snapshot.path,
+          lease: scanLease,
+        };
+        const completed =
+          outcome.kind === "completed" ? outcome.value : undefined;
+        const cleanupOutcome = ():
+          | { readonly kind: "completed" }
+          | { readonly kind: "failed"; readonly cause: unknown } => {
+          if (outcome.kind === "failed")
+            return { kind: "failed", cause: outcome.cause };
+          if (signal?.aborted)
+            return {
+              kind: "failed",
+              cause: new ArtifactReaderFailure(
+                "cancelled",
+                "Artifact read cancelled",
+                { cause: signal.reason, partialObservation: outcome.value },
+              ),
+            };
+          return { kind: "completed" };
+        };
+        // Never remove the snapshot root while child handles or the child
+        // process remain open; retain the ordered per-scan owner to retry
+        // child cleanup first and root removal second.
+        if (snapshot.hasPendingFiles) {
+          this.#resources.retain(scanOwner);
+          throw this.#resources.cleanupFailure(
+            cleanupOutcome(),
+            [
+              {
+                kind: "failed",
+                cause: new Error(
+                  `Snapshot directory ${snapshot.path} remains owned until child handles close`,
+                ),
+                owner: scanOwner,
+                lease: scanLease,
+              },
+            ],
+            completed,
+          );
+        }
+        const release = await this.#resources.release(scanOwner);
         if (release.kind === "failed")
           throw this.#resources.cleanupFailure(
-            outcome.kind === "completed"
-              ? { kind: "completed" }
-              : { kind: "failed", cause: outcome.cause },
+            cleanupOutcome(),
             [release],
+            completed,
           );
         if (outcome.kind === "failed") throw outcome.cause;
-        assertArtifactReadActive(signal);
+        if (signal?.aborted)
+          throw cancelledBy(OPERATION, signal, {
+            partialObservation: outcome.value,
+          });
         return ok(outcome.value);
       });
     } catch (cause: unknown) {
@@ -529,37 +621,53 @@ export class YaraMatchesProvider implements YaraMatchesPort {
     destinationPath: string,
     maxFileBytes: number,
     signal: AbortSignal | undefined,
-    rootPath: string,
+    snapshot: YaraScanSnapshot,
+    transform?: YaraIncludeRewriter,
   ): Promise<StagedSnapshotFile> {
     let destHandle;
     try {
-      destHandle = await open(destinationPath, "wx", 0o600);
+      destHandle =
+        this.options.openSnapshotFile === undefined
+          ? await open(destinationPath, "wx", 0o600)
+          : await this.options.openSnapshotFile(destinationPath);
     } catch (cause: unknown) {
-      throw privateWorkspaceFailure(PROVIDER_ID, OPERATION, cause, rootPath);
+      throw privateWorkspaceFailure(
+        PROVIDER_ID,
+        OPERATION,
+        cause,
+        snapshot.path,
+      );
     }
     return withArtifactFileHandle(
       destinationPath,
       destHandle,
-      this.#resources,
+      snapshot.files,
       signal,
       async (dest) => {
+        const writeChunk = async (bytes: Buffer): Promise<void> => {
+          if (bytes.length === 0) return;
+          try {
+            await dest.writeFile(bytes);
+          } catch (cause: unknown) {
+            throw privateWorkspaceFailure(
+              PROVIDER_ID,
+              OPERATION,
+              cause,
+              snapshot.path,
+            );
+          }
+        };
         const streamed = await streamStableArtifact(sourcePath, maxFileBytes, {
           retainBytes: () => 0,
           signal,
-          resourceScope: this.#resources,
+          resourceScope: snapshot.files,
           onChunk: async (chunk) => {
-            try {
-              await dest.writeFile(chunk);
-            } catch (cause: unknown) {
-              throw privateWorkspaceFailure(
-                PROVIDER_ID,
-                OPERATION,
-                cause,
-                rootPath,
-              );
-            }
+            await writeChunk(
+              transform === undefined ? chunk : transform.push(chunk),
+            );
           },
         });
+        if (transform !== undefined) await writeChunk(transform.finish());
         const state = await dest.stat({ bigint: true });
         return {
           callerPath: sourcePath,
@@ -573,11 +681,12 @@ export class YaraMatchesProvider implements YaraMatchesPort {
   }
 
   async #inspectInSnapshot(
-    rootPath: string,
+    snapshot: YaraScanSnapshot,
     command: string,
     input: InspectYaraMatchesInput,
     settings: YaraScanSettings,
     maxFileBytes: number,
+    platform: NodeJS.Platform,
     signal: AbortSignal | undefined,
     setPhase: (phase: ReadPhase) => void,
     setIdentity: (identity: {
@@ -601,20 +710,21 @@ export class YaraMatchesProvider implements YaraMatchesPort {
       stagedRules.push(
         await this.#stageFile(
           path,
-          join(rootPath, `rule-${String(index)}.yar`),
+          join(snapshot.path, `rule-${String(index)}.yar`),
           maxFileBytes,
           signal,
-          rootPath,
+          snapshot,
+          createYaraIncludeRewriter(path, platform),
         ),
       );
     }
     setPhase(targetPhase);
     const stagedTarget = await this.#stageFile(
       input.path,
-      join(rootPath, "target.bin"),
+      join(snapshot.path, "target.bin"),
       maxFileBytes,
       signal,
-      rootPath,
+      snapshot,
     );
     setIdentity({ sha256: stagedTarget.sha256, bytes: stagedTarget.bytes });
     const staged: StagedScanInputs = {
@@ -626,6 +736,7 @@ export class YaraMatchesProvider implements YaraMatchesPort {
       command,
       staged,
       settings,
+      snapshot.files,
       signal,
     );
     // Verify that neither the target snapshot nor any rule snapshot was
@@ -673,6 +784,7 @@ export class YaraMatchesProvider implements YaraMatchesPort {
     command: string,
     staged: StagedScanInputs,
     settings: YaraScanSettings,
+    scanResources: ArtifactResourceScope,
     signal: AbortSignal | undefined,
   ): Promise<CompletedScan> {
     const parser = new YaraMatchOutputParser(
@@ -714,7 +826,7 @@ export class YaraMatchesProvider implements YaraMatchesPort {
         },
       );
     } catch (cause: unknown) {
-      throw yaraCommandFailure(cause, context, this.#resources);
+      throw yaraCommandFailure(cause, context, scanResources);
     }
     const parsed = parser.finish();
     if (!parsed.ok)
@@ -780,6 +892,11 @@ export class YaraMatchesProvider implements YaraMatchesPort {
           ),
       }),
     );
+    if (
+      cause instanceof ArtifactReaderFailure &&
+      cause.partialObservation !== undefined
+    )
+      primary.retainPartialObservation(cause.partialObservation);
     // `primary` already names the failing `read.path`; once the scanned file's
     // identity is recorded, attribute the retained snapshot observation to
     // `input.path` even if a rule file's final check or close fails afterward.

@@ -18,7 +18,7 @@ import {
  */
 export const YARA_STUB = String.raw`
 const fs = require("node:fs");
-const { resolve } = require("node:path");
+const { dirname, resolve } = require("node:path");
 const args = process.argv.slice(2);
 const target = args.at(-1);
 const ruleArgs = args.filter((value) => value.endsWith(".yar"));
@@ -29,16 +29,36 @@ const ruleFile = (arg) => {
 };
 const rules = ruleArgs.map(ruleFile);
 if (process.env.YARA_STUB_ARGS) fs.writeFileSync(process.env.YARA_STUB_ARGS, JSON.stringify({ args, cwd: process.cwd() }));
+const collectRuleNames = (filePath) => {
+  const fullPath = resolve(process.cwd(), filePath);
+  if (!fs.existsSync(fullPath)) {
+    process.stderr.write("error: could not open file: " + filePath + "\n");
+    process.exit(1);
+  }
+  const text = fs.readFileSync(fullPath, "utf8");
+  const names = [];
+  for (const line of text.split(/\r?\n/)) {
+    const inc = /^\s*include\s+"([^"]+)"\s*$/.exec(line);
+    if (inc) {
+      const targetInc = resolve(dirname(fullPath), inc[1]);
+      if (!fs.existsSync(targetInc)) {
+        process.stderr.write("error: in " + filePath + "(1): can't include file: " + inc[1] + "\n");
+        process.exit(1);
+      }
+      names.push(...collectRuleNames(targetInc));
+      continue;
+    }
+    const rule = /^\s*rule\s+(\w+)/.exec(line);
+    if (rule) names.push(rule[1]);
+  }
+  return names;
+};
 switch (process.env.YARA_STUB_MODE) {
   case "resolve":
     for (const file of rules) {
-      const path = resolve(process.cwd(), file);
-      if (!fs.existsSync(path)) {
-        process.stderr.write("error: could not open file: " + file + "\n");
-        process.exit(1);
+      for (const name of collectRuleNames(file)) {
+        process.stdout.write(name + " [] [] " + target + "\n");
       }
-      const name = /rule (\w+)/.exec(fs.readFileSync(path, "utf8"))[1];
-      process.stdout.write(name + " [] [] " + target + "\n");
     }
     break;
   case "match":

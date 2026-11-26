@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { expect, it } from "vitest";
@@ -192,5 +192,43 @@ it.skipIf(yara === undefined)(
         planted.map((path) => rm(path, { recursive: true, force: true })),
       );
     }
+  },
+);
+
+it.skipIf(yara === undefined)(
+  "compiles a rule file with a relative include directive against its original directory",
+  async () => {
+    const { root, sample } = await sampleFile();
+    const rulesDir = join(root, "rules");
+    await mkdir(rulesDir);
+    const common = join(rulesDir, "common.yar");
+    await writeFile(
+      common,
+      'rule CommonRule { strings: $t = "hello" condition: $t }\n',
+    );
+    const mainSource =
+      'include "common.yar"\nrule MainRule { condition: CommonRule }\n';
+    const mainRule = join(rulesDir, "main.yar");
+    await writeFile(mainRule, mainSource);
+    const service = realService(yara!);
+    const result = await service.inspect({
+      path: sample,
+      rule_paths: [mainRule],
+    });
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+    if (!result.ok) return;
+    const report = yaraMatchesSchema.parse(result.value.normalized_result);
+    expect(report.matches.map((match) => match.rule)).toEqual([
+      "CommonRule",
+      "MainRule",
+    ]);
+    expect(report.rule_files).toEqual([
+      {
+        path: mainRule,
+        sha256: createHash("sha256").update(mainSource).digest("hex"),
+        bytes: Buffer.byteLength(mainSource),
+      },
+    ]);
+    await service.close();
   },
 );

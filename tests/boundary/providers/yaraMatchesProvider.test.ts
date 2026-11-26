@@ -1,5 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  open,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join, parse, relative, resolve } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 
@@ -472,7 +480,43 @@ describe("inspect_yara_matches with a yara stand-in", () => {
     }
   });
 
-  it("retains a failed snapshot directory cleanup and retries it before the next scan", async () => {
+  it("preserves relative include lookup when staging rule files", async () => {
+    const { root, command, sample, args } = await fixture("resolve");
+    const rulesDir = join(root, "rules");
+    await mkdir(rulesDir);
+    const common = join(rulesDir, "common.yar");
+    await writeFile(common, "rule CommonRule { condition: true }\n");
+    const mainRuleText =
+      'include "common.yar"\nrule MainRule { condition: true }\n';
+    const mainRule = join(rulesDir, "main.yar");
+    await writeFile(mainRule, mainRuleText);
+    const service = stubService(command, {
+      ...process.env,
+      YARA_STUB_MODE: "resolve",
+      YARA_STUB_ARGS: args,
+    });
+    const result = await service.inspect({
+      path: sample,
+      rule_paths: [mainRule],
+    });
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+    if (!result.ok) return;
+    const report = yaraMatchesSchema.parse(result.value.normalized_result);
+    expect(report.matches.map((match) => match.rule)).toEqual([
+      "CommonRule",
+      "MainRule",
+    ]);
+    // The reported rule digest and byte length remain bound to the original rule file.
+    expect(report.rule_files).toEqual([
+      {
+        path: mainRule,
+        sha256: createHash("sha256").update(mainRuleText).digest("hex"),
+        bytes: Buffer.byteLength(mainRuleText),
+      },
+    ]);
+  });
+
+  it("retains completed Evidence and retries failed snapshot directory cleanup before the next scan", async () => {
     const { command, sample, rule } = await fixture("match");
     let firstRootPath: string | undefined;
     let firstCloseAttempts = 0;
@@ -501,14 +545,136 @@ describe("inspect_yara_matches with a yara stand-in", () => {
     if (first.ok) return;
     expect(first.error.cleanupIncomplete).toBe(true);
     expect(firstRootPath).toBeDefined();
+    // Completed matches survive failed snapshot cleanup as full Evidence.
+    const partialEvidence = first.error.partialObservation as {
+      normalized_result?: unknown;
+      operation?: string;
+    };
+    expect(partialEvidence?.operation).toBe("inspect_yara_matches");
+    const retainedReport = yaraMatchesSchema.parse(
+      partialEvidence?.normalized_result,
+    );
+    expect(retainedReport.matches.map((match) => match.rule)).toEqual([
+      "Packed",
+      "Plain",
+    ]);
     // Second scan retries removing the retained snapshot root before proceeding.
     const second = await service.inspect({ path: sample, rule_paths: [rule] });
     expect(second.ok, JSON.stringify(second)).toBe(true);
     expect(firstCloseAttempts).toBe(2);
+    expect(first.error.cleanupIncomplete).toBe(false);
     await expect(stat(firstRootPath!)).rejects.toMatchObject({
       code: "ENOENT",
     });
     await expect(service.close()).resolves.toBeUndefined();
+  });
+
+  it("retains completed Evidence when cancelled during snapshot directory removal", async () => {
+    const { command, sample, rule } = await fixture("match");
+    const controller = new AbortController();
+    const provider = new YaraMatchesProvider({
+      environment: { ...process.env, YARA_STUB_MODE: "match" },
+      selectCommand: () => ok(command),
+      launcher: interpreterLauncher,
+      createRuntime: async () => {
+        const real = await PrivateRuntimeRoot.create({ prefix: "rea-yara-" });
+        return {
+          path: real.path,
+          close: async () => {
+            controller.abort("cancelled during cleanup");
+            return real.close();
+          },
+        };
+      },
+    });
+    const service = new YaraMatchesService(provider, process.env);
+    const result = await service.inspect(
+      { path: sample, rule_paths: [rule] },
+      { signal: controller.signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cleanupIncomplete).toBe(false);
+    const partialEvidence = result.error.partialObservation as {
+      normalized_result?: unknown;
+      operation?: string;
+    };
+    expect(partialEvidence?.operation).toBe("inspect_yara_matches");
+    const retainedReport = yaraMatchesSchema.parse(
+      partialEvidence?.normalized_result,
+    );
+    expect(retainedReport.matches.map((match) => match.rule)).toEqual([
+      "Packed",
+      "Plain",
+    ]);
+  });
+
+  it("closes staged file handles before removing the snapshot root and retries in order", async () => {
+    const { command, sample, rule } = await fixture("match");
+    const events: string[] = [];
+    let firstRootPath: string | undefined;
+    let failedHandleOnce = false;
+    let handleCloseAttempts = 0;
+    const provider = new YaraMatchesProvider({
+      environment: { ...process.env, YARA_STUB_MODE: "match" },
+      selectCommand: () => ok(command),
+      launcher: interpreterLauncher,
+      createRuntime: async () => {
+        const real = await PrivateRuntimeRoot.create({ prefix: "rea-yara-" });
+        if (firstRootPath !== undefined) return real;
+        firstRootPath = real.path;
+        return {
+          path: real.path,
+          close: async () => {
+            events.push("root-close");
+            return real.close();
+          },
+        };
+      },
+      openSnapshotFile: async (path) => {
+        const handle = await open(path, "wx", 0o600);
+        if (failedHandleOnce || !path.endsWith("rule-0.yar")) return handle;
+        failedHandleOnce = true;
+        return new Proxy(handle, {
+          get(target, property, receiver) {
+            if (property === "close") {
+              return async () => {
+                handleCloseAttempts += 1;
+                if (handleCloseAttempts === 1) {
+                  events.push("handle-close-fail");
+                  throw new Error("injected staged handle close failure");
+                }
+                events.push("handle-close-ok");
+                return target.close();
+              };
+            }
+            const value = Reflect.get(target, property, receiver);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+      },
+    });
+    const service = new YaraMatchesService(provider, process.env);
+    const first = await service.inspect({ path: sample, rule_paths: [rule] });
+    expect(first.ok).toBe(false);
+    if (first.ok) return;
+    expect(first.error.cleanupIncomplete).toBe(true);
+    // The snapshot root must NOT be removed while a child handle failed to close.
+    expect(events).toEqual(["handle-close-fail"]);
+    expect(firstRootPath).toBeDefined();
+    await expect(stat(firstRootPath!)).resolves.toBeDefined();
+    // Retry on close() must close the handle first, then remove the root.
+    await expect(service.close()).resolves.toBeUndefined();
+    expect(events).toEqual([
+      "handle-close-fail",
+      "handle-close-ok",
+      "root-close",
+    ]);
+    expect(first.error.cleanupIncomplete).toBe(false);
+    await expect(stat(firstRootPath!)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("reports a missing yara command as unavailable with remediation", async () => {

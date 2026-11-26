@@ -20,7 +20,10 @@ import {
   parseAnalysisInput,
 } from "../AnalysisInput.js";
 import { observedFileEvidence } from "../observedFileEvidence.js";
-import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import {
+  completeProviderEvidence,
+  retainCompletedArtifactEvidence,
+} from "../ProviderOperationExecution.js";
 
 const OPERATION = INSPECT_YARA_MATCHES_OPERATION;
 
@@ -53,11 +56,36 @@ export class YaraMatchesService {
       this.settings,
     );
     if (!settings.ok) return settings;
+    const parameters = callerAnalysisParameters(rawInput)(input.value);
+    const buildEvidence = (report: YaraMatches): Evidence =>
+      observedFileEvidence(
+        report,
+        this.provider.identity,
+        OPERATION,
+        parameters,
+        report.rule_files.map(({ path }) => ({
+          kind: "artifact-path" as const,
+          path,
+        })),
+      );
     const inspected = await this.provider.inspect(
       { input: input.value, settings: settings.value },
       options,
     );
-    if (!inspected.ok) return inspected;
+    if (!inspected.ok) {
+      const partial = yaraMatchesSchema.safeParse(
+        inspected.error.partialObservation,
+      );
+      if (
+        partial.success &&
+        validReport(partial.data, input.value, settings.value)
+      )
+        retainCompletedArtifactEvidence(
+          inspected.error,
+          buildEvidence(partial.data),
+        );
+      return inspected;
+    }
     const report = yaraMatchesSchema.safeParse(inspected.value);
     if (
       !report.success ||
@@ -70,16 +98,7 @@ export class YaraMatchesService {
         ),
       );
     return completeProviderEvidence(
-      observedFileEvidence(
-        report.data,
-        this.provider.identity,
-        OPERATION,
-        callerAnalysisParameters(rawInput)(input.value),
-        report.data.rule_files.map(({ path }) => ({
-          kind: "artifact-path" as const,
-          path,
-        })),
-      ),
+      buildEvidence(report.data),
       options?.signal,
     );
   }

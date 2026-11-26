@@ -55,6 +55,7 @@ posixTest(
       const advertised = (await client.listTools()).tools.find(
         (tool) => tool.name === "inspect_yara_matches",
       );
+      expect(yaraContract.effects.writesFilesystem).toBe(true);
       expect(advertised?.annotations).toMatchObject({ readOnlyHint: false });
       const response = await client.callTool({
         name: "inspect_yara_matches",

@@ -13,7 +13,11 @@ export const YARA_TOOL_CONTRACTS = [
     cli: true,
     ...toolContractMetadata(
       "inspect_yara_matches",
-      toolEffects({ mutatesSession: true, launchesProcess: true }),
+      toolEffects({
+        mutatesSession: true,
+        launchesProcess: true,
+        writesFilesystem: true,
+      }),
     ),
     kind: "artifact-provider",
     description:
