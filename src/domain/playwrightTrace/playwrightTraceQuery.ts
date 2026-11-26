@@ -5,7 +5,7 @@ import {
   traceEventSchema,
   traceMemberSchema,
   traceStreamSchema,
-  PLAYWRIGHT_TRACE_LIMIT_BOUNDS,
+  playwrightTraceLimits,
   playwrightTraceLimitsSchema,
 } from "./playwrightTrace.js";
 const page = {
@@ -65,7 +65,7 @@ export const inspectPlaywrightTraceInputSchema = z.strictObject({
   trace_limits: playwrightTraceLimitsSchema
     .optional()
     .describe(
-      `Import admission for this call; omitted fields use ${JSON.stringify(Object.fromEntries(Object.entries(PLAYWRIGHT_TRACE_LIMIT_BOUNDS).map(([field, bounds]) => [field, bounds.default_value])))}. archive_bytes bounds the trace ZIP, metadata_bytes its directory reads, decoded_bytes the decoded stream bytes, line_bytes one record line, nesting_depth one record's JSON nesting, and facts_bytes the retained facts (record parser nodes are facts_bytes / 256). A refusal reports the field in details.limit; paging does not raise these.`,
+      `Import admission for this call; omitted fields use ${JSON.stringify(playwrightTraceLimits())}. archive_bytes bounds the trace ZIP, metadata_bytes its directory reads, decoded_bytes the decoded stream bytes, line_bytes one record line, nesting_depth one record's JSON nesting, and facts_bytes the retained facts (record parser nodes are facts_bytes / 256). A refusal reports the field in details.limit; paging does not raise these.`,
     ),
   view: playwrightTraceViewRequestSchema
     .optional()
