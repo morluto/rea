@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
+import { bfltFile } from "../../../../src/domain/bfltExecutable.fixture.js";
 import { windowsShortcutBytes } from "../../../fixtures/binaryDiagnostics/windowsShortcut.js";
 import { createSqliteDatabaseFixture } from "../../../fixtures/sqlite/database.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
@@ -147,4 +148,34 @@ it("keeps bytes that only resemble a pyc frame unsupported", async () => {
       projectCliAnalysisResult,
     ),
   ).resolves.toMatchObject({ code: "target_unavailable" });
+});
+
+it("routes a bFLT executable's text segment to open_binary", async () => {
+  const directory = await createTestTempDirectory("rea-standalone-format-");
+  const path = await writeBytes("app.flt", () =>
+    bfltFile({ text: Buffer.alloc(16), entry: 0x44 }),
+  )(directory);
+  const evidence = parseEvidence(
+    await runProviderAnalysis(path, "inspect_artifact", {}).then(
+      projectCliAnalysisResult,
+    ),
+  );
+  const inspection = artifactInspectionResultSchema.parse(
+    evidence.normalized_result,
+  );
+
+  expect(inspection.subject.root_format).toBe("bflt");
+  expect(inspection.next_probes).toEqual([
+    expect.objectContaining({
+      operation: "open_binary",
+      authority: "native-analysis-provider",
+      rationale: expect.stringMatching(
+        /text\.bin[\s\S]*raw-binary[\s\S]*0x44/u,
+      ),
+    }),
+  ]);
+  expect(inspection.next_probes[0]?.rationale).toContain("base_address");
+  expect(inspection.next_probes[0]?.rationale).toMatch(
+    /bFLT header, not code/u,
+  );
 });
