@@ -7,6 +7,7 @@ import type { ElfUnwindRanges } from "./native/elfUnwindRanges.js";
 import type { PeUnwindRanges } from "./native/peUnwindRanges.js";
 import type { KernelBuildConfig } from "./native/kernelBuildConfig.js";
 import type { KernelModule } from "./native/kernelModule.js";
+import type { FirmwareVectorTable } from "./firmware/firmwareVectorTable.js";
 import type { V8CodeCache } from "./v8/v8CodeCache.js";
 import type { InterfaceBuilderAnalysis } from "./apple/interfaceBuilderGraph.js";
 import type { PartialTaskMeasurement } from "./desktop/taskDifficulty.js";
@@ -802,4 +803,5 @@ export type AnalysisPartialObservation =
   | AdbActivityStartPartialObservation
   | AdbAcquiredFilePartialObservation
   | AdbPackagePullPartialObservation
-  | AdbDisplayPartialObservation;
+  | AdbDisplayPartialObservation
+  | FirmwareVectorTable;

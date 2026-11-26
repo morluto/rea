@@ -99,6 +99,10 @@ import {
   inspectWindowsShortcutInputSchema,
   windowsShortcutSchema,
 } from "../../domain/native/windowsShortcut.js";
+import {
+  firmwareVectorTableSchema,
+  inspectFirmwareVectorTableInputSchema,
+} from "../../domain/firmware/firmwareVectorTable.js";
 
 /** Caller-selected delivery of completed binary layout Evidence. */
 export const inspectBinaryLayoutRequestSchema =
@@ -559,6 +563,26 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
         input: {
           path: "/artifacts/crash.core",
           include_debugger_context: true,
+        },
+      },
+    ],
+  },
+  {
+    name: "inspect_firmware_vector_table",
+    cli: true,
+    ...toolContractMetadata("inspect_firmware_vector_table", evidenceEffects),
+    kind: "native-provider",
+    description:
+      "Decode an ARM M-profile (armv6-m, armv7-m, armv8-m) interrupt vector table or RISC-V mtvec trap table from a local firmware binary at an explicit base_address and optional vector_table_offset without opening a session or executing code. Reports InitialSP, profile-specific architectural system exceptions (Reset, NMI, HardFault, SVCall, PendSV, SysTick; MemManage/BusFault/UsageFault/DebugMonitor on armv7-m/armv8-m; SecureFault on armv8-m), external IRQ handler addresses, Thumb bit-0 violations, shared default-handler stubs, and RISC-V JAL/C.J/AUIPC+JALR jump slots with trap_entry_address (keeping reset_code_address null on RISC-V). Optional svd_xml binds external IRQ numbers to CMSIS-SVD peripheral interrupt names within max_svd_xml_nodes and max_svd_expanded_chars; unmapped IRQs keep name: null.",
+    inputSchema: inspectFirmwareVectorTableInputSchema,
+    outputSchema: evidenceResultOf(firmwareVectorTableSchema),
+    examples: [
+      {
+        title: "Decode an STM32 Cortex-M4 vector table at 0x08000000",
+        input: {
+          path: "/artifacts/firmware.bin",
+          architecture: "armv7-m",
+          base_address: "0x08000000",
         },
       },
     ],

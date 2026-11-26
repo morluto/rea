@@ -54,6 +54,7 @@ import {
   PE_OVERLAY_PROVIDER,
   PE_RESOURCES_PROVIDER,
   RELEASE_EXPOSURE_PROVIDER,
+  FIRMWARE_VECTOR_TABLE_PROVIDER,
   WEB_SCRIPT_EXPORT_PROVIDER,
   WINDOWS_SHORTCUT_PROVIDER,
 } from "../domain/investigationProviders.js";
@@ -320,6 +321,13 @@ export const CAPABILITY_DECLARATIONS = {
     providers: [
       providerBinding(BINWALK_PROVIDER_IDENTITY, ["inspect_firmware_regions"]),
       providerBinding(UNBLOB_PROVIDER_IDENTITY, ["extract_firmware"]),
+    ],
+  },
+  firmwareVectorTable: {
+    providers: [
+      providerBinding(FIRMWARE_VECTOR_TABLE_PROVIDER, [
+        "inspect_firmware_vector_table",
+      ]),
     ],
   },
   uefiAnalysis: {

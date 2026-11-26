@@ -83,6 +83,9 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
   erlangBeam: { cases: ["tests/acceptance/erlangBeamCli.test.ts"] },
   evmInterface: { cases: ["tests/boundary/mcp/evmInterfaceMcp.test.ts"] },
   firmwareAnalysis: { cases: ["tests/boundary/mcp/firmwareMcp.test.ts"] },
+  firmwareVectorTable: {
+    cases: ["tests/boundary/mcp/firmwareVectorTableMcpCli.test.ts"],
+  },
   uefiAnalysis: { cases: ["tests/acceptance/uefiFirmware.test.ts"] },
   flutter: { cases: ["tests/boundary/cli/flutterCli.test.ts"] },
   fridaInstrumentation: { cases: ["tests/boundary/cli/fridaCli.test.ts"] },
