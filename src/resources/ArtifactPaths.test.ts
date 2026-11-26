@@ -198,12 +198,12 @@ it("reserves prefix capacity atomically without declaring destination kinds", ()
     maxNodes: 3,
   });
   registry.reservePath("a/b");
+  // Unvisited paths may add nodes, so no required value is claimed.
   expect(() => registry.reservePath("a/c/d")).toThrow(
     expect.objectContaining({
       readerLimit: expect.objectContaining({
         parameter: "artifact_limits.deno.path_nodes",
         effective_value: 3,
-        required_value: 4,
       }),
     }),
   );
