@@ -159,7 +159,27 @@ export const iso9660LimitFailure = (
     { name: limit.name, maximum, required },
   );
 
-/** Read a both-endian field: a little-endian half, then a big-endian copy. */
+/** A both-endian field: its little-endian half, then its big-endian copy. */
+const bothEndianHalves = (
+  bytes: Buffer,
+  at: number,
+  width: 2 | 4,
+): { readonly value: number; readonly copy: number } => {
+  const little = new BinaryReader(bytes, true, ISO9660_FORMAT);
+  const big = new BinaryReader(bytes, false, ISO9660_FORMAT);
+  return width === 4
+    ? { value: little.u32(at), copy: big.u32(at + width) }
+    : { value: little.u16(at), copy: big.u16(at + width) };
+};
+
+/** The failure for a both-endian field at `offset` whose halves must agree. */
+const iso9660HalvesDisagree = (
+  offset: number,
+  field: string,
+): ParseFailureError<"malformed"> =>
+  iso9660Malformed(`both-endian ${field} halves disagree`, offset, field);
+
+/** Read a both-endian field whose halves must agree. */
 const readBothEndian = (
   bytes: Buffer,
   at: number,
@@ -167,16 +187,8 @@ const readBothEndian = (
   base: number,
   field: string,
 ): number => {
-  const little = new BinaryReader(bytes, true, ISO9660_FORMAT);
-  const big = new BinaryReader(bytes, false, ISO9660_FORMAT);
-  const value = width === 4 ? little.u32(at) : little.u16(at);
-  const copy = width === 4 ? big.u32(at + width) : big.u16(at + width);
-  if (value !== copy)
-    throw iso9660Malformed(
-      `both-endian ${field} halves disagree`,
-      base + at,
-      field,
-    );
+  const { value, copy } = bothEndianHalves(bytes, at, width);
+  if (value !== copy) throw iso9660HalvesDisagree(base + at, field);
   return value;
 };
 
