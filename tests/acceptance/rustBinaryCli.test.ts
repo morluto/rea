@@ -13,6 +13,7 @@ import {
   createRustImage,
   createRustWasmModule,
   createRustImageWithGoSection,
+  createWasmSectionFlood,
   RUSTC_HASH,
   rustDependencyPayload,
 } from "../fixtures/rust/image.js";
@@ -373,8 +374,8 @@ cliTest(
     // inflate guidance names.
     expect(evidence.limitations).toEqual(
       expect.arrayContaining([
-        expect.stringMatching(
-          /inflated JSON.*64 times the consumed compressed-stream length/iu,
+        expect.stringContaining(
+          "max_dependency_inflate_ratio=64 times the consumed compressed-stream length",
         ),
       ]),
     );
@@ -414,22 +415,58 @@ cliTest(
     padRustPeDependencySection(bytes, alignedSize);
     await writeFile(path, bytes);
 
+    const requiredRatio = Math.ceil(document.length / compressed.length);
+    const limit = {
+      control_kind: "parameter",
+      parameter: "max_dependency_inflate_ratio",
+      effective_value: 64,
+      unit: "count",
+      minimum: 1,
+      maximum: Number.MAX_SAFE_INTEGER,
+      default_value: 64,
+      applies_at: "next_call",
+      required_value: requiredRatio,
+    };
+    const refusal = {
+      kind: "adjustable_budget",
+      operation: "inspect_rust_binary",
+      control: "max_dependency_inflate_ratio",
+      effective_value: 64,
+      unit: "count",
+      range: { minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+      default_value: 64,
+      required_value: requiredRatio,
+    };
     const expectedFailure = {
       code: "resource_constraint",
       retryable: false,
       details: {
         operation: "inspect_rust_binary",
         resource: "memory",
-        reported_limits: { maximum_bytes: compressed.length * 64 },
+        reported_limits: {
+          boundary: "max_dependency_inflate_ratio",
+          maximum: 64,
+          required: requiredRatio,
+        },
+        limit,
+        refusal,
       },
     };
     const result = await cli.run({
       arguments: ["inspect-rust-binary", path, "--json"],
     });
     expect(result.exitCode).toBe(1);
-    expect(result.json).toMatchObject(expectedFailure);
+    expect(result.json).toMatchObject({
+      ...expectedFailure,
+      details: {
+        ...expectedFailure.details,
+        limit: { ...limit, cli_flag: "--max-dependency-inflate-ratio" },
+      },
+    });
     const response = await call("inspect_rust_binary", { path });
-    expect(parseMcpToolError(response).error).toMatchObject(expectedFailure);
+    const mcpError = parseMcpToolError(response).error;
+    expect(mcpError).toMatchObject(expectedFailure);
+    expect(mcpError.details?.limit).not.toHaveProperty("cli_flag");
     await client.ping();
   },
 );
@@ -620,5 +657,89 @@ cliTest(
     expect(selected.report.auditable_metadata).toEqual(
       initial.report.auditable_metadata,
     );
+  },
+);
+
+cliTest(
+  "refuses a WebAssembly section walk past max_wasm_sections on CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-cli-wasm-sections-");
+    const { client, call } = await connectLocalToolsMcp();
+    const path = join(root, "sections.wasm");
+    await writeFile(path, createWasmSectionFlood(8));
+    const result = await cli.run({
+      arguments: [
+        "inspect-rust-binary",
+        path,
+        "--max-wasm-sections",
+        "4",
+        "--json",
+      ],
+    });
+    expect(result.exitCode).toBe(1);
+    const response = await call("inspect_rust_binary", {
+      path,
+      max_wasm_sections: 4,
+    });
+    const mcpError = parseMcpToolError(response).error;
+    const limit = {
+      control_kind: "parameter",
+      parameter: "max_wasm_sections",
+      effective_value: 4,
+      unit: "count",
+      minimum: 1,
+      maximum: 16_777_216,
+      default_value: 65_536,
+      applies_at: "next_call",
+    };
+    const refusal = {
+      kind: "adjustable_budget",
+      operation: "inspect_rust_binary",
+      control: "max_wasm_sections",
+      effective_value: 4,
+      unit: "count",
+      range: { minimum: 1, maximum: 16_777_216 },
+      default_value: 65_536,
+    };
+    expect(mcpError).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        operation: "inspect_rust_binary",
+        resource: "cpu",
+        reported_limits: { boundary: "max_wasm_sections", maximum: 4 },
+        limit,
+        refusal,
+      },
+    });
+    expect(mcpError.details?.limit).not.toHaveProperty("required_value");
+    expect(mcpError.details?.limit).not.toHaveProperty("cli_flag");
+    expect(mcpError.remediation.action).toContain("max_wasm_sections");
+    expect(mcpError.remediation.action).not.toContain("--max-wasm-sections");
+    expect(result.json).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        operation: "inspect_rust_binary",
+        resource: "cpu",
+        limit: { ...limit, cli_flag: "--max-wasm-sections" },
+        refusal,
+      },
+    });
+    const cliRecovery = (result.json as { remediation?: { action?: string } })
+      .remediation?.action;
+    expect(cliRecovery).toContain("--max-wasm-sections");
+    expect(cliRecovery).toContain("rea inspect-rust-binary");
+    const admitted = await cli.run({
+      arguments: [
+        "inspect-rust-binary",
+        path,
+        "--max-wasm-sections",
+        "8",
+        "--json",
+      ],
+    });
+    expect(admitted.exitCode, admitted.stderr).toBe(0);
+    await client.ping();
   },
 );

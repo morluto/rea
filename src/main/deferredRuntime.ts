@@ -236,6 +236,7 @@ export const runDeferred = async (
                 }),
               {
                 maximumInputElements: config.mcpMaxInputElements,
+                toolsListPageBudget: config.mcpToolsListPageBudget,
                 compactPresentation: COMPACT_INPUT_SCHEMA_PRESENTATION,
                 outputProfile: config.mcpOutputSchemaProfile,
                 toolFamilies,

@@ -4,11 +4,8 @@ import { posix } from "node:path";
 import { logicalPathNfc } from "../domain/artifactIdentity.js";
 import { quotedExcerpt } from "../domain/excerpt.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import {
-  ArtifactReaderFailure,
-  artifactFixedLimitFailure,
-  type ArtifactEntry,
-} from "./ArtifactReader.js";
+import { ArtifactReaderFailure, type ArtifactEntry } from "./ArtifactReader.js";
+import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 
 const ABSOLUTE_DRIVE_PATH = /^[A-Za-z]:[\\/]/u;
 
@@ -100,15 +97,15 @@ export class ArtifactPathRegistry {
   };
   #nodeCount = 0;
 
+  /**
+   * A budgeted registry belongs to one reader's `artifact_limits` group; its
+   * refusals name that group's `path_parts` and `path_nodes` controls.
+   */
   constructor(
     private readonly budget?: {
+      readonly group: "bun" | "dotnet_bundle" | "deno";
       readonly maxParts: number;
       readonly maxNodes: number;
-      readonly limitFailure?: (
-        resource: "path_parts" | "path_nodes",
-        effectiveValue: number,
-        requiredValue: number,
-      ) => ArtifactReaderFailure;
     },
   ) {}
 
@@ -140,44 +137,25 @@ export class ArtifactPathRegistry {
 
   #visit(path: string, kind?: DestinationEntryKind): void {
     const parts = path.split("/");
-    if (this.budget !== undefined && parts.length > this.budget.maxParts)
-      throw (
-        this.budget.limitFailure?.(
-          "path_parts",
-          this.budget.maxParts,
-          parts.length,
-        ) ??
-        artifactFixedLimitFailure(
-          {
-            name: "The artifact path depth allowance",
-            kind: "parser",
-            limit: this.budget.maxParts,
-            unit: "path parts",
-          },
-          `An artifact path has ${String(parts.length)} parts, above ${String(this.budget.maxParts)}.`,
-        )
+    const budget = this.budget;
+    if (budget !== undefined && parts.length > budget.maxParts)
+      throw artifactReaderLimitFailure(
+        `artifact_limits.${budget.group}.path_parts`,
+        budget.maxParts,
+        "count",
+        // A later, deeper path may need more; this path is a lower bound.
       );
-    if (this.budget !== undefined) {
+    if (budget !== undefined) {
       let observed = this.#root;
       for (const [index, part] of parts.entries()) {
         const existing = observed.children.get(part);
         if (existing === undefined) {
-          if (parts.length - index > this.budget.maxNodes - this.#nodeCount)
-            throw (
-              this.budget.limitFailure?.(
-                "path_nodes",
-                this.budget.maxNodes,
-                this.#nodeCount + parts.length - index,
-              ) ??
-              artifactFixedLimitFailure(
-                {
-                  name: "The artifact path tree allowance",
-                  kind: "parser",
-                  limit: this.budget.maxNodes,
-                  unit: "path nodes",
-                },
-                `The artifact paths need ${String(this.#nodeCount + parts.length - index)} path nodes, above ${String(this.budget.maxNodes)}.`,
-              )
+          if (parts.length - index > budget.maxNodes - this.#nodeCount)
+            throw artifactReaderLimitFailure(
+              `artifact_limits.${budget.group}.path_nodes`,
+              budget.maxNodes,
+              "count",
+              // Paths not yet visited add nodes; the count is a lower bound.
             );
           break;
         }

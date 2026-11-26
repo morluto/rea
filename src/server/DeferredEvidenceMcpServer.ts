@@ -14,6 +14,7 @@ import {
   type StandardToolRegistration,
 } from "./EvidenceMcpServerCore.js";
 import { currentMcpRequestSignal } from "./ErrorEvidenceTransport.js";
+import type { McpToolsListPageBudget } from "../config/mcpToolsListPageBudget.js";
 import { promptArgumentsSchema } from "./promptArguments.js";
 import { SERVER_START_FAILED } from "./serverStartFailure.js";
 import { isToolFamilyAdvertised } from "../contracts/toolFamilyIds.js";
@@ -67,6 +68,8 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
       // Recorded tools carry their presented schemas. The selected presentation
       // still applies to transport discovery, which is not recorded.
       readonly compactPresentation?: CompactInputSchemaPresentation | undefined;
+      /** Selected tools/list page budget; absent keeps the default page. */
+      readonly toolsListPageBudget?: McpToolsListPageBudget | undefined;
       readonly identity?: RecordedMcpCatalog["identity"] | undefined;
       readonly toolFamilies?: ReadonlySet<string> | undefined;
       /** Serve build-recorded compact output advertisements instead of omitting outputs. */
@@ -108,6 +111,7 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
         : undefined,
       families,
       recordedCompactTools,
+      options.toolsListPageBudget,
     );
     this.canAdvertise = advertisesTool;
     // The runtime attaches the session ledger; until then nothing is retained.

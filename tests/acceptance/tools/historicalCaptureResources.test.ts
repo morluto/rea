@@ -17,7 +17,6 @@ import { CAPTURE_RUNTIME_SUPPORTED } from "../../fixtures/captureDecoderLimits.j
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const execute = promisify(execFile);
 const cli = fileURLToPath(new URL("../../../scripts/rea.mjs", import.meta.url));
@@ -75,7 +74,6 @@ it.skipIf(
       ),
     });
     const response = await call("inspect_web_network_capture", {
-      detail: "complete",
       capture_path: path,
       format: "har",
       sensitive_values: ["caller-marked"],
@@ -125,7 +123,6 @@ it.skipIf(
       [
         cli,
         "inspect-web-network-capture",
-        ...COMPLETE_DETAIL,
         path,
         "har",
         "--json",
@@ -168,7 +165,6 @@ it.skipIf(
     await writeFile(small, capture(2));
     await client.ping();
     const control = await call("inspect_web_network_capture", {
-      detail: "complete",
       capture_path: small,
       format: "har",
     });
@@ -181,7 +177,7 @@ it.skipIf(
     const defaultServer = await connectLocalToolsMcp();
     const defaultControl = await defaultServer.call(
       "inspect_web_network_capture",
-      { detail: "complete", capture_path: small, format: "har" },
+      { capture_path: small, format: "har" },
     );
     expect(defaultControl.isError, JSON.stringify(defaultControl)).not.toBe(
       true,
@@ -191,7 +187,6 @@ it.skipIf(
     );
     await truncate(path, WEB_NETWORK_CAPTURE_LIMITS.inputBytes + 1);
     const oversized = await call("inspect_web_network_capture", {
-      detail: "complete",
       capture_path: path,
       format: "har",
     });

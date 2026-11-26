@@ -1,10 +1,13 @@
 import type { ArtifactLimitBoundary } from "../domain/artifactOperationError.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import { artifactReaderLimitMaximum } from "../domain/artifactReaderLimits.js";
+import {
+  artifactReaderLimitMaximum,
+  type ArtifactReaderLimitParameter,
+} from "../domain/artifactReaderLimits.js";
 
 /** Construct exact next-call recovery at the enforcing resource owner. */
 export const artifactReaderLimitFailure = (
-  parameter: string,
+  parameter: ArtifactReaderLimitParameter,
   effectiveValue: number,
   unit: "bytes" | "count",
   requiredValue?: number | bigint,
@@ -16,7 +19,7 @@ export const artifactReaderLimitFailure = (
         ? Number(requiredValue)
         : requiredValue.toString()
       : requiredValue;
-  const maximum = artifactReaderLimitMaximum(parameter, unit);
+  const maximum = artifactReaderLimitMaximum(parameter);
   const canIncrease =
     effectiveValue < maximum &&
     (requiredValue === undefined ||

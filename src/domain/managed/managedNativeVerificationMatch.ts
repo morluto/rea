@@ -1,6 +1,6 @@
 import { managedModuleRow } from "./managedModuleIdentity.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
-import { joinCoverageStatus } from "../coverage.js";
+import { CoverageAccumulator } from "../coverageAccumulator.js";
 import type { Evidence } from "../evidence.js";
 import { machoRuntimeSymbolName } from "../native/machoSymbolName.js";
 import type {
@@ -573,10 +573,14 @@ export const buildVerificationResult = ({
   // An unavailable boundary inspection read no P/Invoke declarations, so the
   // verification cannot tell what it would cover: unknown wins beside the
   // known gaps of skipped native Evidence or non-exhaustive exports.
-  const status = joinCoverageStatus([
-    managedInspectionCoverage(managed.coverage.state),
-    native.unsupported === 0 && !native.partialExports ? "complete" : "partial",
-  ]);
+  const coverageAcc = new CoverageAccumulator()
+    .merge(managedInspectionCoverage(managed.coverage.state))
+    .recordComplete();
+  if (native.unsupported !== 0)
+    coverageAcc.recordOmission("unsupported native observations were skipped");
+  if (native.partialExports)
+    coverageAcc.recordOmission("native exports are partial");
+  const status = coverageAcc.finalize().status;
   const coverage: ManagedNativeVerificationResult["coverage"] = {
     status: status === "complete" ? "complete-within-inputs" : status,
   };

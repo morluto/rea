@@ -1,3 +1,8 @@
+import {
+  fileStatStamp,
+  sameFileStatStamp,
+  type FileStatStamp,
+} from "../filesystem/FileStatStamp.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
@@ -293,11 +298,7 @@ const cleanup = async (
 };
 
 interface VerifiedFileDigest {
-  readonly dev: bigint;
-  readonly ino: bigint;
-  readonly size: bigint;
-  readonly mtimeNs: bigint;
-  readonly ctimeNs: bigint;
+  readonly stamp: FileStatStamp;
   readonly sha256: string;
 }
 
@@ -305,16 +306,6 @@ const MAX_VERIFIED_DIGEST_ENTRIES = 16;
 
 const isRegularNonSymlinkFile = (observed: BigIntStats): boolean =>
   observed.isFile() && !observed.isSymbolicLink();
-
-const sameFileStat = (
-  expected: Omit<VerifiedFileDigest, "sha256">,
-  observed: BigIntStats,
-): boolean =>
-  observed.dev === expected.dev &&
-  observed.ino === expected.ino &&
-  observed.size === expected.size &&
-  observed.mtimeNs === expected.mtimeNs &&
-  observed.ctimeNs === expected.ctimeNs;
 
 interface RetainedSession {
   readonly key: string;
@@ -824,7 +815,7 @@ export class JadxProvider implements AndroidAnalysisPort {
       cached !== undefined &&
       before !== undefined &&
       isRegularNonSymlinkFile(before) &&
-      sameFileStat(cached, before)
+      sameFileStatStamp(cached.stamp, before)
     ) {
       throwIfJadxInterrupted(signal);
       return cached.sha256;
@@ -835,7 +826,7 @@ export class JadxProvider implements AndroidAnalysisPort {
       if (
         after !== undefined &&
         isRegularNonSymlinkFile(after) &&
-        sameFileStat(before, after)
+        sameFileStatStamp(before, after)
       ) {
         if (
           !this.#verifiedDigests.has(path) &&
@@ -845,11 +836,7 @@ export class JadxProvider implements AndroidAnalysisPort {
           if (oldest !== undefined) this.#verifiedDigests.delete(oldest);
         }
         this.#verifiedDigests.set(path, {
-          dev: after.dev,
-          ino: after.ino,
-          size: after.size,
-          mtimeNs: after.mtimeNs,
-          ctimeNs: after.ctimeNs,
+          stamp: fileStatStamp(after),
           sha256,
         });
       }

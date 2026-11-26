@@ -1,3 +1,4 @@
+import { analysisViewPageFields } from "./analysisViewPageFields.js";
 import { z } from "zod";
 import type { StaticObservedEndpointComparison } from "../javascript/staticObservedEndpointSchemas.js";
 import {
@@ -24,11 +25,7 @@ import { pickFields, selectViewRows } from "./selectViewRows.js";
 import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { ok } from "../result.js";
 
-const page = {
-  kind: z.literal("endpoint-comparison"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
-};
+const page = analysisViewPageFields("endpoint-comparison");
 export const endpointComparisonViewRequestSchema = z.discriminatedUnion(
   "collection",
   [

@@ -41,10 +41,14 @@ export const PCAP_PRODUCER_LIMIT_MAXIMA = {
   output_bytes: PCAP_TSHARK_DECODED_BYTES,
 } as const;
 
-/** One accepted `inspect_pcap_capture` producer limit, as a request parameter. */
+/**
+ * One accepted `inspect_pcap_capture` producer limit, as a request parameter,
+ * with the bytes the refused capture needs when they were measured.
+ */
 export const pcapProducerLimit = (
   field: keyof typeof PCAP_PRODUCER_LIMITS,
   effectiveValue: number,
+  requiredValue?: number,
 ): AnalysisParameterLimit => ({
   control_kind: "parameter",
   parameter: `producer_limits.${field}`,
@@ -54,16 +58,8 @@ export const pcapProducerLimit = (
   maximum: PCAP_PRODUCER_LIMIT_MAXIMA[field],
   default_value: PCAP_PRODUCER_LIMITS[field],
   applies_at: "next_call",
+  ...(requiredValue === undefined ? {} : { required_value: requiredValue }),
 });
-
-/** Recovery for an exhausted `inspect_pcap_capture` producer limit. */
-export const pcapProducerLimitRecovery = (
-  field: keyof typeof PCAP_PRODUCER_LIMITS,
-  effectiveValue: number,
-): string =>
-  effectiveValue < PCAP_PRODUCER_LIMIT_MAXIMA[field]
-    ? `Pass a larger producer_limits.${field} (up to ${String(PCAP_PRODUCER_LIMIT_MAXIMA[field])} bytes) on the next inspect_pcap_capture call for the same complete capture; no restart is required.${field === "output_bytes" ? " The fixed decoded-JSON and retained-fact allowances are independent." : ""}`
-    : `producer_limits.${field} is at its maximum of ${String(effectiveValue)} bytes; select a smaller complete capture. Repeating the unchanged request fails the same way.`;
 
 const pcapProducerLimitsSchema = z
   .strictObject({

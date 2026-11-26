@@ -7,7 +7,11 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import { EvidenceLedger } from "../application/investigation/EvidenceLedger.js";
 import { createByteEntropyService } from "../composition/binaryDiagnostics/byteEntropy.js";
 import { toolContract } from "../contracts/toolContracts.js";
-import { AGENT_RESULT_BUDGET_ENVIRONMENT } from "../domain/agentResultBudget.js";
+import {
+  AGENT_RESULT_BUDGET_ENVIRONMENT,
+  PARTIAL_OBSERVATION_DELIVERY,
+} from "../domain/agentResultBudget.js";
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
   DEFAULT_AGENT_RESULT_BUDGET_BYTES,
   MAXIMUM_AGENT_RESULT_BUDGET_BYTES,
@@ -167,6 +171,75 @@ it("reads the budget seed from the environment the server captured, not the proc
   }
 });
 
+it("retains an inline over-budget partial observation with the request's writer, and keeps it inline without one", async () => {
+  const evidence = await largeEntropyEvidence();
+  const failure = () =>
+    new AnalysisResourceConstraintError(
+      contract.name,
+      "capacity",
+      "The fixture stopped after completing its observation.",
+      null,
+      { partialObservation: evidence },
+    );
+  const errorOf = (result: { readonly content: readonly unknown[] }) =>
+    (
+      JSON.parse((result.content[0] as { text: string }).text) as {
+        readonly error: { readonly details: Record<string, unknown> };
+      }
+    ).error;
+  const deliverFailure = (
+    record:
+      | ((value: Evidence) => ReturnType<EvidenceLedger["record"]>)
+      | undefined,
+    seed?: string,
+  ) => {
+    const request = new McpToolRequest(1, contract.name);
+    request.deliverySelection = { detail: undefined, pageable: true, record };
+    return runMcpToolRequest(request, () =>
+      new ToolResultDelivery(
+        64 * 1024 * 1024,
+        undefined,
+        undefined,
+        seed,
+      ).toErrorToolResult(failure(), false),
+    );
+  };
+
+  const ledger = new EvidenceLedger();
+  const budgeted = errorOf(deliverFailure((value) => ledger.record(value)));
+  expect(budgeted.details.partial_observation).toMatchObject({
+    operation: "inspect_analysis_view",
+    normalized_result: { parent_evidence_id: evidence.evidence_id },
+  });
+  expect(budgeted.details[PARTIAL_OBSERVATION_DELIVERY]).toMatchObject({
+    evidence_id: evidence.evidence_id,
+    retained: "session",
+  });
+  // The complete partial Evidence is retained exactly, before its summary.
+  expect(ledger.forAnalysis(evidence.evidence_id)).toEqual(evidence);
+
+  // A partial that fits beside the failure's own facts stays inline: the
+  // failure is measured without it, so the partial is counted once.
+  const partialBytes = Buffer.byteLength(JSON.stringify(evidence));
+  const roomy = errorOf(
+    deliverFailure(
+      (value) => new EvidenceLedger().record(value),
+      String(partialBytes + 4096),
+    ),
+  );
+  expect(roomy.details).not.toHaveProperty(PARTIAL_OBSERVATION_DELIVERY);
+  expect(roomy.details.partial_observation).toEqual(
+    JSON.parse(JSON.stringify(evidence)),
+  );
+
+  // Without a session writer nothing can be retained: it stays inline.
+  const inline = errorOf(deliverFailure(undefined));
+  expect(inline.details.partial_observation).toEqual(
+    JSON.parse(JSON.stringify(evidence)),
+  );
+  expect(inline.details).not.toHaveProperty(PARTIAL_OBSERVATION_DELIVERY);
+});
+
 it("links the complete record only when one read can fit the frame, and refuses a larger read with the cursor", async () => {
   const evidence = await largeEntropyEvidence();
   const ledger = new EvidenceLedger();
@@ -243,4 +316,44 @@ it("links the complete record only when one read can fit the frame, and refuses 
       }),
     }),
   );
+});
+
+it("keeps a partial observation's link within the frame when another observation is compacted away", async () => {
+  const evidence = await largeEntropyEvidence();
+  const ledger = new EvidenceLedger();
+  // One read of the partial fits this frame; the other observation does not.
+  const delivery = new ToolResultDelivery(1024 * 1024);
+  const request = new McpToolRequest(1, contract.name);
+  request.deliverySelection = {
+    detail: undefined,
+    pageable: true,
+    record: (value) => ledger.record(value),
+  };
+  const result = runMcpToolRequest(request, () =>
+    delivery.toErrorToolResult(
+      new AnalysisResourceConstraintError(
+        contract.name,
+        "capacity",
+        "The fixture stopped after completing its observation.",
+        null,
+        { partialObservation: evidence },
+      ),
+      false,
+      // Too large for the frame, so the encoding retries without it.
+      {
+        completed_observation: {
+          kind: "unretained-evidence",
+          evidence: { filler: "x".repeat(2 * 1024 * 1024) },
+        },
+      },
+    ),
+  );
+  expect(result.content.map(({ type }) => type)).toEqual([
+    "text",
+    "resource_link",
+  ]);
+  const { structuredContent: _carrier, ...wire } = result;
+  expect(
+    measureMcpResultWithinBudget(wire, delivery.resultBudgetBytes).ok,
+  ).toBe(true);
 });

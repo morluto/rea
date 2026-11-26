@@ -49,8 +49,6 @@ const analyzeReturnShapesThroughCli = async (
   const cliResponse = await cli.run({
     arguments: [
       "analyze-javascript-application",
-      "--detail",
-      "complete",
       root,
       "--artifact-format",
       "directory",

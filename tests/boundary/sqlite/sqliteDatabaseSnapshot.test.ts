@@ -17,6 +17,9 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import type { StableArtifactFileSystem } from "../../../src/resources/readStableArtifact.js";
 import { captureSqliteDatabaseSnapshot } from "../../../src/sqlite/SqliteDatabaseSnapshot.js";
+import { DEFAULT_SQLITE_INPUT_BYTES } from "../../../src/domain/sqlite/sqliteDatabase.js";
+import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { inspectSqliteDatabaseSnapshot } from "../../../src/sqlite/SqliteDatabaseInspection.js";
 import { sqliteDatabaseDialect } from "../../../src/sqlite/SqliteDatabaseFailures.js";
 import {
@@ -553,4 +556,40 @@ describe("SQLite snapshot destination cleanup lifecycle", () => {
       }
     }
   });
+});
+
+it("refuses a snapshot above producer_limits.input_bytes with details.limit and admits it at its size", async () => {
+  const { database, root, resourceScope } = await fixture();
+  const bytes = (await lstat(database.path)).size;
+  const refused = await captureSqliteDatabaseSnapshot(
+    database.path,
+    root,
+    resourceScope,
+    undefined,
+    undefined,
+    bytes - 1,
+  ).catch((cause: unknown) => cause);
+  if (!(refused instanceof AnalysisError))
+    throw new Error("Expected the snapshot input refusal");
+  expect(projectAnalysisError(refused).details?.limit).toEqual({
+    control_kind: "parameter",
+    parameter: "producer_limits.input_bytes",
+    effective_value: bytes - 1,
+    unit: "bytes",
+    minimum: 1,
+    maximum: Number.MAX_SAFE_INTEGER,
+    default_value: DEFAULT_SQLITE_INPUT_BYTES,
+    applies_at: "next_call",
+    required_value: bytes,
+  });
+  await expect(
+    captureSqliteDatabaseSnapshot(
+      database.path,
+      root,
+      resourceScope,
+      undefined,
+      undefined,
+      bytes,
+    ),
+  ).resolves.toMatchObject({ artifact: { bytes } });
 });

@@ -48,6 +48,8 @@ export const readBinaryContainerFromReader = async (
   source: ByteSource,
   operation: string,
   pause: ZstandardFramePause,
+  /** `max_structure_bytes` for the ELF directory and Mach-O load commands. */
+  structureBytes?: number,
 ): Promise<BinaryContainer> => {
   const probeLength = Math.min(source.size, 64);
   const prefix =
@@ -57,7 +59,7 @@ export const readBinaryContainerFromReader = async (
         ? Buffer.alloc(0)
         : await source.readRange(0, probeLength);
   if (hasElfMagic(prefix))
-    return readElfImageFromReader(source, operation, pause);
+    return readElfImageFromReader(source, operation, pause, { structureBytes });
   if (prefix.subarray(0, 2).equals(Buffer.from("MZ")))
     return readPeImageFromReader({
       size: source.size,
@@ -90,7 +92,7 @@ export const readBinaryContainerFromReader = async (
         );
     }
     if (readMachoHeaderPrefixFacts(prefix).format !== null)
-      return readMachoImageFromReader(source);
+      return readMachoImageFromReader(source, structureBytes);
   }
   throw new BinaryFormatFailure(
     "unsupported",

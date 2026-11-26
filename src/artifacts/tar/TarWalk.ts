@@ -13,25 +13,23 @@ import {
   type TarPaxRecords,
 } from "../../domain/tarFormat.js";
 import type { ArtifactTraversalOmissionKind } from "../../domain/artifactGraph.js";
+import type { TarReaderLimits } from "../../domain/artifactReaderLimits.js";
 import {
-  artifactFixedLimitFailure,
+  artifactReaderLimitFailure,
   artifactParseFailure,
   assertArtifactReadActive,
 } from "../../resources/index.js";
 import { TarStreamEnded, type TarByteStream } from "./TarByteStream.js";
 
-/**
- * Largest pax extended header or GNU long-name record read into memory. Real
- * records hold one path or a few attributes; the allowance only stops a
- * declared size from forcing an arbitrary allocation.
+/*
+ * `artifact_limits.tar.extended_header_bytes` bounds one pax extended header
+ * or GNU long-name record read into memory. Real records hold one path or a
+ * few attributes; the allowance only stops a declared size from forcing an
+ * arbitrary allocation. `artifact_limits.tar.metadata_bytes` bounds retained
+ * member metadata: a fixed per-member charge plus decoded path and link
+ * bytes, and the global pax map, for streams of many tiny members or repeated
+ * pax global headers.
  */
-export const TAR_EXTENDED_HEADER_BYTES = 1024 * 1024;
-/**
- * Retained member metadata: a fixed per-member charge plus decoded path and
- * link bytes, and the global pax map. It bounds memory for tar streams of
- * many tiny members or repeated pax global headers.
- */
-export const TAR_RETAINED_METADATA_BYTES = 64 * 1024 * 1024;
 const MEMBER_OVERHEAD_BYTES = 512;
 /** One map entry retained with a pax keyword, besides its key and value bytes. */
 const PAX_ENTRY_OVERHEAD_BYTES = 64;
@@ -194,27 +192,21 @@ const typeflagText = (typeflag: number): string =>
 const tarFormatFailure = (detail: string, offset: number): unknown =>
   artifactParseFailure(malformedInput("tar", detail, { offset }), undefined);
 
-const extendedHeaderLimit = (size: bigint): Error =>
-  artifactFixedLimitFailure(
-    {
-      name: "The tar extended-header allowance",
-      kind: "parser",
-      limit: TAR_EXTENDED_HEADER_BYTES,
-      unit: "bytes",
-    },
-    `A tar pax or GNU long-name record declares ${String(size)} bytes, more than the ${String(TAR_EXTENDED_HEADER_BYTES)}-byte extended-header allowance.`,
+const extendedHeaderLimit = (limits: TarReaderLimits, size: bigint): Error =>
+  artifactReaderLimitFailure(
+    "artifact_limits.tar.extended_header_bytes",
+    limits.extended_header_bytes,
+    "bytes",
+    size,
     "memory",
   );
 
-const retainedMetadataLimit = (): Error =>
-  artifactFixedLimitFailure(
-    {
-      name: "The tar member metadata allowance",
-      kind: "parser",
-      limit: TAR_RETAINED_METADATA_BYTES,
-      unit: "bytes",
-    },
-    `The tar members need more than ${String(TAR_RETAINED_METADATA_BYTES)} bytes of retained metadata.`,
+const retainedMetadataLimit = (limits: TarReaderLimits) => (): Error =>
+  artifactReaderLimitFailure(
+    "artifact_limits.tar.metadata_bytes",
+    limits.metadata_bytes,
+    "bytes",
+    undefined,
     "memory",
   );
 
@@ -248,13 +240,15 @@ const countTrailingNonZero = async (
 export const walkTar = async (
   stream: TarByteStream,
   signal: AbortSignal | undefined,
+  limits: TarReaderLimits,
 ): Promise<TarWalk> => {
   const members: TarMember[] = [];
   const omissions: { path: string; kind: ArtifactTraversalOmissionKind }[] = [];
   const limitations: string[] = [];
   const dialects = new Set<TarHeaderDialect>();
   let paxHeaders = 0;
-  const retained = new Budget(TAR_RETAINED_METADATA_BYTES);
+  const retained = new Budget(limits.metadata_bytes);
+  const metadataLimit = retainedMetadataLimit(limits);
   const global = new Map<string, string>();
   let chargedGlobalPax = 0;
   let local: TarPaxRecords | undefined;
@@ -366,8 +360,8 @@ export const walkTar = async (
       }
       const dataOffset = stream.position;
       if (extension) {
-        if (declaredSize > BigInt(TAR_EXTENDED_HEADER_BYTES))
-          throw extendedHeaderLimit(declaredSize);
+        if (declaredSize > BigInt(limits.extended_header_bytes))
+          throw extendedHeaderLimit(limits, declaredSize);
         const data = await stream.read(size, signal);
         const padding = await stream.skip(tarPaddedSize(size) - size, signal);
         if (data.length < size || padding < tarPaddedSize(size) - size) {
@@ -400,10 +394,7 @@ export const walkTar = async (
               chargedGlobalPax + mergedPaxBytesDelta(global, pax.records),
             );
             if (nextBytes > chargedGlobalPax)
-              retained.charge(
-                nextBytes - chargedGlobalPax,
-                retainedMetadataLimit,
-              );
+              retained.charge(nextBytes - chargedGlobalPax, metadataLimit);
             else if (nextBytes < chargedGlobalPax)
               retained.refund(chargedGlobalPax - nextBytes);
             chargedGlobalPax = nextBytes;
@@ -443,12 +434,13 @@ export const walkTar = async (
           break;
         }
       }
-      const skipped = await stream.skip(size, signal);
-      if (skipped < size) {
+      const stored = storedDataBytes(typeflag, name, size);
+      const skipped = await stream.skip(stored, signal);
+      if (skipped < stored) {
         stop(
           "truncated",
           headerOffset,
-          `Tar member ${JSON.stringify(name)} at offset ${String(headerOffset)} declares ${String(size)} byte(s) but the stream ends after ${String(skipped)}; the archive is truncated and the member was not inventoried.`,
+          `Tar member ${JSON.stringify(name)} at offset ${String(headerOffset)} declares ${String(stored)} byte(s) but the stream ends after ${String(skipped)}; the archive is truncated and the member was not inventoried.`,
         );
         break;
       }
@@ -460,7 +452,7 @@ export const walkTar = async (
         retained.charge(
           MEMBER_OVERHEAD_BYTES +
             2 * (Buffer.byteLength(path) + Buffer.byteLength(linkTarget ?? "")),
-          retainedMetadataLimit,
+          metadataLimit,
         );
       if ("omit" in role)
         omissions.push({ path: path.replace(/\/+$/u, ""), kind: role.omit });
@@ -475,7 +467,7 @@ export const walkTar = async (
           sourcePath,
           headerOffset,
           dataOffset,
-          size: role.member === "file" ? size : 0,
+          size: role.member === "file" ? stored : 0,
           typeflag: typeflagText(typeflag),
           mode: header.mode,
           uid: safeNumber(decimal(records.get("uid")) ?? header.uid),
@@ -495,7 +487,7 @@ export const walkTar = async (
           limitations: memberLimitations,
         });
       }
-      const padding = tarPaddedSize(size) - size;
+      const padding = tarPaddedSize(stored) - stored;
       if ((await stream.skip(padding, signal)) < padding) {
         // The member's bytes are complete; only its block padding is missing.
         stop(
@@ -535,6 +527,27 @@ export const walkTar = async (
   };
 };
 
+/** A directory header, including an old regular header whose name ends in `/`. */
+const isDirectoryHeader = (flag: number, name: string): boolean =>
+  flag === TAR_TYPEFLAGS.directory || (flag === 0 && name.endsWith("/"));
+
+/** Typeflags POSIX ustar records without data blocks, besides directories. */
+const HEADER_ONLY_TYPEFLAGS: ReadonlySet<number> = new Set([
+  TAR_TYPEFLAGS.symlink,
+  TAR_TYPEFLAGS.characterDevice,
+  TAR_TYPEFLAGS.blockDevice,
+  TAR_TYPEFLAGS.fifo,
+]);
+
+/**
+ * Data bytes stored after a member header. POSIX ustar stores none for
+ * symbolic links, devices, directories and FIFOs, whose size field may still
+ * be nonzero, so the next header follows at once. Hard links keep their size:
+ * pax interchange archives may store a body for them.
+ */
+const storedDataBytes = (flag: number, name: string, size: number): number =>
+  isDirectoryHeader(flag, name) || HEADER_ONLY_TYPEFLAGS.has(flag) ? 0 : size;
+
 /**
  * What a header contributes: an inventory member, an omission, or nothing
  * for the archive's own `./` root and a GNU volume label.
@@ -546,8 +559,7 @@ const memberRole = (
 ):
   | { readonly member: TarMember["kind"] | "root" }
   | { readonly omit: ArtifactTraversalOmissionKind } => {
-  const directory =
-    flag === TAR_TYPEFLAGS.directory || (flag === 0 && name.endsWith("/"));
+  const directory = isDirectoryHeader(flag, name);
   if (flag === TAR_TYPEFLAGS.gnuVolumeLabel) return { member: "root" };
   if (directory && /^(?:\.\/?)?$/u.test(name)) return { member: "root" };
   if ([...records.keys()].some((key) => key.startsWith("GNU.sparse.")))

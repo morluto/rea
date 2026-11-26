@@ -10,6 +10,8 @@ export type GitHubApiRequest = (
   budget: GitHubApiBudget,
 ) => Promise<unknown>;
 
+export function validateRepository(repository: unknown): string;
+
 export function createGhApiRequest(options?: {
   env?: NodeJS.ProcessEnv;
   now?: () => number;

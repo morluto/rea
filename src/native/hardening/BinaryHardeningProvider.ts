@@ -28,10 +28,12 @@ import { BINARY_HARDENING_PROVIDER } from "../../domain/investigationProviders.j
 import {
   hasElfMagic,
   BinaryResourceFailure,
+  isNativeStructureFailure,
   binaryResourceCeiling,
 } from "../../domain/binaryContainer.js";
 import { readElfHardeningFromHandle } from "./ElfHardening.js";
 import { readMachoHardeningFromHandle } from "./MachoHardening.js";
+import { nativeStructureConstraint } from "../../domain/native/nativeStructureBudget.js";
 import { readPeHardeningFromHandle } from "./PeHardening.js";
 
 const OPERATION = "inspect_binary_hardening";
@@ -86,7 +88,11 @@ export class BinaryHardeningProvider implements BinaryHardeningPort {
                 artifact,
                 format: "elf" as const,
                 images: [
-                  await readElfHardeningFromHandle(handle, options?.signal),
+                  await readElfHardeningFromHandle(
+                    handle,
+                    options?.signal,
+                    input.max_structure_bytes,
+                  ),
                 ],
                 limitations: [...BINARY_HARDENING_LIMITATIONS],
               };
@@ -140,16 +146,18 @@ const binaryHardeningFailure = (
         artifactReadBudgetConstraint(OPERATION, failure, {
           max_file_bytes: input.max_file_bytes,
         }) ??
-        (failure instanceof BinaryResourceFailure
-          ? parseLimitConstraint(OPERATION, "capacity", failure, {
-              path: input.path,
-              ...fixedAllowanceOptions(
-                "The binary hardening structural allowance",
-                "parser",
-                binaryResourceCeiling(failure),
-              ),
-            })
-          : undefined),
+        (isNativeStructureFailure(failure)
+          ? nativeStructureConstraint(OPERATION, failure, input.path)
+          : failure instanceof BinaryResourceFailure
+            ? parseLimitConstraint(OPERATION, "capacity", failure, {
+                path: input.path,
+                ...fixedAllowanceOptions(
+                  "The binary hardening table-entry allowance",
+                  "parser",
+                  binaryResourceCeiling(failure),
+                ),
+              })
+            : undefined),
       fileSize: (failure) =>
         artifactFileCeilingConstraint(
           OPERATION,

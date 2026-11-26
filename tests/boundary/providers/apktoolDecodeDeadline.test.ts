@@ -60,11 +60,17 @@ it.skipIf(process.platform === "win32")(
       const projected = projectAnalysisError(outcome.error);
       expect(projected).toMatchObject({
         code: "provider_timeout",
-        details: { timeout_ms: DECODE_TIMEOUT_MS },
+        details: {
+          timeout_ms: DECODE_TIMEOUT_MS,
+          limit: {
+            control_kind: "parameter",
+            parameter: "decode_timeout_ms",
+            effective_value: DECODE_TIMEOUT_MS,
+            unit: "ms",
+            applies_at: "next_call",
+          },
+        },
       });
-      expect(projected.message).toContain(`${String(DECODE_TIMEOUT_MS)} ms`);
-      expect(projected.remediation.action).toContain("decode_timeout_ms");
-      expect(projected.remediation.action).toContain("next decode");
       // Settlement includes the owned-command deadline, so the timer elapsed.
       expect(elapsed).toBeGreaterThanOrEqual(DECODE_TIMEOUT_MS - 50);
       expect(elapsed).toBeLessThan(15_000);
