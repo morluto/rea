@@ -7,7 +7,7 @@ import {
   ArtifactReaderFailure,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   projectStableArtifactFailure,
 } from "../resources/index.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
@@ -18,6 +18,7 @@ import {
   MAX_INSPECT_V8_CODE_CACHE_MIN_STRING_BYTES,
   MAX_INSPECT_V8_CODE_CACHE_STRINGS,
   type InspectV8CodeCacheInput,
+  type V8CodeCache,
 } from "../domain/v8/v8CodeCache.js";
 import { err, ok } from "../domain/result.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
@@ -34,25 +35,22 @@ export class V8CodeCacheProvider implements V8CodeCachePort {
   readonly identity = V8_CODE_CACHE_PROVIDER_IDENTITY;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        V8_CODE_CACHE_PROVIDER_IDENTITY.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      V8_CODE_CACHE_PROVIDER_IDENTITY,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectV8CodeCacheInput, options?: ExecutionOptions) {
+    let completed: V8CodeCache | undefined;
     let observed:
       | { readonly sha256: string; readonly bytes: number }
       | undefined;
     try {
       return await this.#resources.run(async () => {
-        const result = await withStableArtifactHandle(
+        const result = await withStableArtifactHandle<V8CodeCache>(
           input.path,
           input.max_file_bytes,
           {
@@ -62,14 +60,13 @@ export class V8CodeCacheProvider implements V8CodeCachePort {
             onIdentity: (identity) => {
               observed = identity;
             },
+            onVerifiedResult: (report) => {
+              completed = report;
+            },
           },
           (handle) =>
             parseV8CodeCacheFromHandle(
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               {
                 path: input.path,
                 sha256: handle.sha256,
@@ -81,7 +78,7 @@ export class V8CodeCacheProvider implements V8CodeCachePort {
         return ok(result);
       });
     } catch (cause) {
-      return err(v8CodeCacheFailure(cause, input, observed));
+      return err(v8CodeCacheFailure(cause, input, observed, completed));
     }
   }
 }
@@ -118,7 +115,8 @@ const observationBudgetRemediation = (
 const v8CodeCacheFailure = (
   cause: unknown,
   input: InspectV8CodeCacheInput,
-  observed?: { readonly sha256: string; readonly bytes: number },
+  observed: { readonly sha256: string; readonly bytes: number } | undefined,
+  completed: V8CodeCache | undefined,
 ) => {
   const facts = artifactFilePrimaryFacts(cause);
   const reportedLimits = {
@@ -168,6 +166,7 @@ const v8CodeCacheFailure = (
       },
     }),
   );
+  if (completed !== undefined) primary.retainPartialObservation(completed);
   return projectStableArtifactFailure(
     cause,
     primary,

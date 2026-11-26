@@ -15,6 +15,7 @@ import { NATIVE_PRIMITIVE_OBSERVATION_OPERATIONS } from "../../../src/domain/nat
 import { connectGhidraMcp } from "./ghidraMcpHarness.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
+import { applyCompleteEvidenceByDefault } from "../../support/completeEvidenceByDefault.js";
 
 const validation = createMcpSchemaValidation();
 afterAll(() => validation.clear());
@@ -176,6 +177,7 @@ it("follows native overflow continuations through MCP without repeating provider
             relationshipCoverage: {
               status: "partial",
               limitations: ["Indirect edges unknown"],
+              limited_directions: ["callees"],
               discovery: {
                 callees: {
                   status: "partial",
@@ -194,12 +196,16 @@ it("follows native overflow continuations through MCP without repeating provider
     { kind: "session", session },
     { delivery: createToolResultDelivery(32 * 1024) },
   );
-  const client = new Client(
-    {
-      name: "native-observation-capacity",
-      version: "1",
-    },
-    { jsonSchemaValidator: createMcpSchemaValidation() },
+  // Each observation asks for complete Evidence, which overflows the 32 KiB
+  // transport and returns a paging continuation.
+  const client = applyCompleteEvidenceByDefault(
+    new Client(
+      {
+        name: "native-observation-capacity",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    ),
   );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();

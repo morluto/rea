@@ -48,7 +48,7 @@ it("publishes REA_JADX_MCP_JAR as registration environment when the configured J
         name: "configuration",
         ok: true,
         code: null,
-        classification: "config_drift",
+        classification: "healthy",
         details: { operation_timeout_ms: 120_000 },
       },
     ],

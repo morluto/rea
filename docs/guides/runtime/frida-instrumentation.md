@@ -14,7 +14,7 @@ whether the page omitted rows. Omitting both arguments returns every observed
 process in provider order. Each call enumerates again, so process starts and
 exits can shift rows between pages.
 
-`instrument-with-frida --json` returns the Evidence record directly, matching MCP. Consumers of the earlier `{evidence, cleanup_error}` CLI wrapper should read the record at the JSON root and the session cleanup observation at `normalized_result.cleanup_error`. If final provider cleanup fails or cancellation arrives during it, the typed error retains completed Evidence in `details.partial_observation`. Discovery commands retain their device or process report in the same field.
+`instrument-with-frida --json` returns the Evidence record directly, matching MCP; the session cleanup observation is at `normalized_result.cleanup_error`. If final provider cleanup fails or cancellation arrives during it, the typed error retains completed Evidence in `details.partial_observation`. Discovery commands retain their device or process report in the same field.
 
 For state and capture-coverage checks, pass `{"session_id":"SESSION_ID","detail":"summary"}` to `frida_session_status`. Each call reads the observed session state and retains the complete observation. The reply is an `inspect_analysis_view` Evidence summary with the session identity, state, scripts, `messages_retained`, and `messages_truncated`; message payloads remain in its `parent_evidence_id`. The count covers retained queued messages, not every target event. Omitted `detail` or `detail=complete` preserves the existing complete reply.
 

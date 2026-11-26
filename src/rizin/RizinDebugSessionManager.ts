@@ -7,7 +7,6 @@ import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import {
   createRizinCommandEvidence,
   createRizinCommandTimeoutEvidence,
-  MAX_COMMAND_FRAMES,
   MAX_FRAME_BYTES,
   MAX_QUEUED_FRAME_BYTES,
   MAX_QUEUED_FRAMES,
@@ -24,13 +23,12 @@ import {
   decodeRizinFrameBytes,
   hasUnclaimedRizinFrames,
   rizinCancellationReason,
-  RizinFrameTimeoutError,
   RizinProcessExitError,
   waitForCommandFrames,
   waitForFrame,
-  waitForTurn,
   type RizinFrame,
 } from "./RizinDebugFrames.js";
+import { waitForCommandTurn } from "../process/AbortablePromise.js";
 import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
 import { randomUUID } from "node:crypto";
 import { open, readlink, realpath, stat } from "node:fs/promises";
@@ -55,7 +53,6 @@ import {
   AnalysisTimeoutError,
   cancelledBy,
   carriedReason,
-  isAborted,
 } from "../domain/analysisErrorCore.js";
 import {
   RIZIN_DEBUG_SESSION_TOOLS,
@@ -724,7 +721,7 @@ export class RizinDebugSessionManager {
       release = resolve;
     });
     try {
-      await waitForTurn(previous, signal);
+      await waitForCommandTurn(previous, signal, "rizin_debug_command");
       acquired = true;
       if (signal?.aborted)
         return err(cancelledBy("rizin_debug_command", signal));

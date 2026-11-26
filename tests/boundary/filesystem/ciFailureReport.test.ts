@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
@@ -232,6 +232,57 @@ it.each([
   },
 );
 
+it("reuses complete collector pages for the requested attempt and falls back to GitHub otherwise", async () => {
+  const directory = await createTestTempDirectory("rea-ci-collected-jobs-");
+  const runDirectory = join(directory, "10-2");
+  await mkdir(runDirectory);
+  const job = {
+    id: 7,
+    run_id: 10,
+    run_attempt: 2,
+    name: "Static checks",
+    status: "completed",
+    conclusion: "failure",
+  };
+  const remote = { ...job, id: 8 };
+  const requests: string[] = [];
+  const api = createGitHubApi({
+    token: "fixture-token",
+    collectedJobsDirectory: directory,
+    apiRequest: async (_method, endpoint) => {
+      requests.push(endpoint);
+      return { total_count: 1, jobs: [remote] };
+    },
+  });
+  const path = join(runDirectory, "jobs.json");
+  await writeFile(path, JSON.stringify([{ total_count: 1, jobs: [job] }]));
+  await expect(api.getJobs("owner/rea", 10, 2)).resolves.toEqual([job]);
+  expect(requests).toEqual([]);
+
+  for (const page of [
+    { jobs: [job] },
+    { total_count: 2, jobs: [job] },
+    { total_count: 1, jobs: [{ ...job, run_attempt: 1 }] },
+    { total_count: 1, jobs: [{ ...job, run_id: 11 }] },
+    { total_count: 1, jobs: [{ ...job, status: "in_progress" }] },
+    { total_count: 2, jobs: [job, job] },
+    {
+      total_count: 100,
+      jobs: Array.from({ length: 100 }, (_, id) => ({ ...job, id: id + 1 })),
+    },
+  ]) {
+    await writeFile(path, JSON.stringify([page]));
+    await expect(api.getJobs("owner/rea", 10, 2)).resolves.toEqual([remote]);
+    expect(requests.pop()).toBe(
+      "repos/owner/rea/actions/runs/10/attempts/2/jobs?per_page=100&page=1",
+    );
+  }
+  await api.getJobs("owner/rea", 10, 3);
+  expect(requests).toEqual([
+    "repos/owner/rea/actions/runs/10/attempts/3/jobs?per_page=100&page=1",
+  ]);
+});
+
 it("writes informational JSON and Markdown from the supplied manifest using only read API calls", async () => {
   const directory = await createTestTempDirectory("rea-ci-failure-test-");
   const calls: string[] = [];
@@ -289,7 +340,7 @@ it("writes informational JSON and Markdown from the supplied manifest using only
     api,
     outputDirectory: directory,
   });
-  expect(calls).toEqual(["run:10", "jobs:10", "artifact"]);
+  expect(calls).toEqual(["run:10", "jobs:10"]);
   expect(report).toMatchObject({
     informationalOnly: true,
     gateEffect: "none; this report never changes CI conclusions",
@@ -507,6 +558,11 @@ it("uses static artifacts only when listing is complete, unique, and tied to thi
       2,
     ),
   ).toBeNull();
+  const retry = { ...artifact, id: 14, name: "static-check-reports-attempt-2" };
+  const history = { total_count: 2, artifacts: [artifact, retry] };
+  expect(selectStaticCheckArtifact(history, runRecord, 1)).toBe(artifact);
+  expect(selectStaticCheckArtifact(history, runRecord, 2)).toBe(retry);
+  expect(selectStaticCheckArtifact(history, runRecord, 3)).toBeNull();
   const deep = { ...artifact, id: 13, name: "static-deep-check-reports" };
   expect(
     selectStaticCheckArtifact(
@@ -533,51 +589,77 @@ it("uses static artifacts only when listing is complete, unique, and tied to thi
   ).toBeNull();
 });
 
-it("loads each static gate from its own artifact", async () => {
-  const downloads: string[] = [];
-  const api = createGitHubApi({
-    token: "fixture-token",
-    fetchImpl: async (url) => {
-      downloads.push(String(url));
-      throw new Error("stop-before-download");
-    },
-    apiRequest: async () => ({
-      total_count: 2,
-      artifacts: [
+it.each([
+  [1, ""],
+  [2, "-attempt-2"],
+])(
+  "loads each static gate from its own artifact on attempt %i",
+  async (attempt, suffix) => {
+    const downloads: string[] = [];
+    const queries: string[] = [];
+    const api = createGitHubApi({
+      token: "fixture-token",
+      fetchImpl: async (url) => {
+        downloads.push(String(url));
+        throw new Error("stop-before-download");
+      },
+      apiRequest: async (_method, endpoint) => {
+        const url = new URL(endpoint, "https://api.github.com");
+        expect(url.pathname).toBe("/repos/owner/rea/actions/runs/10/artifacts");
+        expect(url.searchParams.get("per_page")).toBe("1");
+        const name = url.searchParams.get("name");
+        queries.push(name ?? "");
+        const artifacts = [
+          {
+            id: 1,
+            name: `static-check-reports${suffix}`,
+            expired: false,
+            workflow_run: { id: 10, head_sha: sha("a") },
+          },
+          {
+            id: 2,
+            name: `static-deep-check-reports${suffix}`,
+            expired: false,
+            workflow_run: { id: 10, head_sha: sha("a") },
+          },
+        ].filter((artifact) => artifact.name === name);
+        return { total_count: artifacts.length, artifacts };
+      },
+    });
+    const runRecord = { id: 10, run_attempt: attempt, head_sha: sha("a") };
+    await expect(
+      api.getStaticEvidence("owner/rea", runRecord, {
+        name: "Deep static checks",
+      }),
+    ).rejects.toThrow("stop-before-download");
+    await expect(
+      api.getStaticEvidence("owner/rea", runRecord, { name: "Static checks" }),
+    ).rejects.toThrow("stop-before-download");
+    expect(
+      await api.getStaticEvidence("owner/rea", runRecord, {
+        name: "Test shard (1)",
+      }),
+    ).toBeNull();
+    await expect(
+      api.getStaticEvidence(
+        "owner/rea",
+        { ...runRecord, run_attempt: 3 },
         {
-          id: 1,
-          name: "static-check-reports",
-          expired: false,
-          workflow_run: { id: 10, head_sha: sha("a") },
+          name: "Static checks",
         },
-        {
-          id: 2,
-          name: "static-deep-check-reports",
-          expired: false,
-          workflow_run: { id: 10, head_sha: sha("a") },
-        },
-      ],
-    }),
-  });
-  const runRecord = { id: 10, run_attempt: 1, head_sha: sha("a") };
-  await expect(
-    api.getStaticEvidence("owner/rea", runRecord, {
-      name: "Deep static checks",
-    }),
-  ).rejects.toThrow("stop-before-download");
-  await expect(
-    api.getStaticEvidence("owner/rea", runRecord, { name: "Static checks" }),
-  ).rejects.toThrow("stop-before-download");
-  expect(
-    await api.getStaticEvidence("owner/rea", runRecord, {
-      name: "Test shard (1)",
-    }),
-  ).toBeNull();
-  expect(downloads).toEqual([
-    "https://api.github.com/repos/owner/rea/actions/artifacts/2/zip",
-    "https://api.github.com/repos/owner/rea/actions/artifacts/1/zip",
-  ]);
-});
+      ),
+    ).resolves.toBeNull();
+    expect(queries).toEqual([
+      `static-deep-check-reports${suffix}`,
+      `static-check-reports${suffix}`,
+      "static-check-reports-attempt-3",
+    ]);
+    expect(downloads).toEqual([
+      "https://api.github.com/repos/owner/rea/actions/artifacts/2/zip",
+      "https://api.github.com/repos/owner/rea/actions/artifacts/1/zip",
+    ]);
+  },
+);
 
 it("rejects artifact redirects that could send the bearer token to a non-HTTPS host", async () => {
   const calls: string[] = [];

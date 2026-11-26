@@ -139,6 +139,7 @@ export class PlaywrightScenarioEvents {
   private sourcePrivacyIncomplete = false;
   private opaqueRedirectObserved = false;
   private eventPrivacyFinalized = false;
+  private finalizationCompleted = false;
 
   constructor(options: EventCaptureOptions) {
     const network = options.network ?? {
@@ -229,6 +230,11 @@ export class PlaywrightScenarioEvents {
     return this.sequence;
   }
 
+  /** Selected event content and its final privacy projection have both settled. */
+  captureFinalized(): boolean {
+    return this.finalizationCompleted;
+  }
+
   /** Drain selected network content and freeze the result before browser teardown. */
   async finish(): Promise<void> {
     this.stopNetwork?.();
@@ -244,6 +250,7 @@ export class PlaywrightScenarioEvents {
         this.sealed = true;
       }
     }
+    this.finalizationCompleted = true;
   }
 
   /** Report selected popup event families with unrecoverable pre-discovery gaps. */

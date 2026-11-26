@@ -25,7 +25,7 @@ const oversizedArtifact = async (): Promise<string> => {
 };
 
 /** One admission attempt, reported as the projected caller-visible failure. */
-const inspect = async (override?: string) => {
+const inspect = async (override?: string, requestInputBytes?: number) => {
   const path = await oversizedArtifact();
   const provider = new PwntoolsLayoutProvider(
     {
@@ -44,7 +44,12 @@ const inspect = async (override?: string) => {
   onTestFinished(async () => {
     await provider.close();
   });
-  const result = await provider.inspect({ path });
+  const result = await provider.inspect({
+    path,
+    ...(requestInputBytes === undefined
+      ? {}
+      : { producer_limits: { input_bytes: requestInputBytes } }),
+  });
   if (result.ok) throw new Error("Expected the bounded decoder to fail");
   const projected = projectAnalysisError(result.error);
   return { projected, text: JSON.stringify(projected) };
@@ -85,5 +90,48 @@ it.runIf(!unsupportedHost)(
     });
     expect(text).toContain("REA_PWNTOOLS_MAX_INPUT_BYTES must be a decimal");
     expect(text).not.toContain("Selected artifact exceeds");
+  },
+);
+
+it.runIf(!unsupportedHost)(
+  "reports a per-call ceiling as its parameter, defaulting to the launch value",
+  async () => {
+    // The launch value would admit the artifact; the per-call ceiling refuses
+    // it, so the limit names the parameter and the ceiling omitting it restores.
+    const { projected } = await inspect(String(ARTIFACT_BYTES), 4096);
+    expect(projected.details?.limit).toStrictEqual({
+      control_kind: "parameter",
+      parameter: "producer_limits.input_bytes",
+      effective_value: 4096,
+      unit: "bytes",
+      minimum: 1,
+      maximum: Number.MAX_SAFE_INTEGER,
+      default_value: ARTIFACT_BYTES,
+      applies_at: "next_call",
+    });
+  },
+);
+
+it.runIf(!unsupportedHost)(
+  "reports the shipped default when a per-call ceiling refuses without a launch value",
+  async () => {
+    const { projected } = await inspect(undefined, 4096);
+    expect(projected.details?.limit).toMatchObject({
+      control_kind: "parameter",
+      effective_value: 4096,
+      default_value: DEFAULT_INPUT_BYTES,
+    });
+  },
+);
+
+it.runIf(!unsupportedHost)(
+  "invents no default when omitting the per-call ceiling would fail configuration",
+  async () => {
+    const { projected } = await inspect("0", 4096);
+    expect(projected.details?.limit).not.toHaveProperty("default_value");
+    expect(projected.details?.limit).toMatchObject({
+      setting: "pwntools.max_input_bytes",
+      effective_value: 4096,
+    });
   },
 );

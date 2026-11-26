@@ -15,6 +15,7 @@ import {
   artifactReadCancelledBy,
   assertArtifactReadActive,
   copyArtifactEntry,
+  malformedArtifact,
   normalizeArtifactPath,
   type ArtifactEntry,
   type ArtifactReader,
@@ -126,8 +127,8 @@ export class CompoundFileArtifactReader implements ArtifactReader {
       // requiring a byte offset here would make every empty file unreadable.
       if (stored.declaredSize === 0) return Readable.from([]);
       if (stored.byteOffset === null || stored.declaredSize === null)
-        throw new ArtifactReaderFailure(
-          "format",
+        throw malformedArtifact(
+          "compound-file",
           `compound file stream has no contiguous byte range: ${stored.path}`,
         );
       const { handle } = await this.#source.read(signal);
@@ -269,9 +270,9 @@ export class CompoundFileArtifactReader implements ArtifactReader {
   }
 
   #failure(failure: RegionDecodeFailure): ArtifactReaderFailure {
-    return failure.kind === "format"
-      ? new ArtifactReaderFailure(
-          "format",
+    return failure.kind === "malformed"
+      ? malformedArtifact(
+          "compound-file",
           `compound file is malformed: ${failure.message}`,
         )
       : new ArtifactReaderFailure(

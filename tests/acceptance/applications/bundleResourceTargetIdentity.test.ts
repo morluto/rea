@@ -65,13 +65,19 @@ cliTest.for([
     if (operation === "inspect_plist")
       await writeFile(join(contents, "Info.plist"), changedPlist);
     const stale = await call(operation, parameters);
-    expect(parseMcpToolError(stale).error).toMatchObject({
-      code:
-        operation === "inspect_plist"
-          ? "artifact_changed"
-          : "artifact_operation_failed",
+    // The open session keeps the admitted digest, so repeating this request
+    // cannot observe the replacement. Reopening is what acquires it.
+    const staleError = parseMcpToolError(stale).error;
+    expect(staleError).toMatchObject({
+      code: "artifact_operation_failed",
       category: "integrity_mismatch",
+      retryable: false,
+      details: {
+        reason: "integrity",
+        integrity_check: "admitted-identity",
+      },
     });
+    expect(staleError.retry).toBeUndefined();
 
     expect((await call("open_binary", { path: app })).isError).not.toBe(true);
     const after = await call(operation, parameters);

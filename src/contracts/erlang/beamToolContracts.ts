@@ -35,7 +35,7 @@ export const ERLANG_BEAM_TOOL_CONTRACTS = [
     kind: "artifact-provider",
     requiresActiveTarget: true,
     description:
-      "Inspect an Erlang BEAM IFF file without executing bytecode or requiring Erlang. Returns chunk byte ranges/digests, atoms, exports/imports/lambdas and Code header. Default complete returns full Evidence; detail summary retains it, and an optional beam view selects collection rows in the first call. Reuse inspect_analysis_view kind beam for atoms/exports/imports/lambdas/chunks, exact names/indices/fields and paging. source_index scopes rows to parent/collection, preserving every arity; original atom/lambda indices remain distinct. Missing tables/counts stay null, not empty; runtime absence is unknown. Malformed/truncated input or exhausted budgets fail without partial success.",
+      "Inspect an Erlang BEAM IFF file without executing bytecode or requiring Erlang. Returns chunk byte ranges/digests, atoms, exports/imports/lambdas and Code header. Omitted detail returns full Evidence within the agent result budget, else the retained summary; detail summary retains it, and an optional beam view selects collection rows in the first call. Reuse inspect_analysis_view kind beam for atoms/exports/imports/lambdas/chunks, exact names/indices/fields and paging. source_index scopes rows to parent/collection, preserving every arity; original atom/lambda indices remain distinct. Missing tables/counts stay null, not empty; runtime absence is unknown. Malformed/truncated input or exhausted budgets fail without partial success.",
     inputSchema: inspectErlangBeamRequestSchema,
     outputSchema: analysisDetailOutputSchemaOf(
       erlangBeamSchema,

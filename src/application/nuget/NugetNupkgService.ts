@@ -1,7 +1,7 @@
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { NugetNupkgPort } from "../../ports/nuget/NugetNupkgPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import type { Evidence } from "../../domain/evidence.js";
 import {
   inspectNugetNupkgInputSchema,
   nugetNupkgSchema,
@@ -9,6 +9,7 @@ import {
 } from "../../domain/nuget/nupkg.js";
 import type { Result } from "../../domain/result.js";
 import { callerAnalysisParameters } from "../AnalysisInput.js";
+import { observedFileEvidence } from "../observedFileEvidence.js";
 import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_nuget_nupkg";
@@ -39,23 +40,11 @@ export class NugetNupkgService {
           report.artifact.path === parameters.path &&
           validReport(report, parameters),
         buildEvidence: (value, identity, parameters) =>
-          createEvidence(
-            {
-              path: value.artifact.path,
-              format: "file",
-              sha256: value.artifact.sha256,
-            },
+          observedFileEvidence(
+            value,
             identity,
-            {
-              operation: OPERATION,
-              parameters: selectedParameters(parameters),
-              result: value,
-              confidence: "observed",
-              limitations: value.limitations,
-              locations: [
-                { kind: "artifact-path" as const, path: value.artifact.path },
-              ],
-            },
+            OPERATION,
+            selectedParameters(parameters),
           ),
       },
       rawInput,

@@ -13,7 +13,10 @@ export async function verifyGhidraBatchIdentity(call, names) {
   assert.ok(interior, "Source fixture lacks an interior instruction");
   const name = await call("address_name", { address: leaf.address });
   const selectors = [leaf.address, interior, leaf.value, "0x0"];
-  const result = await call("batch_decompile", { addresses: selectors });
+  const result = await call("batch_decompile", {
+    detail: "complete",
+    addresses: selectors,
+  });
   assert.equal(result.total, 4);
   assert.equal(result.succeeded, 3);
   assert.equal(result.failed, 1);

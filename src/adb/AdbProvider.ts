@@ -5,9 +5,9 @@ import {
   absoluteCallerPath,
   appendCallerPath,
 } from "../filesystem/callerPath.js";
-import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
 import { adbInputFileError } from "./AdbFilesystemAdmission.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
+import { ownedProcessPrerequisiteAvailability } from "../providers/ownedProcessAvailability.js";
 import { lstat, link, mkdtemp, mkdir, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
@@ -39,10 +39,10 @@ import {
   AnalysisProtocolError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
-  AnalysisUnsupportedTargetError,
   cancelledBy,
   OwnerCancellation,
   isAborted,
+  unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -282,6 +282,8 @@ export class AdbProvider {
     } catch (cause) {
       if (cause instanceof AdbConfigurationFailure)
         return adbConfigurationAvailability(cause);
+      const prerequisite = ownedProcessPrerequisiteAvailability(cause);
+      if (prerequisite !== undefined) return prerequisite;
       throw cause;
     } finally {
       release();
@@ -934,9 +936,10 @@ export class AdbProvider {
     }
     if (parsed.paths.length === 0 && parsed.unparsedLines.total === 0)
       return err(
-        new AnalysisUnsupportedTargetError(
+        unsupportedTarget(
           operation,
           serial,
+          "android-package",
           `Package Manager reported no APK paths for ${packageName}; it may not be installed for user 0`,
         ),
       );
@@ -1718,9 +1721,10 @@ export class AdbProvider {
           );
         if (verdict.status === "failure")
           return err(
-            new AnalysisUnsupportedTargetError(
+            unsupportedTarget(
               operation,
               input.serial,
+              "android-package",
               verdict.reason,
             ),
           );

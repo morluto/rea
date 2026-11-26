@@ -1,7 +1,10 @@
+import {
+  maxFileBytesReadBudget,
+  PE_FILE_CEILING_BYTES,
+} from "../../domain/artifactReadBudget.js";
 import { projectPeBinaryFailure } from "./PeBinaryFailure.js";
 import {
-  projectArtifactCloseFailure,
-  imageFileSizeRemediation,
+  closeArtifactResources,
   withStableArtifactHandle,
   assertArtifactReadActive,
   ArtifactResourceScope,
@@ -9,14 +12,9 @@ import {
 import type { PeLoadConfigPort } from "../../ports/binaryDiagnostics/PeLoadConfigPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import type { ResourceConstraintRecovery } from "../../domain/analysisErrorCore.js";
-import {
-  fixedAllowanceOptions,
-  type FixedCeilingFacts,
-} from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_PE_LOAD_CONFIG_FILE_BYTES,
-  MAX_INSPECT_PE_LOAD_CONFIG_CALLBACKS,
+  peLoadConfigCallbackLimit,
   type InspectPeLoadConfigInput,
 } from "../../domain/native/peLoadConfig.js";
 import { err, ok } from "../../domain/result.js";
@@ -35,16 +33,12 @@ export class PeLoadConfigProvider implements PeLoadConfigPort {
   readonly identity = PE_LOAD_CONFIG_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        PE_LOAD_CONFIG_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      PE_LOAD_CONFIG_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectPeLoadConfigInput, options?: ExecutionOptions) {
@@ -55,8 +49,12 @@ export class PeLoadConfigProvider implements PeLoadConfigPort {
       return await this.#resources.run(async () =>
         withStableArtifactHandle(
           input.path,
-          input.max_file_bytes,
+          PE_FILE_CEILING_BYTES,
           {
+            readBudget: maxFileBytesReadBudget(
+              input.max_file_bytes,
+              MAX_INSPECT_PE_LOAD_CONFIG_FILE_BYTES,
+            ),
             retainBytes: (size) => Math.min(size, PE_HEADER_PREFIX_BYTES),
             signal: options?.signal,
             resourceScope: this.#resources,
@@ -87,25 +85,6 @@ export class PeLoadConfigProvider implements PeLoadConfigPort {
   }
 }
 
-const limitRecovery = (
-  limit: PeLoadConfigLimit | null,
-  input: InspectPeLoadConfigInput,
-  ceiling: FixedCeilingFacts,
-): ResourceConstraintRecovery =>
-  limit === "callbacks"
-    ? {
-        retryable: false,
-        remediationAction:
-          input.max_callbacks >= MAX_INSPECT_PE_LOAD_CONFIG_CALLBACKS
-            ? `The image exceeds the ${String(MAX_INSPECT_PE_LOAD_CONFIG_CALLBACKS)}-callback ceiling; select a smaller artifact.`
-            : `Raise max_callbacks above ${String(input.max_callbacks)} or select a smaller artifact.`,
-      }
-    : fixedAllowanceOptions(
-        "The PE structural decoding allowance",
-        "parser",
-        ceiling,
-      );
-
 const peLoadConfigFailure = (
   cause: unknown,
   input: InspectPeLoadConfigInput,
@@ -117,13 +96,16 @@ const peLoadConfigFailure = (
     {
       operation: OPERATION,
       providerId: PE_LOAD_CONFIG_PROVIDER.id,
-      fileSizeRemediation: () =>
-        imageFileSizeRemediation(
-          input.max_file_bytes,
-          MAX_INSPECT_PE_LOAD_CONFIG_FILE_BYTES,
-        ),
+      fileCeiling: {
+        name: "The PE whole-file ceiling (32-bit file offsets)",
+        bytes: PE_FILE_CEILING_BYTES,
+      },
       limits: PE_LOAD_CONFIG_LIMITS,
-      limitRecovery: (limit, ceiling) => limitRecovery(limit, input, ceiling),
+      // A running callback count knows only the budget it passed.
+      limitRecovery: (_limit, failure) => ({
+        retryable: false,
+        limit: peLoadConfigCallbackLimit(failure.maximum_bytes),
+      }),
     },
     observed,
   );

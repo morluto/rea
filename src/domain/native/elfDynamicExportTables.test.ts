@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { elfDynamicExportsImage } from "../../../tests/fixtures/binaryDiagnostics/elfDynamicExports.js";
 import {
-  MAX_NATIVE_EXPORT_ROWS,
+  DEFAULT_NATIVE_EXPORT_ROWS,
   nativeExportsSchema,
 } from "./nativeExports.js";
 import {
@@ -260,7 +260,7 @@ describe("malformed ELF dynamic export declarations", () => {
 
   it("bounds hash-declared symbols before reading or allocating their rows", () => {
     const bytes = elfDynamicExportsImage();
-    bytes.writeUInt32LE(MAX_NATIVE_EXPORT_ROWS + 1, 0x304);
+    bytes.writeUInt32LE(DEFAULT_NATIVE_EXPORT_ROWS + 1, 0x304);
     expect(() => parse(bytes)).toThrow(BinaryResourceFailure);
   });
 });

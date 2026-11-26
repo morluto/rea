@@ -1,4 +1,4 @@
-import { readGoFixture, goByteSource } from "../../tests/fixtures/go/image.js";
+import { readGoFixture } from "../../tests/fixtures/go/image.js";
 import type { FileMapping } from "../domain/virtualFileMapping.js";
 import { expect, it } from "vitest";
 import { GO_ANALYSIS_BUDGET_DEFAULTS } from "../domain/go/goBinary.js";
@@ -10,6 +10,7 @@ import type {
 import { createGoRodataStringFixture } from "../../tests/fixtures/go/rodataStringImage.js";
 import { readBinaryContainerFromReader } from "../domain/native/readBinaryContainer.js";
 import { recoverGoStringLiteralsFromReader } from "./GoStringLiterals.js";
+import { bufferByteSource } from "../domain/byteSource.js";
 
 const recoverStringFixture = (
   bytes: Buffer,
@@ -18,7 +19,7 @@ const recoverStringFixture = (
   checkActive?: () => void,
 ) =>
   recoverGoStringLiteralsFromReader(
-    goByteSource(bytes),
+    bufferByteSource(bytes, 4096),
     container,
     budgets,
     checkActive,
@@ -449,7 +450,7 @@ it("bounds rejected-slice caching across thousands of distinct NUL slices withou
     headers,
   });
 
-  const source = goByteSource(fixture.bytes);
+  const source = bufferByteSource(fixture.bytes, 4096);
   const container = await readBinaryContainerFromReader(
     source,
     "inspect_go_binary",
@@ -839,7 +840,7 @@ it("charges and reads only the admitted bytes of distant short string candidates
     return bytes.subarray(offset, offset + length);
   };
   const container = await readBinaryContainerFromReader(
-    goByteSource(bytes),
+    bufferByteSource(bytes, 4096),
     "inspect_go_binary",
     async () => {},
   );

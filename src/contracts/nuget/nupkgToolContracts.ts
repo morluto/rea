@@ -2,9 +2,13 @@ import {
   inspectNugetNupkgInputSchema,
   nugetNupkgSchema,
 } from "../../domain/nuget/nupkg.js";
+import { nugetNupkgSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/nugetNupkgSummarySchema.js";
+import {
+  analysisDetailOutputSchemaOf,
+  analysisDetailSchema,
+} from "../analysisDetail.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { evidenceEffects, toolContractMetadata } from "../toolEffects.js";
-import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 
 /** Static NuGet package inspection is independent of restore, feeds, and active native providers. */
 export const NUGET_NUPKG_TOOL_CONTRACTS = [
@@ -16,9 +20,14 @@ export const NUGET_NUPKG_TOOL_CONTRACTS = [
     kind: "artifact-provider",
     requiresActiveTarget: true,
     description:
-      "Inspect a local NuGet .nupkg ZIP without restoring, executing, or contacting a feed. Returns package identity (id, version, authors, description), license and repository fields as present in the .nuspec, dependency groups with target frameworks and version ranges, and a ZIP contents inventory (entry names, sizes, encrypted flag, path-derived folder roles). Missing, ambiguous, or malformed .nuspec members succeed with inventory and explicit limitations. Encrypted members are listed and not extracted. Invalid ZIP input fails without partial success. Member roles are folder conventions, not restore-time asset selection. Complete Evidence is the result.",
-    inputSchema: inspectNugetNupkgInputSchema,
-    outputSchema: evidenceResultOf(nugetNupkgSchema),
+      "Inspect a local NuGet .nupkg ZIP without restoring, executing, or contacting a feed. Returns package identity (id, version, authors, description), license and repository fields as present in the .nuspec, dependency groups with target frameworks and version ranges, and a ZIP contents inventory (entry names, sizes, encrypted flag, path-derived folder roles). Missing, ambiguous, or malformed .nuspec members succeed with inventory and explicit limitations. Encrypted members are listed and not extracted. Invalid ZIP input fails without partial success. Member roles are folder conventions, not restore-time asset selection. Omitted detail returns complete Evidence within the agent result budget and otherwise the retained summary of identity, license, repository and dependency/content counts; inspect_analysis_view kind evidence-json pages the complete record.",
+    inputSchema: inspectNugetNupkgInputSchema.extend({
+      detail: analysisDetailSchema,
+    }),
+    outputSchema: analysisDetailOutputSchemaOf(
+      nugetNupkgSchema,
+      nugetNupkgSummaryViewResultSchema,
+    ),
     examples: [
       {
         title: "Inspect package identity and dependency groups",

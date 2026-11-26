@@ -171,10 +171,6 @@ it.each([
     limitations: BINARY_HARDENING_LIMITATIONS.slice(0, 4),
   }),
   report(
-    { artifact: { path: "/artifacts/app", sha256: DIGEST, bytes: 80 } },
-    {},
-  ),
-  report(
     {},
     {
       rows: [...ELF_HARDENING_PROPERTIES]
@@ -246,11 +242,7 @@ it.each([
     },
   ),
 ])("rejects inconsistent provider output", async (value) => {
-  const input =
-    value.artifact.bytes === 80
-      ? { path: "/artifacts/app", max_file_bytes: 64 }
-      : { path: "/artifacts/app" };
-  const result = await service(value).inspect(input);
+  const result = await service(value).inspect({ path: "/artifacts/app" });
   expect(result.ok).toBe(false);
   if (!result.ok) expect(result.error._tag).toBe("AnalysisOutputError");
 });

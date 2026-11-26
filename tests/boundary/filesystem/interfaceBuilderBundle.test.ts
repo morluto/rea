@@ -10,7 +10,10 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { analyzeInterfaceBuilderBundle } from "../../../src/artifacts/apple/InterfaceBuilderAnalysis.js";
 import { InterfaceBuilderDecodeBudget } from "../../../src/artifacts/apple/InterfaceBuilderDecodeBudget.js";
 import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
-import { encodeNibArchiveFixture } from "../../../src/artifacts/apple/NibArchive.fixture.js";
+import {
+  encodeNibArchiveFixture,
+  varint,
+} from "../../../src/artifacts/apple/NibArchive.fixture.js";
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { xcodeIbtoolAvailable } from "../../fixtures/ibtool.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -155,17 +158,6 @@ const encodeNibArchiveWithSharedDataValue = (input: {
   readonly payload: string;
   readonly objectCount: number;
 }): Buffer => {
-  const varint = (value: number): Buffer => {
-    const bytes: number[] = [];
-    let remaining = value;
-    do {
-      let byte = remaining & 0x7f;
-      remaining >>>= 7;
-      if (remaining === 0) byte |= 0x80;
-      bytes.push(byte);
-    } while (remaining > 0);
-    return Buffer.from(bytes);
-  };
   const objects = Buffer.concat(
     Array.from({ length: input.objectCount }, () =>
       Buffer.concat([varint(0), varint(0), varint(1)]),
@@ -290,13 +282,13 @@ describe("compiled Interface Builder traversal coverage", () => {
         value.includes(": omitted because "),
       );
       const sourceNotices = result.limitations.filter((value) =>
-        value.endsWith(": Symlink target was not followed or disclosed."),
+        value.endsWith(": Symlink target was recorded, not followed."),
       );
       expect(reasons).toHaveLength(64);
       expect(sourceNotices).toEqual(
         [0, 1, 2].map(
           (index) =>
-            `link-${String(index).padStart(3, "0")}.nib: Symlink target was not followed or disclosed.`,
+            `link-${String(index).padStart(3, "0")}.nib: Symlink target was recorded, not followed.`,
         ),
       );
       const reportedPaths = new Set(

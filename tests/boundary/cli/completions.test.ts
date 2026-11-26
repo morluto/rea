@@ -127,9 +127,7 @@ it("completes whole-word inline values with their option spelling", () => {
     "--target-format=dos-com",
     "--target-format=raw-binary",
   ]);
-  expect(complete(["rea", "instructions", "--targetFormat=r"])).toEqual([
-    "--targetFormat=raw-binary",
-  ]);
+  expect(complete(["rea", "instructions", "--targetFormat=r"])).toEqual([]);
   expect(complete(["rea", "instructions", "-f", "r"])).toEqual(["raw-binary"]);
   expect(complete(["rea", "instructions", "-f=r"])).toEqual([]);
   expect(
