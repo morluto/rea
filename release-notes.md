@@ -856,6 +856,7 @@
 * **domain:** replace production prose/regex limitation matching with typed discriminators ([#14359](https://github.com/morluto/rea/issues/14359)) ([72bdcad](https://github.com/morluto/rea/commit/72bdcad49d1e6d89d935d1a493e0434b3f5d5fd7))
 * **domain:** reuse ordered map appends in index builders ([#14548](https://github.com/morluto/rea/issues/14548)) ([5cd8658](https://github.com/morluto/rea/commit/5cd86586431698d80facc62259ff04a91310f16a))
 * **domain:** share first duplicate index lookup ([#14560](https://github.com/morluto/rea/issues/14560)) ([59b75ec](https://github.com/morluto/rea/commit/59b75ecc3e2bd1c787985e7bebf128f453d5ec82))
+* **domain:** share occurrence counting across collection comparisons ([#14684](https://github.com/morluto/rea/issues/14684)) ([be65e86](https://github.com/morluto/rea/commit/be65e86681add26496134f2b5ebf8d8224e6f300))
 * **domain:** share ordered map list appends ([#14538](https://github.com/morluto/rea/issues/14538)) ([092daf7](https://github.com/morluto/rea/commit/092daf7d443e6e6ebc1a38aa3998ceaaa9a35797))
 * **domain:** share ordered reconstruction obligation categories ([#14524](https://github.com/morluto/rea/issues/14524)) ([e953b21](https://github.com/morluto/rea/commit/e953b215292567a1f74feeffb63a2f0c3c59ad4f))
 * **domain:** share record and graph parsing across input paths ([#14321](https://github.com/morluto/rea/issues/14321)) ([2add88a](https://github.com/morluto/rea/commit/2add88a014e1bb16b53584615ea142067f55f916))
