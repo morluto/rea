@@ -24,6 +24,7 @@ import { byteEntropySchema } from "../native/byteEntropy.js";
 import { projectErlangBeamView } from "./erlangBeamView.js";
 import { projectPythonPycView } from "./pythonPycView.js";
 import { projectNugetNupkgView } from "./nugetNupkgView.js";
+import { projectVsixPackageView } from "./vsixPackageView.js";
 import { projectOciImageLayoutView } from "./ociImageLayoutView.js";
 import { projectNativeExportsView } from "./nativeExportsView.js";
 import { projectElfDependenciesView } from "./elfDependenciesView.js";
@@ -214,6 +215,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_native_load_image", projectNativeLoadImageView),
   retain("inspect_python_pyc", projectPythonPycView),
   retain("inspect_nuget_nupkg", projectNugetNupkgView),
+  retain("inspect_vsix_package", projectVsixPackageView),
   retain("inspect_oci_image_layout", projectOciImageLayoutView),
   retain("frida_session_status", projectFridaSessionStatusView),
   retain("gdb_console", projectCommandObservationView),

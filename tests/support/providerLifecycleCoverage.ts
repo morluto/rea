@@ -1649,6 +1649,20 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     ),
   ),
+  "rea-vsix-package": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/vsixPackageMcp.test.ts",
+        "advertises inspect_vsix_package and reads package identity",
+      ),
+    ),
+    covered(
+      test(
+        "src/application/vsix/VsixPackageService.test.ts",
+        "retains completed Evidence and caller selections on late cancellation",
+      ),
+    ),
+  ),
   "rea-oci-image-layout": inProcess(
     covered(
       test(
