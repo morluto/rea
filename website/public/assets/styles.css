@@ -3223,7 +3223,9 @@ html[dir="rtl"] .scroll-progress {
   :where(:root[data-theme="dark"]) .notion-channel,
   :where(:root[data-theme="dark"]) .prose-highlight,
   :where(:root[data-theme="dark"]) .step-selector button[aria-pressed="true"],
-  :where(:root[data-theme="dark"]) .percent-operation button[aria-pressed="true"],
+  :where(:root[data-theme="dark"])
+    .percent-operation
+    button[aria-pressed="true"],
   :where(:root[data-theme="dark"]) .flow-result,
   :where(:root[data-theme="dark"]) .home-nav-links a[aria-current="location"],
   :where(:root[data-theme="dark"]) .step-comparison .is-active,
