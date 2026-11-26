@@ -1,5 +1,5 @@
 import { lstat, readFile, stat, writeFile, unlink } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -13,6 +13,16 @@ const failChmodFor = vi.hoisted(() => ({
   cleanupPath: undefined as string | undefined,
   beforeLeasePath: undefined as string | undefined,
   beforeLease: undefined as (() => Promise<void>) | undefined,
+  // Models a macOS virtiofs share: lstat reports a new inode for a directory
+  // after chmod changes its mode.
+  renumberDirectories: false,
+  renumbered: new Set<string>(),
+  // mkdir(0o700) cannot gain bits from umask, and the export root's chmod
+  // clears an inherited setgid bit before the functions directory is created.
+  // Set this to the mode left on that directory so the repair chmod runs.
+  functionsCreateMode: undefined as number | undefined,
+  // After the functions directory is chmod'd, lstat reports a different device.
+  swapFunctionsDevice: false,
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -52,10 +62,47 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       }
       return actual.unlink(...args);
     },
+    lstat: (async (
+      path: Parameters<typeof actual.lstat>[0],
+      options?: { bigint?: boolean },
+    ) => {
+      const metadata = await actual.lstat(path, options);
+      if (metadata.isDirectory() && failChmodFor.renumbered.has(String(path))) {
+        metadata.ino =
+          typeof metadata.ino === "bigint"
+            ? metadata.ino + 1n
+            : metadata.ino + 1;
+        if (
+          failChmodFor.swapFunctionsDevice &&
+          basename(String(path)) === "functions"
+        )
+          metadata.dev =
+            typeof metadata.dev === "bigint"
+              ? metadata.dev + 1n
+              : metadata.dev + 1;
+      }
+      return metadata;
+    }) as typeof actual.lstat,
+    mkdir: async (
+      path: Parameters<typeof actual.mkdir>[0],
+      options?: Parameters<typeof actual.mkdir>[1],
+    ) => {
+      const created = await actual.mkdir(path, options);
+      const mode = failChmodFor.functionsCreateMode;
+      // Bypass the chmod mock: this is the mode mkdir left, not a later repair.
+      if (mode !== undefined && basename(String(path)) === "functions")
+        await actual.chmod(path, mode);
+      return created;
+    },
     chmod: async (path: Parameters<typeof actual.chmod>[0], mode: number) => {
       if (path === failChmodFor.path)
         throw Object.assign(new Error("denied"), { code: "EPERM" });
       await actual.chmod(path, mode);
+      if (
+        failChmodFor.renumberDirectories &&
+        (await actual.lstat(path)).isDirectory()
+      )
+        failChmodFor.renumbered.add(String(path));
       if (path === failChmodFor.beforeLeasePath) {
         const hook = failChmodFor.beforeLease;
         failChmodFor.beforeLease = undefined;
@@ -93,6 +140,10 @@ afterEach(() => {
   failChmodFor.cleanupPath = undefined;
   failChmodFor.beforeLeasePath = undefined;
   failChmodFor.beforeLease = undefined;
+  failChmodFor.renumberDirectories = false;
+  failChmodFor.renumbered.clear();
+  failChmodFor.functionsCreateMode = undefined;
+  failChmodFor.swapFunctionsDevice = false;
   vi.restoreAllMocks();
 });
 
@@ -180,6 +231,94 @@ describe("decompile export creation", () => {
     expect(resumed.ok).toBe(true);
     if (resumed.ok) expect((await resumed.value.close()).ok).toBe(true);
   });
+
+  it.skipIf(process.platform === "win32")(
+    "removes its functions directory after failed initialization on a mount that renumbers directories on chmod",
+    async () => {
+      const parent = await createTestTempDirectory("rea-decompile-renumber-");
+      const root = join(parent, "out");
+      failChmodFor.renumberDirectories = true;
+      failChmodFor.path = join(root, "decompile-journal.jsonl");
+      const opened = await DecompileExport.open({
+        placement: { mode: "create", root },
+        identity,
+      });
+      expect(opened.ok).toBe(false);
+      if (opened.ok) return;
+      expect(opened.error.cleanupIncomplete).toBe(false);
+      expect(failChmodFor.renumbered).not.toContain(join(root, "functions"));
+      await expect(stat(root)).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "removes a functions directory whose mode repair renumbers it",
+    async () => {
+      const parent = await createTestTempDirectory("rea-decompile-renumber-");
+      const root = join(parent, "out");
+      const functions = join(root, "functions");
+      failChmodFor.renumberDirectories = true;
+      // setgid plus group read and execute: not the owner-only mode mkdir requested.
+      failChmodFor.functionsCreateMode = 0o2750;
+      failChmodFor.path = join(root, "decompile-journal.jsonl");
+      const opened = await DecompileExport.open({
+        placement: { mode: "create", root },
+        identity,
+      });
+      expect(opened.ok).toBe(false);
+      if (opened.ok) return;
+      expect(opened.error.cleanupIncomplete).toBe(false);
+      expect(failChmodFor.renumbered).toContain(functions);
+      await expect(stat(root)).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "leaves the functions directory owner-only after a mode repair that renumbers it",
+    async () => {
+      const parent = await createTestTempDirectory("rea-decompile-renumber-");
+      const root = join(parent, "out");
+      const functions = join(root, "functions");
+      failChmodFor.renumberDirectories = true;
+      failChmodFor.functionsCreateMode = 0o2750;
+      const opened = await DecompileExport.open({
+        placement: { mode: "create", root },
+        identity,
+      });
+      expect(opened.ok).toBe(true);
+      if (!opened.ok) return;
+      try {
+        const metadata = await lstat(functions);
+        expect(metadata.isSymbolicLink()).toBe(false);
+        expect(metadata.isDirectory()).toBe(true);
+        expect(metadata.mode & 0o7777).toBe(0o700);
+        expect(failChmodFor.renumbered).toContain(functions);
+      } finally {
+        expect((await opened.value.close()).ok).toBe(true);
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "does not remove a functions directory whose device changed during mode repair",
+    async () => {
+      const parent = await createTestTempDirectory("rea-decompile-renumber-");
+      const root = join(parent, "out");
+      const functions = join(root, "functions");
+      failChmodFor.renumberDirectories = true;
+      failChmodFor.functionsCreateMode = 0o2750;
+      failChmodFor.swapFunctionsDevice = true;
+      const opened = await DecompileExport.open({
+        placement: { mode: "create", root },
+        identity,
+      });
+      expect(opened.ok).toBe(false);
+      if (opened.ok) return;
+      expect(opened.error.cleanupIncomplete).toBe(true);
+      expect((await lstat(functions)).isDirectory()).toBe(true);
+      expect((await lstat(root)).isDirectory()).toBe(true);
+    },
+  );
 
   it("preserves unexpected files and keeps initialization cleanup owned until a retry", async () => {
     const parent = await createTestTempDirectory("rea-decompile-cleanup-");

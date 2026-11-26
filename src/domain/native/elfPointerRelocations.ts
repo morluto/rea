@@ -24,6 +24,7 @@ import {
   BinaryReader,
   createFileMappingIndex,
   isZeroFilledSpan,
+  nativeStructureFailure,
   type ElfDynamicSegment,
 } from "../binaryContainer.js";
 import { ParseFailureError } from "../parseFailure.js";
@@ -138,6 +139,12 @@ export interface ElfPointerRelocationInput {
   >[];
   readonly mappings: readonly FileMapping[];
   readonly zeroFills: readonly ZeroFillMapping[];
+  /**
+   * The caller's `max_structure_bytes` for the dynamic directory. A caller
+   * that owns that control passes it and receives its failure; the IL2CPP
+   * and JNI loaders omit it and keep their native-index-capacity failure.
+   */
+  readonly structureBytes?: number | undefined;
 }
 
 // JNI sparse consumers retain per-write provenance; streaming materializers do not.
@@ -527,9 +534,20 @@ function* dynamicTags(
   const declaration = input.dynamicSegments[0];
   if (declaration === undefined)
     return { values: new Map(), ambiguous: new Set() };
-  const table = admitElfDynamicDirectory(bytes.length, declaration, input.bits);
+  const table = admitElfDynamicDirectory(
+    bytes.length,
+    declaration,
+    input.bits,
+    input.structureBytes,
+  );
   if (!table.ok) {
     if (table.error.kind === "malformed") return malformed(table.error.message);
+    if (input.structureBytes !== undefined)
+      throw nativeStructureFailure(
+        "The ELF dynamic directory",
+        table.error.size,
+        table.error.maximum,
+      );
     throw new ElfPointerRelocationFailure(
       "native-index-capacity",
       table.error.message,

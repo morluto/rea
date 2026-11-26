@@ -1,3 +1,4 @@
+import { appendToMapList } from "../domain/appendToMapList.js";
 import {
   RELEASE_EXPOSURE_AUDIT_OPERATION as OPERATION,
   releaseExposureFailure,
@@ -30,7 +31,7 @@ import {
   readStableArtifact,
   withStableArtifactHandle,
   type StableArtifactHandle,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   readerIntegrityFailure,
   hashStableRootArtifactHandle,
   createAsarHeaderSignatureProbe,
@@ -107,7 +108,6 @@ import {
   inspectPeCodeViewFromReader,
 } from "../domain/binaryTarget.js";
 import { logicalPathNfc } from "../domain/artifactIdentity.js";
-import type { ArtifactIntegrityCheck } from "../domain/artifactOperationError.js";
 import { observeMzWindowsHeader } from "../domain/dosMz.js";
 import { evidenceSubjectFormatSchema } from "../domain/evidenceSubject.js";
 import { RELEASE_EXPOSURE_PROVIDER } from "../domain/investigationProviders.js";
@@ -118,7 +118,7 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   PACKAGED_NATIVE_IMAGES,
-  MAX_RELEASE_EXPOSURE_FILE_BYTES,
+  RELEASE_EXPOSURE_FILE_BYTES,
   MAX_RELEASE_EXPOSURE_INVENTORY_BYTES,
   MAX_RELEASE_EXPOSURE_INVENTORY_ENTRIES,
   MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES,
@@ -240,16 +240,12 @@ export class ReleaseExposureReader implements ReleaseExposurePort {
     private readonly asarHeaderAdmission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
   ) {}
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        RELEASE_EXPOSURE_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      RELEASE_EXPOSURE_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(
@@ -259,7 +255,7 @@ export class ReleaseExposureReader implements ReleaseExposurePort {
     visitInterruptedScan?: ReleaseExposureScanVisitor,
   ): Promise<Result<ReleaseExposureScan, AnalysisError>> {
     const maxFileBytes =
-      input.max_file_bytes ?? MAX_RELEASE_EXPOSURE_FILE_BYTES;
+      input.max_file_bytes ?? RELEASE_EXPOSURE_FILE_BYTES.default_value;
     const context: ScanContext = {
       signal: options?.signal,
       resources: this.#resources,
@@ -2949,9 +2945,7 @@ const listContainer = async (
     }
     listed.push(entry);
     const key = logicalPathNfc(entry.path).replace(/\/+$/u, "");
-    const sameName = byPath.get(key);
-    if (sameName === undefined) byPath.set(key, [entry]);
-    else sameName.push(entry);
+    appendToMapList(byPath, key, entry);
   }
   const coverage = traversal.snapshot();
   if (coverage.status === "unknown") state.coverageUnknown = true;

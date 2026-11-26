@@ -76,6 +76,11 @@ import {
   type MzWindowsHeaderRecordEvidence,
 } from "../../domain/dosMz.js";
 import type { ArtifactClassificationEvidence } from "../ArtifactClassificationProbe.js";
+import {
+  ISO9660_DESCRIPTOR_OFFSET,
+  ISO9660_RECOGNITION_BYTES,
+  ISO9660_SIGNATURE_BYTES,
+} from "../../domain/iso9660/iso9660Structures.js";
 
 interface RootClassification {
   readonly format: ArtifactOccurrence["artifact_format"];
@@ -123,7 +128,7 @@ export const classifyAndHashRootForInventory = async (
       "integrity",
       `Artifact root changed after target admission: expected an admitted file at ${path}, observed a directory`,
       {
-        integrityCheck: "container-identity",
+        integrityCheck: "admitted-identity",
         userMessage:
           "The opened file was replaced by a directory. Select the intended artifact and reopen it before retrying.",
       },
@@ -427,9 +432,16 @@ const classifyRootFormat = async (
     hasDfuSePrefix(evidence.prefix)
       ? await read(archiveBytes - DFUSE_SUFFIX_BYTES, DFUSE_SUFFIX_BYTES)
       : fatEvidence.suffix;
+  // Likewise the ISO 9660 descriptor signature lies past the bounded prefix.
+  const iso9660Descriptor =
+    fatEvidence.iso9660Descriptor === undefined &&
+    archiveBytes >= ISO9660_RECOGNITION_BYTES
+      ? await read(ISO9660_DESCRIPTOR_OFFSET, ISO9660_SIGNATURE_BYTES)
+      : fatEvidence.iso9660Descriptor;
   const classificationEvidence = {
     ...fatEvidence,
     ...(suffix === undefined ? {} : { suffix }),
+    ...(iso9660Descriptor === undefined ? {} : { iso9660Descriptor }),
     ...(mzWindowsHeaderSignature === undefined
       ? {}
       : { mzWindowsHeaderSignature }),
@@ -478,7 +490,8 @@ const classifyRootFormat = async (
       } catch (cause: unknown) {
         if (
           cause instanceof ArtifactReaderFailure &&
-          (cause.reason === "format" ||
+          (cause.reason === "malformed" ||
+            cause.reason === "truncated" ||
             (cause.reason === "limit" &&
               (cause.readerLimit?.parameter ===
                 "artifact_limits.node_sea.blob_bytes" ||
@@ -635,7 +648,7 @@ export const assertAdmittedRootDigest = (
       "integrity",
       `Artifact root changed after target admission at ${path}: expected ${expected}, observed ${observed}`,
       {
-        integrityCheck: "container-identity",
+        integrityCheck: "admitted-identity",
         userMessage:
           "The artifact changed after it was opened. Reopen the selected artifact, then retry.",
       },

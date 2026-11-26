@@ -37,7 +37,6 @@ import type {
   AnalysisExecution,
   AnalysisOperation,
   ExecutionOptions,
-  RetainedResourceScope,
 } from "../ports/AnalysisProvider.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -1678,17 +1677,9 @@ export class KunaSessionClient implements AnalysisClient {
   async #inspectInstallation(
     signal: AbortSignal,
   ): Promise<Result<KunaInstallation, AnalysisError>> {
-    const parentResourceScope: RetainedResourceScope = {
-      retain: (owner, resource) =>
-        this.#resourceScope.retain({
-          kind: "lease",
-          resource,
-          lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
-        }),
-      run: <T>(operation: () => Promise<T>) =>
-        this.#resourceScope.run(operation),
-    };
-    const kunaResources = createKunaResourceScope(parentResourceScope);
+    const kunaResources = createKunaResourceScope(
+      this.#resourceScope.forCloseOwners(),
+    );
     try {
       const inspected = await inspectKunaInstallation(this.#environment, {
         platform: this.#platform,

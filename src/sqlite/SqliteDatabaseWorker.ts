@@ -60,7 +60,7 @@ const main = async (): Promise<void> => {
                     ? "memory"
                     : code === 18
                       ? "output-limit"
-                      : "format",
+                      : "malformed",
               message,
             };
   }

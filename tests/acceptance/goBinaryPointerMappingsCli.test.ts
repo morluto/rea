@@ -58,11 +58,18 @@ cliTest(
     expect(rejected.json).toMatchObject({
       code: "unsupported_target",
       details: {
-        format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
+        failure_kind: expect.stringMatching(/^(?:malformed|truncated)$/u),
       },
     });
     const response = await call("inspect_go_binary", { path });
-    expect(parseMcpToolError(response)).toEqual({ error: rejected.json });
+    const mcpError = parseMcpToolError(response).error;
+    const cliError = rejected.json as typeof mcpError;
+    expect({ ...mcpError, remediation: undefined }).toEqual({
+      ...cliError,
+      remediation: undefined,
+    });
+    expect(cliError.remediation.action).toContain("rea inspect-go-binary");
+    expect(mcpError.remediation.action).toContain("inspect_go_binary");
     await client.ping();
   },
 );

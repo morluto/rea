@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { sha256File } from "../../lib/verifier-file-sha256.mjs";
 import {
   artifactCli,
   artifactMcpResult,
@@ -72,12 +72,10 @@ await withVerifierFixture(fixture, async () => {
       ])
     ).stdout,
   );
-  const sha256 = createHash("sha256")
-    .update(await readFile(join(resources, "Assets.car")))
-    .digest("hex");
-  const executableSha256 = createHash("sha256")
-    .update(await readFile(join(app, "Contents", "MacOS", "Fixture")))
-    .digest("hex");
+  const sha256 = await sha256File(join(resources, "Assets.car"));
+  const executableSha256 = await sha256File(
+    join(app, "Contents", "MacOS", "Fixture"),
+  );
   const cli = await artifactCli("inspect-asset-catalog", app);
   assert.deepEqual(
     cli.records.map(({ metadata }) => metadata),

@@ -13,7 +13,7 @@ import {
 } from "../apkSignature/apkSignatureQuery.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import type { JsonValue } from "../jsonValue.js";
-import { err, ok, type Result } from "../result.js";
+import { ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
@@ -23,7 +23,7 @@ import {
 } from "./analysisViewShape.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
-  analysisViewInputError,
+  invalidAnalysisViewSubject,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import {
@@ -108,14 +108,8 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
     subject !== undefined &&
     !apkSignatureMatchesSubject(report.artifact, subject)
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message: "APK subject does not match its recorded artifact",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "APK subject does not match its recorded artifact",
     );
   if (cached !== undefined) return ok(cached);
   const unknowns = [

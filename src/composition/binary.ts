@@ -5,6 +5,7 @@ import { isAppleDispatchMetadataTarget } from "../domain/native/objcSwiftMetadat
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type { AppConfig } from "../config/types.js";
 import type { BinarySession } from "../application/binary/BinarySession.js";
+import type { ArtifactPathInspectionDependencies } from "../application/artifacts/ArtifactPathInspection.js";
 import { HopperProvider } from "../hopper/HopperProvider.js";
 import { GhidraProvider } from "../ghidra/GhidraProvider.js";
 import { createIdaMcpConnection } from "../ida/IdaMcpConnection.js";
@@ -164,6 +165,7 @@ export const createManagedBinarySession = (): BinarySession =>
 export const createArtifactBinarySession = (
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform = HOST_PLATFORM.platform,
+  settings?: AnalysisSettingsReader,
 ): Promise<BinarySession> =>
   import("../artifacts/ArtifactProvider.js").then(({ ArtifactProvider }) =>
     composeBinarySession(
@@ -172,6 +174,7 @@ export const createArtifactBinarySession = (
         new ArtifactProvider(
           snapshotEnvironment(selectedEnvironment, platform),
           platform,
+          settings,
         ),
       ],
       createBundleResourceFactory(
@@ -180,6 +183,29 @@ export const createArtifactBinarySession = (
       ),
     ),
   );
+
+/**
+ * Compose path-selected `inspect_artifact`: a directory is inventoried by the
+ * artifact provider directly, and any other path in its own artifact-only
+ * session. Neither uses a caller's open session target.
+ */
+export const createArtifactPathInspection = (
+  selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
+  settings?: AnalysisSettingsReader,
+): ArtifactPathInspectionDependencies => ({
+  inspectArtifactDirectory: async (path, parameters, options, retained) => {
+    const { ArtifactProvider } =
+      await import("../artifacts/ArtifactProvider.js");
+    return new ArtifactProvider(
+      snapshotEnvironment(selectedEnvironment, platform),
+      platform,
+      settings,
+    ).inspectDirectory(path, parameters, options, retained);
+  },
+  createArtifactBinarySession: () =>
+    createArtifactBinarySession(selectedEnvironment, platform, settings),
+});
 
 /** Compose native inspection utilities without candidates for deep analysis. */
 export const createNativeBinarySession = (

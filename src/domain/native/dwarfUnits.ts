@@ -1,6 +1,11 @@
 import { keyedBy, uniqueKeyed } from "../keyedCollection.js";
 import { z } from "zod";
 import { coverageStatusSchema } from "../coverage.js";
+import {
+  parameterBudgetLimit,
+  parameterBudgetSchema,
+  type ParameterBudget,
+} from "../parameterBudget.js";
 
 import {
   machoSelectionContainsRange,
@@ -14,9 +19,24 @@ import {
   absoluteLocalPathStringSchema,
   localPathStringSchema,
 } from "../localPath.js";
+import { maxStructureBytesSchema } from "./nativeStructureBudget.js";
 
 /** Hard ceiling on the caller-selected input read budget. */
 export const MAX_INSPECT_DWARF_UNITS_FILE_BYTES = 536870912;
+/** `max_file_bytes` of `inspect_dwarf_units`. */
+export const DWARF_UNITS_FILE_BYTES = {
+  minimum: 64,
+  maximum: MAX_INSPECT_DWARF_UNITS_FILE_BYTES,
+  default_value: 67_108_864,
+  unit: "bytes",
+} as const satisfies ParameterBudget;
+/** The `max_file_bytes` control that refused an image. */
+export const dwarfUnitsFileLimit = (effectiveValue: number) =>
+  parameterBudgetLimit(
+    "max_file_bytes",
+    DWARF_UNITS_FILE_BYTES,
+    effectiveValue,
+  );
 /** Hard ceiling on decompressed DWARF debug bytes for one image. */
 export const MAX_DWARF_DECOMPRESSED_SECTION_BYTES = 268435456;
 /** Display name of that fixed decompressed-section allowance. */
@@ -236,13 +256,10 @@ export const inspectDwarfUnitsInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to an ELF, Mach-O, or PE image",
   ),
-  max_file_bytes: z
-    .number()
-    .int()
-    .min(64)
-    .max(MAX_INSPECT_DWARF_UNITS_FILE_BYTES)
-    .default(67_108_864)
-    .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
+  max_structure_bytes: maxStructureBytesSchema,
+  max_file_bytes: parameterBudgetSchema(DWARF_UNITS_FILE_BYTES).describe(
+    "Maximum stable artifact bytes to read (default 64 MiB)",
+  ),
   offset: z
     .number()
     .int()

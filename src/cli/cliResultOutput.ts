@@ -17,7 +17,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { hostRangeErrorKind } from "../domain/parseFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { sliceTextByTokenWindow } from "./tokenWindow.js";
+import { formatTokenWindow } from "./tokenWindow.js";
 import {
   projectAnalysisError,
   type AnalysisErrorProjection,
@@ -788,38 +788,31 @@ export const createCliResultOutput = (
         format === "md" && !options.fullOutput ? document : filtered,
         format,
       );
-      const window = sliceTextByTokenWindow(
-        formatted,
-        options.tokenOffset ?? 0,
-        options.tokenLimit,
-      );
+      const window = formatTokenWindow(formatted, options);
       // Keep the established empty human/agent presentation. Nonempty text
       // already belongs to this formatter, even when the whole result fits.
       if (!window.truncated && !options.fullOutput && formatted === "")
         return false;
 
-      const sliced = window.truncated
-        ? `${window.text}\n[truncated: showing tokens ${window.start}–${window.end} of ${window.total}]`
-        : formatted;
-      if (format === "toon" && hasUnpairedSurrogate(sliced))
+      if (format === "toon" && hasUnpairedSurrogate(window.text))
         return refuseUnrepresentableText();
       const outputDocument = options.fullOutput
         ? formatCliOutput(
             window.truncated
               ? {
                   ok: true,
-                  data: sliced,
+                  data: window.text,
                   meta: {
                     ...resultMeta(metadata),
-                    ...(window.end < window.total
-                      ? { nextOffset: window.end }
-                      : {}),
+                    ...(window.nextOffset === undefined
+                      ? {}
+                      : { nextOffset: window.nextOffset }),
                   },
                 }
               : { ok: true, data: filtered, meta },
             format,
           )
-        : sliced;
+        : window.text;
       handled = true;
       try {
         await writeOutputText(
@@ -890,14 +883,17 @@ const fullFailureEnvelope = (
   if (tokenLimit === undefined && tokenOffset === undefined)
     return { ok: false, error: failure, meta };
   const formatted = formatCliOutput(failure, format);
-  const offset = tokenOffset ?? 0;
-  const window = sliceTextByTokenWindow(formatted, offset, tokenLimit);
+  const window = formatTokenWindow(formatted, { tokenOffset, tokenLimit });
   if (!window.truncated) return { ok: false, error: failure, meta };
-  const nextOffset = window.end < window.total ? window.end : undefined;
   return {
     ok: false,
-    error: `${window.text}\n[truncated: showing tokens ${window.start}–${window.end} of ${window.total}]`,
-    meta: { ...meta, ...(nextOffset === undefined ? {} : { nextOffset }) },
+    error: window.text,
+    meta: {
+      ...meta,
+      ...(window.nextOffset === undefined
+        ? {}
+        : { nextOffset: window.nextOffset }),
+    },
   };
 };
 

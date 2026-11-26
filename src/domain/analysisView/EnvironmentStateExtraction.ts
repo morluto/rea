@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { StateRecordChronology } from "./StateRecordChronology.js";
 import { jsonByteLength } from "../jsonSerialization.js";
 import type { JsonValue } from "../jsonValue.js";
@@ -45,6 +46,7 @@ import {
   type StateToolFacts,
   type StateType,
   type StateView,
+  requestLine,
 } from "./environmentStateRules.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 import {
@@ -96,9 +98,6 @@ interface ObservedMembership {
   readonly ids: Set<string>;
   capacity: number;
 }
-
-const requestLine = (record: StateRecordFacts): string =>
-  record.path + (record.query ?? "");
 
 /** The member names of the object at a pointer, none when it holds no object. */
 const memberNames = (body: JsonValue, pointer: string): string[] => {
@@ -859,9 +858,7 @@ export class EnvironmentStateExtraction {
       for (const entity of this.#merged.values()) {
         if (markedDeleted(entity.fields)) continue;
         const key = environmentCollectionKey(entity.type, entity.collection);
-        const members = this.#collections.get(key);
-        if (members === undefined) this.#collections.set(key, [entity]);
-        else members.push(entity);
+        appendToMapList(this.#collections, key, entity);
       }
     }
     return (

@@ -99,7 +99,7 @@ export const createHexRecordDecoder = (
       });
 
 const formatFailure = (line: number, detail: string): RegionDecodeFailure => ({
-  kind: "format",
+  kind: "malformed",
   message: `line ${String(line)}: ${detail}`,
 });
 
@@ -498,6 +498,6 @@ const conflict = ({
   existing,
   incoming,
 }: RunConflict<RecordRun>): RegionDecodeFailure => ({
-  kind: "format",
+  kind: "malformed",
   message: `address 0x${hex(address, 8)} written with different values at ${lineSpan(writer)} (0x${hex(existing, 2)}) and ${lineSpan(run)} (0x${hex(incoming, 2)})`,
 });

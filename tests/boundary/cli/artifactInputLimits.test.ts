@@ -8,13 +8,13 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 for (const { command, limit, recovery, cliFlag } of [
   {
     command: "inspect-go-binary",
-    limit: 256 * 1024 * 1024,
+    limit: 2 * 1024 * 1024 * 1024,
     recovery: "max_input_bytes",
     cliFlag: "--max-input-bytes",
   },
   {
     command: "inspect-rust-binary",
-    limit: 256 * 1024 * 1024,
+    limit: 2 * 1024 * 1024 * 1024,
     recovery: "producer_limits.input_bytes",
     // The provider binds producer_limits.input_bytes; the CLI names the
     // option that sets the whole field.

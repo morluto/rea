@@ -109,8 +109,12 @@ export async function verifyGhidraTargetAdmission({
         instruction,
       );
       assert.equal(
-        (await call("resolve_containing_procedure", { address })).procedure
-          .address,
+        (
+          await call("resolve_containing_procedure", {
+            detail: "complete",
+            address,
+          })
+        ).procedure.address,
         entry,
       );
     }

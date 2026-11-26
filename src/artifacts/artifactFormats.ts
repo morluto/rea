@@ -39,6 +39,7 @@ import { FitArtifactReader } from "./FitArtifactReader.js";
 import type { GodotPckAdmission } from "./GodotPckLocation.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
 import { InesArtifactReader } from "./InesArtifactReader.js";
+import { Iso9660ArtifactReader } from "./Iso9660ArtifactReader.js";
 import { HexRecordArtifactReader } from "./HexRecordArtifactReader.js";
 import { MachOSliceArtifactReader } from "./MachOSliceArtifactReader.js";
 import { NativeDmgArtifactReader } from "./NativeDmgArtifactReader.js";
@@ -53,6 +54,7 @@ import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactRead
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
+import { TarArtifactReader } from "./tar/TarArtifactReader.js";
 import {
   GpuAssetArtifactReader,
   type GpuAssetFormat,
@@ -289,6 +291,8 @@ const NON_ZIP_FORMATS = {
       new DenoStandaloneArtifactReader(
         path,
         admittedAs("deno-standalone", options),
+        options.readerLimits?.deno,
+        options.readerLimits?.expanded_bytes,
       ),
   }),
   dmg: container("dmg", {
@@ -376,7 +380,27 @@ const NON_ZIP_FORMATS = {
     readerLimitation:
       "wxapkg inventory establishes packaged member names and stored bytes; wxml/wxss sources, compiled bundles and runtime behavior are not reconstructed. V1MMWX-encrypted packages are unsupported.",
     createReader: (path, options) =>
-      new WxapkgArtifactReader(path, sourceOf(options)),
+      new WxapkgArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.wxapkg,
+        options.readerLimits?.expanded_bytes,
+      ),
+  }),
+  tar: container("tar", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "tar inventory lists ustar, pax and GNU members of a plain or gzip-compressed tar stream. Hard links, devices, FIFOs and sparse members are reported as omissions and not read; member bytes are not interpreted.",
+    createReader: (path, options) =>
+      new TarArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+        options.readerLimits?.tar,
+      ),
   }),
   dds: gpuAsset("dds"),
   glb: gpuAsset("glb"),
@@ -410,6 +434,21 @@ const NON_ZIP_FORMATS = {
     readerLimitation: ANDROID_OTA_PAYLOAD_LIMITATIONS.inventoryScope,
     createReader: (path, options) =>
       new AndroidOtaPayloadArtifactReader(path, sourceOf(options)),
+  }),
+  iso9660: container("iso9660", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "ISO 9660 inventory establishes volume descriptor facts, the directory tree (Joliet names when present) and stored file bytes. Rock Ridge and UDF structures and El Torito boot images are not decoded, and nothing is mounted or executed.",
+    createReader: (path, options) =>
+      new Iso9660ArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+        options.readerLimits?.iso9660,
+      ),
   }),
   "javascript-bundle": described("javascript-bundle", plain),
   "source-map": described("source-map", plain),

@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
@@ -234,9 +235,7 @@ const getSemanticLabelCaseCache = (
       texts.push(normalized);
       if (!seenTexts.has(normalized)) {
         seenTexts.add(normalized);
-        const bucket = byExact.get(normalized);
-        if (bucket === undefined) byExact.set(normalized, [entry.match]);
-        else bucket.push(entry.match);
+        appendToMapList(byExact, normalized, entry.match);
       }
     }
     normalizedEntries.push({ match: entry.match, texts });

@@ -16,6 +16,24 @@ export const BUN_FIXTURE_TRAILER = Buffer.from("\n---- Bun! ----\n");
 export const BUN_FIXTURE_GRAPH_SUFFIX_BYTES =
   OFFSETS_BYTES + BUN_FIXTURE_TRAILER.length;
 
+/** Observe actual read bytes without taking ownership of the file handle. */
+export const observeBunFixtureReads = (
+  handle: FileHandle,
+  onRead: (bytesRead: number) => void,
+): FileHandle => {
+  const read = handle.read.bind(handle);
+  return new Proxy(handle, {
+    get: (target, key) =>
+      key === "read"
+        ? async (...args: Parameters<typeof read>) => {
+            const result = await read(...args);
+            onRead(result.bytesRead);
+            return result;
+          }
+        : Reflect.get(target, key),
+  });
+};
+
 /** Exercise the same two-stage probe and payload read as the artifact reader. */
 export const locateBunGraphFixture = async (
   handle: FileHandle,

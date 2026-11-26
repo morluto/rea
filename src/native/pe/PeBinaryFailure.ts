@@ -6,9 +6,11 @@ import {
   projectStableArtifactFailure,
   artifactFilePrimaryFacts,
 } from "../../resources/index.js";
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type {
+  AnalysisError,
+  AnalysisPartialObservation,
+} from "../../domain/analysisErrorBase.js";
 import type { ResourceConstraintRecovery } from "../../domain/analysisErrorCore.js";
-import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import {
   BinaryResourceFailure,
   binaryResourceCeiling,
@@ -16,7 +18,6 @@ import {
 } from "../../domain/binaryContainer.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
-import { errorMessage } from "../../kernel/errorMessage.js";
 
 interface PeBinaryInput {
   readonly path: string;
@@ -34,6 +35,8 @@ interface PeBinaryFailureOptions<Limit extends string> {
     limit: Limit | null,
     ceiling: FixedCeilingFacts,
   ) => ResourceConstraintRecovery;
+  /** A verified report the failure keeps, such as one completed before final cleanup failed. */
+  readonly completed?: AnalysisPartialObservation;
 }
 
 /** Keep one PE error interpretation while preserving the provider's cleanup and partial facts. */
@@ -70,16 +73,10 @@ export const projectPeBinaryFailure = <Limit extends string>(
         artifactFileCeilingConstraint(operation, failure, options.fileCeiling, {
           max_file_bytes: input.max_file_bytes,
         }),
-      unclassified: (failure) =>
-        new ProviderAdapterError(providerId, operation, {
-          cause: failure,
-          diagnostics: {
-            path: input.path,
-            reason: errorMessage(failure),
-          },
-        }),
     }),
   );
+  if (options.completed !== undefined)
+    primary.retainPartialObservation(options.completed);
   return projectStableArtifactFailure(
     cause,
     primary,

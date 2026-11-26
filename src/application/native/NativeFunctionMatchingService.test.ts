@@ -207,7 +207,11 @@ it.each(["", "ram:"])(
         analysisProfile: profile,
         relationshipCoverage: complete
           ? { status: "complete" }
-          : { status: "unknown", reason: "Missing direct call coverage" },
+          : {
+              status: "unknown",
+              reason: "Missing direct call coverage",
+              limited_directions: ["callers", "callees"],
+            },
       });
     const left = observe("1", "list_procedures", [
       { address: `${space}0x10`, value: "old_behavior" },

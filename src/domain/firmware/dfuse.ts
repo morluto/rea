@@ -112,7 +112,7 @@ const formatFailure = (
   offset: number,
   detail: string,
 ): RegionDecodeFailure => ({
-  kind: "format",
+  kind: "malformed",
   message: `byte offset ${String(offset)}: ${detail}`,
 });
 
