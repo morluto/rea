@@ -153,7 +153,34 @@ const harness = (options?: {
   readonly addressCaveats?: boolean;
   /** Addresses procedure_info classifies as external, as Ghidra does for imports. */
   readonly external?: readonly string[];
+  /**
+   * Optional typed procedure_pseudo_code facts. Stub language/representation
+   * and production source without requiring a live provider.
+   */
+  readonly pseudocodeFacts?: {
+    readonly language?: string;
+    readonly representation?: string;
+    readonly source?: string;
+  };
+  readonly pseudocodeText?: string;
 }) => {
+  const typedFacts =
+    options?.pseudocodeFacts === undefined
+      ? {}
+      : {
+          ...(options.pseudocodeFacts.language === undefined
+            ? {}
+            : { pseudocodeLanguage: options.pseudocodeFacts.language }),
+          ...(options.pseudocodeFacts.representation === undefined
+            ? {}
+            : {
+                pseudocodeRepresentation:
+                  options.pseudocodeFacts.representation,
+              }),
+          ...(options.pseudocodeFacts.source === undefined
+            ? {}
+            : { pseudocodeSource: options.pseudocodeFacts.source }),
+        };
   const procedures = options?.procedures ?? [
     { address: "0x3000", name: "Bar::late" },
     { address: "0x1000", name: "Foo::main" },
@@ -227,6 +254,7 @@ const harness = (options?: {
             ok(
               createAnalysisExecution("", provider, {
                 analysisProfile: profile,
+                ...typedFacts,
               }),
             ),
           );
@@ -235,26 +263,32 @@ const harness = (options?: {
             ok(
               createAnalysisExecution(null, provider, {
                 analysisProfile: profile,
+                ...typedFacts,
               }),
             ),
           );
         const selected = options?.mismatch === address ? otherProfile : profile;
         return Promise.resolve(
           ok(
-            createAnalysisExecution(`int fn(void) { ${sentinel} }`, provider, {
-              ...(options?.unprofiled === address
-                ? {}
-                : { analysisProfile: selected }),
-              ...(options?.foreignTarget === address
-                ? { subject: { ...subject, sha256: "cd".repeat(32) } }
-                : {}),
-              limitations: [
-                "terminal call may cut the body",
-                ...(options?.addressCaveats === true
-                  ? [`terminal call at ${address}`]
-                  : []),
-              ],
-            }),
+            createAnalysisExecution(
+              options?.pseudocodeText ?? `int fn(void) { ${sentinel} }`,
+              provider,
+              {
+                ...(options?.unprofiled === address
+                  ? {}
+                  : { analysisProfile: selected }),
+                ...(options?.foreignTarget === address
+                  ? { subject: { ...subject, sha256: "cd".repeat(32) } }
+                  : {}),
+                ...typedFacts,
+                limitations: [
+                  "terminal call may cut the body",
+                  ...(options?.addressCaveats === true
+                    ? [`terminal call at ${address}`]
+                    : []),
+                ],
+              },
+            ),
           ),
         );
       }
@@ -370,6 +404,206 @@ describe("decompile_all manifest", () => {
     await expect(
       readFile(join(directory(), "functions/0x3000.c"), "utf8"),
     ).resolves.toContain(sentinel);
+  });
+});
+
+describe("decompile_all pseudocode language facts", () => {
+  const directory = useOutputDirectory();
+
+  it("records unavailable language facts and a non-C path-extension note", async () => {
+    const { tools } = harness({
+      procedures: [{ address: "0x1000", name: "main" }],
+    });
+    const result = await run(tools, directory());
+    if (!result.ok) throw result.error;
+    const text = await readFile(
+      join(directory(), "functions/0x1000.c"),
+      "utf8",
+    );
+    expect(text).toContain("// language: unavailable");
+    expect(text).toContain("// representation: unavailable");
+    expect(text).toContain("// source: unavailable");
+    expect(text).toMatch(/\/\/ path_extension: \.c\b/);
+    expect(text).toMatch(/does not establish C syntax/i);
+  });
+
+  it("preserves observation language, representation, and source on the file and index", async () => {
+    const rustLike = "unsafe fn audit_compute(a: i32, b: i32) -> i32 { a }";
+    const { tools } = harness({
+      procedures: [{ address: "0x1000", name: "_audit_compute" }],
+      pseudocodeText: rustLike,
+      pseudocodeFacts: {
+        language: "rust-language",
+        representation: "provider-pseudocode",
+        source: "single-function",
+      },
+    });
+    const result = await run(tools, directory());
+    if (!result.ok) throw result.error;
+
+    const text = await readFile(
+      join(directory(), "functions/0x1000.c"),
+      "utf8",
+    );
+    expect(text).toContain("// language: rust-language");
+    expect(text).toContain("// representation: provider-pseudocode");
+    expect(text).toContain("// source: single-function");
+    expect(text).toMatch(/\/\/ path_extension: \.c\b/);
+    expect(text).toMatch(/does not establish C syntax/i);
+    expect(text.endsWith(rustLike)).toBe(true);
+
+    const index = decompileDirectoryIndexSchema.parse(
+      JSON.parse(
+        await readFile(
+          join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+          "utf8",
+        ),
+      ),
+    );
+    expect(index.functions).toEqual([
+      expect.objectContaining({
+        address: "0x1000",
+        status: "written",
+        relative_path: "functions/0x1000.c",
+        language: "rust-language",
+        representation: "provider-pseudocode",
+        source: "single-function",
+      }),
+    ]);
+
+    const journalLine = (
+      await readFile(
+        join(directory(), DECOMPILE_DIRECTORY_JOURNAL_NAME),
+        "utf8",
+      )
+    )
+      .trim()
+      .split("\n")
+      .slice(1)
+      .map((line) => decompileJournalLineSchema.parse(JSON.parse(line)));
+    expect(journalLine).toEqual([
+      expect.objectContaining({
+        kind: "function",
+        language: "rust-language",
+        representation: "provider-pseudocode",
+        source: "single-function",
+      }),
+    ]);
+  });
+
+  it.each([
+    ["null", "no_pseudocode"],
+    ["empty", "empty_pseudocode"],
+  ] as const)(
+    "keeps retained facts on the failure record when pseudocode is %s",
+    async (failure, code) => {
+      const { tools } = harness({
+        procedures: [{ address: "0x1000", name: "main" }],
+        fail: { "0x1000": failure },
+        pseudocodeFacts: {
+          language: "c",
+          representation: "provider-pseudocode",
+          source: "project-export",
+        },
+      });
+      const result = await run(tools, directory());
+      if (!result.ok) throw result.error;
+
+      const index = decompileDirectoryIndexSchema.parse(
+        JSON.parse(
+          await readFile(
+            join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+            "utf8",
+          ),
+        ),
+      );
+      expect(index.functions).toEqual([
+        expect.objectContaining({
+          address: "0x1000",
+          status: "failed",
+          failure: expect.objectContaining({ code }),
+          language: "c",
+          representation: "provider-pseudocode",
+          source: "project-export",
+        }),
+      ]);
+    },
+  );
+
+  it("keeps the first observation's facts on the independent_fresh pre-retry journal record", async () => {
+    const { port } = harness({
+      procedures: [{ address: "0x1000", name: "main" }],
+    });
+    let calls = 0;
+    const retrying: AnalysisOperationPort = {
+      execute: (operation, parameters, options) => {
+        if (operation !== "procedure_pseudo_code")
+          return port.execute(operation, parameters, options);
+        calls += 1;
+        if (calls === 1)
+          return Promise.resolve(
+            ok(
+              createAnalysisExecution(null, provider, {
+                analysisProfile: profile,
+                pseudocodeAbsence: {
+                  kind: "provider-failure",
+                  reason: "initial project-export failure",
+                },
+                pseudocodeLanguage: "c-language",
+                pseudocodeRepresentation: "provider-pseudocode",
+                pseudocodeSource: "project-export",
+              }),
+            ),
+          );
+        return Promise.resolve(
+          ok(
+            createAnalysisExecution("int main(void) { return 0; }", provider, {
+              analysisProfile: profile,
+              pseudocodeLanguage: "c-language",
+              pseudocodeRepresentation: "provider-pseudocode",
+              pseudocodeSource: "single-function",
+            }),
+          ),
+        );
+      },
+    };
+    const result = await run(new EnhancedTools(retrying), directory(), {
+      retry_failed: "independent_fresh",
+    });
+    if (!result.ok) throw result.error;
+    expect(calls).toBe(2);
+
+    const journal = (
+      await readFile(
+        join(directory(), DECOMPILE_DIRECTORY_JOURNAL_NAME),
+        "utf8",
+      )
+    )
+      .trimEnd()
+      .split("\n")
+      .slice(1)
+      .map((line) => decompileJournalLineSchema.parse(JSON.parse(line)));
+    expect(journal).toEqual([
+      expect.objectContaining({
+        kind: "function",
+        status: "failed",
+        failure: expect.objectContaining({ code: "no_pseudocode" }),
+        language: "c-language",
+        representation: "provider-pseudocode",
+        source: "project-export",
+        pseudocode_absence: {
+          kind: "provider-failure",
+          reason: "initial project-export failure",
+        },
+      }),
+      expect.objectContaining({
+        kind: "function",
+        status: "written",
+        language: "c-language",
+        representation: "provider-pseudocode",
+        source: "single-function",
+      }),
+    ]);
   });
 });
 

@@ -14,6 +14,17 @@ export interface FunctionBodyRanges {
 
 export type FunctionBody = FunctionBodyFact | FunctionBodyRanges;
 
+/**
+ * Provider-reported pseudocode language, representation, and production source
+ * when the observation retained them. Null means the fact was not established;
+ * this owner does not invent a language from the target or file extension.
+ */
+export interface PseudocodeExportFacts {
+  readonly language: string | null;
+  readonly representation: string | null;
+  readonly source: string | null;
+}
+
 /** Line-comment header plus the provider text. A block comment would close early inside pseudocode. */
 export const functionFileText = (input: {
   readonly procedure: {
@@ -24,7 +35,9 @@ export const functionFileText = (input: {
   readonly identity: ExportIdentity;
   readonly limitations: readonly string[];
   readonly pseudocode: string;
+  readonly facts?: PseudocodeExportFacts;
 }): string => {
+  const facts = input.facts ?? UNAVAILABLE_FACTS;
   const lines = [
     "// rea decompile_all",
     `// name: ${headerValue(input.procedure.name ?? "")}`,
@@ -34,6 +47,10 @@ export const functionFileText = (input: {
     `// analysis_profile: ${input.identity.analysisProfileDigest ?? "unavailable"}`,
     ...limitationLines(input.limitations),
     "// pseudocode: provider-specific; not original source",
+    `// language: ${factHeader(facts.language)}`,
+    `// representation: ${factHeader(facts.representation)}`,
+    `// source: ${factHeader(facts.source)}`,
+    "// path_extension: .c; export path spelling only — does not establish C syntax",
   ];
   return `${lines.join("\n")}\n\n${input.pseudocode}`;
 };
@@ -51,6 +68,41 @@ export const bodyRecord = (
         non_contiguous: body.non_contiguous,
       }
     : { available: false, reason: body.reason };
+
+/**
+ * Copy language, representation, and production-source facts the provider
+ * already established on the observation. Absent typed fields stay unavailable.
+ */
+export const pseudocodeExportFacts = (input: {
+  readonly pseudocodeLanguage?: string;
+  readonly pseudocodeRepresentation?: string;
+  readonly pseudocodeSource?: string;
+}): PseudocodeExportFacts => ({
+  language: input.pseudocodeLanguage ?? null,
+  representation: input.pseudocodeRepresentation ?? null,
+  source: input.pseudocodeSource ?? null,
+});
+
+/** Optional journal/index fields for established facts only. */
+export const establishedPseudocodeFields = (
+  facts: PseudocodeExportFacts,
+): {
+  readonly language?: string;
+  readonly representation?: string;
+  readonly source?: string;
+} => ({
+  ...(facts.language === null ? {} : { language: facts.language }),
+  ...(facts.representation === null
+    ? {}
+    : { representation: facts.representation }),
+  ...(facts.source === null ? {} : { source: facts.source }),
+});
+
+const UNAVAILABLE_FACTS: PseudocodeExportFacts = {
+  language: null,
+  representation: null,
+  source: null,
+};
 
 const bodyLines = (body: FunctionBody): readonly string[] =>
   body.available
@@ -79,6 +131,9 @@ const limitationLines = (limitations: readonly string[]): readonly string[] => {
 
 const providerLine = (identity: ExportIdentity): string =>
   `${identity.provider.name} ${identity.provider.version ?? "unknown"} (${identity.provider.id})`;
+
+const factHeader = (value: string | null): string =>
+  value === null ? "unavailable" : headerValue(value);
 
 /** Keep a provider string on one header line without control characters. */
 const headerValue = (value: string): string =>

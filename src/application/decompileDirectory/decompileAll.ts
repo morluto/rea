@@ -48,7 +48,9 @@ import {
 } from "./exportTree.js";
 import {
   bodyRecord,
+  establishedPseudocodeFields,
   functionFileText,
+  pseudocodeExportFacts,
   type FunctionBody,
 } from "./functionFile.js";
 import {
@@ -595,11 +597,13 @@ const publishOne = async (input: {
       original.sourceDescriptor === undefined
         ? { status: "unknown", reason: "source_not_available" }
         : { status: "reported", source: original.sourceDescriptor };
+    const originalFacts = pseudocodeExportFacts(original);
     const recorded = await input.session.append(
       failureRecord(input.procedure, body.fact, pseudocodeFailure(null), {
         limitations: [...new Set([...infoCaveats, ...original.limitations])],
         providerSource: originalSource,
         pseudocodeAbsence: original.pseudocodeAbsence,
+        ...establishedPseudocodeFields(originalFacts),
       }),
     );
     if (!recorded.ok) return { result: recorded, bodySupport: body.support };
@@ -668,6 +672,7 @@ const publishOne = async (input: {
     decompiled.value.sourceDescriptor === undefined
       ? { status: "unknown", reason: "source_not_available" }
       : { status: "reported", source: decompiled.value.sourceDescriptor };
+  const facts = pseudocodeExportFacts(decompiled.value);
   const pseudocode = decompiled.value.result;
   if (typeof pseudocode !== "string" || pseudocode.length === 0) {
     const reason =
@@ -694,6 +699,7 @@ const publishOne = async (input: {
           ...(decompiled.value.pseudocodeAbsence === undefined
             ? {}
             : { pseudocodeAbsence: decompiled.value.pseudocodeAbsence }),
+          ...establishedPseudocodeFields(facts),
         }),
       ),
       bodySupport: body.support,
@@ -714,6 +720,7 @@ const publishOne = async (input: {
       identity: input.identity,
       limitations: caveats,
       pseudocode,
+      facts,
     }),
     "utf8",
   );
@@ -739,6 +746,7 @@ const publishOne = async (input: {
           relativePath,
           limitations: caveats,
           providerSource: observationSource,
+          ...establishedPseudocodeFields(facts),
         }),
       ),
       bodySupport: body.support,
@@ -758,6 +766,7 @@ const publishOne = async (input: {
     body: bodyRecord(body.fact),
     // The header may truncate; the journal keeps the complete list.
     ...(caveats.length === 0 ? {} : { limitations: caveats }),
+    ...establishedPseudocodeFields(facts),
   });
   if (!appended.ok) return { result: appended, bodySupport: body.support };
   input.state.written += committed.status === "written" ? 1 : 0;
@@ -1063,6 +1072,9 @@ const failureRecord = (
     readonly limitations?: readonly string[];
     readonly providerSource?: DecompileDirectoryFunctionRecord["provider_source"];
     readonly pseudocodeAbsence?: DecompileDirectoryFunctionRecord["pseudocode_absence"];
+    readonly language?: string;
+    readonly representation?: string;
+    readonly source?: string;
   } = {},
 ): DecompileDirectoryFunctionRecord => ({
   address: procedure.address,
@@ -1082,6 +1094,11 @@ const failureRecord = (
   ...(options.limitations === undefined || options.limitations.length === 0
     ? {}
     : { limitations: [...options.limitations] }),
+  ...establishedPseudocodeFields({
+    language: options.language ?? null,
+    representation: options.representation ?? null,
+    source: options.source ?? null,
+  }),
 });
 
 /** Why a successful pseudocode observation still produced no file. */
@@ -1123,14 +1140,28 @@ const unavailableBody = (reason: string): FunctionBody => ({
 const retainedObservation = (
   session: DecompileExport,
   address: string,
-): { body: FunctionBody; options: { limitations?: readonly string[] } } => {
+): {
+  body: FunctionBody;
+  options: {
+    limitations?: readonly string[];
+    language?: string;
+    representation?: string;
+    source?: string;
+  };
+} => {
   const record = session.record(address);
   return {
     body: record?.body ?? unavailableBody("not rewritten"),
-    options:
-      record?.limitations === undefined
+    options: {
+      ...(record?.limitations === undefined
         ? {}
-        : { limitations: record.limitations },
+        : { limitations: record.limitations }),
+      ...establishedPseudocodeFields({
+        language: record?.language ?? null,
+        representation: record?.representation ?? null,
+        source: record?.source ?? null,
+      }),
+    },
   };
 };
 

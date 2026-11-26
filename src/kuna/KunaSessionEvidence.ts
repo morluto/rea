@@ -262,6 +262,7 @@ export const buildKunaExecution = (
       ...(answer.pseudocodeAbsence === undefined
         ? {}
         : { pseudocodeAbsence: answer.pseudocodeAbsence }),
+      ...(source === null ? {} : { pseudocodeSource: source.kind }),
       // Kuna's identity is in the analysis profile; the raw result records
       // only where file-backed text came from.
       ...(source === null &&
