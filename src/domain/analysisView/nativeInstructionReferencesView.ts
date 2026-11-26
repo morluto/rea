@@ -1,14 +1,17 @@
 import { z } from "zod";
-import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import { nativeInstructionSchema } from "../native/nativeInstruction.js";
 import { jsonValueByteLength } from "../jsonValueByteLength.js";
 import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import {
   createAnalysisViewResultReader,
   type AnalysisViewParent,
 } from "./analysisViewParent.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  ANALYSIS_VIEW_PAGE_BYTES as PAGE_BYTES,
+  analysisViewPageTooLarge,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import {
   boundedViewMessages,
   pageViewCoverage,
@@ -41,7 +44,6 @@ export const nativeInstructionReferenceContextSchema = z.strictObject({
 const read = createAnalysisViewResultReader(nativeInstructionSchema);
 // Reserve space for Evidence and MCP serialization expansion, as in other
 // bounded native pages. An oversized individual row stays in the parent.
-const PAGE_BYTES = 1024 * 1024;
 const DIGEST_BYTES = jsonValueByteLength({ view_digest: "0".repeat(64) }) - 1;
 
 export const projectNativeInstructionReferencesView = (
@@ -49,14 +51,8 @@ export const projectNativeInstructionReferencesView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "native-instruction-references")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "Use native-instruction-references with this source.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Use native-instruction-references with this source.",
     );
   assertOwnedView<z.output<typeof nativeInstructionReferencesRequestSchema>>(
     view,
@@ -70,18 +66,13 @@ export const projectNativeInstructionReferencesView = (
       ? source.references
       : source.incoming_references;
   const tooLarge = () =>
-    err(
-      new AnalysisResourceConstraintError(
-        "inspect_analysis_view",
-        "transport",
-        "The selected instruction-reference view cannot fit the analysis-view byte budget.",
-        { parent_evidence_id: parent.evidenceId, limit_bytes: PAGE_BYTES },
-        {
-          retryable: false,
-          remediationAction:
-            "An individual row or page context exceeds the 1,048,576-byte projection allowance. Retrieve or export the complete parent Evidence by ID, or read its local bundle.",
-        },
-      ),
+    analysisViewPageTooLarge(
+      parent.evidenceId,
+      "The selected instruction-reference view cannot fit the analysis-view byte budget.",
+      {
+        remediationAction:
+          "An individual row or page context exceeds the 1,048,576-byte projection allowance. Retrieve or export the complete parent Evidence by ID, or read its local bundle.",
+      },
     );
   // Parameters already belong to the authenticated parent; measure before
   // parsing their detached page representation.

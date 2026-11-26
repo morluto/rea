@@ -212,5 +212,4 @@ it.runIf(process.platform === "linux")(
       ),
     ).toMatchObject({ error: { code: "invalid_request" } });
   },
-  60_000,
 );

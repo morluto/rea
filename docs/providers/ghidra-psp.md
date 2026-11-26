@@ -32,9 +32,10 @@ Install the extension in the selected Ghidra distribution at
 User-home installations are not searched because REA uses an isolated analysis
 home. REA never downloads, installs, rebuilds or vendors the extension.
 
-The published compatibility experiment used Ghidra **12.1.3**, extension
-**v21.4**, PSPDEV **v20261001** and JDK 21. New public-provider results must be
-reported separately from that historical bridge experiment. The extension's
+The published compatibility experiment was recorded on Ghidra **12.1.3** (no
+longer accepted); not yet re-run on 12.2. It used extension **v21.4**, PSPDEV
+**v20261001** and JDK 21. New public-provider results must be reported
+separately from that historical bridge experiment. The extension's
 `version` property declares its compatible **Ghidra version**, not its release
 tag; the property must match the selected installation. Other same-version
 builds are not described as independently verified merely because they pass

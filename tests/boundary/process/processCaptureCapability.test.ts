@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  processCaptureOwnershipUnavailableReason,
-  probeProcessCaptureCapability,
-} from "../../../src/process/capture/ProcessCaptureCapability.js";
+import { probeProcessCaptureCapability } from "../../../src/process/capture/ProcessCaptureCapability.js";
 
 describe("process capture capability diagnostics", () => {
   it.each([
@@ -67,12 +64,6 @@ describe("process capture capability diagnostics", () => {
         "requires the Apple Swift compiler via xcrun",
       ),
     });
-  });
-
-  it("keeps the ownership limitation separate from native PTY support", () => {
-    expect(processCaptureOwnershipUnavailableReason("win32")).toContain(
-      "Windows PTY process capture",
-    );
   });
 
   it("explains Windows capture admission before loading or spawning a PTY", async () => {

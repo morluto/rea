@@ -1,5 +1,7 @@
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+} from "../../resources/index.js";
 import {
   type BinaryHardeningImage,
   type BinaryHardeningRow,
@@ -13,11 +15,17 @@ import {
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../metadata/BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import { peSubjectArchitecture } from "../../domain/peMachine.js";
+import { peImageBaseHex } from "../../domain/native/peAddressSpace.js";
 import type { PeDataDirectory } from "../../domain/peOptionalHeader.js";
-import { readPeImage } from "../metadata/PeImage.js";
-import { parsePeLoadConfig } from "../pe/PeLoadConfigParser.js";
+import {
+  readPeImage,
+  readPeImageFromReader,
+  type PeImage,
+} from "../../domain/native/peImage.js";
+import { parsePeLoadConfigFromReader } from "../pe/PeLoadConfigParser.js";
+import type { ByteSource } from "../../domain/byteSource.js";
 
 const IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA = 0x0020;
 const IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE = 0x0040;
@@ -58,7 +66,40 @@ export const readPeHardening = async (
   signal?: AbortSignal,
 ): Promise<BinaryHardeningImage> => {
   assertArtifactReadActive(signal);
-  const image = readPeImage(bytes);
+  return readPeHardeningCore(
+    (offset, length) =>
+      Promise.resolve(bytes.subarray(offset, offset + length)),
+    readPeImage(bytes),
+    artifact,
+    signal,
+  );
+};
+
+/** Same PE hardening read over a random-access handle without buffering the full image. */
+export const readPeHardeningFromHandle = async (
+  source: ByteSource,
+  artifact: PeLoadConfig["artifact"],
+  signal?: AbortSignal,
+): Promise<BinaryHardeningImage> => {
+  assertArtifactReadActive(signal);
+  const readBytes = (offset: number, length: number): Promise<Buffer> =>
+    source.prefix !== undefined && offset + length <= source.prefix.length
+      ? Promise.resolve(source.prefix.subarray(offset, offset + length))
+      : source.readRange(offset, length);
+  const image = await readPeImageFromReader({
+    size: source.size,
+    prefix: source.prefix ?? Buffer.alloc(0),
+    readRange: source.readRange,
+  });
+  return readPeHardeningCore(readBytes, image, artifact, signal);
+};
+
+const readPeHardeningCore = async (
+  readBytes: (offset: number, length: number) => Promise<Buffer>,
+  image: PeImage,
+  artifact: PeLoadConfig["artifact"],
+  signal?: AbortSignal,
+): Promise<BinaryHardeningImage> => {
   const characteristics = image.dll_characteristics;
   const flagAt = image.dll_characteristics_file_offset;
   const bit = (
@@ -78,8 +119,9 @@ export const readPeHardening = async (
   let loadConfig: PeLoadConfig | undefined;
   let loadConfigFailure = "";
   try {
-    loadConfig = await parsePeLoadConfig(
-      bytes,
+    loadConfig = await parsePeLoadConfigFromReader(
+      readBytes,
+      image,
       artifact,
       {
         path: artifact.path,
@@ -159,6 +201,7 @@ export const readPeHardening = async (
     bits: image.bits,
     byte_order: "little",
     machine: image.pe_machine,
+    image_base: peImageBaseHex(image.image_base),
     slice: null,
     rows,
   };

@@ -7,36 +7,14 @@ import {
   peLoadConfigImage,
 } from "../../src/native/pe/PeLoadConfig.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 for (const bits of [32, 64] as const) {
   cliTest(
-    `rejects non-MZ PE${String(bits)} load config across CLI and MCP`,
+    `reads a valid PE${String(bits)} load config across CLI and MCP`,
     async ({ cli }) => {
-      const root = await createTestTempDirectory("rea-pe-config-signature-");
+      const root = await createTestTempDirectory("rea-pe-config-valid-");
       const call = await cli.sharedMcpCall!();
-      for (const [name, prefix] of [
-        ["zz", Buffer.from("ZZ")],
-        ["high-bit", Buffer.from([0xcd, 0xda])],
-      ] as const) {
-        const bytes = peLoadConfigImage({ bits });
-        prefix.copy(bytes);
-        const path = join(root, `${name}.exe`);
-        await writeFile(path, bytes);
-        const result = await cli.run({
-          arguments: ["inspect-pe-load-config", path, "--json"],
-        });
-        expect(result.exitCode).toBe(1);
-        expect(result.json).toMatchObject({
-          code: "invalid_request",
-          details: { operation: "inspect_pe_load_config" },
-        });
-        const response = await call("inspect_pe_load_config", { path });
-        expect(response.isError).toBe(true);
-        expect(parseMcpToolError(response)).toEqual({ error: result.json });
-        expect((await readFile(path)).equals(bytes)).toBe(true);
-      }
       const path = join(root, "valid.exe");
       const bytes = peLoadConfigImage({ bits });
       await writeFile(path, bytes);
@@ -58,6 +36,55 @@ for (const bits of [32, 64] as const) {
     },
   );
 
+  cliTest(
+    `reports PE${bits} TLS template metadata across section extent boundaries`,
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-pe-config-padding-cli-");
+      for (const [range, virtualSize, fileOffset, section] of [
+        [[0x2010, 0x2020], 0x20, 0x1610, ".text"],
+        [[0x2010, 0x2020], 0, 0x1610, ".text"],
+        [[0x2180, 0x2280], undefined, null, ".text"],
+        [[0x2200, 0x2300], undefined, null, ".text"],
+        [[0x2010, 0x2020], 0x10, null, null],
+      ] as const) {
+        const zeroFillCallback = virtualSize === undefined;
+        await writeFile(
+          join(root, "app.exe"),
+          peLoadConfigImage({
+            bits,
+            zeroFillCallback,
+            ...(virtualSize === undefined
+              ? {}
+              : { textVirtualSize: virtualSize }),
+            rawDataRange: range,
+          }),
+        );
+        const result = await cli.run({
+          arguments: ["inspect-pe-load-config", "app.exe", "--json"],
+          cwd: root,
+        });
+        expect(result.exitCode, result.stderr).toBe(0);
+        const evidence = toolContract(
+          "inspect_pe_load_config",
+        ).outputSchema.parse(result.json);
+        const base = bits === 32 ? 0x10000000n : 0x180000000n;
+        expect(evidence.normalized_result.tls).toMatchObject({
+          start_address_of_raw_data: `0x${(base + BigInt(range[0])).toString(16)}`,
+          end_address_of_raw_data: `0x${(base + BigInt(range[1])).toString(16)}`,
+          raw_data_size: range[1] - range[0],
+          raw_data_file_offset: fileOffset,
+          raw_data_section: section,
+        });
+        expect(evidence.normalized_result.tls?.callbacks).toHaveLength(
+          zeroFillCallback ? 1 : 3,
+        );
+        expect(evidence.normalized_result.load_config?.guard_flags?.raw).toBe(
+          0x500,
+        );
+        expect(evidence.subject?.local_path).toBe(join(root, "app.exe"));
+      }
+    },
+  );
   cliTest(`reads PE${bits} TLS callbacks through the CLI`, async ({ cli }) => {
     const root = await createTestTempDirectory("rea-pe-config-cli-");
     await writeFile(join(root, "app.exe"), peLoadConfigImage({ bits }));
@@ -97,9 +124,9 @@ cliTest("fails closed at the callback limit", async ({ cli }) => {
   expect(result.json).toMatchObject({
     code: "resource_constraint",
     retryable: false,
-    details: { reported_limits: { limit: "callbacks", maximum: 1 } },
+    details: { reported_limits: { boundary: "callbacks", maximum: 1 } },
     remediation: {
-      action: expect.stringContaining("Raise max_callbacks above 1"),
+      action: expect.stringContaining("Pass a larger --max-callbacks"),
     },
   });
   const retried = await cli.run({

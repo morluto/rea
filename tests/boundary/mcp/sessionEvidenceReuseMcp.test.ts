@@ -2,7 +2,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import {
@@ -21,19 +21,17 @@ import {
   type WithAdmittedAnalysis,
 } from "../../../src/server/analysisAdmission.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { registerEvidenceTools } from "../../../src/server/registerEvidenceTools.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createFixtureProviderIdentity } from "../../fixtures/analysisExecution.js";
 import { createTestProviderRouter } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it.each(["normal", "copied", "parameters", "forged", "source"] as const)(
   "preserves direct observation identity across the %s session boundary",
   async (mode) => {
-    const provider = {
-      id: "fixture",
-      name: "Fixture analysis provider",
-      version: "1",
-    };
+    const provider = createFixtureProviderIdentity();
     const path = join(
       await createTestTempDirectory("rea-session-reuse-"),
       "fixture.com",
@@ -45,11 +43,13 @@ it.each(["normal", "copied", "parameters", "forged", "source"] as const)(
       () => ({
         execute: async () =>
           ok({
-            ...createAnalysisExecution(["0x100"], provider, {
-              ...(mode === "source" && source !== undefined
+            ...createAnalysisExecution(
+              ["0x100"],
+              provider,
+              mode === "source" && source !== undefined
                 ? { sourceEvidence: [source] }
-                : {}),
-            }),
+                : {},
+            ),
             ...(mode === "forged" && forged !== undefined
               ? { evidenceId: forged.evidence_id }
               : {}),
@@ -62,7 +62,9 @@ it.each(["normal", "copied", "parameters", "forged", "source"] as const)(
       },
     );
     const session = new BinarySession(router);
-    const opened = await session.open(path, { formatHint: "dos-com" });
+    const opened = await session.open(path, {
+      loadSelection: { format: "dos-com" },
+    });
     if (!opened.ok) throw opened.error;
     source = createEvidence(
       opened.value,
@@ -104,23 +106,34 @@ it.each(["normal", "copied", "parameters", "forged", "source"] as const)(
       ({ name }) => name === "xrefs",
     );
     if (contract === undefined) throw new Error("Missing xrefs contract");
-    registerEvidenceTools(server, [contract], {
-      logger: silentLogger,
-      activeTarget: () => session.activeTarget(),
-      recordEvidence: session.recordEvidence.bind(session),
-      evidenceById: session.evidenceForAnalysis.bind(session),
-      admitRecovery: session.admitRecoveryObservation.bind(session),
-      withAdmittedAnalysis: admitted,
-      ...(mode === "parameters"
-        ? {
-            parametersForExecution: (_operation, parameters) => ({
-              ...parameters,
-              address: "0x300",
-            }),
-          }
-        : {}),
-    });
-    const client = new Client({ name: "reuse-control", version: "1" });
+    registerServiceTools(
+      server,
+      {
+        providerOperations: {
+          contracts: [contract],
+          activeTarget: () => session.activeTarget(),
+          admitRecovery: session.admitRecoveryObservation.bind(session),
+          ...(mode === "parameters"
+            ? {
+                parametersForExecution: (_operation, parameters) => ({
+                  ...parameters,
+                  address: "0x300",
+                }),
+              }
+            : {}),
+        },
+      },
+      {
+        logger: silentLogger,
+        recordEvidence: session.recordEvidence.bind(session),
+        evidenceById: session.evidenceForAnalysis.bind(session),
+        withAdmittedAnalysis: admitted,
+      },
+    );
+    const client = new Client(
+      { name: "reuse-control", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [ct, st] = InMemoryTransport.createLinkedPair();
     try {
       await server.connect(st);
@@ -159,11 +172,7 @@ it("preserves the selected path when reusing an identical observation for a diff
   const bytes = Buffer.from([0xb8, 0, 0x4c, 0xcd, 0x21]);
   await writeFile(first, bytes);
   await writeFile(second, bytes);
-  const provider = {
-    id: "fixture",
-    name: "Fixture analysis provider",
-    version: "1",
-  };
+  const provider = createFixtureProviderIdentity();
   const router = createTestProviderRouter(
     () => ({
       execute: async () => ok(createAnalysisExecution(["0x200"], provider)),
@@ -176,7 +185,10 @@ it("preserves the selected path when reusing an identical observation for a diff
   );
   const session = new BinarySession(router);
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "reused-subject", version: "1" });
+  const client = new Client(
+    { name: "reused-subject", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [ct, st] = InMemoryTransport.createLinkedPair();
   try {
     await server.connect(st);

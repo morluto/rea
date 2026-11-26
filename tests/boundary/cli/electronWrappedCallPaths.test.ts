@@ -5,22 +5,23 @@ import { runInNewContext } from "node:vm";
 import { stripTypeScriptTypes } from "node:module";
 import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
-import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
 import {
-  cliTest,
-  runFileCli,
-  type TestCli,
-} from "../../support/cli/cliFixture.js";
+  lazyLocalToolsMcp,
+  type connectLocalToolsMcp,
+} from "../../fixtures/localToolsMcp.js";
+import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
+import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { applicationFeatureTraceResultSchema } from "../../../src/domain/javascript/javascriptFeatureTraceSchemas.js";
 import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplication.js";
 import {
   analysisViewResultSchema,
   javascriptApplicationSummaryViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 
 const sourcePositionSchema = z.object({ line: z.number(), column: z.number() });
+const silentCliEnv = { REA_LOG_LEVEL: "silent" } as const;
+const sharedMcp = lazyLocalToolsMcp();
 const callPathConditionSchema = z.object({
   expression: z.string(),
   location: z.object({
@@ -203,6 +204,7 @@ const analyze = async (cli: TestCli, extra = "") => {
   });
   const output = await cli.run({
     arguments: ["analyze-javascript-application", root, "--json"],
+    environment: silentCliEnv,
   });
   expect(output.exitCode, output.stderr).toBe(0);
   const { normalized_result: result } = z
@@ -281,8 +283,9 @@ cliTest(
         direction: "outgoing",
       }),
     );
-    const traced = await runFileCli(cli, {
+    const traced = await cli.run({
       arguments: ["trace-application-feature", input, "--json"],
+      environment: silentCliEnv,
     });
     expect(traced.exitCode).toBe(0);
     const { normalized_result: trace } = z
@@ -402,7 +405,7 @@ cliTest(
   async ({ cli }) => {
     for (const surface of ["CLI", "stdio MCP"] as const) {
       const connection =
-        surface === "stdio MCP" ? await connectLocalToolsMcp() : undefined;
+        surface === "stdio MCP" ? await sharedMcp() : undefined;
       const artifacts = new Set<string>();
       for (const fixture of fallthroughCases) {
         const root = await createTestTempDirectory(
@@ -483,8 +486,9 @@ cliTest(
       "main.cjs": `const { ipcMain, clipboard } = require("electron");
         ipcMain.handle("nested:write", (event, value) => clipboard.writeText(value));`,
     });
-    const output = await runFileCli(cli, {
+    const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
+      environment: silentCliEnv,
     });
     expect(output.exitCode, output.stderr).toBe(0);
     const { normalized_result: application } = z
@@ -525,8 +529,9 @@ cliTest(
         direction: "outgoing",
       }),
     );
-    const traced = await runFileCli(cli, {
+    const traced = await cli.run({
       arguments: ["trace-application-feature", traceInput, "--json"],
+      environment: silentCliEnv,
     });
     expect(traced.exitCode).toBe(0);
     const { normalized_result: trace } = z
@@ -553,8 +558,9 @@ cliTest(
       "main.js": `const { ipcMain } = require("electron");
         ipcMain.on("write", (event) => event.sender.copy());`,
     });
-    const output = await runFileCli(cli, {
+    const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
+      environment: silentCliEnv,
     });
     expect(output.exitCode).toBe(0);
     const { normalized_result: application } = z
@@ -610,8 +616,9 @@ cliTest(
       "main.js": `const { ipcMain } = require("electron");
         ipcMain.handle("nested:write", (event, value) => value);`,
     });
-    const output = await runFileCli(cli, {
+    const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
+      environment: silentCliEnv,
     });
     expect(output.exitCode).toBe(0);
     const { normalized_result: application } = z
@@ -643,8 +650,9 @@ cliTest(
         direction: "outgoing",
       }),
     );
-    const traced = await runFileCli(cli, {
+    const traced = await cli.run({
       arguments: ["trace-application-feature", traceInput, "--json"],
+      environment: silentCliEnv,
     });
     expect(traced.exitCode).toBe(0);
     const { normalized_result: trace } = z
@@ -660,7 +668,7 @@ for (const surface of ["CLI", "stdio MCP"] as const) {
     `retains explicit nested contextBridge members after an unknown spread through ${surface}`,
     async ({ cli }) => {
       const connection =
-        surface === "stdio MCP" ? await connectLocalToolsMcp() : undefined;
+        surface === "stdio MCP" ? await sharedMcp() : undefined;
       const analyzeBridge = async (api: string) => {
         const root = await createTestTempDirectory(
           "rea-electron-spread-bridge-members-",
@@ -726,7 +734,9 @@ for (const surface of ["CLI", "stdio MCP"] as const) {
           contextBridge.exposeInMainWorld("direct", { d: () => ipcRenderer.send("direct:d") });
           named("label", globalThis.bridgeName);`,
       });
-      const application = await analyzeJavaScriptDirectory(surface, cli, root);
+      const application = await analyzeJavaScriptDirectory(surface, cli, root, {
+        mcpCall: surface === "stdio MCP" ? (await sharedMcp()).call : undefined,
+      });
       const bridges = application.graph.nodes
         .filter((node) => node.kind === "context-bridge-api")
         .flatMap((node) => node.observations)
@@ -913,8 +923,9 @@ cliTest(
         e.ipcMain.on("shallow:run", event => event.sender.copy());
         e.ipcMain.on("deep:run", event => event.sender.copy());`,
     });
-    const output = await runFileCli(cli, {
+    const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
+      environment: silentCliEnv,
     });
     expect(output.exitCode).toBe(0);
     const { normalized_result: application } = z
@@ -967,8 +978,9 @@ cliTest(
       "main.cjs": `const e=require("electron");
         e.ipcMain.on("shared:run", event => event.sender.copy());`,
     });
-    const output = await runFileCli(cli, {
+    const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
+      environment: silentCliEnv,
     });
     expect(output.exitCode, output.stderr).toBe(0);
     const { normalized_result: application } = z
@@ -1002,8 +1014,9 @@ cliTest(
       join(root, "main.cjs"),
       'const e=require("electron"); e.ipcMain.on("shared:run", () => {}); e.ipcMain.on("shared:run", () => {});',
     );
-    const competing = await runFileCli(cli, {
+    const competing = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
+      environment: silentCliEnv,
     });
     expect(competing.exitCode, competing.stderr).toBe(0);
     const { normalized_result: competingApplication } = z
@@ -1033,8 +1046,9 @@ cliTest(
       "main.cjs": `const { ipcMain } = require("electron");
         ipcMain.on("empty:key", event => event.sender.copy());`,
     });
-    const output = await runFileCli(cli, {
+    const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
+      environment: silentCliEnv,
     });
     expect(output.exitCode).toBe(0);
     const { normalized_result: application } = z
@@ -1303,8 +1317,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       }),
     );
     await writeFixtureFiles(root, files);
-    const connection =
-      surface === "stdio MCP" ? await connectLocalToolsMcp() : undefined;
+    const connection = surface === "stdio MCP" ? await sharedMcp() : undefined;
     if (connection !== undefined) {
       const failure = await connection.call("analyze_javascript_application", {
         input_path: join(root, "absent"),

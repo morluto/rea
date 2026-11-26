@@ -19,11 +19,12 @@ import {
   systemProcessOwnershipHost,
 } from "../process/ProcessOwnershipObservation.js";
 import { ApktoolWorkspace } from "./ApktoolWorkspace.js";
-import { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
+import { createApktoolResourceAnalysisService } from "../application/ProviderOperationServices.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   apktoolRequestSchema,
   apktoolResultSchemas,
+  DEFAULT_APKTOOL_STRING_TABLE_BYTES,
 } from "../domain/apktool/apktoolResourceAnalysis.js";
 import type { ApktoolRequest } from "../domain/apktool/apktoolResourceAnalysis.js";
 
@@ -183,7 +184,7 @@ it("recovers later string pages and an exhausted XML admission on the same APK",
   const apk = await apkFixture(root);
   const provider = providerOver(command);
   onTestFinished(() => provider.close());
-  const service = new ApktoolResourceAnalysisService(provider);
+  const service = createApktoolResourceAnalysisService(provider);
   const inspect = async (input: Record<string, unknown>) => {
     const outcome = await service.execute("decode_android_resources", {
       path: apk.path,
@@ -191,7 +192,7 @@ it("recovers later string pages and an exhausted XML admission on the same APK",
     });
     if (!outcome.ok) throw outcome.error;
     expect(outcome.value.subject).toMatchObject({
-      digest: { sha256: apk.sha256 },
+      identity: { sha256: apk.sha256 },
     });
     return apktoolResultSchemas.decode_android_resources.parse(
       outcome.value.normalized_result,
@@ -240,14 +241,14 @@ it("returns table-only facts for a single selected primary table", async () => {
   const apk = await apkFixture(root);
   const provider = providerOver(command);
   onTestFinished(() => provider.close());
-  const outcome = await new ApktoolResourceAnalysisService(provider).execute(
+  const outcome = await createApktoolResourceAnalysisService(provider).execute(
     "decode_android_resources",
     { path: apk.path, string_tables_only: true },
   );
   if (!outcome.ok) throw outcome.error;
   expect(outcome.value).toMatchObject({
     parameters: { path: apk.path, string_tables_only: true },
-    subject: { digest: { sha256: apk.sha256 } },
+    subject: { identity: { sha256: apk.sha256 } },
     normalized_result: {
       strings: [],
       string_tables: [
@@ -291,14 +292,14 @@ sdkInfo:
   const original = await readFile(apk.path);
   const provider = providerOver(command);
   onTestFinished(() => provider.close());
-  const outcome = await new ApktoolResourceAnalysisService(provider).execute(
+  const outcome = await createApktoolResourceAnalysisService(provider).execute(
     "decode_android_resources",
     { path: apk.path },
   );
   if (!outcome.ok) throw outcome.error;
   expect(outcome.value).toMatchObject({
     parameters: { path: apk.path },
-    subject: { digest: { sha256: apk.sha256 } },
+    subject: { identity: { sha256: apk.sha256 } },
     normalized_result: {
       client: { apktool_version: "3.0.3" },
       target: { path: apk.path, sha256: apk.sha256, bytes: apk.bytes },
@@ -355,7 +356,7 @@ it.each([
       const observation = {
         operation: "decode_android_resources",
         parameters: { path: apk.path, locales: ["de"] },
-        subject: { local_path: apk.path, digest: { sha256: apk.sha256 } },
+        subject: { local_path: apk.path, identity: { sha256: apk.sha256 } },
         normalized_result: {
           metadata: { package_name: "com.rea.apktool.probe" },
           manifest: `${REAL_MANIFEST}\n`,
@@ -445,7 +446,7 @@ it.each(
       const observation = result.error.partialObservation;
       expect(observation).toMatchObject({
         operation: "decode_android_resources",
-        subject: { local_path: apk.path, digest: { sha256: apk.sha256 } },
+        subject: { local_path: apk.path, identity: { sha256: apk.sha256 } },
         normalized_result: {
           coverage: "partial",
           metadata: {
@@ -580,20 +581,53 @@ it.each([
   expect(result.error.message).toContain("apktool.yml");
 });
 
-it("preserves empty resource strings and reports markup omissions as partial", async () => {
+it("preserves primary strings and reports markup omissions in default and localized tables", async () => {
   const stringsXml =
     '<resources><string name="empty"/><string name="raw">  A &amp; B  </string><string name="styled">Hello <b>world</b></string></resources>';
-  const { command, root } = await writeApktoolStub(decodeStub({ stringsXml }));
+  const { command, root } = await writeApktoolStub((root) =>
+    decodeStub({ stringsXml, withGerman: false })(root).replace(
+      'if [ "$1" = "d" ]; then',
+      `if [ "$1" = "d" ]; then
+    mkdir -p "$5/res/values-de"
+    printf '<resources><string name="styled">Hallo <b>Welt</b></string></resources>' > "$5/res/values-de/strings.xml"`,
+    ),
+  );
   const apk = await apkFixture(root);
-  const result = await evidenceResult(providerOver(command), {
-    operation: "decode_android_resources",
-    input: { path: apk.path, include_strings: true },
+  const provider = providerOver(command);
+  onTestFinished(() => provider.close());
+  const observation = await createApktoolResourceAnalysisService(
+    provider,
+  ).execute("decode_android_resources", {
+    path: apk.path,
+    include_strings: true,
+    locales: ["de"],
   });
+  if (!observation.ok) throw observation.error;
+  const result = apktoolResultSchemas.decode_android_resources.parse(
+    observation.value.normalized_result,
+  );
   expect(result.strings).toEqual([
     { name: "empty", value: "" },
     { name: "raw", value: "  A &amp; B  " },
   ]);
   expect(result.coverage).toBe("partial");
+  expect(result.string_tables).toMatchObject([
+    {
+      locale: null,
+      status: "present",
+      total_count: 2,
+      unparsed_count: 1,
+      coverage: "partial",
+    },
+    {
+      locale: "de",
+      status: "present",
+      strings: [],
+      total_count: 0,
+      unparsed_count: 1,
+      coverage: "partial",
+    },
+  ]);
 });
 
 it("preserves literal U+FFFD in decoded XML with complete coverage", async () => {
@@ -693,13 +727,27 @@ it("notes a missing default strings table without strings", async () => {
   const apk = await apkFixture(root);
   const execution = await providerOver(command).execute({
     operation: "decode_android_resources",
-    input: { path: apk.path, include_strings: true },
+    input: {
+      path: apk.path,
+      include_strings: true,
+      max_string_table_bytes: DEFAULT_APKTOOL_STRING_TABLE_BYTES,
+    },
   });
   if (!execution.ok) throw execution.error;
-  expect(execution.value.result).toMatchObject({ strings: [] });
-  expect(execution.value.limitations).toContain(
-    "No default res/values/strings.xml was found in the decoded workspace",
-  );
+  expect(execution.value.result).toMatchObject({
+    strings: [],
+    coverage: "complete",
+    string_tables: [
+      {
+        locale: null,
+        status: "missing",
+        strings: [],
+        total_count: 0,
+        unparsed_count: 0,
+        coverage: "complete",
+      },
+    ],
+  });
 });
 
 it("reports a missing launcher as a capability gap with recovery", async () => {
@@ -805,7 +853,7 @@ it("uses an owned APK snapshot and framework cache and resolves regional locales
     ),
   );
   const apk = await apkFixture(root);
-  const observation = await new ApktoolResourceAnalysisService(
+  const observation = await createApktoolResourceAnalysisService(
     providerOver(command),
   ).execute("decode_android_resources", {
     path: apk.path,
@@ -815,12 +863,8 @@ it("uses an owned APK snapshot and framework cache and resolves regional locales
   if (!observation.ok) throw observation.error;
   expect(observation.value.subject).toMatchObject({
     local_path: apk.path,
-    format: "apk",
-    digest: { sha256: apk.sha256 },
+    identity: { format: "apk", sha256: apk.sha256 },
   });
-  expect(observation.value.limitations).not.toContainEqual(
-    expect.stringMatching(/artifact identity.*unavailable/iu),
-  );
   expect(await readFile(apk.path, "utf8")).toBe("changed original");
   const result = apktoolResultSchemas.decode_android_resources.parse(
     observation.value.normalized_result,
@@ -848,7 +892,7 @@ it("shares one decode across default and selected locale tables", async () => {
     ),
   );
   const apk = await apkFixture(root);
-  const observation = await new ApktoolResourceAnalysisService(
+  const observation = await createApktoolResourceAnalysisService(
     providerOver(command),
   ).execute("decode_android_resources", {
     path: apk.path,
@@ -915,7 +959,7 @@ it("reuses normalized directory table for locale aliases without extra reads", a
     ),
   );
   const apk = await apkFixture(root);
-  const observation = await new ApktoolResourceAnalysisService(
+  const observation = await createApktoolResourceAnalysisService(
     providerOver(command),
   ).execute("decode_android_resources", {
     path: apk.path,
@@ -978,7 +1022,7 @@ it.each([2000, 2001])(
     const apk = await apkFixture(root);
     const provider = providerOver(command);
     try {
-      const observation = await new ApktoolResourceAnalysisService(
+      const observation = await createApktoolResourceAnalysisService(
         provider,
       ).execute("decode_android_resources", {
         path: apk.path,
@@ -1021,7 +1065,7 @@ it("skips all string tables when include_strings is false despite locales reques
     ),
   );
   const apk = await apkFixture(root);
-  const observation = await new ApktoolResourceAnalysisService(
+  const observation = await createApktoolResourceAnalysisService(
     providerOver(command),
   ).execute("decode_android_resources", {
     path: apk.path,
@@ -1034,38 +1078,6 @@ it("skips all string tables when include_strings is false despite locales reques
   );
   expect(result.string_tables).toEqual([]);
   expect(result.strings).toEqual([]);
-});
-
-it("marks table with styled markup present with partial coverage and unparsed count", async () => {
-  const { command, root } = await writeApktoolStub((root) =>
-    decodeStub({ withGerman: false })(root).replace(
-      'if [ "$1" = "d" ]; then',
-      `if [ "$1" = "d" ]; then
-    mkdir -p "$5/res/values-de"
-    printf '<resources><string name="styled">Hallo <b>Welt</b></string></resources>' > "$5/res/values-de/strings.xml"`,
-    ),
-  );
-  const apk = await apkFixture(root);
-  const observation = await new ApktoolResourceAnalysisService(
-    providerOver(command),
-  ).execute("decode_android_resources", {
-    path: apk.path,
-    include_strings: true,
-    locales: ["de"],
-  });
-  if (!observation.ok) throw observation.error;
-  const result = apktoolResultSchemas.decode_android_resources.parse(
-    observation.value.normalized_result,
-  );
-  const deTable = result.string_tables?.find((t) => t.locale === "de");
-  expect(deTable).toEqual({
-    locale: "de",
-    status: "present",
-    strings: [],
-    total_count: 0,
-    unparsed_count: 1,
-    coverage: "partial",
-  });
 });
 
 it("skips remaining tables without reading or parsing once aggregate string budget is exhausted", async () => {
@@ -1086,7 +1098,7 @@ it("skips remaining tables without reading or parsing once aggregate string budg
   const bigStrings = `<resources>${Array.from({ length: 2000 }, (_, i) => `<string name="s_${String(i)}">val</string>`).join("")}</resources>`;
   await writeFile(join(root, "big-strings.xml"), bigStrings);
   const apk = await apkFixture(root);
-  const observation = await new ApktoolResourceAnalysisService(
+  const observation = await createApktoolResourceAnalysisService(
     providerOver(command),
   ).execute("decode_android_resources", {
     path: apk.path,
@@ -1118,15 +1130,27 @@ it("marks an oversized strings document partial without claiming it is missing",
   const apk = await apkFixture(root);
   const result = await providerOver(command).execute({
     operation: "decode_android_resources",
-    input: { path: apk.path, include_strings: true },
+    input: {
+      path: apk.path,
+      include_strings: true,
+      max_string_table_bytes: DEFAULT_APKTOOL_STRING_TABLE_BYTES,
+    },
   });
   if (!result.ok) throw result.error;
   expect(result.value.result).toMatchObject({
     coverage: "partial",
     strings: [],
+    string_tables: [
+      {
+        locale: null,
+        status: "oversized",
+        strings: [],
+        total_count: null,
+        unparsed_count: null,
+        coverage: "partial",
+      },
+    ],
   });
-  expect(result.value.limitations.join(" ")).toContain("exceeds");
-  expect(result.value.limitations.join(" ")).not.toContain("No default");
 });
 
 describe("truncated manifest prefixes", () => {
@@ -1159,9 +1183,6 @@ describe("truncated manifest prefixes", () => {
       manifest: manifest.slice(0, 512 * 1024),
       metadata: { package_name: null, version_name: "1.2.3" },
     });
-    expect(result.value.limitations.join(" ")).toContain(
-      "manifest is truncated",
-    );
   });
 });
 
@@ -1228,7 +1249,7 @@ it("retains completed Evidence and live cleanup until a denied workspace removal
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(result.error.partialObservation).toMatchObject({
       operation: "decode_android_resources",
-      subject: { local_path: apk.path, digest: { sha256: apk.sha256 } },
+      subject: { local_path: apk.path, identity: { sha256: apk.sha256 } },
       normalized_result: {
         metadata: { package_name: "com.rea.apktool.probe" },
         strings: [
@@ -1303,7 +1324,11 @@ it.each([
       const result = await provider.execute(
         {
           operation: "decode_android_resources",
-          input: { path: apk.path, include_strings: true },
+          input: {
+            path: apk.path,
+            include_strings: true,
+            max_string_table_bytes: DEFAULT_APKTOOL_STRING_TABLE_BYTES,
+          },
         },
         { signal: controller.signal },
       );
@@ -1321,9 +1346,15 @@ it.each([
       });
       if (stringsXml !== undefined)
         expect(result.error.partialObservation).toMatchObject({
-          limitations: expect.arrayContaining([
-            expect.stringContaining("entry counts are unknown"),
-          ]),
+          normalized_result: {
+            string_tables: [
+              {
+                status: "malformed",
+                total_count: null,
+                unparsed_count: null,
+              },
+            ],
+          },
         });
       denied = false;
       await provider.close();
@@ -1371,7 +1402,7 @@ it.each(["decode", "projection"] as const)(
       expect(controller.signal.aborted).toBe(true);
       expect(result.error._tag).toBe(
         stage === "decode"
-          ? "AnalysisUnsupportedTargetError"
+          ? "AnalysisTargetFailureError"
           : "AnalysisProtocolError",
       );
       if (stage === "decode")
@@ -1387,7 +1418,10 @@ it.each(["decode", "projection"] as const)(
             }
           : {
               operation: "decode_android_resources",
-              subject: { local_path: apk.path, digest: { sha256: apk.sha256 } },
+              subject: {
+                local_path: apk.path,
+                identity: { sha256: apk.sha256 },
+              },
               normalized_result: {
                 coverage: "partial",
                 metadata: { package_name: "com.rea.apktool.probe" },
@@ -1509,7 +1543,7 @@ it.each(["first-selected.apk", "second-selected.apk"])(
   },
 );
 
-it("reports launcher disappearance after version admission as a provider failure", async () => {
+it("reports launcher disappearance after version admission as apktool unavailable", async () => {
   const { command, root } = await writeApktoolStub(
     () =>
       `if [ "$1" = "--version" ]; then rm -- "$0"; ${VERSION_BLOCK}; exit 0; fi`,
@@ -1522,9 +1556,14 @@ it("reports launcher disappearance after version admission as a provider failure
       input: { path: apk.path, include_strings: true },
     });
     if (result.ok) throw new Error("Expected missing launcher");
+    // The shared launch owner classifies the real ENOENT spawn failure.
     expect(result.error).toMatchObject({
-      _tag: "ProviderAdapterError",
-      diagnostics: { target_path: apk.path, selected_command: command },
+      _tag: "AnalysisCapabilityUnavailableError",
+      providerId: "apktool",
+      diagnostics: {
+        boundary: "provider-launch",
+        system_code: "ENOENT",
+      },
     });
     expect(projectAnalysisError(result.error).code).not.toBe(
       "unsupported_target",
@@ -1715,33 +1754,34 @@ it.each([
     try {
       const result = await provider.execute({
         operation: "decode_android_resources",
-        input: { path: apk.path, include_strings: true },
+        input: {
+          path: apk.path,
+          include_strings: true,
+          max_string_table_bytes: DEFAULT_APKTOOL_STRING_TABLE_BYTES,
+        },
       });
       if (!result.ok) throw result.error;
       expect(result.value.result).toMatchObject({
         strings,
         target: { sha256: apk.sha256 },
         coverage: "partial",
+        string_tables: [
+          kind === "unsupported"
+            ? {
+                locale: null,
+                status: "present",
+                unparsed_count: 2,
+                coverage: "partial",
+              }
+            : {
+                locale: null,
+                status: "malformed",
+                total_count: null,
+                unparsed_count: null,
+                coverage: "partial",
+              },
+        ],
       });
-      const limitations = result.value.limitations.join("\n");
-      if (kind === "unsupported") {
-        expect(limitations).toMatch(/omitted[^\n]*2/iu);
-        expect(limitations).toMatch(
-          /omitted.*unsupported markup.*missing names/iu,
-        );
-        expect(limitations).not.toContain("entry counts are unknown");
-      } else {
-        expect(limitations).toContain(
-          'String table "res/values/strings.xml" could not be projected:',
-        );
-        expect(limitations).toContain("entry counts are unknown");
-        expect(limitations).not.toContain("String entries omitted");
-        expect(limitations).toContain(
-          kind === "wrong_root"
-            ? "root must be <resources>"
-            : "XML is not well-formed",
-        );
-      }
     } finally {
       await provider.close();
     }
@@ -1778,5 +1818,27 @@ it("reports the owned-process prerequisite as Apktool unavailability, not a prob
   expect(projected.details).toMatchObject({
     provider_id: "process-ownership",
     reason: expect.stringContaining("spawn ps ENOENT") as unknown,
+  });
+});
+
+it("matches the launcher variable by the selected host's environment rules", async () => {
+  const stub = await writeApktoolStub(() => VERSION_BLOCK);
+  // A double leading slash gives Win32 a UNC root and still opens the POSIX fixture.
+  const command = `/${stub.command}`;
+  // Windows environment names are case-insensitive; POSIX names are exact.
+  const environment = { rea_apktool_command: command, PATH: "" };
+  const windows = new ApktoolProvider({ environment, platform: "win32" });
+  onTestFinished(() => windows.close());
+  expect(await windows.inspectAvailability()).toMatchObject({
+    status: "available",
+    diagnostics: {
+      selected_command: command,
+      command_source: "environment",
+    },
+  });
+  const posix = new ApktoolProvider({ environment, platform: "linux" });
+  onTestFinished(() => posix.close());
+  expect(await posix.inspectAvailability()).not.toMatchObject({
+    diagnostics: { selected_command: command },
   });
 });

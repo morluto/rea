@@ -354,8 +354,9 @@ it.each([false, true])(
       now: observedAt,
       apiRequest,
     });
-    expect(report.scan.workflowRunPages).toBe(5);
+    expect(report.scan.workflowRunPages).toBe(10);
     expect(report.scan.workflowRunInventoryComplete).toBe(false);
+    expect(report.lookbackHours).toBe(12);
     const firstPull = report.pullRequests[0];
     if (firstPull === undefined) throw new Error("fixture PR was not scanned");
     expect(firstPull.ci).toMatchObject({
@@ -399,6 +400,46 @@ it("keeps the result unknown when the head changes between API snapshots", async
     errors: ["pull_request_identity_changed_during_scan"],
   });
 });
+
+it.each([
+  { change: { state: "closed" }, hasRun: false },
+  { change: { draft: true }, hasRun: false },
+  { change: { state: "closed" }, hasRun: true },
+  { change: { draft: true }, hasRun: true },
+])(
+  "does not diagnose missing CI after a pull request becomes ineligible: %j",
+  async ({ change, hasRun }) => {
+    const report = await collectPrCiHealth({
+      repository: "owner/rea",
+      repositoryId: 11,
+      defaultBranch: "main",
+      now: observedAt,
+      apiRequest: async (_method, endpoint) => {
+        if (endpoint.includes("/pulls?")) return [rawPull(63)];
+        if (endpoint.includes("/actions/workflows/ci.yml/runs?"))
+          return {
+            workflow_runs: hasRun ? [run({ head_branch: "feature-63" })] : [],
+          };
+        return rawPull(63, { mergeable: true, ...change });
+      },
+    });
+    expect(report.pullRequests[0]).toMatchObject({
+      eligibilityChangedDuringScan: true,
+      ci: {
+        category: "unknown",
+        reason: "pull_request_eligibility_changed_during_scan",
+        runs: hasRun
+          ? [expect.objectContaining({ id: 77, conclusion: "success" })]
+          : [],
+      },
+    });
+    expect(report.counts.missing).toBe(0);
+    expect(report.scan).toMatchObject({
+      status: "partial",
+      errors: ["pull_request_eligibility_changed_during_scan"],
+    });
+  },
+);
 
 it("public CLI uses only GET and produces a report from fixture GitHub responses", async () => {
   const fixture = await createFixture();
@@ -544,6 +585,48 @@ it.each([
   },
 );
 
+it.each([
+  ["2026-10-13T01:00:00Z", "completed_failure"],
+  ["2026-10-12T23:30:00Z", "completed_success"],
+  ["2026-10-13T00:00:00Z", "unknown"],
+  ["2026-10-12T23:00:00Z", "unknown"],
+  ["invalid", "unknown"],
+  ["2026-10-13T01:00:00Z", "queued_pending_executing", "in_progress"],
+  ["2026-10-13T01:00:00Z", "unknown", "queued"],
+])(
+  "uses the attempt start %s to order a retry and a separate run",
+  (startedAt, category, status = "completed") => {
+    const retried = run({
+      id: 78,
+      run_attempt: 2,
+      created_at: "2026-10-12T23:00:00Z",
+      run_started_at: startedAt,
+      status,
+      conclusion: "failure",
+    });
+    const fresh = run({ run_attempt: 1 });
+    for (const candidates of [
+      [fresh, retried],
+      [retried, fresh],
+    ]) {
+      const report = classifyPrCi({
+        pull: validPull(),
+        runs: candidates.map((run) => ({
+          run,
+          basis: "event_pr_number_and_head_sha",
+        })),
+        ambiguousRuns: [],
+        runsComplete: true,
+        pullRequestInventoryComplete: true,
+      });
+      expect(report.category).toBe(category);
+      expect(report.runs.find(({ id }) => id === 78)?.startedAt).toBe(
+        startedAt,
+      );
+    }
+  },
+);
+
 it("does not let an older proven run hide a newer run with an unverified repository ID", async () => {
   const pull = rawPull(42);
   const older = run({
@@ -598,6 +681,32 @@ it("keeps a proven newest run even when two older matched runs have equal timest
   expect(result.runs).toHaveLength(3);
 });
 
+it("queries workflow runs with full ISO timestamp precision across the configured hour window", async () => {
+  const endpoints: string[] = [];
+  const midDay = Date.parse("2026-10-14T18:17:00Z");
+  const report = await collectPrCiHealth({
+    repository: "owner/rea",
+    repositoryId: 11,
+    defaultBranch: "main",
+    now: midDay,
+    apiRequest: async (_method, endpoint) => {
+      endpoints.push(endpoint);
+      if (endpoint.includes("/pulls?"))
+        return [
+          rawPull(91, { mergeable: true, created_at: "2026-10-14T12:00:00Z" }),
+          rawPull(92, { mergeable: true, created_at: "2026-10-14T05:00:00Z" }),
+        ];
+      return { workflow_runs: [] };
+    },
+  });
+  expect(report.lookbackHours).toBe(12);
+  expect(report.scan.cutoff).toBe("2026-10-14T06:17:00.000Z");
+  expect(report.pullRequests.map((pull) => pull.number)).toEqual([91]);
+  expect(endpoints).toContain(
+    "repos/owner/rea/actions/workflows/ci.yml/runs?event=pull_request&created=%3E%3D2026-10-14T06%3A17%3A00.000Z&per_page=100&page=1",
+  );
+});
+
 function run(overrides: Partial<PrCiWorkflowRun> = {}): PrCiWorkflowRun {
   return {
     id: 77,
@@ -617,7 +726,7 @@ function rawPull(number: number, overrides: Record<string, unknown> = {}) {
   return {
     number,
     draft: false,
-    created_at: "2026-10-13T00:00:00Z",
+    created_at: "2026-10-13T18:00:00Z",
     html_url: `https://github.com/owner/rea/pull/${String(number)}`,
     base: { ref: "main", repo: { id: 11 } },
     head: {

@@ -3,6 +3,8 @@ import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
+import { validateRepository } from "./github-api.mjs";
+
 const execFileAsync = promisify(execFile);
 const MAX_BUFFER = 8 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -18,11 +20,12 @@ const PREFIX_PATTERNS = [
   /^rea-static-v1-[A-Za-z0-9]+-[A-Za-z0-9]+-$/u,
   /^rea-static-deep-v1-[A-Za-z0-9]+-[A-Za-z0-9]+-$/u,
   /^rea-portable-build-v2-[A-Za-z0-9]+-[A-Za-z0-9]+-$/u,
+  /^rea-windows-build-v1-[A-Za-z0-9]+-[A-Za-z0-9]+-$/u,
   /^knip-meta-v1-[A-Za-z0-9]+-$/u,
 ];
 
 /** Reject prefixes that could match npm downloads or another platform. */
-export function assertRetentionPrefix(prefix) {
+function assertRetentionPrefix(prefix) {
   if (
     typeof prefix !== "string" ||
     !PREFIX_PATTERNS.some((pattern) => pattern.test(prefix))
@@ -30,6 +33,23 @@ export function assertRetentionPrefix(prefix) {
     throw new Error(
       "Cache retention prefix must be one Turbo family for one OS and architecture, or one Knip metadata family for one OS",
     );
+}
+
+const CACHE_TIMESTAMP =
+  /^(?<date>\d{4}-\d{2}-\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/u;
+
+/** Accept timestamp strings only and rule out native Date rollover. */
+function parseCacheTimestamp(value) {
+  if (typeof value !== "string") return NaN;
+  const date = CACHE_TIMESTAMP.exec(value)?.groups?.date;
+  if (date === undefined) return NaN;
+  const midnight = new Date(`${date}T00:00:00Z`);
+  if (
+    !Number.isFinite(midnight.getTime()) ||
+    midnight.toISOString().slice(0, 10) !== date
+  )
+    return NaN;
+  return Date.parse(value);
 }
 
 function normalizeCache(cache, index) {
@@ -40,8 +60,10 @@ function normalizeCache(cache, index) {
     throw new Error(`Cache entry ${String(index + 1)} has an invalid id`);
   if (typeof key !== "string" || key.length === 0 || /[\r\n]/u.test(key))
     throw new Error(`Cache entry ${String(index + 1)} has an invalid key`);
-  const createdAt = Date.parse(cache.created_at);
-  const accessedAt = Date.parse(cache.last_accessed_at ?? cache.created_at);
+  const createdAt = parseCacheTimestamp(cache.created_at);
+  const accessedAt = parseCacheTimestamp(
+    cache.last_accessed_at ?? cache.created_at,
+  );
   if (!Number.isFinite(createdAt) || !Number.isFinite(accessedAt))
     throw new Error(
       `Cache entry ${String(index + 1)} has an invalid timestamp`,
@@ -69,9 +91,8 @@ function sameStableIdentity(left, right) {
   );
 }
 
-// The list API orders by last access. A restore between pages can place one
-// id on two pages. That is still one cache: collapse it, or abort when the
-// pages disagree, before any id can be both kept and deleted.
+// Adds and deletes can still shift page boundaries. Collapse a repeated id,
+// or abort when the pages disagree, before an id can be both kept and deleted.
 function uniqueById(entries) {
   const byId = new Map();
   for (const entry of entries) {
@@ -121,12 +142,17 @@ export function selectPrefixDeletions(
       throw new Error(
         `Refusing to evaluate a cache outside ${prefix}: ${entry.key}`,
       );
-  const protectedIds = new Set(
-    [...entries]
-      .sort(byNewest)
-      .slice(0, keepGenerations)
-      .map((entry) => entry.id),
-  );
+  // A cache restore requires its version as well as a visible ref.
+  // Preserve fallbacks for jobs using either version during a transition.
+  const newestByRestoreScope = new Map();
+  for (const entry of entries.toSorted(byNewest)) {
+    const scope = `${entry.ref}\n${entry.version}`;
+    const newest = newestByRestoreScope.get(scope) ?? [];
+    if (newest.length >= keepGenerations) continue;
+    newest.push(entry.id);
+    newestByRestoreScope.set(scope, newest);
+  }
+  const protectedIds = new Set([...newestByRestoreScope.values()].flat());
   if (keepKey !== undefined)
     for (const entry of entries)
       if (entry.key === keepKey) protectedIds.add(entry.id);
@@ -172,7 +198,7 @@ export async function listAllCaches(request, repository, prefix) {
   for (let page = 1; page <= MAX_PAGES; page += 1) {
     const body = await request(
       "GET",
-      `repos/${repository}/actions/caches?per_page=${String(PAGE_SIZE)}&page=${String(page)}&key=${encodeURIComponent(prefix)}`,
+      `repos/${repository}/actions/caches?per_page=${String(PAGE_SIZE)}&page=${String(page)}&sort=created_at&direction=desc&key=${encodeURIComponent(prefix)}`,
     );
     if (
       typeof body !== "object" ||
@@ -201,13 +227,7 @@ export async function retainCaches({
   dedupeNpmDownloads = false,
   dryRun = false,
 }) {
-  if (
-    typeof repository !== "string" ||
-    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)
-  )
-    throw new Error(
-      "CI_REPOSITORY must be an owner/name repository identifier",
-    );
+  validateRepository(repository);
   for (const family of families) {
     assertRetentionPrefix(family.prefix);
     if (
@@ -240,18 +260,6 @@ export async function retainCaches({
   return { dryRun, plan, npmDeletions };
 }
 
-function repositoryFromEnv(env) {
-  const repository = env.CI_REPOSITORY;
-  if (
-    typeof repository !== "string" ||
-    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)
-  )
-    throw new Error(
-      "CI_REPOSITORY must be an owner/name repository identifier",
-    );
-  return repository;
-}
-
 function familyWithKeepKey(env, prefixName, keepName) {
   const prefix = env[prefixName];
   const keepKey = env[keepName];
@@ -271,6 +279,10 @@ function familiesFromEnv(env) {
     typeof env.CACHE_PORTABLE_PREFIX === "string" &&
     env.CACHE_PORTABLE_PREFIX.length > 0
       ? { prefix: env.CACHE_PORTABLE_PREFIX }
+      : undefined,
+    typeof env.CACHE_WINDOWS_BUILD_PREFIX === "string" &&
+    env.CACHE_WINDOWS_BUILD_PREFIX.length > 0
+      ? { prefix: env.CACHE_WINDOWS_BUILD_PREFIX }
       : undefined,
   ].filter((family) => family !== undefined);
   if (families.length === 0 && env.DEDUPE_NPM_DOWNLOADS !== "true")
@@ -311,13 +323,13 @@ async function main() {
   const env = process.env;
   const dryRun = env.CACHE_RETENTION_DRY_RUN === "true";
   const report = await retainCaches({
-    repository: repositoryFromEnv(env),
+    repository: validateRepository(env.CI_REPOSITORY),
     request: (method, endpoint) => githubRequest(method, endpoint, env),
     deleteCache: async (id) => {
       try {
         await githubRequest(
           "DELETE",
-          `repos/${repositoryFromEnv(env)}/actions/caches/${String(id)}`,
+          `repos/${validateRepository(env.CI_REPOSITORY)}/actions/caches/${String(id)}`,
           env,
         );
       } catch (error) {

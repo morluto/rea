@@ -1,14 +1,7 @@
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import type { Result } from "../../domain/result.js";
-import type { CapabilityDescriptor } from "../AnalysisProvider.js";
-
-/** Failures of the provider adapter or process rather than of one request. */
-const PROVIDER_WIDE_FAILURES: ReadonlySet<string> = new Set([
-  "ProviderAdapterError",
-  "HopperProcessError",
-  "HopperStartError",
-]);
+import type { CapabilityDescriptor } from "../../ports/AnalysisProvider.js";
 
 interface Failure {
   readonly dispatch: number;
@@ -34,7 +27,7 @@ type RoutedOperation = Pick<
 const runtimeFailureReason = (failure: AnalysisError): string | undefined => {
   if (failure._tag === "AnalysisCapabilityUnavailableError")
     return failure.userMessage ?? failure.message;
-  return PROVIDER_WIDE_FAILURES.has(failure._tag)
+  return failure.providerWide
     ? `${failure._tag}: ${failure.message}`
     : undefined;
 };
@@ -126,7 +119,7 @@ export class SessionRuntimeAvailability {
           result.error,
         );
       }
-      if (PROVIDER_WIDE_FAILURES.has(result.error._tag))
+      if (result.error.providerWide)
         provider.failure = newer(provider.failure, {
           dispatch,
           reason,

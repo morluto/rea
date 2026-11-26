@@ -23,7 +23,10 @@ before it, and a terminating entry within `0xC00` bytes. ESP-IDF accepts a
 table with no partition entries, but REA requires one, so that neither
 erased flash nor a lone MD5 entry is read as a table. A table whose MD5 does not match, or that has a second MD5 entry, is
 still read, with `md5.status` `invalid` and a limitation, because the
-bootloader would refuse it. The table is located in this order:
+bootloader would refuse it. Partition entries after the MD5 record are
+kept. The digest covers only the entries before it, and
+`entries_after_checksum` counts the later ones. The table is located in
+this order:
 
 1. at the caller's `partition_table_offset`, when given; no scan follows;
 2. at the default `0x8000`;
@@ -89,7 +92,13 @@ The root `format_metadata` (`esp-flash-image`) records:
   table, with its ESP image facts;
 - `partition_table`: its flash address, the `method` that found it
   (`default`, `caller` or `scan`), the partition count and the MD5 `status`
-  (`valid`, `invalid` or `absent`) with the stored and computed digests;
+  (`valid`, `invalid` or `absent`) with the stored and computed digests.
+  `entries_after_checksum`, when present, is how many partition entries
+  follow the MD5 record and sit outside its digest. New inventories emit
+  0 when the record is absent or every partition entry precedes it.
+  Evidence saved before the field omits it, and that omission leaves the
+  count unknown. When the count is greater than zero, a limitation names
+  it and the MD5 entry's offset from the start of the table;
 - `apps`: ESP image facts for each app partition the dump holds; app
   partitions declared over the same bytes share one decode;
 - `otadata`: the otadata partition's records, or null without one;
@@ -231,7 +240,8 @@ another partition when an app fails to load.
 Erased flash (`0xFF`) between regions is described. In a gap between
 regions, the first byte that is not erased starts an `undescribed` range to
 the end of the gap, and makes coverage `unknown`; the rest of that range is
-not examined. Coverage is also `unknown` when no bootloader is located, or
+not examined. Coverage is also `unknown` when no bootloader region is described
+(no bootloader is located, or the partition table does not follow it), or
 when a declared partition begins before the dump's first byte, since it has
 no entry. A partition cut short or left out by the end of the file does not
 make it `unknown`: its entry holds the bytes the file has, none for one past

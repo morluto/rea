@@ -18,7 +18,7 @@ import {
 } from "../domain/webMcpDiscovery.js";
 import {
   browserCaptureComparisonSchema,
-  type BrowserCaptureComparisonInput,
+  type BrowserCaptureComparisonRequest,
 } from "../domain/browserCaptureComparison.js";
 import {
   webScreenshotSchema,
@@ -27,15 +27,21 @@ import {
   type CompareWebScreenshotsInput,
 } from "../domain/webScreenshot.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { ExecutionOptions } from "./AnalysisProvider.js";
-import type { BrowserObservationPort } from "./BrowserObservationPort.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
+import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
 import { createBrowserEvidence } from "./BrowserEvidence.js";
+import {
+  admitBrowserCaptureComparison,
+  resolveBrowserCaptureComparison,
+  type ResolvedBrowserCaptureComparison,
+} from "./browserCaptureComparisonSources.js";
+import type { EvidenceLookup } from "./EvidenceInputResolver.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
   completeProviderEvidence,
@@ -67,11 +73,7 @@ export const listBrowserTargets = async (
   const ready = requireBrowser(browser, "list_browser_targets");
   if (!ready.ok) return ready;
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError("list_browser_targets", {
-        cause: options.signal.reason,
-      }),
-    );
+    return err(cancelledBy("list_browser_targets", options.signal));
   const result = await ready.value.listTargets(input, options);
   return result.ok
     ? browserEvidence(
@@ -93,11 +95,7 @@ export const inspectWebPage = async (
   const ready = requireBrowser(browser, "inspect_web_page");
   if (!ready.ok) return ready;
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError("inspect_web_page", {
-        cause: options.signal.reason,
-      }),
-    );
+    return err(cancelledBy("inspect_web_page", options.signal));
   const result = await ready.value.inspectPage(input, options);
   if (!result.ok)
     return retainBrowserObservation(
@@ -126,11 +124,7 @@ export const analyzeWebBundle = async (
   const ready = requireBrowser(browser, "analyze_web_bundle");
   if (!ready.ok) return ready;
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError("analyze_web_bundle", {
-        cause: options.signal.reason,
-      }),
-    );
+    return err(cancelledBy("analyze_web_bundle", options.signal));
   const analyzed = await ready.value.analyzeBundle(input, options);
   if (!analyzed.ok)
     return retainBrowserObservation(
@@ -157,11 +151,7 @@ export const observeWebSession = async (
   const ready = requireBrowser(browser, "observe_web_session");
   if (!ready.ok) return ready;
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError("observe_web_session", {
-        cause: options.signal.reason,
-      }),
-    );
+    return err(cancelledBy("observe_web_session", options.signal));
   const observed = await ready.value.observeSession(input, options);
   return observed.ok
     ? browserEvidence(
@@ -183,11 +173,7 @@ export const discoverWebMcpTools = async (
   const ready = requireBrowser(browser, "discover_webmcp_tools");
   if (!ready.ok) return ready;
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError("discover_webmcp_tools", {
-        cause: options.signal.reason,
-      }),
-    );
+    return err(cancelledBy("discover_webmcp_tools", options.signal));
   const discovered = await ready.value.discoverWebMcpTools(input, options);
   return discovered.ok
     ? browserEvidence(
@@ -200,13 +186,39 @@ export const discoverWebMcpTools = async (
     : discovered;
 };
 
-/** Compare two already-normalized web captures without external access. */
-export const compareWebCaptureEvidence = async (
+/**
+ * Compare two already-normalized web captures without external access. Each
+ * capture is inline or a retained Evidence reference from `lookup`; the
+ * comparison links the retained records it read.
+ */
+export const compareWebCaptureEvidence = (
   browser: BrowserObservationPort | undefined,
-  input: BrowserCaptureComparisonInput,
+  request: unknown,
+  lookup?: EvidenceLookup,
+): Promise<Result<Evidence, AnalysisError>> =>
+  compareResolvedWebCaptures(browser, () =>
+    admitBrowserCaptureComparison(request, lookup),
+  );
+
+/** Compare a request its adapter already parsed, reusing its inline captures. */
+export const compareParsedWebCaptureEvidence = (
+  browser: BrowserObservationPort | undefined,
+  request: BrowserCaptureComparisonRequest,
+  lookup?: EvidenceLookup,
+): Promise<Result<Evidence, AnalysisError>> =>
+  compareResolvedWebCaptures(browser, () =>
+    resolveBrowserCaptureComparison(request, lookup),
+  );
+
+const compareResolvedWebCaptures = async (
+  browser: BrowserObservationPort | undefined,
+  resolve: () => Result<ResolvedBrowserCaptureComparison, AnalysisError>,
 ): Promise<Result<Evidence, AnalysisError>> => {
   const ready = requireBrowser(browser, "compare_web_captures");
   if (!ready.ok) return ready;
+  const resolved = resolve();
+  if (!resolved.ok) return resolved;
+  const { input, sources } = resolved.value;
   const compared = await ready.value.compareCaptures(input);
   return compared.ok
     ? browserEvidence(
@@ -215,6 +227,7 @@ export const compareWebCaptureEvidence = async (
         compared.value,
         ready.value.identity(),
         {},
+        sources,
       )
     : compared;
 };
@@ -228,11 +241,7 @@ export const captureWebScreenshot = async (
   const ready = requireBrowser(browser, "capture_web_screenshot");
   if (!ready.ok) return ready;
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError("capture_web_screenshot", {
-        cause: options.signal.reason,
-      }),
-    );
+    return err(cancelledBy("capture_web_screenshot", options.signal));
   const captured = await ready.value.captureScreenshot(input, options);
   return captured.ok
     ? browserEvidence(
@@ -284,6 +293,7 @@ const browserEvidence = (
   result: Parameters<typeof createBrowserEvidence>[2]["facts"],
   provider: Parameters<typeof createBrowserEvidence>[3],
   options: ExecutionOptions,
+  evidenceLinks?: readonly string[],
 ): Result<Evidence, AnalysisError> => {
   const json = jsonValueSchema.safeParse(result);
   if (!json.success)
@@ -310,7 +320,11 @@ const browserEvidence = (
     createBrowserEvidence(
       operation,
       input,
-      { source: json.data, facts: report.data },
+      {
+        source: json.data,
+        facts: report.data,
+        ...(evidenceLinks === undefined ? {} : { evidenceLinks }),
+      },
       provider,
     ),
     options.signal,

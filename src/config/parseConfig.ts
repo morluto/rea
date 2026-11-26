@@ -1,5 +1,3 @@
-import { accessSync, constants, statSync } from "node:fs";
-
 import {
   ConfigurationError,
   type ConfigurationSettingIssue,
@@ -12,44 +10,18 @@ import {
 import type { AnalysisSettingId } from "../domain/analysisSettings.js";
 import { parseEnvironment } from "./environment.js";
 import { providerStartupTimeoutSchema } from "./providerStartupTimeout.js";
-import { homeDirectoryFromEnvironment } from "./homeDirectory.js";
 import {
   DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
   DEFAULT_HOPPER_CALLER_SCAN_BUDGET_MS,
   DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
 } from "../domain/analysisResourceLimits.js";
 import { DEFAULT_BRIDGE_MAX_REQUEST } from "./bridgeMaxRequestBytes.js";
+import { DEFAULT_BRIDGE_MAX_REPLY } from "./bridgeMaxReplyBytes.js";
 import { hopperCallerScanBudgetFromEnvironment } from "./hopperCallerScanBudget.js";
 import { DEFAULT_REGEX_MATCHING_DEADLINE } from "./regexMatchingDeadline.js";
 import { DEFAULT_REGEX_WORKER_HEAP_REQUEST } from "./regexWorkerHeapRequest.js";
+import { DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET } from "./mcpToolsListPageBudget.js";
 import type { AppConfig } from "./types.js";
-import { hopperLauncherDiscovery } from "../application/HopperLauncherDiscovery.js";
-import { localMacHopperRenamedLauncherCandidates } from "../application/MacHopperPaths.js";
-const executableAvailable = (path: string): boolean => {
-  try {
-    accessSync(path, constants.X_OK);
-    return statSync(path).isFile();
-  } catch {
-    return false;
-  }
-};
-
-export const defaultHopperLauncherPath = (
-  platform: NodeJS.Platform,
-  homeDirectory: string,
-  executable: (path: string) => boolean = executableAvailable,
-): string => {
-  const discovery = hopperLauncherDiscovery(platform, homeDirectory);
-  for (const candidate of discovery.candidates)
-    if (executable(candidate)) return candidate;
-  if (discovery.probesMacApplicationBundles)
-    for (const candidate of localMacHopperRenamedLauncherCandidates(
-      homeDirectory,
-    ))
-      if (executable(candidate)) return candidate;
-  return discovery.fallback;
-};
-
 /**
  * Environment native analysis admits. JEB validates its own settings during
  * optional provider composition; that setting must not block unrelated
@@ -138,6 +110,7 @@ export const parseConfig = (
   const valueFlowEdges = admitted("ghidra.value_flow_max_edges");
   const callerScan = admitted("hopper.caller_scan_budget_ms");
   const bridgeBytes = admitted("bridge.max_request_bytes");
+  const bridgeReplyBytes = admitted("bridge.max_reply_bytes");
   const regexDeadline = admitted("regex.matching_deadline_ms");
   const regexHeap = admitted("regex.worker_heap_request_mib");
   return ok({
@@ -150,9 +123,15 @@ export const parseConfig = (
     ...(env.REA_MCP_MAX_INPUT_ELEMENTS === undefined
       ? {}
       : { mcpMaxInputElements: env.REA_MCP_MAX_INPUT_ELEMENTS }),
-    ...(env.REA_MCP_INPUT_SCHEMA_PROFILE === undefined
+    ...(env.REA_MCP_TOOLS_LIST_PAGE_BYTES === undefined
       ? {}
-      : { mcpInputSchemaProfile: env.REA_MCP_INPUT_SCHEMA_PROFILE }),
+      : {
+          mcpToolsListPageBudget: {
+            ...DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
+            bytes: env.REA_MCP_TOOLS_LIST_PAGE_BYTES,
+            source: "setting",
+          },
+        }),
     ...(env.REA_MCP_OUTPUT_SCHEMA_PROFILE === undefined
       ? {}
       : { mcpOutputSchemaProfile: env.REA_MCP_OUTPUT_SCHEMA_PROFILE }),
@@ -214,12 +193,7 @@ export const parseConfig = (
       ? {}
       : { ghidraNativeAotJar: env.REA_GHIDRA_NATIVEAOT_JAR }),
     ilspyCmdPath: env.REA_ILSPY_CMD_PATH,
-    hopperLauncherPath:
-      env.HOPPER_LAUNCHER_PATH ??
-      defaultHopperLauncherPath(
-        process.platform,
-        homeDirectoryFromEnvironment(environment, process.platform),
-      ),
+    hopperLauncherPath: env.HOPPER_LAUNCHER_PATH,
     hopperStartupTimeoutMs: hopperStartup ?? DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
     hopperStartupTimeoutSource:
       environment.REA_HOPPER_STARTUP_TIMEOUT_MS === undefined ||
@@ -247,6 +221,15 @@ export const parseConfig = (
         ? DEFAULT_BRIDGE_MAX_REQUEST
         : {
             maximumBytes: bridgeBytes,
+            source: "setting",
+          },
+    bridgeMaxReplyBytes:
+      bridgeReplyBytes === undefined ||
+      bridgeReplyBytes === null ||
+      environment.REA_BRIDGE_MAX_REPLY_BYTES === undefined
+        ? DEFAULT_BRIDGE_MAX_REPLY
+        : {
+            maximumBytes: bridgeReplyBytes,
             source: "setting",
           },
     regexMatchingDeadline:

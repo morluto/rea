@@ -8,6 +8,7 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { summarizeEnvironmentCoverage } from "../../domain/analysisView/environmentCoverageView.js";
 import {
@@ -20,8 +21,6 @@ import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
 import {
   ENVIRONMENT_EXPORT_OPERATION,
   planEnvironmentBundle,
-  registryPackageSource,
-  type EnvironmentPackageSource,
 } from "./environmentBundle.js";
 import {
   anonymousOrigin,
@@ -158,15 +157,16 @@ const cancelled = async (
   // The stages are synchronous; yield so a pending interrupt is dispatched before checking.
   if (signal !== undefined) await setImmediate();
   return signal?.aborted === true
-    ? new AnalysisCancelledError(ENVIRONMENT_BUILD_OPERATION, {
-        cause: signal.reason,
-        ...(written === undefined
+    ? cancelledBy(
+        ENVIRONMENT_BUILD_OPERATION,
+        signal,
+        written === undefined
           ? {}
           : {
               userMessage: `The build was cancelled after it wrote the bundle at ${written}.`,
               diagnostics: { output_directory: written, bundle_written: true },
-            }),
-      })
+            },
+      )
     : undefined;
 };
 
@@ -237,13 +237,6 @@ const environmentName = (
 /** A path as one POSIX shell word. */
 const shellWord = (path: string): string =>
   /^[\w./@%+=:,-]+$/u.test(path) ? path : `'${path.replaceAll("'", "'\\''")}'`;
-
-const packageSourceValue = (
-  source: EnvironmentPackageSource,
-): EnvironmentBuildReport["package_source"] =>
-  source.kind === "registry"
-    ? { kind: "registry", specifier: source.specifier }
-    : { kind: "tarball", path: source.path };
 
 /**
  * Build an agent environment bundle from capture Evidence: project the
@@ -324,10 +317,6 @@ export const buildEnvironment = async (
     ...savedCredentialWarnings(capture.parameters),
   );
 
-  const packageSource: EnvironmentPackageSource =
-    input.packageTarball === undefined
-      ? registryPackageSource()
-      : { kind: "tarball", path: input.packageTarball };
   const base = {
     name,
     capture: {
@@ -357,7 +346,7 @@ export const buildEnvironment = async (
     if (beforePlan !== undefined) return err(beforePlan);
     const plan = planEnvironmentBundle(source.value, {
       name,
-      packageSource,
+      packageTarball: input.packageTarball,
       served: () => served,
     });
     if (!plan.ok) return plan;
@@ -371,9 +360,9 @@ export const buildEnvironment = async (
     ];
     if (
       plan.value.copies.tarball !== null &&
-      input.packageTarball !== undefined
+      plan.value.packageSource.kind === "tarball"
     ) {
-      const bytes = await packageTarballBytes(input.packageTarball);
+      const bytes = await packageTarballBytes(plan.value.packageSource.path);
       if (!bytes.ok) return bytes;
       files.push({ path: plan.value.copies.tarball, bytes: bytes.value });
     }
@@ -384,7 +373,7 @@ export const buildEnvironment = async (
       directory: input.directory ?? null,
       ...base,
       tool_count: plan.value.toolCount,
-      package_source: packageSourceValue(packageSource),
+      package_source: plan.value.packageSource,
       files,
       next: [],
     });
@@ -410,7 +399,7 @@ export const buildEnvironment = async (
     directory,
     ...base,
     tool_count: exported.value.tool_count,
-    package_source: packageSourceValue(packageSource),
+    package_source: exported.value.package_source,
     files: [...exported.value.files],
     next: [`agent-env run ${shellWord(directory)}`],
   };

@@ -10,7 +10,7 @@ export const CHROMIUM_NO_SANDBOX_VARIABLE = "REA_BROWSER_NO_SANDBOX";
  */
 export const chromiumSandboxEnabled = (
   environment: Readonly<Record<string, string | undefined>>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): boolean =>
   platform !== "android" &&
   environment[CHROMIUM_NO_SANDBOX_VARIABLE] !== "true";

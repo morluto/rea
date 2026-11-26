@@ -9,7 +9,7 @@ import {
   NativeDmgArtifactReader,
   type NativeDmgHost,
 } from "./NativeDmgArtifactReader.js";
-import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
+import { translateArtifactFailure } from "../resources/index.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 
 it.each(["same", "other", "missing-path", "no-path", "empty-group"] as const)(
@@ -76,7 +76,11 @@ it.each(["same", "other", "missing-path", "no-path", "empty-group"] as const)(
       failure = cause;
     }
     const projected = projectAnalysisError(
-      translateArtifactFailure("inspect_artifact", failure),
+      translateArtifactFailure(
+        "inspect_artifact",
+        "/selected/artifact",
+        failure,
+      ),
     );
     expect(projected).toMatchObject({
       category: "unavailable",

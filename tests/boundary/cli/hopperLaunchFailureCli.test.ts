@@ -5,7 +5,7 @@ import { z } from "zod";
 
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
-import { acquireHopperTargetLease } from "../../../src/process/HopperLease.js";
+import { acquireHopperTargetLease } from "../../../src/hopper/HopperLease.js";
 
 const FAILED_LAUNCHER = `#!/bin/sh
 printf 'Cannot launch Hopper!\\nDocument state is unknown.\\n' >&2
@@ -29,7 +29,6 @@ describe("Hopper launcher failure through the one-shot CLI", () => {
   // Hopper target leases are acquired only for the macOS launcher route.
   workspaceCliTest.skipIf(process.platform !== "darwin")(
     "exits after a retained-cleanup failure and releases the target to a retry",
-    { timeout: 90_000 },
     async ({ cli, workspace }) => {
       const launcherPath = await workspace.write(
         "failure-helper",
@@ -41,7 +40,12 @@ describe("Hopper launcher failure through the one-shot CLI", () => {
       const loaderArgs = ["--probe"];
       try {
         for (const attempt of ["first", "retry"]) {
+          // The one-shot CLI keeps the lease while cleanup is incomplete, and
+          // the operating system releases it when that process exits. The
+          // file's shared process does not exit between commands, so each
+          // attempt needs its own process.
           const result = await cli.run({
+            freshProcess: true,
             arguments: [
               "analyze",
               targetPath,
@@ -55,7 +59,6 @@ describe("Hopper launcher failure through the one-shot CLI", () => {
               HOPPER_LOADER_ARGS_JSON: JSON.stringify(loaderArgs),
               REA_LOG_LEVEL: "silent",
             },
-            timeoutMs: 45_000,
           });
           const retained = RetainedRuntime.safeParse(result.json);
           if (retained.success)

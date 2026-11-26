@@ -1,3 +1,4 @@
+import { DESKTOP_VIEW_DEFAULTS } from "../../domain/desktop/desktopViewPolicy.js";
 import { chmod, open, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -13,7 +14,8 @@ import {
   primaryAnalysisError,
 } from "../../domain/analysisErrorBase.js";
 import { EvidenceFileError } from "../../domain/evidenceErrors.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { RECREATE_EVIDENCE_GUIDANCE } from "../../domain/evidenceFormat.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import type {
@@ -39,6 +41,7 @@ import {
   retained,
   writeCaptureFolder,
 } from "./desktopCapture.fixture.js";
+import { SQLITE_HEADER } from "../../domain/sqliteFormat.js";
 
 it("retains invalid capture JSON and the descriptor owner through failed final cleanup", async () => {
   const root = await createTestTempDirectory("rea-capture-read-cleanup-");
@@ -184,6 +187,41 @@ describe("desktop state view admission", () => {
   });
 });
 
+it("records the complete effective view policy and refuses state without it", async () => {
+  const evidence = await inspectDesktopApplicationState(
+    await writeCaptureFolder(capture()),
+    readers,
+  );
+  if (!("normalized_result" in evidence)) throw evidence;
+  const state = desktopApplicationStateSchema.parse(evidence.normalized_result);
+  expect(state.effective_view_policy).toEqual(DESKTOP_VIEW_DEFAULTS);
+  const { effective_view_policy: policy, ...unrecorded } = state;
+  const { sqlite_view_bytes: _bytes, ...partial } = policy;
+  for (const refused of [
+    unrecorded,
+    { ...state, effective_view_policy: partial },
+  ])
+    expect(desktopApplicationStateSchema.safeParse(refused).success).toBe(
+      false,
+    );
+});
+
+it("refuses a capture from an earlier format revision with the recreate guidance", async () => {
+  const folder = await writeCaptureFolder(capture());
+  const path = join(folder, "capture.json");
+  const { evidence_format: _current, ...earlier } = JSON.parse(
+    await readFile(path, "utf8"),
+  ) as Record<string, unknown>;
+  await writeFile(path, JSON.stringify(earlier));
+
+  const refused = await inspectDesktopApplicationState(folder, readers);
+
+  expect(refused).toBeInstanceOf(Error);
+  expect(refused instanceof Error ? refused.message : "").toContain(
+    RECREATE_EVIDENCE_GUIDANCE,
+  );
+});
+
 describe("inspectDesktopApplicationState", () => {
   it("assigns roles and reads each version into typed views and changes", async () => {
     const folder = await writeCaptureFolder(capture());
@@ -231,7 +269,7 @@ describe("inspectDesktopApplicationState", () => {
       extended({
         baseline: [
           retained(json, "null"),
-          retained(database, "SQLite format 3\0v1"),
+          retained(database, `${SQLITE_HEADER}v1`),
           retained(`${database}-wal`, "wal v1"),
         ],
         changes: [
@@ -316,7 +354,7 @@ describe("inspectDesktopApplicationState", () => {
     const database = `${HOME}/.config/notes/log.db`;
     const folder = await writeCaptureFolder(
       extended({
-        baseline: [retained(database, "SQLite format 3\0v1")],
+        baseline: [retained(database, `${SQLITE_HEADER}v1`)],
         changes: [
           {
             path: `${database}-wal`,
@@ -553,7 +591,7 @@ describe("SQLite sidecar checkpoint coverage", () => {
           { checkpoint_index: 1, view: null, view_error: expect.any(String) },
         ],
       );
-      expect(readVersions).toEqual(["SQLite format 3\0v1"]);
+      expect(readVersions).toEqual([`${SQLITE_HEADER}v1`]);
     },
   );
 });
@@ -696,7 +734,7 @@ describe("SQLite coherent checkpoint sets", () => {
       { checkpoint_index: 0, view_error: null },
       { checkpoint_index: 1, view: null, view_error: expect.any(String) },
     ]);
-    expect(readVersions).toEqual(["SQLite format 3\0v1"]);
+    expect(readVersions).toEqual([`${SQLITE_HEADER}v1`]);
   });
 
   it("reads a SQLite set explicitly recorded at the same incomplete checkpoint", async () => {
@@ -866,7 +904,7 @@ describe("inspectDesktopApplicationState database sidecars", () => {
     const database = `${HOME}/.config/notes/log.db`;
     const folder = await writeCaptureFolder(
       extended({
-        baseline: [retained(database, "SQLite format 3\0v1")],
+        baseline: [retained(database, `${SQLITE_HEADER}v1`)],
         changes: [
           change(`${database}-journal`, { after: "journal" }, { state: true }),
         ],
@@ -899,7 +937,7 @@ describe("inspectDesktopApplicationState database sidecars", () => {
     const database = `${HOME}/.config/notes/log.db`;
     const folder = await writeCaptureFolder(
       extended({
-        baseline: [retained(database, "SQLite format 3\0v1")],
+        baseline: [retained(database, `${SQLITE_HEADER}v1`)],
         changes: [
           {
             path: `${database}-journal`,
@@ -938,8 +976,8 @@ describe("inspectDesktopApplicationState database sidecars", () => {
     const saved = checkpoint(
       "saved",
       "request",
-      [change(database, { after: "SQLite format 3\0v2" }, { state: true })],
-      [retained(database, "SQLite format 3\0v2")],
+      [change(database, { after: `${SQLITE_HEADER}v2` }, { state: true })],
+      [retained(database, `${SQLITE_HEADER}v2`)],
     );
     const folder = await writeCaptureFolder(
       {
@@ -971,7 +1009,7 @@ describe("inspectDesktopApplicationState database sidecars", () => {
     const folder = await writeCaptureFolder(
       extended({
         baseline: [
-          retained(`${HOME}/.local/share/notes/zz.db`, "SQLite format 3\0v1"),
+          retained(`${HOME}/.local/share/notes/zz.db`, `${SQLITE_HEADER}v1`),
         ],
       }),
     );
@@ -1002,7 +1040,7 @@ describe("inspectDesktopApplicationState database selected on its own", () => {
   /** The fixture capture with a database outside home retained under these content roots. */
   const selecting = (roots: readonly string[]): DesktopApplicationCapture => {
     const base = extended({
-      baseline: [retained(books, "SQLite format 3\0v1")],
+      baseline: [retained(books, `${SQLITE_HEADER}v1`)],
     });
     return {
       ...base,

@@ -1,4 +1,5 @@
 import { captureBudgets } from "../CaptureBudgets.js";
+import { strictUtf8Decoder } from "../../../domain/strictUtf8.js";
 import { err, ok, type Result } from "../../../domain/result.js";
 import {
   createFileRegistry,
@@ -17,7 +18,11 @@ import {
   type DescriptorProto,
   type FileDescriptorSet,
 } from "@bufbuild/protobuf/wkt";
-import { BinaryReader } from "@bufbuild/protobuf/wire";
+import {
+  BinaryReader,
+  configureTextEncoding,
+  getTextEncoding,
+} from "@bufbuild/protobuf/wire";
 import type { ProtobufField } from "../../../domain/protobufWire.js";
 import { CaptureFormatError } from "../CaptureFormatError.js";
 import {
@@ -26,6 +31,7 @@ import {
   type ProtobufBudget,
   type WireSchema,
 } from "./ProtobufWire.js";
+import { errorMessage } from "../../../kernel/errorMessage.js";
 
 export type ProtobufSchemaAdmissionFailure =
   | {
@@ -59,6 +65,27 @@ const floatingValue = (value: number): string =>
 
 // Descriptor custom options and future fields remain opaque identity facts.
 const descriptorEquality = { registry: createRegistry(), unknown: true };
+
+/** Descriptor strings are protobuf field data, including any initial U+FEFF. */
+const descriptorUtf8 = strictUtf8Decoder("preserve");
+const readDescriptorSet = (bytes: Uint8Array): FileDescriptorSet => {
+  const encoding = getTextEncoding();
+  // The SDK has no per-fromBinary text-decoder option. Scope its encoding
+  // hook to this synchronous decode; never change ambient TextDecoder or
+  // leave different encoding semantics installed for another SDK consumer.
+  configureTextEncoding({
+    ...encoding,
+    decodeUtf8: (value) => descriptorUtf8.decode(value),
+  });
+  try {
+    return fromBinary(FileDescriptorSetSchema, bytes, {
+      readUnknownFields: true,
+      recursionLimit: captureBudgets().depth,
+    });
+  } finally {
+    configureTextEncoding(encoding);
+  }
+};
 
 const chargeQualifiedName = (
   budget: ProtobufBudget,
@@ -258,15 +285,12 @@ export class ProtobufSchema implements WireSchema {
       });
     let descriptor: FileDescriptorSet;
     try {
-      descriptor = fromBinary(FileDescriptorSetSchema, bytes, {
-        readUnknownFields: true,
-        recursionLimit: captureBudgets().depth,
-      });
+      descriptor = readDescriptorSet(bytes);
     } catch (cause) {
       return err({
         kind: "malformed-descriptor",
         field: "descriptor_set_path",
-        message: `Malformed FileDescriptorSet: ${cause instanceof Error ? cause.message : String(cause)}`,
+        message: `Malformed FileDescriptorSet: ${errorMessage(cause)}`,
       });
     }
     const admitted = await admitRegistryDescriptor(descriptor, budget);
@@ -280,7 +304,7 @@ export class ProtobufSchema implements WireSchema {
       return err({
         kind: "malformed-descriptor",
         field: "descriptor_set_path",
-        message: `Invalid FileDescriptorSet declaration: ${cause instanceof Error ? cause.message : String(cause)}`,
+        message: `Invalid FileDescriptorSet declaration: ${errorMessage(cause)}`,
       });
     }
     if (message === undefined)

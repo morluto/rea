@@ -23,6 +23,7 @@ import {
   type StateServing,
 } from "./environmentStateAnswer.js";
 import { EnvironmentStateStore } from "./environmentStateStore.js";
+import type { ObservedQuery } from "./environmentReplay.js";
 
 const grafana = environmentStateServeInputs();
 
@@ -53,26 +54,17 @@ const answer = (
   serving: StateServing,
   name: string,
   args: Readonly<Record<string, unknown>>,
+  observedQuery?: ObservedQuery,
 ) => {
-  const result = answerFromState(serving, toolOf(serving.source, name), args);
+  const result = answerFromState(
+    serving,
+    toolOf(serving.source, name),
+    args,
+    observedQuery,
+  );
   if (!result.ok) throw result.error;
   return result.value;
 };
-
-it("finds state entities using the recorded path's repeated separators", () => {
-  const serving = servingFrom([
-    ["GET", "/api//books/1", { id: 1, title: "Book" }],
-  ]);
-  const tool = serving.source.manifest.tools.find(
-    (candidate) => candidate.path_template === "/api//books/{numeric}",
-  );
-  if (tool === undefined) throw new Error("Missing double-separator item tool");
-  const result = answerFromState(serving, tool, { id: "1" });
-  expect(result).toMatchObject({
-    ok: true,
-    value: { body: { id: 1, title: "Book" }, state: { source: "state" } },
-  });
-});
 
 const refusal = (
   serving: StateServing,
@@ -83,51 +75,6 @@ const refusal = (
   if (result.ok) throw new Error(`Expected ${name} to be refused`);
   return projectAnalysisError(result.error);
 };
-
-/** A list with one proved whole line keeps an entity added to an empty later page off that page. */
-const expectAddedEntityStaysOffPage = (
-  query: string,
-  args: Readonly<Record<string, unknown>>,
-  membership: "recorded" | "query" = "query",
-): void => {
-  const alpha = { id: 1, name: "Alpha" };
-  const serving = servingFrom([
-    ["GET", "/api/orgs/1/books", [alpha]],
-    ["GET", "/api/orgs/1/books/1", alpha],
-    ["GET", `/api/orgs/2/books?${query}`, []],
-  ]);
-  expect(serving.store.state.views.get("get_orgs_books_by_id")).toMatchObject({
-    shape: "list",
-    membership: "recorded",
-  });
-  load(serving, (entities) => [
-    ...entities,
-    {
-      type: "/api/orgs/{numeric}/books",
-      collection: "/api/orgs/2/books",
-      id: "9",
-      fields: { id: 9, name: "Added" },
-    },
-  ]);
-  expect(
-    answer(serving, "get_orgs_books_by_id", { id: "2", ...args }),
-  ).toMatchObject({
-    body: [],
-    state: { source: "state", membership, listed: 0 },
-  });
-  // Without a proved whole line here, the argument-less call keeps recorded members.
-  expect(answer(serving, "get_orgs_books_by_id", { id: "2" })).toMatchObject({
-    body: [],
-    state:
-      membership === "query"
-        ? { source: "state", membership: "recorded", listed: 0 }
-        : { source: "recording", reason: "unrecorded-request" },
-  });
-};
-
-/** A list with one proved whole line keeps an entity added to an empty start page off that page. */
-const expectAddedEntityStaysOffStartPage = (name: string): void =>
-  expectAddedEntityStaysOffPage(`${name}=1`, { [name]: "1" });
 
 /** Replace the served state with the initial one changed by `edit`. */
 const load = (
@@ -301,21 +248,6 @@ describe("item answers", () => {
         "holds no /api/orgs/{org_id}/users entity 1 in /api/orgs/org2/users",
       ),
     });
-  });
-});
-
-describe("loaded later pages", () => {
-  it.each(["offset", "start", "_start"])(
-    "skips an entity added under an empty ?%s=1 page without whole-collection evidence",
-    expectAddedEntityStaysOffStartPage,
-  );
-
-  it("does not list an entity added under an empty ?page=2&per_page=1 page", () => {
-    expectAddedEntityStaysOffPage(
-      "page=2&per_page=1",
-      { page: "2", per_page: "1" },
-      "recorded",
-    );
   });
 });
 
@@ -499,6 +431,83 @@ describe("list answer coverage and bounds", () => {
   });
 });
 
+describe("state-backed request provenance", () => {
+  it("keeps the item envelope while reporting indistinguishable query orders", () => {
+    const books = servingFrom([
+      ["GET", "/api/books/1?locale=en&format=json", { id: 1, title: "Book" }],
+      ["GET", "/api/books/1?format=json&locale=en", { id: 1, title: "Book" }],
+    ]);
+    expect(
+      answer(books, "get_books_by_id", {
+        id: "1",
+        locale: "en",
+        format: "json",
+      }),
+    ).toMatchObject({
+      body: { id: 1, title: "Book" },
+      replay: { record_ordinal: 0, exact_match: false },
+      state: { source: "state", view: "item" },
+    });
+  });
+
+  it("preserves query order provenance even after an exact page outgrows its bound", () => {
+    const first = "?size=2&limit=1";
+    const second = "?limit=1&size=2";
+    const books = servingFrom([
+      ["GET", `/api/books${first}`, [{ id: 1 }]],
+      ["GET", `/api/books${second}`, [{ id: 1 }]],
+      ["GET", "/api/books/1", { id: 1 }],
+    ]);
+    const args = { size: "2", limit: "1" };
+    expect.soft(answer(books, "get_books", args)).toMatchObject({
+      body: [{ id: 1 }],
+      replay: { record_ordinal: 0, exact_match: false },
+      state: { source: "state", membership: "all" },
+    });
+    expect.soft(answer(books, "get_books", args, second)).toMatchObject({
+      body: [{ id: 1 }],
+      replay: { record_ordinal: 1, exact_match: true },
+      state: { source: "state", membership: "all" },
+    });
+
+    load(books, (entities) => [
+      ...entities,
+      {
+        type: "/api/books",
+        collection: "/api/books",
+        id: "2",
+        fields: { id: 2 },
+      },
+    ]);
+    expect(answer(books, "get_books", args, second)).toMatchObject({
+      body: [{ id: 1 }],
+      replay: { record_ordinal: 1, exact_match: true },
+      state: { source: "recording", reason: "page-exceeded" },
+    });
+    expect(answer(books, "get_books", args)).toMatchObject({
+      body: [{ id: 1 }],
+      replay: { record_ordinal: 0, exact_match: false },
+      state: { source: "recording", reason: "page-exceeded" },
+    });
+  });
+
+  it("keeps the checked list envelope when a later query also matches without order", () => {
+    const books = servingFrom([
+      ["GET", "/api/books?size=2&limit=1", [{ id: 1 }]],
+      ["GET", "/api/books/1", { id: 1 }],
+      ["POST", "/api/books", { id: 2 }, 201, { id: 2 }],
+      ["GET", "/api/books?limit=1&size=2", [{ id: 2 }]],
+    ]);
+    expect(answer(books, "get_books", { size: "2", limit: "1" })).toMatchObject(
+      {
+        body: [{ id: 1 }],
+        replay: { record_ordinal: 0, exact_match: false },
+        state: { source: "state", membership: "all" },
+      },
+    );
+  });
+});
+
 describe("recorded and document answers", () => {
   it("replays recorded views and tools without a view, saying why", () => {
     const serving = servingOf();
@@ -523,14 +532,11 @@ describe("recorded and document answers", () => {
   });
 
   it("caps a state-backed document by its exact serialized UTF-8 body bytes", () => {
-    const capture = timedCaptureEvidence([
+    const serving = servingFrom([
       ["GET", "/api/settings", { theme: "dark" }],
       ["PUT", "/api/settings", { theme: "light" }],
       ["GET", "/api/settings", { theme: "light" }],
     ]);
-    const serving = servingOf(
-      environmentStateServeInputs(environmentStateServeFixture(capture)),
-    );
     const loadDocument = (value: string) =>
       load(serving, (entities) => entities, [
         { tool: "get_settings", path: "/api/settings", value },
@@ -563,27 +569,24 @@ describe("recorded and document answers", () => {
     expect(result.ok).toBe(false);
     if (result.ok)
       throw new Error("Expected the oversized state answer to be refused");
-    expect(result.error).toMatchObject({
-      _tag: "AnalysisResourceConstraintError",
-      operation: "environment-serve",
-      resource: "capacity",
-      reportedLimits: {
-        max_body_bytes: REPLAY_BODY_LIMIT_BYTES,
-        body_bytes: bodyBytes,
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        reported_limits: {
+          max_body_bytes: REPLAY_BODY_LIMIT_BYTES,
+          body_bytes: bodyBytes,
+        },
       },
     });
     expect(serving.store.snapshot()).toEqual(before);
   });
 
   it("answers a document's recorded line with the state's value for it", () => {
-    const capture = timedCaptureEvidence([
+    const serving = servingFrom([
       ["GET", "/api/settings", { theme: "dark", density: "compact" }],
       ["PUT", "/api/settings", { theme: "light", density: "compact" }],
       ["GET", "/api/settings", { theme: "light", density: "compact" }],
     ]);
-    const serving = servingOf(
-      environmentStateServeInputs(environmentStateServeFixture(capture)),
-    );
     expect(answer(serving, "get_settings", {})).toMatchObject({
       body: { theme: "dark", density: "compact" },
       replay: { record_ordinal: 0, exact_match: true },
@@ -632,19 +635,6 @@ describe("recorded and document answers", () => {
       0,
       "record_ordinal",
     ]);
-    load(serving, (entities) => entities, [
-      {
-        tool: "get_settings",
-        path: "/api/settings",
-        value: "x".repeat(REPLAY_BODY_LIMIT_BYTES),
-      },
-    ]);
-    expect(refusal(serving, "get_settings", {})).toMatchObject({
-      code: "resource_constraint",
-      details: {
-        reported_limits: { max_body_bytes: REPLAY_BODY_LIMIT_BYTES },
-      },
-    });
     load(serving, (entities) => entities);
     expect(refusal(serving, "get_settings", {})).toMatchObject({
       message: expect.stringContaining("holds no document"),

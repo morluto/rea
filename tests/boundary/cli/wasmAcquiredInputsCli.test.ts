@@ -1,10 +1,11 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { createHash } from "node:crypto";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { z } from "zod";
 
-import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import {
   createEvidence,
@@ -91,6 +92,7 @@ ${body}
           references: [
             {
               value: "./selected.wasm",
+              association: "local-path-candidate",
               candidate_paths: [selected],
             },
           ],
@@ -186,7 +188,7 @@ cliTest(
       );
       const valid = withEvidenceCallerInputPath(
         createEvidence(
-          undefined,
+          unknownTarget("not-observed"),
           { id: "fixture-wabt", name: "fixture", version: "1" },
           {
             operation: "inspect_wasm_artifact",
@@ -205,6 +207,83 @@ cliTest(
         schema.ajv.validate(schema.outputSchema, valid),
         JSON.stringify(schema.ajv.errors),
       ).toBe(true);
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+cliTest(
+  "reports the max_artifact_paths value a selection needs by CLI flag and MCP field before reading selections",
+  async ({ cli }) => {
+    const directory = await createTestTempDirectory("rea-wasm-paths-");
+    const selected = join(directory, "selected.wasm");
+    const glue = [join(directory, "first.js"), join(directory, "second.js")];
+    const environment = { HOME: directory, XDG_CONFIG_HOME: directory };
+    const invocation = await cli.run({
+      arguments: [
+        "inspect-wasm-artifact",
+        "./selected.wasm",
+        "--glue_paths",
+        "./first.js",
+        "--glue_paths",
+        "./second.js",
+        "--max-artifact-paths",
+        "1",
+        "--format",
+        "json",
+      ],
+      environment,
+      cwd: directory,
+    });
+    expect(invocation.exitCode, invocation.stderr).toBe(1);
+    const cliError = analysisErrorProjectionSchema.parse(invocation.json);
+    const limit = {
+      control_kind: "parameter",
+      parameter: "max_artifact_paths",
+      effective_value: 1,
+      unit: "count",
+      minimum: 1,
+      default_value: expect.any(Number),
+      applies_at: "next_call",
+      required_value: 2,
+    };
+    const refusal = {
+      kind: "adjustable_budget",
+      operation: "inspect_wasm_artifact",
+      control: "max_artifact_paths",
+      effective_value: 1,
+      required_value: 2,
+    };
+    expect(cliError).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        limit: { ...limit, cli_flag: "--max-artifact-paths" },
+        refusal,
+      },
+    });
+    expect(cliError.remediation.action).toMatch(
+      /^inspect_wasm_artifact reached its max_artifact_paths budget of 1\. Pass a larger --max-artifact-paths on the next rea \S.* run \(at least 2; range 1\.\.\d+\), then retry\.$/u,
+    );
+
+    const { client, call } = await connectLocalToolsMcp(environment);
+    try {
+      const mcpError = parseMcpToolError(
+        await call("inspect_wasm_artifact", {
+          path: selected,
+          glue_paths: glue,
+          max_artifact_paths: 1,
+        }),
+      ).error;
+      expect(mcpError).toMatchObject({
+        code: "resource_constraint",
+        details: { limit, refusal },
+      });
+      expect(mcpError.details).not.toHaveProperty("limit.cli_flag");
+      expect(mcpError.remediation.action).toMatch(
+        /^inspect_wasm_artifact reached its max_artifact_paths budget of 1\. Pass a larger max_artifact_paths on the next inspect_wasm_artifact call \(at least 2; range 1\.\.\d+\), then retry\.$/u,
+      );
     } finally {
       await client.close();
     }

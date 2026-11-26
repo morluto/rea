@@ -6,6 +6,7 @@ import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js"
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
 import {
   InesArtifactReader,
+  inesInventoryLimitation,
   type InesRegionScan,
 } from "../InesArtifactReader.js";
 
@@ -19,8 +20,11 @@ import {
   ArtifactReaderFailure,
   type ArtifactReader,
   type ArtifactReaderTraversal,
-} from "../ArtifactReader.js";
-import type { ArtifactResourceOwner } from "../ArtifactResourceScope.js";
+  type ArtifactResourceOwner,
+  hashStableRootArtifact,
+  hashStableRootArtifactHandle,
+  hostExecutableMarking,
+} from "../../resources/index.js";
 import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
@@ -43,12 +47,7 @@ import {
   artifactManifestId,
 } from "../../domain/artifactIdentity.js";
 import { classifyAndHashRootForInventory } from "./classify.js";
-import { hostExecutableMarking } from "../hostExecutableMarking.js";
 import type { HashResult } from "../ArtifactHash.js";
-import {
-  hashStableRootArtifact,
-  hashStableRootArtifactHandle,
-} from "./hashStableRootArtifact.js";
 import { createReader, inventoryCoverage } from "./reader.js";
 import {
   scanReader,
@@ -56,6 +55,8 @@ import {
 } from "./scanReader.js";
 import type { ArtifactInventoryOptions } from "./types.js";
 import type { ArtifactContainerIntegrityPair } from "../../domain/artifactIntegrity.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
+import type { DirectoryRootDigest } from "../../domain/directoryTreeDigest.js";
 
 export interface TransferredArtifactInventorySource {
   readonly owner: ArtifactResourceOwner;
@@ -145,6 +146,7 @@ const scanCanonical = async (
       options.asarHeaderAdmission,
       selectedPath,
       options.readerLimits,
+      options.integrity,
     );
   } catch (cause: unknown) {
     readerCreationFailure = { cause };
@@ -164,6 +166,7 @@ const scanCanonical = async (
       parentResolution,
       traversal,
       rootContradiction,
+      rootDigest: treeDigest,
     } = await scanReader(
       reader,
       ownedReaders,
@@ -192,6 +195,7 @@ const scanCanonical = async (
         traversal,
         rootContradiction,
         recognitionLimitations,
+        treeDigest,
       }),
     };
   } catch (cause: unknown) {
@@ -227,6 +231,7 @@ const scanCanonical = async (
             limitations: [],
           },
           rootContradiction: undefined,
+          treeDigest: undefined,
           traversal: {
             status: "unknown",
             limitations: [
@@ -243,7 +248,7 @@ const scanCanonical = async (
           cause.reason,
           rootFailure === undefined
             ? cause.message
-            : `${cause.message}; root observations could not be revalidated: ${rootFailure instanceof Error ? rootFailure.message : String(rootFailure)}`,
+            : `${cause.message}; root observations could not be revalidated: ${errorMessage(rootFailure)}`,
           {
             cause:
               rootFailure === undefined
@@ -255,7 +260,7 @@ const scanCanonical = async (
                   ),
             cleanup: cause.cleanup,
             cleanupLeases: cause.cleanupLeases,
-            userMessage: cause.userMessage,
+            ...cause.primaryFacts(),
             ...(retained === undefined
               ? {}
               : {
@@ -283,6 +288,7 @@ const scanCanonical = async (
       rootSource !== undefined &&
       (isZipPackageFormat(rootFormat) ||
         rootFormat === "ines" ||
+        rootFormat === "asar" ||
         (readerAdmission !== undefined && "kind" in readerAdmission))
         ? "transfer"
         : "release",
@@ -431,6 +437,8 @@ interface SnapshotBuildInput {
   readonly parentResolution: ArtifactParentResolution;
   readonly traversal: ArtifactReaderTraversal;
   readonly rootContradiction: ArtifactContainerIntegrityPair | undefined;
+  /** A directory root's tree digest; absent for every other root. */
+  readonly treeDigest: DirectoryRootDigest | undefined;
 }
 
 const buildInventorySnapshot = async (
@@ -442,6 +450,7 @@ const buildInventorySnapshot = async (
   const rootNode = createRootNode({
     digest: rootDigest,
     occurrences: input.occurrences,
+    treeDigest: input.treeDigest,
   });
   input.nodes.set(rootNode.artifact_id, rootNode);
   rekeyOccurrences(rootNode.artifact_id, input.occurrences);
@@ -526,6 +535,7 @@ const buildInventorySnapshot = async (
       throw new ArtifactReaderFailure(
         "integrity",
         "Missing iNES reconstruction scan",
+        { integrityCheck: "inventory-node" },
       );
     ines = await reader.verifyReconstruction(
       rootDigest.sha256,
@@ -538,12 +548,16 @@ const buildInventorySnapshot = async (
     ...input.parentResolution.limitations,
     ...edgeResult.limitations,
   ];
+  const recognitionLimitations = input.recognitionLimitations ?? [];
   const coverage =
-    relationshipLimitations.length === 0
+    relationshipLimitations.length === 0 && recognitionLimitations.length === 0
       ? traversal.coverage
       : { ...traversal.coverage, status: "unknown" as const };
   return {
     manifest,
+    ...(input.treeDigest === undefined
+      ? {}
+      : { root_digest: input.treeDigest }),
     ...(ines === undefined ? {} : { ines }),
     nodes: orderedNodes,
     occurrences: orderedOccurrences,
@@ -553,6 +567,7 @@ const buildInventorySnapshot = async (
     coverage,
     limitations: buildLimitations(
       [
+        ...(ines === undefined ? [] : [inesInventoryLimitation(ines.header)]),
         ...traversal.limitations,
         ...relationshipLimitations,
         ...(input.recognitionLimitations ?? []),
@@ -589,8 +604,13 @@ const buildIntegrityContradictions = (
       unpacked: contradiction.unpacked,
       trust: "observed-untrusted",
       provenance: "container-integrity-metadata-versus-observed-bytes",
+      ...(contradiction.signingExplanation === undefined
+        ? {}
+        : { signing_explanation: contradiction.signingExplanation }),
       limitations: [
-        "Observed bytes contradict declared integrity metadata and cannot support equivalence.",
+        contradiction.signingExplanation === undefined
+          ? "Observed bytes contradict declared integrity metadata and cannot support equivalence."
+          : "Observed bytes contradict declared integrity metadata; stripping IMAGE_DIRECTORY_ENTRY_SECURITY restores the declared SHA-256 (signed-after-packing). Bytes remain observed-untrusted and cannot support equivalence.",
       ],
     };
   });
@@ -619,6 +639,7 @@ const verifyRootDigest = async (
     throw new ArtifactReaderFailure(
       "integrity",
       "Root artifact changed during inventory",
+      { integrityCheck: "container-identity" },
     );
 };
 

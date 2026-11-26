@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { unescapeJsonPointerToken } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import { collapseWhitespace, isTimestamp } from "./appTask.js";
@@ -7,6 +8,7 @@ import {
   selectorOf,
   type Condition,
 } from "./viewSelector.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** The arrays a pointer stepped into, each as the pointer to it. */
 interface ArraySteps {
@@ -31,12 +33,13 @@ type Stepped =
   | { readonly kind: "none"; readonly reason?: string }
   | { readonly kind: "unresolved"; readonly problem: string };
 
-const INDEX = /^(?:0|[1-9][0-9]*)$/u;
+/** The conditions in a pointer's last reference token, when it is a selector. */
+export const lastSelectorOf = (pointer: string): readonly Condition[] =>
+  selectorOf(
+    unescapeJsonPointerToken(pointer.slice(pointer.lastIndexOf("/") + 1)),
+  ) ?? [];
 
-const isRecord = (
-  value: JsonValue | null | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+const INDEX = /^(?:0|[1-9][0-9]*)$/u;
 
 const own = (record: Record<string, JsonValue>, key: string) =>
   Object.hasOwn(record, key) ? record[key] : undefined;
@@ -299,9 +302,7 @@ const selectorGroups = (tokens: Iterable<string>) => {
     const values = JSON.stringify(conditions.map(({ value }) => value));
     const group = groups.get(fields) ?? { conditions, wanted: new Map() };
     groups.set(fields, group);
-    const spellings = group.wanted.get(values);
-    if (spellings === undefined) group.wanted.set(values, [token]);
-    else spellings.push(token);
+    appendToMapList(group.wanted, values, token);
   }
   return groups.values();
 };

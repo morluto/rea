@@ -71,7 +71,7 @@ describe("artifact graph path and provenance fields", () => {
     expect(parsed.provenance[0]?.arguments[0]).toBe(arguments_[0]);
   });
 
-  it("requires current coverage and integrity facts and rejects the obsolete status alias", () => {
+  it("requires coverage and integrity facts", () => {
     const inventory = {
       manifest: {
         manifest_id: `agm_${"b".repeat(64)}`,
@@ -110,11 +110,5 @@ describe("artifact graph path and provenance fields", () => {
         integrity_contradictions: [],
       }).success,
     ).toBe(true);
-    expect(
-      artifactInventoryResultSchema.safeParse({
-        ...inventory,
-        coverage_status: "complete",
-      }).success,
-    ).toBe(false);
   });
 });

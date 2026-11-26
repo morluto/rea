@@ -2,17 +2,18 @@ import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createGhApiRequest } from "./github-api.mjs";
+import { createGhApiRequest, validateRepository } from "./github-api.mjs";
 
 const OUTPUT_DIRECTORY = join(".cache", "ci-pr-health");
 const PAGE_SIZE = 100;
 const MAX_PULL_REQUEST_PAGES = 3;
-const MAX_WORKFLOW_RUN_PAGES = 5;
+const MAX_WORKFLOW_RUN_PAGES = 10;
 const MAX_PULL_REQUEST_DETAILS = 40;
 const MAX_API_REQUESTS =
   MAX_PULL_REQUEST_PAGES + MAX_WORKFLOW_RUN_PAGES + MAX_PULL_REQUEST_DETAILS;
-const LOOKBACK_DAYS = 14;
+const LOOKBACK_HOURS = 12;
 const MAX_LOOKBACK_DAYS = 30;
+const MAX_LOOKBACK_HOURS = MAX_LOOKBACK_DAYS * 24;
 const MAX_TOTAL_TIME_MS = 60_000;
 const SHA_PATTERN = /^[0-9a-f]{40}$/iu;
 const COMPLETED_CATEGORIES = new Map([
@@ -27,7 +28,8 @@ export async function collectPrCiHealth({
   repository,
   repositoryId,
   defaultBranch,
-  lookbackDays = LOOKBACK_DAYS,
+  lookbackDays,
+  lookbackHours,
   now = Date.now(),
   apiRequest = createGhApiRequest(),
 }) {
@@ -36,10 +38,11 @@ export async function collectPrCiHealth({
     repositoryId,
     defaultBranch,
     lookbackDays,
+    lookbackHours,
     now,
   });
   const observedAt = new Date(now).toISOString();
-  const cutoff = now - identity.lookbackDays * 24 * 60 * 60 * 1_000;
+  const cutoff = now - identity.lookbackHours * 60 * 60 * 1_000;
   const snapshot = await collectApiSnapshot({ apiRequest, identity, cutoff });
   const classified = classifyPullRequests(snapshot);
   const { pulls, runs, budget } = snapshot;
@@ -53,6 +56,7 @@ export async function collectPrCiHealth({
     repositoryId: identity.repositoryId,
     defaultBranch: identity.defaultBranch,
     lookbackDays: identity.lookbackDays,
+    lookbackHours: identity.lookbackHours,
     scan: {
       status:
         errors.length === 0 && pulls.complete && runs.complete
@@ -168,6 +172,11 @@ async function resolveMergeability({ candidates, requestGet, identity }) {
       continue;
     }
     const { detail } = result;
+    if (detail.closed || detail.draft) {
+      pull.eligibilityChangedDuringScan = true;
+      errors.add("pull_request_eligibility_changed_during_scan");
+      continue;
+    }
     const identityChanged =
       detail.headSha !== pull.head.sha ||
       detail.headRef !== pull.head.ref ||
@@ -221,6 +230,12 @@ export function classifyPrCi({
   if (!pull.identityValid)
     return result("unknown", "pull_request_head_identity_invalid", []);
   const evidence = [...runs, ...ambiguousRuns];
+  if (pull.eligibilityChangedDuringScan)
+    return result(
+      "unknown",
+      "pull_request_eligibility_changed_during_scan",
+      evidence,
+    );
   if (pull.mergeable === false)
     return result("merge_conflict", "github_reports_merge_conflict", evidence);
   // The newest collected run is not proven current until pagination completes:
@@ -447,17 +462,21 @@ function compareRunEvidence(left, right) {
       ? 0
       : null;
   }
-  // A retry may start long after its original creation; without an attempt
-  // clock, creation dates only order first attempts from different runs.
-  if (
-    positiveInteger(leftRun.run_attempt) !== 1 ||
-    positiveInteger(rightRun.run_attempt) !== 1
-  )
-    return null;
-  const time =
-    Date.parse(leftRun.created_at ?? "") -
-    Date.parse(rightRun.created_at ?? "");
+  const time = attemptTime(leftRun) - attemptTime(rightRun);
   return Number.isFinite(time) && time !== 0 ? time : null;
+}
+
+function attemptTime(run) {
+  const attempt = positiveInteger(run.run_attempt);
+  const created = Date.parse(run.created_at ?? "");
+  if (attempt === 1) return created;
+  // Retried runs retain their original creation time. Use the newer start
+  // only after the retry has begun, otherwise the API may still describe
+  // the previous execution.
+  if (attempt === null || !["in_progress", "completed"].includes(run.status))
+    return NaN;
+  const started = Date.parse(run.run_started_at ?? "");
+  return started > created ? started : NaN;
 }
 
 function result(category, reason, runs) {
@@ -471,6 +490,8 @@ function result(category, reason, runs) {
       conclusion: typeof run.conclusion === "string" ? run.conclusion : null,
       headSha: isSha(run.head_sha) ? run.head_sha.toLowerCase() : null,
       createdAt: typeof run.created_at === "string" ? run.created_at : null,
+      startedAt:
+        typeof run.run_started_at === "string" ? run.run_started_at : null,
       url: typeof run.html_url === "string" ? run.html_url : null,
       identityBasis: basis,
     })),
@@ -518,8 +539,8 @@ async function listRecentWorkflowRuns({ requestGet, identity, cutoff }) {
   let error = null;
   for (let page = 1; page <= MAX_WORKFLOW_RUN_PAGES; page += 1) {
     try {
-      const cutoffDate = new Date(cutoff).toISOString().slice(0, 10);
-      const endpoint = `repos/${identity.repository}/actions/workflows/ci.yml/runs?event=pull_request&created=%3E%3D${cutoffDate}&per_page=${PAGE_SIZE}&page=${page}`;
+      const cutoffIso = new Date(cutoff).toISOString();
+      const endpoint = `repos/${identity.repository}/actions/workflows/ci.yml/runs?event=pull_request&created=%3E%3D${encodeURIComponent(cutoffIso)}&per_page=${PAGE_SIZE}&page=${page}`;
       const response = await requestGet(endpoint);
       if (!isRecord(response) || !Array.isArray(response.workflow_runs))
         throw new Error("workflow_run_page_malformed");
@@ -550,6 +571,8 @@ async function getPullRequestDetails({ requestGet, identity, pull }) {
       return { detail: null, error: "pull_request_detail_malformed" };
     return {
       detail: {
+        closed: response.state === "closed",
+        draft: response.draft === true,
         mergeable:
           typeof response.mergeable === "boolean"
             ? response.mergeable
@@ -576,15 +599,10 @@ function validateInputs({
   repositoryId,
   defaultBranch,
   lookbackDays,
+  lookbackHours,
   now,
 }) {
-  if (
-    typeof repository !== "string" ||
-    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)
-  )
-    throw new Error(
-      "CI_REPOSITORY must be an owner/name repository identifier",
-    );
+  validateRepository(repository);
   if (
     typeof defaultBranch !== "string" ||
     defaultBranch.length === 0 ||
@@ -603,19 +621,33 @@ function validateInputs({
   )
     throw new Error("CI_REPOSITORY_ID must be a positive safe integer");
   if (
-    !Number.isInteger(lookbackDays) ||
-    lookbackDays < 1 ||
-    lookbackDays > MAX_LOOKBACK_DAYS
+    lookbackDays !== undefined &&
+    (!Number.isInteger(lookbackDays) ||
+      lookbackDays < 1 ||
+      lookbackDays > MAX_LOOKBACK_DAYS)
   )
     throw new Error(
       `lookbackDays must be an integer from 1 to ${String(MAX_LOOKBACK_DAYS)}`,
     );
+  if (
+    lookbackHours !== undefined &&
+    (!Number.isInteger(lookbackHours) ||
+      lookbackHours < 1 ||
+      lookbackHours > MAX_LOOKBACK_HOURS)
+  )
+    throw new Error(
+      `lookbackHours must be an integer from 1 to ${String(MAX_LOOKBACK_HOURS)}`,
+    );
+  const resolvedHours =
+    lookbackHours ??
+    (lookbackDays !== undefined ? lookbackDays * 24 : LOOKBACK_HOURS);
   if (!Number.isFinite(now)) throw new Error("now must be a finite timestamp");
   return {
     repository,
     repositoryId: parsedRepositoryId,
     defaultBranch,
-    lookbackDays,
+    lookbackDays: resolvedHours / 24,
+    lookbackHours: resolvedHours,
   };
 }
 
@@ -656,7 +688,7 @@ export async function writePrCiHealthReport(
   return { jsonPath, markdownPath };
 }
 
-export function renderMarkdownSummary(report) {
+function renderMarkdownSummary(report) {
   const rows = report.pullRequests.map(
     (pull) =>
       `| #${String(pull.number ?? "?")} | ${escapeCell(pull.head.repository ?? "unknown")} | ${escapeCell(pull.head.ref ?? "unknown")} | \`${pull.head.sha ?? "unknown"}\` | ${pull.ci.category} | ${escapeCell(pull.ci.reason)} |`,
@@ -664,7 +696,7 @@ export function renderMarkdownSummary(report) {
   return [
     "# Pull request CI health snapshot",
     "",
-    `Observed ${report.observedAt} for \`${report.repository}\`, target branch \`${escapeCell(report.defaultBranch)}\`; recent window ${String(report.lookbackDays)} days. Scan: **${report.scan.status}**.`,
+    `Observed ${report.observedAt} for \`${report.repository}\`, target branch \`${escapeCell(report.defaultBranch)}\`; recent window ${String(report.lookbackHours ?? report.lookbackDays * 24)} hours. Scan: **${report.scan.status}**.`,
     "",
     "This is read-only point-in-time telemetry. Missing is reported only when PR and workflow-run inventories are complete and the current immutable PR head identity is unambiguous. Incomplete lookups remain deferred or unknown.",
     "",

@@ -3,14 +3,11 @@ import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
 import { countTaskRows } from "./appTaskChecks.js";
 import type { DesktopStatePath } from "./desktopState.js";
 import { sqliteRowIdentity } from "./stateChanges.js";
+import { appendAll } from "../appendAll.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 type Version = DesktopStatePath["versions"][number];
 type Suggestion = DesktopTaskCheckInput;
-
-const isRecord = (
-  value: JsonValue | null | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 interface TableView {
   readonly columns: readonly string[];
@@ -173,7 +170,7 @@ export const rowSuggestions = (
           "row_absent",
           rowWhere(old, row, (column) => old.key.includes(column)),
         );
-    suggestions.push(...unkeyedRowSuggestions(file, name, old, table));
+    appendAll(suggestions, unkeyedRowSuggestions(file, name, old, table));
     if (old.rows.length !== table.rows.length)
       suggestions.push({
         kind: "row_count",

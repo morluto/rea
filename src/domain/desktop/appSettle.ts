@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** How an app's data/get is read until its files settle; the exported verifier renders the same values. */
 export interface SettleTiming {
@@ -51,9 +51,7 @@ export const appFileDigests = (parts: readonly unknown[]): string =>
         return [
           [
             textField(metadata?.[DATA_OBJECTS], "path") ?? `#${String(index)}`,
-            createHash("sha256")
-              .update(content ?? "")
-              .digest("hex"),
+            sha256Hex(content ?? ""),
           ],
         ];
       })

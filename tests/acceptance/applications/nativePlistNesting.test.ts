@@ -1,4 +1,3 @@
-import { execFile } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buildBinary, type PlistValue } from "plist";
@@ -12,31 +11,12 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-const lintXmlPlist = (path: string) =>
-  new Promise<{ exitCode: number; stdout: string; stderr: string }>(
-    (resolve, reject) => {
-      execFile(
-        "/usr/bin/plutil",
-        ["-lint", "--", path],
-        { timeout: 10_000 },
-        (error, stdout, stderr) => {
-          const exitCode = error === null ? 0 : error.code;
-          if (typeof exitCode !== "number") {
-            reject(error);
-            return;
-          }
-          resolve({ exitCode, stdout, stderr });
-        },
-      );
-    },
-  );
-
 describe.skipIf(process.platform !== "darwin")(
   "ordinary plist source nesting",
   () => {
     cliTest(
       "retains depth-129 data and depth-200 integers through CLI and MCP",
-      async ({ cli }) => {
+      async ({ cli, processes }) => {
         const root = await createTestTempDirectory("rea-plist-nesting-");
         const target = join(root, "target");
         await writeFile(target, thinMach(0xfeedfacf, 0x0100000c));
@@ -82,7 +62,9 @@ describe.skipIf(process.platform !== "darwin")(
           // requiring the historical depth-129/200 controls to succeed below.
           const native =
             format === "xml" && depth === 997
-              ? await lintXmlPlist(path)
+              ? await processes.run("/usr/bin/plutil", ["-lint", "--", path], {
+                  timeoutMs: 10_000,
+                })
               : undefined;
           const output = await cli.run({
             arguments: ["inspect-plist", path, "--json"],
@@ -98,7 +80,10 @@ describe.skipIf(process.platform !== "darwin")(
               retryable: false,
               details: {
                 resource: "memory",
-                reported_limits: { maximum_nesting_depth: 997 },
+                reported_limits: {
+                  boundary: "plist-nesting-depth",
+                  maximum: 997,
+                },
               },
               remediation: {
                 action: expect.stringMatching(/\S/u),
@@ -110,24 +95,37 @@ describe.skipIf(process.platform !== "darwin")(
             );
             continue;
           }
+          if (native !== undefined) expect(native.signal).toBeNull();
           if (native !== undefined && native.exitCode !== 0) {
             expect(output.exitCode, output.stderr).toBe(1);
-            const expectedFailure = {
+            // Native commands inspect a private snapshot, so their raw
+            // diagnostics can name a different operand. plutil writes them to
+            // stderr in Xcode 26 and to stdout in Xcode 16.
+            const operandNeutral = (output: string) =>
+              output.includes(path)
+                ? expect.stringContaining(output.replace(path, "").trim())
+                : output;
+            const captured_output = {
+              exit_code: native.exitCode,
+              stdout: operandNeutral(native.stdout),
+              stderr: operandNeutral(native.stderr),
+            };
+            // The CLI selects the plist as its target; MCP selects it with
+            // the `path` input. Each failure names the input that chose it.
+            expect(output.json).toMatchObject({
+              code: "target_unavailable",
+              retryable: false,
+              details: { path, captured_output },
+            });
+            expect(parseMcpToolError(response).error).toMatchObject({
               code: "invalid_request",
               retryable: false,
               details: {
                 operation: "inspect_plist",
-                captured_output: {
-                  exit_code: native.exitCode,
-                  stdout: native.stdout,
-                  stderr: native.stderr,
-                },
+                issues: [{ path: ["path"] }],
+                captured_output,
               },
-            };
-            expect(output.json).toMatchObject(expectedFailure);
-            expect(parseMcpToolError(response).error).toMatchObject(
-              expectedFailure,
-            );
+            });
             continue;
           }
           expect(
@@ -169,7 +167,6 @@ describe.skipIf(process.platform !== "darwin")(
           ).toBe(false);
         }
       },
-      60_000,
     );
   },
 );

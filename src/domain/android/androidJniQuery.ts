@@ -1,3 +1,4 @@
+import { analysisViewPageFields } from "../analysisView/analysisViewPageFields.js";
 import { z } from "zod";
 import {
   androidJniBindingSchema,
@@ -5,11 +6,8 @@ import {
   androidJniDeclarationSchema,
   androidJniLibrarySchema,
 } from "./androidJniBindings.js";
-import { validateAndroidPackageDelivery } from "./androidPackageQuery.js";
 const page = {
-  kind: z.literal("android-jni"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
+  ...analysisViewPageFields("android-jni"),
   indices: z.array(z.int().nonnegative()).optional(),
 };
 /** Pages reference original parent collection indices, independently of source ordinals. */
@@ -71,10 +69,3 @@ export const androidJniViewItemsSchema = z.union([
       .extend({ row_index: z.int().nonnegative() }),
   ),
 ]);
-/** CLI and MCP share the same delivery admission before analysis starts. */
-export const androidJniDeliverySchema = z
-  .strictObject({
-    detail: z.enum(["complete", "summary"]).default("complete"),
-    view: androidJniViewRequestSchema.optional(),
-  })
-  .superRefine(validateAndroidPackageDelivery);

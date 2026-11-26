@@ -1,3 +1,4 @@
+import { LosslessNumber } from "lossless-json";
 import { expect, it } from "vitest";
 import { CaptureRedaction } from "./CaptureRedaction.js";
 
@@ -104,4 +105,13 @@ it("matches scalar UTF-8 declarations and complete surrogate pairs exactly", () 
   expect(
     new CaptureRedaction(["\ud83d\ude00"]).sensitiveBytes(Buffer.from("😀")),
   ).toBe(true);
+});
+
+it("redacts a recorded decimal when its normalized reported value is sensitive", () => {
+  const value = new LosslessNumber("1.000e21");
+  expect(new CaptureRedaction([]).number(value, "/count")).toEqual({
+    reported: 1e21,
+    literal: "1.000e21",
+  });
+  expect(new CaptureRedaction(["1e+21"]).number(value, "/count")).toBeNull();
 });

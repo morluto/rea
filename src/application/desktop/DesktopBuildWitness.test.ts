@@ -1,4 +1,11 @@
-import { access, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  readFile,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
@@ -7,7 +14,7 @@ import {
   AnalysisCancelledError,
   AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
-import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
+import { SafeOutputTree } from "../../resources/SafeOutputTree.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import * as stableFile from "../../filesystem/readStableFileBytes.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -19,6 +26,8 @@ import {
   taskVerifierArtifact,
 } from "../../domain/desktop/appTaskPython.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { readHostFile } from "../../desktop/HostFileRead.js";
+import type { HostFileReader } from "../../ports/HostFileReader.js";
 import { BuildComputerActionLog } from "./DesktopBuildActionLog.js";
 import {
   DesktopBuildWitness,
@@ -46,12 +55,15 @@ const computer = {
   callTool: () => Promise.reject(new Error("uncalled")),
 } as WitnessedComputer;
 
-const witnessAt = async (bundle: string) =>
+const witnessAt = async (
+  bundle: string,
+  reader: HostFileReader = readHostFile,
+) =>
   new DesktopBuildWitness(
     computer,
     new BuildComputerActionLog(),
     SETTLE_TIMING,
-    { bundle: { path: bundle } },
+    { bundle: { path: bundle }, readHostFile: reader },
   );
 
 describe("bundle task reads", () => {
@@ -88,6 +100,7 @@ describe("bundle task reads", () => {
       },
       new BuildComputerActionLog(),
       { ...SETTLE_TIMING, windowMs: 0 },
+      { readHostFile },
     );
     const signal = new AbortController().signal;
     const first = await witness.check(
@@ -280,6 +293,7 @@ describe("published witness cancellation recovery", () => {
         },
         new BuildComputerActionLog(),
         { ...SETTLE_TIMING, windowMs: 0 },
+        { readHostFile },
       );
       let isPublished = () => false;
       let publishedCloses = 0;
@@ -354,4 +368,97 @@ describe("published witness cancellation recovery", () => {
       }
     },
   );
+});
+
+// Mode bits do not bind root, so a read-only folder is admitted there.
+const unwritable = process.getuid?.() === 0 ? [] : ["read-only folder"];
+
+describe.skipIf(process.platform === "win32")(
+  "seed output folder admission",
+  () => {
+    it.each(["symlinked folder", ...unwritable])(
+      "refuses a %s before starting the recording, and leaves the witness open for a fresh seed",
+      async (kind) => {
+        const root = await createTestTempDirectory("witness-seed-");
+        const refusedFolder = join(root, "refused");
+        if (kind === "symlinked folder") {
+          const target = join(root, "target");
+          await mkdir(target);
+          await symlink(target, refusedFolder);
+        } else await mkdir(refusedFolder, { mode: 0o500 });
+        let recordings = 0;
+        const witness = new DesktopBuildWitness(
+          {
+            ...computer,
+            startRecording: () => {
+              recordings += 1;
+              return Promise.reject(new Error("unstarted"));
+            },
+          } as WitnessedComputer,
+          new BuildComputerActionLog(),
+          SETTLE_TIMING,
+          {
+            bundle: { path: await createTestTempDirectory("witness-bundle-") },
+            readHostFile,
+          },
+        );
+        const signal = new AbortController().signal;
+
+        const refusedSeed = await witness.check(
+          { task, stage: "seed", directory: refusedFolder },
+          signal,
+        );
+        expect(refusedSeed.ok).toBe(false);
+        if (refusedSeed.ok) return;
+        expect(refusedSeed.error).toBeInstanceOf(AnalysisInputError);
+        if (!(refusedSeed.error instanceof AnalysisInputError)) return;
+        expect(refusedSeed.error.issues).toContainEqual(
+          expect.objectContaining({
+            path: ["directory"],
+            reason: "invalid_value",
+          }),
+        );
+        expect(recordings).toBe(0);
+
+        // The refused seed opened no witness, so a fresh seed with a usable
+        // folder passes the folder check and reaches the bundle-task
+        // comparison instead of a directory or already-open refusal.
+        const retry = await witness.check(
+          { task, stage: "seed", directory: join(root, "record") },
+          signal,
+        );
+        expect(retry.ok).toBe(false);
+        if (retry.ok) return;
+        expect(retry.error).toBeInstanceOf(AnalysisInputError);
+        if (!(retry.error instanceof AnalysisInputError)) return;
+        expect(retry.error.userMessage).toContain("bundle");
+        expect(recordings).toBe(0);
+      },
+    );
+  },
+);
+
+describe("injected HostFileReader port", () => {
+  it("forwards bundle verification reads through the injected HostFileReader", async () => {
+    const root = await createTestTempDirectory("witness-port-");
+    const reader = vi.fn<HostFileReader>().mockResolvedValue("missing");
+    const withReader = await witnessAt(root, reader);
+    const missing = await withReader.check(
+      { task, stage: "seed", directory: join(root, "record") },
+      new AbortController().signal,
+    );
+    expect(missing.ok).toBe(false);
+    expect(reader).toHaveBeenCalledTimes(2);
+    const parsedTask = parseDesktopTask(task);
+    if (!parsedTask.ok) throw new Error(parsedTask.error);
+    expect(reader.mock.calls.map(([path]) => path)).toEqual([
+      join(root, "tasks", `${task.name}.json`),
+      join(
+        root,
+        "artifacts",
+        `${taskVerifierArtifact(parsedTask.value)}`,
+        "verify.py",
+      ),
+    ]);
+  });
 });

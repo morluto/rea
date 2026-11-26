@@ -4,8 +4,8 @@ import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
 
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import * as stableArtifact from "../../artifacts/readStableArtifact.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
+import * as stableArtifact from "../../resources/readStableArtifact.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { inspectNtfsJournalEvidence } from "./NtfsJournalService.js";
 import { parseEvidence } from "../../domain/evidence.js";
@@ -69,6 +69,43 @@ it("preserves the completed file identity when MFT interpretation fails", async 
     expect(spy).toHaveBeenCalledTimes(1);
   } finally {
     spy.mockRestore();
+    await resources.close();
+  }
+});
+
+it("refuses an oversized acquisition at max_file_bytes, not host memory", async () => {
+  const resources = new ArtifactResourceScope();
+  const directory = await createTestTempDirectory("rea-ntfs-oversized-");
+  const mftPath = join(directory, "mft");
+  const file = await open(mftPath, "w");
+  await file.truncate(64 * 1024 * 1024 + 1);
+  await file.close();
+  try {
+    const result = await inspectNtfsJournalEvidence(
+      { mft_path: mftPath, journal_path: "/fixture/journal" },
+      resources,
+    );
+    if (result.ok) throw new Error("expected a size refusal");
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 64 * 1024 * 1024,
+          unit: "bytes",
+        },
+      },
+    });
+    expect(projected.details?.refusal).toMatchObject({
+      kind: "adjustable_budget",
+      control: "max_file_bytes",
+    });
+    // Recovery names the per-call control, not host-memory advice.
+    expect(projected.remediation.action).toContain("max_file_bytes");
+  } finally {
     await resources.close();
   }
 });

@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, rename, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.js";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import { ArtifactFileCleanupFailure } from "../resources/ArtifactFileOperation.js";
 import { withNativeMachoSource } from "./NativeMachoSource.js";
 
 const control = vi.hoisted(() => ({ failClose: false, attempts: 0 }));
@@ -33,7 +33,7 @@ afterEach(() => {
 });
 
 const fixture = async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-macho-source-"));
+  const root = await createTestTempDirectory("rea-macho-source-");
   const path = join(root, "image");
   const bytes = Buffer.from("0123456789abcdef");
   await writeFile(path, bytes);
@@ -59,7 +59,7 @@ it("binds bounded reads and returned failures to the selected bytes", async () =
           "5678",
         );
         await expect(source.readSlice(4, 8, 6, 3)).rejects.toMatchObject({
-          reason: "format",
+          reason: "malformed",
         });
         return { ok: false, error: "original failure" };
       },
@@ -68,7 +68,6 @@ it("binds bounded reads and returned failures to the selected bytes", async () =
     expect(control.attempts).toBe(1);
   } finally {
     await scope.close();
-    await rm(f.root, { recursive: true, force: true });
   }
 });
 
@@ -84,7 +83,10 @@ it("refuses wrong initial digest and a changed selected file even after a return
         undefined,
         run,
       ),
-    ).rejects.toMatchObject({ reason: "integrity" });
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "admitted-identity",
+    });
     expect(run).not.toHaveBeenCalled();
     await expect(
       withNativeMachoSource(f, scope, undefined, async () => {
@@ -97,7 +99,6 @@ it("refuses wrong initial digest and a changed selected file even after a return
     });
   } finally {
     await scope.close();
-    await rm(f.root, { recursive: true, force: true });
   }
 });
 
@@ -111,10 +112,12 @@ it("refuses a path replacement during the producer callback", async () => {
         await writeFile(f.path, f.bytes);
         return "result";
       }),
-    ).rejects.toMatchObject({ reason: "integrity" });
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "container-identity",
+    });
   } finally {
     await scope.close();
-    await rm(f.root, { recursive: true, force: true });
   }
 });
 
@@ -144,7 +147,6 @@ it("keeps callback cancellation and retries the exact descriptor after close fai
   } finally {
     control.failClose = false;
     await scope.close();
-    await rm(f.root, { recursive: true, force: true });
   }
 });
 
@@ -170,7 +172,6 @@ it("retains the completed producer failure when cancellation prevents final veri
     });
   } finally {
     await scope.close();
-    await rm(f.root, { recursive: true, force: true });
   }
 });
 
@@ -204,7 +205,6 @@ it("retains a returned producer failure when final descriptor close fails", asyn
   } finally {
     control.failClose = false;
     await scope.close();
-    await rm(f.root, { recursive: true, force: true });
   }
 });
 
@@ -234,7 +234,6 @@ it("rechecks source after a thrown producer failure and retains both failures", 
     });
   } finally {
     await scope.close();
-    await rm(f.root, { recursive: true, force: true });
   }
 });
 
@@ -261,6 +260,5 @@ it("retains a thrown producer failure if cancellation prevents final verificatio
     });
   } finally {
     await scope.close();
-    await rm(f.root, { recursive: true, force: true });
   }
 });

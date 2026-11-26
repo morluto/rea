@@ -3,6 +3,10 @@ import { join } from "node:path";
 
 import { expect } from "vitest";
 
+import {
+  expectAdapterErrorParity,
+  parseMcpToolError,
+} from "../../fixtures/mcpToolError.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
@@ -18,6 +22,7 @@ cliTest.skipIf(process.platform === "win32")(
       binary,
       `#!${process.execPath}
 const args = process.argv.slice(2);
+if (args[0] === 'start-server') process.exit(0);
 if (args[0] === 'version') {
   console.log('Android Debug Bridge version 1.0.41\\nVersion 34.0.5-fixture\\nInstalled as ' + process.argv[1]);
   process.exit(0);
@@ -85,10 +90,11 @@ process.exit(1);
         device_path: devicePath,
         ...transfer.input,
       });
-      expect(reply.isError).toBe(true);
-      const content = reply.content.find((item) => item.type === "text");
-      if (content?.type !== "text") throw new Error("Missing error response");
-      expect(JSON.parse(content.text)).toEqual({ error: output.json });
+      expectAdapterErrorParity(
+        parseMcpToolError(reply).error,
+        output.json,
+        scenario.operation,
+      );
       await client.ping();
     }
     expect(await readFile(source, "utf8")).toBe("caller bytes");

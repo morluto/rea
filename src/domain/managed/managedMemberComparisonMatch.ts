@@ -1,7 +1,4 @@
-import {
-  hasCompleteMethodRows,
-  type ManagedComparisonScope,
-} from "./managedMemberComparisonCoverage.js";
+import type { ManagedComparisonScope } from "./managedMemberComparisonCoverage.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import {
   managedMemberInspectionSchema,
@@ -12,10 +9,7 @@ import type {
   ManagedMemberComparisonResult,
   ManagedMemberComparisonSide,
 } from "./managedMemberComparison.js";
-import {
-  comparableSides,
-  signatureIdentity,
-} from "./managedMemberSignatureIdentity.js";
+import { signatureIdentity } from "./managedMemberSignatureIdentity.js";
 type Method = ManagedMemberInspection["methods"][number];
 type Field = ManagedMemberInspection["fields"][number];
 
@@ -49,15 +43,13 @@ interface Ambiguous<Item> {
   readonly basis: ConcreteMatchBasis;
 }
 
-/** A declared type: a historical bare name or a tagged observed nominal digest. */
-type DeclaredName = string | string[] | null;
-type DeclaredNameOf = (item: Method | Field) => DeclaredName;
+/** A declared type's tagged observed nominal digest; null when unresolved. */
+type DeclaredName = readonly ["nominal-name-sha256", string] | null;
 const keyIdentity = (
   item: Method | Field,
-  declared: DeclaredNameOf,
+  declaringType: DeclaredName,
   kind: "method" | "field",
 ) => {
-  const declaringType = declared(item);
   const signatureId = signatureIdentity(item.signature);
   return {
     identity: digestCanonicalValue(
@@ -76,7 +68,7 @@ const keyIdentity = (
   };
 };
 
-const keyMethod = (item: Method, declared: DeclaredNameOf): Keyed<Method> => ({
+const keyMethod = (item: Method, declared: DeclaredName): Keyed<Method> => ({
   item,
   ...keyIdentity(item, declared, "method"),
   exactKey:
@@ -124,7 +116,7 @@ const keyMethod = (item: Method, declared: DeclaredNameOf): Keyed<Method> => ({
       : null,
 });
 
-const keyField = (item: Field, declared: DeclaredNameOf): Keyed<Field> => ({
+const keyField = (item: Field, declared: DeclaredName): Keyed<Field> => ({
   item,
   ...keyIdentity(item, declared, "field"),
   exactKey:
@@ -506,62 +498,60 @@ const matchObserved = <Item extends Declared>(
 };
 
 export const keyMembers = (
-  observedLeft: ManagedMemberComparisonSide,
-  observedRight: ManagedMemberComparisonSide,
+  left: ManagedMemberComparisonSide,
+  right: ManagedMemberComparisonSide,
   scope: ManagedComparisonScope,
 ): {
   readonly methodMatches: ReturnType<typeof matchMethods>;
   readonly fieldMatches: ReturnType<typeof matchFields>;
 } => {
-  const [left, right] = comparableSides(observedLeft, observedRight);
-  const modern =
-    left.result.nesting_read !== null && right.result.nesting_read !== null;
   const declared = (
     inspection: ManagedMemberInspection,
-    names: ReadonlyMap<string, string | null>,
-  ): DeclaredNameOf => {
+    side: ManagedComparisonScope["left"],
+  ): ((item: Method | Field) => DeclaredName) => {
     return (item) => {
-      if (inspection.nesting_read === false) return null;
-      const digest = names.get(item.declaring_type_token ?? "");
-      // A historical counterpart cannot repair an observed current name gap.
-      if (inspection.nesting_read !== null && digest == null) return null;
-      // Historical observations retain their explicitly limited bare-name mode.
-      if (!modern) return item.declaring_type;
+      if (!inspection.nesting_read || side.emptyMemberNames.has(item))
+        return null;
+      const digest = side.names.get(item.declaring_type_token ?? "");
       return digest == null ? null : ["nominal-name-sha256", digest];
     };
   };
-  const declaredLeft = declared(left.result, scope.left.names);
-  const declaredRight = declared(right.result, scope.right.names);
+  const declaredLeft = declared(left.result, scope.left);
+  const declaredRight = declared(right.result, scope.right);
+  const matchable = {
+    inLeft: (item: Method | Field) =>
+      !scope.right.emptyMemberNames.has(item) && scope.inLeft(item),
+    inRight: (item: Method | Field) =>
+      !scope.left.emptyMemberNames.has(item) && scope.inRight(item),
+  };
   return {
     methodMatches: matchObserved(
       left.result.methods,
       right.result.methods,
-      scope,
+      matchable,
       (a, b) =>
         matchMethods(
           a,
           b,
-          left.result.metadata.status === "complete" &&
-            right.result.metadata.status === "complete" &&
-            hasCompleteMethodRows(left.result) &&
-            hasCompleteMethodRows(right.result),
+          scope.left.inventoryComplete.method &&
+            scope.right.inventoryComplete.method,
         ),
-      (item) => keyMethod(item, declaredLeft),
-      (item) => keyMethod(item, declaredRight),
+      (item) => keyMethod(item, declaredLeft(item)),
+      (item) => keyMethod(item, declaredRight(item)),
     ),
     fieldMatches: matchObserved(
       left.result.fields,
       right.result.fields,
-      scope,
+      matchable,
       (a, b) =>
         matchFields(
           a,
           b,
-          left.result.metadata.status === "complete" &&
-            right.result.metadata.status === "complete",
+          scope.left.inventoryComplete.field &&
+            scope.right.inventoryComplete.field,
         ),
-      (item) => keyField(item, declaredLeft),
-      (item) => keyField(item, declaredRight),
+      (item) => keyField(item, declaredLeft(item)),
+      (item) => keyField(item, declaredRight(item)),
     ),
   };
 };

@@ -1,9 +1,17 @@
-import { readFile, readdir, realpath, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import {
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  writeFile,
+} from "node:fs/promises";
+import { join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { expect } from "vitest";
 import { z } from "zod";
 
+import { cliRetainedEvidenceDirectory } from "../../../src/cli/cliEvidenceRetention.js";
+import { PARTIAL_OBSERVATION_DELIVERY } from "../../../src/domain/agentResultBudget.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
@@ -119,7 +127,6 @@ cliTest(
       Buffer.byteLength(inline.stdout),
     );
   },
-  60_000,
 );
 
 cliTest(
@@ -152,7 +159,6 @@ cliTest(
     });
     expect(await readFile(output, "utf8")).toBe("kept");
   },
-  60_000,
 );
 
 // A one-line module finishes well within 5 s; a string-array-style module of
@@ -227,32 +233,31 @@ cliTest(
       ]),
     );
   },
-  120_000,
 );
 
 // Drive the real staged publication of the partial Evidence across its
 // commit point, as evidenceOutputPublicationCli does for successful results.
 const publishPartialWithSeam = async (
   cli: TestCli,
-  detail: "summary" | "complete",
   publication: Record<string, unknown>,
 ) => {
   const root = await application();
   const work = await createTestTempDirectory("rea-js-failure-seam-");
   const destination = join(work, "partial.json");
+  const marker = join(work, "signal.json");
   const reply = await cli.run({
     cwd: work,
     arguments: timeoutArguments(
       root,
       "--detail",
-      detail,
+      "summary",
       "--evidence_output",
       destination,
     ),
     environment: {
       REA_TEST_EVIDENCE_PUBLICATION: JSON.stringify({
         prefix: join(await realpath(work), ".rea-write-"),
-        marker: join(work, "signal.json"),
+        marker,
         ...publication,
       }),
       NODE_OPTIONS: `--max-old-space-size=2048 --import=${pathToFileURL(resolve("tests/fixtures/evidencePublicationPreload.mjs")).href}`,
@@ -265,14 +270,16 @@ const publishPartialWithSeam = async (
   const [record] = parseEvidenceBundle(JSON.parse(bytes.toString())).records;
   if (record === undefined)
     throw new Error("The published bundle lacks the partial Evidence");
-  return { reply, destination, staging, bytes: bytes.length, record };
+  const proof = JSON.parse(await readFile(marker, "utf8")) as unknown;
+  return { reply, destination, staging, bytes: bytes.length, record, proof };
 };
 
 cliTest(
   "retains the original failure and committed receipt when staging cleanup stays incomplete",
   async ({ cli }) => {
-    const { reply, destination, staging, bytes, record } =
-      await publishPartialWithSeam(cli, "summary", { cleanup_failures: 1_000 });
+    const { reply, destination, staging, bytes, record, proof } =
+      await publishPartialWithSeam(cli, { cleanup_failures: 1_000 });
+    expect(proof).toEqual({ cleanup_failure: "EBUSY" });
     expect(reply.exitCode).toBe(1);
     const failure = failureSchema
       .extend({
@@ -305,14 +312,14 @@ cliTest(
     });
     expect(staging).toHaveLength(1);
   },
-  60_000,
 );
 
 cliTest(
   "delivers the receipt once a failed staging cleanup is confirmed by retry",
   async ({ cli }) => {
-    const { reply, destination, staging, bytes, record } =
-      await publishPartialWithSeam(cli, "summary", { cleanup_failures: 1 });
+    const { reply, destination, staging, bytes, record, proof } =
+      await publishPartialWithSeam(cli, { cleanup_failures: 1 });
+    expect(proof).toEqual({ cleanup_failure: "EBUSY" });
     expect(reply.exitCode).toBe(1);
     const failure = failureSchema.parse(reply.json);
     expect(failure.details.diagnostics?.evidence_bundle).toEqual({
@@ -327,18 +334,23 @@ cliTest(
     });
     expect(staging).toEqual([]);
   },
-  60_000,
 );
 
 cliTest(
   "keeps the original failure and the committed receipt when SIGINT arrives after commit",
   async ({ cli }) => {
-    const { reply, destination, staging, bytes, record } =
-      await publishPartialWithSeam(cli, "summary", {
+    const delivery = process.platform === "win32" ? "event" : "os";
+    const { reply, destination, staging, bytes, record, proof } =
+      await publishPartialWithSeam(cli, {
         phase: "cleanup",
         signal: "SIGINT",
-        delivery: process.platform === "win32" ? "event" : "os",
+        delivery,
       });
+    expect(proof).toMatchObject({
+      phase: "cleanup",
+      signal: "SIGINT",
+      delivery,
+    });
     expect(reply.exitCode).toBe(130);
     const failure = failureSchema.parse(reply.json);
     expect(failure.details.diagnostics?.evidence_bundle).toEqual({
@@ -356,5 +368,300 @@ cliTest(
     });
     expect(staging).toEqual([]);
   },
-  60_000,
+);
+
+cliTest(
+  "retains the original failure and committed cache receipt when retained-cache staging cleanup stays incomplete",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-js-failure-cache-app-");
+    await writeFile(
+      join(root, "package.json"),
+      '{"name":"retained-seam","main":"m0.js"}',
+    );
+    await Promise.all(
+      Array.from({ length: 20 }, (_, index) =>
+        writeFile(
+          join(root, `m${String(index)}.js`),
+          `export const value_${String(index)} = ${String(index)};\n`,
+        ),
+      ),
+    );
+    const home = await createTestTempDirectory("rea-js-failure-cache-home-");
+    const cache = await createTestTempDirectory("rea-js-failure-cache-root-");
+    const work = await createTestTempDirectory("rea-js-failure-cache-work-");
+    const marker = join(work, "signal.json");
+    const environment = {
+      HOME: home,
+      XDG_CACHE_HOME: cache,
+      LOCALAPPDATA: cache,
+    };
+    const cacheDirectory = cliRetainedEvidenceDirectory(
+      environment,
+      process.platform,
+    );
+    await mkdir(cacheDirectory, { recursive: true, mode: 0o700 });
+    const expectedCacheReal = await realpath(cacheDirectory);
+    const reply = await cli.run({
+      cwd: work,
+      delivery: "budgeted",
+      arguments: timeoutArguments(root),
+      environment: {
+        ...environment,
+        REA_TEST_EVIDENCE_PUBLICATION: JSON.stringify({
+          prefix: join(expectedCacheReal, ".rea-write-"),
+          marker,
+          cleanup_failures: 1_000,
+        }),
+        NODE_OPTIONS: `--max-old-space-size=2048 --import=${pathToFileURL(resolve("tests/fixtures/evidencePublicationPreload.mjs")).href}`,
+      },
+    });
+    expect(JSON.parse(await readFile(marker, "utf8"))).toEqual({
+      cleanup_failure: "EBUSY",
+    });
+    expect(reply.exitCode).toBe(1);
+    const failure = failureSchema
+      .extend({
+        code: z.literal("cleanup_incomplete"),
+        retryable: z.literal(false),
+      })
+      .parse(reply.json);
+    const receipt = z
+      .object({
+        path: z.string(),
+        bytes: z.number().int().positive(),
+        record_sha256: z.string().regex(/^[0-9a-f]{64}$/u),
+      })
+      .parse(failure.details.diagnostics?.evidence_bundle);
+    expect(failure.details).toMatchObject({
+      published: true,
+      published_path: receipt.path,
+      bytes: receipt.bytes,
+      cleanup: "incomplete",
+      execution_failure: "provider_timeout",
+      [PARTIAL_OBSERVATION_DELIVERY]: {
+        retained: "cache-file",
+        next: {
+          arguments: {
+            source: { kind: "evidence-file", path: receipt.path },
+          },
+        },
+      },
+    });
+    expect(failure.details.diagnostics?.evidence_bundle_error).toMatchObject({
+      code: "cleanup_incomplete",
+      limitation: expect.stringContaining("retained-Evidence cache"),
+    });
+    const [record] = parseEvidenceBundle(
+      JSON.parse(await readFile(receipt.path, "utf8")),
+    ).records;
+    if (record === undefined)
+      throw new Error("The retained cache bundle lacks the partial Evidence");
+    expect(failure.details.partial_observation).toMatchObject({
+      normalized_result: {
+        kind: "summary",
+        parent_evidence_id: record.evidence_id,
+      },
+    });
+    const staging = (await readdir(expectedCacheReal)).filter((name) =>
+      name.startsWith(".rea-write-"),
+    );
+    expect(staging).toHaveLength(1);
+  },
+);
+
+cliTest(
+  "reports cleanup_incomplete and keeps complete partial Evidence when retained-cache staging cleanup fails before commit",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-js-failure-precommit-app-");
+    await writeFile(
+      join(root, "package.json"),
+      '{"name":"retained-precommit","main":"m0.js"}',
+    );
+    await Promise.all(
+      Array.from({ length: 20 }, (_, index) =>
+        writeFile(
+          join(root, `m${String(index)}.js`),
+          `export const value_${String(index)} = ${String(index)};\n`,
+        ),
+      ),
+    );
+    const home = await createTestTempDirectory(
+      "rea-js-failure-precommit-home-",
+    );
+    const cache = await createTestTempDirectory(
+      "rea-js-failure-precommit-cache-",
+    );
+    const work = await createTestTempDirectory(
+      "rea-js-failure-precommit-work-",
+    );
+    const marker = join(work, "signal.json");
+    const environment = {
+      HOME: home,
+      XDG_CACHE_HOME: cache,
+      LOCALAPPDATA: cache,
+    };
+    const cacheDirectory = cliRetainedEvidenceDirectory(
+      environment,
+      process.platform,
+    );
+    await mkdir(cacheDirectory, { recursive: true, mode: 0o700 });
+    const expectedCacheReal = await realpath(cacheDirectory);
+    const delivery = process.platform === "win32" ? "event" : "os";
+    const reply = await cli.run({
+      cwd: work,
+      delivery: "budgeted",
+      arguments: timeoutArguments(root),
+      environment: {
+        ...environment,
+        REA_TEST_EVIDENCE_PUBLICATION: JSON.stringify({
+          prefix: join(expectedCacheReal, ".rea-write-"),
+          marker,
+          phase: "staging",
+          signal: "SIGINT",
+          delivery,
+          cleanup_failures: 1_000,
+        }),
+        NODE_OPTIONS: `--max-old-space-size=2048 --import=${pathToFileURL(resolve("tests/fixtures/evidencePublicationPreload.mjs")).href}`,
+      },
+    });
+    expect(JSON.parse(await readFile(marker, "utf8"))).toMatchObject({
+      phase: "staging",
+      signal: "SIGINT",
+      delivery,
+    });
+    expect(reply.exitCode).not.toBe(0);
+    const failure = failureSchema
+      .extend({
+        code: z.literal("cleanup_incomplete"),
+        retryable: z.literal(false),
+      })
+      .parse(reply.json);
+    expect(failure.details).toMatchObject({
+      cleanup: "incomplete",
+      execution_failure: "provider_timeout",
+    });
+    expect(Array.isArray(failure.details.resources)).toBe(true);
+    expect((failure.details.resources as unknown[]).length).toBeGreaterThan(0);
+    expect(failure.details.diagnostics?.evidence_bundle).toBeUndefined();
+    expect(failure.details.diagnostics?.evidence_bundle_error).toMatchObject({
+      code: "cleanup_incomplete",
+      limitation: expect.stringContaining("details.resources"),
+    });
+    // Nothing committed, so the complete partial Evidence stays inline.
+    expect(parseEvidence(failure.details.partial_observation).operation).toBe(
+      "analyze_javascript_application",
+    );
+    const staging = (await readdir(expectedCacheReal)).filter((name) =>
+      name.startsWith(".rea-write-"),
+    );
+    expect(staging).toHaveLength(1);
+  },
+);
+
+cliTest(
+  "reports the surviving cache receipt and paging cursor when removing an oversized failure bundle fails",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-js-failure-remains-app-");
+    await writeFile(
+      join(root, "package.json"),
+      '{"name":"retained-remains","main":"m0.js"}',
+    );
+    await Promise.all(
+      Array.from({ length: 20 }, (_, index) =>
+        writeFile(
+          join(root, `m${String(index)}.js`),
+          `export const value_${String(index)} = ${String(index)};\n`,
+        ),
+      ),
+    );
+    const home = await createTestTempDirectory("rea-js-failure-remains-home-");
+    const cache = await createTestTempDirectory(
+      "rea-js-failure-remains-cache-",
+    );
+    const work = await createTestTempDirectory("rea-js-failure-remains-work-");
+    const marker = join(work, "rm-signal.json");
+    const environment = {
+      HOME: home,
+      XDG_CACHE_HOME: cache,
+      LOCALAPPDATA: cache,
+    };
+    const cacheDirectory = cliRetainedEvidenceDirectory(
+      environment,
+      process.platform,
+    );
+    await mkdir(cacheDirectory, { recursive: true, mode: 0o700 });
+    const expectedCacheReal = await realpath(cacheDirectory);
+
+    // Measure the partial observation byte size so the cap admits the record
+    // while the wrapped bundle exceeds it and triggers post-write removal.
+    const baseline = await cli.run({
+      cwd: work,
+      delivery: "budgeted",
+      arguments: timeoutArguments(root, "--no-retain"),
+      environment,
+    });
+    expect(baseline.exitCode).toBe(1);
+    const baselineFailure = failureSchema.parse(baseline.json);
+    const completeBytes = z
+      .object({ complete_bytes: z.number().int().positive() })
+      .parse(
+        baselineFailure.details[PARTIAL_OBSERVATION_DELIVERY],
+      ).complete_bytes;
+
+    const reply = await cli.run({
+      cwd: work,
+      delivery: "budgeted",
+      arguments: timeoutArguments(root),
+      environment: {
+        ...environment,
+        REA_CLI_RETAINED_EVIDENCE_BYTES: String(completeBytes + 32),
+        REA_TEST_EVIDENCE_PUBLICATION: JSON.stringify({
+          prefix: `${expectedCacheReal}${sep}`,
+          marker,
+          rm_failures: 1,
+        }),
+        NODE_OPTIONS: `--max-old-space-size=2048 --import=${pathToFileURL(resolve("tests/fixtures/evidencePublicationPreload.mjs")).href}`,
+      },
+    });
+    expect(JSON.parse(await readFile(marker, "utf8"))).toEqual({
+      rm_failure: "EBUSY",
+    });
+    expect(reply.exitCode).toBe(1);
+    const failure = failureSchema.parse(reply.json);
+    const receipt = z
+      .object({
+        path: z.string(),
+        bytes: z.number().int().positive(),
+        record_sha256: z.string().regex(/^[0-9a-f]{64}$/u),
+      })
+      .parse(failure.details.diagnostics?.evidence_bundle);
+    expect(failure.details[PARTIAL_OBSERVATION_DELIVERY]).toMatchObject({
+      retained: "cache-file",
+      retention_failure: expect.stringContaining("could not be removed"),
+      next: {
+        arguments: {
+          source: { kind: "evidence-file", path: receipt.path },
+        },
+      },
+    });
+    expect(
+      (
+        failure.details[PARTIAL_OBSERVATION_DELIVERY] as {
+          readonly retention_failure?: string;
+        }
+      ).retention_failure,
+    ).toContain("larger than");
+    const [record] = parseEvidenceBundle(
+      JSON.parse(await readFile(receipt.path, "utf8")),
+    ).records;
+    if (record === undefined)
+      throw new Error("The surviving cache bundle lacks the partial Evidence");
+    expect(record.operation).toBe("analyze_javascript_application");
+    expect(failure.details.partial_observation).toMatchObject({
+      normalized_result: {
+        kind: "summary",
+        parent_evidence_id: record.evidence_id,
+      },
+    });
+  },
 );
