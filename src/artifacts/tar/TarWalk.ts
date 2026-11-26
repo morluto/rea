@@ -387,10 +387,14 @@ export const walkTar = async (
             );
             break;
           }
-          const latin1 = pax.latin1.map(
-            (key) =>
-              `tar pax ${key} is not UTF-8 under hdrcharset=BINARY; decoded as Latin-1; raw hex: ${Buffer.from(pax.records.get(key)!, "latin1").toString("hex")}.`,
-          );
+          // Charge each warning before its hex doubles the raw value; the
+          // global map charge does not see a same-sized replacement.
+          const latin1 = pax.latin1.map((key) => {
+            const raw = Buffer.from(pax.records.get(key)!, "latin1");
+            const prefix = `tar pax ${key} is not UTF-8 under hdrcharset=BINARY; decoded as Latin-1; raw hex: `;
+            retained.charge(prefix.length + 2 * raw.length + 1, metadataLimit);
+            return `${prefix}${raw.toString("hex")}.`;
+          });
           if (typeflag === TAR_TYPEFLAGS.paxGlobal) {
             // Charge the map that withPax is about to copy. Repeated global
             // headers otherwise accumulate without reaching this budget.

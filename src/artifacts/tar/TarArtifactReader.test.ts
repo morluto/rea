@@ -557,6 +557,44 @@ describe("tar header edge cases", () => {
     }
   });
 
+  it("charges hdrcharset=BINARY warnings to the retained metadata allowance", async () => {
+    const metadataBytes = 64 * 1024;
+    // The same-sized uname leaves the global map charge unchanged; only the
+    // warnings grow.
+    // "8012 uname=" + 8000 bytes + "\n" is 8012 bytes.
+    const pax = Buffer.concat([
+      Buffer.from("21 hdrcharset=BINARY\n8012 uname="),
+      Buffer.alloc(8_000, 0xe9),
+      Buffer.from("\n"),
+    ]);
+    const header = Buffer.concat([
+      tarHeader({ name: "PaxHeader", type: "g" }, pax.length),
+      pax,
+      Buffer.alloc((512 - (pax.length % 512)) % 512),
+    ]);
+    const count = Math.floor(metadataBytes / (2 * 8_000)) + 2;
+    const reader = new TarArtifactReader(
+      await write(
+        "global-pax-binary-budget.tar",
+        Buffer.concat(Array.from({ length: count }, () => header)),
+      ),
+      undefined,
+      undefined,
+      { ...DEFAULT_TAR_READER_LIMITS, metadata_bytes: metadataBytes },
+    );
+    try {
+      await expect(async () => {
+        for await (const entry of reader.entries()) void entry;
+      }).rejects.toMatchObject({
+        reason: "limit",
+        boundary: "memory",
+        readerLimit: { parameter: "artifact_limits.tar.metadata_bytes" },
+      });
+    } finally {
+      await reader.close();
+    }
+  });
+
   it("stops as malformed at a pax size that is not a number, keeping earlier members", async () => {
     const pax = Buffer.from("12 size=abc\n");
     const result = await read(
