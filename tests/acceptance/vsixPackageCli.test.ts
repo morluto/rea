@@ -88,10 +88,17 @@ cliTest(
   },
 );
 
-cliTest("refuses a non-ZIP file through the public CLI", async ({ cli }) => {
+cliTest.for([
+  { kind: "non-ZIP", bytes: Buffer.from("not a zip"), reason: "not a ZIP" },
+  {
+    kind: "ZIP with no central directory",
+    bytes: Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+    reason: "ZIP archive is malformed",
+  },
+])("refuses a $kind file through the public CLI", async (input, { cli }) => {
   const root = await createTestTempDirectory("rea-vsix-cli-invalid-");
   const path = join(root, "not-an-extension.vsix");
-  await writeFile(path, "not a zip");
+  await writeFile(path, input.bytes);
   const result = await cli.run({
     arguments: ["inspect-vsix-package", path, "--json"],
   });
@@ -101,8 +108,8 @@ cliTest("refuses a non-ZIP file through the public CLI", async ({ cli }) => {
     category: "unsupported_target",
     details: {
       operation: "inspect_vsix_package",
-      format_failure: "malformed",
-      reason: expect.stringContaining("not a ZIP"),
+      failure_kind: "malformed",
+      reason: expect.stringContaining(input.reason),
     },
   });
 });

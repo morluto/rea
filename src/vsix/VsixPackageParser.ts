@@ -184,7 +184,10 @@ const wrapZipFailure = (
       `VS Code extension ZIP uses an unsupported layout: ${typed.message}`,
       { cause: typed },
     );
-  if (typed instanceof ArtifactReaderFailure && typed.reason === "format")
+  if (
+    typed instanceof ArtifactReaderFailure &&
+    typed.parseFailure !== undefined
+  )
     throw malformedInput(VSIX_PACKAGE_FORMAT, typed.message, { cause: typed });
   throw cause;
 };

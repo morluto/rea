@@ -155,9 +155,8 @@ const vsixFailureDialect = (
         cause.fixedAllowance,
         { ...details, cause },
       );
-    // Path and format refusals are the shared owner's; the parser's own
-    // unsupported, malformed and truncated refusals keep their projection.
-    if (cause.reason === "path" || cause.reason === "format") return undefined;
+    // The shared file classifier handles path refusals.
+    if (cause.reason === "path") return undefined;
     return projectOwnedArtifactInputFailure(facts, OPERATION, input.path);
   },
   readCleanup: (read, primary) => {
@@ -178,7 +177,7 @@ const vsixFailureDialect = (
     const { cause, origin } = artifactFilePrimaryFacts(raw);
     return origin === "owned-or-classified" &&
       cause instanceof ArtifactReaderFailure
-      ? translateArtifactFailure(OPERATION, cause)
+      ? translateArtifactFailure(OPERATION, input.path, cause)
       : new ArtifactOperationError(
           OPERATION,
           "io",
