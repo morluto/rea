@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 
 import {
   AnalysisInputError,
+  AnalysisResourceConstraintError,
   AnalysisTargetFailureError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../../../src/domain/analysisErrorCleanup.js";
@@ -15,7 +16,9 @@ import {
   MCP_TARGET_FAILURE_SPELLING,
   renderTargetFailureRecovery,
 } from "../../../src/domain/targetFailure.js";
+import { runWithAnalysisRefusalSpelling } from "../../../src/domain/analysisRefusalSpelling.js";
 import {
+  cliRefusalSpelling,
   projectCliCommandOutput,
   projectCliInputFields,
 } from "../../../src/cli/projectCliAnalysisResult.js";
@@ -128,6 +131,54 @@ it("passes through successful data, unbound operations and unknown error values"
     },
   };
   expect(projectCliInputFields(unknown, binding)).toEqual(unknown);
+});
+
+it("renders a generated per-call budget recovery in the command's spelling and keeps authored recovery", () => {
+  const cli = createCli();
+  const entry = cliCommand(cli, "inspect-pe-resources");
+  if (entry === undefined) throw new Error("Expected inspect-pe-resources");
+  const spelling = cliRefusalSpelling({
+    operations: entry.operations,
+    commands: cliCommands(cli),
+  });
+  const refusal = (remediationAction?: string) =>
+    new AnalysisResourceConstraintError(
+      "inspect_pe_resources",
+      "capacity",
+      "Reads exceed max_file_bytes.",
+      null,
+      {
+        retryable: false,
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 4096,
+          unit: "bytes",
+          minimum: 64,
+          maximum: 8192,
+          default_value: 4096,
+          applies_at: "next_call",
+          required_value: 5000,
+        },
+        ...(remediationAction === undefined ? {} : { remediationAction }),
+      },
+    );
+  const action = (error: AnalysisResourceConstraintError) =>
+    runWithAnalysisRefusalSpelling(
+      spelling,
+      () => projectAnalysisError(error).remediation.action,
+    );
+
+  expect(action(refusal())).toBe(
+    "inspect_pe_resources reached its max_file_bytes budget of 4096 bytes. Pass a larger --max-file-bytes on the next rea inspect-pe-resources run (at least 5000 bytes; range 64..8192 bytes), then retry.",
+  );
+  // MCP keeps the contract field and tool.
+  expect(projectAnalysisError(refusal()).remediation.action).toContain(
+    "Pass a larger max_file_bytes on the next inspect_pe_resources call",
+  );
+  const authored =
+    "Producer note. Pass a larger max_file_bytes on the next inspect_pe_resources call.";
+  expect(action(refusal(authored))).toBe(authored);
 });
 
 it("spells an input refusal with the CLI command and drops the MCP catalog clause", () => {

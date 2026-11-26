@@ -55,7 +55,11 @@ export const budgetArtifactReads = (
   };
 };
 
-/** The typed refusal for an exhausted read allowance, or undefined for any other cause. */
+/**
+ * The typed refusal for an exhausted read allowance, or undefined for any
+ * other cause. Its limit carries the reads the image needs, so the refusal
+ * derives the value that admits the retry.
+ */
 export const artifactReadBudgetConstraint = (
   operation: string,
   cause: unknown,
@@ -74,8 +78,8 @@ export const artifactReadBudgetConstraint = (
     maximum: budget.ceilingBytes,
     default_value: budget.defaultBytes,
     applies_at: "next_call",
+    required_value: requiredBytes,
   };
-  const raisable = requiredBytes <= budget.ceilingBytes;
   return new AnalysisResourceConstraintError(
     operation,
     "capacity",
@@ -85,9 +89,6 @@ export const artifactReadBudgetConstraint = (
       cause,
       limit,
       retryable: false,
-      remediationAction: raisable
-        ? `Raise ${budget.parameter} to at least ${String(requiredBytes)} bytes and retry; it bounds the bytes this reader reads, not the file size.`
-        : `The reads this image needs exceed the ${String(budget.ceilingBytes)}-byte ${budget.parameter} ceiling. This release has no runtime override.`,
     },
   );
 };

@@ -167,9 +167,6 @@ it("reports filesystem sizes above the safe-integer range exactly before opening
           databaseBytes + walBytes
         ).toString(),
       },
-      remediationAction: expect.stringContaining(
-        "smaller offline SQLite snapshot",
-      ),
     });
     expect(projected).toMatchObject({
       code: "resource_constraint",
@@ -192,11 +189,11 @@ it("reports filesystem sizes above the safe-integer range exactly before opening
           default_value: DEFAULT_SQLITE_INPUT_BYTES,
           applies_at: "next_call",
         },
-      },
-      remediation: {
-        action: expect.stringContaining("supported export workflow"),
+        // A size above the safe-integer range is not reported as a need.
+        refusal: { kind: "adjustable_budget" },
       },
     });
+    expect(projected.details?.limit).not.toHaveProperty("required_value");
     await expect(readdir(privateRoot)).rejects.toMatchObject({
       code: "ENOENT",
     });

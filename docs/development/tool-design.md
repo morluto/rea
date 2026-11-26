@@ -251,6 +251,19 @@ does not establish another instance.
     operation actually reads. A header reader is bounded by the bytes it reads,
     not by file size. Name the ceiling and its recovery as described in
     [admission limits and recovery](../reference/limits-and-recovery.md).
+  - Choose the limit's control. Give it a per-call parameter. Also register
+    one analysis setting per limit family an agent plausibly raises
+    repeatedly in a session, such as member or entry counts,
+    decompressed or retained bytes, and producer output bytes, not one per
+    sub-limit: every setting ID is enumerated in `update_analysis_settings`'
+    advertised schema and costs tokens in every session. One-off structural
+    limits, such as nesting depth or a single document, stay per-call. A
+    limit that is a real format, protocol or representation fact stays fixed
+    with its stated reason.
+  - Set `required_value` whenever the producer measured the need, and let the
+    typed refusal generate the recovery
+    ([adjustable budget recovery](../reference/limits-and-recovery.md#adjustable-budget-recovery));
+    do not author duplicate recovery prose.
   - A delivery budget never refuses. It sizes the inline answer for the
     agent's context, retains the complete result as Evidence, and returns a
     summary, the Evidence ID and a cursor. The agent's context is a valid

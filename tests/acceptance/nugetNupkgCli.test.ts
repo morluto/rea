@@ -186,6 +186,38 @@ cliTest(
   },
 );
 
+cliTest(
+  "names max_entries and its range when a package has more members",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-nupkg-entry-budget-");
+    const path = join(root, "demo.nupkg");
+    await writeFile(path, await nugetNupkgFixture());
+    const command = ["inspect-nuget-nupkg", path, "--json"];
+    const refused = await cli.run({
+      arguments: [...command, "--max-entries", "1"],
+    });
+    expect(refused.exitCode).toBe(1);
+    expect(refused.json).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_entries",
+          effective_value: 1,
+          unit: "count",
+          minimum: 1,
+          maximum: 65_536,
+          default_value: 4096,
+          applies_at: "next_call",
+        },
+      },
+    });
+    const admitted = await cli.run({ arguments: command });
+    expect(admitted.exitCode, admitted.stderr).toBe(0);
+  },
+);
+
 cliTest("refuses a non-ZIP file through the public CLI", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-nupkg-cli-invalid-");
   const path = join(root, "not-a-package.nupkg");

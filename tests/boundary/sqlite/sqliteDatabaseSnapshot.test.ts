@@ -580,6 +580,7 @@ it("refuses a snapshot above producer_limits.input_bytes with details.limit and 
     maximum: Number.MAX_SAFE_INTEGER,
     default_value: DEFAULT_SQLITE_INPUT_BYTES,
     applies_at: "next_call",
+    required_value: bytes,
   });
   await expect(
     captureSqliteDatabaseSnapshot(

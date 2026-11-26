@@ -484,6 +484,8 @@ await withVerifierFixture(root, async () => {
       returned: expectedPage.length,
       has_more:
         Math.max(0, expectedMatches.length - offset) > expectedPage.length,
+      // Verified selections fit one page; the page budget is covered by boundary tests.
+      record_budget_reached: false,
     });
     discoveryMeasurements.push({
       input,

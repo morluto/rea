@@ -525,9 +525,15 @@ export const captureSqliteDatabaseSnapshot = async (
           observed_sqlite_snapshot_input_bytes: selectedSize.toString(),
         },
         {
-          limit: sqliteInputLimit(inputBytes),
+          // The database and WAL are the whole snapshot this budget admits,
+          // so their combined size is the complete need of an unchanged retry.
+          limit: sqliteInputLimit(
+            inputBytes,
+            selectedSize > BigInt(Number.MAX_SAFE_INTEGER)
+              ? undefined
+              : Number(selectedSize),
+          ),
           retryable: false,
-          remediationAction: `Pass producer_limits.input_bytes of at least ${selectedSize.toString()} on the next call to snapshot the same complete database and WAL; the copy uses private disk, and no restart is required. Alternatively, use the application's supported export workflow to create a consistent, smaller offline SQLite snapshot. REA will not truncate or modify the selected source. worker_timeout_ms does not raise this budget.`,
         },
       );
     if (journal !== null)

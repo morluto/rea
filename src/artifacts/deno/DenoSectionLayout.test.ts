@@ -1,10 +1,7 @@
 import { expect, it } from "vitest";
 
-import {
-  MAX_DENO_REMOTE_BODY_BYTES,
-  MAX_DENO_SPECIFIER_TEXT_BYTES,
-  parseDenoSection,
-} from "./DenoSectionLayout.js";
+import { DEFAULT_DENO_READER_LIMITS } from "../../domain/artifactReaderLimits.js";
+import { parseDenoSection } from "./DenoSectionLayout.js";
 import {
   buildDenoSection,
   defaultDenoMetadata,
@@ -147,7 +144,11 @@ it("refuses metadata JSON above the named allowance before reading it as JSON", 
   bytes.writeBigUInt64LE(BigInt(claimed), DENO_FIXTURE_SECTION_MAGIC.length);
   await expect(parseDenoSectionBytes(bytes)).rejects.toMatchObject({
     reason: "limit",
-    message: expect.stringContaining("metadata JSON"),
+    readerLimit: {
+      parameter: "artifact_limits.deno.metadata_json_bytes",
+      effective_value: 8 * 1024 * 1024,
+      required_value: claimed,
+    },
   });
 });
 
@@ -161,24 +162,28 @@ it("refuses a specifier table above the named record allowance", async () => {
     ),
   ).rejects.toMatchObject({
     reason: "limit",
-    message: expect.stringContaining("specifier"),
+    readerLimit: {
+      parameter: "artifact_limits.deno.table_records",
+      effective_value: 100_000,
+      required_value: 100_001,
+    },
   });
 });
 
 it.each([
   {
     text: "file:///wire-specifier.ts",
-    limit: MAX_DENO_SPECIFIER_TEXT_BYTES,
+    limit: DEFAULT_DENO_READER_LIMITS.specifier_text_bytes,
     field: "specifier text",
   },
   {
     text: "wire-module",
-    limit: MAX_DENO_REMOTE_BODY_BYTES,
+    limit: DEFAULT_DENO_READER_LIMITS.remote_body_bytes,
     field: "remote module",
   },
   {
     text: "wire-transpiled",
-    limit: MAX_DENO_REMOTE_BODY_BYTES,
+    limit: DEFAULT_DENO_READER_LIMITS.remote_body_bytes,
     field: "remote transpiled",
   },
 ])(
@@ -310,7 +315,11 @@ it("keeps the redirect count allowance and rejects duplicate IDs across batches"
   overCount.writeUInt32LE(100_001, REDIRECT_ROWS - 4);
   await expect(parseDenoSectionBytes(overCount)).rejects.toMatchObject({
     reason: "limit",
-    fixedAllowance: { limit: 100_000, unit: "records" },
+    readerLimit: {
+      parameter: "artifact_limits.deno.table_records",
+      effective_value: 100_000,
+      unit: "count",
+    },
   });
   const sources = Array.from({ length: 1_024 }, (_, index) => index);
   await expect(

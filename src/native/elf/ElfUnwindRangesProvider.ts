@@ -14,7 +14,6 @@ import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
-import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_ELF_UNWIND_FILE_BYTES,
   MAX_INSPECT_ELF_UNWIND_RANGES,
@@ -23,10 +22,8 @@ import {
 } from "../../domain/native/elfUnwindRanges.js";
 import { err, ok } from "../../domain/result.js";
 import { ELF_UNWIND_RANGES_PROVIDER } from "../../domain/investigationProviders.js";
-import {
-  BinaryResourceFailure,
-  binaryResourceCeiling,
-} from "../../domain/binaryContainer.js";
+import { isNativeStructureFailure } from "../../domain/binaryContainer.js";
+import { nativeStructureConstraint } from "../nativeStructureConstraint.js";
 import {
   ELF_UNWIND_FORMAT,
   ELF_UNWIND_RECORD_LIMIT,
@@ -130,17 +127,8 @@ const elfUnwindFailure = (
               : `Request a smaller limit than ${String(input.limit)}, or page with offset; the ${String(limit.maximum)}-byte symbol-name text allowance is fixed, and max_ranges and max_file_bytes do not raise it.`,
           });
         }
-        if (failure instanceof BinaryResourceFailure)
-          return parseLimitConstraint(
-            OPERATION,
-            "memory",
-            failure,
-            fixedAllowanceOptions(
-              "The ELF structural decoding allowance",
-              "parser",
-              binaryResourceCeiling(failure),
-            ),
-          );
+        if (isNativeStructureFailure(failure))
+          return nativeStructureConstraint(OPERATION, failure);
         return undefined;
       },
       fileSize: (failure) =>

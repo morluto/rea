@@ -9,7 +9,10 @@ import {
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { readMachoImageFromReader } from "../../domain/apple/machoImage.js";
-import { BinaryResourceFailure } from "../../domain/binaryContainer.js";
+import {
+  BinaryResourceFailure,
+  DEFAULT_NATIVE_STRUCTURE_BYTES,
+} from "../../domain/binaryContainer.js";
 import {
   MAX_DWARF_DECOMPRESSED_SECTION_BYTES,
   inspectDwarfUnitsInputSchema,
@@ -24,7 +27,6 @@ import { DwarfUnitsProvider } from "./DwarfUnitsProvider.js";
 import {
   DwarfSectionAllowanceFailure,
   locateDwarfSectionsFromHandle,
-  MAX_PE_DECODED_NAME_BYTES,
   MAX_PE_SECTION_NAME_BYTES,
 } from "./DwarfSections.js";
 import {
@@ -48,6 +50,7 @@ const inspect = async (
     readonly architecture?: "x86" | "x86_64" | "arm" | "arm64";
     readonly offset?: number;
     readonly limit?: number;
+    readonly max_structure_bytes?: number;
   } = {},
 ) => {
   const root = await createTestTempDirectory("rea-dwarf-units-");
@@ -321,9 +324,10 @@ it("bounds individual PE long names before decoding", async () => {
   expect(read.error).toBeInstanceOf(AnalysisResourceConstraintError);
   expect(read.error).toMatchObject({
     reportedLimits: {
-      boundary: "structure",
+      boundary: "pe-section-name-bytes",
       maximum: MAX_PE_SECTION_NAME_BYTES,
     },
+    fixedAllowance: { name: "The PE section-name decoding allowance" },
   });
 });
 
@@ -341,10 +345,33 @@ it("bounds aggregate PE name decoding for overlapping string-table offsets", asy
   expect(read.error).toBeInstanceOf(AnalysisResourceConstraintError);
   expect(read.error).toMatchObject({
     reportedLimits: {
-      boundary: "structure",
-      maximum: MAX_PE_DECODED_NAME_BYTES,
+      boundary: "max_structure_bytes",
+      maximum: DEFAULT_NATIVE_STRUCTURE_BYTES,
+    },
+    limit: {
+      control_kind: "parameter",
+      parameter: "max_structure_bytes",
+      effective_value: DEFAULT_NATIVE_STRUCTURE_BYTES,
+      default_value: DEFAULT_NATIVE_STRUCTURE_BYTES,
+      maximum: 512 * 1024 * 1024,
+      applies_at: "next_call",
     },
   });
+});
+
+it("admits aggregate PE name decoding with a larger max_structure_bytes", async () => {
+  const read = await inspect(
+    peImage([
+      { name: "x".repeat(65536), body: Buffer.alloc(0) },
+      ...Array.from({ length: 299 }, (_, index) => ({
+        name: `/${String(index + 5)}`,
+        body: Buffer.alloc(0),
+      })),
+    ]),
+    { max_structure_bytes: 64 * 1024 * 1024 },
+  );
+  if (!read.ok) throw read.error;
+  expect(read.value.debug_info).toBe("absent");
 });
 
 it("rejects an unterminated PE long name within the decoding allowance", async () => {

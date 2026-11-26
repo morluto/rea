@@ -24,9 +24,13 @@ export const DEFAULT_SQLITE_WORKER_TIMEOUT_MS = 30_000;
  */
 export const DEFAULT_SQLITE_INPUT_BYTES = 256 * 1024 * 1024;
 
-/** The snapshot input budget, as the per-call parameter that raises it. */
+/**
+ * The snapshot input budget, as the per-call parameter that raises it, with
+ * the combined database and WAL size the refused snapshot needs when known.
+ */
 export const sqliteInputLimit = (
   effectiveValue: number,
+  requiredValue?: number,
 ): AnalysisParameterLimit => ({
   control_kind: "parameter",
   parameter: "producer_limits.input_bytes",
@@ -36,6 +40,7 @@ export const sqliteInputLimit = (
   maximum: Number.MAX_SAFE_INTEGER,
   default_value: DEFAULT_SQLITE_INPUT_BYTES,
   applies_at: "next_call",
+  ...(requiredValue === undefined ? {} : { required_value: requiredValue }),
 });
 
 const nonnegative = z.int().nonnegative();
