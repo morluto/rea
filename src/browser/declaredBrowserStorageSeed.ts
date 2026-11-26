@@ -13,53 +13,82 @@ export const declaredBrowserStorageSeedMark = "\u0000rea-storage-seed";
 export const isDeclaredBrowserStorageSeedMark = (key: string): boolean =>
   key === declaredBrowserStorageSeedMark;
 
-export type DeclaredBrowserStorageSeedCommand =
-  | "scope"
-  | "was"
-  | "mark"
-  | "fail";
+export type DeclaredBrowserStorageSeedOutcome = "skipped" | "wrote" | "failed";
 
 export type DeclaredBrowserStorageSeedScript = {
   readonly binding: string;
+  readonly skipKey: string;
   readonly seeds: readonly DeclaredBrowserStorageSeed[];
+};
+
+export type DeclaredBrowserStorageSkipPayload = {
+  readonly skipKey: string;
+  readonly value: true | readonly string[];
 };
 
 type StorageArea = {
   setItem(name: string, value: string): void;
 };
 
-type SeedBridge = (
-  command: DeclaredBrowserStorageSeedCommand,
-  area?: "local" | "session",
-  origin?: string,
-) => boolean | Promise<boolean | void>;
+type SeedNotification = (
+  origin: string,
+  localOutcome: DeclaredBrowserStorageSeedOutcome,
+  sessionOutcome: DeclaredBrowserStorageSeedOutcome,
+) => unknown;
+
+type SeedGlobalHost = {
+  top?: unknown;
+  location?: { origin?: string };
+  localStorage?: StorageArea;
+  sessionStorage?: StorageArea;
+  [name: string]: unknown;
+};
 
 /**
- * Playwright serializes this function into documents covered by the scenario
- * seed hook. It runs after document creation and before that document's
- * scripts, including a popup opened later. Page-session auto-attach does not
- * pause a `window.open` target. Once-per-area ownership and connect-mode
- * page lineage live in the Node binding named by `payload.binding`, so markers
- * are not stored in clearable local or session storage.
+ * Per-page init script registered before the context seed hook so a page
+ * already controlled by CDP (`true`) or already seeded for specific session
+ * origins (`string[]`) communicates that synchronously to the context hook.
+ * The context hook deletes `payload.skipKey` before document scripts run.
  */
-export const applyDeclaredBrowserStorageSeeds = async (
-  payload: DeclaredBrowserStorageSeedScript,
-): Promise<void> => {
-  const host = globalThis as {
-    location?: { origin?: string };
-    localStorage?: StorageArea;
-    sessionStorage?: StorageArea;
-    [name: string]: unknown;
-  };
-  const bridge = host[payload.binding];
-  if (typeof bridge !== "function") return;
-  const call = async (
-    command: DeclaredBrowserStorageSeedCommand,
-    area?: "local" | "session",
-    origin?: string,
-  ): Promise<boolean | void> => (bridge as SeedBridge)(command, area, origin);
+export const markDeclaredBrowserStorageSkip = (
+  payload: DeclaredBrowserStorageSkipPayload,
+): void => {
+  const host = globalThis as SeedGlobalHost;
+  try {
+    if (host.top !== host) return;
+  } catch {
+    return;
+  }
+  Object.defineProperty(host, payload.skipKey, {
+    value: payload.value,
+    configurable: true,
+    enumerable: false,
+    writable: true,
+  });
+};
 
-  if ((await call("scope")) !== true) return;
+/**
+ * Playwright serializes this function into top-level documents in a scenario-
+ * owned browser context. It runs synchronously after document creation and
+ * before the document's own scripts, including a popup opened later, without
+ * awaiting Node before writing storage. Third-party iframes are skipped here
+ * so partitioned storage never collides with first-party top-level areas; CDP
+ * seeding handles frames with `Storage.getStorageKey`. Once-per-area state
+ * lives in Node rather than clearable browser storage.
+ */
+export const applyDeclaredBrowserStorageSeeds = (
+  payload: DeclaredBrowserStorageSeedScript,
+): void => {
+  const host = globalThis as SeedGlobalHost;
+  const marker = host[payload.skipKey];
+  if (marker !== undefined) delete host[payload.skipKey];
+  if (marker === true) return;
+
+  try {
+    if (host.top !== host) return;
+  } catch {
+    return;
+  }
 
   let origin = "";
   try {
@@ -71,21 +100,37 @@ export const applyDeclaredBrowserStorageSeeds = async (
   const seed = payload.seeds.find((item) => item.origin === origin);
   if (seed === undefined) return;
 
-  const write = async (
-    area: "local" | "session",
+  const skipSessionOrigins = Array.isArray(marker)
+    ? (marker as readonly string[])
+    : undefined;
+
+  const write = (
     storage: StorageArea | undefined,
     entries: readonly (readonly [string, string])[],
-  ): Promise<void> => {
-    if (storage === undefined || entries.length === 0) return;
-    if ((await call("was", area, origin)) === true) return;
+  ): DeclaredBrowserStorageSeedOutcome => {
+    if (storage === undefined || entries.length === 0) return "skipped";
     try {
       for (const [name, value] of entries) storage.setItem(name, value);
-      await call("mark", area, origin);
+      return "wrote";
     } catch {
-      await call("fail");
+      return "failed";
     }
   };
 
-  await write("local", host.localStorage, seed.local);
-  await write("session", host.sessionStorage, seed.session);
+  const localOutcome = write(host.localStorage, seed.local);
+  const sessionEntries =
+    skipSessionOrigins?.includes(origin) === true ? [] : seed.session;
+  const sessionOutcome = write(host.sessionStorage, sessionEntries);
+
+  const bridge = host[payload.binding];
+  if (
+    typeof bridge === "function" &&
+    (localOutcome !== "skipped" || sessionOutcome !== "skipped")
+  ) {
+    try {
+      void (bridge as SeedNotification)(origin, localOutcome, sessionOutcome);
+    } catch {
+      // Notification is best-effort; storage was already written synchronously.
+    }
+  }
 };

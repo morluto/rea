@@ -11,7 +11,9 @@ import type { BrowserContext, Page } from "playwright-core";
 
 import {
   applyDeclaredBrowserStorageSeeds,
-  type DeclaredBrowserStorageSeedCommand,
+  markDeclaredBrowserStorageSkip,
+  type DeclaredBrowserStorageSeedOutcome,
+  type DeclaredBrowserStorageSeedScript,
 } from "./declaredBrowserStorageSeed.js";
 
 import type { BrowserScenario } from "../domain/browserScenario.js";
@@ -143,6 +145,20 @@ export type PlaywrightScenarioStorageCleanup = {
   readonly loadingStopped: boolean;
 };
 
+type InitScriptHandle = {
+  dispose?(): Promise<void>;
+};
+
+const disposeInitScriptHandle = async (handle: unknown): Promise<void> => {
+  if (
+    typeof handle === "object" &&
+    handle !== null &&
+    "dispose" in handle &&
+    typeof handle.dispose === "function"
+  )
+    await (handle as { dispose(): Promise<void> }).dispose();
+};
+
 /** Owns pre-script storage seeding and its CDP instrumentation for one scenario. */
 export class PlaywrightScenarioStorage {
   readonly #seeds = new Map<string, StorageSeed>();
@@ -152,11 +168,14 @@ export class PlaywrightScenarioStorage {
   readonly #targets = new Map<string, StorageTarget>();
   readonly #replies = new Map<number, PendingReply>();
   readonly #sourceUrl = `rea-storage-${randomUUID()}`;
-  readonly #seedToken = randomUUID();
-  readonly #seedBinding = `__reaStorageSeed_${this.#seedToken.replaceAll("-", "")}`;
-  readonly #lineage = new Set<Page>();
-  readonly #pageIds = new WeakMap<Page, string>();
+  readonly #seedToken = randomUUID().replaceAll("-", "");
+  readonly #seedBinding = `__reaStorageSeed_${this.#seedToken}`;
+  readonly #skipKey = `__reaStorageSkip_${this.#seedToken}`;
+  readonly #pageSkipScripts = new Map<Page, InitScriptHandle>();
+  readonly #pageInitializedSessionOrigins = new Map<Page, Set<string>>();
   readonly #unsubscribers: (() => void)[] = [];
+  #context: BrowserContext | undefined;
+  #contextSeedScript: InitScriptHandle | undefined;
   #sequence = 0;
   #generation = 0;
   #closed = false;
@@ -169,6 +188,7 @@ export class PlaywrightScenarioStorage {
   #detachPromise: Promise<void> | undefined;
   #rootInitialization: Promise<void> | undefined;
   #work: Promise<void> = Promise.resolve();
+  #scriptSync: Promise<void> = Promise.resolve();
   #removeListeners: () => void = () => undefined;
 
   private constructor(
@@ -280,7 +300,6 @@ export class PlaywrightScenarioStorage {
       "Target.getTargetInfo",
     );
     if (this.#closed) return;
-    this.#pageIds.set(page, rootInfo.targetInfo.targetId);
     await this.installDocumentSeedScript(page, context);
     if (this.#closed) return;
     const root = this.createTarget(
@@ -301,101 +320,206 @@ export class PlaywrightScenarioStorage {
     await ready;
   }
 
-  private pageId(page: Page): string {
-    const existing = this.#pageIds.get(page);
-    if (existing !== undefined) return existing;
-    const id = randomUUID();
-    this.#pageIds.set(page, id);
-    return id;
+  private contextSeedPayload(): DeclaredBrowserStorageSeedScript {
+    const seeds = [...this.#seeds]
+      .map(([origin, seed]) => ({
+        origin,
+        local: this.#initializedLocalOrigins.has(origin) ? [] : seed.local,
+        session: seed.session,
+      }))
+      .filter(({ local, session }) => local.length > 0 || session.length > 0);
+    return {
+      binding: this.#seedBinding,
+      skipKey: this.#skipKey,
+      seeds,
+    };
   }
 
-  private seedBridge(
-    source: { readonly page: Page },
-    command: DeclaredBrowserStorageSeedCommand,
-    area?: "local" | "session",
-    origin?: string,
-  ): boolean | void {
-    if (command === "scope")
-      return this.ownsContext || this.#lineage.has(source.page);
-    if (command === "fail") {
+  private recordPopupSeed(
+    sourcePage: Page,
+    origin: string,
+    localOutcome: DeclaredBrowserStorageSeedOutcome,
+    sessionOutcome: DeclaredBrowserStorageSeedOutcome,
+  ): void {
+    if (this.#closed) return;
+    if (localOutcome === "failed" || sessionOutcome === "failed")
       this.#popupSeedCoverageUnknown = true;
-      return;
+    if (localOutcome === "wrote") {
+      this.#initializedLocalOrigins.add(origin);
+      this.#initializedLocal.add(origin);
+      this.#initializedLocal.add(`${origin}/`);
     }
-    if (origin === undefined || (area !== "local" && area !== "session"))
-      return false;
-    if (command === "was") {
-      if (area === "local") return this.#initializedLocalOrigins.has(origin);
-      return this.#initializedSession.has(
-        JSON.stringify([this.pageId(source.page), origin]),
-      );
+    if (sessionOutcome === "wrote") {
+      const origins =
+        this.#pageInitializedSessionOrigins.get(sourcePage) ??
+        new Set<string>();
+      origins.add(origin);
+      this.#pageInitializedSessionOrigins.set(sourcePage, origins);
     }
-    if (command === "mark") {
-      if (area === "local") {
-        this.#initializedLocalOrigins.add(origin);
-        this.#initializedLocal.add(origin);
+    if (localOutcome === "wrote" || sessionOutcome === "wrote") {
+      this.#generation += 1;
+      const updatePage = sessionOutcome === "wrote";
+      this.#scriptSync = this.#scriptSync
+        .then(() => this.syncPopupSeedScripts(sourcePage, updatePage))
+        .catch(() => undefined);
+    }
+  }
+
+  private async syncPopupSeedScripts(
+    sourcePage: Page,
+    updatePage: boolean,
+  ): Promise<void> {
+    if (this.#closed || !this.#popupSeedsInstalled) return;
+    if (
+      updatePage &&
+      typeof sourcePage.addInitScript === "function" &&
+      !(typeof sourcePage.isClosed === "function" && sourcePage.isClosed())
+    ) {
+      const origins = [
+        ...(this.#pageInitializedSessionOrigins.get(sourcePage) ?? []),
+      ];
+      const previous = this.#pageSkipScripts.get(sourcePage);
+      if (previous !== undefined) {
+        this.#pageSkipScripts.delete(sourcePage);
+        await disposeInitScriptHandle(previous).catch(() => undefined);
+      }
+      if (this.#closed) return;
+      const next = (await sourcePage.addInitScript(
+        markDeclaredBrowserStorageSkip,
+        { skipKey: this.#skipKey, value: origins },
+      )) as InitScriptHandle | undefined;
+      if (this.#closed) {
+        await disposeInitScriptHandle(next).catch(() => undefined);
         return;
       }
-      this.#initializedSession.add(
-        JSON.stringify([this.pageId(source.page), origin]),
-      );
+      if (next !== undefined) this.#pageSkipScripts.set(sourcePage, next);
     }
+    await this.replaceContextSeedScript();
+  }
+
+  private syncContextSeedScript(): Promise<void> {
+    if (this.#closed || !this.#popupSeedsInstalled) return Promise.resolve();
+    this.#generation += 1;
+    const sync = this.#scriptSync.then(() => this.replaceContextSeedScript());
+    this.#scriptSync = sync.catch(() => undefined);
+    return sync;
+  }
+
+  private async replaceContextSeedScript(): Promise<void> {
+    const context = this.#context;
+    if (
+      this.#closed ||
+      context === undefined ||
+      typeof context.addInitScript !== "function"
+    )
+      return;
+    const previous = this.#contextSeedScript;
+    this.#contextSeedScript = undefined;
+    await disposeInitScriptHandle(previous).catch(() => undefined);
+    if (this.#closed) return;
+    const payload = this.contextSeedPayload();
+    if (payload.seeds.length === 0) return;
+    const next = (await withScenarioCommandDeadline(
+      () => context.addInitScript(applyDeclaredBrowserStorageSeeds, payload),
+      this.commandTimeoutMs,
+      "command",
+      "BrowserContext.addInitScript",
+    )) as InitScriptHandle | undefined;
+    if (this.#closed) {
+      await disposeInitScriptHandle(next).catch(() => undefined);
+      return;
+    }
+    this.#contextSeedScript = next;
   }
 
   private async installDocumentSeedScript(
     page: Page,
     context: BrowserContext,
   ): Promise<void> {
-    const seeds = [...this.#seeds].map(([origin, seed]) => ({
-      origin,
-      local: seed.local,
-      session: seed.session,
-    }));
+    // Only scenario-owned contexts can install a synchronous context-wide init
+    // script without risking mutations to unrelated tabs in a shared connect
+    // browser context.
+    if (!this.ownsContext) return;
+    const payload = this.contextSeedPayload();
     if (
-      seeds.length === 0 ||
+      payload.seeds.length === 0 ||
       typeof context.addInitScript !== "function" ||
-      typeof context.exposeBinding !== "function"
+      typeof context.exposeBinding !== "function" ||
+      typeof page.addInitScript !== "function"
     )
       return;
-    this.#lineage.add(page);
+    const installed: InitScriptHandle[] = [];
     try {
-      await withScenarioCommandDeadline(
+      const result = await withScenarioCommandDeadline(
         async () => {
+          const rootSkip = (await page.addInitScript(
+            markDeclaredBrowserStorageSkip,
+            { skipKey: this.#skipKey, value: true as const },
+          )) as InitScriptHandle | undefined;
+          if (rootSkip !== undefined) installed.push(rootSkip);
           await context.exposeBinding(
             this.#seedBinding,
             (
               source: { readonly page: Page },
-              command: DeclaredBrowserStorageSeedCommand,
-              area?: "local" | "session",
-              origin?: string,
-            ) => this.seedBridge(source, command, area, origin),
+              origin: string,
+              localOutcome: DeclaredBrowserStorageSeedOutcome,
+              sessionOutcome: DeclaredBrowserStorageSeedOutcome,
+            ) =>
+              this.recordPopupSeed(
+                source.page,
+                origin,
+                localOutcome,
+                sessionOutcome,
+              ),
           );
-          return context.addInitScript(applyDeclaredBrowserStorageSeeds, {
-            binding: this.#seedBinding,
-            seeds,
-          });
+          const contextScript = (await context.addInitScript(
+            applyDeclaredBrowserStorageSeeds,
+            payload,
+          )) as InitScriptHandle | undefined;
+          if (contextScript !== undefined) installed.push(contextScript);
+          return { rootSkip, contextScript };
         },
         this.commandTimeoutMs,
         "command",
         "BrowserContext.addInitScript",
       );
+      if (this.#closed) {
+        await Promise.all(
+          installed.map((handle) =>
+            disposeInitScriptHandle(handle).catch(() => undefined),
+          ),
+        );
+        return;
+      }
+      if (result.rootSkip !== undefined)
+        this.#pageSkipScripts.set(page, result.rootSkip);
+      this.#contextSeedScript = result.contextScript;
+      this.#context = context;
+      this.#popupSeedsInstalled = true;
     } catch (cause: unknown) {
+      for (const handle of installed)
+        void disposeInitScriptHandle(handle).catch(() => undefined);
       const pending = scenarioCommandPending(cause);
       if (pending !== undefined) {
         void pending
-          .then(async (result) => {
-            if (
-              typeof result === "object" &&
-              result !== null &&
-              "dispose" in result &&
-              typeof result.dispose === "function"
-            )
-              await result.dispose();
+          .then(async (late) => {
+            if (typeof late === "object" && late !== null) {
+              const pair = late as {
+                rootSkip?: unknown;
+                contextScript?: unknown;
+              };
+              await Promise.all([
+                disposeInitScriptHandle(pair.rootSkip).catch(() => undefined),
+                disposeInitScriptHandle(pair.contextScript).catch(
+                  () => undefined,
+                ),
+              ]);
+            }
           })
           .catch(() => undefined);
       }
       throw cause;
     }
-    this.#popupSeedsInstalled = true;
   }
 
   private addSeeds(
@@ -424,12 +548,7 @@ export class PlaywrightScenarioStorage {
     // Without the context init script, discovery is later than the first
     // popup script and cannot establish that page-session instrumentation
     // controlled that top-level document.
-    const rememberLineage = (opened: Page): void => {
-      this.#lineage.add(opened);
-      opened.on("popup", rememberLineage);
-    };
     const popup = (opened: Page): void => {
-      if (!this.ownsContext) rememberLineage(opened);
       if (opened !== page && !this.#popupSeedsInstalled)
         this.#popupSeedCoverageUnknown = true;
     };
@@ -640,26 +759,20 @@ export class PlaywrightScenarioStorage {
       "Storage.getStorageKey",
       { frameId },
     );
-    // Chrome's Storage.getStorageKey for a first-party area is often
-    // `${origin}/`, while the init-script bridge keys on location.origin.
-    const localAreaKey =
-      storageKey === origin || storageKey === `${origin}/`
-        ? origin
-        : storageKey;
-    const sessionKey = JSON.stringify([target.topLevelTargetId, localAreaKey]);
-    const sessionOriginKey = JSON.stringify([target.topLevelTargetId, origin]);
+    // Chrome's Storage.getStorageKey for a first-party area is `${origin}/` or
+    // `${origin}`. Third-party partitioned frames carry a distinct key and
+    // must not share first-party origin records with top-level popups.
+    const isFirstPartyLocal =
+      storageKey === origin || storageKey === `${origin}/`;
+    const sessionKey = JSON.stringify([target.topLevelTargetId, storageKey]);
     const local =
       this.#initializedLocal.has(storageKey) ||
-      this.#initializedLocal.has(localAreaKey) ||
-      this.#initializedLocalOrigins.has(storageKey) ||
-      this.#initializedLocalOrigins.has(localAreaKey) ||
+      (isFirstPartyLocal && this.#initializedLocalOrigins.has(origin)) ||
       seed.local.length === 0
         ? []
         : seed.local;
     const session =
-      this.#initializedSession.has(sessionKey) ||
-      this.#initializedSession.has(sessionOriginKey) ||
-      seed.session.length === 0
+      this.#initializedSession.has(sessionKey) || seed.session.length === 0
         ? []
         : seed.session;
     if (local.length === 0 && session.length === 0) return;
@@ -685,13 +798,14 @@ export class PlaywrightScenarioStorage {
       );
     if (local.length > 0) {
       this.#initializedLocal.add(storageKey);
-      this.#initializedLocal.add(localAreaKey);
-      this.#initializedLocalOrigins.add(localAreaKey);
+      if (isFirstPartyLocal) {
+        const newlyInitialized = !this.#initializedLocalOrigins.has(origin);
+        this.#initializedLocalOrigins.add(origin);
+        if (newlyInitialized && this.#popupSeedsInstalled)
+          await this.syncContextSeedScript();
+      }
     }
-    if (session.length > 0) {
-      this.#initializedSession.add(sessionKey);
-      this.#initializedSession.add(sessionOriginKey);
-    }
+    if (session.length > 0) this.#initializedSession.add(sessionKey);
   }
 
   private async frameOrigin(
@@ -856,18 +970,24 @@ export class PlaywrightScenarioStorage {
     for (;;) {
       const generation = this.#generation;
       const work = this.#work;
+      const scriptSync = this.#scriptSync;
       const targets = [...this.#targets.entries()];
       await withPlaywrightExecutionBoundary(
         () => Promise.all(targets.map(([, target]) => target.ready)),
         undefined,
         this.signal,
       );
-      await withPlaywrightExecutionBoundary(() => work, undefined, this.signal);
+      await withPlaywrightExecutionBoundary(
+        () => Promise.all([work, scriptSync]),
+        undefined,
+        this.signal,
+      );
       await Promise.resolve();
       if (this.#failure !== undefined) throw this.#failure;
       if (
         generation === this.#generation &&
         work === this.#work &&
+        scriptSync === this.#scriptSync &&
         targets.every(([id, target]) => this.#targets.get(id) === target)
       )
         return;
@@ -919,17 +1039,32 @@ export class PlaywrightScenarioStorage {
     }
 
     const work = this.#work;
+    const scriptSync = this.#scriptSync;
     const rootInitialization = this.#rootInitialization;
     const targets = [...this.#targets.values()];
+    const handles: InitScriptHandle[] = [
+      ...(this.#contextSeedScript === undefined
+        ? []
+        : [this.#contextSeedScript]),
+      ...this.#pageSkipScripts.values(),
+    ];
+    this.#contextSeedScript = undefined;
+    this.#pageSkipScripts.clear();
+    this.#pageInitializedSessionOrigins.clear();
+    this.#context = undefined;
     try {
       await withPlaywrightExecutionBoundary(
         () =>
           Promise.all([
             work.catch(() => undefined),
+            scriptSync.catch(() => undefined),
             ...(rootInitialization === undefined
               ? []
               : [rootInitialization.catch(() => undefined)]),
             ...targets.map((target) => target.ready.catch(() => undefined)),
+            ...handles.map((handle) =>
+              disposeInitScriptHandle(handle).catch(() => undefined),
+            ),
           ]),
         STORAGE_CLEANUP_TIMEOUT_MS,
       );
