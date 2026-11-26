@@ -1,6 +1,9 @@
 import { expect, it, onTestFinished } from "vitest";
 import { WebRuntimeService } from "../../../src/application/WebRuntimeService.js";
 import { CdpWebRuntimeProvider } from "../../../src/browser/execution/CdpWebRuntimeProvider.js";
+import { webExecutionPageViewResultSchema } from "../../../src/domain/analysisView/summarySchemas/webExecutionSummarySchemas.js";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { listedEvidenceCaller } from "../../support/mcp/listedEvidenceCaller.js";
 import {
@@ -118,6 +121,52 @@ it("summarizes a large execution observation and pages functions and source text
     items: [{ text: runtimeSourceA, script_id: "script-a" }],
     coverage: { total: sourceA.length, next_offset: runtimeSourceA.length },
   });
+
+  const requestPage = await call("inspect_analysis_view", {
+    source,
+    view: { kind: "web-execution", collection: "requests" },
+  });
+  const pages = [executed, sources, text, requestPage].map((evidence) =>
+    webExecutionPageViewResultSchema.parse(evidence.normalized_result),
+  );
+  // The fixture observed no requests. Give that collection a nonempty control
+  // so swapping its rows exercises the item schema.
+  const requestRow = {
+    request_id: "request-1",
+    url: "https://example.invalid/script.js",
+    method: "GET",
+    timestamp_seconds: 0,
+    initiator_type: "other",
+    reported_initiator: {},
+    callsites: [],
+    async_parent_ids: [],
+    causal_attribution: "unknown",
+  };
+  const validation = createMcpSchemaValidation();
+  onTestFinished(() => validation.clear());
+  const validators = ["observe_web_execution", "inspect_analysis_view"].map(
+    (name) => validation.getValidator(canonicalOutputSchema(name)),
+  );
+  const samples = pages.map(({ view, items }) => ({
+    collection: view.collection,
+    items: view.collection === "requests" ? [requestRow] : items,
+  }));
+  for (const sample of samples) expect(sample.items.length).toBeGreaterThan(0);
+  for (const page of pages) {
+    const check = (items: unknown, expected: boolean) => {
+      const normalized_result = { ...page, items };
+      expect(
+        webExecutionPageViewResultSchema.safeParse(normalized_result).success,
+      ).toBe(expected);
+      for (const validate of validators)
+        expect(validate({ ...executed, normalized_result }).valid).toBe(
+          expected,
+        );
+    };
+    check([], true);
+    for (const sample of samples)
+      check(sample.items, sample.collection === page.view.collection);
+  }
 });
 
 it("returns a small execution observation inline unless summary is requested", async () => {
