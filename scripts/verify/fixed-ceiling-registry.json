@@ -62,13 +62,6 @@
       "reason": "apktool output capture is a producer budget without a per-call control."
     }
   },
-  "src/application/ntfs/NtfsJournalService.ts": {
-    "\"The NTFS journal file allowance\"": {
-      "class": "pending",
-      "issue": 14236,
-      "reason": "The NTFS journal file allowance bounds bytes read, a resource policy."
-    }
-  },
   "src/artifacts/AndroidBootImageArtifactReader.ts": {
     "ceiling.name": {
       "class": "forwarding",
@@ -199,9 +192,8 @@
   },
   "src/ghidra/GhidraInstallationProperties.ts": {
     "\"The Ghidra installation-properties read allowance\"": {
-      "class": "pending",
-      "issue": 14236,
-      "reason": "Bounds the read of an installation's properties file; a resource policy on an operator-owned file."
+      "class": "protocol",
+      "reason": "Bounds Ghidra's own Ghidra/application.properties, a short key=value installation descriptor of the bring-your-own provider (about 1 KiB); no analysis input passes through it, and a larger file is not a Ghidra installation REA can drive."
     }
   },
   "src/go/GoBinaryProvider.ts": {
@@ -234,13 +226,6 @@
       "class": "pending",
       "issue": 14235,
       "reason": "IL2CPP metadata input, native-link candidate and Ghidra seed allowances are resource policies; the ELF pointer index became max_native_index_bytes."
-    }
-  },
-  "src/java/MavenGradleMetadataProvider.ts": {
-    "Object.entries(REPORT_ALLOWANCE_SUBJECTS).find( ([key]) => key === name, )?.[1](maximum) ?? name": {
-      "class": "pending",
-      "issue": 14236,
-      "reason": "Maven and Gradle XML node and report allowances are resource policies."
     }
   },
   "src/kuna/KunaProjectReader.ts": {
