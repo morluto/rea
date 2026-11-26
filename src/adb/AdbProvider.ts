@@ -5,7 +5,6 @@ import {
   absoluteCallerPath,
   appendCallerPath,
 } from "../filesystem/callerPath.js";
-import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
 import { adbInputFileError } from "./AdbFilesystemAdmission.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { ownedProcessPrerequisiteAvailability } from "../providers/ownedProcessAvailability.js";

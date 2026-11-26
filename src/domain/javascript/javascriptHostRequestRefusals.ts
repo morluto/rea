@@ -5,6 +5,7 @@ import {
   objectDataPropertyValue,
   primitiveOwnKeys,
   readExactJavaScriptLiteral,
+  stringValue,
   staticObjectPropertyReader,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -16,14 +17,6 @@ const TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u;
 const FORBIDDEN_METHODS = new Set(["CONNECT", "TRACE", "TRACK"]);
 
 const WEBSOCKET_SCHEMES = new Set(["ws:", "wss:", "http:", "https:"]);
-
-const literalString = (node: t.Node | undefined): string | undefined => {
-  if (node === undefined || t.isSpreadElement(node)) return undefined;
-  const literal = readExactJavaScriptLiteral(node);
-  return literal.found && typeof literal.value === "string"
-    ? literal.value
-    : undefined;
-};
 
 /**
  * Whether an absolute URL literal names a user or password. Without `//` after
@@ -111,7 +104,7 @@ const fetchRefused = (node: t.Node): boolean => {
   const [input, init] = node.arguments;
   // A spread can move every later literal to a slot the host ignores.
   if (input === undefined || t.isSpreadElement(input)) return false;
-  const url = literalString(input);
+  const url = stringValue(input);
   if (url !== undefined && carriesCredentials(url)) return true;
   if (init === undefined || t.isSpreadElement(init)) return false;
   const options = unwrapJavaScriptExpression(init).node;
@@ -132,7 +125,7 @@ const fetchRefused = (node: t.Node): boolean => {
   const methodMember = readOption("method");
   const method =
     methodMember.status === "explicit"
-      ? literalString(methodMember.value)
+      ? stringValue(methodMember.value)
       : methodMember.status === "missing" && url !== undefined
         ? "GET"
         : undefined;
@@ -174,7 +167,7 @@ const webSocketRefused = (node: t.Node): boolean => {
   const [target, protocols] = node.arguments;
   // A spread can move every later literal to a slot the host ignores.
   if (target === undefined || t.isSpreadElement(target)) return false;
-  const url = literalString(target);
+  const url = stringValue(target);
   if (url !== undefined) {
     // The URL parser treats any "#" as the start of the fragment.
     if (url.includes("#")) return true;
@@ -183,11 +176,11 @@ const webSocketRefused = (node: t.Node): boolean => {
   }
   if (protocols === undefined || t.isSpreadElement(protocols)) return false;
   const value = unwrapJavaScriptExpression(protocols).node;
-  const single = literalString(value);
+  const single = stringValue(value);
   if (single !== undefined) return !TOKEN.test(single);
   if (!t.isArrayExpression(value)) return false;
   const known = value.elements.flatMap((element) => {
-    const name = literalString(element ?? undefined);
+    const name = stringValue(element ?? undefined);
     return name === undefined ? [] : [name];
   });
   return (

@@ -4,7 +4,10 @@ import { open, stat, rename, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { byteEntropySchema } from "../../domain/native/byteEntropy.js";
+import {
+  byteEntropySchema,
+  byteEntropyWindowLimit,
+} from "../../domain/native/byteEntropy.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { ByteEntropyService } from "./ByteEntropyService.js";
 
@@ -420,12 +423,46 @@ it("refuses a block series above the output-row limit before scanning", async ()
   expect(projectAnalysisError(result.error)).toMatchObject({
     code: "resource_constraint",
     retryable: false,
+    details: {
+      limit: {
+        control_kind: "parameter",
+        parameter: "block_size",
+        effective_value: 256,
+        unit: "bytes",
+        minimum: 256,
+        maximum: 65536,
+        default_value: 4096,
+        applies_at: "next_call",
+        required_value: 512,
+      },
+    },
     remediation: {
-      action: expect.stringMatching(/shorter window|increase block_size/i),
+      action: expect.stringContaining(
+        "Pass a larger block_size on the next inspect_byte_entropy call (at least 512 bytes",
+      ),
     },
   });
   expect(reads).toBe(0);
   await service.close();
+});
+
+it("names length when no block_size admits the window", () => {
+  expect(
+    byteEntropyWindowLimit(65536, 32_768 * 65536 + 1, 32_768 * 65536 + 1),
+  ).toEqual({
+    control_kind: "parameter",
+    parameter: "length",
+    effective_value: 32_768 * 65536 + 1,
+    unit: "bytes",
+    minimum: 0,
+    maximum: 32_768 * 65536,
+    default_value: 32_768 * 65536 + 1,
+    applies_at: "next_call",
+  });
+  // The reported maximum is the window this call's block_size admits.
+  expect(
+    byteEntropyWindowLimit(4096, 3 * 1024 ** 3, 3 * 1024 ** 3).maximum,
+  ).toBe(32_768 * 4096);
 });
 
 it("retains a failed descriptor close and retries it before opening another file", async () => {

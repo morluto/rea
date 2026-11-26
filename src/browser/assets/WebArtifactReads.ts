@@ -3,11 +3,11 @@ import type { WebArtifactAcquisition as Acquisition } from "../../domain/webArti
 import { isAbortOf } from "../../process/SignalAbort.js";
 import { z } from "zod";
 import {
+  artifactFileCleanupError,
   ArtifactReaderFailure,
   stableArtifactInputRecovery,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   artifactFilePrimaryFacts,
-  bindArtifactFileCleanup,
   type ArtifactFilePrimaryFacts,
   type ArtifactResourceScope,
   completedStableArtifact,
@@ -24,11 +24,9 @@ import {
   AnalysisInputError,
   AnalysisTargetFailureError,
   cancelledBy,
-  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { safeParseJson } from "../../domain/safeJson.js";
 import {
@@ -153,14 +151,12 @@ export const webArtifactReadError = (
     context,
     signal,
   );
-  if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
-    const cleanup = new ProviderCleanupError(
-      "captured-web-artifacts",
-      cause.cleanup.resources,
-      { reason: cause.cleanup.reason },
-      { cause, operation: context.operation },
-    );
-    bindArtifactFileCleanup(cause, cleanup);
+  const cleanup = artifactFileCleanupError(
+    cause,
+    "captured-web-artifacts",
+    context.operation,
+  );
+  if (cleanup !== undefined) {
     return analysisErrorWithCleanupDependencies(
       primary,
       cleanup,
@@ -182,10 +178,7 @@ const webArtifactPrimaryError = (
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "cancelled"
   )
-    return cancelledBy(
-      context.operation,
-      carriedReason(artifactFileCancellationCause(cause)),
-    );
+    return artifactFileCancellationError(context.operation, cause);
   if (origin === "owned-or-classified" && isAbortOf(cause, signal))
     return cancelledBy(context.operation, signal);
   const selection = context.callerSelected

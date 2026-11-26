@@ -1,3 +1,5 @@
+import { analysisViewPageFields } from "./analysisViewPageFields.js";
+import { appendToMapList } from "../appendToMapList.js";
 import {
   analysisViewInputError,
   invalidAnalysisViewSubject,
@@ -24,11 +26,7 @@ import { evidenceFileTarget } from "../evidence.js";
 
 const captureSchema = pcapResultSchemas.inspect_pcap_capture;
 const fields = captureSchema.shape;
-const pageShape = {
-  kind: z.literal("pcap"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
-};
+const pageShape = analysisViewPageFields("pcap");
 export const pcapViewRequestSchema = z.discriminatedUnion("facet", [
   z.strictObject({
     ...pageShape,
@@ -192,9 +190,7 @@ const indexedDnsQueries = (
   if (byName !== undefined) return byName;
   const grouped = new Map<string, DnsQuery[]>();
   for (const entry of capture.dns_queries) {
-    const existing = grouped.get(entry.query);
-    if (existing === undefined) grouped.set(entry.query, [entry]);
-    else existing.push(entry);
+    appendToMapList(grouped, entry.query, entry);
   }
   byName = grouped;
   dnsQueriesByName.set(capture, byName);

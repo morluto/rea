@@ -7,13 +7,11 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
-import type { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
-import {
-  isParseLimit,
-  parseLimitConstraint,
-} from "../domain/parseFailureAnalysisError.js";
 import { errorMessage } from "../kernel/errorMessage.js";
-import type { ArtifactAnalysisResources } from "../process/ArtifactAnalysisResources.js";
+import type {
+  ArtifactAnalysisResources,
+  ProducerCommandLimits,
+} from "../process/ArtifactAnalysisResources.js";
 import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
 import type { LinuxResourceLimits } from "../process/LinuxResourceLimits.js";
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
@@ -32,32 +30,23 @@ interface RecordingProducerFailureContext {
   readonly operation: string;
   readonly path: string;
   readonly workspacePath: string | null;
-  readonly limits: Parameters<ArtifactAnalysisResources["commandContext"]>[0];
+  readonly limits: ProducerCommandLimits;
   readonly effectiveLimits: LinuxResourceLimits | undefined;
   readonly observedOutput: AnalysisCapturedOutput | undefined;
-  readonly catalog: {
-    readonly format: string;
-    readonly allowance: (
-      maximum: number,
-    ) => ReturnType<typeof fixedAllowanceOptions>;
-  };
   readonly configurationHelp: string;
   readonly configurationDiagnostics?: (
     cause: unknown,
   ) => AnalysisErrorOptions["diagnostics"];
-  readonly readerIntegrity: (
-    failure: ArtifactReaderFailure,
-    reason: string,
-  ) => AnalysisError;
+  /** A reader integrity failure, classified by its owner. */
+  readonly readerIntegrity: (failure: ArtifactReaderFailure) => AnalysisError;
 }
 
-/** Describe recording failures in terms of the command, workspace, and catalog that produced them. */
+/** Describe recording failures in terms of the command and workspace that produced them. */
 export const recordingProducerFailureDialect = (
   resources: ArtifactAnalysisResources,
   context: RecordingProducerFailureContext,
 ): ProviderFailureDialect => {
-  const { workspacePath, operation, phase, path, observedOutput, catalog } =
-    context;
+  const { workspacePath, operation, phase, path, observedOutput } = context;
   const command = resources.commandContext(
     context.limits,
     context.effectiveLimits,
@@ -76,13 +65,6 @@ export const recordingProducerFailureDialect = (
   return {
     providerId: resources.providerId,
     operation,
-    recognise: (failure) =>
-      isParseLimit(failure, catalog.format)
-        ? parseLimitConstraint(operation, "memory", failure, {
-            ...captured,
-            ...catalog.allowance(failure.failure.limit.maximum),
-          })
-        : undefined,
     command: () => command,
     // The retained workspace reports unresolved cleanup when the run finishes.
     commandCleanup: (_failure, _primary, outcome) =>
@@ -117,7 +99,7 @@ export const recordingProducerFailureDialect = (
         failure instanceof ArtifactReaderFailure &&
         failure.reason === "integrity"
       )
-        return context.readerIntegrity(failure, reason);
+        return context.readerIntegrity(failure);
       return new AnalysisOutputError(operation, reason, {
         cause: failure,
         ...captured,

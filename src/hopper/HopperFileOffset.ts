@@ -458,7 +458,7 @@ function originalOffset(
       size,
       layout.value.tableEnd,
     );
-    if (boundsIssue !== null) return err(boundsIssue.reason);
+    if (boundsIssue !== null) return err(boundsIssue.detail);
     if (
       slice.cpuType === loadedIdentity.cpuType &&
       slice.cpuSubtype === loadedIdentity.cpuSubtype

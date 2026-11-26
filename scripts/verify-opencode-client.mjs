@@ -10,7 +10,8 @@ import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
-import { publishClientReceipt } from "./verify/clients/receipt.mjs";
+import { readClientVersion } from "./verify/clients/version.mjs";
+import { receiptContext, publishReceipt } from "./verify/clients/receipt.mjs";
 import {
   CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
   assertClientJavaScriptFixtureEvidence,
@@ -105,13 +106,7 @@ await withVerifierCleanup(async () => {
       REA_PROCESS_RUN_ID: verifier.run_id,
     };
     try {
-      clientVersion = (
-        await commands.exec(command, ["--version"], {
-          env: environment,
-          timeout: 30_000,
-          stdin: "pipe",
-        })
-      ).stdout.trim();
+      clientVersion = await readClientVersion(commands, command, environment);
     } catch (cause) {
       throw new Error(
         `OpenCode preflight failed for ${command}; install OpenCode or set REA_VERIFY_OPENCODE_COMMAND. ${String(cause)}`,
@@ -297,19 +292,13 @@ await withVerifierCleanup(async () => {
 }, [
   async () => {
     const lineage = await completeVerifierRun(verifier);
-    const receipt = {
+    await publishReceipt({
       client: "OpenCode",
       clientVersion,
       mode,
       configFormat,
       passed,
-      artifacts: lab,
-      runtimeRoot,
-      host: {
-        platform: process.platform,
-        architecture: process.arch,
-        node: process.versions.node,
-      },
+      ...receiptContext(lab, runtimeRoot),
       modelFixture:
         "loopback custom OpenAI-compatible provider; one-million-token fixture capacity and synthetic usage; no live provider claim",
       skillDiscovery:
@@ -325,7 +314,6 @@ await withVerifierCleanup(async () => {
       probes: fixture?.probes,
       fixtureFailure: fixture?.failure,
       verifier: lineage,
-    };
-    await publishClientReceipt(lab, receipt);
+    });
   },
 ]);

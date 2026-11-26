@@ -29,7 +29,11 @@ import {
 } from "../domain/analysisErrorBase.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import type { LimitRef } from "../domain/parseFailure.js";
-import type { FormatTargetFailure } from "../domain/targetFailure.js";
+import type {
+  FormatTargetFailure,
+  TargetFailureOf,
+} from "../domain/targetFailure.js";
+import { ParseFailureError } from "../domain/parseFailure.js";
 
 export interface ArtifactReaderFailureOptions extends ErrorOptions {
   /** Recovery guidance established by the producing adapter, separate from diagnostics. */
@@ -43,6 +47,8 @@ export interface ArtifactReaderFailureOptions extends ErrorOptions {
   readonly partialObservation?: AnalysisPartialObservation | undefined;
   /** The constrained resource bound for a limit failure. */
   readonly boundary?: ArtifactLimitBoundary;
+  /** For a `file-size` limit, the observed size the refused read needs. */
+  readonly observedBytes?: bigint | undefined;
   /** Named admission whose recovery must not be inferred from other limit text. */
   readonly admission?: ArtifactAdmissionLimit;
   readonly readerLimit?: ArtifactReaderLimitFact;
@@ -256,6 +262,7 @@ export interface ArtifactReader {
     | "uimage"
     | "android-boot-image"
     | "android-ota-payload"
+    | "android-sparse-image"
     | "iso9660"
     | "uefi"
     | "pyinstaller"
@@ -309,6 +316,7 @@ export class ArtifactReaderFailure extends Error {
   partialObservation: AnalysisPartialObservation | undefined;
   /** The constrained bound for a `limit` reason, when the reader knows it. */
   readonly boundary: ArtifactLimitBoundary | undefined;
+  readonly observedBytes: bigint | undefined;
   /** Named admission for a limit whose public recovery is owned by the producer. */
   readonly admission: ArtifactAdmissionLimit | undefined;
   readonly readerLimit: ArtifactReaderLimitFact | undefined;
@@ -375,6 +383,7 @@ export class ArtifactReaderFailure extends Error {
       options?.cleanupLeases ?? (this.cleanup === undefined ? [] : undefined);
     this.partialObservation = options?.partialObservation;
     this.boundary = options?.boundary;
+    this.observedBytes = options?.observedBytes;
     this.admission = options?.admission;
     this.readerLimit = options?.readerLimit;
     this.parserLimit = options?.parserLimit;
@@ -397,6 +406,7 @@ export class ArtifactReaderFailure extends Error {
     | "userMessage"
     | "resolvedPath"
     | "boundary"
+    | "observedBytes"
     | "admission"
     | "readerLimit"
     | "parserLimit"
@@ -411,6 +421,9 @@ export class ArtifactReaderFailure extends Error {
         ? {}
         : { resolvedPath: this.resolvedPath }),
       ...(this.boundary === undefined ? {} : { boundary: this.boundary }),
+      ...(this.observedBytes === undefined
+        ? {}
+        : { observedBytes: this.observedBytes }),
       ...(this.admission === undefined ? {} : { admission: this.admission }),
       ...(this.readerLimit === undefined
         ? {}
@@ -574,6 +587,23 @@ export const malformedArtifact = (
     { kind: "malformed", format, detail, ...located(offset, field) },
     options,
   );
+
+/**
+ * The throwable for a failure a reader established. Bytes that came up short
+ * after the file's size was measured mean the file changed during the read,
+ * a read-coverage integrity failure; any other kind is the owner's parse
+ * failure, which a stable-file owner re-verifies before reporting.
+ */
+export const readFailureError = (
+  failure: FormatTargetFailure | TargetFailureOf<"changed">,
+):
+  | ArtifactReaderFailure
+  | ParseFailureError<"malformed" | "truncated" | "unsupported"> =>
+  failure.kind === "changed"
+    ? new ArtifactReaderFailure("integrity", failure.detail, {
+        integrityCheck: "read-coverage",
+      })
+    : new ParseFailureError(failure);
 
 /**
  * The bytes use a form outside what this reader of `format` decodes.

@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative } from "node:path";
 import { expect, it } from "vitest";
 import type { DeviceManager } from "frida";

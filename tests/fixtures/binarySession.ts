@@ -26,6 +26,7 @@ import { ARTIFACT_TOOL_CONTRACTS } from "../../src/contracts/artifactToolContrac
 
 import { err, ok as resultOk } from "../../src/domain/result.js";
 import {
+  createFixtureProviderIdentity,
   availableFixtureProvider,
   supportedFixtureTarget,
   observed,
@@ -42,11 +43,7 @@ type TestBinarySessionOptions = {
 
 type FixtureClientFactory = AnalysisProvider["createClient"];
 
-const FIXTURE_IDENTITY = {
-  id: "fixture",
-  name: "Fixture analysis provider",
-  version: "1",
-} as const;
+const FIXTURE_IDENTITY = createFixtureProviderIdentity();
 
 const FIXTURE_OPERATIONS: readonly Exclude<AnalysisOperation, "health">[] = [
   ...OFFICIAL_TOOL_CONTRACTS,
@@ -132,11 +129,7 @@ export const createCacheProvider = (
   calls: string[],
   mayWriteFilesystem = false,
 ): AnalysisProvider => {
-  const identity = {
-    id: "fixture",
-    name: "Fixture analysis provider",
-    version: "1",
-  } as const;
+  const identity = createFixtureProviderIdentity();
   return {
     identity: () => identity,
     resolveAnalysisProfile: () =>

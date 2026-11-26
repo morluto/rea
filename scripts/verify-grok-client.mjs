@@ -10,7 +10,8 @@ import { verifyClientSetup } from "./verify/clients/setup.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { containsText } from "./verify/clients/result-discovery.mjs";
-import { publishClientReceipt } from "./verify/clients/receipt.mjs";
+import { readClientVersion } from "./verify/clients/version.mjs";
+import { receiptContext, publishReceipt } from "./verify/clients/receipt.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import {
   CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
@@ -375,13 +376,7 @@ command = "unrelated-server"
 enabled = false
 `;
     await writeFile(configPath, original);
-    clientVersion = (
-      await commands.exec(command, ["--version"], {
-        env: environment,
-        timeout: 30_000,
-        stdin: "pipe",
-      })
-    ).stdout.trim();
+    clientVersion = await readClientVersion(commands, command, environment);
     await verifyClientSetup({
       client: "grok_build",
       commands,
@@ -480,18 +475,12 @@ enabled = false
 }, [
   async () => {
     const lineage = await completeVerifierRun(verifier);
-    const receipt = {
+    await publishReceipt({
       client: "Grok Build",
       clientVersion,
       mode,
       passed,
-      artifacts: lab,
-      runtimeRoot,
-      host: {
-        platform: process.platform,
-        architecture: process.arch,
-        node: process.versions.node,
-      },
+      ...receiptContext(lab, runtimeRoot),
       modelFixture:
         "loopback OpenAI completions/SSE, declared one-million-token custom model and synthetic usage; no live model claim",
       discovery:
@@ -519,7 +508,6 @@ enabled = false
       probes: fixture?.probes,
       fixtureFailure: fixture?.failure,
       verifier: lineage,
-    };
-    await publishClientReceipt(lab, receipt);
+    });
   },
 ]);

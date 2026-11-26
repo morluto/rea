@@ -1,3 +1,4 @@
+import { appendToMapList } from "../../domain/appendToMapList.js";
 import { createHash } from "node:crypto";
 import { crc32 } from "node:zlib";
 import {
@@ -12,6 +13,7 @@ import type {
   FitMetadata,
 } from "../../domain/formatMetadata/firmwareMetadata.js";
 import {
+  DEVICETREE_READ_BUDGETS,
   MAX_DEVICETREE_FILE_BYTES,
   type Devicetree,
 } from "../../domain/firmware/devicetree.js";
@@ -577,6 +579,8 @@ const parseFit = (fdt: Buffer, path: string) => {
         max_nodes: 8192,
         max_properties: 32768,
         max_depth: 64,
+        max_decoded_bytes:
+          DEVICETREE_READ_BUDGETS.max_decoded_bytes.default_value,
       },
     );
   } catch (cause) {
@@ -589,7 +593,7 @@ const parseFit = (fdt: Buffer, path: string) => {
         `FIT devicetree exceeds the fixed ${parserLimit.name} allowance`,
         {
           boundary:
-            parserLimit.name === "decoded_bytes" ? "memory" : "capacity",
+            parserLimit.name === "max_decoded_bytes" ? "memory" : "capacity",
           cause,
           parserLimit,
         },
@@ -610,9 +614,7 @@ export const readFitStructure = (
   const children = new Map<string, FitNode[]>();
   for (const node of tree.nodes) {
     if (node.parent === null) continue;
-    const siblings = children.get(node.parent);
-    if (siblings === undefined) children.set(node.parent, [node]);
-    else siblings.push(node);
+    appendToMapList(children, node.parent, node);
   }
   const root = byPath.get("/");
   if (root === undefined || !byPath.has("/images"))

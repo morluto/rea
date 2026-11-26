@@ -27,6 +27,7 @@ import {
 } from "../resources/index.js";
 import {
   isXmlElement,
+  parseTrueFalseText,
   parseXmlDocument,
   xmlChildElements,
   xmlChildrenNamed,
@@ -307,14 +308,6 @@ const opcManifestTargets = (
   return [...targets.values()];
 };
 
-const parseBooleanAttribute = (value: string | null): boolean | null => {
-  if (value === null) return null;
-  const folded = value.toLowerCase();
-  if (folded === "true") return true;
-  if (folded === "false") return false;
-  return null;
-};
-
 const parseDependencies = (
   metadata: Element,
   namespace: string,
@@ -336,7 +329,7 @@ const parseDependencies = (
     version: attribute(element, "version"),
     include: attribute(element, "include"),
     exclude: attribute(element, "exclude"),
-    development_dependency: parseBooleanAttribute(
+    development_dependency: parseTrueFalseText(
       attribute(element, "developmentDependency"),
     ),
   });

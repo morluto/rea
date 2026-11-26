@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256 as hash } from "../../../support/sha256.js";
 
 import { describe, expect, it } from "vitest";
 import { buildManagedPeFixture as buildMethodRows } from "../../../../scripts/fixtures/managed/pe.mjs";
@@ -15,9 +15,6 @@ const inspect = (bytes: Buffer, path: string) => {
   const result = inspectManagedMembersBytes(bytes, target);
   return { result, evidenceId: `ev_${hash(Buffer.from(path))}` };
 };
-
-const hash = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 describe("managed member partial body comparison", () => {
   it.each(["max_stack", "init_locals"] as const)(

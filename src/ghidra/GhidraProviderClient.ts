@@ -66,10 +66,7 @@ import {
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
-  AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
-  AnalysisResourceConstraintError,
-  reattributedResourceConstraint,
   cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";

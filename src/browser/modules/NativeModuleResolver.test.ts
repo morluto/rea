@@ -328,9 +328,13 @@ describe("completed native resolution finalization", () => {
         },
       });
       if (cleanupFails) {
-        await expect(provider.close()).rejects.toMatchObject({
-          cleanupIncomplete: true,
-        });
+        const failures = await Promise.all(
+          [provider.close(), provider.close()].map((attempt) =>
+            attempt.catch((cause: unknown) => cause),
+          ),
+        );
+        expect(failures[0]).toMatchObject({ cleanupIncomplete: true });
+        expect(failures[1]).toBe(failures[0]);
         expect(result.error.cleanupIncomplete).toBe(true);
         allowClose = true;
       }
