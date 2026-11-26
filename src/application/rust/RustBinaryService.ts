@@ -13,7 +13,7 @@ import {
 } from "../../domain/rust/rustBinary.js";
 import { inspectRustBinaryRequestSchema } from "../../domain/rust/rustBinaryQuery.js";
 import type { Result } from "../../domain/result.js";
-import type { AnalysisViewRetention } from "../analysisView/AnalysisViewService.js";
+import type { AnalysisViewRetention } from "../analysisView/AnalysisViewRetention.js";
 import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_rust_binary";
@@ -38,6 +38,7 @@ export class RustBinaryService {
         inputSchema: inspectRustBinaryRequestSchema,
         outputSchema: rustBinarySchema,
         provider: this.provider,
+        retainCompletedReport: true,
         invalidOutputMessage:
           "Rust dependency reader returned malformed metadata or changed the selected artifact or slice identity.",
         toParameters: ({ detail: _detail, view: _view, ...parameters }) =>

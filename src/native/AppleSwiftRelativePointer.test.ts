@@ -1,3 +1,7 @@
+import {
+  swiftFixtureEvidence,
+  swiftFixtureLocation,
+} from "./AppleSwiftReaders.fixture.js";
 import { ParseFailureError, malformedInput } from "../domain/parseFailure.js";
 import { expect, it } from "vitest";
 
@@ -16,26 +20,9 @@ const readers = (bytes: Buffer) => ({
     target: bytes.readBigUInt64LE(Number(address)),
   }),
   string: () => "fixture",
-  location: (address: bigint) => ({
-    address: `0x${address.toString(16)}`,
-    file_offset: Number(address),
-  }),
-  targetLocation: (address: bigint) => ({
-    address: `0x${address.toString(16)}`,
-    file_offset: Number(address),
-  }),
-  evidence: (address: bigint, description: string) => [
-    {
-      kind: "binary_metadata" as const,
-      description,
-      location: {
-        address: `0x${address.toString(16)}`,
-        file_offset: Number(address),
-      },
-      artifact_path: "/fixture",
-      artifact_sha256: "a".repeat(64),
-    },
-  ],
+  location: swiftFixtureLocation,
+  targetLocation: swiftFixtureLocation,
+  evidence: swiftFixtureEvidence,
   offset: (address: bigint, size = 1) => {
     if (address < 0n || address + BigInt(size) > BigInt(bytes.length))
       throw malformedInput("macho", "outside fixture bytes");

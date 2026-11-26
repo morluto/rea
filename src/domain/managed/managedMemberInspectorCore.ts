@@ -6,7 +6,6 @@ import {
   appendManagedParseIssues,
   managedFailure,
   ManagedReaderFailure,
-  readManagedValue,
 } from "./managedReaderFailure.js";
 import type {
   ManagedMemberInspection,

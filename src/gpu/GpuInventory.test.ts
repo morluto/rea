@@ -250,6 +250,26 @@ const conflictingCudaCubin = (options: {
   );
 };
 
+it("names an unreadable shared section name instead of returning a bare null count", async () => {
+  const bytes = conflictingCudaCubin({
+    sharedSizes: [64],
+    globalRegisterValues: [10],
+  });
+  // The shared section is the last one this fixture writes; point its sh_name past the
+  // string table so the name cannot be read and a shared section cannot be ruled out.
+  const table = Number(bytes.readBigUInt64LE(40));
+  const sections = bytes.readUInt16LE(60);
+  bytes.writeUInt32LE(0xffff, table + (sections - 1) * 64);
+  const inventory = new GpuInventory({ path: "/fixture", analysis: "kernels" });
+  await inventory.inspect(new GpuBufferSource(bytes, "fixture"));
+  expect(inventory.kernels[0]).toMatchObject({
+    shared_bytes: null,
+    limitations: expect.arrayContaining([
+      "CUDA section names are not all known, so a shared memory section cannot be ruled out; shared byte count remains unknown",
+    ]),
+  });
+});
+
 it("marks conflicting CUDA .nv.shared sections partial with null shared_bytes and provenance", async () => {
   const bytes = conflictingCudaCubin({
     sharedSizes: [64, 128],

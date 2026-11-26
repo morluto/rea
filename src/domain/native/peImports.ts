@@ -1,8 +1,15 @@
 import { z } from "zod";
+import { peHeaderAnomaliesSchema } from "./peHeaderAnomalies.js";
+import { peImageBaseSchema, peVaSchema } from "./peAddressSpace.js";
 import { knownCoverageStatusSchema } from "../coverage.js";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import {
+  parameterBudgetLimitFor,
+  parameterBudgetSchema,
+  type ParameterBudget,
+} from "../parameterBudget.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const range = z.strictObject({ offset: uint, bytes: uint });
@@ -14,8 +21,33 @@ export const MAX_INSPECT_PE_IMPORT_FILE_BYTES = 536870912;
 export const MAX_INSPECT_PE_IMPORT_DLLS = 4096;
 /** Hard ceiling on named and ordinal functions across every table. */
 export const MAX_INSPECT_PE_IMPORT_FUNCTIONS = 262144;
-/** Fixed ceiling on decoded DLL and function name text retained in one report. */
-export const MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES = 16 * 1024 * 1024;
+
+/** The per-call budgets of `inspect_pe_imports`. */
+export const PE_IMPORT_BUDGETS = {
+  max_dlls: {
+    minimum: 1,
+    maximum: MAX_INSPECT_PE_IMPORT_DLLS,
+    default_value: 256,
+    unit: "count",
+  },
+  max_functions: {
+    minimum: 1,
+    maximum: MAX_INSPECT_PE_IMPORT_FUNCTIONS,
+    default_value: 8192,
+    unit: "count",
+  },
+  /** Decoded DLL and function name text retained in one report. */
+  max_text_bytes: {
+    minimum: 1,
+    maximum: 256 * 1024 * 1024,
+    default_value: 16 * 1024 * 1024,
+    unit: "bytes",
+  },
+} as const satisfies Record<string, ParameterBudget>;
+export type PeImportBudget = keyof typeof PE_IMPORT_BUDGETS;
+
+/** The per-call budget that stopped an import inventory. */
+export const peImportBudgetLimit = parameterBudgetLimitFor(PE_IMPORT_BUDGETS);
 
 /** Complete bounded inspection of PE import and delay-load tables. */
 export const inspectPeImportsInputSchema = z.strictObject({
@@ -28,25 +60,22 @@ export const inspectPeImportsInputSchema = z.strictObject({
     .min(64)
     .max(MAX_INSPECT_PE_IMPORT_FILE_BYTES)
     .default(67108864)
-    .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
-  max_dlls: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_PE_IMPORT_DLLS)
-    .default(256)
     .describe(
-      "Maximum import and delay-load descriptors to examine; exceeding the budget fails without partial success",
+      "Maximum bytes this reader reads from the artifact: headers, directories and the ranges they reference (default 64 MiB). The file may be larger; its one hashing pass is not counted",
     ),
-  max_functions: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_PE_IMPORT_FUNCTIONS)
-    .default(8192)
-    .describe(
-      "Maximum imported functions to examine across every table; exceeding the budget fails without partial success",
-    ),
+  max_dlls: parameterBudgetSchema(PE_IMPORT_BUDGETS.max_dlls).describe(
+    "Maximum import and delay-load descriptors to examine; exceeding the budget fails without partial success",
+  ),
+  max_functions: parameterBudgetSchema(
+    PE_IMPORT_BUDGETS.max_functions,
+  ).describe(
+    "Maximum imported functions to examine across every table; exceeding the budget fails without partial success",
+  ),
+  max_text_bytes: parameterBudgetSchema(
+    PE_IMPORT_BUDGETS.max_text_bytes,
+  ).describe(
+    "Maximum decoded DLL and function name text retained in one report (default 16 MiB)",
+  ),
 });
 export type InspectPeImportsInput = z.infer<typeof inspectPeImportsInputSchema>;
 
@@ -56,6 +85,12 @@ const peImportFunctionSchema = z.strictObject({
   ordinal: z.number().int().min(0).max(0xffff).nullable(),
   ilt_rva: uint.nullable(),
   iat_rva: uint,
+  /**
+   * Import address table slot VA (`image_base` plus `iat_rva`), the address
+   * `xrefs` and other provider tools accept. Evidence saved before this field
+   * existed omits it.
+   */
+  iat_va: peVaSchema.optional(),
   thunk_hex: z.string().regex(/^[0-9a-f]+$/u),
 });
 
@@ -138,6 +173,7 @@ export const peImportsSchema = z.strictObject({
   machine: uint,
   bits: z.union([z.literal(32), z.literal(64)]),
   architecture: z.string().min(1),
+  image_base: peImageBaseSchema,
   import_directory: directorySchema,
   delay_import_directory: directorySchema,
   imports: z.array(peImportDllSchema),
@@ -145,6 +181,8 @@ export const peImportsSchema = z.strictObject({
   imphash: imphashSchema,
   coverage: coverageSchema,
   issues: z.array(peImportIssueSchema),
+  /** Evidence saved before this field existed omits it. */
+  header_anomalies: peHeaderAnomaliesSchema.optional(),
   limitations: z.array(z.string().min(1)),
 });
 export type PeImports = z.infer<typeof peImportsSchema>;

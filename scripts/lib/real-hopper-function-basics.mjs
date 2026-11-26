@@ -10,7 +10,7 @@ export const verifyHopperFunctionBasics = async (
     await client.callTool(
       {
         name: "resolve_containing_procedure",
-        arguments: { address: procedure },
+        arguments: { detail: "complete", address: procedure },
       },
       options,
     ),
@@ -29,10 +29,7 @@ export const verifyHopperFunctionBasics = async (
     await client.callTool(
       {
         name: "procedure_references",
-        arguments: {
-          procedure,
-          direction: "outgoing",
-        },
+        arguments: { detail: "complete", procedure, direction: "outgoing" },
       },
       options,
     ),
@@ -80,6 +77,7 @@ export async function verifyHopperTerminalInstructions(call) {
   let terminalCalls = 0;
   for (const { address } of selected) {
     const references = await call("procedure_references", {
+      detail: "complete",
       procedure: address,
       direction: "outgoing",
     });

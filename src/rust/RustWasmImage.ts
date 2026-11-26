@@ -1,23 +1,18 @@
 import type { ZstandardFramePause } from "../domain/compression/zstandardExactFrame.js";
 import { readLeb128, ULEB32 } from "../domain/leb128.js";
 import { isStrictUtf8, strictUtf8Decoder } from "../domain/strictUtf8.js";
-import type { NativeByteSource } from "../domain/native/nativeSectionDirectory.js";
 import {
   decodeLimit,
   malformedInput,
   truncatedInput,
   unsupportedInput,
 } from "../domain/parseFailure.js";
+import { readByteSourceSlice, type ByteSource } from "../domain/byteSource.js";
+import { RUST_WASM_SECTION_BUDGET } from "../domain/rust/rustBinary.js";
 
 /** The ParseFailure format of WebAssembly section framing. */
 export const WASM_FORMAT = "wasm";
 
-/**
- * Producer output holds a few dozen sections. The format sets no bound, and a
- * 256 MiB input of three-byte custom sections would otherwise keep this
- * section walk busy for about 89 million sections.
- */
-export const MAX_WASM_SECTIONS = 65_536;
 const PREAMBLE = Buffer.from("\0asm", "latin1");
 const CORE_MODULE_VERSION = Buffer.from([1, 0, 0, 0]);
 const COMPONENT_LAYER = Buffer.from([1, 0]);
@@ -51,17 +46,17 @@ const WASM_YIELD_INTERVAL = 256;
 
 /** Stream WebAssembly core-module section framing over a range reader. */
 export const readRustWasmSectionsFromReader = async (
-  source: NativeByteSource,
+  source: ByteSource,
   pause?: ZstandardFramePause,
+  /**
+   * Producer output holds a few dozen sections. The format sets no bound, and
+   * a 256 MiB input of three-byte custom sections would otherwise keep this
+   * walk busy for about 89 million sections.
+   */
+  maxSections: number = RUST_WASM_SECTION_BUDGET.default_value,
 ): Promise<RustWasmSections> => {
-  const readSlice = (offset: number, length: number): Promise<Buffer> => {
-    if (length <= 0 || offset >= source.size)
-      return Promise.resolve(Buffer.alloc(0));
-    const clamped = Math.min(length, source.size - offset);
-    if (source.prefix !== undefined && offset + clamped <= source.prefix.length)
-      return Promise.resolve(source.prefix.subarray(offset, offset + clamped));
-    return source.readRange(offset, clamped);
-  };
+  const readSlice = (offset: number, length: number) =>
+    readByteSourceSlice(source, offset, length);
   if (source.size < 8)
     throw truncatedInput(WASM_FORMAT, "WebAssembly header is truncated", {
       offset: 0,
@@ -105,16 +100,22 @@ export const readRustWasmSectionsFromReader = async (
         { offset: cursor, field: "section" },
       );
     // Admit one complete frame before charging any section payload work.
-    if (sections === MAX_WASM_SECTIONS)
+    // Sections are walked in turn, so the complete count is unknown here.
+    if (sections === maxSections)
       throw decodeLimit(
         WASM_FORMAT,
-        `WebAssembly module declares more than ${MAX_WASM_SECTIONS} sections`,
-        { name: "max_wasm_sections", maximum: MAX_WASM_SECTIONS },
+        `WebAssembly module declares more than max_wasm_sections (${String(maxSections)}) sections`,
+        { name: "max_wasm_sections", maximum: maxSections },
         { offset: cursor },
       );
     if (id === CUSTOM_SECTION) {
+      // A name length cannot consume bytes from the next section.
       const nameHeaderLen = Math.min(5, end - payloadStart);
-      const nameHeader = await readSlice(payloadStart, nameHeaderLen);
+      const nameHeaderEnd = size.end + nameHeaderLen;
+      const nameHeader =
+        nameHeaderEnd <= probe.length
+          ? probe.subarray(size.end, nameHeaderEnd)
+          : await readSlice(payloadStart, nameHeaderLen);
       const nameLen = readU32(nameHeader, 0, nameHeader.length, {
         label: "custom section name length",
         boundary: "section",

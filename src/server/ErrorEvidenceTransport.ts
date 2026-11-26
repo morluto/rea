@@ -8,6 +8,7 @@ import {
   isJSONRPCResultResponse,
   type CallToolResult,
   type JSONRPCMessage,
+  type MessageExtraInfo,
   type RequestId,
   type Transport,
   type TransportSendOptions,
@@ -15,6 +16,11 @@ import {
 import { unknownTarget } from "../domain/targetIdentity.js";
 import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjectionSchema.js";
 import { transportClosedByOwner } from "./transportOwnerClose.js";
+import { ForwardingTransport } from "./ForwardingTransport.js";
+import {
+  formatUnknownMcpToolMessage,
+  type AdvertisedToolCatalog,
+} from "./toolCatalogSearch.js";
 import {
   advertiseToolOutput,
   type AdvertisedToolPresentation,
@@ -43,6 +49,8 @@ import {
   TARGET_CONTENT_RESULT_META,
 } from "./toolResultEncoding.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
+import type { McpToolsListPageBudget } from "../config/mcpToolsListPageBudget.js";
+import { paginateToolsList } from "./toolListPagination.js";
 import {
   currentMcpToolRequest,
   McpToolRequest,
@@ -183,7 +191,11 @@ const presentOutputSchemasForToolsList = (
       tools: message.result.tools.map((tool: unknown) => {
         if (!isRecord(tool) || !isRecord(tool.outputSchema)) return tool;
         const { outputSchema: canonical, ...advertisedTool } = tool;
-        const outputSchema = advertiseToolOutput(canonical, presentation);
+        const outputSchema = advertiseToolOutput(
+          canonical,
+          presentation,
+          typeof tool.name === "string" ? tool.name : undefined,
+        );
         return outputSchema === undefined
           ? advertisedTool
           : { ...advertisedTool, outputSchema };
@@ -195,25 +207,24 @@ const presentOutputSchemasForToolsList = (
 /** Release every transport-owned reference for a cancelled/completed request. */
 export const forgetPendingMcpRequest = (
   pendingTools: Map<RequestId, string>,
-  pendingToolLists: Set<RequestId>,
+  pendingToolListCursors: Map<RequestId, string | undefined>,
   pendingCompletions: Map<RequestId, AbortController>,
   id: RequestId,
   reason: CallerAbort | OwnerCancellation,
 ): void => {
   pendingTools.delete(id);
-  pendingToolLists.delete(id);
+  pendingToolListCursors.delete(id);
   pendingCompletions.get(id)?.abort(reason);
   pendingCompletions.delete(id);
 };
 
-export class ErrorEvidenceTransport implements Transport {
-  onclose: Transport["onclose"];
-  onerror: Transport["onerror"];
-  onmessage: Transport["onmessage"];
-  readonly hasPerRequestStream?: boolean;
+export class ErrorEvidenceTransport extends ForwardingTransport {
   private readonly pendingTools = new Map<RequestId, string>();
   private readonly pendingValidation = new Map<RequestId, McpToolRequest>();
-  private readonly pendingToolLists = new Set<RequestId>();
+  private readonly pendingToolListCursors = new Map<
+    RequestId,
+    string | undefined
+  >();
   private readonly pendingCompletions = new Map<RequestId, AbortController>();
   private closing = false;
 
@@ -226,7 +237,7 @@ export class ErrorEvidenceTransport implements Transport {
   }
 
   constructor(
-    private readonly transport: Transport,
+    transport: Transport,
     private readonly currentEvidenceWriter: () =>
       | EvidenceWriter["recordEvidence"]
       | undefined,
@@ -235,111 +246,112 @@ export class ErrorEvidenceTransport implements Transport {
     private readonly outputPresentation: AdvertisedToolPresentation["output"],
     private readonly maximumInputElements: number,
     private readonly evidenceReferenceAlternatives: ReadonlySet<string>,
+    private readonly toolsListPageBudget: McpToolsListPageBudget,
+    private readonly currentAdvertisedTools: () => AdvertisedToolCatalog,
   ) {
-    if (transport.hasPerRequestStream !== undefined)
-      this.hasPerRequestStream = transport.hasPerRequestStream;
-    transport.onmessage = (message, extra) => {
-      // The pinned SDK classifies generic method schema failures as internal
-      // errors. Validate these wire requests with its canonical schemas before
-      // dispatch, leaving callback failures and negotiated-era checks to it.
-      if (isJSONRPCRequest(message)) {
-        const schema = discoveryRequestSchema(message.method);
-        const result = schema?.["~standard"].validate(message);
-        if (result?.issues !== undefined) {
-          void this.send({
-            jsonrpc: "2.0",
-            id: message.id,
-            error: {
-              code: -32602,
-              message: `Invalid ${message.method} request: ${JSON.stringify(result.issues)}`,
-            },
-          }).catch((cause: unknown) =>
-            this.onerror?.(
-              cause instanceof Error ? cause : new Error(String(cause)),
-            ),
-          );
-          return;
-        }
-      }
-      let validation: McpToolRequest | undefined;
-      if (
-        isJSONRPCRequest(message) &&
-        message.method === "tools/call" &&
-        typeof message.params?.["name"] === "string"
-      ) {
-        this.pendingTools.set(message.id, message.params["name"]);
-        validation = new McpToolRequest(message.id, message.params["name"]);
-        this.pendingValidation.set(message.id, validation);
-      }
-      if (isJSONRPCRequest(message) && message.method === "tools/list")
-        this.pendingToolLists.add(message.id);
-      if (isJSONRPCRequest(message) && message.method === "completion/complete")
-        this.pendingCompletions.set(message.id, new AbortController());
-      // The SDK suppresses replies after cancellation, so send() cannot release
-      // this bookkeeping. Keep transport authentication outside retained data.
-      if (
-        isJSONRPCNotification(message) &&
-        message.method === "notifications/cancelled"
-      ) {
-        const id = message.params?.["requestId"];
-        if (typeof id === "string" || typeof id === "number") {
-          const cancellation = new CallerAbort(
-            "request-cancelled",
-            message.params?.["reason"],
-          );
-          this.pendingValidation.get(id)?.cancel(cancellation);
-          this.pendingValidation.delete(id);
-          forgetPendingMcpRequest(
-            this.pendingTools,
-            this.pendingToolLists,
-            this.pendingCompletions,
-            id,
-            cancellation,
-          );
-        }
-      }
-      const completion =
-        isJSONRPCRequest(message) && message.method === "completion/complete"
-          ? this.pendingCompletions.get(message.id)
-          : undefined;
-      if (validation !== undefined)
-        runMcpToolRequest(validation, () => this.onmessage?.(message, extra));
-      else if (completion === undefined) this.onmessage?.(message, extra);
-      else
-        currentRequestSignal.run(completion.signal, () =>
-          this.onmessage?.(message, extra),
+    super(transport);
+  }
+
+  protected override receive(
+    message: JSONRPCMessage,
+    extra?: MessageExtraInfo,
+  ): void {
+    // The pinned SDK classifies generic method schema failures as internal
+    // errors. Validate these wire requests with its canonical schemas before
+    // dispatch, leaving callback failures and negotiated-era checks to it.
+    if (isJSONRPCRequest(message)) {
+      const schema = discoveryRequestSchema(message.method);
+      const result = schema?.["~standard"].validate(message);
+      if (result?.issues !== undefined) {
+        void this.send({
+          jsonrpc: "2.0",
+          id: message.id,
+          error: {
+            code: -32602,
+            message: `Invalid ${message.method} request: ${JSON.stringify(result.issues)}`,
+          },
+        }).catch((cause: unknown) =>
+          this.onerror?.(
+            cause instanceof Error ? cause : new Error(String(cause)),
+          ),
         );
-    };
-    transport.onerror = (error) => this.onerror?.(error);
-    transport.onclose = () => {
-      const disconnected =
-        this.closing || transportClosedByOwner(this.transport)
-          ? OwnerCancellation.ownerClosed
-          : new CallerAbort("client-disconnected");
-      this.pendingTools.clear();
-      for (const validation of this.pendingValidation.values())
-        validation.cancel(disconnected);
-      this.pendingValidation.clear();
-      this.pendingToolLists.clear();
-      for (const completion of this.pendingCompletions.values())
-        completion.abort(disconnected);
-      this.pendingCompletions.clear();
-      this.onclose?.();
-    };
+        return;
+      }
+    }
+    let validation: McpToolRequest | undefined;
+    if (
+      isJSONRPCRequest(message) &&
+      message.method === "tools/call" &&
+      typeof message.params?.["name"] === "string"
+    ) {
+      this.pendingTools.set(message.id, message.params["name"]);
+      validation = new McpToolRequest(message.id, message.params["name"]);
+      this.pendingValidation.set(message.id, validation);
+    }
+    if (isJSONRPCRequest(message) && message.method === "tools/list") {
+      const params = message.params;
+      this.pendingToolListCursors.set(
+        message.id,
+        isRecord(params) && typeof params.cursor === "string"
+          ? params.cursor
+          : undefined,
+      );
+    }
+    if (isJSONRPCRequest(message) && message.method === "completion/complete")
+      this.pendingCompletions.set(message.id, new AbortController());
+    // The SDK suppresses replies after cancellation, so send() cannot release
+    // this bookkeeping. Keep transport authentication outside retained data.
+    if (
+      isJSONRPCNotification(message) &&
+      message.method === "notifications/cancelled"
+    ) {
+      const id = message.params?.["requestId"];
+      if (typeof id === "string" || typeof id === "number") {
+        const cancellation = new CallerAbort(
+          "request-cancelled",
+          message.params?.["reason"],
+        );
+        this.pendingValidation.get(id)?.cancel(cancellation);
+        this.pendingValidation.delete(id);
+        forgetPendingMcpRequest(
+          this.pendingTools,
+          this.pendingToolListCursors,
+          this.pendingCompletions,
+          id,
+          cancellation,
+        );
+      }
+    }
+    const completion =
+      isJSONRPCRequest(message) && message.method === "completion/complete"
+        ? this.pendingCompletions.get(message.id)
+        : undefined;
+    if (validation !== undefined)
+      runMcpToolRequest(validation, () => this.onmessage?.(message, extra));
+    else if (completion === undefined) this.onmessage?.(message, extra);
+    else
+      currentRequestSignal.run(completion.signal, () =>
+        this.onmessage?.(message, extra),
+      );
   }
 
-  get sessionId(): string | undefined {
-    return this.transport.sessionId;
-  }
-  set sessionId(value: string | undefined) {
-    this.transport.sessionId = value;
+  protected override closed(): void {
+    const disconnected =
+      this.closing || transportClosedByOwner(this.transport)
+        ? OwnerCancellation.ownerClosed
+        : new CallerAbort("client-disconnected");
+    this.pendingTools.clear();
+    for (const validation of this.pendingValidation.values())
+      validation.cancel(disconnected);
+    this.pendingValidation.clear();
+    this.pendingToolListCursors.clear();
+    for (const completion of this.pendingCompletions.values())
+      completion.abort(disconnected);
+    this.pendingCompletions.clear();
+    this.onclose?.();
   }
 
-  start(): Promise<void> {
-    return this.transport.start();
-  }
-
-  async close(): Promise<void> {
+  override async close(): Promise<void> {
     this.closing = true;
     try {
       await this.transport.close();
@@ -348,22 +360,14 @@ export class ErrorEvidenceTransport implements Transport {
       for (const validation of this.pendingValidation.values())
         validation.cancel(OwnerCancellation.ownerClosed);
       this.pendingValidation.clear();
-      this.pendingToolLists.clear();
+      this.pendingToolListCursors.clear();
       for (const completion of this.pendingCompletions.values())
         completion.abort(OwnerCancellation.ownerClosed);
       this.pendingCompletions.clear();
     }
   }
 
-  setProtocolVersion(version: string): void {
-    this.transport.setProtocolVersion?.(version);
-  }
-
-  setSupportedProtocolVersions(versions: string[]): void {
-    this.transport.setSupportedProtocolVersions?.(versions);
-  }
-
-  async send(
+  override async send(
     message: JSONRPCMessage,
     options?: TransportSendOptions,
   ): Promise<void> {
@@ -381,7 +385,7 @@ export class ErrorEvidenceTransport implements Transport {
         : (this.pendingValidation.get(id) ??
           (scopedRequest?.id === id ? scopedRequest : undefined));
     const rewritesOutputSchemas =
-      id !== undefined && this.pendingToolLists.has(id);
+      id !== undefined && this.pendingToolListCursors.has(id);
     try {
       const publish = async (): Promise<void> => {
         const recovered = this.recoverProtocolError(message, tool, request);
@@ -434,7 +438,7 @@ export class ErrorEvidenceTransport implements Transport {
         // The reply settled the request, so REA ends any work it left behind.
         forgetPendingMcpRequest(
           this.pendingTools,
-          this.pendingToolLists,
+          this.pendingToolListCursors,
           this.pendingCompletions,
           id,
           OwnerCancellation.ownerClosed,
@@ -451,16 +455,28 @@ export class ErrorEvidenceTransport implements Transport {
     request: McpToolRequest | undefined,
   ): Promise<void> {
     request?.beginPublication();
+    // Measure the advertised schema presentation, not the canonical schemas
+    // retained by SDK registrations, before publishing a tools/list page.
+    const paged =
+      isJSONRPCResultResponse(message) &&
+      message.id !== undefined &&
+      this.pendingToolListCursors.has(message.id)
+        ? paginateToolsList(
+            message,
+            this.pendingToolListCursors.get(message.id),
+            this.toolsListPageBudget,
+          )
+        : message;
     if (
-      !isJSONRPCResultResponse(message) ||
-      !isCallToolResult(message.result) ||
-      message.result.isError !== true
+      !isJSONRPCResultResponse(paged) ||
+      !isCallToolResult(paged.result) ||
+      paged.result.isError !== true
     ) {
-      await this.transport.send(message, options);
+      await this.transport.send(paged, options);
       return;
     }
     // Oversized recovery has already consumed this private structured carrier.
-    const { structuredContent: _diagnostic, ...result } = message.result;
+    const { structuredContent: _diagnostic, ...result } = paged.result;
     // SDK-built errors bypass ToolResultDelivery's target-content marker.
     const marked =
       tool !== undefined &&
@@ -471,7 +487,7 @@ export class ErrorEvidenceTransport implements Transport {
             _meta: { ...result._meta, ...TARGET_CONTENT_RESULT_META },
           }
         : result;
-    await this.transport.send({ ...message, result: marked }, options);
+    await this.transport.send({ ...paged, result: marked }, options);
   }
 
   private recoverError(
@@ -500,9 +516,13 @@ export class ErrorEvidenceTransport implements Transport {
       preencoded.ok &&
       preencoded.budgetBytes === budget &&
       preencoded.targetContent === targetContent &&
-      message.result.content.length === 1 &&
       content?.type === "text" &&
-      content.text === preencoded.text
+      content.text === preencoded.text &&
+      // A budgeted partial observation's link follows the error text, and
+      // the delivery reserved its bytes.
+      message.result.content
+        .slice(1)
+        .every((block) => block.type === "resource_link")
     )
       return message;
     const preencodedOverflow =
@@ -817,8 +837,10 @@ export class ErrorEvidenceTransport implements Transport {
       ...recovered,
       error: {
         ...recovered.error,
-        message:
-          "The requested MCP tool is not advertised by this REA server. Call tools/list, select an advertised tool, and retry; do not repeat the unknown tool name.",
+        message: formatUnknownMcpToolMessage(
+          tool,
+          this.currentAdvertisedTools(),
+        ),
       },
     };
   }

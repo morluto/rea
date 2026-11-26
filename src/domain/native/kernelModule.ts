@@ -7,6 +7,7 @@ import { digestSchema } from "../digests.js";
 import { fixedTupleSchema } from "../fixedTupleSchema.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { ELF_OBJECT_TYPE_NAMES } from "./elfNotes.js";
+import { maxStructureBytesSchema } from "./nativeStructureBudget.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const uint8 = z.number().int().min(0).max(255);
@@ -229,6 +230,7 @@ export const inspectKernelModuleInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to an ELF kernel module or a compressed .ko container",
   ),
+  max_structure_bytes: maxStructureBytesSchema,
   max_file_bytes: z
     .number()
     .int()

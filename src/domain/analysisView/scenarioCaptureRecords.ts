@@ -1,4 +1,4 @@
-import { AnalysisUnsupportedTargetError } from "../analysisErrorCore.js";
+import { unsupportedTarget } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import type { BrowserNetworkBody } from "../browserNetworkEvidence.js";
 import { retainedNetworkMediaType } from "../browserNetworkMediaType.js";
@@ -346,9 +346,10 @@ export const admitScenarioCaptureParent = (
       : !content.response_body && !content.header_values
   )
     return err(
-      new AnalysisUnsupportedTargetError(
+      unsupportedTarget(
         "inspect_analysis_view",
         parent.evidenceId,
+        "evidence",
         viewKind === "environment-state"
           ? "environment-state needs a capture_browser_scenario capture with capture.network.response_body selected."
           : "environment-manifest needs a capture_browser_scenario capture with capture.network.response_body or header_values selected.",

@@ -1,14 +1,16 @@
+import { exactNames, indexedRow, pageLimit } from "./uefiViewSelection.js";
+import { namedCounts } from "./analysisViewCounts.js";
 import { z } from "zod";
 import { boundedList } from "../boundedList.js";
 import { evidenceSubjectTarget } from "../evidence.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import {
   ffsTypeNameSchema,
   guidSchema,
   uefiResultSchemas,
   type UefiExtractResult,
 } from "../uefi/uefiFirmwareAnalysis.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
@@ -36,12 +38,6 @@ const sourceIndex = {
   ),
 };
 const offset = z.int().nonnegative().default(0);
-const exactNames = <Schema extends z.ZodType>(schema: Schema, what: string) =>
-  z
-    .array(schema)
-    .min(1)
-    .optional()
-    .describe(`Exact ${what}; any listed value matches`);
 
 /** Published files shown inline with a summary before paging is needed. */
 export const UEFI_EXTRACTION_PREVIEW_FILES = 8;
@@ -71,20 +67,20 @@ export const uefiExtractionViewRequestSchema = z.discriminatedUnion(
           "source keeps publication order; size-desc lists the largest files first, ties in publication order",
         ),
       offset,
-      limit: z.int().positive().max(256).default(16),
+      limit: pageLimit(16),
     }),
     z.strictObject({
       kind: z.literal("uefi-extraction"),
       collection: z.literal("derivations"),
       offset,
-      limit: z.int().positive().max(256).default(32),
+      limit: pageLimit(32),
     }),
     z.strictObject({
       kind: z.literal("uefi-extraction"),
       collection: z.literal("gaps"),
       gap_kinds: exactNames(gapRecord.shape.kind, "gap kinds"),
       offset,
-      limit: z.int().positive().max(256).default(32),
+      limit: pageLimit(32),
     }),
   ],
 );
@@ -136,12 +132,6 @@ type ExtractedFile = UefiExtractResult["files"][number];
 
 const readReport = createAnalysisViewResultReader(extraction);
 
-const tallied = <Name>(names: Iterable<Name>) => {
-  const counts = new Map<Name, number>();
-  for (const name of names) counts.set(name, (counts.get(name) ?? 0) + 1);
-  return [...counts].map(([name, n]) => ({ name, count: n }));
-};
-
 /** Counts and the size order derived once per retained report. */
 interface ExtractionIndex {
   readonly context: PageContext;
@@ -170,11 +160,6 @@ const extractionIndex = (r: UefiExtractResult): ExtractionIndex => {
   return index;
 };
 
-const indexedRow = <Row extends object>(row: Row, source_index: number) => ({
-  ...row,
-  source_index,
-});
-
 const extractionSummary = (
   r: UefiExtractResult,
   index: ExtractionIndex,
@@ -183,9 +168,9 @@ const extractionSummary = (
   const preview = boundedList(r.files, UEFI_EXTRACTION_PREVIEW_FILES);
   index.summary = {
     ...index.context,
-    sources: tallied(r.files.map((file) => file.source)),
-    media_types: tallied(r.files.map((file) => file.media_type)),
-    gap_kinds: tallied(r.extraction_gaps.map((gap) => gap.kind)),
+    sources: namedCounts(r.files.map((file) => file.source)),
+    media_types: namedCounts(r.files.map((file) => file.media_type)),
+    gap_kinds: namedCounts(r.extraction_gaps.map((gap) => gap.kind)),
     files_preview: {
       items: preview.items.map(indexedRow),
       omitted: preview.omitted,
@@ -232,28 +217,13 @@ const pageBySize = (
   index: ExtractionIndex,
   view: FilesView,
   matches: ((file: ExtractedFile) => boolean) | undefined,
-) => {
-  const order = sizeOrder(r, index);
-  const rows: z.output<typeof fileRow>[] = [];
-  if (matches === undefined) {
-    // Unfiltered: the cached order already holds every position.
-    const end = Math.min(order.length, view.offset + view.limit);
-    for (let position = view.offset; position < end; position += 1) {
-      const i = order[position]!;
-      rows.push(indexedRow(r.files[i]!, i));
-    }
-    return { rows, total: order.length };
-  }
-  let total = 0;
-  for (const i of order) {
-    const file = r.files[i]!;
-    if (matches !== undefined && !matches(file)) continue;
-    if (total >= view.offset && rows.length < view.limit)
-      rows.push(indexedRow(file, i));
-    total += 1;
-  }
-  return { rows, total };
-};
+) =>
+  selectViewRows(
+    sizeOrder(r, index),
+    view,
+    matches === undefined ? undefined : (i) => matches(r.files[i]!),
+    (i) => indexedRow(r.files[i]!, i),
+  );
 
 const gapFilter = (view: GapsView) => {
   const kinds = view.gap_kinds;
@@ -291,15 +261,8 @@ export const projectUefiExtractionView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "summary" && view.kind !== "uefi-extraction")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "UEFI extraction Evidence supports summary and uefi-extraction views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "UEFI extraction Evidence supports summary and uefi-extraction views.",
     );
   assertOwnedView<SummaryAnalysisView | UefiExtractionView>(
     view,

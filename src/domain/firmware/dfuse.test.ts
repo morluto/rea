@@ -328,7 +328,7 @@ it.each([
 ] as const)("refuses %s with its byte offset", (_name, fixture, message) => {
   expect(decode(dfuseFile(fixture))).toEqual({
     ok: false,
-    error: { kind: "format", message },
+    error: { kind: "malformed", message },
   });
 });
 

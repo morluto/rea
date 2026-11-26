@@ -1,3 +1,4 @@
+import { analysisViewPageFields } from "./analysisViewPageFields.js";
 import { z } from "zod";
 import {
   nativeLoadImageCheckSchema,
@@ -9,18 +10,19 @@ import {
   nativeDosComVerifiedBinaryLoaderLoadImageSchema,
   nativeDosComMismatchLoadImageSchema,
   nativeRawLoadImageSchema,
+  nativeSegmentsLoadImageSchema,
   nativeDolLoadImageSchema,
 } from "../native/nativeLoadImage.js";
 import { nativeAddressObservationSchema } from "../native/nativeAddress.js";
 import { jsonValueSchema } from "../jsonValue.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ownedView,
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewMessages,
@@ -56,9 +58,7 @@ const defaultFields: Partial<Record<keyof typeof rows, readonly string[]>> = {
     .keyof().options,
 };
 const selection = {
-  kind: z.literal("native-load-image"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
+  ...analysisViewPageFields("native-load-image"),
   indices: z.array(z.int().nonnegative()).optional(),
 };
 const request = <Name extends keyof typeof rows>(name: Name) =>
@@ -149,6 +149,11 @@ export const nativeLoadImageSummarySchema = z.strictObject({
       limitations: true,
       checks: true,
     }),
+    nativeSegmentsLoadImageSchema.omit({
+      observations: true,
+      limitations: true,
+      checks: true,
+    }),
     nativeDolLoadImageSchema.omit({
       observations: true,
       limitations: true,
@@ -225,15 +230,8 @@ export const projectNativeLoadImageView = (
     SummaryAnalysisView | z.output<typeof nativeLoadImageViewRequestSchema>
   >(admitted, "summary", "native-load-image");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Native load-image Evidence supports summary and native-load-image views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Native load-image Evidence supports summary and native-load-image views.",
     );
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;

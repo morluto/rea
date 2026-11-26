@@ -32,8 +32,8 @@ for (const [name, xml] of [
       });
       expect(output.exitCode, output.stderr).toBe(1);
       expect(output.json).toMatchObject({
-        code: "truncated",
-        category: "truncated",
+        code: "partial",
+        category: "partial",
         details: {
           reason: "limit",
           truncated: true,

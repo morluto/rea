@@ -1,12 +1,4 @@
-import type { NativeByteSource } from "../../domain/native/nativeSectionDirectory.js";
-
-/** In-memory carrier with the same retained prefix as the physical provider. */
-export const elfUnwindByteSource = (bytes: Buffer): NativeByteSource => ({
-  size: bytes.length,
-  prefix: bytes.subarray(0, 4096),
-  readRange: async (offset, length) => bytes.subarray(offset, offset + length),
-});
-
+import { write16 } from "../BinaryInteger.fixture.js";
 /** Hand-assembled ELF images with .eh_frame CIE/FDE records and .eh_frame_hdr. */
 
 export const UNWIND_FN_A = 0x400100;
@@ -257,16 +249,6 @@ class Writer {
 
 const alignTo = (value: number, alignment: number): number =>
   Math.ceil(value / alignment) * alignment;
-
-const write16 = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  little: boolean,
-): void => {
-  if (little) bytes.writeUInt16LE(value, offset);
-  else bytes.writeUInt16BE(value, offset);
-};
 
 const write32 = (
   bytes: Buffer,

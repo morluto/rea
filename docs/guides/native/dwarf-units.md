@@ -31,8 +31,12 @@ Each call returns the artifact path, SHA-256, and byte length, the container
 file-backed. Section rows keep the stored name, file offset, stored size, and
 `compression` (`none`, `zlib`, or `zstd`). ELF `SHF_COMPRESSED` zlib and zstd
 payloads, and legacy GNU `.zdebug_*` and Mach-O `__zdebug_*` zlib payloads, are
-decompressed within a fixed allowance. A declared size above that allowance
-fails the call. Mach-O sections are read only from the `__DWARF` segment.
+decompressed within `max_decompressed_bytes` (default 256 MiB, at most 1 GiB, CLI
+`--max-decompressed-bytes`), which budgets decompression across every compressed
+section of the image, charging the larger of each section's declared
+uncompressed size and compressed payload length (including failed attempts). A
+declared size or cumulative charge above it fails the call with `details.limit`; because
+sections decompress in turn, the refusal reports no `required_value`. Mach-O sections are read only from the `__DWARF` segment.
 `omissions` gives one row per section name and reason, with a count when
 several sections share it.
 

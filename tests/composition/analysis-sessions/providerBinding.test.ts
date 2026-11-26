@@ -1,3 +1,4 @@
+import { supportedFixtureTarget } from "../../fixtures/analysisExecution.js";
 import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -305,12 +306,7 @@ const deepProvider = (id: string): DeepProviderFixture => {
             remediation: "Repair the fixture provider.",
             diagnostics: { executable_path: `/opt/${id}/bin/analyze` },
           },
-    inspectTargetSupport: () => ({
-      status: "supported",
-      code: null,
-      reason: null,
-      diagnostics: {},
-    }),
+    inspectTargetSupport: supportedFixtureTarget,
     resolveAnalysisProfile: () => {
       fixture.onProfile?.();
       return Promise.resolve(

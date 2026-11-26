@@ -114,7 +114,7 @@ it.each(["startSession", "instrument"] as const)(
   },
 );
 
-it("keeps default Frida status identity and messages and refreshes every summary", () => {
+it("keeps default Frida status identity and messages and refreshes every summary", async () => {
   let reads = 0;
   const provider = createProvider({
     status() {
@@ -139,7 +139,7 @@ it("keeps default Frida status identity and messages and refreshes every summary
     },
   };
   const input = { session_id: createSession().sessionId };
-  const complete = service.inspectStatus(input);
+  const complete = await service.inspectStatus(input);
   if (!complete.ok) throw complete.error;
   expect(complete.value.normalized_result).toMatchObject({
     state: "paused",
@@ -150,7 +150,7 @@ it("keeps default Frida status identity and messages and refreshes every summary
   expect(complete.value.limitations.join("\n")).not.toContain(
     "no runtime override",
   );
-  const summary = service.inspectStatus(
+  const summary = await service.inspectStatus(
     { ...input, detail: "summary" },
     retention,
   );
@@ -186,7 +186,7 @@ it("keeps default Frida status identity and messages and refreshes every summary
   expect(parent?.raw_result).toBeNull();
 });
 
-it("names the Frida field cap and ignores flags inside a caller payload", () => {
+it("names the Frida field cap and ignores flags inside a caller payload", async () => {
   const service = new FridaInstrumentationService(
     createProvider({
       status() {
@@ -205,7 +205,7 @@ it("names the Frida field cap and ignores flags inside a caller payload", () => 
       },
     }),
   );
-  const result = service.inspectStatus({
+  const result = await service.inspectStatus({
     session_id: createSession().sessionId,
   });
   if (!result.ok) throw result.error;
@@ -223,7 +223,7 @@ it.each([
   { recordEvidence: () => ok("added" as const), evidenceById: undefined },
 ])(
   "rejects missing Frida summary retention before reading live state: %j",
-  (retention) => {
+  async (retention) => {
     let reads = 0;
     const service = new FridaInstrumentationService(
       createProvider({
@@ -233,7 +233,7 @@ it.each([
         },
       }),
     );
-    const result = service.inspectStatus(
+    const result = await service.inspectStatus(
       { session_id: createSession().sessionId, detail: "summary" },
       retention,
     );
@@ -244,17 +244,17 @@ it.each([
   },
 );
 
-it("rejects malformed Frida status selections and preserves unknown-session errors", () => {
+it("rejects malformed Frida status selections and preserves unknown-session errors", async () => {
   const service = new FridaInstrumentationService(createProvider());
   for (const input of [
     { session_id: "invalid" },
     { session_id: createSession().sessionId, detail: "messages" },
   ]) {
-    const result = service.inspectStatus(input);
+    const result = await service.inspectStatus(input);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error._tag).toBe("AnalysisInputError");
   }
-  const unknown = service.inspectStatus({
+  const unknown = await service.inspectStatus({
     session_id: createSession().sessionId,
   });
   expect(unknown.ok).toBe(false);

@@ -22,14 +22,20 @@ jobs:
           cache: pip
           cache-dependency-path: website/requirements.txt
       - name: Set up Node.js for skill discovery and Worker checks
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
+          package-manager-cache: false
           node-version-file: .nvmrc
       - name: Install website build dependencies
         run: |
           npm ci --omit=dev --ignore-scripts
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libcairo2 fonts-dejavu-core
+          installed() {
+            [[ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null)" == installed ]]
+          }
+          if ! installed libcairo2 || ! installed fonts-dejavu-core; then
+            sudo apt-get update
+            sudo apt-get install --no-install-recommends -y libcairo2 fonts-dejavu-core
+          fi
           python3 -m pip install -r website/requirements.txt
       - name: Check shared HTML, links, assets and contributor workflows
         run: python3 scripts/website.py check

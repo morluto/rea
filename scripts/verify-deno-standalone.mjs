@@ -120,7 +120,13 @@ await withVerifierFixture(root, async () => {
   ]);
   const hostOutput = await producedBinary(hostBinary);
   const inspectedText = JSON.stringify(
-    await cli(["inspect-artifact", hostOutput, "--json"]),
+    await cli([
+      "inspect-artifact",
+      "--detail",
+      "complete",
+      hostOutput,
+      "--json",
+    ]),
   );
   assert.ok(inspectedText.includes(secret));
   const graph = inventoryOf(JSON.parse(inspectedText));
@@ -203,7 +209,7 @@ await withVerifierFixture(root, async () => {
       continue;
     }
     const crossGraph = inventoryOf(
-      await cli(["inspect-artifact", output, "--json"]),
+      await cli(["inspect-artifact", "--detail", "complete", output, "--json"]),
     );
     assert.equal(crossGraph.manifest.root_format, "deno-standalone");
     const metadata = crossGraph.occurrences.find(
@@ -240,7 +246,13 @@ await withVerifierFixture(root, async () => {
       const damaged = join(root.path, "damaged-native-elf");
       await writeFile(damaged, image);
       nativeElfRootFormat = inventoryOf(
-        await cli(["inspect-artifact", damaged, "--json"]),
+        await cli([
+          "inspect-artifact",
+          "--detail",
+          "complete",
+          damaged,
+          "--json",
+        ]),
       ).manifest.root_format;
       assert.notEqual(nativeElfRootFormat, "deno-standalone");
     }

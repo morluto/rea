@@ -15,6 +15,7 @@ import { webScreenshotSchema } from "../../dist/domain/webScreenshot.js";
 import { comparePngScreenshots } from "../../dist/domain/pngVisualDiff.js";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 import { createVerifierCommands } from "./verify-commands.mjs";
+import { completeEvidenceClient } from "./complete-evidence.mjs";
 
 /** Verify a real, large PNG through production CLI and stdio MCP boundaries. */
 export async function verifyLargeScreenshotE2e(endpoint, origin) {
@@ -96,7 +97,9 @@ export async function verifyLargeScreenshotE2e(endpoint, origin) {
       // The SDK defaults to a 10 MiB receive buffer; inline PNG output is larger.
       maxBufferSize,
     });
-    client = new Client({ name: "browser-screenshot-real-e2e", version: "1" });
+    client = completeEvidenceClient(
+      new Client({ name: "browser-screenshot-real-e2e", version: "1" }),
+    );
     await client.connect(transport);
     const captured = await client.callTool(
       {
@@ -154,10 +157,12 @@ const verifyDefaultScreenshotDelivery = async ({
     env: environment,
     stderr: "pipe",
   });
-  const client = new Client({
-    name: "browser-screenshot-default-e2e",
-    version: "1",
-  });
+  const client = completeEvidenceClient(
+    new Client({
+      name: "browser-screenshot-default-e2e",
+      version: "1",
+    }),
+  );
   try {
     await client.connect(transport);
     const constrained = await client.callTool(

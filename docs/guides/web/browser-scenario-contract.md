@@ -107,8 +107,7 @@ rea capture-browser-scenario ./browser-scenario.json --json > browser-capture.js
 The default capture includes the final URL. Select DOM, screenshots, or events
 only when they help answer the question. REA launches and cleans up the browser
 profile for this request; it does not start your fixture server or install a
-browser. A schema-valid scenario does not prove that the executable or target
-is available on the host.
+browser.
 
 ## Interaction example: capture the visible result
 
@@ -209,6 +208,13 @@ selected page receives the declared scenario environment and temporary focus
 emulation, so actions can complete while that page is in the background.
 Its environment owner clears these overrides before disconnecting; other pages
 keep their media settings. Connecting does not create a bootstrap page.
+
+A capture whose actions and selected event/body/privacy finalization have completed
+can still return Evidence with `browser.cleanup: "incomplete"` when resource
+cleanup fails. Its limitations identify the retained resources; provider close
+retries their cleanup. Completed actions alone are insufficient: unsettled
+selected content or privacy finalization keeps the failure and partial observation.
+Existing capture gaps still prevent complete or equality-eligible claims.
 
 That cleanup requires REA to remain running. Abrupt termination, including
 Windows process-tree termination or POSIX `SIGKILL`, can leave the launch
@@ -762,7 +768,10 @@ and their completeness records are not rewritten.
 ## Scenario comparison
 
 `compare_web_captures` and `compare-web-captures` also accept two complete
-browser scenario captures. Steps align only by exact, unique `step_id`.
+browser scenario captures. Over MCP, each may instead be a retained Evidence
+reference to the capture or its summary; see
+[comparison input shapes](../../reference/mcp-contracts.md#comparison-input-shapes).
+Steps align only by exact, unique `step_id`.
 Duplicate IDs, missing counterparts, changed action kinds, and incompatible
 browser/origin capture context are returned as alignment failures. They prevent
 an unchanged claim; observed differences may still prove a changed result.

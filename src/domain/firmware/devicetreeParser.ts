@@ -1,4 +1,8 @@
-import type { Devicetree, InspectDevicetreeInput } from "./devicetree.js";
+import {
+  DEVICETREE_PROPERTY_PREVIEW_BYTES,
+  type Devicetree,
+  type InspectDevicetreeInput,
+} from "./devicetree.js";
 import { BinaryFormatFailure, BinaryReader } from "../binaryContainer.js";
 import { readDevicetreeHeader } from "./devicetreeHeader.js";
 import { decodeLimit, type ParseFailureError } from "../parseFailure.js";
@@ -6,11 +10,7 @@ import { decodeLimit, type ParseFailureError } from "../parseFailure.js";
 /** The ParseFailure format of flattened devicetree blobs. */
 export const DEVICETREE_FORMAT = "devicetree";
 
-export const DEVICETREE_DECODED_BYTES = 33554432;
-
-export type DevicetreeLimit =
-  | keyof Omit<InspectDevicetreeInput, "path">
-  | "decoded_bytes";
+export type DevicetreeLimit = keyof Omit<InspectDevicetreeInput, "path">;
 
 export const devicetreeLimitFailure = (
   limit: DevicetreeLimit,
@@ -18,9 +18,7 @@ export const devicetreeLimitFailure = (
 ): ParseFailureError<"limit"> =>
   decodeLimit(
     DEVICETREE_FORMAT,
-    limit === "decoded_bytes"
-      ? "Devicetree exceeds its fixed 32 MiB decoded representation allowance; select a smaller blob. This allowance has no runtime override."
-      : `Devicetree exceeds ${limit}; raise that caller-selected limit within its schema ceiling or select a smaller blob.`,
+    `Devicetree exceeds ${limit} (${String(maximum)}); raise that caller-selected limit within its schema ceiling or select a smaller blob.`,
     { name: limit, maximum },
   );
 
@@ -77,8 +75,11 @@ export const parseDevicetree = (
   let decodedBytes = 0;
   const admit = (size: number) => {
     decodedBytes += size;
-    if (decodedBytes > DEVICETREE_DECODED_BYTES)
-      throw devicetreeLimitFailure("decoded_bytes", DEVICETREE_DECODED_BYTES);
+    if (decodedBytes > input.max_decoded_bytes)
+      throw devicetreeLimitFailure(
+        "max_decoded_bytes",
+        input.max_decoded_bytes,
+      );
   };
   const reservations: Devicetree["reservations"] = [];
   let cursor = header.off_mem_rsvmap;
@@ -202,7 +203,11 @@ export const parseDevicetree = (
       const propertyMap = propertiesByPath.get(owner.node.path);
       if (!name || propertyMap?.has(name))
         malformed("Empty or duplicate FDT property name");
-      admit(name.length * 2 + Math.min(length, 256) * 2 + 256);
+      admit(
+        name.length * 2 +
+          Math.min(length, DEVICETREE_PROPERTY_PREVIEW_BYTES) * 2 +
+          256,
+      );
       const raw = bytes.subarray(cursor, cursor + length);
       // Only binding-independent standard strings and single-cell declarations are decoded.
       const stringProperty =
@@ -238,8 +243,8 @@ export const parseDevicetree = (
         name,
         offset: cursor,
         bytes: length,
-        hex: raw.subarray(0, 256).toString("hex"),
-        truncated: length > 256,
+        hex: raw.subarray(0, DEVICETREE_PROPERTY_PREVIEW_BYTES).toString("hex"),
+        truncated: length > DEVICETREE_PROPERTY_PREVIEW_BYTES,
         derived: { confidence: "derived" as const, strings, cells, reg: null },
       };
       owner.node.properties.push(property);
@@ -271,7 +276,7 @@ export const parseDevicetree = (
         ];
   const limitations = [
     ...structureLimitations,
-    "Raw property previews are limited to 256 bytes; offsets and lengths identify complete values in the hashed artifact.",
+    `Raw property previews are limited to ${String(DEVICETREE_PROPERTY_PREVIEW_BYTES)} bytes; offsets and lengths identify complete values in the hashed artifact.`,
     "Phandle references cover only single-cell interrupt-parent, remote-endpoint and msi-parent; binding-specific arrays and overlays are not resolved.",
   ];
   for (const node of nodes) {

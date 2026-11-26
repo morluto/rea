@@ -47,6 +47,15 @@ export const createDirectAnalysis = (
       const { createArtifactBinarySession } = await import("./binary.js");
       return createArtifactBinarySession(environment);
     },
+    inspectArtifactDirectory: async (path, parameters, options, retained) => {
+      const { createArtifactPathInspection } = await import("./binary.js");
+      return createArtifactPathInspection(environment).inspectArtifactDirectory(
+        path,
+        parameters,
+        options,
+        retained,
+      );
+    },
   };
   return bindDirectAnalysis(dependencies);
 };
