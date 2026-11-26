@@ -937,6 +937,10 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
           REVERSE_EDGE_CASES,
           "retains an objdump command's unverified process owner until a later inspection stops it",
         ),
+        test(
+          REVERSE_EDGE_CASES,
+          "stops an owner registered during cleanup retry before admitting another command",
+        ),
       ),
     },
   },

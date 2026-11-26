@@ -140,9 +140,10 @@ export interface ElfPointerRelocationInput {
   readonly mappings: readonly FileMapping[];
   readonly zeroFills: readonly ZeroFillMapping[];
   /**
-   * The caller's `max_structure_bytes` for the dynamic directory. A caller
-   * that owns that control passes it and receives its failure; the IL2CPP
-   * and JNI loaders omit it and keep their native-index-capacity failure.
+   * The caller's `max_structure_bytes` for the dynamic directory and Android
+   * packed relocation tables. A caller that owns that control passes it and
+   * receives its failure; the IL2CPP and JNI loaders omit it and keep their
+   * native-index-capacity failure.
    */
   readonly structureBytes?: number | undefined;
 }
@@ -215,8 +216,16 @@ function* androidPackedRelocations(
   fileOffset: number,
   bits: 32 | 64,
   encoding: "rel" | "rela",
+  structureBytes?: number,
 ): Generator<PackedRelocation | undefined> {
-  const exhausted = (): never => {
+  const maximumBytes = structureBytes ?? ANDROID_PACKED_TABLE_BYTES;
+  const exhausted = (requiredBytes: bigint | number): never => {
+    if (structureBytes !== undefined)
+      throw nativeStructureFailure(
+        "The Android packed relocation table",
+        requiredBytes,
+        structureBytes,
+      );
     throw new ElfPointerRelocationFailure(
       "native-index-capacity",
       "Android packed relocation input or expanded table exceeds the 16 MiB decode-work allowance",
@@ -224,9 +233,9 @@ function* androidPackedRelocations(
       "bytes",
     );
   };
-  if (bytes.length > ANDROID_PACKED_TABLE_BYTES) exhausted();
   if (bytes.length < 4 || bytes.toString("latin1", 0, 4) !== "APS2")
     return malformed("Android packed relocation table lacks an APS2 header");
+  if (bytes.length > maximumBytes) exhausted(bytes.length);
   let cursor = 4;
   const signed = (): bigint => {
     const parsed = readLeb128(bytes, cursor, bytes.length, SLEB64);
@@ -241,8 +250,13 @@ function* androidPackedRelocations(
   if (rawCount < 0n)
     return malformed("Android APS2 relocation count is negative");
   const expandedWidth = (bits / 8) * (encoding === "rela" ? 3 : 2);
-  if (rawCount * BigInt(expandedWidth) > BigInt(ANDROID_PACKED_TABLE_BYTES))
-    exhausted();
+  const expandedBytes = rawCount * BigInt(expandedWidth);
+  if (expandedBytes > BigInt(maximumBytes))
+    exhausted(
+      expandedBytes <= BigInt(Number.MAX_SAFE_INTEGER)
+        ? Number(expandedBytes)
+        : expandedBytes,
+    );
   const count = Number(rawCount);
   let offset = BigInt.asUintN(bits, signed()),
     addend = 0n,
@@ -970,6 +984,7 @@ export function* readElfRelocationWritesSteps(
       start,
       input.bits,
       encoding,
+      input.structureBytes,
     )) {
       if (entry === undefined) yield;
       else yield* applyRelocation(entry, entry.source);
