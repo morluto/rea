@@ -11,7 +11,6 @@ import { resolveScenarioSecrets } from "../../tests/fixtures/browserScenarioSecr
 import {
   applyDeclaredBrowserStorageSeeds,
   declaredBrowserStorageSeedMark,
-  markDeclaredBrowserStorageSkip,
   type DeclaredBrowserStorageSeed,
   type DeclaredBrowserStorageSeedOutcome,
   type DeclaredBrowserStorageSeedScript,
@@ -474,7 +473,9 @@ const applySeeds = (
       session: ReturnType<typeof memoryStorage>;
     };
     readonly isIframe?: boolean;
-    readonly skip?: true | readonly string[];
+    readonly seedToken?: string;
+    readonly initializedLocalOrigins?: readonly string[];
+    readonly windowName?: string;
   } = {},
 ): {
   local: Map<string, string>;
@@ -484,14 +485,14 @@ const applySeeds = (
     local: DeclaredBrowserStorageSeedOutcome;
     session: DeclaredBrowserStorageSeedOutcome;
   }[];
-  hasSkipPropertyAfterRun: boolean;
+  windowName: string;
 } => {
   const storage = options.storage ?? {
     local: memoryStorage(),
     session: memoryStorage(),
   };
   const binding = "__reaStorageSeedTest";
-  const skipKey = "__reaStorageSkipTest";
+  const seedToken = options.seedToken ?? "test-seed-token";
   const notifications: {
     origin: string;
     local: DeclaredBrowserStorageSeedOutcome;
@@ -499,6 +500,7 @@ const applySeeds = (
   }[] = [];
   const context = vm.createContext({
     location: { origin },
+    name: options.windowName ?? "",
     localStorage: storage.local,
     sessionStorage: storage.session,
     [binding]: (
@@ -510,18 +512,11 @@ const applySeeds = (
     },
   });
   context.top = options.isIframe === true ? {} : context;
-  if (options.skip !== undefined)
-    vm.runInContext(
-      `(${markDeclaredBrowserStorageSkip.toString()})(${JSON.stringify({
-        skipKey,
-        value: options.skip,
-      })})`,
-      context,
-    );
   vm.runInContext(
     `(${applyDeclaredBrowserStorageSeeds.toString()})(${JSON.stringify({
       binding,
-      skipKey,
+      seedToken,
+      initializedLocalOrigins: options.initializedLocalOrigins ?? [],
       seeds,
     })})`,
     context,
@@ -530,7 +525,7 @@ const applySeeds = (
     local: storage.local.items,
     session: storage.session.items,
     notifications,
-    hasSkipPropertyAfterRun: Object.hasOwn(context, skipKey),
+    windowName: String(context.name ?? ""),
   };
 };
 
@@ -551,7 +546,6 @@ it("writes declared seeds synchronously for top-level popups and skips iframes",
   expect(first.local.get("probe")).toBe("seed-local");
   expect(first.session.get("probe")).toBe("seed-session");
   expect(first.local.has(declaredBrowserStorageSeedMark)).toBe(false);
-  expect(first.hasSkipPropertyAfterRun).toBe(false);
   expect(first.notifications).toEqual([
     { origin: "http://child.example", local: "wrote", session: "wrote" },
   ]);
@@ -562,30 +556,15 @@ it("writes declared seeds synchronously for top-level popups and skips iframes",
   expect(iframe.session.size).toBe(0);
   expect(iframe.notifications).toEqual([]);
 
-  // Root pages marked with `skip: true` consume the marker and skip writing.
-  const rootSkipped = applySeeds("http://child.example", seeds, { skip: true });
+  // Node-reported initialized local origins skip local without a page marker.
+  const rootSkipped = applySeeds("http://child.example", seeds, {
+    initializedLocalOrigins: ["http://child.example"],
+  });
   expect(rootSkipped.local.size).toBe(0);
-  expect(rootSkipped.session.size).toBe(0);
-  expect(rootSkipped.hasSkipPropertyAfterRun).toBe(false);
-  expect(rootSkipped.notifications).toEqual([]);
-
-  // Reloading a popup after edits/clears preserves both areas when local is
-  // removed from the context payload and the page skip list includes the origin.
-  const reloadedStorage = {
-    local: memoryStorage(),
-    session: memoryStorage(),
-  };
-  reloadedStorage.local.items.set("probe", "page-updated");
-  reloadedStorage.session.items.set("probe", "session-updated");
-  const reloaded = applySeeds(
-    "http://child.example",
-    [{ origin: "http://child.example", local: [], session: seeds[0]!.session }],
-    { storage: reloadedStorage, skip: ["http://child.example"] },
-  );
-  expect(reloaded.local.get("probe")).toBe("page-updated");
-  expect(reloaded.session.get("probe")).toBe("session-updated");
-  expect(reloaded.hasSkipPropertyAfterRun).toBe(false);
-  expect(reloaded.notifications).toEqual([]);
+  expect(rootSkipped.session.get("probe")).toBe("seed-session");
+  expect(rootSkipped.notifications).toEqual([
+    { origin: "http://child.example", local: "skipped", session: "wrote" },
+  ]);
 
   const other = applySeeds("http://other.example", seeds);
   expect(other.local.size).toBe(0);
@@ -593,6 +572,38 @@ it("writes declared seeds synchronously for top-level popups and skips iframes",
   const opaque = applySeeds("null", seeds);
   expect(opaque.local.size).toBe(0);
   expect(opaque.session.size).toBe(0);
+});
+
+it("does not restore deleted seed values on reload of the same tab", () => {
+  const seeds: DeclaredBrowserStorageSeed[] = [
+    {
+      origin: "http://child.example",
+      local: [["probe", "seed-local"]],
+      session: [["probe", "seed-session"]],
+    },
+  ];
+  const first = applySeeds("http://child.example", seeds, {
+    seedToken: "reload-token",
+  });
+  expect(first.local.get("probe")).toBe("seed-local");
+  expect(first.session.get("probe")).toBe("seed-session");
+  expect(first.windowName.startsWith("\0rea-tab-seed:")).toBe(true);
+
+  // Application deletes the seeded keys, then the same tab reloads. The single
+  // ordered hook must honor the durable per-tab once flags and leave deletions.
+  const reloadedStorage = {
+    local: memoryStorage(),
+    session: memoryStorage(),
+  };
+  const reloaded = applySeeds("http://child.example", seeds, {
+    storage: reloadedStorage,
+    seedToken: "reload-token",
+    windowName: first.windowName,
+    // Even if Node has not yet emptied the context payload, tab state wins.
+  });
+  expect(reloaded.local.has("probe")).toBe(false);
+  expect(reloaded.session.has("probe")).toBe(false);
+  expect(reloaded.notifications).toEqual([]);
 });
 
 it("seeds a cloned popup session area and reports write failures", () => {
@@ -673,10 +684,11 @@ it("installs synchronous popup seeds in launch mode and avoids shared connect co
   });
   const launchOwner = await createInitializedStorage(launchContext, launchPage);
   expect(bindings).toHaveLength(1);
-  expect(pageScripts).toHaveLength(1);
-  expect(pageScripts[0]?.script).toBe(markDeclaredBrowserStorageSkip);
+  expect(pageScripts).toHaveLength(0);
   expect(contextScripts).toHaveLength(1);
   expect(contextScripts[0]?.script).toBe(applyDeclaredBrowserStorageSeeds);
+  expect(contextScripts[0]?.payload.initializedLocalOrigins).toEqual([]);
+  expect(contextScripts[0]?.payload.seedToken.length).toBeGreaterThan(0);
   expect(contextScripts[0]?.payload.seeds).toEqual([
     {
       origin: "https://storage.example.test",
@@ -738,7 +750,6 @@ it("shares once-per-origin ownership between popup notifications and CDP without
       ) => void)
     | undefined;
   const contextPayloads: DeclaredBrowserStorageSeedScript[] = [];
-  const popupSkipPayloads: unknown[] = [];
   Object.assign(page, {
     addInitScript: async () => ({ dispose: async () => undefined }),
   });
@@ -773,20 +784,15 @@ it("shares once-per-origin ownership between popup notifications and CDP without
   expect(contextPayloads[0]?.seeds[0]?.local).toEqual([
     ["local-seed", "local-value"],
   ]);
+  expect(contextPayloads[0]?.initializedLocalOrigins).toEqual([]);
 
   // A popup notification marks first-party local storage initialized and
-  // installs a per-page session skip list for that popup.
-  const popupPage = {
-    isClosed: () => false,
-    addInitScript: async (_script: unknown, payload: unknown) => {
-      popupSkipPayloads.push(payload);
-      return { dispose: async () => undefined };
-    },
-  };
+  // refreshes the single context hook payload (no separate page skip script).
+  const popupPage = { isClosed: () => false };
   notify?.({ page: popupPage }, origin, "wrote", "wrote");
   await owner?.settle();
-  expect(popupSkipPayloads).toHaveLength(1);
   expect(contextPayloads.at(-1)?.seeds[0]?.local).toEqual([]);
+  expect(contextPayloads.at(-1)?.initializedLocalOrigins).toEqual([origin]);
 
   // A later first-party CDP pause at `${origin}/` must not reseed localStorage.
   cdp.storageKey = `${origin}/`;
