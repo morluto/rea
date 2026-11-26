@@ -351,3 +351,73 @@ it("runs deferred delegated cleanup before registering a pending start acquisiti
     await runtime.close();
   }
 });
+
+it("keeps terminal close intact when close() races start() during pending cleanup retry", async () => {
+  let failCleanup = true;
+  const runtime = new OwnedWorkerRuntime(
+    runtimeOptions({
+      launcher: async (options) => {
+        const spawned = await spawnOwnedProviderProcess(options);
+        return {
+          ...spawned,
+          cleanup: async () => {
+            if (failCleanup) return { cleaned: false, reason: "held cleanup" };
+            return spawned.cleanup === undefined
+              ? cleanupOwnedProcessGroup(spawned.ownership)
+              : spawned.cleanup();
+          },
+        };
+      },
+    }),
+  );
+  await runtime.start(startOptions());
+  expect(await runtime.stop()).toMatchObject({ status: "incomplete" });
+  expect(runtime.hasPendingCleanup).toBe(true);
+
+  failCleanup = false;
+  const restarting = runtime.start(startOptions());
+  const closing = runtime.close();
+  await closing;
+  await expect(restarting).rejects.toMatchObject({
+    _tag: "ProcessAdmissionError",
+    code: "runtime_closing",
+  });
+  expect(runtime.hasPendingCleanup).toBe(false);
+  expect(runtime.rootPath).toBeUndefined();
+});
+
+it("allows concurrent start() to wait for cohort cleanup retry without failing as runtime_closing", async () => {
+  let failCleanup = true;
+  const cleanupGate = phaseGate();
+  const runtime = new OwnedWorkerRuntime(
+    runtimeOptions({
+      launcher: async (options) => {
+        const spawned = await spawnOwnedProviderProcess(options);
+        return {
+          ...spawned,
+          cleanup: async () => {
+            if (failCleanup) return { cleaned: false, reason: "held cleanup" };
+            await cleanupGate.hold();
+            return spawned.cleanup === undefined
+              ? cleanupOwnedProcessGroup(spawned.ownership)
+              : spawned.cleanup();
+          },
+        };
+      },
+    }),
+  );
+  try {
+    await runtime.start(startOptions());
+    expect(await runtime.stop()).toMatchObject({ status: "incomplete" });
+    failCleanup = false;
+    const cohortRetry = runtime.retryCohort();
+    await cleanupGate.reached(cohortRetry, "cohort cleanup hold");
+    const starting = runtime.start(startOptions());
+    cleanupGate.release();
+    await cohortRetry;
+    await expect(starting).resolves.toBeUndefined();
+  } finally {
+    cleanupGate.release();
+    await runtime.close();
+  }
+});

@@ -78,6 +78,8 @@ export class AsarArtifactReader implements ArtifactReader {
       }
     | undefined;
   #snapshotHandle: SharedAsarFileHandle | undefined;
+  #openingSnapshotHandle: Promise<SharedAsarFileHandle> | undefined;
+  #snapshotOpenWaiters = 0;
   #snapshotStatsChecked = false;
   #snapshotRoot: string | undefined;
   #snapshotOperation: Promise<void> = Promise.resolve();
@@ -310,6 +312,13 @@ export class AsarArtifactReader implements ArtifactReader {
     if (facts.size === 0) return Readable.from([]);
     let openedNew = false;
     let handle: SharedAsarFileHandle | undefined;
+    this.#snapshotOpenWaiters += 1;
+    let waiterCounted = true;
+    const releaseWaiter = (): void => {
+      if (!waiterCounted) return;
+      waiterCounted = false;
+      this.#snapshotOpenWaiters -= 1;
+    };
     try {
       const needsOpen =
         this.#snapshotHandle === undefined ||
@@ -337,15 +346,24 @@ export class AsarArtifactReader implements ArtifactReader {
         signal,
       );
       this.#trackOwnedStream(openedHandle, output);
+      releaseWaiter();
       handle = undefined;
       return output;
     } catch (cause: unknown) {
+      releaseWaiter();
       const failure = asarFailure(
         this.path,
         `read ${producedEntry.path}`,
         cause,
       );
-      if (handle !== undefined && openedNew) {
+      const owned =
+        handle === undefined ? undefined : this.#ownedHandles.get(handle);
+      if (
+        handle !== undefined &&
+        openedNew &&
+        this.#snapshotOpenWaiters === 0 &&
+        (owned?.streams.size ?? 0) === 0
+      ) {
         try {
           await this.#closeOwnedHandle(handle);
         } catch (cleanupCause: unknown) {
@@ -722,26 +740,25 @@ export class AsarArtifactReader implements ArtifactReader {
     ) {
       return this.#snapshotHandle;
     }
-    const snapshotPath = this.#snapshotPath();
-    const handle = await this.#openOwned(
-      snapshotPath,
-      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-    );
-    try {
-      assertAsarReadActive(signal);
-    } catch (cause: unknown) {
-      try {
-        await this.#closeOwnedHandle(handle);
-      } catch (cleanupCause: unknown) {
-        throw ArtifactReaderFailure.withCleanup(
-          asarFailure(this.path, "read", cause),
-          ArtifactReaderFailure.cleanupObservation(cleanupCause, snapshotPath),
-        );
-      }
-      throw cause;
+    if (this.#openingSnapshotHandle === undefined) {
+      const snapshotPath = this.#snapshotPath();
+      const opening = this.#openOwned(
+        snapshotPath,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      )
+        .then((handle) => {
+          this.#snapshotHandle = handle;
+          this.#snapshotStatsChecked = false;
+          return handle;
+        })
+        .finally(() => {
+          if (this.#openingSnapshotHandle === opening)
+            this.#openingSnapshotHandle = undefined;
+        });
+      this.#openingSnapshotHandle = opening;
     }
-    this.#snapshotHandle = handle;
-    this.#snapshotStatsChecked = false;
+    const handle = await this.#openingSnapshotHandle;
+    assertAsarReadActive(signal);
     return handle;
   }
 

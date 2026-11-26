@@ -877,6 +877,7 @@ export const awaitTerminalExit = async ({
     // cannot shorten it or produce a negative elapsed time.
     let finalizationStartedAt: number | undefined;
     let escalationSent = false;
+    let killSent = false;
     let settled = false;
     let exitObserved = false;
     const finalizationSignals: {
@@ -979,18 +980,30 @@ export const awaitTerminalExit = async ({
         attempt("SIGKILL");
         return;
       }
-      terminal.kill("SIGKILL");
+      if (killSent) return;
+      killSent = true;
+      try {
+        terminal.kill("SIGKILL");
+      } catch {
+        unobservedExit();
+      }
     };
     const terminateAtDeadline = (): void => {
       if (scenario.finalization_ms === 0) {
-        terminal.kill("SIGKILL");
+        if (killSent) return;
+        killSent = true;
+        try {
+          terminal.kill("SIGKILL");
+        } catch {
+          unobservedExit();
+        }
         return;
       }
       finalizationStartedAt = monotonicProcessCaptureClock();
       attempt("SIGTERM");
     };
     terminal.onExit((exit) => {
-      if (settled) return;
+      if (settled || exitObserved) return;
       exitObserved = true;
       // Measures when the exit was observed, not when the operating system
       // ended the process; the PTY layer can deliver the notification late.
@@ -1070,6 +1083,8 @@ export const awaitTerminalExit = async ({
           scenario.finalization_ms
         )
           forceKill();
+      } else if (killSent) {
+        return;
       } else if (
         monotonicProcessCaptureClock() - started >=
         scenario.timeout_ms
@@ -1425,6 +1440,10 @@ export class ProcessCaptureResourceScope {
   /** Admit one capture before it starts acquiring resources. */
   async run<T>(operation: () => Promise<T>): Promise<T> {
     while (true) {
+      if (this.#closed)
+        throw new ProcessCaptureError(
+          "process capture lifecycle is closing; start a new server session before capturing again",
+        );
       while (this.#draining !== undefined) await this.#draining;
       if (this.#closed)
         throw new ProcessCaptureError(

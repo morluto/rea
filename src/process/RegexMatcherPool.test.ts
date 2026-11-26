@@ -414,3 +414,20 @@ it("keeps the deadline when termination fails and retries the owned worker", asy
   expect(fakeWorkers.constructed).toBe(2);
   expect(fakeWorkers.maxAlive).toBeLessThanOrEqual(4);
 });
+
+it("does not post to or terminate an idle worker when signal aborts before dispatch", async () => {
+  const first = await search("alpha", ["alpha", "beta"]);
+  expect(first).toEqual({ ok: true, value: [0] });
+  const worker = fakeWorkers.instances[0]!;
+  expect(worker.patterns).toEqual(["alpha"]);
+
+  const controller = new AbortController();
+  controller.abort("pre-aborted");
+  const aborted = await search("beta", ["alpha", "beta"], {
+    signal: controller.signal,
+  });
+  expect(aborted.ok).toBe(false);
+  expect(worker.patterns).toEqual(["alpha"]);
+  expect(worker.exited).toBe(false);
+  expect(worker.terminateCalls).toBe(0);
+});
