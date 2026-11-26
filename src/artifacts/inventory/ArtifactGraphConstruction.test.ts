@@ -44,6 +44,7 @@ import {
 import { devicetreeFixture } from "../../domain/firmware/devicetree.fixture.js";
 import { fitFixture } from "../fit/FitImage.fixture.js";
 import { twoVolumeUbiImage } from "../../domain/firmware/ubiImage.fixture.js";
+import { sampleAndroidVbmeta } from "../../domain/firmware/androidVbmeta.fixture.js";
 
 it("joins only observed PE signature bytes across stream chunks", () => {
   const bytes = pe(0x8664, 8190);
@@ -595,6 +596,19 @@ it("classifies nested UBI images as containers by a valid UBI# header", () => {
   });
   image.writeUInt32BE(0, 60);
   expect(classifyArtifactBytesAtPath("nand/rootfs.ubi", image)).toEqual({
+    kind: "resource",
+    format: "file",
+  });
+});
+
+it("classifies a standalone vbmeta image by AVB0 magic", () => {
+  expect(
+    classifyArtifactBytesAtPath("vbmeta.img", sampleAndroidVbmeta()),
+  ).toEqual({
+    kind: "container",
+    format: "android-vbmeta",
+  });
+  expect(classifyArtifactBytesAtPath("boot.img", Buffer.from("AVBf"))).toEqual({
     kind: "resource",
     format: "file",
   });
