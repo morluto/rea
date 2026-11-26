@@ -86,15 +86,14 @@ export interface WinCertificateEntryRange {
 }
 
 /**
- * Walk every WIN_CERTIFICATE entry for structural bounds and alignment. Throws
- * {@link ParseFailureError} when the table is malformed or truncated. Callers
- * that only need a well-formedness check catch that failure.
+ * Lazily walk every WIN_CERTIFICATE entry for structural bounds and alignment.
+ * Throws {@link ParseFailureError} when the table is malformed or truncated so
+ * callers can enforce entry limits without materializing the full table first.
  */
-export const readWinCertificateEntryRanges = (
+export function* readWinCertificateEntryRanges(
   table: Buffer,
-): readonly WinCertificateEntryRange[] => {
+): Generator<WinCertificateEntryRange> {
   const reader = new BinaryReader(table, true, FORMAT);
-  const entries: WinCertificateEntryRange[] = [];
   let at = 0;
   while (at < table.length) {
     // Alignment padding sits inside the gap before the next 8-byte boundary.
@@ -111,11 +110,10 @@ export const readWinCertificateEntryRanges = (
     const next = align8(entryEnd);
     if (next > table.length)
       failTruncated("WIN_CERTIFICATE alignment padding is truncated.");
-    entries.push({ at, length, entryEnd, next });
+    yield { at, length, entryEnd, next };
     at = next;
   }
-  return entries;
-};
+}
 
 const LIMITATIONS = [
   "This workflow does not verify signatures, certificate chains, timestamps, or Authenticode digest coverage of image bytes.",
@@ -199,13 +197,13 @@ const parsePeCertificateTable = (
   let teletexStringCompatibilityUsed = false;
   let unsignedAttributesPresent = false;
   for (const { at, length, entryEnd } of readWinCertificateEntryRanges(table)) {
-    examined += 1;
-    if (examined > input.max_entries)
+    if (examined >= input.max_entries)
       throw new ArtifactReaderFailure(
         "limit",
         `PE certificate table exceeds the ${String(input.max_entries)}-entry budget.`,
         { boundary: "capacity" },
       );
+    examined += 1;
     const revision = reader.u16(at + 4);
     const certificateType = reader.u16(at + 6);
     const entryPayload = table.subarray(at + 8, entryEnd);

@@ -26,7 +26,10 @@ const CHECKSUM_OPTIONAL_HEADER_OFFSET = 64;
  */
 const certificateTableIsWellFormed = (table: Buffer): boolean => {
   try {
-    readWinCertificateEntryRanges(table);
+    for (const _entry of readWinCertificateEntryRanges(table)) {
+      // Consuming the generator verifies every entry header, length, and
+      // 8-byte alignment bound without retaining an array of all entries.
+    }
     return true;
   } catch (cause) {
     if (cause instanceof ParseFailureError) return false;
