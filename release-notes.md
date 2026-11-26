@@ -243,6 +243,7 @@
 * **browser:** preserve peer observations after a rejected page attachment ([#13841](https://github.com/morluto/rea/issues/13841)) ([6ecb70c](https://github.com/morluto/rea/commit/6ecb70c79c4e2d065cf0c9c2c72b57dd24596c21))
 * **browser:** preserve terminal verifier startup outcomes ([#13228](https://github.com/morluto/rea/issues/13228)) ([39ccb1d](https://github.com/morluto/rea/commit/39ccb1d3b8347cf5b34d33fa86c52d5b9d69c1ea))
 * **browser:** refuse partial HTTP source-map responses ([#13236](https://github.com/morluto/rea/issues/13236)) ([a7b195d](https://github.com/morluto/rea/commit/a7b195d0e1bd94908271d9216dd9bd257d8d0666))
+* **browser:** reject a file URL with a hostname ([#14792](https://github.com/morluto/rea/issues/14792)) ([777832e](https://github.com/morluto/rea/commit/777832eff53babd00f91d51cd798e7a15335735e))
 * **browser:** report only grammatical CORP and X-Content-Type-Options values ([1aa394d](https://github.com/morluto/rea/commit/1aa394d62d6f60809e9fbc1ca6cbfdb3341bc95f))
 * **browser:** retain passive coverage and failure identity ([#13231](https://github.com/morluto/rea/issues/13231)) ([eba41af](https://github.com/morluto/rea/commit/eba41afd6c873258f7c8bb4d9a7f2d9a707e6653))
 * **browser:** retire detached WebMCP frame descendants ([#13233](https://github.com/morluto/rea/issues/13233)) ([190395e](https://github.com/morluto/rea/commit/190395eade8c1164189b0e1ac4fb724f73e3bad0))
