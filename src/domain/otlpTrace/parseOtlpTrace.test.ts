@@ -982,3 +982,39 @@ describe("parseOtlpTrace diagnostic bound", () => {
     expect(report.limitations.join(" ")).toContain("1 diagnostic was omitted");
   });
 });
+
+describe("parseOtlpTrace scope fields", () => {
+  it("retains a non-string scope name instead of reporting it as absent", () => {
+    const report = parse({
+      resourceSpans: [
+        {
+          resource: {},
+          scopeSpans: [
+            { scope: { name: 42, version: true }, spans: [span({})] },
+          ],
+        },
+      ],
+    });
+    expect(report.scopes[0]).toMatchObject({
+      resource_index: 0,
+      name: null,
+      name_raw: 42,
+      version: null,
+      version_raw: true,
+    });
+  });
+
+  it("keeps raw scope fields empty when the scope omitted them", () => {
+    const report = parse({
+      resourceSpans: [
+        { resource: {}, scopeSpans: [{ scope: {}, spans: [span({})] }] },
+      ],
+    });
+    expect(report.scopes[0]).toMatchObject({
+      name: null,
+      name_raw: null,
+      version: null,
+      version_raw: null,
+    });
+  });
+});

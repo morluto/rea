@@ -20,7 +20,9 @@ Each recorded span keeps its trace, span and parent identifiers, name, kind,
 status, start and end timestamps as exact 64-bit decimal strings, the
 its own attributes, and indexes into the `resources` and `scopes` arrays. Each
 resource stores `service.name` and resource attributes once; each scope stores
-its name, version, and resource index. Group source pointers preserve their
+its name, version, and resource index. A scope name or version recorded as
+something other than a string keeps that value in `name_raw` / `version_raw`
+so it cannot be read as an omitted field. Group source pointers preserve their
 positions in the input. Event and link counts are reported without their payloads.
 
 - **Identity is recorded, not reconstructed.** A parent identifier the export

@@ -133,7 +133,9 @@ export const otlpScopeSchema = z.strictObject({
   source_pointer: z.string(),
   resource_index: z.int().nonnegative(),
   name: z.string().nullable(),
+  name_raw: jsonValueSchema.nullable(),
   version: z.string().nullable(),
+  version_raw: jsonValueSchema.nullable(),
 });
 export type OtlpScope = z.output<typeof otlpScopeSchema>;
 

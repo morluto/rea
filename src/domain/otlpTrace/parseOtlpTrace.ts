@@ -668,11 +668,34 @@ const walkResourceSpans = (
       const scopeRecord = isRecord(scopeSpans.scope)
         ? scopeSpans.scope
         : undefined;
-      const scope = {
-        name: typeof scopeRecord?.name === "string" ? scopeRecord.name : null,
-        version:
-          typeof scopeRecord?.version === "string" ? scopeRecord.version : null,
+      // A value recorded as something other than a string is still evidence the
+      // export carried it: null alone would read as an omitted name.
+      const scopeCapture: RawCapture = {
+        pointer: `/resourceSpans/${resourceIndex}/scopeSpans/${scopeIndex}/scope`,
+        ...(lossyNumber === undefined ? {} : { lossyNumber }),
+        damaged: (message) =>
+          problems.add(() => ({
+            code: "invalid-record",
+            pointer: `/resourceSpans/${resourceIndex}/scopeSpans/${scopeIndex}/scope`,
+            message,
+          })),
       };
+      const scopeName = scopeRecord?.name;
+      const scopeVersion = scopeRecord?.version;
+      const scope = {
+        name: typeof scopeName === "string" ? scopeName : null,
+        name_raw:
+          scopeName === undefined || typeof scopeName === "string"
+            ? null
+            : retainedRaw(scopeName, scopeCapture, "attribute"),
+        version: typeof scopeVersion === "string" ? scopeVersion : null,
+        version_raw:
+          scopeVersion === undefined || typeof scopeVersion === "string"
+            ? null
+            : retainedRaw(scopeVersion, scopeCapture, "attribute"),
+      };
+      if (scopeCapture.problem !== undefined)
+        return { walked, unsupported: false, problem: scopeCapture.problem };
       if (scopeSpans.spans === undefined) continue;
       if (!Array.isArray(scopeSpans.spans)) {
         walked.droppedRecords += 1;
