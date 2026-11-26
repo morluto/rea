@@ -17,6 +17,8 @@ import {
 import { recognizeAndroidOtaPayload } from "./firmware/androidOtaPayload.js";
 import { hasAndroidVbmetaMagic } from "./firmware/androidVbmeta.js";
 import { recognizeAndroidSparseImage } from "./firmware/androidSparseImage.js";
+import { claimsExecutableHeader } from "./binaryTarget.js";
+import { hasQualcommMbnHeader } from "./qualcommMbnImage.js";
 import { hasUImageMagic } from "./uimageFormat.js";
 import { hasBfltMagic } from "./bfltExecutable.js";
 import { hasNroMagic, hasNsoMagic } from "./switchExecutable.js";
@@ -70,6 +72,7 @@ export type RecognizedArtifactFormat = Extract<
   | "esp-flash-image"
   | "esp-image"
   | "fit"
+  | "qualcomm-mbn"
   | "ntfs-mft"
   | "plist"
   | StandaloneArtifactFormat
@@ -283,6 +286,15 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     // No magic: the stored logo CRC and a matching checksum claim it, after
     // every format with a leading signature.
     when("nds", hasNdsHeader),
+    // A legacy MBN header has no magic; the version word, sizes and pointer
+    // arithmetic must agree, so it runs after every signature format and yields
+    // to native executable headers (ELF, PE/DOS MZ, Mach-O, FAT). An ELF MBN is
+    // ELF here; root inventory reads it as MBN for its hash segment.
+    ({ prefix, fileSize }) =>
+      !claimsExecutableHeader(prefix, fileSize) &&
+      hasQualcommMbnHeader(prefix, fileSize)
+        ? { state: "recognized", format: "qualcomm-mbn" }
+        : undefined,
   ];
 
 /**

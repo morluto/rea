@@ -1054,6 +1054,18 @@ the file end leaves coverage `unknown`. Secure-area encryption, compressed
 overlays, and NitroARC archives are not decoded. See
 [Nintendo DS ROMs](https://github.com/morluto/rea/blob/main/docs/guides/firmware/nds-roms.md).
 
+Legacy Qualcomm MBN boot images (`sbl1.mbn`, `aboot.mbn`, `tz.mbn`) use the
+same inspection and extraction workflows. The header has no magic; REA claims
+it only when version 3, 5 or 6 sizes and pointers are self-consistent.
+MBN headers are 40 bytes for v3 and v5, and 48 for v6. Inventory lists stored
+code, signature, certificate-chain and v6 metadata regions;
+ranges past the file end are limitations with `unknown` coverage. ELF images
+with a Qualcomm hash segment inventory as `qualcomm-mbn` (hash table and per
+program header hash offsets) but still resolve as ELF for native analysis.
+Signatures and certificates are located, not verified; hashes are not
+recomputed. See
+[Qualcomm MBN images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/qualcomm-mbn-images.md).
+
 Android A/B OTA `payload.bin` files (CrAU v2) use the same
 inspection/extraction workflows. Prefer a retained summary for header,
 partition table, dynamic groups and signature counts. Signatures are not

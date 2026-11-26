@@ -506,6 +506,16 @@ rea extract-artifact ./game.nds --json
 See [Nintendo DS ROMs](../guides/firmware/nds-roms.md) for header detection, member paths,
 checksum and range limitations, and what is not decoded.
 
+Inventory and extract a Qualcomm MBN boot image or an ELF image with a hash segment:
+
+```sh
+rea inspect-artifact ./sbl1.mbn --json
+rea extract-artifact ./sbl1.mbn --json
+```
+
+See [Qualcomm MBN images](../guides/firmware/qualcomm-mbn-images.md) for header
+recognition, regions, hash segments and what is not verified.
+
 Inspect local model declarations without loading weights:
 
 ```bash
