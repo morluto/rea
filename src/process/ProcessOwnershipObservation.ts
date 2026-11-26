@@ -1,5 +1,6 @@
 import { readProcessInspectionFile } from "./ProcessInspectionFile.js";
-import { HOST_PLATFORM, hostHasProcfs } from "../platform/HostPlatform.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { hostHasProcfs } from "./procfsHost.js";
 import {
   describeSystemPs,
   PROCESS_INVENTORY_PS_ARGUMENTS,
@@ -1622,7 +1623,7 @@ export const createSystemProcessOwnershipHost = (
   const captureBaseline = async (
     signal?: AbortSignal,
   ): Promise<ProcessOwnershipBaseline> => {
-    if (platform !== "linux" && darwinTokens === undefined) return [];
+    if (!hostHasProcfs(platform) && darwinTokens === undefined) return [];
     const processes = liveProcesses(await safeListProcesses(signal));
     let identities = await processIdentities(processes, signal);
     const unreadable = processes.filter(
@@ -1739,7 +1740,7 @@ export const createSystemProcessOwnershipHost = (
         );
       }
     },
-    ...(platform !== "linux" && darwinTokens === undefined
+    ...(!hostHasProcfs(platform) && darwinTokens === undefined
       ? {}
       : {
           processIdentities,

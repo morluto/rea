@@ -1,4 +1,4 @@
-import { hostHasProcfs } from "../platform/HostPlatform.js";
+import { hostHasProcfs } from "./procfsHost.js";
 
 /** Persistent debugger managers require procfs descriptor readback. */
 export const persistentDebuggerHostSupported = (

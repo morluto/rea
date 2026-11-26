@@ -1611,3 +1611,10 @@ it("refuses to signal when PID identity changes after token validation", async (
   expect(signalGroup).not.toHaveBeenCalled();
   expect(identityReads).toBeGreaterThanOrEqual(3);
 });
+
+it("exposes procfs identity and baseline hooks on android hosts", () => {
+  const host = createSystemProcessOwnershipHost("android", {});
+  expect(host.platform).toBe("android");
+  expect(typeof host.processIdentities).toBe("function");
+  expect(typeof host.captureBaseline).toBe("function");
+});

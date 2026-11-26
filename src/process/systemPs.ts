@@ -1,4 +1,4 @@
-import { hostHasProcfs } from "../platform/HostPlatform.js";
+import { hostHasProcfs } from "./procfsHost.js";
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 

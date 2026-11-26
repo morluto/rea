@@ -21,11 +21,3 @@ export const HOST_PLATFORM: HostPlatform = Object.freeze({
   platform: process.platform,
   architecture: process.arch,
 });
-
-/**
- * Termux and other Android Node builds expose Linux procfs under
- * `process.platform === "android"`. Treat them like Linux for ownership and
- * sampling paths that read `/proc`.
- */
-export const hostHasProcfs = (platform: NodeJS.Platform): boolean =>
-  platform === "linux" || platform === "android";
