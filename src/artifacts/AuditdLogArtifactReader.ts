@@ -11,6 +11,7 @@ import {
 import {
   artifactFixedLimitFailure,
   ArtifactReaderFailure,
+  malformedArtifact,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactReaderTraversal,
@@ -161,9 +162,9 @@ export class AuditdLogArtifactReader implements ArtifactReader {
         `auditd log exceeds a fixed limit: ${failure.message}`,
         failure.boundary ?? "capacity",
       );
-    return failure.kind === "format"
-      ? new ArtifactReaderFailure(
-          "format",
+    return failure.kind === "malformed"
+      ? malformedArtifact(
+          this.format,
           `auditd log is malformed: ${failure.message}`,
         )
       : new ArtifactReaderFailure(

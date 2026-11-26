@@ -134,7 +134,7 @@ const sortedCounts = (counts: Map<string, number>): AuditEventTypeCount[] =>
     );
 
 const failure = (message: string): RegionDecodeFailure => ({
-  kind: "format",
+  kind: "malformed",
   message,
 });
 
