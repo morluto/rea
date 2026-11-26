@@ -11,8 +11,15 @@ import {
   VerifierFixture,
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
+import {
+  assertVerifierCleanupComplete,
+  completeVerifierRun,
+  createVerifierRun,
+} from "./lib/verifier-run.mjs";
 import { createPeRichHeaderService } from "../dist/composition/binaryDiagnostics/peRichHeader.js";
 import { MAX_INSPECT_PE_RICH_HEADER_FILE_BYTES } from "../dist/domain/native/peRichHeader.js";
+
+const run = createVerifierRun();
 
 const PE_EXTENSIONS = new Set([
   ".exe",
@@ -99,10 +106,17 @@ try {
 }
 
 const pefile = new Map();
+let verifier;
 const scratch = await VerifierFixture.open({ prefix: "rea-pe-rich-header-" });
 await withVerifierFixture(scratch, async (fixture) => {
   const commands = await createVerifierCommands();
   fixture.releaseAfter(() => commands.close());
+  fixture.releaseAfter(async () => {
+    verifier = await completeVerifierRun(run);
+    // Windows has no retained Job Object lease, so lineage observation is unavailable.
+    if (process.platform !== "win32")
+      assertVerifierCleanupComplete(verifier.process_lineage);
+  });
   const list = join(fixture.path, "files.json");
   await writeFile(list, JSON.stringify(files));
   const { stdout } = await commands.exec(
@@ -140,6 +154,7 @@ await withVerifierFixture(scratch, async (fixture) => {
 });
 
 const summary = {
+  verifier,
   files: files.length,
   rejected_by_both: [],
   absent: 0,
