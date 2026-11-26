@@ -24,60 +24,42 @@ export const isXmlElement = (node: Node | null): node is Element =>
 export const isUnqualifiedXmlElement = (node: Node | null): node is Element =>
   isXmlElement(node) && node.namespaceURI === null;
 
-/** Direct child elements of `element` in document order. */
-export const xmlChildElements = (element: Element): Element[] => {
-  const children: Element[] = [];
+/** Direct child elements in document order. An empty namespace selects unqualified elements. */
+export function* iterateXmlChildElements(
+  element: Element,
+  local?: string,
+  namespace?: string,
+): Generator<Element, undefined> {
   for (
     let child = element.firstChild;
     child !== null;
     child = child.nextSibling
-  )
-    if (isXmlElement(child)) children.push(child);
-  return children;
-};
+  ) {
+    if (
+      isXmlElement(child) &&
+      (local === undefined || child.localName === local) &&
+      (namespace === undefined || (child.namespaceURI ?? "") === namespace)
+    )
+      yield child;
+  }
+}
 
-/** Direct child elements matching `local` (and optionally `namespace`, where `""` matches no namespace). */
+export const xmlChildElements = (element: Element): Element[] => [
+  ...iterateXmlChildElements(element),
+];
+
 export const xmlChildrenNamed = (
   element: Element,
   local: string,
   namespace?: string,
-): Element[] => {
-  const matches: Element[] = [];
-  for (
-    let child = element.firstChild;
-    child !== null;
-    child = child.nextSibling
-  ) {
-    if (
-      isXmlElement(child) &&
-      child.localName === local &&
-      (namespace === undefined || (child.namespaceURI ?? "") === namespace)
-    )
-      matches.push(child);
-  }
-  return matches;
-};
+): Element[] => [...iterateXmlChildElements(element, local, namespace)];
 
-/** First direct child element matching `local` (and optionally `namespace`, where `""` matches no namespace). */
 export const xmlFirstChildNamed = (
   element: Element,
   local: string,
   namespace?: string,
-): Element | undefined => {
-  for (
-    let child = element.firstChild;
-    child !== null;
-    child = child.nextSibling
-  ) {
-    if (
-      isXmlElement(child) &&
-      child.localName === local &&
-      (namespace === undefined || (child.namespaceURI ?? "") === namespace)
-    )
-      return child;
-  }
-  return undefined;
-};
+): Element | undefined =>
+  iterateXmlChildElements(element, local, namespace).next().value;
 
 const XML_FORMAT = "xml";
 
