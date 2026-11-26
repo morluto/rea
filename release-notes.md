@@ -986,6 +986,7 @@
 * **views:** reuse invalid-view results and row selectors ([#14314](https://github.com/morluto/rea/issues/14314)) ([5dafc31](https://github.com/morluto/rea/commit/5dafc31d23f8f6f13a57b9b374411f412917d199))
 * **views:** reuse JSON record and request-line projections ([#14582](https://github.com/morluto/rea/issues/14582)) ([3d46331](https://github.com/morluto/rea/commit/3d4633176f15f3bd8072751af788bf31c7f2e0d8))
 * **views:** share count projections across analysis summaries ([#14600](https://github.com/morluto/rea/issues/14600)) ([c8f42a8](https://github.com/morluto/rea/commit/c8f42a872d39046a1dd3ae3e431642671b3b9357))
+* **views:** share default page request fields ([#14633](https://github.com/morluto/rea/issues/14633)) ([d639828](https://github.com/morluto/rea/commit/d63982890e70c55b09704249cde0327537e610f0))
 * **views:** share fixed page budget errors ([#14479](https://github.com/morluto/rea/issues/14479)) ([a2fd2d7](https://github.com/morluto/rea/commit/a2fd2d7d3045951ee684b6612294495d9c4f7435))
 * **views:** share invalid parent subject errors ([#14505](https://github.com/morluto/rea/issues/14505)) ([59a0ed3](https://github.com/morluto/rea/commit/59a0ed33fb5dad9b6bcce3e7f318350d88fbc78c))
 * **web:** remove the superseded single-query module matcher ([#14319](https://github.com/morluto/rea/issues/14319)) ([ab96130](https://github.com/morluto/rea/commit/ab96130f2277fa8a8571fb4bb4f210b6902acd5b))
