@@ -6,6 +6,7 @@ import {
 } from "../domain/artifactGraph.js";
 import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
 import { ANDROID_OTA_PAYLOAD_LIMITATIONS } from "../domain/firmware/androidOtaPayload.js";
+import { ANDROID_SPARSE_IMAGE_LIMITATIONS } from "../domain/firmware/androidSparseImage.js";
 import { ESP_IMAGE_LIMITATIONS } from "../domain/firmware/espImageFacts.js";
 import {
   ZIP_PACKAGE_FORMATS,
@@ -51,6 +52,7 @@ import { UefiArtifactReader } from "../uefi/UefiArtifactReader.js";
 import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
 import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
 import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactReader.js";
+import { AndroidSparseImageArtifactReader } from "./AndroidSparseImageArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
@@ -291,6 +293,8 @@ const NON_ZIP_FORMATS = {
       new DenoStandaloneArtifactReader(
         path,
         admittedAs("deno-standalone", options),
+        options.readerLimits?.deno,
+        options.readerLimits?.expanded_bytes,
       ),
   }),
   dmg: container("dmg", {
@@ -378,7 +382,12 @@ const NON_ZIP_FORMATS = {
     readerLimitation:
       "wxapkg inventory establishes packaged member names and stored bytes; wxml/wxss sources, compiled bundles and runtime behavior are not reconstructed. V1MMWX-encrypted packages are unsupported.",
     createReader: (path, options) =>
-      new WxapkgArtifactReader(path, sourceOf(options)),
+      new WxapkgArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.wxapkg,
+        options.readerLimits?.expanded_bytes,
+      ),
   }),
   tar: container("tar", {
     roleContainer: true,
@@ -392,6 +401,7 @@ const NON_ZIP_FORMATS = {
         path,
         sourceOf(options),
         options.readerLimits?.expanded_bytes,
+        options.readerLimits?.tar,
       ),
   }),
   dds: gpuAsset("dds"),
@@ -426,6 +436,20 @@ const NON_ZIP_FORMATS = {
     readerLimitation: ANDROID_OTA_PAYLOAD_LIMITATIONS.inventoryScope,
     createReader: (path, options) =>
       new AndroidOtaPayloadArtifactReader(path, sourceOf(options)),
+  }),
+  "android-sparse-image": container("android-sparse-image", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation: ANDROID_SPARSE_IMAGE_LIMITATIONS.inventoryScope,
+    createReader: (path, options) =>
+      new AndroidSparseImageArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.android_sparse_image,
+        options.readerLimits?.expanded_bytes,
+      ),
   }),
   iso9660: container("iso9660", {
     roleContainer: true,

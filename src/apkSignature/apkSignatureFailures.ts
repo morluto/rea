@@ -1,11 +1,14 @@
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import {
+  fixedAllowanceOptions,
+  fixedProducerInputAllowance,
+} from "../domain/fixedAllowanceRemediation.js";
 import {
   ArtifactReaderFailure,
   stableArtifactInputFailure,
   readerIntegrityFailure,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   projectStableArtifactFailure,
 } from "../resources/index.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -13,8 +16,6 @@ import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
-  cancelledBy,
-  carriedReason,
   unsupportedTarget,
   unrecognizedTarget,
 } from "../domain/analysisErrorCore.js";
@@ -218,10 +219,7 @@ const artifactReaderFailure = (
     case "integrity":
       return readerIntegrityFailure(OPERATION, path, cause);
     case "cancelled":
-      return cancelledBy(
-        OPERATION,
-        carriedReason(artifactFileCancellationCause(cause)),
-      );
+      return artifactFileCancellationError(OPERATION, cause);
     case "limit":
       return new AnalysisResourceConstraintError(
         OPERATION,
@@ -230,8 +228,10 @@ const artifactReaderFailure = (
         { max_input_bytes: APK_SIGNATURE_LIMITS.inputBytes },
         {
           cause,
-          remediationAction:
-            "The size budget is fixed; select a smaller archive.",
+          ...fixedProducerInputAllowance(
+            APK_SIGNATURE_LIMITS.inputBytes,
+            "The APK signature input allowance",
+          ),
         },
       );
     case "path":

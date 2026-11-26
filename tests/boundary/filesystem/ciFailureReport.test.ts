@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
@@ -231,6 +231,57 @@ it.each([
     });
   },
 );
+
+it("reuses complete collector pages for the requested attempt and falls back to GitHub otherwise", async () => {
+  const directory = await createTestTempDirectory("rea-ci-collected-jobs-");
+  const runDirectory = join(directory, "10-2");
+  await mkdir(runDirectory);
+  const job = {
+    id: 7,
+    run_id: 10,
+    run_attempt: 2,
+    name: "Static checks",
+    status: "completed",
+    conclusion: "failure",
+  };
+  const remote = { ...job, id: 8 };
+  const requests: string[] = [];
+  const api = createGitHubApi({
+    token: "fixture-token",
+    collectedJobsDirectory: directory,
+    apiRequest: async (_method, endpoint) => {
+      requests.push(endpoint);
+      return { total_count: 1, jobs: [remote] };
+    },
+  });
+  const path = join(runDirectory, "jobs.json");
+  await writeFile(path, JSON.stringify([{ total_count: 1, jobs: [job] }]));
+  await expect(api.getJobs("owner/rea", 10, 2)).resolves.toEqual([job]);
+  expect(requests).toEqual([]);
+
+  for (const page of [
+    { jobs: [job] },
+    { total_count: 2, jobs: [job] },
+    { total_count: 1, jobs: [{ ...job, run_attempt: 1 }] },
+    { total_count: 1, jobs: [{ ...job, run_id: 11 }] },
+    { total_count: 1, jobs: [{ ...job, status: "in_progress" }] },
+    { total_count: 2, jobs: [job, job] },
+    {
+      total_count: 100,
+      jobs: Array.from({ length: 100 }, (_, id) => ({ ...job, id: id + 1 })),
+    },
+  ]) {
+    await writeFile(path, JSON.stringify([page]));
+    await expect(api.getJobs("owner/rea", 10, 2)).resolves.toEqual([remote]);
+    expect(requests.pop()).toBe(
+      "repos/owner/rea/actions/runs/10/attempts/2/jobs?per_page=100&page=1",
+    );
+  }
+  await api.getJobs("owner/rea", 10, 3);
+  expect(requests).toEqual([
+    "repos/owner/rea/actions/runs/10/attempts/3/jobs?per_page=100&page=1",
+  ]);
+});
 
 it("writes informational JSON and Markdown from the supplied manifest using only read API calls", async () => {
   const directory = await createTestTempDirectory("rea-ci-failure-test-");

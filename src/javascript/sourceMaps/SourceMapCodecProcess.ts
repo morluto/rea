@@ -1,7 +1,6 @@
 import { readStableArtifact } from "../../resources/index.js";
 import {
   selectedSourceMapLimits,
-  sourceMapLimitRecovery,
   sourceMapLimitsSchema,
 } from "../../domain/sourceMapLimits.js";
 import { traceSourceMap } from "./TraceSourceMap.js";

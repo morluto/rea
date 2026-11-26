@@ -31,7 +31,14 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { UnclassifiedProviderFailure } from "../domain/unclassifiedProviderFailure.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok } from "../domain/result.js";
-import { ArtifactAnalysisResources } from "./ArtifactAnalysisResources.js";
+import {
+  ArtifactAnalysisResources,
+  type ProducerCommandLimits,
+} from "./ArtifactAnalysisResources.js";
+import {
+  BOUNDED_PRODUCER_LIMITS,
+  producerLimitControl,
+} from "../domain/producerResourceLimits.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import {
   type LinuxResourceLimits,
@@ -83,8 +90,7 @@ it.runIf(process.platform !== "win32")(
         ok(
           await resources.readSelectedArtifact({
             path: selected,
-            maximumBytes: 1024,
-            allowanceName: "fixture input allowance",
+            budget: producerLimitControl("input_bytes", 1024, 2048),
             observedOutput: undefined,
           }),
         ),
@@ -498,14 +504,26 @@ it("keeps a runtime root until its descriptor cleanup owner is released", async 
 const classifyFixtureCommand = (
   resources: ArtifactAnalysisResources,
   failure: OwnedCommandFailure,
-  limits: Parameters<ArtifactAnalysisResources["commandContext"]>[0],
+  selected: ProducerCommandLimits["selected"],
   effectiveLimits?: LinuxResourceLimits,
 ) =>
   classifyProviderFailure(failure, {
     providerId: resources.providerId,
     operation: resources.operation,
     command: () =>
-      resources.commandContext(limits, effectiveLimits, resources.operation),
+      resources.commandContext(
+        {
+          selected,
+          defaults: BOUNDED_PRODUCER_LIMITS,
+          output: producerLimitControl(
+            "output_bytes",
+            selected.output_bytes,
+            BOUNDED_PRODUCER_LIMITS.output_bytes,
+          ),
+        },
+        effectiveLimits,
+        resources.operation,
+      ),
     unclassified: (cause) => {
       throw cause;
     },
@@ -646,6 +664,15 @@ it.each([
         code: "provider_timeout",
         message: expect.stringContaining(`${String(deadline)} ms`),
         remediation: { action: expect.stringContaining(recovery) },
+        details: {
+          limit: {
+            control_kind: "parameter",
+            parameter: "producer_limits.command_timeout_ms",
+            effective_value: deadline,
+            default_value: BOUNDED_PRODUCER_LIMITS.command_timeout_ms,
+            applies_at: "next_call",
+          },
+        },
       });
     } finally {
       await resources.close();

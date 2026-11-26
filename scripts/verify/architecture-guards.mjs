@@ -2,12 +2,14 @@ import { readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { recordPredicateCounts } from "./record-predicate-guard.mjs";
+import { mapWithConcurrency } from "./bounded-file-reads.mjs";
 import {
   compareCountedBaseline,
   recordLoweredBaseline,
   reconcileBaselineFile,
 } from "./counted-baseline.mjs";
 import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
+import { adhocCompletenessTernaryCount } from "./completeness-ternary-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
@@ -58,16 +60,14 @@ const listFiles = async (dir) => {
 };
 
 const sources = await listFiles(join(root, "src"));
-const files = await Promise.all(
-  sources.map(async (path) => {
-    const source = await readFile(path, "utf8");
-    return {
-      path: relative(root, path).split(sep).join("/"),
-      content: blankComments(source),
-      source,
-    };
-  }),
-);
+const files = await mapWithConcurrency(sources, async (path) => {
+  const source = await readFile(path, "utf8");
+  return {
+    path: relative(root, path).split(sep).join("/"),
+    content: blankComments(source),
+    source,
+  };
+});
 const failures = [];
 const check = (label, selected, pattern, allow = []) => {
   const offenders = selected.filter(
@@ -936,15 +936,16 @@ const listTestFiles = async (dir) => {
   }
   return output;
 };
-const testFiles = await Promise.all(
+const testFiles = await mapWithConcurrency(
   [
     ...(await listTestFiles(join(root, "src"))),
     ...(await listFiles(join(root, "tests"))),
     ...(await listTestFiles(join(root, "tests"))),
-  ].map(async (path) => ({
+  ],
+  async (path) => ({
     path: relative(root, path).split(sep).join("/"),
     content: await readFile(path, "utf8"),
-  })),
+  }),
 );
 checkCounted(
   "test redefines process.platform or process.arch (inject the platform: pass it as a parameter or host option, or mock src/platform/HostPlatform)",
@@ -996,20 +997,18 @@ checkCounted(
 // processes that may still use it confirm cleanup; otherwise it is retained
 // and named. scripts/lib/verifier-fixture.mjs owns that ordering on a
 // src/process PrivateRuntimeRoot, so verifiers allocate roots through it.
-const verifierScripts = await Promise.all(
+const verifierScripts = await mapWithConcurrency(
   (await readdir(join(root, "scripts"), { recursive: true }))
     .map((path) => path.split(sep).join("/"))
     .filter(
       (path) =>
         /^(?:verify-[^/]+|verify\/.+)\.mjs$/u.test(path) &&
         path !== "verify/architecture-guards.mjs",
-    )
-    .map(async (path) => ({
-      path: `scripts/${path}`,
-      content: blankComments(
-        await readFile(join(root, "scripts", path), "utf8"),
-      ),
-    })),
+    ),
+  async (path) => ({
+    path: `scripts/${path}`,
+    content: blankComments(await readFile(join(root, "scripts", path), "utf8")),
+  }),
 );
 // The Windows native lane tests PrivateRuntimeRoot itself: it calls
 // PrivateRuntimeRoot.create under a parent whose DELETE lease forces a sharing
@@ -1077,6 +1076,19 @@ checkCounted(
   [],
 );
 
+// Completeness is a derived claim built monotonically from examined input.
+// Ad-hoc `? "complete" :` / `: "complete"` ternaries drop newly added omission
+// or trailing-byte checks; use CoverageAccumulator / joinCoverageStatus in
+// src/domain/coverageAccumulator.ts instead. Existing sites are ratcheted here
+// so the count can only shrink.
+checkCounted(
+  'ad-hoc "complete" ternary in src/domain (use CoverageAccumulator or joinCoverageStatus from src/domain/coverageAccumulator)',
+  "adhoc-completeness-ternary",
+  files.filter((file) => file.path.startsWith("src/domain/")),
+  adhocCompletenessTernaryCount,
+  ["src/domain/coverage.ts", "src/domain/coverageAccumulator.ts"],
+);
+
 // Scripts covered by tsconfig.scripts.json declare and check their types in
 // JSDoc inside the .mjs source itself (#11616). A sibling .d.ts / .d.mts file
 // creates a second, unchecked type source that hides signature drift.
@@ -1102,7 +1114,7 @@ const vocabularyGuardPath =
   "scripts/verify/retired-target-failure-vocabulary.mjs";
 const vocabularyGuardTestPath =
   "tests/evaluation/retiredTargetFailureVocabulary.test.ts";
-const vocabularyFiles = await Promise.all(
+const vocabularyFiles = await mapWithConcurrency(
   [
     ...(await listVocabularyFiles(join(root, "src"), [".ts", ".mts", ".py"])),
     ...(await listVocabularyFiles(join(root, "tests"), [".ts", ".mjs", ".py"])),
@@ -1112,10 +1124,11 @@ const vocabularyFiles = await Promise.all(
       ".py",
     ])),
     ...(await listVocabularyFiles(join(root, "bridge"), [".py"])),
-  ].map(async (path) => ({
+  ],
+  async (path) => ({
     path: relative(root, path).split(sep).join("/"),
     content: await readFile(path, "utf8"),
-  })),
+  }),
 );
 const retiredVocabulary = vocabularyFiles.filter(
   ({ path, content }) =>

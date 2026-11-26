@@ -19,7 +19,6 @@ import {
   truncatedKernelConfigFixture,
 } from "../../native/elf/KernelBuildConfig.fixture.js";
 import { parseKernelBuildConfigFromHandle } from "../../native/elf/KernelBuildConfig.js";
-import type { ByteSource } from "../../domain/byteSource.js";
 import { bufferByteSource } from "../../domain/byteSource.js";
 
 const identity = KERNEL_BUILD_CONFIG_PROVIDER;

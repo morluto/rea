@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { runOwnedCommand } from "../dist/process/OwnedCommand.js";
 import { WEB_NETWORK_CAPTURE_LIMITS } from "../dist/domain/webNetworkCapture.js";
 import {
@@ -24,6 +25,7 @@ import {
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 const executable = process.env.REA_MITMDUMP_COMMAND;
 if (
@@ -44,10 +46,12 @@ const runtime = await VerifierFixture.open({
 const environment = Object.fromEntries(
   Object.entries(process.env).filter(([, value]) => typeof value === "string"),
 );
-const client = new Client({
-  name: "historical-web-capture-verifier",
-  version: "1",
-});
+const client = completeEvidenceClient(
+  new Client({
+    name: "historical-web-capture-verifier",
+    version: "1",
+  }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -717,9 +721,7 @@ try {
         runtime.path,
         format === "har" ? "producer.har" : "flows.mitm",
       );
-      const digest = createHash("sha256")
-        .update(await readFile(capturePath))
-        .digest("hex");
+      const digest = await sha256File(capturePath);
       for (const literal of [digest, digest.slice(0, 12)]) {
         const value = await inspect(mode, {
           capture_path: capturePath,
@@ -953,7 +955,7 @@ async function inspect(mode, input, errorCategory) {
   if (mode === "mcp") {
     const result = await client.callTool({
       name: "inspect_web_network_capture",
-      arguments: input,
+      arguments: { ...input, detail: "complete" },
     });
     if (errorCategory !== undefined) {
       const error = requireMcpToolError(result);
@@ -1018,6 +1020,8 @@ async function inspect(mode, input, errorCategory) {
   const args = [
     entrypoint,
     "inspect-web-network-capture",
+    "--detail",
+    "complete",
     input.capture_path,
     input.format,
     "--json",

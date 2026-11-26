@@ -5,7 +5,8 @@ import {
   type RetainedBrowserScenarioCapture as BrowserScenarioCapture,
 } from "../browserScenarioCapture.js";
 import type { BrowserScenarioStep as Step } from "../browserScenarioCaptureValues.js";
-import { compareAsciiStrings } from "../canonicalOrdering.js";
+import { incrementCount } from "../valueCounts.js";
+import { sortedCountEntries } from "./analysisViewCounts.js";
 import { err, ok } from "../result.js";
 import {
   analysisViewInputError,
@@ -118,24 +119,6 @@ const focusAccessibility = (
   };
 };
 
-/** Counts in canonical key order; a null origin sorts first. */
-const sortedCounts = <Key extends string | null>(
-  counts: ReadonlyMap<Key, number>,
-): [Key, number][] =>
-  [...counts].sort(([left], [right]) =>
-    left === right
-      ? 0
-      : left === null
-        ? -1
-        : right === null
-          ? 1
-          : compareAsciiStrings(left, right),
-  );
-
-const increment = <Key>(counts: Map<Key, number>, key: Key): void => {
-  counts.set(key, (counts.get(key) ?? 0) + 1);
-};
-
 const eventCounts = (
   capture: BrowserScenarioCapture,
 ): z.infer<typeof browserScenarioSummarySchema>["events"] => {
@@ -143,12 +126,15 @@ const eventCounts = (
     BrowserScenarioCapture["events"]["items"][number]["kind"],
     number
   >();
-  for (const event of capture.events.items) increment(kinds, event.kind);
+  for (const event of capture.events.items) incrementCount(kinds, event.kind);
   const { omissions } = capture.events;
   return {
     retained: capture.events.retained,
     dropped: capture.events.dropped,
-    by_kind: sortedCounts(kinds).map(([kind, count]) => ({ kind, count })),
+    by_kind: sortedCountEntries(kinds).map(([kind, count]) => ({
+      kind,
+      count,
+    })),
     omissions: {
       by_kind: omissions.by_kind,
       network_transactions: omissions.network_transactions.length,

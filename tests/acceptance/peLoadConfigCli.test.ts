@@ -126,7 +126,7 @@ cliTest("fails closed at the callback limit", async ({ cli }) => {
     retryable: false,
     details: { reported_limits: { boundary: "callbacks", maximum: 1 } },
     remediation: {
-      action: expect.stringContaining("Raise max_callbacks above 1"),
+      action: expect.stringContaining("Pass a larger --max-callbacks"),
     },
   });
   const retried = await cli.run({

@@ -11,9 +11,8 @@ import {
 } from "../../domain/javascript/javascriptSemanticWorkAllowance.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../../domain/analysisResourceLimits.js";
 import {
+  artifactFileCleanupError,
   ArtifactResourceScope,
-  ArtifactReaderFailure,
-  bindArtifactFileCleanup,
 } from "../../resources/index.js";
 import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import {
@@ -1443,16 +1442,8 @@ export class JavaScriptAnalysisWorker {
         : cancellation.capturedOutput === undefined
           ? cancellation.retainCapturedOutput(this.#captured())
           : cancellation;
-    if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
-      const error = new ProviderCleanupError(
-        PROVIDER,
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        { operation: OPERATION, cause },
-      );
-      bindArtifactFileCleanup(cause, error);
-      return error;
-    }
+    const fileCleanup = artifactFileCleanupError(cause, PROVIDER, OPERATION);
+    if (fileCleanup !== undefined) return fileCleanup;
     if (
       cause instanceof AnalysisError &&
       (deadline === undefined || this.#phase === "startup")

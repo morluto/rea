@@ -13,7 +13,8 @@ import {
 } from "../dist/contracts/toolContracts.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
-import { publishClientReceipt } from "./verify/clients/receipt.mjs";
+import { readClientVersion } from "./verify/clients/version.mjs";
+import { receiptContext, publishReceipt } from "./verify/clients/receipt.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import {
   CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
@@ -79,13 +80,7 @@ await withVerifierCleanup(async () => {
       REA_PROCESS_RUN_ID: verifier.run_id,
     };
     try {
-      clientVersion = (
-        await commands.exec(command, ["--version"], {
-          env: environment,
-          timeout: 30_000,
-          stdin: "pipe",
-        })
-      ).stdout.trim();
+      clientVersion = await readClientVersion(commands, command, environment);
     } catch (cause) {
       // npm installs put only a claude.cmd shim on PATH, which Node does not spawn without a shell.
       const windowsHint =
@@ -344,18 +339,12 @@ await withVerifierCleanup(async () => {
   passed = true;
 }, [
   async () => {
-    const receipt = {
+    await publishReceipt({
       client: "Claude Code",
       clientVersion,
       mode,
       passed,
-      artifacts: lab,
-      runtimeRoot,
-      host: {
-        platform: process.platform,
-        architecture: process.arch,
-        node: process.versions.node,
-      },
+      ...receiptContext(lab, runtimeRoot),
       modelFixture:
         "loopback Anthropic Messages/SSE; synthetic usage and native resource hints; no live API claim",
       discovery:
@@ -374,7 +363,6 @@ await withVerifierCleanup(async () => {
       probes: fixture?.probes,
       fixtureFailure: fixture?.failure,
       verifier: await completeVerifierRun(verifier),
-    };
-    await publishClientReceipt(lab, receipt);
+    });
   },
 ]);

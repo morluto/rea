@@ -9,7 +9,8 @@ import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 import { verifyClientSetup } from "./verify/clients/setup.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
-import { publishClientReceipt } from "./verify/clients/receipt.mjs";
+import { readClientVersion } from "./verify/clients/version.mjs";
+import { receiptContext, publishReceipt } from "./verify/clients/receipt.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import {
   CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
@@ -301,14 +302,9 @@ await withVerifierCleanup(async () => {
         2,
       ) + "\n";
     await writeFile(configPath, original);
-    clientVersion = (
-      await commands.exec(command, ["--version"], {
-        env: environment,
-        cwd: workspace,
-        timeout: 30_000,
-        stdin: "pipe",
-      })
-    ).stdout.trim();
+    clientVersion = await readClientVersion(commands, command, environment, {
+      cwd: workspace,
+    });
     await verifyClientSetup({
       client: "commandcode",
       commands,
@@ -399,18 +395,12 @@ await withVerifierCleanup(async () => {
   passed = true;
 }, [
   async () => {
-    const receipt = {
+    await publishReceipt({
       client: "Command Code",
       clientVersion,
       mode,
       passed,
-      artifacts: lab,
-      runtimeRoot,
-      host: {
-        platform: process.platform,
-        architecture: process.arch,
-        node: process.versions.node,
-      },
+      ...receiptContext(lab, runtimeRoot),
       modelFixture:
         "loopback OpenAI completions/SSE, keyless BYOK, synthetic account-key gate and usage; no hosted authentication or live-model claim",
       discovery:
@@ -431,7 +421,6 @@ await withVerifierCleanup(async () => {
       probes: fixture?.probes,
       fixtureFailure: fixture?.failure,
       verifier: await completeVerifierRun(verifier),
-    };
-    await publishClientReceipt(lab, receipt);
+    });
   },
 ]);

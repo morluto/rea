@@ -22,7 +22,9 @@ import {
 } from "../../domain/evidence.js";
 import {
   byteEntropySchema,
+  byteEntropyWindowLimit,
   createBlockEntropyCalculator,
+  MAX_BYTE_ENTROPY_BLOCKS,
   entropyFromCounts,
   countByteValues,
   wholeFileByteCounts,
@@ -38,7 +40,7 @@ import {
   ArtifactFileCleanupFailure,
   artifactFileCompletion,
   assertArtifactReadActive,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   artifactSelectedPathErrno,
   ArtifactReaderFailure,
 } from "../../resources/index.js";
@@ -46,9 +48,6 @@ import { analysisErrorWithCleanupDependencies } from "../../domain/analysisError
 import { sameRegularFileState } from "../../filesystem/RegularFile.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
-
-/** Bound retained result rows before constructing the Evidence representation. */
-const MAX_BYTE_ENTROPY_BLOCKS = 32_768;
 
 /** Generated files such as Linux /proc entries report size 0 but still hold bytes. */
 const ZERO_SIZE_LIMITATION =
@@ -251,8 +250,11 @@ export class ByteEntropyService {
               },
               {
                 retryable: false,
-                remediationAction:
-                  "Reduce the selected window length or increase block_size so the selected window contains at most 32768 blocks.",
+                limit: byteEntropyWindowLimit(
+                  input.block_size,
+                  length,
+                  size - input.offset,
+                ),
               },
             );
           const end = input.offset + length;
@@ -359,9 +361,9 @@ export class ByteEntropyService {
           outcome.cause instanceof ArtifactReaderFailure &&
           outcome.cause.reason === "cancelled"
         ) {
-          const cancelled = cancelledBy(
+          const cancelled = artifactFileCancellationError(
             OPERATION,
-            carriedReason(artifactFileCancellationCause(outcome.cause)),
+            outcome.cause,
             { cleanup: cause.cleanup },
           ).retainSecondaryFailure(cleanup);
           bindArtifactFileCleanup(cause, cancelled);
@@ -390,9 +392,9 @@ export class ByteEntropyService {
       }
       if (cause instanceof ArtifactReaderFailure) {
         if (cause.reason === "cancelled") {
-          const cancelled = cancelledBy(
+          const cancelled = artifactFileCancellationError(
             OPERATION,
-            carriedReason(artifactFileCancellationCause(cause)),
+            cause,
             completion === undefined
               ? {}
               : {

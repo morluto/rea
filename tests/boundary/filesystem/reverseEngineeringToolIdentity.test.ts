@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import type { Stats } from "node:fs";
 import {
   access,
   chmod,

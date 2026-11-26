@@ -105,7 +105,7 @@ const MAX_OID_ARC_BYTES = 32;
 
 // One PKCS#7 payload shares this ceiling. Real issuer and subject names are
 // far smaller; the cap stops one wide string from occupying the file budget.
-const MAX_DECODED_NAME_BYTES = 65_536;
+export const MAX_DECODED_NAME_BYTES = 65_536;
 
 interface DecodedNameBudget {
   remaining: number;
@@ -317,6 +317,8 @@ const decodeName = (
 ): {
   readonly text: string;
   readonly attributes: readonly Attribute[];
+  readonly start: number;
+  readonly end: number;
 } => {
   const attributes: Attribute[] = [];
   for (const [rdnIndex, rdn] of sequence(node, "Name").entries()) {
@@ -361,7 +363,12 @@ const decodeName = (
     openAttributes.push(`${key}=${attribute.value}`);
   }
   finishRdn();
-  return { text: renderedRdns.join(", "), attributes };
+  return {
+    text: renderedRdns.join(", "),
+    attributes,
+    start: node.start,
+    end: node.end,
+  };
 };
 
 // RFC 5280 4.1.2.5 and X.690 11.7-11.8: UTC with seconds, a final "Z", and

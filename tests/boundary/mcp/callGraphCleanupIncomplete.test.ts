@@ -19,6 +19,7 @@ import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { cleanupStoppedTraversal } from "../../../src/application/CallRelationshipTraversal.js";
+import { createFixtureProviderIdentity } from "../../fixtures/analysisExecution.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -31,11 +32,7 @@ import {
 
 afterEach(closeEnhancedToolResources);
 
-const provider = {
-  id: "fixture",
-  name: "Fixture analysis provider",
-  version: "1",
-} as const;
+const provider = createFixtureProviderIdentity();
 const directions = [
   ["forward", "procedure_callees"],
   ["backward", "procedure_callers"],

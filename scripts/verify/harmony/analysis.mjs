@@ -17,6 +17,10 @@ import {
   VerifierFixture,
   withVerifierFixture,
 } from "../../lib/verifier-fixture.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "../../lib/complete-evidence.mjs";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const hap = process.env.REA_HARMONY_TEST_HAP;
@@ -42,7 +46,15 @@ const workspace = workspaceFixture.path;
 await withVerifierFixture(workspaceFixture, async () => {
   const inspectResponse = await execute(
     process.execPath,
-    [entrypoint, "inspect-artifact", path, "--format", "json"],
+    [
+      entrypoint,
+      ...(await completeEvidenceCliArguments([
+        "inspect-artifact",
+        path,
+        "--format",
+        "json",
+      ])),
+    ],
     { cwd: repository, timeout: 150_000, maxBuffer: 64 * 1024 * 1024 },
   );
   const inspection = parseEvidence(JSON.parse(inspectResponse.stdout));
@@ -148,10 +160,12 @@ await withVerifierFixture(workspaceFixture, async () => {
   transport.stderr?.on("data", (chunk) => {
     stderr += chunk.toString();
   });
-  const client = new Client({
-    name: "rea-real-harmony-verifier",
-    version: "1",
-  });
+  const client = completeEvidenceClient(
+    new Client({
+      name: "rea-real-harmony-verifier",
+      version: "1",
+    }),
+  );
   try {
     await client.connect(transport, { timeout: 30_000 });
     await client.listTools();
@@ -170,7 +184,7 @@ await withVerifierFixture(workspaceFixture, async () => {
     assert.equal(status.structuredContent?.result?.open, true);
     assert.equal(status.structuredContent?.result?.format, "hap");
     const inspected = await client.callTool(
-      { name: "inspect_artifact", arguments: {} },
+      { name: "inspect_artifact", arguments: { detail: "complete" } },
       { timeout: 150_000 },
     );
     assert.notEqual(inspected.structuredContent, undefined);

@@ -7,7 +7,7 @@ import {
   type ElfHashWordReader,
 } from "../elfHashSymbolCount.js";
 import {
-  MAX_NATIVE_EXPORT_ROWS,
+  DEFAULT_NATIVE_EXPORT_ROWS,
   type NativeExportIssue,
 } from "./nativeExports.js";
 import { err, ok, type Result } from "../result.js";
@@ -16,6 +16,7 @@ import {
   BinaryReader,
   BinaryResourceFailure,
   createFileMappingIndex,
+  DEFAULT_NATIVE_STRUCTURE_BYTES,
   requireBinaryTableBudget,
   type FileMappingIndex,
 } from "../binaryContainer.js";
@@ -74,21 +75,50 @@ const exact = (value: bigint, label: string): number => {
   return Number(value);
 };
 
-const overBudget = (label: string, count: number): never => {
+/** The caller's export inventory and structural table budgets. */
+export interface ElfExportTableLimits {
+  /** `max_entries`: rows and declared symbol counts. */
+  readonly rows: number;
+  /** `max_structure_bytes`: one dynamic or symbol table read. */
+  readonly structureBytes: number;
+}
+
+/** The budgets an export reader uses when its caller selected none. */
+export const DEFAULT_ELF_EXPORT_TABLE_LIMITS: ElfExportTableLimits = {
+  rows: DEFAULT_NATIVE_EXPORT_ROWS,
+  structureBytes: DEFAULT_NATIVE_STRUCTURE_BYTES,
+};
+
+const overBudget = (
+  label: string,
+  count: number,
+  rows: number,
+  lowerBound?: true,
+): never => {
   throw new BinaryResourceFailure(
     "structure",
-    MAX_NATIVE_EXPORT_ROWS,
-    `${label} declares ${String(count)} entries, above the ${String(MAX_NATIVE_EXPORT_ROWS)}-entry export inventory allowance`,
+    rows,
+    lowerBound === true
+      ? `${label} exceeds max_entries (${String(rows)})`
+      : `${label} declares ${String(count)} entries, above max_entries (${String(rows)})`,
     "rows",
+    "entries",
+    lowerBound === true ? undefined : count,
   );
 };
 
 const admitCount = (
   result: Result<number | null, ElfHashCountFailure>,
+  rows: number,
 ): number | null => {
   if (result.ok) return result.value;
   if (result.error.kind === "malformed") return malformed(result.error.message);
-  return overBudget(result.error.label, result.error.count);
+  return overBudget(
+    result.error.label,
+    result.error.count,
+    rows,
+    result.error.lowerBound,
+  );
 };
 
 type ElfExportDirectory = ReturnType<typeof readElfDirectoryFromBuffer>;
@@ -98,6 +128,7 @@ type DynamicRead = { readonly offset: number; readonly length: number };
 const dynamicProgramRange = (
   fileSize: number,
   directory: ElfExportDirectory,
+  limits: ElfExportTableLimits,
 ): DynamicRead | Unavailable => {
   const programs = directory.programs.filter(
     (program): program is Extract<ElfProgramDeclaration, { type: 2 }> =>
@@ -117,7 +148,7 @@ const dynamicProgramRange = (
   if (program.size % BigInt(width) !== 0n)
     malformed("ELF PT_DYNAMIC size is not a whole number of entries");
   const count = exact(program.size / BigInt(width), "PT_DYNAMIC count");
-  if (count > MAX_NATIVE_EXPORT_ROWS) overBudget("ELF dynamic table", count);
+  if (count > limits.rows) overBudget("ELF dynamic table", count, limits.rows);
   return {
     offset: requireRangeWithin(
       fileSize,
@@ -125,6 +156,7 @@ const dynamicProgramRange = (
       count,
       width,
       "ELF dynamic table",
+      limits.structureBytes,
     ),
     length: count * width,
   };
@@ -166,6 +198,7 @@ function* readDynamicSymbolCount(
   mapping: FileMappingIndex,
   entries: ReadonlyMap<bigint, bigint>,
   bits: 32 | 64,
+  rows: number,
 ): Generator<void, number | null> {
   const hashWords =
     (address: bigint): ElfHashWordReader =>
@@ -185,9 +218,7 @@ function* readDynamicSymbolCount(
   const classicCount =
     hash === undefined
       ? null
-      : admitCount(
-          readElfHashSymbolCount(hashWords(hash), MAX_NATIVE_EXPORT_ROWS),
-        );
+      : admitCount(readElfHashSymbolCount(hashWords(hash), rows), rows);
   const gnuCount =
     gnu === undefined
       ? null
@@ -195,8 +226,9 @@ function* readDynamicSymbolCount(
           yield* readElfGnuHashSymbolCount(
             hashWords(gnu),
             bits === 64 ? 8 : 4,
-            MAX_NATIVE_EXPORT_ROWS,
+            rows,
           ),
+          rows,
         );
   return combineSymbolCounts(classicCount, gnuCount);
 }
@@ -247,6 +279,7 @@ function* readAdmittedDynamicTables(
   entries: ReadonlyMap<bigint, bigint>,
   { symbols, strings, stringBytes, width }: DynamicSymbolDeclarations,
   count: number | null,
+  structureBytes: number,
 ): Generator<DynamicRead, ElfExportTableSelection, Buffer> {
   if (count === null)
     return {
@@ -264,6 +297,7 @@ function* readAdmittedDynamicTables(
     count,
     width,
     "ELF dynamic symbols",
+    structureBytes,
   );
   const tableBytes = yield { offset: table, length: count * width };
   const nameBytes = exact(stringBytes, "DT_STRSZ");
@@ -274,7 +308,7 @@ function* readAdmittedDynamicTables(
     nameBytes,
     1,
     "ELF dynamic strings",
-    false,
+    null,
   );
   const names = yield { offset: namesAt, length: nameBytes };
   const issues: NativeExportIssue[] = [];
@@ -290,6 +324,7 @@ function* readAdmittedDynamicTables(
         count,
         2,
         "ELF symbol versions",
+        structureBytes,
       );
       versions = offset;
     } catch (cause) {
@@ -321,8 +356,9 @@ function* readAdmittedDynamicTables(
 export function* readElfDynamicExportTables(
   bytes: Buffer,
   directory: ElfExportDirectory,
+  limits: ElfExportTableLimits = DEFAULT_ELF_EXPORT_TABLE_LIMITS,
 ): Generator<void, ElfExportTableSelection> {
-  const range = dynamicProgramRange(bytes.length, directory);
+  const range = dynamicProgramRange(bytes.length, directory, limits);
   if ("state" in range) return range;
   const entries = yield* readDynamicEntries(
     bytes.subarray(range.offset, range.offset + range.length),
@@ -337,6 +373,7 @@ export function* readElfDynamicExportTables(
     mapping,
     entries,
     directory.bits,
+    limits.rows,
   );
   const steps = readAdmittedDynamicTables(
     bytes.length,
@@ -344,6 +381,7 @@ export function* readElfDynamicExportTables(
     entries,
     declarations,
     count,
+    limits.structureBytes,
   );
   let step = steps.next();
   while (!step.done) {
@@ -359,7 +397,8 @@ const requireRangeWithin = (
   count: number,
   width: number,
   label: string,
-  table = true,
+  /** `max_structure_bytes` for a table read; `null` for a string table. */
+  structureBytes: number | null,
 ): number => {
   const bytes = BigInt(count) * BigInt(width);
   if (offset < 0n || offset > BigInt(fileSize))
@@ -381,7 +420,8 @@ const requireRangeWithin = (
         offset: Number(offset),
       },
     );
-  if (table) requireBinaryTableBudget(bytes, label);
+  if (structureBytes !== null)
+    requireBinaryTableBudget(bytes, label, structureBytes);
   return Number(offset);
 };
 
@@ -391,8 +431,9 @@ export const readElfDynamicExportTablesFromReader = async (
   fileSize: number,
   directory: ReturnType<typeof readElfDirectoryFromBuffer>,
   pause: ZstandardFramePause,
+  limits: ElfExportTableLimits = DEFAULT_ELF_EXPORT_TABLE_LIMITS,
 ): Promise<ElfExportTableSelection> => {
-  const range = dynamicProgramRange(fileSize, directory);
+  const range = dynamicProgramRange(fileSize, directory, limits);
   if ("state" in range) return range;
   const entrySteps = readDynamicEntries(
     await readRange(range.offset, range.length),
@@ -433,7 +474,8 @@ export const readElfDynamicExportTablesFromReader = async (
       }
     };
     classicCount = admitCount(
-      readElfHashSymbolCount(readHashWord, MAX_NATIVE_EXPORT_ROWS),
+      readElfHashSymbolCount(readHashWord, limits.rows),
+      limits.rows,
     );
   }
   let gnuCount: number | null = null;
@@ -456,12 +498,12 @@ export const readElfDynamicExportTablesFromReader = async (
       const bloomWords = headerReader.u32(8);
       if (
         buckets > 0 &&
-        buckets <= MAX_NATIVE_EXPORT_ROWS &&
+        buckets <= limits.rows &&
         bloomWords > 0 &&
-        bloomWords <= MAX_NATIVE_EXPORT_ROWS
+        bloomWords <= limits.rows
       ) {
         tailStart = 16 + bloomWords * wordBytes;
-        const maxTail = (buckets + MAX_NATIVE_EXPORT_ROWS) * 4;
+        const maxTail = (buckets + limits.rows) * 4;
         // Probe how much of the tail is contiguously mapped without reading the bloom filter.
         const available = Math.min(
           maxTail,
@@ -496,17 +538,13 @@ export const readElfDynamicExportTablesFromReader = async (
         throw cause;
       }
     };
-    const walk = readElfGnuHashSymbolCount(
-      readGnuWord,
-      wordBytes,
-      MAX_NATIVE_EXPORT_ROWS,
-    );
+    const walk = readElfGnuHashSymbolCount(readGnuWord, wordBytes, limits.rows);
     let step = walk.next();
     while (!step.done) {
       await pause();
       step = walk.next();
     }
-    gnuCount = admitCount(step.value);
+    gnuCount = admitCount(step.value, limits.rows);
   }
   const count = combineSymbolCounts(classicCount, gnuCount);
   const steps = readAdmittedDynamicTables(
@@ -515,6 +553,7 @@ export const readElfDynamicExportTablesFromReader = async (
     entries,
     declarations,
     count,
+    limits.structureBytes,
   );
   let step = steps.next();
   while (!step.done) {

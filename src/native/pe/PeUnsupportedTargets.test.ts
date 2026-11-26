@@ -29,12 +29,15 @@ it.each(
       operation === "resources"
         ? new PeResourcesProvider()
         : new PeCertificatesProvider();
-    const input =
-      operation === "resources"
-        ? inspectPeResourcesInputSchema.parse({ path })
-        : inspectPeCertificatesInputSchema.parse({ path });
     try {
-      const result = await provider.inspect(input);
+      const result =
+        provider instanceof PeResourcesProvider
+          ? await provider.inspect(
+              inspectPeResourcesInputSchema.parse({ path }),
+            )
+          : await provider.inspect(
+              inspectPeCertificatesInputSchema.parse({ path }),
+            );
       if (result.ok) throw new Error("Expected unsupported target");
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: "unsupported_target",
