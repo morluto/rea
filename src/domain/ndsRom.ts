@@ -2,7 +2,8 @@ import { z } from "zod";
 
 import { byteToHex } from "../kernel/byteToHex.js";
 import { readUint16At, readUint32At } from "./binaryContainer.js";
-import { malformedInput, truncatedInput } from "./parseFailure.js";
+import { Budget } from "./budget.js";
+import { decodeLimit, malformedInput, truncatedInput } from "./parseFailure.js";
 import { isPortablePathSegment } from "./portablePathSegment.js";
 import { offset, uint16, uint32, uint8 } from "./formatMetadata/primitives.js";
 
@@ -47,6 +48,21 @@ export const NDS_MAX_FNT_BYTES =
   NDS_MAX_FILES * (1 + MAX_NAME_BYTES) +
   NDS_MAX_DIRECTORIES * (1 + MAX_NAME_BYTES + 2) +
   NDS_MAX_DIRECTORIES;
+/** Maximum FNT directory nesting depth admitted from the root. */
+export const NDS_MAX_DIRECTORY_DEPTH = 64;
+/**
+ * Maximum aggregate UTF-8 bytes of expanded member paths retained by
+ * {@link parseNdsLayout}, charged before allocating or retaining each path.
+ */
+export const NDS_MAX_PATH_BYTES = 16 * 1024 * 1024;
+export const NDS_DIRECTORY_DEPTH_LIMIT = "nds.directory_depth";
+export const NDS_PATH_BYTES_LIMIT = "nds.path_bytes";
+
+/** Bounds on expanded FNT paths retained during {@link parseNdsLayout}. */
+export interface NdsLayoutLimits {
+  readonly maxDirectoryDepth?: number;
+  readonly maxPathBytes?: number;
+}
 
 /** CRC-16/MODBUS (reflected polynomial 0xA001, initial 0xFFFF). */
 export const ndsCrc16 = (bytes: Uint8Array): number => {
@@ -378,7 +394,26 @@ export const parseNdsLayout = (
   tables: NdsTables,
   fileSize: number,
   tableLimitations: readonly string[] = [],
+  limits?: NdsLayoutLimits,
 ): NdsLayout => {
+  const maxDirectoryDepth =
+    limits?.maxDirectoryDepth ?? NDS_MAX_DIRECTORY_DEPTH;
+  const maxPathBytes = limits?.maxPathBytes ?? NDS_MAX_PATH_BYTES;
+  const pathBudget = new Budget(maxPathBytes);
+  const chargePath = (pathBytes: number): void => {
+    pathBudget.charge(pathBytes, () =>
+      decodeLimit(
+        NDS_FORMAT,
+        `DS ROM expanded member paths exceed the ${String(maxPathBytes)}-byte allowance.`,
+        {
+          name: NDS_PATH_BYTES_LIMIT,
+          maximum: maxPathBytes,
+          required: pathBudget.used + pathBytes,
+        },
+        { field: "fnt" },
+      ),
+    );
+  };
   const limitations = [...header.limitations, ...tableLimitations];
   // A failed header checksum, or a table left unread, is already a limitation.
   let complete = limitations.length === 0;
@@ -406,8 +441,10 @@ export const parseNdsLayout = (
       );
       continue;
     }
+    const path = `${role}.bin`;
+    chargePath(path.length);
     regions.push({
-      path: `${role}.bin`,
+      path,
       offset: binary.rom_offset,
       length: binary.size,
       metadata: {
@@ -518,13 +555,11 @@ export const parseNdsLayout = (
           "overlay entry",
           `DS ${cpu.toUpperCase()} overlay ${String(overlay.overlay_id)} names file ${String(fileId)}, which another entry already claimed; it is not listed.`,
         );
-      else
-        fileRegion(
-          fileId,
-          `overlays/${cpu}/overlay_${String(overlay.overlay_id).padStart(4, "0")}.bin`,
-          `${cpu}-overlay`,
-          overlay,
-        );
+      else {
+        const overlayPath = `overlays/${cpu}/overlay_${String(overlay.overlay_id).padStart(4, "0")}.bin`;
+        chargePath(overlayPath.length);
+        fileRegion(fileId, overlayPath, `${cpu}-overlay`, overlay);
+      }
     }
   }
 
@@ -559,12 +594,12 @@ export const parseNdsLayout = (
         NDS_MAX_DIRECTORIES,
       );
       const visited = new Set<number>();
-      const pending: { id: number; path: string }[] = [
-        { id: FIRST_DIRECTORY_ID, path: "" },
+      const pending: { id: number; path: string; depth: number }[] = [
+        { id: FIRST_DIRECTORY_ID, path: "", depth: 0 },
       ];
       let scanned = 0;
       walk: while (pending.length > 0) {
-        const { id, path } = pending.pop()!;
+        const { id, path, depth } = pending.pop()!;
         const index = id - FIRST_DIRECTORY_ID;
         if (visited.has(id)) {
           note(
@@ -632,7 +667,8 @@ export const parseNdsLayout = (
                 : `DS FNT name ${JSON.stringify(name)} in directory ${String(id)} is not a portable path segment; it is listed by file ID.`,
             );
           names.add(name);
-          const child = path === "" ? name : `${path}/${name}`;
+          const childBytes =
+            path === "" ? name.length : path.length + 1 + name.length;
           if (isDirectory) {
             const childId = readUint16At(fnt, at + 1 + length, true);
             if (childId < FIRST_DIRECTORY_ID)
@@ -640,8 +676,37 @@ export const parseNdsLayout = (
                 "FNT subdirectory",
                 `DS FNT subdirectory ${JSON.stringify(name)} names ID ${String(childId)}, which is not a directory ID; it is not listed.`,
               );
-            else if (safe) pending.push({ id: childId, path: child });
-            else
+            else if (safe) {
+              const childDepth = depth + 1;
+              if (childDepth > maxDirectoryDepth)
+                throw decodeLimit(
+                  NDS_FORMAT,
+                  `DS FNT directory depth exceeds the ${String(maxDirectoryDepth)}-level allowance.`,
+                  {
+                    name: NDS_DIRECTORY_DEPTH_LIMIT,
+                    maximum: maxDirectoryDepth,
+                    required: childDepth,
+                  },
+                  { field: "fnt" },
+                );
+              // Bound a single directory prefix before allocating it.
+              if (5 + childBytes > maxPathBytes)
+                throw decodeLimit(
+                  NDS_FORMAT,
+                  `DS ROM expanded member paths exceed the ${String(maxPathBytes)}-byte allowance.`,
+                  {
+                    name: NDS_PATH_BYTES_LIMIT,
+                    maximum: maxPathBytes,
+                    required: 5 + childBytes,
+                  },
+                  { field: "fnt" },
+                );
+              pending.push({
+                id: childId,
+                path: path === "" ? name : `${path}/${name}`,
+                depth: childDepth,
+              });
+            } else
               note(
                 "FNT subdirectory",
                 `DS FNT subdirectory ${String(childId)} has no usable name; its files are listed by file ID.`,
@@ -650,14 +715,19 @@ export const parseNdsLayout = (
             if (fileId >= NDS_MAX_FILES || fileId >= fat.length)
               note(
                 "FNT file",
-                `DS FNT file ${JSON.stringify(child)} is file ${String(fileId)}, which has no FAT entry; it is not listed.`,
+                `DS FNT file ${JSON.stringify(path === "" ? name : `${path}/${name}`)} is file ${String(fileId)}, which has no FAT entry; it is not listed.`,
               );
             else if (safe && claimed.has(fileId))
               note(
                 "FNT file",
-                `DS FNT file ${JSON.stringify(child)} is file ${String(fileId)}, which another entry already claimed; the name is not listed.`,
+                `DS FNT file ${JSON.stringify(path === "" ? name : `${path}/${name}`)} is file ${String(fileId)}, which another entry already claimed; the name is not listed.`,
               );
-            else if (safe) fileRegion(fileId, `data/${child}`, "file", null);
+            else if (safe && fat[fileId] !== undefined) {
+              // Safe FNT names are printable ASCII, so string length equals UTF-8 byte length.
+              chargePath(5 + childBytes);
+              const child = path === "" ? name : `${path}/${name}`;
+              fileRegion(fileId, `data/${child}`, "file", null);
+            }
             fileId += 1;
           }
           at = end;
@@ -668,8 +738,11 @@ export const parseNdsLayout = (
 
   // Every FAT file not reached by name or overlay stays visible by ID.
   for (let id = 0; id < fat.length; id++)
-    if (!claimed.has(id) && fat[id] !== undefined)
-      fileRegion(id, `fat/${String(id).padStart(5, "0")}.bin`, "file", null);
+    if (!claimed.has(id) && fat[id] !== undefined) {
+      const fatPath = `fat/${String(id).padStart(5, "0")}.bin`;
+      chargePath(fatPath.length);
+      fileRegion(id, fatPath, "file", null);
+    }
 
   for (const [kind, count] of repeated)
     if (count > NDS_LIMITATION_EXAMPLES)

@@ -8,13 +8,17 @@ import {
 import { recognizeArtifactFormat } from "./artifactFormatRecognition.js";
 import {
   hasNdsHeader,
+  NDS_DIRECTORY_DEPTH_LIMIT,
   NDS_LIMITATION_EXAMPLES,
+  NDS_MAX_DIRECTORY_DEPTH,
+  NDS_PATH_BYTES_LIMIT,
   ndsCrc16,
   ndsTableReadRange,
   parseNdsHeader,
   parseNdsLayout,
   type NdsTables,
 } from "./ndsRom.js";
+import { ParseFailureError } from "./parseFailure.js";
 
 const tablesOf = (rom: Buffer): NdsTables => {
   const header = parseNdsHeader(rom).metadata;
@@ -510,5 +514,140 @@ describe("DS ROM layout", () => {
     );
     // The scan stops after about one table's worth of bytes, not 63 rescans.
     expect(layout.metadata.directory_count).toBeLessThan(directories / 2);
+  });
+
+  it("refuses FNT directory chains deeper than the directory-depth allowance", () => {
+    const rom = ndsRomFixture();
+    // Root (0xF000) -> d0 -> d1 -> ... -> d64 (65 nested levels > 64).
+    const depth = NDS_MAX_DIRECTORY_DEPTH + 1;
+    const directoryCount = depth + 1;
+    const mainBytes = directoryCount * 8;
+    const subtables: Buffer[] = [];
+    const subtableOffsets: number[] = [];
+    let cursor = mainBytes;
+    for (let level = 0; level < depth; level++) {
+      subtableOffsets.push(cursor);
+      const name = Buffer.from(`d${String(level).padStart(2, "0")}`, "latin1");
+      const sub = Buffer.alloc(1 + name.length + 2 + 1);
+      sub[0] = 0x80 | name.length;
+      name.copy(sub, 1);
+      sub.writeUInt16LE(0xf000 + level + 1, 1 + name.length);
+      sub[sub.length - 1] = 0;
+      subtables.push(sub);
+      cursor += sub.length;
+    }
+    subtableOffsets.push(cursor);
+    subtables.push(Buffer.from([0]));
+    cursor += 1;
+
+    const fnt = Buffer.alloc(cursor);
+    for (let index = 0; index < directoryCount; index++) {
+      fnt.writeUInt32LE(subtableOffsets[index]!, index * 8);
+      fnt.writeUInt16LE(0, index * 8 + 4);
+      fnt.writeUInt16LE(
+        index === 0 ? directoryCount : 0xf000 + index - 1,
+        index * 8 + 6,
+      );
+    }
+    Buffer.concat(subtables).copy(fnt, mainBytes);
+
+    expect(() =>
+      parseNdsLayout(
+        parseNdsHeader(rom),
+        { ...tablesOf(rom), fnt },
+        rom.length,
+      ),
+    ).toThrow(ParseFailureError);
+    try {
+      parseNdsLayout(
+        parseNdsHeader(rom),
+        { ...tablesOf(rom), fnt },
+        rom.length,
+      );
+    } catch (cause) {
+      expect(cause).toBeInstanceOf(ParseFailureError);
+      expect((cause as ParseFailureError).failure).toMatchObject({
+        kind: "limit",
+        format: "nds",
+        limit: {
+          name: NDS_DIRECTORY_DEPTH_LIMIT,
+          maximum: NDS_MAX_DIRECTORY_DEPTH,
+          required: depth,
+        },
+      });
+    }
+  });
+
+  it("refuses expanded FNT member paths above the path-byte allowance before retaining them", () => {
+    const rom = ndsRomFixture();
+    // Build a 10-level chain of 100-byte directory names (~1,010-byte prefix)
+    // holding 20 files (~20 KiB of expanded paths) against a 4 KiB budget.
+    const levels = 10;
+    const files = 20;
+    const directoryCount = levels + 1;
+    const mainBytes = directoryCount * 8;
+    const dirName = "d".repeat(100);
+    const subtables: Buffer[] = [];
+    const subtableOffsets: number[] = [];
+    let cursor = mainBytes;
+    for (let level = 0; level < levels; level++) {
+      subtableOffsets.push(cursor);
+      const sub = Buffer.alloc(1 + dirName.length + 2 + 1);
+      sub[0] = 0x80 | dirName.length;
+      sub.write(dirName, 1, "latin1");
+      sub.writeUInt16LE(0xf000 + level + 1, 1 + dirName.length);
+      sub[sub.length - 1] = 0;
+      subtables.push(sub);
+      cursor += sub.length;
+    }
+    subtableOffsets.push(cursor);
+    const leafParts: Buffer[] = [];
+    for (let index = 0; index < files; index++) {
+      const name = `f${String(index).padStart(2, "0")}.bin`;
+      leafParts.push(Buffer.from([name.length]), Buffer.from(name, "latin1"));
+    }
+    leafParts.push(Buffer.from([0]));
+    const leaf = Buffer.concat(leafParts);
+    subtables.push(leaf);
+    cursor += leaf.length;
+
+    const fnt = Buffer.alloc(cursor);
+    for (let index = 0; index < directoryCount; index++) {
+      fnt.writeUInt32LE(subtableOffsets[index]!, index * 8);
+      fnt.writeUInt16LE(0, index * 8 + 4);
+      fnt.writeUInt16LE(
+        index === 0 ? directoryCount : 0xf000 + index - 1,
+        index * 8 + 6,
+      );
+    }
+    Buffer.concat(subtables).copy(fnt, mainBytes);
+
+    const fat = Buffer.alloc(files * 8);
+    for (let id = 0; id < files; id++) {
+      fat.writeUInt32LE(NDS_FIXTURE.files, id * 8);
+      fat.writeUInt32LE(NDS_FIXTURE.files + 8, id * 8 + 4);
+    }
+
+    let caught: unknown;
+    try {
+      parseNdsLayout(
+        parseNdsHeader(rom),
+        { fnt, fat, arm9Overlays: undefined, arm7Overlays: undefined },
+        rom.length,
+        [],
+        { maxPathBytes: 4096 },
+      );
+    } catch (cause) {
+      caught = cause;
+    }
+    expect(caught).toBeInstanceOf(ParseFailureError);
+    expect((caught as ParseFailureError).failure).toMatchObject({
+      kind: "limit",
+      format: "nds",
+      limit: {
+        name: NDS_PATH_BYTES_LIMIT,
+        maximum: 4096,
+      },
+    });
   });
 });

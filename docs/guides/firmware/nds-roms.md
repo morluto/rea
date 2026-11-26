@@ -85,8 +85,12 @@ Repeated limitations of one kind, such as bad FAT entries or unsafe names,
 are itemized up to eight times; one more line counts the rest.
 
 The file and directory ID ranges (61,440 files, 4,096 directories) bound the
-FAT, FNT and overlay table sizes REA reads. These ceilings come from the
-format's 16-bit IDs and have no runtime setting.
+FAT, FNT and overlay table sizes REA reads. Expanded FNT paths are further
+bounded to 64 directory levels and 16 MiB of aggregate member path text
+before paths are allocated or retained. Aggregate readable member bytes
+(including distinct FAT entries that alias the same ROM range) are admitted
+against `artifact_limits.expanded_bytes` before member bytes are hashed or
+extracted.
 
 A file shorter than the `0x160`-byte header, or one with an unknown unit
 code, is not detected as `nds`, so `inspect-artifact` reports an unsupported

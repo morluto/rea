@@ -17,12 +17,14 @@ import {
   type ArtifactEntry,
   type ArtifactReaderTraversal,
 } from "../resources/index.js";
+import { resolveArtifactReaderLimits } from "../domain/artifactReaderLimits.js";
 import {
   NDS_FIXTURE,
   NDS_FIXTURE_FILES,
   ndsRomFixture,
   resealNdsHeader,
 } from "../domain/ndsRom.fixture.js";
+import { NDS_MAX_DIRECTORY_DEPTH } from "../domain/ndsRom.js";
 import { NdsRomArtifactReader } from "./NdsRomArtifactReader.js";
 
 const read = async (bytes: Buffer) => {
@@ -239,4 +241,101 @@ describe("Nintendo DS ROM boundaries", () => {
       }
     },
   );
+
+  it("charges repeated FAT ranges against artifact_limits.expanded_bytes before reading members", async () => {
+    const base = ndsRomFixture({ overlays: false });
+    // Append a FAT with 20 distinct file IDs all aliasing the 256-byte ARM9
+    // range (20 * 256 = 5,120 bytes, plus 256 + 128 = 384 bytes for ARM9/ARM7
+    // = 5,504 bytes total) and no FNT so every alias is listed under fat/.
+    const aliasCount = 20;
+    const fatOffset = base.length;
+    const fat = Buffer.alloc(aliasCount * 8);
+    for (let id = 0; id < aliasCount; id++) {
+      fat.writeUInt32LE(NDS_FIXTURE.arm9.offset, id * 8);
+      fat.writeUInt32LE(
+        NDS_FIXTURE.arm9.offset + NDS_FIXTURE.arm9.size,
+        id * 8 + 4,
+      );
+    }
+    const rom = Buffer.concat([base, fat]);
+    rom.writeUInt32LE(0, 0x40);
+    rom.writeUInt32LE(0, 0x44);
+    rom.writeUInt32LE(fatOffset, 0x48);
+    rom.writeUInt32LE(fat.length, 0x4c);
+    resealNdsHeader(rom);
+
+    const path = await createTestTempFile(
+      "rea-nds-expanded-bytes-",
+      "game.nds",
+      rom,
+    );
+    const expectedTotal =
+      NDS_FIXTURE.arm9.size +
+      NDS_FIXTURE.arm7.size +
+      aliasCount * NDS_FIXTURE.arm9.size;
+    await expect(
+      scanCanonicalArtifactInventory(path, {
+        readerLimits: resolveArtifactReaderLimits({ expanded_bytes: 1024 }),
+      }),
+    ).rejects.toMatchObject({
+      reason: "limit",
+      boundary: "memory",
+      readerLimit: {
+        parameter: "artifact_limits.expanded_bytes",
+        effective_value: 1024,
+        required_value: expectedTotal,
+      },
+    });
+  });
+
+  it("refuses FNT trees deeper than the directory-depth allowance as a fixed reader limit", async () => {
+    const base = ndsRomFixture({ overlays: false });
+    const depth = NDS_MAX_DIRECTORY_DEPTH + 1;
+    const directoryCount = depth + 1;
+    const mainBytes = directoryCount * 8;
+    const subtables: Buffer[] = [];
+    const subtableOffsets: number[] = [];
+    let cursor = mainBytes;
+    for (let level = 0; level < depth; level++) {
+      subtableOffsets.push(cursor);
+      const name = Buffer.from(`d${String(level).padStart(2, "0")}`, "latin1");
+      const sub = Buffer.alloc(1 + name.length + 2 + 1);
+      sub[0] = 0x80 | name.length;
+      name.copy(sub, 1);
+      sub.writeUInt16LE(0xf000 + level + 1, 1 + name.length);
+      sub[sub.length - 1] = 0;
+      subtables.push(sub);
+      cursor += sub.length;
+    }
+    subtableOffsets.push(cursor);
+    subtables.push(Buffer.from([0]));
+    cursor += 1;
+
+    const fnt = Buffer.alloc(cursor);
+    for (let index = 0; index < directoryCount; index++) {
+      fnt.writeUInt32LE(subtableOffsets[index]!, index * 8);
+      fnt.writeUInt16LE(0, index * 8 + 4);
+      fnt.writeUInt16LE(
+        index === 0 ? directoryCount : 0xf000 + index - 1,
+        index * 8 + 6,
+      );
+    }
+    Buffer.concat(subtables).copy(fnt, mainBytes);
+
+    const fntOffset = base.length;
+    const rom = Buffer.concat([base, fnt]);
+    rom.writeUInt32LE(fntOffset, 0x40);
+    rom.writeUInt32LE(fnt.length, 0x44);
+    resealNdsHeader(rom);
+
+    await expect(read(rom)).rejects.toMatchObject({
+      reason: "limit",
+      boundary: "capacity",
+      fixedAllowance: {
+        name: "The Nintendo DS ROM directory depth allowance",
+        limit: NDS_MAX_DIRECTORY_DEPTH,
+        unit: "levels",
+      },
+    });
+  });
 });

@@ -413,7 +413,11 @@ const NON_ZIP_FORMATS = {
     readerLimitation:
       "Nintendo DS ROM inventory reports cartridge header facts and lists the ARM9 and ARM7 binaries, overlay files and NitroROM filesystem files as stored byte ranges. Secure-area encryption, compression and NitroARC archives inside files are not decoded.",
     createReader: (path, options) =>
-      new NdsRomArtifactReader(path, sourceOf(options)),
+      new NdsRomArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+      ),
   }),
   dds: gpuAsset("dds"),
   glb: gpuAsset("glb"),

@@ -18,7 +18,16 @@ import type {
   ArtifactEntry,
   ArtifactReaderTraversal,
 } from "../resources/index.js";
-import { NDS_FIXTURE_FILES, ndsRomFixture } from "../domain/ndsRom.fixture.js";
+import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
+import { compareArtifacts } from "../domain/artifactComparison.js";
+import { artifactInventoryResultSchema } from "../domain/artifactGraph.js";
+import { createEvidence } from "../domain/evidence.js";
+import {
+  NDS_FIXTURE,
+  NDS_FIXTURE_FILES,
+  ndsRomFixture,
+  resealNdsHeader,
+} from "../domain/ndsRom.fixture.js";
 import { NdsRomArtifactReader } from "./NdsRomArtifactReader.js";
 
 const write = (bytes: Buffer, name = "game.nds"): Promise<string> =>
@@ -137,5 +146,88 @@ describe("Nintendo DS ROM reader", () => {
         NDS_FIXTURE_FILES.readme,
       ),
     ).toBe(true);
+  });
+
+  it("compares ARM9/overlay load declarations while ignoring layout-only FAT file IDs", async () => {
+    const leftRom = ndsRomFixture();
+    const rightRom = ndsRomFixture();
+    // Change ARM9 entry_address and overlay RAM address without changing member bytes.
+    rightRom.writeUInt32LE(NDS_FIXTURE.arm9.entry + 0x10, 0x24);
+    rightRom.writeUInt32LE(0x0210_1000, NDS_FIXTURE.arm9OverlayTable + 4);
+    resealNdsHeader(rightRom);
+
+    // Swap FAT IDs 1 (readme.txt) and 2 (data/a.bin) in a third ROM while keeping
+    // the same logical paths and bytes.
+    const repackedRom = ndsRomFixture();
+    const fat1Start = repackedRom.readUInt32LE(NDS_FIXTURE.fat + 8);
+    const fat1End = repackedRom.readUInt32LE(NDS_FIXTURE.fat + 12);
+    const fat2Start = repackedRom.readUInt32LE(NDS_FIXTURE.fat + 16);
+    const fat2End = repackedRom.readUInt32LE(NDS_FIXTURE.fat + 20);
+    repackedRom.writeUInt32LE(fat2Start, NDS_FIXTURE.fat + 8);
+    repackedRom.writeUInt32LE(fat2End, NDS_FIXTURE.fat + 12);
+    repackedRom.writeUInt32LE(fat1Start, NDS_FIXTURE.fat + 16);
+    repackedRom.writeUInt32LE(fat1End, NDS_FIXTURE.fat + 20);
+    // Root first-file ID -> 2 (readme.txt), data subdir first-file ID -> 1 (data/a.bin).
+    repackedRom.writeUInt16LE(2, NDS_FIXTURE.fnt + 4);
+    repackedRom.writeUInt16LE(1, NDS_FIXTURE.fnt + 12);
+
+    const evidenceFor = async (rom: Buffer, name: string) => {
+      const path = await write(rom, name);
+      const inventory = artifactInventoryResultSchema.parse(
+        await scanCanonicalArtifactInventory(path),
+      );
+      return createEvidence(
+        {
+          path: name,
+          sha256: inventory.manifest.root_sha256,
+          format: "nds",
+        },
+        ARTIFACT_COMPARISON_EXAMPLE.left.provider,
+        {
+          operation: "inventory_artifact",
+          parameters: {},
+          result: inventory,
+          confidence: "observed",
+          authority: "shipped-artifact",
+        },
+      );
+    };
+
+    const [leftGraph, rightGraph, repackedGraph] = await Promise.all([
+      evidenceFor(leftRom, "left.nds"),
+      evidenceFor(rightRom, "right.nds"),
+      evidenceFor(repackedRom, "repacked.nds"),
+    ]);
+
+    const addressDiff = compareArtifacts(leftGraph, rightGraph);
+    expect(
+      addressDiff.changes.find((change) => change.logical_path === "arm9.bin"),
+    ).toMatchObject({
+      classification: "changed",
+      dimensions: ["metadata"],
+    });
+    expect(
+      addressDiff.changes.find(
+        (change) => change.logical_path === "overlays/arm9/overlay_0000.bin",
+      ),
+    ).toMatchObject({
+      classification: "changed",
+      dimensions: ["metadata"],
+    });
+    expect(
+      addressDiff.changes.find((change) => change.logical_path === "arm7.bin"),
+    ).toBeUndefined();
+
+    const repackedDiff = compareArtifacts(leftGraph, repackedGraph);
+    expect(
+      repackedDiff.changes.find(
+        (change) => change.logical_path === "data/readme.txt",
+      ),
+    ).toBeUndefined();
+    expect(
+      repackedDiff.changes.find(
+        (change) => change.logical_path === "data/data/a.bin",
+      ),
+    ).toBeUndefined();
   });
 });

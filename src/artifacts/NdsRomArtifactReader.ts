@@ -1,16 +1,24 @@
+import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import { ParseFailureError } from "../domain/parseFailure.js";
 import {
+  NDS_DIRECTORY_DEPTH_LIMIT,
   NDS_HEADER_BYTES,
   NDS_MAX_FAT_BYTES,
   NDS_MAX_FNT_BYTES,
   NDS_MAX_OVERLAY_TABLE_BYTES,
+  NDS_PATH_BYTES_LIMIT,
   ndsTableReadRange,
   parseNdsHeader,
   parseNdsLayout,
+  type NdsLayoutLimits,
   type NdsMetadata,
 } from "../domain/ndsRom.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import { artifactParseFailure } from "../resources/index.js";
+import {
+  artifactFixedLimitFailure,
+  artifactParseFailure,
+  artifactReaderLimitFailure,
+} from "../resources/index.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import {
   PositionalArtifactReader,
@@ -26,7 +34,12 @@ import {
 export class NdsRomArtifactReader extends PositionalArtifactReader<NdsMetadata> {
   override readonly format = "nds" as const;
 
-  constructor(path: string, admitted?: StableRegularFileDescriptor) {
+  constructor(
+    path: string,
+    admitted?: StableRegularFileDescriptor,
+    private readonly expandedBytes?: number,
+    private readonly layoutLimits?: NdsLayoutLimits,
+  ) {
     super(path, "Nintendo DS ROM", admitted);
   }
 
@@ -80,12 +93,61 @@ export class NdsRomArtifactReader extends PositionalArtifactReader<NdsMetadata> 
         ),
       };
       this.assertOpen(signal);
-      layout = parseNdsLayout(header, tables, initial.size, tableLimitations);
+      layout = parseNdsLayout(
+        header,
+        tables,
+        initial.size,
+        tableLimitations,
+        this.layoutLimits,
+      );
     } catch (cause: unknown) {
-      if (cause instanceof ParseFailureError)
+      if (cause instanceof ParseFailureError) {
+        if (cause.failure.kind === "limit") {
+          const { name, maximum } = cause.failure.limit;
+          if (name === NDS_PATH_BYTES_LIMIT)
+            throw artifactFixedLimitFailure(
+              {
+                name: "The Nintendo DS ROM expanded path allowance",
+                kind: "parser",
+                limit: maximum,
+                unit: "bytes",
+              },
+              cause.message,
+              "memory",
+              { cause },
+            );
+          if (name === NDS_DIRECTORY_DEPTH_LIMIT)
+            throw artifactFixedLimitFailure(
+              {
+                name: "The Nintendo DS ROM directory depth allowance",
+                kind: "parser",
+                limit: maximum,
+                unit: "levels",
+              },
+              cause.message,
+              "capacity",
+              { cause },
+            );
+        }
         throw artifactParseFailure(cause, signal);
+      }
       throw cause;
     }
+    // Distinct FAT IDs may share one carrier range; every listed member is
+    // hashed and extractable separately, so admit aggregate readable bytes
+    // before building entries or reading member content.
+    const expansionBudget =
+      this.expandedBytes ?? artifactExpansionBudgetBytes(initial.size);
+    let declaredBytes = 0n;
+    for (const region of layout.regions) declaredBytes += BigInt(region.length);
+    if (declaredBytes > BigInt(expansionBudget))
+      throw artifactReaderLimitFailure(
+        "artifact_limits.expanded_bytes",
+        expansionBudget,
+        "bytes",
+        declaredBytes,
+        "memory",
+      );
     const entries = layout.regions.map((region): PositionalArtifactEntry => ({
       path: region.path,
       kind: "file",
