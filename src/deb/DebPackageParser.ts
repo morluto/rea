@@ -1,5 +1,15 @@
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { ellipsisExcerpt } from "../domain/excerpt.js";
+import {
+  isZeroBlock,
+  parseTarNumber,
+  TAR_BLOCK_BYTES,
+  TAR_TYPEFLAGS,
+  tarHeaderChecksumMatches,
+  tarHeaderDialect,
+  tarPaddedSize,
+  walkPaxRecords,
+} from "../domain/tarFormat.js";
 import { constants, zstdDecompressSync } from "node:zlib";
 
 import { gunzip, isGzip } from "../domain/desktop/gzipDocument.js";
@@ -71,7 +81,6 @@ const gnuLongName = (
   return name;
 };
 
-const TAR_BLOCK = 512;
 const XZ_MAGIC = Buffer.from([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
 const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
 const BZ2_MAGIC = Buffer.from("BZh", "ascii");
@@ -141,11 +150,6 @@ const tarText = (
     : { text: strict, undecodable: false };
 };
 
-const POSIX_USTAR_MAGIC = new Uint8Array([0x75, 0x73, 0x74, 0x61, 0x72, 0x00]);
-
-const isPosixUstar = (header: Uint8Array): boolean =>
-  looksLike(header.subarray(257, 263), POSIX_USTAR_MAGIC);
-
 const decodeUtf8 = (bytes: Uint8Array): string | null => {
   try {
     return decodeStrictUtf8(bytes, "preserve");
@@ -169,40 +173,32 @@ const parseDecimal = (text: string): number | null => {
   return Number.isSafeInteger(value) ? value : null;
 };
 
-const parseOctal = (text: string): number | null => {
-  const trimmed = trimField(text).replace(/ /gu, "");
-  if (trimmed.length === 0) return 0;
-  if (!/^[0-7]+$/u.test(trimmed)) return null;
-  return Number.parseInt(trimmed, 8);
-};
+const MAX_SAFE_TAR_NUMBER = BigInt(Number.MAX_SAFE_INTEGER);
 
-const parseTarNumber = (bytes: Uint8Array): number | null => {
-  const first = bytes[0];
-  if (first !== undefined && (first & 0x80) !== 0) {
-    let value = 0;
-    for (let i = 1; i < bytes.length; i++)
-      value = value * 256 + (bytes[i] ?? 0);
-    return value;
-  }
-  return parseOctal(ascii(bytes));
+/** Convert a tar numeric field to a safe non-negative integer, or null. */
+const nonNegativeTarNumber = (bytes: Uint8Array): number | null => {
+  const value = parseTarNumber(bytes);
+  if (value === undefined || value < 0n || value > MAX_SAFE_TAR_NUMBER)
+    return null;
+  return Number(value);
 };
 
 const tarType = (flag: number): DebTarEntry["type"] => {
   switch (flag) {
-    case 0:
-    case 48:
+    case 0x00:
+    case 0x30:
       return "file";
-    case 49:
+    case TAR_TYPEFLAGS.hardLink:
       return "hardlink";
-    case 50:
+    case TAR_TYPEFLAGS.symlink:
       return "symlink";
-    case 51:
+    case TAR_TYPEFLAGS.characterDevice:
       return "character";
-    case 52:
+    case TAR_TYPEFLAGS.blockDevice:
       return "block";
-    case 53:
+    case TAR_TYPEFLAGS.directory:
       return "directory";
-    case 54:
+    case TAR_TYPEFLAGS.fifo:
       return "fifo";
     default:
       return "unknown";
@@ -256,9 +252,6 @@ const paxId = (value: string | undefined): number | undefined => {
   return Number.isSafeInteger(id) ? id : undefined;
 };
 
-const pad512 = (size: number): number =>
-  Math.ceil(size / TAR_BLOCK) * TAR_BLOCK;
-
 /** Drop trailing `/` by a backward scan; an unanchored regex retries per slash. */
 const trimTrailingSlashes = (name: string): string => {
   let end = name.length;
@@ -268,18 +261,6 @@ const trimTrailingSlashes = (name: string): string => {
 
 const logicalTarPath = (name: string): string =>
   trimTrailingSlashes(name.replace(/^(?:\.\/)+/u, ""));
-
-const tarChecksum = (header: Uint8Array): number => {
-  let sum = 0;
-  for (let i = 0; i < TAR_BLOCK; i++)
-    sum += i >= 148 && i < 156 ? 0x20 : (header[i] ?? 0);
-  return sum;
-};
-
-const isZeroBlock = (block: Uint8Array): boolean => {
-  for (const byte of block) if (byte !== 0) return false;
-  return true;
-};
 
 type ParsedArMember = DebArMember & { readonly bytes: Uint8Array };
 
@@ -446,61 +427,6 @@ const PAX_KEY_SET: ReadonlySet<string> = new Set(PAX_KEYS);
 
 const isPaxKey = (key: string): key is PaxKey => PAX_KEY_SET.has(key);
 
-type PaxFields = {
-  /** Only the keys in `PAX_KEYS`; other records are read and dropped. */
-  readonly fields: Readonly<Partial<Record<PaxKey, string>>>;
-  /** Keys whose value is not UTF-8 and carries U+FFFD replacements. */
-  readonly undecodable: ReadonlySet<string>;
-  /** Offset of the first record that could not be read, if any. */
-  readonly incompleteAt: number | undefined;
-  /**
-   * Whether any `GNU.sparse.*` record was present. Sparse entries store a
-   * map and data segments, not the file's bytes, under a synthetic name.
-   */
-  readonly sparse: boolean;
-};
-
-export const parsePax = (bytes: Uint8Array): PaxFields => {
-  // Each record is "<length> <key>=<value>\n", where <length> counts bytes,
-  // so walk the bytes and decode each record on its own. Only the keys this
-  // reader applies are stored: a header of many short records with distinct
-  // keys would otherwise grow one object property per record.
-  const fields: Partial<Record<PaxKey, string>> = {};
-  const undecodable = new Set<string>();
-  let sparse = false;
-  // A record that cannot be read leaves the extended header's facts unknown.
-  const incomplete = (at: number): PaxFields => ({
-    fields,
-    undecodable,
-    incompleteAt: at,
-    sparse,
-  });
-  let index = 0;
-  while (index < bytes.length) {
-    const space = bytes.indexOf(0x20, index);
-    if (space === -1) return incomplete(index);
-    const lengthText = Buffer.from(bytes.subarray(index, space)).toString(
-      "latin1",
-    );
-    if (!/^[0-9]+$/u.test(lengthText)) return incomplete(index);
-    const length = Number(lengthText);
-    if (!Number.isSafeInteger(length) || length <= space - index + 1)
-      return incomplete(index);
-    if (index + length > bytes.length) return incomplete(index);
-    const record = tarText(bytes.subarray(space + 1, index + length));
-    const eq = record.text.indexOf("=");
-    const key = eq === -1 ? undefined : record.text.slice(0, eq);
-    if (key?.startsWith("GNU.sparse.") === true) sparse = true;
-    if (key !== undefined && isPaxKey(key)) {
-      fields[key] = record.text.slice(eq + 1).replace(/\n$/u, "");
-      if (record.undecodable) undecodable.add(key);
-      else undecodable.delete(key);
-    }
-    index += length;
-  }
-  return { fields, undecodable, incompleteAt: undefined, sparse };
-};
-
 const sparseTarFailure = (memberName: string, offset: number) =>
   new DebPackageFormatFailure(
     "unsupported",
@@ -540,12 +466,10 @@ const parseTar = (
   // A global value is stored once but copied into every later row, so each
   // reuse is charged to the member's byte budget alongside its expanded bytes.
   let charged = bytes.length;
-  while (offset + TAR_BLOCK <= bytes.length) {
-    const header = bytes.subarray(offset, offset + TAR_BLOCK);
+  while (offset + TAR_BLOCK_BYTES <= bytes.length) {
+    const header = bytes.subarray(offset, offset + TAR_BLOCK_BYTES);
     if (isZeroBlock(header)) return { entries, files, undecodableNames };
-    const stored = parseOctal(ascii(header.subarray(148, 156)));
-    const computed = tarChecksum(header);
-    if (stored === null || stored !== computed)
+    if (!tarHeaderChecksumMatches(header))
       return {
         entries,
         files,
@@ -558,7 +482,7 @@ const parseTar = (
     const typeFlag = header[156] ?? 0;
     // Old GNU sparse entries ('S') carry a sparse map and may be followed by
     // extension blocks their size field does not count.
-    if (typeFlag === 83)
+    if (typeFlag === TAR_TYPEFLAGS.gnuSparse)
       return {
         entries,
         files,
@@ -566,10 +490,10 @@ const parseTar = (
         error: sparseTarFailure(memberName, offset),
       };
     const extension =
-      typeFlag === 76 ||
-      typeFlag === 75 ||
-      typeFlag === 120 ||
-      typeFlag === 103;
+      typeFlag === TAR_TYPEFLAGS.gnuLongName ||
+      typeFlag === TAR_TYPEFLAGS.gnuLongLink ||
+      typeFlag === TAR_TYPEFLAGS.paxLocal ||
+      typeFlag === TAR_TYPEFLAGS.paxGlobal;
     // A PAX size record overrides the following entry's header size field;
     // reading or skipping by the header field would desynchronize the stream.
     const paxSize = extension ? undefined : pax.size;
@@ -585,7 +509,7 @@ const parseTar = (
       };
     const size =
       paxSize === undefined
-        ? parseTarNumber(header.subarray(124, 136))
+        ? nonNegativeTarNumber(header.subarray(124, 136))
         : (paxId(paxSize) ?? null);
     if (size === null)
       return {
@@ -597,7 +521,7 @@ const parseTar = (
           `tar size field is unreadable in ${memberName} at offset ${String(offset)}.`,
         ),
       };
-    const dataStart = offset + TAR_BLOCK;
+    const dataStart = offset + TAR_BLOCK_BYTES;
     if (dataStart + size > bytes.length)
       return {
         entries,
@@ -611,9 +535,10 @@ const parseTar = (
     const payload = bytes.subarray(dataStart, dataStart + size);
     // Only POSIX ustar headers carry a path prefix at 345. GNU headers
     // ("ustar  \0") keep atime, ctime and sparse data there instead.
-    const prefix = isPosixUstar(header)
-      ? tarText(header.subarray(345, 500))
-      : { text: "", undecodable: false };
+    const prefix =
+      tarHeaderDialect(header) === "ustar"
+        ? tarText(header.subarray(345, 500))
+        : { text: "", undecodable: false };
     const rawName = tarText(header.subarray(0, 100));
     const headerName =
       prefix.text.length > 0 ? `${prefix.text}/${rawName.text}` : rawName.text;
@@ -631,63 +556,79 @@ const parseTar = (
           ),
         };
     }
-    if (typeFlag === 76) {
+    if (typeFlag === TAR_TYPEFLAGS.gnuLongName) {
       const decoded = tarText(payload);
       longname = decoded.text;
       longnameUndecodable = decoded.undecodable;
-      offset = dataStart + pad512(size);
+      offset = dataStart + tarPaddedSize(size);
       continue;
     }
-    if (typeFlag === 75) {
+    if (typeFlag === TAR_TYPEFLAGS.gnuLongLink) {
       const decoded = tarText(payload);
       longlink = decoded.text;
       longlinkUndecodable = decoded.undecodable;
-      offset = dataStart + pad512(size);
+      offset = dataStart + tarPaddedSize(size);
       continue;
     }
-    if (typeFlag === 120 || typeFlag === 103) {
-      const parsed = parsePax(payload);
-      if (parsed.incompleteAt !== undefined)
+    if (
+      typeFlag === TAR_TYPEFLAGS.paxLocal ||
+      typeFlag === TAR_TYPEFLAGS.paxGlobal
+    ) {
+      // Only the keys this reader applies are kept: a header of many short
+      // records with distinct keys would otherwise grow one entry per record.
+      const fields: Partial<Record<PaxKey, string>> = {};
+      const undecodable = new Set<string>();
+      let sparse = false;
+      const paxError = walkPaxRecords(payload, (keyBytes, valueBytes) => {
+        const key = Buffer.from(keyBytes).toString("utf8");
+        if (key.startsWith("GNU.sparse.")) sparse = true;
+        if (!isPaxKey(key)) return;
+        const decoded = tarText(valueBytes);
+        fields[key] = decoded.text;
+        if (decoded.undecodable) undecodable.add(key);
+        else undecodable.delete(key);
+      });
+      if (paxError !== undefined)
         return {
           entries,
           files,
           undecodableNames,
           error: new DebPackageFormatFailure(
             "malformed",
-            `PAX extended header in ${memberName} at offset ${String(offset)} has an unreadable record at byte ${String(parsed.incompleteAt)}.`,
+            `PAX extended header in ${memberName} at offset ${String(offset)} has an unreadable record at byte ${String(paxError.offset)}.`,
           ),
         };
       // GNU PAX sparse formats rename the entry and store only the mapped
       // segments, so its name, size and bytes would all be wrong as a file.
-      if (parsed.sparse)
+      if (sparse)
         return {
           entries,
           files,
           undecodableNames,
           error: sparseTarFailure(memberName, offset),
         };
-      const target = typeFlag === 103 ? globalPax : pax;
-      const targetUndecodable =
-        typeFlag === 103 ? globalUndecodable : paxUndecodable;
+      const isGlobal = typeFlag === TAR_TYPEFLAGS.paxGlobal;
+      const target = isGlobal ? globalPax : pax;
+      const targetUndecodable = isGlobal ? globalUndecodable : paxUndecodable;
       for (const key of PAX_KEYS) {
-        const value = parsed.fields[key];
+        const value = fields[key];
         if (value === undefined) continue;
         // An empty global value deletes the earlier global override, so later
         // entries read their own header fields again.
-        if (typeFlag === 103 && value.length === 0) {
+        if (isGlobal && value.length === 0) {
           delete target[key];
           targetUndecodable.delete(key);
           continue;
         }
         target[key] = value;
-        if (parsed.undecodable.has(key)) targetUndecodable.add(key);
+        if (undecodable.has(key)) targetUndecodable.add(key);
         else targetUndecodable.delete(key);
       }
-      if (typeFlag === 103) {
+      if (isGlobal) {
         globalUid = paxId(globalPax.uid);
         globalGid = paxId(globalPax.gid);
       }
-      offset = dataStart + pad512(size);
+      offset = dataStart + tarPaddedSize(size);
       continue;
     }
     if (entries.length >= maxEntries)
@@ -740,15 +681,15 @@ const parseTar = (
           ? headerLink.undecodable
           : longlinkUndecodable;
     if (nameUndecodable || linkUndecodable) undecodableNames += 1;
-    const mode = parseOctal(ascii(header.subarray(100, 108)));
+    const mode = nonNegativeTarNumber(header.subarray(100, 108));
     // PAX owner records override the fixed fields, which can hold shortened
     // or fallback values.
     const uid =
       (pax.uid === undefined ? globalUid : paxId(pax.uid)) ??
-      parseTarNumber(header.subarray(108, 116));
+      nonNegativeTarNumber(header.subarray(108, 116));
     const gid =
       (pax.gid === undefined ? globalGid : paxId(pax.gid)) ??
-      parseTarNumber(header.subarray(116, 124));
+      nonNegativeTarNumber(header.subarray(116, 124));
     const user = nonempty(
       fileFields.uname ?? trimField(ascii(header.subarray(265, 297))),
     );
@@ -776,7 +717,7 @@ const parseTar = (
     for (const key of PAX_KEYS) delete pax[key];
     extensionHeaders = 0;
     paxUndecodable.clear();
-    offset = dataStart + pad512(size);
+    offset = dataStart + tarPaddedSize(size);
   }
   // Without an end-of-archive block the stream must stop exactly on a block
   // boundary; a partial header or missing member padding means it was cut off.

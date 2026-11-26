@@ -9,6 +9,7 @@ import {
   DebPackageFormatFailure,
 } from "./DebPackage.errors.js";
 import {
+  arArchive,
   DEFAULT_CONTROL_TEXT,
   debPackageFixture,
   notArBytes,
@@ -21,7 +22,6 @@ import {
 import {
   DEB_PACKAGE_LIMITATIONS,
   parseDebPackage,
-  parsePax,
   undecodableTarNamesLimitation,
   unreadableRelationshipsDetail,
 } from "./DebPackageParser.js";
@@ -533,18 +533,30 @@ it("keeps only the PAX keys it applies, so distinct unknown keys cost no storage
   const unknown = Array.from({ length: 10_000 }, (_, index) =>
     paxRecord(`k${String(index)}`, ""),
   );
-  const parsed = parsePax(
-    Buffer.concat([
-      ...unknown,
-      paxRecord("path", "./usr/share/a"),
-      paxRecord("mtime", "1"),
-      paxRecord("uname", Buffer.from([0xff])),
-    ]),
+  const report = parse(
+    debPackageFixture({
+      dataEntries: [
+        { name: "./", type: "5", mode: 0o755, content: "" },
+        {
+          name: "./PaxHeaders/a",
+          type: "x",
+          content: Buffer.concat([
+            ...unknown,
+            paxRecord("path", "./usr/share/a"),
+            paxRecord("mtime", "1"),
+            paxRecord("uname", Buffer.from([0xff])),
+          ]),
+        },
+        { name: "./usr/share/ignored", content: "" },
+      ],
+    }),
   );
-  expect(parsed.incompleteAt).toBeUndefined();
-  expect(Object.keys(parsed.fields).sort()).toEqual(["path", "uname"]);
-  expect(parsed.fields.path).toBe("./usr/share/a");
-  expect([...parsed.undecodable]).toEqual(["uname"]);
+  expect(
+    report.data_entries.find((entry) => entry.path === "usr/share/a"),
+  ).toMatchObject({
+    path: "usr/share/a",
+    user: "\uFFFD",
+  });
 });
 
 it("refuses a GNU PAX sparse entry instead of reporting its stored name and size", () => {
@@ -1277,4 +1289,84 @@ it("refuses relationship fields past the alternatives allowance before building 
   });
   expect(error.message).toMatch(/more than 65536 alternatives/u);
   expect(error.partial?.ar.format_version).toBe("2.0");
+});
+
+const withHeaderField = (
+  member: Buffer,
+  offset: number,
+  bytes: readonly number[],
+): Buffer => {
+  const copy = Buffer.from(member);
+  const header = copy.subarray(0, 512);
+  header.set(bytes, offset);
+  header.write("        ", 148);
+  let sum = 0;
+  for (const byte of header) sum += byte;
+  header.write(`${sum.toString(8).padStart(6, "0")}\0 `, 148);
+  return copy;
+};
+
+it("reads GNU base-256 uid magnitude and sign bits without dropping the first byte", () => {
+  // First byte 0x81 has base-256 bit 0x80 plus nonzero magnitude bit 0x01
+  // (2^56 + 7 > MAX_SAFE_INTEGER); dropping byte 0 would mis-read this as 7.
+  const unsafeUid = withHeaderField(
+    tarMember({ name: "./usr/bin/unsafe-uid", content: "" }),
+    108,
+    [0x81, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07],
+  );
+  // First byte 0xff is negative two's complement (-1); dropping byte 0 would
+  // mis-read it as a positive number.
+  const negativeUid = withHeaderField(
+    tarMember({ name: "./usr/bin/negative-uid", content: "" }),
+    108,
+    [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
+  );
+  // Valid safe-integer base-256 uid (3_000_000 = 0x2dc6c0).
+  const safeUid = withHeaderField(
+    tarMember({ name: "./usr/bin/safe-uid", content: "" }),
+    108,
+    [0x80, 0x00, 0x00, 0x00, 0x00, 0x2d, 0xc6, 0xc0],
+  );
+  const dataTar = Buffer.concat([
+    unsafeUid,
+    negativeUid,
+    safeUid,
+    Buffer.alloc(1024),
+  ]);
+  const report = parse(
+    arArchive([
+      { name: "debian-binary", data: Buffer.from("2.0\n", "utf8") },
+      {
+        name: "control.tar.gz",
+        data: gzipSync(
+          tarArchive([{ name: "./control", content: DEFAULT_CONTROL_TEXT }]),
+        ),
+      },
+      { name: "data.tar.gz", data: gzipSync(dataTar) },
+    ]),
+  );
+  expect(
+    report.data_entries.map(({ path, uid }) => [path, uid]),
+  ).toEqual([
+    ["usr/bin/unsafe-uid", null],
+    ["usr/bin/negative-uid", null],
+    ["usr/bin/safe-uid", 3_000_000],
+  ]);
+});
+
+it("refuses a GNU base-256 size whose first byte carries nonzero magnitude bits", () => {
+  // First byte 0x81 encodes 2^88 (> MAX_SAFE_INTEGER); dropping byte 0 would
+  // mis-read this as size 0 and accept the entry.
+  const hugeSize = withHeaderField(
+    tarMember({ name: "./control", content: "" }),
+    124,
+    [0x81, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  );
+  const tar = Buffer.concat([hugeSize, Buffer.alloc(1024)]);
+  const error = expectFailure(
+    () => parse(debPackageFixture({ controlMemberBytes: gzipSync(tar) })),
+    DebPackageFormatFailure,
+  );
+  expect(error.kind).toBe("malformed");
+  expect(error.message).toMatch(/tar size field is unreadable/u);
 });
