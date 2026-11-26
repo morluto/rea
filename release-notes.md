@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **limits:** per-call parameter refusals gain `details.refusal`, and their `remediation.action` wording changes to the generated form.
 * **trace:** PlaywrightTracePort.inspect takes the resolved limits, and trace archive and nesting refusals report details.limit instead of a fixed_ceiling refusal.
 * **native:** refusals at the structural budget report reported_limits.boundary "max_structure_bytes" instead of "structure".
 * **metadata:** NTFS and Maven report refusals report details.limit instead of a fixed_ceiling refusal, and parseMavenGradleMetadata and the inspect_ntfs_journal input contract gain the new controls.
@@ -98,6 +99,7 @@
 * **ida:** support the official Hex-Rays IDA MCP headlessly ([#4813](https://github.com/morluto/rea/issues/4813)) ([6822ebe](https://github.com/morluto/rea/commit/6822ebe1f3a4caec007fcd046754d66317d3349f))
 * **javascript:** add semantic_analysis structure-only mode to analyze_javascript_application ([#14117](https://github.com/morluto/rea/issues/14117)) ([eccd18a](https://github.com/morluto/rea/commit/eccd18a2cc325bb97f66f23a4216dfcacd9e1bca))
 * **javascript:** inventory Expo Router require.context route keys ([#10624](https://github.com/morluto/rea/issues/10624)) ([7b6e816](https://github.com/morluto/rea/commit/7b6e816b0b61d24d1a3b79106481f29db676ea65))
+* **limits:** report the value a per-call limit needs and derive its recovery ([#14625](https://github.com/morluto/rea/issues/14625)) ([78cb717](https://github.com/morluto/rea/commit/78cb7172a6d38f726fe00acd530a8a8b7c21a737))
 * **mcp:** link retained Evidence from over-budget summaries ([#14603](https://github.com/morluto/rea/issues/14603)) ([fa65e51](https://github.com/morluto/rea/commit/fa65e51a24dc4c2983840af8d2ec119c28687cf7))
 * **metadata:** give NTFS, Maven report and NuGet budgets typed per-call controls ([#14629](https://github.com/morluto/rea/issues/14629)) ([4f66985](https://github.com/morluto/rea/commit/4f6698597884d709be8a98ec43f9f5320ae598ce))
 * **native:** give the native structural decoding allowance a per-call max_structure_bytes ([#14626](https://github.com/morluto/rea/issues/14626)) ([e540cbd](https://github.com/morluto/rea/commit/e540cbdafd8170701b07b4735f8a5da40e47e10e))
