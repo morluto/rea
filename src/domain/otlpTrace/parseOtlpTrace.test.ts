@@ -315,6 +315,34 @@ describe("parseOtlpTrace attributes", () => {
     });
   });
 
+  it("keeps a damaged base64 payload from reading as a short byte string", () => {
+    // Buffer.from silently drops malformed base64, so "!!!!" would otherwise
+    // report zero bytes and look like a recorded empty payload.
+    const report = parse(
+      envelope([
+        span({
+          attributes: [
+            { key: "damaged", value: { bytesValue: "!!!!" } },
+            { key: "truncated", value: { bytesValue: "AA=EC" } },
+          ],
+        }),
+      ]),
+    );
+    const attributes = new Map(
+      report.spans[0]!.attributes.map((a) => [a.key, a]),
+    );
+    for (const key of ["damaged", "truncated"]) {
+      expect(attributes.get(key)).toMatchObject({
+        value_kind: "bytes",
+        bytes_length: null,
+      });
+      expect(attributes.get(key)!.bytes_value_raw).not.toBeNull();
+    }
+    expect(report.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "invalid-record" }),
+    );
+  });
+
   it("keeps equal-length byte values distinct", () => {
     const report = parse(
       envelope([

@@ -27,6 +27,8 @@ interface RawCapture {
   readonly pointer: string;
   readonly lossyNumber?: (holder: object, key: string) => boolean;
   problem?: string;
+  /** A recorded value that was kept but could not be fully interpreted. */
+  readonly damaged?: (message: string) => void;
 }
 
 /** Preserve a rejected value, or refuse the inventory if Evidence cannot hold it. */
@@ -178,6 +180,15 @@ const statusCode = (value: Json): OtlpSpan["status_code"] => {
 
 type Attribute = OtlpSpan["attributes"][number];
 
+/**
+ * Standard-alphabet base64 with every four-character group complete and its
+ * padding only at the end. Node's decoder accepts none of this by itself.
+ */
+const isCanonicalBase64 = (text: string): boolean =>
+  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+    text,
+  );
+
 const readAttribute = (
   key: string,
   rawValue: Json,
@@ -257,22 +268,30 @@ const readAttribute = (
           : retainedRaw(value, capture, "attribute"),
       };
     }
-    case "bytesValue":
+    case "bytesValue": {
       if (retainedNumber(rawValue, kind, capture))
         return { ...empty, value_kind: "bytes" };
+      const text = typeof value === "string" ? value : undefined;
+      // Buffer.from ignores malformed base64, so a damaged payload would
+      // otherwise report a short or zero length and read as valid.
+      const readable = text !== undefined && isCanonicalBase64(text);
+      if (text !== undefined && !readable)
+        capture.damaged?.(
+          `The bytesValue at ${capture.pointer} is not canonical base64, so its decoded length is unknown; the source text is retained.`,
+        );
       return {
         ...empty,
         value_kind: "bytes",
-        bytes_length:
-          typeof value === "string"
-            ? Buffer.from(value, "base64").length
-            : null,
-        bytes_base64: typeof value === "string" ? value : null,
+        bytes_length: readable ? Buffer.from(text, "base64").length : null,
+        bytes_base64: text ?? null,
         bytes_value_raw:
-          typeof value === "string"
-            ? null
-            : retainedRaw(value, capture, "attribute"),
+          text === undefined
+            ? retainedRaw(value, capture, "attribute")
+            : readable
+              ? null
+              : retainedRaw(text, capture, "attribute"),
       };
+    }
     case "arrayValue":
       return {
         ...empty,
@@ -404,6 +423,8 @@ const parseSpan = (
   const capture: RawCapture = {
     pointer,
     ...(lossyNumber === undefined ? {} : { lossyNumber }),
+    damaged: (message) =>
+      problems.push({ code: "invalid-record", pointer, message }),
   };
   // A timestamp the inventory cannot read is kept as recorded so callers can
   // tell a damaged value from an omitted one and still recover the original.
@@ -592,6 +613,12 @@ const walkResourceSpans = (
     const capture: RawCapture = {
       pointer: `/resourceSpans/${resourceIndex}/resource/attributes`,
       ...(lossyNumber === undefined ? {} : { lossyNumber }),
+      damaged: (message) =>
+        problems.add(() => ({
+          code: "invalid-record",
+          pointer: `/resourceSpans/${resourceIndex}/resource/attributes`,
+          message,
+        })),
     };
     const { attributes: resourceFacts, dropped: resourceDropped } =
       resourceAttributes(resourceSpans.resource, capture);
