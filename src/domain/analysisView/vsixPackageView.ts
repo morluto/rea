@@ -142,6 +142,10 @@ export const projectVsixPackageView = (
             present: report.entry_points.browser.present,
           },
   };
+  let eagerActivationEventCount = 0;
+  for (const event of report.activation_events) {
+    if (event.eager) eagerActivationEventCount++;
+  }
   const requiredLimitations = textTruncated
     ? [
         `One or more summary text fields were truncated to fit the summary view; inspect parent Evidence ${parent.evidenceId} for complete values.`,
@@ -178,9 +182,7 @@ export const projectVsixPackageView = (
       coverage: report.coverage,
       text_truncated: textTruncated,
       activation_event_count: report.activation_events.length,
-      eager_activation_event_count: report.activation_events.filter(
-        (event) => event.eager,
-      ).length,
+      eager_activation_event_count: eagerActivationEventCount,
       contribute_key_count: report.contributes.keys.length,
       command_count: report.contributes.commands_total,
       content_count: report.contents.length,
