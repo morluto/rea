@@ -143,7 +143,9 @@ describe("PE resource provider budget reporting", () => {
     });
     expect(projectAnalysisError(entryError)).toMatchObject({
       remediation: {
-        action: expect.stringContaining("max_entries is already at its maximum"),
+        action: expect.stringContaining(
+          "max_entries is already at its maximum",
+        ),
       },
     });
     expect(
