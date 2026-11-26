@@ -38,7 +38,11 @@ import {
 
 import { BinarySession } from "./BinarySession.js";
 import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
-import { estimateJsonStorage } from "../JsonAuthenticationHeadroom.js";
+import {
+  estimateJsonStorage,
+  requireAuthenticationHeadroom,
+} from "../JsonAuthenticationHeadroom.js";
+import type { RecoveryAdmission } from "../investigation/InvestigationRetention.js";
 
 const fixture = (
   id: string,
@@ -659,6 +663,140 @@ it("omits recovery before materialization when authentication headroom is exhaus
     });
     expect(session.exportEvidenceBundle().records).toHaveLength(0);
   } finally {
+    await session.dispose();
+  }
+});
+
+/** Allow the existing payload, but no unaccounted-for selection copy. */
+const admitPayloadOnly: RecoveryAdmission = (input, operation, additional) => {
+  const payload = { ...(input as Record<string, unknown>) };
+  delete payload.provider_selection;
+  const baseline = requireAuthenticationHeadroom(payload, {
+    operation,
+    path: "fixture",
+    description: "fixture budget",
+    availableBytes: 0,
+    additional,
+  });
+  if (baseline.ok) throw new Error("Expected the baseline cost report");
+  const bytes = baseline.error.reportedLimits?.authentication_bytes;
+  if (typeof bytes !== "number")
+    throw new Error("Expected reported authentication cost");
+  return requireAuthenticationHeadroom(input, {
+    operation,
+    path: "fixture",
+    description: "fixture budget",
+    availableBytes: bytes,
+    additional,
+  });
+};
+
+it("admits historical selection bytes before replay copies, while legacy absence fits", async () => {
+  const [path] = await createBinarySessionTargets();
+  const { session } = fixture("ghidra");
+  try {
+    const opened = await session.open(path, { providerId: "ghidra" });
+    if (!opened.ok) throw opened.error;
+    const parameters = { address: "0x1000", document: "fixture" };
+    const issued = await session.execute("address_name", parameters);
+    if (!issued.ok) throw issued.error;
+    const fresh = completedOperationEvidence(
+      "address_name",
+      parameters,
+      issued.value,
+      {
+        target: opened.value,
+        evidenceById: session.evidenceForAnalysis.bind(session),
+        admitRecovery: () => {
+          throw new Error("Issued Evidence needs no new materialization");
+        },
+      },
+    );
+    if (!fresh.ok) throw fresh.error;
+    const historical = withEvidenceProviderSelection(fresh.value, {
+      ...fresh.value.provider_selection!,
+      selection_source: "environment",
+      candidates: [
+        ...fresh.value.provider_selection!.candidates,
+        {
+          provider: {
+            id: "unselected",
+            name: "historical alternative",
+            version: null,
+          },
+          selected: false,
+          availability: "unavailable",
+          target_support: "unknown",
+          rejection_codes: ["recorded reason ".repeat(32)],
+        },
+      ],
+    });
+    expect(
+      session.importEvidenceBundle(createEvidenceBundle([historical])).ok,
+    ).toBe(true);
+    const replay = await session.execute("address_name", parameters);
+    if (!replay.ok) throw replay.error;
+    const refused = completedOperationEvidence(
+      "address_name",
+      parameters,
+      replay.value,
+      { target: opened.value, admitRecovery: admitPayloadOnly },
+    );
+    expect(refused).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisResourceConstraintError", resource: "memory" },
+    });
+    const admitted = completedOperationEvidence(
+      "address_name",
+      parameters,
+      replay.value,
+      { target: opened.value },
+    );
+    if (!admitted.ok) throw admitted.error;
+    expect(admitted.value.provider_selection).toEqual(
+      historical.provider_selection,
+    );
+    const legacy = { ...historical };
+    delete legacy.provider_selection;
+    expect(
+      session.importEvidenceBundle(createEvidenceBundle([legacy])).ok,
+    ).toBe(true);
+    const oldReplay = await session.execute("address_name", parameters);
+    if (!oldReplay.ok) throw oldReplay.error;
+    const plain = completedOperationEvidence(
+      "address_name",
+      parameters,
+      oldReplay.value,
+      { target: opened.value, admitRecovery: admitPayloadOnly },
+    );
+    if (!plain.ok) throw plain.error;
+    expect(plain.value.provider_selection).toBeUndefined();
+  } finally {
+    await session.dispose();
+  }
+});
+
+it("includes native selection in the session's first retained-record admission", async () => {
+  const [path] = await createBinarySessionTargets();
+  const records = new InvestigationRecords();
+  const admission = vi
+    .spyOn(records, "admitRecoveryObservation")
+    .mockImplementation(admitPayloadOnly);
+  const { session } = fixture("ghidra", [], "inline", [], records);
+  try {
+    const opened = await session.open(path, { providerId: "ghidra" });
+    if (!opened.ok) throw opened.error;
+    const refused = await session.execute("address_name", {
+      address: "0x1000",
+      document: "fixture",
+    });
+    expect(refused).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisResourceConstraintError", resource: "memory" },
+    });
+    expect(session.exportEvidenceBundle().records).toHaveLength(0);
+  } finally {
+    admission.mockRestore();
     await session.dispose();
   }
 });

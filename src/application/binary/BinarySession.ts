@@ -4,6 +4,7 @@ import {
   bindFreshNativeExecution,
   carrySessionExecutionProvenance,
   withSessionExecutionProvenance,
+  sessionExecutionEvidenceMetadata,
 } from "./SessionEvidenceReuse.js";
 import { admitCompletedAnalysis } from "../investigation/admitCompletedAnalysis.js";
 import { randomUUID } from "node:crypto";
@@ -1572,12 +1573,11 @@ export class BinarySession
       ? ok(bindFreshNativeExecution(covered.value, active.route))
       : covered;
     const observed = captured.ok
-      ? ok(
-          deliverSessionLimitations(
-            captured.value,
-            captured.value.subject ?? active.target,
-            this.#sessionLimitations,
-          ),
+      ? deliverSessionLimitations(
+          captured.value,
+          captured.value.subject ?? active.target,
+          this.#sessionLimitations,
+          this.admitRecoveryObservation.bind(this),
         )
       : captured;
     // A caller who asked for a one-shot snapshot learns when it cannot replay.
@@ -1817,6 +1817,7 @@ export class BinarySession
       evidenceExecution,
       {
         callerTarget: active.target,
+        metadata: sessionExecutionEvidenceMetadata(execution),
         admit: this.admitRecoveryObservation.bind(this),
       },
     );

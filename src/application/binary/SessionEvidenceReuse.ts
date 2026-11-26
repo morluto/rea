@@ -261,6 +261,7 @@ export const completedOperationEvidence = (
   };
   const admitted = admitCompletedAnalysis(operation, parameters, observation, {
     callerTarget: options.target,
+    metadata: sessionExecutionEvidenceMetadata(execution),
     admit: options.admitRecovery,
   });
   if (!admitted.ok) return admitted;
