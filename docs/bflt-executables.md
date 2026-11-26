@@ -56,10 +56,11 @@ With `gzip`, everything after the header is one gzip stream. With `gzdata`,
 text is stored and the stream starts at `data_start`. Revision 2 loaders
 ignore these flags, so a revision 2 body is always read as stored. The reader
 inflates the stream in memory under `artifact_limits.expanded_bytes` (by
-default 500 times the file size, at least 256 MiB). When the stream is larger
-than that or cannot be inflated, the header facts are still reported,
-coverage is `unknown`, a limitation names the cause, and the stored bytes are
-served as `compressed-body.gz` (plus `text.bin` for `gzdata`).
+default 500 times the file size, at least 256 MiB), capped at a fixed 128 MiB
+in-memory inflation ceiling. When the stream exceeds the active limit or cannot
+be inflated, the header facts are still reported, coverage is `unknown`, a
+limitation names the cause, and the stored bytes are served as
+`compressed-body.gz` (plus `text.bin` for `gzdata`).
 
 ## Limits and limitations
 

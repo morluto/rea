@@ -585,7 +585,7 @@ const NON_ZIP_FORMATS = {
     extractable: true,
     absentInventory: "unavailable",
     readerLimitation:
-      "bFLT inventory reports the flat header and serves text (header included), data and the relocation table at their loader offsets. gzip bodies are inflated under artifact_limits.expanded_bytes; relocations are not applied, and the executable is not run. The header does not name a CPU.",
+      "bFLT inventory reports the flat header and serves text (header included), data and the relocation table at their loader offsets. gzip bodies are inflated in memory under artifact_limits.expanded_bytes (capped at 128 MiB); relocations are not applied, and the executable is not run. The header does not name a CPU.",
     createReader: (path, options) =>
       new BfltArtifactReader(
         path,

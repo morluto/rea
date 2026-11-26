@@ -756,7 +756,8 @@ one domain-owned default policy. See [.NET bundles](../dotnet-bundles.md),
 
 `artifact_limits.expanded_bytes` selects aggregate plaintext work for ZIP, Bun,
 SEA, PCK, ISO 9660, Deno, wxapkg, tar and Android sparse image readers, and
-bFLT gzip decompression, including repeated readable logical occurrences.
+bFLT gzip decompression (which is also capped at a fixed 128 MiB in-memory
+inflation ceiling), including repeated readable logical occurrences.
 Omission retains each archive's encoded-size-derived default. The .NET bundle
 group's own `expanded_bytes` controls its independently enforced bundle
 expansion.

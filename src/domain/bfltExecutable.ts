@@ -40,6 +40,14 @@ const FLAG_GZDATA = 0x08;
  */
 export const BFLT_MAX_FILE_BYTES = 128 * 1024 * 1024;
 /**
+ * Fixed in-memory ceiling for inflating a gzip or gzdata body. Keeps
+ * synchronous working memory bounded even when the aggregate
+ * `artifact_limits.expanded_bytes` budget is larger (such as the 500x default
+ * on a multi-megabyte file); bodies past this ceiling fall back to exposing
+ * `compressed-body.gz`.
+ */
+export const BFLT_MAX_INFLATED_BYTES = 128 * 1024 * 1024;
+/**
  * Relocation offsets listed inline in the header metadata. This is a delivery
  * budget, not an admission limit: every entry is still bounds-checked and the
  * complete table is extractable as relocations.bin.
@@ -171,19 +179,34 @@ interface Inflation {
   readonly limitation?: string;
 }
 
-/** Inflate the gzip body under the caller's expansion budget. */
+/**
+ * Inflate the gzip body under the stricter of the caller's expansion budget
+ * and the fixed in-memory inflation ceiling.
+ */
 const inflateBody = (
   bytes: Uint8Array,
   compressedFrom: number,
   expandedBytes: number,
+  maxInflatedBytes: number,
 ): Inflation => {
+  if (compressedFrom < BFLT_HEADER_SIZE)
+    return {
+      image: null,
+      inflatedBytes: null,
+      limitation: `The compressed body is declared to start at byte ${String(compressedFrom)}, inside the ${String(BFLT_HEADER_SIZE)}-byte header; it was not inflated.`,
+    };
   if (compressedFrom > bytes.length)
     return {
       image: null,
       inflatedBytes: null,
       limitation: `The compressed body is declared to start at byte ${String(compressedFrom)}, past the ${String(bytes.length)}-byte file; it was not inflated.`,
     };
-  const inflated = gunzip(bytes.subarray(compressedFrom), expandedBytes);
+  const callerBound = expandedBytes < maxInflatedBytes;
+  const effectiveLimit = Math.max(
+    0,
+    callerBound ? expandedBytes : maxInflatedBytes,
+  );
+  const inflated = gunzip(bytes.subarray(compressedFrom), effectiveLimit);
   if (inflated.ok)
     return {
       image: inflatedImage(bytes, compressedFrom, inflated.value),
@@ -194,7 +217,9 @@ const inflateBody = (
     inflatedBytes: null,
     limitation:
       inflated.error === "too_large"
-        ? `The gzip body inflates past the ${String(expandedBytes)}-byte artifact_limits.expanded_bytes budget; only the stored compressed bytes are exposed. Raise artifact_limits.expanded_bytes to inflate it.`
+        ? callerBound
+          ? `The gzip body inflates past the ${String(effectiveLimit)}-byte artifact_limits.expanded_bytes budget; only the stored compressed bytes are exposed. Raise artifact_limits.expanded_bytes (up to ${String(maxInflatedBytes)} bytes) to inflate it.`
+          : `The gzip body inflates past the fixed ${String(maxInflatedBytes)}-byte in-memory inflation ceiling; only the stored compressed bytes are exposed. Extract compressed-body.gz to decompress it externally.`
         : "The gzip body is not a readable gzip stream; only the stored compressed bytes are exposed.",
   };
 };
@@ -207,6 +232,7 @@ const inflateBody = (
 export const parseBflt = (
   bytes: Uint8Array,
   expandedBytes = artifactExpansionBudgetBytes(bytes.length),
+  maxInflatedBytes = BFLT_MAX_INFLATED_BYTES,
 ): Result<BfltExecutable, RegionDecodeFailure> => {
   if (bytes.length < BFLT_HEADER_SIZE || !hasBfltMagic(bytes))
     return err({
@@ -260,7 +286,12 @@ export const parseBflt = (
   let image: LoaderImage | null = storedImage(bytes);
   let inflatedBytes: number | null = null;
   if (compressedFrom !== undefined) {
-    const inflation = inflateBody(bytes, compressedFrom, expandedBytes);
+    const inflation = inflateBody(
+      bytes,
+      compressedFrom,
+      expandedBytes,
+      maxInflatedBytes,
+    );
     image = inflation.image;
     inflatedBytes = inflation.inflatedBytes;
     if (inflation.limitation !== undefined) {
@@ -337,7 +368,7 @@ export const parseBflt = (
         },
         bytes: bytes.subarray(0, dataStart),
       });
-    if (compressedFrom < bytes.length)
+    if (compressedFrom >= BFLT_HEADER_SIZE && compressedFrom < bytes.length)
       segments.push({
         path: "compressed-body.gz",
         fileOffset: compressedFrom,

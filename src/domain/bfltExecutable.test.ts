@@ -3,6 +3,8 @@ import { expect, it } from "vitest";
 import { bfltFile } from "./bfltExecutable.fixture.js";
 import {
   BFLT_LISTED_RELOCATIONS,
+  BFLT_MAX_FILE_BYTES,
+  BFLT_MAX_INFLATED_BYTES,
   hasBfltMagic,
   parseBflt,
 } from "./bfltExecutable.js";
@@ -10,8 +12,12 @@ import {
 const TEXT = Buffer.from("0123456789abcdef");
 const DATA = Buffer.from("datadata");
 
-const parsed = (bytes: Uint8Array, maxInflated?: number) => {
-  const result = parseBflt(bytes, maxInflated);
+const parsed = (
+  bytes: Uint8Array,
+  maxExpanded?: number,
+  maxInflated?: number,
+) => {
+  const result = parseBflt(bytes, maxExpanded, maxInflated);
   if (!result.ok) throw new Error(result.error.message);
   return result.value;
 };
@@ -101,6 +107,51 @@ it("reports an over-budget gzip body as a limitation with the stored bytes", () 
   expect(
     image.segments.map((s) => [s.path, s.fileOffset, s.bytes.length]),
   ).toEqual([["compressed-body.gz", 64, bytes.length - 64]]);
+});
+
+it("caps in-memory inflation below a larger expanded_bytes allowance and preserves the compressed fallback", () => {
+  expect(BFLT_MAX_INFLATED_BYTES).toBe(BFLT_MAX_FILE_BYTES);
+  const gzipBytes = bfltFile({ text: TEXT, data: DATA, flags: 0x05 });
+  // Default expanded_bytes (>= 256 MiB) and an explicit larger budget both stop
+  // at the fixed in-memory ceiling rather than allocating up to expanded_bytes.
+  for (const expanded of [undefined, 1024 * 1024]) {
+    const image = parsed(gzipBytes, expanded, 16);
+    expect(image.complete).toBe(false);
+    expect(image.metadata.inflated_bytes).toBeNull();
+    expect(image.limitations).toContainEqual(
+      expect.stringContaining("fixed 16-byte in-memory inflation ceiling"),
+    );
+    expect(image.limitations.join("\n")).not.toContain(
+      "Raise artifact_limits.expanded_bytes",
+    );
+    expect(
+      image.segments.map((s) => [s.path, s.fileOffset, s.bytes.length]),
+    ).toEqual([["compressed-body.gz", 64, gzipBytes.length - 64]]);
+  }
+
+  // gzdata keeps text.bin alongside compressed-body.gz when inflation hits the ceiling.
+  const gzdataBytes = bfltFile({ text: TEXT, data: DATA, flags: 0x09 });
+  const gzdataImage = parsed(gzdataBytes, undefined, 4);
+  expect(gzdataImage.complete).toBe(false);
+  expect(gzdataImage.metadata.inflated_bytes).toBeNull();
+  expect(
+    gzdataImage.segments.map((s) => [s.path, s.fileOffset, s.bytes.length]),
+  ).toEqual([
+    ["text.bin", 0, 80],
+    ["compressed-body.gz", 80, gzdataBytes.length - 80],
+  ]);
+});
+
+it("does not inflate or expose compressed-body.gz when gzdata starts inside the header", () => {
+  const bytes = bfltFile({ text: TEXT, data: DATA, flags: 0x09 });
+  bytes.writeUInt32BE(16, 12); // data_start inside the 64-byte header
+  const image = parsed(bytes);
+  expect(image.complete).toBe(false);
+  expect(image.metadata.inflated_bytes).toBeNull();
+  expect(image.limitations).toContainEqual(
+    expect.stringContaining("inside the 64-byte header"),
+  );
+  expect(image.segments).toEqual([]);
 });
 
 it("accepts rev 2 with its stored-entry caveat", () => {
