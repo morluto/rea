@@ -70,7 +70,7 @@
   "src/firmware/FirmwareFailures.ts": 1,
   "src/firmware/FirmwareFiles.ts": 2,
   "src/firmware/devicetree/DevicetreeProvider.ts": 1,
-  "src/flutter/FlutterBuildProvider.ts": 12,
+  "src/flutter/FlutterBuildProvider.ts": 4,
   "src/ghidra/GhidraExecutableHeader.ts": 1,
   "src/ghidra/GhidraFileArtifacts.ts": 1,
   "src/ghidra/GhidraInstallationProperties.ts": 1,

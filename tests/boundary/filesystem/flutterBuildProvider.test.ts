@@ -938,11 +938,16 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
     const projected = projectAnalysisError(result.error);
     expect(projected.code).toBe("resource_constraint");
     expect(projected.retryable).toBe(false);
-    expect(projected.details?.refusal).toMatchObject({
-      kind: "fixed_ceiling",
-      allowance_kind: "input",
-      limit: 2 * 1024 ** 3,
+    expect(projected.details?.refusal).toBeUndefined();
+    expect(projected.details?.limit).toEqual({
+      control_kind: "parameter",
+      parameter: "apk_limits.apk_bytes",
+      effective_value: 2 * 1024 ** 3,
       unit: "bytes",
+      minimum: 1,
+      maximum: Number.MAX_SAFE_INTEGER,
+      default_value: 2 * 1024 ** 3,
+      applies_at: "next_call",
     });
     expect(projected.remediation.action).not.toMatch(/evidence reply/u);
     expect(result.error).toMatchObject({
@@ -1110,11 +1115,19 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
       reportedLimits: { max_metadata_read_bytes: 8 * 1024 ** 2 },
     });
     expect(result.error.message).toContain("ZIP metadata read requires");
-    expect(projectAnalysisError(result.error).details?.refusal).toMatchObject({
-      kind: "fixed_ceiling",
-      limit: 8 * 1024 ** 2,
+    expect(projectAnalysisError(result.error).details?.limit).toMatchObject({
+      control_kind: "parameter",
+      parameter: "apk_limits.metadata_read_bytes",
+      effective_value: 8 * 1024 ** 2,
       unit: "bytes",
     });
+    // The same APK passes metadata admission when the caller raises it.
+    const raised = await provider.execute({
+      operation,
+      input: { path, apk_limits: { metadata_read_bytes: 16 * 1024 ** 2 } },
+    });
+    if (raised.ok) return;
+    expect(projectAnalysisError(raised.error).details?.limit).toBeUndefined();
   },
 );
 
@@ -1388,12 +1401,12 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
 );
 
 it.each([
-  ["identify_flutter_build", "ABI", 32, "ABIs"],
-  ["inspect_dart_aot", "ABI", 32, "ABIs"],
-  ["identify_flutter_build", "path", 1024, "bytes"],
+  ["identify_flutter_build", "ABI", 32, "apk_limits.abi_count"],
+  ["inspect_dart_aot", "ABI", 32, "apk_limits.abi_count"],
+  ["identify_flutter_build", "path", 1024, "apk_limits.library_path_bytes"],
 ] as const)(
   "%s refuses %s metadata expansion before opening empty libraries",
-  async (operation, shape, limit, unit) => {
+  async (operation, shape, limit, parameter) => {
     const path = await buildApk(
       "many-abis.apk",
       shape === "ABI"
@@ -1416,11 +1429,10 @@ it.each([
     if (result.ok) throw new Error("ABI expansion must be refused");
     const projected = projectAnalysisError(result.error);
     expect(projected.code).toBe("resource_constraint");
-    expect(projected.details?.refusal).toMatchObject({
-      kind: "fixed_ceiling",
-      allowance_kind: "parser",
-      limit,
-      unit,
+    expect(projected.details?.limit).toMatchObject({
+      control_kind: "parameter",
+      parameter,
+      effective_value: limit,
     });
     expect(extract).not.toHaveBeenCalled();
   },
@@ -1637,11 +1649,18 @@ it("refuses truncated hash-candidate evidence and includes five-character tokens
   if (result.ok) throw new Error("Incomplete candidate set must be explicit");
   const projected = projectAnalysisError(result.error);
   expect(projected.code).toBe("resource_constraint");
-  expect(projected.details?.refusal).toMatchObject({
-    kind: "fixed_ceiling",
-    limit: 64,
-    unit: "candidates",
+  expect(projected.details?.limit).toMatchObject({
+    control_kind: "parameter",
+    parameter: "apk_limits.snapshot_hash_candidates",
+    effective_value: 64,
+    unit: "count",
   });
+  // Raising the control retains every distinct candidate of the same APK.
+  const raised = await provider.execute({
+    operation: "identify_flutter_build",
+    input: { path, apk_limits: { snapshot_hash_candidates: 65 } },
+  });
+  if (!raised.ok) throw raised.error;
 });
 
 it.each([
