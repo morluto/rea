@@ -405,6 +405,7 @@ export class ArtifactReaderFailure extends Error {
     | "userMessage"
     | "resolvedPath"
     | "boundary"
+    | "observedBytes"
     | "admission"
     | "readerLimit"
     | "parserLimit"
@@ -419,6 +420,9 @@ export class ArtifactReaderFailure extends Error {
         ? {}
         : { resolvedPath: this.resolvedPath }),
       ...(this.boundary === undefined ? {} : { boundary: this.boundary }),
+      ...(this.observedBytes === undefined
+        ? {}
+        : { observedBytes: this.observedBytes }),
       ...(this.admission === undefined ? {} : { admission: this.admission }),
       ...(this.readerLimit === undefined
         ? {}
