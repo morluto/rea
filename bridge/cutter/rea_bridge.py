@@ -283,6 +283,17 @@ def _windows_user_sid_text() -> str:
         kernel32.CloseHandle(token)
 
 
+def _record_private_acl_trustee(
+    expected_user: str, sid: str, user_allowed: bool, system_allowed: bool
+) -> tuple[bool, bool]:
+    """Record one ACE. The current user can be SYSTEM, so one ACE can set both."""
+    is_user = sid == expected_user
+    is_system = sid == "S-1-5-18"
+    if not is_user and not is_system:
+        raise RuntimeError("Cutter bridge ACL allows an unrelated principal")
+    return user_allowed or is_user, system_allowed or is_system
+
+
 def _verify_windows_private_path(path: Path, directory: bool) -> None:
     kernel32, advapi32 = _windows_api()
     attributes = kernel32.GetFileAttributesW(str(path))
@@ -370,12 +381,9 @@ def _verify_windows_private_path(path: Path, directory: bool) -> None:
             if not advapi32.ConvertSidToStringSidW(sid_pointer, ctypes.byref(sid_text)):
                 raise ctypes.WinError(ctypes.get_last_error())
             try:
-                if sid_text.value == expected_user:
-                    user_allowed = True
-                elif sid_text.value == "S-1-5-18":
-                    system_allowed = True
-                else:
-                    raise RuntimeError("Cutter bridge ACL allows an unrelated principal")
+                user_allowed, system_allowed = _record_private_acl_trustee(
+                    expected_user, sid_text.value, user_allowed, system_allowed
+                )
             finally:
                 kernel32.LocalFree(sid_text)
         if not user_allowed or not system_allowed:
