@@ -1,5 +1,6 @@
 import { BinaryReader } from "../binaryContainer.js";
 import { managedDecodeBudget } from "./managedDecodeBudget.js";
+import { metadataIndexAt } from "./managedMetadataHeaps.js";
 import type {
   ManagedMetadataLayout,
   MetadataTableLayout,
@@ -157,9 +158,9 @@ export const memberListDefinitionRow = (
   if (pointers === undefined || pointers.rowCount === 0) return position;
   // The index validates every pointer row once and replays its failure.
   memberListIndex(bytes, layout, table);
-  const offset = pointers.offset + (position - 1) * pointers.rowSize;
-  const reader = new BinaryReader(bytes, true, "managed");
-  return layout.tableIndexSize(table) === 2
-    ? reader.u16(offset)
-    : reader.u32(offset);
+  return metadataIndexAt(
+    bytes,
+    pointers.offset + (position - 1) * pointers.rowSize,
+    layout.tableIndexSize(table),
+  );
 };
