@@ -8,6 +8,7 @@ import {
   type BrowserStepArtifacts,
 } from "../domain/browserScenarioCaptureValues.js";
 import type { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
+import { isDeclaredBrowserStorageSeedMark } from "./declaredBrowserStorageSeed.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const historyValueSchema = z.strictObject({
@@ -171,14 +172,18 @@ const captureStorage = async (input: {
         same_site: cookie.sameSite,
         ...secrets.fingerprint(cookie.value),
       })),
-      local_storage: pageStorage.local_storage.map(([name, value]) => ({
-        name: secrets.redact(name),
-        ...secrets.fingerprint(value),
-      })),
-      session_storage: pageStorage.session_storage.map(([name, value]) => ({
-        name: secrets.redact(name),
-        ...secrets.fingerprint(value),
-      })),
+      local_storage: pageStorage.local_storage
+        .filter(([name]) => !isDeclaredBrowserStorageSeedMark(name))
+        .map(([name, value]) => ({
+          name: secrets.redact(name),
+          ...secrets.fingerprint(value),
+        })),
+      session_storage: pageStorage.session_storage
+        .filter(([name]) => !isDeclaredBrowserStorageSeedMark(name))
+        .map(([name, value]) => ({
+          name: secrets.redact(name),
+          ...secrets.fingerprint(value),
+        })),
     };
     return { state: "captured" as const, value };
   } catch (cause: unknown) {

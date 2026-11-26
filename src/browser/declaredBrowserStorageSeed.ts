@@ -4,35 +4,64 @@ export type DeclaredBrowserStorageSeed = {
   readonly session: readonly (readonly [string, string])[];
 };
 
-/** Bookkeeping key. Not a caller entry; storage capture omits it. */
+/**
+ * Legacy bookkeeping key from earlier seed installs. Capture paths omit it so
+ * inventories do not treat it as application state.
+ */
 export const declaredBrowserStorageSeedMark = "\u0000rea-storage-seed";
 
+export const isDeclaredBrowserStorageSeedMark = (key: string): boolean =>
+  key === declaredBrowserStorageSeedMark;
+
+export type DeclaredBrowserStorageSeedCommand =
+  | "scope"
+  | "was"
+  | "mark"
+  | "fail";
+
 export type DeclaredBrowserStorageSeedScript = {
-  readonly mark: string;
+  readonly binding: string;
   readonly seeds: readonly DeclaredBrowserStorageSeed[];
 };
 
 type StorageArea = {
-  getItem(name: string): string | null;
   setItem(name: string, value: string): void;
 };
 
+type SeedBridge = (
+  command: DeclaredBrowserStorageSeedCommand,
+  area?: "local" | "session",
+  origin?: string,
+) => boolean | Promise<boolean | void>;
+
 /**
- * Playwright serializes this function into every document in the scenario
- * context. It runs after document creation and before that document's scripts,
- * including a popup opened later. Page-session auto-attach does not pause a
- * `window.open` target. A mark already stored in that area means this
- * partition or top-level context was seeded, so later documents keep the
- * page's updates and deletions.
+ * Playwright serializes this function into documents covered by the scenario
+ * seed hook. It runs after document creation and before that document's
+ * scripts, including a popup opened later. Page-session auto-attach does not
+ * pause a `window.open` target. Once-per-area ownership and connect-mode
+ * page lineage live in the Node binding named by `payload.binding`, so markers
+ * are not stored in clearable local or session storage.
  */
-export const applyDeclaredBrowserStorageSeeds = (
+export const applyDeclaredBrowserStorageSeeds = async (
   payload: DeclaredBrowserStorageSeedScript,
-): void => {
+): Promise<void> => {
   const host = globalThis as {
     location?: { origin?: string };
     localStorage?: StorageArea;
     sessionStorage?: StorageArea;
+    [name: string]: unknown;
   };
+  const bridge = host[payload.binding];
+  if (typeof bridge !== "function") return;
+  const call = async (
+    command: DeclaredBrowserStorageSeedCommand,
+    area?: "local" | "session",
+    origin?: string,
+  ): Promise<boolean | void> =>
+    (bridge as SeedBridge)(command, area, origin);
+
+  if ((await call("scope")) !== true) return;
+
   let origin = "";
   try {
     origin = host.location?.origin ?? "";
@@ -42,21 +71,22 @@ export const applyDeclaredBrowserStorageSeeds = (
   if (origin === "" || origin === "null") return;
   const seed = payload.seeds.find((item) => item.origin === origin);
   if (seed === undefined) return;
-  const writeOnce = (
+
+  const write = async (
+    area: "local" | "session",
     storage: StorageArea | undefined,
     entries: readonly (readonly [string, string])[],
-  ): void => {
-    if (storage === undefined || storage.getItem(payload.mark) === "1") return;
-    for (const [name, value] of entries) {
-      if (name === payload.mark) continue;
-      storage.setItem(name, value);
+  ): Promise<void> => {
+    if (storage === undefined || entries.length === 0) return;
+    if ((await call("was", area, origin)) === true) return;
+    try {
+      for (const [name, value] of entries) storage.setItem(name, value);
+      await call("mark", area, origin);
+    } catch {
+      await call("fail");
     }
-    storage.setItem(payload.mark, "1");
   };
-  try {
-    writeOnce(host.localStorage, seed.local);
-    writeOnce(host.sessionStorage, seed.session);
-  } catch {
-    return;
-  }
+
+  await write("local", host.localStorage, seed.local);
+  await write("session", host.sessionStorage, seed.session);
 };

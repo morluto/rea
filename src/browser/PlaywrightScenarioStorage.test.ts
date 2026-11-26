@@ -12,6 +12,7 @@ import {
   applyDeclaredBrowserStorageSeeds,
   declaredBrowserStorageSeedMark,
   type DeclaredBrowserStorageSeed,
+  type DeclaredBrowserStorageSeedCommand,
 } from "./declaredBrowserStorageSeed.js";
 import { PlaywrightScenarioStorage } from "./PlaywrightScenarioStorage.js";
 
@@ -455,9 +456,6 @@ const memoryStorage = (fail = false) => {
   const items = new Map<string, string>();
   return {
     items,
-    getItem(name: string) {
-      return items.get(name) ?? null;
-    },
     setItem(name: string, value: string) {
       if (fail) throw new Error("storage denied");
       items.set(name, value);
@@ -465,33 +463,75 @@ const memoryStorage = (fail = false) => {
   };
 };
 
-const applySeeds = (
+const createSeedBridge = (options?: {
+  readonly scope?: boolean;
+  readonly pageKey?: string;
+}) => {
+  const local = new Set<string>();
+  const session = new Set<string>();
+  let failed = false;
+  const pageKey = options?.pageKey ?? "page";
+  const bridge = (
+    command: DeclaredBrowserStorageSeedCommand,
+    area?: "local" | "session",
+    origin?: string,
+  ): boolean | void => {
+    if (command === "scope") return options?.scope !== false;
+    if (command === "fail") {
+      failed = true;
+      return;
+    }
+    if (origin === undefined || (area !== "local" && area !== "session"))
+      return false;
+    if (command === "was") {
+      if (area === "local") return local.has(origin);
+      return session.has(`${pageKey}\0${origin}`);
+    }
+    if (command === "mark") {
+      if (area === "local") local.add(origin);
+      else session.add(`${pageKey}\0${origin}`);
+    }
+  };
+  return { bridge, local, session, failed: () => failed };
+};
+
+const applySeeds = async (
   origin: string,
   seeds: readonly DeclaredBrowserStorageSeed[],
   storage: {
     local: ReturnType<typeof memoryStorage>;
     session: ReturnType<typeof memoryStorage>;
   } = { local: memoryStorage(), session: memoryStorage() },
-): {
+  bridgeState: ReturnType<typeof createSeedBridge> = createSeedBridge(),
+): Promise<{
   local: Map<string, string>;
   session: Map<string, string>;
-} => {
+  failed: boolean;
+}> => {
+  const binding = "__reaStorageSeedTest";
   const context = vm.createContext({
     location: { origin },
     localStorage: storage.local,
     sessionStorage: storage.session,
+    [binding]: bridgeState.bridge,
   });
-  vm.runInContext(
-    `(${applyDeclaredBrowserStorageSeeds.toString()})(${JSON.stringify({
-      mark: declaredBrowserStorageSeedMark,
-      seeds,
-    })})`,
+  await vm.runInContext(
+    `(async () => await (${applyDeclaredBrowserStorageSeeds.toString()})(${JSON.stringify(
+      {
+        binding,
+        seeds,
+      },
+    )}))()`,
     context,
   );
-  return { local: storage.local.items, session: storage.session.items };
+  return {
+    local: storage.local.items,
+    session: storage.session.items,
+    failed: bridgeState.failed(),
+  };
 };
 
-it("writes declared seeds once per area and keeps later page edits", () => {
+it("writes declared seeds once per area and keeps later page edits", async () => {
   const seeds: DeclaredBrowserStorageSeed[] = [
     {
       origin: "http://child.example",
@@ -504,29 +544,84 @@ it("writes declared seeds once per area and keeps later page edits", () => {
       session: [["probe", "root-session"]],
     },
   ];
+  const bridge = createSeedBridge();
   const storage = { local: memoryStorage(), session: memoryStorage() };
-  applySeeds("http://child.example", seeds, storage);
+  await applySeeds("http://child.example", seeds, storage, bridge);
   expect(storage.local.items.get("probe")).toBe("seed-local");
   expect(storage.session.items.get("probe")).toBe("seed-session");
+  expect(storage.local.items.has(declaredBrowserStorageSeedMark)).toBe(false);
   storage.local.items.set("probe", "page-updated");
-  storage.local.items.delete("rea_storage_remove");
+  storage.local.items.clear();
+  storage.local.items.set("probe", "page-updated");
   storage.session.items.set("probe", "session-updated");
-  applySeeds("http://child.example", seeds, storage);
+  await applySeeds("http://child.example", seeds, storage, bridge);
   expect(storage.local.items.get("probe")).toBe("page-updated");
-  expect(storage.local.items.has("rea_storage_remove")).toBe(false);
   expect(storage.session.items.get("probe")).toBe("session-updated");
 
+  const popupBridge = createSeedBridge({ pageKey: "popup" });
+  popupBridge.local.add("http://child.example");
   const popup = { local: storage.local, session: memoryStorage() };
-  applySeeds("http://child.example", seeds, popup);
+  await applySeeds("http://child.example", seeds, popup, popupBridge);
   expect(popup.local.items.get("probe")).toBe("page-updated");
   expect(popup.session.items.get("probe")).toBe("seed-session");
 
-  const other = applySeeds("http://other.example", seeds);
+  const other = await applySeeds("http://other.example", seeds);
   expect(other.local.size).toBe(0);
   expect(other.session.size).toBe(0);
-  const opaque = applySeeds("null", seeds);
+  const opaque = await applySeeds("null", seeds);
   expect(opaque.local.size).toBe(0);
   expect(opaque.session.size).toBe(0);
+});
+
+it("seeds a cloned popup session area and reports write failures", async () => {
+  const seeds: DeclaredBrowserStorageSeed[] = [
+    {
+      origin: "http://child.example",
+      local: [["probe", "seed-local"]],
+      session: [["probe", "seed-session"]],
+    },
+  ];
+  const openerBridge = createSeedBridge({ pageKey: "opener" });
+  const opener = { local: memoryStorage(), session: memoryStorage() };
+  await applySeeds("http://child.example", seeds, opener, openerBridge);
+  opener.session.items.set("probe", "opener-edited");
+
+  const popupBridge = createSeedBridge({ pageKey: "popup" });
+  const popup = {
+    local: opener.local,
+    session: memoryStorage(),
+  };
+  for (const [name, value] of opener.session.items)
+    popup.session.items.set(name, value);
+  await applySeeds("http://child.example", seeds, popup, popupBridge);
+  expect(popup.session.items.get("probe")).toBe("seed-session");
+
+  const failing = await applySeeds(
+    "http://child.example",
+    seeds,
+    { local: memoryStorage(true), session: memoryStorage() },
+    createSeedBridge(),
+  );
+  expect(failing.failed).toBe(true);
+  expect(failing.local.size).toBe(0);
+});
+
+it("skips seeding when the connect-mode bridge denies scope", async () => {
+  const seeds: DeclaredBrowserStorageSeed[] = [
+    {
+      origin: "http://child.example",
+      local: [["probe", "seed-local"]],
+      session: [["probe", "seed-session"]],
+    },
+  ];
+  const denied = await applySeeds(
+    "http://child.example",
+    seeds,
+    { local: memoryStorage(), session: memoryStorage() },
+    createSeedBridge({ scope: false }),
+  );
+  expect(denied.local.size).toBe(0);
+  expect(denied.session.size).toBe(0);
 });
 
 it.each(["launch", "connect"] as const)(
@@ -535,7 +630,11 @@ it.each(["launch", "connect"] as const)(
     const cdp = new FakeCdp();
     const { page, contextApi } = fixture(cdp);
     const installed: { script: unknown; payload: unknown }[] = [];
+    const bindings: string[] = [];
     Object.assign(contextApi, {
+      exposeBinding: async (name: string) => {
+        bindings.push(name);
+      },
       addInitScript: async (script: unknown, payload: unknown) => {
         installed.push({ script, payload });
       },
@@ -553,10 +652,11 @@ it.each(["launch", "connect"] as const)(
         : {}),
     });
     const owner = await createInitializedStorage(contextApi, page, input);
+    expect(bindings).toHaveLength(1);
     expect(installed).toHaveLength(1);
     expect(installed[0]?.script).toBe(applyDeclaredBrowserStorageSeeds);
     expect(installed[0]?.payload).toEqual({
-      mark: declaredBrowserStorageSeedMark,
+      binding: bindings[0],
       seeds: [
         {
           origin: "https://storage.example.test",
@@ -571,6 +671,42 @@ it.each(["launch", "connect"] as const)(
     await owner?.close();
   },
 );
+
+it("shares once-per-origin ownership between the init bridge and CDP seeder", async () => {
+  const cdp = new FakeCdp();
+  const { page, contextApi } = fixture(cdp);
+  let bridge:
+    | ((
+        source: { readonly page: unknown },
+        command: DeclaredBrowserStorageSeedCommand,
+        area?: "local" | "session",
+        origin?: string,
+      ) => boolean | void)
+    | undefined;
+  Object.assign(contextApi, {
+    exposeBinding: async (
+      _name: string,
+      callback: NonNullable<typeof bridge>,
+    ) => {
+      bridge = callback;
+    },
+    addInitScript: async () => undefined,
+  });
+  const owner = await createInitializedStorage(contextApi, page);
+  expect(bridge).toBeTypeOf("function");
+  const origin = "https://storage.example.test";
+  expect(bridge?.({ page }, "mark", "local", origin)).toBeUndefined();
+  expect(bridge?.({ page }, "mark", "session", origin)).toBeUndefined();
+  expect(bridge?.({ page }, "was", "local", origin)).toBe(true);
+  expect(bridge?.({ page }, "was", "session", origin)).toBe(true);
+
+  emitSeedPause(cdp);
+  await owner?.settle();
+  expect(
+    cdp.calls.filter(({ method }) => method === "Debugger.evaluateOnCallFrame"),
+  ).toHaveLength(0);
+  await owner?.close();
+});
 
 it("seeds session storage once per namespace and StorageKey", async () => {
   const cdp = new FakeCdp();
