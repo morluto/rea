@@ -37,12 +37,8 @@ const UNW_FLAG_CHAININFO = 0x4;
 const RUNTIME_FUNCTION_INDIRECT = 0x1;
 /** UNWIND_INFO header: version/flags, prolog size, code count, frame register. */
 const UNWIND_HEADER_BYTES = 4;
-/**
- * Fixed structural allowance on decoded entries. Each entry keeps about 30
- * bytes of typed-array state; the largest shipped x64 images hold a few
- * hundred thousand functions.
- */
-export const MAX_PE_UNWIND_ENTRIES = 2_097_152;
+/** Limit name of the exception-directory entry budget (`max_entries`). */
+export const PE_UNWIND_ENTRY_LIMIT = "entries";
 const READ_WINDOW_BYTES = 65536;
 const YIELD_EVERY = 4096;
 
@@ -526,13 +522,15 @@ export const parsePeUnwindRangesFromHandle = async (
   // Only a file-backed directory reaches the decoding allowance, so a
   // directory that leaves the file stays a malformed target.
   const count = Math.floor(directory.size / ENTRY_BYTES);
-  if (count > MAX_PE_UNWIND_ENTRIES)
+  // The declared entry count is the complete need.
+  if (count > input.max_entries)
     throw new BinaryResourceFailure(
       "structure",
-      MAX_PE_UNWIND_ENTRIES,
-      `PE exception directory declares ${String(count)} entries; at most ${String(MAX_PE_UNWIND_ENTRIES)} are decoded`,
-      "structure",
+      input.max_entries,
+      `PE exception directory declares ${String(count)} entries, above max_entries (${String(input.max_entries)})`,
+      PE_UNWIND_ENTRY_LIMIT,
       "entries",
+      count,
     );
   const tableBytes = count * ENTRY_BYTES;
   const bytes =

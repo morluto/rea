@@ -1,3 +1,4 @@
+import { analysisViewPageFields } from "./analysisViewPageFields.js";
 import { z } from "zod";
 import { canonicalJson } from "../comparisonSemantics.js";
 import { jsonValueSchema } from "../jsonValue.js";
@@ -30,11 +31,7 @@ import {
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 
-const page = {
-  kind: z.literal("native-procedure-references"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
-};
+const page = analysisViewPageFields("native-procedure-references");
 export const procedureReferenceViewRequests = {
   references: z.strictObject({
     ...page,

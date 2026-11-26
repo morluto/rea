@@ -20,9 +20,10 @@ export const DEFAULT_SQLITE_WORKER_TIMEOUT_MS = 30_000;
 /**
  * Combined database and WAL bytes copied into the private snapshot when
  * producer_limits.input_bytes is omitted. The copy streams to disk, so a
- * larger value costs disk, not memory.
+ * larger value costs disk, not memory: up to this much private disk per
+ * inspection, and the provider admits two at a time.
  */
-export const DEFAULT_SQLITE_INPUT_BYTES = 256 * 1024 * 1024;
+export const DEFAULT_SQLITE_INPUT_BYTES = 2 * 1024 * 1024 * 1024;
 
 /**
  * The snapshot input budget, as the per-call parameter that raises it, with

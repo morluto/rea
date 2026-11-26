@@ -48,6 +48,19 @@ export const analysisErrorRefusal = (
       operation: error.operation,
       ceiling: error.fixedAllowance,
     };
+  // A reader admission backed by a registered setting (artifact.member_count)
+  // is the same adjustable budget, with the per-call field as `parameter`.
+  if (
+    error instanceof ArtifactOperationError &&
+    error.readerLimit !== undefined &&
+    error.limit !== undefined &&
+    !("control_kind" in error.limit)
+  )
+    return {
+      kind: "adjustable_budget",
+      operation: error.operation,
+      budget: error.limit,
+    };
   if (
     error instanceof AnalysisInputError &&
     error.ambiguousSelector !== undefined

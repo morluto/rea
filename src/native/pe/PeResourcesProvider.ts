@@ -13,7 +13,6 @@ import {
   ArtifactResourceScope,
   artifactParseFailure,
 } from "../../resources/index.js";
-import { fixedNativeAllowance } from "../../domain/native/nativeDeadlines.js";
 import type { PeResourcesPort } from "../../ports/binaryDiagnostics/PeResourcesPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
@@ -21,6 +20,7 @@ import { classifyProviderFailure } from "../../providers/classifyProviderFailure
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import {
   peResourceEntryLimit,
+  peResourceMetadataLimit,
   MAX_INSPECT_PE_FILE_BYTES,
   type InspectPeResourcesInput,
 } from "../../domain/native/peResources.js";
@@ -157,12 +157,10 @@ const peResourcesFailure = (
                 ...reportedLimitContext,
                 maximum_metadata_bytes: limit.maximum,
               },
-              ...fixedNativeAllowance(
-                "The PE resource metadata allowance",
-                "parser",
-                limit.maximum,
-                "bytes",
-              ),
+              retryable: false,
+              // The result is measured until it passes the budget, so its
+              // complete size is unknown.
+              limit: peResourceMetadataLimit(limit.maximum),
             });
           if (boundary === "capacity")
             return parseLimitConstraint(operation, boundary, failure, {

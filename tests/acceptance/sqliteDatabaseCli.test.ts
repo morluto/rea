@@ -282,7 +282,7 @@ cliTest(
     const root = await createTestTempDirectory("rea-sqlite-size-budget-");
     const path = join(root, "selected.db");
     const walPath = `${path}-wal`;
-    const maximum = 256 * 1024 * 1024;
+    const maximum = 2 * 1024 * 1024 * 1024;
     const databaseBytes = maximum / 2;
     const walBytes = databaseBytes + 1;
     await writeFile(path, "");
