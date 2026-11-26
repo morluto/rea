@@ -112,8 +112,10 @@ export class SafeOutputTree {
   readonly #creatingDirectories = new Map<string, Promise<DirectoryIdentity>>();
   readonly #unknownDirectories = new Set<string>();
   readonly #ownedFiles = new Map<string, FileIdentity>();
-  /** Exclusive files awaiting identity admission; admitted identity and handles have separate owners. */
+  /** Exclusive files whose path is not yet admitted. */
   readonly #pendingFiles = new Map<string, OwnedFileHandle>();
+  /** Identity taken from a pending exclusive handle, before the path check. */
+  readonly #pendingFileIdentity = new Map<string, FileIdentity>();
   readonly #openHandles = new Set<OwnedFileHandle>();
   #published = false;
   #createdRoot = true;
@@ -192,6 +194,10 @@ export class SafeOutputTree {
       await assertPathIdentity(canonicalOutput, tree.#rootIdentity);
       return tree;
     } catch (cause: unknown) {
+      // The caller still owns this directory. A refusal must not hand back a
+      // tree whose rollback treats the caller's files as an unowned remainder.
+      if (!created && cause instanceof SafeOutputTreeDestinationRefusal)
+        throw cause;
       throw new SafeOutputTreeCreationFailure(cause, tree);
     }
   }
@@ -514,9 +520,33 @@ export class SafeOutputTree {
       residualPaths: [basename(this.#outputRoot)],
     };
     let removalFailure: unknown;
+    let admitFailure: unknown;
     try {
       await this.#admitPendingFiles();
-      await this.closeHandles();
+    } catch (cause: unknown) {
+      admitFailure = cause;
+    }
+    let closeFailure: unknown;
+    try {
+      // The exclusive handle is the only safe identity source. Close it only
+      // after that identity is stored. A later rollback checks the path.
+      await (admitFailure === undefined
+        ? this.closeHandles()
+        : this.#closeAdmittedHandles());
+    } catch (cause: unknown) {
+      closeFailure = cause;
+    }
+    if (admitFailure !== undefined) {
+      throw ArtifactReaderFailure.withCleanup(
+        admitFailure,
+        ArtifactReaderFailure.cleanupObservation(
+          closeFailure ?? admitFailure,
+          this.#outputRoot,
+        ),
+      );
+    }
+    try {
+      if (closeFailure !== undefined) throw closeFailure;
       await this.#assertOwnedDirectories();
       await removeOwnedTree({
         outputRoot: this.#outputRoot,
@@ -769,8 +799,23 @@ export class SafeOutputTree {
 
   /** Release descriptors without deleting an inspectable partial output tree. */
   async closeHandles(): Promise<void> {
+    await this.#closeOpenHandles();
+  }
+
+  /** Close handles whose identity is already known. Unidentified pending files stay open. */
+  async #closeAdmittedHandles(): Promise<void> {
+    const retain = new Set<OwnedFileHandle>();
+    for (const [path, owner] of this.#pendingFiles)
+      if (!this.#pendingFileIdentity.has(path)) retain.add(owner);
+    await this.#closeOpenHandles(retain);
+  }
+
+  async #closeOpenHandles(
+    retain?: ReadonlySet<OwnedFileHandle>,
+  ): Promise<void> {
     const failures: unknown[] = [];
     for (const owner of this.#openHandles) {
+      if (retain?.has(owner) === true) continue;
       try {
         await this.#closeHandle(owner);
       } catch (cause: unknown) {
@@ -785,9 +830,14 @@ export class SafeOutputTree {
     for (const [path, owner] of this.#pendingFiles) {
       let identity = this.#ownedFiles.get(path);
       if (identity === undefined) {
-        identity = await readFileIdentity(owner.handle, path);
+        identity = this.#pendingFileIdentity.get(path);
+        if (identity === undefined) {
+          identity = await readFileIdentity(owner.handle, path);
+          this.#pendingFileIdentity.set(path, identity);
+        }
         await assertFilePathIdentity(path, identity);
         this.#ownedFiles.set(path, identity);
+        this.#pendingFileIdentity.delete(path);
       }
       this.#pendingFiles.delete(path);
     }
