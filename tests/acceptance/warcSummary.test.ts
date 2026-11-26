@@ -22,7 +22,7 @@ cliTest(
       arguments: [
         "inspect-warc-archive",
         "./input.warc",
-        "--maxRecords",
+        "--max-records",
         "1",
         "--detail",
         "summary",
