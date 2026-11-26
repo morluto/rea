@@ -11,6 +11,7 @@ import {
   UBI_MAX_PEB_BYTES,
   UBI_MAX_PEBS,
   UBI_STATIC_PAYLOAD_CRC_LIMIT,
+  type UbiErasedBodyVerificationStats,
   type UbiImage,
   type UbiImageParseError,
 } from "./ubiImage.js";
@@ -2692,25 +2693,32 @@ it("verifies tens of thousands of erased blocks in linear time", async () => {
       : erasedBlock;
   };
   let bodyBytesRead = 0;
-  const parsed = await parseUbiImage(fileSize, (offset, length) => {
-    const pebIndex = Math.floor(offset / geometry.pebSize);
-    const inPeb = offset % geometry.pebSize;
-    if (inPeb === geometry.dataOffset && length === geometry.pebSize - inPeb)
-      bodyBytesRead += length;
-    if (inPeb + length <= geometry.pebSize)
-      return blockAt(pebIndex).subarray(inPeb, inPeb + length);
-    const out = Buffer.alloc(length);
-    let written = 0;
-    while (written < length) {
-      const pos = offset + written;
-      const idx = Math.floor(pos / geometry.pebSize);
-      const local = pos % geometry.pebSize;
-      const take = Math.min(length - written, geometry.pebSize - local);
-      blockAt(idx).copy(out, written, local, local + take);
-      written += take;
-    }
-    return out;
-  });
+  const verificationPasses: UbiErasedBodyVerificationStats[] = [];
+  const startedAt = performance.now();
+  const parsed = await parseUbiImage(
+    fileSize,
+    (offset, length) => {
+      const pebIndex = Math.floor(offset / geometry.pebSize);
+      const inPeb = offset % geometry.pebSize;
+      if (inPeb === geometry.dataOffset && length === geometry.pebSize - inPeb)
+        bodyBytesRead += length;
+      if (inPeb + length <= geometry.pebSize)
+        return blockAt(pebIndex).subarray(inPeb, inPeb + length);
+      const out = Buffer.alloc(length);
+      let written = 0;
+      while (written < length) {
+        const pos = offset + written;
+        const idx = Math.floor(pos / geometry.pebSize);
+        const local = pos % geometry.pebSize;
+        const take = Math.min(length - written, geometry.pebSize - local);
+        blockAt(idx).copy(out, written, local, local + take);
+        written += take;
+      }
+      return out;
+    },
+    { onErasedBodyVerification: (pass) => verificationPasses.push(pass) },
+  );
+  const elapsedMs = performance.now() - startedAt;
   expect(parsed).toMatchObject({
     ok: true,
     value: {
@@ -2725,6 +2733,15 @@ it("verifies tens of thousands of erased blocks in linear time", async () => {
     (consecutiveErased + alternatingPairs) *
       (geometry.pebSize - geometry.dataOffset),
   );
+  expect(verificationPasses).toHaveLength(1);
+  expect(verificationPasses[0]).toMatchObject({
+    erasedRangeCount: 1 + alternatingPairs,
+    nonErasedOffsetCount: 0,
+  });
+  expect(verificationPasses[0]!.rangeWalkSteps).toBeLessThanOrEqual(
+    3 * pebCount,
+  );
+  expect(elapsedMs).toBeLessThan(5_000);
 });
 
 it("reuses dynamic wear-leveling copy CRCs across PEB size candidates", async () => {

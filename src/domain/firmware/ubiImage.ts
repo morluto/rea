@@ -1543,12 +1543,25 @@ export type UbiImageRead = (
   length: number,
 ) => Promise<Uint8Array> | Uint8Array;
 
+export interface UbiErasedBodyVerificationStats {
+  readonly erasedRangeCount: number;
+  readonly nonErasedOffsetCount: number;
+  readonly rangeWalkSteps: number;
+}
+
 export interface ParseUbiImageOptions {
   /**
    * Called before scan chunks and header-probe batches. When `yieldControl` is
    * true, async callers can yield to the event loop before checking liveness.
    */
   readonly checkpoint?: (yieldControl: boolean) => Promise<void> | void;
+  /**
+   * Optional observer invoked after each erased-body verification pass with
+   * coalesced range-cache and cursor-walk counts.
+   */
+  readonly onErasedBodyVerification?: (
+    stats: UbiErasedBodyVerificationStats,
+  ) => void;
 }
 
 interface UbiErasedRange {
@@ -1566,6 +1579,9 @@ interface UbiParseContext {
   readonly read: UbiImageRead;
   readonly checkpoint:
     | ((yieldControl: boolean) => Promise<void> | void)
+    | undefined;
+  readonly onErasedBodyVerification:
+    | ((stats: UbiErasedBodyVerificationStats) => void)
     | undefined;
 }
 
@@ -1806,6 +1822,7 @@ const verifyErasedPebBodies = async (
   let erasedCursor = 0;
   let nonErasedCursor = 0;
   let chunks = 0;
+  let rangeWalkSteps = 0;
   const newErasedRanges: UbiErasedRange[] = [];
   const newNonErasedOffsets: number[] = [];
   for (let index = 0; index < pebs.length; index += 1) {
@@ -1817,11 +1834,14 @@ const verifyErasedPebBodies = async (
     // `classifyUbiPeb` already verified [pebStart, bodyStart) is all 0xFF, so
     // recording it lets adjacent erased blocks coalesce into a single range.
     appendErasedRange(newErasedRanges, pebStart, bodyStart);
+    rangeWalkSteps += 1;
     while (
       nonErasedCursor < ctx.nonErasedOffsets.length &&
       ctx.nonErasedOffsets[nonErasedCursor]! < bodyStart
-    )
+    ) {
       nonErasedCursor += 1;
+      rangeWalkSteps += 1;
+    }
     let erased = true;
     if (
       nonErasedCursor < ctx.nonErasedOffsets.length &&
@@ -1832,13 +1852,16 @@ const verifyErasedPebBodies = async (
       while (
         erasedCursor < ctx.erasedRanges.length &&
         ctx.erasedRanges[erasedCursor]!.end <= bodyStart
-      )
+      ) {
         erasedCursor += 1;
+        rangeWalkSteps += 1;
+      }
       const gaps: UbiErasedRange[] = [];
       let cursor = bodyStart;
       while (erasedCursor < ctx.erasedRanges.length) {
         const range = ctx.erasedRanges[erasedCursor]!;
         if (range.start >= pebEnd) break;
+        rangeWalkSteps += 1;
         if (range.start > cursor)
           gaps.push({ start: cursor, end: range.start });
         cursor = Math.max(cursor, range.end);
@@ -1863,10 +1886,12 @@ const verifyErasedPebBodies = async (
           if (nonErased !== -1) {
             appendErasedRange(newErasedRanges, offset, offset + nonErased);
             newNonErasedOffsets.push(offset + nonErased);
+            rangeWalkSteps += 1;
             erased = false;
             break;
           }
           appendErasedRange(newErasedRanges, offset, offset + length);
+          rangeWalkSteps += 1;
         }
         if (!erased) break;
       }
@@ -1880,13 +1905,22 @@ const verifyErasedPebBodies = async (
       };
     }
   }
-  if (newErasedRanges.length > 0)
+  if (newErasedRanges.length > 0) {
+    rangeWalkSteps += ctx.erasedRanges.length + newErasedRanges.length;
     ctx.erasedRanges = mergeErasedRanges(ctx.erasedRanges, newErasedRanges);
-  if (newNonErasedOffsets.length > 0)
+  }
+  if (newNonErasedOffsets.length > 0) {
+    rangeWalkSteps += ctx.nonErasedOffsets.length + newNonErasedOffsets.length;
     ctx.nonErasedOffsets = mergeSortedNumbers(
       ctx.nonErasedOffsets,
       newNonErasedOffsets,
     );
+  }
+  ctx.onErasedBodyVerification?.({
+    erasedRangeCount: ctx.erasedRanges.length,
+    nonErasedOffsetCount: ctx.nonErasedOffsets.length,
+    rangeWalkSteps,
+  });
   return verified ?? pebs;
 };
 
@@ -2063,6 +2097,7 @@ export const parseUbiImage = async (
     first: first.value,
     read,
     checkpoint: options?.checkpoint,
+    onErasedBodyVerification: options?.onErasedBodyVerification,
   };
   const scanEnd = Math.min(fileSize, UBI_MAX_PEB_BYTES + UBI_HEADER_BYTES);
   let fallback: UbiImage | null = null;
