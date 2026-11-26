@@ -4,6 +4,7 @@ interface PackageManifest {
   devDependencies?: Record<string, string>;
   dependencies?: Record<string, string>;
   overrides?: Record<string, unknown>;
+  scripts?: Record<string, string>;
   // npm manifests are extensible; preserve metadata outside this projection.
   [key: string]: unknown;
 }
