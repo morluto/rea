@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { sha256 as digestForTest } from "../../support/sha256.js";
 import { execFile } from "node:child_process";
 import { access, lstat, readFile, symlink, writeFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
@@ -585,9 +586,6 @@ it.each(["late-cancellation", "cleanup-failure", "cancelled cleanup-failure"])(
   },
 );
 
-const digestForTest = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
-
 it("inspects committed WAL schema and rows while preserving every source artifact", async () => {
   const { database } = await createFixture(true);
   const paths = [database.path, database.walPath, `${database.path}-shm`];
@@ -929,6 +927,11 @@ it("reports a projection above SQLite's result-column capacity as capacity, not 
         selected_result_columns: engineColumnLimit + 1,
         engine_result_column_limit: engineColumnLimit,
       },
+      refusal: expect.objectContaining({
+        allowance: "SQLite's result-column limit for this connection",
+        limit: engineColumnLimit,
+        unit: "columns",
+      }),
     },
   });
   expect(JSON.stringify(projection)).not.toContain("invalid_format");

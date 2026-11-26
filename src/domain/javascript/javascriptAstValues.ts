@@ -114,6 +114,20 @@ export const readExactJavaScriptLiteral = (
   return { found: false };
 };
 
+/**
+ * Return a string literal value without evaluating an expression. A template
+ * literal without substitutions denotes the same exact string.
+ */
+export const stringValue = (
+  node: t.Node | null | undefined,
+): string | undefined => {
+  if (node === null || node === undefined) return undefined;
+  const literal = readExactJavaScriptLiteral(node);
+  return literal.found && typeof literal.value === "string"
+    ? literal.value
+    : undefined;
+};
+
 /** Read an identifier or literal property name without evaluating syntax. */
 export const propertyName = (node: t.Node): string => {
   if (t.isIdentifier(node)) return node.name;
@@ -406,11 +420,7 @@ const appendEnumerableSourceMembers = (
   }
   const primitive = primitiveOwnKeys(spread, isNullish);
   if (primitive === "indices") {
-    const literal = readExactJavaScriptLiteral(spread);
-    const length =
-      literal.found && typeof literal.value === "string"
-        ? literal.value.length
-        : null;
+    const length = stringValue(spread)?.length ?? null;
     if (length !== 0) members.push({ kind: "primitive-indices", length });
     return undefined;
   }
@@ -626,14 +636,7 @@ export const semanticFinalObjectProperty = (
 export const semanticFinalObjectStringProperty = (
   node: t.ObjectExpression,
   key: string,
-): string | undefined => {
-  const value = semanticFinalObjectProperty(node, key);
-  if (value === undefined) return undefined;
-  const literal = readExactJavaScriptLiteral(value);
-  return literal.found && typeof literal.value === "string"
-    ? literal.value
-    : undefined;
-};
+): string | undefined => stringValue(semanticFinalObjectProperty(node, key));
 
 /** Read exact consumed object-pattern keys, leaving dynamic keys unknown. */
 export const semanticObjectPatternKeys = (

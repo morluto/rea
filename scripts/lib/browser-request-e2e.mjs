@@ -17,6 +17,7 @@ import {
 } from "../fixtures/browser-request-site.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 import { createPackageVerifierCommands } from "./verify-package-commands.mjs";
+import { completeEvidenceCliArguments } from "./complete-evidence.mjs";
 
 const authenticated = [
   { name: "X-CSRFToken", value: { source: "cookie", name: "csrftoken" } },
@@ -125,7 +126,10 @@ const cliOf = (commands, entrypoint) => async (args, maxBuffer) =>
 
 const captureOf = async (cli, scenario, maxBuffer) => {
   const stdout = await cli(
-    ["capture-browser-scenario", JSON.stringify(scenario)],
+    await completeEvidenceCliArguments([
+      "capture-browser-scenario",
+      JSON.stringify(scenario),
+    ]),
     maxBuffer,
   );
   const evidence = parseEvidence(JSON.parse(stdout));

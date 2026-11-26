@@ -43,6 +43,7 @@ override is `source: "runtime"`. The structured field is `update_mode: "runtime"
 
 | Setting                                      | Environment seed                                 | Owner                                                         | Default                                   | Floor |                                Maximum | Read                  |
 | -------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------- | ----------------------------------------- | ----: | -------------------------------------: | --------------------- |
+| `artifact.member_count`                      | `REA_ARTIFACT_MEMBER_COUNT`                      | `src/domain/artifactReaderLimits.ts`                          | 100000                                    |     1 |                             2147483647 | per operation         |
 | `asar.max_header_bytes`                      | `REA_ASAR_MAX_HEADER_BYTES`                      | `src/domain/analysisResourceLimits.ts`                        | 16777216                                  |     1 |                              268435456 | per operation         |
 | `asar.max_listing_bytes`                     | `REA_ASAR_MAX_LISTING_BYTES`                     | `src/domain/analysisResourceLimits.ts`                        | 67108864                                  |     1 |              `Number.MAX_SAFE_INTEGER` | per operation         |
 | `ghidra.value_flow_max_operations`           | `REA_GHIDRA_VALUE_FLOW_MAX_OPERATIONS`           | `src/domain/analysisResourceLimits.ts`                        | 3000                                      |     1 |                             2147483647 | per operation         |
@@ -60,6 +61,12 @@ override is `source: "runtime"`. The structured field is `update_mode: "runtime"
 | `javascript.max_heap_mb`                     | none (`max_heap_mb`)                             | `src/domain/javascript/javascriptAnalysisResourceControls.ts` | 1024                                      |   128 |                                  16384 | next worker           |
 | `wasm.command_timeout_ms`                    | none (`command_timeout_ms`)                      | `src/domain/wasm/wasmArtifact.ts`                             | 30000                                     |     1 |                             2147483647 | per operation         |
 | `native.matching_representation_bytes`       | `REA_NATIVE_MATCHING_REPRESENTATION_BYTES`       | `src/domain/analysisResourceLimits.ts`                        | 100663296                                 |     1 |                             1073741824 | per operation         |
+| `delivery.agent_result_budget_bytes`         | `REA_AGENT_RESULT_BUDGET_BYTES`                  | `src/domain/analysisResourceLimits.ts`                        | 32768                                     |  4096 |                               10485760 | per operation         |
+| `delivery.cli_retained_evidence_bytes`       | `REA_CLI_RETAINED_EVIDENCE_BYTES`                | `src/domain/analysisResourceLimits.ts`                        | 268435456                                 |     0 |                            68719476736 | per CLI invocation    |
+
+See [Agent result budget](limits-and-recovery.md#agent-result-budget) for
+`delivery.agent_result_budget_bytes` and `delivery.cli_retained_evidence_bytes`
+delivery and recovery behavior.
 
 An out-of-range `update_analysis_settings` value is rejected by the setting's
 schema. Invalid launch seeds that the global environment parser accepts as

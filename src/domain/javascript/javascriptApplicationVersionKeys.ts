@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { nativeExportCorrespondenceKey } from "./javascriptNativeExportFacts.js";
 import { canonicalJson } from "../comparisonSemantics.js";
 import {
@@ -155,9 +156,7 @@ const nodesByKey = (
   for (const node of nodes) {
     const key = keyFor(node);
     if (key === null) continue;
-    const group = output.get(key);
-    if (group === undefined) output.set(key, [node]);
-    else group.push(node);
+    appendToMapList(output, key, node);
   }
   return output;
 };

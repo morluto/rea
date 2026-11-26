@@ -1,3 +1,4 @@
+import { appendToMapList } from "../domain/appendToMapList.js";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import {
   readTsharkJsonPackets,
@@ -20,7 +21,6 @@ import {
   PCAP_PRODUCER_LIMITS,
   PCAP_TSHARK_DECODED_BYTES,
   pcapProducerLimit,
-  pcapProducerLimitRecovery,
 } from "../domain/pcap/pcapAnalysis.js";
 
 const OPERATION = "inspect_pcap_capture";
@@ -213,10 +213,6 @@ const decodeTsharkPackets = async (
         {
           retryable: false,
           limit: pcapProducerLimit("output_bytes", failure.maxBytes),
-          remediationAction: pcapProducerLimitRecovery(
-            "output_bytes",
-            failure.maxBytes,
-          ),
         },
       );
     case "json-expansion":
@@ -296,16 +292,6 @@ const joinDnsPackets = (
   return joinedIndices;
 };
 
-const appendFieldValue = (
-  values: Map<string, string[]>,
-  key: string,
-  item: string,
-): void => {
-  const list = values.get(key);
-  if (list === undefined) values.set(key, [item]);
-  else list.push(item);
-};
-
 const appendFieldArray = (
   values: Map<string, string[]>,
   key: string,
@@ -340,7 +326,7 @@ const collectTargetFieldsFromNodes = (
       if (key.endsWith("_raw")) continue;
       const child = value[key];
       if (typeof child === "string") {
-        if (TARGET_FIELD_KEYS.has(key)) appendFieldValue(values, key, child);
+        if (TARGET_FIELD_KEYS.has(key)) appendToMapList(values, key, child);
       } else if (Array.isArray(child)) {
         if (isStringArray(child)) {
           if (TARGET_FIELD_KEYS.has(key)) appendFieldArray(values, key, child);

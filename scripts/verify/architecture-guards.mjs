@@ -8,6 +8,7 @@ import {
   reconcileBaselineFile,
 } from "./counted-baseline.mjs";
 import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
+import { adhocCompletenessTernaryCount } from "./completeness-ternary-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
@@ -1075,6 +1076,19 @@ checkCounted(
   ),
   /from\s+["'][^"']*analysisView\/AnalysisViewService\.js["']/gu,
   [],
+);
+
+// Completeness is a derived claim built monotonically from examined input.
+// Ad-hoc `? "complete" :` / `: "complete"` ternaries drop newly added omission
+// or trailing-byte checks; use CoverageAccumulator / joinCoverageStatus in
+// src/domain/coverageAccumulator.ts instead. Existing sites are ratcheted here
+// so the count can only shrink.
+checkCounted(
+  'ad-hoc "complete" ternary in src/domain (use CoverageAccumulator or joinCoverageStatus from src/domain/coverageAccumulator)',
+  "adhoc-completeness-ternary",
+  files.filter((file) => file.path.startsWith("src/domain/")),
+  adhocCompletenessTernaryCount,
+  ["src/domain/coverage.ts", "src/domain/coverageAccumulator.ts"],
 );
 
 // Scripts covered by tsconfig.scripts.json declare and check their types in

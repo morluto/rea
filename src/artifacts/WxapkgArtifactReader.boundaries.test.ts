@@ -5,11 +5,10 @@ import {
 } from "../../tests/fixtures/artifactReaderLifecycle.js";
 import { once } from "node:events";
 import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { buffer, text } from "node:stream/consumers";
 import { setImmediate } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { buildWxapkg } from "../../tests/fixtures/wxapkg.js";
@@ -17,14 +16,8 @@ import { openRegularFile } from "../filesystem/RegularFile.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
 import { ArtifactFileSource } from "../resources/index.js";
 
-const fixture = async (bytes: Buffer): Promise<string> => {
-  const path = join(
-    await createTestTempDirectory("rea-wxapkg-boundary-"),
-    "package.wxapkg",
-  );
-  await writeFile(path, bytes);
-  return path;
-};
+const fixture = (bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-wxapkg-boundary-", "package.wxapkg", bytes);
 
 it("retries Wxapkg preparation cancelled during file reading", async () => {
   const path = await fixture(buildWxapkg([{ path: "a", data: "x" }]));
@@ -106,11 +99,12 @@ describe("wxapkg allocation and malformed-input boundaries", () => {
       await expect(collectEntries(reader)).rejects.toMatchObject({
         reason: "limit",
         boundary: "capacity",
-        fixedAllowance: {
-          name: "The wxapkg member table allowance",
-          kind: "parser",
-          limit: 16 * 1024 * 1024,
-          unit: "bytes",
+        readerLimit: {
+          parameter: "artifact_limits.wxapkg.table_bytes",
+          effective_value: 16 * 1024 * 1024,
+          // The declared index length less its four-byte file count.
+          required_value: 17 * 1024 * 1024 - 4,
+          can_increase: true,
         },
       });
       expect(reads).toHaveBeenCalledTimes(1); // bounded header only
@@ -147,8 +141,9 @@ describe("wxapkg allocation and malformed-input boundaries", () => {
       await expect(collectEntries(reader)).rejects.toMatchObject({
         reason: "limit",
         boundary: "capacity",
-        fixedAllowance: {
-          name: "The wxapkg directory representation allowance",
+        readerLimit: {
+          parameter: "artifact_limits.wxapkg.directory_bytes",
+          effective_value: 64 * 1024 * 1024,
           unit: "bytes",
         },
       });
@@ -170,7 +165,12 @@ describe("wxapkg allocation and malformed-input boundaries", () => {
     try {
       await expect(collectEntries(reader)).rejects.toMatchObject({
         reason: "limit",
-        message: expect.stringContaining("wxapkg members declare"),
+        readerLimit: {
+          parameter: "artifact_limits.expanded_bytes",
+          // 500 times the encoded package size when no value is selected.
+          effective_value: expect.any(Number),
+          can_increase: true,
+        },
       });
     } finally {
       await reader.close();

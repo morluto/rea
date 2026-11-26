@@ -1,14 +1,15 @@
-import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import { inspectCapacityContext } from "../../support/mcp/addressContextCapacity.js";
+import { mcpTest } from "../../support/mcp/mcpFixture.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
+import { createFixtureProviderIdentity } from "../../fixtures/analysisExecution.js";
 import { createTestProviderRouter } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { BinarySession } from "../../../src/application/binary/BinarySession.js";
-import { InvestigationRecords } from "../../../src/application/investigation/InvestigationRecords.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
@@ -96,138 +97,42 @@ const verifyContext = (
   });
 };
 
-it.each([
+mcpTest.for([
   ["compact", false],
   ["compact", true],
 ] as const)(
   "keeps context and smaller partials when unretained observations exceed the MCP budget (%s, two large=%s)",
-  async (profile, twoLarge) => {
-    const identity = {
-      id: "fixture",
-      name: "Fixture analysis provider",
-      version: "1",
-    };
-    const directory = await createTestTempDirectory("rea-context-capacity-");
-    const target = join(directory, "fixture.com");
-    await writeFile(target, Buffer.from([0xb8, 0, 0x4c, 0xcd, 0x21]));
-    const router = createTestProviderRouter(
-      () => ({
-        execute: async (operation) => {
-          if (operation === "address_name")
-            return ok(createAnalysisExecution("entry", identity));
-          if (operation === "comment")
-            return ok(
-              createAnalysisExecution(
-                twoLarge ? "g".repeat(6 * 1024 * 1024) : "short note",
-                identity,
-              ),
-            );
-          if (operation === "inline_comment" && twoLarge)
-            return ok(createAnalysisExecution("short note", identity));
-          if (operation === "resolve_containing_procedure")
-            return ok(
-              createAnalysisExecution(
-                {
-                  query_address: "0x100",
-                  found: true,
-                  procedure: {
-                    address: "0x100",
-                    name: "f".repeat(6 * 1024 * 1024),
-                    classification: null,
-                    body: { available: false, reason: "not recorded" },
-                  },
-                },
-                identity,
-              ),
-            );
-          return err(
-            new AnalysisCapabilityUnavailableError(
-              identity.id,
-              operation,
-              "not provided",
-            ),
-          );
-        },
-        close: async () => ok(null),
-      }),
+  async ([profile, twoLarge], { mcp, onTestFinished }) => {
+    const { client, response, session } = await inspectCapacityContext(
+      mcp,
+      onTestFinished,
       {
-        resolveAnalysisProfile: async () =>
-          ok({ profile: createAnalysisProfile(identity, { fixture: true }) }),
+        REA_MCP_TOOL_FAMILIES: "session",
+        REA_MCP_OUTPUT_SCHEMA_PROFILE: profile,
+      },
+      {
+        procedureName: "f".repeat(6 * 1024 * 1024),
+        comment: twoLarge ? "g".repeat(6 * 1024 * 1024) : "short note",
+        ...(twoLarge ? { inline_comment: "short note" } : {}),
       },
     );
-    const records = new InvestigationRecords({
-      maximumRepresentationBytes: 8000,
+    verifyContext(response.structuredContent, twoLarge, session);
+    const bundle = await client.callTool({
+      name: "get_evidence_bundle",
+      arguments: { detail: "complete" },
     });
-    const session = new BinarySession(router, records);
-    const server = createServer(
-      { kind: "session", session },
-      {
-        environment: {
-          ...process.env,
-          REA_MCP_TOOL_FAMILIES: "session",
-          REA_MCP_OUTPUT_SCHEMA_PROFILE: profile,
-        },
+    expect(bundle.structuredContent).toMatchObject({
+      result: {
+        records: [{ operation: "address_name", normalized_result: "entry" }],
       },
-    );
-    const client = new Client(
-      { name: "context-capacity", version: "1" },
-      { jsonSchemaValidator: createMcpSchemaValidation() },
-    );
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const definitions = new Map(
-        (await client.listTools()).tools.map((tool) => [tool.name, tool]),
-      );
-      const call = (name: string, args: Record<string, string>) => {
-        const toolDefinition = definitions.get(name);
-        if (toolDefinition === undefined)
-          throw new Error(`Tool ${name} was not advertised`);
-        return client.callTool(
-          { name, arguments: args },
-          { toolDefinition: withCanonicalOutputSchema(toolDefinition) },
-        );
-      };
-      expect(
-        (
-          await call("open_binary", {
-            path: target,
-            format: "dos-com",
-            provider_id: "fixture",
-          })
-        ).isError,
-      ).not.toBe(true);
-      const arguments_ = { document: "fixture", address: "0x100" };
-      const response = await call("inspect_address_context", arguments_);
-      expect(response.isError).not.toBe(true);
-      verifyContext(response.structuredContent, twoLarge, session);
-      const bundle = await client.callTool({
-        name: "get_evidence_bundle",
-        arguments: { detail: "complete" },
-      });
-      expect(bundle.structuredContent).toMatchObject({
-        result: {
-          records: [{ operation: "address_name", normalized_result: "entry" }],
-        },
-      });
-    } finally {
-      await client.close();
-      await server.close();
-      await session.close();
-    }
+    });
   },
 );
 
 it.each([true, false])(
   "recovers retained context facets when possible (profile=%s)",
   async (profile) => {
-    const identity = {
-      id: "fixture",
-      name: "Fixture analysis provider",
-      version: "1",
-    };
+    const identity = createFixtureProviderIdentity();
     const target = join(
       await createTestTempDirectory("rea-context-oversize-success-"),
       "fixture.com",

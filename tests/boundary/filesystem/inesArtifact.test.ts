@@ -1,5 +1,5 @@
 import * as rootHash from "../../../src/resources/StableRootArtifact.js";
-import { createHash } from "node:crypto";
+import { sha256 } from "../../support/sha256.js";
 import {
   lstat,
   mkdir,
@@ -32,9 +32,6 @@ import {
 import { abortIfNeeded } from "../../../src/resources/StreamDigest.js";
 
 const AGED_FIXTURE_TIME = new Date("2000-01-01T00:00:00Z");
-
-const sha256 = (bytes: Buffer) =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const fileReadPrototype = async (
   path: string,

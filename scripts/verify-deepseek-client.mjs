@@ -10,7 +10,8 @@ import { pathExists } from "./lib/verify-package-core.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { bindVerifierCommandInterruption } from "./lib/verifier-command-interruption.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
-import { publishClientReceipt } from "./verify/clients/receipt.mjs";
+import { readClientVersion } from "./verify/clients/version.mjs";
+import { receiptContext, publishReceipt } from "./verify/clients/receipt.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import {
   CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
@@ -109,14 +110,9 @@ await withVerifierCleanup(async () => {
       },
     );
     await writeFile(join(target, "app.js"), CLIENT_JAVASCRIPT_FIXTURE_SOURCE);
-    clientVersion = (
-      await commands.exec(command, ["--version"], {
-        env: environment,
-        cwd: workspace,
-        timeout: 30_000,
-        stdin: "pipe",
-      })
-    ).stdout.trim();
+    clientVersion = await readClientVersion(commands, command, environment, {
+      cwd: workspace,
+    });
     const runRea = async (args, artifact) => {
       const result = await commands.exec(
         process.execPath,
@@ -396,13 +392,7 @@ await withVerifierCleanup(async () => {
       lifecycle,
       passed: passed && reason === undefined,
       interruption: reason?.message,
-      artifacts: lab,
-      runtimeRoot,
-      host: {
-        platform: process.platform,
-        architecture: process.arch,
-        node: process.versions.node,
-      },
+      ...receiptContext(lab, runtimeRoot),
       modelFixture:
         "loopback custom OpenAI-compatible adapter; no live DeepSeek provider claim",
       modelContextWindow: 1000000,
@@ -428,7 +418,7 @@ await withVerifierCleanup(async () => {
         receipt.passed = false;
         throw cause;
       }
-    }, [() => publishClientReceipt(lab, receipt)]);
+    }, [() => publishReceipt(receipt)]);
   },
   () => {
     const reason = commands.finish();

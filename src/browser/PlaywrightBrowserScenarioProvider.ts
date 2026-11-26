@@ -1,3 +1,4 @@
+import { QueuedProviderClose } from "../providers/QueuedProviderClose.js";
 import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import {
   withPlaywrightExecutionBoundary,
@@ -382,8 +383,7 @@ const runScenario = async (
 /** Controlled Playwright/CDP scenario driver with exact process ownership. */
 export class PlaywrightBrowserScenarioProvider implements BrowserScenarioCapturePort {
   #tail: Promise<void> = Promise.resolve();
-  #closing = false;
-  #closePromise: Promise<void> | undefined;
+  readonly #closeState = new QueuedProviderClose();
   readonly #pendingCleanup = new Map<
     AnalysisCleanupLease,
     (value: string) => string
@@ -399,9 +399,10 @@ export class PlaywrightBrowserScenarioProvider implements BrowserScenarioCapture
     scenario: BrowserScenario,
     options: ExecutionOptions = {},
   ): Promise<Result<BrowserScenarioCapture, AnalysisError>> {
-    if (this.#closing) return Promise.resolve(err(this.#closedError()));
+    if (this.#closeState.requested)
+      return Promise.resolve(err(this.#closedError()));
     const operation = this.#tail.then(() =>
-      this.#closing
+      this.#closeState.requested
         ? err(this.#closedError())
         : this.#captureScenario(scenario, options),
     );
@@ -459,17 +460,7 @@ export class PlaywrightBrowserScenarioProvider implements BrowserScenarioCapture
   }
 
   async close(): Promise<void> {
-    this.#closing = true;
-    this.#closePromise ??= this.#tail
-      .then(async () => {
-        const failure = await this.#retryCleanup();
-        if (failure !== undefined) throw failure;
-      })
-      .catch((cause: unknown) => {
-        this.#closePromise = undefined;
-        throw cause;
-      });
-    return this.#closePromise;
+    return this.#closeState.closeAfter(this.#tail, () => this.#retryCleanup());
   }
 
   #closedError(): AnalysisError {

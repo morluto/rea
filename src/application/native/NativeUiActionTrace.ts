@@ -1,3 +1,4 @@
+import { appendToMapList } from "../../domain/appendToMapList.js";
 import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { permitsCapabilityFallback } from "../CapabilityFallback.js";
 import { stopsTraversal } from "../CallRelationshipTraversal.js";
@@ -635,9 +636,7 @@ const graphNodeDepths = (
       !known.has(edge.to)
     )
       continue;
-    const targets = outgoing.get(edge.from);
-    if (targets === undefined) outgoing.set(edge.from, [edge.to]);
-    else targets.push(edge.to);
+    appendToMapList(outgoing, edge.from, edge.to);
   }
   const depths = new Map([[start, 0]]);
   const queue = [start];

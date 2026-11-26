@@ -319,6 +319,8 @@ export const createServer = (
     recordEvidence,
     recordEvidenceWithUnknown,
   } = createSessionRecorders(server, session);
+  // Over-budget summaries link the complete record they replaced.
+  if (evidenceById !== undefined) server.serveRetainedEvidence(evidenceById);
   const analysisAdmission = withAdmittedAnalysis(source);
   server.withAdmittedAnalysis = analysisAdmission;
   server.registerTransportCloseHook(() => {
@@ -581,7 +583,7 @@ const selectToolResultDelivery = (
     environment.REA_MCP_MAX_RESPONSE_BYTES,
   );
   if (!configured.ok) throw configured.error;
-  return createToolResultDelivery(configured.value);
+  return createToolResultDelivery(configured.value, environment);
 };
 
 const outputSchemaProfile = (

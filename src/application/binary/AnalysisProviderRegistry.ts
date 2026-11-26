@@ -1,6 +1,5 @@
 import { ProviderInspectionScope } from "../../ports/ProviderInspectionScope.js";
 import {
-  AnalysisCleanupLease,
   ArtifactResourceScope,
   ArtifactReaderFailure,
   bindArtifactFileCleanup,
@@ -146,15 +145,7 @@ export class AnalysisProviderRegistry {
     AnalysisCleanupRelease
   >();
   readonly #profileResources = new ArtifactResourceScope();
-  readonly #profileOwner: RetainedResourceScope = {
-    retain: (owner, resource) =>
-      this.#profileResources.retain({
-        kind: "lease",
-        resource,
-        lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
-      }),
-    run: (operation) => this.#profileResources.run(operation),
-  };
+  readonly #profileOwner = this.#profileResources.forCloseOwners();
   #closing: Promise<Result<null, AnalysisError>> | undefined;
 
   constructor(
