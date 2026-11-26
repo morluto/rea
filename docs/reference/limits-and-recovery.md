@@ -115,8 +115,8 @@ import and lambda rows combined; default 65,536, at most 1,048,576).
 ### Native table structure budget
 
 `inspect_elf_unwind_ranges`, `inspect_kernel_module`, `inspect_elf_debug_link`,
-`inspect_dwarf_units`, `inspect_binary_hardening` and
-`inspect_native_initializers` accept `max_structure_bytes` (CLI
+`inspect_dwarf_units`, `inspect_binary_hardening`, `inspect_native_initializers`
+and `inspect_native_exports` accept `max_structure_bytes` (CLI
 `--max-structure-bytes`, 64 bytes to 512 MiB, default 16 MiB). It bounds one
 header, section, load-command or ELF dynamic-directory table read, and,
 separately, the section names decoded from the section-name table, before the
@@ -129,8 +129,18 @@ covers the ELF header tables, section names and dynamic table; Mach-O load
 commands keep the Mach-O command reader's own limit, and the PE headers it reads
 are bounded by the PE format.
 
-The Go, Rust and IL2CPP readers and `inspect_native_exports` read the same
-tables with the 16 MiB default and report it as a fixed allowance.
+For `inspect_native_exports` it also bounds the ELF dynamic, symbol and version
+tables located through PT_DYNAMIC.
+
+The Go, Rust and IL2CPP readers read the same tables with the 16 MiB default and
+report it as a fixed allowance.
+
+`inspect_native_exports` also accepts `max_entries` (export rows and declared
+symbol counts; default 262,144, at most 4,194,304) and `max_text_bytes` (name and
+version text retained across rows; default 16 MiB, at most 256 MiB). A table
+whose declared count exceeds `max_entries` reports that count as
+`required_value`; the text budget stops at the first excess and reports no
+`required_value`.
 
 ### Static reader read allowance
 
@@ -153,6 +163,14 @@ The identity pass has a fixed whole-file ceiling: 4 GiB minus one byte for the
 PE-only readers, whose file offsets are 32-bit, and 512 MiB for hardening and
 exports. A file above it is a `file-size` refusal naming that fixed allowance,
 which `max_file_bytes` does not raise.
+
+The PE readers also report `details.limit` for their per-call inventory budgets:
+`inspect_pe_imports` `max_dlls`, `max_functions` and `max_text_bytes` (decoded
+names, default 16 MiB, at most 256 MiB); `inspect_pe_load_config`
+`max_callbacks`; `inspect_pe_unwind_ranges` `max_entries` (default 2,097,152, at
+most 16,777,216; the declared count is its `required_value`); and
+`inspect_pe_resources` `max_entries` and `max_metadata_bytes` (the complete
+result, default 8 MiB, at most 256 MiB).
 
 ### Producer limits
 
