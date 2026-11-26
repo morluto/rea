@@ -84,6 +84,7 @@ export const PE_OVERLAY_LEADING_FORMATS = [
   "srec",
   "uf2",
   "dfuse",
+  "bflt",
   "esp-image",
   "fit",
   "ntfs-mft",
