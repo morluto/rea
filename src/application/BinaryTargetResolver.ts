@@ -544,17 +544,18 @@ const readOpenedBinaryTarget = async (
       (await hasTrailingZipArchive(metadata.size, (position, length) =>
         readHandleRange(handle, position, length, signal),
       ))
-    )
+    ) {
+      const format = await zipRootFormatByContent(
+        classificationPath,
+        metadata.size,
+        (position, length) => readHandleRange(handle, position, length, signal),
+      );
       return ok({
         ...(await artifactIdentity()),
         kind: "archive",
-        format: await zipRootFormatByContent(
-          classificationPath,
-          metadata.size,
-          (position, length) =>
-            readHandleRange(handle, position, length, signal),
-        ),
+        format,
       });
+    }
     const reason =
       typeof detected.error === "string"
         ? detected.error
