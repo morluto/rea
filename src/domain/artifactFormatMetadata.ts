@@ -51,6 +51,7 @@ import {
   ktx2MetadataSchema,
   ktxMetadataSchema,
 } from "./formatMetadata/gpuAssetMetadata.js";
+import { ndsEntryMetadataSchema, ndsMetadataSchema } from "./ndsRom.js";
 
 export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   godotPckMetadataSchema,
@@ -97,6 +98,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   ktxMetadataSchema,
   ktx2MetadataSchema,
   gpuAssetRegionMetadataSchema,
+  ndsMetadataSchema,
+  ndsEntryMetadataSchema,
 ]);
 export type ArtifactFormatMetadata = z.infer<
   typeof artifactFormatMetadataSchema
@@ -336,6 +339,14 @@ const declarationsByKind: {
   "gpu-asset-region": {
     notCompared:
       "role and index restate the region's path; its stored bytes are compared by content.",
+  },
+  nds: {
+    notCompared:
+      "Its header and table facts come from the ROM's own bytes, which content comparison covers.",
+  },
+  "nds-entry": {
+    notCompared:
+      "role, file ID, addresses and overlay facts come from the ROM's header and tables, which content comparison covers; its stored bytes are compared by content.",
   },
   fit: {
     notCompared:

@@ -454,6 +454,16 @@ rea extract-artifact ./installer.iso --json
 See [ISO 9660 disc images](../guides/firmware/iso9660-images.md) for volume facts, Joliet
 names, multi-extent and interleaved files, and what is not decoded.
 
+Inventory and extract a Nintendo DS ROM's CPU binaries, overlays, and files:
+
+```sh
+rea inspect-artifact ./game.nds --detail summary --json
+rea extract-artifact ./game.nds --json
+```
+
+See [Nintendo DS ROMs](../nds-roms.md) for header detection, member paths,
+checksum and range limitations, and what is not decoded.
+
 Inspect local model declarations without loading weights:
 
 ```bash

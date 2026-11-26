@@ -514,6 +514,11 @@ export const documentationSections = [
         route: "/ines-containers",
       },
       {
+        text: "Nintendo DS ROMs",
+        source: "nds-roms.md",
+        route: "/nds-roms",
+      },
+      {
         text: "WeChat mini-program wxapkg archives",
         source: "wxapkg.md",
         route: "/wxapkg",

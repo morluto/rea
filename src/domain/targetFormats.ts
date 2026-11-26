@@ -19,6 +19,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   ) as Record<ZipPackageFormat, "archive">),
   asar: "archive",
   ines: "archive",
+  nds: "archive",
   "godot-pck": "archive",
   unityfs: "archive",
   wxapkg: "archive",
