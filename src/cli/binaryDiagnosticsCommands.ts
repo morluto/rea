@@ -283,6 +283,7 @@ export const registerBinaryDiagnosticsCommands = (
         "Inspect file-wide and block byte entropy without executing the file",
       positionals: ["path"],
       callerPaths: ["path"],
+      evidenceDelivery: true,
       fields: {
         path: { description: "Local file" },
         block_size: {
@@ -293,12 +294,8 @@ export const registerBinaryDiagnosticsCommands = (
           description: "Window length in bytes; omit to extend through EOF",
         },
       },
-      omit: {
-        detail:
-          "One-shot output is complete Evidence; this command has no summary delivery",
-      },
     },
-    inspectWithService(
+    deliverWithService(
       async () =>
         (
           await import("../composition/binaryDiagnostics/byteEntropy.js")
@@ -401,6 +398,10 @@ export const registerBinaryDiagnosticsCommands = (
           description: "Maximum number of device-tree properties",
         },
         max_depth: { description: "Maximum device-tree nesting depth" },
+        max_decoded_bytes: {
+          description:
+            "Maximum estimated bytes of the decoded report, charged before allocation",
+        },
       },
     },
     deliverWithService(

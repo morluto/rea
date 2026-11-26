@@ -15,3 +15,22 @@ it("appends an array wider than any call-argument limit", () => {
 it("appends any iterable in order", () => {
   expect(appendAll(["a"], new Set(["b", "c"]))).toEqual(["a", "b", "c"]);
 });
+
+it("appends a target to itself only once", () => {
+  const values = [1, 2];
+  let yielded = 0;
+  Object.defineProperty(values, Symbol.iterator, {
+    value: function* () {
+      for (const value of Array.prototype.values.call(
+        this,
+      ) as Iterable<number>) {
+        if (++yielded > 2) throw new Error("reread appended item");
+        yield value;
+      }
+    },
+  });
+
+  expect(appendAll(values, values)).toBe(values);
+  expect(values.slice()).toEqual([1, 2, 1, 2]);
+  expect(yielded).toBe(2);
+});

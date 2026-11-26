@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256 } from "../support/sha256.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -17,9 +17,6 @@ import {
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const DEMO_GUID = "9e21fd93-9c72-4c15-8c4b-e77f9db8d4d2";
 const OTHER_GUID = "0a8f1d2b-1111-2222-3333-445566778899";

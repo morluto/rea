@@ -1,3 +1,4 @@
+import { expectInvalidInspectionInputs } from "../../../tests/support/expectInvalidInspectionInputs.js";
 import { lateCancellationEvidence } from "../../../tests/support/lateCancellationEvidence.js";
 import { expect, it } from "vitest";
 import { ElfNotesService } from "./ElfNotesService.js";
@@ -9,7 +10,6 @@ import { parseElfNotesFromHandle } from "../../native/elf/ElfNoteParser.js";
 import { ok } from "../../domain/result.js";
 import {
   AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import { bufferByteSource } from "../../domain/byteSource.js";
@@ -28,26 +28,12 @@ const report = await parseElfNotesFromHandle(
   async () => {},
 );
 
-it("rejects a relative path and extra arguments before reading", async () => {
-  let calls = 0;
-  const service = new ElfNotesService({
-    identity,
-    inspect: () => {
-      calls += 1;
-      return Promise.resolve(ok(report));
-    },
-  });
-  const relative = await service.inspect({ path: "app" });
-  const extra = await service.inspect({
-    path: report.artifact.path,
-    extra: true,
-  });
-  expect(relative.ok).toBe(false);
-  expect(extra.ok).toBe(false);
-  if (!relative.ok) expect(relative.error).toBeInstanceOf(AnalysisInputError);
-  if (!extra.ok) expect(extra.error).toBeInstanceOf(AnalysisInputError);
-  expect(calls).toBe(0);
-});
+it("rejects a relative path and extra arguments before reading", () =>
+  expectInvalidInspectionInputs(
+    report,
+    "app",
+    (inspect) => new ElfNotesService({ identity, inspect }),
+  ));
 
 it("records the selected ELF and an absent note table", async () => {
   const result = await new ElfNotesService({

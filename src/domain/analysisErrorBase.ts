@@ -30,8 +30,7 @@ const ANALYSIS_ERROR_TAGS = [
   "AnalysisArtifactChangedError",
   "AnalysisOutputError",
   "AnalysisCapabilityUnavailableError",
-  "AnalysisUnsupportedTargetError",
-  "AnalysisMalformedTargetError",
+  "AnalysisTargetFailureError",
   "AnalysisCancelledError",
   "AnalysisTimeoutError",
   "AnalysisResourceConstraintError",
@@ -99,6 +98,18 @@ export interface AnalysisCleanupObservation {
   readonly resources: readonly string[];
 }
 
+/** Append a later cleanup failure, keeping resource labels in first-seen order. */
+export const appendCleanupObservation = (
+  previous: AnalysisCleanupObservation | undefined,
+  next: AnalysisCleanupObservation,
+): AnalysisCleanupObservation =>
+  previous === undefined
+    ? next
+    : {
+        reason: `${previous.reason}; ${next.reason}`,
+        resources: [...new Set([...previous.resources, ...next.resources])],
+      };
+
 /** Publication stopped after a workflow produced its Evidence. Counts describe
  * question occurrences, not distinct Unknown identities. */
 export interface WorkflowUnknownPublication {
@@ -141,6 +152,8 @@ export interface AnalysisContinuingCallerGuidance {
 export interface AnalysisRelatedInputs {
   readonly parameters?: readonly string[];
   readonly operations?: readonly string[];
+  /** Providers, by ID, that offer the operation for this target. */
+  readonly providers?: readonly string[];
 }
 
 /** Optional provider-neutral context that must survive typed error projection. */
@@ -312,6 +325,9 @@ export abstract class AnalysisError extends Error {
             ...(options.related.operations === undefined
               ? {}
               : { operations: Object.freeze([...options.related.operations]) }),
+            ...(options.related.providers === undefined
+              ? {}
+              : { providers: Object.freeze([...options.related.providers]) }),
           });
     this.diagnostics =
       options?.diagnostics === undefined
@@ -397,7 +413,9 @@ export abstract class AnalysisError extends Error {
   /**
    * This error's own completion record. A bound release claim is its owner's
    * record; without one, an error composed only of dependencies has no
-   * resources of its own, and any other error waits for its owner.
+   * resources of its own, and any other error waits for its owner. Several
+   * claims are successive owners of the same resources (a retry owner that
+   * took over a lease), so the first owner to release completes them.
    */
   #ownCleanupPending(): boolean {
     if (this.#cleanupReleaseClaims.size === 0)
@@ -554,14 +572,22 @@ export abstract class AnalysisError extends Error {
     dependencies: readonly AnalysisError[],
     resourceProjection?: { readonly cleanupResources: readonly string[] },
   ): this {
-    // Settle the dependencies already bound before adding more: completion is
-    // monotonic, so a dependency bound after they released cannot reopen it.
-    if (!this.cleanupIncomplete) this.#cleanupDependencies?.clear();
+    // Completion is monotonic once this error has owned and settled cleanup;
+    // a dependency bound after settlement cannot reopen it or leak into cleanupResources.
+    if (this.#carriesCleanup && !this.cleanupIncomplete) {
+      this.#cleanupDependencies?.clear();
+      return this;
+    }
+    const incomplete = dependencies.filter(
+      (dependency) => dependency.cleanupIncomplete,
+    );
+    if (!this.#carriesCleanup && incomplete.length > 0)
+      this.#cleanupIncomplete = true;
+    this.#carriesCleanup = true;
     const pending = (this.#cleanupDependencies ??= new Set<AnalysisError>());
     if (resourceProjection !== undefined)
       this.#cleanupResourceProjection = resourceProjection;
-    for (const dependency of dependencies)
-      if (dependency.cleanupIncomplete) pending.add(dependency);
+    for (const dependency of incomplete) pending.add(dependency);
     return this;
   }
 

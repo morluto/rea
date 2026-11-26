@@ -1,11 +1,9 @@
 import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { text } from "node:stream/consumers";
+import { buffer, text } from "node:stream/consumers";
 
 import { describe, expect, it } from "vitest";
 
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import {
   buildUnityFs,
   type UnityFsMember,
@@ -14,20 +12,13 @@ import {
 import type { ArtifactEntry } from "../resources/ArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 
-const writeBundle = async (bytes: Buffer): Promise<string> => {
-  const path = join(
-    await createTestTempDirectory("rea-unityfs-"),
-    "content.bundle",
-  );
-  await writeFile(path, bytes);
-  return path;
-};
-
 const withReader = async <T>(
   bytes: Buffer,
   use: (reader: UnityFsArtifactReader) => Promise<T>,
 ): Promise<T> => {
-  const reader = new UnityFsArtifactReader(await writeBundle(bytes));
+  const reader = new UnityFsArtifactReader(
+    await createTestTempFile("rea-unityfs-", "content.bundle", bytes),
+  );
   try {
     return await use(reader);
   } finally {
@@ -156,9 +147,7 @@ describe("UnityFS payloads and malformed declarations", () => {
         const [entry] = await collectEntries(reader);
         if (entry === undefined) throw new Error("expected one entry");
         const stream = await reader.open(entry);
-        const chunks: Buffer[] = [];
-        for await (const chunk of stream) chunks.push(chunk as Buffer);
-        expect(Buffer.concat(chunks).equals(big)).toBe(true);
+        expect((await buffer(stream)).equals(big)).toBe(true);
       },
     );
   });
@@ -281,14 +270,14 @@ describe("UnityFS unavailable and malformed directories", () => {
         bytes.writeBigUInt64BE(1n << 40n, 32);
         return bytes;
       })(),
-      "format",
+      "truncated",
     ],
     [
       "a node count that cannot fit",
       buildUnityFs(members, { declaredNodeCount: 0xffff_ffff }),
-      "format",
+      "malformed",
     ],
-    ["bytes without a bundle", Buffer.from("not a unity bundle"), "format"],
+    ["bytes without a bundle", Buffer.from("not a unity bundle"), "malformed"],
   ])("refuses %s", async (_, bytes, reason) => {
     await withReader(bytes, async (reader) => {
       await expect(collectEntries(reader)).rejects.toMatchObject({ reason });

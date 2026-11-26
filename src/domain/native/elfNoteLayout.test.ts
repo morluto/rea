@@ -1,6 +1,22 @@
 import { expect, it } from "vitest";
 import { readElfNoteHeader } from "./elfNoteLayout.js";
 
+it("keeps byte order and view offsets independent across repeated reads", () => {
+  const backing = new Uint8Array(13);
+  const first = backing.subarray(0, 12);
+  const second = backing.subarray(1);
+  backing.set([1, 2]);
+  const header = (namesz: number) => ({
+    ok: true,
+    value: { namesz, descsz: 0, type: 0 },
+  });
+  expect(readElfNoteHeader(first, true)).toEqual(header(0x0201));
+  expect(readElfNoteHeader(first, false)).toEqual(header(0x01020000));
+  expect(readElfNoteHeader(second, true)).toEqual(header(2));
+  backing[1] = 3;
+  expect(readElfNoteHeader(first, true)).toEqual(header(0x0301));
+});
+
 it.each([false, true])(
   "preserves raw note sizes and type without admission (littleEndian=%s)",
   (littleEndian) => {

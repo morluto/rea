@@ -10,6 +10,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   executeWorkflowFixture,
   workflowGit,
+  workflowFixtureEnvironment,
 } from "../../support/workflowGit.js";
 
 const qualificationScript = fileURLToPath(
@@ -103,7 +104,7 @@ async function admissionFixture(
   const output = join(directory, "github-output");
   await writeFile(output, "");
   const env = {
-    ...process.env,
+    ...workflowFixtureEnvironment(),
     PATH: `${bin}:${process.env.PATH ?? ""}`,
     GH_FIXTURE_RESPONSE: fixturePath,
     GH_API_ERROR: String(options.apiError ?? false),
@@ -295,7 +296,7 @@ async function requiredRun(
   const output = join(directory, "github-output");
   await writeFile(output, "");
   const env = {
-    ...process.env,
+    ...workflowFixtureEnvironment(),
     CI_JOBS: JSON.stringify(results),
     CI_QUALIFICATION_DIRECTORY: receiptDirectory,
     GITHUB_EVENT_NAME: overrides.event ?? "schedule",

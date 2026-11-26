@@ -78,7 +78,7 @@ const codecRuntimeFailure = (
 
 const codecFailure = (
   path: string,
-  reason: "format" | "unsupported" | "limit",
+  reason: "malformed" | "unsupported" | "limit",
   detail: string,
 ): Result<never, AnalysisError> =>
   err(

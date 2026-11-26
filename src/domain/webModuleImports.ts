@@ -1,5 +1,6 @@
+import { appendToMapList } from "./appendToMapList.js";
 import type { Node } from "@babel/types";
-import { readExactJavaScriptLiteral } from "./javascript/javascriptAstValues.js";
+import { stringValue } from "./javascript/javascriptAstValues.js";
 import { traverseJavaScriptAst } from "./javascript/javascriptSemanticTraversal.js";
 import {
   javaScriptSourceLoaderCondition,
@@ -77,14 +78,10 @@ const addImportedReference = (
     expression.loc === undefined
   )
     return;
-  let specifier: string | null;
-  if (expression.type === "StringLiteral") {
-    specifier = expression.value;
-  } else {
-    const literal = readExactJavaScriptLiteral(expression);
-    specifier =
-      literal.found && typeof literal.value === "string" ? literal.value : null;
-  }
+  const specifier =
+    expression.type === "StringLiteral"
+      ? expression.value
+      : (stringValue(expression) ?? null);
   imports.push({
     kind,
     specifier,
@@ -238,19 +235,6 @@ interface CapturedModuleIndex {
   readonly responseByUrl: Map<string, number[]>;
 }
 
-const pushIndex = (
-  map: Map<string, number[]>,
-  key: string,
-  index: number,
-): void => {
-  let bucket = map.get(key);
-  if (bucket === undefined) {
-    bucket = [];
-    map.set(key, bucket);
-  }
-  bucket.push(index);
-};
-
 const buildCapturedModuleIndex = (
   scripts: readonly ExportedWebScript[],
 ): CapturedModuleIndex => {
@@ -258,9 +242,9 @@ const buildCapturedModuleIndex = (
   const responseByUrl = new Map<string, number[]>();
   for (let i = 0; i < scripts.length; i += 1) {
     const script = scripts[i]!;
-    pushIndex(byUrl, script.url, i);
+    appendToMapList(byUrl, script.url, i);
     if (script.source.kind === "scenario-response")
-      pushIndex(responseByUrl, script.url, i);
+      appendToMapList(responseByUrl, script.url, i);
   }
   return { byUrl, responseByUrl };
 };

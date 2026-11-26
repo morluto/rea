@@ -189,7 +189,7 @@ export const elf64PieInitializers = (
   file.writeUInt16LE(12, 60);
   file.writeUInt16LE(11, 62);
   phdr64(file, 64, 1, 7, 0, 0, file.length);
-  phdr64(file, 120, 2, 6, 0x300, 0x300, (19 + needed) * 16);
+  phdr64(file, 120, 2, 6, 0x300, 0x300, (20 + needed) * 16);
   file.writeBigUInt64LE(0x120n, 0x220);
   file.writeBigUInt64LE(0x100n, 0x240);
   [
@@ -212,8 +212,12 @@ export const elf64PieInitializers = (
     [5, 0x560],
     [10, dynstr.bytes.length],
     [11, 24],
+    [4, 0x780],
     [0, 0],
   ].forEach(([tag, value], index) => dyn64(file, index, tag ?? 0, value ?? 0));
+  [1, 2, 1, 0, 0].forEach((value, index) =>
+    file.writeUInt32LE(value, 0x780 + index * 4),
+  );
   rela64(file, 0x480, 0, 0, 0, 0);
   rela64(file, 0x498, 0x200, 0, 8, 0x100);
   rela64(file, 0x4b0, 0x208, 0, 8, 0x110);
@@ -231,7 +235,7 @@ export const elf64PieInitializers = (
   shdr64(file, 2, 0x800, name(1), 16, 2, 0x240, 0x240, 8);
   shdr64(file, 3, 0x800, name(2), 14, 2, 0x200, 0x200, 24);
   shdr64(file, 4, 0x800, name(3), 15, 2, 0x220, 0x220, 8);
-  shdr64(file, 5, 0x800, name(4), 6, 2, 0x300, 0x300, 19 * 16);
+  shdr64(file, 5, 0x800, name(4), 6, 2, 0x300, 0x300, 20 * 16);
   shdr64(file, 6, 0x800, name(5), 4, 2, 0x480, 0x480, 96, 7, 24);
   shdr64(file, 7, 0x800, name(6), 11, 2, 0x520, 0x520, 48, 8, 24);
   shdr64(file, 8, 0x800, name(7), 3, 2, 0x560, 0x560, dynstr.bytes.length);

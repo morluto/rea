@@ -1,14 +1,18 @@
 import { BinaryReader } from "../binaryContainer.js";
-import { DEFAULT_ISO9660_READER_LIMITS } from "../artifactReaderLimits.js";
-import { decodeIso9660RecordDate } from "./iso9660Dates.js";
-import { err, ok, type Result } from "../result.js";
 import {
+  DEFAULT_ISO9660_READER_LIMITS,
+  type ArtifactReaderLimitParameter,
+} from "../artifactReaderLimits.js";
+import { decodeIso9660RecordDate } from "./iso9660Dates.js";
+import type { Result } from "../result.js";
+import {
+  captureParseFailure,
   decodeLimit,
   malformedInput,
-  ParseFailureError,
   truncatedInput,
   unsupportedInput,
   type LimitRef,
+  type ParseFailureError,
 } from "../parseFailure.js";
 
 /**
@@ -39,7 +43,7 @@ export const ISO9660_FLAG_DIRECTORY = 0x02;
 export const ISO9660_FLAG_MULTI_EXTENT = 0x80;
 
 type Iso9660LimitSpec = LimitRef & {
-  readonly parameter: string;
+  readonly parameter: ArtifactReaderLimitParameter;
   readonly maximum: number;
   readonly unit: "bytes" | "count";
 };
@@ -132,17 +136,6 @@ export interface Iso9660Extent {
    */
   readonly leadingRunBytes: number;
 }
-
-export const parsedIso9660 = <T>(
-  read: () => T,
-): Result<T, ParseFailureError> => {
-  try {
-    return ok(read());
-  } catch (cause) {
-    if (!(cause instanceof ParseFailureError)) throw cause;
-    return err(cause);
-  }
-};
 
 export const iso9660Malformed = (
   detail: string,
@@ -532,7 +525,7 @@ export const admitIso9660Extent = (
   fileSize: number,
   volumeBytes: number,
 ): Result<void, ParseFailureError> =>
-  parsedIso9660(() => {
+  captureParseFailure(() => {
     // An empty extent with no extended attribute record stores no bytes, so
     // its location names no data; writers such as libarchive record the
     // unallocated sentinel 0xfffffff0 there.

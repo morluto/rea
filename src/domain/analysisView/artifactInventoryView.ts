@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import {
   artifactGraphManifestSchema,
   artifactInventoryCoverageSchema,
@@ -46,6 +47,7 @@ import {
   inventoryPathGlobSchema,
 } from "./inventoryPathGlob.js";
 import { androidOtaPayloadSummaryMetadataSchema } from "./androidOtaPayloadSummary.js";
+import { androidVbmetaSummaryMetadataSchema } from "./androidVbmetaSummary.js";
 import {
   espFlashImageSummaryMetadataSchema,
   summaryRootMetadata,
@@ -133,14 +135,16 @@ export const artifactInventorySummarySchema = z.strictObject({
     .exactOptional(),
   manifest: artifactGraphManifestSchema,
   /**
-   * An ESP flash layout's nested images appear as summaries here, and an
-   * Android OTA payload's partition, group and APEX arrays as counts.
+   * An ESP flash layout's nested images appear as summaries here, an
+   * Android OTA payload's partition, group and APEX arrays as counts, and a
+   * vbmeta image's descriptors as counts.
    */
   root_format_metadata: z
     .union([
       artifactFormatMetadataSchema,
       espFlashImageSummaryMetadataSchema,
       androidOtaPayloadSummaryMetadataSchema,
+      androidVbmetaSummaryMetadataSchema,
     ])
     .exactOptional(),
   available_counts: z.strictObject({
@@ -316,6 +320,8 @@ export const projectArtifactInventoryView = (
     inventory.manifest.root_format === "wxapkg" ||
     inventory.manifest.root_format === "iso9660" ||
     inventory.manifest.root_format === "tar" ||
+    inventory.manifest.root_format === "nso" ||
+    inventory.manifest.root_format === "nro" ||
     inventory.manifest.root_format === "pyinstaller" ||
     inventory.manifest.root_format === "node-sea" ||
     inventory.manifest.root_format === "intel-hex" ||
@@ -323,9 +329,13 @@ export const projectArtifactInventoryView = (
     inventory.manifest.root_format === "esp-image" ||
     inventory.manifest.root_format === "uf2" ||
     inventory.manifest.root_format === "dfuse" ||
+    inventory.manifest.root_format === "bflt" ||
     inventory.manifest.root_format === "esp-flash-image" ||
     inventory.manifest.root_format === "fit" ||
-    inventory.manifest.root_format === "android-ota-payload";
+    inventory.manifest.root_format === "nds" ||
+    inventory.manifest.root_format === "android-ota-payload" ||
+    inventory.manifest.root_format === "android-vbmeta" ||
+    inventory.manifest.root_format === "android-sparse-image";
   const counts = inventoryCounts(source);
   const limitations = uniqueSorted([
     ...parent.limitations,
@@ -590,12 +600,8 @@ const exactCandidates = (
     const byKind = new Map<ArtifactOccurrence["entry_kind"], number[]>();
     for (const [index, row] of rows.entries()) {
       byId.set(row.occurrence_id, index);
-      const existing = byPath.get(row.logical_path);
-      if (existing === undefined) byPath.set(row.logical_path, [index]);
-      else existing.push(index);
-      const kind = byKind.get(row.entry_kind);
-      if (kind === undefined) byKind.set(row.entry_kind, [index]);
-      else kind.push(index);
+      appendToMapList(byPath, row.logical_path, index);
+      appendToMapList(byKind, row.entry_kind, index);
     }
     source.index = { byId, byPath, byKind };
   }

@@ -1,3 +1,0 @@
-303(module, exports, require) {
-  module.exports = () => require("node:fs");
-}

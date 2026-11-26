@@ -72,7 +72,13 @@ export const deliverApplicationExecution = async (
       ? records.recordEvidence?.(parent)
       : records.recordEvidenceWithUnknown?.(parent, execution.unknown);
   if (view === undefined)
-    return delivery.toEvidenceToolResult(parent, contract, saved);
+    return delivery.toEvidenceToolResult(
+      parent,
+      contract,
+      saved,
+      undefined,
+      records.recordEvidence,
+    );
   if (saved !== undefined && !saved.ok)
     return delivery.toCallToolResult(saved, contract);
   return delivery.toSelectedViewToolResult(

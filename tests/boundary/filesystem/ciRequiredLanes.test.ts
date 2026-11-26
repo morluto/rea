@@ -6,7 +6,10 @@ import { minVersion, subset } from "semver";
 import { parse } from "yaml";
 import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { executeWorkflowFixture } from "../../support/workflowGit.js";
+import {
+  executeWorkflowFixture,
+  workflowFixtureEnvironment,
+} from "../../support/workflowGit.js";
 
 const workflow = async (filename = "ci.yml") =>
   z
@@ -71,10 +74,12 @@ it("opts only the Noble binary-layout toolchain into the Ubuntu Azure archive fa
   const toolchain = steps
     .parse(layout?.steps)
     .find((step) => step.uses === "./.github/actions/host-apt-packages");
-  expect(toolchain?.with).toMatchObject({
-    "download-timeout-seconds": "900",
-    "install-recommends": "false",
-  });
+  expect(toolchain?.with).toMatchObject({ "install-recommends": "false" });
+  // Three attempts, each with its kill grace, plus 15 s of backoff must leave
+  // the job five minutes to build and verify the fixtures.
+  const attemptSeconds = Number(toolchain?.with?.["download-timeout-seconds"]);
+  expect(attemptSeconds).toBeGreaterThan(0);
+  expect(3 * (attemptSeconds + 5) + 15).toBeLessThanOrEqual(25 * 60 - 300);
   expect(
     steps.parse(layout?.steps).filter((step) => step.uses === archive),
   ).toEqual([{ uses: archive, with: { [input]: "true" } }]);
@@ -900,7 +905,9 @@ it.each([
           new URL("../../../scripts/ci/required.mjs", import.meta.url),
         ),
       ],
-      { env: { ...process.env, CI_JOBS: JSON.stringify(jobs) } },
+      {
+        env: { ...workflowFixtureEnvironment(), CI_JOBS: JSON.stringify(jobs) },
+      },
     );
     if (passes) await expect(execution).resolves.toMatchObject({ stderr: "" });
     else
@@ -928,7 +935,7 @@ it("rejects incomplete or malformed classification even when available jobs succ
       ],
       {
         env: {
-          ...process.env,
+          ...workflowFixtureEnvironment(),
           CI_JOBS: JSON.stringify({
             changes: { result: "success", outputs },
             static: { result: "success" },
@@ -1004,7 +1011,12 @@ it("fails fast only for ordinary PR matrices and rejects partial portable feedba
             new URL("../../../scripts/ci/required.mjs", import.meta.url),
           ),
         ],
-        { env: { ...process.env, CI_JOBS: JSON.stringify(needs) } },
+        {
+          env: {
+            ...workflowFixtureEnvironment(),
+            CI_JOBS: JSON.stringify(needs),
+          },
+        },
       ),
     ).rejects.toMatchObject({
       code: 1,
@@ -1061,7 +1073,7 @@ it("runs a selected PR subset in planner-owned groups and still gates it", async
       ],
       {
         env: {
-          ...process.env,
+          ...workflowFixtureEnvironment(),
           GITHUB_EVENT_NAME: event,
           CI_QUALIFICATION_DIRECTORY: "",
           CI_JOBS: JSON.stringify({
@@ -1204,7 +1216,7 @@ it("binds each canonical lane to its explicit fast and full workflow jobs", asyn
       ],
       {
         env: {
-          ...process.env,
+          ...workflowFixtureEnvironment(),
           GITHUB_EVENT_NAME: "push",
           CI_JOBS: JSON.stringify(context),
           CI_QUALIFICATION_DIRECTORY: "",
@@ -1291,12 +1303,14 @@ it("requires every client schema engine in the build job of every code change", 
 });
 
 it.skipIf(process.platform === "win32").each([
-  ["true", "180", "0"],
-  ["false", "120", "0"],
-  ["false", "120", "124"],
+  ["true", "180", ["0"]],
+  ["false", "120", ["0"]],
+  // A slow download resumes from APT's cache on the next bounded attempt.
+  ["false", "120", ["124", "0"]],
+  ["false", "120", ["124", "100", "124"]],
 ] as const)(
-  "downloads hosted packages within the selected deadline and keeps cached install outside it (%s, %s, %s)",
-  async (recommends, seconds, status) => {
+  "downloads hosted packages within the selected per-attempt deadline and keeps cached install outside it (%s, %s, %j)",
+  async (recommends, seconds, statuses) => {
     const { run } = z
       .object({
         runs: z.object({ steps: z.tuple([z.object({ run: z.string() })]) }),
@@ -1319,18 +1333,23 @@ it.skipIf(process.platform === "win32").each([
         REA_APT_INSTALL_RECOMMENDS=$1
         REA_APT_DOWNLOAD_TIMEOUT=$2
         REA_APT_PACKAGES="package-one package-two"
-        fixture_status=$3
+        read -r -a fixture_statuses <<< "$3"
+        fixture_attempt=0
         sudo() {
           printf '%s\n' "$*"
-          if [[ $1 == timeout ]]; then return "$fixture_status"; fi
+          if [[ $1 == timeout ]]; then
+            fixture_attempt=$((fixture_attempt + 1))
+            return "\${fixture_statuses[fixture_attempt - 1]}"
+          fi
         }
+        sleep() { :; }
       ` +
         "\n" +
         run,
       "fixture",
       recommends,
       seconds,
-      status,
+      statuses.join(" "),
     ]).then(
       ({ stdout }) => ({ code: 0, stdout }),
       (cause: unknown) =>
@@ -1341,12 +1360,19 @@ it.skipIf(process.platform === "win32").each([
       .trim()
       .split("\n")
       .filter((line) => !line.startsWith("::error::"));
-    expect(result.code).toBe(Number(status));
+    const last = statuses.at(-1)!;
+    expect(result.code).toBe(Number(last));
     expect(commands).toEqual([
-      `timeout --kill-after=5s ${seconds}s apt-get -o Acquire::Retries=2 --download-only ${install}`,
-      ...(status === "0" ? [`apt-get --no-download ${install}`] : []),
+      ...statuses.map(
+        () =>
+          `timeout --kill-after=5s ${seconds}s apt-get -o Acquire::Retries=2 --download-only ${install}`,
+      ),
+      ...(last === "0" ? [`apt-get --no-download ${install}`] : []),
     ]);
-    if (status !== "0") expect(result.stdout).toContain(`(exit ${status})`);
+    if (last !== "0")
+      expect(result.stdout).toContain(
+        `failed after three bounded attempts (last exit ${last})`,
+      );
   },
 );
 

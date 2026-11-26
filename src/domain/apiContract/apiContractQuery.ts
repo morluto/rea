@@ -1,3 +1,4 @@
+import { analysisViewPageFields } from "../analysisView/analysisViewPageFields.js";
 import { z } from "zod";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { graphqlContractViewRequestSchema } from "./graphqlContractQuery.js";
@@ -9,11 +10,7 @@ import {
 } from "./apiContract.js";
 import { presentRootDiscriminator } from "../schemaAnnotations.js";
 
-const page = {
-  kind: z.literal("api-contract"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
-};
+const page = analysisViewPageFields("api-contract");
 export const apiContractViewRequestSchema = z.discriminatedUnion("collection", [
   z.strictObject({
     ...page,

@@ -144,10 +144,7 @@ const readFirstZstandardMember = async (archive: Buffer): Promise<Buffer> => {
     for await (const entry of reader.entries()) entries.push(entry);
     const entry = entries[0];
     if (entry === undefined) throw new Error("Missing ZIP member");
-    const chunks: Buffer[] = [];
-    for await (const chunk of await reader.open(entry))
-      chunks.push(Buffer.from(chunk));
-    return Buffer.concat(chunks);
+    return await buffer(await reader.open(entry));
   } finally {
     await reader.close();
   }
@@ -172,7 +169,7 @@ describe("ZIP Zstandard method 93", () => {
         ),
       ).rejects.toMatchObject({
         name: "ArtifactReaderFailure",
-        reason: "format",
+        reason: "malformed",
         message: expect.stringContaining(message),
       });
     },
@@ -197,7 +194,7 @@ describe("ZIP Zstandard method 93", () => {
       ),
     ).rejects.toMatchObject({
       name: "ArtifactReaderFailure",
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("Invalid compressed data"),
     });
   });
@@ -211,7 +208,7 @@ describe("ZIP Zstandard method 93", () => {
     await expect(
       readFirstZstandardMember(zstandardZipFixture(content, { compressed })),
     ).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("Invalid compressed data"),
       cause: { code: "ZSTD_error_checksum_wrong" },
     });
@@ -228,12 +225,16 @@ describe("ZIP Zstandard method 93", () => {
       message: expect.stringContaining("Zstandard dictionary"),
       cause: { code: "ZSTD_error_dictionary_wrong" },
     });
-    expect(translateArtifactFailure("extract_artifact", failure)).toMatchObject(
-      {
-        reason: "unavailable",
-        detail: expect.stringContaining("Zstandard dictionary"),
-      },
-    );
+    expect(
+      translateArtifactFailure(
+        "extract_artifact",
+        "/selected/artifact",
+        failure,
+      ),
+    ).toMatchObject({
+      reason: "unavailable",
+      detail: expect.stringContaining("Zstandard dictionary"),
+    });
   });
 
   it.each([
@@ -258,7 +259,7 @@ describe("ZIP Zstandard method 93", () => {
         zstandardZipFixture(content, { compressed: Buffer.from(hex, "hex") }),
       ),
     ).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("Invalid compressed data"),
       cause: { code },
     });
@@ -311,7 +312,7 @@ describe("ZIP Zstandard frame completion", () => {
         readFirstZstandardMember(zstandardZipFixture(output, { compressed })),
       ).rejects.toMatchObject({
         name: "ArtifactReaderFailure",
-        reason: "format",
+        reason: "malformed",
         message: expect.stringContaining("Invalid compressed data"),
       });
     },
@@ -419,10 +420,9 @@ describe("ZIP Zstandard member streams", () => {
           expect(decoders[0]?.closed).toBe(true);
           expect(decoders[0]?.destroyed).toBe(true);
         });
-        const chunks: Buffer[] = [];
-        for await (const chunk of await reader.open(entry))
-          chunks.push(Buffer.from(chunk));
-        expect(Buffer.concat(chunks).equals(content)).toBe(true);
+        expect((await buffer(await reader.open(entry))).equals(content)).toBe(
+          true,
+        );
         expect(producers).toHaveLength(2);
         expect(decoders).toHaveLength(2);
         await waitFor(() => {
@@ -459,11 +459,11 @@ describe("ZipArtifactReader positional reads", () => {
       expect(entries.map(({ path }) => path)).toEqual(["member.txt"]);
       const entry = entries[0];
       if (entry === undefined) throw new Error("Expected a ZIP member");
-      const chunks: Buffer[] = [];
-      for await (const chunk of await reader.open(entry))
-        chunks.push(Buffer.from(chunk));
       expect(
-        Buffer.compare(Buffer.concat(chunks), Buffer.from(fixture.content)),
+        Buffer.compare(
+          await buffer(await reader.open(entry)),
+          Buffer.from(fixture.content),
+        ),
       ).toBe(0);
       expect(reads.mock.calls.length).toBeGreaterThan(3);
     } finally {
@@ -803,7 +803,7 @@ describe("ZipArtifactReader extraction finalization", () => {
       held.release();
       await expect(consuming).rejects.toMatchObject({
         name: "ArtifactReaderFailure",
-        reason: "format",
+        reason: "malformed",
         cause: failure,
       });
       expect(stream.readableEnded).toBe(false);

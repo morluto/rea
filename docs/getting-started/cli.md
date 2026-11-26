@@ -397,6 +397,17 @@ rea extract-artifact ./payload.bin --json
 See [Android OTA update payloads](../guides/firmware/android-ota-payload.md) for manifest
 facts, signature counting, REPLACE/ZERO reconstruction and delta limits.
 
+Inventory an Android sparse image and expand it to one raw partition image
+without `simg2img`:
+
+```sh
+rea inspect-artifact ./system.img --json
+rea extract-artifact ./system.img --json
+```
+
+See [Android sparse images](../guides/firmware/android-sparse-image.md) for chunk
+facts, DONT_CARE handling, unverified checksums and the expansion allowance.
+
 `inspect-artifact` and `extract-artifact` also read ZIP members compressed with
 Zstandard (standard method 93). They retain the shared ZIP CRC, declared-size,
 overlap and archive expansion checks. The native streaming decoder keeps the
@@ -444,6 +455,17 @@ See [Android boot images](../android-boot-image.md) for header versions 0 throug
 4, vendor ramdisk table entries, stored compression, and the unverified AVB
 footer. `ANDROID!` does not record boot versus init_boot versus recovery.
 
+Inspect a standalone Android Verified Boot vbmeta image:
+
+```sh
+rea inspect-artifact ./vbmeta.img --json
+rea extract-artifact ./vbmeta.img --json
+```
+
+See [Android Verified Boot vbmeta images](../guides/firmware/android-vbmeta.md)
+for the header, descriptors, stored public key, and the fact that nothing is
+verified.
+
 Inventory and extract an ISO 9660 disc image without mounting it:
 
 ```sh
@@ -453,6 +475,36 @@ rea extract-artifact ./installer.iso --json
 
 See [ISO 9660 disc images](../guides/firmware/iso9660-images.md) for volume facts, Joliet
 names, multi-extent and interleaved files, and what is not decoded.
+
+Inventory and extract a Nintendo Switch NSO module or NRO executable:
+
+```sh
+rea inspect-artifact ./main.nso --json
+rea extract-artifact ./main.nso --json
+```
+
+See [Switch executables](../guides/firmware/switch-executables.md) for header facts, segment
+hashes, LZ4 decompression limits and NRO assets.
+
+Inventory and extract a uClinux bFLT flat executable:
+
+```sh
+rea inspect-artifact ./busybox.bflt --detail summary --evidence_output busybox.json --json
+rea extract-artifact ./busybox.bflt --json
+```
+
+See [uClinux bFLT flat executables](../bflt-executables.md) for header facts,
+segments, gzip and gzdata bodies, and the limitations kept beside the facts.
+
+Inventory and extract a Nintendo DS ROM's CPU binaries, overlays, and files:
+
+```sh
+rea inspect-artifact ./game.nds --detail summary --json
+rea extract-artifact ./game.nds --json
+```
+
+See [Nintendo DS ROMs](../guides/firmware/nds-roms.md) for header detection, member paths,
+checksum and range limitations, and what is not decoded.
 
 Inspect local model declarations without loading weights:
 
@@ -693,6 +745,19 @@ The workflow reports package identity, license and repository fields as present,
 dependency groups with version ranges, and a ZIP contents inventory with
 path-derived folder roles. Missing or malformed `.nuspec` members still return
 the inventory with limitations. See [NuGet packages](../guides/managed/nuget-nupkg.md).
+
+Inspect an OCI image-layout directory without unpacking a tar, decompressing
+layers, or contacting a registry:
+
+```bash
+rea inspect-oci-image-layout /absolute/path/to/busybox.oci --json
+```
+
+The workflow reports layout version, index entries, image config facts, layers,
+and streamed digest verification of present referenced blobs. Missing blobs,
+digest mismatches, and similar defects are findings. Env values are kept
+unless `--no-include-env-values` is selected. Directory form only. See
+[OCI image layouts](../guides/artifacts/oci-image-layout.md).
 
 Complete `rea decompile --json` Evidence can be saved and inspected through
 `inspect-analysis-view` with an inline source and
@@ -963,6 +1028,23 @@ the observed artifact kind. Restoring the snapshot validates its contents and
 checks its binding to the target, provider and profile.
 
 ## Import, export and compare Evidence
+
+Evidence `provider` identifies the producer of the observation. Optional
+`provider_selection` records the captured selection of a fresh Hopper, Ghidra,
+IDA, or Kuna execution, including candidate availability, target support, and
+rejection codes. The execution must match the selected native provider and its
+known profile facts. Unknown version or profile facts remain unknown.
+
+Generic retention, imports, and snapshot replay preserve supplied metadata,
+including its absence; opening another provider does not rewrite history.
+Artifact, browser, managed, and capture output does not acquire native selection
+metadata. REA-derived summaries and views cite their attributed native sources
+without claiming to be native observations themselves.
+
+Selection metadata on an Evidence envelope does not change its `evidence_id`.
+A nested Evidence value remains the exact input captured by its parent: later
+admission metadata on the separately retained source does not rewrite that
+embedded value or the parent's commitment.
 
 Evidence records retain artifact identity, source locations, observations,
 inferences and unresolved findings. Validate an existing bundle, export its

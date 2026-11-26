@@ -1,3 +1,4 @@
+import { analysisViewPageFields } from "./analysisViewPageFields.js";
 import { z } from "zod";
 import {
   nativeExportsSchema,
@@ -30,11 +31,7 @@ const peRow = pe.shape.exports.element;
 const elfRow = elf.shape.exports.element;
 const issue = pe.shape.issues.element;
 const sourceIndex = { source_index: z.int().nonnegative() };
-const page = {
-  kind: z.literal("native-exports"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
-};
+const page = analysisViewPageFields("native-exports");
 
 /** Exact names preserve all versions/aliases; indices are scoped to the complete parent. */
 export const nativeExportsViewRequestSchema = z.discriminatedUnion(

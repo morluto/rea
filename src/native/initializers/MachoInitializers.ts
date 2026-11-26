@@ -783,9 +783,10 @@ export const readMachoInitializers = async (
   image: MachoInitializerImage,
   page: InitializerPage,
   signal?: AbortSignal,
+  structureBytes?: number,
 ): Promise<NativeInitializerInspection> => {
   assertArtifactReadActive(signal);
-  const container = readMachoImage(image.bytes);
+  const container = readMachoImage(image.bytes, structureBytes);
   const header = readMachoLoadCommandTableHeader(
     image.bytes,
     image.bytes.length,

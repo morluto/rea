@@ -937,6 +937,10 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
           REVERSE_EDGE_CASES,
           "retains an objdump command's unverified process owner until a later inspection stops it",
         ),
+        test(
+          REVERSE_EDGE_CASES,
+          "stops an owner registered during cleanup retry before admitting another command",
+        ),
       ),
     },
   },
@@ -1641,6 +1645,20 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "src/application/nuget/NugetNupkgService.test.ts",
+        "retains completed Evidence and caller selections on late cancellation",
+      ),
+    ),
+  ),
+  "rea-oci-image-layout": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/ociImageLayoutMcp.test.ts",
+        "advertises inspect_oci_image_layout and reads layout version",
+      ),
+    ),
+    covered(
+      test(
+        "src/application/oci/OciImageLayoutService.test.ts",
         "retains completed Evidence and caller selections on late cancellation",
       ),
     ),

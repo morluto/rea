@@ -1,3 +1,4 @@
+import { analysisViewPageFields } from "./analysisViewPageFields.js";
 import { z } from "zod";
 import {
   nativeLoadImageCheckSchema,
@@ -57,9 +58,7 @@ const defaultFields: Partial<Record<keyof typeof rows, readonly string[]>> = {
     .keyof().options,
 };
 const selection = {
-  kind: z.literal("native-load-image"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
+  ...analysisViewPageFields("native-load-image"),
   indices: z.array(z.int().nonnegative()).optional(),
 };
 const request = <Name extends keyof typeof rows>(name: Name) =>

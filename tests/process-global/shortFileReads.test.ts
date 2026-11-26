@@ -335,7 +335,7 @@ it("keeps fuse sentinel offsets, states and complete-file digest across short re
   }
 });
 
-it("returns malformed dyld header facts when short positive data ends at true EOF", async () => {
+it("reports changed dyld header facts when short positive data ends before the measured size", async () => {
   const root = await createTestTempDirectory("rea-dyld-read-eof-");
   const path = join(root, "Main");
   await writeFile(path, machoImage({}));
@@ -345,7 +345,11 @@ it("returns malformed dyld header facts when short positive data ends at true EO
   const resources = new ArtifactResourceScope();
   try {
     const image = await new DylibFileAccess(resources, root).image(path);
-    expect(image.facts).toMatchObject({ status: "malformed" });
+    // The file measured larger than the bytes it returned, so it changed.
+    expect(image.facts).toMatchObject({
+      status: "failed",
+      failure: { kind: "changed", format: "macho" },
+    });
     expect(fault.reads).toBeGreaterThan(1);
     expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
   } finally {

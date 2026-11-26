@@ -41,6 +41,8 @@ export interface AnalysisViewParent {
   readonly artifact?: { readonly path: string; readonly sha256: string } | null;
   /** Parent Evidence parameters, when the parent operation records them. */
   readonly parameters?: unknown;
+  /** The complete authenticated parent record, for views that page its exact JSON. */
+  readonly evidence?: Evidence;
 }
 import {
   canBorrowParsedJsonSnapshot,

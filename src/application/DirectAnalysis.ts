@@ -407,6 +407,7 @@ const runAnalysis = async (
       const inspectDirectory = dependencies.inspectArtifactDirectory;
       const execution = await runInRetainedArtifactScope(
         session.resourceScope,
+        path,
         () =>
           inspectDirectory(
             directory,
@@ -741,6 +742,10 @@ const executeAnalysisTool = async (input: {
         ...(input.saveSnapshot
           ? { snapshotContext: "one-shot-target" as const }
           : {}),
+      },
+      {
+        admitRecovery: session.admitRecoveryObservation.bind(session),
+        evidenceById: (id) => session.evidenceForAnalysis(id),
       },
     );
     result = retainAnalysisResultSources(

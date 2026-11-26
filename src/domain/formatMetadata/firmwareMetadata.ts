@@ -549,3 +549,44 @@ export const uImageEntryMetadataSchema = z.strictObject({
   index: uint32,
 });
 export type UImageEntryMetadata = z.infer<typeof uImageEntryMetadataSchema>;
+
+/**
+ * uClinux bFLT flat header facts (all fields big-endian). Header offsets count
+ * from the start of the file. Revision 4 relocation entries count from the
+ * byte after the header and are listed up to a fixed inline count; the full
+ * table stays extractable.
+ */
+export const bfltMetadataSchema = z.strictObject({
+  kind: z.literal("bflt"),
+  revision: uint32,
+  entry: uint32,
+  data_start: uint32,
+  data_end: uint32,
+  bss_end: uint32,
+  stack_size: uint32,
+  reloc_start: uint32,
+  reloc_count: uint32,
+  flags: uint32,
+  flag_names: z.array(z.string()),
+  unknown_flags: uint32,
+  build_date: uint32.nullable(),
+  build_date_iso: z.string().nullable(),
+  compression: z.enum(["none", "gzip", "gzdata"]),
+  text_size: offset.nullable(),
+  data_size: offset.nullable(),
+  bss_size: offset.nullable(),
+  inflated_bytes: offset.nullable(),
+  relocations: z.array(uint32),
+  relocations_truncated: z.boolean(),
+  out_of_range_relocation_count: offset.nullable(),
+});
+export type BfltMetadata = z.infer<typeof bfltMetadataSchema>;
+
+/** One bFLT segment: its range in the loader's (inflated) image. */
+export const bfltSegmentMetadataSchema = z.strictObject({
+  kind: z.literal("bflt-segment"),
+  segment: z.enum(["text", "data", "relocations", "compressed-body"]),
+  image_offset: offset.nullable(),
+  length: offset,
+});
+export type BfltSegmentMetadata = z.infer<typeof bfltSegmentMetadataSchema>;

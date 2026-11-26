@@ -1,3 +1,4 @@
+import { appendToMapList } from "./appendToMapList.js";
 import {
   canBorrowParsedJsonSnapshot,
   isImmutableJsonSnapshot,
@@ -596,9 +597,7 @@ const orderOccurrences = (
 ): ArtifactOccurrence[] => {
   const groups = new Map<string, ArtifactOccurrence[]>();
   for (const occurrence of occurrences) {
-    const group = groups.get(occurrence.logical_path);
-    if (group === undefined) groups.set(occurrence.logical_path, [occurrence]);
-    else group.push(occurrence);
+    appendToMapList(groups, occurrence.logical_path, occurrence);
   }
   return [...groups]
     .sort(([left], [right]) => compareUnicodeCodePoints(left, right))

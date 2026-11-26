@@ -1,4 +1,4 @@
-import { BinaryReader } from "../domain/binaryContainer.js";
+import { createBinaryReaderCache } from "../domain/binaryContainer.js";
 import { Buffer } from "node:buffer";
 import { byteToHex } from "../kernel/byteToHex.js";
 import {
@@ -60,23 +60,10 @@ interface UnconfirmedFfsState {
   readonly rawState: number;
 }
 
-/**
- * Parse one FFS header at a local position; null when framing is unconfirmed.
- * Checksum findings are observations on the header,
- * not rejections — invalid files stay in the inventory with their notes.
- */
 const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
-const ffsFileReaders = new WeakMap<Buffer, BinaryReader>();
+const ffsFileReader = createBinaryReaderCache(true, "FFS file");
 
-function ffsFileReader(buffer: Buffer): BinaryReader {
-  let reader = ffsFileReaders.get(buffer);
-  if (reader === undefined) {
-    reader = new BinaryReader(buffer, true, "FFS file");
-    ffsFileReaders.set(buffer, reader);
-  }
-  return reader;
-}
-
+/** Return null for unconfirmed framing and retain checksum findings on parsed headers. */
 export function parseFfsFileHeader(
   region: ScanRegion,
   localBase: number,

@@ -111,7 +111,7 @@ cliTest(
       code: "unsupported_target",
       details: {
         operation: "inspect_dwarf_units",
-        format_failure: "malformed",
+        failure_kind: "malformed",
         reason: expect.stringContaining(
           "PE long section name string table is unavailable",
         ),

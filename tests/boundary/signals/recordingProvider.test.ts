@@ -6,6 +6,7 @@ import {
 } from "../../../src/domain/analysisErrorCore.js";
 import { signalDecodersSchema } from "../../../src/domain/signals/signalDecoders.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import { it, expect, onTestFinished } from "vitest";
 import { writeFile, readFile, readdir, chmod, symlink } from "node:fs/promises";
@@ -61,7 +62,7 @@ else if (${JSON.stringify(mode)} === 'invalid-catalog-stdout' && process.argv.in
 else if (${JSON.stringify(mode)} === 'invalid-help-stdout' && process.argv.includes('--show')) process.stdout.write(Buffer.concat([Buffer.from('ID: uart\\nOptions:\\n'), Buffer.from([0xfe])]));
 else if (${JSON.stringify(mode)} === 'malformed-copy') { chmodSync(snapshotName, 0o600); writeFileSync(snapshotName, 'changed'); }
 else if (${JSON.stringify(mode)} === 'oversized-copy') { chmodSync(snapshotName, 0o600); truncateSync(snapshotName, 32 * 1024 * 1024 + 1); }
-else if (${JSON.stringify(mode)} === 'line-budget') process.stdout.write('ID: uart' + '\\n'.repeat(65536));
+else if (${JSON.stringify(mode)} === 'long-help') process.stdout.write('ID: uart' + '\\n'.repeat(65540));
 else if (${JSON.stringify(mode)} === 'overflow') process.stdout.write('x'.repeat(5 * 1024 * 1024));
 else if (${JSON.stringify(mode)} === 'wait') { console.log('ready'); setInterval(() => {}, 1000); }
 else if (${JSON.stringify(mode)} === 'many') process.stdout.write(Array.from({length:90},(_,i)=>'line '+(i+1)+'\\r\\n').join(''));
@@ -78,6 +79,7 @@ const fixture = async (
   mode = "ok",
   failCleanup = false,
   recordingName?: string,
+  launchEnvironment: Readonly<Record<string, string>> = {},
 ) => {
   const directory = await createTestTempDirectory("rea-signal-test-");
   const path = join(
@@ -114,6 +116,7 @@ const fixture = async (
   const provider = new SigrokRecordingProvider(
     {
       ...process.env,
+      ...launchEnvironment,
       REA_SIGROK_COMMAND: configuredCommand,
       REA_SIGROK_PRLIMIT_COMMAND:
         mode === "limiter-refused" ? limiter : configuredCommand,
@@ -1358,56 +1361,162 @@ it("attributes discovery admission failures to discovery while sharing the decod
   });
 });
 
-it.each([
-  "bad-version",
-  "nonzero",
-  "overflow",
-  "line-budget",
-  "wait",
-  "oversized-tool",
-])("preserves discovery failure diagnostics: %s", async (mode) => {
-  const f = await fixture(mode);
-  const result = await f.service.inspectDecoders(
-    {},
-    { signal: f.controller.signal },
-  );
-  if (result.ok) throw new Error("Expected failure");
-  expect(result.error).toMatchObject({
-    operation: "inspect_signal_decoders",
+it.each(["bad-version", "nonzero", "overflow", "wait", "oversized-tool"])(
+  "preserves discovery failure diagnostics: %s",
+  async (mode) => {
+    const f = await fixture(mode);
+    const result = await f.service.inspectDecoders(
+      {},
+      { signal: f.controller.signal },
+    );
+    if (result.ok) throw new Error("Expected failure");
+    expect(result.error).toMatchObject({
+      operation: "inspect_signal_decoders",
+    });
+    if (mode === "bad-version")
+      expect(result.error.capturedOutput).toMatchObject({
+        stdout: "sigrok-cli 0.7.1\n",
+        stderr: "version warning\n",
+      });
+    if (mode === "overflow") {
+      expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+      if (!(result.error instanceof AnalysisResourceConstraintError))
+        throw new Error("Expected command-output allowance refusal");
+      expect(result.error).toMatchObject({
+        resource: "memory",
+        reportedLimits: { output_bytes: 4194304 },
+        retryable: false,
+      });
+      // The per-call field is backed by the session setting.
+      expect(projectAnalysisError(result.error).details?.limit).toMatchObject({
+        setting: "producer.output_bytes",
+        parameter: "producer_limits.output_bytes",
+        effective_value: 4194304,
+        source: "default",
+        update_mode: "runtime",
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+      });
+      expect(projectAnalysisError(result.error).details?.refusal).toMatchObject(
+        {
+          kind: "adjustable_budget",
+          control: "producer_limits.output_bytes",
+          setting: "producer.output_bytes",
+          effective_value: 4194304,
+          source: "default",
+        },
+      );
+    }
+  },
+);
+
+it("applies a runtime producer.output_bytes override below the per-call field", async () => {
+  const f = await fixture("overflow");
+  const snapshot = (value: number) => ({
+    revision: 1,
+    overrides: { "producer.output_bytes": value },
   });
-  if (mode === "line-budget") {
-    expect(result.error).toMatchObject({
-      _tag: "AnalysisResourceConstraintError",
-      resource: "memory",
-      reason: "Decoder discovery exceeds the 65,536-line representation budget",
-      reportedLimits: { boundary: "line_budget", maximum: 65536 },
-      fixedAllowance: { kind: "capture" },
-    });
-    expect(result.error.capturedOutput?.stdout).toBe(
-      "ID: uart" + "\n".repeat(65536),
-    );
-  }
-  if (mode === "bad-version")
-    expect(result.error.capturedOutput).toMatchObject({
-      stdout: "sigrok-cli 0.7.1\n",
-      stderr: "version warning\n",
-    });
-  if (mode === "overflow") {
-    expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
-    if (!(result.error instanceof AnalysisResourceConstraintError))
-      throw new Error("Expected command-output allowance refusal");
-    expect(result.error).toMatchObject({
-      resource: "memory",
-      reportedLimits: { output_bytes: 4194304 },
-      retryable: false,
-    });
-    expect(analysisErrorRemediationAction(result.error)).toContain(
-      "producer_limits.output_bytes",
-    );
-    expect(analysisErrorRemediationAction(result.error)).not.toMatch(
-      /Review the reported worker memory limits/u,
-    );
-  }
+  // A lower session value refuses the 5 MiB output and reports its source.
+  const lowered = await runWithAnalysisOperationSnapshot(snapshot(1024), () =>
+    f.service.inspectDecoders({}),
+  );
+  if (lowered.ok) throw new Error("Expected the lowered output refusal");
+  expect(projectAnalysisError(lowered.error).details?.limit).toMatchObject({
+    setting: "producer.output_bytes",
+    effective_value: 1024,
+    source: "runtime",
+  });
+  // A higher session value admits the output; it then fails only on grammar.
+  const raised = await runWithAnalysisOperationSnapshot(
+    snapshot(8 * 1024 * 1024),
+    () => f.service.inspectDecoders({}),
+  );
+  if (raised.ok) throw new Error("Expected the malformed catalog");
+  // The whole output was admitted; only the catalog grammar refused it.
+  expect(raised.error).toBeInstanceOf(AnalysisOutputError);
+  expect(raised.error.capturedOutput?.stdout).toHaveLength(5 * 1024 * 1024);
+  // An explicit per-call field still wins over the session value.
+  const request = await runWithAnalysisOperationSnapshot(
+    snapshot(8 * 1024 * 1024),
+    () =>
+      f.service.inspectDecoders({ producer_limits: { output_bytes: 2048 } }),
+  );
+  if (request.ok) throw new Error("Expected the per-call output refusal");
+  expect(projectAnalysisError(request.error).details?.limit).toMatchObject({
+    setting: "producer.output_bytes",
+    effective_value: 2048,
+    source: "request",
+    update_mode: "parameter",
+  });
+  await f.service.close();
+});
+
+it("seeds producer.output_bytes from REA_PRODUCER_OUTPUT_BYTES and refuses an invalid seed until a runtime value repairs it", async () => {
+  const seeded = await fixture("overflow", false, undefined, {
+    REA_PRODUCER_OUTPUT_BYTES: "1024",
+  });
+  const refused = await seeded.service.inspectDecoders({});
+  if (refused.ok) throw new Error("Expected the seeded output refusal");
+  expect(projectAnalysisError(refused.error).details?.limit).toMatchObject({
+    setting: "producer.output_bytes",
+    effective_value: 1024,
+    source: "setting",
+  });
+  await seeded.service.close();
+
+  const invalid = await fixture("overflow", false, undefined, {
+    REA_PRODUCER_OUTPUT_BYTES: "0",
+  });
+  const rejected = await invalid.service.inspectDecoders({});
+  if (rejected.ok) throw new Error("Expected the invalid seed refusal");
+  expect(rejected.error).toMatchObject({ _tag: "ConfigurationError" });
+  // A runtime value repairs the session without editing the seed.
+  const repaired = await runWithAnalysisOperationSnapshot(
+    { revision: 1, overrides: { "producer.output_bytes": 2048 } },
+    () => invalid.service.inspectDecoders({}),
+  );
+  if (repaired.ok) throw new Error("Expected the repaired output refusal");
+  expect(projectAnalysisError(repaired.error).details?.limit).toMatchObject({
+    effective_value: 2048,
+    source: "runtime",
+  });
+  // Resetting the override exposes the invalid seed again.
+  const reset = await invalid.service.inspectDecoders({});
+  if (reset.ok) throw new Error("Expected the invalid seed refusal again");
+  expect(reset.error).toMatchObject({ _tag: "ConfigurationError" });
+  await invalid.service.close();
+});
+
+it("pages help output longer than one page record budget instead of refusing it", async () => {
+  const f = await fixture("long-help");
+  const result = await f.service.inspectDecoders({
+    decoder: "uart",
+    limit: null,
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.normalized_result).toMatchObject({
+    output_window: {
+      unit: "help-lines",
+      examined: 65540,
+      returned: 65536,
+      has_more: true,
+      record_budget_reached: true,
+    },
+  });
+  const later = await f.service.inspectDecoders({
+    decoder: "uart",
+    offset: 65536,
+    limit: null,
+  });
+  if (!later.ok) throw later.error;
+  expect(later.value.normalized_result).toMatchObject({
+    output_window: {
+      returned: 4,
+      has_more: false,
+      record_budget_reached: false,
+    },
+  });
+  await f.service.close();
 });
 
 it("retains completed discovery when cleanup fails, then retries before accepting work", async () => {

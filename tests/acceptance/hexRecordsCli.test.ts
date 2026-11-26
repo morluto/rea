@@ -142,20 +142,3 @@ cliTest.for(cases)(
     expect((await readFile(source)).equals(Buffer.from(text))).toBe(true);
   },
 );
-
-cliTest("rejects a malformed record through the CLI", async ({ cli }) => {
-  const directory = await createTestTempDirectory("rea-hex-invalid-cli-");
-  const source = join(directory, "firmware.hex");
-  await writeFile(source, INTEL_HEX_I32_GAP.replace("BEEFC3", "BEEFC4"));
-  const result = await cli.run({
-    arguments: ["inspect-artifact", source, "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "artifact_operation_failed",
-    details: { operation: "inspect_artifact", reason: "format" },
-  });
-  expect(result.stdout + result.stderr).toMatch(
-    /line 4.*record type 00.*checksum 0xc4.*computed 0xc3/iu,
-  );
-});

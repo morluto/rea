@@ -462,7 +462,7 @@ it.each([
       if (result.ok) throw new Error("Expected authored failure");
       if (kind === "refusal") {
         expect(result.error).toMatchObject({
-          _tag: "AnalysisUnsupportedTargetError",
+          _tag: "AnalysisTargetFailureError",
           path,
         });
         expect(result.error.message).toContain(path);

@@ -81,6 +81,28 @@ export const artifactIntegrityPairOf = (
       };
 };
 
+/**
+ * Verifiable explanation when stripping Authenticode restores an ASAR-declared
+ * SHA-256. Observed companion bytes remain untrusted; this does not attest the
+ * signature or treat the entry as matching for equivalence.
+ */
+export const signedAfterPackingExplanationSchema = z.strictObject({
+  kind: z.literal("signed-after-packing"),
+  platform: z.literal("pe-authenticode"),
+  unsigned_sha256: sha256,
+  certificate_table_bytes: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(Number.MAX_SAFE_INTEGER),
+  signer_subjects: z.array(z.string()),
+  /** False when a signer identity or certificate table could not be resolved. */
+  signer_subjects_complete: z.boolean(),
+});
+export type SignedAfterPackingExplanation = z.infer<
+  typeof signedAfterPackingExplanationSchema
+>;
+
 export type ArtifactIntegrityDetails = {
   readonly logicalPath: string;
   readonly unpacked: boolean;
@@ -88,6 +110,7 @@ export type ArtifactIntegrityDetails = {
   | {
       readonly declaredSha256: string | null;
       readonly calculatedSha256: string | null;
+      readonly signingExplanation?: SignedAfterPackingExplanation;
     }
   | {
       readonly algorithm: "md5";
@@ -107,6 +130,7 @@ export const artifactIntegrityDetails = (
   claim: ArtifactIntegrityClaim | null,
   observed: string | null,
   unpacked: boolean,
+  signingExplanation?: SignedAfterPackingExplanation,
 ): ArtifactIntegrityDetails => ({
   logicalPath,
   unpacked,
@@ -116,7 +140,11 @@ export const artifactIntegrityDetails = (
         declaredMd5: claim.digest,
         calculatedMd5: observed,
       }
-    : { declaredSha256: claim?.digest ?? null, calculatedSha256: observed }),
+    : {
+        declaredSha256: claim?.digest ?? null,
+        calculatedSha256: observed,
+        ...(signingExplanation === undefined ? {} : { signingExplanation }),
+      }),
 });
 
 /** Error details for a container checksum that disagrees with its own bytes. */
@@ -136,6 +164,9 @@ const projectedDigests = (details: ArtifactIntegrityDetails) => {
     return {
       declared_sha256: details.declaredSha256,
       calculated_sha256: details.calculatedSha256,
+      ...(details.signingExplanation === undefined
+        ? {}
+        : { signing_explanation: details.signingExplanation }),
     };
   return details.algorithm === "md5"
     ? {
