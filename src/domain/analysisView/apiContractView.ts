@@ -10,7 +10,7 @@ import {
   type ApiContract,
 } from "../apiContract/apiContract.js";
 import { apiContractViewRequestSchema } from "../apiContract/apiContractQuery.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import {
   createAnalysisViewResultReader,
   type AnalysisViewParent,
@@ -26,7 +26,7 @@ import {
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 import { pickFields, selectViewRows } from "./selectViewRows.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 
 export const apiContractViewContextSchema = apiContractSchema.omit({
   operations: true,
@@ -159,15 +159,8 @@ export const projectApiContractView = (
     SummaryAnalysisView | z.output<typeof apiContractViewRequestSchema>
   >(admitted, "summary", "api-contract");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "API contract inventories support summary and api-contract pages.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "API contract inventories support summary and api-contract pages.",
     );
   const {
     operations: _operations,

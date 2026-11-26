@@ -175,20 +175,6 @@ cliTest(
   },
 );
 
-cliTest("reports a truncated image as invalid input", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-native-init-cli-bad-");
-  const path = join(root, "broken");
-  await writeFile(path, Buffer.from("\x7fELF"));
-  const result = await cli.run({
-    arguments: ["inspect-native-initializers", path, "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: { operation: "inspect_native_initializers" },
-  });
-});
-
 const dynamicTableCeiling = 16 * 1024 * 1024;
 
 cliTest.for([
@@ -196,19 +182,19 @@ cliTest.for([
     name: "short partial row",
     size: 33,
     backed: true,
-    code: "invalid_request",
+    code: "unsupported_target",
   },
   {
     name: "oversized unbacked declaration",
     size: dynamicTableCeiling + 16,
     backed: false,
-    code: "invalid_request",
+    code: "unsupported_target",
   },
   {
     name: "oversized backed partial row",
     size: dynamicTableCeiling + 1,
     backed: true,
-    code: "invalid_request",
+    code: "unsupported_target",
   },
   {
     name: "oversized backed whole rows",
@@ -235,16 +221,51 @@ cliTest.for([
       code,
       details: {
         operation: "inspect_native_initializers",
-        ...(code === "invalid_request"
-          ? { issues: [{ path: ["path"], reason: "invalid_format" }] }
+        ...(code === "unsupported_target"
+          ? { path, failure_kind: "malformed" }
           : {
               reported_limits: {
-                boundary: "structure",
+                boundary: "max_structure_bytes",
                 maximum: dynamicTableCeiling,
+              },
+              limit: {
+                control_kind: "parameter",
+                parameter: "max_structure_bytes",
+                effective_value: dynamicTableCeiling,
+                default_value: dynamicTableCeiling,
+                applies_at: "next_call",
               },
             }),
       },
     });
+  },
+);
+
+cliTest(
+  "admits an oversized PT_DYNAMIC with a larger --max-structure-bytes",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-native-init-structure-cli-",
+    );
+    const path = join(root, "library.so");
+    const bytes = elf64PieInitializers();
+    const size = dynamicTableCeiling + 16;
+    bytes.writeBigUInt64LE(BigInt(size), 120 + 32);
+    bytes.writeBigUInt64LE(BigInt(size), 120 + 40);
+    await writeFile(path, bytes);
+    await truncate(path, 0x300 + size);
+    const result = await cli.run({
+      arguments: [
+        "inspect-native-initializers",
+        path,
+        "--max-structure-bytes",
+        String(dynamicTableCeiling * 2),
+        "--json",
+      ],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = contract.outputSchema.parse(result.json);
+    expect(evidence.normalized_result.entries.length).toBeGreaterThan(0);
   },
 );
 

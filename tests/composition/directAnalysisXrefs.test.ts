@@ -1,8 +1,13 @@
+import { join } from "node:path";
 import { projectCliAnalysisResult } from "../../src/cli/projectCliAnalysisResult.js";
 import { parseConfig } from "../../src/config/parseConfig.js";
 import { describe, expect, it } from "vitest";
 import { runDirectAnalysis } from "../../src/application/DirectAnalysis.js";
 import type { DirectAnalysisDependencies } from "../../src/application/DirectAnalysisDependencies.js";
+import { readAnalysisSnapshot } from "../../src/application/binary/AnalysisSnapshotFiles.js";
+import { BinarySession } from "../../src/application/binary/BinarySession.js";
+import { executeWithNativeSymbolSelection } from "../../src/application/NativeSymbolSelection.js";
+import { createAnalysisProfile } from "../../src/domain/analysisProfile.js";
 import type { AnalysisError } from "../../src/domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -11,11 +16,19 @@ import {
 } from "../../src/domain/analysisErrorCore.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { err, ok as resultOk } from "../../src/domain/result.js";
+import { CAPABILITIES as GHIDRA_CAPABILITIES } from "../../src/ghidra/GhidraProviderCapabilities.js";
+import { GHIDRA_PROVIDER_IDENTITY } from "../../src/ghidra/GhidraProviderMetadata.js";
+import {
+  createAnalysisExecution,
+  type AnalysisProvider,
+} from "../../src/ports/AnalysisProvider.js";
 import { observed } from "../fixtures/analysisExecution.js";
 import {
   createBinarySessionTargets,
   createTestBinarySession,
+  createTestProviderRouter,
 } from "../fixtures/binarySession.js";
+import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 const inventory = [
   { address: "0x1000", value: "add" },
@@ -55,7 +68,15 @@ const fixture = (
           );
         if (operation === "procedure_address")
           return Promise.resolve(
-            observed(parameters.procedure === "main" ? "0x5000" : null),
+            parameters.procedure === "main"
+              ? observed("0x5000")
+              : err(
+                  new AnalysisInputError(
+                    "procedure_address",
+                    { conformsToInputContract: true },
+                    [{ path: ["procedure"], reason: "invalid_value" }],
+                  ),
+                ),
           );
         if (operation === "xrefs") {
           if (options.xrefsError !== undefined)
@@ -198,7 +219,7 @@ describe("direct CLI cross-reference name resolution", () => {
     expect(missing).toMatchObject({
       code: "invalid_request",
       remediation: {
-        action: expect.stringContaining("use different address coordinates"),
+        action: expect.stringContaining("search_procedures or list_names"),
       },
       details: { operation: "xrefs", issues: [{ path: ["address"] }] },
     });
@@ -275,4 +296,250 @@ describe("direct CLI cross-reference name resolution", () => {
       expect(provider.closed()).toBe(1);
     },
   );
+});
+
+describe("named Ghidra one-shot snapshot replay", () => {
+  const ghidraSnapshotFixture = () => {
+    const profile = createAnalysisProfile(
+      { ...GHIDRA_PROVIDER_IDENTITY, version: "12.1.4" },
+      { fixture: true },
+    );
+    let starts = 0;
+    let failOnStart = false;
+    const calls: { operation: string; parameters: unknown }[] = [];
+    const provider: AnalysisProvider = {
+      identity: () => GHIDRA_PROVIDER_IDENTITY,
+      capabilities: () => GHIDRA_CAPABILITIES,
+      resolveAnalysisProfile: async () => resultOk({ profile }),
+      createClient: () => {
+        if (failOnStart)
+          throw new Error("provider should not start on snapshot replay");
+        starts += 1;
+        return {
+          execute: async (operation, parameters) => {
+            if (operation !== "health") calls.push({ operation, parameters });
+            switch (operation) {
+              case "health":
+                return resultOk(
+                  createAnalysisExecution(null, profile.provider),
+                );
+              case "list_names":
+                return resultOk(
+                  createAnalysisExecution(
+                    [
+                      {
+                        address: "EXTERNAL:0x4d",
+                        value: "KERNEL32.DLL::VirtualAlloc",
+                        symbol: {
+                          primary: true,
+                          dynamic: false,
+                          external: true,
+                          type: "function",
+                          source: "imported",
+                        },
+                      },
+                    ],
+                    profile.provider,
+                  ),
+                );
+              case "resolve_containing_procedure":
+                return resultOk(
+                  createAnalysisExecution(
+                    {
+                      query_address: String(parameters.address),
+                      found: true,
+                      procedure: {
+                        address: "EXTERNAL:0x4d",
+                        name: "KERNEL32.DLL::VirtualAlloc",
+                        symbol: null,
+                        classification: null,
+                        body: { available: false, reason: "external" },
+                      },
+                    },
+                    profile.provider,
+                  ),
+                );
+              case "procedure_callers":
+                return resultOk(
+                  createAnalysisExecution(["0x180001000"], profile.provider),
+                );
+              case "procedure_references":
+                return resultOk(
+                  createAnalysisExecution(
+                    [
+                      {
+                        from: "0x180001010",
+                        to: "EXTERNAL:0x4d",
+                        type: "call",
+                        procedure: "0x180001000",
+                      },
+                    ],
+                    profile.provider,
+                  ),
+                );
+              case "xrefs":
+                return parameters.address === "EXTERNAL:0x4d"
+                  ? resultOk(
+                      createAnalysisExecution(
+                        ["0x180001010"],
+                        profile.provider,
+                      ),
+                    )
+                  : err(
+                      new AnalysisInputError("xrefs", undefined, [
+                        { path: ["address"], reason: "invalid_format" },
+                      ]),
+                    );
+              default:
+                return resultOk(
+                  createAnalysisExecution(null, profile.provider),
+                );
+            }
+          },
+          close: async () => resultOk(null),
+        };
+      },
+    };
+    const createSession = () =>
+      new BinarySession(createTestProviderRouter(provider));
+    const dependencies: DirectAnalysisDependencies = {
+      readConfiguration: () => parseConfig({}),
+      createBinarySession: createSession,
+      createArtifactBinarySession: createSession,
+      createNativeDispatchBinarySession: createSession,
+      createNativeBinarySession: createSession,
+      createManagedBinarySession: createSession,
+    };
+    return {
+      dependencies,
+      createSession,
+      calls,
+      starts: () => starts,
+      blockProviderStarts: () => {
+        failOnStart = true;
+      },
+    };
+  };
+
+  it.each([
+    {
+      tool: "procedure_references" as const,
+      arguments: { procedure: "VirtualAlloc", direction: "incoming" },
+      expectedLookupOperations: [
+        "list_names",
+        "resolve_containing_procedure",
+        "procedure_references",
+      ],
+    },
+    {
+      tool: "xrefs" as const,
+      arguments: { address: "VirtualAlloc" },
+      expectedLookupOperations: ["list_names", "xrefs"],
+    },
+  ])(
+    "saves lookup reads and replays named $tool without restarting Ghidra",
+    async ({ tool, arguments: parameters, expectedLookupOperations }) => {
+      const [path] = await createBinarySessionTargets();
+      const directory = await createTestTempDirectory("rea-named-snapshot-");
+      const snapshotPath = join(directory, "snapshot.json");
+      const provider = ghidraSnapshotFixture();
+
+      const first = parseEvidence(
+        await runDirectAnalysis(provider.dependencies, path, tool, parameters, {
+          snapshotPath,
+        }).then(projectCliAnalysisResult),
+      );
+      expect(first.parameters).toEqual(parameters);
+      expect(first.limitations).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining(
+            'REA resolved "VirtualAlloc" to KERNEL32.DLL::VirtualAlloc at EXTERNAL:0x4d (import_name)',
+          ),
+        ]),
+      );
+
+      const saved = await readAnalysisSnapshot(snapshotPath);
+      if (!saved.ok) throw saved.error;
+      for (const operation of expectedLookupOperations)
+        expect(
+          saved.value.entries.some((entry) => entry.operation === operation),
+        ).toBe(true);
+      expect(saved.value.entries).toContainEqual(
+        expect.objectContaining({ operation: tool, parameters }),
+      );
+
+      const initialCalls = [...provider.calls];
+      if (process.platform !== "win32") provider.blockProviderStarts();
+
+      const replay = parseEvidence(
+        await runDirectAnalysis(provider.dependencies, path, tool, parameters, {
+          snapshotPath,
+        }).then(projectCliAnalysisResult),
+      );
+      expect(replay.parameters).toEqual(parameters);
+      expect(replay.normalized_result).toEqual(first.normalized_result);
+      expect(replay.limitations).toEqual(first.limitations);
+      if (process.platform !== "win32") {
+        expect(provider.starts()).toBe(1);
+        expect(provider.calls).toEqual(initialCalls);
+      }
+    },
+  );
+
+  it("retains and replays named procedure_callers in session snapshots without re-running lookups", async () => {
+    const [path] = await createBinarySessionTargets();
+    const provider = ghidraSnapshotFixture();
+    const session = provider.createSession();
+    const opened = await session.open(path);
+    if (!opened.ok) throw opened.error;
+    const options = { snapshotContext: "one-shot-target" as const };
+    const parameters = { procedure: "VirtualAlloc" };
+    try {
+      const first = await executeWithNativeSymbolSelection(
+        session,
+        "procedure_callers",
+        parameters,
+        (resolved) => session.execute("procedure_callers", resolved, options),
+        options,
+      );
+      if (!first.ok) throw first.error;
+      expect(first.value.result).toEqual(["0x180001000"]);
+      expect(first.value.limitations).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining(
+            'REA resolved "VirtualAlloc" to KERNEL32.DLL::VirtualAlloc at EXTERNAL:0x4d (import_name)',
+          ),
+        ]),
+      );
+      const exported = session.exportAnalysisSnapshot();
+      if (!exported.ok) throw exported.error;
+      expect(exported.value.entries).toContainEqual(
+        expect.objectContaining({
+          operation: "procedure_callers",
+          parameters,
+        }),
+      );
+      const callsBeforeReplay = [...provider.calls];
+      const replay = await executeWithNativeSymbolSelection(
+        session,
+        "procedure_callers",
+        parameters,
+        (resolved) => session.execute("procedure_callers", resolved, options),
+        options,
+      );
+      if (!replay.ok) throw replay.error;
+      expect(replay.value.result).toEqual(["0x180001000"]);
+      expect(replay.value.limitations).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining(
+            'REA resolved "VirtualAlloc" to KERNEL32.DLL::VirtualAlloc at EXTERNAL:0x4d (import_name)',
+          ),
+          expect.stringContaining("Loaded from a local REA analysis snapshot"),
+        ]),
+      );
+      expect(provider.calls).toEqual(callsBeforeReplay);
+    } finally {
+      await session.close();
+    }
+  });
 });

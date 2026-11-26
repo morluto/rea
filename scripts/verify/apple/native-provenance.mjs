@@ -272,7 +272,7 @@ async function verifyInstallNames() {
       await withArtifactMcp(consumer, async (client) => {
         const response = await artifactMcpCall(client, {
           name: "inspect_macho",
-          arguments: {},
+          arguments: { detail: "complete" },
         });
         assert.notEqual(response.isError, true, JSON.stringify(response));
         const mcp = toolContract("inspect_macho").outputSchema.parse(

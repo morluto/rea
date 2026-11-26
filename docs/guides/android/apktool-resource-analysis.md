@@ -180,10 +180,16 @@ and response transport capacity still apply.
 
 - The decode wall clock is `decode_timeout_ms` (CLI `--decode-timeout-ms`).
   Omitted means 600000 ms. The integer range is 1 to 2147483647. A change
-  applies on the next decode. It does not raise the 4194304-byte (4 MiB)
-  output capture budget. That capture budget has no runtime override. A
+  applies on the next decode. It does not raise the output capture budget. A
   stopped decode reports `provider_timeout` and names the effective
-  milliseconds; an exceeded capture budget reports `resource_constraint`.
+  milliseconds.
+- Apktool's retained stdout and stderr are bounded by
+  `producer_limits.output_bytes` (CLI `--producer-limits` as JSON text),
+  default 4194304 bytes (4 MiB), at most the JavaScript string limit. An
+  exceeded budget reports `resource_constraint` with `details.limit` naming
+  `producer_limits.output_bytes`, its effective value and default; raise it
+  on the next decode. It does not raise `decode_timeout_ms` or the version
+  probe.
 - The version probe waits 20000 ms and retains 65536 bytes. This release has
   no runtime override for that probe. `decode_timeout_ms` does not raise it.
 - Manifest reads are bounded to 512 KiB before decoding UTF-8. Strings XML

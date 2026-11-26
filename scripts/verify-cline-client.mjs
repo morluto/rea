@@ -10,6 +10,7 @@ import { createVerifierMcpOwner } from "./lib/verifier-mcp-owner.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 /** Verify default-path CLI registration, client parsing and owned MCP discovery. */
 const repo = fileURLToPath(new URL("..", import.meta.url));
@@ -107,7 +108,9 @@ const report = await withVerifierCleanup(async () => {
     expectedCommand: null,
     sweepTokenOwnedProcesses: true,
   });
-  const client = new Client({ name: "rea-cline-verifier", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "rea-cline-verifier", version: "1" }),
+  );
   // The SDK keeps stdin open through delayed initialization and tool discovery.
   const connection = await mcp.open(client, transport);
   assert.equal(

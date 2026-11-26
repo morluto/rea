@@ -384,7 +384,8 @@ it("rejects a short positional read of an admitted frame range", async () => {
       return bytes.subarray(offset, offset + length);
     }),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "integrity",
+    integrityCheck: "read-coverage",
     message: expect.stringMatching(/unwind range.*admitted file extent/iu),
   });
   expect(frameReads).toBe(1);

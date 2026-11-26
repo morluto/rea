@@ -6,7 +6,7 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { createModelArtifactEvidence } from "../../domain/model/modelArtifactEvidence.js";
 import type { Result } from "../../domain/result.js";
-import type { AnalysisViewRetention } from "../analysisView/AnalysisViewService.js";
+import type { AnalysisViewRetention } from "../analysisView/AnalysisViewRetention.js";
 import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 /** Shared input, Evidence and retained delivery boundary for CLI, MCP and SDK callers. */

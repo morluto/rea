@@ -17,6 +17,7 @@ import {
 } from "../../src/domain/analysisView/analysisViewResult.js";
 import { workspaceCliTest as test } from "../support/cli/workspaceCliFixture.js";
 import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
+import { expectCarrierProbes } from "../fixtures/nativeCarrierProbes.js";
 
 // Compile SDK output validators for the tools a test calls, not the whole catalog.
 const schemaValidation = createMcpSchemaValidation();
@@ -169,11 +170,8 @@ for (const format of ["dotnet-bundle", "pyinstaller"] as const) {
         root_sha256: createHash("sha256").update(bytes).digest("hex"),
       });
       if (format === "dotnet-bundle") {
-        expect(inventory.next_probes).toHaveLength(1);
-        expect(inventory.next_probes[0]).toMatchObject({
-          operation: "extract_artifact",
-          authority: "artifact-bytes",
-        });
+        // The apphost carrier is a PE, so its readers follow the package's.
+        expectCarrierProbes(inventory.next_probes, "pe", ["extract_artifact"]);
       }
       expect(
         inventory.unexplored_branches.map(({ next_probe }) => next_probe),
@@ -194,7 +192,7 @@ for (const format of ["dotnet-bundle", "pyinstaller"] as const) {
       expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
       const observed = await client.callTool({
         name: "inspect_artifact",
-        arguments: {},
+        arguments: { detail: "complete" },
       });
       expect(observed.isError, JSON.stringify(observed)).not.toBe(true);
       expect(
@@ -248,8 +246,8 @@ test("reports excessive bundle path depth as a public CLI limit", async ({
   });
   expect(result.exitCode, result.stderr).toBe(1);
   expect(result.json).toMatchObject({
-    code: "truncated",
-    category: "truncated",
+    code: "partial",
+    category: "partial",
     retryable: true,
     details: {
       reason: "limit",
@@ -258,10 +256,13 @@ test("reports excessive bundle path depth as a public CLI limit", async ({
       reader_limit: {
         parameter: "artifact_limits.dotnet_bundle.path_parts",
         effective_value: 256,
-        required_value: 257,
         unit: "count",
         can_increase: true,
       },
     },
+  });
+  // The path-depth count stops at the limit, so it knows only a lower bound.
+  expect(result.json).not.toMatchObject({
+    details: { reader_limit: { required_value: expect.anything() } },
   });
 });

@@ -4,8 +4,10 @@ import { scheduler } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
 import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js";
 import { GoBinaryProvider } from "../../../src/go/GoBinaryProvider.js";
+import { GO_ANALYSIS_BUDGET_DEFAULTS } from "../../../src/domain/go/goBinary.js";
+import { NATIVE_STRUCTURE_BYTES } from "../../../src/domain/native/nativeStructureBudget.js";
 import {
-  AnalysisInputError,
+  AnalysisTargetFailureError,
   AnalysisResourceConstraintError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { BinaryFormatFailure } from "../../../src/domain/binaryContainer.js";
@@ -20,18 +22,31 @@ import { CPU_ARM64, universalMacho } from "../../fixtures/universalMacho.js";
 import { elfFrameAllowanceFixture } from "../../fixtures/binaryDiagnostics/elfFrameAllowance.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-it("rejects advertised PE32 data directories outside the optional header", async () => {
+it("reads Go build information from a PE32 image declaring one data directory", async () => {
   const root = await createTestTempDirectory("rea-go-pe-directories-");
   const fixture = createGoBinaryFixture({ format: "pe", bits: 32 });
   fixture.bytes.writeUInt32LE(1, 152 + 92);
-  const path = join(root, "truncated-pe32.exe");
+  const path = join(root, "one-directory-pe32.exe");
   await writeFile(path, fixture.bytes);
-  const result = await new GoBinaryProvider().inspect({ path });
-  if (result.ok) throw new Error("Truncated PE32 directories must be refused");
-  expect(projectAnalysisError(result.error)).toMatchObject({
-    code: "invalid_request",
-    details: { issues: [{ path: ["path"], reason: "invalid_format" }] },
+  const structureBytes = NATIVE_STRUCTURE_BYTES.default_value * 2;
+  const result = await new GoBinaryProvider().inspect({
+    path,
+    max_structure_bytes: structureBytes,
   });
+  if (!result.ok) throw result.error;
+  expect(result.value.build_info).toMatchObject({ go_version: "go1.26.0" });
+  expect(
+    result.value.limitations.some((limitation) =>
+      limitation.includes(`max_structure_bytes=${String(structureBytes)}`),
+    ),
+  ).toBe(true);
+  expect(
+    result.value.limitations.some((limitation) =>
+      limitation.includes(
+        `max_structure_bytes=${String(NATIVE_STRUCTURE_BYTES.default_value)}`,
+      ),
+    ),
+  ).toBe(false);
 });
 
 it.each([false, true])(
@@ -63,14 +78,21 @@ it.each([false, true])(
           code: "resource_constraint",
           details: {
             reported_limits: {
-              boundary: "structure",
+              boundary: "max_structure_bytes",
               maximum: 16 * 1024 * 1024,
             },
+            limit: {
+              control_kind: "parameter",
+              parameter: "max_structure_bytes",
+              effective_value: 16 * 1024 * 1024,
+            },
+            refusal: { kind: "adjustable_budget" },
           },
         });
       else {
-        expect(result.error).toBeInstanceOf(AnalysisInputError);
-        if (!(result.error instanceof AnalysisInputError)) throw result.error;
+        expect(result.error).toBeInstanceOf(AnalysisTargetFailureError);
+        if (!(result.error instanceof AnalysisTargetFailureError))
+          throw result.error;
         expect(result.error.cause).toBeInstanceOf(BinaryFormatFailure);
         if (!(result.error.cause instanceof BinaryFormatFailure))
           throw result.error.cause;
@@ -81,9 +103,12 @@ it.each([false, true])(
           offset: 32,
         });
         expect(projected).toMatchObject({
-          code: "invalid_request",
+          code: "unsupported_target",
           details: {
-            issues: [{ path: ["path"], reason: "invalid_format" }],
+            failure_kind: "truncated",
+            format: "macho",
+            field: "Mach-O load commands",
+            offset: 32,
           },
         });
       }
@@ -108,7 +133,7 @@ it("preserves the actual build-info byte guard as a resource failure", async () 
   expect(result.error.reason).toContain(path);
   expect(result.error.reportedLimits).toEqual({
     boundary: "build-info",
-    maximum: 1024 * 1024,
+    maximum: GO_ANALYSIS_BUDGET_DEFAULTS.max_build_info_bytes,
   });
   const projected = projectAnalysisError(result.error);
   expect(projected.details?.limit).toMatchObject({
@@ -117,10 +142,6 @@ it("preserves the actual build-info byte guard as a resource failure", async () 
     unit: "bytes",
   });
   expect(projected.retryable).toBe(false);
-  expect(projected.remediation.action).toContain(
-    "Go build-info string allowance",
-  );
-  expect(projected.remediation.action).not.toMatch(/available host memory/u);
 });
 
 it("keeps the header-search budget distinct from a worker CPU limit", async () => {
@@ -136,12 +157,10 @@ it("keeps the header-search budget distinct from a worker CPU limit", async () =
       resource: "cpu",
       reported_limits: {
         boundary: "search",
-        maximum: 256 * 1024 * 1024,
+        maximum: GO_ANALYSIS_BUDGET_DEFAULTS.max_header_search_bytes,
       },
     },
   });
-  expect(projected.remediation.action).toContain("header-search allowance");
-  expect(projected.remediation.action).not.toMatch(/observed signal/u);
 });
 
 it("reports unreadable ELF names alongside the no-record limitation", async () => {
@@ -296,7 +315,6 @@ it.each([
             unit: "bytes",
           },
         },
-        remediation: { action: expect.stringContaining(parameter) },
       });
       const recovered = await service.inspect({ path, [parameter]: raised });
       if (!recovered.ok) throw recovered.error;

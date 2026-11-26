@@ -138,6 +138,10 @@ import {
 import { AnalysisSnapshotCache } from "../application/binary/AnalysisSnapshotCache.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
+import {
+  admittedRawLoad,
+  rawLoadAtEntry,
+} from "../domain/rawBinary.fixture.js";
 import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const GHIDRA_SESSION_RETAINED = "The Ghidra session remains usable.";
@@ -662,8 +666,7 @@ describe("Ghidra raw-binary profile", () => {
       format: "raw-binary",
       architecture: "6502",
       availableArchitectures: ["6502"],
-      entryPoint: "0x8001",
-      entryPointSource: "0x008001",
+      rawLoad: rawLoadAtEntry("0x008001"),
     };
     expect(ghidra.inspectTargetSupport(target).status).toBe("supported");
     const resolved = await ghidra.resolveAnalysisProfile(target);
@@ -691,8 +694,7 @@ describe("Ghidra raw-binary profile", () => {
       format: "raw-binary",
       architecture: "arm",
       availableArchitectures: ["arm"],
-      entryPoint: "0x8000000",
-      entryPointSource: "0x08000000",
+      rawLoad: rawLoadAtEntry("0x08000000"),
     };
     expect(ghidra.inspectTargetSupport(target).status).toBe("supported");
     const resolved = await ghidra.resolveAnalysisProfile(target);
@@ -711,8 +713,7 @@ describe("Ghidra raw-binary profile", () => {
     });
     const shifted = await ghidra.resolveAnalysisProfile({
       ...target,
-      entryPoint: "0x8001000",
-      entryPointSource: "0x8001000",
+      rawLoad: rawLoadAtEntry("0x8001000"),
     });
     expect(resolved.ok && shifted.ok).toBe(true);
     if (!resolved.ok || !shifted.ok || resolved.value.profile === null)
@@ -732,8 +733,7 @@ describe("Ghidra raw-binary profile", () => {
       format: "raw-binary",
       architecture: "m68k",
       availableArchitectures: ["m68k"],
-      entryPoint: "0x1000",
-      entryPointSource: "0x00001000",
+      rawLoad: rawLoadAtEntry("0x00001000"),
     };
     const ghidra = provider();
     expect(ghidra.inspectTargetSupport(target).status).toBe("supported");
@@ -1565,8 +1565,24 @@ describe("Ghidra client projection", () => {
     expect(result.value.limitations).not.toContainEqual(
       expect.stringContaining("The bridge is verified against"),
     );
+    // An x86-64 target keeps the x86-64 record and drops the AArch64 one.
     expect(result.value.limitations).toEqual(
-      expect.arrayContaining([...ghidraKnownProviderDefectLimitations("12.2")]),
+      expect.arrayContaining([
+        ...ghidraKnownProviderDefectLimitations("12.2", {
+          architecture: "x86_64",
+          operation: "list_procedures",
+        }),
+      ]),
+    );
+    expect(result.value.limitations.join("\n")).toContain("ghidra-9996");
+    expect(result.value.limitations.join("\n")).not.toContain("ghidra-10154");
+    expect(result.value.sessionLimitations).toEqual(
+      expect.arrayContaining([
+        ...ghidraKnownProviderDefectLimitations("12.2", {
+          architecture: "x86_64",
+          operation: "list_procedures",
+        }),
+      ]),
     );
     expect(startCount).toBe(1);
   });
@@ -3952,19 +3968,20 @@ const sessionInfo = () => ({
   },
 });
 
-describe("Ghidra empty reference diagnostics", () => {
-  const emptyReferenceProvider = (result: JsonValue) =>
+const createElfClientWithResult = (result: JsonValue) =>
+  createElfClient(
     provider(installationHost(), () => ({
       start: () => Promise.resolve(ok(sessionInfo())),
       callTool: () => Promise.resolve(ok(result)),
       close: () => Promise.resolve(ok(null)),
-    }));
+    })),
+  );
 
-  const observation = (value: JsonValue) => ({ value, limitations: [] });
+const referenceObservation = (value: JsonValue) => ({ value, limitations: [] });
 
+describe("Ghidra empty reference diagnostics", () => {
   it("names unresolved references in the limitations of an empty xrefs result", async () => {
-    const ghidra = emptyReferenceProvider([]);
-    const client = await createElfClient(ghidra);
+    const client = await createElfClientWithResult([]);
     try {
       const execution = await client.execute("xrefs", {
         address: "0x1005409a2",
@@ -3978,8 +3995,7 @@ describe("Ghidra empty reference diagnostics", () => {
   });
 
   it("does not add the unresolved-references caveat to a non-empty xrefs result", async () => {
-    const ghidra = emptyReferenceProvider(["0x100003670"]);
-    const client = await createElfClient(ghidra);
+    const client = await createElfClientWithResult(["0x100003670"]);
     try {
       const execution = await client.execute("xrefs", {
         address: "0x1005409a2",
@@ -3997,8 +4013,8 @@ describe("Ghidra empty reference diagnostics", () => {
   it.each(["incoming", "outgoing"] as const)(
     "qualifies the empty %s direction in procedure_references limitations",
     async (direction) => {
-      const ghidra = emptyReferenceProvider(
-        observation({
+      const client = await createElfClientWithResult(
+        referenceObservation({
           procedure: ghidraFunctionIdentity(),
           direction,
           references: [],
@@ -4006,7 +4022,6 @@ describe("Ghidra empty reference diagnostics", () => {
           unresolved_calls: [],
         }),
       );
-      const client = await createElfClient(ghidra);
       try {
         const execution = await client.execute("procedure_references", {
           procedure: "0x401000",
@@ -4031,8 +4046,8 @@ describe("Ghidra empty reference diagnostics", () => {
   );
 
   it("does not add the caveat to procedure_references that returned references", async () => {
-    const ghidra = emptyReferenceProvider(
-      observation({
+    const client = await createElfClientWithResult(
+      referenceObservation({
         procedure: ghidraFunctionIdentity(),
         direction: "outgoing",
         references: [ghidraReferenceEdge()],
@@ -4040,7 +4055,6 @@ describe("Ghidra empty reference diagnostics", () => {
         unresolved_calls: [],
       }),
     );
-    const client = await createElfClient(ghidra);
     try {
       const execution = await client.execute("procedure_references", {
         procedure: "0x401000",
@@ -4060,8 +4074,8 @@ describe("Ghidra empty reference diagnostics", () => {
 
   it("names the external-specific outgoing caveat for an external procedure_references result", async () => {
     const identity = ghidraFunctionIdentity();
-    const ghidra = emptyReferenceProvider(
-      observation({
+    const client = await createElfClientWithResult(
+      referenceObservation({
         procedure: {
           ...identity,
           classification: { ...identity.classification, external: true },
@@ -4072,7 +4086,6 @@ describe("Ghidra empty reference diagnostics", () => {
         unresolved_calls: [],
       }),
     );
-    const client = await createElfClient(ghidra);
     try {
       const execution = await client.execute("procedure_references", {
         procedure: "0x401000",
@@ -4092,25 +4105,15 @@ describe("Ghidra empty reference diagnostics", () => {
 });
 
 describe("Ghidra empty function-reference facets", () => {
-  const emptyReferenceProvider = (result: JsonValue) =>
-    provider(installationHost(), () => ({
-      start: () => Promise.resolve(ok(sessionInfo())),
-      callTool: () => Promise.resolve(ok(result)),
-      close: () => Promise.resolve(ok(null)),
-    }));
-
-  const observation = (value: JsonValue) => ({ value, limitations: [] });
-
   it("names each unresolved direction in the limitations of a dossier without any references", async () => {
     const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
-    const ghidra = emptyReferenceProvider(
-      observation({
+    const client = await createElfClientWithResult(
+      referenceObservation({
         ...dossier,
         incoming_references: [],
         outgoing_references: [],
       }),
     );
-    const client = await createElfClient(ghidra);
     try {
       const execution = await client.execute("analyze_function", {
         procedure: "0x401000",
@@ -4132,10 +4135,9 @@ describe("Ghidra empty function-reference facets", () => {
 
   it("qualifies the empty incoming direction when a dossier observed only outgoing references", async () => {
     const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
-    const ghidra = emptyReferenceProvider(
-      observation({ ...dossier, incoming_references: [] }),
+    const client = await createElfClientWithResult(
+      referenceObservation({ ...dossier, incoming_references: [] }),
     );
-    const client = await createElfClient(ghidra);
     try {
       const execution = await client.execute("analyze_function", {
         procedure: "0x401000",
@@ -4157,14 +4159,13 @@ describe("Ghidra empty function-reference facets", () => {
 
   it("qualifies the empty outgoing direction when a dossier observed only incoming references", async () => {
     const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
-    const ghidra = emptyReferenceProvider(
-      observation({
+    const client = await createElfClientWithResult(
+      referenceObservation({
         ...dossier,
         incoming_references: [ghidraReferenceEdge()],
         outgoing_references: [],
       }),
     );
-    const client = await createElfClient(ghidra);
     try {
       const execution = await client.execute("analyze_function", {
         procedure: "0x401000",
@@ -4183,8 +4184,8 @@ describe("Ghidra empty function-reference facets", () => {
 
   it("qualifies an external function's empty facets without local-disassembly guidance", async () => {
     const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
-    const ghidra = emptyReferenceProvider(
-      observation({
+    const client = await createElfClientWithResult(
+      referenceObservation({
         ...dossier,
         procedure: {
           ...dossier.procedure,
@@ -4197,7 +4198,6 @@ describe("Ghidra empty function-reference facets", () => {
         outgoing_references: [],
       }),
     );
-    const client = await createElfClient(ghidra);
     try {
       const execution = await client.execute("analyze_function", {
         procedure: "0x401000",
@@ -4222,16 +4222,9 @@ describe("Ghidra empty function-reference facets", () => {
 });
 
 describe("Ghidra empty annotation reference facets", () => {
-  const emptyReferenceProvider = (result: JsonValue) =>
-    provider(installationHost(), () => ({
-      start: () => Promise.resolve(ok(sessionInfo())),
-      callTool: () => Promise.resolve(ok(result)),
-      close: () => Promise.resolve(ok(null)),
-    }));
-
   it("names each unresolved direction when annotation readback observes no references", async () => {
     const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
-    const ghidra = emptyReferenceProvider({
+    const client = await createElfClientWithResult({
       annotations: {
         address: "0x401000",
         name: "fixture_main",
@@ -4245,7 +4238,6 @@ describe("Ghidra empty annotation reference facets", () => {
         persists_after_close: false,
       },
     });
-    const client = await createElfClient(ghidra);
     try {
       const execution = await client.execute("annotate_native_function", {
         procedure: "0x401000",
@@ -4265,7 +4257,7 @@ describe("Ghidra empty annotation reference facets", () => {
 
   it("qualifies the empty direction when annotation readback observed one direction only", async () => {
     const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
-    const ghidra = emptyReferenceProvider({
+    const client = await createElfClientWithResult({
       annotations: {
         address: "0x401000",
         name: "fixture_main",
@@ -4283,7 +4275,6 @@ describe("Ghidra empty annotation reference facets", () => {
         persists_after_close: false,
       },
     });
-    const client = await createElfClient(ghidra);
     try {
       const execution = await client.execute("annotate_native_function", {
         procedure: "0x401000",
@@ -4303,13 +4294,6 @@ describe("Ghidra empty annotation reference facets", () => {
 });
 
 describe("Ghidra empty instruction reference facets", () => {
-  const emptyReferenceProvider = (result: JsonValue) =>
-    provider(installationHost(), () => ({
-      start: () => Promise.resolve(ok(sessionInfo())),
-      callTool: () => Promise.resolve(ok(result)),
-      close: () => Promise.resolve(ok(null)),
-    }));
-
   const instruction = (incoming: JsonValue[], outgoing: JsonValue[]) => ({
     ...compactInstruction(outgoing),
     incoming_references: incoming,
@@ -4332,8 +4316,7 @@ describe("Ghidra empty instruction reference facets", () => {
   const executeInspect = async (
     result: JsonValue,
   ): Promise<readonly string[]> => {
-    const ghidra = emptyReferenceProvider(result);
-    const client = await createElfClient(ghidra);
+    const client = await createElfClientWithResult(result);
     try {
       const execution = await client.execute("inspect_native_instruction", {
         document: null,
@@ -4416,12 +4399,7 @@ describe("Ghidra empty instruction reference facets", () => {
 
 describe("Ghidra containing-procedure absence", () => {
   const containing = async (result: JsonValue) => {
-    const ghidra = provider(installationHost(), () => ({
-      start: () => Promise.resolve(ok(sessionInfo())),
-      callTool: () => Promise.resolve(ok(result)),
-      close: () => Promise.resolve(ok(null)),
-    }));
-    const client = await createElfClient(ghidra);
+    const client = await createElfClientWithResult(result);
     try {
       const execution = await client.execute("resolve_containing_procedure", {
         address: "0x401000",
@@ -4718,7 +4696,7 @@ describe("compatible Ghidra builds", () => {
     if (!resolved.ok || resolved.value.profile === null)
       throw new Error("expected a compatible Ghidra profile");
     const client = ghidra.createClient(
-      executableTarget("elf", "x86_64"),
+      executableTarget("elf", "arm64"),
       resolved.value.profile,
     );
     const health = await client.execute("health", {});
@@ -4732,11 +4710,12 @@ describe("compatible Ghidra builds", () => {
     const openDefects = ghidraKnownProviderDefectLimitations("12.3");
     expect(unverified).toBeTypeOf("string");
     expect(openDefects).toHaveLength(1);
+    // Health does not depend on flow recovery, so no switch defect applies.
     expect(health.ok && health.value.limitations).toEqual(
-      expect.arrayContaining([unverified, ...openDefects]),
+      expect.arrayContaining([unverified]),
     );
     expect(health.ok && health.value.limitations?.join("\n")).not.toContain(
-      "ghidra-9996",
+      "Known provider defect",
     );
     expect(procedures.ok && procedures.value.limitations).toEqual(
       expect.arrayContaining([unverified, ...openDefects]),
@@ -5584,8 +5563,7 @@ describe("Ghidra disabled analyzer options", () => {
       format: "raw-binary",
       architecture: "x86",
       availableArchitectures: ["x86"],
-      entryPoint: "0x1000",
-      entryPointSource: "0x1000",
+      rawLoad: rawLoadAtEntry("0x1000"),
     };
     const resolved = await ghidra.resolveAnalysisProfile(target);
     if (!resolved.ok || resolved.value.profile === null)
@@ -5650,6 +5628,47 @@ describe("Ghidra disabled analyzer options", () => {
       if (!failed.ok) expect(failed.error._tag).toBe("ProviderAdapterError");
       expect(starts).toBe(0);
     }
+  });
+});
+
+describe("Ghidra raw-binary launch", () => {
+  it("hands the committed label policy to the launcher", async () => {
+    const launchers: GhidraHeadlessLauncher[] = [];
+    const ghidra = configuredProvider({}, (options) => {
+      launchers.push(options.launcher as GhidraHeadlessLauncher);
+      return {
+        start: () => Promise.resolve(ok(sessionInfo())),
+        callTool: () => Promise.resolve(ok(null)),
+        close: () => Promise.resolve(ok(null)),
+      };
+    });
+    const target: BinaryTarget = {
+      path: "/tmp/flash.bin",
+      sha256: "a".repeat(64),
+      kind: "executable",
+      format: "raw-binary",
+      architecture: "arm",
+      availableArchitectures: ["arm"],
+      rawLoad: admittedRawLoad({
+        architecture: "arm",
+        architectureVariant: "armv7-m",
+        baseAddress: "0x8000000",
+        entryPoint: "0x8000000",
+        fileBytes: 4,
+      }),
+    };
+    const resolved = await ghidra.resolveAnalysisProfile(target);
+    if (!resolved.ok || resolved.value.profile === null)
+      throw new Error("expected a bound raw-binary profile");
+    expect(resolved.value.profile.parameters.processor_labels).toBe(
+      "not-applied",
+    );
+    const client = ghidra.createClient(target, resolved.value.profile);
+    expect((await client.execute("health", {})).ok).toBe(true);
+    expect(launchers[0]?.options.rawBinary).toMatchObject({
+      applyProcessorLabels: false,
+    });
+    await client.close();
   });
 });
 
@@ -7088,8 +7107,7 @@ it("commits native coordinates independently of analyzer choices and preserves r
   const rawProfile = await resolve(defaultProvider, raw);
   const shifted = await resolve(defaultProvider, {
     ...raw,
-    entryPoint: "0x8001000",
-    entryPointSource: "0x8001000",
+    rawLoad: rawLoadAtEntry("0x8001000"),
   });
   expect(rawProfile.parameters.function_coordinate_context).toMatchObject({
     kind: "native-function-coordinate-context-v1",

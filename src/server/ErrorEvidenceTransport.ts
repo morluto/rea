@@ -185,7 +185,11 @@ const presentOutputSchemasForToolsList = (
       tools: message.result.tools.map((tool: unknown) => {
         if (!isRecord(tool) || !isRecord(tool.outputSchema)) return tool;
         const { outputSchema: canonical, ...advertisedTool } = tool;
-        const outputSchema = advertiseToolOutput(canonical, presentation);
+        const outputSchema = advertiseToolOutput(
+          canonical,
+          presentation,
+          typeof tool.name === "string" ? tool.name : undefined,
+        );
         return outputSchema === undefined
           ? advertisedTool
           : { ...advertisedTool, outputSchema };
@@ -482,9 +486,13 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
       preencoded.ok &&
       preencoded.budgetBytes === budget &&
       preencoded.targetContent === targetContent &&
-      message.result.content.length === 1 &&
       content?.type === "text" &&
-      content.text === preencoded.text
+      content.text === preencoded.text &&
+      // A budgeted partial observation's link follows the error text, and
+      // the delivery reserved its bytes.
+      message.result.content
+        .slice(1)
+        .every((block) => block.type === "resource_link")
     )
       return message;
     const preencodedOverflow =

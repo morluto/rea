@@ -42,7 +42,7 @@ it.each([1, 129])(
       expect(bytes.length).toBeLessThan(16_384);
       const projected = projectAnalysisError(result.error);
       expect(projected).toMatchObject({
-        code: "truncated",
+        code: "partial",
         retryable: false,
         message: expect.stringMatching(/PyInstaller.*PYZ.*128.file.*budget/iu),
         details: { boundary: "capacity" },

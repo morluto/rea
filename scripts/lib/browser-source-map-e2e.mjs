@@ -13,6 +13,10 @@ import { mcpTextValue } from "./mcp-verifier-results.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 import { createPackageVerifierCommands } from "./verify-package-commands.mjs";
 import { importVerifierSource } from "./verifier-source-loader.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./complete-evidence.mjs";
 
 const { BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS } = await importVerifierSource(
   new URL("./browser-process-startup.mts", import.meta.url).href,
@@ -52,7 +56,10 @@ export async function verifyBrowserSourceMap(
     const cli = async (...args) => {
       const { stdout } = await commands.exec(
         process.execPath,
-        [entrypoint, ...args, "--json"],
+        [
+          entrypoint,
+          ...(await completeEvidenceCliArguments([...args, "--json"])),
+        ],
         // Allow the shared cold-start budget plus capture, cleanup and delivery.
         { env, timeout: 120_000, maxBuffer: 16 * 1024 * 1024 },
       );
@@ -64,7 +71,9 @@ export async function verifyBrowserSourceMap(
       env,
       stderr: "pipe",
     });
-    client = new Client({ name: "source-map-real-e2e", version: "1" });
+    client = completeEvidenceClient(
+      new Client({ name: "source-map-real-e2e", version: "1" }),
+    );
     const capture = await cli(
       "capture-browser-scenario",
       JSON.stringify({
@@ -207,7 +216,7 @@ async function assertPublicPair(cli, client, oracle) {
   const expected = assertPoint(evidence, oracle);
   const response = await client.callTool({
     name: "trace_web_source_location",
-    arguments: input,
+    arguments: { ...input, detail: "complete" },
   });
   assert.notEqual(response.isError, true, mcpTextValue(response));
   const mcpEvidence = parseEvidence(JSON.parse(mcpTextValue(response)));

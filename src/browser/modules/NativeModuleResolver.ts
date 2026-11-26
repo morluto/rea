@@ -1,3 +1,4 @@
+import { QueuedProviderClose } from "../../providers/QueuedProviderClose.js";
 import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
 import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import {
@@ -97,8 +98,7 @@ const moduleResolverFailure = (
 /** Use native import.meta.resolve in an owned context with locally fulfilled requests. */
 export class NativeModuleResolver implements WebModuleResolutionPort {
   #tail: Promise<void> = Promise.resolve();
-  #closing = false;
-  #closePromise: Promise<void> | undefined;
+  readonly #closeState = new QueuedProviderClose();
   #pendingCleanup: AnalysisCleanupLease | undefined;
 
   readonly environment: Readonly<Record<string, string | undefined>>;
@@ -116,9 +116,12 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
     input: Parameters<WebModuleResolutionPort["resolve"]>[0],
     options?: ExecutionOptions,
   ): ReturnType<WebModuleResolutionPort["resolve"]> {
-    if (this.#closing) return Promise.resolve(err(this.#closedError()));
+    if (this.#closeState.requested)
+      return Promise.resolve(err(this.#closedError()));
     const operation = this.#tail.then(() =>
-      this.#closing ? err(this.#closedError()) : this.#resolve(input, options),
+      this.#closeState.requested
+        ? err(this.#closedError())
+        : this.#resolve(input, options),
     );
     this.#tail = operation.then(
       () => undefined,
@@ -317,17 +320,7 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
   }
 
   async close(): Promise<void> {
-    this.#closing = true;
-    this.#closePromise ??= this.#tail
-      .then(async () => {
-        const failure = await this.#retryCleanup();
-        if (failure !== undefined) throw failure;
-      })
-      .catch((cause: unknown) => {
-        this.#closePromise = undefined;
-        throw cause;
-      });
-    return this.#closePromise;
+    return this.#closeState.closeAfter(this.#tail, () => this.#retryCleanup());
   }
 
   #closedError(): AnalysisError {

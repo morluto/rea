@@ -69,6 +69,49 @@ it("retains exact explicit-layout declarations with build-local coordinates", ()
 });
 
 it.each([
+  ["left", "known"],
+  ["right", "known"],
+  ["left", "unexamined"],
+  ["right", "unexamined"],
+] as const)(
+  "retains %s-side layout snapshots when declarations are %s",
+  (side, coverage) => {
+    const present = inspect(explicit);
+    const absent = inspect({ fieldRowCount: 0 });
+    if (coverage === "unexamined") delete present.layout_declarations;
+    const result = compareManagedMembers(
+      {
+        evidenceId: `ev_${"1".repeat(64)}`,
+        result: side === "left" ? present : absent,
+      },
+      {
+        evidenceId: `ev_${"2".repeat(64)}`,
+        result: side === "right" ? present : absent,
+      },
+    );
+
+    expect(result.fields).toHaveLength(1);
+    expect(result.fields[0]).toMatchObject({
+      status: side === "left" ? "removed" : "added",
+      [side === "left" ? "right" : "left"]: null,
+      [side]: {
+        token: "0x04000001",
+        layout:
+          coverage === "known"
+            ? {
+                state: "known",
+                kind: "explicit",
+                packing_size: 0,
+                class_size: 16,
+                field_offset: 4,
+              }
+            : { state: "unknown" },
+      },
+    });
+  },
+);
+
+it.each([
   ["field offset", explicit, { ...explicit, fieldLayouts: [[8, 1]] }],
   ["declared size", explicit, { ...explicit, classLayouts: [[0, 24, 1]] }],
   [

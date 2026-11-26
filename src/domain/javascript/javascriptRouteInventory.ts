@@ -2,6 +2,7 @@ import {
   coverageStatusSchema,
   knownCoverageStatusSchema,
 } from "../coverage.js";
+import { CoverageAccumulator, knownCoverage } from "../coverageAccumulator.js";
 import { javascriptSourceRangeSchema } from "./javascriptSourceCoordinates.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { z } from "zod";
@@ -703,14 +704,20 @@ export function* buildJavaScriptRouteInventorySteps(
     capacity,
     coverage: {
       scope: "provided-code-sources",
-      source_parsing:
-        sources.length === 0
-          ? "unknown"
-          : sources.some((source) => source.status !== "complete") ||
-              capacity !== null
-            ? "partial"
-            : "complete",
-      candidate_enumeration: partial ? "partial" : "complete",
+      source_parsing: (() => {
+        const acc = new CoverageAccumulator();
+        if (sources.length === 0) return acc.finalize().status;
+        acc.recordComplete();
+        if (sources.some((source) => source.status !== "complete"))
+          acc.recordOmission("one or more sources did not parse completely");
+        if (capacity !== null)
+          acc.recordOmission("route inventory capacity reached");
+        return acc.finalize().status;
+      })(),
+      candidate_enumeration: knownCoverage(
+        !partial,
+        "route enumeration partial",
+      ),
       application_routes: "unknown",
     },
     statistics: {

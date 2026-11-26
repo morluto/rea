@@ -1,23 +1,22 @@
-import type { FixedCeilingFacts } from "../../domain/fixedAllowanceRemediation.js";
 import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import {
+  artifactFileCeilingConstraint,
+  artifactReadBudgetConstraint,
   projectStableArtifactFailure,
   artifactFilePrimaryFacts,
 } from "../../resources/index.js";
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisResourceConstraintError,
-  type ResourceConstraintRecovery,
-} from "../../domain/analysisErrorCore.js";
-import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import type {
+  AnalysisError,
+  AnalysisErrorOptions,
+  AnalysisPartialObservation,
+} from "../../domain/analysisErrorBase.js";
+import type { ResourceConstraintRecovery } from "../../domain/analysisErrorCore.js";
 import {
   BinaryResourceFailure,
-  binaryResourceCeiling,
   binaryResourceAllowance,
 } from "../../domain/binaryContainer.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
-import { errorMessage } from "../../kernel/errorMessage.js";
 
 interface PeBinaryInput {
   readonly path: string;
@@ -26,14 +25,19 @@ interface PeBinaryInput {
 interface PeBinaryFailureOptions<Limit extends string> {
   readonly operation: string;
   readonly providerId: string;
-  readonly fileSizeRemediation: () => string;
-  /** The allowances the parser names in its `BinaryResourceFailure`. */
+  /** The whole-file ceiling of the identity pass; `max_file_bytes` does not raise it. */
+  readonly fileCeiling: { readonly name: string; readonly bytes: number };
+  /** The allowances the parser names in its `BinaryResourceFailure`; no other reaches these readers. */
   readonly limits: readonly Limit[];
-  /** Recovery for the named allowance, or the structural allowance (`null`) at `ceiling`. */
+  /** The control or recovery of the named allowance. */
   readonly limitRecovery: (
-    limit: Limit | null,
-    ceiling: FixedCeilingFacts,
-  ) => ResourceConstraintRecovery;
+    limit: Limit,
+    failure: BinaryResourceFailure,
+  ) => ResourceConstraintRecovery & {
+    readonly limit?: AnalysisErrorOptions["limit"];
+  };
+  /** A verified report the failure keeps, such as one completed before final cleanup failed. */
+  readonly completed?: AnalysisPartialObservation;
 }
 
 /** Keep one PE error interpretation while preserving the provider's cleanup and partial facts. */
@@ -53,37 +57,28 @@ export const projectPeBinaryFailure = <Limit extends string>(
       path: input.path,
       description: "image",
       recognise: (failure) => {
+        const readBudget = artifactReadBudgetConstraint(operation, failure, {
+          max_file_bytes: input.max_file_bytes,
+        });
+        if (readBudget !== undefined) return readBudget;
         if (failure instanceof BinaryResourceFailure) {
           const limit = binaryResourceAllowance(failure, options.limits);
+          if (limit === null) return undefined;
           return parseLimitConstraint(operation, "capacity", failure, {
             path: input.path,
-            ...options.limitRecovery(limit, binaryResourceCeiling(failure)),
+            ...options.limitRecovery(limit, failure),
           });
         }
         return undefined;
       },
       fileSize: (failure) =>
-        new AnalysisResourceConstraintError(
-          operation,
-          "file-size",
-          failure.message,
-          { max_file_bytes: input.max_file_bytes },
-          {
-            cause: failure,
-            retryable: false,
-            remediationAction: options.fileSizeRemediation(),
-          },
-        ),
-      unclassified: (failure) =>
-        new ProviderAdapterError(providerId, operation, {
-          cause: failure,
-          diagnostics: {
-            path: input.path,
-            reason: errorMessage(failure),
-          },
+        artifactFileCeilingConstraint(operation, failure, options.fileCeiling, {
+          max_file_bytes: input.max_file_bytes,
         }),
     }),
   );
+  if (options.completed !== undefined)
+    primary.retainPartialObservation(options.completed);
   return projectStableArtifactFailure(
     cause,
     primary,

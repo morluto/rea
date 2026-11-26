@@ -1,3 +1,4 @@
+import { listFixtureFiles } from "../../../tests/support/workspace/listFixtureFiles.js";
 import { evidenceFileBytes } from "./environmentEvidenceBytes.js";
 import {
   chmod,
@@ -8,7 +9,7 @@ import {
   writeFile,
   type FileHandle,
 } from "node:fs/promises";
-import { join, sep } from "node:path";
+import { join } from "node:path";
 import { Writable } from "node:stream";
 
 import { describe, expect, it, vi } from "vitest";
@@ -41,17 +42,6 @@ import {
   readEnvironmentExportInputs,
 } from "./environmentExport.js";
 import { loadEnvironmentSource } from "./environmentSource.js";
-
-const listFiles = async (root: string): Promise<string[]> =>
-  (await readdir(root, { recursive: true, withFileTypes: true }))
-    .filter((entry) => entry.isFile())
-    .map((entry) =>
-      join(entry.parentPath, entry.name)
-        .slice(root.length + 1)
-        .split(sep)
-        .join("/"),
-    )
-    .sort();
 
 /** The Grafana-shaped capture with every recorded URL moved to a loopback origin. */
 const loopbackCapture = (): Evidence =>
@@ -144,8 +134,8 @@ const fileHandlePrototype = async (path: string): Promise<FileHandle> => {
 };
 
 const sameTree = async (left: string, right: string): Promise<number> => {
-  const files = await listFiles(left);
-  expect(await listFiles(right)).toEqual(files);
+  const files = await listFixtureFiles(left);
+  expect(await listFixtureFiles(right)).toEqual(files);
   for (const file of files)
     expect(
       Buffer.compare(
@@ -306,7 +296,7 @@ describe("buildEnvironment naming and refusals", () => {
     const built = await buildEnvironment(input);
     if (built.ok) throw new Error("Expected a refusal");
     expect(projectAnalysisError(built.error).code).toBe("invalid_request");
-    expect(await listFiles(input.directory!)).toEqual(["notes.md"]);
+    expect(await listFixtureFiles(input.directory!)).toEqual(["notes.md"]);
   });
 });
 
@@ -352,7 +342,7 @@ describe("buildEnvironment cancellation and input checks", () => {
         },
       },
     });
-    expect(await listFiles(input.directory!)).toHaveLength(7);
+    expect(await listFixtureFiles(input.directory!)).toHaveLength(7);
   });
 
   it("refuses repeated rules and a HAR document saved as JSON", async () => {

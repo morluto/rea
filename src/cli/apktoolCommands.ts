@@ -1,9 +1,12 @@
 import type { RequestAnalysisPort } from "../ports/AnalysisProvider.js";
-import type { ApktoolRequest } from "../domain/apktool/apktoolResourceAnalysis.js";
+import type {
+  ApktoolRequest,
+  ApktoolOperation,
+} from "../domain/apktool/apktoolResourceAnalysis.js";
+import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
 import { createApktoolResourceAnalysisService } from "../application/ProviderOperationServices.js";
 import { createApktoolResourceAnalysisProvider } from "../composition/apktool.js";
 import { APKTOOL_TOOL_CONTRACTS } from "../contracts/apktool/apktoolToolContracts.js";
-import type { ApktoolOperation } from "../domain/apktool/apktoolResourceAnalysis.js";
 import type { Logger } from "pino";
 import { contractNamed } from "./contractCliDescription.js";
 import { registerContractCommand } from "./contractCommand.js";
@@ -52,7 +55,9 @@ export const registerApktoolCommands = (
       // The contract admits a relative path, resolved by the provider from
       // the working directory, so the CLI passes it on as spelled.
       positionals: ["path"],
+      jsonText: ["producer_limits"],
       fields: {
+        producer_limits: { description: PRODUCER_LIMITS_HELP },
         include_strings: {
           name: "strings",
           description:

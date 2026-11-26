@@ -1,3 +1,4 @@
+import { int32LE as int32 } from "../../src/native/BinaryInteger.fixture.js";
 import { createHash } from "node:crypto";
 import { readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -14,6 +15,7 @@ import { artifactInspectionResultSchema } from "../../src/domain/artifactInspect
 import { artifactExtractionResultSchema } from "../../src/domain/artifactGraph.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { expectCarrierProbes } from "../fixtures/nativeCarrierProbes.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 const onefile = async (
@@ -92,12 +94,6 @@ const onefile = async (
   return path;
 };
 
-const int32 = (value: number): Buffer => {
-  const bytes = Buffer.alloc(4);
-  bytes.writeInt32LE(value);
-  return bytes;
-};
-
 const marshalInt = (value: number): Buffer =>
   Buffer.concat([Buffer.from([0x69]), int32(value)]);
 
@@ -173,7 +169,8 @@ cliTest(
       parseEvidence(JSON.parse(result.stdout)).normalized_result,
     );
     expect(inspection.subject.root_format).toBe("pyinstaller");
-    expect(inspection.next_probes).toEqual([]);
+    // The archive has no package reader; its ELF carrier keeps its readers.
+    expectCarrierProbes(inspection.next_probes, "elf");
     const inventory = inspection.substeps[0]?.evidence.normalized_result;
     expect(inventory?.manifest.root_format).toBe("pyinstaller");
     const root = inventory?.occurrences.find(
@@ -705,7 +702,7 @@ cliTest(
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
-      code: "truncated",
+      code: "partial",
       details: {
         reason: "limit",
         detail: expect.stringContaining(
