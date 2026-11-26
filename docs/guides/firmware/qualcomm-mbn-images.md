@@ -77,8 +77,11 @@ A program header count of 65535 (ELF extended numbering), an entry size
 that is not the ELF class size, or a table past the file end leaves the
 hash segment unknown, and the file stays ELF. A hash segment header that
 cannot be decoded, an MBN header cut short by the segment size or
-the file end, further hash segments, and a hash count that differs from the
-program header count are limitations with `unknown` coverage.
+the file end, further hash segments, and a code size that does not match
+a supported digest size (32, 48, or 20 bytes) times the program header
+count are limitations with `unknown` coverage; when no digest size
+matches the program header count, `hash_size` and `hash_count` are
+reported as `null`.
 
 ## Verification scope
 

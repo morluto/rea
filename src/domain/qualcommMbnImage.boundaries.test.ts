@@ -101,7 +101,7 @@ describe("hostile ELF program header tables", () => {
     expect(qualcommMbnInventoryCoverage(inspection)).toBe("unknown");
   });
 
-  it("keeps a hash count that disagrees with the program headers unknown", () => {
+  it("keeps hash size and count unknown when no candidate matches the program headers", () => {
     const bytes = mbnElfImage([
       { type: 0, flags: 0x0700_0000, data: Buffer.alloc(0) },
       { type: 0, flags: HASH_FLAGS, data: hashSegmentData(5) },
@@ -111,8 +111,58 @@ describe("hostile ELF program header tables", () => {
     expect(inspection).toMatchObject({
       kind: "elf",
       programHeaderCount: 3,
-      facet: { hashSize: 32, hashCount: 5, segmentHashes: [] },
-      limitations: ["hash count 5 does not equal the 3 program headers"],
+      facet: { hashSize: null, hashCount: null, segmentHashes: [] },
+      limitations: [
+        "code size 160 does not match the 3 program headers (fits 5 32-byte or 8 20-byte hashes); hash size and count are unknown",
+      ],
+    });
+    if (inspection.kind !== "elf") throw new Error("not elf");
+    expect(qualcommMbnInventoryCoverage(inspection)).toBe("unknown");
+  });
+
+  it("does not guess a digest size for codeSize 192 with 3 program headers", () => {
+    const bytes = mbnElfImage([
+      { type: 0, flags: 0x0700_0000, data: Buffer.alloc(0) },
+      { type: 0, flags: HASH_FLAGS, data: hashSegmentData(6) },
+      { type: 1, flags: 5, data: Buffer.alloc(16, 1) },
+    ]);
+    const inspection = inspectQualcommMbnImage(bytes);
+    expect(inspection).toMatchObject({
+      kind: "elf",
+      programHeaderCount: 3,
+      facet: {
+        header: { codeSize: 192 },
+        hashSize: null,
+        hashCount: null,
+        segmentHashes: [],
+      },
+      limitations: [
+        "code size 192 does not match the 3 program headers (fits 6 32-byte or 4 48-byte hashes); hash size and count are unknown",
+      ],
+    });
+    if (inspection.kind !== "elf") throw new Error("not elf");
+    expect(qualcommMbnInventoryCoverage(inspection)).toBe("unknown");
+  });
+
+  it("keeps hash size and count unknown even when only one digest size divides a mismatched codeSize", () => {
+    const bytes = mbnElfImage([
+      { type: 0, flags: 0x0700_0000, data: Buffer.alloc(0) },
+      { type: 0, flags: HASH_FLAGS, data: hashSegmentData(2) },
+      { type: 1, flags: 5, data: Buffer.alloc(16, 1) },
+    ]);
+    const inspection = inspectQualcommMbnImage(bytes);
+    expect(inspection).toMatchObject({
+      kind: "elf",
+      programHeaderCount: 3,
+      facet: {
+        header: { codeSize: 64 },
+        hashSize: null,
+        hashCount: null,
+        segmentHashes: [],
+      },
+      limitations: [
+        "code size 64 does not match the 3 program headers (fits 2 32-byte hashes); hash size and count are unknown",
+      ],
     });
     if (inspection.kind !== "elf") throw new Error("not elf");
     expect(qualcommMbnInventoryCoverage(inspection)).toBe("unknown");

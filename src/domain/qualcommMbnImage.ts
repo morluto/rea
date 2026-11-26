@@ -608,23 +608,35 @@ export const qualcommMbnHashHeaderSpan = (
   return { kind: "span", offset, length };
 };
 
-const chooseHash = (
-  codeSize: number,
-  programCount: number,
-): {
+interface HashCandidate {
   readonly hashSize: HashSize;
   readonly hashCount: number;
-  readonly aligned: boolean;
-} | null => {
-  let fallback: { hashSize: HashSize; hashCount: number } | null = null;
+}
+
+type ChosenHash =
+  | {
+      readonly kind: "matched";
+      readonly hashSize: HashSize;
+      readonly hashCount: number;
+    }
+  | {
+      readonly kind: "mismatched";
+      readonly candidates: readonly HashCandidate[];
+    }
+  | { readonly kind: "indivisible" };
+
+const chooseHash = (codeSize: number, programCount: number): ChosenHash => {
+  const candidates: HashCandidate[] = [];
   for (const hashSize of HASH_SIZES) {
     if (codeSize % hashSize !== 0) continue;
     const hashCount = codeSize / hashSize;
     if (hashCount === programCount)
-      return { hashSize, hashCount, aligned: true };
-    if (fallback === null) fallback = { hashSize, hashCount };
+      return { kind: "matched", hashSize, hashCount };
+    candidates.push({ hashSize, hashCount });
   }
-  return fallback === null ? null : { ...fallback, aligned: false };
+  return candidates.length === 0
+    ? { kind: "indivisible" }
+    : { kind: "mismatched", candidates };
 };
 
 const segmentHashes = (
@@ -650,21 +662,32 @@ const segmentHashes = (
   return hashes;
 };
 
+const formatHashCandidates = (candidates: readonly HashCandidate[]): string => {
+  const parts = candidates.map(
+    ({ hashCount, hashSize }) =>
+      `${String(hashCount)} ${String(hashSize)}-byte`,
+  );
+  if (parts.length === 1)
+    return `${parts[0]!} ${candidates[0]!.hashCount === 1 ? "hash" : "hashes"}`;
+  if (parts.length === 2) return `${parts[0]!} or ${parts[1]!} hashes`;
+  return `${parts.slice(0, -1).join(", ")}, or ${parts[parts.length - 1]!} hashes`;
+};
+
 const hashLimitations = (
   codeSize: number,
   programCount: number,
-  chosen: ReturnType<typeof chooseHash>,
+  chosen: ChosenHash,
   hashes: readonly QualcommMbnSegmentHash[] | null,
 ): string[] => {
-  if (chosen === null)
+  if (chosen.kind === "indivisible")
     return [
       `code size ${String(codeSize)} is not a whole number of 32-byte, 48-byte, or 20-byte hashes`,
     ];
-  if (hashes === null) return ["hash offsets do not fit in a safe integer"];
-  if (!chosen.aligned)
+  if (chosen.kind === "mismatched")
     return [
-      `hash count ${String(chosen.hashCount)} does not equal the ${String(programCount)} program headers`,
+      `code size ${String(codeSize)} does not match the ${String(programCount)} program ${programCount === 1 ? "header" : "headers"} (fits ${formatHashCandidates(chosen.candidates)}); hash size and count are unknown`,
     ];
+  if (hashes === null) return ["hash offsets do not fit in a safe integer"];
   return [];
 };
 
@@ -674,7 +697,7 @@ const facetFromHeader = (
 ): { readonly facet: QualcommMbnFacet; readonly limitations: string[] } => {
   const chosen = chooseHash(parsed.header.codeSize, rows.length);
   const hashes =
-    chosen?.aligned === true &&
+    chosen.kind === "matched" &&
     !exceedsEnd(
       parsed.ranges.code.offset,
       parsed.ranges.code.length,
@@ -687,8 +710,8 @@ const facetFromHeader = (
       header: parsed.header,
       ranges: parsed.ranges,
       readableEnd: parsed.readableEnd,
-      hashSize: chosen?.hashSize ?? null,
-      hashCount: chosen?.hashCount ?? null,
+      hashSize: chosen.kind === "matched" ? chosen.hashSize : null,
+      hashCount: chosen.kind === "matched" ? chosen.hashCount : null,
       segmentHashes: hashes ?? [],
     },
     limitations: [

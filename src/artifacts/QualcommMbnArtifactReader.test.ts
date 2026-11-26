@@ -306,6 +306,49 @@ it("lists the first segment hashes inline and counts the rest", async () => {
   }
 });
 
+it("publishes null hash_size and hash_count when code_size 192 does not match 3 program headers", async () => {
+  const hashSegment = mbnLegacyImage({
+    imageId: 0,
+    destination: 0x8810_0028,
+    code: Buffer.alloc(192, 0x11),
+    signature: Buffer.alloc(64, 0x5a),
+    certificateChain: Buffer.alloc(32, 0xc3),
+  });
+  const path = await writeMbn(
+    "ambiguous-hash.mdt",
+    mbnElfImage([
+      { type: 0, flags: 0x0700_0000, data: Buffer.alloc(0) },
+      { type: 0, flags: 0x0220_0000, data: hashSegment },
+      { type: 1, flags: 5, data: Buffer.alloc(16, 1) },
+    ]),
+  );
+  const reader = new QualcommMbnArtifactReader(path);
+  try {
+    const { coverage } = await readAll(reader);
+    expect(coverage).toEqual([
+      {
+        status: "unknown",
+        limitations: [
+          "code size 192 does not match the 3 program headers (fits 6 32-byte or 4 48-byte hashes); hash size and count are unknown",
+        ],
+      },
+    ]);
+    expect(reader.formatMetadata()).toMatchObject({
+      layout: "elf",
+      header: { code_size: 192 },
+      elf: {
+        program_header_count: 3,
+        hash_size: null,
+        hash_count: null,
+        segment_hashes: [],
+        omitted_segment_hashes: 0,
+      },
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
 it("fails an ELF without a hash segment when read directly", async () => {
   const reader = new QualcommMbnArtifactReader(
     await writeMbn(
