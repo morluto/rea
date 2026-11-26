@@ -100,13 +100,19 @@ const isArray = (schema: z.ZodObject | undefined, name: string): boolean => {
   return field !== undefined && declaredOptionType(field) instanceof z.ZodArray;
 };
 
-/** Number and boolean options arrive as text; the schema validates the result. */
+/**
+ * Number and boolean options arrive as text; the schema validates the result.
+ * Text that is not a literal of the declared type stays text, so the schema
+ * reports it instead of it silently becoming `false` or `0`.
+ */
 const coerce = (value: unknown, schema: z.ZodObject, name: string): unknown => {
   const field = fieldOf(schema, name);
   if (field === undefined || typeof value !== "string") return value;
   const type = declaredOptionType(field);
-  if (type instanceof z.ZodNumber) return Number(value);
-  if (type instanceof z.ZodBoolean) return value === "true";
+  if (type instanceof z.ZodNumber)
+    return value.trim() === "" ? value : Number(value);
+  if (type instanceof z.ZodBoolean)
+    return value === "true" ? true : value === "false" ? false : value;
   return value;
 };
 

@@ -220,25 +220,33 @@ const runSetupInTty = async (
   arguments_: readonly string[],
   approval?: boolean,
   environment: NodeJS.ProcessEnv = {},
+  { terminalStdin = true }: { readonly terminalStdin?: boolean } = {},
 ): Promise<{ readonly exitCode: number; readonly output: string }> => {
-  const terminal = spawn(
-    process.execPath,
-    ["scripts/rea.mjs", "setup", ...arguments_],
-    {
-      cwd: process.cwd(),
-      // Client locations such as CODEX_HOME must follow the temporary home.
-      env: {
-        ...process.env,
-        ...isolatedSetupEnvironment(home),
-        REA_LOG_LEVEL: "silent",
-        NO_COLOR: "1",
-        ...environment,
-      },
-      name: "xterm-256color",
-      cols: 120,
-      rows: 40,
+  // Without a terminal stdin, only stdout and stderr stay on the terminal.
+  const command = terminalStdin
+    ? { file: process.execPath, args: ["scripts/rea.mjs", "setup"] }
+    : {
+        file: "/bin/sh",
+        args: [
+          "-c",
+          'exec "$0" scripts/rea.mjs setup "$@" < /dev/null',
+          process.execPath,
+        ],
+      };
+  const terminal = spawn(command.file, [...command.args, ...arguments_], {
+    cwd: process.cwd(),
+    // Client locations such as CODEX_HOME must follow the temporary home.
+    env: {
+      ...process.env,
+      ...isolatedSetupEnvironment(home),
+      REA_LOG_LEVEL: "silent",
+      NO_COLOR: "1",
+      ...environment,
     },
-  );
+    name: "xterm-256color",
+    cols: 120,
+    rows: 40,
+  });
   let output = "";
   let answered = false;
   terminal.onData((data) => {
@@ -364,6 +372,66 @@ describe("TTY setup dry run", () => {
     ).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "shows the unapproved plan it asks a terminal reader to review",
+    async () => {
+      const home = await createTestTempDirectory("rea-cli-setup-unapproved-");
+      const { exitCode, output } = await runSetupInTty(
+        home,
+        ["--client", "codex", "--skill=false"],
+        undefined,
+        {},
+        { terminalStdin: false },
+      );
+
+      expect(output).toContain(
+        "Review the setup plan, then rerun interactively or with --yes.",
+      );
+      expect(output).toContain("CREATE  Codex");
+      expect(output).toContain(join(home, ".codex/config.toml"));
+      expect(output).toContain("No changes were made.");
+      expect(exitCode, output).not.toBe(0);
+      await expect(
+        access(join(home, ".codex/config.toml")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
+
+  it.each([
+    { flag: "--full-output", document: /plannedActions/u },
+    { flag: "--token-count", document: /^\d+$/u },
+  ])(
+    "writes only the requested document for a TTY dry run with $flag",
+    async ({ flag, document }) => {
+      const home = await createTestTempDirectory("rea-cli-setup-document-");
+      const { exitCode, output } = await runSetupInTty(home, [
+        "--dry-run",
+        "--client",
+        "codex",
+        "--skill=false",
+        flag,
+      ]);
+
+      expect(exitCode, output).toBe(0);
+      expect(output.trim()).toMatch(document);
+      expect(output).not.toContain("Dry run complete. No changes were made.");
+    },
+  );
+
+  it("opens the setup rail once when a scoped run starts at approval", async () => {
+    const home = await createTestTempDirectory("rea-cli-setup-scoped-");
+    const { output } = await runSetupInTty(
+      home,
+      ["--client", "codex", "--skill=false"],
+      false,
+    );
+
+    const prompt = output.indexOf("Apply this change?");
+    expect(prompt, output).toBeGreaterThan(0);
+    const beforePrompt = output.slice(0, prompt);
+    expect(beforePrompt.split("REA setup").length - 1, output).toBe(1);
   });
 
   it("prints the applied result for a non-interactive TTY setup", async () => {
@@ -884,13 +952,14 @@ const runJourney = async (
 ): Promise<JourneyResult> => {
   const isolatedHome = await createTestTempDirectory("rea-cli-setup-test-");
   const script = [
-    'import { confirmInteractiveSetup } from "./dist/cli/interactiveSetup.js";',
+    'import { confirmInteractiveSetup, createSetupJourney } from "./dist/cli/interactiveSetup.js";',
+    "const journey = createSetupJourney();",
     `const actions = ${JSON.stringify(journeyActions)};`,
     `const context = ${JSON.stringify({ stage: "select", clientStates: states, selectedClientIds: initialClientIds, clientSelectionAllowed: true })};`,
-    `let decision = await confirmInteractiveSetup(actions, ${JSON.stringify(accessible)}, context);`,
+    `let decision = await confirmInteractiveSetup(actions, ${JSON.stringify(accessible)}, context, undefined, journey);`,
     "if (!decision.cancelled && decision.selectedActionIds.length > 0) {",
     "  const selected = new Set(decision.selectedActionIds);",
-    `  decision = await confirmInteractiveSetup(actions.filter(({ id }) => selected.has(id)), ${JSON.stringify(accessible)}, { ...context, stage: "confirm", clientSelectionAllowed: false });`,
+    `  decision = await confirmInteractiveSetup(actions.filter(({ id }) => selected.has(id)), ${JSON.stringify(accessible)}, { ...context, stage: "confirm", clientSelectionAllowed: false }, undefined, journey);`,
     "}",
     `process.stdout.write(${JSON.stringify(`\n${decisionMarker}`)} + JSON.stringify(decision) + "\\n");`,
   ].join("\n");

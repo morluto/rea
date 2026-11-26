@@ -54,6 +54,23 @@ describe("parseCliArgv", () => {
     });
   });
 
+  it("accepts only true and false as inline boolean values", () => {
+    expect(bound(["file", "--yes=true", "--global=false"]).options).toEqual({
+      blockSize: 4096,
+      global: false,
+      yes: true,
+    });
+    for (const literal of ["yes", "1", "TRUE", ""])
+      expect(failure(["file", `--yes=${literal}`])).toMatchObject({
+        kind: "validation",
+        fieldErrors: [{ path: "yes", expected: "boolean" }],
+      });
+    expect(failure(["file", "--block-size="])).toMatchObject({
+      kind: "validation",
+      fieldErrors: [{ path: "blockSize", expected: "number" }],
+    });
+  });
+
   it.each([
     [["file", "--blockSize", "512"], "--blockSize", "--block-size"],
     [["file", "--blockSize=512"], "--blockSize", "--block-size"],
@@ -150,10 +167,5 @@ describe("parseCliArgv", () => {
       verbosity: 3,
       yes: true,
     });
-  });
-
-  it("reads boolean text as true only for 'true'", () => {
-    expect(bound(["file", "--yes=maybe"]).options.yes).toBe(false);
-    expect(bound(["file", "--yes=true"]).options.yes).toBe(true);
   });
 });

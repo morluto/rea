@@ -109,7 +109,7 @@ const fixture = async (kind: (typeof kinds)[number]) => {
   const invoke = async (options: Record<string, unknown>): Promise<unknown> =>
     execute({
       args: argsSchema.parse(args),
-      formatExplicit: false,
+      structuredOutput: false,
       options: optionsSchema.parse({
         ...(kind === "gdb" ? { inferiorTty: "/dev/pts/caller-fixture" } : {}),
         ...options,
