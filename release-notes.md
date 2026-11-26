@@ -456,6 +456,7 @@
 * **macho:** report Mach-O read failures as target failures and delete MachoReadIssue ([#14416](https://github.com/morluto/rea/issues/14416)) ([5b79ae5](https://github.com/morluto/rea/commit/5b79ae5d62be355c5f955fe43c42a8e15b891a64))
 * **managed:** isolate invalid string loads from member coverage ([#13588](https://github.com/morluto/rea/issues/13588)) ([4d507e8](https://github.com/morluto/rea/commit/4d507e861282e8ffa5f0e2e09fc523e40a5dd6e7))
 * **maven:** preserve property value spelling ([#13442](https://github.com/morluto/rea/issues/13442)) ([b43084c](https://github.com/morluto/rea/commit/b43084c7fd892524bce20982719ef08df3310687))
+* **maven:** read Maven 4.1.0 model POMs ([#14089](https://github.com/morluto/rea/issues/14089)) ([0c59c2e](https://github.com/morluto/rea/commit/0c59c2ed4e46ff52c69cb9f216c069e7b703f658))
 * **mcp:** accept discover_tools in exact-name discovery batches ([#13288](https://github.com/morluto/rea/issues/13288)) ([fd40fd9](https://github.com/morluto/rea/commit/fd40fd9ab2a0238529e2c2bc55264af778b439a3))
 * **mcp:** keep doctor launches target-free on Windows ([#13250](https://github.com/morluto/rea/issues/13250)) ([0209d3e](https://github.com/morluto/rea/commit/0209d3e1b580d83497a7b04bc274001670311bd6))
 * **mcp:** name the HTTP option that requires --http ([2fbcec8](https://github.com/morluto/rea/commit/2fbcec84eb5054c7f014729021172173df1742c8))
