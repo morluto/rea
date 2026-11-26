@@ -207,8 +207,14 @@ class ScopeJavaScriptSourceAnalysis implements JavaScriptSourceAnalysisPort {
         current.busy = false;
         return;
       }
-      if (current?.worker === this.worker) retained.delete(this.scope);
+      // Release the scope's ownership only after the process stopped; a
+      // failed close stays owned by the scope's close hook.
       await this.worker.close();
+      if (
+        current?.worker === this.worker &&
+        retained.get(this.scope) === current
+      )
+        retained.delete(this.scope);
     } catch (cause) {
       this.#closed = false;
       throw cause;

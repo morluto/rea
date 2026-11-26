@@ -166,6 +166,10 @@ export const executeSessionFunctionAnalysis = async (
       jsonParameters(input),
       session?.activeTarget(),
       request,
+      {
+        admitRecovery: session?.admitRecoveryObservation.bind(session),
+        evidenceById: session?.evidenceForAnalysis.bind(session),
+      },
     ),
   );
   return analyzed.ok ? ok({ evidence: analyzed.value }) : analyzed;
