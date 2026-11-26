@@ -450,7 +450,9 @@ jobs:
           REA_CI_TEST_HISTORY: .cache/ci-test-history/test-results.json
       - name: Run built-dependent tests for fast feedback
         if: needs.changes.outputs.tier == 'fast' && needs.changes.outputs.test_mode == 'full'
-        run: npm run test:built -- --reporter=default --reporter=blob --shard=${{ matrix.shard }}
+        run: >-
+          npm run test:built -- --reporter=default --reporter=blob
+          --reporter=./scripts/ci/test-progress-reporter.mjs --shard=${{ matrix.shard }}
         env:
           VITEST_BLOB_LABEL: built
           REA_CI_TEST_HISTORY: .cache/ci-test-history/test-results.json

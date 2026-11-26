@@ -532,6 +532,9 @@ it("merges source and built reports exactly once using the workflow's shard matr
   const vitest = fileURLToPath(
     new URL("../../../node_modules/vitest/vitest.mjs", import.meta.url),
   );
+  const progressReporter = fileURLToPath(
+    new URL("../../../scripts/ci/test-progress-reporter.mjs", import.meta.url),
+  );
   const blobs = new Map<string, Buffer>();
   const runs = [
     { group: "source", shard: [] },
@@ -548,6 +551,7 @@ it("merges source and built reports exactly once using the workflow's shard matr
         "--project",
         group,
         "--reporter=blob",
+        ...(group === "built" ? [`--reporter=${progressReporter}`] : []),
         ...shard,
       ],
       {

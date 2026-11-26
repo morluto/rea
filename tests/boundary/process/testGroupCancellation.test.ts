@@ -1,11 +1,12 @@
 import { spawn } from "node:child_process";
-import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { readFile, symlink, writeFile } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
+import TestProgressReporter from "../../../scripts/ci/test-progress-reporter.mjs";
 import { execFileOutput } from "../../../src/process/ExecFileOutput.js";
 import { createDeferred } from "../../fixtures/binarySession.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
@@ -13,6 +14,40 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
 
 const groups = ["source", "built"] as const;
+const progressReporter = "--reporter=./scripts/ci/test-progress-reporter.mjs";
+const firstProgress =
+  '[test-shard] 0/1 modules completed, 1 active. Oldest active: [{"file":"value.test.ts"';
+
+it("logs completed modules and the oldest active files on each progress interval", () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] });
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const reporter = new TestProgressReporter();
+    const files = Array.from({ length: 7 }, (_, index) => ({
+      id: String(index),
+      relativeModuleId: `file-${index}.test.ts`,
+    }));
+    reporter.onTestRunStart(files);
+    for (const file of files) reporter.onTestModuleQueued(file);
+    reporter.onTestModuleEnd({ id: "0" });
+    vi.advanceTimersByTime(30_000);
+    const oldest = files.slice(1, 6).map(({ relativeModuleId }) => ({
+      file: relativeModuleId,
+      seconds: 30,
+    }));
+    expect(log).toHaveBeenNthCalledWith(
+      2,
+      `[test-shard] 1/7 modules completed, 6 active. Oldest active: ${JSON.stringify(oldest)}`,
+    );
+
+    reporter.onTestRunEnd();
+    vi.advanceTimersByTime(30_000);
+    expect(log).toHaveBeenCalledTimes(2);
+  } finally {
+    log.mockRestore();
+    vi.useRealTimers();
+  }
+});
 
 const fixture = async () => {
   const root = await createTestTempDirectory("rea-test-group-cancellation-");
@@ -20,6 +55,7 @@ const fixture = async () => {
   await copyScriptsWithImports(
     [
       "scripts/ci/test-group.mjs",
+      "scripts/ci/test-progress-reporter.mjs",
       "scripts/run-exclusive.mjs",
       "scripts/run-exclusive-command.mjs",
     ],
@@ -56,12 +92,14 @@ it.each(groups)(
         [
           "scripts/ci/test-group.mjs",
           group,
+          progressReporter,
           "--reporter=json",
           "--outputFile=group-report.json",
         ],
         { cwd: root, timeout: 10_000, maxBuffer: 1024 * 1024 },
       );
-    await run();
+    const result = await run();
+    expect(result.stdout).toContain(firstProgress);
     const report = () => readFile(join(root, "group-report.json"), "utf8");
     expect(JSON.parse(await report())).toMatchObject({
       numPassedTests: 1,
@@ -129,9 +167,17 @@ function release() { clearInterval(timer); clearTimeout(deadline); socket.end();
         join(root, "value.test.ts"),
         'import { it } from "vitest"; import { spawn } from "node:child_process"; it("waits", async () => { spawn(process.execPath, ["descendant.cjs"], { stdio: "ignore" }); await new Promise(() => {}); }, 30000);',
       );
-      runner = spawn(process.execPath, ["scripts/ci/test-group.mjs", group], {
-        cwd: root,
-        stdio: "ignore",
+      const running = spawn(
+        process.execPath,
+        ["scripts/ci/test-group.mjs", group, progressReporter],
+        { cwd: root, stdio: ["ignore", "pipe", "ignore"] },
+      );
+      runner = running;
+      const progress = createDeferred<void>();
+      let stdout = "";
+      running.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+        stdout += chunk;
+        if (stdout.includes(firstProgress)) progress.resolve();
       });
       closed = new Promise((resolve) =>
         runner!.once("exit", (code, signal) => resolve({ code, signal })),
@@ -141,6 +187,7 @@ function release() { clearInterval(timer); clearTimeout(deadline); socket.end();
         closed,
         "test-owned descendant readiness",
       );
+      await awaitAcknowledgement(progress.promise, closed, "shard progress");
       runner.kill(signal);
       expect(await closed).toEqual({
         code: signal === "SIGTERM" ? 143 : 130,

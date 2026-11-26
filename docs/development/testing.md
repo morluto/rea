@@ -1289,6 +1289,9 @@ project ownership lives in `scripts/lib/test-projects.mjs`, shared by Vitest,
 CI group execution, and development-test preparation. A test importing compiled
 verifier code belongs to the built group even if its directory is conformance.
 Source and built blobs have separate labels to prevent merge collisions.
+Fast built-dependent shards log completed module counts and up to five of the
+oldest active files every 30 seconds. Look for `[test-shard]` in an interrupted
+job's log. This progress is available before Vitest writes its blob report.
 Each test job emits a blob report; the merge job produces JUnit and JSON diagnostics, a module timing
 report, plus aggregate coverage during full qualification. It retains available
 reports even when a shard fails, uploads available diagnostics, and writes the

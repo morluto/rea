@@ -395,6 +395,7 @@ it.each([
   "job-timings-batch.mjs",
   "pr-ci-health.d.mts",
   "pr-ci-health.mjs",
+  "test-progress-reporter.mjs",
   "test-report.mjs",
   "test-timing-reporter.mjs",
   "test-history.mjs",

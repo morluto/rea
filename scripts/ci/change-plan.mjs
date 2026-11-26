@@ -51,6 +51,7 @@ const PORTABLE_CI_REPORTERS = new Set([
   "scripts/ci/job-timings-batch.mjs",
   "scripts/ci/pr-ci-health.d.mts",
   "scripts/ci/pr-ci-health.mjs",
+  "scripts/ci/test-progress-reporter.mjs",
   "scripts/ci/test-report.mjs",
   "scripts/ci/test-timing-reporter.mjs",
   "scripts/ci/test-history.mjs",
