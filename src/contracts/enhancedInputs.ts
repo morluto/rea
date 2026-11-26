@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { nativeDispatchMetadataInputSchema } from "../domain/native/objcSwiftMetadata.js";
 import { nativeProcedureInputSchema } from "../domain/native/nativeProcedureInput.js";
+import { inspectProcedureHardwareInstructionsInputSchema } from "../domain/firmware/hardwareInstructionChannels.js";
 import { decompileDirectoryInputSchema } from "./decompileDirectory.js";
 import { nativeValueTraceInputSchema } from "../domain/native/nativeValueTrace.js";
 import { nativeInvestigationTraceLimitsSchema } from "../domain/native/nativeInvestigationGraph.js";
@@ -90,6 +91,8 @@ export const enhancedInputSchemas = {
   // Provider input excludes delivery detail, which belongs to the MCP tool contract.
   analyze_function: nativeProcedureInputSchema,
   inspect_native_api: nativeProcedureInputSchema,
+  inspect_procedure_hardware_instructions:
+    inspectProcedureHardwareInstructionsInputSchema,
   trace_feature: traceLiteralInputSchema,
   trace_call_path: z.strictObject({
     start: z.string().describe("A starting procedure symbol or address"),

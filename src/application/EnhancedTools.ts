@@ -87,6 +87,7 @@ import {
 import { traceLiteralFeature } from "./EnhancedLiteralTracing.js";
 import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import { projectNativeApiInspection } from "./native/NativeApiInspection.js";
+import { inspectProcedureHardwareInstructions } from "./firmware/HardwareInstructionChannelsService.js";
 
 type BatchResolution = {
   readonly address: string;
@@ -143,6 +144,15 @@ export class EnhancedTools {
       }
       case "inspect_native_api": {
         const parsed = enhancedInputSchemas.inspect_native_api.safeParse(input);
+        return parsed.success
+          ? this.executeValidated({ name, input: parsed.data }, signal)
+          : invalidEnhancedInput(name, parsed.error, input);
+      }
+      case "inspect_procedure_hardware_instructions": {
+        const parsed =
+          enhancedInputSchemas.inspect_procedure_hardware_instructions.safeParse(
+            input,
+          );
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
           : invalidEnhancedInput(name, parsed.error, input);
@@ -224,6 +234,8 @@ export class EnhancedTools {
         return this.#analyzeFunction(call.input, signal);
       case "inspect_native_api":
         return this.#inspectNativeApi(call.input, signal);
+      case "inspect_procedure_hardware_instructions":
+        return this.#inspectHardwareInstructions(call.input, signal);
       case "trace_feature":
         return traceLiteralFeature(this.#observed, call.input, signal);
       case "trace_call_path":
@@ -262,6 +274,21 @@ export class EnhancedTools {
     return ok(
       ownedJsonValueSchema.parse(projectNativeApiInspection(parsed.value)),
     );
+  }
+
+  async #inspectHardwareInstructions(
+    input: z.output<
+      typeof enhancedInputSchemas.inspect_procedure_hardware_instructions
+    >,
+    signal?: AbortSignal,
+  ): EnhancedResult {
+    const inspected = await inspectProcedureHardwareInstructions(
+      this.analysis,
+      input,
+      signal === undefined ? undefined : { signal },
+    );
+    if (!inspected.ok) return inspected;
+    return ok(ownedJsonValueSchema.parse(inspected.value));
   }
 
   async #objcClasses(pattern: string, signal?: AbortSignal): EnhancedResult {

@@ -8,7 +8,11 @@ that build. Binwalk and Unblob operations run only on Linux; other hosts
 report the capability as unavailable. Verification covers Linux x64.
 No device, root privilege, mount, emulation or execution of extracted programs
 is needed. Arbitrary firmware bytes do not pass native executable admission;
-select a returned ELF separately for supported Ghidra analysis.
+select a returned ELF separately for supported Ghidra analysis. Once a firmware
+or kernel target is open in a native provider, use
+[`inspect_procedure_hardware_instructions`](hardware-instruction-channels.md) to
+extract privileged system-register, CSR, special-register, barrier, and x86 port
+I/O instructions from disassembled procedures.
 
 On Linux, Binwalk and Unblob run as REA-owned processes and require a
 procps-compatible system `ps`; see the shared

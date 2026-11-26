@@ -70,6 +70,7 @@ import { evidenceBundleSchema } from "../domain/evidenceBundle.js";
 
 import { processCaptureComparisonSchema } from "../domain/process/processComparison.js";
 import { nativeApiInspectionResultSchema } from "../domain/native/nativeApiBoundary.js";
+import { hardwareInstructionChannelsResultSchema } from "../domain/firmware/hardwareInstructionChannels.js";
 import {
   demangleSwiftSchema,
   inspectMachoSchema,
@@ -426,6 +427,9 @@ export const enhancedOutputSchemas = {
     nativeFunctionSummaryViewResultSchema,
   ),
   inspect_native_api: evidenceResultOf(nativeApiInspectionResultSchema),
+  inspect_procedure_hardware_instructions: evidenceResultOf(
+    hardwareInstructionChannelsResultSchema,
+  ),
   trace_feature: literalTraceOutput,
   trace_call_path: callPathTraceOutput,
 } as const satisfies Readonly<Record<string, z.ZodObject>>;

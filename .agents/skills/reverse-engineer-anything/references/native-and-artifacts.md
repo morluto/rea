@@ -953,6 +953,12 @@ For ESP32/ESP8266 flash dumps or carved `partitions/nvs.bin` files (`esp-nvs`), 
 to decode ESP-IDF v1/v2 Non-Volatile Storage pages, CRC32 checksums, namespaces,
 strings, integers, floats, and multi-chunk v2 blobs, marking older copies of a
 key `superseded`; encrypted NVS entries are not decrypted. See [ESP-IDF NVS partitions](https://github.com/morluto/rea/blob/main/docs/guides/firmware/esp-nvs.md).
+When analyzing disassembled bootloaders, RTOS handlers, kernels, or BIOS/UEFI
+functions in an open target, use `inspect_procedure_hardware_instructions`
+(`rea inspect-procedure-hardware-instructions TARGET PROCEDURE --hardware-architecture ARCH`)
+to extract non-MMIO hardware channels (`MRS`/`MSR`, `CPSID`, `MCR`/`MRC`,
+RISC-V `csrr*`, Xtensa `rsr`/`wsr`, MIPS `mfc0`/`mtc0`, x86 `in`/`out` and
+`rdmsr`/`wrmsr`/`cr*`). See [hardware instruction channels](https://github.com/morluto/rea/blob/main/docs/guides/firmware/hardware-instruction-channels.md).
 
 For other headerless images (embedded firmware without ELF/Mach-O/PE/MZ
 headers), open with `format: "raw-binary"`, `architecture` (`x86`, `x86_64`,

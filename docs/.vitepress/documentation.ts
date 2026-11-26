@@ -429,6 +429,11 @@ export const documentationSections = [
         route: "/firmware-analysis",
       },
       {
+        text: "Non-MMIO hardware instruction channels",
+        source: "guides/firmware/hardware-instruction-channels.md",
+        route: "/hardware-instruction-channels",
+      },
+      {
         text: "Android OTA update payloads",
         source: "guides/firmware/android-ota-payload.md",
         route: "/android-ota-payload",

@@ -11,6 +11,7 @@ const PROCEDURE_OPERATIONS: ReadonlySet<string> = new Set([
   "analyze_function",
   "annotate_native_function",
   "inspect_native_api",
+  "inspect_procedure_hardware_instructions",
   "procedure_address",
   "procedure_assembly",
   "procedure_callees",
