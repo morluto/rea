@@ -101,6 +101,13 @@ describe("legacy MBN headers", () => {
       expect(hasQualcommMbnHeader(bytes)).toBe(false);
   });
 
+  it("rejects an image size that also counts the header", () => {
+    const withHeader = Buffer.from(LEGACY);
+    withHeader.writeUInt32LE(552 + 40, 16);
+    expect(hasQualcommMbnHeader(withHeader)).toBe(false);
+    expect(inspectQualcommMbnImage(withHeader).kind).toBe("unrecognized");
+  });
+
   it("does not claim a header whose code region is not in the file", () => {
     // 40 header bytes alone, then the header and 199 of 200 code bytes.
     for (const length of [40, 239]) {

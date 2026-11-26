@@ -434,11 +434,7 @@ const headerIsPlausible = (raw: RawHeader, base: number): boolean => {
     raw.metadata1Size,
   ]);
   if (payload === null || payload === 0) return false;
-  const withHeader = sumUint32([raw.headerBytes, payload]);
-  const sizeMatches =
-    raw.imageSize === payload ||
-    (withHeader !== null && raw.imageSize === withHeader);
-  return sizeMatches && pointersPlausible(raw, base);
+  return raw.imageSize === payload && pointersPlausible(raw, base);
 };
 
 const decodeMbnHeader = (
