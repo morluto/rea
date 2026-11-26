@@ -322,8 +322,10 @@ profile, a second session reports the owning run ID instead of opening a
 duplicate document.
 
 **MCP server shutdown** (or connection drop) releases the session guard but
-**retains the Hopper document** by default (`retainProviderDocuments: true`).
-A later REA session can therefore open another document for the same target.
+**retains the Hopper document** by default (`retainProviderDocuments: true`), except
+for a prepared FAT64 target where `HopperCleanup` requests `shutdown_document`
+when `preparedImagePath` exists. A later REA session can therefore open another
+document for the same target.
 
 **Closing or switching a target** (via `close_binary` or target switch) closes
 its bound Hopper document, shuts down REA's bridge, and removes its temporary
@@ -462,7 +464,8 @@ the document: inspect and close the reported document in Hopper before ending
 the owning REA connection.
 
 **Note:** This target-close behavior differs from MCP server shutdown, which
-retains provider documents by default (`retainProviderDocuments: true`). See the
+retains provider documents by default (`retainProviderDocuments: true`), except for
+prepared FAT64 targets where the document closes with the image. See the
 Hopper session lifecycle section above for details.
 
 ### Hopper in CI
