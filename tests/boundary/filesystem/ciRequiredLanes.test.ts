@@ -78,6 +78,7 @@ it("opts only the Noble binary-layout toolchain into the Ubuntu Azure archive fa
   // Three attempts, each with its kill grace, plus 15 s of backoff must leave
   // the job five minutes to build and verify the fixtures.
   const attemptSeconds = Number(toolchain?.with?.["download-timeout-seconds"]);
+  expect(attemptSeconds).toBeGreaterThan(0);
   expect(3 * (attemptSeconds + 5) + 15).toBeLessThanOrEqual(25 * 60 - 300);
   expect(
     steps.parse(layout?.steps).filter((step) => step.uses === archive),

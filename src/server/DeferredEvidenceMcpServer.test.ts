@@ -9,6 +9,8 @@ import { COMPACT_OUTPUT_SCHEMA_PRESENTATION } from "../contracts/mcpSchemaPresen
 import { isRecord } from "../kernel/isRecord.js";
 import type { RecordedMcpCatalog } from "../recordedMcpCatalog.js";
 import { DeferredEvidenceMcpServer } from "./DeferredEvidenceMcpServer.js";
+import { OwnerCancellation } from "../domain/analysisErrorCore.js";
+import { waitFor } from "../../tests/support/testWait.js";
 import {
   DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
   parseMcpToolsListPageBudget,
@@ -567,6 +569,27 @@ it("joins late initialization during close and prevents target execution", async
     startup.release();
     await Promise.allSettled([pending, closing]);
   }
+});
+
+it("cancels in-flight initialization when the server closes", async () => {
+  const startupSignals: AbortSignal[] = [];
+  const server = new DeferredEvidenceMcpServer(
+    catalog,
+    new ToolResultDelivery(1024 * 1024),
+    async (_target, signal) => {
+      startupSignals.push(signal);
+      // Startup that only ends when cancelled: close must not wait it out.
+      await new Promise<void>((resolve) => {
+        signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+    },
+  );
+  const loading = server.ensureRuntime();
+  await waitFor(() => expect(startupSignals).toHaveLength(1));
+  await server.close();
+  await loading;
+  expect(startupSignals[0]?.aborted).toBe(true);
+  expect(startupSignals[0]?.reason).toBe(OwnerCancellation.ownerClosed);
 });
 
 it("retains failed cleanup for retry without loading a replacement runtime", async () => {

@@ -1,5 +1,17 @@
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { ok, type Result } from "../../domain/result.js";
+import {
+  admitInvestigationAuthentication,
+  type RecoveryAdmission,
+} from "../investigation/InvestigationRetention.js";
+import {
+  withSessionExecutionProvenance,
+  carrySessionExecutionProvenance,
+  sessionExecutionEvidenceMetadata,
+} from "./SessionEvidenceReuse.js";
 import {
   createEvidence,
+  evidenceEnvelopeForAdmission,
   type Evidence,
   type EvidenceSubjectInput,
 } from "../../domain/evidence.js";
@@ -24,22 +36,36 @@ export const sessionLimitationContextEvidence = (
   execution: AnalysisExecution,
   sessionLimitations: readonly string[],
   target: EvidenceSubjectInput,
-): Evidence =>
-  createEvidence(
-    target,
-    execution.provider,
-    {
-      operation: "health",
-      parameters: SESSION_LIMITATIONS_FACET,
-      ...(execution.analysisProfile === undefined
-        ? {}
-        : { analysisProfile: execution.analysisProfile }),
-      result: { limitations: [...sessionLimitations] },
-      confidence: "observed",
-      limitations: [...sessionLimitations],
-    },
-    { immutable: true },
+  admit?: RecoveryAdmission,
+): Result<Evidence, AnalysisError> => {
+  const observation = {
+    operation: "health",
+    parameters: SESSION_LIMITATIONS_FACET,
+    ...(execution.analysisProfile === undefined
+      ? {}
+      : { analysisProfile: execution.analysisProfile }),
+    result: { limitations: sessionLimitations },
+    confidence: "observed" as const,
+    limitations: sessionLimitations,
+  };
+  const envelope = {
+    ...evidenceEnvelopeForAdmission(target, execution.provider, observation),
+    ...sessionExecutionEvidenceMetadata(execution),
+  };
+  const admitted =
+    admit === undefined
+      ? admitInvestigationAuthentication(envelope, "health", {})
+      : admit(envelope, "health", { valueBytes: 0, serializedUtf16Bytes: 0 });
+  if (!admitted.ok) return admitted;
+  return ok(
+    withSessionExecutionProvenance(
+      execution,
+      createEvidence(target, execution.provider, observation, {
+        immutable: true,
+      }),
+    ),
   );
+};
 
 /** The one limitation that stands in for the session's shared facts. */
 export const sessionLimitationReference = (
@@ -59,24 +85,31 @@ export const deliverSessionLimitations = (
   execution: AnalysisExecution,
   target: EvidenceSubjectInput,
   delivery: SessionLimitationDelivery,
-): AnalysisExecution => {
+  admit?: RecoveryAdmission,
+): Result<AnalysisExecution, AnalysisError> => {
   const { sessionLimitations, ...rest } = execution;
-  if (sessionLimitations === undefined) return execution;
-  if (delivery === "inline" || sessionLimitations.length === 0) return rest;
-  const context = sessionLimitationContextEvidence(
+  if (sessionLimitations === undefined) return ok(execution);
+  if (delivery === "inline" || sessionLimitations.length === 0)
+    return ok(carrySessionExecutionProvenance(execution, rest));
+  const materialized = sessionLimitationContextEvidence(
     execution,
     sessionLimitations,
     target,
+    admit,
   );
+  if (!materialized.ok) return materialized;
+  const context = materialized.value;
   const shared = new Set(sessionLimitations);
-  return {
-    ...rest,
-    limitations: [
-      ...execution.limitations.filter((entry) => !shared.has(entry)),
-      sessionLimitationReference(context, sessionLimitations.length),
-    ],
-    sourceEvidence: [...(execution.sourceEvidence ?? []), context],
-  };
+  return ok(
+    carrySessionExecutionProvenance(execution, {
+      ...rest,
+      limitations: [
+        ...execution.limitations.filter((entry) => !shared.has(entry)),
+        sessionLimitationReference(context, sessionLimitations.length),
+      ],
+      sourceEvidence: [...(execution.sourceEvidence ?? []), context],
+    }),
+  );
 };
 
 const isSessionLimitationContext = (source: Evidence): boolean =>
@@ -100,10 +133,10 @@ export const inlineLinkedSessionLimitations = (
         source.limitations,
       );
   if (contexts.size === 0) return execution;
-  return {
+  return carrySessionExecutionProvenance(execution, {
     ...execution,
     limitations: execution.limitations.flatMap(
       (entry) => contexts.get(entry) ?? [entry],
     ),
-  };
+  });
 };

@@ -743,6 +743,10 @@ const executeAnalysisTool = async (input: {
           ? { snapshotContext: "one-shot-target" as const }
           : {}),
       },
+      {
+        admitRecovery: session.admitRecoveryObservation.bind(session),
+        evidenceById: (id) => session.evidenceForAnalysis(id),
+      },
     );
     result = retainAnalysisResultSources(
       tool,

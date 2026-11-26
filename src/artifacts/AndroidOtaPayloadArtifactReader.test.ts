@@ -1,6 +1,4 @@
 import { createHash } from "node:crypto";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 
 import { BinaryWriter, WireType } from "@bufbuild/protobuf/wire";
@@ -14,14 +12,11 @@ import {
   v1AndroidOtaPayload,
 } from "../domain/firmware/androidOtaPayload.fixture.js";
 import { zipArchive } from "../domain/desktop/zipArchive.fixture.js";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 
-const writeCarrier = async (name: string, bytes: Buffer): Promise<string> => {
-  const path = join(await createTestTempDirectory("rea-android-ota-"), name);
-  await writeFile(path, bytes);
-  return path;
-};
+const writeCarrier = (name: string, bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-android-ota-", name, bytes);
 
 it("distinguishes supported OTA payload bytes from opaque ZIP members", async () => {
   const archive = zipArchive([

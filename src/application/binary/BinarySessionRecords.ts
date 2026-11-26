@@ -1,3 +1,4 @@
+import { bindSnapshotReplayExecution } from "./SessionEvidenceReuse.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import { analysisProfilesEqual } from "../../domain/analysisProfile.js";
 import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
@@ -124,9 +125,15 @@ export abstract class BinarySessionRecords {
   ): Result<"added" | "duplicate", AnalysisError> {
     if (this.#investigationDisposed)
       return err(cancelledBy("record_evidence", OwnerCancellation.ownerClosed));
-    const recorded = this.#records.recordEvidence(evidence);
-    if (recorded.ok && recorded.value === "added") this.#emitSnapshotChanged();
-    return recorded;
+    const recorded = this.#records.recordEvidenceWithMetadata(evidence);
+    if (!recorded.ok) return recorded;
+    this.#snapshot.refreshEvidenceMetadata(recorded.value.replacements);
+    if (
+      recorded.value.disposition === "added" ||
+      recorded.value.replacements.length > 0
+    )
+      this.#emitSnapshotChanged();
+    return ok(recorded.value.disposition);
   }
 
   admitRecoveryObservation(
@@ -341,9 +348,18 @@ export abstract class BinarySessionRecords {
     >,
   ): AnalysisExecution | undefined {
     if (this.#snapshotInvalidated) return undefined;
-    return this.#snapshot.lookup(target, profile, operation, parameters, (id) =>
-      this.evidenceForAnalysis(id),
+    const replay = this.#snapshot.lookup(
+      target,
+      profile,
+      operation,
+      parameters,
+      (id) => this.evidenceForAnalysis(id),
     );
+    if (replay?.evidenceId === undefined) return replay;
+    const source = this.evidenceForAnalysis(replay.evidenceId);
+    return source === undefined
+      ? replay
+      : bindSnapshotReplayExecution(replay, source);
   }
 
   /** Why recording this execution would keep no replay entry, if anything. */
