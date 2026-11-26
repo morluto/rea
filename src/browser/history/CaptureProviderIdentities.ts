@@ -1,9 +1,12 @@
+import { PACKAGE_METADATA } from "../../generatedPackageMetadata.js";
+
+const captureJsonVersions = `jsonc-parser@${PACKAGE_METADATA.jsoncParserVersion};lossless-json@${PACKAGE_METADATA.losslessJsonVersion}`;
+
 /** Upstream packages and owned schema corrections for offline HAR decoding. */
 export const HAR_CAPTURE_PROVIDER_IDENTITY = {
   id: "har-schema/lossless-json",
   name: "REA HAR capture adapter",
-  version:
-    "har-schema@2.0.0;har-schema-corrections@1;jsonc-parser@3.3.1;lossless-json@4.3.3",
+  version: `har-schema@2.0.0;har-schema-corrections@1;${captureJsonVersions}`,
 } as const;
 
 /** Native SAZ member decoding with the existing ZIP and XML package profiles. */
@@ -23,6 +26,5 @@ export const MITMPROXY_CAPTURE_PROVIDER_IDENTITY = {
 export const QLOG_CAPTURE_PROVIDER_IDENTITY = {
   id: "aioquic-qlog-json",
   name: "REA aioquic qlog capture adapter",
-  version:
-    "aioquic-profile@1.5.0;qlog@0.3;jsonc-parser@3.3.1;lossless-json@4.3.3",
+  version: `aioquic-profile@1.5.0;qlog@0.3;${captureJsonVersions}`,
 } as const;

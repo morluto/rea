@@ -19,8 +19,8 @@ import { DWARF_UNITS_PROVIDER } from "../../domain/investigationProviders.js";
 import {
   DWARF_DECOMPRESSED_SECTION_ALLOWANCE,
   dwarfUnitsSchema,
-  MAX_INSPECT_DWARF_UNITS_FILE_BYTES,
   type DwarfUnitsReport,
+  dwarfUnitsFileLimit,
   type InspectDwarfUnitsInput,
 } from "../../domain/native/dwarfUnits.js";
 import { err, ok } from "../../domain/result.js";
@@ -250,11 +250,6 @@ const limitationsFor = (
   return limitations;
 };
 
-const inputBudgetRemediation = (input: InspectDwarfUnitsInput): string =>
-  input.max_file_bytes >= MAX_INSPECT_DWARF_UNITS_FILE_BYTES
-    ? `The image exceeds the ${String(MAX_INSPECT_DWARF_UNITS_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller artifact.`
-    : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
-
 const dwarfUnitsFailure = (
   cause: unknown,
   input: InspectDwarfUnitsInput,
@@ -319,7 +314,7 @@ const dwarfUnitsFailure = (
           ),
           {
             retryable: false,
-            remediationAction: inputBudgetRemediation(input),
+            limit: dwarfUnitsFileLimit(input.max_file_bytes),
           },
         ),
     }),

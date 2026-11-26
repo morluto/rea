@@ -256,10 +256,13 @@ test("reports excessive bundle path depth as a public CLI limit", async ({
       reader_limit: {
         parameter: "artifact_limits.dotnet_bundle.path_parts",
         effective_value: 256,
-        required_value: 257,
         unit: "count",
         can_increase: true,
       },
     },
+  });
+  // The path-depth count stops at the limit, so it knows only a lower bound.
+  expect(result.json).not.toMatchObject({
+    details: { reader_limit: { required_value: expect.anything() } },
   });
 });

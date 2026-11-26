@@ -74,10 +74,13 @@ describe("PE resource provider budget reporting", () => {
     const error = result.error as AnalysisResourceConstraintError;
     expect(error.resource).toBe("capacity");
     expect(error.reportedLimits).toMatchObject({ max_entries: 1 });
-    expect(error.remediationAction).toContain("max_entries");
     expect(projectAnalysisError(error)).toMatchObject({
       retryable: false,
-      remediation: { action: error.remediationAction },
+      remediation: {
+        action: expect.stringContaining(
+          "Pass a larger max_entries on the next inspect_pe_resources call",
+        ),
+      },
       details: {
         reported_limits: {
           boundary: "max_entries",
@@ -138,9 +141,12 @@ describe("PE resource provider budget reporting", () => {
       reportedLimits: { max_entries: MAX_INSPECT_PE_DIRECTORY_ENTRIES },
       retryable: false,
     });
-    expect(typeof entryError.remediationAction).toBe("string");
     expect(projectAnalysisError(entryError)).toMatchObject({
-      remediation: { action: entryError.remediationAction },
+      remediation: {
+        action: expect.stringContaining(
+          "max_entries is already at its maximum",
+        ),
+      },
     });
     expect(
       inspectPeResourcesInputSchema.safeParse({

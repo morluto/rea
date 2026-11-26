@@ -489,7 +489,7 @@ export const normalizeRetainedTerminalFrames = (
     const value = normalize(raw, maximumBytes - bytes);
     if (value.state === "over_budget")
       throw new AnalysisResourceConstraintError(
-        "capture_process",
+        "capture_process_scenario",
         "capacity",
         `Retained terminal text exceeded the selected output budget after ${reason} projection.`,
         {

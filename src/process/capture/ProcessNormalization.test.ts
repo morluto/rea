@@ -742,7 +742,8 @@ it("refuses a retained frame that no longer fits limits.output_bytes with detail
   }
   if (!(thrown instanceof AnalysisResourceConstraintError))
     throw new Error("Expected the retained-output refusal");
-  expect(projectAnalysisError(thrown).details?.limit).toEqual({
+  const projected = projectAnalysisError(thrown);
+  expect(projected.details?.limit).toEqual({
     control_kind: "parameter",
     parameter: "limits.output_bytes",
     effective_value: 64,
@@ -752,4 +753,6 @@ it("refuses a retained frame that no longer fits limits.output_bytes with detail
     default_value: DEFAULT_PROCESS_OUTPUT_BYTES,
     applies_at: "next_call",
   });
+  expect(projected.remediation?.action).toContain("capture_process_scenario");
+  expect(projected.remediation?.action).toContain("limits.output_bytes");
 });

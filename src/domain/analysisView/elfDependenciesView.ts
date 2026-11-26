@@ -1,3 +1,4 @@
+import { analysisViewPageFields } from "./analysisViewPageFields.js";
 import { z } from "zod";
 import {
   elfDependenciesReportSchema,
@@ -33,11 +34,7 @@ const definitionRow = definitionTable.shape.names.element;
 const maximumRow =
   elfDependenciesReportSchema.shape.derived_version_maxima.element;
 const sourceIndex = { source_index: z.int().nonnegative() };
-const page = {
-  kind: z.literal("elf-dependencies"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
-};
+const page = analysisViewPageFields("elf-dependencies");
 
 const versionRowSchema = z.strictObject({
   file: z.string().min(1).nullable(),

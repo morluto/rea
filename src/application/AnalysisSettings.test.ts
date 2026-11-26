@@ -266,6 +266,7 @@ it("exposes shared provider controls and preserves the explicit unbounded decomp
       .inspect({ operation: "inventory_artifact" })
       .settings.map(({ setting }) => setting),
   ).toEqual([
+    "artifact.member_count",
     "asar.max_listing_bytes",
     "asar.max_header_bytes",
     "windows.change_time_drift_ms",
