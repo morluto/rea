@@ -1,7 +1,7 @@
 REA third-party npm runtime copyright, license and NOTICE texts
 Collected from integrity-verified locked npm archives. Release-specific supplements and upstream notice gaps are identified in their entries.
 External engines are separately obtained; see THIRD_PARTY_NOTICES.md.
-Runtime dependency fingerprint (SHA-256): ace4d479bfa0c00c686481331dd503029223c8c5f91c52f82613fd65032cf6dd
+Runtime dependency fingerprint (SHA-256): cb5422c851ea64bfc8960e7a434f75201bc98d601ed99a56ba1d9aa853fc90b2
 
 ===== @babel/helper-string-parser@8.1.2 =====
 Declared license: MIT
@@ -3497,10 +3497,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-===== evmole@0.9.6 =====
+===== evmole@0.10.1 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/evmole/-/evmole-0.9.6.tgz
-Integrity: sha512-JKqceBQQz8tdM09rt8XsXBd9w+zq9qT1v7BuUN+aRTbpOcEbOmYXyqgUREi6XUEEEhb5yaTIYrTi5BxQwcU98Q==
+Archive: https://registry.npmjs.org/evmole/-/evmole-0.10.1.tgz
+Integrity: sha512-kSN/g/Wi4vXNJPV7jgV1TrKSFKCJuaNiBs2rvCDv5+mzRaHkM7inImkRhqQKHdLx41TCIsWKzAaDihVMf06iTg==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
@@ -4552,10 +4552,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-===== lossless-json@4.3.3 =====
+===== lossless-json@4.3.4 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/lossless-json/-/lossless-json-4.3.3.tgz
-Integrity: sha512-FGFrGArHsv7BRiYOf37ZRieT9HlKw+Kpu9HvtpYjcoOEo8lqNkjny8A2YAfWNWWQC+9pcLIrLZ+IviKJhaHwGQ==
+Archive: https://registry.npmjs.org/lossless-json/-/lossless-json-4.3.4.tgz
+Integrity: sha512-zfmBtt+IgL7aiem9qNhAmW8/kZOVzA0Y219UNj/FN7p21hQ4ZOghT4y9FzxQAm/64e4wi4jR7lBXUXy2IrjaMA==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE.md ---

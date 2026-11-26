@@ -19,7 +19,6 @@ import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../../../src/contracts/
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 cliTest(
   "retains selected JavaScript path separately from resolved identity",
@@ -40,7 +39,6 @@ cliTest(
     const cliResponse = await cli.run({
       arguments: [
         "analyze-javascript-application",
-        ...COMPLETE_DETAIL,
         selectedPath,
         "--artifact-format",
         "directory",
@@ -103,21 +101,21 @@ cliTest(
     }
 
     const { call } = await connectLocalToolsMcp({ REA_LOG_LEVEL: "silent" });
-    // Each path is analyzed with its complete Evidence inline.
-    const analyzeComplete = (input_path: string) =>
-      call("analyze_javascript_application", {
-        detail: "complete",
-        input_path,
-        format: "directory",
-        integrity_policy: "fail",
-      });
-    const aliasResponse = await analyzeComplete(selectedPath);
+    const aliasResponse = await call("analyze_javascript_application", {
+      input_path: selectedPath,
+      format: "directory",
+      integrity_policy: "fail",
+    });
     expect(
       aliasResponse.isError,
       JSON.stringify(aliasResponse.content),
     ).not.toBe(true);
     const aliasEvidence = parseEvidence(aliasResponse.structuredContent);
-    const physicalResponse = await analyzeComplete(physicalPath);
+    const physicalResponse = await call("analyze_javascript_application", {
+      input_path: physicalPath,
+      format: "directory",
+      integrity_policy: "fail",
+    });
     expect(
       physicalResponse.isError,
       JSON.stringify(physicalResponse.content),

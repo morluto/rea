@@ -19,7 +19,10 @@ import {
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { SQLITE_PROVIDER_IDENTITY } from "../domain/sqlite/SqliteProviderIdentity.js";
-import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
+import {
+  DEFAULT_SQLITE_INPUT_BYTES,
+  sqliteInputLimit,
+} from "../domain/sqlite/sqliteDatabase.js";
 
 const fileSystem: StableArtifactFileSystem = {
   lstat: (path) => lstat(path, { bigint: true }),
@@ -457,6 +460,8 @@ export const captureSqliteDatabaseSnapshot = async (
   resourceScope: ArtifactResourceScope,
   signal?: AbortSignal,
   selectedFileSystem: StableArtifactFileSystem = fileSystem,
+  /** The selected producer_limits.input_bytes for the database and WAL together. */
+  inputBytes: number = DEFAULT_SQLITE_INPUT_BYTES,
 ) => {
   const walPath = `${path}-wal`;
   const completedMembers: CompletedSnapshotMember[] = [];
@@ -510,17 +515,25 @@ export const captureSqliteDatabaseSnapshot = async (
     );
     const before = [database, wal, journal] as const;
     const selectedSize = database.size + (wal?.size ?? 0n);
-    if (selectedSize > BigInt(SQLITE_DATABASE_LIMITS.inputBytes))
+    if (selectedSize > BigInt(inputBytes))
       throw new AnalysisResourceConstraintError(
         "inspect_sqlite_database",
         "file-size",
-        `Selected SQLite database and WAL total ${selectedSize.toString()} bytes, exceeding the combined ${String(SQLITE_DATABASE_LIMITS.inputBytes)}-byte offline snapshot budget: ${path}`,
+        `Selected SQLite database and WAL total ${selectedSize.toString()} bytes, exceeding the combined ${String(inputBytes)}-byte offline snapshot budget (producer_limits.input_bytes): ${path}`,
         {
-          sqlite_snapshot_input_bytes: SQLITE_DATABASE_LIMITS.inputBytes,
+          sqlite_snapshot_input_bytes: inputBytes,
           observed_sqlite_snapshot_input_bytes: selectedSize.toString(),
         },
         {
-          remediationAction: `Use the application's supported export workflow to create a consistent, smaller offline SQLite snapshot containing only the relevant data, then inspect that snapshot. REA will not truncate or modify the selected source. The combined input allowance is ${String(SQLITE_DATABASE_LIMITS.inputBytes)} bytes. This release has no runtime override. worker_timeout_ms does not raise it.`,
+          // The database and WAL are the whole snapshot this budget admits,
+          // so their combined size is the complete need of an unchanged retry.
+          limit: sqliteInputLimit(
+            inputBytes,
+            selectedSize > BigInt(Number.MAX_SAFE_INTEGER)
+              ? undefined
+              : Number(selectedSize),
+          ),
+          retryable: false,
         },
       );
     if (journal !== null)
@@ -536,7 +549,7 @@ export const captureSqliteDatabaseSnapshot = async (
     const captured = await copyMember(
       "database",
       database,
-      SQLITE_DATABASE_LIMITS.inputBytes,
+      inputBytes,
       snapshotPath,
     );
     const artifact = {
@@ -549,7 +562,7 @@ export const captureSqliteDatabaseSnapshot = async (
       const capturedWal = await copyMember(
         "wal",
         wal,
-        SQLITE_DATABASE_LIMITS.inputBytes - artifact.bytes,
+        inputBytes - artifact.bytes,
         `${snapshotPath}-wal`,
       );
       walArtifact = {

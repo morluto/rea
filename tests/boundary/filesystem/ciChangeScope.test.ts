@@ -1282,6 +1282,18 @@ it.each([
     { code: true, ghidra_bridge: true, runtime: false, package: false },
   ],
   [
+    "scripts/verify-real-ghidra-project-coverage.mjs",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/selected-project-coverage.c",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/ReaSelectedProjectSeeds.java",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
     "scripts/verify-ghidra-loader-relocation.mjs",
     { code: true, ghidra_bridge: true, runtime: false, package: false },
   ],
@@ -2323,7 +2335,13 @@ const workflowFile = async (name: string): Promise<unknown> =>
 
 const scopesSchema = z.object({
   CI_FLAGS: z.array(z.string()),
-  CI_LANES: z.record(z.string(), z.object({ paths: z.array(z.string()) })),
+  CI_LANES: z.record(
+    z.string(),
+    z.object({
+      paths: z.array(z.string()),
+      earlyInputs: z.array(z.string()).optional(),
+    }),
+  ),
   MANUAL_VERIFIERS: z.array(z.string()),
 });
 
@@ -2376,7 +2394,10 @@ it("owns every explicit native-host test path with the lane that runs it", async
 });
 
 it("never runs a manual-only verifier from an automatic workflow", async () => {
-  const { MANUAL_VERIFIERS } = await loadScopes();
+  const { MANUAL_VERIFIERS, CI_LANES } = await loadScopes();
+  const ownedAutomaticInputs = Object.values(CI_LANES).flatMap(
+    (lane) => lane.earlyInputs ?? [],
+  );
   const scripts = z
     .object({ scripts: z.record(z.string(), z.string()) })
     .parse(
@@ -2416,8 +2437,10 @@ it("never runs a manual-only verifier from an automatic workflow", async () => {
   }
   expect(files.size).toBeGreaterThan(0);
   expect(
-    [...files].filter((file) =>
-      MANUAL_VERIFIERS.some((pattern) => matchesGlob(file, pattern)),
+    [...files].filter(
+      (file) =>
+        MANUAL_VERIFIERS.some((pattern) => matchesGlob(file, pattern)) &&
+        !ownedAutomaticInputs.some((pattern) => matchesGlob(file, pattern)),
     ),
   ).toEqual([]);
 });
@@ -2538,9 +2561,11 @@ it("keeps a non-UTF-8 Git name distinct from a literal replacement character", a
     "tree",
     "raw-tree",
   ]);
-  expect(() => gitRepository(directory).readFiles(tree, ["\uFFFD.ts"])).toThrow(
-    `Git could not read ${tree}:\uFFFD.ts`,
-  );
+  // Exercise both a small read and a full-tree index lookup.
+  for (const revision of [tree, `${tree}^{tree}`])
+    expect(() =>
+      gitRepository(directory).readFiles(revision, ["\uFFFD.ts"]),
+    ).toThrow(`Git could not read ${revision}:\uFFFD.ts`);
 });
 
 it("outputs only changed, tracked JS and TS paths for fast PR typed lint", async () => {

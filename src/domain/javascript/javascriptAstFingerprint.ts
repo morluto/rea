@@ -6,8 +6,10 @@ import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import { semanticStaticPropertyKey } from "./javascriptAstValues.js";
-import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
+import {
+  stringValue,
+  semanticStaticPropertyKey,
+} from "./javascriptAstValues.js";
 import {
   withoutUnusedFactoryDefaults,
   type JavaScriptBundlerFactoryRoles,

@@ -90,36 +90,59 @@ export interface RetainedStaticCheckpoint extends ReusedJavaScriptStatic {
  * the key, so a reused checkpoint is byte-identical to a recomputed one. The
  * store keeps at most one eighth of the V8 heap limit and stays empty where
  * the runtime does not report one; a miss recomputes.
+ *
+ * Entries are keyed by source identity. The normal pass analyzes each source
+ * once and always removes its entry; it reuses the checkpoint only when the
+ * package type also matches. A discovered preload script is read as CommonJS
+ * after discovery read its package as ESM, and that entry must not outlive
+ * the pass that can no longer use it.
  */
-const retainedStatics = new Map<string, RetainedStaticCheckpoint>();
+interface RetainedStaticEntry {
+  readonly packageType: string;
+  readonly checkpoint: RetainedStaticCheckpoint;
+}
+const retainedStatics = new Map<string, RetainedStaticEntry>();
 let retainedStaticBytes = 0;
+
+/** Which source a checkpoint describes, and the package type it was read as. */
+export interface JavaScriptStaticReuseKey {
+  readonly source: string;
+  readonly packageType: string;
+}
 
 export const javaScriptStaticReuseKey = (
   request: ReturnType<typeof javaScriptWorkerRequestSchema.parse>,
-): string =>
-  JSON.stringify([
+): JavaScriptStaticReuseKey => ({
+  source: JSON.stringify([
     request.file.container_sha256,
     request.file.path,
     request.text_sha256,
-    request.package_type,
     request.semantic_precision ?? null,
     request.member_mutation_allowance,
-  ]);
+  ]),
+  packageType: request.package_type,
+});
 
 const staticReuseCapacityBytes = (): number =>
   javaScriptRuntime(process.versions).id === "node"
     ? Math.floor(getHeapStatistics().heap_size_limit / 8)
     : 0;
 
+const releaseRetainedStatic = (
+  source: string,
+): RetainedStaticEntry | undefined => {
+  const previous = retainedStatics.get(source);
+  if (previous === undefined) return undefined;
+  retainedStatics.delete(source);
+  retainedStaticBytes -= previous.checkpoint.retainedBytes;
+  return previous;
+};
+
 export const retainJavaScriptStaticCheckpoint = (
-  key: string,
+  key: JavaScriptStaticReuseKey,
   facts: JavaScriptStaticAnalysis,
 ): void => {
-  const previous = retainedStatics.get(key);
-  if (previous !== undefined) {
-    retainedStatics.delete(key);
-    retainedStaticBytes -= previous.retainedBytes;
-  }
+  releaseRetainedStatic(key.source);
   // Skip encoding where reuse is disabled or no capacity remains.
   const capacity = staticReuseCapacityBytes();
   if (retainedStaticBytes >= capacity) return;
@@ -137,23 +160,25 @@ export const retainJavaScriptStaticCheckpoint = (
     return;
   }
   if (retainedStaticBytes + retainedBytes > capacity) return;
-  retainedStatics.set(key, {
-    text,
-    retainedBytes,
-    parse_status: facts.parse_status,
-    call_paths: facts.electron.call_paths,
+  retainedStatics.set(key.source, {
+    packageType: key.packageType,
+    checkpoint: {
+      text,
+      retainedBytes,
+      parse_status: facts.parse_status,
+      call_paths: facts.electron.call_paths,
+    },
   });
   retainedStaticBytes += retainedBytes;
 };
 
 export const takeJavaScriptStaticCheckpoint = (
-  key: string,
+  key: JavaScriptStaticReuseKey,
 ): RetainedStaticCheckpoint | undefined => {
-  const retained = retainedStatics.get(key);
-  if (retained === undefined) return undefined;
-  retainedStatics.delete(key);
-  retainedStaticBytes -= retained.retainedBytes;
-  return retained;
+  const retained = releaseRetainedStatic(key.source);
+  return retained?.packageType === key.packageType
+    ? retained.checkpoint
+    : undefined;
 };
 
 /** Validate, fit and bound static facts as the checkpoint the parent reads. */

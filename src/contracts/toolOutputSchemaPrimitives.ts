@@ -656,6 +656,9 @@ export const sessionProviderFacts = z
         analysis_profile: analysisProfileSchema,
         release_verification: providerReleaseVerificationSchema.optional(),
       })
+      .describe(
+        "Binding for the active target. Fresh matching Hopper, Ghidra, IDA and Kuna observations retain this selection as provider_selection. Historical and replayed Evidence preserve their original metadata, including absence; REA-derived and other provider records are not attributed to this binding.",
+      )
       .nullable(),
     client_features: z.object({
       elicitation_form: z.boolean(),

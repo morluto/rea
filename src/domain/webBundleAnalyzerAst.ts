@@ -4,7 +4,7 @@ import { sanitizeBrowserUrl } from "./browserObservation.js";
 import { hasScheme } from "./artifactPathSyntax.js";
 import {
   isNullishJavaScriptSyntax,
-  readExactJavaScriptLiteral,
+  stringValue,
   staticObjectProperty,
   type ObjectDataPropertyValue,
 } from "./javascript/javascriptAstValues.js";
@@ -21,14 +21,7 @@ export const objectValue = (
 export const objectString = (
   object: t.ObjectExpression,
   name: string,
-): string | undefined => {
-  const value = objectValue(object, name);
-  if (value === undefined) return undefined;
-  const literal = readExactJavaScriptLiteral(value);
-  return literal.found && typeof literal.value === "string"
-    ? literal.value
-    : undefined;
-};
+): string | undefined => stringValue(objectValue(object, name));
 
 /** Whether module syntax supplies a URL location without a package/import-map resolver. */
 export const isUrlLikeModuleSpecifier = (specifier: string): boolean =>

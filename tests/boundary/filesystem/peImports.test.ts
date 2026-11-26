@@ -95,7 +95,12 @@ describe("PE import stable filesystem boundary", () => {
     expect(dlls.error).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
       reportedLimits: { boundary: "dlls", maximum: 1 },
-      remediationAction: expect.stringContaining("Raise max_dlls above 1"),
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_dlls",
+        effective_value: 1,
+        default_value: 256,
+      },
       retryable: false,
     });
     const text = await service.inspect({
@@ -106,14 +111,23 @@ describe("PE import stable filesystem boundary", () => {
     expect(text.error).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
       reportedLimits: { boundary: "retained_text", maximum: 16777216 },
-      remediationAction: undefined,
-      fixedAllowance: {
-        name: expect.stringContaining("PE import retained-text allowance"),
-        kind: "bytes",
-        limit: 16777216,
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_text_bytes",
+        effective_value: 16777216,
         unit: "bytes",
       },
       retryable: false,
     });
+    const raisedText = await service.inspect({
+      path: longNames,
+      max_file_bytes: 536870912,
+      max_text_bytes: 64 * 1024 * 1024,
+    });
+    if (!raisedText.ok) throw raisedText.error;
+    const raisedReport = peImportsSchema.parse(
+      raisedText.value.normalized_result,
+    );
+    expect(raisedReport.imports[0]?.functions).toHaveLength(4097);
   });
 });
