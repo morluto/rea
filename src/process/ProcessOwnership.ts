@@ -1378,7 +1378,9 @@ const cleanupValidationFailure = (
         ),
       ]
         .sort((left, right) => left - right)
-        .join(", ")}`,
+        .join(
+          ", ",
+        )}; Chromium-family browsers often overwrite /proc/<pid>/environ (including REA_PROCESS_RUN_ID) after launch, so token proof is unavailable and cleanup stays fail-closed without CDP Browser.close`,
       failures,
       ...unverifiedEntry,
     };
