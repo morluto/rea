@@ -100,6 +100,7 @@
 * **cli:** add human-TTY failure rendering with CLI-only issue hint ([#14355](https://github.com/morluto/rea/issues/14355)) ([64279ef](https://github.com/morluto/rea/commit/64279efb5a01fc768d66033bd69a41a647c3e175))
 * **cli:** add list-procedures to produce function-matching inventories ([#14241](https://github.com/morluto/rea/issues/14241)) ([e2c0071](https://github.com/morluto/rea/commit/e2c00712fd421fc77f335d7b9f87ce162808a437))
 * **cli:** keep over-budget CLI results recoverable by default ([#14610](https://github.com/morluto/rea/issues/14610)) ([2bb554e](https://github.com/morluto/rea/commit/2bb554e8b05b945b1bf6cfe7d25b9b1ca0b60e5c))
+* **cli:** retain over-budget partial observations from failed CLI runs ([#14693](https://github.com/morluto/rea/issues/14693)) ([9cb0aa3](https://github.com/morluto/rea/commit/9cb0aa328b17509f0931905284ba38eac87aecbe))
 * **config:** persist provider settings in a user config file ([#3023](https://github.com/morluto/rea/issues/3023)) ([8d6552e](https://github.com/morluto/rea/commit/8d6552e928704a6477edec3674a17c3ba2f4f4af))
 * **delivery:** bound default results by an agent result budget ([#14252](https://github.com/morluto/rea/issues/14252)) ([123b693](https://github.com/morluto/rea/commit/123b693f0877181115b8fd7ad800ecfd566f22c0))
 * **delivery:** budget the partial observation carried by failure results ([#14607](https://github.com/morluto/rea/issues/14607)) ([73d6092](https://github.com/morluto/rea/commit/73d6092687a201940d2d454feb69ed0ccf845bd5))
