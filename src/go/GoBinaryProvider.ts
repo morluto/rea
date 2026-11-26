@@ -38,6 +38,7 @@ import {
   type GoBinaryImage,
 } from "./GoBinaryImage.js";
 import { requireSelectedNativeImageFromReader } from "../domain/apple/machoSliceSelection.js";
+import { NATIVE_STRUCTURE_BYTES } from "../domain/native/nativeStructureBudget.js";
 import {
   BinaryResourceFailure,
   isNativeStructureFailure,
@@ -160,6 +161,7 @@ const limitationsFor = (
   image: GoBinaryImage,
   stringLiterals: GoStringLiterals | undefined,
   budgets: GoAnalysisBudgets,
+  structureBytes: number,
 ): string[] => {
   const {
     build_info: info,
@@ -171,7 +173,7 @@ const limitationsFor = (
     stringLiterals === undefined
       ? "Only Go build information is inspected; function names, source mappings, type metadata and decompiled code are not recovered."
       : "Only Go build information and inferred static (ptr, len) string-header candidates are inspected; function names, source mappings, type metadata and decompiled code are not recovered.",
-    `Resource guards use max_input_bytes=${String(budgets.max_input_bytes)}, max_header_search_bytes=${String(budgets.max_header_search_bytes)}, max_build_info_bytes=${String(budgets.max_build_info_bytes)} and max_report_bytes=${String(budgets.max_report_bytes)}; increase the named per-call budget for the next inspection when needed. Native structural table decoding retains its separate 16 MiB bound. These are not operating-system memory or CPU limits.`,
+    `Resource guards use max_input_bytes=${String(budgets.max_input_bytes)}, max_header_search_bytes=${String(budgets.max_header_search_bytes)}, max_build_info_bytes=${String(budgets.max_build_info_bytes)} and max_report_bytes=${String(budgets.max_report_bytes)}; increase the named per-call budget for the next inspection when needed. Native structural table decoding uses max_structure_bytes=${String(structureBytes)}. These are not operating-system memory or CPU limits.`,
     ...(info !== null && (info.go_version === null || info.module_text === null)
       ? [
           "Some embedded Go strings contain non-UTF8 bytes; undecodable text is null and exact source bytes are preserved as base64.",
@@ -272,6 +274,8 @@ export class GoBinaryProvider implements GoBinaryPort {
       | { readonly sha256: string; readonly bytes: number }
       | undefined;
     const budgets = goAnalysisBudgets(input);
+    const structureBytes =
+      input.max_structure_bytes ?? NATIVE_STRUCTURE_BYTES.default_value;
     try {
       return await this.#resources.run(async () => {
         const parsedData = await withStableArtifactHandle<GoBinary>(
@@ -299,7 +303,7 @@ export class GoBinaryProvider implements GoBinaryPort {
             const imageOptions = {
               includeStringLiterals: input.include_string_literals === true,
               budgets,
-              structureBytes: input.max_structure_bytes,
+              structureBytes,
               checkActive: () => assertArtifactReadActive(options?.signal),
             };
             const image = await readGoBinaryImageFromHandle(
@@ -334,7 +338,12 @@ export class GoBinaryProvider implements GoBinaryPort {
                 ? {}
                 : { string_literals: stringLiterals }),
               limitations: [
-                ...limitationsFor(image, stringLiterals, budgets),
+                ...limitationsFor(
+                  image,
+                  stringLiterals,
+                  budgets,
+                  structureBytes,
+                ),
                 ...selected.limitations,
               ],
             };
