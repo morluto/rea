@@ -73,7 +73,7 @@ export const ANDROID_TOOL_CONTRACTS = [
       }),
     ),
     description:
-      "Inspect APK package/SDK/permission declarations, decoded manifest, static components and class/resource counts without executing it or verifying signatures. Requires caller-supplied JADX MCP JAR and JDK. Omitted detail returns full Evidence within the agent result budget, else the retained summary; detail summary retains it and omits manifest text/raw duplicates. With summary, view kind android selects facet components (exact filters, fields, paging), component-summary or manifest (UTF-16 text pages); complete detail rejects view. Use normalized_result.parent_evidence_id with inspect_analysis_view for later views. Component source_index identifies the original declaration, and declaration_coverage marks partial declarations.",
+      "Inspect APK package/SDK/permission declarations, decoded manifest, static components and class/resource counts without executing it or verifying signatures. Requires caller-supplied JADX MCP JAR and JDK. Omitted detail returns full Evidence within the agent result budget, else the retained summary; detail summary retains it and returns declarations with component counts instead of component rows and manifest text. With summary, view kind android selects facet components (exact filters, fields, paging), component-summary or manifest (UTF-16 text pages); complete detail rejects view. Use normalized_result.parent_evidence_id with inspect_analysis_view for later views. Component source_index identifies the original declaration, and declaration_coverage marks partial declarations.",
     kind: "android-provider",
     inputSchema: androidPackageInspectionInputSchema,
     outputSchema: evidenceResultOf(
