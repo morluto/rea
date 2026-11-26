@@ -41,11 +41,33 @@ const pageShape = {
 };
 const names = z.array(z.string().min(1)).max(64).optional();
 
-/** Pages of one retained observe_web_execution observation. */
-export const webExecutionViewRequestSchema = z.discriminatedUnion(
-  "collection",
-  [
+/** A function row with the coverage script that reported it. */
+const webExecutionFunctionRowSchema = functionSchema.extend({
+  script_id: coverageScriptSchema.shape.script_id,
+  reported_url: coverageScriptSchema.shape.reported_url,
+  function_index: z.int().nonnegative(),
+});
+
+/** Source metadata without the captured text, which pages separately. */
+const webExecutionSourceRowSchema = sourceSchema.omit({ source: true }).extend({
+  source: z.discriminatedUnion("state", [
     z.strictObject({
+      state: z.literal("captured"),
+      sha256: z.string(),
+      utf8_bytes: z.int().nonnegative(),
+      utf16_units: z.int().nonnegative(),
+    }),
+    z.strictObject({
+      state: z.enum(["unavailable", "excluded"]),
+      reason: z.string(),
+    }),
+  ]),
+});
+
+/** The retained collection owns both its selector and its projected rows. */
+export const webExecutionCollections = {
+  functions: {
+    view: z.strictObject({
       ...pageShape,
       collection: z.literal("functions"),
       script_ids: names.describe("Exact session script IDs"),
@@ -54,17 +76,26 @@ export const webExecutionViewRequestSchema = z.discriminatedUnion(
         .default(false)
         .describe("Only functions with at least one range count above zero"),
     }),
-    z.strictObject({
+    items: z.array(webExecutionFunctionRowSchema),
+  },
+  requests: {
+    view: z.strictObject({
       ...pageShape,
       collection: z.literal("requests"),
       methods: names.describe("Exact request methods, such as GET"),
     }),
-    z.strictObject({
+    items: z.array(requestSchema),
+  },
+  sources: {
+    view: z.strictObject({
       ...pageShape,
       collection: z.literal("sources"),
       script_ids: names.describe("Exact session script IDs"),
     }),
-    z.strictObject({
+    items: z.array(webExecutionSourceRowSchema),
+  },
+  "source-text": {
+    view: z.strictObject({
       kind: z.literal("web-execution"),
       collection: z.literal("source-text"),
       script_id: z.string().min(1),
@@ -75,34 +106,23 @@ export const webExecutionViewRequestSchema = z.discriminatedUnion(
         .describe("UTF-16 code-unit offset into the captured source"),
       limit: z.int().positive().max(65_536).default(16_384),
     }),
+    items: z.array(
+      analysisTextPageItemSchema.extend({ script_id: z.string() }),
+    ),
+  },
+};
+
+/** Pages of one retained observe_web_execution observation. */
+export const webExecutionViewRequestSchema = z.discriminatedUnion(
+  "collection",
+  [
+    webExecutionCollections.functions.view,
+    webExecutionCollections.requests.view,
+    webExecutionCollections.sources.view,
+    webExecutionCollections["source-text"].view,
   ],
 );
 type WebExecutionView = z.output<typeof webExecutionViewRequestSchema>;
-
-/** A function row with the coverage script that reported it. */
-export const webExecutionFunctionRowSchema = functionSchema.extend({
-  script_id: coverageScriptSchema.shape.script_id,
-  reported_url: coverageScriptSchema.shape.reported_url,
-  function_index: z.int().nonnegative(),
-});
-
-/** Source metadata without the captured text, which pages separately. */
-export const webExecutionSourceRowSchema = sourceSchema
-  .omit({ source: true })
-  .extend({
-    source: z.discriminatedUnion("state", [
-      z.strictObject({
-        state: z.literal("captured"),
-        sha256: z.string(),
-        utf8_bytes: z.int().nonnegative(),
-        utf16_units: z.int().nonnegative(),
-      }),
-      z.strictObject({
-        state: z.enum(["unavailable", "excluded"]),
-        reason: z.string(),
-      }),
-    ]),
-  });
 
 export const webExecutionSummarySchema = z.strictObject({
   browser: shape.browser,
@@ -124,17 +144,6 @@ export const webExecutionSummarySchema = z.strictObject({
     captured_source_utf16_units: z.int().nonnegative(),
   }),
 });
-
-export const webExecutionViewItemsSchema = z.union([
-  z.array(webExecutionFunctionRowSchema),
-  z.array(requestSchema),
-  z.array(webExecutionSourceRowSchema),
-  z.array(
-    analysisTextPageItemSchema.extend({
-      script_id: z.string(),
-    }),
-  ),
-]);
 
 const readReport = createAnalysisViewResultReader(
   webExecutionObservationSchema,
@@ -322,18 +331,22 @@ export const projectWebExecutionView = (
     });
   const view = admitted;
   const pageContext = { ...shared, ...pageContextOf(report) };
-  const page = <Row>(items: Row[], total: number, offset: number) =>
+  const page = <View extends WebExecutionView, Row>(
+    selection: View,
+    items: Row[],
+    total: number,
+  ) =>
     ok({
       ...pageContext,
       kind: "web-execution" as const,
-      view,
+      view: selection,
       items,
-      coverage: pageViewCoverage(offset, items.length, total),
+      coverage: pageViewCoverage(selection.offset, items.length, total),
     });
   switch (view.collection) {
     case "functions": {
       const rows = selectFunctionRows(report, view);
-      return page(rows.rows, rows.total, view.offset);
+      return page(view, rows.rows, rows.total);
     }
     case "requests": {
       const methods = selected(view.methods);
@@ -343,7 +356,7 @@ export const projectWebExecutionView = (
         methods === undefined ? undefined : (row) => methods.has(row.method),
         (row) => row,
       );
-      return page(rows.rows, rows.total, view.offset);
+      return page(view, rows.rows, rows.total);
     }
     case "sources": {
       const ids = selected(view.script_ids);
@@ -353,7 +366,7 @@ export const projectWebExecutionView = (
         ids === undefined ? undefined : (row) => ids.has(row.script_id),
         sourceRow,
       );
-      return page(rows.rows, rows.total, view.offset);
+      return page(view, rows.rows, rows.total);
     }
     case "source-text": {
       const text = sourceTextPage(report, view);
