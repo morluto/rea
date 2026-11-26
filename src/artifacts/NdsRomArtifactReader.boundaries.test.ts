@@ -1,12 +1,25 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { Readable } from "node:stream";
+
 import { describe, expect, it } from "vitest";
 
-import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
-import type {
-  ArtifactEntry,
-  ArtifactReaderTraversal,
+import {
+  materializeArtifactInventory,
+  scanCanonicalArtifactInventory,
+} from "../../tests/fixtures/artifactInventory.js";
+import {
+  createTestTempDirectory,
+  createTestTempFile,
+} from "../../tests/fixtures/temporaryDirectory.js";
+import {
+  SafeOutputTree,
+  type ArtifactEntry,
+  type ArtifactReaderTraversal,
 } from "../resources/index.js";
 import {
   NDS_FIXTURE,
+  NDS_FIXTURE_FILES,
   ndsRomFixture,
   resealNdsHeader,
 } from "../domain/ndsRom.fixture.js";
@@ -119,4 +132,111 @@ describe("Nintendo DS ROM boundaries", () => {
     );
     expect(result.metadata?.directory_count).toBe(1);
   });
+
+  it.each([
+    ["a:b", "CON"],
+    ["a:b", "a*b"],
+  ] as const)(
+    "lists Windows-unsafe FNT names (%j, %j) under their FAT-ID fallbacks and extracts them",
+    async (rootName, nestedName) => {
+      const rom = ndsRomFixture();
+      const fnt = NDS_FIXTURE.fnt;
+      const rootSub = 16;
+      const root = Buffer.concat([
+        Buffer.from([rootName.length]),
+        Buffer.from(rootName, "latin1"),
+        Buffer.from([0x80 | 4]),
+        Buffer.from("data", "latin1"),
+        Buffer.from([0x01, 0xf0, 0]),
+      ]);
+      const dataSub = rootSub + root.length;
+      const data = Buffer.concat([
+        Buffer.from([nestedName.length]),
+        Buffer.from(nestedName, "latin1"),
+        Buffer.from([0]),
+      ]);
+      rom.fill(0, fnt + rootSub, fnt + NDS_FIXTURE.fntSize);
+      rom.writeUInt32LE(dataSub, fnt + 8);
+      root.copy(rom, fnt + rootSub);
+      data.copy(rom, fnt + dataSub);
+
+      const path = await createTestTempFile(
+        "rea-nds-windows-names-",
+        "game.nds",
+        rom,
+      );
+      const snapshot = await scanCanonicalArtifactInventory(path);
+      expect(snapshot.coverage.status).toBe("unknown");
+      expect(snapshot.limitations).toContainEqual(
+        expect.stringContaining(
+          `DS FNT name ${JSON.stringify(rootName)} in directory 61440 is not a portable path segment`,
+        ),
+      );
+      expect(snapshot.limitations).toContainEqual(
+        expect.stringContaining(
+          `DS FNT name ${JSON.stringify(nestedName)} in directory 61441 is not a portable path segment`,
+        ),
+      );
+      const logicalPaths = snapshot.occurrences.map((row) => row.logical_path);
+      expect(logicalPaths).not.toContain(`data/${rootName}`);
+      expect(logicalPaths).not.toContain(`data/data/${nestedName}`);
+      const selected = snapshot.occurrences
+        .filter((row) =>
+          ["fat/00001.bin", "fat/00002.bin"].includes(row.logical_path),
+        )
+        .map((row) => row.occurrence_id);
+      expect(selected).toHaveLength(2);
+
+      const output = join(
+        await createTestTempDirectory("rea-nds-win-out-"),
+        "out",
+      );
+      const extracted = await materializeArtifactInventory(
+        {
+          inputPath: path,
+          inputFormat: "nds",
+          outputRoot: output,
+          occurrenceIds: selected,
+          environment: process.env,
+          integrityPolicy: "fail",
+        },
+        path,
+        snapshot,
+      );
+      expect(
+        extracted.artifacts.map((artifact) => artifact.relative_path).sort(),
+      ).toEqual(["fat/00001.bin", "fat/00002.bin"]);
+      expect(
+        (await readFile(join(output, "fat", "00001.bin"))).equals(
+          NDS_FIXTURE_FILES.readme,
+        ),
+      ).toBe(true);
+      expect(
+        (await readFile(join(output, "fat", "00002.bin"))).equals(
+          NDS_FIXTURE_FILES.asset,
+        ),
+      ).toBe(true);
+
+      // Confirm the shared Windows destination writer accepts every fallback path.
+      const winOutput = join(
+        await createTestTempDirectory("rea-nds-win32-tree-"),
+        "out",
+      );
+      const tree = await SafeOutputTree.create(winOutput, "win32");
+      try {
+        for (const [relativePath, bytes] of [
+          ["fat/00001.bin", NDS_FIXTURE_FILES.readme],
+          ["fat/00002.bin", NDS_FIXTURE_FILES.asset],
+        ] as const) {
+          const written = await tree.write(relativePath, Readable.from(bytes), {
+            bytes: bytes.length,
+          });
+          expect(written.relativePath).toBe(relativePath);
+        }
+        await tree.commit();
+      } finally {
+        if (!tree.published) await tree.rollback();
+      }
+    },
+  );
 });

@@ -54,9 +54,10 @@ was read in full and every range fits in the file. Otherwise coverage is
 - An FNT directory reached twice (a loop or shared subdirectory) is walked
   once. If directories share or overlap subtables, so that the walk would read
   more bytes than the FNT holds, the walk stops there.
-- A name that is not a portable path segment (`/`, `\`, `..` or non-ASCII
-  bytes), or the same name twice in one directory, is reported, and its file
-  is listed under `fat/` instead.
+- A name that is not a portable path segment (`/`, `\`, `..`, non-ASCII
+  bytes, or a Windows-reserved character, trailing dot/space or device name),
+  or the same name twice in one directory, is reported, and its file is listed
+  under `fat/` instead.
 - An FNT name for a file ID an overlay or another directory already claimed
   is reported, and the earlier listing is kept.
 - An overlay that names a file ID another entry already claimed is reported,

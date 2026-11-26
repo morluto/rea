@@ -202,6 +202,59 @@ describe("DS ROM layout", () => {
     );
   });
 
+  it.each(["a:b", "a*b", "CON", "nul.txt", "end.", "end "])(
+    "lists a Windows-unsafe FNT file name %j by its FAT ID",
+    (unsafeName) => {
+      const rom = ndsRomFixture();
+      const fnt = NDS_FIXTURE.fnt;
+      const rootSub = 16;
+      const root = Buffer.concat([
+        Buffer.from([unsafeName.length]),
+        Buffer.from(unsafeName, "latin1"),
+        Buffer.from([0x80 | 4]),
+        Buffer.from("data", "latin1"),
+        Buffer.from([0x01, 0xf0, 0]),
+      ]);
+      const dataSub = rootSub + root.length;
+      const data = Buffer.concat([
+        Buffer.from([5]),
+        Buffer.from("a.bin", "latin1"),
+        Buffer.from([0]),
+      ]);
+      rom.fill(0, fnt + rootSub, fnt + NDS_FIXTURE.fntSize);
+      rom.writeUInt32LE(dataSub, fnt + 8);
+      root.copy(rom, fnt + rootSub);
+      data.copy(rom, fnt + dataSub);
+
+      const layout = layoutOf(rom);
+      expect(layout.complete).toBe(false);
+      const paths = layout.regions.map((region) => region.path);
+      expect(paths).not.toContain(`data/${unsafeName}`);
+      expect(paths).toContain("fat/00001.bin");
+      expect(paths).toContain("data/data/a.bin");
+      expect(layout.limitations).toContainEqual(
+        expect.stringContaining(
+          `DS FNT name ${JSON.stringify(unsafeName)} in directory 61440 is not a portable path segment`,
+        ),
+      );
+    },
+  );
+
+  it("lists files under a Windows-unsafe subdirectory name by their FAT IDs", () => {
+    const rom = ndsRomFixture();
+    const rootSub = NDS_FIXTURE.fnt + rom.readUInt32LE(NDS_FIXTURE.fnt);
+    // readme.txt entry (11 bytes), then the 4-byte "data" subdirectory name.
+    rom.write("d:ir", rootSub + 11 + 1, "latin1");
+    const layout = layoutOf(rom);
+    expect(layout.complete).toBe(false);
+    const paths = layout.regions.map((region) => region.path);
+    expect(paths).not.toContain("data/d:ir/a.bin");
+    expect(paths).toContain("fat/00002.bin");
+    expect(layout.limitations).toContainEqual(
+      expect.stringContaining('DS FNT name "d:ir" in directory 61440'),
+    );
+  });
+
   it("leaves coverage unknown when a directory repeats a name", () => {
     const rom = ndsRomFixture();
     const fnt = NDS_FIXTURE.fnt;

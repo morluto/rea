@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { readUint16At, readUint32At } from "./binaryContainer.js";
 import { malformedInput, truncatedInput } from "./parseFailure.js";
+import { isPortablePathSegment } from "./portablePathSegment.js";
 import { offset, uint16, uint32, uint8 } from "./formatMetadata/primitives.js";
 
 /**
@@ -320,11 +321,7 @@ export interface NdsLayout {
 }
 
 const isSafeName = (name: string): boolean =>
-  name.length > 0 &&
-  name !== "." &&
-  name !== ".." &&
-  /^[\x20-\x7e]+$/u.test(name) &&
-  !/[/\\]/u.test(name);
+  /^[\x20-\x7e]+$/u.test(name) && isPortablePathSegment(name);
 
 /**
  * Itemized limitations per repeated kind (bad FAT entry, unsafe name, ...).
