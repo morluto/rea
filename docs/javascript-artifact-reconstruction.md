@@ -443,9 +443,11 @@ queries use per-file range indexes, while call sites use exact-range lookups.
 Existing node budgets and coverage reporting remain in effect.
 
 Progress identifies the source file being parsed and projected. Cancellation is
-checked between files and throughout result transfer. The owned analyzer can
-be stopped while its synchronous parser or semantic extractor is active;
-the CLI/MCP process remains available for control requests.
+checked between files and throughout result transfer. Within the owned analyzer
+process, synchronous Babel and JSON parser calls run to completion and cannot
+be preempted mid-call. However, the parent CLI/MCP process can terminate the
+entire analyzer worker process at any time (which stops the parser), and the
+CLI/MCP process itself remains available for control requests.
 
 Graph and Evidence identifiers hash canonical JSON incrementally, without
 assembling a single string for the whole graph. The canonical bytes and existing
