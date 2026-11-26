@@ -21,6 +21,7 @@ import {
   readAsn1,
 } from "./PeCertificateAsn1.js";
 import {
+  readPeImage,
   readPeImageFromReader,
   type PeImage,
 } from "../../domain/native/peImage.js";
@@ -108,6 +109,7 @@ const parsePeCertificateTable = (
   table: Buffer,
   artifact: PeCertificates["artifact"],
   input: InspectPeCertificatesInput,
+  onSignerSubject?: (subject: string | undefined) => void,
 ): PeCertificates => {
   const format = image.bits === 64 ? "pe32-plus" : "pe32";
   const machine = image.pe_machine;
@@ -182,6 +184,27 @@ const parsePeCertificateTable = (
           fail("WIN_CERTIFICATE has invalid PKCS#7 alignment padding.");
         payload = entryPayload.subarray(0, root.end);
         const parsed = parsePkcs7SignedData(root);
+        if (onSignerSubject !== undefined) {
+          for (const signer of parsed.signers) {
+            const issuer = signer.issuer;
+            const matches =
+              issuer === null || signer.serial_hex === null
+                ? []
+                : parsed.certificates.filter(
+                    (certificate) =>
+                      certificate.serial_hex === signer.serial_hex &&
+                      payload
+                        .subarray(
+                          certificate.issuer.start,
+                          certificate.issuer.end,
+                        )
+                        .equals(payload.subarray(issuer.start, issuer.end)),
+                  );
+            onSignerSubject(
+              matches.length === 1 ? matches[0]?.subject.text : undefined,
+            );
+          }
+        }
         teletexStringCompatibilityUsed ||=
           parsed.teletexStringCompatibilityUsed;
         unsignedAttributesPresent ||= parsed.signers.some(
@@ -307,6 +330,7 @@ export const parsePeCertificatesFromHandle = async (
   handle: StableArtifactHandle,
   artifact: PeCertificates["artifact"],
   input: InspectPeCertificatesInput,
+  onSignerSubject?: (subject: string | undefined) => void,
 ): Promise<PeCertificates> => {
   const image = await readCertificateImageAt(handle);
   const range = certificateTableRange(image, handle.size);
@@ -314,5 +338,43 @@ export const parsePeCertificatesFromHandle = async (
     range === null
       ? Buffer.alloc(0)
       : await handle.readRange(range.tableOffset, range.tableSize);
-  return parsePeCertificateTable(image, range, table, artifact, input);
+  return parsePeCertificateTable(
+    image,
+    range,
+    table,
+    artifact,
+    input,
+    onSignerSubject,
+  );
+};
+
+/**
+ * Decode IMAGE_DIRECTORY_ENTRY_SECURITY from already-buffered PE bytes. Used by
+ * the ASAR signed-after-packing explanation path after a mismatch.
+ */
+export const parsePeCertificatesFromBytes = (
+  bytes: Buffer,
+  artifact: PeCertificates["artifact"],
+  input: InspectPeCertificatesInput,
+  onSignerSubject?: (subject: string | undefined) => void,
+): PeCertificates => {
+  let image: PeImage;
+  try {
+    image = readPeImage(bytes, "headers");
+  } catch (cause) {
+    throw artifactParseFailure(cause, undefined);
+  }
+  const range = certificateTableRange(image, bytes.length);
+  const table =
+    range === null
+      ? Buffer.alloc(0)
+      : bytes.subarray(range.tableOffset, range.tableOffset + range.tableSize);
+  return parsePeCertificateTable(
+    image,
+    range,
+    table,
+    artifact,
+    input,
+    onSignerSubject,
+  );
 };
