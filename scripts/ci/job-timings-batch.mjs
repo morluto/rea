@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
+import { validateRepository } from "./github-api.mjs";
 import { collectJobTimings } from "./job-timings.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -204,17 +205,6 @@ function selectionShadowCost(jobs) {
     else measuredSeconds += job.execution.seconds;
   }
   return { measuredSeconds, unknownJobs };
-}
-
-function validateRepository(repository) {
-  if (
-    typeof repository !== "string" ||
-    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)
-  )
-    throw new Error(
-      "CI_REPOSITORY must be an owner/name repository identifier",
-    );
-  return repository;
 }
 
 async function apiJson(endpoint, env, started, now) {

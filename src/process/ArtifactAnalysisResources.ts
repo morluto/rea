@@ -40,8 +40,10 @@ import {
   deadlineParameterLimit,
   MAX_NODE_TIMER_DELAY_MS,
 } from "../domain/analysisResourceLimits.js";
-import type { AnalysisParameterLimit } from "../domain/analysisSettings.js";
-import { producerLimitControl } from "../domain/producerResourceLimits.js";
+import type {
+  AnalysisLimit,
+  AnalysisParameterLimit,
+} from "../domain/analysisSettings.js";
 
 /** Limitations shared by resource-limited artifact producer observations. */
 export const ARTIFACT_PRODUCER_LIMITATION =
@@ -62,12 +64,15 @@ export interface SelectedArtifactRead {
 }
 
 /** The selected and omitted values of an owned producer command's per-call budgets. */
-export type ProducerCommandLimits = Readonly<
-  Record<
-    "selected" | "defaults",
-    { readonly command_timeout_ms: number; readonly output_bytes: number }
-  >
->;
+export interface ProducerCommandLimits {
+  readonly selected: {
+    readonly command_timeout_ms: number;
+    readonly output_bytes: number;
+  };
+  readonly defaults: { readonly command_timeout_ms: number };
+  /** The control that raises the output budget: a parameter, or a setting backing it. */
+  readonly output: AnalysisLimit;
+}
 
 /** What a resource-owned read was doing when it failed. */
 export type ArtifactResourceFailureContext =
@@ -238,9 +243,12 @@ export class ArtifactAnalysisResources {
         {
           ...details,
           cause,
-          limit: budget,
+          limit:
+            cause.observedBytes === undefined ||
+            cause.observedBytes > BigInt(Number.MAX_SAFE_INTEGER)
+              ? budget
+              : { ...budget, required_value: Number(cause.observedBytes) },
           retryable: false,
-          remediationAction: `Increase ${budget.parameter} above ${String(budget.effective_value)} bytes on the next call to admit the same complete selected artifact; no REA restart is required. Do not truncate required input bytes. Output, parser, transport and inherited OS limits remain independent.`,
         },
       );
   }
@@ -473,7 +481,7 @@ export class ArtifactAnalysisResources {
 
   /** How this provider's owned producer commands report, for the shared classifiers. */
   commandContext(
-    { selected: limits, defaults }: ProducerCommandLimits,
+    { selected: limits, defaults, output }: ProducerCommandLimits,
     effectiveLimits: LinuxResourceLimits | undefined,
     operation: string,
   ): ProviderOutcomeContext {
@@ -493,15 +501,9 @@ export class ArtifactAnalysisResources {
       },
       outputLimit: {
         limits: { output_bytes: limits.output_bytes },
-        limit: producerLimitControl(
-          "output_bytes",
-          limits.output_bytes,
-          defaults.output_bytes,
-        ),
-        recovery: {
-          retryable: false,
-          remediationAction: `Increase producer_limits.output_bytes above ${String(limits.output_bytes)} bytes on the next call; no restart is required. Inspect captured output and confirm cleanup before retrying. This controls collection, not parser, transport, host memory or inherited OS limits. Repeating the unchanged request cannot raise it.`,
-        },
+        limit: output,
+        // The capture stops at the budget, so the output it needs is unmeasured.
+        recovery: { retryable: false },
       },
       resourceSignal: (signal) => {
         const reported =

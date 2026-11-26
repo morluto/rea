@@ -8,7 +8,9 @@ import type { Element, Node } from "@xmldom/xmldom";
 
 import {
   isXmlElement,
+  iterateXmlChildElements,
   opensLikeXml,
+  parseTrueFalseText,
   parseXmlDocumentWithinNodeLimit,
   xmlChildElements,
   xmlChildrenNamed,
@@ -36,27 +38,17 @@ const BASE_LIMITATIONS = [
 const GRADLE_MODULE_METADATA_VERSION = "1.1";
 
 const soleNamed = (element: Element, local: string): Element | undefined => {
-  const ns = element.namespaceURI ?? "";
-  let found: Element | undefined;
-  for (
-    let child = element.firstChild;
-    child !== null;
-    child = child.nextSibling
-  ) {
-    if (
-      isXmlElement(child) &&
-      (child.namespaceURI ?? "") === ns &&
-      child.localName === local
-    ) {
-      if (found !== undefined)
-        throw malformedInput(
-          MAVEN_GRADLE_METADATA_FORMAT,
-          `Maven POM declares <${local}> more than once in one <${element.localName}>.`,
-        );
-      found = child;
-    }
-  }
-  return found;
+  const [match, duplicate] = iterateXmlChildElements(
+    element,
+    local,
+    element.namespaceURI ?? "",
+  );
+  if (duplicate !== undefined)
+    throw malformedInput(
+      MAVEN_GRADLE_METADATA_FORMAT,
+      `Maven POM declares <${local}> more than once in one <${element.localName}>.`,
+    );
+  return match;
 };
 
 const MAVEN_POM_NAMESPACE = "http://maven.apache.org/POM/4.0.0";
@@ -120,14 +112,6 @@ const childText = (element: Element, local: string): string | null => {
 /** Keep Gradle JSON spelling for Evidence and exact comparisons. */
 const gradleText = (value: unknown): string | null =>
   typeof value === "string" && value.trim() !== "" ? value : null;
-
-const boolOf = (value: string | null): boolean | null => {
-  if (value === null) return null;
-  const folded = value.toLowerCase();
-  if (folded === "true") return true;
-  if (folded === "false") return false;
-  return null;
-};
 
 const emptyGradleVersion = {
   requires: null,
@@ -271,7 +255,7 @@ const parseMavenDependency = <
     gradle_version: null,
     scope,
     type,
-    optional: boolOf(optional_spelling),
+    optional: parseTrueFalseText(optional_spelling),
     optional_spelling,
     classifier,
     exclusions,

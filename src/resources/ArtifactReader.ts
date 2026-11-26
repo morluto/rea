@@ -47,6 +47,8 @@ export interface ArtifactReaderFailureOptions extends ErrorOptions {
   readonly partialObservation?: AnalysisPartialObservation | undefined;
   /** The constrained resource bound for a limit failure. */
   readonly boundary?: ArtifactLimitBoundary;
+  /** For a `file-size` limit, the observed size the refused read needs. */
+  readonly observedBytes?: bigint | undefined;
   /** Named admission whose recovery must not be inferred from other limit text. */
   readonly admission?: ArtifactAdmissionLimit;
   readonly readerLimit?: ArtifactReaderLimitFact;
@@ -313,6 +315,7 @@ export class ArtifactReaderFailure extends Error {
   partialObservation: AnalysisPartialObservation | undefined;
   /** The constrained bound for a `limit` reason, when the reader knows it. */
   readonly boundary: ArtifactLimitBoundary | undefined;
+  readonly observedBytes: bigint | undefined;
   /** Named admission for a limit whose public recovery is owned by the producer. */
   readonly admission: ArtifactAdmissionLimit | undefined;
   readonly readerLimit: ArtifactReaderLimitFact | undefined;
@@ -379,6 +382,7 @@ export class ArtifactReaderFailure extends Error {
       options?.cleanupLeases ?? (this.cleanup === undefined ? [] : undefined);
     this.partialObservation = options?.partialObservation;
     this.boundary = options?.boundary;
+    this.observedBytes = options?.observedBytes;
     this.admission = options?.admission;
     this.readerLimit = options?.readerLimit;
     this.parserLimit = options?.parserLimit;
@@ -401,6 +405,7 @@ export class ArtifactReaderFailure extends Error {
     | "userMessage"
     | "resolvedPath"
     | "boundary"
+    | "observedBytes"
     | "admission"
     | "readerLimit"
     | "parserLimit"
@@ -415,6 +420,9 @@ export class ArtifactReaderFailure extends Error {
         ? {}
         : { resolvedPath: this.resolvedPath }),
       ...(this.boundary === undefined ? {} : { boundary: this.boundary }),
+      ...(this.observedBytes === undefined
+        ? {}
+        : { observedBytes: this.observedBytes }),
       ...(this.admission === undefined ? {} : { admission: this.admission }),
       ...(this.readerLimit === undefined
         ? {}

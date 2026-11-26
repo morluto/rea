@@ -1,7 +1,8 @@
 import { z } from "zod";
 import type { RetainedBrowserScenarioCapture } from "../browserScenarioCapture.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
-import { incrementCount, sortedCountEntries } from "./analysisViewCounts.js";
+import { incrementCount } from "../valueCounts.js";
+import { sortedCountEntries } from "./analysisViewCounts.js";
 
 const count = z.int().nonnegative();
 const statusClass = z

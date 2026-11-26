@@ -23,7 +23,10 @@ relative to the current directory; MCP paths must be absolute.
   with provider virtual addresses.
 - `coverage` counts every entry whatever page you select: `primary_entries`,
   `chained_entries`, `unknown_entries`, `entries_with_issues`, and the
-  directory's `trailing_bytes` after its last whole 12-byte entry.
+  directory's `trailing_bytes` after its last whole 12-byte entry. When
+  `unknown_entries` or `trailing_bytes` is nonzero, `coverage.status` is
+  `partial`, and nonzero trailing bytes add a limitation noting that the
+  trailing tail was not decoded.
 - Each entry has its begin, end and unwind RVAs, the `UNWIND_INFO` version,
   flags (`ehandler`, `uhandler`, `chaininfo`) and code count, and its `kind`:
   - `primary` starts a function.
@@ -61,5 +64,6 @@ findings that the table does not support.
 
 A directory that is not backed by file bytes, a zero RVA with a nonzero size,
 or a file cut inside the table is refused as a malformed target, without
-partial success. A table with more than 2,097,152 entries exceeds the fixed
-decoding allowance. The default [read allowance](../../reference/limits-and-recovery.md#static-reader-read-allowance) is 64 MiB of reads (`max_file_bytes`, ceiling 512 MiB), whatever the file size.
+partial success. A table with more entries than `max_entries` (default 2,097,152,
+at most 16,777,216; CLI `--max-entries`) is refused with `details.limit`, whose
+`required_value` is the declared entry count. The default [read allowance](../../reference/limits-and-recovery.md#static-reader-read-allowance) is 64 MiB of reads (`max_file_bytes`, ceiling 512 MiB), whatever the file size.

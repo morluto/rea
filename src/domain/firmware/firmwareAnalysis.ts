@@ -1,8 +1,7 @@
 import { timerDurationMsSchema } from "../analysisResourceLimits.js";
 import { z } from "zod";
-import type { AnalysisParameterLimit } from "../analysisSettings.js";
 import {
-  parameterBudgetLimit,
+  parameterBudgetLimitFor,
   parameterBudgetSchema,
   type ParameterBudget,
 } from "../parameterBudget.js";
@@ -36,15 +35,9 @@ export const FIRMWARE_STAGING_BUDGETS = {
 } as const satisfies Record<string, ParameterBudget>;
 
 /** The staging budget that stopped an extraction. */
-export const firmwareStagingBudgetLimit = (
-  parameter: keyof typeof FIRMWARE_STAGING_BUDGETS,
-  effectiveValue: number,
-): AnalysisParameterLimit =>
-  parameterBudgetLimit(
-    parameter,
-    FIRMWARE_STAGING_BUDGETS[parameter],
-    effectiveValue,
-  );
+export const firmwareStagingBudgetLimit = parameterBudgetLimitFor(
+  FIRMWARE_STAGING_BUDGETS,
+);
 /** Largest extraction depth the input contract accepts. */
 export const MAX_FIRMWARE_EXTRACTION_DEPTH = 10;
 const target = {

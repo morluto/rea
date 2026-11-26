@@ -7,6 +7,7 @@ import { evidenceBundleSchema } from "../domain/evidenceBundle.js";
 import {
   getEvidenceInputContract,
   isDeclaredEvidenceInput,
+  isEvidenceReferenceAlternative,
 } from "../domain/evidenceInputContract.js";
 import {
   evidenceFileReferenceSchema,
@@ -23,9 +24,7 @@ owners.add(evidenceSchema, { owner: "record" });
 owners.add(retainedEvidenceReferenceSchema, { owner: "reference" });
 for (const schema of [
   evidenceBundleSchema,
-  evidenceSourceInputSchema,
   evidenceFileReferenceSchema,
-  analysisViewSourceSchema,
   exportEnvironmentBundleInputSchema.shape.source,
 ])
   owners.add(schema, { owner: "source-or-bundle" });
@@ -143,7 +142,10 @@ const declarationIssues = (root: z.ZodType): string[] => {
         );
       return;
     }
-    const owner = owners.get(schema)?.owner;
+    // A declared inline-or-reference source owns its reference.
+    const owner = isEvidenceReferenceAlternative(schema)
+      ? "source-or-bundle"
+      : owners.get(schema)?.owner;
     if (owner === "source-or-bundle") return;
     if (owner === "record" || owner === "reference") {
       problems.add(

@@ -1150,7 +1150,13 @@ invalid, and keeps live-server state `unknown` unless the active connection
 supplies identity.
 
 By default, `tools/list` returns the complete canonical tool inventory, including tools that
-are currently unavailable. Opening or closing a target or observing a provider
+are currently unavailable. When the serialized listing would exceed one SSE
+event under the strictest known client limit, the server pages it per the MCP
+cursor contract instead: each page carries a `nextCursor` until the last page,
+and following the cursors returns the complete inventory. Catalogs that fit are
+returned in one response, exactly as before. A cursor is bound to the catalog
+snapshot it started from; if the catalog changes mid-listing, the server
+rejects the cursor and the client restarts without one. Opening or closing a target or observing a provider
 health transition leaves that catalog unchanged and does not emit
 `notifications/tools/list_changed`.
 
@@ -2172,6 +2178,8 @@ operands instead of repeating their full output schemas in the input catalog.
 Pass the original `inspect_web_page` normalized result in `before.inspection`
 and `after.inspection`, optional complete `discover_webmcp_tools` results in
 `webmcp`, or complete `capture_browser_scenario` results in the scenario fields.
+Each field also accepts a retained Evidence reference, described under
+[Comparison input shapes](#comparison-input-shapes).
 Do not construct partial observations from the abbreviated declaration: the
 server still validates every canonical field before comparison. Input groups
 and analyst-authored normalization rules remain explicit. This presentation
@@ -2464,6 +2472,9 @@ the MCP specification does not require an output schema for
 For the 1 MiB FastMCP SSE limit reported by Unsloth in
 [#9093](https://github.com/morluto/rea/issues/9093), see the
 [tested catalog configuration](../getting-started/client-configuration.md#fastmcp-and-unsloth-sse-catalog-limits).
+The default catalog now pages itself when it exceeds one event, so a client
+that follows `nextCursor` loads the complete inventory without those settings;
+the settings remain the way to reduce the context the catalog costs.
 Hot/cold selection alone does not bound later catalog refreshes.
 
 `compact` keeps the complete validation structure when it fits the budget.
@@ -2543,6 +2554,15 @@ and the identity dimension unknown.
   `normalized_result` objects from `capture_browser_scenario`. Optional
   `normalization` defaults to `{ "rules": [] }` in the canonical scenario parser;
   this scenario-only default is omitted from the merged advertised input.
+
+Each capture may instead be `{"kind":"retained-evidence","evidence_id":...}`.
+The ID names retained producer Evidence in the current session, or the
+`inspect_analysis_view` summary that budgeted delivery returned for it. REA
+reads the complete retained record, validates its `normalized_result` as the
+inline capture, and lists the records it read in `evidence_links`. The
+comparison result and parameters are the same as for the same captures sent
+inline. A reference to other Evidence, or to Evidence the session does not
+retain, is refused.
 
 The advertised schema includes complete nested capture fields and rejects
 incomplete pairs and structurally malformed captures. Mixed comparison families,
