@@ -1,4 +1,3 @@
-import type { FixedCeilingFacts } from "../../domain/fixedAllowanceRemediation.js";
 import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import {
   artifactFileCeilingConstraint,
@@ -8,12 +7,12 @@ import {
 } from "../../resources/index.js";
 import type {
   AnalysisError,
+  AnalysisErrorOptions,
   AnalysisPartialObservation,
 } from "../../domain/analysisErrorBase.js";
 import type { ResourceConstraintRecovery } from "../../domain/analysisErrorCore.js";
 import {
   BinaryResourceFailure,
-  binaryResourceCeiling,
   binaryResourceAllowance,
 } from "../../domain/binaryContainer.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
@@ -28,13 +27,15 @@ interface PeBinaryFailureOptions<Limit extends string> {
   readonly providerId: string;
   /** The whole-file ceiling of the identity pass; `max_file_bytes` does not raise it. */
   readonly fileCeiling: { readonly name: string; readonly bytes: number };
-  /** The allowances the parser names in its `BinaryResourceFailure`. */
+  /** The allowances the parser names in its `BinaryResourceFailure`; no other reaches these readers. */
   readonly limits: readonly Limit[];
-  /** Recovery for the named allowance, or the structural allowance (`null`) at `ceiling`. */
+  /** The control or recovery of the named allowance. */
   readonly limitRecovery: (
-    limit: Limit | null,
-    ceiling: FixedCeilingFacts,
-  ) => ResourceConstraintRecovery;
+    limit: Limit,
+    failure: BinaryResourceFailure,
+  ) => ResourceConstraintRecovery & {
+    readonly limit?: AnalysisErrorOptions["limit"];
+  };
   /** A verified report the failure keeps, such as one completed before final cleanup failed. */
   readonly completed?: AnalysisPartialObservation;
 }
@@ -62,9 +63,10 @@ export const projectPeBinaryFailure = <Limit extends string>(
         if (readBudget !== undefined) return readBudget;
         if (failure instanceof BinaryResourceFailure) {
           const limit = binaryResourceAllowance(failure, options.limits);
+          if (limit === null) return undefined;
           return parseLimitConstraint(operation, "capacity", failure, {
             path: input.path,
-            ...options.limitRecovery(limit, binaryResourceCeiling(failure)),
+            ...options.limitRecovery(limit, failure),
           });
         }
         return undefined;
