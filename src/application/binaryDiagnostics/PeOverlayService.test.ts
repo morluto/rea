@@ -144,8 +144,20 @@ it("retains an absent overlay and artifact provenance", async () => {
   expect(result.value).toMatchObject({
     confidence: "derived",
     subject: { identity: { format: "pe", architecture: "x86" } },
+    parameters: { path: report.artifact.path },
     normalized_result: report,
     locations: [{ kind: "artifact-path", path: report.artifact.path }],
+  });
+  expect(result.value.parameters).toEqual({ path: report.artifact.path });
+
+  const explicit = await service(report).inspect({
+    path: report.artifact.path,
+    max_file_bytes: 4096,
+  });
+  if (!explicit.ok) throw explicit.error;
+  expect(explicit.value.parameters).toEqual({
+    path: report.artifact.path,
+    max_file_bytes: 4096,
   });
 });
 

@@ -44,6 +44,7 @@ mcpTest(
       const evidence = toolContract("inspect_pe_overlay").outputSchema.parse(
         response.structuredContent,
       );
+      expect(evidence.parameters).toEqual({ path });
       expect(evidence.normalized_result.ranges).toEqual([
         expect.objectContaining({
           role: "other",
@@ -54,6 +55,31 @@ mcpTest(
         }),
       ]);
       expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+      const tooSmall = await client.callTool(
+        {
+          name: "inspect_pe_overlay",
+          arguments: { path, max_file_bytes: 64 },
+        },
+        { toolDefinition: withCanonicalOutputSchema(definition) },
+      );
+      expect(tooSmall.isError).toBe(true);
+      const tooSmallText = tooSmall.content[0];
+      expect(tooSmallText?.type).toBe("text");
+      expect(
+        JSON.parse(tooSmallText?.type === "text" ? tooSmallText.text : ""),
+      ).toMatchObject({
+        error: {
+          code: "resource_constraint",
+          details: {
+            refusal: {
+              kind: "adjustable_budget",
+              operation: "inspect_pe_overlay",
+              control: "max_file_bytes",
+              effective_value: 64,
+            },
+          },
+        },
+      });
       const bad = await client.callTool(
         {
           name: "inspect_pe_overlay",

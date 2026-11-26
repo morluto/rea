@@ -10,7 +10,10 @@ import {
 import { peSubjectArchitecture } from "../../domain/peMachine.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import {
+  callerAnalysisParameters,
+  parseAnalysisInput,
+} from "../AnalysisInput.js";
 
 const OPERATION = "inspect_pe_overlay";
 
@@ -33,6 +36,7 @@ export class PeOverlayService {
       options?.signal,
     );
     if (!input.ok) return input;
+    const parameters = callerAnalysisParameters(rawInput)(input.value);
     const result = await this.provider.inspect(input.value, options);
     if (!result.ok) return result;
     const report = peOverlaySchema.safeParse(result.value);
@@ -68,7 +72,7 @@ export class PeOverlayService {
         this.provider.identity,
         {
           operation: OPERATION,
-          parameters: input.value,
+          parameters,
           result: value,
           confidence: "derived",
           limitations: value.limitations,

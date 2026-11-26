@@ -4,6 +4,10 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createPeOverlayService } from "../../../src/composition/binaryDiagnostics/peOverlay.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import {
+  MAX_INSPECT_PE_OVERLAY_FILE_BYTES,
+  PE_OVERLAY_FILE_BYTES,
+} from "../../../src/domain/native/peOverlay.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { peOverlayImage } from "../../../src/native/pe/PeOverlay.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -56,7 +60,44 @@ describe("PE overlay stable filesystem boundary", () => {
     const service = createPeOverlayService();
     const tooSmall = await service.inspect({ path, max_file_bytes: 64 });
     if (tooSmall.ok) throw new Error("Expected resource budget failure");
-    expect(tooSmall.error._tag).toBe("AnalysisResourceConstraintError");
+    expect(tooSmall.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      operation: "inspect_pe_overlay",
+      resource: "file-size",
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_file_bytes",
+        effective_value: 64,
+        unit: "bytes",
+        minimum: PE_OVERLAY_FILE_BYTES.minimum,
+        maximum: MAX_INSPECT_PE_OVERLAY_FILE_BYTES,
+        default_value: PE_OVERLAY_FILE_BYTES.default_value,
+        applies_at: "next_call",
+      },
+    });
+    expect(projectAnalysisError(tooSmall.error)).toMatchObject({
+      code: "resource_constraint",
+      remediation: { action: expect.stringContaining("max_file_bytes") },
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 64,
+        },
+        refusal: {
+          kind: "adjustable_budget",
+          operation: "inspect_pe_overlay",
+          control: "max_file_bytes",
+          effective_value: 64,
+          unit: "bytes",
+          range: {
+            minimum: PE_OVERLAY_FILE_BYTES.minimum,
+            maximum: MAX_INSPECT_PE_OVERLAY_FILE_BYTES,
+          },
+          default_value: PE_OVERLAY_FILE_BYTES.default_value,
+        },
+      },
+    });
     const cancelled = await service.inspect(
       { path },
       { signal: AbortSignal.abort() },

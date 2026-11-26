@@ -1,9 +1,15 @@
 import { z } from "zod";
 
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
 import { knownCoverageStatusSchema } from "../coverage.js";
 import { knownCoverage } from "../coverageAccumulator.js";
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import {
+  parameterBudgetLimit,
+  parameterBudgetSchema,
+  type ParameterBudget,
+} from "../parameterBudget.js";
 import { malformedInput, truncatedInput } from "../parseFailure.js";
 import { peHeaderAnomaliesSchema } from "./peHeaderAnomalies.js";
 import {
@@ -21,6 +27,20 @@ const uint = z.number().int().min(0).max(0xffffffff);
 
 /** Hard ceiling on the caller-selected input read budget. */
 export const MAX_INSPECT_PE_OVERLAY_FILE_BYTES = 536870912;
+
+/** `max_file_bytes` of `inspect_pe_overlay`. */
+export const PE_OVERLAY_FILE_BYTES = {
+  minimum: 64,
+  maximum: MAX_INSPECT_PE_OVERLAY_FILE_BYTES,
+  default_value: 67_108_864,
+  unit: "bytes",
+} as const satisfies ParameterBudget;
+
+/** The `max_file_bytes` control that refused an image. */
+export const peOverlayFileLimit = (
+  effectiveValue: number,
+): AnalysisParameterLimit =>
+  parameterBudgetLimit("max_file_bytes", PE_OVERLAY_FILE_BYTES, effectiveValue);
 /**
  * Windows loader file mapping rounds PointerToRawData down to this modulus.
  * The value is 512 bytes, not the image's FileAlignment.
@@ -59,6 +79,7 @@ export const PE_OVERLAY_LEADING_FORMATS = [
   "uimage",
   "android-boot-image",
   "android-ota-payload",
+  "android-sparse-image",
   "intel-hex",
   "srec",
   "uf2",
@@ -115,13 +136,9 @@ export const inspectPeOverlayInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to a PE image",
   ),
-  max_file_bytes: z
-    .number()
-    .int()
-    .min(64)
-    .max(MAX_INSPECT_PE_OVERLAY_FILE_BYTES)
-    .default(67108864)
-    .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
+  max_file_bytes: parameterBudgetSchema(PE_OVERLAY_FILE_BYTES).describe(
+    "Maximum stable artifact bytes to read (default 64 MiB)",
+  ),
 });
 export type InspectPeOverlayInput = z.infer<typeof inspectPeOverlayInputSchema>;
 

@@ -8,10 +8,8 @@ import {
 } from "../../resources/index.js";
 import type { PeOverlayPort } from "../../ports/binaryDiagnostics/PeOverlayPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
-import { binaryResourceCeiling } from "../../domain/binaryContainer.js";
-import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
-  MAX_INSPECT_PE_OVERLAY_FILE_BYTES,
+  peOverlayFileLimit,
   type InspectPeOverlayInput,
 } from "../../domain/native/peOverlay.js";
 import { err, ok } from "../../domain/result.js";
@@ -19,8 +17,6 @@ import { PE_OVERLAY_PROVIDER } from "../../domain/investigationProviders.js";
 import { parsePeOverlay } from "./PeOverlayParser.js";
 
 const OPERATION = "inspect_pe_overlay";
-/** This parser names no caller-raised allowance. Structural refusal stays fixed. */
-const PE_OVERLAY_LIMITS = [] as const;
 
 /** Portable overlay reader over one bounded, identity-checked regular file. */
 export class PeOverlayProvider implements PeOverlayPort {
@@ -68,16 +64,8 @@ export class PeOverlayProvider implements PeOverlayPort {
             operation: OPERATION,
             providerId: PE_OVERLAY_PROVIDER.id,
             fileCeiling: {
-              name: "The PE overlay whole-file ceiling",
-              bytes: MAX_INSPECT_PE_OVERLAY_FILE_BYTES,
+              parameterLimit: peOverlayFileLimit(input.max_file_bytes),
             },
-            limits: PE_OVERLAY_LIMITS,
-            limitRecovery: (_limit, failure) =>
-              fixedAllowanceOptions(
-                "The PE structural decoding allowance",
-                "parser",
-                binaryResourceCeiling(failure),
-              ),
           },
           snapshot,
         ),

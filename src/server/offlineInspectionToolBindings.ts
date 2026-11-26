@@ -131,7 +131,7 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
   })) satisfies Bind<PeUnwindRangesService>,
   peOverlay: ((service) => ({
     inspect_pe_overlay: {
-      admission: "sdk",
+      admission: "application",
       run: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<PeOverlayService>,
