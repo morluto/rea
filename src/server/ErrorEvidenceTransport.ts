@@ -18,6 +18,10 @@ import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjection
 import { transportClosedByOwner } from "./transportOwnerClose.js";
 import { ForwardingTransport } from "./ForwardingTransport.js";
 import {
+  formatUnknownMcpToolMessage,
+  type AdvertisedToolCatalog,
+} from "./toolCatalogSearch.js";
+import {
   advertiseToolOutput,
   type AdvertisedToolPresentation,
 } from "../contracts/advertisedTool.js";
@@ -243,6 +247,7 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
     private readonly maximumInputElements: number,
     private readonly evidenceReferenceAlternatives: ReadonlySet<string>,
     private readonly toolsListPageBudget: McpToolsListPageBudget,
+    private readonly currentAdvertisedTools: () => AdvertisedToolCatalog,
   ) {
     super(transport);
   }
@@ -832,8 +837,10 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
       ...recovered,
       error: {
         ...recovered.error,
-        message:
-          "The requested MCP tool is not advertised by this REA server. Call tools/list, select an advertised tool, and retry; do not repeat the unknown tool name.",
+        message: formatUnknownMcpToolMessage(
+          tool,
+          this.currentAdvertisedTools(),
+        ),
       },
     };
   }
