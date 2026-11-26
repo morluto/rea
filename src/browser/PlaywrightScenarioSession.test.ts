@@ -900,6 +900,39 @@ it.each(["unprotected live realm", "failed auto-attach"])(
   },
 );
 
+it("retires the main policy session when CDP reports it gone during cleanup", async () => {
+  const { cleanup } = fixture();
+  const session = await PlaywrightScenarioSession.open(
+    connectedScenario("block"),
+    {},
+    {},
+  );
+  // The main session detached while event delivery was stopped, so its
+  // detach notice never arrived; CDP now reports the session missing.
+  mocks.policySend.mockImplementation(
+    async (method: string, _params: unknown, target: string) => {
+      if (
+        target === "policy-session" &&
+        method === "Page.removeScriptToEvaluateOnNewDocument"
+      )
+        throw new CdpCommandRejection(
+          "capture_browser_scenario",
+          method,
+          -32_001,
+          "Session with given id not found.",
+        );
+      return policyResponse(method);
+    },
+  );
+  await expect(session.close()).resolves.toBe("disconnected-external");
+  expect(mocks.policySend).not.toHaveBeenCalledWith(
+    "Target.detachFromTarget",
+    expect.anything(),
+  );
+  expect(mocks.policyTransportClose).toHaveBeenCalledOnce();
+  expect(cleanup.close).toHaveBeenCalledOnce();
+});
+
 it.each(["detach notice", "missing-session rejection"])(
   "releases the parent policy when the child is retired by %s",
   async (retirement) => {

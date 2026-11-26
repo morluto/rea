@@ -499,14 +499,14 @@ export class PlaywrightScenarioServiceWorkers {
               { identifier: target.identifier },
             );
           } catch (cause: unknown) {
-            // A child target can detach while event delivery is stopped by a
+            // A target can detach while event delivery is stopped by a
             // listener failure, so its detach notice never retires it. CDP
-            // confirming the session is gone retires it here instead.
-            const gone =
-              target.id !== session.sessionId &&
-              isCdpSessionGoneRejection(cause);
+            // confirming the session is gone retires it here instead; for the
+            // owned main session that is the same as its detach event.
+            const gone = isCdpSessionGoneRejection(cause);
             if (!gone && this.#targets.get(target.id) === target) throw cause;
-            if (gone) {
+            if (gone && target.id === session.sessionId) this.#detached = true;
+            else if (gone) {
               target.markDetached();
               this.#targets.delete(target.id);
             }

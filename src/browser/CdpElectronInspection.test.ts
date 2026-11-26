@@ -29,6 +29,7 @@ import {
 } from "./CdpElectronScriptEvents.js";
 import { CDP_SCRIPT_SOURCE_BYTES_OMISSION_REASON } from "./CdpScriptSourceBudget.js";
 import { captureElectronScripts } from "./CdpElectronScripts.js";
+import { ElectronFileScope } from "./ElectronFileScope.js";
 import { inspectElectronPageInputSchema } from "../domain/javascript/electronObservation.js";
 import type { ProgressReporter } from "../ports/ProgressReporter.js";
 
@@ -42,6 +43,7 @@ const inspectRaceConnection = (
     ...(progress === undefined ? {} : { progress }),
     sessionId: undefined,
     asarHeaderAdmission: DEFAULT_ASAR_HEADER_ADMISSION,
+    files: new ElectronFileScope(),
     discovery: {
       webSocket: { scope: "browser", url: "ws://127.0.0.1:9222" },
       version: {
@@ -962,3 +964,48 @@ it.each([
     }
   },
 );
+
+it("captures only the scripts parsed before script capture starts", async () => {
+  const directory = await createTestTempDirectory("rea-electron-snapshot-");
+  const first = join(directory, "first.js");
+  await writeFile(first, "1");
+  const scripts: ElectronScriptDraft[] = [];
+  const retention = { bytes: 2 };
+  const ingestCompleteness = new CdpCaptureCompleteness();
+  const executionContextFrames = new Map<string, CdpContextFrameClaim>();
+  const draft = (path: string, id: string): ElectronScriptDraft => {
+    const drafts: ElectronScriptDraft[] = [];
+    ingestElectronScriptEvent({
+      event: receiveCdpEvent({
+        method: "Debugger.scriptParsed",
+        params: { scriptId: id, url: pathToFileURL(path).href, hash: id },
+      }),
+      scripts: drafts,
+      executionContextFrames,
+      retention,
+      completeness: ingestCompleteness,
+    });
+    const created = drafts[0];
+    if (created === undefined) throw new Error("fixture script not ingested");
+    return created;
+  };
+  scripts.push(draft(first, "1"));
+  const captured = await captureElectronScripts({
+    connection: {} as CdpConnection,
+    sessionId: undefined,
+    request: inspectElectronPageInputSchema.parse({
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "page",
+    }),
+    scripts,
+    frameScopeForScript: (script) => {
+      // A script parsed while capture awaits must not join this capture.
+      if (scripts.length === 1) scripts.push(draft(first, "2"));
+      return { state: "unknown", frameId: script.frameId };
+    },
+    completeness: new CdpCaptureCompleteness(["scripts", "script_sources"]),
+    asarHeaderAdmission: DEFAULT_ASAR_HEADER_ADMISSION,
+    files: new ElectronFileScope(),
+  });
+  expect(captured.total).toBe(1);
+});

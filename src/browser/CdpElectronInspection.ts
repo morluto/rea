@@ -36,7 +36,10 @@ import {
 } from "./CdpElectronScriptEvents.js";
 import { captureElectronScripts } from "./CdpElectronScripts.js";
 import { captureElectronWorkers } from "./CdpElectronWorkers.js";
-import { authorizedElectronFile } from "./ElectronFileScope.js";
+import {
+  authorizedElectronFile,
+  type ElectronFileScope,
+} from "./ElectronFileScope.js";
 import {
   compareUnicodeCodePoints,
   compositeKey,
@@ -50,6 +53,8 @@ interface ElectronContext {
   readonly input: InspectElectronPageInput;
   /** Header admission resolved by the provider's composition root. */
   readonly asarHeaderAdmission: AsarHeaderAdmission;
+  /** The provider's own ASAR descriptor owner, retried at its shutdown. */
+  readonly files: ElectronFileScope;
   readonly signal?: AbortSignal;
   readonly progress?: ProgressReporter;
 }
@@ -524,6 +529,7 @@ const readCurrentFrames = async (
     completeness,
     context.asarHeaderAdmission,
     context.signal,
+    context.files,
   );
   const main = selectedMainFrame(inventory, state.mainFrameId);
   return { ...inventory, main, generations, unprovenDocuments };
@@ -590,6 +596,7 @@ const captureElectronContent = async (
     },
     completeness: state.completeness,
     asarHeaderAdmission: context.asarHeaderAdmission,
+    files: context.files,
   });
   const workers = await captureElectronWorkers({
     connection: context.connection,
@@ -600,6 +607,7 @@ const captureElectronContent = async (
     completeness: state.completeness,
     limitations: state.limitations,
     asarHeaderAdmission: context.asarHeaderAdmission,
+    files: context.files,
   });
   return { dom, scripts, resources, workers };
 };
@@ -644,6 +652,7 @@ export const captureFrames = async (
   completeness: CdpCaptureCompleteness,
   asarHeaderAdmission: AsarHeaderAdmission,
   signal?: AbortSignal,
+  files?: ElectronFileScope,
 ): Promise<ElectronFrameInventory> => {
   if (tree.omittedFrames)
     completeness.exclude("frames", "invalid_protocol_value", null);
@@ -677,6 +686,7 @@ export const captureFrames = async (
       signal,
       "inspect_electron_page",
       asarHeaderAdmission,
+      files,
     );
     if (path === undefined) {
       completeness.exclude("frames", "out_of_target_scope");
@@ -719,6 +729,7 @@ const captureResources = async (
       context.signal,
       "inspect_electron_page",
       context.asarHeaderAdmission,
+      context.files,
     );
     if (path === undefined) {
       completeness.exclude("resources", "out_of_target_scope");
@@ -787,6 +798,7 @@ const captureDom = async (
         context.signal,
         "inspect_electron_page",
         context.asarHeaderAdmission,
+        context.files,
       )) === undefined
     ) {
       completeness.exclude("dom", "out_of_target_scope");
