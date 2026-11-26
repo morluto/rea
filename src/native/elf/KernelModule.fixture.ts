@@ -1,40 +1,5 @@
+import { write16, write32, writeWord } from "../BinaryInteger.fixture.js";
 const concat = (...parts: readonly Buffer[]): Buffer => Buffer.concat(parts);
-
-const write16 = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  little: boolean,
-): void => {
-  if (little) bytes.writeUInt16LE(value, offset);
-  else bytes.writeUInt16BE(value, offset);
-};
-
-const write32 = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  little: boolean,
-): void => {
-  if (little) bytes.writeUInt32LE(value, offset);
-  else bytes.writeUInt32BE(value, offset);
-};
-
-const writeWord = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  bits: 32 | 64,
-  little: boolean,
-): void => {
-  if (bits === 64) {
-    const wide = BigInt(value);
-    if (little) bytes.writeBigUInt64LE(wide, offset);
-    else bytes.writeBigUInt64BE(wide, offset);
-    return;
-  }
-  write32(bytes, offset, value, little);
-};
 
 /** One `__versions` record: unsigned long CRC plus a fixed NUL-padded name. */
 export const modversionEntry = (

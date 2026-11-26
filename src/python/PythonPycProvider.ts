@@ -1,27 +1,20 @@
 import { PYTHON_PYC_PROVIDER_IDENTITY } from "./PythonPycProviderIdentity.js";
 import {
-  projectSelectedArtifactFileFailure,
-  projectOwnedArtifactIdentityFailure,
-  projectStableArtifactFailure,
-  stableArtifactInputFailure,
-  projectArtifactCloseFailure,
   artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
-  ArtifactReaderFailure,
+  closeArtifactResources,
+  projectStableArtifactFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
   ArtifactResourceScope,
 } from "../resources/index.js";
 import type { PythonPycPort } from "../ports/python/PythonPycPort.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
   PYTHON_PYC_LIMIT_MAXIMA,
   type InspectPythonPycInput,
   type PythonPycLimits,
 } from "../domain/python/pythonPyc.js";
-import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok } from "../domain/result.js";
 import {
   PYTHON_PYC_FORMAT,
@@ -29,11 +22,11 @@ import {
 } from "./PythonPyc.errors.js";
 import {
   isParseLimit,
-  parseFailureAnalysisError,
   parseLimitConstraint,
 } from "../domain/parseFailureAnalysisError.js";
 import { parsePythonPyc } from "./PythonPycParser.js";
-import { errorMessage } from "../kernel/errorMessage.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import { offlineArtifactFailureDialect } from "../providers/offlineArtifactFailure.js";
 
 const OPERATION = "inspect_python_pyc";
 
@@ -55,73 +48,44 @@ const parserLimitRecovery = (
   };
 };
 
-const failureForPrimary = (
-  facts: ArtifactFilePrimaryFacts,
-  input: InspectPythonPycInput,
-) => {
-  const { cause, origin } = facts;
-  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
-    return cause;
-  const identityFailure = projectOwnedArtifactIdentityFailure(
-    facts,
-    OPERATION,
-    input.path,
-  );
-  if (identityFailure !== undefined) return identityFailure;
-  if (isParseLimit(cause, PYTHON_PYC_FORMAT)) {
-    const { name } = cause.failure.limit;
-    return parseLimitConstraint(
-      OPERATION,
-      name === "max_depth" ? "capacity" : "memory",
-      cause,
-      parserLimitRecovery(input, pythonPycLimitControls(name)),
-    );
-  }
-  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
-  if (formatFailure !== undefined) return formatFailure;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "limit")
-      return new AnalysisResourceConstraintError(
-        OPERATION,
-        "file-size",
-        cause.message,
-        { max_file_bytes: input.max_file_bytes },
-        {
-          cause,
-          ...parserLimitRecovery(input, ["max_file_bytes"]),
-        },
-      );
-    if (cause.reason === "path" || cause.reason === "format")
-      return stableArtifactInputFailure(cause, OPERATION);
-  }
-  const fileFailure = projectSelectedArtifactFileFailure(
-    cause,
-    OPERATION,
-    input.path,
-    "pyc",
-  );
-  if (fileFailure !== undefined) return fileFailure;
-  return new ProviderAdapterError(PYTHON_PYC_PROVIDER_IDENTITY.id, OPERATION, {
-    cause,
-    diagnostics: {
-      path: input.path,
-      reason: errorMessage(cause),
-    },
-  });
-};
-
 const failureFor = (
   cause: unknown,
   input: InspectPythonPycInput,
   snapshot?: StableArtifactSnapshot,
 ) => {
-  const primary = failureForPrimary(artifactFilePrimaryFacts(cause), input);
+  const facts = artifactFilePrimaryFacts(cause);
   return projectStableArtifactFailure(
     cause,
-    primary,
+    classifyProviderFailure(
+      facts.cause,
+      offlineArtifactFailureDialect(facts, {
+        operation: OPERATION,
+        providerId: PYTHON_PYC_PROVIDER_IDENTITY.id,
+        path: input.path,
+        description: "pyc",
+        recognise: (failure) => {
+          if (!isParseLimit(failure, PYTHON_PYC_FORMAT)) return undefined;
+          const { name } = failure.failure.limit;
+          return parseLimitConstraint(
+            OPERATION,
+            name === "max_depth" ? "capacity" : "memory",
+            failure,
+            parserLimitRecovery(input, pythonPycLimitControls(name)),
+          );
+        },
+        fileSize: (failure) =>
+          new AnalysisResourceConstraintError(
+            OPERATION,
+            "file-size",
+            failure.message,
+            { max_file_bytes: input.max_file_bytes },
+            {
+              cause: failure,
+              ...parserLimitRecovery(input, ["max_file_bytes"]),
+            },
+          ),
+      }),
+    ),
     input.path,
     PYTHON_PYC_PROVIDER_IDENTITY.id,
     OPERATION,
@@ -134,16 +98,12 @@ export class PythonPycProvider implements PythonPycPort {
   readonly identity = PYTHON_PYC_PROVIDER_IDENTITY;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        PYTHON_PYC_PROVIDER_IDENTITY.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      PYTHON_PYC_PROVIDER_IDENTITY,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectPythonPycInput, options?: ExecutionOptions) {

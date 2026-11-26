@@ -4,35 +4,20 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { binaryPlistObjectTable } from "../../tests/fixtures/binaryPlistObjectTable.js";
+import {
+  binaryPlistAscii,
+  binaryPlistFromObjects,
+} from "../../tests/fixtures/binaryPlistObjectTable.js";
 import { resolveAppleBundleExecutable } from "./AppBundleExecutable.js";
 
-const binaryPlistExecutableWithThreeByteUid = (): Buffer => {
-  const ascii = (value: string): Buffer => {
-    const bytes = Buffer.from(value, "ascii");
-    return bytes.length < 15
-      ? Buffer.concat([Buffer.from([0x50 | bytes.length]), bytes])
-      : Buffer.concat([Buffer.from([0x5f, 0x10, bytes.length]), bytes]);
-  };
-  const objects = [
+const binaryPlistExecutableWithThreeByteUid = (): Buffer =>
+  binaryPlistFromObjects([
     Buffer.from([0xd2, 1, 3, 2, 4]),
-    ascii("CFBundleExecutable"),
-    ascii("Fixture"),
-    ascii("ignored"),
+    binaryPlistAscii("CFBundleExecutable"),
+    binaryPlistAscii("Fixture"),
+    binaryPlistAscii("ignored"),
     Buffer.from([0x82, 1, 2, 3]),
-  ];
-  const tableOffset =
-    8 + objects.reduce((sum, object) => sum + object.length, 0);
-  const bytes = Buffer.alloc(tableOffset + objects.length + 32);
-  let cursor = 8;
-  const offsets = objects.map((object) => {
-    const offset = cursor;
-    object.copy(bytes, cursor);
-    cursor += object.length;
-    return offset;
-  });
-  return binaryPlistObjectTable(bytes, offsets, tableOffset);
-};
+  ]);
 
 it.each([
   ["macOS", ["Contents"], ["Contents", "MacOS"]],
@@ -53,9 +38,17 @@ it.each([
     await writeFile(executable, "inert fixture; never executed");
 
     const result = await resolveAppleBundleExecutable(bundle);
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       ok: true,
-      value: { executable, infoPlist: plistPath },
+      value: {
+        executable,
+        infoPlist: plistPath,
+        bundleExecutableSelection: {
+          canonical_path: bundle,
+          layout: plistDirectory.length === 0 ? "root" : "contents",
+          declared_executable: "Fixture",
+        },
+      },
     });
   },
 );
@@ -94,7 +87,7 @@ describe("app bundle Info.plist magic", () => {
     await writeFile(plistPath, binaryPlistExecutableWithThreeByteUid());
     await writeFile(executable, "inert fixture; never executed");
 
-    expect(await resolveAppleBundleExecutable(bundle)).toEqual({
+    expect(await resolveAppleBundleExecutable(bundle)).toMatchObject({
       ok: true,
       value: { executable, infoPlist: plistPath },
     });

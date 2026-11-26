@@ -12,7 +12,11 @@ afterEach(async () => {
 });
 
 const connect = async (
-  options: { replyBytes?: number; bulk?: boolean } = {},
+  options: {
+    replyBytes?: number;
+    bulk?: boolean;
+    extraTools?: Array<{ name: string; description: string }>;
+  } = {},
 ) => {
   const bulkNames = options.bulk
     ? Array.from(
@@ -20,6 +24,7 @@ const connect = async (
         (_, index) => `bulk_${String(index).padStart(2, "0")}`,
       )
     : [];
+  const extraTools = options.extraTools ?? [];
   const server = new EvidenceMcpServerCore(
     { name: "catalog-test", version: "1" },
     { capabilities: {} },
@@ -30,7 +35,7 @@ const connect = async (
     {
       counts: {
         cli_commands: 0,
-        mcp_tools: 3 + bulkNames.length,
+        mcp_tools: 3 + bulkNames.length + extraTools.length,
         mcp_prompts: 0,
       },
       digests: {
@@ -64,6 +69,13 @@ const connect = async (
       },
     );
     if (name === "excluded_sqlite") registration.disable();
+  }
+  for (const extra of extraTools) {
+    server.registerTool(
+      extra.name,
+      { description: extra.description, inputSchema: z.strictObject({}) },
+      () => ({ content: [] }),
+    );
   }
   server.enableProgressiveCatalog();
   const client = new Client({ name: "catalog-test-client", version: "1" });
@@ -241,4 +253,68 @@ it("rejects every malformed discovery without changing visibility", async () => 
     expect(await f.client.listTools()).toEqual(initial);
     expect(f.changed).not.toHaveBeenCalled();
   }
+});
+
+it("ranks name matches ahead of description-only matches and caches projected input schemas", async () => {
+  const f = await connect({ bulk: true });
+  const first = await f.discover({ query: "sqlite", limit: 3 });
+  const firstPage = DISCOVER_TOOLS.outputSchema.parse(first.structuredContent);
+  expect(firstPage.tools.map(({ name }) => name)).toEqual([
+    "alpha_sqlite",
+    "beta_sqlite",
+    "binary_session",
+  ]);
+  const repeat = await f.discover({
+    names: ["alpha_sqlite", "bulk_00"],
+  });
+  const repeatPage = DISCOVER_TOOLS.outputSchema.parse(
+    repeat.structuredContent,
+  );
+  expect(repeatPage.tools[0]?.input_schema).toEqual(
+    firstPage.tools[0]?.input_schema,
+  );
+  expect(repeatPage.loaded_count).toBe(5);
+});
+
+it("returns ranked matches for multi-word task queries when not every word appears (#11707)", async () => {
+  const f = await connect({
+    bulk: false,
+    extraTools: [
+      { name: "a_sqlite", description: "Single keyword match" },
+      { name: "z_inspector", description: "Inspect schema tables" },
+    ],
+  });
+
+  // More matched words in description (z_inspector: 2 words, 0 name matches)
+  // outranks fewer matched words with a name match and earlier alphabetical name
+  // (a_sqlite: 1 word, 1 name match).
+  const byCount = DISCOVER_TOOLS.outputSchema.parse(
+    (await f.discover({ query: "sqlite schema tables", limit: 4 }))
+      .structuredContent,
+  );
+  expect(byCount.tools[0]?.name).toBe("z_inspector");
+  expect(byCount.tools.map(({ name }) => name)).toContain("a_sqlite");
+
+  // Repeated query words are deduplicated so they cannot inflate matchedWords.
+  const repeated = DISCOVER_TOOLS.outputSchema.parse(
+    (await f.discover({ query: "sqlite sqlite schema tables", limit: 4 }))
+      .structuredContent,
+  );
+  expect(repeated.tools[0]?.name).toBe("z_inspector");
+
+  // Underscore-named tools and multi-word queries rank cleanly without
+  // splitting hyphenated tokens into accidental substring matches.
+  const exactPrefix = DISCOVER_TOOLS.outputSchema.parse(
+    (await f.discover({ query: "alpha_sqlite nonexistent", limit: 3 }))
+      .structuredContent,
+  );
+  expect(exactPrefix.total_matches).toBeGreaterThanOrEqual(1);
+  expect(exactPrefix.tools[0]?.name).toBe("alpha_sqlite");
+
+  const unmatched = DISCOVER_TOOLS.outputSchema.parse(
+    (await f.discover({ query: "alpha-no-such-tool-9995", limit: 3 }))
+      .structuredContent,
+  );
+  expect(unmatched.total_matches).toBe(0);
+  expect(unmatched.tools).toEqual([]);
 });

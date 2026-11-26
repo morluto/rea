@@ -24,6 +24,7 @@ import {
   assertArtifactReadActive,
   targetDigestChangedFailure,
   DirectoryArtifactReader,
+  unsupportedArtifact,
 } from "../../resources/index.js";
 import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
 import { consumeWithOrderedReads } from "../OrderedReads.js";
@@ -79,6 +80,13 @@ class FilesystemTreeView implements DylibTreeView {
     const pending = this.#readImage(path);
     this.#images.set(path, pending);
     return pending;
+  }
+
+  /** Seed an already-verified Mach-O parse so follow-up resolution skips re-opening the file. */
+  seedImage(path: string, facts: MachoImageFacts, identity: BigIntStats): void {
+    if (this.#images.has(path)) return;
+    this.#images.set(path, Promise.resolve(facts));
+    this.#identities.set(path, identity);
   }
 
   /** Identity of the file whose header bytes `image()` parsed. */
@@ -272,14 +280,14 @@ const executableRoots = async (
           firstSymlink ??= entry.path;
         }
         return entry.kind === "file"
-          ? files.startsWithMachoMagic(entry)
+          ? files.readMachoIfMagic(entry)
           : undefined;
       },
-      async (entry, macho) => {
-        if (!macho) return;
-        const facts = await view.image(entry.path);
-        if (facts.status === "malformed" || facts.status === "unsupported")
-          unclassified.push(entry.path);
+      async (entry, observed) => {
+        if (observed === undefined) return;
+        view.seedImage(entry.path, observed.facts, observed.identity);
+        const { facts } = observed;
+        if (facts.status === "failed") unclassified.push(entry.path);
         else if (
           facts.status === "parsed" &&
           machoImageSlices(facts).some(
@@ -332,14 +340,16 @@ const requireMachoRoots = async (
   const resolved: string[] = [];
   for (const [index, path] of roots.entries()) {
     const reject = (
-      reason: "path" | "format",
+      reason: "path" | "unsupported",
       message: string,
     ): AnalysisInputError | ArtifactReaderFailure =>
       callerSelected
         ? new AnalysisInputError(OPERATION, undefined, [
             { path: ["roots", index], reason: "invalid_value", message },
           ])
-        : new ArtifactReaderFailure(reason, message);
+        : reason === "unsupported"
+          ? unsupportedArtifact("macho", message)
+          : new ArtifactReaderFailure(reason, message);
     const lookup = await resolveTreePath(view, path);
     if (lookup.kind === "escapes")
       throw reject("path", `Root ${path} resolves outside the analyzed root`);
@@ -354,7 +364,7 @@ const requireMachoRoots = async (
         `Root ${path} is not a regular file in the analyzed root`,
       );
     if ((await view.image(lookup.path)).status === "not-mach-o")
-      throw reject("format", `Root ${path} is not a Mach-O image`);
+      throw reject("unsupported", `Root ${path} is not a Mach-O image`);
     if (!resolved.includes(lookup.path)) resolved.push(lookup.path);
   }
   return resolved;

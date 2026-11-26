@@ -1,13 +1,19 @@
 import { createHash } from "node:crypto";
-import { copyFile, lstat, mkdir, rm, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
-import { json } from "node:stream/consumers";
 import { z } from "zod";
 
 const output = ".cache/ci-build-cache";
 const plan = ".cache/ci-build-plan.json";
 
-async function readTasks() {
+function readTasks(source) {
   const { tasks } = z
     .object({
       tasks: z
@@ -20,8 +26,7 @@ async function readTasks() {
         )
         .min(1),
     })
-    // Node 24's synchronous UTF-8 read can abort on short pipe reads.
-    .parse(await json(process.stdin));
+    .parse(JSON.parse(source));
   const identities = new Set();
   for (const { taskId } of tasks) {
     if (identities.has(taskId))
@@ -121,16 +126,22 @@ async function snapshot(tasks) {
   );
 }
 
-const [mode, ...extra] = process.argv.slice(2);
-if (extra.length || !["key", "snapshot"].includes(mode))
-  throw new Error(
-    "Usage: portable-build-cache.mjs key|snapshot < turbo-dry-plan.json",
-  );
-// Invalidate this mode's previous result before parsing its input. Failed
-// validation must not leave stale plans or snapshots for downstream reuse.
-if (mode === "snapshot") await rm(output, { recursive: true, force: true });
-else await rm(plan, { force: true });
-const tasks = await readTasks();
+const [mode, input, ...extra] = process.argv.slice(2);
+if (extra.length || !input || !["key", "snapshot"].includes(mode))
+  throw new Error("Usage: portable-build-cache.mjs key|snapshot <plan.json>");
+// Read the complete plan file first so invalidation can delete the retained
+// plan even when that path is also the input. If the read fails, still clear
+// this mode's previous output so a missing or unreadable file cannot leave a
+// stale plan or snapshot. Failed validation must also not leave stale output
+// for downstream reuse.
+let source;
+try {
+  source = await readFile(input, "utf8");
+} finally {
+  if (mode === "snapshot") await rm(output, { recursive: true, force: true });
+  else await rm(plan, { force: true });
+}
+const tasks = readTasks(source);
 if (mode === "key") {
   const prefix = z
     .string()

@@ -5,7 +5,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it } from "vitest";
 import { appleIpsSchema } from "../../../src/domain/native/appleIps.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import { createAppleIpsService } from "../../../src/composition/binaryDiagnostics.js";
+import { createAppleIpsService } from "../../../src/composition/binaryDiagnostics/appleIps.js";
 import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -100,7 +100,7 @@ it("advertises and validates IPS facts and failures through production stdio MCP
   );
   const whitespace = await call("inspect_apple_ips", { path: whitespacePath });
   expect(whitespace.isError).toBe(true);
-  expect(parseMcpToolError(whitespace).error.code).toBe("invalid_request");
+  expect(parseMcpToolError(whitespace).error.code).toBe("unsupported_target");
 
   const malformedPath = join(root, "malformed-uuid.ips");
   await writeFile(malformedPath, appleIpsBytes({ uuid: "malformed/report" }));

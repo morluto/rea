@@ -1,3 +1,4 @@
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { withCanonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -14,7 +15,7 @@ import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
 } from "../dist/process/ProviderProcess.js";
-import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { inspectVerifierGhidraFromEnvironment } from "./lib/ghidra-installation-inspection.mjs";
 import {
   requireMcpLifecycleResult,
   requireMcpOutput,
@@ -35,6 +36,7 @@ import {
   VerifierFixture,
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 if (process.argv.length !== 2)
   throw new Error("Usage: node scripts/verify-real-ghidra-raw.mjs");
@@ -46,13 +48,7 @@ if (process.env.GHIDRA_INSTALL_DIR === undefined)
   throw new Error(
     "Set GHIDRA_INSTALL_DIR to a bring-your-own Ghidra installation.",
   );
-const installation = await inspectVerifierGhidraInstallation({
-  environment: process.env,
-  installDir: process.env.GHIDRA_INSTALL_DIR,
-  ...(process.env.JAVA_HOME === undefined
-    ? {}
-    : { javaHome: process.env.JAVA_HOME }),
-});
+const installation = await inspectVerifierGhidraFromEnvironment(process.env);
 assert.equal(installation.status, "available", JSON.stringify(installation));
 
 const run = createVerifierRun();
@@ -60,10 +56,6 @@ const workspaceFixture = await VerifierFixture.open({
   prefix: "rea-raw-proof-",
 });
 const workspace = workspaceFixture.path;
-const retainWorkspace = (message, options) => {
-  workspaceFixture.retain(message);
-  return new Error(message, options);
-};
 let fixtureCleaned = true;
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
@@ -115,7 +107,9 @@ const transport = new StdioClientTransport({
   env: env,
   stderr: "pipe",
 });
-const client = new Client({ name: "rea-real-raw-proof", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "rea-real-raw-proof", version: "1" }),
+);
 let stderr = "";
 transport.stderr?.on("data", (chunk) => {
   stderr = (stderr + chunk.toString()).slice(-65536);
@@ -290,6 +284,8 @@ await withVerifierFixture(workspaceFixture, async () => {
       [
         entrypoint,
         "inspect-native-load-image",
+        "--detail",
+        "complete",
         path,
         "--target-format",
         "raw-binary",
@@ -321,7 +317,11 @@ await withVerifierFixture(workspaceFixture, async () => {
         architecture,
         entry_point: "0x1000",
       });
-      const image = await call("inspect_native_load_image", {}, x86Sha256);
+      const image = await call(
+        "inspect_native_load_image",
+        { detail: "complete" },
+        x86Sha256,
+      );
       assert.equal(
         image.normalized_result.status,
         "verified",
@@ -344,7 +344,7 @@ await withVerifierFixture(workspaceFixture, async () => {
       );
       const pseudo = await call(
         "procedure_pseudo_code",
-        { procedure: "0x1000" },
+        { detail: "complete", procedure: "0x1000" },
         x86Sha256,
       );
       assert.match(pseudo.normalized_result, /\b(?:42|0x2a)\b/iu);
@@ -671,7 +671,7 @@ await withVerifierFixture(workspaceFixture, async () => {
     cleanupFailure = cause;
   }
   if (cleanupFailure !== undefined || primaryFailure !== undefined)
-    throw retainWorkspace(
+    throw workspaceFixture.retainedError(
       `Raw-binary verification failed; retained workspace: ${workspace}`,
       {
         cause:
@@ -687,7 +687,7 @@ await withVerifierFixture(workspaceFixture, async () => {
     );
   const interrupted = commandInterruption.reason();
   if (interrupted !== undefined)
-    throw retainWorkspace(
+    throw workspaceFixture.retainedError(
       `Raw-binary verification interrupted; retained diagnostic workspace: ${workspace}`,
       { cause: interrupted },
     );
@@ -819,10 +819,12 @@ async function verifyCrossBlockProject(target, targetSha256) {
     },
     stderr: "pipe",
   });
-  const projectClient = new Client({
-    name: "rea-cross-block-project-proof",
-    version: "1",
-  });
+  const projectClient = completeEvidenceClient(
+    new Client({
+      name: "rea-cross-block-project-proof",
+      version: "1",
+    }),
+  );
   try {
     await untilInterrupted(
       projectClient.connect(projectTransport, {
@@ -919,12 +921,7 @@ async function fingerprintFiles(directory) {
       const name = join(relative, entry.name);
       if (entry.isDirectory()) await visit(name);
       else if (entry.isFile())
-        result.push([
-          name,
-          createHash("sha256")
-            .update(await readFile(join(directory, name)))
-            .digest("hex"),
-        ]);
+        result.push([name, await sha256File(join(directory, name))]);
       else throw new Error(`Unexpected project entry: ${name}`);
     }
   };

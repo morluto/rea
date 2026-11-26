@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { PE_CODEVIEW_PREFIX_BYTES } from "./binaryTargetTypes.js";
+import type { AnalysisParameterLimit } from "./analysisSettings.js";
 import { digestSchema } from "./digests.js";
 import { evidenceLocationSchema, type EvidenceLocation } from "./evidence.js";
 import {
@@ -8,8 +9,29 @@ import {
   localPathStringSchema,
 } from "./localPath.js";
 
-/** Selected-file ceiling for one release-exposure audit. */
-export const MAX_RELEASE_EXPOSURE_FILE_BYTES = 256 * 1024 * 1024;
+/**
+ * `max_file_bytes`: the per-call selected-file, on-disk PE and shared
+ * packaged-image read budget. Reads are held in memory, so the host heap is
+ * an independent constraint; the accounting is exact up to the safe-integer
+ * range.
+ */
+export const RELEASE_EXPOSURE_FILE_BYTES = {
+  minimum: 1,
+  maximum: Number.MAX_SAFE_INTEGER,
+  default_value: 256 * 1024 * 1024,
+} as const;
+
+/** The per-call control that stopped a release-exposure read. */
+export const releaseExposureFileBytesLimit = (
+  effectiveValue: number,
+): AnalysisParameterLimit => ({
+  control_kind: "parameter",
+  parameter: "max_file_bytes",
+  effective_value: effectiveValue,
+  unit: "bytes",
+  ...RELEASE_EXPOSURE_FILE_BYTES,
+  applies_at: "next_call",
+});
 /** Members inventoried from one installation or package. */
 export const MAX_RELEASE_EXPOSURE_INVENTORY_ENTRIES = 65_536;
 /** Bytes hashed while inventorying one installation or package. */
@@ -43,7 +65,7 @@ const RELEASE_EXPOSURE_LIMITATION =
   "This report states what static analysis of the selected artifact recovered. It does not establish that the application is secure.";
 
 export const RELEASE_EXPOSURE_ALLOWANCES = [
-  `Selected file reads stop at ${String(MAX_RELEASE_EXPOSURE_FILE_BYTES)} bytes.`,
+  `Selected file reads stop at max_file_bytes (${String(RELEASE_EXPOSURE_FILE_BYTES.default_value)} bytes by default).`,
   `Text member scans read at most ${String(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES)} bytes each and ${String(MAX_RELEASE_EXPOSURE_TEXT_BYTES)} bytes in total.`,
   `HTML script targets keep at most ${String(MAX_RELEASE_EXPOSURE_SCRIPT_TARGET_BYTES)} bytes of resolved paths. Later targets stay unassessed.`,
   `Local source map targets keep at most ${String(MAX_RELEASE_EXPOSURE_MAP_TARGET_BYTES)} bytes of resolved paths. Later targets stay unassessed.`,
@@ -56,7 +78,6 @@ export const RELEASE_EXPOSURE_ALLOWANCES = [
 export const RELEASE_EXPOSURE_STATUSES = [
   "exposed",
   "not_observed",
-  "not_applicable",
   "unknown",
   "not_assessed",
 ] as const;
@@ -89,6 +110,11 @@ const RELEASE_EXPOSURE_CHECK_IDS = [
 const statusSchema = z.enum(RELEASE_EXPOSURE_STATUSES);
 const severitySchema = z.enum(RELEASE_EXPOSURE_SEVERITIES);
 type Status = z.infer<typeof statusSchema>;
+/**
+ * A builder's outcome. `not_applicable` is never reported as a row: the check
+ * is omitted and named in `coverage.inapplicable_checks` instead.
+ */
+type Outcome = Status | "not_applicable";
 type Severity = z.infer<typeof severitySchema>;
 export type ReleaseExposureCheckId =
   (typeof RELEASE_EXPOSURE_CHECK_IDS)[number];
@@ -230,7 +256,6 @@ const releaseExposureCheckSchema = z.strictObject({
 const countSchema = z.strictObject({
   exposed: z.int().nonnegative(),
   not_observed: z.int().nonnegative(),
-  not_applicable: z.int().nonnegative(),
   unknown: z.int().nonnegative(),
   not_assessed: z.int().nonnegative(),
 });
@@ -258,6 +283,11 @@ export const releaseExposureReportSchema = z
     }),
     coverage: z.strictObject({
       allowances: z.array(z.string().min(1)),
+      inapplicable_checks: z
+        .array(z.enum(RELEASE_EXPOSURE_CHECK_IDS))
+        .describe(
+          "Checks that cannot apply to this artifact's detected formats. They are omitted from checks.",
+        ),
       omitted: z.array(
         z.strictObject({
           subject: z.string().min(1),
@@ -269,16 +299,25 @@ export const releaseExposureReportSchema = z
     limitations: z.array(z.string().min(1)),
   })
   .superRefine((report, context) => {
+    const inapplicable = new Set(report.coverage.inapplicable_checks);
+    const expected = RELEASE_EXPOSURE_CHECK_IDS.filter(
+      (id) => !inapplicable.has(id),
+    );
+    const omitted = RELEASE_EXPOSURE_CHECK_IDS.filter((id) =>
+      inapplicable.has(id),
+    );
     if (
-      report.checks.length !== RELEASE_EXPOSURE_CHECK_IDS.length ||
-      report.checks.some(
-        (check, index) => check.id !== RELEASE_EXPOSURE_CHECK_IDS[index],
+      report.checks.length !== expected.length ||
+      report.checks.some((check, index) => check.id !== expected[index]) ||
+      report.coverage.inapplicable_checks.some(
+        (id, index) => id !== omitted[index],
       )
     )
       context.addIssue({
         code: "custom",
         path: ["checks"],
-        message: "Checks must be the fixed release-exposure table, in order.",
+        message:
+          "Checks and coverage.inapplicable_checks must split the fixed release-exposure table, in order.",
       });
     for (const [index, check] of report.checks.entries()) {
       const policy = CHECK_TABLE[check.id];
@@ -322,11 +361,11 @@ export const auditReleaseExposureInputSchema = z.strictObject({
   ),
   max_file_bytes: z
     .int()
-    .positive()
-    .max(MAX_RELEASE_EXPOSURE_FILE_BYTES)
-    .default(MAX_RELEASE_EXPOSURE_FILE_BYTES)
+    .min(RELEASE_EXPOSURE_FILE_BYTES.minimum)
+    .max(RELEASE_EXPOSURE_FILE_BYTES.maximum)
+    .default(RELEASE_EXPOSURE_FILE_BYTES.default_value)
     .describe(
-      "Selected-file, on-disk PE, and shared packaged-image read ceiling. Text, source-map, and other package members use the smaller allowances in coverage.allowances.",
+      `Selected-file, on-disk PE, and shared packaged-image read budget (default ${String(RELEASE_EXPOSURE_FILE_BYTES.default_value)} bytes); reads are held in memory. Text, source-map, and other package members use the smaller allowances in coverage.allowances.`,
     ),
 });
 
@@ -413,8 +452,6 @@ export interface FuseImageFact {
   readonly kind: "unsupported" | "failed" | "report";
   readonly role: "app-bundle" | "native-image";
   readonly path?: string;
-  /** Digest of the file the reader resolved, on a report. */
-  readonly sha256?: string;
   readonly reason?: string;
   readonly implications?: readonly {
     readonly subject: string;
@@ -486,14 +523,22 @@ const boundLocations = (
   // sample-cap: illustrative locations; observation.counts reports the totals
 ): EvidenceLocation[] => locations.slice(0, MAX_RELEASE_EXPOSURE_SAMPLES);
 
+/** A check that cannot apply to the artifact's detected formats. */
+interface InapplicableCheck {
+  readonly id: ReleaseExposureCheckId;
+  readonly status: "not_applicable";
+}
+type CheckResult = ReleaseExposureCheck | InapplicableCheck;
+
 const makeCheck = (
   id: ReleaseExposureCheckId,
-  status: Status,
+  status: Outcome,
   confidence: "observed" | "inferred",
   counts: Record<string, number>,
   samples: readonly string[],
   locations: readonly EvidenceLocation[],
-): ReleaseExposureCheck => {
+): CheckResult => {
+  if (status === "not_applicable") return { id, status };
   const policy = CHECK_TABLE[id];
   return {
     id,
@@ -526,10 +571,10 @@ const sourceMapCheck = (
   id: ReleaseExposureCheckId,
   present: number,
   scan: ReleaseExposureScan,
-): ReleaseExposureCheck => {
+): CheckResult => {
   const { source_maps: maps, coverage, target } = scan;
   const unresolved = maps.unparsed + maps.skipped > 0 || coverage === "unknown";
-  const status: Status =
+  const status: Outcome =
     present > 0 ? "exposed" : unresolved ? "unknown" : "not_observed";
   const findingPaths =
     id === "javascript.source_map_sources"
@@ -606,7 +651,7 @@ const fuseCheck = (
   id: keyof typeof FUSE_SUBJECTS,
   scan: ReleaseExposureScan,
   owners: ReleaseExposureOwnerFacts,
-): ReleaseExposureCheck => {
+): CheckResult => {
   const path = scan.target.selected_path;
   const spec = FUSE_SUBJECTS[id];
   const images = owners.fuse_images;
@@ -632,7 +677,7 @@ const fuseCheck = (
     packagedNativeImagesUnread(scan) ||
     (nativeImagesMayBeUnread(scan) &&
       owners.electron_executable_included !== true);
-  let status: Status;
+  let status: Outcome;
   if (outcomes.includes(spec.exposed)) status = "exposed";
   else if (owners.electron_family === "not_electron")
     status = nativeImagesMayBeUnread(scan) ? "unknown" : "not_applicable";
@@ -675,9 +720,9 @@ const fuseCheck = (
   );
 };
 
-const extractableCheck = (scan: ReleaseExposureScan): ReleaseExposureCheck => {
+const extractableCheck = (scan: ReleaseExposureScan): CheckResult => {
   const { extractable, coverage, target } = scan;
-  let status: Status;
+  let status: Outcome;
   if (extractable.readable_members > 0) status = "exposed";
   else if (
     extractable.unreadable_members > 0 ||
@@ -702,9 +747,9 @@ const extractableCheck = (scan: ReleaseExposureScan): ReleaseExposureCheck => {
   );
 };
 
-const companionCheck = (scan: ReleaseExposureScan): ReleaseExposureCheck => {
+const companionCheck = (scan: ReleaseExposureScan): CheckResult => {
   const { debug_companions: companions, coverage, target } = scan;
-  const status: Status =
+  const status: Outcome =
     companions.paths.length > 0
       ? "exposed"
       : companions.skipped > 0 || coverage === "unknown"
@@ -723,11 +768,11 @@ const companionCheck = (scan: ReleaseExposureScan): ReleaseExposureCheck => {
   );
 };
 
-const pdbCheck = (scan: ReleaseExposureScan): ReleaseExposureCheck => {
+const pdbCheck = (scan: ReleaseExposureScan): CheckResult => {
   const { pdb, coverage, target } = scan;
   const rawPaths = pdb.path_bytes ?? [];
   const paths = pdb.paths.length + rawPaths.length;
-  let status: Status;
+  let status: Outcome;
   if (paths > 0) status = "exposed";
   else if (pdb.failed > 0 || coverage !== "complete") status = "unknown";
   else if (pdb.examined === 0) status = "not_applicable";
@@ -743,7 +788,7 @@ const pdbCheck = (scan: ReleaseExposureScan): ReleaseExposureCheck => {
       ? findingLocations(imagePaths, target.selected_path)
       : targetLocation(target.selected_path),
   );
-  return rawPaths.length === 0
+  return rawPaths.length === 0 || check.status === "not_applicable"
     ? check
     : {
         ...check,
@@ -755,7 +800,7 @@ const metadataStatus = (
   images: readonly MetadataImageFact[],
   present: (image: MetadataImageFact) => boolean,
   unresolved: boolean,
-): Status => {
+): Outcome => {
   if (images.some(present)) return "exposed";
   if (
     unresolved ||
@@ -773,7 +818,7 @@ const retainsBuildPaths = (image: MetadataImageFact): boolean =>
 const goCheck = (
   scan: ReleaseExposureScan,
   images: readonly MetadataImageFact[],
-): ReleaseExposureCheck => {
+): CheckResult => {
   const path = scan.target.selected_path;
   const paths = images.flatMap((image) =>
     image.kind === "paths" ? image.paths : [],
@@ -807,7 +852,7 @@ const goCheck = (
 const rustCheck = (
   scan: ReleaseExposureScan,
   images: readonly MetadataImageFact[],
-): ReleaseExposureCheck => {
+): CheckResult => {
   const path = scan.target.selected_path;
   const packages = images.flatMap((image) =>
     image.kind === "packages" ? image.packages : [],
@@ -838,7 +883,7 @@ const rustCheck = (
 const credentialCheck = (
   scan: ReleaseExposureScan,
   markers: ReleaseExposureOwnerFacts["credential_markers"],
-): ReleaseExposureCheck => {
+): CheckResult => {
   const { text_members: members, coverage, target } = scan;
   const counts: Record<string, number> = {
     scanned_members: members.scanned,
@@ -847,7 +892,7 @@ const credentialCheck = (
   };
   for (const hit of markers.hits)
     counts[hit.rule_id] = (counts[hit.rule_id] ?? 0) + 1;
-  const status: Status =
+  const status: Outcome =
     markers.hits.length > 0
       ? "exposed"
       : members.skipped > 0 || coverage === "unknown"
@@ -873,15 +918,41 @@ const credentialCheck = (
 const notAssessed = (
   id: "native.hardening" | "macho.hardened_runtime" | "android.manifest",
   path: string,
-): ReleaseExposureCheck =>
+  applies: boolean,
+): CheckResult =>
   makeCheck(
     id,
-    "not_assessed",
+    applies ? "not_assessed" : "not_applicable",
     "inferred",
     { assessed: 0 },
     [],
     targetLocation(path),
   );
+
+/**
+ * Which format-gated checks can apply, from the reader's format facts. A check
+ * stays when a member it could apply to may have gone unread.
+ */
+const formatApplicability = (scan: ReleaseExposureScan) => {
+  const formats = new Set(scan.native_images.map((image) => image.format));
+  // Member formats decide applicability. A native image that may have gone
+  // unread, including one stored inside a package, keeps the native checks;
+  // a fully read package with no native member does not.
+  const unread = nativeImagesMayBeUnread(scan);
+  return {
+    native: formats.size > 0 || unread,
+    macho: formats.has("mach-o") || formats.has("mach-o-universal") || unread,
+    // The audit does not recognize Android packages, so a directory or an
+    // unclassified file may hold one. An app bundle, an ASAR, or a native
+    // executable cannot be one.
+    android: scan.target.kind === "directory" || scan.target.kind === "file",
+    // A native executable carries JavaScript only inside an embedded package.
+    javascript:
+      scan.target.kind !== "executable" ||
+      scan.extractable.formats.length > 0 ||
+      scan.coverage !== "complete",
+  };
+};
 
 /** Build the fixed check list from reader facts and owner results. */
 export const assembleReleaseExposureReport = (
@@ -889,17 +960,17 @@ export const assembleReleaseExposureReport = (
   owners: ReleaseExposureOwnerFacts,
 ): ReleaseExposureReport => {
   const path = scan.target.selected_path;
-  const checks = [
-    sourceMapCheck(
-      "javascript.source_map_sources",
-      scan.source_maps.embedded,
-      scan,
-    ),
-    sourceMapCheck(
-      "javascript.source_maps",
-      scan.source_maps.without_sources,
-      scan,
-    ),
+  const applies = formatApplicability(scan);
+  const sourceMaps = (
+    id: "javascript.source_map_sources" | "javascript.source_maps",
+    present: number,
+  ): CheckResult =>
+    applies.javascript || present > 0
+      ? sourceMapCheck(id, present, scan)
+      : { id, status: "not_applicable" };
+  const results: CheckResult[] = [
+    sourceMaps("javascript.source_map_sources", scan.source_maps.embedded),
+    sourceMaps("javascript.source_maps", scan.source_maps.without_sources),
     fuseCheck("electron.run_as_node", scan, owners),
     fuseCheck("electron.asar_integrity", scan, owners),
     fuseCheck("electron.only_load_from_asar", scan, owners),
@@ -910,16 +981,22 @@ export const assembleReleaseExposureReport = (
     goCheck(scan, owners.go_images),
     rustCheck(scan, owners.rust_images),
     credentialCheck(scan, owners.credential_markers),
-    notAssessed("native.hardening", path),
-    notAssessed("macho.hardened_runtime", path),
-    notAssessed("android.manifest", path),
+    notAssessed("native.hardening", path, applies.native),
+    notAssessed("macho.hardened_runtime", path, applies.macho),
+    notAssessed("android.manifest", path, applies.android),
   ];
+  const checks = results.filter(
+    (check): check is ReleaseExposureCheck => check.status !== "not_applicable",
+  );
   return releaseExposureReportSchema.parse({
     target: scan.target,
     checks,
     summary: summarizeReleaseExposureChecks(checks),
     coverage: {
       allowances: [...RELEASE_EXPOSURE_ALLOWANCES],
+      inapplicable_checks: results.flatMap((check) =>
+        check.status === "not_applicable" ? [check.id] : [],
+      ),
       omitted: scan.omitted.filter((item) => item.count > 0),
     },
     limitations: [
@@ -941,7 +1018,6 @@ export const summarizeReleaseExposureChecks = (
   const byStatus = {
     exposed: 0,
     not_observed: 0,
-    not_applicable: 0,
     unknown: 0,
     not_assessed: 0,
   };

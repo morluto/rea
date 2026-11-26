@@ -1,5 +1,7 @@
 import { BinaryReader } from "../binaryContainer.js";
+import type { TargetFailureOf, TruncatedExtent } from "../targetFailure.js";
 import {
+  hasJvmClassHeader,
   isJvmClassFile,
   JVM_CLASS_IDENTITY_LIMIT_REASON,
 } from "./jvmClassFile.js";
@@ -20,15 +22,84 @@ export interface FatSliceDeclaration {
   readonly reserved: number | null;
 }
 
-export interface FatSliceRangeIssue {
-  readonly category: "malformed" | "unsupported";
+/** The format every Mach-O image and universal container owner reports. */
+export const MACHO_FORMAT = "macho";
+
+/**
+ * Why a Mach-O structure could not be read, as the target failure its owner
+ * established: bytes that break the format, end before a structure they
+ * declare, use a form outside coverage, or came up short after the file's
+ * size was measured (the file changed during the read).
+ */
+export type MachoReadFailure = TargetFailureOf<
+  "malformed" | "truncated" | "unsupported" | "changed"
+>;
+
+type MachoSite = { readonly offset?: number; readonly field?: string };
+
+/** The Mach-O owner's failures, one constructor per kind. */
+export const machoFailure = {
+  malformed: (
+    detail: string,
+    site: MachoSite = {},
+  ): TargetFailureOf<"malformed"> => ({
+    kind: "malformed",
+    format: MACHO_FORMAT,
+    detail,
+    ...site,
+  }),
+  truncated: (
+    detail: string,
+    site: MachoSite & { readonly extent?: TruncatedExtent } = {},
+  ): TargetFailureOf<"truncated"> => ({
+    kind: "truncated",
+    format: MACHO_FORMAT,
+    detail,
+    ...site,
+  }),
+  unsupported: (
+    detail: string,
+    site: MachoSite = {},
+  ): TargetFailureOf<"unsupported"> => ({
+    kind: "unsupported",
+    format: MACHO_FORMAT,
+    detail,
+    undecodedContent: false,
+    ...site,
+  }),
+  changed: (
+    detail: string,
+    site: MachoSite = {},
+  ): TargetFailureOf<"changed"> => ({
+    kind: "changed",
+    format: MACHO_FORMAT,
+    detail,
+    ...site,
+  }),
+} as const;
+
+/** A FAT declaration whose own range or alignment cannot be read. */
+export type FatSliceRangeFailure = Extract<
+  MachoReadFailure,
+  { readonly kind: "malformed" | "truncated" | "unsupported" }
+>;
+
+/**
+ * A FAT header or table that runs past the measured end of the file: the
+ * declared structure is intact as far as the file goes, so the file is cut
+ * short rather than corrupt.
+ */
+export interface FatContainerTruncation {
+  readonly state: "truncated";
   readonly reason: string;
+  readonly extent: TruncatedExtent;
 }
 
 export type FatContainerHeader =
   | { readonly state: "not-fat" }
   | { readonly state: "needs-data"; readonly requiredBytes: number }
   | { readonly state: "malformed"; readonly reason: string }
+  | FatContainerTruncation
   | {
       readonly state: "parsed";
       readonly magic: number;
@@ -37,7 +108,7 @@ export type FatContainerHeader =
       readonly littleEndian: boolean;
       readonly tableEnd: number;
       readonly slices: readonly FatSliceDeclaration[];
-      readonly rangeIssues: readonly (FatSliceRangeIssue | null)[];
+      readonly rangeIssues: readonly (FatSliceRangeFailure | null)[];
     };
 
 /** Exact slice-header observations collected by a complete, bounded reader. */
@@ -88,6 +159,52 @@ export const readMachoHeaderPrefixFacts = (
   };
 };
 
+/** Bounded thin-header prefix length needed to read magic, CPU type, and subtype. */
+export const FAT_SLICE_HEADER_PREFIX_BYTES = 12;
+
+/**
+ * Read bounded thin Mach-O header prefixes for each valid FAT slice using the
+ * caller's positional range reader, optionally preserving already-observed
+ * slice headers and skipping slices below `minSliceSize`.
+ */
+export const readFatSliceHeaders = async (
+  header: Extract<FatContainerHeader, { readonly state: "parsed" }>,
+  readRange: (offset: number, length: number) => Promise<Buffer>,
+  options?: {
+    readonly existing?: ReadonlyMap<number, MachoHeaderPrefixFacts>;
+    readonly minSliceSize?: number;
+    readonly includeMisaligned?: boolean;
+  },
+): Promise<FatSliceHeaderEvidence> => {
+  const sliceHeadersByOffset = new Map<number, MachoHeaderPrefixFacts>(
+    options?.existing,
+  );
+  const minSliceSize = options?.minSliceSize ?? 0;
+  const includeMisaligned = options?.includeMisaligned === true;
+  for (let index = 0; index < header.slices.length; index += 1) {
+    const slice = header.slices[index];
+    const rangeIssue = header.rangeIssues[index] ?? null;
+    if (
+      slice === undefined ||
+      (rangeIssue !== null &&
+        (!includeMisaligned || !isAlignmentOnlyIssue(slice, rangeIssue)))
+    )
+      continue;
+    if (slice.size < minSliceSize) continue;
+    if (options?.existing !== undefined) {
+      const observed = sliceHeadersByOffset.get(slice.offset);
+      if (observed !== undefined && observed.magic !== null) continue;
+    }
+    const observedLength = Math.min(FAT_SLICE_HEADER_PREFIX_BYTES, slice.size);
+    const thinHeader = await readRange(slice.offset, observedLength);
+    sliceHeadersByOffset.set(
+      slice.offset,
+      readMachoHeaderPrefixFacts(thinHeader),
+    );
+  }
+  return { header, sliceHeadersByOffset };
+};
+
 /** FAT declarations decoded before the caller knows the final stream length. */
 export type FatContainerTable =
   | { readonly state: "not-fat" }
@@ -110,11 +227,7 @@ export type FatContainerIdentity =
       readonly state: "needs-slice-header";
       readonly offsets: readonly number[];
     }
-  | {
-      readonly state: "malformed";
-      readonly category: "malformed" | "unsupported";
-      readonly reason: string;
-    };
+  | { readonly state: "failed"; readonly failure: FatSliceRangeFailure };
 
 const FAT_MAGIC = 0xcafebabe;
 const FAT_MAGIC_64 = 0xcafebabf;
@@ -172,15 +285,6 @@ const readFatMagicFormat = (magic: number): FatHeaderFormat | null => {
   };
 };
 
-/** Classify a Mach-O signature without admitting a thin header or FAT table. */
-export const machoContainerKindFromMagic = (
-  magic: number,
-): "thin" | "fat32" | "fat64" | null => {
-  if (thinMachoFormat(magic) !== null) return "thin";
-  const fat = readFatMagicFormat(magic);
-  return fat === null ? null : fat.wide ? "fat64" : "fat32";
-};
-
 /** Observe the fixed FAT header without table, count-limit or container-identity admission. */
 export const readFatHeaderPrefix = (bytes: Uint8Array): FatHeaderPrefix => {
   if (bytes.byteLength < 4) return { state: "unknown", requiredBytes: 4 };
@@ -214,9 +318,14 @@ export const readFatContainerHeader = (
   const table = decodeFatContainerTable(bytes, prefix);
   if (table.state !== "parsed") {
     if (table.state === "needs-data" && table.requiredBytes > fileSize) {
-      return table.requiredBytes === 8 && fileSize < 8
-        ? { state: "malformed", reason: "FAT header is truncated" }
-        : { state: "not-fat" };
+      if (prefix.state === "incomplete")
+        return fatTruncation("FAT header", fileSize, table.requiredBytes);
+      // A CAFEBABE count that reads as a JVM class version may belong to a
+      // class file shorter than the table it would declare. Any other FAT
+      // header that declares a table past the file's end is cut short.
+      return hasJvmClassHeader(bytes)
+        ? { state: "not-fat" }
+        : fatTruncation("FAT table", fileSize, table.requiredBytes);
     }
     return table;
   }
@@ -230,6 +339,16 @@ export const readFatContainerHeader = (
     ),
   };
 };
+
+const fatTruncation = (
+  structure: "FAT header" | "FAT table",
+  availableBytes: number,
+  requiredBytes: number,
+): FatContainerTruncation => ({
+  state: "truncated",
+  reason: `${structure} is truncated: the file has ${availableBytes} bytes and the ${structure} needs ${requiredBytes}`,
+  extent: { availableBytes, requiredBytes },
+});
 
 /** Decode bounded FAT declarations without assuming the final file size. */
 export const readFatContainerTable = (bytes: Uint8Array): FatContainerTable =>
@@ -274,24 +393,41 @@ const decodeFatContainerTable = (
 export const classifyFatContainerIdentity = (
   header: Extract<FatContainerHeader, { readonly state: "parsed" }>,
   sliceHeaderAt: (offset: number) => number | null | undefined,
+  options?: { readonly ignoreAlignmentIssues?: boolean },
 ): FatContainerIdentity => {
-  const hasKnownCpu = header.slices.some(({ cpuType }) =>
-    KNOWN_MACHO_CPU_TYPES.includes(cpuType),
-  );
-  const invalidRange = header.rangeIssues.find(
-    (issue): issue is FatSliceRangeIssue => issue !== null,
-  );
+  const ignoreAlignmentIssues = options?.ignoreAlignmentIssues === true;
+  const effectiveRangeIssue = (index: number): FatSliceRangeFailure | null => {
+    const issue = header.rangeIssues[index] ?? null;
+    if (issue === null) return null;
+    const slice = header.slices[index];
+    if (
+      ignoreAlignmentIssues &&
+      slice !== undefined &&
+      isAlignmentOnlyIssue(slice, issue)
+    )
+      return null;
+    return issue;
+  };
+  let invalidRange: FatSliceRangeFailure | undefined;
+  for (let index = 0; index < header.slices.length; index += 1) {
+    const issue = effectiveRangeIssue(index);
+    if (issue !== null) {
+      invalidRange = issue;
+      break;
+    }
+  }
   // Preserve the existing malformed-range result for recognized CPU tables;
   // a valid CPU declaration by itself does not establish a Mach-O image.
-  if (hasKnownCpu && invalidRange !== undefined)
-    return { state: "malformed", ...invalidRange };
-  const validRanges = header.slices.filter(
-    (_slice, index) => header.rangeIssues[index] === null,
-  );
+  if (
+    invalidRange !== undefined &&
+    header.slices.some(({ cpuType }) => KNOWN_MACHO_CPU_TYPES.includes(cpuType))
+  )
+    return { state: "failed", failure: invalidRange };
   const missingHeaders: number[] = [];
   let observedMachO = false;
   let observedNonMachO = false;
-  for (const slice of validRanges) {
+  for (const [index, slice] of header.slices.entries()) {
+    if (effectiveRangeIssue(index) !== null) continue;
     if (slice.size < 4) {
       observedNonMachO = true;
       continue;
@@ -308,7 +444,7 @@ export const classifyFatContainerIdentity = (
   if (observedMachO)
     return invalidRange === undefined
       ? { state: "mach-o" }
-      : { state: "malformed", ...invalidRange };
+      : { state: "failed", failure: invalidRange };
   return { state: "not-mach-o" };
 };
 
@@ -317,22 +453,21 @@ export const classifyFatContainerEvidence = (
   header: Extract<FatContainerHeader, { readonly state: "parsed" }>,
   prefix: Uint8Array,
   sliceHeadersByOffset?: ReadonlyMap<number, MachoHeaderPrefixFacts>,
-): FatContainerIdentity =>
-  classifyFatContainerIdentity(header, (offset) => {
-    if (sliceHeadersByOffset?.has(offset))
-      return sliceHeadersByOffset.get(offset)?.magic;
-    const slice = header.slices.find(
-      (candidate) => candidate.offset === offset,
-    );
-    if (slice === undefined || offset >= prefix.byteLength) return undefined;
-    const available = Math.max(
-      0,
-      Math.min(slice.size, prefix.byteLength - offset, 12),
-    );
-    return readMachoHeaderPrefixFacts(
-      prefix.subarray(offset, offset + available),
-    ).magic;
-  });
+  options?: { readonly ignoreAlignmentIssues?: boolean },
+): FatContainerIdentity => {
+  const reader = machoReader(prefix, false);
+  // The classifier requests magic only from a valid range of at least four
+  // bytes. An alias declaration at this offset cannot narrow that range.
+  return classifyFatContainerIdentity(
+    header,
+    (offset) => {
+      if (sliceHeadersByOffset?.has(offset))
+        return sliceHeadersByOffset.get(offset)?.magic;
+      return offset <= prefix.byteLength - 4 ? reader.u32(offset) : undefined;
+    },
+    options,
+  );
+};
 
 /**
  * A malformed table is conclusive after a capped JVM scan only if one
@@ -344,7 +479,7 @@ export const readFatJvmIdentityLimitIssue = async (
   identity: FatContainerIdentity,
   readAt: (offset: number, length: number) => Promise<Uint8Array>,
 ): Promise<string | null> => {
-  if (identity.state !== "malformed") return null;
+  if (identity.state !== "failed") return null;
   for (const [index, slice] of header.slices.entries()) {
     // A 28-byte header is the smallest complete thin header. Never read
     // outside the slice, even when the enclosing file has more bytes.
@@ -442,10 +577,79 @@ export const validateFatSlice = (
   embedded?: { readonly cpuType: number; readonly cpuSubtype: number },
 ): string | null => {
   const rangeIssue = inspectFatSliceRange(declaration, containerSize, tableEnd);
-  if (rangeIssue !== null) return rangeIssue.reason;
+  if (rangeIssue !== null) return rangeIssue.detail;
   return embedded === undefined
     ? null
     : validateFatSliceIdentity(declaration, embedded);
+};
+
+/** Validate table placement and container bounds independently of slice alignment. */
+export const inspectFatSliceBounds = (
+  declaration: FatSliceDeclaration,
+  containerSize: number,
+  tableEnd: number,
+): FatSliceRangeFailure | null => {
+  const { index, offset, size } = declaration;
+  const field = `fat_arch[${index}]`;
+  if (
+    !Number.isSafeInteger(offset) ||
+    !Number.isSafeInteger(size) ||
+    size <= 0 ||
+    offset < tableEnd
+  )
+    return machoFailure.malformed(
+      `FAT architecture ${index} has an invalid slice range`,
+      { field },
+    );
+  // A slice declared past the measured end is intact as far as the file
+  // goes: the file is cut short, which a re-acquired copy can repair.
+  if (offset > containerSize || size > containerSize - offset)
+    return machoFailure.truncated(
+      `FAT architecture ${index} slice range extends beyond the file`,
+      {
+        offset,
+        field,
+        extent: {
+          availableBytes: Math.max(0, containerSize - offset),
+          requiredBytes: size,
+        },
+      },
+    );
+  return null;
+};
+
+/** Validate only a slice's declared alignment exponent and offset alignment. */
+export const inspectFatSliceAlignment = (
+  declaration: FatSliceDeclaration,
+): FatSliceRangeFailure | null => {
+  const { index, offset, alignmentExponent } = declaration;
+  if (
+    !Number.isInteger(alignmentExponent) ||
+    alignmentExponent < 0 ||
+    alignmentExponent > 52
+  )
+    return machoFailure.unsupported(
+      `FAT architecture ${index} alignment exponent ${alignmentExponent} is unsupported`,
+      { field: `fat_arch[${index}]` },
+    );
+  if (offset % 2 ** alignmentExponent !== 0)
+    return machoFailure.malformed(
+      `FAT architecture ${index} offset is not aligned to 2^${alignmentExponent}`,
+      { offset, field: `fat_arch[${index}]` },
+    );
+  return null;
+};
+
+const isAlignmentOnlyIssue = (
+  declaration: FatSliceDeclaration,
+  issue: FatSliceRangeFailure,
+): boolean => {
+  const alignment = inspectFatSliceAlignment(declaration);
+  return (
+    alignment !== null &&
+    alignment.kind === issue.kind &&
+    alignment.detail === issue.detail
+  );
 };
 
 /** Validate table placement, container bounds, and alignment with a typed failure. */
@@ -453,39 +657,9 @@ export const inspectFatSliceRange = (
   declaration: FatSliceDeclaration,
   containerSize: number,
   tableEnd: number,
-): FatSliceRangeIssue | null => {
-  const { index, offset, size, alignmentExponent } = declaration;
-  if (
-    !Number.isSafeInteger(offset) ||
-    !Number.isSafeInteger(size) ||
-    size <= 0 ||
-    offset < tableEnd
-  )
-    return {
-      category: "malformed",
-      reason: `FAT architecture ${index} has an invalid slice range`,
-    };
-  if (offset > containerSize || size > containerSize - offset)
-    return {
-      category: "malformed",
-      reason: `FAT architecture ${index} slice range extends beyond the file`,
-    };
-  if (
-    !Number.isInteger(alignmentExponent) ||
-    alignmentExponent < 0 ||
-    alignmentExponent > 52
-  )
-    return {
-      category: "unsupported",
-      reason: `FAT architecture ${index} alignment exponent ${alignmentExponent} is unsupported`,
-    };
-  if (offset % 2 ** alignmentExponent !== 0)
-    return {
-      category: "malformed",
-      reason: `FAT architecture ${index} offset is not aligned to 2^${alignmentExponent}`,
-    };
-  return null;
-};
+): FatSliceRangeFailure | null =>
+  inspectFatSliceBounds(declaration, containerSize, tableEnd) ??
+  inspectFatSliceAlignment(declaration);
 
 /** Validate only the identity claim after the owner has validated its range. */
 export const validateFatSliceIdentity = (

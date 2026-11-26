@@ -25,11 +25,28 @@ const metadataValueLimit = () =>
 
 /** Validate allocation and nesting costs before the standard decoder allocates containers. */
 const utf8 = strictUtf8Decoder("preserve");
-const preflight = (bytes: Buffer): Set<string> => {
+/**
+ * HSA metadata maps use string keys. PAL `.registers` maps are keyed by
+ * unsigned 32-bit register offsets, which normalize to their decimal spelling.
+ */
+export type AmdMetadataKeys = "string" | "string-or-unsigned";
+/**
+ * Decoded values one code object's notes may hold in total. Every retained or
+ * projected fact derives from a decoded value, so sharing this allowance
+ * across notes also bounds what consumers expand from them.
+ */
+export class AmdMetadataValueBudget {
+  used = 0;
+}
+const preflight = (
+  bytes: Buffer,
+  keyKinds: AmdMetadataKeys,
+  budget: AmdMetadataValueBudget,
+): Set<string> => {
   const strings = new Set<string>();
   const reader = new BinaryReader(bytes, false, "amdgpu-metadata");
   let at = 0,
-    values = 0;
+    values = budget.used;
   const take = (size: number): number => {
     const start = at;
     if (size > bytes.length - at)
@@ -37,7 +54,9 @@ const preflight = (bytes: Buffer): Set<string> => {
     at += size;
     return start;
   };
-  const value = (depth: number): string | undefined => {
+  // Strings return their text and non-negative integers their value, so map
+  // keys keep type identity until normalization.
+  const value = (depth: number): string | bigint | undefined => {
     if (depth > AMD_METADATA_DEPTH)
       throw new BinaryResourceFailure(
         "structure",
@@ -52,14 +71,8 @@ const preflight = (bytes: Buffer): Set<string> => {
     const map = (code & 0xf0) === 0x80 || code === 0xde || code === 0xdf;
     let count = 0,
       payload = 0;
-    if (
-      code <= 0x7f ||
-      code >= 0xe0 ||
-      code === 0xc0 ||
-      code === 0xc2 ||
-      code === 0xc3
-    )
-      return;
+    if (code <= 0x7f) return BigInt(code);
+    if (code >= 0xe0 || code === 0xc0 || code === 0xc2 || code === 0xc3) return;
     if ((code & 0xe0) === 0xa0) payload = code & 31;
     else if ((code & 0xf0) === 0x90) count = code & 15;
     else if ((code & 0xf0) === 0x80) count = (code & 15) * 2;
@@ -95,6 +108,29 @@ const preflight = (bytes: Buffer): Set<string> => {
       payload = width!;
     }
     const start = take(payload);
+    if (code >= 0xcc && code <= 0xcf)
+      return code === 0xcf
+        ? BigInt.asUintN(64, reader.i64(start))
+        : BigInt(
+            code === 0xcc
+              ? reader.u8(start)
+              : code === 0xcd
+                ? reader.u16(start)
+                : reader.u32(start),
+          );
+    if (code >= 0xd0 && code <= 0xd3) {
+      const signed =
+        code === 0xd3
+          ? reader.i64(start)
+          : BigInt(
+              code === 0xd0
+                ? reader.i8(start)
+                : code === 0xd1
+                  ? reader.i16(start)
+                  : reader.i32(start),
+            );
+      return signed >= 0n ? signed : undefined;
+    }
     // Every declared child requires at least one encoded byte, regardless of
     // its type. Impossible extents are malformed independently of limits.
     if (count > bytes.length - at)
@@ -121,12 +157,24 @@ const preflight = (bytes: Buffer): Set<string> => {
       }
     }
     if (map) {
-      const keys = new Set<string>();
+      const keys = new Set<string | bigint>(),
+        spellings = new Set<string>();
       for (let index = 0; index < count; index += 2) {
         const key = value(depth + 1);
-        if (key === undefined || keys.has(key))
+        if (
+          key === undefined ||
+          (typeof key === "bigint" && keyKinds === "string") ||
+          keys.has(key)
+        )
           rejectGpu("AMDGPU metadata map has non-string or duplicate keys");
+        const spelling = String(key);
+        if (spellings.has(spelling))
+          throw new BinaryFormatFailure(
+            "unsupported",
+            "AMDGPU metadata map has string and integer keys with the same spelling",
+          );
         keys.add(key!);
+        spellings.add(spelling);
         value(depth + 1);
       }
     } else for (let index = 0; index < count; index++) value(depth + 1);
@@ -134,16 +182,21 @@ const preflight = (bytes: Buffer): Set<string> => {
   };
   value(0);
   if (at !== bytes.length) rejectGpu("Trailing AMDGPU MessagePack values");
+  budget.used = values;
   return strings;
 };
-export const readAmdMetadata = (bytes: Buffer): unknown => {
+export const readAmdMetadata = (
+  bytes: Buffer,
+  keys: AmdMetadataKeys = "string",
+  budget = new AmdMetadataValueBudget(),
+): unknown => {
   if (bytes.length > AMD_METADATA_BYTES)
     throw new BinaryResourceFailure(
       "structure",
       AMD_METADATA_BYTES,
       "AMDGPU metadata exceeds 8 MiB",
     );
-  const strings = preflight(bytes);
+  const strings = preflight(bytes, keys, budget);
   const stringValue = (value: unknown): string => {
     if (
       !(value instanceof Uint8Array) ||
@@ -182,9 +235,14 @@ export const readAmdMetadata = (bytes: Buffer): unknown => {
             utf8.decode(source.subarray(offset, offset + length)),
         },
         mapKeyConverter: (key) => {
-          if (typeof key !== "string")
-            return rejectGpu("AMDGPU metadata map key is not a string");
-          return key;
+          if (typeof key === "string") return key;
+          // The preflight admitted only non-negative integer keys for this schema.
+          if (
+            keys === "string-or-unsigned" &&
+            (typeof key === "number" || typeof key === "bigint")
+          )
+            return String(key);
+          return rejectGpu("AMDGPU metadata map key is not a string");
         },
         useBigInt64: true,
         maxStrLength: AMD_METADATA_VALUE_BYTES,
@@ -198,8 +256,11 @@ export const readAmdMetadata = (bytes: Buffer): unknown => {
     return rejectGpu("Malformed AMDGPU MessagePack metadata");
   }
 };
+/** A MessagePack map; binary values decode to `Uint8Array` and are not maps. */
 export const amdRecord = (value: unknown): Record<string, unknown> | null =>
-  isRecord(value) ? (value as Record<string, unknown>) : null;
+  isRecord(value) && !(value instanceof Uint8Array)
+    ? (value as Record<string, unknown>)
+    : null;
 export const amdCount = (value: unknown): number | null => {
   if (typeof value === "bigint")
     return value >= 0n && value <= BigInt(Number.MAX_SAFE_INTEGER)

@@ -7,6 +7,7 @@ import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mj
 import { z } from "zod";
 import { access } from "node:fs/promises";
 import { ANDROID_TOOL_CONTRACTS } from "../../../src/contracts/android/androidToolContracts.js";
+import { JADX_RELEASE } from "../../../src/android/JadxRelease.js";
 import { packagedJadxBridgeIdentity } from "../../support/packagedJadxBridge.js";
 import { androidPartialObservationSchema } from "../../../src/domain/android/androidPartialObservation.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -21,10 +22,8 @@ import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import {
-  createJadxProtocolFixture,
-  verifyJadxFixtureCleanup,
-} from "../../fixtures/android/jadx.js";
+import { expectProviderLaunchCleanup } from "../../support/process/expectProviderLaunchCleanup.js";
+import { createJadxProtocolFixture } from "../../fixtures/android/jadx.js";
 
 test("preserves Android caller field constraints before target or provider access", async () => {
   let calls = 0;
@@ -178,7 +177,7 @@ it("publishes and executes all APK contracts with inline Evidence and no active 
   }
   expect(launches).toHaveLength(1);
   await close();
-  await verifyJadxFixtureCleanup(launches);
+  await expectProviderLaunchCleanup(launches);
 });
 
 test.each([
@@ -188,7 +187,7 @@ test.each([
     errorCode: "execution_failure",
     serverName: "rea-jadx-bridge",
     serverVersion: packagedJadxBridgeIdentity().version,
-    engineVersion: "0.7.1",
+    engineVersion: JADX_RELEASE.version,
     calls: [
       { operation: "rea_jvm_status" },
       { operation: "load_apk" },
@@ -206,7 +205,7 @@ test.each([
     errorCode: "execution_failure",
     serverName: "rea-jadx-bridge",
     serverVersion: packagedJadxBridgeIdentity().version,
-    engineVersion: "0.7.1",
+    engineVersion: JADX_RELEASE.version,
     calls: [{ operation: "rea_jvm_status" }, { operation: "load_apk" }],
     containsAmbientEnvironment: true,
   },
@@ -270,7 +269,7 @@ test.each([
     if (!containsAmbientEnvironment)
       expect(JSON.stringify(partial)).not.toContain("JAVA_HOME");
     await close();
-    await verifyJadxFixtureCleanup(launches);
+    await expectProviderLaunchCleanup(launches);
   },
 );
 
@@ -340,5 +339,5 @@ it("cleans an active engine when the MCP client disconnects", async () => {
     })
     .toBe(true);
   await close();
-  await verifyJadxFixtureCleanup(launches);
+  await expectProviderLaunchCleanup(launches);
 });

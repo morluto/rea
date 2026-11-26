@@ -1,25 +1,43 @@
+import { Buffer } from "node:buffer";
+import { once } from "node:events";
+import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { join } from "node:path";
+import type { Writable } from "node:stream";
+import { z } from "zod";
 import { BinaryReader } from "../domain/binaryContainer.js";
-import { sha256Hex } from "../kernel/sha256Hex.js";
-import { Budget } from "../domain/budget.js";
 import {
   decodeLimit,
   malformedInput,
   parseFailureFromCause,
   truncatedInput,
 } from "../domain/parseFailure.js";
-import { errorMessage } from "../kernel/errorMessage.js";
-import { readFile, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
-import { join } from "node:path";
-import { z } from "zod";
-import { undoUefiX86BranchFilter } from "./UefiX86BranchFilter.js";
-import { lzmaRequestSchema, type UefiLzmaReply } from "./UefiLzmaProtocol.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
+import {
+  encodeLzmaFrameHeader,
+  LZMA_FRAME_HEADER_BYTES,
+  LzmaFrameReader,
+  lzmaStreamRequestSchema,
+  type UefiLzmaReply,
+} from "./UefiLzmaProtocol.js";
+import { undoUefiX86BranchFilter } from "./UefiX86BranchFilter.js";
 
 const LZMA_ALONE_HEADER_BYTES = 13;
 const LZMA_DICTIONARY_OFFSET = 1;
 const LZMA_MIN_DICTIONARY_BYTES = 0x1000;
 const LZMA_RANGE_CODER_INIT_BYTES = 5;
+
+interface LzmaCodec {
+  readonly lzma: {
+    decompressFile(
+      input: { readByte(): number },
+      output: { writeByte(byte: number): void },
+    ): void;
+  };
+  readonly version: string;
+}
 
 /**
  * Output sink that enforces the byte budget while the decoder writes, instead
@@ -28,33 +46,34 @@ const LZMA_RANGE_CODER_INIT_BYTES = 5;
  */
 class BoundedLzmaOutput {
   #buffer: Buffer;
-  readonly #budget: Budget;
+  #used = 0;
 
   constructor(readonly limit: number) {
-    this.#budget = new Budget(limit);
     this.#buffer = Buffer.allocUnsafe(Math.min(limit, 0x10000));
   }
 
   writeByte(byte: number): void {
-    const position = this.#budget.used;
-    if (!this.#budget.tryCharge(1))
+    const position = this.#used;
+    if (position >= this.limit) {
       throw decodeLimit(
         "LZMA",
         `Decompressed output exceeds the ${this.limit} byte budget.`,
         { name: "output_bytes", maximum: this.limit, required: position + 1 },
       );
+    }
     if (position >= this.#buffer.length) {
       const next = Buffer.allocUnsafe(
-        Math.min(this.limit, this.#buffer.length * 2),
+        Math.min(this.limit, Math.max(0x10000, this.#buffer.length * 2)),
       );
       this.#buffer.copy(next, 0, 0, position);
       this.#buffer = next;
     }
     this.#buffer[position] = byte;
+    this.#used = position + 1;
   }
 
   getBuffer(): Buffer {
-    return this.#buffer.subarray(0, this.#budget.used);
+    return this.#buffer.subarray(0, this.#used);
   }
 }
 
@@ -103,45 +122,44 @@ const prepareLzmaInput = (payload: Buffer, maxOutputBytes: number) => {
   // Normalize the worker's private input buffer before passing it to the codec.
   if (dictionaryBytes < LZMA_MIN_DICTIONARY_BYTES)
     payload.writeUInt32LE(LZMA_MIN_DICTIONARY_BYTES, LZMA_DICTIONARY_OFFSET);
-  return { reader, declaredOutput };
+  return { declaredOutput };
 };
 
-const main = async (): Promise<void> => {
-  const requestPath = process.argv[2];
-  if (requestPath === undefined) {
-    throw new Error("Owned worker request path missing.");
-  }
-  const request = lzmaRequestSchema.parse(
-    JSON.parse(await readFile(requestPath, "utf8")),
+const loadLzmaCodec = async (): Promise<LzmaCodec> => {
+  const require = createRequire(import.meta.url);
+  const lzma = require("lzma-purejs") as LzmaCodec["lzma"];
+  const workerModulePath = require.resolve("lzma-purejs");
+  const upstreamMetadata = JSON.parse(
+    await readFile(join(workerModulePath, "..", "package.json"), "utf8"),
   );
-  let reply: UefiLzmaReply;
-  try {
-    const require = createRequire(import.meta.url);
-    const lzma = require("lzma-purejs");
-    const workerModulePath = require.resolve("lzma-purejs");
-    const upstreamMetadata = JSON.parse(
-      await readFile(join(workerModulePath, "..", "package.json"), "utf8"),
-    );
-    const decoderVersion = z
-      .object({ version: z.string() })
-      .parse(upstreamMetadata).version;
+  const version = z
+    .object({ version: z.string() })
+    .parse(upstreamMetadata).version;
+  return { lzma, version };
+};
 
-    const payload = await readFile(request.payload_path);
-    const { reader, declaredOutput } = prepareLzmaInput(
-      payload,
-      request.max_output_bytes,
-    );
-    const output = new BoundedLzmaOutput(request.max_output_bytes);
+const decodeStreamPayload = (
+  codec: LzmaCodec,
+  payload: Buffer,
+  format: "lzma" | "lzmaf86",
+  maxOutputBytes: number,
+): { readonly reply: UefiLzmaReply; readonly decoded?: Buffer } => {
+  try {
+    const { declaredOutput } = prepareLzmaInput(payload, maxOutputBytes);
+    const output = new BoundedLzmaOutput(maxOutputBytes);
     let position = 0;
-    lzma.decompressFile(
+    const totalLength = payload.length;
+    codec.lzma.decompressFile(
       {
         readByte() {
-          if (position === payload.length)
+          if (position === totalLength)
             throw truncatedInput(
               "LZMA-Alone",
               "Compressed stream ends before the decoder can finish.",
             );
-          return reader.u8(position++);
+          const byte = payload[position]!;
+          position += 1;
+          return byte;
         },
       },
       output,
@@ -153,40 +171,101 @@ const main = async (): Promise<void> => {
         `LZMA decoded ${decoded.length} bytes; stream declared ${declaredOutput} bytes.`,
       );
     }
-    if (request.format === "lzmaf86") undoUefiX86BranchFilter(decoded);
-    await writeFile(request.output_path, decoded, { flag: "wx", mode: 0o600 });
-    reply = {
-      ok: true,
-      lzma_version: decoderVersion,
-      input_bytes_consumed: position,
-      output: {
-        sha256: sha256Hex(decoded),
-        bytes: decoded.length,
+    if (format === "lzmaf86") undoUefiX86BranchFilter(decoded);
+    return {
+      decoded,
+      reply: {
+        ok: true,
+        lzma_version: codec.version,
+        input_bytes_consumed: position,
+        output: {
+          sha256: sha256Hex(decoded),
+          bytes: decoded.length,
+        },
       },
     };
   } catch (cause: unknown) {
     const failure = parseFailureFromCause(cause);
-    reply = {
-      ok: false,
-      reason:
-        failure === undefined
-          ? "decoder"
-          : failure.kind === "limit"
-            ? "output-limit"
-            : "format",
-      message: errorMessage(cause),
+    return {
+      reply: {
+        ok: false,
+        reason:
+          failure === undefined
+            ? "decoder"
+            : failure.kind === "limit"
+              ? "output-limit"
+              : "malformed",
+        message: errorMessage(cause),
+      },
     };
   }
-  let encoded = JSON.stringify(reply);
-  if (Buffer.byteLength(encoded) > UEFI_FIRMWARE_LIMITS.diagnosticBytes) {
-    const bounded: UefiLzmaReply = {
-      ok: false,
-      reason: reply.ok ? "decoder" : reply.reason,
-      message: "LZMA reply exceeds the diagnostic budget.",
-    };
-    encoded = JSON.stringify(bounded);
-  }
-  await writeFile(request.reply_path, encoded, { flag: "wx", mode: 0o600 });
 };
 
-await main();
+const serializeReply = (
+  reply: UefiLzmaReply,
+): { readonly text: string; readonly ok: boolean } => {
+  const encoded = JSON.stringify(reply);
+  if (Buffer.byteLength(encoded) <= UEFI_FIRMWARE_LIMITS.diagnosticBytes) {
+    return { text: encoded, ok: reply.ok };
+  }
+  const bounded: UefiLzmaReply = {
+    ok: false,
+    reason: reply.ok ? "decoder" : reply.reason,
+    message: "LZMA reply exceeds the diagnostic budget.",
+  };
+  return { text: JSON.stringify(bounded), ok: false };
+};
+
+const writeFramed = async (stream: Writable, frame: Buffer): Promise<void> => {
+  if (!stream.write(frame)) {
+    await once(stream, "drain");
+  }
+};
+
+const runStdioWorker = async (): Promise<void> => {
+  const codec = await loadLzmaCodec();
+  const reader = new LzmaFrameReader(process.stdin);
+  for (;;) {
+    const header = await reader.readExact(LZMA_FRAME_HEADER_BYTES, {
+      allowCleanEof: true,
+    });
+    if (header === null) break;
+    const headerReader = new BinaryReader(header, false, "LZMA-Frame");
+    const jsonBytes = headerReader.u32(0);
+    const payloadBytes = headerReader.u32(4);
+    if (
+      jsonBytes === 0 ||
+      jsonBytes > UEFI_FIRMWARE_LIMITS.diagnosticBytes ||
+      payloadBytes > UEFI_FIRMWARE_LIMITS.inputBytes
+    ) {
+      throw new Error("LZMA worker request frame exceeds protocol bounds.");
+    }
+    const jsonBuf = await reader.readExact(jsonBytes);
+    const payload = await reader.readExact(payloadBytes);
+    if (jsonBuf === null || payload === null) {
+      throw new Error("Truncated LZMA worker request body.");
+    }
+    const request = lzmaStreamRequestSchema.parse(
+      JSON.parse(jsonBuf.toString("utf8")),
+    );
+    const { reply, decoded } = decodeStreamPayload(
+      codec,
+      payload,
+      request.format,
+      request.max_output_bytes,
+    );
+    const serialized = serializeReply(reply);
+    const body =
+      serialized.ok && decoded !== undefined ? decoded : Buffer.alloc(0);
+    await writeFramed(
+      process.stdout,
+      encodeLzmaFrameHeader(serialized.text, body.length),
+    );
+    if (body.length > 0) await writeFramed(process.stdout, body);
+  }
+};
+
+if (process.argv[2] !== "--stdio")
+  throw new Error("Owned LZMA worker requires framed stdio.");
+
+await runStdioWorker();

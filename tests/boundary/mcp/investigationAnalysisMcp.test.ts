@@ -24,7 +24,10 @@ import {
 } from "../../../src/contracts/investigationExamples.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { observed } from "../../fixtures/analysisExecution.js";
+import {
+  createFixtureProviderIdentity,
+  observed,
+} from "../../fixtures/analysisExecution.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import type { RelationshipCoverage } from "../../../src/domain/relationshipCoverage.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
@@ -249,10 +252,17 @@ const dossierWithCallees = (addresses: readonly string[]) => {
   });
 };
 
-it.each([
+it.each<{
+  label: string;
+  coverage: RelationshipCoverage | undefined;
+  providerLimitations: string[];
+  dossierLimitations: string[];
+  status: string;
+  exhaustive: boolean;
+}>([
   {
     label: "complete",
-    coverage: { status: "complete" } as RelationshipCoverage,
+    coverage: { status: "complete" },
     providerLimitations: ["The provider version identity is unavailable."],
     dossierLimitations: ["The dossier has no native value-flow observation."],
     status: "unknown",
@@ -263,7 +273,7 @@ it.each([
     coverage: {
       status: "complete",
       discovery: { callees: { status: "complete" } },
-    } as RelationshipCoverage,
+    },
     providerLimitations: [],
     dossierLimitations: [],
     status: "not_found",
@@ -279,7 +289,7 @@ it.each([
           reason: "This node was classified as data.",
         },
       },
-    } as RelationshipCoverage,
+    },
     providerLimitations: [],
     dossierLimitations: [],
     status: "unknown",
@@ -290,7 +300,8 @@ it.each([
     coverage: {
       status: "partial",
       limitations: ["Callee output was capped."],
-    } as RelationshipCoverage,
+      limited_directions: ["callees"],
+    },
     providerLimitations: [],
     dossierLimitations: [],
     status: "unknown",
@@ -301,7 +312,8 @@ it.each([
     coverage: {
       status: "unknown",
       reason: "Callee coverage was not established.",
-    } as RelationshipCoverage,
+      limited_directions: ["callees"],
+    },
     providerLimitations: [],
     dossierLimitations: [],
     status: "unknown",
@@ -331,11 +343,7 @@ it.each([
     const base = FUNCTION_COMPARISON_EXAMPLE.left;
     if (base.subject.identity.kind !== "file")
       throw new Error("missing fixture subject");
-    const provider = {
-      id: "fixture",
-      name: "Fixture analysis provider",
-      version: "1",
-    };
+    const provider = createFixtureProviderIdentity();
     const rawResult = { fixture_reply: scenario.label };
     const execution = createAnalysisExecution(
       {

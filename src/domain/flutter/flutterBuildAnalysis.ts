@@ -6,8 +6,108 @@ import { digestSchema } from "../digests.js";
 import type { AnalysisParameterLimit } from "../analysisSettings.js";
 import { analysisParameterLimitSchema } from "../analysisSettingDefinitions.js";
 
-/** Full logical ZIP path budget, enforced by Flutter library inventory. */
-export const MAX_FLUTTER_LIBRARY_PATH_BYTES = 1024;
+/** ZIP stores a member name length in a 16-bit field. */
+const ZIP_NAME_MAX_BYTES = 0xffff;
+/**
+ * Inventory counts the decoded UTF-8 path. A stored byte decodes to at most
+ * three UTF-8 bytes (a CP437 box-drawing character is U+25xx), so a valid
+ * stored name needs at most three times its stored length.
+ */
+const ZIP_NAME_MAX_DECODED_BYTES = 3 * ZIP_NAME_MAX_BYTES;
+const COUNT_MAXIMUM = 0x7fffffff;
+
+/**
+ * Per-call APK admission for both Flutter operations: the bounds the schema
+ * enforces and the omitted value of each `apk_limits` field. Byte budgets are
+ * exact up to the safe-integer range; libraries and metadata are held in
+ * memory, so host heap is an independent constraint.
+ */
+export const FLUTTER_APK_LIMIT_BOUNDS = {
+  apk_bytes: {
+    default_value: 2 * 1024 * 1024 * 1024,
+    maximum: Number.MAX_SAFE_INTEGER,
+    unit: "bytes",
+  },
+  metadata_read_bytes: {
+    default_value: 8 * 1024 * 1024,
+    maximum: Number.MAX_SAFE_INTEGER,
+    unit: "bytes",
+  },
+  library_bytes: {
+    default_value: 256 * 1024 * 1024,
+    maximum: Number.MAX_SAFE_INTEGER,
+    unit: "bytes",
+  },
+  extraction_bytes: {
+    default_value: 768 * 1024 * 1024,
+    maximum: Number.MAX_SAFE_INTEGER,
+    unit: "bytes",
+  },
+  abi_count: { default_value: 32, maximum: COUNT_MAXIMUM, unit: "count" },
+  library_path_bytes: {
+    default_value: 1024,
+    maximum: ZIP_NAME_MAX_DECODED_BYTES,
+    unit: "bytes",
+  },
+  snapshot_hash_candidates: {
+    default_value: 64,
+    maximum: COUNT_MAXIMUM,
+    unit: "count",
+  },
+} as const;
+export type FlutterApkLimitField = keyof typeof FLUTTER_APK_LIMIT_BOUNDS;
+export type FlutterApkLimits = Readonly<Record<FlutterApkLimitField, number>>;
+
+const apkLimitField = (field: FlutterApkLimitField) =>
+  z.int().min(1).max(FLUTTER_APK_LIMIT_BOUNDS[field].maximum).optional();
+export const flutterApkLimitsSchema = z.strictObject({
+  apk_bytes: apkLimitField("apk_bytes"),
+  metadata_read_bytes: apkLimitField("metadata_read_bytes"),
+  library_bytes: apkLimitField("library_bytes"),
+  extraction_bytes: apkLimitField("extraction_bytes"),
+  abi_count: apkLimitField("abi_count"),
+  library_path_bytes: apkLimitField("library_path_bytes"),
+  snapshot_hash_candidates: apkLimitField("snapshot_hash_candidates"),
+});
+
+/** Omitted fields resolve to their defaults; explicit values are kept. */
+export const flutterApkLimits = (
+  selected?: z.infer<typeof flutterApkLimitsSchema>,
+): FlutterApkLimits => {
+  const resolved: Record<string, number> = {};
+  for (const field of Object.keys(
+    FLUTTER_APK_LIMIT_BOUNDS,
+  ) as FlutterApkLimitField[])
+    resolved[field] =
+      selected?.[field] ?? FLUTTER_APK_LIMIT_BOUNDS[field].default_value;
+  return resolved as FlutterApkLimits;
+};
+
+/** The per-call control that stopped an APK admission. */
+export const flutterApkLimit = (
+  field: FlutterApkLimitField,
+  limits: FlutterApkLimits,
+): AnalysisParameterLimit => ({
+  control_kind: "parameter",
+  parameter: `apk_limits.${field}`,
+  effective_value: limits[field],
+  unit: FLUTTER_APK_LIMIT_BOUNDS[field].unit,
+  minimum: 1,
+  maximum: FLUTTER_APK_LIMIT_BOUNDS[field].maximum,
+  default_value: FLUTTER_APK_LIMIT_BOUNDS[field].default_value,
+  applies_at: "next_call",
+});
+
+/** Recovery for an exhausted `apk_limits` field. */
+export const flutterApkLimitRecovery = (
+  field: FlutterApkLimitField,
+  limits: FlutterApkLimits,
+): string =>
+  limits[field] < FLUTTER_APK_LIMIT_BOUNDS[field].maximum
+    ? `Pass a larger apk_limits.${field} (up to ${String(FLUTTER_APK_LIMIT_BOUNDS[field].maximum)}) on the next call for the same APK; no restart is required.`
+    : `apk_limits.${field} is at its maximum of ${String(limits[field])}; the APK cannot be admitted by raising it.`;
+
+const APK_LIMITS_DESCRIPTION = `APK admission for this call; omitted fields use ${JSON.stringify(flutterApkLimits())}. apk_bytes bounds the private snapshot copy, metadata_read_bytes the ZIP directory reads, library_bytes each libapp.so/libflutter.so, extraction_bytes their total, abi_count and library_path_bytes the library inventory, and snapshot_hash_candidates distinct Dart snapshot hashes retained per libapp.so. A refusal reports the field in details.limit.`;
 
 /** Retained GNU build-ID descriptor budget, in bytes. */
 export const MAX_FLUTTER_BUILD_ID_BYTES = 64;
@@ -23,7 +123,7 @@ const gnuBuildIdSchema = z
  * unmatched labels; inventory owns the exact UTF-8 byte check on real paths.
  */
 const ABI_SELECTOR_MAX_CHARACTERS =
-  MAX_FLUTTER_LIBRARY_PATH_BYTES - "lib/".length - "/libapp.so".length;
+  ZIP_NAME_MAX_BYTES - "lib/".length - "/libapp.so".length;
 
 /**
  * ZIP labels are literal names, including backslashes and controls. They are
@@ -111,6 +211,9 @@ export const dartPoolPolicy = (
 export const flutterInputSchemas = {
   identify_flutter_build: z.strictObject({
     path: localPathStringSchema.describe("Local APK file to inspect"),
+    apk_limits: flutterApkLimitsSchema
+      .optional()
+      .describe(APK_LIMITS_DESCRIPTION),
   }),
   inspect_dart_aot: z.strictObject({
     pool_policy: dartPoolPolicySchema
@@ -121,6 +224,9 @@ export const flutterInputSchemas = {
     path: localPathStringSchema.describe(
       "Local APK file carrying a Flutter AOT payload",
     ),
+    apk_limits: flutterApkLimitsSchema
+      .optional()
+      .describe(APK_LIMITS_DESCRIPTION),
     abi: abiSelectorSchema
       .optional()
       .describe(

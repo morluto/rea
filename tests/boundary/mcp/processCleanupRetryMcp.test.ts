@@ -2,9 +2,7 @@ import {
   closeVerifierResources,
   withVerifierCleanup,
 } from "../../../scripts/lib/verifier-cleanup.mjs";
-import { access, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { access, rm } from "node:fs/promises";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished, vi } from "vitest";

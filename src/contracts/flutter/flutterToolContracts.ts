@@ -4,7 +4,7 @@ import {
   dartAotInspectionInputSchema,
   flutterResultSchemas,
 } from "../../domain/flutter/flutterBuildAnalysis.js";
-import { dartAotSummaryViewResultSchema } from "../../domain/analysisView/analysisViewResult.js";
+import { dartAotSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/dartAotSummarySchema.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 import { toolContractMetadata, toolEffects } from "../toolEffects.js";
@@ -44,7 +44,7 @@ export const FLUTTER_TOOL_CONTRACTS = [
       }),
     ),
     description:
-      "Inspect one APK ABI's Dart AOT snapshot without executing it. Supports legacy split VM/isolate FullAOT kind 3 and unified FullAOT kind 2. Returns the observed profile, snapshot exports, headers, hashes and bounded package:/dart:/identifier-like byte-pattern strings. pool_policy.contains selects strings before collection; other pool budgets do not raise APK/ELF/response limits. Default complete returns all facts; detail summary retains them for inspect_analysis_view kind dart-aot, collections package_uris/dart_uris/class_like_tokens, using parent_evidence_id and row paging. Counts are lower bounds and page exhaustion never proves complete pool coverage.",
+      "Inspect one APK ABI's Dart AOT snapshot without executing it. Supports legacy split VM/isolate FullAOT kind 3 and unified FullAOT kind 2. Returns the observed profile, snapshot exports, headers, hashes and bounded package:/dart:/identifier-like byte-pattern strings. pool_policy.contains selects strings before collection; other pool budgets do not raise APK/ELF/response limits. Omitted detail returns all facts within the agent result budget, else the retained summary; detail summary retains them for inspect_analysis_view kind dart-aot, collections package_uris/dart_uris/class_like_tokens, using parent_evidence_id and row paging. Counts are lower bounds and page exhaustion never proves complete pool coverage.",
     kind: "flutter-provider",
     inputSchema: dartAotInspectionInputSchema,
     outputSchema: evidenceResultOf(

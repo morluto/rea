@@ -2,6 +2,7 @@ import { ParseFailureError } from "../domain/parseFailure.js";
 import {
   artifactOperationCause,
   ArtifactReaderFailure,
+  artifactParseFailure,
   copyArtifactEntry,
   assertProducedEntry,
   type ArtifactEntry,
@@ -11,7 +12,7 @@ import {
   abortIfNeeded,
   ArtifactResourceScope,
 } from "../resources/index.js";
-import { readFileHandlePrefix } from "../filesystem/readFileHandlePrefix.js";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { Transform, pipeline, type Readable } from "node:stream";
 import {
   parseInesLayout,
@@ -29,11 +30,11 @@ import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 
 const CLASSIC_INES_LIMITATION =
-  "Classic iNES file regions are observed; mapper execution, CPU bank mappings, CHR-RAM contents, 6502 analysis and emulator behavior are not observed. Trailing bytes are retained without interpretation. NES 2.0 and UNIF are unsupported.";
+  "Classic iNES file regions are observed; mapper execution, CPU bank mappings, CHR-RAM contents, 6502 analysis and emulator behavior are not observed. Trailing bytes are retained without interpretation. UNIF is unsupported.";
 const NES_2_LIMITATION =
   "NES 2.0 file regions are observed; header mapper, nametable layout flags, RAM/NVRAM, timing, console and expansion-device values are declarations. Effective nametable wiring, mapper execution, CPU bank mappings, CHR-RAM contents, miscellaneous ROM boundaries, 6502 analysis and emulator behavior are not observed. Trailing bytes are retained without interpretation. UNIF is unsupported.";
 
-/** Keep the classic inventory's existing semantic limitation and Evidence identity. */
+/** Report the analysis limits of the selected iNES container format. */
 export const inesInventoryLimitation = (
   header: InesInventory["header"],
 ): string =>
@@ -72,7 +73,7 @@ export class InesArtifactReader implements ArtifactReader {
   ): AsyncIterable<ArtifactEntry> {
     const layout = await this.#scope.run(async () => {
       await this.#verifySource(signal);
-      const prefix = await readFileHandlePrefix(this.source.handle, 16, () =>
+      const prefix = await readFileHandleRange(this.source.handle, 0, 16, () =>
         abortIfNeeded(signal),
       );
       abortIfNeeded(signal);
@@ -80,9 +81,7 @@ export class InesArtifactReader implements ArtifactReader {
       await this.#verifySource(signal);
       const parsed = parseInesLayout(prefix, this.source.initial.size);
       if (!parsed.ok)
-        throw new ArtifactReaderFailure("format", parsed.error.detail, {
-          cause: new ParseFailureError(parsed.error),
-        });
+        throw artifactParseFailure(new ParseFailureError(parsed.error), signal);
       this.#layout = parsed.value;
       this.#entries.clear();
       return parsed.value;

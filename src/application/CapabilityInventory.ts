@@ -1,4 +1,5 @@
 import { PCAP_CAPTURE_UNSUPPORTED_HOST_REASON } from "../domain/pcap/pcapAnalysis.js";
+import { WABT_RELEASE_LINE } from "../domain/wasm/wasmArtifact.js";
 import { DEFAULT_CALL_RELATIONSHIP_DIRECTION } from "../contracts/enhancedInputs.js";
 import {
   FIRMWARE_OPERATION_ENGINES,
@@ -251,7 +252,12 @@ const ENHANCED_REQUIREMENTS: ReadonlyMap<string, ProviderComposition> = new Map(
     get_call_graph: CALL_RELATIONSHIP_COMPOSITION,
     trace_call_path: CALL_RELATIONSHIP_COMPOSITION,
     analyze_swift_types: ["list_procedures", { optional: "list_names" }],
-    find_xrefs_to_name: ["list_names", "xrefs"],
+    // Names resolve from the name inventory, then the procedure lookup.
+    find_xrefs_to_name: [
+      ["list_names", "procedure_address"],
+      { optional: "procedure_address" },
+      "xrefs",
+    ],
     binary_overview: [
       { optional: "read_binary_inventory_summary" },
       ["current_document", "list_documents"],
@@ -329,7 +335,9 @@ export const buildCapabilityInventory = (
   const descriptors = new Map<string, ProviderDescriptor>(
     status.capabilities.map((descriptor) => [descriptor.operation, descriptor]),
   );
-  return TOOL_CONTRACTS.map((contract): ToolAvailability => {
+  const advertised: ToolAvailability[] = [];
+  for (const contract of TOOL_CONTRACTS) {
+    if (!isToolAdvertised(contract.name)) continue;
     const availability = availabilityFor({
       name: contract.name,
       kind: contract.kind,
@@ -349,7 +357,7 @@ export const buildCapabilityInventory = (
     const effects = composedEffects(
       contract.name,
       contract.sessionEffects,
-      status.capabilities,
+      descriptors,
     );
     const annotations = annotationsFromEffects(effects);
     const facts = {
@@ -386,25 +394,28 @@ export const buildCapabilityInventory = (
         open_world: annotations.openWorldHint,
       },
     };
-    return availability.reason === "available"
-      ? {
-          ...facts,
-          available: true,
-          reason: availability.reason,
-          remediation: null,
-        }
-      : {
-          ...facts,
-          available: false,
-          reason: availability.reason,
-          remediation: availability.remediation,
-          ...(availability.alternatives === undefined
-            ? {}
-            : { alternatives: [...availability.alternatives] }),
-        };
-  })
-    .filter(({ name }) => isToolAdvertised(name))
-    .sort((left, right) => compareUnicodeCodePoints(left.name, right.name));
+    advertised.push(
+      availability.reason === "available"
+        ? {
+            ...facts,
+            available: true,
+            reason: availability.reason,
+            remediation: null,
+          }
+        : {
+            ...facts,
+            available: false,
+            reason: availability.reason,
+            remediation: availability.remediation,
+            ...(availability.alternatives === undefined
+              ? {}
+              : { alternatives: [...availability.alternatives] }),
+          },
+    );
+  }
+  return advertised.sort((left, right) =>
+    compareUnicodeCodePoints(left.name, right.name),
+  );
 };
 
 type ClientRequirements = ToolAvailability["client_requirements"];
@@ -436,9 +447,14 @@ export function compactToolAvailability(
 ): ToolAvailabilityInventory | ToolAvailabilitySummaryInventory {
   const clientRequirements =
     availability[0]?.client_requirements ?? emptyClientRequirements();
+  let clientRequirementsJson: string | undefined;
   const groups = new Map<string, { names: string[] }>();
 
   for (const entry of availability) {
+    const sameClientRequirements =
+      entry.client_requirements === clientRequirements ||
+      JSON.stringify(entry.client_requirements) ===
+        (clientRequirementsJson ??= JSON.stringify(clientRequirements));
     const statusFacts = {
       available: entry.available,
       reason: entry.reason,
@@ -453,8 +469,7 @@ export function compactToolAvailability(
       ...(entry.available || entry.alternatives === undefined
         ? {}
         : { alternatives: [...entry.alternatives] }),
-      ...(JSON.stringify(entry.client_requirements) ===
-      JSON.stringify(clientRequirements)
+      ...(sameClientRequirements
         ? {}
         : { client_requirements: entry.client_requirements }),
     };
@@ -583,8 +598,7 @@ const workflowAvailabilityFor = (
       ? { reason: "available", remediation: null }
       : {
           reason: "provider_missing",
-          remediation:
-            "Supply WABT 1.0.42 via absolute REA_WABT_BIN_DIRECTORY. No active binary target is required; tools are checked at execution.",
+          remediation: `Supply ${WABT_RELEASE_LINE} via absolute REA_WABT_BIN_DIRECTORY. No active binary target is required; tools are checked at execution.`,
         };
   if (kind === "android-provider")
     return policy.androidAnalysisAvailability?.status === "available"
@@ -599,7 +613,7 @@ const workflowAvailabilityFor = (
                 : "provider_missing",
           remediation:
             policy.androidAnalysisAvailability?.remediation ??
-            "Set REA_JADX_MCP_JAR to the jadx-headless-mcp 0.7.1 release JAR (rea doctor --provider jadx names its download URL and SHA-256) and provide a full JDK on Linux, macOS, or Windows x64 with its matching bundled native controls.",
+            "Set REA_JADX_MCP_JAR to a caller-supplied jadx-headless-mcp JAR (rea doctor --provider jadx names its download URL and SHA-256) and provide a full JDK on Linux, macOS, or Windows x64 with its matching bundled native controls.",
         };
   if (kind === "adb-provider")
     return ownerProbeAvailability(
@@ -1227,7 +1241,7 @@ const reachableRequirements = (
 const composedEffects = (
   name: string,
   base: ToolEffects,
-  descriptors: readonly ProviderDescriptor[],
+  byOperation: ReadonlyMap<string, ProviderDescriptor>,
 ): ToolEffects => {
   const composition: ProviderComposition | undefined =
     name === "get_navigation_context"
@@ -1235,9 +1249,6 @@ const composedEffects = (
       : name === "inspect_address_context"
         ? ADDRESS_CONTEXT_EFFECT_COMPOSITION
         : ENHANCED_REQUIREMENTS.get(name);
-  const byOperation = new Map(
-    descriptors.map((descriptor) => [descriptor.operation, descriptor]),
-  );
   const reachable =
     composition === undefined
       ? []
@@ -1248,8 +1259,9 @@ const composedEffects = (
         : reachableRequirements(composition, byOperation);
   const operations = new Set<string>([name, ...reachable]);
   const effects = { ...base };
-  for (const descriptor of descriptors) {
-    if (!operations.has(descriptor.operation)) continue;
+  for (const operation of operations) {
+    const descriptor = byOperation.get(operation);
+    if (descriptor === undefined) continue;
     const source = descriptor.effects;
     effects.mutatesTarget ||= source.mutates_artifact;
     effects.launchesProcess ||= source.launches_process;

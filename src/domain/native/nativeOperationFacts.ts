@@ -1,5 +1,6 @@
 import type { z } from "zod";
 import { nativeInventoryRowsSchemas } from "./nativeInventory.js";
+import { containingProcedureResolutionSchema } from "./nativeObservation.js";
 
 /**
  * One native operation's provider-neutral result contract with its exact fact
@@ -45,4 +46,9 @@ export const searchStringsFact = factContract(
   "search_strings",
   "string search result",
   nativeInventoryRowsSchemas.strings,
+);
+export const resolveContainingProcedureFact = factContract(
+  "resolve_containing_procedure",
+  "containing-procedure resolution",
+  containingProcedureResolutionSchema,
 );

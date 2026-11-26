@@ -29,10 +29,10 @@ import {
   range,
   rangeForOffsets,
   sourceSlice,
-  stringValue,
   staticFileExpressionPath,
 } from "./javascriptStaticAnalysisHelpers.js";
 import {
+  stringValue,
   semanticStaticPropertyKey,
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,

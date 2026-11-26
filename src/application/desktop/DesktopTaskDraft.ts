@@ -63,9 +63,10 @@ const draft = async (
   selection: DraftSelection,
   viewPolicy: DesktopViewPolicyInput | undefined,
 ): Promise<Evidence> => {
-  const { evidence, capture } = await readDesktopCapture(folder, signal);
+  const source = await readDesktopCapture(folder, signal);
+  const { evidence, capture } = source;
   const stateEvidence = await inspectDesktopApplicationState(
-    folder,
+    source,
     readers,
     signal,
     { viewPolicy },

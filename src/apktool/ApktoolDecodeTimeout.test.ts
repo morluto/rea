@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { afterEach, expect, it, vi } from "vitest";
 
-import { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
+import { createApktoolResourceAnalysisService } from "../application/ProviderOperationServices.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { DEFAULT_APKTOOL_DECODE_TIMEOUT_MS } from "../domain/apktool/apktoolResourceAnalysis.js";
 import {
@@ -88,7 +88,7 @@ const decode = async (
   path: string,
   decodeTimeoutMs?: number,
 ) =>
-  new ApktoolResourceAnalysisService(provider).execute(
+  createApktoolResourceAnalysisService(provider).execute(
     "decode_android_resources",
     {
       path,
@@ -143,8 +143,9 @@ it("applies the omitted 600000 ms decode deadline and a selected value on the ne
       String(DEFAULT_APKTOOL_DECODE_TIMEOUT_MS),
     );
     expect(projected.remediation.action).toContain("next decode");
-    expect(projected.remediation.action).toContain("no runtime override");
     expect(decodeTimeouts).toEqual([DEFAULT_APKTOOL_DECODE_TIMEOUT_MS, 200]);
+    // A selected deadline leaves the separate output capture budget unchanged.
+    expect(outputBudgets).toEqual([4 * 1024 * 1024, 4 * 1024 * 1024]);
 
     const selected = await decode(provider, path, 5_000);
     expect(selected.ok).toBe(true);

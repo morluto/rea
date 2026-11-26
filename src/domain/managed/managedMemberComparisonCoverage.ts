@@ -1,5 +1,6 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { managedModuleRow } from "./managedModuleIdentity.js";
-import { joinCoverageStatus, type CoverageStatus } from "../coverage.js";
+import { joinCoverageStatus } from "../coverage.js";
 import type {
   ManagedMemberComparisonResult,
   ManagedMemberComparisonSide,
@@ -45,9 +46,7 @@ export const buildComparisonCoverage = ({
 };
 
 /** Full MethodDef coverage is required before inferring cross-build absence. */
-export const hasCompleteMethodRows = (
-  result: ManagedMemberInspection,
-): boolean =>
+const hasCompleteMethodRows = (result: ManagedMemberInspection): boolean =>
   result.method_rows !== null &&
   result.method_rows.offset === 0 &&
   result.method_rows.count === result.method_rows.total;
@@ -74,9 +73,7 @@ const unavailableTypeNames = (
   const children = new Map<string, string[]>();
   for (const { token, enclosing_type_token: enclosing } of types) {
     if (enclosing === null) continue;
-    const existing = children.get(enclosing);
-    if (existing === undefined) children.set(enclosing, [token]);
-    else existing.push(token);
+    appendToMapList(children, enclosing, token);
   }
   // A Set visits appended entries and prevents cyclic historical links from
   // revisiting a row. Follow only enclosing links retained in the report.
@@ -118,7 +115,10 @@ const comparisonSideScope = (result: ManagedMemberInspection) => {
     emptyMemberNames,
     emptyFieldTokens,
     hasEmptyDefinitionName,
-    metadataComplete,
+    inventoryComplete: {
+      field: metadataComplete,
+      method: metadataComplete && hasCompleteMethodRows(result),
+    },
     selected:
       result.selection === null
         ? null
@@ -220,37 +220,46 @@ export const buildComparisonSummary = (
     | ManagedMemberComparisonResult["methods"][number]
     | ManagedMemberComparisonResult["fields"][number]
   )[],
-): ManagedMemberComparisonResult["summary"] => ({
-  unchanged: items.filter(({ status }) => status === "unchanged").length,
-  changed: items.filter(({ status }) => status === "changed").length,
-  added: items.filter(({ status }) => status === "added").length,
-  removed: items.filter(({ status }) => status === "removed").length,
-  unknown: items.filter(({ status }) => status === "unknown").length,
-});
+): ManagedMemberComparisonResult["summary"] => {
+  const counts = {
+    unchanged: 0,
+    changed: 0,
+    added: 0,
+    removed: 0,
+    unknown: 0,
+  };
+  for (const { status } of items) counts[status] += 1;
+  return counts;
+};
 
 export const buildComparisonMatching = (
   methodItems: readonly ManagedMemberComparisonResult["methods"][number][],
   fieldItems: readonly ManagedMemberComparisonResult["fields"][number][],
-): ManagedMemberComparisonResult["matching"] => ({
-  exact_il_signature: methodItems.filter(
-    ({ match }) => match.basis === "exact-il-signature",
-  ).length,
-  exact_signature: [...methodItems, ...fieldItems].filter(
-    ({ match }) => match.basis === "exact-signature",
-  ).length,
-  structural_method_shape: methodItems.filter(
-    ({ match }) => match.basis === "structural-method-shape",
-  ).length,
-  field_signature: fieldItems.filter(
-    ({ match }) => match.basis === "field-signature",
-  ).length,
-  ambiguous:
-    methodItems.filter(({ match }) => match.status === "ambiguous").length +
-    fieldItems.filter(({ match }) => match.status === "ambiguous").length,
-  unmatched: [...methodItems, ...fieldItems].filter(
-    ({ match }) => match.status === "unmatched",
-  ).length,
-});
+): ManagedMemberComparisonResult["matching"] => {
+  const counts = {
+    exact_il_signature: 0,
+    exact_signature: 0,
+    structural_method_shape: 0,
+    field_signature: 0,
+    ambiguous: 0,
+    unmatched: 0,
+  };
+  for (const { match } of methodItems) {
+    if (match.basis === "exact-il-signature") counts.exact_il_signature += 1;
+    else if (match.basis === "exact-signature") counts.exact_signature += 1;
+    else if (match.basis === "structural-method-shape")
+      counts.structural_method_shape += 1;
+    if (match.status === "ambiguous") counts.ambiguous += 1;
+    else if (match.status === "unmatched") counts.unmatched += 1;
+  }
+  for (const { match } of fieldItems) {
+    if (match.basis === "exact-signature") counts.exact_signature += 1;
+    else if (match.basis === "field-signature") counts.field_signature += 1;
+    if (match.status === "ambiguous") counts.ambiguous += 1;
+    else if (match.status === "unmatched") counts.unmatched += 1;
+  }
+  return counts;
+};
 
 /** Carry each side's representation-budget diagnostic and its recovery. */
 const capacityLimitations = (

@@ -3,7 +3,6 @@ import { SQLITE_DATABASE_OUTPUT_BYTES } from "../domain/sqlite/sqliteDatabase.js
 /** Bound frozen input, retained JSON and worker allocation before parsing untrusted files. */
 export const SQLITE_DATABASE_LIMITS = {
   concurrentInspections: 2,
-  inputBytes: 256 * 1024 * 1024,
   outputBytes: SQLITE_DATABASE_OUTPUT_BYTES,
   diagnosticBytes: 1024 * 1024,
   /** V8 old-space ceiling for the owned worker, passed as --max-old-space-size. */
@@ -19,7 +18,7 @@ export const SQLITE_WORKER_HEAP_BYTES =
  * can emit cannot be one the client refuses to parse.
  */
 export const SQLITE_INSPECTION_REASONS = [
-  "format",
+  "malformed",
   "selection",
   "column-selection",
   "row-offset",

@@ -17,10 +17,8 @@ import { javascriptRecoveryResultSchema } from "../../../src/domain/javascript/j
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { RECOVERY_LIMITS } from "../../../src/javascript/recovery/WakaruRelease.js";
-import {
-  assertRecoveryCleanup,
-  recoveryFixture,
-} from "../../fixtures/javascript-recovery/provider.js";
+import { expectProviderLaunchCleanup } from "../../support/process/expectProviderLaunchCleanup.js";
+import { recoveryFixture } from "../../fixtures/javascript-recovery/provider.js";
 import { readWithoutFifoWriter } from "../../fixtures/fifoInput.js";
 import { injectPublishedDirectoryCloseFailure } from "../../support/publishedDirectoryCloseFailure.js";
 
@@ -57,7 +55,7 @@ const registerRecoveryProvenanceCases = () => {
       "module.exports = 42;",
     );
     expect(result.value.confidence).toBe("derived");
-    await assertRecoveryCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   });
 
   it.each([
@@ -106,7 +104,7 @@ const registerRecoveryProvenanceCases = () => {
       await expect(access(fixture.output)).rejects.toMatchObject({
         code: "ENOENT",
       });
-      await assertRecoveryCleanup(fixture.launches);
+      await expectProviderLaunchCleanup(fixture.launches);
     },
   );
 
@@ -120,7 +118,7 @@ const registerRecoveryProvenanceCases = () => {
     expect(JSON.stringify(projectAnalysisError(result.error))).toContain(
       "UTF-8 byte range",
     );
-    await assertRecoveryCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   });
 };
 
@@ -160,7 +158,7 @@ const registerRecoveryReleaseAndPartialCases = () => {
         message: "future warning",
       },
     ]);
-    await assertRecoveryCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   });
 
   it("retains valid partial output and exact failure diagnostics", async () => {
@@ -179,7 +177,7 @@ const registerRecoveryReleaseAndPartialCases = () => {
       warnings: [{ is_error: true, kind: "parse_error" }],
     });
     expect(value.modules).toHaveLength(1);
-    await assertRecoveryCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   });
 };
 
@@ -242,7 +240,7 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
       await expect(access(fixture.output)).rejects.toMatchObject({
         code: "ENOENT",
       });
-      await assertRecoveryCleanup(fixture.launches);
+      await expectProviderLaunchCleanup(fixture.launches);
     });
 
     it("reports cleanup failure and retains the workspace named by the error", async () => {
@@ -280,7 +278,7 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
       expect(projectAnalysisError(result.error).code).toBe(
         "capability_unavailable",
       );
-      await assertRecoveryCleanup(fixture.launches);
+      await expectProviderLaunchCleanup(fixture.launches);
     });
   },
 );
@@ -368,7 +366,7 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
           failure.restore();
         }
       }
-      await assertRecoveryCleanup(fixture.launches);
+      await expectProviderLaunchCleanup(fixture.launches);
     });
 
     it("retains published recovery and its result while cleanup remains unresolved", async () => {
@@ -420,7 +418,7 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
       await expect(
         access(join(fixture.output, "manifest.json")),
       ).resolves.toBeUndefined();
-      await assertRecoveryCleanup(fixture.launches);
+      await expectProviderLaunchCleanup(fixture.launches);
     });
   },
 );
@@ -468,7 +466,7 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
           original_path: sources[index]!.path,
           original_sha256: sources[index]!.sha256,
         });
-      await assertRecoveryCleanup(fixture.launches);
+      await expectProviderLaunchCleanup(fixture.launches);
     });
   },
 );
@@ -549,7 +547,7 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
       }
       const manifest = JSON.parse(await readFile(value.manifest.path, "utf8"));
       expect(manifest.additional_sources).toEqual(value.additional_sources);
-      await assertRecoveryCleanup(fixture.launches);
+      await expectProviderLaunchCleanup(fixture.launches);
     });
 
     it.each([
@@ -584,7 +582,7 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
       await expect(access(fixture.output)).rejects.toMatchObject({
         code: "ENOENT",
       });
-      await assertRecoveryCleanup(fixture.launches);
+      await expectProviderLaunchCleanup(fixture.launches);
     });
 
     it("rejects aggregate input overflow before launching the engine", async () => {

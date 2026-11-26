@@ -650,7 +650,11 @@ export class WebBundleAnalysisWorker {
         failure.reason,
         failure.reportedLimits,
         failure.kind === "host-capacity"
-          ? { remediationAction: failure.remediationAction }
+          ? {
+              // Measured host memory, not a selected REA budget.
+              measuredExhaustion: true,
+              remediationAction: failure.remediationAction,
+            }
           : undefined,
       ),
     };

@@ -8,8 +8,10 @@ import { ArtifactOperationError } from "./artifactOperationError.js";
 
 /**
  * The typed refusal an error carries, attributed to the error's operation so
- * a re-attributed error names the request that was refused. Occupied capacity
- * keeps its wait-and-retry recovery even when a setting bounds it.
+ * a re-attributed error names the request that was refused. A registered
+ * setting and a per-call parameter are adjustable budgets; an environment
+ * control is not. Occupied capacity keeps its wait-and-retry recovery even
+ * when a setting bounds it.
  */
 export const analysisErrorRefusal = (
   error: AnalysisError,
@@ -21,9 +23,10 @@ export const analysisErrorRefusal = (
         operation: error.operation,
         ceiling: error.fixedAllowance,
       };
+    const { limit } = error;
     if (
-      error.limit !== undefined &&
-      !("control_kind" in error.limit) &&
+      limit !== undefined &&
+      (!("control_kind" in limit) || limit.control_kind === "parameter") &&
       !(
         "measuredExhaustion" in error.recovery &&
         error.recovery.measuredExhaustion === true
@@ -32,7 +35,7 @@ export const analysisErrorRefusal = (
       return {
         kind: "adjustable_budget",
         operation: error.operation,
-        budget: error.limit,
+        budget: limit,
       };
     return undefined;
   }
@@ -44,6 +47,19 @@ export const analysisErrorRefusal = (
       kind: "fixed_ceiling",
       operation: error.operation,
       ceiling: error.fixedAllowance,
+    };
+  // A reader admission backed by a registered setting (artifact.member_count)
+  // is the same adjustable budget, with the per-call field as `parameter`.
+  if (
+    error instanceof ArtifactOperationError &&
+    error.readerLimit !== undefined &&
+    error.limit !== undefined &&
+    !("control_kind" in error.limit)
+  )
+    return {
+      kind: "adjustable_budget",
+      operation: error.operation,
+      budget: error.limit,
     };
   if (
     error instanceof AnalysisInputError &&

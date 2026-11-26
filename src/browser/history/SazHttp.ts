@@ -1,28 +1,45 @@
 import { CaptureFormatError } from "./CaptureFormatError.js";
 
+/** Locate the first blank line ending headers across CRLF, LF, or mixed line endings. */
+const findHeaderBoundary = (
+  bytes: Buffer,
+): { readonly headerEnd: number; readonly bodyStart: number } | null => {
+  let offset = 0;
+  while (offset < bytes.length) {
+    const lf = bytes.indexOf(0x0a, offset);
+    if (lf < 0) return null;
+    const next = lf + 1;
+    const blankLineLength =
+      bytes[next] === 0x0a
+        ? 1
+        : bytes[next] === 0x0d && bytes[next + 1] === 0x0a
+          ? 2
+          : 0;
+    if (blankLineLength > 0)
+      return {
+        headerEnd: lf > 0 && bytes[lf - 1] === 0x0d ? lf - 1 : lf,
+        bodyStart: next + blankLineLength,
+      };
+    offset = next;
+  }
+  return null;
+};
+
 /** Preserve ordered HTTP fields and the stored body; never dechunk, decompress or fetch. */
 export const decodeSazHttp = (bytes: Buffer, request: boolean) => {
-  const crlfSplit = bytes.indexOf("\r\n\r\n");
-  // Once a CRLF separator is found, only an earlier LF separator can win.
-  // Avoid searching an otherwise unrelated large body a second time.
-  const lfSplit = bytes
-    .subarray(0, crlfSplit < 0 ? bytes.length : crlfSplit)
-    .indexOf("\n\n");
-  // The first separator ends the headers. Later separators belong to the
+  // The first blank line ends the headers. Later separators belong to the
   // stored body, which may use different line endings or contain binary data.
-  const split =
-    crlfSplit >= 0 && (lfSplit < 0 || crlfSplit < lfSplit) ? crlfSplit : -1;
-  const boundary = split < 0 ? lfSplit : split;
-  if (boundary < 0)
+  const boundary = findHeaderBoundary(bytes);
+  if (boundary === null)
     throw new CaptureFormatError(
       "malformed",
       "SAZ HTTP message has no header/body separator.",
     );
-  const lines = bytes
-    .subarray(0, boundary)
+  const parts = bytes
+    .subarray(0, boundary.headerEnd)
     .toString("latin1")
-    .split(split < 0 ? "\n" : "\r\n");
-  const first = lines.shift() ?? "";
+    .split(/(\r?\n)/);
+  const first = parts[0] ?? "";
   const fields = request
     ? /^(\S+) +(\S+) +(HTTP\/\d+(?:\.\d+)?)$/.exec(first)
     : /^(HTTP\/\d+(?:\.\d+)?) +(\d{3})(?: (.*))?$/.exec(first);
@@ -32,7 +49,8 @@ export const decodeSazHttp = (bytes: Buffer, request: boolean) => {
       "SAZ HTTP start line is malformed.",
     );
   const headers: { name: string; value: string }[] = [];
-  for (const line of lines) {
+  for (let index = 2; index < parts.length; index += 2) {
+    const line = parts[index] ?? "";
     if (/^[ \t]/.test(line)) {
       const previous = headers.at(-1);
       if (previous === undefined)
@@ -40,7 +58,7 @@ export const decodeSazHttp = (bytes: Buffer, request: boolean) => {
           "malformed",
           "SAZ HTTP header continuation has no field.",
         );
-      previous.value += `${split < 0 ? "\n" : "\r\n"}${line}`;
+      previous.value += `${parts[index - 1] ?? ""}${line}`;
       continue;
     }
     const colon = line.indexOf(":");
@@ -73,6 +91,6 @@ export const decodeSazHttp = (bytes: Buffer, request: boolean) => {
   return {
     ...start,
     headers,
-    body: bytes.subarray(boundary + (split < 0 ? 2 : 4)),
+    body: bytes.subarray(boundary.bodyStart),
   };
 };
