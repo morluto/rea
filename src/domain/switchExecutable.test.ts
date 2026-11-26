@@ -18,8 +18,7 @@ it("parses NSO segment headers, flags and the module id", () => {
   const bytes = buildNso();
   expect(hasNsoMagic(bytes)).toBe(true);
   const parsed = parseNsoHeader(bytes, bytes.length);
-  expect(parsed.ok).toBe(true);
-  if (!parsed.ok) return;
+  if (!parsed.ok) throw parsed.error;
   expect(parsed.value).toMatchObject({
     format: "nso",
     flags: 0b111101,
@@ -101,8 +100,7 @@ it("parses an NRO header and its ASET section", () => {
     bytes.subarray(0, NRO_HEADER_SIZE),
     bytes.length,
   );
-  expect(parsed.ok).toBe(true);
-  if (!parsed.ok) return;
+  if (!parsed.ok) throw parsed.error;
   const header = parsed.value;
   expect(header).toMatchObject({
     format: "nro",
@@ -275,7 +273,7 @@ it("reads the MOD0 offset at text+4 only from a full text prefix", () => {
 it("locates the NRO MOD0 magic only when the file holds it", () => {
   const bytes = buildNro();
   const parsed = parseNroHeader(bytes, bytes.length);
-  if (!parsed.ok) throw new Error(parsed.error.message);
+  if (!parsed.ok) throw parsed.error;
   expect(nroMod0MagicExtent(parsed.value, bytes.length)).toEqual({
     offset: 0x80,
     size: 4,
