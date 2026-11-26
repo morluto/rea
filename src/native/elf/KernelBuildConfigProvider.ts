@@ -16,6 +16,7 @@ import {
   MAX_INSPECT_KERNEL_BUILD_CONFIG_ENTRIES,
   MAX_INSPECT_KERNEL_BUILD_CONFIG_FILE_BYTES,
   MAX_INSPECT_KERNEL_BUILD_CONFIG_PAYLOAD_BYTES,
+  kernelBuildConfigBudgetLimit,
   type InspectKernelBuildConfigInput,
   type KernelBuildConfig,
 } from "../../domain/native/kernelBuildConfig.js";
@@ -171,6 +172,14 @@ const kernelBuildConfigFailure = (
                 [limit.name]: limit.maximum,
               },
               retryable: false,
+              // The compressed candidate allowance is derived from max_config_bytes.
+              limit:
+                limit.name === "compressed_candidate_bytes"
+                  ? kernelBuildConfigBudgetLimit(
+                      "max_config_bytes",
+                      input.max_config_bytes,
+                    )
+                  : kernelBuildConfigBudgetLimit(limit.name, limit.maximum),
               remediationAction: parserBudgetRemediation(limit),
             },
           );
@@ -192,6 +201,10 @@ const kernelBuildConfigFailure = (
                 ? {}
                 : {
                     retryable: false as const,
+                    limit: kernelBuildConfigBudgetLimit(
+                      "max_file_bytes",
+                      input.max_file_bytes,
+                    ),
                     remediationAction:
                       failure.boundary === "file-size"
                         ? fileSizeRemediation(input)

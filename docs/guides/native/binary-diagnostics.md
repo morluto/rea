@@ -382,7 +382,10 @@ Offsets and lengths are decimal byte counts. Blocks begin at the requested
 EOF fail rather than silently clipping. The final block may be shorter.
 `block_size` must be a power of two from 256 through 65536, default 4096. A
 window may produce at most 32,768 block rows; larger requests fail before the
-file scan with a capacity error. Choose a shorter window or larger block size.
+file scan with a capacity error. Its `details.limit` names `block_size` (range
+256 to 65536, default 4096) while a larger block admits the window, else
+`length` (at most 2 GiB, the window of 32,768 blocks of 65536 bytes); page a
+larger window with `offset` and `length`.
 SHA-256 and `file_entropy` always cover the entire file, including when a window
 is selected. Empty files and empty windows are accepted; empty entropy is zero
 by convention. The tool reads the size the file reports. A file that reports size

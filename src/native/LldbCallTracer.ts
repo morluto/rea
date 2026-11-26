@@ -7,6 +7,7 @@ import {
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
 import { translateNativeCommandFailure } from "./NativeCommandAnalysisError.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { DEFAULT_NATIVE_COMMAND_TIMEOUT_MS } from "../domain/native/nativeDeadlines.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { randomUUID } from "node:crypto";
@@ -1221,11 +1222,11 @@ const readTracerOutput = async (
             maximum_result_bytes: MAX_NATIVE_CALL_CAPTURE_BYTES,
             observed_result_bytes: size,
           },
-          {
-            retryable: false,
-            remediationAction:
-              "The combined LLDB result cannot fit the running Node Buffer/single-string representation. Select smaller capture_limits.trace_bytes or capture_limits.breakpoint_location_bytes, or fewer breakpoints before a new authorized observation. Increasing the client receive buffer cannot raise this ceiling. Retained journal/output observations remain partial; earlier omitted facts cannot be recovered.",
-          },
+          fixedAllowanceOptions(
+            "The Node Buffer and single-string representation ceiling of the combined LLDB result (smaller capture_limits.trace_bytes or capture_limits.breakpoint_location_bytes, or fewer breakpoints, keep a new observation within it)",
+            "capture",
+            { limit: MAX_NATIVE_CALL_CAPTURE_BYTES, unit: "bytes" },
+          ),
         ),
       );
     const read = await readBoundedPrefix(

@@ -20,11 +20,11 @@ import {
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import {
-  MAX_INSPECT_WINDOWS_SHORTCUT_EXTRA_DATA_BLOCKS,
   MAX_INSPECT_WINDOWS_SHORTCUT_FILE_BYTES,
-  MAX_INSPECT_WINDOWS_SHORTCUT_ID_LIST_ITEMS,
-  MAX_INSPECT_WINDOWS_SHORTCUT_STRING_BYTES,
+  WINDOWS_SHORTCUT_BUDGETS,
+  windowsShortcutBudgetLimit,
   type InspectWindowsShortcutInput,
+  type WindowsShortcutBudget,
 } from "../../domain/native/windowsShortcut.js";
 import { err, ok } from "../../domain/result.js";
 import { WINDOWS_SHORTCUT_PROVIDER } from "../../domain/investigationProviders.js";
@@ -225,36 +225,22 @@ const fileSizeRemediation = (input: InspectWindowsShortcutInput): string =>
     ? `The shortcut exceeds the ${String(MAX_INSPECT_WINDOWS_SHORTCUT_FILE_BYTES)}-byte input ceiling this operation accepts. This release has no runtime override. Select a smaller artifact.`
     : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
 
+/** The schema field of each boundary the parser names. */
 const SELECTED_BUDGETS = {
-  id_list_items: {
-    argument: "max_id_list_items",
-    maximum: MAX_INSPECT_WINDOWS_SHORTCUT_ID_LIST_ITEMS,
-    unit: "entries",
-  },
-  extra_data_blocks: {
-    argument: "max_extra_data_blocks",
-    maximum: MAX_INSPECT_WINDOWS_SHORTCUT_EXTRA_DATA_BLOCKS,
-    unit: "entries",
-  },
-  string_bytes: {
-    argument: "max_string_bytes",
-    maximum: MAX_INSPECT_WINDOWS_SHORTCUT_STRING_BYTES,
-    unit: "bytes",
-  },
+  id_list_items: "max_id_list_items",
+  extra_data_blocks: "max_extra_data_blocks",
+  string_bytes: "max_string_bytes",
 } as const satisfies Record<
   WindowsShortcutSelectedBoundary,
-  {
-    readonly argument: keyof InspectWindowsShortcutInput;
-    readonly maximum: number;
-    readonly unit: string;
-  }
+  WindowsShortcutBudget
 >;
 
-const budgetRemediation = ({
-  name,
-  maximum: selected,
-}: WindowsShortcutResourceFailure["failure"]["limit"]): string => {
-  const { argument, maximum, unit } = SELECTED_BUDGETS[name];
+const budgetRemediation = (
+  argument: WindowsShortcutBudget,
+  selected: number,
+): string => {
+  const { maximum, unit: budgetUnit } = WINDOWS_SHORTCUT_BUDGETS[argument];
+  const unit = budgetUnit === "bytes" ? "bytes" : "entries";
   const recovery =
     selected >= maximum
       ? `This release has no override above the ${String(maximum)} ${unit} ceiling; select a smaller shortcut.`
@@ -275,12 +261,16 @@ const windowsShortcutFailure = (
       path: input.path,
       description: "shortcut",
       recognise: (failure) => {
-        if (failure instanceof WindowsShortcutResourceFailure)
+        if (failure instanceof WindowsShortcutResourceFailure) {
+          const { name, maximum } = failure.failure.limit;
+          const argument = SELECTED_BUDGETS[name];
           return parseLimitConstraint(OPERATION, "capacity", failure, {
             path: input.path,
             retryable: false,
-            remediationAction: budgetRemediation(failure.failure.limit),
+            limit: windowsShortcutBudgetLimit(argument, maximum),
+            remediationAction: budgetRemediation(argument, maximum),
           });
+        }
         return undefined;
       },
       fileSize: (failure) =>
@@ -292,6 +282,10 @@ const windowsShortcutFailure = (
           {
             cause: failure,
             retryable: false,
+            limit: windowsShortcutBudgetLimit(
+              "max_file_bytes",
+              input.max_file_bytes,
+            ),
             remediationAction: fileSizeRemediation(input),
           },
         ),

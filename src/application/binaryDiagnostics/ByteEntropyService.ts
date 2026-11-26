@@ -22,7 +22,9 @@ import {
 } from "../../domain/evidence.js";
 import {
   byteEntropySchema,
+  byteEntropyWindowLimit,
   createBlockEntropyCalculator,
+  MAX_BYTE_ENTROPY_BLOCKS,
   entropyFromCounts,
   countByteValues,
   wholeFileByteCounts,
@@ -46,9 +48,6 @@ import { analysisErrorWithCleanupDependencies } from "../../domain/analysisError
 import { sameRegularFileState } from "../../filesystem/RegularFile.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
-
-/** Bound retained result rows before constructing the Evidence representation. */
-const MAX_BYTE_ENTROPY_BLOCKS = 32_768;
 
 /** Generated files such as Linux /proc entries report size 0 but still hold bytes. */
 const ZERO_SIZE_LIMITATION =
@@ -251,8 +250,12 @@ export class ByteEntropyService {
               },
               {
                 retryable: false,
-                remediationAction:
-                  "Reduce the selected window length or increase block_size so the selected window contains at most 32768 blocks.",
+                limit: byteEntropyWindowLimit(
+                  input.block_size,
+                  length,
+                  size - input.offset,
+                ),
+                remediationAction: `Increase block_size or reduce the window length so it holds at most ${String(MAX_BYTE_ENTROPY_BLOCKS)} blocks; a window above ${String(MAX_BYTE_ENTROPY_BLOCKS)} blocks of the largest block_size needs several calls with offset and length.`,
               },
             );
           const end = input.offset + length;

@@ -39,7 +39,15 @@ describe("kernel build config stable filesystem boundary", () => {
     try {
       const tooSmall = await service.inspect({ path, max_file_bytes: 64 });
       if (tooSmall.ok) throw new Error("Expected resource budget failure");
-      expect(tooSmall.error._tag).toBe("AnalysisResourceConstraintError");
+      expect(tooSmall.error).toMatchObject({
+        _tag: "AnalysisResourceConstraintError",
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 64,
+          default_value: 67108864,
+        },
+      });
       const bootImage = join(root, "bzImage");
       await writeFile(bootImage, bzImageGzipFixture());
       for (const [target, boundary, maximum] of [
@@ -58,6 +66,12 @@ describe("kernel build config stable filesystem boundary", () => {
           details: {
             resource: "capacity",
             reported_limits: { boundary, maximum, [boundary]: maximum },
+            limit: {
+              control_kind: "parameter",
+              parameter: boundary,
+              effective_value: maximum,
+              applies_at: "next_call",
+            },
           },
           remediation: {
             action: expect.stringContaining(

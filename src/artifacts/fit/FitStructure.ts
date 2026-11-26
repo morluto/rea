@@ -13,6 +13,7 @@ import type {
   FitMetadata,
 } from "../../domain/formatMetadata/firmwareMetadata.js";
 import {
+  DEVICETREE_READ_BUDGETS,
   MAX_DEVICETREE_FILE_BYTES,
   type Devicetree,
 } from "../../domain/firmware/devicetree.js";
@@ -578,6 +579,8 @@ const parseFit = (fdt: Buffer, path: string) => {
         max_nodes: 8192,
         max_properties: 32768,
         max_depth: 64,
+        max_decoded_bytes:
+          DEVICETREE_READ_BUDGETS.max_decoded_bytes.default_value,
       },
     );
   } catch (cause) {

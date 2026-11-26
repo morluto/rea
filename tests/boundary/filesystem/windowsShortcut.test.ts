@@ -230,6 +230,16 @@ it.each([false, true])(
         boundary: "string_bytes",
         maximum,
       });
+      expect(projected.details?.limit).toEqual({
+        control_kind: "parameter",
+        parameter: "max_string_bytes",
+        effective_value: maximum,
+        unit: "bytes",
+        minimum: 1,
+        maximum: 1024 * 1024,
+        default_value: 65536,
+        applies_at: "next_call",
+      });
     } finally {
       await service.close();
     }
@@ -243,7 +253,14 @@ it("returns typed resource and cancellation failures", async () => {
   const service = createWindowsShortcutService();
   const tooSmall = await service.inspect({ path, max_file_bytes: 76 });
   if (tooSmall.ok) throw new Error("Expected resource budget failure");
-  expect(tooSmall.error._tag).toBe("AnalysisResourceConstraintError");
+  expect(tooSmall.error).toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    limit: {
+      parameter: "max_file_bytes",
+      effective_value: 76,
+      default_value: 1048576,
+    },
+  });
   for (const [argument, boundary] of [
     ["max_id_list_items", "id_list_items"],
     ["max_extra_data_blocks", "extra_data_blocks"],
@@ -260,6 +277,7 @@ it("returns typed resource and cancellation failures", async () => {
         },
       },
       reportedLimits: { boundary, maximum: 1 },
+      limit: { parameter: argument, effective_value: 1, unit: "count" },
       remediationAction: expect.stringContaining(`Effective ${argument} is 1`),
       retryable: false,
     });

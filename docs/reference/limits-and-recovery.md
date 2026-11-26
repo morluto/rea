@@ -101,6 +101,13 @@ accepts `max_native_index_bytes` (default 1 GiB) for the estimated ELF pointer
 index of `binary_path`; its refusal reports the same kind of limit. See
 [IL2CPP metadata](../il2cpp-metadata.md#native-method-addresses).
 
+`inspect_devicetree`, `inspect_windows_shortcut`, `inspect_kernel_build_config`,
+`extract_firmware` and `inspect_byte_entropy` report the same parameter limit for
+their per-call budgets (`max_file_bytes`, entry, depth and decoded-byte budgets,
+`max_output_bytes`/`max_output_files`, and `block_size` or `length`).
+`inspect_devicetree` bounds its estimated decoded representation with
+`max_decoded_bytes` (default 32 MiB, at most 256 MiB).
+
 ### Native table structure budget
 
 `inspect_elf_unwind_ranges`, `inspect_kernel_module`, `inspect_elf_debug_link`,
