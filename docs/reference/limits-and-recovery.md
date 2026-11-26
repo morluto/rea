@@ -114,8 +114,9 @@ one streaming pass that hashes the file for its identity is not counted.
 An exhausted allowance is a `capacity` refusal. `details.limit` has
 `control_kind: "parameter"`, `parameter: "max_file_bytes"`, the effective
 value, the bounds, the default and `applies_at: "next_call"`, and
-`details.reported_limits.required_read_bytes` holds the reads needed so far.
-Raise `max_file_bytes` and retry; `update_analysis_settings` does not change it.
+`details.limit.required_value` (also `details.reported_limits.required_read_bytes`)
+holds the reads needed so far. Pass at least that `max_file_bytes` and retry;
+`update_analysis_settings` does not change it.
 The identity pass has a fixed whole-file ceiling: 4 GiB minus one byte for the
 PE-only readers, whose file offsets are 32-bit, and 512 MiB for hardening and
 exports. A file above it is a `file-size` refusal naming that fixed allowance,
@@ -221,10 +222,13 @@ A deadline controlled by something other than a registered setting reports
 `details.limit` with `control_kind` instead of `setting`.
 `control_kind: "parameter"` names the per-call contract field in `parameter`
 (`native_command_timeout_ms`, `native_ui_deadline_ms`,
-`pwntools_timeout_ms`) and applies on the next call. Services and their
-remediation text name only that field. A CLI command adds `cli_flag`, the
-option that sets the field on that command, from its own field-to-flag
-binding; MCP results do not carry it.
+`pwntools_timeout_ms`) and applies on the next call. It carries its
+`effective_value`, `unit`, `minimum`, `maximum` and `default_value`, and
+`required_value` when the producer measured the smallest value that admits the
+refused request. Services and their remediation text name only that field. A
+CLI command adds `cli_flag`, the option that sets the field on that command,
+from its own field-to-flag binding, and its recovery names that option and
+command in place of the field and tool; MCP results do not carry it.
 A completed or partial result can record the same reference, for example a
 `limit` in a web bundle `unknowns` entry for a script that reached its
 `analysis_timeout_ms` deadline. That reference is part of the result and its
@@ -457,16 +461,22 @@ recovery to the resource kind. The domain owner is
 It has three variants. Each one projects under `details.refusal` with the
 `operation` the error is attributed to:
 
-| Variant              | Producer fact                                                                                                                            | Projected fields                                                                    |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `fixed_ceiling`      | `fixedAllowanceOptions(name, kind, { limit, unit, narrowing })`, or an artifact reader's `artifactFixedLimitFailure(allowance, outcome)` | `allowance`, `allowance_kind`, `limit`, `unit`, `narrowing`                         |
-| `adjustable_budget`  | an `AnalysisSettingLimit` bound as `limit`                                                                                               | `control`, `setting`, `effective_value`, `unit`, `range`, optional `required_value` |
-| `ambiguous_selector` | `AnalysisInputError` option `ambiguousSelector: { field, candidates }`                                                                   | `field`, `candidates`                                                               |
+| Variant              | Producer fact                                                                                                                            | Projected fields                                                                                                                       |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `fixed_ceiling`      | `fixedAllowanceOptions(name, kind, { limit, unit, narrowing })`, or an artifact reader's `artifactFixedLimitFailure(allowance, outcome)` | `allowance`, `allowance_kind`, `limit`, `unit`, `narrowing`                                                                            |
+| `adjustable_budget`  | an `AnalysisSettingLimit`, or a `control_kind: "parameter"` limit, bound as `limit`                                                      | `control`, `setting` (settings only), `effective_value`, `unit`, `range`, `default_value` (parameters only), optional `required_value` |
+| `ambiguous_selector` | `AnalysisInputError` option `ambiguousSelector: { field, candidates }`                                                                   | `field`, `candidates`                                                                                                                  |
 
-Presentation is total over these variants. Authored remediation still wins.
-Without it, the variant names the recovery: fixed ceilings and their narrowing
-step, the budget's control and range for the caller's lifetime, or the selector
-field and its candidates. A resource refusal never falls back to text about
+Presentation is total over these variants. Authored remediation still wins,
+so a producer that binds a parameter or setting limit omits it unless it adds
+something the facts cannot say. Without it, the variant names the recovery:
+fixed ceilings and their narrowing step, the budget's control and range for the
+caller's lifetime, or the selector field and its candidates. A per-call
+parameter reads "Pass a larger `<parameter>` on the next `<operation>` call
+(at least `<required_value>`; range `<minimum>..<maximum>`), then retry." When
+the control is already at its maximum, or `required_value` is above it, the
+recovery asks for a narrower request instead. An environment control is not
+an adjustable budget. A resource refusal never falls back to text about
 worker limits, the MCP transport, or doctor. An ambiguous selector conforms to
 the input contract, so it does not ask the caller to inspect the schema.
 
@@ -500,7 +510,9 @@ whether live repair is possible.
 Use `details.limit` for a direct runtime update when it names an editable
 setting with `scope: "rea-runtime"`. For `scope: "rea-invocation"`, set its
 `environment` or `parameter` for a new invocation instead.
-Follow `remediation.action` for per-call, fixed and external controls.
+For `control_kind: "parameter"`, pass at least `required_value` (when
+present) for `parameter` on the next call. Follow `remediation.action` for
+fixed and external controls.
 Inspect settings only when bounds or application details are missing. Restart only when it says the value is
 read at startup. A sentence that a control does not raise the limit is not a
 request to change it.

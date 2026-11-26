@@ -186,7 +186,9 @@ describe("ELF debug-link stable filesystem boundary", () => {
       if (tooMany.ok) throw new Error("Expected entry budget failure");
       if (!(tooMany.error instanceof AnalysisResourceConstraintError))
         throw new Error("Expected entry budget failure");
-      expect(tooMany.error.remediationAction).toContain("smaller image");
+      expect(projectAnalysisError(tooMany.error).remediation.action).toBe(
+        "inspect_elf_debug_link reached its max_entries budget of 1. Pass a larger max_entries on the next inspect_elf_debug_link call (range 1..256), then retry.",
+      );
       expect(tooMany.error.limit).toEqual({
         control_kind: "parameter",
         parameter: "max_entries",

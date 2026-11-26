@@ -15,6 +15,10 @@ import {
   renderInputSchemaRemediation,
   type InputSchemaRemediationSpelling,
 } from "../domain/analysisErrorPresentation.js";
+import {
+  MCP_PER_CALL_CONTROL_SPELLING,
+  perCallControlChange,
+} from "../domain/analysisRefusal.js";
 import type { Result } from "../domain/result.js";
 import {
   cliCommandForOperation,
@@ -174,7 +178,13 @@ const projectErrorRecord = (
   );
   const remediation =
     cliTargetFailureRemediation(error, details, context) ??
-    cliInputSchemaRemediation(error, details, context);
+    cliInputSchemaRemediation(error, details, context) ??
+    cliPerCallControlRemediation(
+      error,
+      details,
+      limit ?? details.limit,
+      context,
+    );
   if (
     limit === undefined &&
     relatedFlags === undefined &&
@@ -387,6 +397,61 @@ const cliInputSchemaRemediation = (
         ...remediation,
         action: `${remediation.action.slice(0, index)}${cli}${remediation.action.slice(index + mcp.length)}`,
       };
+};
+
+/**
+ * An adjustable-budget refusal's per-call step in CLI spelling: the flag that
+ * sets the control on the command that runs the refused operation, or the
+ * whole field's option that carries it. Only the step the refusal rendered is
+ * replaced, so its facts and range survive.
+ */
+const cliPerCallControlRemediation = (
+  error: Record<string, JsonValue>,
+  details: Record<string, JsonValue>,
+  limit: JsonValue | undefined,
+  context: CliCommandOutputProjectionContext,
+): Record<string, JsonValue> | undefined => {
+  const { remediation } = error;
+  const { refusal } = details;
+  if (
+    !isObject(remediation) ||
+    typeof remediation.action !== "string" ||
+    !isObject(refusal) ||
+    refusal.kind !== "adjustable_budget" ||
+    typeof refusal.operation !== "string" ||
+    !isObject(limit) ||
+    typeof limit.cli_flag !== "string" ||
+    typeof limit.parameter !== "string" ||
+    limit.parameter !== refusal.control
+  )
+    return undefined;
+  const { operation } = refusal;
+  const parameter = limit.parameter;
+  const flag = limit.cli_flag;
+  const mcp = perCallControlChange(parameter, operation);
+  const index = remediation.action.indexOf(mcp);
+  if (index < 0) return undefined;
+  const command = cliCommandForOperation(
+    operation,
+    context.commands,
+    context.cliName ?? "rea",
+    context.recordedCommands,
+  );
+  // A member set through its whole field's JSON option keeps its path.
+  const memberFlag = orderedOperations(context.operations, operation).some(
+    ({ flags }) => flags[parameter] === flag,
+  );
+  const cli = perCallControlChange(parameter, operation, {
+    parameter: () => (memberFlag ? flag : `${parameter} (in ${flag})`),
+    call:
+      command === undefined
+        ? MCP_PER_CALL_CONTROL_SPELLING.call
+        : () => `the next ${command} run`,
+  });
+  return {
+    ...remediation,
+    action: `${remediation.action.slice(0, index)}${cli}${remediation.action.slice(index + mcp.length)}`,
+  };
 };
 
 const projectedSecondaryFailures = (

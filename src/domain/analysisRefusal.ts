@@ -1,5 +1,8 @@
 import type { AnalysisCallerLifetime } from "./analysisErrorBase.js";
-import type { AnalysisSettingLimit } from "./analysisSettings.js";
+import type {
+  AnalysisParameterLimit,
+  AnalysisSettingLimit,
+} from "./analysisSettings.js";
 import { analysisSettingDefinition } from "./analysisSettingDefinitions.js";
 import {
   fixedAllowanceRemediation,
@@ -25,10 +28,10 @@ export interface AmbiguousSelector {
  *
  * - `fixed_ceiling`: a release-fixed allowance (`FixedAllowance`) with its
  *   optional limit, unit and narrowing step.
- * - `adjustable_budget`: an agent-adjustable setting or per-call parameter
- *   (`AnalysisSettingLimit`) with its control, unit, range and, when the
- *   producer measured it, the minimum value (`required_value`) that admits
- *   the request.
+ * - `adjustable_budget`: an agent-adjustable setting (`AnalysisSettingLimit`)
+ *   or per-call parameter (`AnalysisParameterLimit`) with its control, unit,
+ *   range and, when the producer measured it, the minimum value
+ *   (`required_value`) that admits the request.
  * - `ambiguous_selector`: a selector that matched several candidates.
  */
 export type AnalysisRefusal =
@@ -40,7 +43,7 @@ export type AnalysisRefusal =
   | {
       readonly kind: "adjustable_budget";
       readonly operation: string;
-      readonly budget: AnalysisSettingLimit;
+      readonly budget: AdjustableBudget;
     }
   | {
       readonly kind: "ambiguous_selector";
@@ -48,13 +51,69 @@ export type AnalysisRefusal =
       readonly selector: AmbiguousSelector;
     };
 
+/** A budget the caller can raise: a registered setting or a per-call parameter. */
+export type AdjustableBudget = AnalysisSettingLimit | AnalysisParameterLimit;
+
 const fieldName = (field: RefusalField): string => field.map(String).join(".");
 
 const UNCHANGED = "Repeating the unchanged request is not expected to succeed.";
 
-const adjustableBudgetRemediation = (
+/** How an adapter spells a per-call control and the call that accepts it. */
+export interface PerCallControlSpelling {
+  readonly parameter: (parameter: string) => string;
+  readonly call: (operation: string) => string;
+}
+
+/** MCP names a control by its contract field and the call by its tool. */
+export const MCP_PER_CALL_CONTROL_SPELLING: PerCallControlSpelling = {
+  parameter: (parameter) => parameter,
+  call: (operation) => `the next ${operation} call`,
+};
+
+/**
+ * The step that raises a per-call control. Adapters re-render it with their
+ * own spelling, so it is the one sentence fragment they replace.
+ */
+export const perCallControlChange = (
+  parameter: string,
+  operation: string,
+  spelling: PerCallControlSpelling = MCP_PER_CALL_CONTROL_SPELLING,
+): string =>
+  `Pass a larger ${spelling.parameter(parameter)} on ${spelling.call(operation)}`;
+
+const budgetControl = (budget: AdjustableBudget): string =>
+  "control_kind" in budget
+    ? budget.parameter
+    : (budget.parameter ?? budget.setting);
+
+const settingBudgetChange = (
   operation: string,
   budget: AnalysisSettingLimit,
+  callerLifetime: AnalysisCallerLifetime,
+): string => {
+  const environment = analysisSettingDefinition(budget.setting).environment;
+  if (
+    budget.parameter !== undefined &&
+    (budget.update_mode === "parameter" ||
+      (callerLifetime === "invocation" && environment === undefined))
+  )
+    return perCallControlChange(budget.parameter, operation);
+  if (callerLifetime === "invocation")
+    return `Set ${environment ?? budget.setting} for the next invocation`;
+  return budget.update_mode === "runtime"
+    ? `Raise ${budget.setting} with update_analysis_settings`
+    : `Set ${environment ?? budget.setting} in the environment that starts REA, then restart REA`;
+};
+
+/** A budget quantity as prose; a count needs no unit word. */
+const quantity = (
+  value: number | string,
+  unit: AdjustableBudget["unit"],
+): string => (unit === "count" ? String(value) : `${String(value)} ${unit}`);
+
+const adjustableBudgetRemediation = (
+  operation: string,
+  budget: AdjustableBudget,
   callerLifetime: AnalysisCallerLifetime,
 ): string => {
   const {
@@ -64,29 +123,23 @@ const adjustableBudgetRemediation = (
     effective_value: value,
     required_value: required,
   } = budget;
-  const control = budget.parameter ?? budget.setting;
-  const range = `${String(minimum)}..${String(maximum)} ${unit}`;
+  const control = budgetControl(budget);
+  const source = "control_kind" in budget ? undefined : budget.source;
+  const range = quantity(`${String(minimum)}..${String(maximum)}`, unit);
   const effective =
     value === null
       ? `The effective ${control} value is unknown`
-      : `${operation} reached its ${control} budget of ${String(value)} ${unit}${budget.source === undefined ? "" : ` (source ${budget.source})`}`;
+      : `${operation} reached its ${control} budget of ${quantity(value, unit)}${source === undefined ? "" : ` (source ${source})`}`;
   if (value !== null && value >= maximum)
     return `${effective}. ${control} is already at its maximum (${range}); narrow the request or select a smaller input. ${UNCHANGED}`;
   if (required !== undefined && required > maximum)
-    return `${effective}. The request requires ${String(required)} ${unit}, above the ${control} maximum (${range}); narrow the request or select a smaller input. ${UNCHANGED}`;
-  const environment = analysisSettingDefinition(budget.setting).environment;
+    return `${effective}. The request requires ${quantity(required, unit)}, above the ${control} maximum (${range}); narrow the request or select a smaller input. ${UNCHANGED}`;
   const change =
-    budget.parameter !== undefined &&
-    (budget.update_mode === "parameter" ||
-      (callerLifetime === "invocation" && environment === undefined))
-      ? `Pass a larger ${budget.parameter} on the next ${operation} call`
-      : callerLifetime === "invocation"
-        ? `Set ${environment ?? budget.setting} for the next invocation`
-        : budget.update_mode === "runtime"
-          ? `Raise ${budget.setting} with update_analysis_settings`
-          : `Set ${environment ?? budget.setting} in the environment that starts REA, then restart REA`;
+    "control_kind" in budget
+      ? perCallControlChange(budget.parameter, operation)
+      : settingBudgetChange(operation, budget, callerLifetime);
   const atLeast =
-    required === undefined ? "" : `at least ${String(required)} ${unit}; `;
+    required === undefined ? "" : `at least ${quantity(required, unit)}; `;
   return `${effective}. ${change} (${atLeast}range ${range}), then retry.`;
 };
 
@@ -155,11 +208,14 @@ export const analysisRefusalDetails = (
       return {
         kind: refusal.kind,
         operation: refusal.operation,
-        control: budget.parameter ?? budget.setting,
-        setting: budget.setting,
+        control: budgetControl(budget),
+        ...("control_kind" in budget ? {} : { setting: budget.setting }),
         effective_value: budget.effective_value,
         unit: budget.unit,
         range: { minimum: budget.minimum, maximum: budget.maximum },
+        ...("default_value" in budget
+          ? { default_value: budget.default_value }
+          : {}),
         ...(budget.required_value === undefined
           ? {}
           : { required_value: budget.required_value }),

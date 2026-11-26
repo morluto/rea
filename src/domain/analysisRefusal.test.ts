@@ -12,6 +12,7 @@ import {
   type AnalysisRefusal,
 } from "./analysisRefusal.js";
 import { analysisErrorProjectionSchema } from "./analysisErrorProjectionSchema.js";
+import type { AnalysisParameterLimit } from "./analysisSettings.js";
 
 const budgetError = (
   setting: Parameters<typeof analysisSettingLimit>[0],
@@ -281,5 +282,125 @@ describe("adjustable budget minimum", () => {
     ).remediation.action;
     expect(unreachable).toContain("above the asar.max_listing_bytes maximum");
     expect(unreachable).not.toContain("update_analysis_settings");
+  });
+});
+
+describe("per-call parameter budgets", () => {
+  const parameterLimit = (
+    effective: number,
+    required?: number,
+  ): AnalysisParameterLimit => ({
+    control_kind: "parameter",
+    parameter: "max_file_bytes",
+    effective_value: effective,
+    unit: "bytes",
+    minimum: 64,
+    maximum: 4096,
+    default_value: 1024,
+    applies_at: "next_call",
+    ...(required === undefined ? {} : { required_value: required }),
+  });
+  const refusal = (
+    limit: AnalysisParameterLimit,
+    remediationAction?: string,
+  ): AnalysisResourceConstraintError =>
+    new AnalysisResourceConstraintError(
+      "inspect_elf_notes",
+      "capacity",
+      "Reads exceed max_file_bytes.",
+      null,
+      {
+        retryable: false,
+        limit,
+        ...(remediationAction === undefined ? {} : { remediationAction }),
+      },
+    );
+
+  it("derives the next-call value from the measured need for every caller lifetime", () => {
+    const limit = parameterLimit(1024, 2048);
+    const expected =
+      "inspect_elf_notes reached its max_file_bytes budget of 1024 bytes. Pass a larger max_file_bytes on the next inspect_elf_notes call (at least 2048 bytes; range 64..4096 bytes), then retry.";
+    const projected = projectAnalysisError(refusal(limit));
+
+    expect(analysisErrorProjectionSchema.parse(projected)).toBeDefined();
+    expect(projected.retryable).toBe(false);
+    expect(projected.remediation.action).toBe(expected);
+    expect(
+      projectAnalysisError(refusal(limit), "invocation").remediation.action,
+    ).toBe(expected);
+    expect(projected.details?.limit).toEqual(limit);
+    expect(projected.details?.refusal).toEqual({
+      kind: "adjustable_budget",
+      operation: "inspect_elf_notes",
+      control: "max_file_bytes",
+      effective_value: 1024,
+      unit: "bytes",
+      range: { minimum: 64, maximum: 4096 },
+      default_value: 1024,
+      required_value: 2048,
+    });
+  });
+
+  it("omits the minimum when the producer did not measure it", () => {
+    const projected = projectAnalysisError(refusal(parameterLimit(1024)));
+
+    expect(projected.remediation.action).toBe(
+      "inspect_elf_notes reached its max_file_bytes budget of 1024 bytes. Pass a larger max_file_bytes on the next inspect_elf_notes call (range 64..4096 bytes), then retry.",
+    );
+    expect(projected.details?.refusal).not.toHaveProperty("required_value");
+  });
+
+  it("does not suggest raising a control at its maximum or below the need", () => {
+    const atMaximum = projectAnalysisError(refusal(parameterLimit(4096)))
+      .remediation.action;
+    const aboveMaximum = projectAnalysisError(
+      refusal(parameterLimit(1024, 8192)),
+    ).remediation.action;
+
+    expect(atMaximum).toContain(
+      "max_file_bytes is already at its maximum (64..4096 bytes)",
+    );
+    expect(aboveMaximum).toContain(
+      "The request requires 8192 bytes, above the max_file_bytes maximum (64..4096 bytes)",
+    );
+    for (const action of [atMaximum, aboveMaximum])
+      expect(action).not.toContain("Pass a larger");
+  });
+
+  it("keeps a producer's authored recovery beside the typed refusal", () => {
+    const projected = projectAnalysisError(
+      refusal(parameterLimit(1024), "Producer recovery."),
+    );
+
+    expect(projected.remediation.action).toBe("Producer recovery.");
+    expect(projected.details?.refusal).toMatchObject({
+      kind: "adjustable_budget",
+      control: "max_file_bytes",
+    });
+  });
+
+  it("leaves an environment control without a typed refusal", () => {
+    const projected = projectAnalysisError(
+      new AnalysisResourceConstraintError(
+        "inspect_process",
+        "capacity",
+        "Token buffer exceeded.",
+        null,
+        {
+          limit: {
+            control_kind: "environment",
+            environment: "REA_EXAMPLE_BYTES",
+            effective_value: 1,
+            unit: "bytes",
+            minimum: 1,
+            maximum: 2,
+            default_value: 1,
+            applies_at: "next_startup",
+          },
+        },
+      ),
+    );
+
+    expect(projected.details).not.toHaveProperty("refusal");
   });
 });

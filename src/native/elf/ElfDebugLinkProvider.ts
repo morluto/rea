@@ -25,8 +25,6 @@ import {
   ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION,
   ELF_DEBUG_LINK_READ_BUDGETS,
   MAX_ELF_DEBUG_CANDIDATE_BYTES,
-  MAX_INSPECT_ELF_DEBUG_LINK_ENTRIES,
-  MAX_INSPECT_ELF_DEBUG_LINK_FILE_BYTES,
   type ElfDebugLink,
   type InspectElfDebugLinkInput,
 } from "../../domain/native/elfDebugLink.js";
@@ -283,34 +281,6 @@ const candidateUnreadable = (cause: unknown): boolean => {
   );
 };
 
-const inputLabel = (field: SelectedField): string =>
-  field === "candidate_path" ? "candidate" : "image";
-
-const inputBudgetRemediation = (
-  boundary: "file-size" | "capacity",
-  input: InspectElfDebugLinkInput,
-  field: SelectedField,
-): string => {
-  const label = inputLabel(field);
-  return boundary === "file-size"
-    ? input.max_file_bytes >= MAX_INSPECT_ELF_DEBUG_LINK_FILE_BYTES
-      ? `The ${label} exceeds the ${String(MAX_INSPECT_ELF_DEBUG_LINK_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller ${label}.`
-      : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller ${label}; the limit is the caller-selected input read budget.`
-    : input.max_entries >= MAX_INSPECT_ELF_DEBUG_LINK_ENTRIES
-      ? `The ${label} exceeds the ${String(MAX_INSPECT_ELF_DEBUG_LINK_ENTRIES)}-entry note-table ceiling this operation accepts; select a smaller ${label}.`
-      : `Raise max_entries above ${String(input.max_entries)} or select a smaller ${label}; the limit is the caller-selected note entry budget.`;
-};
-
-const sectionNameBudgetRemediation = (
-  required: bigint,
-  field: SelectedField,
-): string => {
-  const label = inputLabel(field);
-  return required <= BigInt(MAX_INSPECT_ELF_DEBUG_LINK_FILE_BYTES)
-    ? `Raise max_file_bytes to at least ${String(required)} bytes to admit the ${label} and its decoded ELF section names.`
-    : `The ${label} and its decoded ELF section names require ${String(required)} bytes, above this operation's ${String(MAX_INSPECT_ELF_DEBUG_LINK_FILE_BYTES)}-byte maximum; select a ${label} with a smaller section-name table.`;
-};
-
 const selectedPath = (
   input: InspectElfDebugLinkInput,
   field: SelectedField,
@@ -356,10 +326,7 @@ const elfDebugLinkFailure = (
               ELF_DEBUG_LINK_READ_BUDGETS,
               "max_file_bytes",
               input.max_file_bytes,
-            ),
-            remediationAction: sectionNameBudgetRemediation(
               sectionNameBudget.required,
-              field,
             ),
           });
         if (failure instanceof BinaryResourceFailure)
@@ -386,11 +353,6 @@ const elfDebugLinkFailure = (
                     ELF_DEBUG_LINK_READ_BUDGETS,
                     "max_entries",
                     input.max_entries,
-                  ),
-                  remediationAction: inputBudgetRemediation(
-                    "capacity",
-                    input,
-                    field,
                   ),
                 }
               : fixedAllowanceOptions(ELF_NOTE_TEXT_ALLOWANCE, "parser", {
@@ -432,11 +394,6 @@ const elfDebugLinkFailure = (
                   ELF_DEBUG_LINK_READ_BUDGETS,
                   "max_file_bytes",
                   input.max_file_bytes,
-                ),
-                remediationAction: inputBudgetRemediation(
-                  "file-size",
-                  input,
-                  field,
                 ),
               },
         );
