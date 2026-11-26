@@ -29,7 +29,7 @@ import { err, ok } from "../../domain/result.js";
 import type { AnalysisPartialObservation } from "../../domain/analysisErrorBase.js";
 import { ELF_DEBUG_LINK_PROVIDER } from "../../domain/investigationProviders.js";
 import { isNativeStructureFailure } from "../../domain/binaryContainer.js";
-import { nativeStructureConstraint } from "../nativeStructureConstraint.js";
+import { nativeStructureConstraint } from "../../domain/native/nativeStructureBudget.js";
 import {
   continueGnuDebuglinkCrc32,
   parseElfDebugLinkFromHandle,

@@ -132,8 +132,13 @@ are bounded by the PE format.
 For `inspect_native_exports` it also bounds the ELF dynamic, symbol and version
 tables located through PT_DYNAMIC.
 
-The Go, Rust and IL2CPP readers read the same tables with the 16 MiB default and
-report it as a fixed allowance.
+`inspect_go_binary` and `inspect_rust_binary` accept it for their ELF directory
+and Mach-O load commands. The IL2CPP reader reads the same tables with the 16
+MiB default and reports it as a fixed allowance.
+
+`inspect_rust_binary` also accepts `max_wasm_sections` (WebAssembly sections
+walked; default 65,536, at most 16,777,216). The walk stops at the first excess,
+so the refusal reports no `required_value`.
 
 `inspect_native_exports` also accepts `max_entries` (export rows and declared
 symbol counts; default 262,144, at most 4,194,304) and `max_text_bytes` (name and
