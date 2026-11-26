@@ -1,10 +1,14 @@
+import { once } from "node:events";
 import { buffer } from "node:stream/consumers";
+import { finished } from "node:stream/promises";
 
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { resolveArtifactReaderLimits } from "../domain/artifactReaderLimits.js";
+import { openRegularFile } from "../filesystem/RegularFile.js";
 import {
   ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
@@ -322,11 +326,31 @@ it("lists a truncated NRO asset with a limitation", async () => {
   try {
     const { entries, coverage } = await collect(reader);
     const romfs = entries.find((entry) => entry.path === "assets/romfs.bin");
+    const text = entries.find((entry) => entry.path === "text.bin");
     expect(romfs?.limitations.join(" ")).toContain("truncated");
+    expect(romfs?.formatMetadata).toMatchObject({ hash_status: "unavailable" });
+    expect(text?.formatMetadata).toMatchObject({ hash_status: "not-checked" });
     expect(coverage?.status).toBe("unknown");
     await expect(reader.open(romfs!)).rejects.toThrow(/NRO is malformed/u);
   } finally {
     await reader.close();
+  }
+
+  const truncatedSegment = new SwitchExecutableArtifactReader(
+    await fixture(buildNro({ truncateBy: 2 })),
+    "nro",
+  );
+  try {
+    const { entries, coverage } = await collect(truncatedSegment);
+    const data = entries.find((entry) => entry.path === "data.bin");
+    expect(data?.limitations.join(" ")).toContain("truncated");
+    expect(data?.formatMetadata).toMatchObject({ hash_status: "unavailable" });
+    expect(coverage?.status).toBe("unknown");
+    await expect(truncatedSegment.open(data!)).rejects.toThrow(
+      /NRO is malformed/u,
+    );
+  } finally {
+    await truncatedSegment.close();
   }
 });
 
@@ -540,5 +564,148 @@ it("cancels a decoded segment when the caller aborts", async () => {
     });
   } finally {
     await reader.close();
+  }
+});
+
+const withDeadline = async <T>(
+  operation: Promise<T>,
+  label: string,
+  timeoutMs = 2_000,
+): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+};
+
+it.for([
+  { label: "with no chunks read", chunksToRead: 0, action: "close" as const },
+  {
+    label: "after reading one chunk",
+    chunksToRead: 1,
+    action: "close" as const,
+  },
+  { label: "with no chunks read", chunksToRead: 0, action: "abort" as const },
+  {
+    label: "after reading one chunk",
+    chunksToRead: 1,
+    action: "abort" as const,
+  },
+])(
+  "retires a paused compressed segment on $action $label",
+  async ({ chunksToRead, action }) => {
+    const reader = new SwitchExecutableArtifactReader(
+      await fixture(
+        buildNso({
+          segments: [
+            Buffer.alloc(512 * 1024, 0x5a),
+            Buffer.from("ro"),
+            Buffer.from("rw"),
+          ],
+          compress: [true, false, false],
+        }),
+      ),
+      "nso",
+    );
+    let closed = false;
+    try {
+      const { entries } = await collect(reader);
+      const text = entries.find((entry) => entry.path === "text.bin");
+      const controller = new AbortController();
+      const callerReason = new Error("caller stopped reading");
+      const stream = await reader.open(text!, controller.signal);
+      const settled = finished(stream, { cleanup: true }).catch(
+        (cause: unknown) => cause,
+      );
+      await withDeadline(once(stream, "readable"), "initial buffer fill");
+      for (let index = 0; index < chunksToRead; index++) {
+        const chunk = stream.read() as Buffer | null;
+        expect(chunk).not.toBeNull();
+        expect(chunk!.length).toBeGreaterThan(0);
+        await withDeadline(once(stream, "readable"), "buffer refill");
+      }
+      expect(stream.readableLength).toBeGreaterThan(0);
+      if (action === "close") {
+        await withDeadline(reader.close(), "reader.close()");
+        closed = true;
+        expect(stream.destroyed).toBe(true);
+        const failure = await withDeadline(settled, "stream settlement");
+        expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+        expect(failure).toMatchObject({
+          reason: "unavailable",
+          message: "NSO reader closed",
+        });
+      } else {
+        controller.abort(callerReason);
+        const failure = await withDeadline(
+          settled,
+          "aborted stream settlement",
+        );
+        expect(stream.destroyed).toBe(true);
+        expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+        expect(failure).toMatchObject({
+          reason: "cancelled",
+          cause: callerReason,
+        });
+        await withDeadline(reader.close(), "reader.close() after abort");
+        closed = true;
+      }
+    } finally {
+      if (!closed) await reader.close();
+    }
+  },
+);
+
+it("surfaces the original error when a pending compressed segment read rejects", async () => {
+  const path = await fixture(buildNso());
+  const descriptor = await openRegularFile(path, { symlinks: "reject" });
+  const reader = new SwitchExecutableArtifactReader(path, "nso", descriptor);
+  const gate = phaseGate();
+  const ioFailure = Object.assign(new Error("physical descriptor I/O failed"), {
+    code: "EIO",
+  });
+  let closed = false;
+  try {
+    const { entries } = await collect(reader);
+    const text = entries.find((entry) => entry.path === "text.bin");
+    const { handle } = descriptor;
+    const read = handle.read.bind(handle);
+    vi.spyOn(handle, "read").mockImplementation((...args: unknown[]) =>
+      Promise.resolve(Reflect.apply(read, handle, args)).then(
+        async (result) => {
+          await gate.hold();
+          return result;
+        },
+      ),
+    );
+    const controller = new AbortController();
+    const stream = await reader.open(text!, controller.signal);
+    const settled = finished(stream, { cleanup: true }).catch(
+      (cause: unknown) => cause,
+    );
+    stream.resume();
+    await gate.reached(settled, "compressed segment read");
+    controller.abort(new Error("caller cancelled during pending read"));
+    const closing = reader.close().then(() => {
+      closed = true;
+    });
+    gate.reject(ioFailure);
+    const failure = await withDeadline(settled, "pending read rejection");
+    await withDeadline(closing, "reader.close() after read rejection");
+    expect(failure).toBe(ioFailure);
+  } finally {
+    gate.release();
+    if (!closed) await reader.close();
+    await descriptor.handle.close();
   }
 });

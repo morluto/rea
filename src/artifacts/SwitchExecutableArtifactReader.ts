@@ -33,6 +33,7 @@ import {
   ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
   artifactParseFailure,
+  artifactReadCancelledBy,
   artifactReaderLimitFailure,
   malformedArtifact,
 } from "../resources/index.js";
@@ -122,19 +123,39 @@ export class SwitchExecutableArtifactReader extends PositionalArtifactReader<
     carrier: StableRegularFileDescriptor,
     member: ArtifactMemberLifecycle,
   ): Readable | undefined {
-    return entry.formatMetadata.compressed
-      ? Readable.from(this.#decodedSegment(entry, carrier, member))
-      : undefined;
+    if (!entry.formatMetadata.compressed) return undefined;
+    const { signal, cancellationFailure } = member;
+    let readState: "idle" | "pending" | "failed" = "idle";
+    const source = Readable.from(
+      this.#decodedSegment(entry, carrier, member, (state) => {
+        readState = state;
+      }),
+      { objectMode: false },
+    );
+    const onAbort = (): void => {
+      // A pending carrier read or decode owns its failure; once idle (such as
+      // paused on backpressure), destroy the source immediately so pipeline
+      // and reader.close() retire promptly.
+      if (readState === "idle" && !source.destroyed)
+        source.destroy(cancellationFailure(signal.reason));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    source.once("close", () => signal.removeEventListener("abort", onAbort));
+    if (signal.aborted) onAbort();
+    return source;
   }
 
   async *#decodedSegment(
     entry: SwitchEntry,
     { handle, initial }: StableRegularFileDescriptor,
     member: ArtifactMemberLifecycle,
+    onStateChange: (state: "idle" | "pending" | "failed") => void,
   ): AsyncIterable<Buffer> {
     const { signal, cancellationFailure } = member;
-    let decoded: Buffer;
+    let decoded: Buffer | undefined;
+    onStateChange("pending");
     try {
+      if (signal.aborted) throw cancellationFailure(signal.reason);
       const stored = entry.formatMetadata.file_size;
       const refused = this.#admitStoredInput(
         entry.adapterKey,
@@ -157,8 +178,11 @@ export class SwitchExecutableArtifactReader extends PositionalArtifactReader<
         entry.declaredSize,
         signal,
       );
+      onStateChange("idle");
     } catch (cause) {
-      if (signal.aborted) throw cancellationFailure(signal.reason);
+      onStateChange("failed");
+      if (artifactReadCancelledBy(cause, signal))
+        throw cancellationFailure(signal.reason);
       if (
         !(
           cause instanceof BinaryFormatFailure ||
@@ -175,9 +199,18 @@ export class SwitchExecutableArtifactReader extends PositionalArtifactReader<
         { cause },
       );
     }
-    for (let offset = 0; offset < decoded.length; offset += READ_CHUNK_BYTES) {
+    try {
       if (signal.aborted) throw cancellationFailure(signal.reason);
-      yield decoded.subarray(offset, offset + READ_CHUNK_BYTES);
+      for (
+        let offset = 0;
+        offset < decoded.length;
+        offset += READ_CHUNK_BYTES
+      ) {
+        if (signal.aborted) throw cancellationFailure(signal.reason);
+        yield decoded.subarray(offset, offset + READ_CHUNK_BYTES);
+      }
+    } finally {
+      decoded = undefined;
     }
   }
 
@@ -441,7 +474,7 @@ export class SwitchExecutableArtifactReader extends PositionalArtifactReader<
           compressed: false,
           declared_sha256: null,
           observed_sha256: null,
-          hash_status: "not-checked",
+          hash_status: truncated ? "unavailable" : "not-checked",
         },
       });
     };
