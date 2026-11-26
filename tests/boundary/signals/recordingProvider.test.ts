@@ -1397,14 +1397,14 @@ it.each(["bad-version", "nonzero", "overflow", "wait", "oversized-tool"])(
         minimum: 1,
         maximum: Number.MAX_SAFE_INTEGER,
       });
-      expect(analysisErrorRemediationAction(result.error)).toContain(
-        "producer_limits.output_bytes",
-      );
-      expect(analysisErrorRemediationAction(result.error)).toContain(
-        "producer.output_bytes",
-      );
-      expect(analysisErrorRemediationAction(result.error)).not.toMatch(
-        /Review the reported worker memory limits/u,
+      expect(projectAnalysisError(result.error).details?.refusal).toMatchObject(
+        {
+          kind: "adjustable_budget",
+          control: "producer_limits.output_bytes",
+          setting: "producer.output_bytes",
+          effective_value: 4194304,
+          source: "default",
+        },
       );
     }
   },
