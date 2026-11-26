@@ -12846,12 +12846,13 @@ msgid ""
 "list. Ghidra must be configured first."
 msgstr "把 {ph0} 換成目標函式清單中的名稱或位址。先完成 Ghidra 設定再執行。"
 
-#: website/public/get-started/index.html:1694
+#: website/public/get-started/index.html:1710
 msgctxt "page:get-started/index.html"
 msgid ""
-"On macOS or Linux, you can also use the curl installer after preparing "
-"Node.js:"
-msgstr "macOS 或 Linux 準備好 Node.js 後，也可以使用 curl 安裝："
+"On macOS or Linux, review a release-tagged installer before running it. This "
+"example pins 6.10.1. The default-branch script tracks main and is not a "
+"pinned release."
+msgstr ""
 
 #: website/public/get-started/index.html:1732
 msgctxt "page:get-started/index.html"
@@ -16050,3 +16051,9 @@ msgstr ""
 #~ "REA: Find out how software works. Reverse engineering with your coding "
 #~ "agent."
 #~ msgstr "REA-瞭解軟體的工作原理。 逆向工程與你的程式設計助手."
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "On macOS or Linux, you can also use the curl installer after preparing "
+#~ "Node.js:"
+#~ msgstr "macOS 或 Linux 準備好 Node.js 後，也可以使用 curl 安裝："

@@ -14063,14 +14063,13 @@ msgstr ""
 "Thay {ph0} bằng tên hàm hoặc địa chỉ trong danh sách hàm của đối tượng. Bạn "
 "phải cấu hình Ghidra trước."
 
-#: website/public/get-started/index.html:1694
+#: website/public/get-started/index.html:1710
 msgctxt "page:get-started/index.html"
 msgid ""
-"On macOS or Linux, you can also use the curl installer after preparing "
-"Node.js:"
+"On macOS or Linux, review a release-tagged installer before running it. This "
+"example pins 6.10.1. The default-branch script tracks main and is not a "
+"pinned release."
 msgstr ""
-"Trên macOS hoặc Linux, bạn cũng có thể dùng bộ cài qua curl sau khi chuẩn bị"
-" Node.js:"
 
 #: website/public/get-started/index.html:1732
 msgctxt "page:get-started/index.html"
@@ -17619,3 +17618,11 @@ msgstr ""
 #~ msgstr ""
 #~ "REA-Tìm hiểu cách thức hoạt động của phần mềm. Kỹ thuật đảo ngược với agent "
 #~ "mã hóa của bạn."
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "On macOS or Linux, you can also use the curl installer after preparing "
+#~ "Node.js:"
+#~ msgstr ""
+#~ "Trên macOS hoặc Linux, bạn cũng có thể dùng bộ cài qua curl sau khi chuẩn bị"
+#~ " Node.js:"

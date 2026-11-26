@@ -13836,14 +13836,13 @@ msgstr ""
 "แทนที่ {ph0} ด้วยชื่อฟังก์ชันหรือที่อยู่จากรายการฟังก์ชันของเป้าหมาย "
 "ต้องตั้งค่า Ghidra ก่อน"
 
-#: website/public/get-started/index.html:1694
+#: website/public/get-started/index.html:1710
 msgctxt "page:get-started/index.html"
 msgid ""
-"On macOS or Linux, you can also use the curl installer after preparing "
-"Node.js:"
+"On macOS or Linux, review a release-tagged installer before running it. This "
+"example pins 6.10.1. The default-branch script tracks main and is not a "
+"pinned release."
 msgstr ""
-"บน macOS หรือ Linux คุณใช้ตัวติดตั้งผ่าน curl ได้เช่นกัน หลังเตรียม Node.js "
-"แล้ว:"
 
 #: website/public/get-started/index.html:1732
 msgctxt "page:get-started/index.html"
@@ -17230,3 +17229,11 @@ msgstr ""
 #~ "agent."
 #~ msgstr ""
 #~ "REA-หาวิธีการทำงานของซอฟต์แวร์ วิศวกรรมย้อนกลับกับตัวแทนการเขียนโค้ดของคุณ"
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "On macOS or Linux, you can also use the curl installer after preparing "
+#~ "Node.js:"
+#~ msgstr ""
+#~ "บน macOS หรือ Linux คุณใช้ตัวติดตั้งผ่าน curl ได้เช่นกัน หลังเตรียม Node.js "
+#~ "แล้ว:"
