@@ -235,3 +235,13 @@ describe("duration shard allocation", () => {
     ).toBe(300);
   });
 });
+
+it("uses both shards when equal files fit into spare workers in one shard", () => {
+  const items = ["a", "b"].map((key) => ({
+    item: key,
+    key,
+    duration: 20,
+    laneWidth: 2,
+  }));
+  expect(allocateByDuration(items, 2)).toEqual([["a"], ["b"]]);
+});

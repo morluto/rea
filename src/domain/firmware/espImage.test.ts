@@ -832,7 +832,7 @@ describe("ESP image refusals", () => {
   it("refuses bytes that are not an ESP image header", () => {
     expect(decode(pattern(64, 0x5a))).toMatchObject({
       ok: false,
-      error: { kind: "format" },
+      error: { kind: "malformed" },
     });
   });
 
@@ -843,7 +843,7 @@ describe("ESP image refusals", () => {
     expect(decoder.finish()).toMatchObject({
       ok: false,
       error: {
-        kind: "format",
+        kind: "malformed",
       },
     });
   });

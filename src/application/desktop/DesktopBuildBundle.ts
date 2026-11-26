@@ -18,7 +18,7 @@ import {
   AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
 import { isLockFile } from "../../domain/desktop/appExportUnowned.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import {
   type ArtifactResourceScope,

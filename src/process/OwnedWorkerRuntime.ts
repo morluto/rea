@@ -7,6 +7,7 @@ import {
   type OwnedProviderProcessSpawnOptions,
   type ProviderProcessSupervisorOptions,
   type ProviderProcessStopResult,
+  type ProviderProcessOutputTokenOptions,
 } from "./ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "./ProcessOwnership.js";
 import type {
@@ -19,7 +20,8 @@ import { errorMessage } from "../kernel/errorMessage.js";
 export interface OwnedWorkerRuntimeOptions {
   readonly rootPrefix: string;
   readonly launcher?: typeof spawnOwnedProviderProcess;
-  readonly supervisorOptions?: ProviderProcessSupervisorOptions;
+  readonly supervisorOptions?: ProviderProcessSupervisorOptions &
+    ProviderProcessOutputTokenOptions;
   /** Report request-stream failure at the lifecycle owner observation point. */
   readonly onInputFailure?: (cause: Error) => void;
   /** Let a higher-level owner release its dependent resources before this root. */
@@ -148,6 +150,7 @@ export class OwnedWorkerRuntime {
   #stopAttempt: Promise<ProviderProcessStopResult> | undefined;
   #closeAttempt: Promise<void> | undefined;
   #closing = false;
+  #retryingCleanup = false;
   #closed = false;
   #lastRunId: string | undefined;
   #terminalCloseRequested = false;
@@ -230,9 +233,16 @@ export class OwnedWorkerRuntime {
     spawnOptions: Omit<OwnedProviderProcessSpawnOptions, "cwd">,
     initialize?: (supervisor: ProviderProcessSupervisor) => Promise<void>,
   ): Promise<void> {
-    if (this.#terminalCloseRequested || this.#closing)
+    if (
+      this.#terminalCloseRequested ||
+      (this.#closing && !this.#retryingCleanup)
+    )
       return Promise.reject(new ProcessAdmissionError("runtime_closing"));
     if (this.#acquisition !== undefined) return this.#acquisition;
+    if (this.#retryingCleanup && this.#closeAttempt !== undefined)
+      return this.#closeAttempt.then(() =>
+        this.start(spawnOptions, initialize),
+      );
     if (this.#supervisor !== undefined && !this.#registry.has(this))
       return Promise.resolve();
     if (this.options.retryCleanup !== undefined && this.#registry.has(this))
@@ -246,6 +256,8 @@ export class OwnedWorkerRuntime {
       : Promise.resolve();
     this.#launchFailure = undefined;
     const acquisition = ownRetry.then(async () => {
+      if (this.#terminalCloseRequested || this.#closing)
+        throw new ProcessAdmissionError("runtime_closing");
       if (this.#closed) this.#closed = false;
       await this.#start(spawnOptions, initialize);
     });
@@ -299,6 +311,7 @@ export class OwnedWorkerRuntime {
     if (this.options.retryCleanup !== undefined)
       return this.#retryOwnedCleanup();
     if (this.#terminalCloseRequested) return this.close();
+    this.#retryingCleanup = true;
     this.#closing = true;
     if (this.#closeAttempt === undefined) {
       const attempt = this.#close();
@@ -310,7 +323,11 @@ export class OwnedWorkerRuntime {
         .catch(() => undefined);
     }
     const attempt = this.#closeAttempt;
-    if (attempt === undefined) return;
+    if (attempt === undefined) {
+      this.#retryingCleanup = false;
+      if (!this.#terminalCloseRequested) this.#closing = false;
+      return;
+    }
     try {
       await attempt;
       if (!this.#terminalCloseRequested) {
@@ -320,6 +337,8 @@ export class OwnedWorkerRuntime {
     } catch (cause: unknown) {
       if (!this.#terminalCloseRequested) this.#closing = false;
       throw cause;
+    } finally {
+      this.#retryingCleanup = false;
     }
   }
 

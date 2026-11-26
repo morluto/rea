@@ -7,13 +7,17 @@ import {
 import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
-import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
+import type {
+  AnalysisCapturedOutput,
+  AnalysisErrorOptions,
+} from "../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisCapabilityUnavailableError,
 } from "../domain/analysisErrorCore.js";
+import { hostRangeErrorKind } from "../domain/parseFailure.js";
 import type { ProviderOutcome } from "../process/ProviderOutcome.js";
 import type { ProviderFailureDialect } from "../providers/classifyProviderFailure.js";
 import {
@@ -24,12 +28,13 @@ import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import type { AnalysisControlLimit } from "../domain/analysisSettings.js";
 import {
   DEFAULT_WASM_COMMAND_TIMEOUT_MS,
+  WABT_ACCEPTED_RANGE,
   WABT_VERSION,
   WASM_RESOURCE_DEFAULTS,
   WASM_RESOURCE_MAXIMUMS,
   type WasmResourceLimits,
 } from "../domain/wasm/wasmArtifact.js";
-import { WABT_ACCEPTED_RANGE, WABT_PROVIDER_IDENTITY } from "./WabtRelease.js";
+import { WABT_PROVIDER_IDENTITY } from "./WabtRelease.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 const OUTPUT_LIMIT_EXCERPT_BYTES = 4096;
 const OPERATION = "inspect_wasm_artifact";
@@ -110,18 +115,32 @@ export const wabtConfigurationRecoveryAction = (cause?: unknown): string => {
           : "";
   return `${action}Set absolute REA_WABT_BIN_DIRECTORY to a directory that contains wasm-validate, wasm-objdump and wasm2wat from one WABT installation; each --version must report ${WABT_ACCEPTED_RANGE} on stdout with empty stderr. Releases in that range other than ${WABT_VERSION} are admitted and reported as the observed banner. Correct the reported tool path, access or release before retrying, not the WASM input. Set this in the shell for the next CLI call, or in the MCP server launch environment and restart that server; a shell export does not update a running MCP server. Do not repeat the unchanged call or install tools implicitly.`;
 };
+/** The configured WABT installation cannot run this call. */
+const wabtUnavailable = (
+  message: string,
+  cause: unknown,
+  details: AnalysisErrorOptions,
+): AnalysisCapabilityUnavailableError =>
+  new AnalysisCapabilityUnavailableError(
+    WABT_PROVIDER_IDENTITY.id,
+    OPERATION,
+    message,
+    {
+      ...details,
+      userMessage: `Configured WABT could not start. Check executable/interpreter access and WABT ${WABT_VERSION} profile; inspect retained diagnostics.`,
+      remediationAction: wabtConfigurationRecoveryAction(cause),
+    },
+  );
+
 /** Past the output budget, retained text is a prefix of an oversized stream; keep a bounded excerpt of each. */
 const outputLimitExcerpt = (snapshot: ProviderProcessSnapshot) => ({
+  ...capturedProviderOutput(snapshot),
   stdout: utf8HeadExcerpt(snapshot.stdout.text, OUTPUT_LIMIT_EXCERPT_BYTES)
     .text,
   stderr: utf8HeadExcerpt(snapshot.stderr.text, OUTPUT_LIMIT_EXCERPT_BYTES)
     .text,
   // The command reports output-limit only after retention was truncated.
   truncated: true,
-  stdout_bytes: snapshot.stdout.bytes,
-  stderr_bytes: snapshot.stderr.bytes,
-  exit_code: snapshot.exitCode ?? null,
-  signal: snapshot.signal ?? null,
 });
 /** WABT's per-call command deadline and the setting that changes it. */
 const wabtCommandTimeout = (execution: WabtFailureContext | undefined) => {
@@ -157,7 +176,7 @@ const allocationRefused = (cause: unknown): boolean => {
         "ERR_MEMORY_ALLOCATION_FAILED",
         "ERR_BUFFER_TOO_LARGE",
       ].includes(String(physical.code))) ||
-      (physical instanceof RangeError &&
+      (hostRangeErrorKind(physical) === "host-capacity" &&
         physical.message === "Array buffer allocation failed"))
   );
 };
@@ -253,22 +272,14 @@ export const wabtFailureDialect = (
           ),
         },
       },
-      dialect: (exit, details) =>
-        // A tool that cannot start, or a version probe that exits or whose
-        // output cannot be collected, leaves the configured installation
-        // unusable for this call.
-        exit.kind === "launch-refused" || phase === "configuration"
-          ? new AnalysisCapabilityUnavailableError(
-              WABT_PROVIDER_IDENTITY.id,
-              OPERATION,
-              exit.message,
-              {
-                ...details,
-                userMessage: `Configured WABT could not start. Check executable/interpreter access and WABT ${WABT_VERSION} profile; inspect retained diagnostics.`,
-                remediationAction: wabtConfigurationRecoveryAction(exit.cause),
-              },
-            )
-          : new AnalysisOutputError(OPERATION, exit.message, details),
+      launchUnavailable: (_failure, details) =>
+        wabtUnavailable(outcome.message, outcome.cause, details),
+      dialect: (exit, details, unclassified) =>
+        // A version probe that exits or whose output cannot be collected
+        // leaves the configured installation unusable for this call.
+        phase === "configuration"
+          ? wabtUnavailable(exit.message, exit.cause, details)
+          : unclassified(),
     }),
     ...(phase === "artifact"
       ? {

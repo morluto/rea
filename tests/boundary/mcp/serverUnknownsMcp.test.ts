@@ -1,10 +1,10 @@
+import { connectFixtureClient } from "../../support/mcp/mcpFixture.js";
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, expect, it } from "vitest";
 
@@ -154,12 +154,11 @@ it("rejects divergent imported histories without suggesting an unchanged retry",
     throw new Error("no target");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "conflicting-history", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
+  const client = await connectFixtureClient(
+    server,
+    { name: "conflicting-history", version: "1" },
+    resources,
+  );
   const emptyExport = await client.callTool({
     name: "export_evidence_bundle",
     arguments: { path: join(root, "empty-export.json") },
@@ -209,12 +208,11 @@ it("does not record capability unavailability without supporting Evidence", asyn
     providerWithCapabilities(["procedure_pseudo_code"]),
   );
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "unavailable-unknown", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
+  const client = await connectFixtureClient(
+    server,
+    { name: "unavailable-unknown", version: "1" },
+    resources,
+  );
   await client.callTool({
     name: "open_binary",
     arguments: { path: process.execPath },
@@ -277,12 +275,11 @@ it("records capture disagreement as a contradicted unknown", async () => {
   expect(session.recordEvidence(leftEvidence).ok).toBe(true);
   expect(session.recordEvidence(rightEvidence).ok).toBe(true);
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "comparison-unknown", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
+  const client = await connectFixtureClient(
+    server,
+    { name: "comparison-unknown", version: "1" },
+    resources,
+  );
 
   const mismatched = await client.callTool({
     name: "compare_process_captures",
@@ -370,12 +367,11 @@ it("records capture disagreement as a contradicted unknown", async () => {
 it("pages filtered unknown heads through the public MCP contract", async () => {
   const session = createTestBinarySession(providerWithCapabilities([]));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "unknown-pagination", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
+  const client = await connectFixtureClient(
+    server,
+    { name: "unknown-pagination", version: "1" },
+    resources,
+  );
 
   const created = [
     ["matching c", "high", "pagination"],
@@ -524,12 +520,11 @@ it("pages filtered unknown heads through the public MCP contract", async () => {
 it("reports contradictory unknown input as a correctable request", async () => {
   const session = createTestBinarySession(providerWithCapabilities([]));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "unknown-input", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
+  const client = await connectFixtureClient(
+    server,
+    { name: "unknown-input", version: "1" },
+    resources,
+  );
   const fields = {
     severity: "medium",
     required_authority: "analyst-inference",
@@ -638,11 +633,11 @@ it("returns exact committed unknown receipts when creation and update replies ov
     { kind: "session", session },
     { delivery: createToolResultDelivery(8 * 1024) },
   );
-  const client = new Client({ name: "unknown-overflow-receipt", version: "1" });
-  const [ct, st] = InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(st);
-  await client.connect(ct);
+  const client = await connectFixtureClient(
+    server,
+    { name: "unknown-overflow-receipt", version: "1" },
+    resources,
+  );
   const fields = {
     severity: "medium",
     supporting_evidence_ids: [],
@@ -722,12 +717,11 @@ it("returns exact committed unknown receipts when creation and update replies ov
 it("preserves graph constraint facts and rejects atomically until input is corrected", async () => {
   const session = createTestBinarySession(providerWithCapabilities([]));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "unknown-constraint", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
+  const client = await connectFixtureClient(
+    server,
+    { name: "unknown-constraint", version: "1" },
+    resources,
+  );
   const fields = {
     severity: "medium",
     required_authority: "controlled-replay",
@@ -840,11 +834,11 @@ it("recovers an oversized list with same-session paging or export", async () => 
     { kind: "session", session },
     { delivery: createToolResultDelivery(8 * 1024) },
   );
-  const client = new Client({ name: "unknown-list-recovery", version: "1" });
-  const [ct, st] = InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(st);
-  await client.connect(ct);
+  const client = await connectFixtureClient(
+    server,
+    { name: "unknown-list-recovery", version: "1" },
+    resources,
+  );
   const fields = {
     severity: "medium",
     domain: "overflow-list",

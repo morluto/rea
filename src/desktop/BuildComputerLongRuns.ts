@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -8,16 +9,13 @@ import {
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import {
-  AGENTENV_PROVIDER,
-  type ComputerRelease,
-} from "./AgentEnvComputerHelper.js";
-import {
-  answerSchema,
-  runBuildController,
-  type Answer,
-  type ControlledComputer,
-} from "./BuildComputerController.js";
+import { AGENTENV_PROVIDER } from "./AgentEnvProviderIdentity.js";
+import type { ComputerRelease } from "../domain/desktop/computerRelease.js";
+import { answerSchema, runBuildController } from "./BuildComputerController.js";
+import type {
+  BuildControllerAnswer,
+  ControlledComputer,
+} from "../ports/BuildComputerControl.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "export_build_environment";
@@ -166,7 +164,7 @@ export class BuildComputerLongRuns {
         };
       }
     } catch (cause: unknown) {
-      let primary = signal.aborted
+      const primary = signal.aborted
         ? cancelledBy(OPERATION, signal)
         : cause instanceof AnalysisError
           ? cause
@@ -181,11 +179,11 @@ export class BuildComputerLongRuns {
       if (!this.#jobs.has(job)) throw primary;
       const released = await this.#cancel(job);
       const completed = released.completed ?? observedCommand;
-      if (signal.aborted && !(primary instanceof AnalysisCancelledError)) {
-        const cancelled = cancelledBy(OPERATION, signal);
-        cancelled.retainSecondaryFailure(primary);
-        primary = cancelled;
-      }
+      // A cancellation that arrived while the job was being cancelled is
+      // later than the failure already determined above; keep that failure
+      // primary and retain the cancellation beside it.
+      if (signal.aborted && !(primary instanceof AnalysisCancelledError))
+        analysisErrorWithCancellation(primary, cancelledBy(OPERATION, signal));
       if (released.verified) {
         if (completed !== undefined)
           primary.retainDiagnostics({ completed_command: completed });
@@ -285,7 +283,7 @@ export class BuildComputerLongRuns {
     }
   }
 
-  #receipt(job: Job, answer: Answer): JsonValue {
+  #receipt(job: Job, answer: BuildControllerAnswer): JsonValue {
     return {
       stdout: job.stdout,
       ...(typeof answer.stdout_bytes === "number"

@@ -4,10 +4,14 @@ import {
 } from "./javascript/javascriptSemanticWorkAllowance.js";
 import type { File, Node } from "@babel/types";
 import { traverseJavaScriptAst } from "./javascript/javascriptSemanticTraversal.js";
-import { readExactJavaScriptLiteral } from "./javascript/javascriptAstValues.js";
+import {
+  readExactJavaScriptLiteral,
+  stringValue,
+} from "./javascript/javascriptAstValues.js";
 import {
   parseRecoveredJavaScript,
-  parserPluginsForPath,
+  JavaScriptLoaderSyntaxError,
+  javaScriptSourceLoaderCondition,
   type JavaScriptPackageType,
 } from "./javascript/javascriptSourceParser.js";
 import {
@@ -76,16 +80,6 @@ export const PARSEABLE_REFERENCE_SOURCE_LANGUAGES: ReadonlySet<string> =
 const safeModuleName = (node: Node | null | undefined): string | undefined => {
   if (isStringLiteral(node)) return node.value;
   return undefined;
-};
-
-const exactStringModuleName = (
-  node: Node | null | undefined,
-): string | undefined => {
-  if (node === null || node === undefined) return undefined;
-  const literal = readExactJavaScriptLiteral(node);
-  return literal.found && typeof literal.value === "string"
-    ? literal.value
-    : undefined;
 };
 
 const resolveSpecifier = (
@@ -188,7 +182,7 @@ const extractImports = (
             resolution: "unknown",
           });
       } else if (isImportExpression(node) || isTSImportType(node)) {
-        const specifier = exactStringModuleName(node.source);
+        const specifier = stringValue(node.source);
         appendRelationship(relationships, limitations, {
           fromPath: from_path,
           to: specifier ?? "<dynamic-import>",
@@ -252,12 +246,9 @@ const parseWithBabel = (
   packageType: JavaScriptPackageType | undefined,
 ): {
   ast: File | undefined;
-  reasons: readonly string[];
+  reasons: readonly Pick<ReferenceSourceParseFailure, "parser" | "reason">[];
   moduleOnlyErrors: readonly string[];
 } => {
-  // The shared parser owns filename precedence and observed package context.
-  const plugins = parserPluginsForPath(path);
-
   try {
     const { file: ast, moduleOnlyErrors } = parseRecoveredJavaScript(
       source,
@@ -266,19 +257,29 @@ const parseWithBabel = (
         allowImportExportEverywhere: false,
         allowReturnOutsideFunction: true,
         allowUndeclaredExports: true,
-        plugins,
       },
       packageType,
     );
     return {
       ast,
-      reasons: ast.errors.map((error) => error.message),
+      reasons: ast.errors.map((error) => ({
+        parser:
+          error instanceof JavaScriptLoaderSyntaxError
+            ? "rea-node-loader"
+            : "babel",
+        reason: error.message,
+      })),
       moduleOnlyErrors,
     };
   } catch (cause: unknown) {
     return {
       ast: undefined,
-      reasons: [cause instanceof Error ? cause.message : "Parse failed"],
+      reasons: [
+        {
+          parser: "babel",
+          reason: cause instanceof Error ? cause.message : "Parse failed",
+        },
+      ],
       moduleOnlyErrors: [],
     };
   }
@@ -319,7 +320,8 @@ export const parseReferenceSourceImports = (
 
   let source: string;
   try {
-    source = decodeStrictUtf8(bytes, "strip-signature");
+    // The shared parser owns loader-specific BOM/hashbang preprocessing.
+    source = decodeStrictUtf8(bytes, "preserve");
   } catch {
     return {
       relationships: [],
@@ -339,16 +341,20 @@ export const parseReferenceSourceImports = (
     source,
     packageType,
   );
+  const loaderCondition =
+    ast === undefined
+      ? undefined
+      : javaScriptSourceLoaderCondition(ast.program);
   const limitations =
     moduleOnlyErrors.length === 0
       ? []
       : [
           `Strict-mode errors apply only if this file is an ES module: ${moduleOnlyErrors.join("; ")}`,
         ];
+  if (loaderCondition !== undefined) limitations.push(loaderCondition);
   const parseFailures = reasons.map((reason) => ({
     path,
-    parser: "babel",
-    reason,
+    ...reason,
   }));
 
   if (ast === undefined) {
@@ -372,7 +378,8 @@ export const parseReferenceSourceImports = (
     relationships: relationships.map((relationship) => ({
       ...relationship,
       parse_state:
-        parseFailures.length > 0 && relationship.parse_state === "parsed"
+        (parseFailures.length > 0 || loaderCondition !== undefined) &&
+        relationship.parse_state === "parsed"
           ? "partial"
           : relationship.parse_state,
     })),

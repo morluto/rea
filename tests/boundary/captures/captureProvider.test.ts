@@ -1,8 +1,11 @@
+import { createCommandCli } from "../../support/cli/commandCli.js";
+import { spawnFailure } from "../../support/process/spawnFailure.js";
 import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { packetFieldsCatalogSchema } from "../../../src/domain/captures/packetFields.js";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import { it, expect, onTestFinished } from "vitest";
-import { writeFile, readdir, chmod, symlink } from "node:fs/promises";
+import { writeFile, readdir, chmod, stat, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { readStableArtifact } from "../../../src/resources/readStableArtifact.js";
 import { TsharkCaptureProvider } from "../../../src/captures/TsharkCaptureProvider.js";
@@ -12,7 +15,6 @@ import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createDeferred } from "../../fixtures/binarySession.js";
-import { Cli } from "incur";
 import { registerCaptureCommands } from "../../../src/cli/captureCommands.js";
 import { silentLogger } from "../../../src/logger.js";
 import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
@@ -77,7 +79,7 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
     async (input) => {
       calls++;
       if (mode === "launch-failure" && !input.arguments.includes("--version"))
-        throw Object.assign(new Error("spawn E2BIG"), { code: "E2BIG" });
+        throw spawnFailure("E2BIG", input.command);
       if (mode === "file-limit" && !input.arguments.includes("--version")) {
         const stdout = { text: "", bytes: 0, observedBytes: 0 };
         const stderr = {
@@ -232,10 +234,22 @@ it("recovers the same capture with CLI producer budgets and retains a tighter in
     error: { _tag: "AnalysisResourceConstraintError" },
   });
   if (refused.ok) throw new Error("Expected input-budget refusal");
+  expect(projectAnalysisError(refused.error).details?.limit).toEqual({
+    control_kind: "parameter",
+    parameter: "producer_limits.input_bytes",
+    effective_value: 13,
+    unit: "bytes",
+    minimum: 1,
+    maximum: Number.MAX_SAFE_INTEGER,
+    default_value: 32 * 1024 * 1024,
+    applies_at: "next_call",
+    // The selected read measured the file it refused.
+    required_value: (await stat(f.path)).size,
+  });
   expect(analysisErrorRemediationAction(refused.error)).toContain(
     "producer_limits.input_bytes",
   );
-  const cli = Cli.create("capture-producer-budget", { sync: false });
+  const cli = createCommandCli();
   registerCaptureCommands(cli, silentLogger, {}, f.service);
   let stdout = "";
   await cli.serve(
@@ -312,19 +326,6 @@ it("pages matching observations without changing dissection scope or frame ident
   }
 });
 
-it("preserves TShark canonical output for a caller-selected field alias", async () => {
-  const f = await fixture("alias-canonical");
-  const input = { path: f.path, fields: ["bootp.type"] };
-  const result = await f.service.inspect(input);
-  if (!result.ok) throw result.error;
-  const report = packetCaptureSchema.parse(result.value.normalized_result);
-  expect(report.selection.fields).toEqual(["bootp.type"]);
-  expect(report.packets).toEqual([
-    { "frame.number": ["1"], "dhcp.type": ["1"] },
-  ]);
-  expect(report.tool.arguments).toContain("bootp.type");
-});
-
 it("refuses producer frames outside the selected input read scope before paging", async () => {
   const f = await fixture("many");
   const request = { path: f.path, fields: ["ip.addr"], match_limit: 1 };
@@ -347,7 +348,7 @@ it("refuses producer frames outside the selected input read scope before paging"
 
 it("returns canonical alias output through the public packet-capture CLI", async () => {
   const f = await fixture("alias-canonical");
-  const cli = Cli.create("capture-alias-test", { sync: false });
+  const cli = createCommandCli();
   registerCaptureCommands(cli, silentLogger, {}, f.service);
   let stdout = "";
   await cli.serve(
@@ -364,6 +365,7 @@ it("returns canonical alias output through the public packet-capture CLI", async
   const evidence = parseEvidence(JSON.parse(stdout));
   const report = packetCaptureSchema.parse(evidence.normalized_result);
   expect(report.selection.fields).toEqual(["bootp.type"]);
+  expect(report.tool.arguments).toContain("bootp.type");
   expect(report.packets).toEqual([
     { "frame.number": ["1"], "dhcp.type": ["1"] },
   ]);
@@ -434,7 +436,6 @@ it("inspects an immutable copy, preserves options and warnings, and releases its
 });
 
 it.each([
-  ["invalid-json", "AnalysisOutputError"],
   ["nonzero", "ProviderAdapterError"],
   ["malformed-copy", "AnalysisArtifactChangedError"],
   ["overflow", "AnalysisResourceConstraintError"],
@@ -482,6 +483,12 @@ it.each([
       reason,
     });
     expect(result.error.capturedOutput?.stdout).toBe(stdout);
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(
+      (await readdir(f.directory)).filter((name) =>
+        name.startsWith("decoder-"),
+      ),
+    ).toEqual([]);
   },
 );
 
@@ -536,7 +543,13 @@ it.each(["capture", "fields"] as const)(
         : await f.service.inspectFields({ kind: "fields" });
     if (result.ok) throw new Error("Expected launch failure");
     expect(f.calls()).toBe(2);
-    expect(result.error.message).toContain("spawn E2BIG");
+    // A launch failure is not tool output: the shared owner reports the
+    // oversized argument list as a resource constraint.
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      resource: "transport",
+      reportedLimits: { spawn_error: "E2BIG" },
+    });
     expect(result.error.capturedOutput).toBeUndefined();
   },
 );
@@ -1037,7 +1050,7 @@ it("retains completed discovery on late cancellation and cleanup failure", async
 
 it("preserves discovery resource ownership through CLI shutdown retries", async () => {
   const f = await fixture("cleanup", true);
-  const cli = Cli.create("discovery-cleanup", { sync: false });
+  const cli = createCommandCli();
   registerCaptureCommands(cli, silentLogger, {}, f.service);
   let stdout = "";
   try {

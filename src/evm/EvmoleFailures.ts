@@ -3,7 +3,7 @@ import {
   MAX_NODE_TIMER_DELAY_MS,
 } from "../domain/analysisResourceLimits.js";
 import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
-import type { EvmWorkerLimits } from "./EvmWorkerLimits.js";
+import type { LinuxResourceLimits } from "../process/LinuxResourceLimits.js";
 import type { AnalysisErrorOptions } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -11,6 +11,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import type { ProviderOutcomeContext } from "../process/classifyProviderOutcome.js";
+import { describeLaunchFailure } from "../process/launchFailure.js";
 import type { ProviderFailureDialect } from "../providers/classifyProviderFailure.js";
 import {
   DEFAULT_EVM_TIMEOUT_MS,
@@ -65,7 +66,7 @@ export interface EvmFileSizeFailureEvidence {
 interface EvmFailureContext {
   readonly phase: "configuration" | "artifact-read" | "worker";
   readonly path: string;
-  readonly workerLimits?: EvmWorkerLimits | undefined;
+  readonly workerLimits?: LinuxResourceLimits | undefined;
   readonly limiter?: string | undefined;
   readonly fileFailure?: EvmFileSizeFailureEvidence | undefined;
   readonly timeoutMs?: number | undefined;
@@ -139,7 +140,7 @@ export const evmFailureDialect = (
 /** The EVMole worker's dialect: its prlimit launcher and its reserved EFBIG exit. */
 const evmCommandContext = (
   context: ResolvedEvmFailureContext,
-): ProviderOutcomeContext => {
+): Omit<ProviderOutcomeContext, "providerId"> => {
   const { workerLimits, limiter, fileFailure, timeoutMs, producerLimits } =
     context;
   return {
@@ -185,16 +186,16 @@ const evmCommandContext = (
         remediationAction: `The EVMole worker's ${String(EVM_WORKER_HEAP_MIB)} MiB heap is fixed in this release; producer_limits and timeout_ms do not raise it. Select a smaller bytecode carrier; repeating the unchanged request is expected to fail the same way.`,
       },
     }),
-    dialect: (outcome, details) => {
-      if (outcome.kind === "launch-refused") {
-        const reason = `Configured util-linux prlimit could not launch (${outcome.refusal.code}): ${limiter}. Check its executable/interpreter and host execute access.`;
-        return new AnalysisCapabilityUnavailableError(
-          EVMOLE_PROVIDER_IDENTITY.id,
-          OPERATION,
-          reason,
-          { ...details, userMessage: reason },
-        );
-      }
+    launchUnavailable: (failure, details) => {
+      const reason = `Configured util-linux prlimit could not launch (${describeLaunchFailure(failure)}): ${limiter}. Check its executable/interpreter and host execute access.`;
+      return new AnalysisCapabilityUnavailableError(
+        EVMOLE_PROVIDER_IDENTITY.id,
+        OPERATION,
+        reason,
+        { ...details, userMessage: reason },
+      );
+    },
+    dialect: (outcome, details, unclassified) => {
       // The reserved exit means EFBIG only when the worker's marker says so.
       if (
         outcome.kind === "exited" &&
@@ -216,21 +217,8 @@ const evmCommandContext = (
             ),
           },
         );
-      return new ProviderAdapterError(EVMOLE_PROVIDER_IDENTITY.id, OPERATION, {
-        ...details,
-        diagnostics: {
-          ...evmWorkerDiagnostics(context),
-          reason: outcome.message,
-          failure_kind: outcome.kind,
-          // A stream failure is not an ordinary exit, but its recorded
-          // status remains evidence.
-          ...(outcome.output === undefined
-            ? {}
-            : {
-                exit_code: outcome.output.snapshot.exitCode ?? null,
-                signal: outcome.output.snapshot.signal ?? null,
-              }),
-        },
+      return unclassified({
+        diagnostics: evmWorkerDiagnostics(context),
       });
     },
   };
@@ -246,21 +234,29 @@ const evmWorkerDiagnostics = ({
   path,
   ...(workerLimits === undefined
     ? {}
-    : { configured_resource_limits: { ...workerLimits } }),
+    : {
+        configured_resource_limits: {
+          addressSpaceBytes: workerLimits.address_space_bytes,
+          cpuSeconds: workerLimits.cpu_seconds,
+          fileSizeBytes: workerLimits.file_bytes,
+        },
+      }),
   ...(fileFailure === undefined
     ? {}
     : { file_size_failure_marker: { ...fileFailure } }),
 });
 
 /** Configured soft limits; the effective limits the worker ran under are unknown. */
-const configuredWorkerLimits = (workerLimits: EvmWorkerLimits | undefined) =>
+const configuredWorkerLimits = (
+  workerLimits: LinuxResourceLimits | undefined,
+) =>
   workerLimits === undefined
     ? null
     : {
         configured_soft_limits: {
-          address_space_bytes: workerLimits.addressSpaceBytes,
-          cpu_seconds: workerLimits.cpuSeconds,
-          file_size_bytes: workerLimits.fileSizeBytes,
+          address_space_bytes: workerLimits.address_space_bytes,
+          cpu_seconds: workerLimits.cpu_seconds,
+          file_size_bytes: workerLimits.file_bytes,
         },
         effective_soft_limits: null,
       };

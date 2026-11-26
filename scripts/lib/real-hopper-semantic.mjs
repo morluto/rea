@@ -60,7 +60,7 @@ export function requireBridgeProgress(updates) {
     );
 }
 
-/** Require one sanitized invalid-request diagnostic from the real bridge. */
+/** Require one sanitized selector-miss diagnostic from the real bridge. */
 export function requireBridgeDiagnostic(chunks) {
   const diagnostics = chunks
     .join("")
@@ -71,7 +71,7 @@ export function requireBridgeDiagnostic(chunks) {
     !diagnostics.some(
       (diagnostic) =>
         diagnostic.type === "bridge-diagnostic" &&
-        diagnostic.category === "invalid_request" &&
+        diagnostic.category === "selector_not_found" &&
         diagnostic.message.includes(
           "Unknown Hopper address or name: __rea_missing_procedure__",
         ),
@@ -148,7 +148,11 @@ export async function verifyRealHopperFixture({
     await client.callTool(
       {
         name: "procedure_references",
-        arguments: { procedure: entry.address, direction: "outgoing" },
+        arguments: {
+          detail: "complete",
+          procedure: entry.address,
+          direction: "outgoing",
+        },
       },
       options,
     ),
@@ -282,6 +286,7 @@ export async function resolveFixtureProcedure(
       {
         name: "search_procedures",
         arguments: {
+          detail: "complete",
           pattern: expectedName,
           mode: "literal",
           case_sensitive: true,

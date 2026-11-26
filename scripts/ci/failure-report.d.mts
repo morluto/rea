@@ -93,6 +93,7 @@ export function reportCiFailures(options: {
 export function createGitHubApi(options?: {
   token?: string;
   fetchImpl?: typeof fetch;
+  collectedJobsDirectory?: string;
   apiRequest?: (
     method: string,
     endpoint: string,

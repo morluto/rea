@@ -1,7 +1,7 @@
 import type { HostPlatform } from "../../platform/HostPlatform.js";
 import {
   binaryLayoutPayloadSchema,
-  binaryLayoutSchema,
+  safeParseProjectedBinaryLayout,
   type BinaryLayout,
   type InspectBinaryLayoutInput,
 } from "../../domain/native/binaryLayout.js";
@@ -34,10 +34,10 @@ export class PwntoolsLayoutProvider
         identity: PWNTOOLS_PROVIDER_IDENTITY,
         operation: "inspect_binary_layout",
         bridge: new URL("../../../bridge/pwntools/layout.py", import.meta.url),
+        targetFormat: "elf",
         payloadSchema: binaryLayoutPayloadSchema,
         project: ({ input, payload, snapshot, diagnostics }) => {
-          const value = binaryLayoutSchema.safeParse({
-            ...payload,
+          const value = safeParseProjectedBinaryLayout(payload, {
             artifact: {
               path: input.path,
               sha256: snapshot.sha256,

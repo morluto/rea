@@ -3,6 +3,7 @@ import { canonicalJson } from "../comparisonSemantics.js";
 import type { JsonValue } from "../jsonValue.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
 import {
+  succeeded,
   isObject,
   normalizedPath,
   replaceAt,
@@ -17,9 +18,6 @@ const MINIMUM_REPEATS = 2;
 
 /** The paths whose repeated reads showed each member minted anew, so only views of those paths leave it out. */
 export type MintedMembers = ReadonlyMap<string, ReadonlySet<string>>;
-
-const succeeded = (record: StateRecordFacts): boolean =>
-  record.status !== null && record.status >= 200 && record.status < 300;
 
 /** A body's top-level members whose value looks minted: a UUID or a clock reading. */
 const mintedValues = (

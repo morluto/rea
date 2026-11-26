@@ -19,6 +19,7 @@ import {
 import { buildManagedMemberCapacityFixture } from "../fixtures/managedMemberCapacity.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 const createTransport = () =>
   new StdioClientTransport({
@@ -39,6 +40,26 @@ const createTransport = () =>
     stderr: "pipe",
   });
 
+const expectDefaultMemberRecovery = (value: unknown) => {
+  const report = managedMemberInspectionSchema.parse(value);
+  expect(report.coverage).toMatchObject({
+    state: "partial",
+    issues: [
+      {
+        code: "resource-limit",
+        scope: "metadata.representation",
+        limit: {
+          parameter: "max_metadata_representation_bytes",
+          effective_value: 64 * 1024 * 1024,
+        },
+      },
+    ],
+  });
+  expect(report.types).toHaveLength(3);
+  expect(report.methods).toEqual([]);
+  return report;
+};
+
 cliTest(
   "CLI and stdio MCP recover type discovery and preserve partial retained pages",
   async ({ cli }) => {
@@ -49,7 +70,10 @@ cliTest(
     const sha256 = createHash("sha256").update(bytes).digest("hex");
     const transport = createTransport();
     transport.stderr?.on("data", () => undefined);
-    const client = new Client({ name: "managed-type-recovery", version: "1" });
+    const client = new Client(
+      { name: "managed-type-recovery", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     try {
       await client.connect(transport);
       const definition = (await client.listTools()).tools.find(
@@ -70,7 +94,7 @@ cliTest(
       const cliEvidence = parseEvidence(output.json);
       const response = await artifactMcpCall(client, {
         name: "inspect_managed_members",
-        arguments: { path },
+        arguments: { detail: "complete", path },
       });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
       expect(
@@ -83,12 +107,7 @@ cliTest(
       );
       expect(fileIdentity(mcpEvidence.subject).sha256).toBe(sha256);
       expect(fileIdentity(cliEvidence.subject).sha256).toBe(sha256);
-      const report = managedMemberInspectionSchema.parse(
-        mcpEvidence.normalized_result,
-      );
-      expect(report.coverage.state).toBe("partial");
-      expect(report.types).toHaveLength(3);
-      expect(report.methods).toEqual([]);
+      const report = expectDefaultMemberRecovery(mcpEvidence.normalized_result);
       const empty = report.types.find((type) => type.method_list.count === 0);
       if (empty === undefined) throw new Error("Missing empty fixture type");
       const selectedCli = await cli.run({
@@ -103,7 +122,7 @@ cliTest(
       expect(selectedCli.exitCode, selectedCli.stderr).toBe(0);
       const selected = await artifactMcpCall(client, {
         name: "inspect_managed_members",
-        arguments: { path, type_names: [empty.full_name] },
+        arguments: { detail: "complete", path, type_names: [empty.full_name] },
       });
       expect(selected.isError).not.toBe(true);
       const selectedEvidence = parseEvidence(selected.structuredContent);

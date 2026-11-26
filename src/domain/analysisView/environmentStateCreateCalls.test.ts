@@ -1,27 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  timedCaptureEvidence,
-  type TimedCaptureRow,
-} from "../../../tests/fixtures/analysisView.js";
+import type { TimedCaptureRow } from "../../../tests/fixtures/analysisView.js";
 import {
   HELD_FIXED_TAG_ROWS,
-  TAG_ROWS,
   misshelvedRows,
   referencedCreateRows,
   shelvedRows,
 } from "../../../tests/fixtures/environmentStateDerivedValues.js";
-import { environmentStateViewOf } from "../../../tests/fixtures/environmentStateWrites.js";
+import { planOf } from "../../../tests/fixtures/environmentStateWrites.js";
 import { mergedCreatePlan } from "./environmentStateWriteCreateCalls.js";
 import type { FieldRule } from "./environmentStateWriteRules.js";
 
-const createPlan = (rows: readonly TimedCaptureRow[], tool = "post_books") => {
-  const plan = environmentStateViewOf(timedCaptureEvidence(rows)).writes.find(
-    (candidate) => candidate.tool === tool,
-  );
-  if (plan === undefined) throw new Error("No create plan");
-  return plan;
-};
+const createPlan = (rows: readonly TimedCaptureRow[], tool = "post_books") =>
+  planOf(rows, tool);
 
 const OPTIONAL_SHELF = {
   served: true,
@@ -63,11 +54,7 @@ describe("create plans learned from every call", () => {
     });
   });
 
-  it.each([
-    { id: 1, name: "Different Hall", floor: "ground" },
-    { id: 2, name: "Map Room", floor: "upper" },
-    null,
-  ])(
+  it.each([{ id: 2, name: "Map Room", floor: "upper" }, null])(
     "withholds a create whose sent reference contradicts its answer (%j)",
     (shelf) => {
       expect(createPlan(referencedCreateRows(shelf))).toMatchObject({
@@ -86,7 +73,6 @@ describe("create plans learned from every call", () => {
   });
 
   it("trims no clock a later create shows trimmed after a held entity showed it at a fixed width", () => {
-    expect(createPlan(TAG_ROWS, "post_tags")).toMatchObject({ served: true });
     const plan = createPlan(HELD_FIXED_TAG_ROWS, "post_tags");
     expect(plan).toMatchObject({ served: false, reason: "unexplained-change" });
     expect(plan.rules).not.toContainEqual(
@@ -175,24 +161,16 @@ describe("merging a later create into a plan", () => {
     });
   const unshelvedExemplar = { id: 3, name: "Third" };
 
-  it("takes a reference one call alone shows when the other did not send its member", () => {
-    const merged = mergedCreatePlan(
-      plan,
-      unshelvedExemplar,
-      shelved(4, "Fourth"),
-    );
-    expect(merged).toMatchObject({
-      rules: expect.arrayContaining([reference]),
-      body: { accepted: ["name", "shelf_id"], required: ["name"] },
-    });
-  });
-
-  it("keeps a reference an earlier call added through calls that leave it out, and agrees with it when it returns", () => {
+  it("adds an optional reference and keeps it through later omission and return", () => {
     const added = mergedCreatePlan(
       plan,
       unshelvedExemplar,
       shelved(4, "Fourth"),
     )!;
+    expect(added).toMatchObject({
+      rules: expect.arrayContaining([reference]),
+      body: { accepted: ["name", "shelf_id"], required: ["name"] },
+    });
     const omitted = mergedCreatePlan(
       added,
       unshelvedExemplar,

@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { knownCoverage } from "../coverageAccumulator.js";
 
 import { BUILTIN_RESOURCE_METHODS } from "./javascriptBuiltinResourceMethods.js";
 import { semanticBuiltinNamespacePath } from "./javascriptSemanticProvenance.js";
@@ -38,11 +39,12 @@ import {
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import {
-  readExactJavaScriptLiteral,
+  stringValue,
   semanticMemberChain,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
+import { semanticConsumerMemo } from "./javascriptSemanticConsumer.js";
 
 export interface SemanticProjectedBinding extends JavaScriptSemanticProjectedResultBinding {
   readonly identifier: t.Identifier;
@@ -107,7 +109,7 @@ const projectedPatternBindings = (
           bindingId: binding.bindingId,
           identifier: current,
           projectionPath: path,
-          resolution: partial ? "partial" : "complete",
+          resolution: knownCoverage(!partial, "data-effect projection partial"),
         });
       return;
     }
@@ -200,6 +202,27 @@ export const builtinDataEffectIdentity = (
   return candidate === null
     ? null
     : { path: candidate, builtinAuthority: "candidate" };
+};
+
+/** Recover the default HTTP agent protocol only while its shared slot is intact. */
+export const semanticDefaultHttpProtocol = (
+  callee: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): "http:" | "https:" | undefined => {
+  for (const family of ["http", "https"] as const) {
+    const identity = builtinDataEffectIdentity(callee, state, [
+      family,
+      `node:${family}`,
+    ]);
+    if (
+      identity?.builtinAuthority === undefined &&
+      identity?.path.length === 1 &&
+      (identity.path[0] === "request" || identity.path[0] === "get") &&
+      !requiredModuleChanged(family, ["globalAgent", "protocol"], callee, state)
+    )
+      return family === "http" ? "http:" : "https:";
+  }
+  return undefined;
 };
 
 const builtinDataEffectCallablePathWithAuthority = (
@@ -712,8 +735,12 @@ const affectsBuiltinPath = (
     semanticPropertyPathKeyMatches(key, selected[index]!),
   );
 
-const BUILTIN_RECEIVER_METHODS: Readonly<Record<string, ReadonlySet<string>>> =
-  {
+// A Map, so a specifier named like an Object.prototype key finds nothing.
+const BUILTIN_RECEIVER_METHODS: ReadonlyMap<
+  string,
+  ReadonlySet<string>
+> = new Map(
+  Object.entries({
     path: new Set(["resolve", "join", "dirname"]),
     "path/posix": new Set(["resolve", "join", "dirname"]),
     url: new Set(["fileURLToPath"]),
@@ -747,7 +774,8 @@ const BUILTIN_RECEIVER_METHODS: Readonly<Record<string, ReadonlySet<string>>> =
       "clearInterval",
       "clearImmediate",
     ]),
-  };
+  }),
+);
 
 interface BuiltinEffectIndex {
   readonly writesByModule: Map<
@@ -764,10 +792,7 @@ interface BuiltinEffectIndex {
 
 // Derived passes run after mutation collection. These indexes share that state's
 // lifetime and never cache facts while its mutation owner is still producing them.
-const builtinEffectIndexes = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  BuiltinEffectIndex
->();
+const builtinEffectIndexes = semanticConsumerMemo<BuiltinEffectIndex>();
 
 const builtinEffectIndex = (
   state: JavaScriptSemanticAnalysisState,
@@ -843,7 +868,7 @@ const processSnapshotObjectRoot = (
 };
 
 /** Check shared exports at the use or method-capture point, not at every later call. */
-const requiredModuleChanged = (
+export const requiredModuleChanged = (
   specifier: string,
   selected: readonly string[],
   capture: t.Node,
@@ -853,6 +878,8 @@ const requiredModuleChanged = (
   allowCandidate = false,
   ignoreCandidateEffects = false,
   snapshotObjectRoot?: "env" | "argv",
+  descendantsMatter = false,
+  ignoreRootSlotWrite = false,
 ): boolean => {
   const identity = semanticRequireExportsIdentity(specifier, selected);
   return builtinModuleEffects(identity.specifier, state, allowCandidate).some(
@@ -865,6 +892,12 @@ const requiredModuleChanged = (
         path[0] === snapshotObjectRoot
       ) &&
       !(
+        ignoreRootSlotWrite &&
+        kind === "write" &&
+        path.length === 1 &&
+        path[0] === identity.path[0]
+      ) &&
+      !(
         savedObjectCapture !== undefined &&
         path.length < identity.path.length &&
         semanticTopLevelEffectFollowsCapture(
@@ -873,7 +906,12 @@ const requiredModuleChanged = (
           state.parentsByNode,
         )
       ) &&
-      affectsBuiltinPath(path, identity.path) &&
+      (affectsBuiltinPath(path, identity.path) ||
+        (descendantsMatter &&
+          path.length > identity.path.length &&
+          identity.path.every((key, index) =>
+            semanticPropertyPathKeyMatches(path[index]!, key),
+          ))) &&
       !semanticTopLevelEffectFollowsCapture(
         capture,
         node,
@@ -884,6 +922,56 @@ const requiredModuleChanged = (
         path.length < identity.path.length),
   );
 };
+
+/** Whether a built-in export can still be relied on at this use site. */
+export const builtinModuleSlotUnmodified = (
+  specifier: string,
+  path: readonly string[],
+  use: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  !requiredModuleChanged(specifier, path, use, state, false, undefined, true);
+
+/** Whether a built-in object and its descendants retain their known behavior. */
+export const builtinModuleSubtreeUnmodified = (
+  specifier: string,
+  path: readonly string[],
+  use: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  !requiredModuleChanged(
+    specifier,
+    path,
+    use,
+    state,
+    false,
+    undefined,
+    true,
+    false,
+    undefined,
+    true,
+  );
+
+/** A saved constructor's shared prototype survives reassignment of its export slot. */
+export const builtinSharedPrototypeUnmodified = (
+  specifier: string,
+  path: readonly string[],
+  use: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  !requiredModuleChanged(
+    specifier,
+    path,
+    use,
+    state,
+    false,
+    undefined,
+    true,
+    false,
+    undefined,
+    true,
+    true,
+  );
 
 /** Calling an unchanged built-in as a member is not an escape to unknown code. */
 const originalBuiltinReceiver = (
@@ -966,9 +1054,9 @@ const computeOriginalBuiltinReceiver = (
         }));
   if (
     method === null ||
-    !BUILTIN_RECEIVER_METHODS[
-      posixReceiver ? "path/posix" : origin.specifier
-    ]?.has(method) ||
+    !BUILTIN_RECEIVER_METHODS.get(
+      posixReceiver ? "path/posix" : origin.specifier,
+    )?.has(method) ||
     (receiver !== undefined &&
       bindingMemberEffectMayPrecedeReads(
         state,
@@ -1142,11 +1230,16 @@ export const outerDataEffectBinding = (
   );
 };
 
-/** Traverse with exact callable and ancestor stacks. */
+/**
+ * Traverse once with exact callable and ancestor stacks. Every visitor sees
+ * each node in source order, in the order given, with the same stacks a
+ * traversal of its own would have built; visitors must not read each other's
+ * findings.
+ */
 export const traverseDataEffects = (
   program: t.Program,
   context: DataEffectTraversalContext,
-  visit: (node: t.Node, parent: t.Node | null) => void,
+  ...visitors: readonly ((node: t.Node, parent: t.Node | null) => void)[]
 ): void => {
   const callableStack = createSemanticCallableIdStack(
     context.callableIds,
@@ -1156,7 +1249,7 @@ export const traverseDataEffects = (
   traverseJavaScriptValueAst(program, context.state.erasedSyntaxNodes, {
     enter: (node, parent) => {
       callableStack.enter(node, parent);
-      visit(node, parent);
+      for (const visit of visitors) visit(node, parent);
       context.ancestors.push(node);
     },
     exit: (node) => {
@@ -1192,13 +1285,7 @@ export const dataEffectLiteralString = (
     | t.JSXNamespacedName
     | t.ArgumentPlaceholder
     | undefined,
-): string | null => {
-  if (node === undefined) return null;
-  const literal = readExactJavaScriptLiteral(node);
-  return literal.found && typeof literal.value === "string"
-    ? literal.value
-    : null;
-};
+): string | null => stringValue(node) ?? null;
 
 /** Read a member callee from call or construction syntax. */
 export const dataEffectMemberCallee = (

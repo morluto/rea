@@ -13,7 +13,7 @@ import {
 } from "../apkSignature/apkSignatureQuery.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import type { JsonValue } from "../jsonValue.js";
-import { err, ok, type Result } from "../result.js";
+import { ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
@@ -22,7 +22,10 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  invalidAnalysisViewSubject,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
@@ -105,14 +108,8 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
     subject !== undefined &&
     !apkSignatureMatchesSubject(report.artifact, subject)
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message: "APK subject does not match its recorded artifact",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "APK subject does not match its recorded artifact",
     );
   if (cached !== undefined) return ok(cached);
   const unknowns = [
@@ -266,15 +263,8 @@ export const projectApkSignatureView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "summary" && view.kind !== "apk-signature")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "APK Evidence supports summary and apk-signature signer/digest/lineage pages",
-        },
-      ]),
+    return invalidAnalysisView(
+      "APK Evidence supports summary and apk-signature signer/digest/lineage pages",
     );
   assertOwnedView<
     SummaryAnalysisView | z.output<typeof apkSignatureViewRequestSchema>

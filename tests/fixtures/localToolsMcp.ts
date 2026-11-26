@@ -1,7 +1,4 @@
-import {
-  canonicalOutputSchema,
-  withCanonicalOutputSchema,
-} from "./canonicalOutputSchema.js";
+import { withCanonicalOutputSchema } from "./canonicalOutputSchema.js";
 import {
   Client,
   type CallToolRequestOptions,
@@ -15,6 +12,11 @@ import { closeVerifierResources } from "../../scripts/lib/verifier-cleanup.mjs";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, onTestFinished } from "vitest";
 import { createMcpSchemaValidation } from "./mcpSchemaValidation.js";
+import { createSharedMcpSession } from "../support/mcp/sharedMcpSession.js";
+import {
+  applyCompleteEvidenceByDefault,
+  type TestDelivery,
+} from "../support/completeEvidenceByDefault.js";
 
 /** Default to native tools while preserving explicit caller configuration. */
 export const localToolsMcpEnvironment = (
@@ -33,6 +35,7 @@ export async function connectLocalToolsMcp(
   registerCleanup: (cleanup: () => Promise<void>) => void = onTestFinished,
   transportOptions: Readonly<Pick<StdioServerParameters, "maxBufferSize">> = {},
   jsonSchemaValidator?: NonNullable<ClientOptions["jsonSchemaValidator"]>,
+  delivery: TestDelivery = "completeEvidenceByDefault",
 ) {
   const transport = new StdioClientTransport({
     ...transportOptions,
@@ -45,9 +48,12 @@ export async function connectLocalToolsMcp(
     stderr: "pipe",
   });
   const validation = createMcpSchemaValidation();
-  const client = new Client(
-    { name: "local-tools-e2e", version: "1" },
-    { jsonSchemaValidator: jsonSchemaValidator ?? validation },
+  const client = applyCompleteEvidenceByDefault(
+    new Client(
+      { name: "local-tools-e2e", version: "1" },
+      { jsonSchemaValidator: jsonSchemaValidator ?? validation },
+    ),
+    delivery,
   );
   registerCleanup(async () => {
     await closeVerifierResources([
@@ -99,6 +105,24 @@ export async function connectLocalToolsMcp(
 }
 
 /**
+ * Lazy file-scoped production stdio MCP client. Connects on first use so
+ * skipped files pay zero startup cost, sharing `createSharedMcpSession`'s
+ * retryable cleanup queue and handshake-failure attribution.
+ */
+export const lazyLocalToolsMcp = (
+  environment: Readonly<Record<string, string>> = {},
+): (() => Promise<Awaited<ReturnType<typeof connectLocalToolsMcp>>>) => {
+  const { session, close } = createSharedMcpSession(
+    async (registerCleanup, isClosed) => {
+      if (isClosed()) throw new Error("Shared MCP session is closed");
+      return connectLocalToolsMcp(environment, registerCleanup);
+    },
+  );
+  afterAll(() => close());
+  return () => session.call();
+};
+
+/**
  * One production stdio MCP client for the calling test file. It connects
  * before the file's tests. Teardown removes each cleanup only after it
  * succeeds, so a failed cleanup stays owned.
@@ -124,6 +148,11 @@ export const fileLocalToolsMcp = (
       if (connected === undefined)
         throw new Error("The file's MCP client is not connected");
       return connected.client;
+    },
+    get call() {
+      if (connected === undefined)
+        throw new Error("The file's MCP client is not connected");
+      return connected.call;
     },
   };
 };

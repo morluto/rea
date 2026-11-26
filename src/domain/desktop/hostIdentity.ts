@@ -48,7 +48,15 @@ export const identitySpellings = (identity: HostIdentity): readonly string[] =>
  * `user@host`; and the host name as a whole name. The user name alone is
  * never matched, since a short one such as `ada` is also ordinary text.
  */
+const identityPatternCache = new WeakMap<HostIdentity, RegExp | null>();
+const homePatternCache = new WeakMap<HostIdentity, RegExp | null>();
+
 const identityPattern = (identity: HostIdentity): RegExp | undefined => {
+  const cached = identityPatternCache.get(identity);
+  if (cached !== undefined) {
+    if (cached !== null) cached.lastIndex = 0;
+    return cached ?? undefined;
+  }
   const home = homeOf(identity);
   const login = loginOf(identity);
   const host = hostOf(identity);
@@ -61,9 +69,18 @@ const identityPattern = (identity: HostIdentity): RegExp | undefined => {
       ? []
       : [`(?<![${WORD}.-])(?<host>${escaped(host)})${HOST_END}`]),
   ];
-  return alternatives.length === 0
-    ? undefined
-    : new RegExp(alternatives.join("|"), "gu");
+  const compiled =
+    alternatives.length === 0 ? null : new RegExp(alternatives.join("|"), "gu");
+  identityPatternCache.set(identity, compiled);
+  return compiled ?? undefined;
+};
+
+const homePattern = (identity: HostIdentity, home: string): RegExp => {
+  const cached = homePatternCache.get(identity);
+  if (cached !== undefined && cached !== null) return cached;
+  const compiled = new RegExp(`${escaped(home)}${HOME_END}`, "u");
+  homePatternCache.set(identity, compiled);
+  return compiled;
 };
 
 /** The text with the identity replaced: `/home/user` for the home, `user@localhost` and `localhost` for the host. */
@@ -100,7 +117,7 @@ export const identityLeftIn = (
       text,
     );
     return spelling === home
-      ? new RegExp(`${escaped(home)}${HOME_END}`, "u").test(rest)
+      ? homePattern(identity, home).test(rest)
       : rest.includes(spelling);
   });
 };

@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join, isAbsolute } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import {
   StdioClientTransport,
@@ -13,7 +14,10 @@ import { currentClientRegistrationCommand } from "../../../src/application/Clien
 import { systemUninstallHost } from "../../../src/application/Uninstall.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { supportedClientRegistrationProfile } from "../../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { registrationEnvironment } from "../../support/cli/registrationEnvironment.js";
+import { processTest } from "../../support/process/processFixture.js";
 
 // These writer tests model setup running from REA's actual entrypoint, not Vitest's worker.
 vi.mock(
@@ -211,10 +215,13 @@ it.skipIf(process.platform !== "win32")(
       env: getDefaultEnvironment(),
       stderr: "pipe",
     });
-    const client = new Client({
-      name: "windows-direct-registration",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "windows-direct-registration",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     try {
       await client.connect(transport);
       expect(client.getServerVersion()?.version).toBe(
@@ -233,5 +240,76 @@ it.skipIf(process.platform !== "win32")(
       await client.close();
       await transport.close();
     }
+  },
+);
+
+processTest.skipIf(process.platform !== "win32")(
+  "mcp add blocks an implicit MSIX-private launcher before writing client files",
+  async ({ processes }) => {
+    const home = await createTestTempDirectory("rea-msix-mcp-add-");
+    const environment = await registrationEnvironment(home, {
+      CLAUDE_CONFIG_DIR: home,
+    });
+    const isolatedConfig = join(home, ".claude.json");
+    const installed = join(home, "installed", "rea.mjs");
+    const privateEntry = join(
+      home,
+      "localappdata",
+      "Packages",
+      "Fixture_123",
+      "LocalCache",
+      "rea.mjs",
+    );
+    const original = '{"mcpServers":{"other":{"command":"unchanged"}}}\n';
+    const launcher = `import ${JSON.stringify(pathToFileURL(resolve("scripts/rea.mjs")).href)};\n`;
+    for (const entry of [installed, privateEntry]) {
+      await mkdir(dirname(entry), { recursive: true });
+      await writeFile(entry, launcher);
+    }
+    await writeFile(isolatedConfig, original);
+    const run = (entry: string, args: readonly string[] = []) =>
+      processes.run(
+        process.execPath,
+        [entry, "mcp", "add", "--agent", "claude-code", "--json", ...args],
+        {
+          cwd: home,
+          env: environment,
+        },
+      );
+
+    const blocked = await run(privateEntry);
+    expect(blocked.exitCode, blocked.stderr).toBe(1);
+    expect(JSON.parse(blocked.stdout)).toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining(
+        "inside the private storage of MSIX package Fixture_123",
+      ),
+      fieldErrors: [expect.objectContaining({ path: "command" })],
+    });
+    expect(await readFile(isolatedConfig, "utf8")).toBe(original);
+    await expect(
+      readFile(`${isolatedConfig}.rea.backup`, "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+
+    const allowed = await run(installed);
+    expect(allowed.exitCode, allowed.stderr).toBe(0);
+    expect(JSON.parse(await readFile(isolatedConfig, "utf8"))).toMatchObject({
+      mcpServers: {
+        rea: { command: process.execPath, args: [installed, "mcp"] },
+        other: { command: "unchanged" },
+      },
+    });
+    expect(await readFile(`${isolatedConfig}.rea.backup`, "utf8")).toBe(
+      original,
+    );
+
+    const explicit = await run(privateEntry, [
+      "--command",
+      '"custom executable" mcp',
+    ]);
+    expect(explicit.exitCode, explicit.stderr).toBe(0);
+    expect(JSON.parse(await readFile(isolatedConfig, "utf8"))).toMatchObject({
+      mcpServers: { rea: { command: "custom executable", args: ["mcp"] } },
+    });
   },
 );

@@ -1,27 +1,22 @@
+import { listenCutterServer } from "../../fixtures/cutterBridgeProtocol.js";
 import { createServer } from "node:net";
 import { createHmac, randomUUID } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { serveCli } from "./cliServeHarness.js";
+import { cutterDiscoveryLimitations } from "../../../src/domain/cutterDiscovery.js";
 import {
   spawnOwnedProviderProcess,
   ProviderProcessSupervisor,
 } from "../../../src/process/ProviderProcess.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const SESSION_ID = "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a";
-const listen = async (
-  server: ReturnType<typeof createServer>,
-): Promise<number> => {
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  if (address === null || typeof address === "string")
-    throw new Error("Expected an ephemeral TCP listener");
-  return address.port;
-};
+const listen = (server: ReturnType<typeof createServer>) =>
+  listenCutterServer(server, "Expected an ephemeral TCP listener");
 
 describe("Cutter CLI commands", () => {
   let directory: string | undefined;
@@ -30,31 +25,32 @@ describe("Cutter CLI commands", () => {
   afterEach(async () => {
     if (server !== undefined)
       await new Promise<void>((resolve) => server?.close(() => resolve()));
-    if (directory !== undefined)
-      await rm(directory, { recursive: true, force: true });
-    directory = undefined;
     server = undefined;
   });
 
   it("lists sessions from the selected bridge directory", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-cutter-cli-test-"));
+    directory = await createTestTempDirectory("rea-cutter-cli-test-");
 
     const result = await serveCli(["list-cutter-sessions", "--json"], {
       REA_CUTTER_BRIDGE_DIR: directory,
     });
 
     expect(result.exitCode).toBe(0);
+    // The CLI projects the shared discovery owner's limitation unchanged.
+    const limitations = cutterDiscoveryLimitations("no_live_bridge_found");
+    expect(limitations).not.toEqual([]);
     expect(JSON.parse(result.stdout)).toMatchObject({
       sessions: [],
       discovery_status: "no_live_bridge_found",
       bridge_directory: directory,
+      limitations,
     });
   });
 
   it.skipIf(process.platform === "win32")(
     "awaits discovery cancellation on SIGINT and returns its typed outcome with exit130",
     async () => {
-      directory = await mkdtemp(join(tmpdir(), "rea-cutter-cli-cancel-"));
+      directory = await createTestTempDirectory("rea-cutter-cli-cancel-");
       const sockets = new Set<import("node:net").Socket>();
       let accepted = 0;
       server = createServer((socket) => {
@@ -120,7 +116,7 @@ describe("Cutter CLI commands", () => {
   );
 
   it("reports an unavailable selected session for a command", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-cutter-cli-test-"));
+    directory = await createTestTempDirectory("rea-cutter-cli-test-");
 
     const result = await serveCli(
       ["cutter-command", SESSION_ID, "0", "pdi", "--json"],
@@ -152,14 +148,11 @@ describe("Cutter CLI command output flags", () => {
   afterEach(async () => {
     if (server !== undefined)
       await new Promise<void>((resolve) => server?.close(() => resolve()));
-    if (directory !== undefined)
-      await rm(directory, { recursive: true, force: true });
-    directory = undefined;
     server = undefined;
   });
 
   it("returns Evidence when the selected Cutter session completes a command", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-cutter-cli-test-"));
+    directory = await createTestTempDirectory("rea-cutter-cli-test-");
     const token = "synthetic-cutter-cli-token-for-test";
     let nextConnectionOrdinal = 0;
     const commandJsonModes: boolean[] = [];

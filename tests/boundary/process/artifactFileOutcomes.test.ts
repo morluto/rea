@@ -6,7 +6,10 @@ import { SigrokRecordingProvider } from "../../../src/signals/SigrokRecordingPro
 import { TsharkCaptureProvider } from "../../../src/captures/TsharkCaptureProvider.js";
 import { SignalRecordingService } from "../../../src/application/signals/SignalRecordingService.js";
 import { PacketCaptureService } from "../../../src/application/captures/PacketCaptureService.js";
-import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  malformedArtifact,
+} from "../../../src/resources/ArtifactReader.js";
 import { withArtifactRegularFile } from "../../../src/resources/ArtifactFileOperation.js";
 import { readStableArtifact } from "../../../src/resources/readStableArtifact.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
@@ -61,6 +64,27 @@ const fileOutcomeControls = (["signal", "capture"] as const).flatMap((kind) =>
 
 type FileOutcomeControl = (typeof fileOutcomeControls)[number];
 
+/** The physical read failure a control injects, with the facts production names. */
+const physicalFailure = (failure: FileOutcomeControl["failure"]): Error =>
+  failure === "denied"
+    ? Object.assign(new Error("controlled read denial"), { code: "EACCES" })
+    : failure === "format"
+      ? malformedArtifact("fixture", "controlled physical file failure")
+      : failure === "limit"
+        ? // The stable reader names the bound it refused, as production does.
+          new ArtifactReaderFailure(
+            "limit",
+            "controlled physical file failure",
+            {
+              boundary: "file-size",
+            },
+          )
+        : new ArtifactReaderFailure(
+            "integrity",
+            "controlled physical file failure",
+            { integrityCheck: "container-identity" },
+          );
+
 const createFileOutcomeFixture = async ({
   kind,
   stage,
@@ -81,19 +105,7 @@ const createFileOutcomeFixture = async ({
       : "if(process.argv.includes('--version')) console.log('TShark (Wireshark) 4.6.9 (fixture)'); else console.log('[]');",
     { mode: 0o700 },
   );
-  const physical =
-    failure === "denied"
-      ? Object.assign(new Error("controlled read denial"), { code: "EACCES" })
-      : new ArtifactReaderFailure(
-          failure === "format"
-            ? "format"
-            : failure === "limit"
-              ? "limit"
-              : "integrity",
-          "controlled physical file failure",
-          // The stable reader names the bound it refused, as production does.
-          failure === "limit" ? { boundary: "file-size" } : undefined,
-        );
+  const physical = physicalFailure(failure);
   const selectedPath =
     resource === "limiter"
       ? limiter

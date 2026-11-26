@@ -159,7 +159,10 @@ export const elfUnmappedInitializerTargets = (
  * ELF64 PIE: DT_INIT, RELATIVE init_array, one import, one RELR fini slot.
  * `needed` prepends that many DT_NEEDED entries, which repeat by design.
  */
-export const elf64PieInitializers = (needed = 0): Buffer => {
+export const elf64PieInitializers = (
+  needed = 0,
+  relrTags: "standard" | "android" = "standard",
+): Buffer => {
   const file = Buffer.alloc(0xc00);
   const dynstr = cStringTable(["imp_init"]);
   const strtab = cStringTable(["ctor_a", "ctor_b", "fini_fn"]);
@@ -186,7 +189,7 @@ export const elf64PieInitializers = (needed = 0): Buffer => {
   file.writeUInt16LE(12, 60);
   file.writeUInt16LE(11, 62);
   phdr64(file, 64, 1, 7, 0, 0, file.length);
-  phdr64(file, 120, 2, 6, 0x300, 0x300, (19 + needed) * 16);
+  phdr64(file, 120, 2, 6, 0x300, 0x300, (20 + needed) * 16);
   file.writeBigUInt64LE(0x120n, 0x220);
   file.writeBigUInt64LE(0x100n, 0x240);
   [
@@ -202,15 +205,19 @@ export const elf64PieInitializers = (needed = 0): Buffer => {
     [7, 0x480],
     [8, 96],
     [9, 24],
-    [36, 0x500],
-    [35, 8],
-    [37, 8],
+    [relrTags === "android" ? 0x6fffe000 : 36, 0x500],
+    [relrTags === "android" ? 0x6fffe001 : 35, 8],
+    [relrTags === "android" ? 0x6fffe003 : 37, 8],
     [6, 0x520],
     [5, 0x560],
     [10, dynstr.bytes.length],
     [11, 24],
+    [4, 0x780],
     [0, 0],
   ].forEach(([tag, value], index) => dyn64(file, index, tag ?? 0, value ?? 0));
+  [1, 2, 1, 0, 0].forEach((value, index) =>
+    file.writeUInt32LE(value, 0x780 + index * 4),
+  );
   rela64(file, 0x480, 0, 0, 0, 0);
   rela64(file, 0x498, 0x200, 0, 8, 0x100);
   rela64(file, 0x4b0, 0x208, 0, 8, 0x110);
@@ -228,7 +235,7 @@ export const elf64PieInitializers = (needed = 0): Buffer => {
   shdr64(file, 2, 0x800, name(1), 16, 2, 0x240, 0x240, 8);
   shdr64(file, 3, 0x800, name(2), 14, 2, 0x200, 0x200, 24);
   shdr64(file, 4, 0x800, name(3), 15, 2, 0x220, 0x220, 8);
-  shdr64(file, 5, 0x800, name(4), 6, 2, 0x300, 0x300, 19 * 16);
+  shdr64(file, 5, 0x800, name(4), 6, 2, 0x300, 0x300, 20 * 16);
   shdr64(file, 6, 0x800, name(5), 4, 2, 0x480, 0x480, 96, 7, 24);
   shdr64(file, 7, 0x800, name(6), 11, 2, 0x520, 0x520, 48, 8, 24);
   shdr64(file, 8, 0x800, name(7), 3, 2, 0x560, 0x560, dynstr.bytes.length);
@@ -670,6 +677,55 @@ export const machoX8664ObjectInitializers = (): Buffer => {
   nlist(0x250, 1, 0n);
   nlist(0x260, 9, 0x10n);
   strings.copy(file, 0x270);
+  return file;
+};
+
+/**
+ * LLVM 19.1.7 golden: llvm-mc -triple=x86_64-apple-macosx -filetype=obj input.s.
+ * Producer source (Lstartup is a temporary label, absent from the symbol table):
+ *   .text
+ *   .space 8, 0x90
+ *   Lstartup: ret
+ *   .globl _alias
+ *   .set _alias, _external
+ *   .section __DATA,__mod_init_func,mod_init_funcs
+ *   .p2align 3
+ *   .quad Lstartup
+ * llvm-readobj --symbols --relocations confirms N_INDR _alias has n_value=8
+ * (the string index of _external), and the slot has a section-relative relocation.
+ */
+export const machoIndirectInitializerGolden = (): Buffer =>
+  Buffer.from(
+    "z/rt/gcAAAEDAAAAAQAAAAMAAABQAQAAAAAAAAAAAAAZAAAA6AAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+      "AAAAAAAAABgAAAAAAAAAcAEAAAAAAAAYAAAAAAAAAAcAAAAHAAAAAgAAAAAAAABfX3RleHQAAAAA" +
+      "AAAAAAAAX19URVhUAAAAAAAAAAAAAAAAAAAAAAAACQAAAAAAAABwAQAAAAAAAAAAAAAAAAAAAAQA" +
+      "gAAAAAAAAAAAAAAAAF9fbW9kX2luaXRfZnVuYwBfX0RBVEEAAAAAAAAAAAAAEAAAAAAAAAAIAAAA" +
+      "AAAAAIABAAADAAAAiAEAAAEAAAAJAAAAAAAAAAAAAAAAAAAAAgAAABgAAACQAQAAAgAAALABAAAY" +
+      "AAAACwAAAFAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACQkJCQkJCQkMMAAAAAAAAACAAAAAAAAAAAAAAAAQAA" +
+      "BgEAAAALAAAACAAAAAAAAAAIAAAAAQAAAAAAAAAAAAAAAF9hbGlhcwBfZXh0ZXJuYWwAAAAAAAAA",
+    "base64",
+  );
+
+/** An n_value string index collides with a real initializer address. */
+export const machoInitializerSymbolKinds = (type: number): Buffer => {
+  const file = Buffer.alloc(0x400);
+  machoX8664ObjectInitializers().copy(file);
+  // The second, section-relative pointer also selects _startup at 0x10.
+  file.writeBigUInt64LE(0x10n, 0x228);
+  // First symbol: an indirect alias to the unresolved _external, whose string
+  // index (0x10) is not the address of _startup. Defined kinds serve as controls.
+  file.writeUInt8(type | 1, 0x254);
+  file.writeUInt8(type === 0x0e ? 1 : 0, 0x255);
+  file.writeBigUInt64LE(0x10n, 0x258);
+  file.writeUInt32LE(0x20, 0x260);
+  const strings = Buffer.alloc(0x30);
+  strings.write("_alias", 1);
+  strings.write("_external", 0x10);
+  strings.write("_startup", 0x20);
+  file.writeUInt32LE(0x300, 280);
+  file.writeUInt32LE(strings.length, 284);
+  strings.copy(file, 0x300);
   return file;
 };
 

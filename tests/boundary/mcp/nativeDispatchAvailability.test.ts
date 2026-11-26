@@ -1,3 +1,7 @@
+import {
+  createFixtureProviderIdentity,
+  supportedFixtureTarget,
+} from "../../fixtures/analysisExecution.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -29,6 +33,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { NativeFixtureRunner } from "../../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createSessionMcpHarness } from "./sessionMcpHarness.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const resources: Array<{ close(): Promise<unknown> }> = [];
 
@@ -37,11 +42,7 @@ afterEach(async () => {
   await Promise.all(resources.splice(0).map((resource) => resource.close()));
 });
 
-const identity = {
-  id: "fixture",
-  name: "Fixture analysis provider",
-  version: "1",
-};
+const identity = createFixtureProviderIdentity();
 const dispatchMetadata = inspectNativeDispatchMetadata(
   [
     {
@@ -294,12 +295,7 @@ const connectUnconfiguredSymbolFallback = async (
             remediation: "Configure the fixture symbol provider.",
             diagnostics: {},
           }),
-          inspectTargetSupport: () => ({
-            status: "supported",
-            code: null,
-            reason: null,
-            diagnostics: {},
-          }),
+          inspectTargetSupport: supportedFixtureTarget,
         },
       ],
       "auto",
@@ -312,7 +308,10 @@ const connectUnconfiguredSymbolFallback = async (
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "native-dispatch-fallback", version: "1" });
+  const mcp = new Client(
+    { name: "native-dispatch-fallback", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });

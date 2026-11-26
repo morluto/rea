@@ -1,0 +1,31 @@
+$ rea doctor --help
+exit: 0
+--- stdout
+rea doctor — Check whether REA is ready
+
+Usage: rea doctor [options]
+
+Options:
+  --target <string>   Optional app path to check
+  --client <array>    Agent registration whose readiness is required; repeatable
+  --provider <array>  Deep-analysis provider, or desktop_build for a desktop build host, whose readiness is required
+  --skill             Require the installed REA skill identity to be aligned
+
+Custom Global Options:
+  --timings  Write measured command timing to stderr.
+
+Global Options:
+  --filter-output <keys>                      Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+  --format <toon|json|yaml|md|jsonl|csv|tsv>  Output format
+  --full-output                               Show full output envelope
+  --help                                      Show help
+  --json                                      Shorthand for --format json
+  --llms, --llms-full                         Print LLM-readable manifest
+  --no-retain                                 Write no over-budget result to the retained-Evidence cache
+  --schema                                    Show JSON Schema for command
+  --token-count                               Print token count of output (instead of output)
+  --token-limit <n>                           Limit output to n tokens
+  --token-offset <n>                          Skip first n tokens of output
+<end>
+--- stderr
+<end>

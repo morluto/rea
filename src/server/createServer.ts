@@ -3,19 +3,34 @@ import {
   type CapabilityServiceOptions,
 } from "../composition/capabilityServices.js";
 import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
-import { registerToolFamilies } from "../contracts/toolFamilyIds.js";
+import {
+  isToolFamilyAdvertised,
+  registerToolFamilies,
+} from "../contracts/toolFamilyIds.js";
+import { toolFamilyId } from "../contracts/toolFamilies.js";
 import { SCOPED_NO_TARGET_RECOVERY } from "./recoveryInstructions.js";
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { parseMcpInputBudget } from "../config/mcpInputBudget.js";
+import { parseMcpToolsListPageBudget } from "../config/mcpToolsListPageBudget.js";
 import { serverInstructions } from "./serverInstructions.js";
-import { registerServiceTools } from "./serviceToolBindings.js";
+import {
+  registerServiceTools,
+  type ToolServices,
+} from "./serviceToolBindings.js";
+import {
+  artifactAnalysisForAdmission,
+  artifactExecutionParameters,
+  managedAnalysisForAdmission,
+} from "./providerOperationFamilies.js";
+import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
+import { NATIVE_TOOL_CONTRACTS } from "../contracts/native/nativeToolContracts.js";
+import { ARTIFACT_TOOL_CONTRACTS } from "../contracts/artifactToolContracts.js";
+import { MANAGED_TOOL_CONTRACTS } from "../contracts/managed/managedToolContracts.js";
+import { promptsForToolFamilies } from "../contracts/promptToolFamilyScope.js";
 import { retainedDebuggerDiagnostics } from "../process/ownedDebuggerCleanupError.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
-import { captureProviderEnvironment } from "./providerEnvironment.js";
-import { createByteEntropyService } from "../composition/binaryDiagnostics.js";
-import { registerDesktopBuildTools } from "./registerDesktopBuildTools.js";
-import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
-import { registerFridaTools } from "./registerFridaTools.js";
+import { createByteEntropyService } from "../composition/binaryDiagnostics/byteEntropy.js";
+import { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { catalogIdentityForToolFamilies } from "../contracts/catalog/catalogIdentity.js";
 import { parseMcpToolFamilies } from "../config/mcpToolFamilies.js";
@@ -26,28 +41,22 @@ import { parseMcpResponseBudget } from "../config/mcpResponseBudget.js";
 import { parseMcpOutputSchemaProfile } from "../config/mcpOutputSchemaProfile.js";
 import { parseMcpInputSchemaProfile } from "../config/mcpInputSchemaProfile.js";
 import type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
-import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
+import type {
+  BinarySessionPort,
+  ManagedBinarySessionPort,
+} from "../application/binary/BinarySessionPort.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
-import { registerApplicationTools } from "./registerApplicationTools.js";
-import { registerArtifactTools } from "./registerArtifactTools.js";
-import { registerNativeTools } from "./registerNativeTools.js";
-import { registerBrowserScenarioTool } from "./registerBrowserScenarioTool.js";
-import { registerBrowserTools } from "./registerBrowserTools.js";
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
-import { registerElectronTools } from "./registerElectronTools.js";
-import { registerEnhancedTools } from "./registerEnhancedTools.js";
-import { registerJavaScriptRuntimeObservationTools } from "./registerJavaScriptRuntimeObservationTools.js";
-import { registerManagedTools } from "./registerManagedTools.js";
 import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
-import { JebAnalysisService } from "../application/jeb/JebAnalysisService.js";
-import { PcapAnalysisService } from "../application/pcap/PcapAnalysisService.js";
-import { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
-import { FlutterBuildAnalysisService } from "../application/flutter/FlutterBuildAnalysisService.js";
+import {
+  createJebAnalysisService,
+  createPcapAnalysisService,
+  createApktoolResourceAnalysisService,
+  createFlutterBuildAnalysisService,
+} from "../application/ProviderOperationServices.js";
 import { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
-import { registerManagedWorkflowTools } from "./registerManagedWorkflowTools.js";
-import { registerOfficialTools } from "./registerOfficialTools.js";
 import { registerGuidedPrompts } from "./registerPrompts.js";
 import { registerSessionTools } from "./registerSessionTools.js";
 import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
@@ -56,10 +65,6 @@ import {
   withAdmittedAnalysis,
   type ServerAnalysisSource,
 } from "./analysisAdmission.js";
-import { registerReverseEngineeringTools } from "./registerReverseEngineeringTools.js";
-import { registerCutterTools } from "./registerCutterTools.js";
-import { registerGdbTools } from "./registerGdbTools.js";
-import { registerRizinDebugTools } from "./registerRizinDebugTools.js";
 import {
   resolveMcpOutputSchemaProfile,
   type McpOutputSchemaProfile,
@@ -78,6 +83,9 @@ export interface CreateServerOptions extends CapabilityServiceOptions {
   readonly providerEnvironment?: Readonly<NodeJS.ProcessEnv>;
   readonly logger?: Logger;
   readonly availabilityPolicy?: () => AvailabilityPolicy;
+  readonly createManagedBinarySession?: () =>
+    | ManagedBinarySessionPort
+    | Promise<ManagedBinarySessionPort>;
   /**
    * The host the server's integrations run on: it decides environment-name
    * rules, host-restricted availability and execution checks. Defaults to the
@@ -93,9 +101,12 @@ const createMcpServer = (
   outputSchemaProfile: McpOutputSchemaProfile,
   advertisedToolFamilies: ReadonlySet<string> | undefined,
   inputElementBudget: string | undefined,
+  toolsListPageBudget: string | undefined,
 ): EvidenceMcpServer => {
   const configured = parseMcpInputBudget(inputElementBudget);
   if (!configured.ok) throw configured.error;
+  const pageBudget = parseMcpToolsListPageBudget(toolsListPageBudget);
+  if (!pageBudget.ok) throw pageBudget.error;
   return new EvidenceMcpServer(
     {
       name: PRODUCT_IDENTITY.mcpServerKey,
@@ -104,9 +115,8 @@ const createMcpServer = (
     {
       capabilities: {},
       maxToolInputElements: configured.value,
-      instructions: serverInstructions(
-        session !== undefined,
-        advertisedToolFamilies,
+      instructions: serverInstructions(session !== undefined, (tool) =>
+        isToolFamilyAdvertised(advertisedToolFamilies, toolFamilyId(tool)),
       ),
     },
     session === undefined
@@ -121,6 +131,7 @@ const createMcpServer = (
       advertisedToolFamilies,
     ),
     advertisedToolFamilies,
+    pageBudget.value,
   );
 };
 
@@ -150,9 +161,8 @@ export const createServer = (
   );
   if (!catalogProfile.ok) throw catalogProfile.error;
   const advertisedToolFamilies = selectAdvertisedToolFamilies(environment);
-  const providerEnvironment = captureProviderEnvironment(
-    options.providerEnvironment,
-    environment,
+  const providerEnvironment = snapshotEnvironment(
+    options.providerEnvironment ?? environment,
     host.platform,
   );
   const baseDelivery = selectToolResultDelivery(environment, options.delivery);
@@ -190,23 +200,30 @@ export const createServer = (
     nativeExports,
     devicetree,
     elfNotes,
+    elfDebugLink,
     nativeInitializers,
     elfUnwindRanges,
     appleIps,
     kernelModule,
     kernelBuildConfig,
     peLoadConfig,
+    peUnwindRanges,
     binaryHardening,
     peCertificates,
     peImports,
     windowsShortcut,
     electronFuses,
     releaseExposure,
+    nugetNupkg,
     pythonPyc,
+    mavenGradleMetadata,
+    dwarfUnits,
+    elfDependencies,
     webNetworkCapture,
     javascriptRecovery,
     artifactResources,
     reverseEngineering,
+    uefiAnalysis,
     firmwareAnalysis,
     gdbSessions,
     rizinDebugSessions,
@@ -235,6 +252,7 @@ export const createServer = (
       selectedOutputSchemaProfile,
       advertisedToolFamilies,
       environment.REA_MCP_MAX_INPUT_ELEMENTS,
+      environment.REA_MCP_TOOLS_LIST_PAGE_BYTES,
     );
   server.analysisSettings = analysisSettings;
   if (options.mcpServer !== undefined) {
@@ -259,6 +277,10 @@ export const createServer = (
             options.availabilityPolicy,
             {
               ...capabilities.availability,
+              observeOptionalFeatures: () =>
+                server.advertisesFamily("artifact")
+                  ? capabilities.observeOptionalFeatures()
+                  : {},
               optionalProviderLoadFailures:
                 options.optionalProviderLoadFailures,
             },
@@ -303,19 +325,11 @@ export const createServer = (
     recordEvidence,
     recordEvidenceWithUnknown,
   } = createSessionRecorders(server, session);
+  // Over-budget summaries link the complete record they replaced.
+  if (evidenceById !== undefined) server.serveRetainedEvidence(evidenceById);
   const analysisAdmission = withAdmittedAnalysis(source);
   server.withAdmittedAnalysis = analysisAdmission;
-  const recordSessionEvidence =
-    session === undefined
-      ? undefined
-      : (
-          evidence: Parameters<
-            NonNullable<typeof session>["recordEvidence"]
-          >[0],
-        ) => session.recordEvidence(evidence);
-  const previousOnclose = server.server.onclose;
-  server.server.onclose = () => {
-    previousOnclose?.();
+  server.registerTransportCloseHook(() => {
     void closeProviders().catch((cause: unknown) => {
       logger.error(
         {
@@ -325,312 +339,226 @@ export const createServer = (
         "Provider cleanup failed during server shutdown",
       );
     });
-  };
-  const closeServer = server.close.bind(server);
-  server.close = async () => {
-    const results = await Promise.allSettled([closeServer(), closeProviders()]);
-    const failures = results.flatMap((result) =>
-      result.status === "rejected" ? [result.reason as unknown] : [],
-    );
-    if (failures.length === 1) throw failures[0];
-    if (failures.length > 1)
-      throw new AggregateError(failures, "REA server cleanup failed");
-  };
-  const recordUnknown =
-    session === undefined
-      ? undefined
-      : (input: Parameters<NonNullable<typeof session>["recordUnknown"]>[0]) =>
-          session.recordUnknown(input);
-  const analysisOptions = {
-    logger: toolLogger,
-    activeTarget,
-    recordEvidence,
-    recordUnknown,
-    evidenceById,
-    withAdmittedAnalysis: analysisAdmission,
-    ...(session === undefined
-      ? {}
-      : { admitRecovery: session.admitRecoveryObservation.bind(session) }),
-  };
-  const evidenceOptions = {
-    logger: toolLogger,
-    activeTarget,
-    recordEvidence,
-    withAdmittedAnalysis: analysisAdmission,
-  };
-  const common = {
-    logger: toolLogger,
-    recordEvidence,
-    withAdmittedAnalysis: analysisAdmission,
-  };
+  });
+  server.registerCloseHook(closeProviders, {
+    failureMessage: "REA server cleanup failed",
+  });
   const contractTools = {
     logger: toolLogger,
     recordEvidence,
+    recordEvidenceWithUnknown,
     withAdmittedAnalysis: analysisAdmission,
     evidenceById,
   };
+  const registerServices = (services: Partial<ToolServices>): void =>
+    registerServiceTools(server, services, contractTools);
   const javascriptRecoveryService = new JavaScriptRecoveryService(
     javascriptRecovery,
   );
   registerToolFamilies({
-    direct: () => registerOfficialTools(server, analysisOptions),
-    enhanced: () =>
-      registerEnhancedTools(server, {
-        ...analysisOptions,
-        ...(session === undefined
-          ? {}
-          : { evidenceForAnalysis: session.evidenceForAnalysis.bind(session) }),
-        ...(session === undefined
-          ? {}
-          : { admitRecovery: session.admitRecoveryObservation.bind(session) }),
-        analysisProfile:
-          session === undefined
-            ? undefined
-            : (operation) =>
-                session.analysisProfile() ?? session.analysisProfile(operation),
-        allowsSnapshotReplay:
-          session === undefined
-            ? undefined
-            : (operation) => session.allowsSnapshotReplay(operation),
-        recordWorkflowSnapshot:
-          session === undefined
-            ? undefined
-            : (input) => session.recordWorkflowSnapshot(input),
+    direct: () =>
+      registerServices({
+        providerOperations: {
+          contracts: OFFICIAL_TOOL_CONTRACTS,
+          activeTarget,
+          ...(session === undefined
+            ? {}
+            : {
+                admitRecovery: session.admitRecoveryObservation.bind(session),
+              }),
+        },
       }),
+    enhanced: () => registerServices({ enhancedWorkflows: { session } }),
     native: () => {
-      registerNativeTools(server, { ...evidenceOptions, evidenceById });
-      registerReverseEngineeringTools(
-        server,
-        reverseEngineering,
-        toolLogger,
-        delivery,
-        recordSessionEvidence,
-        analysisAdmission,
-        session === undefined
-          ? undefined
-          : () => session.invalidateSnapshotForExternalMutation(),
-        session === undefined
-          ? undefined
-          : (path, signal, operation, rebindFailure) =>
-              session.withAdmittedExternalMutation(
-                path,
-                signal,
-                operation,
-                rebindFailure,
-              ),
-        evidenceById,
-      );
-      registerCutterTools(
-        server,
-        cutter,
-        toolLogger,
-        delivery,
-        recordSessionEvidence,
-        session,
-      );
-      registerGdbTools(
-        server,
-        gdbSessions,
-        toolLogger,
-        delivery,
-        recordSessionEvidence,
-        session,
-        evidenceById,
-      );
-      registerRizinDebugTools(
-        server,
-        rizinDebugSessions,
-        toolLogger,
-        delivery,
-        recordSessionEvidence,
-        session,
-      );
-      registerBinaryDiagnosticsTools(
-        server,
-        binaryLayout,
-        toolLogger,
-        recordEvidence,
-        evidenceById,
-        analysisAdmission,
-      );
+      registerServices({
+        providerOperations: {
+          contracts: NATIVE_TOOL_CONTRACTS,
+          activeTarget,
+        },
+      });
+      registerServices({
+        reverseEngineering: { service: reverseEngineering, session },
+      });
       registerServiceTools(
         server,
         {
-          cutterSessions: cutter,
-          byteEntropy: createByteEntropyService(artifactResources),
-          peResources,
-          nativeExports,
-          devicetree,
-          elfNotes,
-          nativeInitializers,
-          elfUnwindRanges,
-          appleIps,
-          kernelModule,
-          kernelBuildConfig,
-          peLoadConfig,
-          releaseExposure,
-          binaryHardening,
-          peCertificates,
-          peImports,
-          windowsShortcut,
-          recordedCrash,
+          cutter: { service: cutter, session },
+          gdb: { manager: gdbSessions, session },
+          rizinDebug: { manager: rizinDebugSessions, session },
         },
-        contractTools,
+        { logger: toolLogger, recordEvidence, evidenceById },
       );
+      registerServices({
+        binaryLayout,
+        byteEntropy: createByteEntropyService(artifactResources),
+        peResources,
+        nativeExports,
+        devicetree,
+        elfNotes,
+        elfDebugLink,
+        nativeInitializers,
+        elfUnwindRanges,
+        appleIps,
+        kernelModule,
+        kernelBuildConfig,
+        peLoadConfig,
+        peUnwindRanges,
+        releaseExposure,
+        binaryHardening,
+        peCertificates,
+        peImports,
+        windowsShortcut,
+        recordedCrash,
+        dwarfUnits,
+        elfDependencies,
+      });
     },
     artifact: () => {
-      registerArtifactTools(server, { ...evidenceOptions, evidenceById });
-      registerServiceTools(
-        server,
-        {
-          desktopApplication,
-          modelArtifact,
-          gpuCodeObjects,
-          evmInterface,
-          goBinary,
-          il2cppMetadata,
-          rustBinary,
-          pythonPyc,
-          erlangBeam,
-          v8CodeCache,
-          wasmArtifact,
-          apkSignature,
-          sqliteDatabase,
-          packetCapture,
-          signalRecording,
+      registerServices({
+        providerOperations: {
+          contracts: ARTIFACT_TOOL_CONTRACTS,
+          activeTarget,
+          parametersForExecution: artifactExecutionParameters,
+          analysisForAdmission: artifactAnalysisForAdmission(
+            capabilities.createArtifactPathInspection,
+          ),
         },
-        contractTools,
-      );
+      });
+      registerServices({
+        desktopApplication,
+        modelArtifact,
+        gpuCodeObjects,
+        evmInterface,
+        goBinary,
+        il2cppMetadata,
+        rustBinary,
+        nugetNupkg,
+        pythonPyc,
+        erlangBeam,
+        v8CodeCache,
+        wasmArtifact,
+        apkSignature,
+        sqliteDatabase,
+        packetCapture,
+        signalRecording,
+        mavenGradleMetadata,
+      });
     },
     managed: () => {
-      registerManagedTools(server, { ...evidenceOptions, evidenceById });
-      if (session !== undefined)
-        registerManagedWorkflowTools(server, {
-          logger: toolLogger,
-          recordEvidence,
-          recordEvidenceWithUnknown,
-          session,
-          withAdmittedAnalysis: analysisAdmission,
-        });
-    },
-    firmware: () =>
-      registerServiceTools(server, { firmwareAnalysis }, contractTools),
-    android: () =>
-      registerServiceTools(
-        server,
-        {
-          androidAnalysis: new AndroidAnalysisService(android, recordEvidence),
+      registerServices({
+        providerOperations: {
+          contracts: MANAGED_TOOL_CONTRACTS,
+          activeTarget,
+          analysisForAdmission: managedAnalysisForAdmission(
+            activeTarget,
+            options.createManagedBinarySession ??
+              (session === undefined
+                ? capabilities.createManagedBinarySession
+                : () =>
+                    session.createManagedBinarySession?.() ??
+                    capabilities.createManagedBinarySession()),
+          ),
         },
-        contractTools,
-      ),
+      });
+      if (session !== undefined)
+        registerServices({ managedWorkflows: session });
+    },
+    firmware: () => registerServices({ firmwareAnalysis }),
+    uefi: () => registerServices({ uefiAnalysis }),
+    android: () =>
+      registerServices({
+        androidAnalysis: new AndroidAnalysisService(android, recordEvidence),
+      }),
     pcap: () => {
-      registerServiceTools(
-        server,
-        { pcapAnalysis: new PcapAnalysisService(pcap) },
-        contractTools,
-      );
+      registerServices({ pcapAnalysis: createPcapAnalysisService(pcap) });
     },
     flutter: () => {
-      registerServiceTools(
-        server,
-        { flutterAnalysis: new FlutterBuildAnalysisService(flutter) },
-        contractTools,
-      );
+      registerServices({
+        flutterAnalysis: createFlutterBuildAnalysisService(flutter),
+      });
     },
     frida: () =>
-      registerFridaTools(
+      // Frida instruments a live process the caller selects, outside
+      // analysis admission.
+      registerServiceTools(
         server,
-        fridaInstrumentation,
-        toolLogger,
-        delivery,
-        recordSessionEvidence,
-        evidenceById,
+        { frida: new FridaInstrumentationService(fridaInstrumentation) },
+        { logger: toolLogger, recordEvidence, evidenceById },
       ),
     apktool: () =>
-      registerServiceTools(
-        server,
-        { apktoolAnalysis: new ApktoolResourceAnalysisService(apktool) },
-        contractTools,
-      ),
-    jeb: () =>
-      registerServiceTools(
-        server,
-        { jebAnalysis: new JebAnalysisService(jeb) },
-        contractTools,
-      ),
+      registerServices({
+        apktoolAnalysis: createApktoolResourceAnalysisService(apktool),
+      }),
+    jeb: () => registerServices({ jebAnalysis: createJebAnalysisService(jeb) }),
     adb: () =>
-      registerServiceTools(
-        server,
-        { adbDeviceAnalysis: new AdbDeviceAnalysisService(adbDevice) },
-        contractTools,
-      ),
+      registerServices({
+        adbDeviceAnalysis: new AdbDeviceAnalysisService(adbDevice),
+      }),
     browser: () => {
-      registerBrowserTools(server, {
-        ...common,
-        evidenceById,
-        browser: options.browserObservation,
-        loadFailure: options.optionalProviderLoadFailures?.browserObservation,
+      registerServices({
+        browserObservation: {
+          browser: options.browserObservation,
+          loadFailure: options.optionalProviderLoadFailures?.browserObservation,
+        },
       });
-      registerBrowserScenarioTool(server, {
-        ...common,
-        evidenceById,
-        provider: options.browserScenarioCapture,
-        loadFailure:
-          options.optionalProviderLoadFailures?.browserScenarioCapture,
+      registerServices({
+        browserScenario: {
+          provider: options.browserScenarioCapture,
+          loadFailure:
+            options.optionalProviderLoadFailures?.browserScenarioCapture,
+        },
+        webRuntime,
+        webNetworkCapture,
       });
-      registerServiceTools(
-        server,
-        { webRuntime, webNetworkCapture },
-        contractTools,
-      );
     },
     electron: () =>
-      registerElectronTools(server, {
-        ...common,
-        artifactResources,
-        environment,
-        evidenceById,
-        electron: options.electronObservation,
-        electronActive: options.electronActiveObservation,
+      registerServices({
         electronFuses,
-        observationLoadFailure:
-          options.optionalProviderLoadFailures?.electronObservation,
-        activeLoadFailure:
-          options.optionalProviderLoadFailures?.electronActiveObservation,
+        electronObservation: {
+          provider: options.electronObservation,
+          loadFailure:
+            options.optionalProviderLoadFailures?.electronObservation,
+        },
+        electronScenario: {
+          provider: options.electronActiveObservation,
+          loadFailure:
+            options.optionalProviderLoadFailures?.electronActiveObservation,
+        },
+        javascriptApplication: {
+          resources: artifactResources,
+          environment,
+          settings: analysisSettings.read,
+        },
       }),
     "javascript-runtime": () =>
-      registerJavaScriptRuntimeObservationTools(server, {
-        ...common,
-        runtime: options.javascriptRuntimeObservation,
-        loadFailure:
-          options.optionalProviderLoadFailures?.javascriptRuntimeObservation,
+      registerServices({
+        javascriptRuntime: {
+          runtime: options.javascriptRuntimeObservation,
+          loadFailure:
+            options.optionalProviderLoadFailures?.javascriptRuntimeObservation,
+        },
       }),
     application: () => {
+      registerServices({
+        analysisSettings: {
+          settings: analysisSettings,
+          delivery: server.delivery,
+        },
+        analysisView: { resources: artifactResources },
+        webScripts: artifactResources,
+        guidance: artifactResources,
+        webModuleTrace,
+        webSourceLocation,
+        javascriptRecovery: javascriptRecoveryService,
+        applicationWorkflows: { resources: artifactResources },
+        guidedWorkflows: promptsForToolFamilies(server.advertisedToolFamilies),
+      });
+      // Build tool responses are redacted as a whole; they record nothing.
       registerServiceTools(
         server,
-        {
-          analysisSettings: {
-            settings: analysisSettings,
-            delivery: server.delivery,
-          },
-          analysisView: { resources: artifactResources },
-          webScripts: artifactResources,
-          guidance: artifactResources,
-          webModuleTrace,
-          webSourceLocation,
-          javascriptRecovery: javascriptRecoveryService,
-        },
-        contractTools,
+        { desktopBuild: desktopBuildComputers },
+        { logger: toolLogger },
       );
-      registerApplicationTools(server, {
-        artifactResources,
-        evidenceById,
-        logger: toolLogger,
-        recordEvidence,
-        recordEvidenceWithUnknown,
-        withAdmittedAnalysis: analysisAdmission,
-      });
-      registerDesktopBuildTools(server, desktopBuildComputers, toolLogger);
     },
     session: () => {
       if (session === undefined) return;
@@ -638,6 +566,7 @@ export const createServer = (
         environment,
         platform: host.platform,
         artifactResources,
+        createArtifactPathInspection: capabilities.createArtifactPathInspection,
         ...(availability === undefined
           ? {}
           : { availabilityPolicy: availability.policy }),
@@ -660,7 +589,7 @@ const selectToolResultDelivery = (
     environment.REA_MCP_MAX_RESPONSE_BYTES,
   );
   if (!configured.ok) throw configured.error;
-  return createToolResultDelivery(configured.value);
+  return createToolResultDelivery(configured.value, environment);
 };
 
 const outputSchemaProfile = (

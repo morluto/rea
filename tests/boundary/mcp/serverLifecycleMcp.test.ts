@@ -1,3 +1,4 @@
+import { connectFixtureClient } from "../../support/mcp/mcpFixture.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -6,7 +7,7 @@ import { afterEach, expect, it } from "vitest";
 import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
 
 import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
-import { HopperRemoteError } from "../../../src/domain/hopperErrors.js";
+import { HopperRemoteError } from "../../../src/hopper/HopperErrors.js";
 import { err } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -38,9 +39,10 @@ import { z } from "zod";
 import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js";
 import { Il2cppMetadataService } from "../../../src/application/il2cpp/Il2cppMetadataService.js";
 import { WebNetworkCaptureService } from "../../../src/application/WebNetworkCaptureService.js";
-import { AnalysisUnsupportedTargetError } from "../../../src/domain/analysisErrorCore.js";
+import { unsupportedTarget } from "../../../src/domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import type { JavaScriptRuntimeObservationPort } from "../../../src/ports/javascript/JavaScriptRuntimeObservationPort.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
 
@@ -80,7 +82,10 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       { kind: "session", session },
       { sqliteDatabase: new SqliteDatabaseService(provider) },
     );
-    const client = new Client({ name: "sqlite-admission", version: "1" });
+    const client = new Client(
+      { name: "sqlite-admission", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -165,10 +170,13 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       { kind: "session", session },
       { sqliteDatabase: new SqliteDatabaseService(provider) },
     );
-    const client = new Client({
-      name: "sqlite-retained-observation",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "sqlite-retained-observation",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -349,9 +357,10 @@ it("closes the bound Go, IL2CPP and web-capture services and retries failed shut
     inspect: async ({ path }) => {
       goCalls += 1;
       return err(
-        new AnalysisUnsupportedTargetError(
+        unsupportedTarget(
           "inspect_go_binary",
           path,
+          "fixture",
           "fixture rejection",
         ),
       );
@@ -402,7 +411,10 @@ it("closes the bound Go, IL2CPP and web-capture services and retries failed shut
       },
     },
   );
-  const client = new Client({ name: "bound-service-lifecycle", version: "1" });
+  const client = new Client(
+    { name: "bound-service-lifecycle", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);
@@ -534,16 +546,14 @@ afterEach(async () => {
 
 const connect = async (analysis: AnalysisOperationPort) => {
   const server = createServer({ kind: "fixed", analysis });
-  const client = new Client({
-    name: "integration-test",
-    version: "1.0.0",
-  });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  return client;
+  return connectFixtureClient(
+    server,
+    {
+      name: "integration-test",
+      version: "1.0.0",
+    },
+    resources,
+  );
 };
 
 const text = (result: CallToolResult): string => {

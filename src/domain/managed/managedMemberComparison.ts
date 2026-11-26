@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { z } from "zod";
 
 import { digestCanonicalValue } from "../canonicalDigest.js";
@@ -13,7 +14,6 @@ import {
 } from "./managedArtifact.js";
 import {
   buildComparisonCoverage,
-  hasCompleteMethodRows,
   managedComparisonScope,
   buildComparisonMatching,
   buildComparisonSummary,
@@ -282,15 +282,14 @@ const callEdgesByCaller = (
     ManagedMemberInspection["call_edges"][number][]
   >();
   for (const edge of result.call_edges) {
-    const callerEdges = edges.get(edge.caller_token);
-    if (callerEdges === undefined) edges.set(edge.caller_token, [edge]);
-    else callerEdges.push(edge);
+    appendToMapList(edges, edge.caller_token, edge);
   }
   return edges;
 };
 
 const fieldAccessesByCaller = (
   result: ManagedMemberInspection,
+  emptyFieldTokens: ReadonlySet<string>,
 ): ReadonlyMap<
   string,
   readonly ManagedMemberInspection["field_accesses"][number][]
@@ -300,10 +299,12 @@ const fieldAccessesByCaller = (
     ManagedMemberInspection["field_accesses"][number][]
   >();
   for (const access of result.field_accesses) {
-    const callerAccesses = accesses.get(access.method_token);
-    if (callerAccesses === undefined)
-      accesses.set(access.method_token, [access]);
-    else callerAccesses.push(access);
+    const observed =
+      emptyFieldTokens.has(access.field_token) &&
+      access.target_identity_sha256 !== null
+        ? { ...access, target_identity_sha256: null }
+        : access;
+    appendToMapList(accesses, access.method_token, observed);
   }
   return accesses;
 };
@@ -318,39 +319,32 @@ export const compareManagedMembers = (
   const itemContext = {
     leftEvidenceId: left.evidenceId,
     rightEvidenceId: right.evidenceId,
-    leftComplete: left.result.metadata.status === "complete",
-    rightComplete: right.result.metadata.status === "complete",
-    leftMethodsComplete:
-      left.result.metadata.status === "complete" &&
-      hasCompleteMethodRows(left.result),
-    rightMethodsComplete:
-      right.result.metadata.status === "complete" &&
-      hasCompleteMethodRows(right.result),
     scope,
     sameArtifact: left.result.artifact.sha256 === right.result.artifact.sha256,
     leftAssembly: left.result.assembly,
     rightAssembly: right.result.assembly,
     leftCallEdgesByCaller: callEdgesByCaller(left.result),
     rightCallEdgesByCaller: callEdgesByCaller(right.result),
-    leftFieldAccessesByCaller: fieldAccessesByCaller(left.result),
-    rightFieldAccessesByCaller: fieldAccessesByCaller(right.result),
+    leftFieldAccessesByCaller: fieldAccessesByCaller(
+      left.result,
+      scope.left.emptyFieldTokens,
+    ),
+    rightFieldAccessesByCaller: fieldAccessesByCaller(
+      right.result,
+      scope.right.emptyFieldTokens,
+    ),
   };
   const methodItems = buildMethodItems(methodMatches, itemContext);
   const fieldItems = buildFieldItems(fieldMatches, itemContext);
   const allItems = [...methodItems, ...fieldItems];
   const summary = buildComparisonSummary(allItems);
   const matching = buildComparisonMatching(methodItems, fieldItems);
-  const selectionAgreement = scope.agreement;
   const coverage = buildComparisonCoverage({
     left: left.result,
     right: right.result,
-    selectionAgreement,
+    scope,
   });
-  const limitations = comparisonLimitations(
-    left.result,
-    right.result,
-    selectionAgreement,
-  );
+  const limitations = comparisonLimitations(left.result, right.result, scope);
   const result = {
     comparison_id: `mmc_${digestCanonicalValue(
       {

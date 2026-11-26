@@ -1,7 +1,18 @@
+import type { GoBinary } from "./go/goBinary.js";
+import type { RustBinary } from "./rust/rustBinary.js";
+import type { ElfDebugLink } from "./native/elfDebugLink.js";
+import type { ElfDependencies } from "./native/elfDependencies.js";
+import type { ElfNotes } from "./native/elfNotes.js";
+import type { ElfUnwindRanges } from "./native/elfUnwindRanges.js";
+import type { PeUnwindRanges } from "./native/peUnwindRanges.js";
+import type { KernelBuildConfig } from "./native/kernelBuildConfig.js";
+import type { KernelModule } from "./native/kernelModule.js";
+import type { V8CodeCache } from "./v8/v8CodeCache.js";
 import type { InterfaceBuilderAnalysis } from "./apple/interfaceBuilderGraph.js";
 import type { PartialTaskMeasurement } from "./desktop/taskDifficulty.js";
 import type { AppleIpsPartialObservation } from "./native/appleIps.js";
 import type { PlaywrightTrace } from "./playwrightTrace/playwrightTrace.js";
+import type { ErlangBeam } from "./erlang/beam.js";
 import type { ApiContract } from "./apiContract/apiContract.js";
 import type { GraphqlContract } from "./apiContract/graphqlContract.js";
 import type { SavedAnalysisSnapshotPartialObservation } from "./savedAnalysisSnapshot.js";
@@ -19,7 +30,7 @@ const ANALYSIS_ERROR_TAGS = [
   "AnalysisArtifactChangedError",
   "AnalysisOutputError",
   "AnalysisCapabilityUnavailableError",
-  "AnalysisUnsupportedTargetError",
+  "AnalysisTargetFailureError",
   "AnalysisCancelledError",
   "AnalysisTimeoutError",
   "AnalysisResourceConstraintError",
@@ -31,19 +42,41 @@ const ANALYSIS_ERROR_TAGS = [
   "EvidenceIntegrityError",
   "EvidenceFileError",
   "UnknownRegistryError",
-  "HopperTimeoutError",
-  "HopperCancelledError",
-  "HopperProtocolError",
-  "HopperRemoteError",
-  "HopperProcessError",
-  "HopperStartError",
   "ConfigurationError",
   "NoBinaryOpenError",
   "BinaryTargetError",
 ] as const;
 
-/** Stable tag for an expected analysis failure. */
+/** Stable tag for an expected analysis failure the domain defines. */
 export type AnalysisErrorTag = (typeof ANALYSIS_ERROR_TAGS)[number];
+
+const DOMAIN_ERROR_TAGS: ReadonlySet<string> = new Set(ANALYSIS_ERROR_TAGS);
+
+/** Whether a tag names an error the domain defines and presents. */
+export const isAnalysisErrorTag = (tag: string): tag is AnalysisErrorTag =>
+  DOMAIN_ERROR_TAGS.has(tag);
+
+/** The error's domain tag; undefined for a provider-owned failure. */
+export const domainErrorTag = (error: {
+  readonly _tag: string;
+}): AnalysisErrorTag | undefined =>
+  isAnalysisErrorTag(error._tag) ? error._tag : undefined;
+
+declare const providerErrorTagBrand: unique symbol;
+
+/**
+ * Tag of a failure a provider module defines and presents itself. It is
+ * outside the domain tag set; the error's `ownPresentation()` supplies what
+ * the domain tables would.
+ */
+export type ProviderErrorTag = string & {
+  readonly [providerErrorTagBrand]: true;
+};
+
+/** Brand the tag of a `ProviderOwnedAnalysisError` subclass. */
+export const providerErrorTag = <const Tag extends string>(
+  tag: Tag,
+): Tag & ProviderErrorTag => tag as Tag & ProviderErrorTag;
 
 /** Retained command output associated with a typed failure; truncation stays explicit. */
 export interface AnalysisCapturedOutput {
@@ -54,6 +87,9 @@ export interface AnalysisCapturedOutput {
   readonly stderr_bytes?: number;
   readonly exit_code?: number | null;
   readonly signal?: string | null;
+  /** Set when the runner reported invalid UTF-8, decoded as replacement characters. */
+  readonly stdout_invalid_utf8?: true;
+  readonly stderr_invalid_utf8?: true;
 }
 
 /** Cleanup uncertainty attached to the original typed analysis failure. */
@@ -61,6 +97,18 @@ export interface AnalysisCleanupObservation {
   readonly reason: string;
   readonly resources: readonly string[];
 }
+
+/** Append a later cleanup failure, keeping resource labels in first-seen order. */
+export const appendCleanupObservation = (
+  previous: AnalysisCleanupObservation | undefined,
+  next: AnalysisCleanupObservation,
+): AnalysisCleanupObservation =>
+  previous === undefined
+    ? next
+    : {
+        reason: `${previous.reason}; ${next.reason}`,
+        resources: [...new Set([...previous.resources, ...next.resources])],
+      };
 
 /** Publication stopped after a workflow produced its Evidence. Counts describe
  * question occurrences, not distinct Unknown identities. */
@@ -94,6 +142,20 @@ export interface AnalysisContinuingCallerGuidance {
   readonly remediationAction?: string;
 }
 
+/**
+ * Inputs a failure's recovery names: fields of the failing operation's
+ * contract (`path`, or `field.member`) the caller may set instead, and other
+ * operations, by contract name, the caller may call. Each adapter renders its
+ * own spelling (a CLI flag or command, an MCP field or tool), so the
+ * message and remediation name contract fields and operations only.
+ */
+export interface AnalysisRelatedInputs {
+  readonly parameters?: readonly string[];
+  readonly operations?: readonly string[];
+  /** Providers, by ID, that offer the operation for this target. */
+  readonly providers?: readonly string[];
+}
+
 /** Optional provider-neutral context that must survive typed error projection. */
 export interface AnalysisErrorOptions extends ErrorOptions {
   /** Typed primary retained when a later lifecycle failure composes this error. */
@@ -101,6 +163,8 @@ export interface AnalysisErrorOptions extends ErrorOptions {
   /** Producer-owned, caller-safe facts retained through every typed projection. */
   readonly diagnostics?: Readonly<Record<string, JsonValue>> | undefined;
   readonly limit?: AnalysisLimit | undefined;
+  /** Inputs the recovery names, rendered by each adapter. */
+  readonly related?: AnalysisRelatedInputs | undefined;
   readonly continuingCallerGuidance?:
     | AnalysisContinuingCallerGuidance
     | undefined;
@@ -173,6 +237,39 @@ export interface SourcePublicationRecovery {
   readonly completed: SourcePublicationCompletion;
 }
 
+/**
+ * Presentation an error's own module supplies. The shared presenter reads it
+ * before its tables, so it never needs the error's type: a provider error
+ * says what it means for callers where it is defined.
+ */
+export interface AnalysisErrorOwnPresentation {
+  /** The stable code before any cleanup composition. */
+  readonly code: AnalysisErrorProjection["code"];
+  readonly category: AnalysisErrorProjection["category"];
+  /** The outcome every caller receives; absent keeps the code's standard text. */
+  readonly message?: string;
+  /** Guidance only a caller that keeps REA's runtime and session receives. */
+  readonly continuing?: AnalysisContinuingCallerGuidance;
+  /** The next step; absent keeps the shared fallback. */
+  readonly remediation?: string;
+  /** False when the failure cannot clear on retry whatever its code. */
+  readonly retryable?: false;
+  readonly details?: Readonly<Record<string, JsonValue>>;
+}
+
+/**
+ * The provider request a provider-owned failure answered. A shared workflow
+ * that attributes the failure to its caller's operation copies `facts` under
+ * `provider_request` and rebuilds the failure with `reattribute`.
+ */
+export interface ProviderRequestFailure {
+  readonly facts: Readonly<Record<string, JsonValue>>;
+  readonly reattribute: (
+    operation: string,
+    options: AnalysisErrorOptions,
+  ) => AnalysisError;
+}
+
 /** Base class for expected analysis, provider, and session failures. */
 export abstract class AnalysisError extends Error {
   limit: Readonly<AnalysisLimit> | undefined;
@@ -188,6 +285,8 @@ export abstract class AnalysisError extends Error {
     | { readonly cleanupResources: readonly string[] }
     | undefined;
   readonly diagnostics: Readonly<Record<string, JsonValue>> | undefined;
+  /** Inputs the recovery names, rendered by each adapter. */
+  readonly related: Readonly<AnalysisRelatedInputs> | undefined;
   readonly continuingCallerGuidance:
     | Readonly<AnalysisContinuingCallerGuidance>
     | undefined;
@@ -216,6 +315,20 @@ export abstract class AnalysisError extends Error {
     super(message, options);
     this.#cleanupPrimary = options?.cleanupPrimary;
     if (options?.limit !== undefined) this.bindLimit(options.limit);
+    this.related =
+      options?.related === undefined
+        ? undefined
+        : Object.freeze({
+            ...(options.related.parameters === undefined
+              ? {}
+              : { parameters: Object.freeze([...options.related.parameters]) }),
+            ...(options.related.operations === undefined
+              ? {}
+              : { operations: Object.freeze([...options.related.operations]) }),
+            ...(options.related.providers === undefined
+              ? {}
+              : { providers: Object.freeze([...options.related.providers]) }),
+          });
     this.diagnostics =
       options?.diagnostics === undefined
         ? undefined
@@ -238,7 +351,23 @@ export abstract class AnalysisError extends Error {
     this.#ownedCleanupResources = [...(options?.cleanup?.resources ?? [])];
     this.partialObservation = options?.partialObservation;
   }
-  abstract readonly _tag: AnalysisErrorTag;
+  abstract readonly _tag: AnalysisErrorTag | ProviderErrorTag;
+  /** What this error's own module says it means; undefined uses the shared tables. */
+  ownPresentation(): AnalysisErrorOwnPresentation | undefined {
+    return undefined;
+  }
+  /**
+   * Whether the provider adapter or its process failed, rather than one
+   * request. Session availability treats every operation of that provider as
+   * affected until a later success.
+   */
+  get providerWide(): boolean {
+    return false;
+  }
+  /** The provider request this failure answered; undefined when none. */
+  providerRequest(): ProviderRequestFailure | undefined {
+    return undefined;
+  }
   readonly userMessage: string | undefined = undefined;
   readonly userCategory: "cancelled" | undefined = undefined;
   readonly executionFailure: string | undefined = undefined;
@@ -284,7 +413,9 @@ export abstract class AnalysisError extends Error {
   /**
    * This error's own completion record. A bound release claim is its owner's
    * record; without one, an error composed only of dependencies has no
-   * resources of its own, and any other error waits for its owner.
+   * resources of its own, and any other error waits for its owner. Several
+   * claims are successive owners of the same resources (a retry owner that
+   * took over a lease), so the first owner to release completes them.
    */
   #ownCleanupPending(): boolean {
     if (this.#cleanupReleaseClaims.size === 0)
@@ -441,14 +572,22 @@ export abstract class AnalysisError extends Error {
     dependencies: readonly AnalysisError[],
     resourceProjection?: { readonly cleanupResources: readonly string[] },
   ): this {
-    // Settle the dependencies already bound before adding more: completion is
-    // monotonic, so a dependency bound after they released cannot reopen it.
-    if (!this.cleanupIncomplete) this.#cleanupDependencies?.clear();
+    // Completion is monotonic once this error has owned and settled cleanup;
+    // a dependency bound after settlement cannot reopen it or leak into cleanupResources.
+    if (this.#carriesCleanup && !this.cleanupIncomplete) {
+      this.#cleanupDependencies?.clear();
+      return this;
+    }
+    const incomplete = dependencies.filter(
+      (dependency) => dependency.cleanupIncomplete,
+    );
+    if (!this.#carriesCleanup && incomplete.length > 0)
+      this.#cleanupIncomplete = true;
+    this.#carriesCleanup = true;
     const pending = (this.#cleanupDependencies ??= new Set<AnalysisError>());
     if (resourceProjection !== undefined)
       this.#cleanupResourceProjection = resourceProjection;
-    for (const dependency of dependencies)
-      if (dependency.cleanupIncomplete) pending.add(dependency);
+    for (const dependency of incomplete) pending.add(dependency);
     return this;
   }
 
@@ -486,6 +625,15 @@ export abstract class AnalysisError extends Error {
   }
 }
 
+/**
+ * A failure its provider module defines: its tag is outside the domain tag
+ * set, so it must say what it means through `ownPresentation()`.
+ */
+export abstract class ProviderOwnedAnalysisError extends AnalysisError {
+  abstract override readonly _tag: ProviderErrorTag;
+  abstract override ownPresentation(): AnalysisErrorOwnPresentation;
+}
+
 /** Confirmed cleanup reveals the typed primary; unresolved ownership stays visible. */
 export const resolvedAnalysisError = (error: AnalysisError): AnalysisError => {
   while (!error.cleanupIncomplete && error.cleanupPrimary !== undefined)
@@ -519,6 +667,7 @@ import type {
 import type { FileOffsetPartialObservation } from "./native/fileOffsetPartialObservation.js";
 import type { NativeCallPartialObservation } from "./native/nativeCallPartialObservation.js";
 import type { HopperCallerReconciliationPartial } from "./native/hopperCallerReconciliation.js";
+import type { AnalysisErrorProjection } from "./analysisErrorProjection.js";
 import type {
   ElectronActiveObservationResult,
   ElectronActivePartialObservation,
@@ -537,6 +686,7 @@ import type {
   ElectronPagePartialObservation,
 } from "./javascript/electronObservation.js";
 import type { AndroidPartialObservation } from "./android/androidPartialObservation.js";
+import type { UefiPartialObservation } from "./uefi/uefiFirmwareAnalysis.js";
 import type { FirmwarePartialObservation } from "./firmware/firmwareAnalysis.js";
 import type {
   AdbActivityStartPartialObservation,
@@ -546,6 +696,7 @@ import type {
 } from "./adb/adbDeviceAnalysis.js";
 import type {
   InspectMacho,
+  InspectPlist,
   InspectSignature,
 } from "./native/nativeInspection.js";
 import type { NativeUiObservationResult } from "./native/nativeUiObservation.js";
@@ -578,6 +729,16 @@ import type { WebArtifactAcquisition } from "./webArtifactAcquisition.js";
 
 /** Provider-neutral evidence collected before a typed analysis failure. */
 export type AnalysisPartialObservation =
+  | GoBinary
+  | RustBinary
+  | ElfDebugLink
+  | ElfDependencies
+  | ElfNotes
+  | ElfUnwindRanges
+  | PeUnwindRanges
+  | KernelBuildConfig
+  | KernelModule
+  | V8CodeCache
   | InterfaceBuilderAnalysis
   | PartialTaskMeasurement
   | {
@@ -588,6 +749,7 @@ export type AnalysisPartialObservation =
     }
   | { readonly kind: "unretained-evidence"; readonly evidence: Evidence }
   | { readonly kind: "retained-evidence"; readonly evidence_id: string }
+  | ErlangBeam
   | ApiContract
   | GraphqlContract
   | PlaywrightTrace
@@ -630,9 +792,11 @@ export type AnalysisPartialObservation =
   | RecordedCrashPartialObservation
   | AndroidPartialObservation
   | FirmwarePartialObservation
+  | UefiPartialObservation
   | NativeUiObservationResult
   | InspectSignature
   | InspectMacho
+  | InspectPlist
   | ElectronPagePartialObservation
   | ElectronPageInspection
   | AdbActivityStartPartialObservation

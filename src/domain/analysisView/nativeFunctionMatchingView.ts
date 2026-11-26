@@ -10,7 +10,7 @@ import {
 } from "../native/functionMatching.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
@@ -185,9 +185,8 @@ const filterRows = (entry: Checked, view: MatchRequest): readonly number[] => {
       if (
         matchesIdentity(row) &&
         (functions === undefined ||
-          [...row.left, ...row.right].some((member) =>
-            functions.has(member.function_id),
-          ))
+          row.left.some((member) => functions.has(member.function_id)) ||
+          row.right.some((member) => functions.has(member.function_id)))
       )
         rows.push(index);
     });
@@ -206,12 +205,18 @@ const filterRows = (entry: Checked, view: MatchRequest): readonly number[] => {
   if (key.length <= Math.max(256, count * 8)) entry.recent = { key, rows };
   return rows;
 };
+const isUnfilteredMatchRequest = (view: MatchRequest): boolean =>
+  view.states === undefined &&
+  view.match_ids === undefined &&
+  view.function_ids === undefined &&
+  (view.collection !== "functions" ||
+    (view.sides === undefined && view.names === undefined));
+
 const selectedItems = (
   entry: Checked,
   view: MatchRequest,
-  rows: readonly number[],
+  indices: readonly number[],
 ) => {
-  const indices = rows.slice(view.offset, view.offset + view.limit);
   const defaults =
     view.collection === "matches"
       ? [
@@ -288,15 +293,8 @@ export const projectNativeFunctionMatchingView = (
     | z.output<typeof nativeFunctionMatchingViewRequestSchema>
   >(admitted, "summary", "function-matches");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Native matching supports summary and function-matches pages",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Native matching supports summary and function-matches pages",
     );
   const parsed = checkedReport(parent);
   if (!parsed.ok) return parsed;
@@ -318,15 +316,8 @@ export const projectNativeFunctionMatchingView = (
     });
   if (view.collection === "byte-sources") {
     if (entry.report.byte_sources === undefined)
-      return err(
-        analysisViewInputError([
-          {
-            path: ["view"],
-            reason: "invalid_value",
-            message:
-              "This historical report did not record byte-source qualifications; inspect its linked Evidence.",
-          },
-        ]),
+      return invalidAnalysisView(
+        "This historical report did not record byte-source qualifications; inspect its linked Evidence.",
       );
     const sides = selected(view.sides),
       ids = selected(view.evidence_ids);
@@ -412,14 +403,30 @@ export const projectNativeFunctionMatchingView = (
       coverage: pageViewCoverage(view.offset, items.length, total),
     });
   }
-  const rows = filterRows(entry, view),
-    items = selectedItems(entry, view, rows);
+  let total: number;
+  let pageIndices: readonly number[];
+  if (isUnfilteredMatchRequest(view)) {
+    total =
+      view.collection === "matches"
+        ? entry.report.matches.length
+        : functionRows(entry).length;
+    const start = Math.max(0, view.offset);
+    const end = Math.min(total, start + Math.max(0, view.limit));
+    const slice: number[] = [];
+    for (let i = start; i < end; i += 1) slice.push(i);
+    pageIndices = slice;
+  } else {
+    const rows = filterRows(entry, view);
+    total = rows.length;
+    pageIndices = rows.slice(view.offset, view.offset + view.limit);
+  }
+  const items = selectedItems(entry, view, pageIndices);
   return ok({
     kind: "function-matches" as const,
     view,
     ...shared,
     ...context,
     items,
-    coverage: pageViewCoverage(view.offset, items.length, rows.length),
+    coverage: pageViewCoverage(view.offset, items.length, total),
   });
 };

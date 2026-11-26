@@ -2,13 +2,46 @@ import type { z } from "zod";
 
 import { recordedControlSchemas } from "../domain/analysisSettingDefinitions.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import {
+  MCP_TARGET_FAILURE_SPELLING,
+  renderTargetFailureRecovery,
+  TARGET_FAILURE_KINDS,
+  type TargetFailureKind,
+  type TargetFailureRecoveryFacts,
+  type TargetFailureSpelling,
+} from "../domain/targetFailure.js";
+import {
+  MCP_INPUT_SCHEMA_SPELLING,
+  renderInputSchemaRemediation,
+  type InputSchemaRemediationSpelling,
+} from "../domain/analysisErrorPresentation.js";
+import type { AnalysisRefusalSpelling } from "../domain/analysisRefusalSpelling.js";
 import type { Result } from "../domain/result.js";
+import {
+  cliCommandForOperation,
+  type CliCommandEntry,
+  type CliCommandOperation,
+} from "./commandRegistry.js";
 
 interface CliInputFieldBinding {
   readonly operation: string;
   readonly fields: Readonly<Record<string, string>>;
   /** Each contract field, or `field.member`, the command takes as a flag. */
   readonly flags: Readonly<Record<string, string>>;
+  /**
+   * Operations the selected command route runs, including its session-target
+   * opener and Evidence-target source. When supplied, recovery flags fall back
+   * across these operations when an error omits `details.operation` or names
+   * its opener.
+   */
+  readonly operations?: readonly CliCommandOperation[] | undefined;
+}
+
+export interface CliCommandOutputProjectionContext {
+  readonly operations: readonly CliCommandOperation[];
+  readonly commands: readonly CliCommandEntry[];
+  readonly cliName?: string | undefined;
+  readonly recordedCommands?: Readonly<Record<string, string>> | undefined;
 }
 
 /** Flatten a finalized outcome only when returning the command's JSON output. */
@@ -21,31 +54,394 @@ export const isObject = (
 ): value is Record<string, JsonValue> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 
+const orderedOperations = (
+  operations: readonly CliCommandOperation[],
+  errorOperation: JsonValue | undefined,
+): readonly CliCommandOperation[] => {
+  if (typeof errorOperation !== "string" || operations.length <= 1)
+    return operations;
+  const matching = operations.filter(({ name }) => name === errorOperation);
+  if (matching.length === 0) return operations;
+  return [
+    ...matching,
+    ...operations.filter(({ name }) => name !== errorOperation),
+  ];
+};
+
 /**
  * Name a contract command's input fields by their CLI spelling in its
  * output: a direct failure, a delivered failure or a refused publication.
  * Issue paths owned by this operation take the CLI key, and a per-call
  * control a failure reports (`details.limit.parameter`, which services name
  * by contract field) gains `cli_flag`, the option that sets it on this
- * command. Any other output is returned unchanged.
+ * command, and the fields its recovery names (`details.related_parameters`)
+ * gain `related_cli_flags`, each field's option. Any other output is returned
+ * unchanged.
  */
 export const projectCliInputFields = <Output>(
   output: Output,
   binding: CliInputFieldBinding,
 ): Output => {
   const error = output as JsonValue;
-  if (!isObject(error) || !isObject(error.details)) return output;
+  if (
+    !isObject(error) ||
+    typeof error.code !== "string" ||
+    !isObject(error.details)
+  )
+    return output;
+  const operations =
+    binding.operations === undefined
+      ? [{ name: binding.operation, flags: binding.flags }]
+      : orderedOperations(binding.operations, error.details.operation);
   const issues = renamedIssues(error, error.details, binding);
-  const limit = flaggedLimit(error.details.limit, binding);
-  if (issues === undefined && limit === undefined) return output;
+  const remediation = cliConflictRemediation(error, error.details, binding);
+  const inputs = renamedTargetInputs(error.details, binding);
+  const limit = flaggedLimit(error.details.limit, operations);
+  const relatedFlags =
+    binding.operations === undefined &&
+    error.details.operation !== binding.operation
+      ? undefined
+      : relatedCliFlagsFromOperations(error.details, operations);
+  if (
+    issues === undefined &&
+    remediation === undefined &&
+    inputs === undefined &&
+    limit === undefined &&
+    relatedFlags === undefined
+  )
+    return output;
   return {
     ...error,
+    ...(remediation === undefined ? {} : { remediation }),
     details: {
       ...error.details,
       ...(issues === undefined ? {} : { issues }),
+      ...(inputs === undefined ? {} : { inputs }),
       ...(limit === undefined ? {} : { limit }),
+      ...(relatedFlags === undefined
+        ? {}
+        : { related_cli_flags: relatedFlags }),
     },
   } as Output;
+};
+
+/**
+ * Render `cli_flag`, `related_cli_flags`, and `related_cli_commands` on any
+ * CLI command's error output from its registered operations and the CLI's
+ * command registry. Preserves existing route-specific bindings and untouched
+ * references.
+ */
+export const projectCliCommandOutput = <Output>(
+  output: Output,
+  context: CliCommandOutputProjectionContext,
+): Output => {
+  const candidate = output as JsonValue;
+  if (!isObject(candidate)) return output;
+  if (typeof candidate.code === "string" && isObject(candidate.details))
+    return projectErrorRecord(candidate, context) as Output;
+  if (
+    isObject(candidate.error) &&
+    typeof candidate.error.code === "string" &&
+    isObject(candidate.error.details)
+  ) {
+    const nested = projectErrorRecord(candidate.error, context);
+    return nested === candidate.error
+      ? output
+      : ({ ...candidate, error: nested } as Output);
+  }
+  return output;
+};
+
+const projectErrorRecord = (
+  error: Record<string, JsonValue>,
+  context: CliCommandOutputProjectionContext,
+): Record<string, JsonValue> => {
+  const { details } = error;
+  if (!isObject(details)) return error;
+  const operations = orderedOperations(context.operations, details.operation);
+  const limit =
+    isObject(details.limit) && Object.hasOwn(details.limit, "cli_flag")
+      ? undefined
+      : flaggedLimit(details.limit, operations);
+  const relatedFlags = Object.hasOwn(details, "related_cli_flags")
+    ? undefined
+    : relatedCliFlagsFromOperations(details, operations);
+  const relatedCommands = Object.hasOwn(details, "related_cli_commands")
+    ? undefined
+    : relatedCliCommands(details, context);
+  const secondaryFailures = projectedSecondaryFailures(
+    details.secondary_failures,
+    context,
+  );
+  const remediation =
+    cliTargetFailureRemediation(error, details, context) ??
+    cliInputSchemaRemediation(error, details, context);
+  if (
+    limit === undefined &&
+    relatedFlags === undefined &&
+    relatedCommands === undefined &&
+    secondaryFailures === undefined &&
+    remediation === undefined
+  )
+    return error;
+  return {
+    ...error,
+    ...(remediation === undefined ? {} : { remediation }),
+    details: {
+      ...details,
+      ...(limit === undefined ? {} : { limit }),
+      ...(relatedFlags === undefined
+        ? {}
+        : { related_cli_flags: relatedFlags }),
+      ...(relatedCommands === undefined
+        ? {}
+        : { related_cli_commands: relatedCommands }),
+      ...(secondaryFailures === undefined
+        ? {}
+        : { secondary_failures: secondaryFailures }),
+    },
+  };
+};
+
+const stringList = (value: JsonValue | undefined): string[] =>
+  Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+
+const isTargetFailureKind = (
+  value: JsonValue | undefined,
+): value is TargetFailureKind =>
+  typeof value === "string" &&
+  (TARGET_FAILURE_KINDS as readonly string[]).includes(value);
+
+const targetInputFields = (details: Record<string, JsonValue>): string[] =>
+  Array.isArray(details.inputs)
+    ? details.inputs.flatMap((input) =>
+        isObject(input) && typeof input.field === "string" ? [input.field] : [],
+      )
+    : [];
+
+/**
+ * Rewrite a conflict failure's recovery text with CLI input spellings before
+ * `renamedTargetInputs` replaces the source field names in `details.inputs`.
+ */
+const cliConflictRemediation = (
+  error: Record<string, JsonValue>,
+  details: Record<string, JsonValue>,
+  binding: CliInputFieldBinding,
+): Record<string, JsonValue> | undefined => {
+  const { remediation } = error;
+  if (
+    details.operation !== binding.operation ||
+    details.failure_kind !== "conflict" ||
+    typeof details.format !== "string" ||
+    !isObject(remediation) ||
+    typeof remediation.action !== "string"
+  )
+    return undefined;
+  const inputFields = targetInputFields(details);
+  if (inputFields.length === 0) return undefined;
+  const mcpFacts: TargetFailureRecoveryFacts = {
+    operation: binding.operation,
+    kind: "conflict",
+    format: details.format,
+    inputFields,
+  };
+  const mcp = renderTargetFailureRecovery(
+    mcpFacts,
+    MCP_TARGET_FAILURE_SPELLING,
+  );
+  if (!remediation.action.startsWith(mcp)) return undefined;
+  const cliInputFields = inputFields.map((field) => {
+    const flag = cliFlagForFlags(field, binding.flags);
+    if (flag !== undefined) return flag;
+    return Object.hasOwn(binding.fields, field)
+      ? (binding.fields[field] ?? field)
+      : field;
+  });
+  const cli = renderTargetFailureRecovery(
+    { ...mcpFacts, inputFields: cliInputFields },
+    MCP_TARGET_FAILURE_SPELLING,
+  );
+  return cli === mcp
+    ? undefined
+    : {
+        ...remediation,
+        action: `${cli}${remediation.action.slice(mcp.length)}`,
+      };
+};
+
+/**
+ * A target failure's recovery in CLI spelling: the projection table renders
+ * the same facts with commands and options in place of MCP tool names. Only
+ * the table's own MCP text is replaced, so appended guidance survives.
+ */
+const cliTargetFailureRemediation = (
+  error: Record<string, JsonValue>,
+  details: Record<string, JsonValue>,
+  context: CliCommandOutputProjectionContext,
+): Record<string, JsonValue> | undefined => {
+  const { remediation, retry } = error;
+  // `io` is the only kind whose table text depends on the retry hint.
+  // cleanup_incomplete keeps the target recovery and drops `retry`, so the
+  // other kinds still rewrite when the action starts with that table text.
+  if (
+    !isObject(remediation) ||
+    typeof remediation.action !== "string" ||
+    !isTargetFailureKind(details.failure_kind) ||
+    typeof details.format !== "string" ||
+    typeof details.operation !== "string" ||
+    (details.failure_kind === "io" && typeof retry !== "string")
+  )
+    return undefined;
+  const inputFields = targetInputFields(details);
+  const facts: TargetFailureRecoveryFacts = {
+    operation: details.operation,
+    kind: details.failure_kind,
+    format: details.format,
+    inputFields,
+    transient: retry === "backoff",
+    alternatives: {
+      operations: stringList(details.related_operations),
+      providers: stringList(details.related_providers),
+    },
+  };
+  const mcp = renderTargetFailureRecovery(facts, MCP_TARGET_FAILURE_SPELLING);
+  if (!remediation.action.startsWith(mcp)) return undefined;
+  const cliName = context.cliName ?? "rea";
+  const mappedOperation = (operation: string): string | undefined =>
+    cliCommandForOperation(
+      operation,
+      context.commands,
+      cliName,
+      context.recordedCommands,
+    );
+  const spelling: TargetFailureSpelling = {
+    operation: (operation) => mappedOperation(operation) ?? operation,
+    provider: (providerId) => `--provider ${providerId}`,
+  };
+  const operations = orderedOperations(context.operations, details.operation);
+  const cliInputFields = inputFields.map(
+    (field) => cliFlagForOperations(field, operations) ?? field,
+  );
+  const cliOperations = facts.alternatives?.operations?.filter(
+    (operation) => mappedOperation(operation) !== undefined,
+  );
+  const cliProviders = facts.alternatives?.providers;
+  const cliFacts: TargetFailureRecoveryFacts = {
+    ...facts,
+    inputFields: cliInputFields,
+    alternatives: {
+      ...(cliOperations === undefined ? {} : { operations: cliOperations }),
+      ...(cliProviders === undefined ? {} : { providers: cliProviders }),
+    },
+  };
+  const cli = renderTargetFailureRecovery(cliFacts, spelling);
+  return cli === mcp
+    ? undefined
+    : {
+        ...remediation,
+        action: `${cli}${remediation.action.slice(mcp.length)}`,
+      };
+};
+
+/**
+ * An input refusal's recovery in CLI spelling. Presentation renders the MCP
+ * sentence from the same facts; this replaces that rendering with the command
+ * and drops the catalog-refresh clause. A prefixed argument hint stays ahead
+ * of the sentence.
+ */
+const cliInputSchemaRemediation = (
+  error: Record<string, JsonValue>,
+  details: Record<string, JsonValue>,
+  context: CliCommandOutputProjectionContext,
+): Record<string, JsonValue> | undefined => {
+  const { remediation } = error;
+  if (
+    typeof details.operation !== "string" ||
+    !isObject(remediation) ||
+    typeof remediation.action !== "string"
+  )
+    return undefined;
+  const operation = details.operation;
+  const mcp = renderInputSchemaRemediation(
+    operation,
+    MCP_INPUT_SCHEMA_SPELLING,
+  );
+  const index = remediation.action.indexOf(mcp);
+  if (index < 0) return undefined;
+  const command = cliCommandForOperation(
+    operation,
+    context.commands,
+    context.cliName ?? "rea",
+    context.recordedCommands,
+  );
+  if (command === undefined) return undefined;
+  const spelling: InputSchemaRemediationSpelling = {
+    subject: () => command,
+    includeCatalogRefresh: false,
+  };
+  const cli = renderInputSchemaRemediation(operation, spelling);
+  return cli === mcp
+    ? undefined
+    : {
+        ...remediation,
+        action: `${remediation.action.slice(0, index)}${cli}${remediation.action.slice(index + mcp.length)}`,
+      };
+};
+
+const projectedSecondaryFailures = (
+  secondary: JsonValue | undefined,
+  context: CliCommandOutputProjectionContext,
+): JsonValue[] | undefined => {
+  if (!Array.isArray(secondary) || secondary.length === 0) return undefined;
+  let changed = false;
+  const mapped = secondary.map((item) => {
+    if (!isObject(item) || typeof item.code !== "string") return item;
+    const next = projectErrorRecord(item, context);
+    if (next !== item) changed = true;
+    return next;
+  });
+  return changed ? mapped : undefined;
+};
+
+/**
+ * The option of each field a failure names for its recovery, keyed by contract
+ * field, or undefined when the command takes none of them.
+ */
+const relatedCliFlagsFromOperations = (
+  details: Record<string, JsonValue>,
+  operations: readonly CliCommandOperation[],
+): Record<string, JsonValue> | undefined => {
+  if (!Array.isArray(details.related_parameters) || operations.length === 0)
+    return undefined;
+  const flags: Record<string, JsonValue> = {};
+  for (const parameter of details.related_parameters) {
+    if (typeof parameter !== "string") continue;
+    const flag = cliFlagForOperations(parameter, operations);
+    if (flag !== undefined) flags[parameter] = flag;
+  }
+  return Object.keys(flags).length === 0 ? undefined : flags;
+};
+
+const relatedCliCommands = (
+  details: Record<string, JsonValue>,
+  context: CliCommandOutputProjectionContext,
+): Record<string, JsonValue> | undefined => {
+  if (!Array.isArray(details.related_operations)) return undefined;
+  const cliName = context.cliName ?? "rea";
+  const commands: Record<string, JsonValue> = {};
+  for (const operation of details.related_operations) {
+    if (typeof operation !== "string") continue;
+    const command = cliCommandForOperation(
+      operation,
+      context.commands,
+      cliName,
+      context.recordedCommands,
+    );
+    if (command !== undefined) commands[operation] = command;
+  }
+  return Object.keys(commands).length === 0 ? undefined : commands;
 };
 
 /** Issue paths renamed to CLI keys, or undefined when none changes. */
@@ -81,6 +477,29 @@ const renamedIssues = (
 };
 
 /**
+ * A target conflict's inputs, each named by the request field that selected
+ * it, take this command's CLI spelling of that field.
+ */
+const renamedTargetInputs = (
+  details: Record<string, JsonValue>,
+  binding: CliInputFieldBinding,
+): JsonValue[] | undefined => {
+  if (details.operation !== binding.operation || !Array.isArray(details.inputs))
+    return undefined;
+  let changed = false;
+  const inputs = details.inputs.map((input) => {
+    if (!isObject(input) || typeof input.field !== "string") return input;
+    const alias = Object.hasOwn(binding.fields, input.field)
+      ? binding.fields[input.field]
+      : undefined;
+    if (alias === undefined || alias === input.field) return input;
+    changed = true;
+    return { ...input, field: alias };
+  });
+  return changed ? inputs : undefined;
+};
+
+/**
  * The request parameter a limit names, when a caller selects it per call: a
  * parameter control, or a registered setting a request argument can also
  * select.
@@ -98,26 +517,75 @@ const limitParameter = (limit: JsonValue | undefined): string | undefined =>
  * parameter path names the flag: a flattened member option, else the option
  * of the whole field (such as `--producer-limits` JSON).
  */
-const cliFlagFor = (
+const cliFlagForFlags = (
   parameter: string,
-  binding: CliInputFieldBinding,
+  flags: Readonly<Record<string, string>>,
 ): string | undefined => {
   const segments = parameter.split(".");
   for (let length = segments.length; length > 0; length -= 1) {
-    const flag = binding.flags[segments.slice(0, length).join(".")];
+    const flag = flags[segments.slice(0, length).join(".")];
     if (flag !== undefined) return flag;
   }
   return undefined;
 };
 
+const cliFlagFor = (
+  parameter: string,
+  binding: Pick<CliInputFieldBinding, "flags">,
+): string | undefined => cliFlagForFlags(parameter, binding.flags);
+
+const cliFlagForOperations = (
+  parameter: string,
+  operations: readonly CliCommandOperation[],
+): string | undefined => {
+  for (const operation of operations) {
+    const flag = cliFlagForFlags(parameter, operation.flags);
+    if (flag !== undefined) return flag;
+  }
+  return undefined;
+};
+
+/**
+ * How this command names a refusal's per-call control and next request: the
+ * option that sets the control, or the whole field's JSON option that carries
+ * a member, and the command that runs the operation. A CLI caller's runtime
+ * ends with the invocation, so a setting's route is its launch environment.
+ */
+export const cliRefusalSpelling = (
+  context: CliCommandOutputProjectionContext,
+): AnalysisRefusalSpelling => ({
+  callerLifetime: "invocation",
+  control: (parameter, operation) => {
+    const operations = orderedOperations(context.operations, operation);
+    const flag = cliFlagForOperations(parameter, operations);
+    if (flag === undefined) return parameter;
+    return operations.some(({ flags }) => flags[parameter] === flag)
+      ? flag
+      : `${parameter} (in ${flag})`;
+  },
+  call: (operation) => {
+    const command = cliCommandForOperation(
+      operation,
+      context.commands,
+      context.cliName ?? "rea",
+      context.recordedCommands,
+    );
+    return command === undefined
+      ? `the next ${operation} call`
+      : `the next ${command} run`;
+  },
+});
+
 /** The reported per-call control with the flag that sets it. */
 const flaggedLimit = (
   limit: JsonValue | undefined,
-  binding: CliInputFieldBinding,
+  operations: readonly CliCommandOperation[],
 ): Record<string, JsonValue> | undefined => {
   const parameter = limitParameter(limit);
   const flag =
-    parameter === undefined ? undefined : cliFlagFor(parameter, binding);
+    parameter === undefined
+      ? undefined
+      : cliFlagForOperations(parameter, operations);
   return flag === undefined || !isObject(limit)
     ? undefined
     : { ...limit, cli_flag: flag };
@@ -134,11 +602,122 @@ const WRAPPER_TYPES = new Set([
   "catch",
 ]);
 
+type SchemaDef = Record<string, unknown> & { readonly type: string };
+
+const schemaDef = (node: z.ZodType): SchemaDef =>
+  node._zod.def as unknown as SchemaDef;
+
+/** The schemas the walk enters below a node, for each type it enters. */
+const enteredChildren = (def: SchemaDef): readonly z.ZodType[] => {
+  if (WRAPPER_TYPES.has(def.type)) return [def.innerType as z.ZodType];
+  if (def.type === "pipe") return [def.out as z.ZodType];
+  if (def.type === "union") return def.options as z.ZodType[];
+  if (def.type === "array") return [def.element as z.ZodType];
+  if (def.type === "object")
+    return Object.values(def.shape as Record<string, z.ZodType>);
+  return [];
+};
+
+// Output schemas are fixed module-level values, so whether a node can reach
+// a recorded control is computed once per node.
+const controlReach = new WeakMap<z.ZodType, boolean>();
+
+/**
+ * Whether a control lies at or below `node`, and the shallowest node still
+ * being visited that its subtree refers back to. A result that depends on an
+ * unfinished ancestor of a recursive schema is not cached until that
+ * ancestor finishes.
+ */
+const visitControlReach = (
+  node: z.ZodType,
+  visiting: Map<z.ZodType, number>,
+): { readonly reaches: boolean; readonly lowest: number } => {
+  const known = controlReach.get(node);
+  if (known !== undefined) return { reaches: known, lowest: Infinity };
+  const active = visiting.get(node);
+  if (active !== undefined) return { reaches: false, lowest: active };
+  if (recordedControlSchemas.has(node)) {
+    controlReach.set(node, true);
+    return { reaches: true, lowest: Infinity };
+  }
+  const depth = visiting.size;
+  visiting.set(node, depth);
+  let lowest = Infinity;
+  let reaches = false;
+  for (const child of enteredChildren(schemaDef(node))) {
+    const visited = visitControlReach(child, visiting);
+    lowest = Math.min(lowest, visited.lowest);
+    if (visited.reaches) {
+      reaches = true;
+      break;
+    }
+  }
+  visiting.delete(node);
+  if (reaches || lowest >= depth) controlReach.set(node, reaches);
+  return { reaches, lowest: reaches ? Infinity : lowest };
+};
+
+/** Whether a recorded control position lies at or below this schema node. */
+const reachesRecordedControl = (node: z.ZodType): boolean =>
+  visitControlReach(node, new Map()).reaches;
+
+/**
+ * Whether a value cannot satisfy an option, judged without parsing it: an
+ * object option rejects a non-object, a missing required key, a key a strict
+ * object does not declare, or a key whose literal values exclude the value's;
+ * a union rejects what every option rejects. Anything else may satisfy it.
+ */
+const cannotSatisfy = (value: unknown, option: z.ZodType): boolean => {
+  const def = schemaDef(option);
+  if (def.type === "union")
+    return (def.options as z.ZodType[]).every((nested) =>
+      cannotSatisfy(value, nested),
+    );
+  if (def.type !== "object") return false;
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    return true;
+  const record = value as Record<string, unknown>;
+  const shape = def.shape as Record<string, z.ZodType>;
+  const strict =
+    (def.catchall as z.ZodType | undefined)?._zod.def.type === "never";
+  const literals = Object.entries(option._zod.propValues ?? {});
+  return (
+    Object.entries(shape).some(
+      ([key, field]) =>
+        field._zod.optin === undefined && !Object.hasOwn(record, key),
+    ) ||
+    (strict && Object.keys(record).some((key) => !Object.hasOwn(shape, key))) ||
+    literals.some(([key, values]) => !values.has(record[key] as never))
+  );
+};
+
+/**
+ * The option a union value was produced with, when it can hold a control:
+ * the first option the value satisfies. Options the value's keys and literal
+ * values rule out are not parsed; when one option remains, it is the only
+ * shape the value can have and is followed without parsing it. Options after
+ * the last one that can hold a control are never parsed.
+ */
+const producedUnionOption = (
+  value: unknown,
+  options: readonly z.ZodType[],
+): z.ZodType | undefined => {
+  const possible = options.filter((option) => !cannotSatisfy(value, option));
+  if (possible.length === 1)
+    return reachesRecordedControl(possible[0]!) ? possible[0] : undefined;
+  const last = possible.findLastIndex(reachesRecordedControl);
+  for (const option of possible.slice(0, last + 1))
+    if (option.safeParse(value).success)
+      return reachesRecordedControl(option) ? option : undefined;
+  return undefined;
+};
+
 /**
  * The schema nodes of a value, following the result schema: each position
  * the schema declares a recorded control yields that value. Positions the
  * schema leaves open (records, unknown JSON, lazy or custom types) are not
- * entered, so captured content cannot supply a control.
+ * entered, so captured content cannot supply a control, and subtrees whose
+ * schema declares no control are skipped without reading them.
  */
 const recordedControlValues = (
   output: unknown,
@@ -148,23 +727,18 @@ const recordedControlValues = (
   const pending: [unknown, z.ZodType][] = [[output, schema]];
   while (pending.length > 0) {
     const [value, node] = pending.pop()!;
-    if (value === undefined) continue;
+    if (value === undefined || !reachesRecordedControl(node)) continue;
     if (recordedControlSchemas.has(node)) {
       if (node.safeParse(value).success) found.push(value);
       continue;
     }
-    const def = node._zod.def as unknown as Record<string, unknown> & {
-      readonly type: string;
-    };
+    const def = schemaDef(node);
     if (WRAPPER_TYPES.has(def.type)) {
       pending.push([value, def.innerType as z.ZodType]);
     } else if (def.type === "pipe") {
       pending.push([value, def.out as z.ZodType]);
     } else if (def.type === "union") {
-      // The first option the value satisfies is the one the producer used.
-      const option = (def.options as z.ZodType[]).find(
-        (candidate) => candidate.safeParse(value).success,
-      );
+      const option = producedUnionOption(value, def.options as z.ZodType[]);
       if (option !== undefined) pending.push([value, option]);
     } else if (def.type === "array" && Array.isArray(value)) {
       for (const item of value) pending.push([item, def.element as z.ZodType]);

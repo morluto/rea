@@ -25,10 +25,16 @@ export {
   ArtifactFileSource,
   assertArtifactFileSelectedSource,
 } from "./ArtifactFileSource.js";
-export { translateArtifactFailure } from "./ArtifactOperationFailure.js";
+export {
+  artifactOperationReason,
+  artifactReaderTargetFailure,
+  translateArtifactFailure,
+  translateArtifactOperationFailure,
+} from "./ArtifactOperationFailure.js";
 export {
   ArtifactFileCancelled,
   ArtifactFileCleanupFailure,
+  ArtifactFileFailureGroup,
   artifactFileCancellationCause,
   artifactFileCompletion,
   artifactFilePrimaryFacts,
@@ -37,6 +43,7 @@ export {
   artifactReadCancelledBy,
   artifactSelectedPathErrno,
   assertArtifactReadActive,
+  yieldArtifactRead,
   bindArtifactFileCleanup,
   mapArtifactFileFailure,
   withArtifactFileHandle,
@@ -47,6 +54,11 @@ export {
   ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
   artifactFixedLimitFailure,
+  artifactFormatFailure,
+  malformedArtifact,
+  truncatedArtifact,
+  unsupportedArtifact,
+  readFailureError,
   artifactPrimaryCleanupLeases,
   assertProducedEntry,
   copyArtifactEntry,
@@ -56,8 +68,8 @@ export {
 export { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 export type {
   ArtifactEntry,
+  ArtifactFixedLimit,
   ArtifactReader,
-  ArtifactReaderFailureOptions,
   ArtifactReaderTraversal,
   ArtifactTraversalOmission,
   ArtifactTraversalOptions,
@@ -65,25 +77,43 @@ export type {
   CleanupFailedRead,
 } from "./ArtifactReader.js";
 export {
+  assertArtifactSelectedSource,
+  resolveArtifactSourcePath,
+} from "./ArtifactSelectedSource.js";
+export {
+  DirectoryArtifactEntryAccessDenied,
+  DirectoryArtifactReader,
+  DirectoryArtifactRootFailure,
+  DirectoryArtifactTraversalLimit,
+} from "./DirectoryArtifactReader.js";
+export type { DirectoryArtifactEntry } from "./DirectoryArtifactReader.js";
+export { hostExecutableMarking } from "./hostExecutableMarking.js";
+export {
   ArtifactResourceRetryFailure,
   ArtifactResourceScope,
 } from "./ArtifactResourceScope.js";
 export type {
   ArtifactCleanupAttempt,
   ArtifactResourceOwner,
+  RetainedResourceScope,
 } from "./ArtifactResourceScope.js";
 export {
   imageFileSizeRemediation,
+  closeArtifactResources,
+  artifactFileCleanupError,
   projectArtifactCloseFailure,
+  withArtifactCleanupFailure,
+  artifactFileCancellationError,
   projectOwnedArtifactIdentityFailure,
+  projectOwnedArtifactInputFailure,
   projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
   readerIntegrityFailure,
-  regularFileSymlinkRecovery,
   stableArtifactInputFailure,
   stableArtifactInputRecovery,
 } from "./StableArtifactFailure.js";
 export type { RequestField } from "./StableArtifactFailure.js";
+export { selectedFileTargetError } from "./RegularFileErrorProjection.js";
 export { completedStableArtifactObservation } from "./StableArtifactObservation.js";
 export {
   fileAccessFailureReason,
@@ -93,11 +123,23 @@ export {
 export {
   assertStableArtifactState,
   completedStableArtifact,
+  completedStableArtifactStream,
+  readAdmittedRange,
   readStableArtifact,
+  streamStableArtifact,
+  withStableArtifactHandle,
 } from "./readStableArtifact.js";
+export {
+  artifactFileCeilingConstraint,
+  artifactReadBudgetConstraint,
+} from "./artifactReadBudget.js";
 export type {
   StableArtifactFileSystem,
+  StableArtifactHandle,
+  StableArtifactHandleOptions,
   StableArtifactSnapshot,
+  StableArtifactStream,
+  StableArtifactStreamOptions,
 } from "./readStableArtifact.js";
 export {
   ArtifactPathRegistry,
@@ -116,7 +158,7 @@ export { SafeOutputTreeCreationFailure } from "./SafeOutputTreeCreationFailure.j
 export { streamChunkToBuffer } from "./StreamBytes.js";
 export { readArtifactFileChunks } from "./readArtifactFileChunks.js";
 export { abortIfNeeded, digestReadableToCompletion } from "./StreamDigest.js";
-export type { StreamDigest, StreamDigestObserver } from "./StreamDigest.js";
+export type { StreamDigest } from "./StreamDigest.js";
 export {
   hashStableRootArtifact,
   hashStableRootArtifactHandle,
@@ -131,5 +173,8 @@ export {
   ZIP_READER_OPTIONS,
   ZipArtifactReader,
   decodeZipEntryText,
+  zipEntryNameLimitations,
   zipEntryPath,
+  zipListingCoverage,
+  typedZipFailure,
 } from "./ZipArtifactReader.js";

@@ -1,4 +1,4 @@
-import canonicalize from "canonicalize";
+import { canonicalJsonSerializer } from "./canonicalDigest.js";
 import { z } from "zod";
 
 import type {
@@ -6,7 +6,15 @@ import type {
   UniversalMachOSliceIdentity,
 } from "./binaryTargetTypes.js";
 import { digestSchema } from "./digests.js";
-import { rawBinaryEntryPointSchema } from "./rawBinary.js";
+import {
+  DIRECTORY_TREE_DIGEST_ALGORITHM,
+  DIRECTORY_TREE_DIGEST_VERSION,
+} from "./directoryTreeDigest.js";
+import {
+  rawBinaryEntryPointSchema,
+  rawLoadIdentity,
+  rawLoadIdentitySchema,
+} from "./rawBinary.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const flashOffsetSchema = z.number().int().min(0).max(0xffff_ffff).nullable();
@@ -17,6 +25,10 @@ export const fileTargetSelectionSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("entry-point"),
     entry_point: rawBinaryEntryPointSchema,
+    // A raw load that is not legacy-equivalent also selects its base, variant,
+    // vector table and the entry's role and basis. Absent otherwise, so a
+    // legacy load keeps the identity it had before these inputs.
+    raw_load: rawLoadIdentitySchema.exactOptional(),
   }),
   z.strictObject({
     kind: z.literal("esp-flash"),
@@ -63,14 +75,38 @@ export interface FileTargetIdentity {
 }
 
 /**
+ * A local directory, path-free, named by the complete root digest of its
+ * tree. The algorithm and its version are part of the identity, so a later
+ * encoding never collides with this one. A directory whose walk was partial
+ * has no such identity.
+ */
+export const directoryTargetIdentitySchema = z.strictObject({
+  kind: z.literal("directory"),
+  algorithm: z.literal(DIRECTORY_TREE_DIGEST_ALGORITHM),
+  version: z.literal(DIRECTORY_TREE_DIGEST_VERSION),
+  sha256: digestSchema,
+});
+
+/** A local directory named by the complete root digest of its tree. */
+export interface DirectoryTargetIdentity {
+  readonly kind: "directory";
+  readonly algorithm: typeof DIRECTORY_TREE_DIGEST_ALGORITHM;
+  readonly version: typeof DIRECTORY_TREE_DIGEST_VERSION;
+  readonly sha256: string;
+}
+
+/**
  * Why an observation names no target: it derives from linked Evidence that
  * already commits to its sources, the producer did not observe the target's
- * identity, or the target is not a kind REA can identify.
+ * identity, the target is not a kind REA can identify, or REA observed the
+ * identity and the caller chose not to record it (for example PID
+ * normalization).
  */
 export const unknownTargetReasonSchema = z.enum([
   "derived-from-linked-evidence",
   "not-observed",
   "unsupported-subject",
+  "withheld-by-caller",
 ]);
 
 /** A target whose identity is unknown, with the reason it is unknown. */
@@ -137,21 +173,81 @@ export interface UrlTargetIdentity {
 }
 
 /**
- * What an observation or cache entry is about. Tagged by `kind`; see
- * docs/adr/evidence/target-identity.md for the kinds later slices add.
+ * A live process named by its PID and the start identity the `src/process`
+ * identity primitives read for that PID. A PID alone does not identify a
+ * process after exit or reuse, so the start identity is required. The
+ * executable digest is null when the executable could not be read stably
+ * across launch.
+ */
+export const processTargetIdentitySchema = z.strictObject({
+  kind: z.literal("process"),
+  pid: z.int().positive(),
+  start_time: z.string().min(1),
+  executable_sha256: digestSchema.nullable(),
+});
+
+/** A live process named by its PID and start identity. */
+export interface ProcessTargetIdentity {
+  readonly kind: "process";
+  readonly pid: number;
+  /** Platform start identity from `src/process`; opaque, compared only for equality. */
+  readonly start_time: string;
+  readonly executable_sha256: string | null;
+}
+
+/** Debugger sessions REA mints and can bind to a launch target. */
+export const debuggerSessionKindSchema = z.enum(["rizin", "gdb"]);
+
+/**
+ * A debugger session REA minted, bound to the target it launched: the launch
+ * file hashed when the session started, or an explicit unknown when REA did
+ * not observe it (an attach, or a launch file that could not be hashed).
+ * Later debugger commands do not rebind the session.
+ */
+export const sessionTargetIdentitySchema = z.strictObject({
+  kind: z.literal("session"),
+  session_kind: debuggerSessionKindSchema,
+  id: z.string().min(1),
+  target: z.discriminatedUnion("kind", [
+    fileTargetIdentitySchema,
+    unknownTargetIdentitySchema,
+  ]),
+});
+
+/** A debugger session REA minted, bound to the target it launched. */
+export interface SessionTargetIdentity {
+  readonly kind: "session";
+  readonly session_kind: z.infer<typeof debuggerSessionKindSchema>;
+  readonly id: string;
+  readonly target: FileTargetIdentity | UnknownTargetIdentity;
+}
+
+/**
+ * What an observation or cache entry is about. Tagged by `kind`.
  */
 export type TargetIdentity =
   | FileTargetIdentity
+  | DirectoryTargetIdentity
   | UrlTargetIdentity
+  | ProcessTargetIdentity
+  | SessionTargetIdentity
   | UnknownTargetIdentity;
 
-/** A target identity that names no file, and so has no file display facts. */
-export type NonFileTargetIdentity = Exclude<TargetIdentity, FileTargetIdentity>;
+/** A target identity that names no local path, and so has no display facts. */
+export type NonFileTargetIdentity = Exclude<
+  TargetIdentity,
+  FileTargetIdentity | DirectoryTargetIdentity
+>;
 
-/** The identities a subject without file display facts can commit to. */
-export const nonFileTargetIdentitySchema = z.union([
+/**
+ * The identities without a nested target that a subject without file display
+ * facts can commit to. A session identity nests its target, so a persistence
+ * format validates it with its own file declaration.
+ */
+export const nonFileTargetIdentitySchema = z.discriminatedUnion("kind", [
   unknownTargetIdentitySchema,
   urlTargetIdentitySchema,
+  processTargetIdentitySchema,
 ]);
 
 /** The universal Mach-O slice a target selects, with its FAT CPU declaration when admitted. */
@@ -172,21 +268,38 @@ const universalSliceSelection = (
   };
 };
 
+/** A raw load's entry, with its versioned load identity when it has one. */
+const rawBinarySelection = (
+  load: Parameters<typeof rawLoadIdentity>[0],
+): FileTargetSelection => {
+  const identity = rawLoadIdentity(load);
+  return {
+    kind: "entry-point",
+    entry_point: load.entryPoint,
+    ...(identity === undefined ? {} : { raw_load: identity }),
+  };
+};
+
 /** The selection an open binary target makes inside its bytes, if any. */
 export const binaryTargetSelection = (
   target: BinaryTarget,
 ): FileTargetSelection | null =>
-  target.format === "raw-binary" || target.format === "gamecube-dol"
-    ? { kind: "entry-point", entry_point: target.entryPoint }
-    : target.format === "esp-flash-image"
-      ? {
-          kind: "esp-flash",
-          flash_offset: target.espFlash.flashOffset,
-          partition_table_offset: target.espFlash.partitionTableOffset,
-        }
-      : target.format === "mach-o-universal"
-        ? universalSliceSelection(target.universalSlice, target.universalSlices)
-        : null;
+  target.format === "raw-binary"
+    ? rawBinarySelection(target.rawLoad)
+    : target.format === "gamecube-dol"
+      ? { kind: "entry-point", entry_point: target.entryPoint }
+      : target.format === "esp-flash-image"
+        ? {
+            kind: "esp-flash",
+            flash_offset: target.espFlash.flashOffset,
+            partition_table_offset: target.espFlash.partitionTableOffset,
+          }
+        : target.format === "mach-o-universal"
+          ? universalSliceSelection(
+              target.universalSlice,
+              target.universalSlices,
+            )
+          : null;
 
 /** The one projection of an open binary target into its target identity. */
 export const binaryTargetIdentity = (
@@ -199,16 +312,55 @@ export const binaryTargetIdentity = (
   selection: binaryTargetSelection(target),
 });
 
+const serializeIdentity = canonicalJsonSerializer(
+  "RFC 8785 canonicalization rejected a target identity",
+);
+
 /** The only comparison of two target identities: an RFC 8785 canonical digest. */
-export const targetIdentityKey = (identity: TargetIdentity): string => {
-  const encoded = canonicalize(identity);
-  if (encoded === undefined)
-    throw new TypeError("RFC 8785 canonicalization rejected a target identity");
-  return `target_${sha256Hex(encoded)}`;
-};
+export const targetIdentityKey = (identity: TargetIdentity): string =>
+  `target_${sha256Hex(serializeIdentity(identity))}`;
 
 /** Whether two identities name the same target. */
 export const sameTargetIdentity = (
   left: TargetIdentity,
   right: TargetIdentity,
 ): boolean => targetIdentityKey(left) === targetIdentityKey(right);
+
+/**
+ * The facts of an identity that place addresses. A raw load that is not
+ * legacy-equivalent maps file offset 0 at its base, so its entry's address,
+ * instruction set, role and basis, and the vector table it was read from,
+ * choose where analysis starts and move no coordinates; its base and variant
+ * remain. Every other identity, a legacy raw load included (it maps offset 0
+ * at its entry), places addresses by all of its facts. The provider's function
+ * coordinate context commits the rest. Sessions, snapshots and Evidence
+ * subjects keep the full identity.
+ */
+const coordinateKey = (identity: TargetIdentity): string => {
+  const load =
+    identity.kind === "file" && identity.selection?.kind === "entry-point"
+      ? identity.selection.raw_load
+      : undefined;
+  if (identity.kind !== "file" || load === undefined)
+    return targetIdentityKey(identity);
+  const encoded = serializeIdentity({
+    kind: "raw-load-coordinates",
+    sha256: identity.sha256,
+    format: identity.format,
+    architecture: identity.architecture,
+    version: load.version,
+    base_address: load.base_address,
+    architecture_variant: load.architecture_variant ?? null,
+  });
+  return `coordinates_${sha256Hex(encoded)}`;
+};
+
+/**
+ * Whether two identities place the same bytes at the same addresses, so that
+ * comparison workflows can relate their functions by address. Narrower than
+ * {@link sameTargetIdentity}: it ignores how a raw load chose its entry.
+ */
+export const sameTargetCoordinates = (
+  left: TargetIdentity,
+  right: TargetIdentity,
+): boolean => coordinateKey(left) === coordinateKey(right);

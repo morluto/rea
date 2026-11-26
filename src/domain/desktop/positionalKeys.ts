@@ -1,6 +1,7 @@
+import { appendToMapList } from "../appendToMapList.js";
 import type { JsonValue } from "../jsonValue.js";
 import { isIdentifyingAttribute } from "./attributeRank.js";
-import { isRecord } from "../isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** An identifier of the members with one tag, as `tag` NUL `key`. */
 const tagKey = (tag: string, key: string) => `${tag}\u0000${key}`;
@@ -16,9 +17,7 @@ const attributesByTag = (items: readonly JsonValue[]) => {
         (entry): entry is [string, string] => typeof entry[1] === "string",
       ),
     );
-    const members = byTag.get(item.name);
-    if (members === undefined) byTag.set(item.name, [strings]);
-    else members.push(strings);
+    appendToMapList(byTag, item.name, strings);
   }
   return byTag;
 };

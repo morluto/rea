@@ -2,11 +2,9 @@
  * Lifecycle regression coverage for every provider id in
  * `CAPABILITY_DECLARATIONS`.
  *
- * Each stage either names real regression tests (file and literal test title),
- * is not applicable for a stated reason, or is an explicit gap. Gaps are also
- * listed in `PROVIDER_LIFECYCLE_GAPS`; that list may only shrink, so closing a
- * gap means naming its tests here and removing the gap entry. A newly
- * registered provider must add its own entry.
+ * Each stage names a regression by file and title at its registration site,
+ * or states why the stage does not apply. The coverage check reports any
+ * applicable stage still marked as a gap.
  *
  * Stages: `launch` starts the owned process (including launch failure and
  * refusal at the launch boundary); `handshake` is the first readiness or
@@ -34,7 +32,7 @@ export type LifecycleStage = (typeof LIFECYCLE_STAGES)[number];
 export interface LifecycleRegression {
   /** Repository-relative test file. */
   readonly path: string;
-  /** Literal title of a test in that file. */
+  /** Title at the test registration site, before any parameter expansion. */
   readonly title: string;
 }
 
@@ -65,7 +63,6 @@ const notApplicable = (reason: string): StageCoverage => ({
   kind: "not_applicable",
   reason,
 });
-const gap = (reason: string): StageCoverage => ({ kind: "gap", reason });
 
 const ONE_SHOT = notApplicable(
   "One-shot command per request: there is no handshake after launch.",
@@ -105,8 +102,8 @@ const historicalCapture = (
   stages: {
     launch: covered(
       test(
-        HISTORICAL_DECODER,
-        "cancels after snapshot acquisition before launch and removes private input declarations",
+        "tests/boundary/browser/historicalCapturePreparationCleanup.test.ts",
+        "cancels after snapshot acquisition without launching or adopting the opaque caller reason",
       ),
     ),
     handshake: notApplicable(
@@ -134,6 +131,7 @@ const historicalCapture = (
   },
 });
 
+const UEFI_PROVIDER = "src/uefi/UefiAnalysisProvider.test.ts";
 const FIRMWARE_INTEGRATION =
   "tests/boundary/firmware/firmwareIntegration.test.ts";
 const REVERSE_LAUNCH_ERRORS =
@@ -171,11 +169,23 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
           "src/adb/AdbProvider.test.ts",
           "reports cancellation arriving during the version probe",
         ),
+        test(
+          "tests/boundary/providers/adb/adbServerLifetime.test.ts",
+          "asks a cancelled device command to stop with SIGTERM before its group is killed",
+        ),
       ),
       cleanup: covered(
         test(
           "src/adb/AdbProvider.test.ts",
           "retains failed snapshot cleanup with completed push Evidence until close retries",
+        ),
+        test(
+          "tests/boundary/providers/adb/adbServerLifetime.test.ts",
+          "stops a descendant a device command leaves behind with the command's cleanup",
+        ),
+        test(
+          "tests/boundary/providers/adb/adbServerLifetime.test.ts",
+          "starts the adb server explicitly before device commands and never stops it",
         ),
       ),
       retry: covered(
@@ -187,8 +197,11 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     },
   },
   "aioquic-qlog-json": historicalCapture(
-    gap(
-      "Successful qlog decoding is covered at the parser; no regression completes it through the decoder child.",
+    covered(
+      test(
+        "tests/acceptance/tools/qlogCapture.test.ts",
+        "runs built CLI and real stdio SDK with exact evidence parity, selection, retained references and strict schemas",
+      ),
     ),
   ),
   "apk-signature": inProcess(
@@ -211,7 +224,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       launch: covered(
         test(
           "src/apktool/ApktoolProvider.test.ts",
-          "reports launcher disappearance after version admission as a provider failure",
+          "reports launcher disappearance after version admission as apktool unavailable",
         ),
       ),
       handshake: ONE_SHOT,
@@ -281,13 +294,13 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "src/application/binaryDiagnostics/ByteEntropyService.test.ts",
-        "keeps whole-file identity and entropy while selecting unaligned blocks and a partial tail",
+        "keeps %i-byte blocks relative to an unaligned window across short physical reads",
       ),
     ),
     covered(
       test(
         "src/application/binaryDiagnostics/ByteEntropyService.test.ts",
-        "honors cancellation before and during streaming",
+        "honors cancellation %s and closes any admitted descriptor",
       ),
     ),
   ),
@@ -389,7 +402,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/boundary/filesystem/flutterBuildProvider.test.ts",
-        "inspects a full synthetic AOT image end to end",
+        "projects each payload shape through the owned snapshot",
       ),
     ),
     covered(
@@ -469,7 +482,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cancel: covered(
         test(
           "tests/boundary/providers/ghidra/ghidraClient.test.ts",
-          "cancels queued work and stops active provider work on cancellation",
+          "retains cancellation reasons before admission, in the queue, and on the wire (%j)",
         ),
         test(
           "tests/boundary/providers/ghidra/ghidraClient.test.ts",
@@ -662,13 +675,13 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cleanup: covered(
         test(
           "src/ida/IdaSessionClient.test.ts",
-          "retains the private workspace and reports cleanup failure when worker release is unverified",
+          "retries failed worker release through the retained connection",
         ),
       ),
       retry: covered(
         test(
-          "src/ida/IdaSessionClient.test.ts",
-          "retries failed worker release through the retained connection before removing its workspace",
+          "tests/boundary/providers/ida/retainedConnectionRetry.test.ts",
+          "retries cleanup through the detached stdio connection",
         ),
       ),
     },
@@ -739,7 +752,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       handshake: covered(
         test(
           "tests/boundary/providers/jebMcpCatalog.test.ts",
-          "reads every JEB catalog page and refreshes the connected engine catalog",
+          "uses the selected discovery budget across handshake and catalog pages",
         ),
         test(
           "tests/boundary/providers/jebMcpConnection.test.ts",
@@ -821,8 +834,11 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     },
   },
   "mitmproxy-native-tnetstring": historicalCapture(
-    gap(
-      "The decoder tests bind mitmproxy configuration but no regression completes a mitmproxy capture.",
+    covered(
+      test(
+        "tests/boundary/browser/historicalCaptureWideNumbers.test.ts",
+        "retains every exclusion in a wide native-number reply through the owned decoder",
+      ),
     ),
   ),
   "model-artifact": inProcess(
@@ -920,6 +936,10 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         test(
           REVERSE_EDGE_CASES,
           "retains an objdump command's unverified process owner until a later inspection stops it",
+        ),
+        test(
+          REVERSE_EDGE_CASES,
+          "stops an owner registered during cleanup retry before admitting another command",
         ),
       ),
     },
@@ -1032,8 +1052,11 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
   "rea-apple-application": {
     ownership: "process",
     stages: {
-      launch: gap(
-        "No regression for an assetutil or Interface Builder tool launch failure.",
+      launch: covered(
+        test(
+          "src/artifacts/apple/AppleAssetCatalogAnalysis.test.ts",
+          "reports an assetutil that cannot be launched as unavailable",
+        ),
       ),
       handshake: ONE_SHOT,
       operation: covered(
@@ -1048,8 +1071,18 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
           "settles a cancelled assetutil run only after its process exits",
         ),
       ),
-      cleanup: gap("No regression for failed assetutil process cleanup."),
-      retry: gap("No regression for assetutil cleanup retry."),
+      cleanup: covered(
+        test(
+          "src/artifacts/apple/AppleAssetCatalogAnalysis.test.ts",
+          "retains an unproven assetutil process cleanup for a later retry",
+        ),
+      ),
+      retry: covered(
+        test(
+          "src/artifacts/apple/AppleAssetCatalogAnalysis.test.ts",
+          "releases a retained assetutil cleanup before the next inspection launches",
+        ),
+      ),
     },
   },
   "rea-apple-ips": inProcess(
@@ -1174,8 +1207,11 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ownership: "connection",
     stages: {
       launch: ATTACH_ONLY,
-      handshake: gap(
-        "No Electron-provider regression for a late, absent or failed CDP handshake.",
+      handshake: covered(
+        test(
+          "tests/boundary/browser/cdpElectronProvider.test.ts",
+          "cancels a held Electron CDP handshake and admits the next inspection",
+        ),
       ),
       operation: covered(
         test(
@@ -1193,17 +1229,25 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
           "classifies cancellation that arrives during final Electron detach",
         ),
       ),
-      cleanup: gap(
-        "No regression retains a failed Electron inspection cleanup; the cleanup tests cover cancellation during a successful close.",
+      cleanup: covered(
+        test(
+          "tests/boundary/browser/cdpElectronProvider.test.ts",
+          "retains a failed Electron transport close and retries it before the next inspection",
+        ),
       ),
-      retry: gap("No regression for Electron inspection cleanup retry."),
+      retry: covered(
+        test(
+          "tests/boundary/browser/cdpElectronProvider.test.ts",
+          "retains a failed Electron transport close and retries it before the next inspection",
+        ),
+      ),
     },
   },
   "rea-devicetree": inProcess(
     covered(
       test(
         "tests/acceptance/devicetreeCli.test.ts",
-        "rejects ambiguous Devicetree node paths in correctly hashed Evidence",
+        "inspects a relative DTB and preserves the source",
       ),
     ),
     covered(
@@ -1234,13 +1278,58 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         "retains partial native export coverage after an observed match",
       ),
     ),
-    gap("No cancellation regression for the managed workflow provider."),
+    covered(
+      test(
+        "tests/composition/analysis-sessions/managedApplicationGraph.test.ts",
+        "stops resolving retained managed sources when the caller cancels mid-request",
+      ),
+    ),
+  ),
+  "rea-dwarf-units": inProcess(
+    covered(
+      test(
+        "tests/acceptance/dwarfUnitsCli.test.ts",
+        "reports a compile unit through the public CLI",
+      ),
+      test(
+        "tests/boundary/mcp/dwarfUnitsMcp.test.ts",
+        "advertises inspect_dwarf_units and reads a compile unit",
+      ),
+    ),
+    typedFailures("tests/boundary/filesystem/dwarfUnits.test.ts"),
+  ),
+  "rea-elf-debug-link": inProcess(
+    covered(
+      test(
+        "tests/acceptance/elfDebugLinkCli.test.ts",
+        "verifies a debug file while preserving both relative caller paths",
+      ),
+    ),
+    covered(
+      test(
+        "tests/boundary/filesystem/elfDebugLink.test.ts",
+        "returns typed resource and cancellation failures",
+      ),
+      test(
+        "tests/boundary/filesystem/elfDebugLink.test.ts",
+        "retains streamed candidate Evidence when cancelled during %s",
+      ),
+    ),
+  ),
+  "rea-elf-dependencies": inProcess(
+    covered(
+      test(
+        "tests/acceptance/elfDependenciesCli.test.ts",
+        "reports needed libraries, RUNPATH tokens, and versioned imports through the public CLI",
+      ),
+    ),
+    typedFailures("tests/boundary/filesystem/elfDependencies.test.ts"),
   ),
   "rea-elf-notes": inProcess(
     covered(
       test(
         "tests/acceptance/elfNotesCli.test.ts",
-        "resolves section note names from zlib and Zstandard string tables through the CLI",
+        "resolves section note names from a compressed string table through the CLI",
       ),
     ),
     typedFailures("tests/boundary/filesystem/elfNotes.test.ts"),
@@ -1258,7 +1347,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/acceptance/erlangBeamCli.test.ts",
-        "reports BEAM tables and code through the public CLI",
+        "reports BEAM tables and code for a path relative to the CLI working directory",
       ),
     ),
     typedFailures("tests/boundary/filesystem/erlangBeam.test.ts"),
@@ -1270,16 +1359,31 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         "preserves Harmony archive formats through the public CLI/MCP lifecycle",
       ),
     ),
-    gap("No cancellation regression for the Harmony application provider."),
+    covered(
+      test(
+        "tests/boundary/filesystem/harmony/application.test.ts",
+        "stops resolving retained inventory pages when the caller cancels mid-request",
+      ),
+    ),
   ),
   "rea-javascript-application": {
     ownership: "process",
     stages: {
-      launch: gap(
-        "No regression for a JavaScript analysis worker process that fails to launch.",
+      launch: covered(
+        test(
+          "tests/boundary/javascript/javascriptAnalysisWorkerLaunch.test.ts",
+          "reports a JavaScript worker that fails to launch and launches a fresh worker on the next analysis",
+        ),
       ),
-      handshake: gap(
-        "No regression for a late or invalid worker admission frame from the provider side.",
+      handshake: covered(
+        test(
+          "src/javascript/analysis/JavaScriptAnalysisWorker.startup.test.ts",
+          "refuses a worker that emits facts before its ready frame and stops it",
+        ),
+        test(
+          "src/javascript/analysis/JavaScriptAnalysisWorker.startup.test.ts",
+          "times out a worker whose ready frame never arrives and stops it",
+        ),
       ),
       operation: covered(
         test(
@@ -1314,7 +1418,12 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         "traces a contextBridge API through IPC into linked native evidence",
       ),
     ),
-    gap("No cancellation regression for JavaScript application workflows."),
+    covered(
+      test(
+        "tests/boundary/filesystem/javascriptApplicationWorkflows.test.ts",
+        "stops resolving retained version-comparison sources when the caller cancels mid-request",
+      ),
+    ),
   ),
   "rea-javascript-runtime-reconciliation": inProcess(
     covered(
@@ -1323,7 +1432,12 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         "matches renderer, frame, script bytes, and worker without claiming execution",
       ),
     ),
-    gap("No cancellation regression for JavaScript runtime reconciliation."),
+    covered(
+      test(
+        "src/application/javascript/JavaScriptRuntimeReconciliationService.test.ts",
+        "stops resolving retained reconciliation sources when the caller cancels mid-request",
+      ),
+    ),
   ),
   "rea-kernel-build-config": inProcess(
     covered(
@@ -1347,6 +1461,20 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     ),
     typedFailures("tests/boundary/filesystem/kernelModule.test.ts"),
+  ),
+  "rea-maven-gradle-metadata": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/mavenGradleMetadataMcp.test.ts",
+        "advertises inspect_maven_gradle_metadata and reports a real POM",
+      ),
+    ),
+    covered(
+      test(
+        "src/application/java/MavenGradleMetadataService.test.ts",
+        "retains completed Evidence and selected parameters on late cancellation",
+      ),
+    ),
   ),
   "rea-native-exports": inProcess(
     covered(
@@ -1377,8 +1505,11 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
   ),
   "rea-pe-certificates": inProcess(
-    gap(
-      "Successful certificate tables are covered at the parser and through generated CLI titles, not by a literal-titled provider regression.",
+    covered(
+      test(
+        "tests/acceptance/peCertificatesCli.test.ts",
+        "reports PKCS#7 signer identity and BER lengths through both adapters",
+      ),
     ),
     typedFailures("tests/boundary/filesystem/peCertificates.test.ts"),
   ),
@@ -1409,6 +1540,15 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
     typedFailures("tests/boundary/filesystem/peResources.test.ts"),
   ),
+  "rea-pe-unwind-ranges": inProcess(
+    covered(
+      test(
+        "tests/acceptance/peUnwindRangesCli.test.ts",
+        "reads x64 exception-directory ranges identically over CLI and MCP",
+      ),
+    ),
+    typedFailures("src/native/pe/PeUnwindRangesProvider.test.ts"),
+  ),
   "rea-playwright-browser-scenario": {
     ownership: "process",
     stages: {
@@ -1419,14 +1559,10 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         ),
         test(
           "src/browser/PlaywrightScenarioBrowser.test.ts",
-          "passes the selected environment to the actual browser launch boundary",
+          "passes the selected environment to the $platform browser launch boundary",
         ),
       ),
       handshake: covered(
-        test(
-          "src/browser/PlaywrightScenarioBrowser.test.ts",
-          "applies command_timeout_ms to the primary connect handshake when service workers are allowed",
-        ),
         test(
           "src/browser/PlaywrightScenarioBrowser.test.ts",
           "closes a browser that connects after its deadline without waiting to report the timeout",
@@ -1435,13 +1571,13 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       operation: covered(
         test(
           "src/browser/PlaywrightBrowserScenarioProvider.test.ts",
-          "returns an initial state and every step beyond the former action ceiling",
+          "retains all long-scenario steps and monotonic elapsed time",
         ),
       ),
       cancel: covered(
         test(
-          "src/browser/PlaywrightBrowserScenarioProvider.test.ts",
-          "cancels an active action and still closes the session",
+          "src/browser/PlaywrightScenarioSession.test.ts",
+          "preserves $outcome action rejection through provider cancellation (cleanup refused: $cleanupFails)",
         ),
       ),
       cleanup: covered(
@@ -1453,7 +1589,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       retry: covered(
         test(
           "src/browser/PlaywrightBrowserScenarioProvider.test.ts",
-          "shares concurrent close and retries browser cleanup after failure",
+          "retries all opening leases after a refusal and reports only those still owned",
         ),
       ),
     },
@@ -1482,13 +1618,13 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cancel: covered(
         test(
           "src/browser/PlaywrightElectronActiveProvider.test.ts",
-          "cancels a windowless wait action and cleans up the owned application",
+          "cancels a windowless wait action and cleans up the owned application (%s)",
         ),
       ),
       cleanup: covered(
         test(
           "src/browser/PlaywrightElectronActiveProvider.test.ts",
-          "keeps cleanup failure precedence over cancellation observed during cleanup",
+          "retains cancellation first observed during failed %s cleanup through retry",
         ),
       ),
       retry: covered(
@@ -1499,6 +1635,20 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     },
   },
+  "rea-nuget-nupkg": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/nugetNupkgMcp.test.ts",
+        "advertises inspect_nuget_nupkg and reads package identity",
+      ),
+    ),
+    covered(
+      test(
+        "src/application/nuget/NugetNupkgService.test.ts",
+        "retains completed Evidence and caller selections on late cancellation",
+      ),
+    ),
+  ),
   "rea-python-pyc": inProcess(
     covered(
       test(
@@ -1506,7 +1656,12 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         "reads signed TYPE_INT64 constants and rejects a truncated payload",
       ),
     ),
-    typedFailures("tests/boundary/filesystem/pythonPyc.test.ts"),
+    covered(
+      test(
+        "src/application/python/PythonPycService.test.ts",
+        "retains completed pyc Evidence and the opaque caller reason on late cancellation",
+      ),
+    ),
   ),
   "rea-release-exposure": inProcess(
     covered(
@@ -1521,17 +1676,25 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/acceptance/v8CodeCacheCli.test.ts",
-        "reports the observed header and payload through the public CLI",
+        "reports wide, synthetic narrow and synthetic six-word header extents through the public CLI",
       ),
     ),
-    gap("No cancellation regression for the V8 code cache provider."),
+    covered(
+      test(
+        "tests/boundary/filesystem/v8CodeCacheArtifact.test.ts",
+        "retains verified V8 Evidence during $stage",
+      ),
+    ),
   ),
   "rea-v8-inspector": {
     ownership: "connection",
     stages: {
       launch: ATTACH_ONLY,
-      handshake: gap(
-        "No regression for a late, absent or failed inspector WebSocket handshake.",
+      handshake: covered(
+        test(
+          "src/inspector/V8InspectorProvider.handshake.test.ts",
+          "cancels a held inspector WebSocket handshake and admits the next observation",
+        ),
       ),
       operation: covered(
         test(
@@ -1568,13 +1731,16 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
           "retains the selected executable and actual startup diagnostic",
         ),
       ),
-      handshake: gap(
-        "No regression for a late or failed browser-engine connection after Chromium launches.",
+      handshake: covered(
+        test(
+          "src/browser/modules/NativeModuleResolver.test.ts",
+          "awaits and closes the late browser connection after cancellation",
+        ),
       ),
       operation: covered(
         test(
           "tests/boundary/filesystem/webModuleArtifacts.test.ts",
-          "verifies original bytes and tolerates relocation without inventing URL paths",
+          "verifies relocated source identity before accepting the captured bytes",
         ),
       ),
       cancel: covered(
@@ -1590,11 +1756,14 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cleanup: covered(
         test(
           "src/browser/modules/NativeModuleResolver.test.ts",
-          "returns cleanup_incomplete when owned cleanup fails after an engine error",
+          "retries retained browser cleanup before launching the next resolution",
         ),
       ),
-      retry: gap(
-        "The resolver retries retained browser cleanup before later work, but no regression names that retry.",
+      retry: covered(
+        test(
+          "src/browser/modules/NativeModuleResolver.test.ts",
+          "retries retained browser cleanup before launching the next resolution",
+        ),
       ),
     },
   },
@@ -1627,7 +1796,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       operation: covered(
         test(
           "tests/boundary/filesystem/webSourceLocationArtifacts.test.ts",
-          "reads exact selected map bytes, retaining a BOM and explicitly selected URL context",
+          "retains exact selected map bytes and completed reads across failures",
         ),
       ),
       cancel: covered(
@@ -1682,7 +1851,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cancel: covered(
         test(
           "tests/composition/reverseEngineeringCancellation.test.ts",
-          "waits for a cancelled Rizin process to exit before returning",
+          "waits for a Rizin process cancelled during its %s to exit before returning",
         ),
       ),
       cleanup: covered(
@@ -1797,8 +1966,11 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
   sqlite: {
     ownership: "process",
     stages: {
-      launch: gap(
-        "No regression for a SQLite worker process that fails to launch.",
+      launch: covered(
+        test(
+          "tests/boundary/sqlite/sqliteDatabaseProvider.test.ts",
+          "reports a SQLite worker that fails to launch and removes its snapshot before the next inspection",
+        ),
       ),
       handshake: notApplicable(
         "The SQLite worker writes one reply per request; there is no handshake.",
@@ -1861,6 +2033,44 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         test(
           "tests/boundary/captures/captureProvider.test.ts",
           "releases a retained decoder process cleanup before the next inspection completes",
+        ),
+      ),
+    },
+  },
+  "rea-uefi": {
+    ownership: "process",
+    stages: {
+      launch: covered(
+        test(
+          UEFI_PROVIDER,
+          "decodes an LZMA-custom section through the owned worker and derives it",
+        ),
+      ),
+      handshake: notApplicable(
+        "The decoder child writes one framed reply per request; there is no handshake.",
+      ),
+      operation: covered(
+        test(
+          "tests/acceptance/uefiFirmware.test.ts",
+          "maps a flash image end to end through CLI inspection and MCP session inventory",
+        ),
+      ),
+      cancel: covered(
+        test(
+          UEFI_PROVIDER,
+          "waits for committed output finalization during late cancellation and retries retained cleanup",
+        ),
+      ),
+      cleanup: covered(
+        test(
+          UEFI_PROVIDER,
+          "retains the worker root across a failed child stop retry and stops its child before root removal",
+        ),
+      ),
+      retry: covered(
+        test(
+          UEFI_PROVIDER,
+          "retains the worker root across a failed child stop retry and stops its child before root removal",
         ),
       ),
     },
@@ -1974,30 +2184,3 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     },
   },
 };
-
-/**
- * Every stage marked as a gap above, as `providerId:stage`. This list may only
- * shrink: close a gap by naming its regression tests and removing the entry.
- */
-export const PROVIDER_LIFECYCLE_GAPS: readonly string[] = [
-  "aioquic-qlog-json:operation",
-  "mitmproxy-native-tnetstring:operation",
-  "rea-apple-application:cleanup",
-  "rea-apple-application:launch",
-  "rea-apple-application:retry",
-  "rea-cdp-electron:cleanup",
-  "rea-cdp-electron:handshake",
-  "rea-cdp-electron:retry",
-  "rea-dotnet-workflows:cancel",
-  "rea-harmony-application:cancel",
-  "rea-javascript-application-workflows:cancel",
-  "rea-javascript-application:handshake",
-  "rea-javascript-application:launch",
-  "rea-javascript-runtime-reconciliation:cancel",
-  "rea-pe-certificates:operation",
-  "rea-v8-code-cache:cancel",
-  "rea-v8-inspector:handshake",
-  "rea-web-module-trace:handshake",
-  "rea-web-module-trace:retry",
-  "sqlite:launch",
-];

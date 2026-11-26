@@ -5,12 +5,16 @@ import {
 import {
   mzWindowsHeaderLayoutLimitation,
   parseMzHeaderEvidence,
-  withMzWindowsHeaderSignature,
 } from "../dosMz.js";
+import { elfFixedHeaderWidth } from "../elfFixedHeader.js";
 import { readElfSectionHeader } from "../elfSectionHeader.js";
 import { readElfProgramHeader } from "../elfProgramHeader.js";
-import { readPeCoffHeader } from "../peCoffHeader.js";
-import { readPeSectionHeader } from "../peSectionHeader.js";
+import { observePeCoffFrame, PE_COFF_FRAME_BYTES } from "../peCoffHeader.js";
+import {
+  PE_SECTION_HEADER_BYTES,
+  peSectionTableExtent,
+  readPeSectionHeader,
+} from "../peSectionHeader.js";
 import {
   readElfTableDeclarations,
   validateElfDeclaredRanges,
@@ -19,16 +23,37 @@ import { readPeOptionalHeaderStructure } from "../peOptionalHeader.js";
 import {
   BinaryFormatFailure,
   BinaryReader,
-  BinaryResourceFailure,
+  DEFAULT_NATIVE_STRUCTURE_BYTES,
   declaredFileRange,
+  nativeStructureFailure,
   type ElfDynamicSegment,
 } from "../binaryContainer.js";
-import { decodeElfSectionNameTable } from "./elfSectionNameTable.js";
+import {
+  decodeElfSectionNameRequest,
+  decodeElfSectionNameRequestCooperative,
+  elfSectionNameBudgetFailure,
+  type CooperativeElfSectionNameDecoder,
+  type ElfSectionNameDecodeRequest,
+} from "./elfSectionNameTable.js";
+import type { ElfCompressedSectionResult } from "./elfCompressedSection.js";
+import type { ZstandardFramePause } from "../compression/zstandardExactFrame.js";
+import {
+  projectZstandardFrameAllowance,
+  ZstandardFrameAllowanceError,
+} from "../compression/zstandardFrameAllowance.js";
+import { bufferByteSource, type ByteSource } from "../byteSource.js";
+import type { NativeDirectoryBudgets } from "./nativeStructureBudget.js";
 
 /** A borrowed positional source. Drivers own admission, cancellation and file identity. */
 export interface NativeReadRequest {
   readonly offset: number;
   readonly size: number;
+  /**
+   * When set, the driver decodes this section-name table and calls
+   * `fulfillSectionNames` before resuming. A byte read does not satisfy it.
+   */
+  readonly sectionNames?: ElfSectionNameDecodeRequest;
+  readonly fulfillSectionNames?: (result: ElfCompressedSectionResult) => void;
 }
 export interface NativeSection {
   readonly index: number;
@@ -87,27 +112,39 @@ export interface NativeSectionDirectory {
   readonly elf_os_abi: number | null;
   readonly flags: number;
   readonly section_names_limitation?: string;
+  /** Raw COFF symbol table declarations, present only for PE. */
+  readonly pe_symbol_table?: {
+    readonly offset: number;
+    readonly count: number;
+  };
   readonly programs: readonly ElfProgramDeclaration[];
   readonly sections: readonly NativeSection[];
 }
-type ElfSectionDirectory = NativeSectionDirectory & {
+export type ElfSectionDirectory = NativeSectionDirectory & {
   readonly format: "elf";
   readonly elf_type: number;
 };
 
-const STRUCTURE_BYTES = 16 * 1024 * 1024;
 const reject = (message: string): never => {
   throw new BinaryFormatFailure("malformed", message);
+};
+const requireSectionNames = (
+  result: ElfCompressedSectionResult | undefined,
+): ElfCompressedSectionResult => {
+  if (result === undefined)
+    return reject("ELF section-name decode was not satisfied");
+  return result;
 };
 const exact = (value: bigint): number => {
   if (value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER))
     reject("Native offset exceeds exact host precision");
   return Number(value);
 };
-const request = (
+const directoryRequest = (
   fileSize: number,
   offset: bigint,
   size: bigint,
+  structureBytes: number,
 ): NativeReadRequest => {
   if (
     offset < 0n ||
@@ -116,11 +153,11 @@ const request = (
     size > BigInt(fileSize) - offset
   )
     reject("Native directory range is truncated or outside the file");
-  if (size > BigInt(STRUCTURE_BYTES))
-    throw new BinaryResourceFailure(
-      "structure",
-      STRUCTURE_BYTES,
-      "Native directory exceeds the 16777216-byte (16 MiB) structural decoding budget. This release has no runtime override.",
+  if (size > BigInt(structureBytes))
+    throw nativeStructureFailure(
+      "A native directory read",
+      size,
+      structureBytes,
     );
   return { offset: exact(offset), size: exact(size) };
 };
@@ -128,9 +165,15 @@ const request = (
 /** One ELF interpretation for in-memory images and bounded descriptor-backed inspections. */
 export function* readElfSectionDirectory(
   fileSize: number,
+  budgets: NativeDirectoryBudgets = {},
 ): Generator<NativeReadRequest, ElfSectionDirectory, Buffer> {
+  const structureBytes =
+    budgets.structureBytes ?? DEFAULT_NATIVE_STRUCTURE_BYTES;
+  const maximumSourceAndDecodedNamesBytes = budgets.sourceAndDecodedNamesBytes;
+  const request = (fileSize: number, offset: bigint, size: bigint) =>
+    directoryRequest(fileSize, offset, size, structureBytes);
   const prefix = yield request(fileSize, 0n, 16n);
-  const headerSize = prefix[4] === 1 ? 52 : 64;
+  const headerSize = elfFixedHeaderWidth(prefix[4] === 1 ? 32 : 64);
   const bytes = yield request(fileSize, 0n, BigInt(headerSize));
   const parsed = yield* readElfTableDeclarations(bytes, fileSize);
   if (!parsed.ok) return reject(parsed.error);
@@ -156,7 +199,7 @@ export function* readElfSectionDirectory(
       BigInt(program_count) * BigInt(program_width),
     );
     // At most one record per table entry, bounded before allocation by the
-    // existing 16 MiB table allowance and minimum 32/56-byte ELF record width.
+    // max_structure_bytes table allowance and minimum 32/56-byte ELF record width.
     for (let index = 0; index < program_count; index++) {
       const at = index * program_width;
       const parsedProgram = readElfProgramHeader(
@@ -184,6 +227,7 @@ export function* readElfSectionDirectory(
           header_offset,
           offset: program.offset,
           size: program.fileSize,
+          virtual_address: program.virtualAddress,
         });
       else if (type === ELF_PT_NOTE)
         programDeclarations.push({ type: ELF_PT_NOTE, ...span });
@@ -219,28 +263,60 @@ export function* readElfSectionDirectory(
       const namesSection = parsedNames.value;
       if (namesSection.type !== 3)
         reject("ELF section name table is not a string table");
-      const rawNames = yield request(
+      const namesRange = request(
         fileSize,
         namesSection.offset,
         namesSection.size,
       );
-      const decoded = decodeElfSectionNameTable(
-        rawNames,
-        namesSection.flags,
+      const rawNames = yield namesRange;
+      const structuralRemaining = Math.max(0, structureBytes - rawNames.length);
+      const callerRemaining =
+        maximumSourceAndDecodedNamesBytes === undefined
+          ? structuralRemaining
+          : Math.max(0, maximumSourceAndDecodedNamesBytes - fileSize);
+      let decoded: ElfCompressedSectionResult | undefined;
+      const sectionNames: ElfSectionNameDecodeRequest = {
+        fileOffset: namesRange.offset,
+        raw: rawNames,
+        flags: namesSection.flags,
         bits,
         little,
-        Math.max(0, STRUCTURE_BYTES - rawNames.length),
-      );
-      if (decoded.state === "malformed") return reject(decoded.message);
-      if (decoded.state === "limit")
-        throw new BinaryResourceFailure(
-          "structure",
-          STRUCTURE_BYTES,
-          `Decoded ELF section names require ${String(decoded.requiredBytes)} bytes, above the ${String(decoded.maximumBytes)}-byte remaining structural budget`,
+        maximumDecodedBytes: Math.min(structuralRemaining, callerRemaining),
+      };
+      yield {
+        offset: 0,
+        size: 0,
+        sectionNames,
+        fulfillSectionNames: (result) => {
+          decoded = result;
+        },
+      };
+      const admitted = requireSectionNames(decoded);
+      if (admitted.state === "malformed") return reject(admitted.message);
+      if (admitted.state === "configuration") throw admitted.error;
+      if (admitted.state === "work_limit")
+        throw new ZstandardFrameAllowanceError(
+          { maxFrames: admitted.value, source: admitted.source },
+          admitted.offset,
         );
-      if (decoded.state === "unsupported")
-        section_names_limitation = `ELF section names are unavailable because compression type ${String(decoded.compressionType)} is unsupported`;
-      else names = decoded.bytes;
+      if (
+        admitted.state === "limit" &&
+        maximumSourceAndDecodedNamesBytes !== undefined &&
+        admitted.requiredBytes > BigInt(callerRemaining)
+      )
+        throw elfSectionNameBudgetFailure(
+          BigInt(fileSize) + admitted.requiredBytes,
+          maximumSourceAndDecodedNamesBytes,
+        );
+      if (admitted.state === "limit")
+        throw nativeStructureFailure(
+          "The ELF section-name table and its decoded names",
+          BigInt(rawNames.length) + admitted.requiredBytes,
+          structureBytes,
+        );
+      if (admitted.state === "unsupported")
+        section_names_limitation = `ELF section names are unavailable because compression type ${String(admitted.compressionType)} is unsupported`;
+      else names = admitted.bytes;
     } else if (count > 1) {
       section_names_limitation =
         "ELF section names are unavailable because no section-name string table is declared";
@@ -267,11 +343,11 @@ export function* readElfSectionDirectory(
         if (decoded === undefined) {
           const observed = observeElfStringTableEntry(names, nameOffset, 65536);
           nameBytes += observed.examinedBytes;
-          if (nameBytes > STRUCTURE_BYTES)
-            throw new BinaryResourceFailure(
-              "structure",
-              STRUCTURE_BYTES,
-              "Decoded ELF section names exceed the 16 MiB structural budget",
+          if (nameBytes > structureBytes)
+            throw nativeStructureFailure(
+              "Decoded ELF section names",
+              nameBytes,
+              structureBytes,
             );
           decoded = {
             name: elfStringTableText(observed),
@@ -333,7 +409,10 @@ export function* readElfSectionDirectory(
 
 export function* readPeSectionDirectory(
   fileSize: number,
+  structureBytes: number = DEFAULT_NATIVE_STRUCTURE_BYTES,
 ): Generator<NativeReadRequest, NativeSectionDirectory, Buffer> {
+  const request = (fileSize: number, offset: bigint, size: bigint) =>
+    directoryRequest(fileSize, offset, size, structureBytes);
   const dos = new BinaryReader(yield request(fileSize, 0n, 64n), true, "pe");
   if (dos.u16(0) !== 0x5a4d) reject("Missing DOS MZ header");
   const evidence = parseMzHeaderEvidence(dos.bytes, fileSize);
@@ -348,32 +427,29 @@ export function* readPeSectionDirectory(
       throw new BinaryFormatFailure("unsupported", limitation);
   }
   const pe = observed.offset;
-  const coff = new BinaryReader(
-    yield request(fileSize, BigInt(pe), 24n),
-    true,
-    "pe",
-  );
-  const confirmed = withMzWindowsHeaderSignature(
-    dos.bytes,
-    fileSize,
-    evidence,
-    { offset: pe, bytes: coff.bytes },
-  ).windowsHeader;
-  if (confirmed.state !== "declared" || confirmed.signature !== "PE")
-    return reject("PE signature is invalid");
-  const limitation = mzWindowsHeaderLayoutLimitation(confirmed);
+  // Native sections require a complete PE frame before decoding its fields.
+  request(fileSize, BigInt(pe), BigInt(PE_COFF_FRAME_BYTES));
+  const frame = yield* observePeCoffFrame(dos.bytes, fileSize, evidence);
+  if (frame.kind !== "pe") return reject("PE signature is invalid");
+  const limitation = mzWindowsHeaderLayoutLimitation(frame.observation);
   if (limitation !== undefined)
     throw new BinaryFormatFailure("unsupported", limitation);
-  const parsedCoff = readPeCoffHeader(coff.bytes.subarray(4, 24));
+  const { coff: parsedCoff } = frame;
   if (!parsedCoff.ok) return reject(parsedCoff.error.message);
   const {
     sectionCount: count,
     optionalHeaderSize: optionalSize,
     machine,
     characteristics,
+    symbolTableOffset,
+    symbolCount,
   } = parsedCoff.value;
   const optional = readPeOptionalHeaderStructure(
-    yield request(fileSize, BigInt(pe + 24), BigInt(optionalSize)),
+    yield request(
+      fileSize,
+      BigInt(pe + PE_COFF_FRAME_BYTES),
+      BigInt(optionalSize),
+    ),
   );
   if (!optional.ok) {
     switch (optional.error.reason) {
@@ -390,12 +466,21 @@ export function* readPeSectionDirectory(
     }
   }
   const { bits } = optional.value;
-  const start = pe + 24 + optionalSize;
-  const table = yield request(fileSize, BigInt(start), BigInt(count) * 40n);
+  const { sectionTableOffset, sectionTableBytes } = peSectionTableExtent(
+    pe + PE_COFF_FRAME_BYTES,
+    optionalSize,
+    count,
+  );
+  const table = yield request(
+    fileSize,
+    BigInt(sectionTableOffset),
+    BigInt(sectionTableBytes),
+  );
   const sections: NativeSection[] = [];
   for (let index = 0; index < count; index++) {
+    const at = index * PE_SECTION_HEADER_BYTES;
     const parsed = readPeSectionHeader(
-      table.subarray(index * 40, (index + 1) * 40),
+      table.subarray(at, at + PE_SECTION_HEADER_BYTES),
     );
     if (!parsed.ok) return reject(parsed.error.message);
     const row = parsed.value;
@@ -403,7 +488,7 @@ export function* readPeSectionDirectory(
       index,
       name: row.name,
       name_state: "known",
-      header_offset: start + index * 40,
+      header_offset: sectionTableOffset + at,
       offset: BigInt(row.offset),
       size: BigInt(row.size),
       address: BigInt(row.virtual_address),
@@ -423,6 +508,7 @@ export function* readPeSectionDirectory(
   }
   return {
     format: "pe",
+    pe_symbol_table: { offset: symbolTableOffset, count: symbolCount },
     elf_os_abi: null,
     bits,
     little: true,
@@ -433,23 +519,129 @@ export function* readPeSectionDirectory(
   };
 }
 
+const resumeDirectoryStep = (
+  bytes: Buffer,
+  step: NativeReadRequest,
+  names: (request: ElfSectionNameDecodeRequest) => ElfCompressedSectionResult,
+): Buffer => {
+  if (
+    step.sectionNames !== undefined &&
+    step.fulfillSectionNames !== undefined
+  ) {
+    step.fulfillSectionNames(names(step.sectionNames));
+    return Buffer.alloc(0);
+  }
+  return bytes.subarray(step.offset, step.offset + step.size);
+};
+
 const driveFromBuffer = <T>(
   bytes: Buffer,
   steps: Generator<NativeReadRequest, T, Buffer>,
 ): T => {
   let next = steps.next();
   while (!next.done) {
-    const { offset, size } = next.value;
-    next = steps.next(bytes.subarray(offset, offset + size));
+    next = steps.next(
+      resumeDirectoryStep(bytes, next.value, decodeElfSectionNameRequest),
+    );
   }
   return next.value;
 };
 
-/** Borrow ELF bytes; file drivers satisfy the identical requests without loading payloads. */
+const projectDirectoryFrameAllowance = (
+  operation: string,
+  cause: unknown,
+): never => {
+  if (cause instanceof ZstandardFrameAllowanceError)
+    throw projectZstandardFrameAllowance(operation, cause);
+  throw cause;
+};
+
+/**
+ * Borrow ELF bytes. `operation` names the public refusal when a compressed
+ * section-name table exceeds `zstd.max_frames`, so every caller projects that
+ * adjustable limit instead of an I/O or adapter failure.
+ */
 export const readElfDirectoryFromBuffer = (
   bytes: Buffer,
-): ElfSectionDirectory =>
-  driveFromBuffer(bytes, readElfSectionDirectory(bytes.length));
+  operation: string,
+  budgets?: NativeDirectoryBudgets,
+): ElfSectionDirectory => {
+  try {
+    return driveFromBuffer(
+      bytes,
+      readElfSectionDirectory(bytes.length, budgets),
+    );
+  } catch (cause) {
+    return projectDirectoryFrameAllowance(operation, cause);
+  }
+};
+
+/**
+ * Same directory as {@link readElfDirectoryFromBuffer}. Compressed section
+ * names yield through `pause` so the caller's abort signal can land.
+ */
+export const readElfDirectoryFromBufferCooperative = async (
+  bytes: Buffer,
+  pause: ZstandardFramePause,
+  operation: string,
+  budgets?: NativeDirectoryBudgets,
+  decode?: CooperativeElfSectionNameDecoder,
+): Promise<ElfSectionDirectory> =>
+  readElfDirectoryFromReader(
+    bufferByteSource(bytes),
+    pause,
+    operation,
+    budgets,
+    decode,
+  );
+
+const driveElfDirectoryFromSource = async (
+  source: ByteSource,
+  decode: CooperativeElfSectionNameDecoder,
+  budgets?: NativeDirectoryBudgets,
+): Promise<ElfSectionDirectory> => {
+  const steps = readElfSectionDirectory(source.size, budgets);
+  let next = steps.next();
+  while (!next.done) {
+    const step = next.value;
+    if (
+      step.sectionNames !== undefined &&
+      step.fulfillSectionNames !== undefined
+    ) {
+      step.fulfillSectionNames(await decode(step.sectionNames));
+      next = steps.next(Buffer.alloc(0));
+      continue;
+    }
+    const slice =
+      step.size === 0
+        ? Buffer.alloc(0)
+        : source.prefix !== undefined &&
+            step.offset + step.size <= source.prefix.length
+          ? source.prefix.subarray(step.offset, step.offset + step.size)
+          : await source.readRange(step.offset, step.size);
+    next = steps.next(slice);
+  }
+  return next.value;
+};
+
+/**
+ * Same directory as {@link readElfDirectoryFromBufferCooperative}, reading only
+ * the header, program/section tables, and section-name table from `source`.
+ */
+export const readElfDirectoryFromReader = async (
+  source: ByteSource,
+  pause: ZstandardFramePause,
+  operation: string,
+  budgets?: NativeDirectoryBudgets,
+  decode: CooperativeElfSectionNameDecoder = (request) =>
+    decodeElfSectionNameRequestCooperative(request, pause),
+): Promise<ElfSectionDirectory> => {
+  try {
+    return await driveElfDirectoryFromSource(source, decode, budgets);
+  } catch (cause) {
+    return projectDirectoryFrameAllowance(operation, cause);
+  }
+};
 
 /** Reject a program or section payload the declared tables place outside these bytes. */
 export const assertElfDeclaredRangesFromBuffer = (bytes: Buffer): void => {
@@ -458,4 +650,24 @@ export const assertElfDeclaredRangesFromBuffer = (bytes: Buffer): void => {
     validateElfDeclaredRanges(bytes.subarray(0, 64), bytes.length),
   );
   if (!checked.ok) reject(checked.error);
+};
+
+/** Same declared-range check over a random-access source without buffering the full image. */
+export const assertElfDeclaredRangesFromReader = async (
+  source: ByteSource,
+): Promise<void> => {
+  const readSlice = async (offset: number, size: number): Promise<Buffer> => {
+    if (size <= 0) return Buffer.alloc(0);
+    if (source.prefix !== undefined && offset + size <= source.prefix.length)
+      return source.prefix.subarray(offset, offset + size);
+    return source.readRange(offset, size);
+  };
+  const header = await readSlice(0, Math.min(64, source.size));
+  const steps = validateElfDeclaredRanges(header, source.size);
+  let next = steps.next();
+  while (!next.done) {
+    const step = next.value;
+    next = steps.next(await readSlice(step.offset, step.size));
+  }
+  if (!next.value.ok) reject(next.value.error);
 };

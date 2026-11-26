@@ -1,9 +1,12 @@
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  invalidAnalysisViewSubject,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { z } from "zod";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { evmInterfaceSchema } from "../evm/evmInterface.js";
-import { err, ok } from "../result.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { ok } from "../result.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ownedView,
@@ -49,6 +52,8 @@ export const evmSummarySchema = z.strictObject({
   limitations: evmInterfaceSchema.shape.limitations,
 });
 
+const readEvmInterface = createAnalysisViewResultReader(evmInterfaceSchema);
+
 /** Select already authenticated producer facts; no interpreter or provider is invoked. */
 export const projectEvmInterfaceView = (
   parent: AnalysisViewParent,
@@ -58,16 +63,8 @@ export const projectEvmInterfaceView = (
     SummaryAnalysisView | z.output<typeof evmViewRequestSchema>
   >(admitted, "summary", "evm");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "EVM Evidence supports summary and evm views.",
-        },
-      ]),
-    );
-  const parsed = parseAnalysisViewResult(evmInterfaceSchema, parent);
+    return invalidAnalysisView("EVM Evidence supports summary and evm views.");
+  const parsed = readEvmInterface(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
   const subject = evidenceFileTarget(parent);
@@ -76,15 +73,8 @@ export const projectEvmInterfaceView = (
     subject.format !== "file" ||
     subject.sha256 !== report.artifact.sha256
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message:
-            "EVM parent subject must identify the report's carrier format and SHA-256.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "EVM parent subject must identify the report's carrier format and SHA-256.",
     );
   const shared = {
     parent_evidence_id: parent.evidenceId,

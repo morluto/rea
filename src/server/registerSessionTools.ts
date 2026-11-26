@@ -1,258 +1,35 @@
 import type { CapabilityAvailabilityProbes } from "../application/CapabilityAvailability.js";
-import { openBinaryTargetSelection } from "../contracts/sessionLifecycleInputs.js";
-import { registerNativeFunctionMatchingTool } from "./registerNativeFunctionMatchingTool.js";
+import { runtimeNativeMatchingAllowance } from "../config/runtimeAnalysisSettings.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
-import { workflowUnknownInput } from "../application/investigation/WorkflowUnknown.js";
-
-import {
-  getNavigationContext,
-  inspectAddressContext,
-  omitContextEvidenceForDelivery,
-} from "../application/AnalysisContextQueries.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
-import {
-  createProcessCaptureEvidence,
-  createProcessScenarioPlanEvidence,
-} from "../application/process/ProcessEvidence.js";
-import { prepareProcessScenarioPlan } from "../application/process/ProcessScenarioPreparation.js";
-import { captureProcessScenario } from "../process/capture/ProcessHarness.js";
 import { ProcessCaptureResourceScope } from "../process/capture/ProcessCaptureLifecycle.js";
 import { ProcessCaptureError } from "../process/capture/ProcessCaptureError.js";
-import { toolContract } from "../contracts/toolContracts.js";
-import { binaryTargetSummary } from "../application/binary/BinaryTargetSummary.js";
-import { UnknownRegistryError } from "../domain/unknownRegistryError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import type { Evidence } from "../domain/evidence.js";
-import type { ProcessCapture } from "../domain/process/processCaptureParsing.js";
-import { err, ok, type Result } from "../domain/result.js";
+import { err, ok } from "../domain/result.js";
 import type { Logger } from "pino";
 import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
-import { mcpProgressReporter } from "./mcpProgress.js";
-import { registerCloseLifecycleTool } from "./registerCloseLifecycleTool.js";
-import { registerResetInvestigationTool } from "./registerResetInvestigationTool.js";
-import {
-  registerEvidenceTools,
-  registerUnknownTools,
-} from "./registerSessionRecordTools.js";
 import { registerServiceTools } from "./serviceToolBindings.js";
+import type { SessionLifecycleOptions } from "./sessionLifecycle.js";
+import type { SessionStatusToolOptions } from "./sessionStatusTool.js";
 import { sessionAvailabilityPolicy } from "./sessionAvailabilityPolicy.js";
 import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
-import { logToolExecution } from "./toolLogging.js";
-import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { withAdmittedAnalysis } from "./analysisAdmission.js";
-import { runAdmittedToolOperation } from "./admittedToolOperation.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import type { ArtifactPathInspectionDependencies } from "../application/artifacts/ArtifactPathInspection.js";
 
-const recordProcessResidualUnknowns = (
-  session: BinarySessionPort,
-  evidence: Evidence,
-  residuals: ProcessCapture["residual_unknowns"],
-): Result<null, AnalysisError> => {
-  for (const residual of residuals) {
-    const input = workflowUnknownInput(evidence.evidence_id, {
-      question: `Was ${residual.scope} behavior fully observed during capture?`,
-      severity: "medium",
-      domain: `process-${residual.scope}`,
-      required_authority: "controlled-replay",
-      required_confidence: "observed",
-      required_environment: evidence.environment,
-      recommended_probes: [
-        {
-          operation: "capture_process_scenario",
-          rationale:
-            "Repeat with a scenario that observes the missing behavior.",
-        },
-      ],
-      relationships: [],
-    });
-    if (!input.ok) return input;
-    const unknown = session.recordUnknown(input.value);
-    if (
-      !unknown.ok &&
-      !(
-        unknown.error instanceof UnknownRegistryError &&
-        unknown.error.reason === "already-exists"
-      )
-    )
-      return unknown;
-  }
-  return ok(null);
-};
+/** What the lifecycle and status tools of one session need. */
+interface LifecycleToolRegistration
+  extends SessionStatusToolOptions, SessionLifecycleOptions {}
 
-interface ProcessToolRegistration {
-  readonly server: EvidenceMcpServer;
-  readonly session: BinarySessionPort;
-  readonly logger: Logger;
-  readonly captureContract: ReturnType<
-    typeof toolContract<"capture_process_scenario">
-  >;
-  readonly resourceScope: ProcessCaptureResourceScope;
-  readonly environment: Readonly<NodeJS.ProcessEnv>;
-  readonly platform: NodeJS.Platform;
-}
-
-const registerProcessTools = ({
-  server,
-  session,
-  logger,
-  captureContract,
-  resourceScope,
-  environment,
-  platform,
-}: ProcessToolRegistration): void => {
-  const admission = withAdmittedAnalysis({ kind: "session", session });
-  server.registerTool(
-    captureContract.name,
-    toolRegistrationOptions(captureContract),
-    async (input, context) =>
-      runAdmittedToolOperation(
-        server,
-        admission,
-        captureContract.name,
-        context.mcpReq.signal,
-        async () => {
-          const progress = mcpProgressReporter(context);
-          if (input.dry_run) {
-            const prepared = await logToolExecution(
-              logger,
-              captureContract.name,
-              () =>
-                prepareProcessScenarioPlan(
-                  input,
-                  environment,
-                  platform,
-                  context.mcpReq.signal,
-                ),
-            );
-            if (!prepared.ok)
-              return server.delivery.toCallToolResult(
-                prepared,
-                captureContract,
-              );
-            const evidence = createProcessScenarioPlanEvidence(
-              prepared.value,
-              platform,
-            );
-            const recorded = session.recordEvidence(evidence);
-            if (!recorded.ok)
-              return server.delivery.toCallToolResult(
-                recorded,
-                captureContract,
-              );
-            return server.delivery.toEvidenceToolResult(
-              evidence,
-              captureContract,
-              recorded,
-            );
-          }
-          const captured = await logToolExecution(
-            logger,
-            captureContract.name,
-            () =>
-              captureProcessScenario(
-                input,
-                context.mcpReq.signal,
-                platform,
-                environment,
-                undefined,
-                undefined,
-                progress,
-                resourceScope,
-              ),
-          );
-          if (!captured.ok)
-            return server.delivery.toCallToolResult(captured, captureContract);
-          const evidence = createProcessCaptureEvidence(input, captured.value);
-          const recorded = session.recordEvidence(evidence);
-          if (!recorded.ok)
-            return server.delivery.toCallToolResult(recorded, captureContract);
-          const unknowns = recordProcessResidualUnknowns(
-            session,
-            evidence,
-            captured.value.residual_unknowns,
-          );
-          if (!unknowns.ok)
-            return server.delivery.toCallToolResult(unknowns, captureContract);
-          return server.delivery.toEvidenceToolResult(
-            evidence,
-            captureContract,
-            recorded,
-          );
-        },
-      ),
-  );
-};
-
-export interface LifecycleToolRegistration extends CapabilityAvailabilityProbes {
-  readonly server: EvidenceMcpServer;
-  readonly session: BinarySessionPort;
-  readonly logger: Logger;
-  readonly openContract: ReturnType<typeof toolContract<"open_binary">>;
-  readonly closeContract: ReturnType<typeof toolContract<"close_binary">>;
-  readonly startedAt: string;
-  readonly availabilityPolicy: () => AvailabilityPolicy;
-  readonly artifactResources: ArtifactResourceScope;
-  readonly closeProcessResources: () => Promise<Result<null, AnalysisError>>;
-}
-
+/** Close, reset and status run outside analysis admission; the session orders them. */
 const registerLifecycleTools = (
   registration: LifecycleToolRegistration,
 ): void => {
-  registerOpenLifecycleTool(registration);
-  registerCloseLifecycleTool(registration);
-  registerResetInvestigationTool(registration);
   registerServiceTools(
     registration.server,
-    { sessionStatus: registration },
+    { sessionLifecycle: registration, sessionStatus: registration },
     { logger: registration.logger },
-  );
-};
-
-const registerOpenLifecycleTool = ({
-  server,
-  session,
-  logger,
-  openContract,
-}: LifecycleToolRegistration): void => {
-  server.registerTool(
-    openContract.name,
-    toolRegistrationOptions(openContract),
-    async (input, context) => {
-      const snapshotPath = input.snapshot_path;
-      const opened = await logToolExecution(logger, openContract.name, () =>
-        session.open(input.path, {
-          signal: context.mcpReq.signal,
-          ...openBinaryTargetSelection(input),
-          ...(input.provider_id === undefined
-            ? {}
-            : { providerId: input.provider_id }),
-          ...(snapshotPath === undefined
-            ? {}
-            : {
-                // Read inside the open's turn: calls issued after it must not
-                // overtake a file read that precedes its place in the order.
-                loadSnapshot: () =>
-                  session.readAnalysisSnapshot(
-                    snapshotPath,
-                    context.mcpReq.signal,
-                  ),
-              }),
-        }),
-      );
-      return opened.ok
-        ? server.delivery.toCallToolResult(
-            {
-              ok: true,
-              value: binaryTargetSummary(opened.value),
-            },
-            openContract,
-          )
-        : server.delivery.toOpenFailureToolResult(
-            opened,
-            openContract.returnsTargetContent,
-          );
-    },
   );
 };
 
@@ -265,71 +42,9 @@ export interface SessionToolOptions extends Partial<CapabilityAvailabilityProbes
   readonly platform: NodeJS.Platform;
   readonly startedAt?: string;
   readonly availabilityPolicy?: () => AvailabilityPolicy;
+  /** Inventories compare_artifacts path sources. */
+  readonly createArtifactPathInspection?: () => Promise<ArtifactPathInspectionDependencies>;
 }
-
-const registerContextTools = (
-  server: EvidenceMcpServer,
-  session: BinarySessionPort,
-): void => {
-  const navigationContract = toolContract("get_navigation_context");
-  const addressContract = toolContract("inspect_address_context");
-  const admission = withAdmittedAnalysis({ kind: "session", session });
-  server.registerTool(
-    navigationContract.name,
-    toolRegistrationOptions(navigationContract),
-    async (input, context) => {
-      const admitted = await admission(
-        navigationContract.name,
-        context.mcpReq.signal,
-        async (analysis) =>
-          server.delivery.toCallToolResult(
-            await getNavigationContext(analysis, input, context.mcpReq.signal),
-            navigationContract,
-          ),
-      );
-      return admitted.ok
-        ? admitted.value
-        : server.delivery.toCallToolResult(admitted, navigationContract);
-    },
-  );
-  server.registerTool(
-    addressContract.name,
-    toolRegistrationOptions(addressContract),
-    async (input, context) => {
-      const admitted = await admission(
-        addressContract.name,
-        context.mcpReq.signal,
-        async (analysis) => {
-          const result = await inspectAddressContext(
-            analysis,
-            input,
-            context.mcpReq.signal,
-          );
-          if (!result.ok)
-            return server.delivery.toCallToolResult(result, addressContract);
-          const value = result.value;
-          return server.delivery.toCallToolResult(
-            result,
-            addressContract,
-            {},
-            (failure, budgetBytes) =>
-              (function* () {
-                for (const alternative of omitContextEvidenceForDelivery(
-                  value,
-                  failure,
-                  budgetBytes,
-                ))
-                  yield { result: alternative };
-              })(),
-          );
-        },
-      );
-      return admitted.ok
-        ? admitted.value
-        : server.delivery.toCallToolResult(admitted, addressContract);
-    },
-  );
-};
 
 export const registerSessionTools = (
   server: EvidenceMcpServer,
@@ -337,54 +52,12 @@ export const registerSessionTools = (
   logger: Logger,
   options: SessionToolOptions,
 ): void => {
-  const openContract = toolContract("open_binary");
-  const openBundleResourcesContract = toolContract("open_bundle_resources");
-  const closeContract = toolContract("close_binary");
-  const exportContract = toolContract("export_evidence_bundle");
-  const importContract = toolContract("import_evidence_bundle");
-  const captureContract = toolContract("capture_process_scenario");
-  const snapshotContract = toolContract("get_evidence_bundle");
   const processResources = new ProcessCaptureResourceScope();
-  server.registerTool(
-    openBundleResourcesContract.name,
-    toolRegistrationOptions(openBundleResourcesContract),
-    async (input, context) => {
-      const opened = await logToolExecution(
-        logger,
-        openBundleResourcesContract.name,
-        () =>
-          session.openBundleResources(input.path, {
-            signal: context.mcpReq.signal,
-          }),
-      );
-      if (!opened.ok)
-        return server.delivery.toCallToolResult(
-          opened,
-          openBundleResourcesContract,
-        );
-      const root = opened.value;
-      return server.delivery.toCallToolResult(
-        {
-          ok: true,
-          value: {
-            caller_path: root.callerPath,
-            canonical_path: root.canonicalPath,
-            info_plist_path: root.infoPlistPath,
-            layout: root.layout,
-            executable_sha256: root.executableSha256,
-          },
-        },
-        openBundleResourcesContract,
-      );
-    },
-  );
   registerLifecycleTools({
     ...options,
     server,
     session,
     logger,
-    openContract,
-    closeContract,
     startedAt: options.startedAt ?? new Date().toISOString(),
     availabilityPolicy: sessionAvailabilityPolicy(
       options.availabilityPolicy,
@@ -419,70 +92,69 @@ export const registerSessionTools = (
       }
     },
   });
-  registerEvidenceTools({
-    server,
-    session,
-    resources: options.artifactResources,
-    exportContract,
-    importContract,
-    snapshotContract,
+  server.registerCloseHook(() => processResources.close(), {
+    failureMessage: "REA session cleanup failed",
+    alwaysAggregate: true,
   });
-  registerProcessTools({
-    server,
-    session,
-    logger,
-    captureContract,
-    resourceScope: processResources,
-    environment: options.environment,
-    platform: options.platform,
+  server.registerTransportCloseHook(() => {
+    void processResources.close().catch((cause: unknown) => {
+      logger.error(
+        { error: errorMessage(cause) },
+        "Process capture cleanup failed during server shutdown",
+      );
+    });
   });
-  const closeServer = server.close.bind(server);
-  server.close = async () => {
-    const results = await Promise.allSettled([
-      closeServer(),
-      processResources.close(),
-    ]);
-    const failures = results.flatMap((result) =>
-      result.status === "rejected" ? [result.reason] : [],
-    );
-    if (failures.length > 0)
-      throw new AggregateError(failures, "REA session cleanup failed");
-  };
-  const previousOnclose = server.server.onclose;
-  server.server.onclose = () => {
-    try {
-      previousOnclose?.();
-    } finally {
-      void processResources.close().catch((cause: unknown) => {
-        logger.error(
-          { error: errorMessage(cause) },
-          "Process capture cleanup failed during server shutdown",
-        );
-      });
-    }
-  };
   registerServiceTools(
     server,
     {
-      sessionDerived: { session, resources: options.artifactResources },
+      binaryTarget: session,
+      analysisContext: {},
+      processCapture: {
+        session,
+        environment: options.environment,
+        platform: options.platform,
+        resources: processResources,
+      },
+      sessionDerived: {
+        session,
+        resources: options.artifactResources,
+        createArtifactPathInspection: options.createArtifactPathInspection,
+      },
+      sessionRecords: { session, resources: options.artifactResources },
     },
-    { logger },
+    {
+      logger,
+      withAdmittedAnalysis: withAdmittedAnalysis({ kind: "session", session }),
+    },
   );
-  registerNativeFunctionMatchingTool(
+  // Native matching records in the session itself and reads each accepted
+  // call's settings snapshot over the launch value.
+  registerServiceTools(
     server,
-    session,
-    logger,
-    options.environment,
+    {
+      nativeFunctionMatching: {
+        session,
+        allowance: runtimeNativeMatchingAllowance(
+          options.environment,
+          server.analysisSettings?.read,
+        ),
+      },
+    },
+    {
+      logger,
+      recordEvidence: (evidence) => session.recordEvidence(evidence),
+      withAdmittedAnalysis: withAdmittedAnalysis({ kind: "session", session }),
+    },
   );
-  registerUnknownTools({ server, session });
-  registerContextTools(server, session);
 };
 
 const missingAndroidAvailability = async (): Promise<ProviderAvailability> => ({
   status: "unavailable",
   code: "not_configured",
   reason: "No Android JADX analysis provider is configured.",
+  // The Android boundary owns the versioned remediation; this composition
+  // default names no release so it cannot drift from the pinned engine.
   remediation:
-    "Set REA_JADX_MCP_JAR to the jadx-headless-mcp 0.7.1 release JAR (rea doctor --provider jadx names its download URL and SHA-256) and provide a full JDK on Linux, macOS, or Windows x64 with its matching bundled native controls.",
+    "Set REA_JADX_MCP_JAR to a caller-supplied jadx-headless-mcp JAR (rea doctor --provider jadx names its download URL and SHA-256) and provide a full JDK on Linux, macOS, or Windows x64 with its matching bundled native controls.",
   diagnostics: { configured: false },
 });

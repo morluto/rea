@@ -1,4 +1,4 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { connectFixtureClient } from "../support/mcp/mcpFixture.js";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { afterEach, expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -18,15 +18,12 @@ afterEach(async () => {
   vi.unstubAllEnvs();
 });
 
-const connect = async (server: EvidenceMcpServer) => {
-  const client = new Client({ name: "selected-delivery", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  return client;
-};
+const connect = (server: EvidenceMcpServer) =>
+  connectFixtureClient(
+    server,
+    { name: "selected-delivery", version: "1" },
+    resources,
+  );
 
 it("keeps independent server budgets for successful results and oversized errors after environment mutation", async () => {
   const smallBudget = STDIO_DEFAULT_MAX_BUFFER_SIZE;

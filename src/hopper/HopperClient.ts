@@ -15,6 +15,7 @@ import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import {
   analysisErrorWithCloseRejection,
   analysisErrorWithCloseRejections,
+  withInheritedCleanupOwnership,
 } from "../domain/analysisErrorCleanup.js";
 import { analysisClientFailureContext } from "../providers/AnalysisClientFailure.js";
 import {
@@ -22,7 +23,7 @@ import {
   OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import {
-  hopperBridgeReplyContracts,
+  hopperReplySchemas,
   parseHopperReply,
   type HopperBridgeReplyContracts,
   type ValueKeepingContracts,
@@ -32,8 +33,9 @@ import {
   type HopperServerInfo,
 } from "./HopperReplyContracts.js";
 import {
+  hopperAppleEventsAuthorizationRejection,
   hopperCancelledBySignal,
-  type HopperCancelledError,
+  HopperCancelledError,
   type HopperError,
   type HopperLauncherOutcome,
   HopperProcessError,
@@ -41,13 +43,13 @@ import {
   HopperRemoteError,
   HopperStartError,
   HopperTimeoutError,
-} from "../domain/hopperErrors.js";
+} from "./HopperErrors.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import {
   hopperStartupFailure,
   type HopperStartupFailureDiagnostic,
-} from "../domain/hopperStartupFailure.js";
+} from "./HopperStartupFailure.js";
 import {
   providerRetryAction,
   sharedProviderFailureStage,
@@ -68,13 +70,19 @@ import {
 } from "../process/ProviderDeadline.js";
 import { redactExplicitOutput } from "../domain/explicitSensitiveValues.js";
 import { ProviderRunLineage } from "../process/ProviderRunLineage.js";
-import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
+import {
+  AbortedWait,
+  waitForAbortable,
+  waitForRetainedResult,
+} from "../process/AbortablePromise.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import {
   type ProviderProcessDiagnostic,
   ProviderProcessSupervisor,
 } from "../process/ProviderProcess.js";
 import { observeProcessStartIdentity } from "../process/ProcessOwnershipObservation.js";
+import { retainArtifactCommandCleanup } from "../providers/OwnedCommandCleanup.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import type { BridgeLaunch, BridgeLauncher } from "./BridgeLauncher.js";
 import { hopperOperationStage } from "./HopperOperationStage.js";
 import type { HopperDiagnostic } from "./HopperDiagnostics.js";
@@ -107,6 +115,7 @@ import {
 import {
   HopperRequestQueue,
   type HopperRequestActivity,
+  type HopperRequestFailure,
 } from "./HopperRequestQueue.js";
 import {
   type HopperBridgeEvent,
@@ -198,6 +207,7 @@ export class HopperClient<
     runtimeRoot: undefined,
     shutdownConfirmed: false,
     externalApplication: undefined,
+    inspections: new ArtifactResourceScope(),
   };
   #token: string | undefined;
   /** Reply ceiling admitted with the request on the wire; the default before any. */
@@ -278,7 +288,7 @@ export class HopperClient<
     // typed refusal per method (see #typedReply), never a throw.
     this.#contracts =
       options.replyContracts ??
-      (hopperBridgeReplyContracts as unknown as Contracts &
+      (hopperReplySchemas as unknown as Contracts &
         ValueKeepingContracts<Contracts>);
     this.#options = {
       ...options,
@@ -495,9 +505,9 @@ export class HopperClient<
     attempt: HopperStartupAttempt,
     signal?: AbortSignal,
   ): Promise<HopperStartupResult> {
-    const waited = await waitForAbortable(attempt.promise, signal);
-    if (waited instanceof AbortedWait || (waited.ok && isAborted(signal)))
-      return err(hopperCancelledBySignal(signal));
+    const waited = await waitForRetainedResult(attempt.promise, signal);
+    if (waited instanceof AbortedWait)
+      return err(new HopperCancelledError(waited.carried));
     if (waited.ok || waited.error.cleanupIncomplete) return waited;
     return this.start(signal);
   }
@@ -537,10 +547,11 @@ export class HopperClient<
     };
     deadline.signal.addEventListener("abort", onStartupAbort, { once: true });
     try {
-      const result = await this.#startWithin(deadline);
-      return result.ok && deadline.signal.aborted
-        ? await this.#startupFailure(await this.#interruptionFailure(deadline))
-        : result;
+      return await deadline.finishStartup(
+        () => this.#startWithin(deadline),
+        async () =>
+          this.#startupFailure(await this.#interruptionFailure(deadline)),
+      );
     } finally {
       deadline.signal.removeEventListener("abort", onStartupAbort);
       if (this.#startupSignal === deadline.signal)
@@ -702,6 +713,13 @@ export class HopperClient<
       try {
         identity = await observeProcessStartIdentity(parsed.value.processId);
       } catch (cause: unknown) {
+        // The identity stays unavailable; descriptors the read left open stay
+        // owned until session cleanup releases them.
+        retainArtifactCommandCleanup(
+          cause,
+          this.#resources.inspections,
+          "open_binary",
+        );
         identity = {
           state: "unavailable" as const,
           reason:
@@ -828,11 +846,7 @@ export class HopperClient<
       source.safeMessage,
       analysisClientFailureContext(source, "hopper", name),
     );
-    return err(
-      source.cleanupIncomplete
-        ? failure.bindCleanupDependencies([source])
-        : failure,
-    );
+    return err(withInheritedCleanupOwnership(failure, source));
   }
 
   /** Stop the bridge and report whether every owned resource was verified clean. */
@@ -1201,10 +1215,7 @@ export class HopperClient<
     ) {
       this.#resources.shutdownConfirmed = true;
       return new HopperStartError({
-        launchRejection: {
-          boundary: "apple_events_authorization",
-          reason: "not_authorized",
-        },
+        launchRejection: hopperAppleEventsAuthorizationRejection,
         launcherFailure,
       });
     }
@@ -1296,7 +1307,7 @@ export class HopperClient<
         bridgeRequestOversizeError(
           method,
           requestLimit.value,
-          measured,
+          { bytesAtLeast: measured },
           "Hopper",
         ),
       );
@@ -1469,7 +1480,7 @@ export class HopperClient<
     this.#socket?.destroy();
   }
 
-  #failAll(error: HopperError): void {
+  #failAll(error: HopperRequestFailure): void {
     this.#requests.failAll(error);
   }
 
@@ -1486,7 +1497,7 @@ export class HopperClient<
   }
 
   #retainRequestHealth(
-    result: Result<JsonValue, HopperError>,
+    result: Result<JsonValue, AnalysisError>,
     requestId: number,
     operation: string,
   ): void {

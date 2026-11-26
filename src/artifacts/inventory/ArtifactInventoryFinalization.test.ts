@@ -5,16 +5,21 @@ import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { ArtifactProvider } from "../ArtifactProvider.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  malformedArtifact,
+} from "../../resources/ArtifactReader.js";
 import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
-import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
+import {
+  ZipArtifactReader,
+  DirectoryArtifactReader,
+} from "../../resources/index.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import {
   scanCanonicalArtifactInventoryForExtractionInScope,
   scanCanonicalArtifactInventoryInScope,
 } from "./scanCanonical.js";
-import { ZipArtifactReader } from "../../resources/index.js";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -173,10 +178,7 @@ it("keeps an earlier inventory failure primary when cleanup is cancelled", async
   const { path } = await zipFixture();
   const scope = new ArtifactResourceScope();
   const controller = new AbortController();
-  const primary = new ArtifactReaderFailure(
-    "format",
-    "member enumeration failed",
-  );
+  const primary = malformedArtifact("zip", "member enumeration failed");
   const enumeration = vi
     .spyOn(ZipArtifactReader.prototype, "entries")
     .mockImplementation(async function* () {

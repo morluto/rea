@@ -1,3 +1,7 @@
+import {
+  availableFixtureProvider,
+  supportedFixtureTarget,
+} from "../../../fixtures/analysisExecution.js";
 import type { ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { rm } from "node:fs/promises";
@@ -30,6 +34,7 @@ import {
   transportReplyContracts,
   type TransportHopperClient,
 } from "./hopperClient.fixture.js";
+import { ArtifactResourceScope } from "../../../../src/resources/index.js";
 
 const identities = {
   hopper: { id: "hopper", name: "Hopper fixture", version: null },
@@ -65,18 +70,8 @@ const makeCandidate = (
   return {
     identity: () => identity,
     capabilities: () => [capability],
-    inspectAvailability: () => ({
-      status: "available",
-      code: null,
-      reason: null,
-      diagnostics: {},
-    }),
-    inspectTargetSupport: () => ({
-      status: "supported",
-      code: null,
-      reason: null,
-      diagnostics: {},
-    }),
+    inspectAvailability: availableFixtureProvider,
+    inspectTargetSupport: supportedFixtureTarget,
     resolveAnalysisProfile: () =>
       Promise.resolve(
         ok({
@@ -235,6 +230,7 @@ it.skipIf(process.platform === "win32")(
       processSupervisor: undefined,
       runtimeRoot,
       shutdownConfirmed: false,
+      inspections: new ArtifactResourceScope(),
       externalApplication: {
         pid: started.value.processId,
         identity,

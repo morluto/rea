@@ -36,26 +36,15 @@ const session = async (
   const { root, target } = await createIdaTarget();
   roots.push(root);
   const producer = new RecordingIdaMcp(target, mode);
-  const fn = {
-    [mode === "attached" ? "address" : "addr"]: "0x1000",
-    name: "main",
-    ...fields,
-  };
-  const page = { data: [fn], next_offset: null };
+  const fn = { addr: "0x1000", name: "main", ...fields };
+  const inventory = [{ data: [fn], next_offset: null }];
   const lookup = [{ query: "main", fn, error: null }];
   producer.overrideCall = (name) => {
     switch (name) {
-      case "list_functions":
-        return page;
       case "list_funcs":
-        return [page];
-      case "get_function_by_name":
-        return fn;
+        return inventory;
       case "lookup_funcs":
         return lookup;
-      case "get_callers":
-      case "get_callees":
-        return [];
       case "callees":
         return [{ callees: [], more: false }];
       default:
@@ -68,19 +57,14 @@ const session = async (
       args: [],
       env: {},
       mode,
-      protocol: mode === "attached" ? "legacy" : "modern",
+      protocol: mode === "attached" ? "native" : "modern",
       timeoutMs: 1000,
       workspaceRoot: root,
     },
     target,
     producer,
   );
-  return {
-    client,
-    inventoryObservation: mode === "attached" ? page : [page],
-    lookupObservation: mode === "attached" ? fn : lookup,
-    lookupTool: mode === "attached" ? "get_function_by_name" : "lookup_funcs",
-  };
+  return { client, inventoryObservation: inventory, lookupObservation: lookup };
 };
 
 describe.each(["attached", "headless"] as const)(
@@ -101,12 +85,9 @@ describe.each(["attached", "headless"] as const)(
           expect(inventory.value.result).toEqual([
             { address: "0x1000", value: "main" },
           ]);
-          expect(
-            observation(
-              inventory.value.rawResult,
-              mode === "attached" ? "list_functions" : "list_funcs",
-            ),
-          ).toEqual(fixture.inventoryObservation);
+          expect(observation(inventory.value.rawResult, "list_funcs")).toEqual(
+            fixture.inventoryObservation,
+          );
 
           const analyzed = await fixture.client.execute("analyze_function", {
             procedure: "main",
@@ -118,9 +99,9 @@ describe.each(["attached", "headless"] as const)(
             name: "main",
             body: { available: false, reason: expect.any(String) },
           });
-          expect(
-            observation(analyzed.value.rawResult, fixture.lookupTool),
-          ).toEqual(fixture.lookupObservation);
+          expect(observation(analyzed.value.rawResult, "lookup_funcs")).toEqual(
+            fixture.lookupObservation,
+          );
         } finally {
           expect((await fixture.client.close()).ok).toBe(true);
         }
@@ -129,7 +110,8 @@ describe.each(["attached", "headless"] as const)(
 
     it.each<IdentityCase>([
       { label: "address", fields: { address: "invalid", addr: "invalid" } },
-      { label: "name", fields: { name: null } },
+      { label: "null name", fields: { name: null } },
+      { label: "empty name", fields: { name: "" } },
     ])("rejects malformed $label despite unused size", async ({ fields }) => {
       const fixture = await session(mode, {
         ...fields,
@@ -152,11 +134,7 @@ describe.each(["attached", "headless"] as const)(
           expect(
             observation(
               partial.raw_result,
-              operation === "list_procedures"
-                ? mode === "attached"
-                  ? "list_functions"
-                  : "list_funcs"
-                : fixture.lookupTool,
+              operation === "list_procedures" ? "list_funcs" : "lookup_funcs",
             ),
           ).toEqual(
             operation === "list_procedures"
@@ -170,3 +148,30 @@ describe.each(["attached", "headless"] as const)(
     });
   },
 );
+
+it("preserves unknown native instruction body bounds despite an upstream size", async () => {
+  const { client, lookupObservation } = await session("attached", {
+    size: { bytes: 32 },
+  });
+  try {
+    const result = await client.execute("read_function_instructions", {
+      procedure: "main",
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.result).toMatchObject({
+      procedure: {
+        address: "0x1000",
+        name: "main",
+        body: {
+          available: false,
+          reason: expect.stringContaining("complete function body ranges"),
+        },
+      },
+    });
+    expect(observation(result.value.rawResult, "lookup_funcs")).toEqual(
+      lookupObservation,
+    );
+  } finally {
+    expect((await client.close()).ok).toBe(true);
+  }
+});

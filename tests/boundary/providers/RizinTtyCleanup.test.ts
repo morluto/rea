@@ -1,13 +1,13 @@
-import { isatty } from "node:tty";
-import { open } from "node:fs/promises";
+import { open, realpath, writeFile, type FileHandle } from "node:fs/promises";
+import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { createInjectedProcess } from "./RizinDebugSessionCoverage.fixtures.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
+import { rizinTestInferiorTty } from "./RizinTestInferiorTty.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
-
-vi.mock("node:tty", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:tty")>();
-  return { ...actual, isatty: vi.fn(actual.isatty) };
-});
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -17,28 +17,15 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 it.skipIf(process.platform === "win32")(
   "retains the TTY descriptor when its close fails",
   async () => {
-    const actual =
-      await vi.importActual<typeof import("node:fs/promises")>(
-        "node:fs/promises",
-      );
     const closeFailure = new Error("TTY descriptor close refused");
     let closeCalls = 0;
-    let closeFixture: (() => Promise<void>) | undefined;
     let allowClose = false;
-    vi.mocked(open).mockImplementation(async (...args) => {
-      const handle = await actual.open(...args);
-      const close = handle.close.bind(handle);
-      closeFixture = close;
+    await instrumentDescriptor("/dev/null", (handle, close) => {
       vi.spyOn(handle, "close").mockImplementation(async () => {
         closeCalls++;
         if (!allowClose) throw closeFailure;
         await close();
       });
-      return handle;
-    });
-    onTestFinished(async () => {
-      await closeFixture?.().catch(() => undefined);
-      vi.restoreAllMocks();
     });
     const manager = new RizinDebugSessionManager(
       {},
@@ -84,21 +71,10 @@ it.skipIf(process.platform === "win32")(
 it.skipIf(process.platform === "win32")(
   "does not spawn Rizin when cancellation arrives during TTY validation",
   async () => {
-    const actual =
-      await vi.importActual<typeof import("node:fs/promises")>(
-        "node:fs/promises",
-      );
-    vi.mocked(isatty).mockReturnValue(true);
+    const tty = await realpath(await rizinTestInferiorTty());
     const controller = new AbortController();
     const reason = { cancelled: "during TTY validation" };
-    vi.mocked(open).mockImplementation(async (...args) => {
-      const handle = await actual.open(...args);
-      controller.abort(reason);
-      return handle;
-    });
-    onTestFinished(() => {
-      vi.restoreAllMocks();
-    });
+    await instrumentDescriptor(tty, () => controller.abort(reason));
     let spawned = false;
     const manager = new RizinDebugSessionManager(
       {},
@@ -111,7 +87,7 @@ it.skipIf(process.platform === "win32")(
       },
     );
     const result = await manager.start(
-      { path: "/fixture", inferior_tty: "/dev/null" },
+      { path: "/fixture", inferior_tty: tty },
       controller.signal,
     );
     expect(result).toMatchObject({
@@ -126,19 +102,11 @@ it.skipIf(process.platform === "win32")(
 it.skipIf(process.platform === "win32")(
   "preserves cancellation during final TTY close with failed cleanup",
   async () => {
-    const actual =
-      await vi.importActual<typeof import("node:fs/promises")>(
-        "node:fs/promises",
-      );
-    vi.mocked(isatty).mockReturnValue(true);
+    const tty = await realpath(await rizinTestInferiorTty());
     const controller = new AbortController();
     const reason = { cancelled: "during TTY close" };
-    let releaseFixture: (() => Promise<void>) | undefined;
     let closeCalls = 0;
-    vi.mocked(open).mockImplementation(async (...args) => {
-      const handle = await actual.open(...args);
-      const close = handle.close.bind(handle);
-      releaseFixture = close;
+    await instrumentDescriptor(tty, (handle, close) => {
       vi.spyOn(handle, "close").mockImplementation(async () => {
         if (++closeCalls === 1) {
           controller.abort(reason);
@@ -146,11 +114,6 @@ it.skipIf(process.platform === "win32")(
         }
         await close();
       });
-      return handle;
-    });
-    onTestFinished(async () => {
-      await releaseFixture?.().catch(() => undefined);
-      vi.restoreAllMocks();
     });
     const manager = new RizinDebugSessionManager(
       {},
@@ -162,7 +125,7 @@ it.skipIf(process.platform === "win32")(
       },
     );
     const result = await manager.start(
-      { path: "/fixture", inferior_tty: "/dev/null" },
+      { path: "/fixture", inferior_tty: tty },
       controller.signal,
     );
     if (result.ok) throw new Error("expected cancellation");
@@ -176,27 +139,17 @@ it.skipIf(process.platform === "win32")(
 it.skipIf(process.platform === "win32")(
   "retries a failed TTY owner without stopping a released session again",
   async () => {
-    const actual =
-      await vi.importActual<typeof import("node:fs/promises")>(
-        "node:fs/promises",
-      );
-    vi.mocked(isatty).mockReturnValue(true);
+    const tty = await realpath(await rizinTestInferiorTty());
     let opens = 0;
     let closeCalls = 0;
     let allowClose = false;
-    let releaseFixture: (() => Promise<void>) | undefined;
-    vi.mocked(open).mockImplementation(async (...args) => {
-      const handle = await actual.open(...args);
-      if (++opens === 2) {
-        const close = handle.close.bind(handle);
-        releaseFixture = close;
+    await instrumentDescriptor(tty, (handle, close) => {
+      if (++opens === 2)
         vi.spyOn(handle, "close").mockImplementation(async () => {
           closeCalls++;
           if (!allowClose) throw new Error("TTY close denied");
           await close();
         });
-      }
-      return handle;
     });
     const injected = createInjectedProcess();
     let stops = 0;
@@ -212,19 +165,15 @@ it.skipIf(process.platform === "win32")(
         },
       },
     );
-    onTestFinished(async () => {
-      injected.control.exit();
-      await releaseFixture?.().catch(() => undefined);
-      vi.restoreAllMocks();
-    });
+    onTestFinished(() => injected.control.exit());
     const first = await manager.start({
       path: "/fixture",
-      inferior_tty: "/dev/null",
+      inferior_tty: tty,
     });
     if (!first.ok) throw first.error;
     const second = await manager.start({
       path: "/fixture",
-      inferior_tty: "/dev/null",
+      inferior_tty: tty,
     });
     if (second.ok) throw new Error("expected failed TTY close");
     await expect(manager.closeAll()).rejects.toThrow();
@@ -235,5 +184,163 @@ it.skipIf(process.platform === "win32")(
     expect(stops).toBe(1);
     expect(closeCalls).toBe(3);
     expect(second.error.cleanupIncomplete).toBe(false);
+  },
+);
+
+type Debugger = "rizin" | "gdb";
+
+const instrumentDescriptor = async (
+  path: string,
+  instrument: (handle: FileHandle, close: () => Promise<void>) => void,
+) => {
+  const actual =
+    await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises",
+    );
+  const releases: Array<() => Promise<void>> = [];
+  vi.mocked(open).mockImplementation(async (...args) => {
+    const handle = await actual.open(...args);
+    if (args[0] === path) {
+      const close = handle.close.bind(handle);
+      releases.push(close);
+      instrument(handle, close);
+    }
+    return handle;
+  });
+  onTestFinished(async () => {
+    try {
+      await Promise.all(releases.map((close) => close()));
+    } finally {
+      vi.restoreAllMocks();
+      vi.mocked(open).mockImplementation(actual.open);
+    }
+  });
+};
+
+const startWithLaunchFile = async (
+  debuggerName: Debugger,
+  path: string,
+  signal?: AbortSignal,
+) => {
+  const spawnProcess = vi.fn(() => {
+    throw new Error("must not spawn before file observation settles");
+  });
+  const options = { platform: "linux" as const, spawnProcess };
+  if (debuggerName === "gdb") {
+    const manager = new GdbSessionManager(options);
+    const started = await manager.start(signal, { executable: path });
+    expect(spawnProcess).not.toHaveBeenCalled();
+    return { manager, started, operation: "start_gdb_session" };
+  }
+
+  const manager = new RizinDebugSessionManager({}, options);
+  const started = await manager.start(
+    { path, inferior_tty: await rizinTestInferiorTty() },
+    signal,
+  );
+  expect(spawnProcess).not.toHaveBeenCalled();
+  return { manager, started, operation: "start_rizin_debug_session" };
+};
+
+it.skipIf(process.platform === "win32").each(["rizin", "gdb"] as const)(
+  "keeps the %s launch file read failure when its descriptor close also fails",
+  async (debuggerName) => {
+    const directory = await createTestTempDirectory(
+      "rea-debugger-launch-read-",
+    );
+    const launchFile = join(directory, "target.bin");
+    await writeFile(launchFile, "launch bytes");
+    let closeCalls = 0;
+    await instrumentDescriptor(launchFile, (handle, close) => {
+      vi.spyOn(handle, "read").mockRejectedValue(
+        new Error("launch file read refused"),
+      );
+      vi.spyOn(handle, "close").mockImplementation(async () => {
+        if (++closeCalls === 1) throw new Error("launch file close refused");
+        await close();
+      });
+    });
+
+    const { manager, started, operation } = await startWithLaunchFile(
+      debuggerName,
+      launchFile,
+    );
+    if (started.ok) throw new Error("expected the failed close to fail start");
+    expect(projectAnalysisError(started.error)).toMatchObject({
+      code: "cleanup_incomplete",
+      details: {
+        operation,
+        resources: [launchFile],
+        diagnostics: {
+          launch_file_hash_failure: expect.stringContaining(
+            "launch file read refused",
+          ),
+        },
+      },
+    });
+    expect(closeCalls).toBe(1);
+    expect((await manager.retryCleanupFailures()).ok).toBe(true);
+    expect(closeCalls).toBe(2);
+    expect(started.error.cleanupIncomplete).toBe(false);
+    await manager.closeAll();
+  },
+);
+
+it.skipIf(process.platform === "win32").each([
+  { debuggerName: "gdb", cancel: false, closeFails: true },
+  { debuggerName: "rizin", cancel: true, closeFails: false },
+  { debuggerName: "rizin", cancel: true, closeFails: true },
+  { debuggerName: "gdb", cancel: true, closeFails: true },
+] as const)(
+  "preserves a completed $debuggerName launch hash (cancel: $cancel, close fails: $closeFails)",
+  async ({ debuggerName, cancel, closeFails }) => {
+    const directory = await createTestTempDirectory("rea-debugger-hash-close-");
+    const launchFile = join(directory, "target.bin");
+    const contents = "completed launch-file observation";
+    await writeFile(launchFile, contents);
+    const completed = {
+      completed_hash: {
+        sha256: createHash("sha256").update(contents).digest("hex"),
+        bytes: Buffer.byteLength(contents),
+      },
+    };
+    const controller = new AbortController();
+    const reason = { cancelled: "after launch hash" };
+    let closeCalls = 0;
+    await instrumentDescriptor(launchFile, (handle, close) => {
+      vi.spyOn(handle, "close").mockImplementation(async () => {
+        if (++closeCalls === 1 && closeFails) {
+          if (cancel) controller.abort(reason);
+          throw new Error("launch file close refused");
+        }
+        await close();
+        if (cancel && closeCalls === 1) controller.abort(reason);
+      });
+    });
+
+    const { manager, started, operation } = await startWithLaunchFile(
+      debuggerName,
+      launchFile,
+      controller.signal,
+    );
+    if (started.ok) throw new Error("expected finalization to fail startup");
+    expect(started.error.cleanupIncomplete).toBe(closeFails);
+    const observed = started.error.cleanupPrimary ?? started.error;
+    expect(projectAnalysisError(observed).details).toMatchObject({
+      operation,
+      diagnostics: completed,
+    });
+    if (cancel) {
+      expect(observed._tag).toBe("AnalysisCancelledError");
+      expect(observed.cause).toBe(reason);
+    }
+    expect(closeCalls).toBe(1);
+    expect((await manager.retryCleanupFailures()).ok).toBe(true);
+    expect(started.error.cleanupIncomplete).toBe(false);
+    expect(closeCalls).toBe(closeFails ? 2 : 1);
+    expect(
+      projectAnalysisError(started.error).details?.diagnostics,
+    ).toMatchObject(completed);
+    await manager.closeAll();
   },
 );

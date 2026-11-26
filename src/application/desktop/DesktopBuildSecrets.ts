@@ -25,7 +25,7 @@ import type {
   AgentEnvComputer,
   DriverResult,
 } from "../../desktop/AgentEnvComputer.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import {
   listBuildSecretHandles,
   readBuildSecretFile,

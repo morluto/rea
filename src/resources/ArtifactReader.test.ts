@@ -56,3 +56,32 @@ it.each([
     expect(second.cause).toBe(first);
   },
 );
+
+it("requires an integrity failure to name its check, including when rebuilt", () => {
+  // @ts-expect-error An integrity failure names the check that failed.
+  void new ArtifactReaderFailure("integrity", "unnamed integrity failure");
+  const primary = new ArtifactReaderFailure("integrity", "carrier changed", {
+    integrityCheck: "container-identity",
+  });
+  const rebuilt = new ArtifactReaderFailure(primary.reason, primary.message, {
+    cause: primary,
+    ...primary.primaryFacts(),
+  });
+  expect(rebuilt.integrityCheck).toBe("container-identity");
+  const reason: ArtifactReaderFailure["reason"] = primary.reason;
+  // @ts-expect-error A rebuild with a non-literal reason carries the check.
+  void new ArtifactReaderFailure(reason, "rebuilt without its check");
+});
+
+it("keeps a file-size refusal's observed size through a rebuild", () => {
+  const primary = new ArtifactReaderFailure("limit", "too large", {
+    boundary: "file-size",
+    observedBytes: 4097n,
+  });
+  const rebuilt = new ArtifactReaderFailure(primary.reason, primary.message, {
+    cause: primary,
+    ...primary.primaryFacts(),
+  });
+  expect(rebuilt.observedBytes).toBe(4097n);
+  expect(rebuilt.boundary).toBe("file-size");
+});

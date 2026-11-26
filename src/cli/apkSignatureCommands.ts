@@ -2,10 +2,8 @@ import type { Logger } from "pino";
 
 import { APK_SIGNATURE_PROVIDER_IDENTITY } from "../apkSignature/ApkSignatureRelease.js";
 import { apkSignatureModule } from "../composition/apkSignature.js";
-import {
-  deliverWithService,
-  registerContractCommand,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { deliverWithService } from "./contractCommandRunners.js";
 import type { CliInstance } from "./types.js";
 
 /** CLI shares selected delivery and complete-Evidence publication with other artifact tools. */
@@ -23,7 +21,6 @@ export const registerApkSignatureCommands = (
     logger,
     apkSignatureModule.contract,
     {
-      command: apkSignatureModule.cliCommand,
       description:
         "Inspect declared APK signing schemes, signers and content digests",
       positionals: ["path"],

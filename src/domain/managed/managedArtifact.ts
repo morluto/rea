@@ -4,6 +4,10 @@ import type { CoverageStatus } from "../coverage.js";
 import { digestSchema } from "../digests.js";
 import { analysisParameterLimitSchema } from "../analysisSettingDefinitions.js";
 import { managedFieldConstantSchema } from "./managedFieldConstant.js";
+import {
+  unresolvedDefinitionsSchema,
+  validateUnresolvedDefinitions,
+} from "./managedUnresolvedDefinitions.js";
 
 /** Build-local ECMA-335 metadata token emitted as an eight-digit lowercase hex value. */
 export const managedMetadataTokenSchema = z.string().regex(/^0x[0-9a-f]{8}$/u);
@@ -56,15 +60,31 @@ const assemblyIdentitySchema = z.object({
   row_offset: offsetSchema,
 });
 
-const moduleIdentitySchema = z.object({
-  name: z.string(),
+const moduleRowCoordinates = {
   generation: z.int().min(0).max(0xffff),
   mvid: cliMetadataGuidSchema.nullable(),
   enc_id: cliMetadataGuidSchema.nullable(),
   enc_base_id: cliMetadataGuidSchema.nullable(),
   token: managedMetadataTokenSchema,
   row_offset: offsetSchema,
+};
+
+const moduleIdentitySchema = z.object({
+  name: z.string(),
+  ...moduleRowCoordinates,
 });
+
+const unresolvedModuleNameSchema = z.strictObject({
+  name: z.null(),
+  name_index: z.int().min(1).max(0xffff_ffff),
+  ...moduleRowCoordinates,
+  token: z.literal("0x00000001"),
+});
+
+export type NamedManagedModule = z.infer<typeof moduleIdentitySchema>;
+export type UnresolvedManagedModuleName = z.infer<
+  typeof unresolvedModuleNameSchema
+>;
 
 /**
  * What a managed inspection established about the CLI metadata: none present,
@@ -87,6 +107,7 @@ const managedMetadataSummarySchema = z.object({
   status: managedMetadataStatusSchema,
   version: z.string().nullable(),
   table_row_counts: z.record(z.string(), z.int().min(0).max(0xffff_ffff)),
+  unresolved_module_name: unresolvedModuleNameSchema.exactOptional(),
 });
 
 const managedTokenIdentityScopeSchema = z.object({
@@ -532,11 +553,8 @@ export const managedArtifactInspectionSchema = z.object({
       }),
     ),
   }),
-  metadata: z.object({
-    status: managedMetadataStatusSchema,
-    version: z.string().nullable(),
+  metadata: managedMetadataSummarySchema.extend({
     stream_names: z.array(z.string()),
-    table_row_counts: z.record(z.string(), z.int().min(0).max(0xffff_ffff)),
   }),
   module: moduleIdentitySchema.nullable(),
   assembly: assemblyIdentitySchema.nullable(),
@@ -616,6 +634,11 @@ export const managedMemberInspectionSchema = z
       .describe(
         "Examined zero-based MethodDef row interval before declaring-type selection; null means the row scope was not recorded. Row coordinates are build-local and cannot prove cross-build member absence for a page.",
       ),
+    unresolved_definitions: unresolvedDefinitionsSchema
+      .exactOptional()
+      .describe(
+        "Checked build-local TypeDef and MethodDef rows whose names could not be established. Omitted when the inspection did not record this projection.",
+      ),
     coverage: z.object({
       state: managedInspectionStateSchema,
       issues: z.array(managedParseIssueSchema),
@@ -623,6 +646,7 @@ export const managedMemberInspectionSchema = z
     limitations: z.array(z.string()),
   })
   .superRefine((result, context) => {
+    validateUnresolvedDefinitions(result, context);
     if (result.signature_resolution !== null) return;
     // Null resolution means member decoding exceeded capacity, so no member was
     // examined; a member beside it would carry an unattested signature digest.

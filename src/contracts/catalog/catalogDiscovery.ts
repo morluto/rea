@@ -27,7 +27,7 @@ const inputSchema = z
       .trim()
       .optional()
       .describe(
-        "Case-insensitive words matched against tool names and descriptions; all words must match. Omit to browse.",
+        "Case-insensitive words matched against tool names and descriptions, ranked by matched words (tools matching all words rank first). Omit to browse.",
       ),
     names: z
       .array(z.string().min(1))
@@ -62,7 +62,7 @@ const outputSchema = z.strictObject({
       description: z
         .string()
         .describe(
-          "Abbreviated canonical description; read tools/list for the complete contract.",
+          "Complete advertised tool description for exact-name lookups. Keyword searches return an abbreviated description.",
         ),
       input_schema: z
         .record(z.string(), z.unknown())

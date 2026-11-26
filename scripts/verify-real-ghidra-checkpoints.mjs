@@ -1,10 +1,9 @@
 #!/usr/bin/env node
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { createVerifierMcpOwner } from "./lib/verifier-mcp-owner.mjs";
 
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
   copyFile,
   mkdir,
@@ -14,7 +13,6 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import {
@@ -31,13 +29,13 @@ import {
   assertVerifierCleanupComplete,
 } from "./lib/verifier-run.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 if (process.platform === "win32")
   throw new Error(
     "Owned Ghidra checkpoints currently support Linux/macOS only.",
   );
-const run = createVerifierRun(),
-  exec = promisify(execFile);
+const run = createVerifierRun();
 // Ghidra children use the root as HOME and TMPDIR; a plain root admits them on every host.
 const workspace = await VerifierFixture.open({
   prefix: "rea-ghidra-checkpoints-",
@@ -76,10 +74,7 @@ const report = {
   phases: [],
   target: null,
 };
-const sha = async (path) =>
-  createHash("sha256")
-    .update(await readFile(path))
-    .digest("hex");
+
 async function phase(name, operation) {
   const start = performance.now();
   try {
@@ -100,28 +95,41 @@ async function phase(name, operation) {
   }
 }
 async function cli(procedure, flags = [], path = target) {
-  const { stdout } = await exec(
-    process.execPath,
-    [
-      entrypoint,
-      "decompile",
-      path,
-      procedure,
-      "--provider",
-      "ghidra",
-      "--json",
-      ...flags,
-    ],
-    { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
-  );
-  return JSON.parse(stdout);
+  try {
+    const { stdout } = await compilerCommands.exec(
+      process.execPath,
+      [
+        entrypoint,
+        "decompile",
+        "--detail",
+        "complete",
+        path,
+        procedure,
+        "--provider",
+        "ghidra",
+        "--json",
+        ...flags,
+      ],
+      { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
+    );
+    return JSON.parse(stdout);
+  } catch (cause) {
+    // The checkpoint refusal helper reads the execFile-shaped stdout and stderr.
+    if (cause instanceof Error && cause.snapshot?.stdout?.text !== undefined) {
+      cause.stdout = cause.snapshot.stdout.text;
+      cause.stderr = cause.snapshot.stderr.text;
+    }
+    throw cause;
+  }
 }
 async function connect(environment = {}) {
   const owner = createVerifierMcpOwner();
-  const client = new Client({
-    name: "rea-ghidra-checkpoint-verifier",
-    version: "1",
-  });
+  const client = completeEvidenceClient(
+    new Client({
+      name: "rea-ghidra-checkpoint-verifier",
+      version: "1",
+    }),
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],
@@ -169,7 +177,7 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
     ],
     { timeout: 120_000, maxBuffer: 16 * 1024 * 1024 },
   );
-  const targetDigest = await sha(target);
+  const targetDigest = await sha256File(target);
   report.target = {
     sha256: targetDigest,
     source: `self-built C struct/function ${process.platform === "darwin" ? "object" : "executable"} fixture; never executed`,
@@ -187,6 +195,7 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
       try {
         await cold.call("open_binary", { path: target, provider_id: "ghidra" });
         await cold.call("procedure_pseudo_code", {
+          detail: "complete",
           procedure: "rea_checkpoint_leaf",
         });
         const id = (await cold.call("binary_session")).analysis_run.run_id;
@@ -200,6 +209,7 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
           id,
         );
         const current = await cold.call("procedure_pseudo_code", {
+          detail: "complete",
           procedure: "rea_checkpoint_leaf",
         });
         assert.match(JSON.stringify(current), /cold-session unsaved comment/);
@@ -282,6 +292,7 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
           provider_id: "ghidra",
         });
         await active.call("procedure_pseudo_code", {
+          detail: "complete",
           procedure: "rea_checkpoint_leaf",
         });
         const id = (await active.call("binary_session")).analysis_run.run_id;
@@ -382,6 +393,7 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
           provider_id: "ghidra",
         });
         const result = await active.call("procedure_pseudo_code", {
+          detail: "complete",
           procedure: "rea_checkpoint_retained",
         });
         assert.match(JSON.stringify(result), /saved during alias switch/);
@@ -457,7 +469,7 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
       return {};
     },
   );
-  assert.equal(await sha(target), targetDigest);
+  assert.equal(await sha256File(target), targetDigest);
   assert.deepEqual(await readdir(runtime), []);
   const checkpointFiles = await readdir(
     join(checkpointDirectory, (await readdir(checkpointDirectory))[0]),
@@ -479,7 +491,7 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
 } finally {
   let cleanupVerified = false;
   try {
-    await compilerCommands.close();
+    await workspace.closeEarly([() => compilerCommands.close()]);
     report.run = await completeVerifierRun(run);
     assertVerifierCleanupComplete(report.run.process_lineage);
     cleanupVerified = true;
@@ -488,7 +500,7 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
     report.retained_workspace = root;
     process.exitCode = 1;
   }
-  if (cleanupVerified) {
+  if (cleanupVerified && report.status === "verified") {
     try {
       await workspace.release();
     } catch (cause) {
@@ -496,6 +508,8 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
       report.retained_workspace = root;
       process.exitCode = 1;
     }
+  } else if (report.retained_workspace === undefined) {
+    report.retained_workspace = root;
   }
   process.stdout.write(JSON.stringify(report, null, 2) + "\n");
 }

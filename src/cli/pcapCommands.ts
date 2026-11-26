@@ -1,27 +1,31 @@
+import type { RequestAnalysisPort } from "../ports/AnalysisProvider.js";
+import type { PcapRequest } from "../domain/pcap/pcapAnalysis.js";
 import type { Logger } from "pino";
 
-import { PcapAnalysisService } from "../application/pcap/PcapAnalysisService.js";
-import type { PcapAnalysisPort } from "../application/pcap/PcapAnalysisPort.js";
+import { createPcapAnalysisService } from "../application/ProviderOperationServices.js";
 import { createPcapAnalysisProvider } from "../composition/pcap.js";
 import { PCAP_TOOL_CONTRACTS } from "../contracts/pcap/pcapToolContracts.js";
 import type { PcapOperation } from "../domain/pcap/pcapAnalysis.js";
 import { contractNamed } from "./contractCliDescription.js";
+import { registerContractCommand } from "./contractCommand.js";
 import {
   analyzeWithService,
   inspectWithService,
-  registerContractCommand,
   type EvidenceInspectionService,
-} from "./contractCommand.js";
+} from "./contractCommandRunners.js";
 import type { CliInstance } from "./types.js";
+import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
 
 /** Expose the same explicit pcap requests through one-shot CLI commands. */
 export const registerPcapCommands = (
   cli: CliInstance,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
-  provider: PcapAnalysisPort = createPcapAnalysisProvider(environment),
+  provider: RequestAnalysisPort<PcapRequest> = createPcapAnalysisProvider(
+    environment,
+  ),
 ): void => {
-  const pcap = new PcapAnalysisService(provider);
+  const pcap = createPcapAnalysisService(provider);
   // Each command releases the shared provider's tools when it finishes.
   const service =
     (operation: PcapOperation) => (): EvidenceInspectionService => ({
@@ -46,16 +50,17 @@ export const registerPcapCommands = (
       description:
         "Inspect one pcap/pcapng capture: endpoints, DNS, TLS SNI, and protocol distribution",
       positionals: ["path"],
+      callerPaths: ["path"],
+      jsonText: ["producer_limits"],
+      fields: {
+        path: { description: "Local pcap or pcapng capture file to inspect" },
+        producer_limits: { description: PRODUCER_LIMITS_HELP },
+      },
       omit: {
         detail:
           "The one-shot command returns complete Evidence; summaries are retained by MCP sessions.",
       },
     },
-    // The contract admits the path as typed, so the input is the caller's spelling.
-    (input, context) =>
-      inspectWithService(service("inspect_pcap_capture"), "pcap")(input, {
-        ...context,
-        callerInputs: { path: input.path },
-      }),
+    inspectWithService(service("inspect_pcap_capture"), "pcap"),
   );
 };

@@ -28,6 +28,7 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { classifyBinaryTargetFilesystemFailure } from "../domain/binaryTargetFilesystemFailure.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 interface ManagedSourceObservation {
   readonly byteLength: number;
@@ -105,13 +106,16 @@ export const readManagedSnapshot = async (
       const signal = options.signal;
       if (metadata.size > maxBytes)
         throw managedSnapshotCapacityError(operation, maxBytes);
-      const bytes = await readBoundedFileBytes(handle, maxBytes, { signal });
+      const bytes = await readBoundedFileBytes(handle, maxBytes, {
+        signal,
+        expectedSize: metadata.size,
+      });
       if (bytes === undefined)
         throw managedSnapshotCapacityError(operation, maxBytes);
       signal?.throwIfAborted();
       return {
         byteLength: bytes.length,
-        sha256: createHash("sha256").update(bytes).digest("hex"),
+        sha256: sha256Hex(bytes),
         bytes,
       };
     },
@@ -134,7 +138,7 @@ export const hashManagedSource = async (
         throw managedSnapshotCapacityError(operation, maxBytes);
       const digest = createHash("sha256");
       let byteLength = 0;
-      const chunk = Buffer.allocUnsafe(64 * 1024);
+      const chunk = Buffer.allocUnsafe(256 * 1024);
       for (;;) {
         signal?.throwIfAborted();
         const { bytesRead } = await handle.read(

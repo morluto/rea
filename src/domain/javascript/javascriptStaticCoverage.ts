@@ -28,10 +28,13 @@ export const javaScriptStaticCoverageSchema = z.strictObject({
         "dynamic-findings",
         "returned-reference-widening",
         "type-only-module-side-effect",
+        "conditional-loader",
+        "commonjs-wrapper-redeclaration",
       ]),
     ),
   }),
   examination: z.strictObject({
+    // domain-vocabulary: whether the static pass ran without hitting a semantic_precision budget, was limited by one, or was not run.
     status: z.enum(["complete", "limited", "not-examined"]),
     semantic_resource_limits: z.array(javaScriptSemanticResourceLimitSchema),
     semantic_precision: javaScriptSemanticPrecisionSchema.optional(),
@@ -58,7 +61,9 @@ export const javaScriptStaticParseStatus = (
     ? "failed"
     : coverage.syntax.status === "recovered" ||
         coverage.examination.status === "not-examined" ||
-        (coverage.semantics.unknown_findings ?? 0) > 0 ||
+        // An unknown finding count cannot establish that none were found.
+        coverage.semantics.unknown_findings !== 0 ||
+        coverage.semantics.uncertainty.includes("conditional-loader") ||
         coverage.examination.semantic_resource_limits.includes(
           "alias-selections",
         )

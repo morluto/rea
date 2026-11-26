@@ -4,7 +4,7 @@ import {
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
+  unsupportedTarget,
 } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
@@ -18,6 +18,7 @@ import {
   type ApiContractDiagnostic,
   type ApiContractOperation,
 } from "./apiContract.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 const methods = [
   "get",
@@ -43,9 +44,7 @@ const pathMetadata = new Set([
 // HTTP methods are case-sensitive tokens; additionalOperations preserves that spelling.
 const httpToken = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u;
 const record = (value: unknown): Record<string, unknown> | undefined =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
+  isRecord(value) ? (value as Record<string, unknown>) : undefined;
 const identity = (prefix: string, facts: unknown) =>
   `${prefix}_${digestCanonicalValue(facts)}`;
 
@@ -424,9 +423,10 @@ export function* parseApiContractSteps(
   const version = /^3\.([012])\.(?:0|[1-9][0-9]*)$/u.exec(root.openapi);
   if (version === null)
     return err(
-      new AnalysisUnsupportedTargetError(
+      unsupportedTarget(
         API_CONTRACT_OPERATION,
         artifact.path,
+        "openapi",
         "Only OpenAPI 3.0, 3.1 and 3.2 JSON documents are supported.",
       ),
     );

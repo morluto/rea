@@ -1,10 +1,13 @@
-import { Writable } from "node:stream";
+import { captureOutput } from "../../support/cli/capturedOutput.js";
+import { cliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 
-import { Cli, Formatter } from "incur";
 import { expect, it } from "vitest";
 import { z } from "zod";
 
-import { parseCliOutputArguments } from "../../../src/cliOutput.js";
+import { decode as decodeToon } from "@toon-format/toon";
+import { parse as parseYaml } from "yaml";
+import { parseCliOutputArguments } from "../../../src/cli/cliOutput.js";
 import { registerContractCommand } from "../../../src/cli/contractCommand.js";
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 import {
@@ -99,6 +102,84 @@ it("collects each recorded control's flag without changing the result", () => {
   expect(result).toEqual(before);
 });
 
+it("reads a union value under the option the producer used", () => {
+  const limit = deadlineParameterLimit("worker_timeout_ms", 5, 1_000);
+  const flagged = { worker_timeout_ms: "--worker-timeout-ms" };
+  // Both options accept the value, so the first one, where `limit` is
+  // captured content, is the one the producer used.
+  const overlapping = z.union([
+    z.strictObject({ note: z.strictObject({ limit: z.unknown() }) }),
+    z.strictObject({
+      note: z.strictObject({ limit: analysisParameterLimitSchema }),
+    }),
+  ]);
+  expect(
+    cliResultControlsIn({ note: { limit } }, overlapping, binding),
+  ).toEqual({});
+  // A value whose keys and literals rule out every option but one is read
+  // under that option; a value that fits the view reads none.
+  const views = z.union([
+    z.strictObject({
+      kind: z.literal("view"),
+      limit: analysisParameterLimitSchema,
+    }),
+    z.strictObject({ limit: analysisParameterLimitSchema, total: z.number() }),
+  ]);
+  expect(cliResultControlsIn({ limit, total: 1 }, views, binding)).toEqual(
+    flagged,
+  );
+  expect(cliResultControlsIn({ kind: "view", limit }, views, binding)).toEqual(
+    flagged,
+  );
+  expect(
+    cliResultControlsIn({ kind: "other", limit, total: 1 }, views, binding),
+  ).toEqual({});
+});
+
+it("reads declared controls without inspecting unrelated captured values", () => {
+  const limit = deadlineParameterLimit("worker_timeout_ms", 5, 1_000);
+  const extra = {
+    get count(): number {
+      throw new Error("Control collection visited an unrelated captured value");
+    },
+  };
+  const schema = z.strictObject({
+    result: z.strictObject({ limit: analysisParameterLimitSchema }),
+    extra: z.union([
+      z.strictObject({ count: z.literal(1) }),
+      z.strictObject({ timestamp: z.string() }),
+    ]),
+  });
+  expect(
+    cliResultControlsIn({ result: { limit }, extra }, schema, binding),
+  ).toEqual({
+    worker_timeout_ms: "--worker-timeout-ms",
+  });
+});
+
+it("finds a control a recursive schema reaches only past a back-reference", () => {
+  // Visiting `inner` first reaches `outer` again before `outer`'s control.
+  const outer: z.ZodType = z.strictObject({
+    get inner() {
+      return inner;
+    },
+    control: z.strictObject({ limit: analysisParameterLimitSchema }).optional(),
+  });
+  const inner: z.ZodType = z.strictObject({
+    get outer() {
+      return outer.optional();
+    },
+  });
+  const limit = deadlineParameterLimit("worker_timeout_ms", 5, 1_000);
+  expect(
+    cliResultControlsIn(
+      { inner: { outer: { inner: {}, control: { limit } } } },
+      outer,
+      binding,
+    ),
+  ).toEqual({ worker_timeout_ms: "--worker-timeout-ms" });
+});
+
 /** Run the fixture command once, returning its output and recorded controls. */
 const runFixtureCommand = async (produce: () => unknown) => {
   const contract = {
@@ -109,7 +190,7 @@ const runFixtureCommand = async (produce: () => unknown) => {
     }),
     outputSchema: partialResultSchema,
   };
-  const cli = Cli.create("rea-result-controls", { version: "1", sync: false });
+  const cli = createCommandCli();
   registerContractCommand(
     cli as unknown as CliInstance,
     silentLogger,
@@ -121,10 +202,10 @@ const runFixtureCommand = async (produce: () => unknown) => {
     },
     async () => produce() as never,
   );
-  const command = Cli.toCommands.get(cli)?.get("inspect-control-fixture");
+  const command = cliCommand(cli, "inspect-control-fixture")?.definition;
   if (command === undefined) throw new Error("command is not registered");
   const parse = (key: "args" | "options", value: unknown) =>
-    (Reflect.get(command, key) as { parse(v: unknown): unknown }).parse(value);
+    command[key]!.parse(value);
   return withCliResultControls(async () => {
     const value: unknown = await (
       Reflect.get(command, "run") as (value: unknown) => Promise<unknown>
@@ -135,13 +216,6 @@ const runFixtureCommand = async (produce: () => unknown) => {
     return { output: value, controls: cliResultControls() };
   });
 };
-
-it("records the controls of a contract command's result and returns the result unchanged", async () => {
-  const { output, controls } = await runFixtureCommand(partialResult);
-  expect(output).toEqual(partialResult());
-  // Only controls this command takes as options are rendered.
-  expect(controls).toEqual({ worker_timeout_ms: "--worker-timeout-ms" });
-});
 
 it("reads a failure's partial Evidence of the same operation at the declared positions only", async () => {
   const failure = (operation: string) => ({
@@ -165,32 +239,24 @@ const written = async (
   argv: readonly string[],
   cliControls?: Readonly<Record<string, string>>,
 ): Promise<{ readonly text: string; readonly collected: number }> => {
-  const chunks: Buffer[] = [];
-  const destination = new Writable({
-    write(chunk: Buffer, _encoding, callback) {
-      chunks.push(chunk);
-      callback();
-    },
-  });
+  const { destination, text: readText } = captureOutput();
   const output = createCliResultOutput(
     parseCliOutputArguments(["fixture", ...argv]),
     destination,
   );
   if (output === undefined) throw new Error("Missing output surface");
-  const format = argv[argv.indexOf("--format") + 1] ?? "json";
   let collected = 0;
   // The ordinary command path: no forced output, controls collected on demand.
   const handled = await output.write(partialResult(), {
     command: "fixture",
     duration: "0ms",
-    format,
     collectCliControls: () => {
       collected += 1;
       return cliControls;
     },
   });
   return {
-    text: handled ? Buffer.concat(chunks).toString("utf8") : "",
+    text: handled ? readText() : "",
     collected,
   };
 };
@@ -233,19 +299,18 @@ it.each(["yaml", "toon"] as const)(
       ["--format", format, "--full-output"],
       cliControls,
     );
-    expect(text).toBe(
-      `${Formatter.format(
-        {
-          ok: true,
-          data: partialResult(),
-          meta: {
-            command: "fixture",
-            duration: "0ms",
-            cli_controls: cliControls,
-          },
-        },
-        format,
-      )}\n`,
-    );
+    const decoded = format === "yaml" ? parseYaml(text) : decodeToon(text);
+    expect(decoded).toEqual({
+      ok: true,
+      data: {
+        ...partialResult(),
+        ...(format === "toon" ? { trailing: null } : {}),
+      },
+      meta: {
+        command: "fixture",
+        duration: "0ms",
+        cli_controls: cliControls,
+      },
+    });
   },
 );

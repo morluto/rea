@@ -24,17 +24,18 @@ export const machoTargetSelectionSchema = z
       .nullable(),
   })
   .superRefine((selection, context) => {
-    if (
-      (selection.container === "thin" &&
-        (selection.offset !== 0 ||
-          selection.container_table_sha256 !== null)) ||
-      (selection.container === "fat" &&
-        selection.container_table_sha256 === null)
-    )
-      context.addIssue({
-        code: "custom",
-        message: "Invalid Mach-O container identity",
-      });
+    // Each refusal names the rule for its container, so the selection can be
+    // corrected without the canonical schema.
+    const problem =
+      selection.container === "thin"
+        ? selection.offset !== 0 || selection.container_table_sha256 !== null
+          ? "A thin Mach-O selection has offset 0 and container_table_sha256 null"
+          : undefined
+        : selection.container_table_sha256 === null
+          ? "A fat Mach-O selection requires the container_table_sha256 of its fat header table"
+          : undefined;
+    if (problem !== undefined)
+      context.addIssue({ code: "custom", message: problem });
   });
 
 export type MachoTargetSelection = z.infer<typeof machoTargetSelectionSchema>;
@@ -156,16 +157,21 @@ export const sameMachoTargetSelection = (
   left.cpu_subtype === right.cpu_subtype &&
   left.container_table_sha256 === right.container_table_sha256;
 
-/** Evidence subject format of a metadata report that read an ELF, PE, thin Mach-O or universal slice. */
+/**
+ * Evidence subject format of a metadata report that read an ELF, PE, thin
+ * Mach-O or universal slice, or a WebAssembly module, which is a file as for WABT.
+ */
 export const metadataReportSubjectFormat = (report: {
-  readonly format: "elf" | "pe" | "macho";
+  readonly format: "elf" | "pe" | "macho" | "wasm";
   readonly selected_slice?: MachoTargetSelection;
-}): "elf" | "pe" | "mach-o" | "mach-o-universal" =>
-  report.format !== "macho"
-    ? report.format
-    : report.selected_slice === undefined
-      ? "mach-o"
-      : "mach-o-universal";
+}): "elf" | "pe" | "mach-o" | "mach-o-universal" | "file" =>
+  report.format === "wasm"
+    ? "file"
+    : report.format !== "macho"
+      ? report.format
+      : report.selected_slice === undefined
+        ? "mach-o"
+        : "mach-o-universal";
 
 /**
  * Whether a metadata report's own container and CPU agree with the universal
@@ -173,7 +179,7 @@ export const metadataReportSubjectFormat = (report: {
  */
 export const selectedSliceAgreesWithReport = (
   selection: MachoTargetSelection,
-  format: "elf" | "pe" | "macho",
+  format: "elf" | "pe" | "macho" | "wasm",
   architecture: BinaryArchitecture | undefined,
 ): boolean =>
   selection.container === "fat" &&

@@ -1,5 +1,5 @@
 import { GhidraAdmissionError } from "../GhidraAdmissionError.js";
-import { createHash } from "node:crypto";
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { realpath, mkdir } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
@@ -8,8 +8,8 @@ import type { AppConfig } from "../../config/types.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisUnsupportedTargetError,
   cancelledBy,
+  unsupportedTarget,
 } from "../../domain/analysisErrorCore.js";
 import {
   type ArtifactResourceScope,
@@ -18,12 +18,15 @@ import {
 import {
   readGhidraProfileArtifact,
   writeGhidraProfileArtifact,
-  ghidraFileFailure,
+  ghidraFileDialect,
 } from "../GhidraFileArtifacts.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { jsonObjectSchema } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { nativeAotAdapter } from "./nativeaot/NativeAotAdapter.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
+import { BinaryReader } from "../../domain/binaryContainer.js";
+import { ZIP_LOCAL_HEADER_SIGNATURE } from "../../domain/zip/zipLocalHeader.js";
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/u);
 /** Exact executable extension artifact committed before the session starts. */
@@ -88,7 +91,11 @@ const readJar = (
     resources,
     signal,
     (bytes) => {
-      if (bytes.length < 4 || bytes.readUInt32LE(0) !== 0x04034b50)
+      if (
+        bytes.length < 4 ||
+        new BinaryReader(bytes, true, "jar").u32(0) !==
+          ZIP_LOCAL_HEADER_SIGNATURE
+      )
         throw new GhidraAdmissionError("not_jar", { path });
       return bytes;
     },
@@ -119,16 +126,19 @@ export const resolveGhidraExtensions = async (
             id: adapter.id,
             path,
             configured_path: configured,
-            sha256: createHash("sha256").update(bytes).digest("hex"),
+            sha256: sha256Hex(bytes),
             entry_class: adapter.entryClass,
             integration_api: 1,
           });
         } catch (cause: unknown) {
           return err(
-            ghidraFileFailure(cause, "resolve_analysis_profile", {
-              extension: adapter.id,
-              path: configured,
-            }),
+            classifyProviderFailure(
+              cause,
+              ghidraFileDialect("resolve_analysis_profile", {
+                extension: adapter.id,
+                path: configured,
+              }),
+            ),
           );
         }
       }
@@ -136,7 +146,12 @@ export const resolveGhidraExtensions = async (
       return ok(extensions);
     })
     .catch((cause: unknown) =>
-      err(ghidraFileFailure(cause, "resolve_analysis_profile")),
+      err(
+        classifyProviderFailure(
+          cause,
+          ghidraFileDialect("resolve_analysis_profile"),
+        ),
+      ),
     );
 
 /** Require explicit local configuration before admitting executable code from a profile. */
@@ -184,12 +199,12 @@ const extensionRefusalError = (
         refusal.reason,
         { userMessage: refusal.reason },
       )
-    : new AnalysisUnsupportedTargetError(
+    : // The reason names the workflows that remain available.
+      unsupportedTarget(
         "resolve_analysis_profile",
         target.path,
+        target.format,
         refusal.reason,
-        // The reason names the workflows that remain available.
-        { remediationAction: refusal.reason },
       );
 
 /** Snapshot committed extension bytes into the private runtime before Java loads them. */
@@ -223,9 +238,7 @@ export const snapshotGhidraExtensions = async (
       const result: GhidraExtension[] = [];
       for (const extension of extensions) {
         const bytes = await readJar(extension.path, resources, signal);
-        if (
-          createHash("sha256").update(bytes).digest("hex") !== extension.sha256
-        )
+        if (sha256Hex(bytes) !== extension.sha256)
           throw new GhidraAdmissionError("digest_differs", {
             id: extension.id,
             path: extension.path,
@@ -237,7 +250,7 @@ export const snapshotGhidraExtensions = async (
       return result;
     })
     .catch((cause: unknown) => {
-      throw ghidraFileFailure(cause, "open_binary");
+      throw classifyProviderFailure(cause, ghidraFileDialect("open_binary"));
     });
 
 /** Require every configured producer result to match its artifact and registered ABI. */

@@ -1,7 +1,9 @@
+import type { CommandRejection } from "../../domain/commandObservation.js";
 import type { EvidenceProvider } from "../../domain/evidence.js";
 import type { Result } from "../../domain/result.js";
 import type {
   ObjdumpSelection,
+  ProviderVersionProbe,
   RizinInput,
 } from "../../domain/reverseEngineering.js";
 
@@ -24,11 +26,13 @@ export interface ReverseEngineeringProviderCommand {
   /** What the provider cannot attest about the arguments it built. */
   readonly limitations?: readonly string[];
   /**
-   * Explain a provider refusal of the command that a completed process
-   * reported only in its diagnostics, or return undefined.
+   * A provider refusal of the command that a completed process reported only
+   * in its diagnostics, with the limitation that explains it, or undefined.
    */
-  readonly rejection?: (stderr: string) => string | undefined;
+  readonly rejection?: (stderr: string) => CommandRejection | undefined;
   readonly environmentOverrides?: Readonly<NodeJS.ProcessEnv>;
+  /** Identifies the selected executable once per digest; never refuses it. */
+  readonly versionProbe?: ProviderVersionProbe;
 }
 
 /**

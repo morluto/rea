@@ -1,3 +1,5 @@
+import { lastAtOrBelow } from "../../domain/virtualFileMapping.js";
+
 /** One half-open `[low, high)` range owned by `value`. */
 export interface IndexedInterval<T> {
   readonly low: bigint;
@@ -7,18 +9,6 @@ export interface IndexedInterval<T> {
 
 const compareBig = (left: bigint, right: bigint): number =>
   left < right ? -1 : left > right ? 1 : 0;
-
-/** First index whose boundary is greater than `key`. */
-const upperBound = (boundaries: readonly bigint[], key: bigint): number => {
-  let low = 0;
-  let high = boundaries.length;
-  while (low < high) {
-    const middle = (low + high) >>> 1;
-    if (boundaries[middle]! <= key) low = middle + 1;
-    else high = middle;
-  }
-  return low;
-};
 
 /** First index whose boundary is at least `key`. */
 const lowerBound = (boundaries: readonly bigint[], key: bigint): number => {
@@ -74,7 +64,7 @@ export const buildIntervalIndex = <T>(
     }
   }
   return (key) => {
-    const segment = upperBound(boundaries, key) - 1;
+    const segment = lastAtOrBelow(boundaries, key);
     return segment < 0 || segment >= segments ? undefined : owners[segment];
   };
 };

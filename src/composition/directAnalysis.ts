@@ -47,7 +47,23 @@ export const createDirectAnalysis = (
       const { createArtifactBinarySession } = await import("./binary.js");
       return createArtifactBinarySession(environment);
     },
+    inspectArtifactDirectory: async (path, parameters, options, retained) => {
+      const { createArtifactPathInspection } = await import("./binary.js");
+      return createArtifactPathInspection(environment).inspectArtifactDirectory(
+        path,
+        parameters,
+        options,
+        retained,
+      );
+    },
   };
+  return bindDirectAnalysis(dependencies);
+};
+
+/** Bind one-shot analysis and status commands to the given session owners. */
+export const bindDirectAnalysis = (
+  dependencies: DirectAnalysisDependencies,
+) => {
   const runDirectAnalysis: BoundOperation<
     DirectAnalysisRuntime["runDirectAnalysis"]
   > = async (...args) => {
@@ -85,7 +101,7 @@ export const createDirectAnalysis = (
 };
 
 /** Bound operations used by CLI command registration. */
-export type DirectAnalysis = ReturnType<typeof createDirectAnalysis>;
+export type DirectAnalysis = ReturnType<typeof bindDirectAnalysis>;
 
 /** Execute managed metadata without configuration or native provider candidates. */
 export const runManagedProviderExecution: BoundOperation<

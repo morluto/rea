@@ -13,9 +13,9 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { executeWorkflowFixture } from "../../support/workflowGit.js";
 
 const upstream =
-  "https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz";
+  "https://downloads.mitmproxy.org/12.3.1/mitmproxy-12.3.1-linux-x86_64.tar.gz";
 const digest =
-  "2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5";
+  "f7b4237f5702f6cd21357fe6e4680a7e905f8f9b816b872230d018ea696c34d5";
 
 async function fixture(
   outcome: "recover" | "reset" | "not-found" | "bad-digest",
@@ -105,7 +105,7 @@ async function fixture(
       return requests;
     },
     environment,
-    profile: join(directory, "rea-mitmproxy-12.2.3/mitmdump"),
+    profile: join(directory, "rea-mitmproxy-12.3.1/mitmdump"),
     run: () =>
       executeWorkflowFixture(
         process.execPath,

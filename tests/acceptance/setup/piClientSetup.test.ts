@@ -9,6 +9,7 @@ import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/contracts/mcpSchemaPresentation.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 for (const [setting, profile] of [
   ["REA_MCP_INPUT_SCHEMA_PROFILE", ""],
@@ -166,7 +167,10 @@ cliTest(
       },
       stderr: "pipe",
     });
-    const client = new Client({ name: "setup-environment", version: "1" });
+    const client = new Client(
+      { name: "setup-environment", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     try {
       await client.connect(transport);
       const { tools } = await client.listTools();

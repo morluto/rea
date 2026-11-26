@@ -1,4 +1,6 @@
+import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import { addAbortListener } from "node:events";
+import { isAbortOf } from "../process/SignalAbort.js";
 import type { Readable } from "node:stream";
 import { getHeapStatistics } from "node:v8";
 
@@ -37,6 +39,7 @@ import {
   JSON_INPUT_RESOURCE_REMEDIATION,
   parseUtf8Json,
 } from "../application/Utf8JsonInput.js";
+import { reportedSystemCode } from "../kernel/reportedSystemCode.js";
 
 /**
  * Scopes of JSON-input files whose close still failed after their owner's
@@ -107,19 +110,30 @@ export const parseCliJsonInput = async (
             resources,
             options?.snapshot ?? false,
           );
-    if (parsed.ok && signal?.aborted) return cancelled(signal.reason);
-    return parsed.ok
-      ? { ok: true, value: parsed.value }
+    const finalized = finalizedResult(
+      await runOwned(async () => parsed, {
+        providerId: "rea",
+        operation,
+        signal,
+        diagnostics: () => undefined,
+      }),
+    );
+    return finalized.ok
+      ? { ok: true, value: finalized.value }
       : {
           ok: false,
           error: {
             error: "Application workflow failed",
-            ...projectAnalysisError(parsed.error),
-            input_path: value,
-            input_reason:
-              parsed.error._tag === "AnalysisInputError"
-                ? "invalid-json"
-                : "too-large",
+            ...projectAnalysisError(finalized.error),
+            ...(parsed.ok
+              ? {}
+              : {
+                  input_path: value,
+                  input_reason:
+                    parsed.error._tag === "AnalysisInputError"
+                      ? "invalid-json"
+                      : "too-large",
+                }),
           },
         };
   } catch (cause: unknown) {
@@ -131,8 +145,7 @@ export const parseCliJsonInput = async (
       return cancelled(cause.reason);
     if (cause instanceof JsonInputPhysicalReadFailure)
       return jsonFileReadError(value, operation, cause.physicalCause);
-    if (signal?.aborted && isJsonInputCancellation(cause, signal))
-      return cancelled(signal.reason);
+    if (isAbortOf(cause, signal)) return cancelled(signal.reason);
     if (accessDeniedSystemCode(cause) !== undefined)
       return jsonFileReadError(value, operation, cause);
     if (
@@ -223,7 +236,7 @@ const readCliJsonStdin = async (
     } catch (cause: unknown) {
       if (
         cause instanceof JsonInputCancellationFailure ||
-        (signal?.aborted && isJsonInputCancellation(cause, signal))
+        isAbortOf(cause, signal)
       )
         throw cause;
       if (cause instanceof AnalysisResourceConstraintError) return err(cause);
@@ -270,17 +283,6 @@ const readCliJsonStdin = async (
   }
 };
 
-const isJsonInputCancellation = (
-  cause: unknown,
-  signal: AbortSignal,
-): boolean =>
-  cause === signal.reason ||
-  (cause instanceof Error &&
-    cause.name === "AbortError" &&
-    "code" in cause &&
-    cause.code === "ABORT_ERR" &&
-    cause.cause === signal.reason);
-
 const accessDeniedSystemCode = (
   cause: unknown,
 ): "EACCES" | "EPERM" | undefined => {
@@ -299,14 +301,16 @@ const URL_REFERENCE = new RegExp(`^${URL_REFERENCE_SOURCE}`, "u");
 
 /**
  * A caller-path field of a CLI JSON document as the CLI admits it: any
- * nonempty local spelling, which it resolves, but not a URL, which it leaves
- * for the contract to refuse. The pattern spells case-insensitivity out so
+ * nonblank local spelling, which it resolves, but not a URL, which it leaves
+ * for the contract to refuse. The URL pattern spells case-insensitivity out so
  * JSON Schema, which carries no regex flags, advertises the same rule.
  */
-export const cliJsonCallerPathSchema = localPathStringSchema.regex(
-  new RegExp(`^(?!${URL_REFERENCE_SOURCE})`, "u"),
-  "must be a local path, not a URL",
-);
+export const cliJsonCallerPathSchema = localPathStringSchema
+  .regex(/\S/u, "must be a nonblank local path")
+  .regex(
+    new RegExp(`^(?!${URL_REFERENCE_SOURCE})`, "u"),
+    "must be a local path, not a URL",
+  );
 
 /**
  * Resolve named string fields of CLI-supplied JSON against the operator
@@ -472,19 +476,14 @@ const jsonFileReadError = (
 
 /** Preserve file-selection and system failures alongside the requested path. */
 const readFailureIssue = (path: string, cause: unknown) => {
-  const code =
-    typeof cause === "object" &&
-    cause !== null &&
-    "code" in cause &&
-    typeof cause.code === "string"
-      ? ` (${cause.code})`
-      : "";
+  const code = reportedSystemCode(cause);
+  const suffix = code === undefined ? "" : ` (${code})`;
   return {
     path: [],
     reason: "invalid_value" as const,
     message:
-      cause instanceof NonRegularFileReadError && cause.code === "ENOTFILE"
-        ? `The JSON input must be a regular file${code}: ${path}`
-        : `The JSON input file could not be read${code}: ${path}`,
+      cause instanceof NonRegularFileReadError && code === "ENOTFILE"
+        ? `The JSON input must be a regular file${suffix}: ${path}`
+        : `The JSON input file could not be read${suffix}: ${path}`,
   };
 };

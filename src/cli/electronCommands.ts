@@ -1,25 +1,24 @@
+import { registerContractDocumentCommand } from "./contractDocumentCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 
-import { Cli, z } from "incur";
+import type { CliInstance } from "./types.js";
+import { z } from "zod";
 
 import { ELECTRON_TOOL_CONTRACTS } from "../contracts/javascript/electronToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
 import {
   admittedContractInput,
-  inspectWithService,
   registerContractCommand,
-  registerContractDocumentCommand,
   type ContractCommandContext,
 } from "./contractCommand.js";
+import { inspectWithService } from "./contractCommandRunners.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { Result } from "../domain/result.js";
-import type { CliInstance } from "./types.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
 
-import { createElectronFuseService } from "../composition/electronFuses.js";
 import { ELECTRON_FUSE_PROVIDER_IDENTITY } from "../electron/ElectronFuseProviderIdentity.js";
 
 import {
@@ -35,7 +34,7 @@ import {
 
 /** Register CLI equivalents of the Electron MCP tools. */
 export const registerElectronCommands = (
-  cli: ReturnType<typeof Cli.create>,
+  cli: CliInstance,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
   options: {
@@ -51,10 +50,7 @@ export const registerElectronCommands = (
   registerJavaScriptRuntimeReconciliationCommand(cli, logger);
 };
 
-const registerElectronFuseCommand = (
-  cli: ReturnType<typeof Cli.create>,
-  logger: Logger,
-): void =>
+const registerElectronFuseCommand = (cli: CliInstance, logger: Logger): void =>
   registerContractCommand(
     cli,
     logger,
@@ -72,13 +68,16 @@ const registerElectronFuseCommand = (
       },
     },
     inspectWithService(
-      createElectronFuseService,
+      async () =>
+        (
+          await import("../composition/electronFuses.js")
+        ).createElectronFuseService(),
       ELECTRON_FUSE_PROVIDER_IDENTITY.id,
     ),
   );
 
 const registerElectronActiveCommand = (
-  cli: ReturnType<typeof Cli.create>,
+  cli: CliInstance,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
   options: {
@@ -132,7 +131,7 @@ const registerElectronActiveCommand = (
 };
 
 const registerJavaScriptRuntimeReconciliationCommand = (
-  cli: ReturnType<typeof Cli.create>,
+  cli: CliInstance,
   logger: Logger,
 ): void =>
   registerContractDocumentCommand(
@@ -170,7 +169,7 @@ const registerJavaScriptRuntimeReconciliationCommand = (
   );
 
 const registerElectronObservationCommands = (
-  cli: ReturnType<typeof Cli.create>,
+  cli: CliInstance,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
 ): void => {
@@ -179,7 +178,7 @@ const registerElectronObservationCommands = (
 };
 
 const registerElectronTargetList = (
-  cli: ReturnType<typeof Cli.create>,
+  cli: CliInstance,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
 ): void => {
@@ -206,7 +205,7 @@ const registerElectronTargetList = (
 };
 
 const registerElectronPageInspection = (
-  cli: ReturnType<typeof Cli.create>,
+  cli: CliInstance,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
 ): void => {
@@ -280,7 +279,7 @@ const observeElectron =
   };
 
 const registerJavaScriptApplicationCommand = (
-  cli: ReturnType<typeof Cli.create>,
+  cli: CliInstance,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
 ): void => {

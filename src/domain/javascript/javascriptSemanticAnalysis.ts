@@ -18,6 +18,7 @@ import {
   semanticReadMayObserveEffect,
   semanticReferenceRoot,
   type SemanticAmbientRootPaths,
+  retainSemanticInactiveMemberWrites,
 } from "./javascriptSemanticEffectLog.js";
 import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFacts.js";
 import * as t from "@babel/types";
@@ -88,6 +89,12 @@ import {
   semanticBundledRequireOriginCandidate,
 } from "./javascriptBundledRequireOrigin.js";
 import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
+import { semanticInactiveFirstDefaultWritesSteps } from "./javascriptSemanticReadPresence.js";
+import {
+  beginSemanticConsumer,
+  createSemanticObservations,
+  semanticIndexStep,
+} from "./javascriptSemanticConsumer.js";
 import {
   DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
   type JavaScriptMemberMutationAllowance,
@@ -113,6 +120,7 @@ import {
   resolveSemanticModuleCallables,
 } from "./javascriptSemanticReturns.js";
 import { collectJavaScriptDerivedSemanticsSteps } from "./javascriptSemanticDerivedAnalysis.js";
+import { collectJavaScriptSemanticObjects } from "./javascriptSemanticObjects.js";
 import {
   evaluateSemanticProvenance,
   clearSemanticValueCaches,
@@ -130,8 +138,10 @@ import {
 } from "./javascriptSemanticCoverage.js";
 import { semanticResourceLimitReason } from "./javascriptSemanticResourceLimits.js";
 import {
-  javaScriptProgramStrictness,
+  javaScriptSourceLoaderCondition,
+  javaScriptStrictnessAt,
   parseJavaScriptSource,
+  recoveredJavaScriptSyntaxErrorCount,
   type ParsedJavaScriptSource,
 } from "./javascriptSourceParser.js";
 
@@ -151,6 +161,7 @@ interface BindPatternInput {
   readonly state: JavaScriptSemanticAnalysisState;
   readonly mutable: boolean;
   readonly declarationKind?: "var" | "let" | "const" | "using" | "await using";
+  readonly letDeclarator?: t.VariableDeclarator;
   readonly kind?: JavaScriptSemanticDefinition["kind"];
   readonly projection?: readonly (string | number | null)[];
   readonly referenceOnly?: boolean;
@@ -183,10 +194,12 @@ interface AddBindingInput {
   readonly kind: JavaScriptSemanticDefinition["kind"];
   readonly mutable: boolean;
   readonly declarationKind?: "var" | "let" | "const" | "using" | "await using";
+  readonly letDeclarator?: t.VariableDeclarator;
   readonly definitionNode: t.Node;
   readonly initializer: t.Node | null;
   readonly directOrigin?: JavaScriptModuleOrigin;
   readonly runtimeImport?: boolean;
+  readonly selfNameAssignment?: JavaScriptSemanticBindingState["selfNameAssignment"];
   readonly projection?: readonly (string | number | null)[];
 }
 
@@ -220,15 +233,23 @@ export const analyzeParsedJavaScriptReferences = (
 const indexedAmbientWriteStates =
   new WeakSet<JavaScriptSemanticAnalysisState>();
 /** The ambient-write owner resolves the global roots a reference may alias. */
-const ambientRootPaths =
-  (state: JavaScriptSemanticAnalysisState): SemanticAmbientRootPaths =>
-  (root) =>
-    createAmbientPathResolver(state, false)(root).paths;
+const ambientRootPaths = (
+  state: JavaScriptSemanticAnalysisState,
+): SemanticAmbientRootPaths => {
+  const resolver = createAmbientPathResolver(state, false);
+  return (root) => resolver(root).paths;
+};
 
 function* indexSemanticAmbientWritesSteps(
   state: JavaScriptSemanticAnalysisState,
 ): Generator<void, void> {
   if (indexedAmbientWriteStates.has(state)) return;
+  yield* semanticIndexStep(state, indexAmbientWritesOnceSteps(state));
+}
+
+function* indexAmbientWritesOnceSteps(
+  state: JavaScriptSemanticAnalysisState,
+): Generator<void, void> {
   yield* indexJavaScriptAmbientWritesSteps(
     state.program,
     state,
@@ -248,8 +269,14 @@ function* indexSemanticMemberMutationFactsSteps(
   state: JavaScriptSemanticAnalysisState,
 ): Generator<void, void> {
   if (state.memberMutationFactsComplete) return;
+  yield* semanticIndexStep(state, indexMemberMutationFactsOnceSteps(state));
+}
+
+function* indexMemberMutationFactsOnceSteps(
+  state: JavaScriptSemanticAnalysisState,
+): Generator<void, void> {
   yield* indexSemanticAmbientWritesSteps(state);
-  yield* collectSemanticMemberMutationsSteps(
+  const candidateDefaults = yield* collectSemanticMemberMutationsSteps(
     state.program,
     state,
     (site, reference, path) =>
@@ -262,6 +289,15 @@ function* indexSemanticMemberMutationFactsSteps(
       ),
   );
   state.memberMutationFactsComplete = true;
+  const inactiveWrites = yield* semanticInactiveFirstDefaultWritesSteps(
+    state,
+    candidateDefaults,
+  );
+  // Every guard is proved before any inactive write is excluded.
+  if (inactiveWrites.length > 0) {
+    retainSemanticInactiveMemberWrites(state, inactiveWrites);
+    clearSemanticValueCaches(state);
+  }
   invalidateSemanticRequireDelegateWrites(state);
 }
 
@@ -287,6 +323,13 @@ export const analyzeParsedJavaScriptSemantics = (
  * phases, so a caller can serve control messages within one large file.
  * Each phase completes before the next starts; results equal the synchronous
  * form.
+ *
+ * `lexicalIndex` continues from the index the static phase built for this
+ * same program instead of collecting its definitions, ambient writes and
+ * member-mutation facts a second time. It must come from
+ * {@link indexJavaScriptBindingsWithReceiversSteps} with the same program,
+ * resolution mode, precision and allowance; any other index is rejected. An
+ * index continues one semantic phase and is rejected by a second.
  */
 export function* analyzeParsedJavaScriptSemanticsSteps(
   file: ParsedJavaScriptSource,
@@ -294,14 +337,27 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
   expressionNodeBudget?: number,
   precision?: JavaScriptSemanticPrecisionInput,
   memberMutationAllowance?: JavaScriptMemberMutationAllowance,
+  lexicalIndex?: Pick<JavaScriptBindingIndex, "bindings">,
 ): Generator<void, JavaScriptSemanticIr> {
-  const state = createState(
-    file.program,
-    staticImportResolutionMode,
-    precision,
-    memberMutationAllowance,
-  );
-  yield* collectDefinitionsSteps(file.program, state);
+  let state: JavaScriptSemanticAnalysisState;
+  if (lexicalIndex === undefined) {
+    state = createState(
+      file.program,
+      staticImportResolutionMode,
+      precision,
+      memberMutationAllowance,
+    );
+    yield* collectDefinitionsSteps(file.program, state);
+  } else {
+    // The static phase already collected these definitions from this program.
+    state = sharedLexicalState(
+      lexicalIndex,
+      file.program,
+      staticImportResolutionMode,
+      precision,
+      memberMutationAllowance,
+    );
+  }
   yield* indexSemanticAmbientWritesSteps(state);
   yield* indexSemanticMemberMutationFactsSteps(state);
   const commonJsReceivers = yield* indexCommonJsExportReceiversSteps(state);
@@ -310,7 +366,13 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
   });
   yield;
   const references = yield* collectSemanticReferencesSteps(file.program, state);
-  const parserPartial = file.errors.length > 0;
+  const parserPartial = recoveredJavaScriptSyntaxErrorCount(file.errors) > 0;
+  const objectOperations = collectJavaScriptSemanticObjects(
+    file.program,
+    state,
+    state.callables,
+  );
+  yield;
   const bindings = immutableSemanticBindings(state);
   yield;
   const callables = collectSemanticReturns(state, parserPartial);
@@ -328,12 +390,16 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
     parserPartial,
     expressionNodeBudget,
   );
+  const loaderCondition = javaScriptSourceLoaderCondition(file.program);
   const coverage = semanticCoverage(
-    parserPartial,
+    parserPartial || loaderCondition !== undefined,
     [
-      ...new Set([...state.valueResourceLimits, ...state.getterResourceLimits]),
+      ...new Set([
+        ...state.observations.valueResourceLimits,
+        ...state.observations.getterResourceLimits,
+      ]),
     ].sort(),
-    [...state.returnedReferenceWidenings].map(range),
+    [...state.observations.returnedReferenceWidenings].map(range),
     state.precision,
   );
   return {
@@ -343,23 +409,26 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
     callables,
     references,
     moduleLinks,
+    objectOperations,
     ...derived,
     coverage: derived.expressionFlowsTruncated
       ? { ...coverage, status: "partial", omittedCount: null }
       : coverage,
+    ...(loaderCondition === undefined ? {} : { loaderCondition }),
     limitations: [
+      ...(loaderCondition === undefined ? [] : [loaderCondition]),
       ...(derived.expressionFlowsTruncated
         ? [
             "The offered semantic node capacity bounded expression dependencies; omitted influence remains unknown.",
           ]
         : []),
-      ...(state.valueResourceLimits.has("alias-selections")
+      ...(state.observations.valueResourceLimits.has("alias-selections")
         ? [semanticResourceLimitReason("alias-selections", state.precision)]
         : []),
-      ...(state.returnedReferenceWidenings.size > 0
+      ...(state.observations.returnedReferenceWidenings.size > 0
         ? [RETURNED_REFERENCE_WIDENING_LIMITATION]
         : []),
-      ...[...state.getterResourceLimits]
+      ...[...state.observations.getterResourceLimits]
         .sort()
         .map((limit) => semanticResourceLimitReason(limit, state.precision)),
       ...(parserPartial
@@ -394,6 +463,48 @@ export interface JavaScriptReceiverIndex extends JavaScriptBindingIndex {
   readonly receivers: JavaScriptReceiverFacts;
 }
 
+/** Inputs each shareable lexical state was created from. */
+const shareableLexicalStates = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  {
+    readonly precision: JavaScriptSemanticPrecisionInput | undefined;
+    readonly memberMutationAllowance:
+      | JavaScriptMemberMutationAllowance
+      | undefined;
+  }
+>();
+
+/**
+ * Admit a lexical index only when a fresh state would have been created from
+ * identical inputs, and start the semantic phase as a new consumer of it, so
+ * continuing from it cannot change semantic results.
+ */
+const sharedLexicalState = (
+  lexicalIndex: Pick<JavaScriptBindingIndex, "bindings">,
+  program: t.Program,
+  staticImportResolutionMode: JavaScriptModuleResolutionMode,
+  precision: JavaScriptSemanticPrecisionInput | undefined,
+  memberMutationAllowance: JavaScriptMemberMutationAllowance | undefined,
+): JavaScriptSemanticAnalysisState => {
+  const state = lexicalIndex.bindings;
+  const inputs = shareableLexicalStates.get(state);
+  if (
+    inputs === undefined ||
+    state.program !== program ||
+    state.staticImportResolutionMode !== staticImportResolutionMode ||
+    inputs.precision !== precision ||
+    inputs.memberMutationAllowance !== memberMutationAllowance
+  )
+    throw new TypeError(
+      "A shared JavaScript lexical index must be built from the same program, resolution mode, precision and allowance, and can continue only one semantic phase",
+    );
+  // The semantic phase appends its own module links and callable facts to
+  // this state, so a second phase would report them twice.
+  shareableLexicalStates.delete(state);
+  beginSemanticConsumer(state);
+  return state;
+};
+
 /**
  * Index bindings and classify receivers from one definitions pass. Receiver
  * facts read the definitions-only phase. Consumers request ambient writes and
@@ -421,6 +532,12 @@ export function* indexJavaScriptBindingsWithReceiversSteps(
     state.bindingsById.set(binding.bindingId, binding);
   }
   yield* collectDefinitionsSteps(program, state);
+  // A host-context index declares a binding the semantic phase does not.
+  if (hostContext === undefined)
+    shareableLexicalStates.set(state, {
+      precision,
+      memberMutationAllowance,
+    });
   const receivers = yield* classifyDefinitionReceiversSteps(program, state);
   let references: readonly JavaScriptSemanticReference[] | undefined;
   return {
@@ -1042,7 +1159,7 @@ const bindingOrigin = (
   // reported resource limit, not a silent absence of the origin.
   const exhausted =
     alias !== undefined && visited.size >= state.precision.alias_selections;
-  if (exhausted) state.valueResourceLimits.add("alias-selections");
+  if (exhausted) state.observations.valueResourceLimits.add("alias-selections");
   const origin =
     alias === undefined
       ? electronRequireOrigin(initializer.node, state)?.origin
@@ -1081,9 +1198,8 @@ const createState = (
     program,
     opaqueEffects: createSemanticOpaqueEffects(),
     staticImportResolutionMode,
-    valueResourceLimits: new Set(),
-    getterResourceLimits: new Set(),
-    returnedReferenceWidenings: new Set(),
+    observations: createSemanticObservations(),
+    indexObservations: createSemanticObservations(),
     parentsByNode: new WeakMap(),
     erasedSyntaxNodes: new WeakSet(),
     scopes: [root],
@@ -1107,6 +1223,7 @@ const createState = (
     ambientWrites: new SemanticPropertyPathCoverage(),
     escapingReferenceStores: new WeakSet(),
     retainedGlobalCallReceivers: new WeakSet(),
+    escapingThrows: [],
     ambientEscapes: new SemanticPropertyPathCoverage(),
     ambientEscapeEffects: [],
     ambientWriteEffects: [],
@@ -1122,7 +1239,14 @@ const globalCodeRoots = new Set([
   "self",
 ]);
 
-function* collectDefinitionsSteps(
+/** The first index step: every lexical scope, binding and callable. */
+const collectDefinitionsSteps = (
+  program: t.Program,
+  state: JavaScriptSemanticAnalysisState,
+): Generator<void, void> =>
+  semanticIndexStep(state, collectProgramDefinitionsSteps(program, state));
+
+function* collectProgramDefinitionsSteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
 ): Generator<void, void> {
@@ -1370,6 +1494,10 @@ function* collectDefinitionsSteps(
     }
   }
   for (const { node, ancestors } of thrownValues) {
+    // A value not caught in its own function or class body reaches a
+    // caller's handler, and one thrown uncaught at the top level reaches the
+    // host's uncaught-exception handlers; neither is linked to the throw.
+    let caught = false;
     let child: t.Node = node;
     for (let index = ancestors.length - 1; index >= 0; index--) {
       const parent = ancestors[index]!;
@@ -1399,16 +1527,20 @@ function* collectDefinitionsSteps(
             referenceOnly: true,
             entryBody: parent.handler.body,
           });
+        caught = true;
         break;
       }
       child = parent;
     }
+    if (!caught) state.escapingThrows.push(node);
   }
   for (const { node, scope } of legacyBlockFunctions) {
     if (
       node.id == null ||
-      semanticStrictnessAt(state.parentsByNode.get(node) ?? node, state) ===
-        "strict"
+      javaScriptStrictnessAt(
+        state.parentsByNode.get(node) ?? node,
+        state.parentsByNode,
+      ) === "strict"
     )
       continue;
     let outer =
@@ -1614,7 +1746,7 @@ function* indexPrototypeUncertaintySteps(
         return;
       if (
         (t.isCallExpression(parent) || t.isOptionalCallExpression(parent)) &&
-        parent.arguments.includes(node as t.Expression)
+        parent.callee !== node
       )
         return;
       if (
@@ -1742,6 +1874,9 @@ const bindInnerDeclaration = (
       ...(parent !== null && t.isVariableDeclaration(parent)
         ? { declarationKind: parent.kind }
         : {}),
+      ...(t.isVariableDeclaration(parent, { kind: "let" })
+        ? { letDeclarator: node }
+        : {}),
     });
   else if (t.isClass(node) && t.isIdentifier(node.id))
     addBinding({
@@ -1750,6 +1885,7 @@ const bindInnerDeclaration = (
       name: node.id.name,
       kind: "class",
       mutable: false,
+      selfNameAssignment: "always-throws",
       definitionNode: node.id,
       initializer: node,
     });
@@ -1957,29 +2093,8 @@ const mappedArgumentsOwner = (
   return {
     scope,
     parameters: mapped,
-    strictness: semanticStrictnessAt(owner, state),
+    strictness: javaScriptStrictnessAt(owner, state.parentsByNode),
   };
-};
-
-const semanticStrictnessAt = (
-  owner: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-): MappedArgumentsOwner["strictness"] => {
-  for (
-    let current: t.Node | undefined = owner;
-    current !== undefined;
-    current = state.parentsByNode.get(current)
-  ) {
-    if (t.isClass(current)) return "strict";
-    if (
-      t.isFunction(current) &&
-      t.isBlockStatement(current.body) &&
-      current.body.directives.some(({ value }) => value.value === "use strict")
-    )
-      return "strict";
-    if (t.isProgram(current)) return javaScriptProgramStrictness(current);
-  }
-  return "unknown";
 };
 
 /** A mapped arguments property write is another write to its formal binding. */
@@ -2086,6 +2201,7 @@ const functionNameScope = (
     name: node.id.name,
     kind: "function",
     mutable: false,
+    selfNameAssignment: "throws-in-strict-mode",
     definitionNode: node.id,
     initializer: node,
   });
@@ -2230,6 +2346,7 @@ const bindPattern = (input: BindPatternInput): void => {
         binding.referenceInitializers.push({
           node: initializer,
           projection,
+          patternTarget: pattern,
           ...(input.entryBody === undefined
             ? {}
             : { entryBody: input.entryBody }),
@@ -2253,6 +2370,9 @@ const bindPattern = (input: BindPatternInput): void => {
       kind,
       mutable,
       ...(declarationKind === undefined ? {} : { declarationKind }),
+      ...(input.letDeclarator === undefined
+        ? {}
+        : { letDeclarator: input.letDeclarator }),
       definitionNode: pattern,
       initializer,
       projection,
@@ -2403,11 +2523,20 @@ const addBinding = (input: AddBindingInput): void => {
   binding.mutable ||= mutable;
   if (declarationKind !== undefined)
     binding.declarationKinds.add(declarationKind);
+  if (input.letDeclarator !== undefined)
+    binding.letDeclarator =
+      binding.letDeclarator === undefined ||
+      binding.letDeclarator === input.letDeclarator
+        ? input.letDeclarator
+        : null;
   binding.definitions.push({ kind, location: range(definitionNode) });
   if (initializer !== null)
     binding.initializers.push({
       node: initializer,
       projection,
+      ...(projection.length > 0 && t.isIdentifier(definitionNode)
+        ? { patternTarget: definitionNode }
+        : {}),
       ...(iterationSources === undefined ? {} : { iterationSources }),
     });
   if (directOrigin !== undefined)
@@ -2421,6 +2550,8 @@ const addBinding = (input: AddBindingInput): void => {
         : directOrigin,
     );
   binding.runtimeImport ||= runtimeImport === true;
+  if (input.selfNameAssignment !== undefined)
+    binding.selfNameAssignment = input.selfNameAssignment;
 };
 
 const createBinding = (

@@ -3,7 +3,7 @@ import { isAbsolute } from "node:path";
 
 import {
   ArtifactReaderFailure,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   bindArtifactFileCleanup,
 } from "../../resources/index.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -21,9 +21,11 @@ import {
   bindRegularFileCleanup,
   RetainedRegularFileCleanupFailure,
 } from "../../process/RegularFileRead.js";
-import type { LinuxApplicationRefusal } from "../../desktop/LinuxApplicationInventory.js";
-import { resolveProgram } from "../../desktop/ProgramLookup.js";
-import type { ObservedWindow } from "../../desktop/X11WindowObserver.js";
+import type {
+  DesktopCaptureProvider,
+  LinuxApplicationRefusal,
+  ObservedWindow,
+} from "../../ports/DesktopApplicationSession.js";
 import type { OutputRefusal } from "./DesktopCaptureOutput.js";
 import { processInspectionCancellationError } from "../../providers/OwnedCommandCleanup.js";
 
@@ -157,6 +159,7 @@ export const checkDesktopCaptureHost = async (
   host: {
     readonly platform: NodeJS.Platform;
     readonly environment: NodeJS.ProcessEnv;
+    readonly desktop: Pick<DesktopCaptureProvider, "resolveProgram">;
   },
 ) => {
   if (host.platform !== "linux")
@@ -174,7 +177,11 @@ export const checkDesktopCaptureHost = async (
     );
   const xprop = host.environment.REA_XPROP_COMMAND ?? "xprop";
   if (
-    (await resolveProgram(xprop, host.environment, process.cwd())) === undefined
+    (await host.desktop.resolveProgram(
+      xprop,
+      host.environment,
+      process.cwd(),
+    )) === undefined
   )
     throw unavailable(
       "executable_missing",
@@ -250,10 +257,7 @@ export const desktopOperationFailure = (
   ) {
     const primary =
       cause.reason === "cancelled"
-        ? cancelledBy(
-            operation,
-            carriedReason(artifactFileCancellationCause(cause)),
-          )
+        ? artifactFileCancellationError(operation, cause)
         : undefined;
     const error = new ProviderAdapterError(DESKTOP_PROVIDER.id, operation, {
       cause,
@@ -268,10 +272,7 @@ export const desktopOperationFailure = (
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "cancelled"
   ) {
-    failure = cancelledBy(
-      operation,
-      carriedReason(artifactFileCancellationCause(cause)),
-    );
+    failure = artifactFileCancellationError(operation, cause);
   } else
     failure = new ProviderAdapterError(DESKTOP_PROVIDER.id, operation, {
       cause,

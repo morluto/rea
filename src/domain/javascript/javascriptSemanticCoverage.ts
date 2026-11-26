@@ -1,3 +1,4 @@
+import { knownCoverage } from "../coverageAccumulator.js";
 import { semanticResourceLimitFacts } from "./javascriptSemanticResourceLimits.js";
 import type { JavaScriptSourceRange } from "./javascriptStaticAnalysisTypes.js";
 import type { JavaScriptSemanticResourceLimit } from "./javascriptSemanticValueTypes.js";
@@ -78,6 +79,7 @@ export const semanticCoverage = (
 /** Read typed resource-limit classifications from any coverage state. */
 export const semanticCoverageResourceLimits = (
   coverage: JavaScriptSemanticCoverage,
+  // optional-fact-default: typed classifications only; the coverage state carries completeness.
 ): readonly JavaScriptSemanticResourceLimit[] => coverage.resourceLimits ?? [];
 
 /** Effective evaluator facts, rather than reconstructed default-only bounds. */
@@ -102,7 +104,7 @@ export const semanticReturnCoverage = (
   retainedCount: number,
   parserPartial: boolean,
 ): JavaScriptSemanticReturnCoverage => ({
-  status: parserPartial ? "partial" : "complete",
+  status: knownCoverage(!parserPartial, "parser recovery was partial"),
   retainedCount,
   omittedCount: 0,
 });

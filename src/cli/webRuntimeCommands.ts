@@ -1,4 +1,4 @@
-import type { Cli } from "incur";
+import type { CliInstance } from "./types.js";
 import type { Logger } from "pino";
 
 import type { WebRuntimeService } from "../application/WebRuntimeService.js";
@@ -9,6 +9,7 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { Result } from "../domain/result.js";
 import { browserTargetProjection } from "./browserContractCommands.js";
+import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
 import { cliProgressReporter } from "./cliProgress.js";
 import { contractNamed } from "./contractCliDescription.js";
 import {
@@ -31,7 +32,7 @@ const targetFields = {
 
 /** Register public equivalents of the two modular website runtime tools. */
 export const registerWebRuntimeCommands = (
-  cli: ReturnType<typeof Cli.create>,
+  cli: CliInstance,
   logger: Logger,
 ): void => {
   registerContractCommand(
@@ -46,10 +47,25 @@ export const registerWebRuntimeCommands = (
         ...targetFields,
         observation_ms: { description: "Observation duration in milliseconds" },
       },
+      evidenceDelivery: true,
     },
-    throughWebRuntime((service, input, options) =>
-      service.observe(input, { ...options, progress: cliProgressReporter }),
-    ),
+    async (input, { operation, signal, delivery }) => {
+      // Delivery fields select the reply; the observation takes the rest.
+      const service = createWebRuntimeService();
+      return deliverCliAnalysisEvidence({
+        ...delivery!,
+        run: () =>
+          service.observe(input, { signal, progress: cliProgressReporter }),
+        service: {
+          close: async () => {
+            await service.provider.close?.();
+          },
+        },
+        providerId: service.provider.identity().id,
+        operation,
+        signal,
+      });
+    },
   );
   registerContractCommand(
     cli,

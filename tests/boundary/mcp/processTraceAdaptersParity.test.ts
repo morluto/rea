@@ -1,9 +1,9 @@
+import { connectFixtureClient } from "../../support/mcp/mcpFixture.js";
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -50,13 +50,11 @@ const comparisonClient = async (
     { kind: "session", session },
     { environment: { ...process.env, ...INLINE_EVIDENCE_MCP_ENVIRONMENT } },
   );
-  const client = new Client({ name: "trace-parity", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  return client;
+  return connectFixtureClient(
+    server,
+    { name: "trace-parity", version: "1" },
+    resources,
+  );
 };
 
 afterEach(async () => {

@@ -58,7 +58,7 @@ it("retains network cleanup effects in session discovery for lifecycle tools", (
 });
 
 it("keeps retryable IDA effects in composed discovery while preserving unavailability", () => {
-  const ida = idaCapabilities(IDA_COMPATIBILITY_PROFILES.legacy, false);
+  const ida = idaCapabilities(IDA_COMPATIBILITY_PROFILES.native, false);
   const statusFor = (runtimeUnavailable: boolean) => ({
     open: true,
     kind: "executable",
@@ -99,68 +99,88 @@ it("keeps retryable IDA effects in composed discovery while preserving unavailab
 });
 
 it.each([
-  ["legacy", false],
-  ["native", true],
-  ["modern", true],
-] as const)(
-  "covers IDA provider effects in the global audit (%s, stdio=%s)",
-  (profileName, stdio) => {
-    for (const descriptor of idaCapabilities(
-      IDA_COMPATIBILITY_PROFILES[profileName],
-      stdio,
-    )) {
-      const audited = contractNamed(descriptor.operation)?.effects;
-      expect(audited, descriptor.operation).toBeDefined();
-      if (descriptor.effects.mayAccessNetwork)
-        expect(audited?.accessesNetwork, descriptor.operation).toBe(true);
-      if (descriptor.effects.mayShowUi)
-        expect(audited?.changesUiState, descriptor.operation).toBe(true);
-      if (descriptor.effects.launchesProcess)
-        expect(audited?.launchesProcess, descriptor.operation).toBe(true);
-      if (descriptor.effects.mayWriteFilesystem)
-        expect(audited?.writesFilesystem, descriptor.operation).toBe(true);
-    }
+  {
+    profile: "native",
+    stdio: false,
+    showUi: true,
+    launchesAndWrites: false,
   },
-);
+  {
+    profile: "native",
+    stdio: true,
+    showUi: true,
+    launchesAndWrites: true,
+  },
+  {
+    profile: "modern",
+    stdio: false,
+    showUi: false,
+    launchesAndWrites: true,
+  },
+] as const)(
+  "audits and projects IDA effects for $profile (stdio=$stdio)",
+  ({ profile, stdio, showUi, launchesAndWrites }) => {
+    const descriptors = idaCapabilities(
+      IDA_COMPATIBILITY_PROFILES[profile],
+      stdio,
+    );
+    for (const { operation, effects } of descriptors) {
+      expect(contractNamed(operation)?.effects, operation).toMatchObject({
+        accessesNetwork: true,
+        ...(effects.mayShowUi ? { changesUiState: true } : {}),
+        ...(effects.launchesProcess ? { launchesProcess: true } : {}),
+        ...(effects.mayWriteFilesystem ? { writesFilesystem: true } : {}),
+      });
+    }
 
-it.each([false, true])(
-  "retains selected provider UI/process/network effects in direct and composed discovery (UI=%s)",
-  (showUi) => {
-    const input = {
-      open: true,
-      kind: "executable",
-      capabilities: providerCapabilitySets(
-        idaCapabilities(
-          IDA_COMPATIBILITY_PROFILES[showUi ? "legacy" : "modern"],
-          false,
-        ),
-      ),
-    };
-    const entries = buildCapabilityInventory(input, enabledPolicy);
-    for (const name of [
-      "procedure_pseudo_code",
-      "procedure_assembly",
-      "read_function_instructions",
-      "analyze_function",
-      "batch_decompile",
-      "decompile_all",
-      "trace_native_values",
-      "inspect_native_api",
-    ]) {
-      expect(entries.find((entry) => entry.name === name)).toMatchObject({
-        effects: {
-          changesUiState: showUi,
-          accessesNetwork: true,
-        },
-        annotations: { open_world: true },
-      });
+    const entries = buildCapabilityInventory(
+      {
+        open: true,
+        kind: "executable",
+        capabilities: providerCapabilitySets(descriptors),
+      },
+      enabledPolicy,
+    );
+    for (const [names, changesUiState] of [
+      [
+        [
+          "procedure_pseudo_code",
+          "analyze_function",
+          "batch_decompile",
+          "decompile_all",
+          "trace_native_values",
+          "inspect_native_api",
+        ],
+        showUi,
+      ],
+      [
+        [
+          "procedure_assembly",
+          "read_function_instructions",
+          "list_procedures",
+          "search_strings",
+          "trace_feature",
+        ],
+        false,
+      ],
+    ] as const) {
+      for (const name of names)
+        expect(
+          entries.find((entry) => entry.name === name),
+          name,
+        ).toMatchObject({
+          effects: { changesUiState, accessesNetwork: true },
+          annotations: { open_world: true },
+        });
     }
-    for (const name of ["list_procedures", "search_strings", "trace_feature"]) {
-      expect(entries.find((entry) => entry.name === name)).toMatchObject({
-        effects: { changesUiState: false, accessesNetwork: true },
-        annotations: { open_world: true },
-      });
-    }
+    expect(
+      entries.find(({ name }) => name === "procedure_assembly"),
+    ).toMatchObject({
+      effects: {
+        launchesProcess: launchesAndWrites,
+        writesFilesystem: launchesAndWrites,
+      },
+    });
   },
 );
 
@@ -170,12 +190,21 @@ it("omits effects of IDA calls hidden behind unavailable workflow prerequisites"
       open: true,
       kind: "executable",
       capabilities: providerCapabilitySets(
-        idaCapabilities(IDA_COMPATIBILITY_PROFILES.legacy, false),
+        idaCapabilities(IDA_COMPATIBILITY_PROFILES.native, false),
       ),
     },
     enabledPolicy,
   );
-  for (const name of ["find_xrefs_to_name", "get_navigation_context"]) {
+  // Without a name inventory, find_xrefs_to_name resolves names through the
+  // procedure lookup, so it is reachable and declares IDA's effects.
+  expect(
+    entries.find((entry) => entry.name === "find_xrefs_to_name"),
+  ).toMatchObject({
+    available: true,
+    effects: { accessesNetwork: true },
+    annotations: { open_world: true },
+  });
+  for (const name of ["get_navigation_context"]) {
     expect(contractNamed(name)?.effects, name).toMatchObject({
       accessesNetwork: false,
       launchesProcess: false,
@@ -197,7 +226,7 @@ it("omits effects of IDA calls hidden behind unavailable workflow prerequisites"
 });
 
 it("advertises reachable IDA calls through native UI tracing", () => {
-  const ida = idaCapabilities(IDA_COMPATIBILITY_PROFILES.legacy, false);
+  const ida = idaCapabilities(IDA_COMPATIBILITY_PROFILES.native, false);
   const source = ida[0];
   if (source === undefined) throw new Error("IDA capability fixture is empty");
   const metadata = {
@@ -305,29 +334,4 @@ it("includes reachable IDA document and procedure effects in address-context dis
     },
     annotations: { open_world: false },
   });
-});
-
-it("keeps native attached UI effects limited to the operations that show them", () => {
-  const input = {
-    open: true,
-    kind: "executable",
-    capabilities: providerCapabilitySets(
-      idaCapabilities(IDA_COMPATIBILITY_PROFILES.native, true),
-    ),
-  };
-  const entries = buildCapabilityInventory(input, enabledPolicy);
-  for (const [name, showUi] of [
-    ["procedure_pseudo_code", true],
-    ["analyze_function", true],
-    ["procedure_assembly", false],
-    ["read_function_instructions", false],
-  ] as const) {
-    expect(
-      entries.find((entry) => entry.name === name),
-      name,
-    ).toMatchObject({
-      effects: { changesUiState: showUi, accessesNetwork: true },
-      annotations: { open_world: true },
-    });
-  }
 });

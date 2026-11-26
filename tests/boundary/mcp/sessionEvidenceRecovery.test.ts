@@ -1,3 +1,4 @@
+import { successfulTool } from "../../support/mcp/mcpFixture.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -15,22 +16,11 @@ import {
 } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const bundleResult = (reply: CallToolResult) =>
   z.object({ result: evidenceBundleSchema }).parse(reply.structuredContent)
     .result;
-
-const successfulTool = async (
-  client: Client,
-  name: string,
-  arguments_: Record<string, unknown> = {},
-): Promise<CallToolResult> => {
-  const reply = await client.callTool({ name, arguments: arguments_ });
-  expect(reply.isError, `${name}: ${JSON.stringify(reply.content)}`).not.toBe(
-    true,
-  );
-  return reply;
-};
 
 const recordUnknownHistory = async (client: Client): Promise<void> => {
   const fields = {
@@ -108,10 +98,13 @@ it.each(["switch", "restart"] as const)(
       { kind: "session", session },
       { environment: {} },
     );
-    const client = new Client({
-      name: "switch-evidence-recovery",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "switch-evidence-recovery",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     const call = (name: string, arguments_: Record<string, unknown> = {}) =>
@@ -125,6 +118,7 @@ it.each(["switch", "restart"] as const)(
       // independently of the investigation's Evidence and Unknown history.
       await call("address_name", query);
       const analyzed = await call("analyze_javascript_application", {
+        detail: "complete",
         input_path: application,
         format: "directory",
         max_heap_mb: 128,

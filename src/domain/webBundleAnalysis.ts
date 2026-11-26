@@ -290,6 +290,13 @@ const sourceLocationSchema = z.object({
   column: z.int().min(0).nullable(),
 });
 
+/** One source call whose endpoint is unknown, and the API it calls. */
+export const webBundleCallSiteSchema = z.object({
+  mechanism: z.string(),
+  location: sourceLocationSchema,
+});
+export type WebBundleCallSite = z.infer<typeof webBundleCallSiteSchema>;
+
 const basisSchema = z.object({
   script_key: z.string(),
   artifact_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
@@ -302,6 +309,10 @@ const findingSchema = z.object({
   value: z.string(),
   mechanism: z.string(),
   location: sourceLocationSchema,
+  /** Present only when the same finding was merged across scripts. */
+  occurrences: z.int().min(1).exactOptional(),
+  /** Script keys that contained the finding, in first-occurrence order. */
+  script_keys: z.array(z.string()).exactOptional(),
 });
 
 const originalSourceSchema = z.object({
@@ -346,7 +357,7 @@ const responseIdentitySchema = z.object({
   representation: z.literal("fetch-response-body-bytes"),
 });
 
-const sourceMapSchema = z.union([
+const sourceMapSchema = z.discriminatedUnion("status", [
   z.object({
     ...sourceMapContextShape,
     ...parsedSourceMapShape,
@@ -557,6 +568,8 @@ export const webBundleAnalysisSchema = z.object({
       dimension: z.string(),
       reason: z.string(),
       affected_script_keys: z.array(z.string()),
+      /** The source calls this unknown is about, when it is about calls. */
+      call_sites: z.array(webBundleCallSiteSchema).exactOptional(),
       /** The setting or request parameter that bounded these scripts, and how to change it. */
       limit: analysisResultLimitSchema.exactOptional(),
       remediation: z.string().exactOptional(),

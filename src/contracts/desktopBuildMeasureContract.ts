@@ -91,7 +91,13 @@ export const MEASURE_BUILD_TASK_CONTRACT = {
     k: z.int().nonnegative().describe("The solves that finished."),
     passes: z.int().nonnegative(),
     unfinished: z.int().nonnegative(),
-    usd: z.number().nonnegative(),
+    usd: z
+      .number()
+      .nonnegative()
+      .nullable()
+      .describe(
+        "Total cost of the solves; null when a solve reported no cost.",
+      ),
     budget_usd: z.number().positive(),
     turns: z.array(z.int().nonnegative().nullable()),
     failures_per_check: z

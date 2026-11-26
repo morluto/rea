@@ -16,7 +16,7 @@ import { wasmArtifactSummaryViewResultSchema } from "../../../src/domain/analysi
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { createServer } from "../../../src/server/createServer.js";
-import { err, ok } from "../../../src/domain/result.js";
+import { ok } from "../../../src/domain/result.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -128,13 +128,19 @@ it.each(["bin", "hop"])(
       error: {
         code: "target_unavailable",
         category: "unsupported_target",
-        details: { constraint: "wasm_requires_static_inspection" },
+        details: {
+          constraint: "wasm_requires_static_inspection",
+          related_operations: ["inspect_wasm_artifact"],
+        },
       },
     });
+    expect(failure.error.details).not.toHaveProperty("related_cli_commands");
+    expect(failure.error.remediation.action).not.toContain(
+      "rea inspect-wasm-artifact",
+    );
     const [, recoveryName, serializedInput] =
-      failure.error.remediation.action.match(
-        /call (\w+) with (\{.*\}) or run/,
-      ) ?? [];
+      failure.error.remediation.action.match(/call (\w+) with (\{[^}]*\})\./) ??
+      [];
     expect(recoveryName).toBe(name);
     const recoveryInput = z
       .object({ path: z.literal(path) })
@@ -533,16 +539,6 @@ it("reads an oversized completed WASM result through its reported retained refer
     .parse(parseMcpToolError(reply).error).details
     .reported_limits.evidence_reference;
   expect(reference.evidence_id).toBe(summary.parent_evidence_id);
-  const explicitComplete = await harness.client.callTool({
-    name: "inspect_wasm_artifact",
-    arguments: { path: value.artifact.path, detail: "complete" },
-  });
-  expect(parseMcpToolError(explicitComplete)).toMatchObject({
-    error: {
-      code: "resource_constraint",
-      details: { reported_limits: { evidence_reference: reference } },
-    },
-  });
   const catalog = await harness.client.listTools();
   const advertised = catalog.tools.find(
     (tool) => tool.name === "inspect_analysis_view",
@@ -600,7 +596,7 @@ it("reads an oversized completed WASM result through its reported retained refer
   const original = harness.session.evidenceById(reference.evidence_id);
   expect(original?.normalized_result).toEqual(value);
   expect(original).toEqual(retained);
-  expect(inspect).toHaveBeenCalledTimes(3);
+  expect(inspect).toHaveBeenCalledTimes(2);
   await harness.client.ping();
 });
 
@@ -733,7 +729,10 @@ it("rejects malformed paths, refuses WASM summary delivery before provider work 
     { kind: "fixed", analysis: session },
     { wasmArtifact: service },
   );
-  const client = new Client({ name: "wasm-fixed-delivery", version: "1" });
+  const client = new Client(
+    { name: "wasm-fixed-delivery", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [a, b] = InMemoryTransport.createLinkedPair();
   try {
     await server.connect(b);
@@ -749,6 +748,9 @@ it("rejects malformed paths, refuses WASM summary delivery before provider work 
         message: expect.stringContaining("does not retain Evidence"),
       },
     });
+    expect(parseMcpToolError(summary).error.message).toContain(
+      "Select detail complete",
+    );
     expect(inspect).not.toHaveBeenCalled();
     const malformed = await client.callTool({
       name: "inspect_wasm_artifact",
@@ -785,20 +787,6 @@ it("rejects malformed paths, refuses WASM summary delivery before provider work 
         parseEvidence(complete.structuredContent).normalized_result,
       ).toEqual(value);
     }
-    expect(inspect).toHaveBeenCalledTimes(2);
-    inspect.mockImplementation(() =>
-      Promise.resolve(err(new AnalysisInputError("inspect_wasm_artifact"))),
-    );
-    const refused = await client.callTool({
-      name: "inspect_wasm_artifact",
-      arguments: summaryInput,
-    });
-    expect(parseMcpToolError(refused)).toMatchObject({
-      error: {
-        code: "capability_unavailable",
-        message: expect.stringContaining("Select detail complete"),
-      },
-    });
     expect(inspect).toHaveBeenCalledTimes(2);
     await client.ping();
   } finally {
@@ -861,7 +849,10 @@ it("compares caller-owned complete inline WASM sources on a fixed server without
     { kind: "fixed", analysis: session },
     { wasmArtifact: service },
   );
-  const client = new Client({ name: "wasm-fixed-comparison", version: "1" });
+  const client = new Client(
+    { name: "wasm-fixed-comparison", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -910,7 +901,10 @@ it("retries cleanup of the injected WASM module after server shutdown fails", as
     { kind: "session", session },
     { wasmArtifact: service },
   );
-  const client = new Client({ name: "wasm-cleanup-retry", version: "1" });
+  const client = new Client(
+    { name: "wasm-cleanup-retry", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [a, b] = InMemoryTransport.createLinkedPair();
   try {
     await server.connect(b);

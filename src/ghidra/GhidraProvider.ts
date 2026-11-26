@@ -1,4 +1,5 @@
 import { resolveGhidraCheckpoint } from "./GhidraCheckpoint.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   checkpointCapabilities,
@@ -21,7 +22,6 @@ import type { ProviderInspectionScope } from "../ports/ProviderInspectionScope.j
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import {
-  AnalysisCleanupLease,
   ArtifactResourceScope,
   ArtifactReaderFailure,
   bindArtifactFileCleanup,
@@ -49,6 +49,7 @@ import {
 } from "../domain/analysisProfile.js";
 import {
   isMachOFormat,
+  BINARY_ARCHITECTURES,
   RAW_ONLY_ARCHITECTURES,
   type BinaryArchitecture,
   type BinaryTarget,
@@ -80,7 +81,7 @@ import {
   admitGhidraLanguageOverride,
   readGhidraLanguageCatalog,
 } from "./GhidraLanguageCatalog.js";
-import { ghidraFileFailure } from "./GhidraFileArtifacts.js";
+import { ghidraFileDialect } from "./GhidraFileArtifacts.js";
 import {
   ghidraProcessorUnsupportedReason,
   isGhidraPspTarget,
@@ -99,24 +100,27 @@ import {
 } from "./GhidraAdmission.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
-const SUPPORTED_ARCHITECTURES = new Set<BinaryArchitecture>([
-  "x86",
-  "x86_64",
-  "arm",
-  "arm64",
-  "mips",
-  "6502",
-  "riscv",
-  "powerpc",
-  "m68k",
-  "hexagon",
-  "xtensa",
-]);
+const GHIDRA_ARCHITECTURES = {
+  x86: true,
+  x86_64: true,
+  arm: true,
+  arm64: true,
+  arm64_32: false,
+  mips: true,
+  "6502": true,
+  riscv: true,
+  powerpc: true,
+  m68k: true,
+  hexagon: true,
+  xtensa: true,
+} as const satisfies Record<BinaryArchitecture, boolean>;
 
 /** Names every admitted family, so the refusal cannot drift from the set. */
 const admittedArchitecturesText = (): string => {
   const rawOnly = new Set<BinaryArchitecture>(RAW_ONLY_ARCHITECTURES);
-  const admitted = [...SUPPORTED_ARCHITECTURES];
+  const admitted = BINARY_ARCHITECTURES.filter(
+    (family) => GHIDRA_ARCHITECTURES[family],
+  );
   const detected = admitted.filter((family) => !rawOnly.has(family));
   const raw = admitted.filter((family) => rawOnly.has(family));
   return `Admitted families: ${detected.join(", ")}; raw-binary only: ${raw.join(", ")}.`;
@@ -137,15 +141,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
   #inspectionAttempt:
     | SharedStartupAttempt<Result<GhidraInstallationInspection, AnalysisError>>
     | undefined;
-  readonly #inspectionOwner: RetainedResourceScope = {
-    retain: (owner, resource) =>
-      this.#inspectionResources.retain({
-        kind: "lease",
-        resource,
-        lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
-      }),
-    run: (operation) => this.#inspectionResources.run(operation),
-  };
+  readonly #inspectionOwner = this.#inspectionResources.forCloseOwners();
   #closing: Promise<Result<null, AnalysisError>> | undefined;
   private readonly environment: NodeJS.ProcessEnv;
 
@@ -322,7 +318,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
           "Ghidra v1 cannot enforce the selected architecture when importing a universal Mach-O; analyze a thinned Mach-O slice instead.",
         diagnostics,
       };
-    if (!SUPPORTED_ARCHITECTURES.has(target.architecture))
+    if (!GHIDRA_ARCHITECTURES[target.architecture])
       return {
         status: "unsupported",
         code: "architecture_unsupported",
@@ -490,9 +486,12 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         );
       } catch (cause: unknown) {
         return err(
-          ghidraFileFailure(cause, "resolve_analysis_profile", {
-            setting: "REA_GHIDRA_LANGUAGE_ID",
-          }),
+          classifyProviderFailure(
+            cause,
+            ghidraFileDialect("resolve_analysis_profile", {
+              setting: "REA_GHIDRA_LANGUAGE_ID",
+            }),
+          ),
         );
       }
       const refused = admitGhidraLanguageOverride(
@@ -546,6 +545,9 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         ghidraPinnedLanguage(target) !== undefined ||
         extensions.value.length !== 0 ||
         baseProfile.parameters.loader !== "auto-from-header" ||
+        // A committed ELF image base is an import-time loader option; restoring
+        // a saved Program would not re-apply it, so it is not a stock import.
+        baseProfile.parameters.elf_image_base !== undefined ||
         baseProfile.parameters.psp_extension !== undefined ||
         seeds.value !== undefined ||
         this.config.ghidraLanguageOverride !== undefined ||

@@ -159,6 +159,7 @@ export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
   /** Whether the scalar being assembled is a key. */
   #inKey = false;
   /** The key or kept scalar assembled so far. */
+  // not-an-allowance: the scalar being assembled; keys are capped at MAX_TOKEN_CODE_UNITS and kept values are charged through #charge.
   #text = "";
   #rows = 0;
   #projectedBytes = 0;
@@ -572,6 +573,8 @@ export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
           heap_size_limit_bytes: heap.heap_size_limit,
         },
         {
+          // Live heap headroom was measured; no configured budget was exceeded.
+          measuredExhaustion: true,
           remediationAction:
             "Close other targets in this REA process, or start REA with a larger Node.js heap (--max-old-space-size), then reopen the target.",
         },

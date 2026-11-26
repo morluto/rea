@@ -3,7 +3,7 @@ import { Budget } from "../domain/budget.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import type { FileHandle } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
-import { Readable } from "node:stream";
+import type { Readable } from "node:stream";
 import {
   ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
@@ -16,12 +16,10 @@ import {
   assertArtifactReadActive,
   ArtifactFileSource,
 } from "../resources/index.js";
-import { ownAsyncArtifactStream } from "./OwnedAsyncArtifactStream.js";
+import { OwnedAsyncArtifactStreams } from "./OwnedAsyncArtifactStreams.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
-import type {
-  ArtifactFormatMetadata,
-  UnityFsMetadata,
-} from "../domain/artifactFormatMetadata.js";
+import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
+import type { UnityFsMetadata } from "../domain/formatMetadata/packageAndGameMetadata.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { UNITYFS_COMPRESSION_NONE } from "../domain/unityfsFormat.js";
 import {
@@ -34,9 +32,7 @@ import {
 } from "./UnityFsStructures.js";
 
 const CHUNK_BYTES = 64 * 1024;
-// A decode can retain both encoded and 64 MiB decoded buffers. Bound active
-// decodes/paused block owners as well as the single completed cache entry.
-const MAX_MEMBER_STREAMS = 4;
+
 type UnityFsEntry = ArtifactEntry & {
   readonly declaredSize: number;
   readonly formatMetadata: Extract<
@@ -56,7 +52,11 @@ export class UnityFsArtifactReader implements ArtifactReader {
   readonly format = "unityfs" as const;
   readonly #scope = new ArtifactResourceScope();
   #entries = new Map<string, UnityFsEntryState>();
-  readonly #streams = new Map<Readable, AbortController>();
+  readonly #streams = new OwnedAsyncArtifactStreams(
+    this.#scope,
+    "UnityFS",
+    CHUNK_BYTES,
+  );
   readonly #source: ArtifactFileSource;
   readonly #preparation = new ArtifactPreparation();
   #header: UnityFsMetadata | undefined;
@@ -150,38 +150,15 @@ export class UnityFsArtifactReader implements ArtifactReader {
           { traversal: { status: "unknown", limitations: [limitation] } },
         );
       }
-      if (this.#streams.size >= MAX_MEMBER_STREAMS)
-        throw new ArtifactReaderFailure(
-          "limit",
-          "UnityFS reader already owns four active member streams",
-          { boundary: "capacity" },
-        );
-      const controller = new AbortController();
-      const output = ownAsyncArtifactStream(
-        this.#memberChunks(handle, state, controller.signal),
-        controller,
-        {
-          scope: this.#scope,
-          streams: this.#streams,
-          signal,
-          label: "UnityFS",
-          highWaterMark: CHUNK_BYTES,
-        },
+      return this.#streams.open(signal, (active) =>
+        this.#memberChunks(handle, state, active),
       );
-      return output;
     });
   }
 
   async close(): Promise<void> {
     this.#closing = true;
-    for (const [stream, controller] of this.#streams) {
-      const cause = new ArtifactReaderFailure(
-        "unavailable",
-        "UnityFS reader closed",
-      );
-      controller.abort(cause);
-      stream.destroy(cause);
-    }
+    this.#streams.close();
     await this.#scope.close();
     await this.#source.close();
     this.#entries.clear();
@@ -376,6 +353,7 @@ export class UnityFsArtifactReader implements ArtifactReader {
         const chunk =
           plain === undefined
             ? await readArtifactFileBytes(
+                "unityfs",
                 handle,
                 this.#dataStart + block.compressedStart + offset,
                 size,
@@ -411,6 +389,7 @@ export class UnityFsArtifactReader implements ArtifactReader {
     this.#reserveMemberRead();
     this.#decodeBytes.charge(block.uncompressedSize, exhausted);
     const encoded = await readArtifactFileBytes(
+      "unityfs",
       handle,
       this.#dataStart + block.compressedStart,
       block.compressedSize,

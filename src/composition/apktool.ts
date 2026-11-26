@@ -1,4 +1,5 @@
-import type { ApktoolResourceAnalysisPort } from "../application/apktool/ApktoolResourceAnalysisPort.js";
+import type { RequestAnalysisPort } from "../ports/AnalysisProvider.js";
+import type { ApktoolRequest } from "../domain/apktool/apktoolResourceAnalysis.js";
 import { ApktoolProvider } from "../apktool/ApktoolProvider.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 
@@ -6,5 +7,5 @@ import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 export const createApktoolResourceAnalysisProvider = (
   environment: Readonly<Record<string, string | undefined>> = process.env,
   platform: NodeJS.Platform = HOST_PLATFORM.platform,
-): ApktoolResourceAnalysisPort =>
+): RequestAnalysisPort<ApktoolRequest> =>
   new ApktoolProvider({ environment, platform });
