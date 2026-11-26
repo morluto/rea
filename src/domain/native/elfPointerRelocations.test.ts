@@ -1,10 +1,11 @@
-import { expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { FileMapping } from "../virtualFileMapping.js";
 import {
   ElfPointerRelocationFailure,
   elfAbsoluteRelocationType,
   elfCopyRelocationType,
   elfRelocationWidth,
+  elfRelocationWidthLookup,
   readElfRelocationWritesSteps,
   readElfPointerValuesSteps,
   readElfPointerRelocationsSteps,
@@ -309,7 +310,7 @@ const symbolicImage = (
     ...(layout.symbolTags ?? [
       [6n, 0x200n],
       [11n, 24n],
-      ...(layout.definition === undefined || layout.hash === "none"
+      ...(layout.hash === "none"
         ? []
         : [
             [layout.hash === "gnu" ? 0x6ffffef5n : 4n, 0x280n] as [
@@ -337,6 +338,8 @@ const symbolicImage = (
     bytes[0x200 + 24 + 4] = 0x10 | (layout.definition.type ?? 1);
     bytes.writeUInt16LE(layout.definition.section ?? 1, 0x200 + 24 + 6);
     bytes.writeBigUInt64LE(layout.definition.value, 0x200 + 24 + 8);
+  }
+  if (layout.hash !== "none") {
     const words =
       layout.hash === "gnu" ? [1, 1, 1, 0, 0, 0, 1, 1] : [1, 2, 1, 0, 0];
     words.forEach((value, index) =>
@@ -355,6 +358,7 @@ const symbolicImage32 = (kind: number, symbolSize: number): Buffer => {
     [19, 8],
     [6, 0x200],
     [11, 16],
+    [4, 0x280],
     [0, 0],
   ] as const;
   dynamic.forEach(([tag, value], index) => {
@@ -364,6 +368,9 @@ const symbolicImage32 = (kind: number, symbolSize: number): Buffer => {
   bytes.writeUInt32LE(0x300, 0x100);
   bytes.writeUInt32LE((1 << 8) | kind, 0x104);
   bytes.writeUInt32LE(symbolSize, 0x200 + 16 + 8);
+  [1, 2, 1, 0, 0].forEach((value, index) =>
+    bytes.writeUInt32LE(value, 0x280 + index * 4),
+  );
   return bytes;
 };
 
@@ -618,13 +625,22 @@ it("writes nothing for a COPY of a zero-size symbol", () => {
 });
 
 it.each([
-  ["no DT_SYMTAB", symbolicImage(5n, 8n, { symbolTags: [[11n, 24n]] })],
+  [
+    "no DT_SYMTAB",
+    symbolicImage(5n, 8n, {
+      symbolTags: [
+        [11n, 24n],
+        [4n, 0x280n],
+      ],
+    }),
+  ],
   [
     "a nonstandard DT_SYMENT",
     symbolicImage(5n, 8n, {
       symbolTags: [
         [6n, 0x200n],
         [11n, 16n],
+        [4n, 0x280n],
       ],
     }),
   ],
@@ -635,6 +651,7 @@ it.each([
         [6n, 0x200n],
         [6n, 0x200n],
         [11n, 24n],
+        [4n, 0x280n],
       ],
     }),
   ],
@@ -644,8 +661,30 @@ it.each([
       symbolTags: [
         [6n, 0x10000n],
         [11n, 24n],
+        [4n, 0x280n],
       ],
     }),
+  ],
+  ["no hash table", symbolicImage(5n, 8n, { hash: "none" })],
+  [
+    "a symbol index past DT_HASH nchain (nonzero mapped bytes)",
+    (() => {
+      const bytes = symbolicImage(5n, 8n, { symbolIndex: 2 });
+      bytes.writeBigUInt64LE(0x99n, 0x200 + 48 + 16);
+      return bytes;
+    })(),
+  ],
+  [
+    "a symbol index past DT_HASH nchain (zero mapped bytes)",
+    symbolicImage(5n, 8n, { symbolIndex: 2 }),
+  ],
+  [
+    "a symbol index past DT_GNU_HASH",
+    (() => {
+      const bytes = symbolicImage(5n, 8n, { hash: "gnu", symbolIndex: 2 });
+      bytes.writeBigUInt64LE(0x40n, 0x200 + 48 + 16);
+      return bytes;
+    })(),
   ],
   ["symbol index 0", symbolicImage(5n, 8n, { symbolIndex: 0 })],
   [
@@ -660,6 +699,14 @@ it.each([
     pointer_coverage_known: false,
   });
   expect(() => walk(bytes)).toThrow(ElfPointerRelocationFailure);
+});
+
+it("sizes a COPY write when bounded by DT_GNU_HASH", () => {
+  const { writes, result } = walk(symbolicImage(5n, 0x18n, { hash: "gnu" }));
+  expect(writes).toMatchObject([
+    { address: 0x300n, width: 0x18, value: null, symbol_index: 1 },
+  ]);
+  expect(result).toMatchObject({ issues: [], pointer_coverage_known: true });
 });
 
 it("stops sizing COPY writes once they cover more than the file byte count", () => {
@@ -751,6 +798,12 @@ it("admits fitting pointer workspace and preserves its complete values", () => {
   ).toEqual([0x1234n, 0x1334n, 0x1434n]);
 });
 
+it("exposes clipped, coalesced loader-write intervals from the value-only overlay", () => {
+  const facts = pointerValues(relativeValues(), 6144);
+  expect(facts.writeIntervalsIn(0x304n, 16)).toEqual([{ start: 0, end: 16 }]);
+  expect(facts.writeIntervalsIn(0x318n, 8)).toEqual([]);
+});
+
 it("charges repeated virtual destinations once within the pointer workspace", () => {
   const facts = pointerValues(relativeValues(true), 2048);
   expect(facts.unsignedAt(0x300n, 8)).toBe(0x1234n);
@@ -765,7 +818,9 @@ it("refuses pointer workspace growth before inserting the next virtual destinati
         failure: expect.objectContaining({
           kind: "limit",
           format: "elf-pointer-relocations",
-          limit: { name: "native-index-capacity", maximum: 4096 },
+          // The caller selected this allowance, so it names it separately
+          // from the loader's fixed capacities.
+          limit: { name: "virtual-pointer-index-bytes", maximum: 4096 },
         }),
         unit: "bytes",
         message: expect.stringContaining("4096 estimated representation bytes"),
@@ -792,11 +847,6 @@ const riscvSymbolicImage32 = (kind: number, symbol = 1): Buffer => {
   bytes.writeUInt32LE(0x4000, 0x214);
   bytes[0x21c] = 0x11;
   bytes.writeUInt16LE(1, 0x21e);
-  bytes.writeInt32LE(4, 40);
-  bytes.writeUInt32LE(0x280, 44);
-  [1, 2, 1, 0, 0].forEach((value, index) =>
-    bytes.writeUInt32LE(value, 0x280 + index * 4),
-  );
   return bytes;
 };
 
@@ -870,4 +920,27 @@ it.each([32, 64] as const)(
 it("does not apply a machine's pointer rules to a different ELF class", () => {
   expect(elfAbsoluteRelocationType(183, 32)).toBeUndefined();
   expect(elfAbsoluteRelocationType(40, 64)).toBeUndefined();
+});
+
+describe("elfRelocationWidthLookup", () => {
+  it("matches elfRelocationWidth across supported and unsupported targets", () => {
+    for (const [machine, bits, sampleType] of [
+      [183, 64, 257],
+      [62, 64, 1],
+      [40, 32, 2],
+      [3, 32, 1],
+      [243, 32, 1],
+      [243, 64, 2],
+    ] as const) {
+      const widths = elfRelocationWidthLookup(machine, bits);
+      expect(widths).toBeDefined();
+      expect(widths?.get(sampleType)).toBe(
+        elfRelocationWidth(machine, sampleType, bits),
+      );
+      expect(widths?.get(0)).toBeUndefined();
+      expect(elfRelocationWidth(machine, 0, bits)).toBe(0);
+    }
+    expect(elfRelocationWidthLookup(183, 32)).toBeUndefined();
+    expect(elfRelocationWidthLookup(999, 64)).toBeUndefined();
+  });
 });

@@ -1,3 +1,4 @@
+import { knownCoverage } from "./coverageAccumulator.js";
 import { buildJavaScriptRouteInventorySteps } from "./javascript/javascriptRouteInventory.js";
 import { completeSemanticSteps } from "./javascript/javascriptSemanticTraversal.js";
 import { RETURNED_REFERENCE_WIDENING_LIMITATION } from "./javascript/javascriptSemanticCoverage.js";
@@ -19,6 +20,7 @@ import {
   type WebBundleScriptAnalysis,
 } from "./webBundleScriptAnalysis.js";
 import { appendAll } from "./appendAll.js";
+import { compositeKey } from "./unicodeCodePointOrder.js";
 
 export const buildCapturedWebBundleAnalysis = (
   inspection: WebPageInspection,
@@ -198,12 +200,12 @@ export const buildCapturedWebBundleAnalysis = (
       omittedSourceScripts,
       omittedSourceMaps,
     }),
-    completeness: buildCompleteness({
-      partial,
-      parsedScripts: accumulator.parsedScripts,
-      parseFailures: accumulator.failedScripts.length,
-      visitedNodes: accumulator.visitedNodes,
-    }),
+    completeness: {
+      status: knownCoverage(!partial),
+      parsed_scripts: accumulator.parsedScripts,
+      parse_failures: accumulator.failedScripts.length,
+      visited_ast_nodes: accumulator.visitedNodes,
+    },
     limitations: bundleLimitations(),
   });
 };
@@ -212,6 +214,8 @@ const mergeScriptResults = (
   results: readonly WebBundleScriptAnalysis[],
 ): AnalysisAccumulator => {
   const accumulator = createWebBundleAnalysisAccumulator();
+  const routeKeys = new Map<string, BundleFinding>();
+  const endpointKeys = new Map<string, BundleFinding>();
   for (const result of results) {
     if (result.status === "unavailable") {
       // A refused script still parsed; its text inferences remain.
@@ -233,8 +237,16 @@ const mergeScriptResults = (
     if (result.widened_return_references)
       accumulator.widenedScripts.push(result.script_key);
     appendAll(accumulator.edges, result.observations.edges);
-    appendAll(accumulator.routes, result.observations.routes);
-    appendAll(accumulator.endpoints, result.observations.endpoints);
+    appendDeduplicatedFindings(
+      accumulator.routes,
+      result.observations.routes,
+      routeKeys,
+    );
+    appendDeduplicatedFindings(
+      accumulator.endpoints,
+      result.observations.endpoints,
+      endpointKeys,
+    );
     appendAll(
       accumulator.unresolvedEndpoints,
       result.observations.unresolved_endpoints,
@@ -243,6 +255,39 @@ const mergeScriptResults = (
     appendAll(accumulator.inferences, result.inferences);
   }
   return accumulator;
+};
+
+type BundleFinding = AnalysisAccumulator["routes"][number];
+
+/**
+ * Merge per-script findings across scripts by (value, mechanism). The first
+ * occurrence keeps its location; later occurrences are folded into
+ * occurrences/script_keys so no script is silently dropped. Findings that
+ * appear in only one script keep their original shape.
+ */
+const appendDeduplicatedFindings = (
+  target: BundleFinding[],
+  findings: readonly BundleFinding[],
+  seen: Map<string, BundleFinding>,
+): void => {
+  for (const finding of findings) {
+    const key = compositeKey([finding.value, finding.mechanism]);
+    const retained = seen.get(key);
+    if (retained === undefined) {
+      seen.set(key, finding);
+      target.push(finding);
+      continue;
+    }
+    retained.occurrences = (retained.occurrences ?? 1) + 1;
+    if (retained.script_keys === undefined) {
+      retained.script_keys = [
+        retained.location.script_key,
+        finding.location.script_key,
+      ];
+    } else {
+      retained.script_keys.push(finding.location.script_key);
+    }
+  }
 };
 
 const buildCaptureObservation = (
@@ -496,26 +541,19 @@ const captureBudgetReason = (label: string, count: number | null): string =>
     ? `Capture omitted an unknown number of ${label} because its resource budget was exhausted.`
     : `Capture omitted ${String(count)} ${label} because its resource budget was exhausted.`;
 
-interface CompletenessInput {
-  readonly partial: boolean;
-  readonly parsedScripts: number;
-  readonly parseFailures: number;
-  readonly visitedNodes: number;
-}
-
-const buildCompleteness = (
-  input: CompletenessInput,
-): WebBundleAnalysis["completeness"] => ({
-  status: input.partial ? "partial" : "complete",
-  parsed_scripts: input.parsedScripts,
-  parse_failures: input.parseFailures,
-  visited_ast_nodes: input.visitedNodes,
-});
+/**
+ * Reported when findings are merged across scripts. Wording may change, but
+ * the limitation itself must stay so callers know the retained location is
+ * the first occurrence only.
+ */
+export const CROSS_SCRIPT_DEDUP_LIMITATION =
+  "Routes and endpoints are deduplicated across scripts by value and mechanism; the retained entry keeps the first occurrence's location, and occurrences and script_keys record the scripts that contained the same finding.";
 
 const bundleLimitations = (): WebBundleAnalysis["limitations"] => [
   "Static bundle findings are observations or bounded inferences; REA does not execute captured JavaScript.",
   "Bare string arguments of unbound HTTP-method-named calls are low-confidence endpoint candidates; form, translation, storage and other APIs can use the same syntax. URL-shaped findings still do not prove network execution.",
   'Endpoint candidates are deduplicated by script, value and detector; basis retains only the first matching source coordinate. They are not a complete call-site inventory or a runtime occurrence count. completeness.status="complete" describes examination of captured source, not a call-site census.',
+  CROSS_SCRIPT_DEDUP_LIMITATION,
   "String-built routes and endpoints, encrypted configuration, and server-side behavior may remain unknown.",
   "Page-declared WebMCP metadata is untrusted and is never registered or invoked as an REA tool.",
 ];

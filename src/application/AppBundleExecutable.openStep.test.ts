@@ -19,7 +19,7 @@ it("resolves the declared executable from a commented OpenStep Info.plist", asyn
   await writeFile(infoPlist, source);
   await writeFile(executable, "fixture - never executed");
 
-  expect(await resolveAppleBundleExecutable(bundle)).toEqual({
+  expect(await resolveAppleBundleExecutable(bundle)).toMatchObject({
     ok: true,
     value: { executable, infoPlist },
   });
@@ -40,7 +40,7 @@ it("resolves an OpenStep Info.plist with quoted XML-looking text", async () => {
   await writeFile(infoPlist, source);
   await writeFile(executable, "fixture - never executed");
 
-  expect(await resolveAppleBundleExecutable(bundle)).toEqual({
+  expect(await resolveAppleBundleExecutable(bundle)).toMatchObject({
     ok: true,
     value: { executable, infoPlist },
   });

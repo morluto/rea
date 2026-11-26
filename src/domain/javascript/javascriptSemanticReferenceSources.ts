@@ -91,7 +91,7 @@ const semanticArrayIteratorMayHaveReturnAt = (
     ambientPathMayObserveAt(state, pattern, path, "contents"),
   );
 
-const isLexicalPatternDeclaration = (
+export const isLexicalPatternDeclaration = (
   owner: t.Node | undefined,
   state: JavaScriptSemanticAnalysisState,
 ): owner is t.VariableDeclarator => {

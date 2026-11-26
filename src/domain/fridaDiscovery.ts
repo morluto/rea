@@ -22,6 +22,8 @@ export const fridaProcessListSchema = z.strictObject({
       identifier: z.string().nullable(),
     }),
   ),
+  total_processes: z.int().nonnegative().optional(),
+  truncated: z.boolean().optional(),
   cleanup_error: z.string().nullable(),
 });
 

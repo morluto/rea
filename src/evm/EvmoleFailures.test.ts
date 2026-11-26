@@ -120,12 +120,12 @@ it("names timeout_ms, the omitted default, and the caps it does not raise", () =
     parameter: "timeout_ms",
     effective_value: 45_000,
     default_value: DEFAULT_EVM_TIMEOUT_MS,
+    applies_at: "next_call",
   });
   expect(projected.remediation.action).toContain(
     String(MAX_NODE_TIMER_DELAY_MS),
   );
   expect(projected.remediation.action).toContain("does not raise");
-  expect(projected.remediation.action).toContain("no server restart");
 });
 
 it("names the selected CPU budget separately from tighter inherited limits", () => {
@@ -210,15 +210,12 @@ it("names a selected carrier that is a directory as invalid input", () => {
   });
 });
 
-it.each([
-  {
-    reason: "path" as const,
-    message: "Expected a regular file without a symlink: /selected.bin",
-  },
-  { reason: "format" as const, message: "Unsupported carrier format." },
-])("keeps reader $reason refusals as invalid input", ({ reason, message }) => {
+// Only a path-kind reader refusal is the caller's selection; the shared
+// projection no longer treats a reader's byte-format reason as one.
+it("keeps a reader path refusal as invalid input", () => {
+  const message = "Expected a regular file without a symlink: /selected.bin";
   const projected = projectAnalysisError(
-    evmInterfaceFailure(new ArtifactReaderFailure(reason, message), {
+    evmInterfaceFailure(new ArtifactReaderFailure("path", message), {
       phase: "artifact-read",
       path: "/selected.bin",
     }),

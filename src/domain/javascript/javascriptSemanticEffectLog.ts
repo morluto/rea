@@ -1,6 +1,6 @@
 /**
  * The effect log: one owner of the questions readers ask about recorded
- * effects (docs/adr/javascript/pushed-effect-invalidation.md). Readers ask
+ * effects. Readers ask
  * whether a read may observe an effect; the timing, capture and path proofs
  * stay here. Recorded opaque sites live in javascriptSemanticEffectRecord.ts.
  */
@@ -45,6 +45,7 @@ import {
   type JavaScriptSemanticMemberEffect,
   type JavaScriptSemanticReferenceEffectsAtSite,
 } from "./javascriptSemanticState.js";
+import { semanticConsumerMemo } from "./javascriptSemanticConsumer.js";
 
 export const indexSemanticOpaqueEffects = (
   candidates: readonly {
@@ -414,17 +415,14 @@ type MemberWrite = JavaScriptSemanticBindingState["memberWrites"][number];
 
 /** Matching effects per queried path; the effect lists only grow, so their
  * lengths tell when a retained selection is stale. */
-const ambientPathSelections = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  {
-    writes: number;
-    escapes: number;
-    readonly byPath: Map<
-      string,
-      { readonly writes: AmbientEffect[]; readonly escapes: AmbientEffect[] }
-    >;
-  }
->();
+const ambientPathSelections = semanticConsumerMemo<{
+  writes: number;
+  escapes: number;
+  readonly byPath: Map<
+    string,
+    { readonly writes: AmbientEffect[]; readonly escapes: AmbientEffect[] }
+  >;
+}>();
 
 const ambientPathEffects = (
   state: JavaScriptSemanticAnalysisState,
@@ -1030,15 +1028,55 @@ const opaqueCodeMayReachBindingReference = (
 ): boolean =>
   semanticBindingMayHaveOpaqueEffect(binding, state, capturePoint, "reference");
 
+/** Whether a binding can acquire members outside its retained assignment sources. */
+export const bindingHasUnmodeledMemberValues = (
+  binding: JavaScriptSemanticBindingState,
+  write: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (opaqueCodeMayReachBindingReference(binding, state, undefined))
+    return true;
+  if (
+    binding.memberWrites.some((effect) => effect.assignedSources === undefined)
+  )
+    return true;
+  // The queried store itself can mark its selected slot escaped. Its retained
+  // RHS still participates in the source proof.
+  const storeIsModeled = binding.memberWrites.some(
+    (effect) => effect.node === write,
+  );
+  return binding.escapedPaths.some(
+    (effect) => effect.node !== write || !storeIsModeled,
+  );
+};
+
+const inactiveMemberWriteNodes = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  WeakSet<t.Node>
+>();
+
+export const retainSemanticInactiveMemberWrites = (
+  state: JavaScriptSemanticAnalysisState,
+  nodes: readonly t.Node[],
+): void => {
+  inactiveMemberWriteNodes.set(state, new WeakSet(nodes));
+};
+
 const observesCapturedWrite = (
   binding: JavaScriptSemanticBindingState,
   capture: t.Node | undefined,
   node: t.Node | undefined,
-  parents: JavaScriptSemanticAnalysisState["parentsByNode"],
+  state: JavaScriptSemanticAnalysisState,
 ): boolean =>
-  capture === undefined ||
   node === undefined ||
-  !semanticBindingEffectFollowsCapture(binding, capture, node, parents);
+  (inactiveMemberWriteNodes.get(state)?.has(node) !== true &&
+    (capture === undefined ||
+      !semanticBindingEffectFollowsCapture(
+        binding,
+        capture,
+        node,
+        state.parentsByNode,
+      )));
 
 const observesCapturedEscape = (
   binding: JavaScriptSemanticBindingState,
@@ -1064,12 +1102,7 @@ export const capturedBindingPathMayHaveChanged = (
       path,
       (effect) =>
         semanticEffectPathMatches(effect.path, path) &&
-        observesCapturedWrite(
-          binding,
-          capture,
-          effect.node,
-          state.parentsByNode,
-        ),
+        observesCapturedWrite(binding, capture, effect.node, state),
     ) ||
     semanticSomeEffectPathCandidate(
       binding.escapedPaths,
@@ -1134,7 +1167,7 @@ export const applySemanticBindingReferenceEffects = (
     value,
     binding.memberWrites
       .filter(({ node }) =>
-        observesCapturedWrite(binding, capturePoint, node, state.parentsByNode),
+        observesCapturedWrite(binding, capturePoint, node, state),
       )
       .map(({ path }) => path),
   );

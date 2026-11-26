@@ -1,3 +1,4 @@
+import { write16, write32, writeWord } from "../BinaryInteger.fixture.js";
 import { deflateSync, zstdCompressSync } from "node:zlib";
 
 const concat = (...parts: Buffer[]): Buffer => Buffer.concat(parts);
@@ -7,42 +8,6 @@ const alignTo = (value: number, alignment: number): number =>
 
 /** Effective namesz/descsz padding: 8 stays 8; 0, 1, 4, and other values use 4. */
 const notePadding = (declared: number): number => (declared === 8 ? 8 : 4);
-
-const writeWord = (
-  bytes: Buffer,
-  offset: number,
-  value: bigint | number,
-  bits: 32 | 64,
-  little: boolean,
-): void => {
-  if (bits === 64) {
-    if (little) bytes.writeBigUInt64LE(BigInt(value), offset);
-    else bytes.writeBigUInt64BE(BigInt(value), offset);
-    return;
-  }
-  if (little) bytes.writeUInt32LE(Number(value), offset);
-  else bytes.writeUInt32BE(Number(value), offset);
-};
-
-const write16 = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  little: boolean,
-): void => {
-  if (little) bytes.writeUInt16LE(value, offset);
-  else bytes.writeUInt16BE(value, offset);
-};
-
-const write32 = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  little: boolean,
-): void => {
-  if (little) bytes.writeUInt32LE(Number(value), offset);
-  else bytes.writeUInt32BE(Number(value), offset);
-};
 
 /** Encode one ELF note, padding name/descriptor to the table alignment. */
 export const elfNote = (
@@ -226,6 +191,19 @@ export const elfNoteWithUnreadableSectionNameFixture = (
   return bytes;
 };
 
+export const elfCompressedNoteStorage = (
+  notes: Buffer,
+  bits: 32 | 64,
+  little: boolean,
+  alignment: number,
+): Buffer => {
+  const header = Buffer.alloc(bits === 64 ? 24 : 12);
+  write32(header, 0, 1, little); // ELFCOMPRESS_ZLIB
+  writeWord(header, bits === 64 ? 8 : 4, notes.length, bits, little);
+  writeWord(header, bits === 64 ? 16 : 8, alignment, bits, little);
+  return concat(header, deflateSync(notes));
+};
+
 /** A non-allocated SHT_NOTE whose stored bytes include an ELF compression header. */
 export const compressedElfNoteSectionFixture = (
   bits: 32 | 64 = 64,
@@ -236,10 +214,6 @@ export const compressedElfNoteSectionFixture = (
     gnuBuildIdNote(undefined, little),
     gnuAbiTagNote(little),
   );
-  const header = Buffer.alloc(bits === 64 ? 24 : 12);
-  write32(header, 0, 1, little); // ELFCOMPRESS_ZLIB
-  writeWord(header, bits === 64 ? 8 : 4, notes.length, bits, little);
-  writeWord(header, bits === 64 ? 16 : 8, 4, bits, little);
   const bytes = elfNoteFixture({
     bits,
     little,
@@ -247,7 +221,7 @@ export const compressedElfNoteSectionFixture = (
     ownership,
     sectionName: ".debug.notes",
     alignment: bits === 64 ? 8 : 4,
-    notes: concat(header, deflateSync(notes)),
+    notes: elfCompressedNoteStorage(notes, bits, little, 4),
   });
   const headerSize = bits === 64 ? 64 : 52;
   const programSize = bits === 64 ? 56 : 32;
@@ -443,13 +417,59 @@ export interface CorePrpsinfoOptions {
   readonly sid?: number;
   readonly fname?: string;
   readonly psargs?: string;
+  /** UID/GID byte width in the ELF32 descriptor. ELF64 always uses four bytes. */
+  readonly idWidth?: 2 | 4;
 }
 
-/** Linux CORE NT_PRPSINFO note (type 3). */
-export const corePrpsinfoNote = (options: CorePrpsinfoOptions = {}): Buffer => {
+/** Encode a full ELF32 Linux process record and a shortened record under the same ABI. */
+export const elf32ProcessIdentityFixture = (
+  machine: number,
+  little: boolean,
+  idWidth: 2 | 4,
+  flags = 0,
+) => {
+  const expected = {
+    state: 1,
+    uid: idWidth === 4 ? 70001 : 500,
+    gid: idWidth === 4 ? 90002 : 600,
+    pid: 1234,
+    ppid: 12,
+    pgrp: 4321,
+    sid: 5678,
+    filename: "core-probe",
+    psargs: "core-probe --flag",
+  };
+  const descriptor = corePrpsinfoDescriptor({
+    ...expected,
+    bits: 32,
+    idWidth,
+    little,
+    fname: expected.filename,
+  });
+  const shortened = descriptor.subarray(0, descriptor.length - 4);
+  const bytes = elfNoteFixture({
+    bits: 32,
+    little,
+    machine,
+    type: 4,
+    ownership: "program",
+    notes: concat(
+      elfNote("CORE", 3, descriptor, little),
+      elfNote("CORE", 3, shortened, little),
+    ),
+  });
+  write32(bytes, 36, flags, little);
+  return { bytes, shortened, expected };
+};
+
+/** Descriptor bytes for a Linux NT_PRPSINFO note. */
+export const corePrpsinfoDescriptor = (
+  options: CorePrpsinfoOptions = {},
+): Buffer => {
   const bits = options.bits ?? 64;
   const little = options.little ?? true;
-  const desc = Buffer.alloc(bits === 64 ? 136 : 124);
+  const idWidth = bits === 64 ? 4 : (options.idWidth ?? 2);
+  const desc = Buffer.alloc(bits === 64 ? 136 : idWidth === 4 ? 128 : 124);
   desc[0] = options.state ?? 0;
   desc[1] = (options.sname ?? "R").charCodeAt(0);
   desc[2] = options.zomb ?? 0;
@@ -479,29 +499,39 @@ export const corePrpsinfoNote = (options: CorePrpsinfoOptions = {}): Buffer => {
     psargs.copy(desc, 56, 0, Math.min(psargs.length, 80));
   } else {
     write32(desc, 4, options.flag ?? 0, little);
-    write16(desc, 8, options.uid ?? 1000, little);
-    write16(desc, 10, options.gid ?? 1000, little);
-    if (little) {
-      desc.writeInt32LE(options.pid ?? 1234, 12);
-      desc.writeInt32LE(options.ppid ?? 1, 16);
-      desc.writeInt32LE(options.pgrp ?? 1234, 20);
-      desc.writeInt32LE(options.sid ?? 1234, 24);
+    if (idWidth === 4) {
+      write32(desc, 8, options.uid ?? 1000, little);
+      write32(desc, 12, options.gid ?? 1000, little);
     } else {
-      desc.writeInt32BE(options.pid ?? 1234, 12);
-      desc.writeInt32BE(options.ppid ?? 1, 16);
-      desc.writeInt32BE(options.pgrp ?? 1234, 20);
-      desc.writeInt32BE(options.sid ?? 1234, 24);
+      write16(desc, 8, options.uid ?? 1000, little);
+      write16(desc, 10, options.gid ?? 1000, little);
+    }
+    const pidAt = 8 + idWidth * 2;
+    if (little) {
+      desc.writeInt32LE(options.pid ?? 1234, pidAt);
+      desc.writeInt32LE(options.ppid ?? 1, pidAt + 4);
+      desc.writeInt32LE(options.pgrp ?? 1234, pidAt + 8);
+      desc.writeInt32LE(options.sid ?? 1234, pidAt + 12);
+    } else {
+      desc.writeInt32BE(options.pid ?? 1234, pidAt);
+      desc.writeInt32BE(options.ppid ?? 1, pidAt + 4);
+      desc.writeInt32BE(options.pgrp ?? 1234, pidAt + 8);
+      desc.writeInt32BE(options.sid ?? 1234, pidAt + 12);
     }
     const fname = Buffer.from(`${options.fname ?? "app"}\0`, "latin1");
-    fname.copy(desc, 28, 0, Math.min(fname.length, 16));
+    fname.copy(desc, pidAt + 16, 0, Math.min(fname.length, 16));
     const psargs = Buffer.from(
       `${options.psargs ?? "./app --flag"}\0`,
       "latin1",
     );
-    psargs.copy(desc, 44, 0, Math.min(psargs.length, 80));
+    psargs.copy(desc, pidAt + 32, 0, Math.min(psargs.length, 80));
   }
-  return elfNote("CORE", 3, desc, little);
+  return desc;
 };
+
+/** Linux CORE NT_PRPSINFO note (type 3). */
+export const corePrpsinfoNote = (options: CorePrpsinfoOptions = {}): Buffer =>
+  elfNote("CORE", 3, corePrpsinfoDescriptor(options), options.little ?? true);
 
 export interface CoreFileMapping {
   readonly start: bigint | number;

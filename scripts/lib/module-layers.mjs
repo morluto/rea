@@ -4,13 +4,9 @@
  * layer. An undeclared unit fails the check, so a new directory must choose
  * its layer when it is added.
  *
- * The order follows docs/architecture/architecture.mermaid: the dependency-free
- * kernel helpers that every layer may use, domain and
- * contracts at the centre, the process/filesystem foundation, the ports
- * that providers implement and application consumes, the shared provider
- * core (src/providers), provider adapters,
- * shared application workflows, production composition, then the CLI and
- * MCP entry points.
+ * The order starts with dependency-free kernel helpers that every layer may
+ * use, then the domain, contracts, process/filesystem foundation, and ports.
+ * Providers implement the ports and application workflows consume them.
  */
 export const LAYER_ORDER = Object.freeze([
   "kernel",
@@ -102,17 +98,14 @@ export const UNIT_LAYERS = Object.freeze(
       "main",
       "server",
       "cli.ts",
-      "cliBrowserScenarioCommands.ts",
       "cliBuiltinArguments.ts",
       "cliConfiguration.ts",
-      "cliEvidenceCommands.ts",
+      "cliLoader.ts",
       "cliLogging.ts",
       "cliOneShot.ts",
-      "cliOutput.ts",
       "doctorRuntime.ts",
       "main.ts",
       "mcpDoctor.ts",
-      "mcpDoctorOptions.ts",
       "recordedCliCommandRegistrations.ts",
       "recordedMcpCatalog.ts",
     ]),
@@ -278,8 +271,16 @@ export const ENTRY_FILES = Object.freeze(
         "BuildComputerEnvironment.ts",
         "DconfDatabaseReader.ts",
         "DesktopBuildDoctorFacts.ts",
+        "DesktopBuildSetupHost.ts",
         "DesktopCaptureProvider.ts",
         "DesktopSessionRequests.ts",
+        // Build-computer workflows in src/application/desktop drive these owners.
+        "AgentEnvComputerHelper.ts",
+        "AgentEnvSolveHelper.ts",
+        "BuildComputerController.ts",
+        "BuildComputerLongRuns.ts",
+        "BuildSecretFiles.ts",
+        "ScreenJudgeProcess.ts",
         // Build-computer composition (`capabilityServices`) wires `readHostFile` into `DesktopBuildComputers`.
         "HostFileRead.ts",
       ],
@@ -300,7 +301,11 @@ export const ENTRY_FILES = Object.freeze(
       ],
       flutter: ["FlutterBuildProvider.ts", "FlutterProviderIdentity.ts"],
       frida: ["FridaInstrumentationManager.ts", "FridaProviderIdentity.ts"],
-      gdb: ["GdbProviderIdentity.ts", "GdbSessionManager.ts"],
+      gdb: [
+        "GdbCommandClassification.ts",
+        "GdbProviderIdentity.ts",
+        "GdbSessionManager.ts",
+      ],
       ghidra: [
         "GhidraDoctor.ts",
         "GhidraProvider.ts",
@@ -360,6 +365,7 @@ export const ENTRY_FILES = Object.freeze(
         "pe/PeCertificatesProvider.ts",
         "pe/PeImportsProvider.ts",
         "pe/PeLoadConfigProvider.ts",
+        "pe/PeUnwindRangesProvider.ts",
         "pe/PeResourcesProvider.ts",
         "pwntools/PwntoolsDecoder.ts",
         "pwntools/PwntoolsLayoutProvider.ts",

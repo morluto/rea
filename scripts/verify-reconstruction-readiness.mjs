@@ -12,6 +12,7 @@ import { requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { createEvidenceBundle } from "../dist/domain/evidenceBundle.js";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 const [
   { RECONSTRUCTION_READINESS_EXAMPLE },
@@ -43,15 +44,25 @@ const environment = {
   ...process.env,
 };
 await access(nativePath);
-const nativeEvidence = await runCli(["inspect-artifact", nativePath, "--json"]);
+const nativeEvidence = await runCli([
+  "inspect-artifact",
+  nativePath,
+  "--detail",
+  "complete",
+  "--json",
+]);
 const javascriptCliEvidence = await runCli([
   "analyze-javascript-application",
   javascriptPath,
+  "--detail",
+  "complete",
   "--json",
 ]);
 const electronCliEvidence = await runCli([
   "analyze-javascript-application",
   electronPath,
+  "--detail",
+  "complete",
   "--json",
 ]);
 
@@ -62,11 +73,13 @@ const transport = new StdioClientTransport({
   env: environment,
   stderr: "pipe",
 });
-const client = new Client({
-  name: "rea-readiness-verifier",
-  version: "1",
-  capabilities: { elicitation: {} },
-});
+const client = completeEvidenceClient(
+  new Client({
+    name: "rea-readiness-verifier",
+    version: "1",
+    capabilities: { elicitation: {} },
+  }),
+);
 
 let verificationReport;
 await withVerifierCleanup(async () => {
@@ -190,7 +203,7 @@ async function runCli(arguments_) {
 async function analyzeMcp(client_, inputPath) {
   const response = await client_.callTool({
     name: "analyze_javascript_application",
-    arguments: { input_path: inputPath },
+    arguments: { input_path: inputPath, detail: "complete" },
   });
   assert.notEqual(response.structuredContent, undefined);
   return parseEvidence(

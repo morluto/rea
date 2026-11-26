@@ -8,9 +8,12 @@ import {
   reconcileBaselineFile,
 } from "./counted-baseline.mjs";
 import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
+import { adhocCompletenessTernaryCount } from "./completeness-ternary-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
+import { usesRetiredTargetFailureVocabulary } from "./retired-target-failure-vocabulary.mjs";
+import { completedAbortReclassificationCount } from "./completed-abort-guard.mjs";
 import { countDefaultValidationClients } from "./mcp-client-validation.mjs";
 import {
   isComparisonOrCountFile,
@@ -18,6 +21,7 @@ import {
 } from "./optional-fact-default-guard.mjs";
 import { unmarkedMatchCount } from "./reason-marker.mjs";
 import { blankComments } from "./source-tokens.mjs";
+import { moduleReExportCount } from "./module-re-export-guard.mjs";
 import {
   cliTextGuardSelects,
   cliTextOutsideCliCount,
@@ -93,7 +97,6 @@ check(
 
 check("NUL-joined list key (use compositeKey)", files, /\.join\(["']\\0["']\)/);
 
-// Pushed effect invalidation (docs/adr/javascript/pushed-effect-invalidation.md).
 // Opaque-effect checks are private to javascriptSemanticEffectLog.ts, so the
 // compiler keeps readers on its questions, and only the log and its record
 // module read the recorded sites. A method read on an intrinsic
@@ -290,9 +293,9 @@ check(
   ],
 );
 
-// Native inventory results parse once against their named fact contract
-// (docs/adr/native/typed-operation-facts.md). Hopper's reply table and the
-// advertised output schemas own their own protocol and catalog contracts.
+// Native inventory results parse once against their named fact contract.
+// Hopper's reply table and the advertised output schemas own their protocol
+// and catalog contracts.
 check(
   "native inventory rows parsed outside their fact contract (use executeFact or a contract from src/domain/native/nativeOperationFacts)",
   files,
@@ -396,7 +399,6 @@ checkCounted(
   ["src/process/capturedProviderOutput.ts"],
 );
 
-// Pushed effect invalidation (docs/adr/javascript/pushed-effect-invalidation.md).
 // Recorded effects belong to the effect log. A reader that reads an effect
 // index itself decides on its own which effect kinds and proofs apply; readers
 // ask the log instead. Every reader has moved; the remaining counts are the
@@ -637,7 +639,7 @@ checkCounted(
   "completed result reclassified by a hand-read abort signal (finalize through runOwned in src/providers/runOwned)",
   "completed-abort-reclassification",
   files,
-  /\.ok\s*&&\s*(?:isAborted\(|[\w.?]*signal\??\.aborted)/gu,
+  completedAbortReclassificationCount,
   ["src/providers/runOwned.ts"],
 );
 
@@ -693,6 +695,27 @@ checkCounted(
   files,
   /\bcause instanceof ConfigurationError\b/gu,
   ["src/config/runtimeAnalysisSettings.ts"],
+);
+
+// A re-export leaves a second import path for a symbol, so moved code keeps a
+// shim and consumers never learn its owner. Import from the owning module.
+// The resource-scope entrypoint and the lazily loaded CLI bundle entries are
+// the only declared re-export boundaries.
+checkCounted(
+  "re-export from another module (import the symbol from its owning module)",
+  "module-re-export",
+  files.filter(({ path }) => path.startsWith("src/")),
+  (content, { source }) =>
+    /\bexport\s*(?:type\s*)?[*{]/u.test(content)
+      ? moduleReExportCount(source)
+      : 0,
+  [
+    "src/resources/index.ts",
+    // Loaded by src/cliLoader.ts through a dynamic import.
+    "src/cli.ts",
+    // Loaded by src/cliOneShot.ts through a dynamic import.
+    "src/cli/cliResultOutput.ts",
+  ],
 );
 
 // Byte-format parsers read untrusted input. Bounds, truncation and failure
@@ -1037,6 +1060,37 @@ checkCounted(
   ],
 );
 
+// Application services load the analysis-view module only when a summary or
+// view is actually requested (await import), so one-shot CLI chunks do not
+// statically link it. The remaining static importers are the two synchronous
+// view-projection helpers and Frida's synchronous status path, counted here
+// so new static links cannot return silently (see #14112).
+checkCounted(
+  "static AnalysisViewService import in an application service (load it with await import on the summary branch, or shrink this baseline with its own change)",
+  "static-analysis-view-import",
+  files.filter(
+    (file) =>
+      file.path.startsWith("src/application/") &&
+      !file.path.startsWith("src/application/analysisView/") &&
+      !file.path.endsWith(".test.ts"),
+  ),
+  /from\s+["'][^"']*analysisView\/AnalysisViewService\.js["']/gu,
+  [],
+);
+
+// Completeness is a derived claim built monotonically from examined input.
+// Ad-hoc `? "complete" :` / `: "complete"` ternaries drop newly added omission
+// or trailing-byte checks; use CoverageAccumulator / joinCoverageStatus in
+// src/domain/coverageAccumulator.ts instead. Existing sites are ratcheted here
+// so the count can only shrink.
+checkCounted(
+  'ad-hoc "complete" ternary in src/domain (use CoverageAccumulator or joinCoverageStatus from src/domain/coverageAccumulator)',
+  "adhoc-completeness-ternary",
+  files.filter((file) => file.path.startsWith("src/domain/")),
+  adhocCompletenessTernaryCount,
+  ["src/domain/coverage.ts", "src/domain/coverageAccumulator.ts"],
+);
+
 // Scripts covered by tsconfig.scripts.json declare and check their types in
 // JSDoc inside the .mjs source itself (#11616). A sibling .d.ts / .d.mts file
 // creates a second, unchecked type source that hides signature drift.
@@ -1044,6 +1098,48 @@ const siblingDeclarationFiles = await findTypedScriptSiblingDeclarations(root);
 if (siblingDeclarationFiles.length > 0)
   failures.push(
     `typed script in tsconfig.scripts.json has a sibling declaration file (inline JSDoc types in the .mjs source instead):\n${siblingDeclarationFiles.map((file) => `  ${file}`).join("\n")}`,
+  );
+
+const listVocabularyFiles = async (dir, extensions) => {
+  const output = [];
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.name === "node_modules") continue;
+    if (entry.isDirectory())
+      output.push(...(await listVocabularyFiles(path, extensions)));
+    else if (extensions.some((extension) => entry.name.endsWith(extension)))
+      output.push(path);
+  }
+  return output;
+};
+const vocabularyGuardPath =
+  "scripts/verify/retired-target-failure-vocabulary.mjs";
+const vocabularyGuardTestPath =
+  "tests/evaluation/retiredTargetFailureVocabulary.test.ts";
+const vocabularyFiles = await Promise.all(
+  [
+    ...(await listVocabularyFiles(join(root, "src"), [".ts", ".mts", ".py"])),
+    ...(await listVocabularyFiles(join(root, "tests"), [".ts", ".mjs", ".py"])),
+    ...(await listVocabularyFiles(join(root, "scripts"), [
+      ".mjs",
+      ".ts",
+      ".py",
+    ])),
+    ...(await listVocabularyFiles(join(root, "bridge"), [".py"])),
+  ].map(async (path) => ({
+    path: relative(root, path).split(sep).join("/"),
+    content: await readFile(path, "utf8"),
+  })),
+);
+const retiredVocabulary = vocabularyFiles.filter(
+  ({ path, content }) =>
+    path !== vocabularyGuardPath &&
+    path !== vocabularyGuardTestPath &&
+    usesRetiredTargetFailureVocabulary(content),
+);
+if (retiredVocabulary.length > 0)
+  failures.push(
+    `retired target-failure vocabulary (raise a TargetFailure kind instead; see docs/reference/target-failures.md):\n${retiredVocabulary.map(({ path }) => `  ${path}`).join("\n")}`,
   );
 
 for (const key of baselineTexts.keys())

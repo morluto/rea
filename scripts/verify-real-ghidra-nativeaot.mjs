@@ -5,23 +5,28 @@ import {
   requireMcpLifecycleResult,
   requireMcpOutput,
 } from "./lib/mcp-verifier-results.mjs";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { nativeDataTypeSchema } from "../dist/domain/native/nativeDataType.js";
 import { nativeLoadImageSchema } from "../dist/domain/native/nativeLoadImage.js";
 
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { bindVerifierCommandInterruption } from "./lib/verifier-command-interruption.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
 import {
   VerifierFixture,
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 const run = createVerifierRun();
 const mode = process.argv[2] ?? "symbols";
 if (
@@ -113,6 +118,12 @@ if (mode === "default-native") delete env.REA_GHIDRA_NATIVEAOT_JAR;
 // a simulated producer report. Its class/JAR exist only in the owned workspace.
 if (mode === "loader-failure")
   env.REA_GHIDRA_NATIVEAOT_JAR = join(workspace, "bad-extension.jar");
+// javac, jar, and the optional CLI share one command owner. A timeout stops that process group.
+const commands = await createVerifierCommands();
+const commandInterruption = bindVerifierCommandInterruption(commands);
+const execOwned = commandInterruption.exec;
+const { untilInterrupted, throwIfInterrupted } = commandInterruption;
+const finishCommandInterruption = () => commandInterruption.finish();
 async function prepareLoaderFailure() {
   const source = join(workspace, "NativeAotExtension.java");
   const classes = join(workspace, "classes");
@@ -131,12 +142,12 @@ public final class NativeAotExtension {
     process.env.JAVA_HOME === undefined
       ? name
       : join(process.env.JAVA_HOME, "bin", name);
-  await promisify(execFile)(
+  await execOwned(
     command("javac"),
     ["-J-Xmx512m", "-J-XX:ActiveProcessorCount=1", "-d", classes, source],
     { timeout: 60000 },
   );
-  await promisify(execFile)(
+  await execOwned(
     command("jar"),
     ["--create", "--file", env.REA_GHIDRA_NATIVEAOT_JAR, "-C", classes, "."],
     { timeout: 60000 },
@@ -148,7 +159,9 @@ const transport = new StdioClientTransport({
   env,
   stderr: "pipe",
 });
-const client = new Client({ name: "rea-nativeaot-proof", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "rea-nativeaot-proof", version: "1" }),
+);
 let stderr = "";
 transport.stderr?.on("data", (chunk) => {
   stderr = (stderr + chunk.toString()).slice(-65536);
@@ -171,20 +184,23 @@ workspaceFixture.releaseAfter(async () => {
     "Owned runtime/project/extension files leaked after close",
   );
   verifierRun = await completeVerifierRun(run);
-  assert.equal(verifierRun.process_lineage.status, "verified");
-  assert.deepEqual(verifierRun.process_lineage.descendants, []);
+  assertVerifierCleanupComplete(verifierRun.process_lineage);
 });
+commandInterruption.retainWorkspaceIfInterrupted(workspaceFixture);
 await withVerifierFixture(workspaceFixture, async () => {
+  let primaryFailure;
   try {
     if (mode === "loader-failure") await prepareLoaderFailure();
-    await client.connect(transport);
+    await untilInterrupted(
+      client.connect(transport, { signal: commandInterruption.signal }),
+    );
     connected = true;
     const response = await client.callTool(
       {
         name: "open_binary",
         arguments: { path: target, provider_id: "ghidra" },
       },
-      { timeout: 360000 },
+      { timeout: 360000, signal: commandInterruption.signal },
     );
     if (
       ["unsupported", "malformed", "ambiguous", "loader-failure"].includes(mode)
@@ -194,8 +210,11 @@ await withVerifierFixture(workspaceFixture, async () => {
       if (failure.isError !== true) {
         opened = true;
         failure = await client.callTool(
-          { name: "inspect_native_load_image", arguments: {} },
-          { timeout: 360000 },
+          {
+            name: "inspect_native_load_image",
+            arguments: { detail: "complete" },
+          },
+          { timeout: 360000, signal: commandInterruption.signal },
         );
       }
       assert.equal(failure.isError, true, JSON.stringify(failure));
@@ -340,7 +359,12 @@ await withVerifierFixture(workspaceFixture, async () => {
         assert.ok(dispatch.pseudocode.trim());
         for (const literal of oracle.expected_strings)
           assert.ok(
-            (await call("search_strings", { pattern: literal })).length > 0,
+            (
+              await call("search_strings", {
+                detail: "complete",
+                pattern: literal,
+              })
+            ).length > 0,
             `Frozen string missing: ${literal}`,
           );
         const observed = await call("read_bytes", {
@@ -358,7 +382,7 @@ await withVerifierFixture(workspaceFixture, async () => {
         // One representative CLI boundary, selected explicitly to avoid repeated
         // full NativeAOT auto-analysis during each focused iteration.
         if (process.env.REA_NATIVEAOT_PROOF_CLI === "1") {
-          const { stdout } = await promisify(execFile)(
+          const { stdout } = await execOwned(
             process.execPath,
             [
               entrypoint,
@@ -393,9 +417,39 @@ await withVerifierFixture(workspaceFixture, async () => {
     }
   } catch (error) {
     console.error(stderr);
-    throw error;
+    primaryFailure = error;
   }
+  // Close the command owner before release observes the parent tree.
+  let cleanupFailure;
+  try {
+    await workspaceFixture.closeEarly([() => commands.close()]);
+  } catch (cause) {
+    cleanupFailure = cause;
+  }
+  if (cleanupFailure !== undefined || primaryFailure !== undefined)
+    throw workspaceFixture.retainedError(
+      `NativeAOT verification failed; retained diagnostic workspace: ${workspace}`,
+      {
+        cause:
+          cleanupFailure === undefined
+            ? primaryFailure
+            : primaryFailure === undefined
+              ? cleanupFailure
+              : new AggregateError(
+                  [primaryFailure, cleanupFailure],
+                  "NativeAOT verification and command cleanup both failed",
+                ),
+      },
+    );
+  const interrupted = commandInterruption.reason();
+  if (interrupted !== undefined)
+    throw workspaceFixture.retainedError(
+      `NativeAOT verification interrupted; retained diagnostic workspace: ${workspace}`,
+      { cause: interrupted },
+    );
 });
+const releaseInterrupted = finishCommandInterruption();
+if (releaseInterrupted !== undefined) throw releaseInterrupted;
 const capture = process.env.REA_NATIVEAOT_PROOF_CAPTURE_DIR;
 if (capture !== undefined) {
   assert.ok(isAbsolute(capture));
@@ -418,9 +472,10 @@ function hash(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 async function call(name, args = {}) {
+  throwIfInterrupted();
   const response = await client.callTool(
     { name, arguments: args },
-    { timeout: 360000 },
+    { timeout: 360000, signal: commandInterruption.signal },
   );
   if (name === "close_binary") return requireMcpLifecycleResult(response, name);
   const evidence = parseEvidence(requireMcpOutput(response, name));

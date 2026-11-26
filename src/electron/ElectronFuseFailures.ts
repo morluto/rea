@@ -1,13 +1,15 @@
-import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
 import { ELECTRON_FUSE_PROVIDER_IDENTITY } from "./ElectronFuseProviderIdentity.js";
 import {
+  artifactFileCleanupError,
   ArtifactReaderFailure,
   ArtifactFileCleanupFailure,
   artifactFileCompletion,
-  artifactFileCancellationCause,
-  bindArtifactFileCleanup,
+  artifactFileCancellationError,
 } from "../resources/index.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -16,7 +18,6 @@ import {
   AnalysisArtifactChangedError,
   AnalysisInputError,
   AnalysisOutputError,
-  AnalysisResourceConstraintError,
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
@@ -40,14 +41,12 @@ export const electronFuseFailure = (
   operation = OPERATION,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
-  if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
-    const cleanup = new ProviderCleanupError(
-      ELECTRON_FUSE_PROVIDER_IDENTITY.id,
-      cause.cleanup.resources,
-      { reason: cause.cleanup.reason },
-      { operation, cause },
-    );
-    bindArtifactFileCleanup(cause, cleanup);
+  const cleanup = artifactFileCleanupError(
+    cause,
+    ELECTRON_FUSE_PROVIDER_IDENTITY.id,
+    operation,
+  );
+  if (cleanup !== undefined) {
     if (cause instanceof ArtifactFileCleanupFailure) {
       const outcome = cause.fileCleanupFailure.outcome;
       const cancellation = artifactFileCompletion(cause)?.cancellation;
@@ -67,10 +66,7 @@ export const electronFuseFailure = (
     return cleanup;
   }
   if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-    return cancelledBy(
-      operation,
-      carriedReason(artifactFileCancellationCause(cause)),
-    );
+    return artifactFileCancellationError(operation, cause);
   const cancellation = regularFileCancellation(cause);
   if (cancellation !== undefined)
     return cancelledBy(operation, carriedReason(cancellation.reason));
@@ -81,13 +77,12 @@ export const electronFuseFailure = (
   if (cause instanceof ElectronFuseResourceFailure) {
     const { name, maximum } = cause.limit;
     const fileSize = name === "maximum_input_bytes";
-    return new AnalysisResourceConstraintError(
+    return parseLimitConstraint(
       operation,
       fileSize ? "file-size" : "capacity",
-      cause.message,
-      { [name]: maximum },
+      cause,
       {
-        cause,
+        legacyMaximumKey: name,
         ...fixedAllowanceOptions(
           fileSize
             ? "the Electron fuse input allowance"

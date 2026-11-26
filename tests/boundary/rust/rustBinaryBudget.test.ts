@@ -7,28 +7,10 @@ import { RustBinaryProvider } from "../../../src/rust/RustBinaryProvider.js";
 import {
   createRustImage,
   createRustHashOverflowImage,
+  createWasmSectionFlood,
 } from "../../fixtures/rust/image.js";
 import { elfFrameAllowanceFixture } from "../../fixtures/binaryDiagnostics/elfFrameAllowance.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-
-it("reports a recoverable compiler prefix without refusing the dependency report", async () => {
-  const root = await createTestTempDirectory("rea-rust-hash-budget-");
-  const path = join(root, "many-hashes.elf");
-  await writeFile(path, createRustHashOverflowImage());
-  const result = await new RustBinaryProvider().inspect({ path });
-  if (!result.ok) throw result.error;
-  expect(result.value.rustc_commit?.coverage).toMatchObject({
-    reason: "max_rustc_hashes",
-    effective_limit: 64,
-    limit: { parameter: "max_rustc_hashes", effective_value: 64 },
-  });
-  expect(result.value.auditable_metadata?.packages).toHaveLength(2);
-  expect(result.value.limitations).toContainEqual(
-    expect.stringContaining("rustc_commit.coverage.limit"),
-  );
-  // The producer names the contract field; the CLI renders its own option.
-  expect(result.value.limitations.join(" ")).not.toContain("--");
-});
 
 it("recovers the same complete Rust image after input and report budget changes", async () => {
   const root = await createTestTempDirectory("rea-rust-input-budget-");
@@ -141,7 +123,6 @@ it("describes compiler coverage from the retained result when report trimming dr
     const trimmed = await inspect(admitted);
     if (!trimmed.ok) throw trimmed.error;
     expect(trimmed.value.rustc_commit).toBeNull();
-    expect(trimmed.value.auditable_metadata?.packages).toHaveLength(2);
     const text = trimmed.value.limitations.join(" ");
     // The reader's partial-prefix guidance referred to a record that no
     // longer exists; the trimming guidance names its control directly.
@@ -176,32 +157,157 @@ it("reports byte trimming only when it removes a compiler path", async () => {
       provider.inspect({ path, producer_limits: { output_bytes } });
     const complete = await inspect(1024 * 1024);
     if (!complete.ok) throw complete.error;
-    const hashes = complete.value.rustc_commit?.hashes.length;
-    expect(complete.value.rustc_commit?.coverage?.reason).toBe(
-      "max_rustc_hashes",
+    const commit = complete.value.rustc_commit;
+    if (commit === null) throw new Error("Expected a compiler-path prefix");
+    expect(commit.hashes).toHaveLength(64);
+    expect(commit.coverage).toMatchObject({
+      reason: "max_rustc_hashes",
+      effective_limit: 64,
+      limit: { parameter: "max_rustc_hashes", effective_value: 64 },
+    });
+    const guidance = complete.value.limitations.find((text) =>
+      text.includes("rustc_commit.coverage.limit"),
     );
+    if (guidance === undefined)
+      throw new Error("Expected compiler-path guidance");
+    expect(guidance).not.toContain("--max-rustc-hashes");
+    expect(complete.value.auditable_metadata?.packages).toHaveLength(2);
     const fullBytes = Buffer.byteLength(JSON.stringify(complete.value));
-    // Below the complete report, swapping the reader's guidance for the
-    // shorter trimming guidance can make every path fit again.
-    let keptEveryPath = 0;
-    for (let output = fullBytes - 1; output > fullBytes - 120; output -= 1) {
-      const result = await inspect(output);
-      if (!result.ok) continue;
-      const commit = result.value.rustc_commit;
-      if (commit === null) continue;
-      const text = result.value.limitations.join(" ");
-      if (commit.hashes.length === hashes) {
-        keptEveryPath += 1;
-        expect(commit, `output_bytes ${output}`).toEqual(
-          complete.value.rustc_commit,
-        );
-        expect(text).not.toContain("Compiler paths were omitted");
-      } else
-        expect(commit.coverage?.reason, `output_bytes ${output}`).toBe(
-          "report_bytes",
-        );
-    }
-    expect(keptEveryPath).toBeGreaterThan(0);
+    // Pick a budget halfway into the observed guidance's size. This leaves
+    // room for the existing prefix even if the numeric budget's width changes.
+    const tight = await inspect(
+      fullBytes - Math.floor(Buffer.byteLength(JSON.stringify(guidance)) / 2),
+    );
+    if (!tight.ok) throw tight.error;
+    expect(tight.value.rustc_commit).toEqual(commit);
+    expect(tight.value.limitations).not.toContain(guidance);
+    expect(tight.value).not.toHaveProperty("rustc_commit_omission");
+    expect(tight.value.auditable_metadata).toEqual(
+      complete.value.auditable_metadata,
+    );
+
+    const outputBytes =
+      fullBytes - Math.floor(Buffer.byteLength(JSON.stringify(commit)) / 2);
+    const trimmed = await inspect(outputBytes);
+    if (!trimmed.ok) throw trimmed.error;
+    const partial = trimmed.value.rustc_commit;
+    if (partial === null)
+      throw new Error("Expected some retained compiler paths");
+    expect(partial.hashes.length).toBeLessThan(commit.hashes.length);
+    expect(partial.hashes).toEqual(
+      commit.hashes.slice(0, partial.hashes.length),
+    );
+    expect(partial.coverage).toMatchObject({
+      status: "partial",
+      reason: "report_bytes",
+      effective_limit: outputBytes,
+      limit: {
+        parameter: "producer_limits.output_bytes",
+        effective_value: outputBytes,
+      },
+    });
+    expect(trimmed.value.auditable_metadata).toEqual(
+      complete.value.auditable_metadata,
+    );
+  } finally {
+    await provider.close();
+  }
+});
+
+it("refuses dependency JSON at the binding parser budget and admits the measured compressed size", async () => {
+  const root = await createTestTempDirectory("rea-rust-dependency-budget-");
+  const path = join(root, "selected.elf");
+  await writeFile(path, createRustImage({ format: "elf" }));
+  const provider = new RustBinaryProvider();
+  try {
+    const compressed = await provider.inspect({
+      path,
+      max_compressed_dependency_bytes: 1,
+    });
+    if (compressed.ok)
+      throw new Error("Expected the compressed-section refusal");
+    const projected = projectAnalysisError(compressed.error);
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        resource: "memory",
+        reported_limits: {
+          boundary: "max_compressed_dependency_bytes",
+          maximum: 1,
+        },
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_compressed_dependency_bytes",
+          effective_value: 1,
+          unit: "bytes",
+          minimum: 1,
+          default_value: 1024 * 1024,
+          applies_at: "next_call",
+        },
+        refusal: {
+          kind: "adjustable_budget",
+          operation: "inspect_rust_binary",
+          control: "max_compressed_dependency_bytes",
+          effective_value: 1,
+          unit: "bytes",
+          default_value: 1024 * 1024,
+        },
+      },
+    });
+    const reportedLimit = projected.details?.limit;
+    const required =
+      reportedLimit !== null &&
+      typeof reportedLimit === "object" &&
+      !Array.isArray(reportedLimit) &&
+      typeof reportedLimit.required_value === "number"
+        ? reportedLimit.required_value
+        : undefined;
+    if (required === undefined || required <= 1)
+      throw new Error("Expected the measured compressed section size");
+    const admitted = await provider.inspect({
+      path,
+      max_compressed_dependency_bytes: required,
+    });
+    if (!admitted.ok) throw admitted.error;
+    expect(admitted.value.auditable_metadata?.packages.length).toBeGreaterThan(
+      0,
+    );
+
+    const ratio = await provider.inspect({
+      path,
+      max_dependency_inflate_ratio: 1,
+    });
+    if (ratio.ok) throw new Error("Expected the inflate-ratio refusal");
+    expect(projectAnalysisError(ratio.error).details).toMatchObject({
+      limit: {
+        parameter: "max_dependency_inflate_ratio",
+        effective_value: 1,
+        unit: "count",
+        default_value: 64,
+      },
+      refusal: {
+        kind: "adjustable_budget",
+        control: "max_dependency_inflate_ratio",
+      },
+    });
+
+    const inflated = await provider.inspect({
+      path,
+      max_inflated_dependency_bytes: 1,
+    });
+    if (inflated.ok) throw new Error("Expected the inflated-JSON refusal");
+    expect(projectAnalysisError(inflated.error).details).toMatchObject({
+      limit: {
+        parameter: "max_inflated_dependency_bytes",
+        effective_value: 1,
+        default_value: 8 * 1024 * 1024,
+      },
+      refusal: {
+        kind: "adjustable_budget",
+        control: "max_inflated_dependency_bytes",
+      },
+    });
   } finally {
     await provider.close();
   }
@@ -234,5 +340,33 @@ it("cancels a many-frame compressed ELF section-name table", async () => {
     });
   } finally {
     spy.mockRestore();
+  }
+});
+
+it("names max_wasm_sections when a module has more sections than it", async () => {
+  const root = await createTestTempDirectory("rea-rust-wasm-sections-");
+  const path = join(root, "module.wasm");
+  await writeFile(path, createWasmSectionFlood(8));
+  const provider = new RustBinaryProvider();
+  try {
+    const refused = await provider.inspect({ path, max_wasm_sections: 4 });
+    if (refused.ok) throw new Error("Expected a max_wasm_sections refusal");
+    expect(projectAnalysisError(refused.error)).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_wasm_sections",
+          effective_value: 4,
+          default_value: 65_536,
+        },
+        refusal: { kind: "adjustable_budget" },
+      },
+    });
+    const admitted = await provider.inspect({ path, max_wasm_sections: 8 });
+    if (!admitted.ok) throw admitted.error;
+    expect(admitted.value.format).toBe("wasm");
+  } finally {
+    await provider.close();
   }
 });

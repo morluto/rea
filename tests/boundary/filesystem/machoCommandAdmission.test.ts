@@ -58,24 +58,24 @@ it.each([
     tableBytes: MAX_LOAD_COMMAND_BYTES + 8,
     count: 1,
     length: 32,
-    status: "malformed",
-    reason: /extend beyond/,
+    kind: "malformed",
+    detail: /extend beyond/,
   },
   {
     label: "an impossible count in a backed oversized table",
     tableBytes: MAX_LOAD_COMMAND_BYTES + 8,
     count: 0xffffffff,
     length: 32 + MAX_LOAD_COMMAND_BYTES + 8,
-    status: "malformed",
-    reason: /count.*cannot fit/,
+    kind: "malformed",
+    detail: /count.*cannot fit/,
   },
   {
     label: "a plausible count in a backed oversized table",
     tableBytes: MAX_LOAD_COMMAND_BYTES + 8,
     count: 1,
     length: 32 + MAX_LOAD_COMMAND_BYTES + 8,
-    status: "unsupported",
-    reason: /above the .* limit/,
+    kind: "unsupported",
+    detail: /above the .* limit/,
   },
 ])("reports $label before reading its payload", async (fixture) => {
   const header = commandImage(true, true, []);
@@ -91,8 +91,13 @@ it.each([
     fixture.length,
   );
   expect(result).toMatchObject({
-    status: fixture.status,
-    reason: expect.stringMatching(fixture.reason),
+    status: "failed",
+    failure: {
+      kind: fixture.kind,
+      format: "macho",
+      field: "load_commands",
+      detail: expect.stringMatching(fixture.detail),
+    },
     header: { commandCount: fixture.count, commandBytes: fixture.tableBytes },
   });
   expect(reads).toEqual([0]);
@@ -178,7 +183,7 @@ it.each([false, true])(
 );
 
 it.each([null, 0, 1])(
-  "checks every admitted FAT slice's framing (corrupt slice %s)",
+  "validates only the selected FAT slice's command framing (corrupt slice %s)",
   async (corruptIndex) => {
     const slices = [
       commandImage(true, true, [16]),
@@ -201,7 +206,8 @@ it.each([null, 0, 1])(
     const resolved = await parseBinaryTarget(path, {
       hostArchitecture: "arm64",
     });
-    expect(resolved.ok).toBe(corruptIndex === null);
+    // Slice 1 (arm64) is selected; corrupting unselected slice 0 is isolated.
+    expect(resolved.ok).toBe(corruptIndex !== 1);
     if (!resolved.ok) {
       if (!(resolved.error instanceof BinaryTargetError)) throw resolved.error;
       expect(resolved.error.reason).toContain("invalid cmdsize");

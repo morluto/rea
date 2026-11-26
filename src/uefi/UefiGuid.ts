@@ -1,8 +1,10 @@
-import { BinaryReader } from "../domain/binaryContainer.js";
+import { createBinaryReaderCache } from "../domain/binaryContainer.js";
 import { Buffer } from "node:buffer";
 
 /** UEFI GUIDs are 16 raw bytes rendered as 8-4-4-4-12 hex digits. */
 export const GUID_LENGTH = 16;
+
+const guidReader = createBinaryReaderCache(true, "UEFI GUID");
 
 /**
  * Format a raw GUID with UEFI mixed-endian decoding: the first data word and
@@ -17,26 +19,19 @@ export function formatGuidLittleEndian(
   if (offset < 0 || offset + GUID_LENGTH > buffer.length) {
     return null;
   }
-  const reader = new BinaryReader(buffer, true, "UEFI GUID");
-  const data1 = reader.u32(offset);
-  const data2 = reader.u16(offset + 4);
-  const data3 = reader.u16(offset + 6);
-  const tail = buffer.subarray(offset + 8, offset + GUID_LENGTH);
-  const word = (value: number, digits: number): string =>
-    value.toString(16).padStart(digits, "0");
-  const node = Array.from(tail, (byte) => word(byte, 2)).join("");
-  return [
-    word(data1, 8),
-    word(data2, 4),
-    word(data3, 4),
-    node.slice(0, 4),
-    node.slice(4),
-  ].join("-");
-}
-
-/** Case-insensitive canonical GUID comparison. */
-export function guidEquals(left: string, right: string): boolean {
-  return left.toLowerCase() === right.toLowerCase();
+  const reader = guidReader(buffer);
+  const data1 = reader.u32(offset).toString(16).padStart(8, "0");
+  const data2 = reader
+    .u16(offset + 4)
+    .toString(16)
+    .padStart(4, "0");
+  const data3 = reader
+    .u16(offset + 6)
+    .toString(16)
+    .padStart(4, "0");
+  const clockSeq = buffer.toString("hex", offset + 8, offset + 10);
+  const node = buffer.toString("hex", offset + 10, offset + GUID_LENGTH);
+  return `${data1}-${data2}-${data3}-${clockSeq}-${node}`;
 }
 
 /**

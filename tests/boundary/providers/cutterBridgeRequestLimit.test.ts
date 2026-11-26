@@ -1,10 +1,11 @@
 import { bridgeMaxRequestBytesRecovery } from "../../../src/config/bridgeMaxRequestBytes.js";
 import { createServer } from "node:net";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, readFile, writeFile } from "node:fs/promises";
+
 import { join } from "node:path";
 
 import { expect, it, onTestFinished, vi } from "vitest";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { CutterBridgeClient } from "../../../src/cutter/CutterBridgeClient.js";
 import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
@@ -19,34 +20,29 @@ import {
 import {
   authenticatedServer,
   writeDescriptor,
+  listenCutterServer,
 } from "../../fixtures/cutterBridgeProtocol.js";
 
 const SESSION = "00000000-0000-4000-8000-000000000001";
 const TOKEN = "bridge-token-0123456789abcdef";
 
 const privateDirectory = async (): Promise<string> => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-cutter-request-limit-"));
+  const directory = await createTestTempDirectory("rea-cutter-request-limit-");
   await chmod(directory, 0o700);
-  onTestFinished(async () => {
-    await rm(directory, { recursive: true, force: true });
-  });
   return directory;
 };
 
 const listen = async (
   server: ReturnType<typeof createServer>,
 ): Promise<number> => {
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  if (address === null || typeof address === "string")
-    throw new Error("Expected an ephemeral IPv4 listener");
+  const port = await listenCutterServer(server);
   onTestFinished(
     () =>
       new Promise<void>((resolve) => {
         server.close(() => resolve());
       }),
   );
-  return address.port;
+  return port;
 };
 
 const clientFor = (directory: string, ceiling: string): CutterBridgeClient => {
@@ -489,7 +485,7 @@ it("refuses an escaped Cutter command before serializing it", async () => {
   }
 });
 
-it("accepts a Cutter response at the ceiling and excludes the terminating LF", async () => {
+it("accepts the frame ceiling and reports omitted output for one byte over", async () => {
   const directory = await privateDirectory();
   const ceiling = 8192;
   const output = outputForEnvelope(ceiling);
@@ -557,6 +553,9 @@ it("accepts a Cutter response at the ceiling and excludes the terminating LF", a
           execution_state: "unknown",
           error: "transport-response-missing",
           output_truncated: true,
+          message: expect.stringMatching(
+            /framed transport limit of 8192 bytes.*bridge\.max_request_bytes.*may have completed/s,
+          ),
         },
       },
     },

@@ -2,6 +2,15 @@ import { expect, it } from "vitest";
 import { AnalysisSettings } from "./AnalysisSettings.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
+  DEFAULT_ASAR_MAX_HEADER_BYTES,
+  DEFAULT_ASAR_MAX_LISTING_BYTES,
+  DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
+  DEFAULT_GHIDRA_VALUE_FLOW_MAX_EDGES,
+  DEFAULT_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION,
+  DEFAULT_GHIDRA_VALUE_FLOW_MAX_OPERATIONS,
+  DEFAULT_REGEX_MATCHING_DEADLINE_MS,
+} from "../domain/analysisResourceLimits.js";
+import {
   applyWindowsChangeTimeSnapshot,
   resolveWindowsChangeTimeSettle,
 } from "../config/windowsChangeTimeSettle.js";
@@ -110,13 +119,21 @@ it("keeps accepted operations and their typed provider views stable across concu
   });
   const pending = store.run(async () => {
     await barrier;
-    expect(asar.maximumBytes).toBe(16777216);
-    expect(asar.listing?.maximumBytes).toBe(67108864);
-    expect(live.ghidraValueFlowMaxOperations).toBe(3000);
-    expect(live.ghidraValueFlowMaxInputsPerOperation).toBe(64);
-    expect(live.ghidraValueFlowMaxEdges).toBe(12000);
-    expect(live.ghidraStartupTimeoutMs).toBe(330000);
-    expect(live.regexMatchingDeadline.deadlineMs).toBe(5000);
+    expect(asar.maximumBytes).toBe(DEFAULT_ASAR_MAX_HEADER_BYTES);
+    expect(asar.listing?.maximumBytes).toBe(DEFAULT_ASAR_MAX_LISTING_BYTES);
+    expect(live.ghidraValueFlowMaxOperations).toBe(
+      DEFAULT_GHIDRA_VALUE_FLOW_MAX_OPERATIONS,
+    );
+    expect(live.ghidraValueFlowMaxInputsPerOperation).toBe(
+      DEFAULT_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION,
+    );
+    expect(live.ghidraValueFlowMaxEdges).toBe(
+      DEFAULT_GHIDRA_VALUE_FLOW_MAX_EDGES,
+    );
+    expect(live.ghidraStartupTimeoutMs).toBe(DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS);
+    expect(live.regexMatchingDeadline.deadlineMs).toBe(
+      DEFAULT_REGEX_MATCHING_DEADLINE_MS,
+    );
     expect(store.read().revision).toBe(0);
   });
   try {
@@ -249,6 +266,7 @@ it("exposes shared provider controls and preserves the explicit unbounded decomp
       .inspect({ operation: "inventory_artifact" })
       .settings.map(({ setting }) => setting),
   ).toEqual([
+    "artifact.member_count",
     "asar.max_listing_bytes",
     "asar.max_header_bytes",
     "windows.change_time_drift_ms",
@@ -544,4 +562,13 @@ it("retains an invalid capture heap seed through override and reset", () => {
     "REA_CAPTURE_DECODER_OLD_GENERATION_MIB",
   );
   expect(() => heap.source).toThrow("REA_CAPTURE_DECODER_OLD_GENERATION_MIB");
+});
+
+it("includes producer.output_bytes when filtering inspect_analysis_settings by sigrok-recording", () => {
+  const store = new AnalysisSettings({});
+  expect(
+    store
+      .inspect({ provider: "sigrok-recording" })
+      .settings.map(({ setting }) => setting),
+  ).toContain("producer.output_bytes");
 });

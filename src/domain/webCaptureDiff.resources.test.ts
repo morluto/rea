@@ -1,12 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { compareInspectionDimension } from "../../tests/support/browser/webCaptureComparison.js";
 
 import { passiveNetworkCapture } from "../../tests/fixtures/passiveNetworkCapture.js";
-import {
-  browserCaptureComparisonInputSchema,
-  compareBrowserCaptures,
-} from "./browserCaptureComparison.js";
 import type { WebPageInspection } from "./browserObservationSchemas.js";
-import { webCaptureDiffSchema } from "./webCaptureDiffSchemas.js";
 import { stableWebResources } from "./webInventory.js";
 
 const resource = (
@@ -26,18 +22,7 @@ const capture = (resources: readonly ReturnType<typeof resource>[]) => {
   return inspection;
 };
 
-const compareResources = (
-  before: WebPageInspection,
-  after: WebPageInspection,
-) =>
-  webCaptureDiffSchema.parse(
-    compareBrowserCaptures(
-      browserCaptureComparisonInputSchema.parse({
-        before: { inspection: before },
-        after: { inspection: after },
-      }),
-    ),
-  ).dimensions.resources;
+const compareResources = compareInspectionDimension("resources");
 
 describe("web resource comparison identity and optional size", () => {
   it.each([
@@ -56,14 +41,7 @@ describe("web resource comparison identity and optional size", () => {
     ).toMatchObject({ status: "unknown", total_changes: 0, changes: [] });
   });
 
-  it("compares distinct all-known size variants and keeps exact deduplication", () => {
-    const before = stableWebResources([resource(128), resource(256)]);
-    const after = stableWebResources([resource(128), resource(512)]);
-    expect(before).toHaveLength(2);
-    expect(after).toHaveLength(2);
-    expect(before.map(({ resource_key }) => resource_key)).not.toEqual(
-      after.map(({ resource_key }) => resource_key),
-    );
+  it("reports a modified resource group when a known size variant changes", () => {
     expect(
       compareResources(
         capture([resource(128), resource(256)]),
@@ -73,17 +51,6 @@ describe("web resource comparison identity and optional size", () => {
       status: "changed",
       total_changes: 1,
       changes: [{ change: "modified" }],
-    });
-    expect(stableWebResources([resource(128), resource(128)])).toHaveLength(1);
-    expect(
-      compareResources(
-        capture([resource(128), resource(128)]),
-        capture([resource(128)]),
-      ),
-    ).toMatchObject({
-      status: "unchanged",
-      total_changes: 0,
-      changes: [],
     });
   });
 

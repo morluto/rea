@@ -1,3 +1,5 @@
+import { ParseFailureError } from "./parseFailure.js";
+
 /** A bounded BER value tree shared by binary format owners. */
 export interface Asn1BerNode {
   readonly tag: number;
@@ -17,12 +19,25 @@ export interface Asn1BerConstraint {
   readonly limit: number;
 }
 
-export class Asn1BerFailure extends Error {
+export class Asn1BerFailure extends ParseFailureError<"malformed" | "limit"> {
   constructor(
     message: string,
     readonly constraint: Asn1BerConstraint | null = null,
   ) {
-    super(message);
+    super(
+      constraint === null
+        ? { kind: "malformed", format: "asn1-ber", detail: message }
+        : {
+            kind: "limit",
+            format: "asn1-ber",
+            detail: message,
+            limit: {
+              name:
+                constraint.resource === "nodes" ? "asn1_nodes" : "asn1_depth",
+              maximum: constraint.limit,
+            },
+          },
+    );
     this.name = "Asn1BerFailure";
   }
 }

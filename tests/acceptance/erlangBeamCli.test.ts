@@ -66,13 +66,14 @@ const extendedFirstAtomLength = (): Buffer => {
 };
 
 cliTest(
-  "reports BEAM tables and code through the public CLI",
+  "reports BEAM tables and code for a path relative to the CLI working directory",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-beam-cli-");
     const path = join(root, "app.beam");
     await writeFile(path, erlangBeamFixture("cli_mod"));
     const result = await cli.run({
-      arguments: ["inspect-erlang-beam", path, "--json"],
+      arguments: ["inspect-erlang-beam", "app.beam", "--json"],
+      cwd: root,
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = completeBeamEvidenceSchema.parse(result.json);
@@ -466,8 +467,12 @@ cliTest(
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
-      code: "invalid_request",
-      details: { operation: "inspect_erlang_beam" },
+      code: "unsupported_target",
+      details: {
+        operation: "inspect_erlang_beam",
+        failure_kind: "malformed",
+        format: "beam",
+      },
     });
   },
 );
@@ -486,29 +491,32 @@ cliTest(
         arguments: ["inspect-erlang-beam", path, "--max-chunks", "1", "--json"],
       });
     const admitted = await inspect();
-    expect(admitted.json).toMatchObject({ code: "resource_constraint" });
+    expect(admitted.exitCode).toBe(1);
+    expect(admitted.json).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        operation: "inspect_erlang_beam",
+        resource: "capacity",
+        reported_limits: { max_chunks: 1 },
+      },
+    });
 
     // Retain bytes beyond the declared form. They cannot supply the second
     // chunk's payload even though the complete file contains it.
     bytes.writeUInt32BE(secondHeader, 4);
     await writeFile(path, bytes);
     const refused = await inspect();
-    expect(refused.json).toMatchObject({ code: "invalid_request" });
-  },
-);
-
-cliTest(
-  "resolves a relative BEAM path against the working directory",
-  async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-beam-cli-rel-");
-    await writeFile(join(root, "app.beam"), erlangBeamFixture());
-    const result = await cli.run({
-      arguments: ["inspect-erlang-beam", "app.beam", "--json"],
-      cwd: root,
+    expect(refused.exitCode).toBe(1);
+    expect(refused.json).toMatchObject({
+      code: "unsupported_target",
+      details: {
+        operation: "inspect_erlang_beam",
+        failure_kind: "malformed",
+        format: "beam",
+        reason: "BEAM chunk payload exceeds the form.",
+      },
     });
-    expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = completeBeamEvidenceSchema.parse(result.json);
-    expect(evidence.subject?.local_path).toBe(join(root, "app.beam"));
   },
 );
 
@@ -520,18 +528,4 @@ cliTest("rejects an empty BEAM path before reading", async ({ cli }) => {
   });
   expect(result.exitCode, result.stderr).not.toBe(0);
   expect(result.stdout).not.toContain("sha256");
-});
-
-cliTest("reports a truncated BEAM as invalid input", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-beam-cli-bad-");
-  const path = join(root, "broken.beam");
-  await writeFile(path, Buffer.from("FOR1"));
-  const result = await cli.run({
-    arguments: ["inspect-erlang-beam", path, "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: { operation: "inspect_erlang_beam" },
-  });
 });

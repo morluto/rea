@@ -84,7 +84,7 @@ request ceiling.
 | Symbols          | `list_names` includes address-bearing memory and external symbols, including dynamic symbols, while excluding variable and no-address namespace records. Each item reports primary, dynamic, external, symbol type, and source facts.                                                           |
 | Procedures       | Both non-external and external functions are listed. A local thunk remains distinct from its resolved target; exact and qualified name lookup fails on ambiguity rather than guessing.                                                                                                          |
 | Strings          | Only Ghidra-defined string `Data` is observed. Items report charset, byte length, and whether a required null terminator is missing. The API cannot distinguish a present terminator from fixed/Pascal layouts when no terminator is missing, so that state is named `present_or_not_required`. |
-| Memory           | Memory-block end addresses are exclusive. Read/write/execute, initialization, overlay, address space, and image base are direct Ghidra observations.                                                                                                                                            |
+| Memory           | Memory-block end addresses are exclusive. Read/write/execute, initialization, overlay, address space, and image base are direct Ghidra observations, after any memory-map preparation a lane documents, such as the [RISC-V load layout](ghidra-riscv.md#load-layout).                          |
 | Inventory        | Procedure, symbol, and string listings plus searches return the complete matching collection in one response; callers do not provide offsets or result-count limits.                                                                                                                            |
 | Search           | Literal and Java-regex searches return every match in the immutable provider-defined inventory; string search does not cover every text sequence in artifact bytes. Search waits for a reply or caller cancellation; there are no caller-supplied offsets or result-count limits.               |
 | Analysis state   | The socket is exposed only after default auto-analysis completes. Established operations wait for their reply or caller cancellation; there is no fixed response-size ceiling.                                                                                                                  |
@@ -318,8 +318,8 @@ Runtime updates apply to newly accepted operations on the existing Program.
 They preserve accepted budgets and do not clear cleanup blockers or change the
 client deadline. Transient decompile timeout failures remain uncached so the
 same function can be retried after raising the limit. See the
-[settings design](../design/limits-and-recovery.md) for snapshots, precedence,
-and provider integration.
+[analysis settings and recovery](../reference/limits-and-recovery.md#precedence-and-lifetime)
+for precedence and lifetime.
 
 Every Ghidra analysis profile commits `producer`: the REA release and a SHA-256
 of the packaged bridge scripts. A snapshot replays only under the same
@@ -399,9 +399,13 @@ DWARF 4 type-layout object. It proves the admitted operations, external function
 behavior, direct and targetless indirect calls, typed references, strings/xrefs,
 multi-block CFG, bounded p-code def-use/effect links, semantic enhanced workflows, cancellation, startup deadlines,
 serialized concurrency, malformed-target rejection, profile identity, and
-process/project cleanup against real Ghidra 12.1.4. Unit fixtures separately
-cover startup deadlines, process exit, queued cancellation, and malformed wire
-output.
+process/project cleanup. Its namespace-annotation check also needs the host's
+GNU demangler native component (`demangler_gnu_v2_41` under
+`GPL/DemanglerGnu/os/<platform>/`); the Ghidra 12.2 release ships it only for
+`linux_x86_64` and `win_x86_64`, and REA does not build it. Recorded on Ghidra
+12.1.4 (no longer accepted); not yet re-run on 12.2. A 12.2 run on macOS arm64
+stopped at that missing demangler. Unit fixtures separately cover startup deadlines, process
+exit, queued cancellation, and malformed wire output.
 
 `npm run verify:ghidra:cross-format` adds AArch64 ELF, x86-64 PE, and x86-64
 Mach-O target coverage. It requires `clang`, LLD, and `lld-link`; set

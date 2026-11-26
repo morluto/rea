@@ -101,7 +101,7 @@ export type GdbCommandResult = Readonly<
 
 export const commandEvidenceDetailSchema = z
   .enum(["complete", "summary"])
-  .default("complete")
+  .optional()
   .describe(
-    "complete returns the original Evidence; summary retains that complete parent and returns command output once with completion and source context.",
+    "Omitted: the original Evidence when it fits the agent result budget, otherwise the retained summary. complete returns the original Evidence; summary retains that complete parent and returns command output once with completion and source context.",
   );

@@ -7,7 +7,7 @@ import type {
 } from "./webScreenshot.js";
 import {
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
+  unsupportedTarget,
 } from "./analysisErrorCore.js";
 import { decodeCanonicalBase64 } from "./webScreenshot.js";
 import {
@@ -117,10 +117,8 @@ export const isOneColourPng = (dataBase64: string): boolean | undefined => {
   } catch {
     return undefined;
   }
-  const first = rgba.readUInt32BE(0);
-  for (let offset = 4; offset < rgba.length; offset += 4)
-    if (rgba.readUInt32BE(offset) !== first) return false;
-  return true;
+  // A uniform frame matches itself shifted by one RGBA pixel.
+  return rgba.subarray(4).equals(rgba.subarray(0, -4));
 };
 
 const parsePng = (
@@ -211,15 +209,17 @@ const parsePng = (
   if (header.colorType === 3 && !sawPalette)
     throw new TypeError("Missing PNG palette");
   if (unsupportedReason !== undefined)
-    throw new AnalysisUnsupportedTargetError(
+    throw unsupportedTarget(
       "compare_web_screenshots",
       field,
+      "png",
       unsupportedReason,
     );
   if (!header.supported)
-    throw new AnalysisUnsupportedTargetError(
+    throw unsupportedTarget(
       "compare_web_screenshots",
       field,
+      "png",
       "PNG encoding is not supported for pixel comparison.",
     );
   const pixels = BigInt(header.width) * BigInt(header.height);

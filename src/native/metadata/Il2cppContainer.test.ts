@@ -1,20 +1,20 @@
+import { readGoFixture } from "../../../tests/fixtures/go/image.js";
 import { expect, it } from "vitest";
-import { readGoBinaryImage } from "../../go/GoBinaryImage.js";
 import { createRustImageWithGoSection } from "../../../tests/fixtures/rust/image.js";
 import { openImageSteps } from "../../il2cpp/Il2cppBinaryImage.js";
 import { readBinaryContainer } from "../../domain/native/readBinaryContainer.js";
 
 it.each(["unmapped", "zero-fill", "duplicate", "out-of-file"] as const)(
   "keeps IL2CPP admission independent of a Mach-O Go build-info %s failure",
-  (fault) => {
+  async (fault) => {
     const goNamed = createRustImageWithGoSection("macho", fault);
     const control = Buffer.from(goNamed);
     const sectionName = Buffer.from("__other\0".padEnd(16, "\0"), "ascii");
     for (let index = 0; index < (fault === "duplicate" ? 2 : 1); index++)
       sectionName.copy(control, 408 + index * 152);
 
-    expect(() => readGoBinaryImage(goNamed)).toThrow(/build-info|mapped/i);
-    expect(readGoBinaryImage(control).build_info).toBeNull();
+    await expect(readGoFixture(goNamed)).rejects.toThrow(/build-info|mapped/i);
+    expect((await readGoFixture(control)).build_info).toBeNull();
     expect(readBinaryContainer(goNamed, "elf-directory").load_regions).toEqual(
       readBinaryContainer(control, "elf-directory").load_regions,
     );
@@ -23,7 +23,7 @@ it.each(["unmapped", "zero-fill", "duplicate", "out-of-file"] as const)(
     expect(image.done).toBe(true);
     if (!image.done)
       throw new Error("container admission unexpectedly yielded");
-    expect(image.value.bytes).toBe(goNamed);
+    expect(image.value.stored.bytes).toBe(goNamed);
     expect(image.value.container).toMatchObject({
       format: "macho",
       macho_chained_fixups: false,

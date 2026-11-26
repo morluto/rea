@@ -2,13 +2,14 @@ import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import {
   readerIntegrityFailure,
   ArtifactFileCleanupFailure,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   bindArtifactFileCleanup,
   withArtifactRegularFile,
   ArtifactReaderFailure,
   type ArtifactResourceScope,
+  readFailureError,
 } from "../resources/index.js";
 import {
   malformedInput,
@@ -33,9 +34,9 @@ import {
   AnalysisAccessDeniedError,
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
   cancelledBy,
   carriedReason,
+  AnalysisTargetFailureError,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -47,7 +48,10 @@ import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import { pushDispatchCoverage } from "./AppleDispatchCoverage.js";
 import { parsePointerFixupsSteps } from "../domain/apple/appleMachoFixups.js";
-import { BinaryFormatFailure } from "../domain/binaryContainer.js";
+import {
+  BinaryFormatFailure,
+  BinaryReader,
+} from "../domain/binaryContainer.js";
 import { parseMachoLayout } from "../domain/apple/appleMachoSelection.js";
 import {
   selectMachoSlice,
@@ -88,8 +92,8 @@ export function* decodeAppleDispatchMetadataSteps(
     slice: admittedSlice,
   });
   if (!selected.ok) {
-    if (selected.error.kind === "malformed")
-      throw malformedInput("macho", selected.error.message);
+    if (selected.error.kind === "target")
+      throw readFailureError(selected.error.failure);
     // Admission bound this architecture and slice to these exact bytes, so a
     // refusal is an inconsistency inside REA, not the caller's selection.
     throw new ProviderAdapterError(IDENTITY.id, OPERATION, {
@@ -102,6 +106,7 @@ export function* decodeAppleDispatchMetadataSteps(
   }
   const layout = parseMachoLayout(bytes, selected.value);
   const { segments, sections, offset } = layout;
+  const metadata = new BinaryReader(bytes, true, "macho");
   const fixups = yield* parsePointerFixupsSteps(
     bytes,
     layout.fixups,
@@ -116,9 +121,10 @@ export function* decodeAppleDispatchMetadataSteps(
     addressesComplete: objcClassImportAddressesComplete,
     maxRecords,
   });
-  const u32 = (address: bigint) => bytes.readUInt32LE(offset(address, 4));
+  const u32 = (address: bigint) => metadata.u32(offset(address, 4));
+  const u64 = (address: bigint) => metadata.word(offset(address, 8), 64);
   const decodePointer = (address: bigint) =>
-    fixups.decode(address, bytes.readBigUInt64LE(offset(address, 8)));
+    fixups.decode(address, u64(address));
   /** In-image target of a raw or rebased pointer; a bind is not an address. */
   const pointer = (address: bigint) => {
     const decodedPointer = decodePointer(address);
@@ -211,8 +217,8 @@ export function* decodeAppleDispatchMetadataSteps(
   };
   const readers = {
     u32,
-    i32: (address: bigint) => bytes.readInt32LE(offset(address, 4)),
-    u64: (address: bigint) => bytes.readBigUInt64LE(offset(address, 8)),
+    i32: (address: bigint) => metadata.i32(offset(address, 4)),
+    u64,
     pointer,
     resolvePointer: decodePointer,
     bound,
@@ -230,7 +236,6 @@ export function* decodeAppleDispatchMetadataSteps(
     objcListScanTruncated,
     objcClassListScanTruncated,
   } = decodeObjcDispatchFacets({
-    bytes,
     sections,
     segments,
     readers,
@@ -239,7 +244,6 @@ export function* decodeAppleDispatchMetadataSteps(
     result,
   });
   const swiftRelative = createSwiftRelativeReader({
-    bytes,
     readers,
     budget,
     result,
@@ -322,7 +326,7 @@ export function* decodeAppleDispatchMetadataSteps(
     vtables: vtables.facts(),
     swift,
   });
-  return objcSwiftMetadataSchema.parse(result);
+  return result;
 }
 
 const OPERATION = "inspect_native_dispatch_metadata";
@@ -429,6 +433,7 @@ export const inspectAppleDispatchMetadata = async (
       if (signal?.aborted) throw cancelled();
       const read = await readBoundedFileBytes(handle, maximumBytes, {
         signal,
+        expectedSize: before.size,
         cancellationFailure: () => cancelled(),
       });
       if (read === undefined) throw inputBudgetExceeded(admission, null);
@@ -456,15 +461,18 @@ export const inspectAppleDispatchMetadata = async (
     if (signal?.aborted) throw cancelled();
     next = steps.next();
   }
-  return nativeDispatchMetadataResultSchema.parse({
+  const envelope = nativeDispatchMetadataEnvelopeSchema.parse({
     target_sha256: target.sha256,
     target_architecture: target.architecture,
     provider: APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE.provider,
     analysis_profile_digest: APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE.digest,
     input_admission: { ...admission, retained_bytes: bytes.length },
-    result: next.value,
   });
+  return { ...envelope, result: next.value };
 };
+
+const nativeDispatchMetadataEnvelopeSchema =
+  nativeDispatchMetadataResultSchema.omit({ result: true });
 
 /** Translate the owned target read, keeping a failed close beside its physical outcome. */
 export const appleDispatchMetadataFailure = (
@@ -523,23 +531,11 @@ const appleDispatchMetadataPrimaryFailure = (
         { cause },
       );
     if (cause instanceof BinaryFormatFailure)
-      return new AnalysisUnsupportedTargetError(
-        OPERATION,
-        path,
-        cause.message,
-        {
-          cause,
-          remediationAction:
-            cause.kind !== "unsupported"
-              ? "Select a Mach-O artifact with well-formed metadata sections, reopen the target, then retry."
-              : "Select a supported little-endian 64-bit Mach-O artifact, reopen the target, then retry.",
-        },
-      );
+      return new AnalysisTargetFailureError(OPERATION, path, cause.failure, {
+        cause,
+      });
     if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      return cancelledBy(
-        OPERATION,
-        carriedReason(artifactFileCancellationCause(cause)),
-      );
+      return artifactFileCancellationError(OPERATION, cause);
     if (
       cause instanceof ArtifactReaderFailure &&
       cause.reason === "unavailable"

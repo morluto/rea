@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { createWindowsShortcutService } from "../../../src/composition/binaryDiagnostics.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { createWindowsShortcutService } from "../../../src/composition/binaryDiagnostics/windowsShortcut.js";
 import { WindowsShortcutProvider } from "../../../src/native/windows/WindowsShortcutProvider.js";
 import {
   LINK_FLAG,
@@ -11,6 +12,7 @@ import {
 } from "../../fixtures/binaryDiagnostics/windowsShortcut.js";
 import { phaseGate } from "../../support/lifecycleHarness.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expectFileSelectionErrors } from "../../support/expectFileSelectionErrors.js";
 
 const { realpathCalls, lstatCalls, lstatGate } = vi.hoisted(() => ({
   realpathCalls: vi.fn(),
@@ -61,27 +63,20 @@ describe("Windows shortcut stable filesystem boundary", () => {
     await writeFile(malformed, Buffer.from("not a shell link"));
     await symlink(path, alias);
     const service = createWindowsShortcutService();
-    for (const [candidate, reason] of [
-      [root, "invalid_format"],
-      [alias, "invalid_format"],
-      [malformed, "invalid_format"],
-      [join(root, "missing.lnk"), "invalid_value"],
-      [join(path, "child.lnk"), "invalid_value"],
-    ] as const) {
-      const result = await service.inspect({ path: candidate });
-      if (result.ok) throw new Error("Expected file acquisition failure");
-      expect(result.error).toMatchObject({
-        _tag: "AnalysisInputError",
-        operation: "inspect_windows_shortcut",
-        issues: [
-          {
-            path: ["path"],
-            reason,
-            message: expect.any(String),
-          },
-        ],
-      });
-    }
+    await expectFileSelectionErrors(
+      service,
+      "inspect_windows_shortcut",
+      { root, alias, path },
+      ".lnk",
+    );
+    // Malformed bytes are a target refusal, not a request-field error.
+    const malformedResult = await service.inspect({ path: malformed });
+    if (malformedResult.ok) throw new Error("Expected a malformed target");
+    expect(malformedResult.error).toMatchObject({
+      _tag: "AnalysisTargetFailureError",
+      operation: "inspect_windows_shortcut",
+      path: malformed,
+    });
   });
 
   it.skipIf(process.platform === "win32")(
@@ -179,30 +174,119 @@ describe("Windows shortcut stable filesystem boundary", () => {
       coverage: { status: "partial", failing_offset: 92 },
     });
   });
+});
 
-  it("returns typed resource and cancellation failures", async () => {
-    const root = await createTestTempDirectory("rea-windows-shortcut-budget-");
-    const path = join(root, "shortcut.lnk");
-    await writeFile(path, powershellHiddenIconSpoofShortcut());
+it.each([false, true])(
+  "counts retained LinkInfo text separately from its terminators (unicode: %s)",
+  async (unicode) => {
+    const root = await createTestTempDirectory("rea-shortcut-text-budget-");
+    const path = join(root, "notes.lnk");
+    const target = "C:\\notes.txt";
+    await writeFile(
+      path,
+      windowsShortcutBytes({
+        flags: LINK_FLAG.HasLinkInfo,
+        idList: null,
+        linkInfo: { unicode, label: "", localBasePath: target },
+        extraData: [],
+      }),
+    );
     const service = createWindowsShortcutService();
-    const tooSmall = await service.inspect({ path, max_file_bytes: 76 });
-    if (tooSmall.ok) throw new Error("Expected resource budget failure");
-    expect(tooSmall.error._tag).toBe("AnalysisResourceConstraintError");
-    const items = await service.inspect({ path, max_id_list_items: 1 });
-    if (items.ok) throw new Error("Expected IDList budget failure");
-    expect(items.error).toMatchObject({
+    try {
+      const retainedBytes =
+        Buffer.byteLength(target, "latin1") +
+        (unicode ? Buffer.byteLength(target, "utf16le") : 0);
+      const admitted = await service.inspect({
+        path,
+        max_string_bytes: retainedBytes,
+      });
+      if (!admitted.ok) throw admitted.error;
+      expect(admitted.value.normalized_result).toMatchObject({
+        link_info: {
+          local_base_path: target,
+          local_base_path_unicode: unicode ? target : null,
+        },
+        coverage: { status: "complete" },
+      });
+      const maximum = retainedBytes - 1;
+      const limited = await service.inspect({
+        path,
+        max_string_bytes: maximum,
+      });
+      if (limited.ok)
+        throw new Error("Expected retained-text capacity failure");
+      const projected = projectAnalysisError(limited.error);
+      expect(projected).toMatchObject({
+        code: "resource_constraint",
+        details: { resource: "capacity" },
+        remediation: {
+          action: expect.stringContaining(
+            "Pass a larger max_string_bytes on the next inspect_windows_shortcut call",
+          ),
+        },
+        retryable: false,
+      });
+      expect(projected.details?.reported_limits).toEqual({
+        boundary: "string_bytes",
+        maximum,
+      });
+      expect(projected.details?.limit).toEqual({
+        control_kind: "parameter",
+        parameter: "max_string_bytes",
+        effective_value: maximum,
+        unit: "bytes",
+        minimum: 1,
+        maximum: 1024 * 1024,
+        default_value: 65536,
+        applies_at: "next_call",
+      });
+    } finally {
+      await service.close();
+    }
+  },
+);
+
+it("returns typed resource and cancellation failures", async () => {
+  const root = await createTestTempDirectory("rea-windows-shortcut-budget-");
+  const path = join(root, "shortcut.lnk");
+  await writeFile(path, powershellHiddenIconSpoofShortcut());
+  const service = createWindowsShortcutService();
+  const tooSmall = await service.inspect({ path, max_file_bytes: 76 });
+  if (tooSmall.ok) throw new Error("Expected resource budget failure");
+  expect(tooSmall.error).toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    limit: {
+      parameter: "max_file_bytes",
+      effective_value: 76,
+      default_value: 1048576,
+    },
+  });
+  for (const [argument, boundary] of [
+    ["max_id_list_items", "id_list_items"],
+    ["max_extra_data_blocks", "extra_data_blocks"],
+  ] as const) {
+    const limited = await service.inspect({ path, [argument]: 1 });
+    if (limited.ok) throw new Error(`Expected ${boundary} capacity failure`);
+    expect(limited.error).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
-      reportedLimits: { boundary: "id_list_items", maximum: 1 },
-      remediationAction: expect.stringContaining("max_id_list_items"),
+      cause: {
+        failure: {
+          kind: "limit",
+          format: "windows-shortcut",
+          limit: { name: boundary, maximum: 1 },
+        },
+      },
+      reportedLimits: { boundary, maximum: 1 },
+      limit: { parameter: argument, effective_value: 1, unit: "count" },
       retryable: false,
     });
-    const cancelled = await service.inspect(
-      { path },
-      { signal: AbortSignal.abort() },
-    );
-    if (cancelled.ok) throw new Error("Expected cancellation");
-    expect(cancelled.error._tag).toBe("AnalysisCancelledError");
-  });
+  }
+  const cancelled = await service.inspect(
+    { path },
+    { signal: AbortSignal.abort() },
+  );
+  if (cancelled.ok) throw new Error("Expected cancellation");
+  expect(cancelled.error._tag).toBe("AnalysisCancelledError");
 });
 
 it.each([

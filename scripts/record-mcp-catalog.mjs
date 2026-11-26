@@ -67,15 +67,46 @@ const recordCatalog = async () => {
     const tools = (await client.listTools()).tools.map((tool) => {
       const contract = TOOL_CONTRACTS.find(({ name }) => name === tool.name);
       if (contract === undefined) throw new Error(`Missing tool ${tool.name}`);
+      const outputSchema = toolOutputSchemaWithMetadata(contract)[
+        "~standard"
+      ].jsonSchema.output({ target: "draft-2020-12" });
       return {
         ...tool,
-        // Record the pre-codec schema. The SDK owns protocol-specific root
-        // wrapping for both tools/list and tools/call on the deferred server.
-        outputSchema: toolOutputSchemaWithMetadata(contract)[
-          "~standard"
-        ].jsonSchema.output({ target: "draft-2020-12" }),
+        // Deferred listings omit outputs and calls use canonical validation.
+        // An object root is enough for the SDK's legacy result codec. Keep
+        // other roots intact for wrapping, and the session schema for doctor.
+        outputSchema:
+          tool.name === "binary_session" || outputSchema.type !== "object"
+            ? outputSchema
+            : { type: "object" },
       };
     });
+    // Record the compact schemas a legacy client receives. The SDK stamps or
+    // wraps a non-object root before REA compacts that listing.
+    const compactServer = createServer(
+      { kind: "session", session },
+      {
+        environment: {
+          ...environment,
+          REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact",
+        },
+      },
+    );
+    cleanup.push(() => compactServer.close());
+    const compactClient = new Client({
+      name: "rea-catalog-recorder-compact",
+      version: "1",
+    });
+    cleanup.push(() => compactClient.close());
+    const [compactClientTransport, compactServerTransport] =
+      InMemoryTransport.createLinkedPair();
+    await compactServer.connect(compactServerTransport);
+    await compactClient.connect(compactClientTransport);
+    const compactOutputSchemas = Object.fromEntries(
+      (await compactClient.listTools()).tools.flatMap((tool) =>
+        tool.outputSchema === undefined ? [] : [[tool.name, tool.outputSchema]],
+      ),
+    );
     const prompts = (await client.listPrompts()).prompts.map((prompt) => {
       const contract = PROMPT_CONTRACTS.find(
         (candidate) => candidate.name === prompt.name,
@@ -91,6 +122,7 @@ const recordCatalog = async () => {
       instructions: client.getInstructions(),
       identity: server.catalogIdentity,
       tools,
+      compactOutputSchemas,
       toolFamilies: Object.fromEntries(
         tools.map(({ name }) => {
           const family = toolFamilyId(name);

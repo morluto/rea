@@ -8,19 +8,19 @@ import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 
+export interface ValidatedRegistrationEnvironment {
+  readonly configuration: Environment;
+  readonly runtimeEnvironment: Readonly<Record<string, string>>;
+  readonly unresolvedSettings: ReadonlySet<string>;
+}
+
 /** Validate literal registration settings while retaining expression-owned unknowns. */
 export const validateRegistrationEnvironment = (
   values: Readonly<Record<string, string>>,
   expressionSettings: ReadonlySet<string>,
   validation: "fragment" | "effective",
   platform: NodeJS.Platform,
-): Result<
-  {
-    readonly configuration: Environment;
-    readonly unresolvedSettings: ReadonlySet<string>;
-  },
-  ConfigurationError
-> => {
+): Result<ValidatedRegistrationEnvironment, ConfigurationError> => {
   const runtimeEnvironment = snapshotEnvironment(values, platform);
   const unresolvedSettings = new Set(
     Object.keys(
@@ -45,5 +45,9 @@ export const validateRegistrationEnvironment = (
         settings: seedIssues,
       }),
     );
-  return ok({ configuration: validated.value, unresolvedSettings });
+  return ok({
+    configuration: validated.value,
+    runtimeEnvironment,
+    unresolvedSettings,
+  });
 };

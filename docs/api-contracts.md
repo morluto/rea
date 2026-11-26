@@ -138,8 +138,8 @@ one local document containing operations and fragments. Both MCP paths are
 absolute; CLI accepts relative spellings:
 
 ```sh
-rea inspect-api-contract ./schema.graphql --contractFormat graphql-sdl \
-  --operationsPath ./queries.graphql --detail summary \
+rea inspect-api-contract ./schema.graphql --contract-format graphql-sdl \
+  --operations-path ./queries.graphql --detail summary \
   --view '{"kind":"graphql-contract","collection":"references","limit":20}' \
   --evidence_output ./graphql.evidence.json --json
 ```

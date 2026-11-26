@@ -1,4 +1,4 @@
-import { BinaryReader } from "../domain/binaryContainer.js";
+import { createBinaryReaderCache } from "../domain/binaryContainer.js";
 import { Buffer } from "node:buffer";
 import { byteToHex } from "../kernel/byteToHex.js";
 import {
@@ -8,6 +8,7 @@ import {
   type ScanRegion,
 } from "./UefiBytes.js";
 import { formatGuidLittleEndian } from "./UefiGuid.js";
+import type { FirmwareVolumeHeader } from "./FirmwareVolume.js";
 import { FFS_ATTRIBUTE_MASKS, FFS_HEADER_LAYOUT } from "./UefiCodeTables.js";
 
 const FFS_DATA_ALIGNMENT_EXPONENTS = [0, 4, 7, 9, 10, 12, 15, 16] as const;
@@ -59,11 +60,10 @@ interface UnconfirmedFfsState {
   readonly rawState: number;
 }
 
-/**
- * Parse one FFS header at a local position; null when framing is unconfirmed.
- * Checksum findings are observations on the header,
- * not rejections — invalid files stay in the inventory with their notes.
- */
+const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
+const ffsFileReader = createBinaryReaderCache(true, "FFS file");
+
+/** Return null for unconfirmed framing and retain checksum findings on parsed headers. */
 export function parseFfsFileHeader(
   region: ScanRegion,
   localBase: number,
@@ -114,14 +114,14 @@ function observeFfsFileHeader(
   let headerLength: number = FFS_HEADER_LAYOUT.length;
   let declaredLength = declaredCompact;
   if (largeFile) {
-    const reader = new BinaryReader(region.buffer, true, "FFS file");
     if (!extended) return null;
+    const reader = ffsFileReader(region.buffer);
     headerLength = FFS_HEADER_LAYOUT.extendedLength;
     const size = reader.word(
       localBase + FFS_HEADER_LAYOUT.extendedSizeOffset,
       64,
     );
-    if (size > BigInt(Number.MAX_SAFE_INTEGER))
+    if (size > MAX_SAFE_INTEGER_BIGINT)
       return { kind: "unrepresentable", size, unusableState };
     declaredLength = Number(size);
     if (declaredCompact !== 0)
@@ -165,10 +165,7 @@ function observeFfsFileHeader(
         : null,
     bodyIssue: state === "header-valid" ? "data-not-valid" : null,
     extentIssue,
-    nameGuid: formatGuidLittleEndian(
-      region.buffer.subarray(localBase, localBase + 16),
-      0,
-    ),
+    nameGuid: formatGuidLittleEndian(region.buffer, localBase),
     typeCode: region.buffer[localBase + FFS_HEADER_LAYOUT.typeOffset] ?? 0,
     attributes,
     dataAlignment:
@@ -238,8 +235,9 @@ export function checkFfsFileIntegrity(
   const length = end - start;
   if (length === 0) return { verdict: "unchecked" } as const;
   let total = header.fileChecksumField;
-  for (const byte of region.buffer.subarray(start, end)) {
-    total = (total + byte) & 0xff;
+  const buffer = region.buffer;
+  for (let i = start; i < end; i += 1) {
+    total = (total + buffer[i]!) & 0xff;
   }
   return total === 0
     ? ({ verdict: "valid" } as const)
@@ -300,7 +298,10 @@ type FfsHeaderRead =
 export function readFfsHeader(
   region: ScanRegion,
   local: number,
-  erasePolarity: boolean,
+  {
+    erasePolarity,
+    fileSystem,
+  }: Pick<FirmwareVolumeHeader, "erasePolarity" | "fileSystem">,
   reserve: () => boolean = () => true,
 ): FfsHeaderRead {
   if (local >= region.end) return { kind: "end" };
@@ -342,6 +343,38 @@ export function readFfsHeader(
         region.end,
         region.start + alignUp(end - region.start, 8),
       );
+      if (
+        fileSystem === "ffs2" &&
+        header.headerLength === FFS_HEADER_LAYOUT.extendedLength
+      ) {
+        const detail = `FFS2 volume contains an FFS3 file header at 0x${header.absoluteBase.toString(16)}.`;
+        const fixedHeaderOnly = header.extentIssue === "unusable-header-state";
+        if (
+          !fixedHeaderOnly &&
+          (header.extentIssue !== null ||
+            !header.headerChecksumValid ||
+            header.declaredLength <= 0xff_ffff ||
+            header.implausibilities.includes(
+              "large-file-compact-size-is-nonzero",
+            ))
+        )
+          return {
+            kind: "unparsed",
+            offset: header.absoluteBase,
+            length: region.end - local,
+            detail: `${detail} Its occupied extent could not be confirmed.`,
+          };
+        const skipEnd = fixedHeaderOnly ? end : nextLocal;
+        return {
+          kind: "unusable-header",
+          offset: header.absoluteBase,
+          length: skipEnd - local,
+          nextLocal: skipEnd,
+          detail: fixedHeaderOnly
+            ? `${detail} Its state permits advancing by the fixed header extent.`
+            : detail,
+        };
+      }
       return {
         kind: "file",
         header,
