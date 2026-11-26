@@ -3216,11 +3216,30 @@ html[dir="rtl"] .scroll-progress {
   .guide-route span {
     color: #000;
   }
+  .agent-terminal,
   :where(:root[data-theme="dark"]) .agent-terminal,
   :where(:root[data-theme="dark"]) .flow-node,
-  :where(:root[data-theme="dark"]) .step-comparison .is-active {
+  :where(:root[data-theme="dark"]) .step-comparison .is-active,
+  :where(:root[data-theme="dark"]) .button {
     background: var(--soft);
+    border-color: var(--line);
     color: var(--ink);
+  }
+  .terminal-header,
+  :where(:root[data-theme="dark"]) .terminal-header {
+    border-bottom-color: var(--line);
+    color: var(--muted);
+  }
+  .terminal-target,
+  .prompt-symbol,
+  .agent-terminal .copy-button {
+    color: var(--muted);
+  }
+  .agent-terminal .terminal-prompt {
+    color: #000;
+  }
+  .terminal-cursor {
+    display: none;
   }
   .article-section {
     border: 0;
