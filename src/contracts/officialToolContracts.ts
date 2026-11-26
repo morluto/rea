@@ -291,7 +291,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   official(
     "search_procedures",
     providerNetworkEvidenceEffects,
-    "Find analyzed procedures by literal name (default) or regex, including accepted secondary names. Returns deterministic provider-inventory matches under primary names with matched_aliases and available thunk/external metadata. For Ghidra case-insensitive literal searches, raw_result holds Ghidra's candidates only when Unicode filtering removed any; normalized_result holds matches. Select detail summary for counts and retained native-inventory pages; omitted detail is complete within the agent result budget, else the retained summary. Regex uses Java Pattern in Ghidra and ECMAScript Unicode in Kuna, IDA and Hopper; binary_session and errors report effective limits and recovery.",
+    "Find analyzed procedures by literal name (default) or regex, including accepted secondary names. Returns deterministic provider-inventory matches under primary names with matched_aliases and available thunk/external metadata. For Ghidra case-insensitive literal searches, raw_result holds Ghidra's candidates only when Unicode filtering removed any; normalized_result holds matches. Select detail summary for counts and retained native-inventory pages; omitted detail is complete within the agent result budget, else the retained summary. Page one procedure's aliases with inspect_analysis_view view {kind:\"native-inventory-aliases\",source_index:0,offset:0,limit:32}. Regex uses Java Pattern in Ghidra and ECMAScript Unicode in Kuna, IDA and Hopper; binary_session and errors report effective limits and recovery.",
     z.object({ ...nativeSearchInput, detail: analysisDetailSchema }),
     { evidenceParameters: "omit-detail" },
   ),

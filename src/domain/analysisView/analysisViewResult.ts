@@ -143,6 +143,8 @@ import {
   nativeInstructionReferencesRequestSchema,
 } from "./nativeInstructionReferencesView.js";
 import {
+  nativeInventoryAliasViewRequestSchema,
+  nativeInventoryAliasItemsSchema,
   nativeInventoryViewRequestSchema,
   nativeInventoryViewRowSchema,
 } from "./nativeInventoryView.js";
@@ -646,6 +648,21 @@ const machoPageViewResultSchema = z
 
 /** Projected facts for one selected view of retained analysis Evidence. */
 export const analysisViewResultSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    ...viewResultBase,
+    ...nativeViewSourceContext,
+    kind: z.literal("native-inventory-aliases"),
+    parent_operation: z.literal("search_procedures"),
+    artifact: artifactSchema.nullable(),
+    view: nativeInventoryAliasViewRequestSchema,
+    procedure: z.strictObject({
+      address: z.string(),
+      value: z.string(),
+      source_index: z.int().nonnegative(),
+    }),
+    items: nativeInventoryAliasItemsSchema,
+    coverage: analysisViewCoverageSchema.nullable(),
+  }),
   z.strictObject({
     ...viewResultBase,
     ...nativeViewSourceContext,
