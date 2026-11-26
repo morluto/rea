@@ -574,6 +574,11 @@ export const documentationSections = [
         route: "/wxapkg",
       },
       {
+        text: "macOS flat installer packages",
+        source: "macos-pkg.md",
+        route: "/macos-pkg",
+      },
+      {
         text: "ISO 9660 disc images",
         source: "guides/firmware/iso9660-images.md",
         route: "/iso9660-images",

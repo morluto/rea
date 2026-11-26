@@ -47,6 +47,7 @@ import { Iso9660ArtifactReader } from "./Iso9660ArtifactReader.js";
 import { QualcommMbnArtifactReader } from "./QualcommMbnArtifactReader.js";
 import { HexRecordArtifactReader } from "./HexRecordArtifactReader.js";
 import { MachOSliceArtifactReader } from "./MachOSliceArtifactReader.js";
+import { MacosPkgArtifactReader } from "./MacosPkgArtifactReader.js";
 import { NativeDmgArtifactReader } from "./NativeDmgArtifactReader.js";
 import type { NodeSeaAdmission } from "./nodeSea/NodeSeaAdmission.js";
 import { NodeSeaArtifactReader } from "./NodeSeaArtifactReader.js";
@@ -329,7 +330,20 @@ const NON_ZIP_FORMATS = {
     createReader: (path, options) =>
       new NativeDmgArtifactReader(path, options.environment),
   }),
-  pkg: container("pkg", { absentInventory: "platform" }),
+  pkg: container("pkg", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "macOS flat installer inventory reads the XAR header, zlib TOC, Distribution/PackageInfo, gzip cpio Scripts and gzip cpio Payload members. XAR signatures are not verified. pbzx/xz payloads, Bom contents and installer JavaScript are not decoded or executed.",
+    createReader: (path, options) =>
+      new MacosPkgArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+      ),
+  }),
   asar: container("asar", {
     retainClassifiedSource: true,
     extractable: true,
