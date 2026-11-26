@@ -173,6 +173,14 @@ it("reports a stream whose FAT chain leaves the file", async () => {
   expect(inventory.limitations).toContainEqual(
     expect.stringMatching(/allocation chain reaches/u),
   );
+  // The entry itself says why it carries no bytes, rather than publishing a
+  // metadata-only occurrence with an empty limitation list.
+  const listed = inventory.occurrences.find(
+    (row) => row.logical_path === "Broken",
+  );
+  expect(listed?.limitations).toContainEqual(
+    expect.stringMatching(/FAT chain ends before the declared size/u),
+  );
 });
 
 it("keeps an unsafe name as a source path instead of aborting the inventory", async () => {

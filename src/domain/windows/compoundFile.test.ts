@@ -125,6 +125,7 @@ it("lists a storage's children by their full path and a stream's allocation", ()
     storage: "fat",
     contiguous: true,
     byteOffset: 3 * SECTOR,
+    chainProblem: null,
   });
   // Below the 4096-byte cutoff, bytes live in the root storage's mini stream.
   expect(image.entries.find((entry) => entry.name === "small")).toMatchObject({
@@ -196,6 +197,7 @@ it("reports a chain that is contiguous but shorter than the declared size", () =
   expect(image.entries.find((entry) => entry.name === "short")).toMatchObject({
     contiguous: true,
     byteOffset: null,
+    chainProblem: "incomplete",
   });
 });
 
@@ -211,6 +213,7 @@ it("classifies a stream that starts at a marker with bytes as a broken chain", (
     startingSector: null,
     contiguous: null,
     byteOffset: null,
+    chainProblem: "marker-start",
   });
 });
 

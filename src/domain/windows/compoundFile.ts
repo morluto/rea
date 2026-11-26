@@ -147,7 +147,16 @@ export interface CompoundFileDirectoryEntry {
   readonly sharedOverlap: boolean;
   /** File offset of the first sector, only when the chain is contiguous. */
   readonly byteOffset: number | null;
+  /**
+   * Why a FAT stream has no byte range, when the chain itself is at fault:
+   * a start marker with declared bytes, a walk that ended before the declared
+   * size (cyclic, or leaving the file), or the visit budget. `null` when the
+   * chain resolved or is not a FAT chain.
+   */
+  readonly chainProblem: CompoundFileChainProblem | null;
 }
+
+export type CompoundFileChainProblem = "marker-start" | "incomplete" | "budget";
 
 export interface CompoundFileMetadata {
   readonly kind: "compound-file";
@@ -995,6 +1004,7 @@ export const parseCompoundFile = (
         structuralOverlap: false,
         sharedOverlap: false,
         byteOffset: null,
+        chainProblem: markerStartWithBytes ? "marker-start" : null,
       };
     const chain = chains.walk(startingSector);
     const needed = Math.ceil(entry.streamSize / sectorBytes);
@@ -1045,6 +1055,7 @@ export const parseCompoundFile = (
         contiguous && complete && !structuralOverlap && !sharedOverlap
           ? sectorOf(startingSector, sectorBytes)
           : null,
+      chainProblem: complete ? null : chain.budgetHit ? "budget" : "incomplete",
     };
   });
 

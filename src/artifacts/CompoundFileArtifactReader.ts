@@ -5,6 +5,7 @@ import type { CompoundFileMetadata } from "../domain/formatMetadata/androidAndSy
 import type { RegionDecodeFailure } from "../domain/firmware/regionDecoder.js";
 import {
   createCompoundFileDecoder,
+  type CompoundFileChainProblem,
   type CompoundFileDirectoryEntry,
   type CompoundFileImage,
 } from "../domain/windows/compoundFile.js";
@@ -354,6 +355,14 @@ const normalizedIdentity = (path: string): string | null => {
   }
 };
 
+const chainProblemLimitation = (problem: CompoundFileChainProblem): string => {
+  if (problem === "marker-start")
+    return "This stream declares bytes but its start marker names no sector, so it has no byte range in this step.";
+  if (problem === "budget")
+    return "This stream's FAT chain was left unresolved when the allocation-chain walk budget was exhausted, so it has no byte range in this step.";
+  return "This stream's FAT chain ends before the declared size — it is cyclic or leaves the file — so it has no byte range in this step.";
+};
+
 const toArtifactEntry = (
   entry: CompoundFileDirectoryEntry,
 ): ArtifactEntry | null => {
@@ -410,10 +419,8 @@ const toArtifactEntry = (
     limitations.push(
       "This stream declares bytes but its allocation is unresolved, so it has no byte range in this step.",
     );
-  if (entry.storage !== "mini" && entry.contiguous === false)
-    limitations.push(
-      "This stream's FAT chain is not contiguous, so it has no single byte range in this step.",
-    );
+  if (entry.storage !== "mini" && entry.chainProblem !== null)
+    limitations.push(chainProblemLimitation(entry.chainProblem));
   if (entry.structuralOverlap)
     limitations.push(
       "This stream's chain reaches sectors the FAT, the DIFAT or the directory already owns, so its byte range is not resolved in this step.",
