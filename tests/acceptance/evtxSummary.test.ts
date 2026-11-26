@@ -35,7 +35,7 @@ cliTest(
       arguments: [
         "inspect-evtx-archive",
         "./input.evtx",
-        "--maxRecords",
+        "--max-records",
         "1",
         "--detail",
         "summary",
