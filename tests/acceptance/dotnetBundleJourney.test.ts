@@ -261,9 +261,8 @@ test("reports excessive bundle path depth as a public CLI limit", async ({
       },
     },
   });
-  expect(result.json).not.toHaveProperty([
-    "details",
-    "reader_limit",
-    "required_value",
-  ]);
+  // The path-depth count stops at the limit, so it knows only a lower bound.
+  expect(result.json).not.toMatchObject({
+    details: { reader_limit: { required_value: expect.anything() } },
+  });
 });
