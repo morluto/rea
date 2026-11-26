@@ -1,3 +1,4 @@
+import { producerLimitControl } from "../producerResourceLimits.js";
 import { timerDurationMsSchema } from "../analysisResourceLimits.js";
 import { z } from "zod";
 import { requirePresence } from "../schemaConstraints.js";
@@ -33,14 +34,11 @@ export const sqliteInputLimit = (
   effectiveValue: number,
   requiredValue?: number,
 ): AnalysisParameterLimit => ({
-  control_kind: "parameter",
-  parameter: "producer_limits.input_bytes",
-  effective_value: effectiveValue,
-  unit: "bytes",
-  minimum: 1,
-  maximum: Number.MAX_SAFE_INTEGER,
-  default_value: DEFAULT_SQLITE_INPUT_BYTES,
-  applies_at: "next_call",
+  ...producerLimitControl(
+    "input_bytes",
+    effectiveValue,
+    DEFAULT_SQLITE_INPUT_BYTES,
+  ),
   ...(requiredValue === undefined ? {} : { required_value: requiredValue }),
 });
 
