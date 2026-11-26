@@ -101,6 +101,13 @@ accepts `max_native_index_bytes` (default 1 GiB) for the estimated ELF pointer
 index of `binary_path`; its refusal reports the same kind of limit. See
 [IL2CPP metadata](../il2cpp-metadata.md#native-method-addresses).
 
+`inspect_devicetree`, `inspect_windows_shortcut`, `inspect_kernel_build_config`,
+`extract_firmware` and `inspect_byte_entropy` report the same parameter limit for
+their per-call budgets (`max_file_bytes`, entry, depth and decoded-byte budgets,
+`max_output_bytes`/`max_output_files`, and `block_size` or `length`).
+`inspect_devicetree` bounds its estimated decoded representation with
+`max_decoded_bytes` (default 32 MiB, at most 256 MiB).
+
 ### Native table structure budget
 
 `inspect_elf_unwind_ranges`, `inspect_kernel_module`, `inspect_elf_debug_link`,
@@ -134,8 +141,9 @@ one streaming pass that hashes the file for its identity is not counted.
 An exhausted allowance is a `capacity` refusal. `details.limit` has
 `control_kind: "parameter"`, `parameter: "max_file_bytes"`, the effective
 value, the bounds, the default and `applies_at: "next_call"`, and
-`details.limit.required_value` (also `details.reported_limits.required_read_bytes`)
-holds the reads needed so far. Pass at least that `max_file_bytes` and retry;
+`details.reported_limits.required_read_bytes` holds the reads needed so far.
+It is a lower bound, since later reads depend on structures not yet decoded, so
+the limit reports no `required_value`. Raise `max_file_bytes` and retry;
 `update_analysis_settings` does not change it.
 The identity pass has a fixed whole-file ceiling: 4 GiB minus one byte for the
 PE-only readers, whose file offsets are 32-bit, and 512 MiB for hardening and
@@ -504,7 +512,9 @@ caller to inspect the schema.
 The recovery is generated from the refusal's facts only, never from earlier
 calls. `required_value` is the smallest value that admits the refused request;
 the refusal reports it, in `details.limit` and `details.refusal`, whenever the
-producer measured it.
+producer measured it. A producer that knows only a lower bound, such as the
+reads counted before a refusal, omits it and reports the bound in
+`details.reported_limits`.
 
 - A per-call control reads "Pass a larger `<parameter>` on the next
   `<operation>` call (at least `<required_value>`; range

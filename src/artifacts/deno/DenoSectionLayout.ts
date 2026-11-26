@@ -215,7 +215,7 @@ export const parseDenoSection = async (
     const range = takeRange(BigInt(length), "specifier text");
     textBytes += length;
     if (textBytes > limits.specifier_text_bytes)
-      throw denoByteLimit("specifier_text_bytes", textBytes, limits);
+      throw denoByteLimit("specifier_text_bytes", undefined, limits);
     const bytes = await readExact(range.sectionOffset, range.length);
     const id = await u32();
     if (specifierText.has(id))
@@ -377,7 +377,7 @@ const addRemoteBody = (
 ): bigint => {
   const next = total + BigInt(length);
   if (next > BigInt(limits.remote_body_bytes))
-    throw denoByteLimit("remote_body_bytes", next, limits);
+    throw denoByteLimit("remote_body_bytes", undefined, limits);
   return next;
 };
 
@@ -540,7 +540,11 @@ const denoByteLimit = (
     | "vfs_header_json_bytes"
     | "specifier_text_bytes"
     | "remote_body_bytes",
-  claimed: number | bigint,
+  /**
+   * A declared length is the complete need. A running total stops at the
+   * first crossing, a lower bound, and is passed as undefined.
+   */
+  claimed: number | bigint | undefined,
   limits: DenoReaderLimits,
 ): ArtifactReaderFailure =>
   artifactReaderLimitFailure(

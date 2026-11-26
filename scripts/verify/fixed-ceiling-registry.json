@@ -211,6 +211,12 @@
       "reason": "Kuna's buffered function-text allowance is a resource policy."
     }
   },
+  "src/native/LldbCallTracer.ts": {
+    "\"The combined LLDB result representation ceiling\"": {
+      "class": "representation",
+      "reason": "The combined tracer result is read into one Buffer and decoded to one string; above min(buffer.constants.MAX_LENGTH, buffer.constants.MAX_STRING_LENGTH) the running Node cannot represent it."
+    }
+  },
   "src/native/NativeCommandAnalysisError.ts": {
     "\"The native command output capture allowance\"": {
       "class": "pending",
