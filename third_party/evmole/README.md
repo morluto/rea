@@ -1,8 +1,8 @@
 # EVM interface upstream profile
 
 REA integrates unchanged [EVMole](https://github.com/cdump/evmole) as the exact
-npm dependency `evmole@0.10.0`, with lockfile integrity verification. Upstream
-records this release in commit [`48c8d94`](https://github.com/cdump/evmole/commit/48c8d94611ab24a4c27234677b9ee3a5687e465c).
+npm dependency `evmole@0.10.1`, with lockfile integrity verification. Its upstream
+release tag `0.10.1` points to commit [`763f298`](https://github.com/cdump/evmole/commit/763f2984f6be5ea33636336e804022c75318a260).
 
 The JavaScript binding and WASM engine remain in the original upstream package;
 REA contains only carrier validation, a worker adapter and portable contracts.
