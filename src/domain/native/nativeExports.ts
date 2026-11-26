@@ -6,9 +6,8 @@ import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { canonicalBase64Schema } from "../stringPatterns.js";
 import { peHeaderAnomaliesSchema } from "./peHeaderAnomalies.js";
 import { peImageBaseSchema } from "./peAddressSpace.js";
-import type { AnalysisParameterLimit } from "../analysisSettings.js";
 import {
-  parameterBudgetLimit,
+  parameterBudgetLimitFor,
   parameterBudgetSchema,
   type ParameterBudget,
 } from "../parameterBudget.js";
@@ -59,15 +58,8 @@ export const NATIVE_EXPORT_BUDGETS = {
 export type NativeExportBudget = keyof typeof NATIVE_EXPORT_BUDGETS;
 
 /** The per-call budget that stopped an export inventory. */
-export const nativeExportBudgetLimit = (
-  parameter: NativeExportBudget,
-  effectiveValue: number,
-): AnalysisParameterLimit =>
-  parameterBudgetLimit(
-    parameter,
-    NATIVE_EXPORT_BUDGETS[parameter],
-    effectiveValue,
-  );
+export const nativeExportBudgetLimit =
+  parameterBudgetLimitFor<NativeExportBudget>(NATIVE_EXPORT_BUDGETS);
 
 /** One explicitly selected PE or ELF library or executable. */
 export const inspectNativeExportsInputSchema = z.strictObject({

@@ -5,9 +5,8 @@ import { knownCoverageStatusSchema } from "../coverage.js";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
-import type { AnalysisParameterLimit } from "../analysisSettings.js";
 import {
-  parameterBudgetLimit,
+  parameterBudgetLimitFor,
   parameterBudgetSchema,
   type ParameterBudget,
 } from "../parameterBudget.js";
@@ -48,11 +47,7 @@ export const PE_IMPORT_BUDGETS = {
 export type PeImportBudget = keyof typeof PE_IMPORT_BUDGETS;
 
 /** The per-call budget that stopped an import inventory. */
-export const peImportBudgetLimit = (
-  parameter: PeImportBudget,
-  effectiveValue: number,
-): AnalysisParameterLimit =>
-  parameterBudgetLimit(parameter, PE_IMPORT_BUDGETS[parameter], effectiveValue);
+export const peImportBudgetLimit = parameterBudgetLimitFor(PE_IMPORT_BUDGETS);
 
 /** Complete bounded inspection of PE import and delay-load tables. */
 export const inspectPeImportsInputSchema = z.strictObject({
