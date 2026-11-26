@@ -27,11 +27,18 @@ level, which tree supplied names (`name_source`), and the directory and file
 counts are derived from the descriptors found and the tree walked.
 
 Both-endian fields are decoded from both halves. A disagreement is a
-malformed image. Only 2048-byte logical blocks and file structure version 1
+malformed image, except in the data length of a directory record inside a
+directory extent. REA takes that length from its little-endian half, as
+Linux, libarchive, and pycdlib do, because mastering programs have written
+images whose big-endian copy is wrong. A file or directory entry whose
+record disagrees carries a limitation with both values; which one is
+correct is unknown.
+Only 2048-byte logical blocks and file structure version 1
 are decoded; other values return `unsupported_target`. A volume set size of
 0, a sequence number outside the set, or a volume space that ends before the
 descriptor set terminator is malformed. The descriptor's root record must be
-a single-extent directory with identifier 0x00 on this volume.
+a single-extent directory with identifier 0x00 on this volume, whose data
+length agrees in both halves.
 
 Every directory record names its volume. A volume sequence number of 0 or
 above the declared volume set size names no volume and is malformed. Another
