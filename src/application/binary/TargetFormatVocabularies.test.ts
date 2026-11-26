@@ -136,6 +136,7 @@ const TARGETS: TargetFixtures = {
   iso9660: { ...archive, format: "iso9660" },
   "android-ota-payload": { ...archive, format: "android-ota-payload" },
   "android-vbmeta": { ...archive, format: "android-vbmeta" },
+  "android-sparse-image": { ...archive, format: "android-sparse-image" },
   uf2: { ...archive, format: "uf2" },
   dfuse: { ...archive, format: "dfuse" },
   dmg: { ...archive, format: "dmg" },

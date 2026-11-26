@@ -194,7 +194,22 @@ it.each(["inspect_android_class", "inspect_android_method"] as const)(
       operation === "inspect_android_class"
         ? androidClassSummaryViewResultSchema.parse(result.value)
         : androidMethodSummaryViewResultSchema.parse(result.value);
-    expect(view.summary).toEqual(facts);
+    if (operation === "inspect_android_method")
+      expect(view.summary).toEqual(facts);
+    else {
+      // A class summary counts members; their rows page separately.
+      const report = facts as ReturnType<typeof classReport>;
+      const { symbols, ...mapping } = report.mapping;
+      expect(view.summary).toMatchObject({
+        class_name: report.class_name,
+        counts: {
+          methods: report.methods.length,
+          fields: report.fields.length,
+          inner_classes: report.inner_classes.length,
+        },
+        mapping: { ...mapping, symbols: symbols.length },
+      });
+    }
     expect(view.artifact).toEqual({
       path: "/retained/selected.apk",
       sha256: "a".repeat(64),
@@ -209,7 +224,8 @@ it.each(["inspect_android_class", "inspect_android_method"] as const)(
       exhausted: true,
     });
     expect(view.limitations).toEqual(evidence.limitations);
-    expect(view.summary.mapping).toEqual(facts.mapping);
+    if (operation === "inspect_android_method")
+      expect(view.summary.mapping).toEqual(facts.mapping);
     expect(JSON.stringify(view)).not.toContain("irrelevant_member_metadata");
     expect(JSON.stringify(evidence)).toBe(before);
     if (operation === "inspect_android_method")

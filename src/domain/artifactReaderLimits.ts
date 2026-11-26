@@ -115,6 +115,15 @@ export type AndroidVbmetaReaderLimits = z.output<
   typeof androidVbmetaReaderLimitsSchema
 >;
 
+export const DEFAULT_ANDROID_SPARSE_IMAGE_READER_LIMITS = {
+  chunk_count: 1_048_576,
+};
+export const androidSparseImageReaderLimitsSchema = z.strictObject({
+  chunk_count: count,
+});
+export type AndroidSparseImageReaderLimits = z.output<
+  typeof androidSparseImageReaderLimitsSchema
+>;
 export const DEFAULT_ISO9660_READER_LIMITS = {
   descriptor_count: 64,
   directory_depth: 64,
@@ -267,6 +276,15 @@ export const artifactReaderLimitsInputSchema = z.strictObject({
     .describe(
       `Android vbmeta admission; omitted fields use ${JSON.stringify(DEFAULT_ANDROID_VBMETA_READER_LIMITS)}. Header-declared block and descriptor-table sizes are admitted before the image is read; the descriptor count bounds the descriptor walk.`,
     ),
+  android_sparse_image: z
+    .strictObject({
+      chunk_count:
+        androidSparseImageReaderLimitsSchema.shape.chunk_count.exactOptional(),
+    })
+    .exactOptional()
+    .describe(
+      `Android sparse image admission; omitted fields use ${JSON.stringify(DEFAULT_ANDROID_SPARSE_IMAGE_READER_LIMITS)}. The declared total_chunks is admitted before the chunk walk; it bounds walked chunk headers and the retained expansion plan.`,
+    ),
   iso9660: z
     .strictObject({
       descriptor_count:
@@ -342,6 +360,7 @@ const readerLimitGroups = {
   node_sea: nodeSeaReaderLimitsSchema,
   godot: godotReaderLimitsSchema,
   android_vbmeta: androidVbmetaReaderLimitsSchema,
+  android_sparse_image: androidSparseImageReaderLimitsSchema,
   iso9660: iso9660ReaderLimitsSchema,
   deno: denoReaderLimitsSchema,
   wxapkg: wxapkgReaderLimitsSchema,
@@ -356,10 +375,11 @@ export type ArtifactReaderLimits = z.output<
   typeof resolvedArtifactReaderLimitsSchema
 >;
 
-// Earlier Evidence predates vbmeta admission and omits that policy.
+// Earlier Evidence may omit the later vbmeta and sparse-image policies.
 export const artifactReaderLimitsSchema =
   resolvedArtifactReaderLimitsSchema.extend({
     android_vbmeta: androidVbmetaReaderLimitsSchema.exactOptional(),
+    android_sparse_image: androidSparseImageReaderLimitsSchema.exactOptional(),
   });
 
 /**
@@ -396,6 +416,10 @@ export const resolveArtifactReaderLimits = (
   android_vbmeta: {
     ...DEFAULT_ANDROID_VBMETA_READER_LIMITS,
     ...selected?.android_vbmeta,
+  },
+  android_sparse_image: {
+    ...DEFAULT_ANDROID_SPARSE_IMAGE_READER_LIMITS,
+    ...selected?.android_sparse_image,
   },
   iso9660: { ...DEFAULT_ISO9660_READER_LIMITS, ...selected?.iso9660 },
   deno: {

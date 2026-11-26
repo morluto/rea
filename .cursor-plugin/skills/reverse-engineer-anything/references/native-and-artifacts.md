@@ -1003,6 +1003,13 @@ Signatures and digests are recorded and not verified. An `AVBf` footer is not
 this image. See
 [Android Verified Boot vbmeta images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/android-vbmeta.md).
 
+Android sparse images (`system.img`, `vendor.img`, `super.img` with magic
+`0xED26FF3A`) expand to one `image.raw` child without `simg2img`. Header,
+chunk counts and stored checksums are root facts; checksums are not verified
+and DONT_CARE blocks are written as zeros. The expanded child is classified
+again. See
+[Android sparse images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/android-sparse-image.md).
+
 ## ESP images
 
 For an ESP32-family app or bootloader image, `open_binary` then

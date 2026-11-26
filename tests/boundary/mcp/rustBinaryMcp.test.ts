@@ -114,7 +114,7 @@ fileInspectionTest(
 );
 
 fileInspectionTest(
-  "refuses a WebAssembly section walk past its fixed work allowance",
+  "refuses a WebAssembly section walk past max_wasm_sections",
   async ({ client }) => {
     const root = await createTestTempDirectory("rea-rust-mcp-");
     const path = join(root, "many-sections.wasm");
@@ -131,11 +131,22 @@ fileInspectionTest(
         operation: "inspect_rust_binary",
         resource: "cpu",
         reported_limits: { boundary: "max_wasm_sections", maximum: 65_536 },
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_wasm_sections",
+          effective_value: 65_536,
+          unit: "count",
+          minimum: 1,
+          maximum: 16_777_216,
+          default_value: 65_536,
+        },
         refusal: {
-          kind: "fixed_ceiling",
-          allowance_kind: "work",
-          limit: 65_536,
-          unit: "sections",
+          kind: "adjustable_budget",
+          operation: "inspect_rust_binary",
+          control: "max_wasm_sections",
+          effective_value: 65_536,
+          unit: "count",
+          default_value: 65_536,
         },
       },
     });

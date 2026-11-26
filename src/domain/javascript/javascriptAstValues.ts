@@ -294,17 +294,26 @@ type StaticObjectProperty =
       readonly value: ObjectDataPropertyValue;
     };
 
+type StaticObjectIndexMember =
+  | { readonly kind: "primitive-indices"; readonly length: number | null }
+  | {
+      readonly kind: "array-indices";
+      readonly elements: t.ArrayExpression["elements"];
+      readonly firstSpread: number;
+    };
+
 type StaticObjectMember =
   | { readonly kind: "unknown" }
   | {
       readonly kind: "prototype-setter";
       readonly prototype: "null" | "ignored" | "unknown";
     }
-  | { readonly kind: "primitive-indices"; readonly length: number | null }
+  | StaticObjectIndexMember
   | {
-      readonly kind: "array-indices";
-      readonly elements: t.ArrayExpression["elements"];
-      readonly firstSpread: number;
+      // Keys one branch of a conditional spread may copy; any may stay absent.
+      readonly kind: "conditional-keys";
+      readonly keys: ReadonlySet<string>;
+      readonly indices: readonly StaticObjectIndexMember[];
     }
   | {
       readonly kind: "property";
@@ -418,6 +427,10 @@ const appendEnumerableSourceMembers = (
       });
     return undefined;
   }
+  if (isConditionalSpreadSource(spread)) {
+    appendConditionalSpreadMembers(members, spread, depth, isNullish);
+    return undefined;
+  }
   const primitive = primitiveOwnKeys(spread, isNullish);
   if (primitive === "indices") {
     const length = stringValue(spread)?.length ?? null;
@@ -433,6 +446,78 @@ const appendEnumerableSourceMembers = (
     return undefined;
   members.push(UNKNOWN_STATIC_OBJECT_MEMBER);
   return undefined;
+};
+
+type ConditionalSpreadSource = t.ConditionalExpression | t.LogicalExpression;
+
+/**
+ * Sources whose branches syntax bounds. `||` and `??` can copy a left operand
+ * whose keys syntax does not bound, so they stay unknown.
+ */
+const isConditionalSpreadSource = (
+  node: t.Node,
+): node is ConditionalSpreadSource =>
+  t.isConditionalExpression(node) ||
+  t.isLogicalExpression(node, { operator: "&&" });
+
+/**
+ * Record the keys any branch may copy, with one worklist so nesting depth never
+ * recurses. The test runs before the branch and cannot reach the object under
+ * construction, so the branches alone bound the copied keys; none of them is
+ * known to be present. A falsy `&&` operand is copied itself and is bounded
+ * like a branch: an unresolved operand may be document.all, the only falsy
+ * object, which can carry expando properties with any key.
+ */
+const appendConditionalSpreadMembers = (
+  members: StaticObjectMember[],
+  spread: ConditionalSpreadSource,
+  depth: number,
+  isNullish?: (node: t.Node) => boolean,
+): void => {
+  const copied: StaticObjectMember[] = [];
+  const keys = new Set<string>();
+  const pending: t.Node[] = [spread];
+  let bounded = true;
+  while (bounded && pending.length > 0) {
+    const { node } = unwrapJavaScriptExpression(pending.pop()!);
+    if (isConditionalSpreadSource(node)) {
+      pending.push(
+        ...(t.isConditionalExpression(node)
+          ? [node.consequent, node.alternate]
+          : [node.left, node.right]),
+      );
+      continue;
+    }
+    const literal = appendEnumerableSourceMembers(
+      copied,
+      node,
+      depth,
+      isNullish,
+    );
+    if (literal === undefined) continue;
+    for (const property of literal.object.properties) {
+      if (t.isSpreadElement(property)) {
+        pending.push(property.argument);
+        continue;
+      }
+      const key = semanticStaticPropertyKey(property.key, property.computed);
+      if (key === null) {
+        bounded = false;
+        break;
+      }
+      // A prototype setter copied through spread has no effect on the target.
+      if (!isObjectPrototypeSetter(property, key)) keys.add(key);
+    }
+  }
+  const indices: StaticObjectIndexMember[] = [];
+  for (const member of copied) {
+    if (member.kind === "primitive-indices" || member.kind === "array-indices")
+      indices.push(member);
+    else bounded = false;
+  }
+  if (!bounded) members.push(UNKNOWN_STATIC_OBJECT_MEMBER);
+  else if (keys.size > 0 || indices.length > 0)
+    members.push({ kind: "conditional-keys", keys, indices });
 };
 
 const staticObjectMembers = (
@@ -460,11 +545,23 @@ const staticObjectPropertySource = (
       ? staticObjectMembers(object, 0, isNullish)
       : "dynamic";
 
+/** Whether an index-only spread member may own the array index of a key. */
+const indexMemberMayOwn = (
+  member: StaticObjectIndexMember,
+  index: number | null,
+): boolean =>
+  index !== null &&
+  (member.kind === "primitive-indices"
+    ? member.length === null || index < member.length
+    : (member.firstSpread >= 0 && index >= member.firstSpread) ||
+      (index < member.elements.length && member.elements[index] != null));
+
 const readStaticObjectProperty = (
   source: StaticObjectPropertySource,
   name: string,
 ): StaticObjectProperty => {
   if (typeof source === "string") return { status: source };
+  const nameIndex = semanticArrayIndex(name);
   let prototypeMaySupply = false;
   for (let index = source.length - 1; index >= 0; index--) {
     const member = source[index]!;
@@ -473,18 +570,18 @@ const readStaticObjectProperty = (
       continue;
     }
     if (member.kind === "unknown") return { status: "dynamic" };
-    if (member.kind === "primitive-indices") {
-      const index = semanticArrayIndex(name);
-      if (index !== null && (member.length === null || index < member.length))
-        return { status: "dynamic" };
+    if (
+      member.kind === "primitive-indices" ||
+      member.kind === "array-indices"
+    ) {
+      if (indexMemberMayOwn(member, nameIndex)) return { status: "dynamic" };
       continue;
     }
-    if (member.kind === "array-indices") {
-      const index = semanticArrayIndex(name);
+    if (member.kind === "conditional-keys") {
+      // The untaken branch may leave an earlier definition effective.
       if (
-        index !== null &&
-        ((member.firstSpread >= 0 && index >= member.firstSpread) ||
-          (index < member.elements.length && member.elements[index] != null))
+        member.keys.has(name) ||
+        member.indices.some((entry) => indexMemberMayOwn(entry, nameIndex))
       )
         return { status: "dynamic" };
       continue;
@@ -536,6 +633,11 @@ const indexStaticObjectProperties = (
       member.kind === "array-indices"
     ) {
       hasIndexedSpread = true;
+    } else if (member.kind === "conditional-keys") {
+      // A possibly copied key leaves any earlier definition unresolved.
+      for (const key of member.keys)
+        if (!properties.has(key)) properties.set(key, { status: "dynamic" });
+      if (member.indices.length > 0) hasIndexedSpread = true;
     } else if (member.kind === "unknown" || member.key === null) {
       fallback = "dynamic";
       break;
@@ -575,6 +677,12 @@ export const staticObjectOwnMethodReader = (
     const member = members[index]!;
     if (member.kind === "prototype-setter") continue;
     if (member.kind === "unknown") break;
+    if (member.kind === "conditional-keys") {
+      // Neither branch proves which member is effective.
+      for (const key of member.keys)
+        if (!methods.has(key)) methods.set(key, false);
+      continue;
+    }
     if (member.kind !== "property") continue;
     if (member.key === null) break;
     if (!methods.has(member.key))
@@ -605,10 +713,12 @@ export const staticObjectPropertyNames = (
     if (
       member.kind === "unknown" ||
       member.kind === "primitive-indices" ||
-      member.kind === "array-indices"
+      member.kind === "array-indices" ||
+      member.kind === "conditional-keys"
     ) {
       // Indexed spread keys remain unenumerated; never claim a complete name
       // inventory or expand the input into a potentially much larger key set.
+      // Conditionally copied keys are possible, not known, own names.
       complete = false;
       continue;
     }

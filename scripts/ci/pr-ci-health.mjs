@@ -2,7 +2,7 @@ import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createGhApiRequest } from "./github-api.mjs";
+import { createGhApiRequest, validateRepository } from "./github-api.mjs";
 
 const OUTPUT_DIRECTORY = join(".cache", "ci-pr-health");
 const PAGE_SIZE = 100;
@@ -602,13 +602,7 @@ function validateInputs({
   lookbackHours,
   now,
 }) {
-  if (
-    typeof repository !== "string" ||
-    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)
-  )
-    throw new Error(
-      "CI_REPOSITORY must be an owner/name repository identifier",
-    );
+  validateRepository(repository);
   if (
     typeof defaultBranch !== "string" ||
     defaultBranch.length === 0 ||

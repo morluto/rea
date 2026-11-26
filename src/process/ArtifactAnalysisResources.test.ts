@@ -512,7 +512,15 @@ const classifyFixtureCommand = (
     operation: resources.operation,
     command: () =>
       resources.commandContext(
-        { selected, defaults: BOUNDED_PRODUCER_LIMITS },
+        {
+          selected,
+          defaults: BOUNDED_PRODUCER_LIMITS,
+          output: producerLimitControl(
+            "output_bytes",
+            selected.output_bytes,
+            BOUNDED_PRODUCER_LIMITS.output_bytes,
+          ),
+        },
         effectiveLimits,
         resources.operation,
       ),

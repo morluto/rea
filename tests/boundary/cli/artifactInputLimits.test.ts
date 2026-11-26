@@ -85,7 +85,12 @@ exit 1
         expect(output.json).toMatchObject({
           details: { limit: { parameter: recovery, cli_flag: cliFlag } },
         });
-        expect(refusal.remediation.action).not.toContain("--");
+        if (command === "inspect-go-binary") {
+          expect(refusal.remediation.action).toContain(cliFlag);
+          expect(refusal.remediation.action).toContain(`rea ${command}`);
+        } else {
+          expect(refusal.remediation.action).not.toContain("--");
+        }
       }
       expect(refusal.remediation.action).not.toMatch(
         /allowance for the evidence reply/u,
