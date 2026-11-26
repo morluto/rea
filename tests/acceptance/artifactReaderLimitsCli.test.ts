@@ -312,7 +312,7 @@ test("admits the same vbmeta image above the default 4096-descriptor admission",
   const refused = await cli.run({ arguments: command });
   expect(refused.exitCode).toBe(1);
   expect(refused.json).toMatchObject({
-    code: "truncated",
+    code: "partial",
     retryable: true,
     details: {
       reader_limit: {
