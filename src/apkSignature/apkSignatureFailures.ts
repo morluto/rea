@@ -1,7 +1,5 @@
-import {
-  apkSignatureBudgetLimit,
-  type ApkSignatureBudget,
-} from "../domain/apkSignature/apkSignatureQuery.js";
+import type { ApkSignatureBudget } from "../domain/apkSignature/apkSignatureBudgets.js";
+import { apkSignatureBudgetLimit } from "../domain/apkSignature/apkSignatureQuery.js";
 import {
   ArtifactReaderFailure,
   stableArtifactInputFailure,

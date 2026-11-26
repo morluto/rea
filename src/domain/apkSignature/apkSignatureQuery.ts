@@ -15,8 +15,6 @@ import {
   apkSignatureResultSchema,
 } from "./apkSignatureReport.js";
 
-export { APK_SIGNATURE_BUDGETS, type ApkSignatureBudget };
-
 /** The per-call budget that stopped an APK signature inspection. */
 export const apkSignatureBudgetLimit =
   parameterBudgetLimitFor<ApkSignatureBudget>(APK_SIGNATURE_BUDGETS);

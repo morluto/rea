@@ -1,4 +1,4 @@
-import { APK_SIGNATURE_BUDGETS } from "../domain/apkSignature/apkSignatureQuery.js";
+import { APK_SIGNATURE_BUDGETS } from "../domain/apkSignature/apkSignatureBudgets.js";
 
 /** Identity of REA's in-process APK signature reader (no external engine, no device). */
 export const APK_SIGNATURE_PROVIDER_IDENTITY = {

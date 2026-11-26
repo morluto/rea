@@ -3,10 +3,8 @@ import { apkSignatureAdmission } from "./ApkSignatureAdmission.js";
 
 import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
-import {
-  APK_SIGNATURE_BUDGETS,
-  type ApkSignatureInspectionParameters,
-} from "../domain/apkSignature/apkSignatureQuery.js";
+import { APK_SIGNATURE_BUDGETS } from "../domain/apkSignature/apkSignatureBudgets.js";
+import type { ApkSignatureInspectionParameters } from "../domain/apkSignature/apkSignatureQuery.js";
 import type {
   ApkSignatureExecution,
   ApkSignaturePort,
