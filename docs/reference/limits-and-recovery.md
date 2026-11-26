@@ -744,18 +744,20 @@ editable setting or active worker telemetry.
 ## Artifact reader admission
 
 `inspect_artifact` and `extract_artifact` accept `bun`, `dotnet_bundle`,
-`node_sea`, `godot`, `iso9660`, `deno`, `wxapkg` and `tar` groups in
-`artifact_limits`. Their controls apply when recognition
-or inventory encounters that format; supplying
-a policy does not assert the format is present. Unsupported keys are rejected.
-Each group follows one domain-owned default policy. See [.NET bundles](../dotnet-bundles.md),
-[Node SEA](../node-sea.md), [Godot PCK](../godot-pck.md) and
+`node_sea`, `godot`, `iso9660`, `deno`, `wxapkg`, `tar` and
+`android_sparse_image` groups in `artifact_limits`. Their controls apply when
+recognition or inventory encounters that format. Supplying a policy does not
+assert the format is present. Unsupported keys are rejected. Each group follows
+one domain-owned default policy. See [.NET bundles](../dotnet-bundles.md),
+[Node SEA](../node-sea.md), [Godot PCK](../godot-pck.md),
 [Bun standalone](../bun-standalone.md), [Deno compile](../deno-standalone.md),
-[wxapkg](../wxapkg.md) and [tar](../tar-archives.md) for format semantics.
+[wxapkg](../wxapkg.md), [tar](../tar-archives.md) and
+[Android sparse images](../guides/firmware/android-sparse-image.md) for format semantics.
 
 `artifact_limits.expanded_bytes` selects aggregate plaintext work for ZIP, Bun,
-SEA, PCK, ISO 9660, Deno, wxapkg and tar readers, including repeated readable logical occurrences. Omission
-retains each archive's encoded-size-derived default. The .NET bundle group's
+SEA, PCK, ISO 9660, Deno, wxapkg, tar and Android sparse image readers,
+including repeated readable logical occurrences. Omission retains each
+archive's encoded-size-derived default. The .NET bundle group's
 own `expanded_bytes` controls its independently enforced bundle expansion.
 
 `artifact.member_count` (launch seed `REA_ARTIFACT_MEMBER_COUNT`, default
