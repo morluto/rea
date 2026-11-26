@@ -1,7 +1,7 @@
 REA third-party npm runtime copyright, license and NOTICE texts
 Collected from integrity-verified locked npm archives. Release-specific supplements and upstream notice gaps are identified in their entries.
 External engines are separately obtained; see THIRD_PARTY_NOTICES.md.
-Runtime dependency fingerprint (SHA-256): 84431d7d066657a44822ed7d372f76312bf87db3273e6206146c05d06cc5b8a6
+Runtime dependency fingerprint (SHA-256): cb5422c851ea64bfc8960e7a434f75201bc98d601ed99a56ba1d9aa853fc90b2
 
 ===== @babel/helper-string-parser@8.1.2 =====
 Declared license: MIT
@@ -3497,10 +3497,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-===== evmole@0.10.0 =====
+===== evmole@0.10.1 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/evmole/-/evmole-0.10.0.tgz
-Integrity: sha512-bZ0BaqddBA5C1+O9B7kxLaCGWO8RmR4BM74mvzuNlZJ9twCRPSSRg+HzKybkjqASbXCeKtXo53zbPla5A9BzUA==
+Archive: https://registry.npmjs.org/evmole/-/evmole-0.10.1.tgz
+Integrity: sha512-kSN/g/Wi4vXNJPV7jgV1TrKSFKCJuaNiBs2rvCDv5+mzRaHkM7inImkRhqQKHdLx41TCIsWKzAaDihVMf06iTg==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
