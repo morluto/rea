@@ -8,6 +8,7 @@ import {
 } from "../resources/index.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import { decodeLz4Block } from "../compression/Lz4Block.js";
+import { decodeUnityLzmaBlock } from "../compression/LzmaUnityBlock.js";
 import {
   BinaryReader,
   BinaryFormatFailure,
@@ -19,6 +20,7 @@ import {
   readUnityFsHeaderFacts,
   UNITYFS_COMPRESSION_LZ4,
   UNITYFS_COMPRESSION_LZ4HC,
+  UNITYFS_COMPRESSION_LZMA,
   UNITYFS_COMPRESSION_NONE,
   UNITYFS_FLAG_BLOCKS_INFO_AT_END,
   UNITYFS_FLAG_COMPRESSION_MASK,
@@ -107,6 +109,11 @@ const unityFsTruncatedFailure = (detail: string): ArtifactReaderFailure =>
 
 const align16 = (value: number): number => (value + 15) & ~15;
 
+const unityFsBlockNeedsDecode = (compression: number): boolean =>
+  compression === UNITYFS_COMPRESSION_LZMA ||
+  compression === UNITYFS_COMPRESSION_LZ4 ||
+  compression === UNITYFS_COMPRESSION_LZ4HC;
+
 /** Decode header fields once; unsupported content does not erase observed headers. */
 export const readUnityFsHeader = async (
   handle: FileHandle,
@@ -170,8 +177,7 @@ export const readUnityFsHeader = async (
     return { ...common, layout: { status: "unsupported-layout" } };
   if (
     compression !== UNITYFS_COMPRESSION_NONE &&
-    compression !== UNITYFS_COMPRESSION_LZ4 &&
-    compression !== UNITYFS_COMPRESSION_LZ4HC
+    !unityFsBlockNeedsDecode(compression)
   )
     return { ...common, layout: { status: "unsupported-compression" } };
   const position = layout.headerAligned
@@ -222,6 +228,12 @@ const decodeBlocksInfoTable = async (
       header.uncompressedBlocksInfoSize,
       signal,
     );
+  if (compression === UNITYFS_COMPRESSION_LZMA)
+    return decodeUnityFsLzma(
+      compressed,
+      header.uncompressedBlocksInfoSize,
+      signal,
+    );
   throw new ArtifactReaderFailure(
     "unavailable",
     `UnityFS blocks-info compression ${String(compression)} is unsupported`,
@@ -259,6 +271,37 @@ export const decodeUnityFsLz4 = async (
   }
 };
 
+/** Translate LZMA decoder failures once, without erasing cancellation or resource reasons. */
+export const decodeUnityFsLzma = async (
+  encoded: Buffer,
+  expected: number,
+  signal?: AbortSignal,
+): Promise<Buffer> => {
+  try {
+    return await decodeUnityLzmaBlock(
+      encoded,
+      expected,
+      MAX_BLOCK_UNCOMPRESSED_BYTES,
+      signal,
+    );
+  } catch (cause: unknown) {
+    if (cause instanceof ArtifactReaderFailure) throw cause;
+    if (cause instanceof BinaryResourceFailure)
+      throw new ArtifactReaderFailure(
+        "limit",
+        "UnityFS LZMA exceeds the decoder memory budget",
+        { cause, boundary: "memory" },
+      );
+    if (cause instanceof BinaryFormatFailure)
+      throw malformedArtifact(
+        "unityfs",
+        "UnityFS is malformed: LZMA block does not decode to its declared size",
+        { cause, field: "block" },
+      );
+    throw cause;
+  }
+};
+
 const parseBlocks = async (
   table: BinaryReader,
   dataBytes: number,
@@ -289,17 +332,15 @@ const parseBlocks = async (
       );
     const compression = flags & UNITYFS_FLAG_COMPRESSION_MASK;
     cursor += 10;
-    const lz4 =
-      compression === UNITYFS_COMPRESSION_LZ4 ||
-      compression === UNITYFS_COMPRESSION_LZ4HC;
+    const decodable = unityFsBlockNeedsDecode(compression);
     if (
-      lz4 &&
+      decodable &&
       (uncompressedSize > MAX_BLOCK_UNCOMPRESSED_BYTES ||
         compressedSize > MAX_BLOCK_ENCODED_BYTES)
     )
       throw new ArtifactReaderFailure(
         "limit",
-        "UnityFS LZ4 block exceeds its 64 MiB decoded or bounded encoded buffer budget",
+        "UnityFS compressed block exceeds its 64 MiB decoded or bounded encoded buffer budget",
         { boundary: "memory" },
       );
     if (
@@ -312,7 +353,7 @@ const parseBlocks = async (
     if (
       uncompressedSize > 0 &&
       compression !== UNITYFS_COMPRESSION_NONE &&
-      !lz4
+      !decodable
     )
       unavailableCount++;
     if (compression !== UNITYFS_COMPRESSION_NONE && compressedSize === 0)

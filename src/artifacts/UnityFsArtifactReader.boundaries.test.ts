@@ -106,7 +106,7 @@ it("does not publish UnityFs entries when final source verification fails", asyn
 describe("UnityFS declared container bounds", () => {
   it.each([
     ["encrypted", { flags: 0x1400 | 0xc3 }],
-    ["unsupported compression", { blocksInfoCompression: 1 }],
+    ["unsupported compression", { blocksInfoCompression: 4 }],
     ["unknown layout", { engineVersion: "2021.x.32f1c1", flags: 0x2c3 }],
   ] as const)(
     "rejects an impossible footer extent even with %s",
@@ -135,7 +135,7 @@ describe("UnityFS declared container bounds", () => {
     // A one-byte unsupported block declares more than the 256 MiB work floor.
     // Its bytes need not be decoded to reject the declared virtual extent.
     bytes.writeUInt32BE(256 * 1024 * 1024 + 1, 64 + 20);
-    bytes.writeUInt16BE(1, 64 + 28);
+    bytes.writeUInt16BE(4, 64 + 28);
     const reader = new UnityFsArtifactReader(
       await fixture(Buffer.concat([bytes, Buffer.alloc(1024 * 1024)])),
     );

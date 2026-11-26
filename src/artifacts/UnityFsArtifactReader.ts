@@ -21,9 +21,13 @@ import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
 import type { UnityFsMetadata } from "../domain/formatMetadata/packageAndGameMetadata.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import { UNITYFS_COMPRESSION_NONE } from "../domain/unityfsFormat.js";
+import {
+  UNITYFS_COMPRESSION_LZMA,
+  UNITYFS_COMPRESSION_NONE,
+} from "../domain/unityfsFormat.js";
 import {
   decodeUnityFsLz4,
+  decodeUnityFsLzma,
   readUnityFsBlocksInfo,
   readUnityFsHeader,
   unityFsFormatFailure,
@@ -396,11 +400,10 @@ export class UnityFsArtifactReader implements ArtifactReader {
       this.#dataStart + block.compressedStart + block.compressedSize,
       signal,
     );
-    const bytes = await decodeUnityFsLz4(
-      encoded,
-      block.uncompressedSize,
-      signal,
-    );
+    const bytes =
+      block.compression === UNITYFS_COMPRESSION_LZMA
+        ? await decodeUnityFsLzma(encoded, block.uncompressedSize, signal)
+        : await decodeUnityFsLz4(encoded, block.uncompressedSize, signal);
     this.#assertOpen(signal);
     this.#cachedBlock = { index, bytes };
     return bytes;

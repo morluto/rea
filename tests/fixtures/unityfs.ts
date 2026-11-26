@@ -1,6 +1,8 @@
 /** Synthetic UnityFS (AssetBundle) builders for reader tests. */
 import { lz4LiteralBlock } from "./lz4LiteralBlock.js";
 
+import { createRequire } from "node:module";
+
 export interface UnityFsMember {
   readonly path: string;
   readonly data: string | Buffer;
@@ -29,8 +31,21 @@ const cstring = (value: string): Buffer =>
 
 const align16 = (value: number): number => (value + 15) & ~15;
 
-const maybeCompress = (data: Buffer, compression: number): Buffer =>
-  compression === 2 || compression === 3 ? lz4LiteralBlock(data) : data;
+/** UnityFS LZMA: five property bytes plus the raw stream, no Alone size field. */
+const unityLzmaBlock = (data: Buffer): Buffer => {
+  const require = createRequire(import.meta.url);
+  const lzma = require("lzma-purejs") as {
+    compressFile(input: Buffer): Buffer | Uint8Array;
+  };
+  const alone = Buffer.from(lzma.compressFile(data));
+  return Buffer.concat([alone.subarray(0, 5), alone.subarray(13)]);
+};
+
+const maybeCompress = (data: Buffer, compression: number): Buffer => {
+  if (compression === 1) return unityLzmaBlock(data);
+  if (compression === 2 || compression === 3) return lz4LiteralBlock(data);
+  return data;
+};
 
 interface BlockRecord {
   readonly uncompressedSize: number;
