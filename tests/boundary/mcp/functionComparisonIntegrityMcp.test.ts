@@ -1,4 +1,4 @@
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it } from "vitest";
 
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
 import {
@@ -194,7 +194,6 @@ it.each([
       );
     });
     const harness = await createApplicationMcpHarness({ session });
-    onTestFinished(harness.close);
     for (const record of [
       FUNCTION_COMPARISON_EXAMPLE.left,
       FUNCTION_COMPARISON_EXAMPLE.right,

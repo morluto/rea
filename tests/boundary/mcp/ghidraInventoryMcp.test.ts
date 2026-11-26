@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { GhidraClient } from "../../../src/ghidra/GhidraClient.js";
 import { GhidraProvider } from "../../../src/ghidra/GhidraProvider.js";
+import { GHIDRA_LITERAL_CANDIDATES_LIMITATION } from "../../../src/ghidra/GhidraLiteralSearch.js";
 import { ghidraProducerIdentity } from "../../../src/ghidra/GhidraProducerIdentity.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import { silentLogger } from "../../../src/logger.js";
@@ -44,7 +45,7 @@ it("delivers a complete Ghidra inventory within the existing MCP response budget
   try {
     const reply = await harness.mcp.callTool({
       name: "list_procedures",
-      arguments: {},
+      arguments: { detail: "complete" },
     });
     if (reply.isError) throw new Error(JSON.stringify(reply));
     const evidence = sessionEvidence(harness.session, reply.structuredContent);
@@ -659,7 +660,7 @@ it("returns a procedure once with the exact-entry names its search matched", asy
     ...(matched_aliases === undefined ? {} : { matched_aliases }),
   });
   let output = jsonValueSchema.parse([
-    row("0x1012a0", "audit_alias", ["audit_primary"]),
+    row("0x1012a0", "source_item_alias", ["source_item_primary"]),
   ]);
   const requests: unknown[] = [];
   const harness = await connectGhidraMcp(
@@ -682,7 +683,7 @@ it("returns a procedure once with the exact-entry names its search matched", asy
   try {
     // The bridge owns exact and regex matching over its entry symbols.
     const exact = await search({
-      pattern: "audit_primary",
+      pattern: "source_item_primary",
       case_sensitive: true,
     });
     expect(exact.normalized_result).toEqual(output);
@@ -694,32 +695,99 @@ it("returns a procedure once with the exact-entry names its search matched", asy
     // Node owns Unicode folding: the bridge's non-ASCII candidates are kept
     // only when they match, for secondary names as for primary names.
     output = jsonValueSchema.parse([
-      row("0x1012a0", "audit_alias", ["audit_primary", "Äudit_label"]),
-      row("0x101300", "ÄUDIT_only", ["ünrelated"]),
-      row("0x101340", "FUN_00101340", ["AUDİT_x", "AUDIT_label"]),
-      row("0x101380", "Audit_plain"),
+      row("0x1012a0", "source_item_alias", [
+        "source_item_primary",
+        "Śource_item_label",
+      ]),
+      row("0x101300", "ŚOURCE_ITEM_only", ["ünrelated"]),
+      row("0x101340", "FUN_00101340", ["SOURCE_İTEM_x", "SOURCE_ITEM_label"]),
+      row("0x101380", "ſource_item_plain"),
     ]);
-    const folded = await search({ pattern: "audit" });
+    const folded = await search({ pattern: "source_item" });
     expect(folded.normalized_result).toEqual([
-      row("0x1012a0", "audit_alias", ["audit_primary"]),
-      row("0x101340", "FUN_00101340", ["AUDIT_label"]),
-      row("0x101380", "Audit_plain"),
+      row("0x1012a0", "source_item_alias", ["source_item_primary"]),
+      row("0x101340", "FUN_00101340", ["SOURCE_ITEM_label"]),
+      row("0x101380", "ſource_item_plain"),
     ]);
     expect(folded.raw_result).toEqual(output);
+    expect(folded.limitations).toContain(GHIDRA_LITERAL_CANDIDATES_LIMITATION);
+    expect(exact.limitations).not.toContain(
+      GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+    );
     expect(requests).toEqual([
-      expect.objectContaining({ pattern: "audit_primary" }),
-      expect.objectContaining({ pattern: "audit", case_sensitive: false }),
+      expect.objectContaining({ pattern: "source_item_primary" }),
+      expect.objectContaining({
+        pattern: "source_item",
+        case_sensitive: false,
+      }),
     ]);
 
-    // An empty alias list is not a match report.
-    output = jsonValueSchema.parse([row("0x1012a0", "audit_alias", [])]);
-    const malformed = await harness.mcp.callTool({
-      name: "search_procedures",
-      arguments: { pattern: "audit_", mode: "regex" },
+    // The bridge folds ASCII exactly, so its candidates are usually the
+    // matches; an unnarrowed reply is not retained a second time as raw_result.
+    output = jsonValueSchema.parse([
+      row("0x1012a0", "SOURCE_ITEM_alias", ["source_item_primary"]),
+      row("0x101380", "ſource_item_plain"),
+    ]);
+    const unnarrowed = await search({ pattern: "source_item" });
+    expect(unnarrowed.normalized_result).toEqual(output);
+    expect(unnarrowed.raw_result).toBeNull();
+    expect(unnarrowed.limitations).not.toContain(
+      GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+    );
+
+    // Narrowing a secondary name alone keeps every procedure but still makes
+    // the reply differ from the matches, so the candidates are retained.
+    output = jsonValueSchema.parse([
+      row("0x1012a0", "source_item_alias", [
+        "source_item_primary",
+        "Śource_item_label",
+      ]),
+      row("0x101380", "ſource_item_plain"),
+    ]);
+    const aliasNarrowed = await search({ pattern: "source_item" });
+    expect(aliasNarrowed.normalized_result).toEqual([
+      row("0x1012a0", "source_item_alias", ["source_item_primary"]),
+      row("0x101380", "ſource_item_plain"),
+    ]);
+    expect(aliasNarrowed.raw_result).toEqual(output);
+    expect(aliasNarrowed.limitations).toContain(
+      GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+    );
+
+    output = jsonValueSchema.parse([row("0x101380", "ſource_item_plain")]);
+    const regex = await search({
+      pattern: "^ſource_item_plain$",
+      mode: "regex",
     });
-    expect(parseMcpToolError(malformed)).toMatchObject({
-      error: { code: "unreadable_output" },
-    });
+    expect(regex.normalized_result).toEqual(output);
+    expect(regex.raw_result).toBeNull();
+    expect(regex.limitations).not.toContain(
+      GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+    );
+
+    const invalidRows = [
+      {
+        arguments: { pattern: "source_", mode: "regex" },
+        value: row("0x1012a0", "source_item_alias", []),
+      },
+      {
+        arguments: { pattern: "source_item" },
+        value: {
+          ...row("0x101440", "unrelated"),
+          procedure: { external: null },
+        },
+      },
+    ];
+    for (const invalid of invalidRows) {
+      output = jsonValueSchema.parse([invalid.value]);
+      const malformed = await harness.mcp.callTool({
+        name: "search_procedures",
+        arguments: invalid.arguments,
+      });
+      expect(parseMcpToolError(malformed)).toMatchObject({
+        error: { code: "unreadable_output" },
+      });
+    }
   } finally {
     await harness.close();
   }

@@ -9,7 +9,7 @@ import {
   analysisDetailSchema,
   analysisDetailOutputSchemaOf,
 } from "../analysisDetail.js";
-import { pcapCaptureSummaryViewResultSchema } from "../../domain/analysisView/analysisViewResult.js";
+import { pcapCaptureSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/pcapCaptureSummarySchema.js";
 
 /** Packet-capture analysis served by caller-supplied tshark and capinfos. */
 export const PCAP_TOOL_CONTRACTS = [
@@ -44,7 +44,7 @@ export const PCAP_TOOL_CONTRACTS = [
       }),
     ),
     description:
-      "Summarize a saved pcap/pcapng snapshot: exact packet count, SHA-256, IP endpoints, DNS questions/addresses, TLS SNI, protocols and HTTP URIs. Use inspect_packet_capture for caller-selected TShark fields or display filters. Default complete returns full Evidence; detail summary retains it for inspect_analysis_view kind pcap. Unknown DNS attribution and excluded credentials stay explicit. Requires caller-supplied capinfos/tshark and Linux prlimit or Windows Job Objects; never captures live traffic.",
+      "Summarize a saved pcap/pcapng snapshot: exact packet count, SHA-256, IP endpoints, DNS questions/addresses, TLS SNI, protocols and HTTP URIs. Use inspect_packet_capture for caller-selected TShark fields or display filters. Omitted detail returns full Evidence within the agent result budget, else the retained summary; detail summary retains it for inspect_analysis_view kind pcap. Unknown DNS attribution and excluded credentials stay explicit. Requires caller-supplied capinfos/tshark and Linux prlimit or Windows Job Objects; never captures live traffic.",
     kind: "pcap-provider",
     inputSchema: pcapInputSchemas.inspect_pcap_capture.extend({
       detail: analysisDetailSchema,

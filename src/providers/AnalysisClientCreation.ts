@@ -29,15 +29,7 @@ import { closeAnalysisClient } from "./AnalysisClientCleanup.js";
 /** Own deferred client creation while callers wait independently and close joins it. */
 export class AnalysisClientCreation {
   readonly #inspectionResources = new ArtifactResourceScope();
-  readonly #inspectionOwner: RetainedResourceScope = {
-    retain: (owner, resource) =>
-      this.#inspectionResources.retain({
-        kind: "lease",
-        resource,
-        lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
-      }),
-    run: (operation) => this.#inspectionResources.run(operation),
-  };
+  readonly #inspectionOwner = this.#inspectionResources.forCloseOwners();
   #attempt:
     | SharedStartupAttempt<Result<AnalysisClient, AnalysisError>>
     | undefined;
@@ -258,6 +250,7 @@ export class AnalysisClientCreation {
       await this.#clientLease.release();
       return ok(null);
     } catch (cause: unknown) {
+      const clientLease = this.#clientLease;
       const failure = new ProviderCleanupError(
         this.providerId,
         cause instanceof AnalysisError && cause.cleanupResources.length > 0
@@ -272,8 +265,23 @@ export class AnalysisClientCreation {
         },
         { cause, operation: "create_analysis_client" },
       );
-      failure.bindCleanupResourceOwner(this.#clientLease);
-      this.#clientLease.bindCleanupError(failure);
+      if (cause instanceof AnalysisError && cause.hasCleanupOwner) {
+        failure.bindCleanupResourceOwner({
+          get cleanupResources() {
+            return clientLease.released || !cause.cleanupIncomplete
+              ? []
+              : cause.cleanupResources;
+          },
+        });
+        failure.bindCleanupReleaseClaim({
+          get cleanupReleased() {
+            return !cause.cleanupIncomplete;
+          },
+        });
+      } else {
+        failure.bindCleanupResourceOwner(clientLease);
+      }
+      clientLease.bindCleanupError(failure);
       return err(failure);
     }
   }

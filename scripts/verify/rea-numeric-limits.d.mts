@@ -1,29 +1,11 @@
-/** Relative path of the registry. Its text is a declaration, not a producer. */
-export const NUMERIC_LIMIT_DECLARATION: "src/domain/numericLimitRegistry.ts";
-
-/** Roots scanned for the removed restart-field names. */
-export const FORBIDDEN_FIELD_SCAN_ROOTS: readonly string[];
-
-/** File extensions, without the dot, scanned under those roots. */
-export const FORBIDDEN_FIELD_SCAN_EXTENSIONS: readonly string[];
-
-/** True for a numeric `REA_` limit, including the documented endpoint-candidate count. */
-export function isNumericLimit(name: string): boolean;
-
 /** Statically declared environment seeds owned by ANALYSIS_SETTINGS. */
 export function parseRuntimeSettingEnvironments(source: string): Set<string>;
-
-/** Detect stale or newly introduced temporary per-call exceptions. */
-export function perCallLimitFailures(
-  listed: ReadonlyMap<string, string>,
-  temporary: ReadonlySet<string>,
-): string[];
 
 /** Parse static registry declarations, including external-reader provenance. */
 export function parseNumericLimitRegistry(source: string): Array<{
   name: string;
   update_mode: "restart";
-  policy: "restart-only" | "per-call";
+  policy: "restart-only";
   read: "startup" | "per-call" | "construction";
   reason: string;
   provenance?: {
@@ -60,8 +42,78 @@ export function discoverNumericLimitUses(
   }[];
 };
 
-/** Why a tracked limit is not an analysis setting, when it is present. */
+/** A required runtime limit that is missing or is not an analysis setting. */
+export type RequiredRuntimeLimitFailure = {
+  readonly code:
+    | "required_runtime_limit_missing"
+    | "required_runtime_limit_not_analysis_setting";
+  readonly name: string;
+};
+
+/**
+ * Classify one required runtime limit.
+ * Absence from source, the exception registry, and ANALYSIS_SETTINGS is
+ * `required_runtime_limit_missing`.
+ */
 export function requiredRuntimeLimitFailure(
   name: string,
-  presence: { readonly inRuntime: boolean; readonly inRegistry: boolean },
-): string | undefined;
+  presence: {
+    readonly inSource: boolean;
+    readonly inRuntime: boolean;
+    readonly inRegistry: boolean;
+  },
+): RequiredRuntimeLimitFailure | undefined;
+
+/** One default, floor, and maximum from the numeric inventory tables. */
+export type DocumentedNumericLimit = {
+  readonly name: string;
+  readonly section: string;
+  readonly defaultCell: string;
+  readonly floorCell: string;
+  readonly maximumCell: string;
+};
+
+/** Default, floor, and maximum exported by the analysis-setting registry or an owner. */
+export type ExportedNumericLimit = {
+  readonly name: string;
+  readonly aliases?: readonly string[];
+  readonly defaultValue: number | null;
+  readonly minimum: number;
+  readonly maximum: number;
+};
+
+/** Read default, floor, and maximum from the three numeric inventory tables. */
+export function parseDocumentedNumericLimits(
+  markdown: string,
+): DocumentedNumericLimit[];
+
+/**
+ * Read one documented cell.
+ * A fraction is unreadable. Prose is allowed only after a complete integer and whitespace.
+ */
+export function documentedLimitCell(
+  cell: string,
+  names: Readonly<Record<string, number>>,
+):
+  | { readonly ok: true; readonly value: number | null }
+  | { readonly ok: false; readonly reason: string };
+
+/**
+ * Compare documented limits with exported bounds.
+ * Each failure names the limit and both values.
+ */
+export function compareDocumentedNumericLimits(
+  rows: readonly DocumentedNumericLimit[],
+  bounds: readonly ExportedNumericLimit[],
+  names: Readonly<Record<string, number>>,
+): string[];
+
+/**
+ * Bounds ANALYSIS_SETTINGS and the restart-only owners export.
+ * `failures` names a registry entry that has no exported bound.
+ */
+export function loadExportedNumericLimitBounds(): Promise<{
+  readonly bounds: readonly ExportedNumericLimit[];
+  readonly names: Readonly<Record<string, number>>;
+  readonly failures: readonly string[];
+}>;

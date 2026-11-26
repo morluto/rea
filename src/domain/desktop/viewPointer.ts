@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { unescapeJsonPointerToken } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import { collapseWhitespace, isTimestamp } from "./appTask.js";
@@ -31,6 +32,12 @@ export type Located = ArraySteps &
 type Stepped =
   | { readonly kind: "none"; readonly reason?: string }
   | { readonly kind: "unresolved"; readonly problem: string };
+
+/** The conditions in a pointer's last reference token, when it is a selector. */
+export const lastSelectorOf = (pointer: string): readonly Condition[] =>
+  selectorOf(
+    unescapeJsonPointerToken(pointer.slice(pointer.lastIndexOf("/") + 1)),
+  ) ?? [];
 
 const INDEX = /^(?:0|[1-9][0-9]*)$/u;
 
@@ -295,9 +302,7 @@ const selectorGroups = (tokens: Iterable<string>) => {
     const values = JSON.stringify(conditions.map(({ value }) => value));
     const group = groups.get(fields) ?? { conditions, wanted: new Map() };
     groups.set(fields, group);
-    const spellings = group.wanted.get(values);
-    if (spellings === undefined) group.wanted.set(values, [token]);
-    else spellings.push(token);
+    appendToMapList(group.wanted, values, token);
   }
   return groups.values();
 };

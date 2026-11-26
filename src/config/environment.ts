@@ -32,6 +32,7 @@ import {
   mcpInitializeBudgetMsSchema,
   mcpToolsListBudgetMsSchema,
 } from "./mcpStartupBudgets.js";
+import { mcpToolsListPageBytesSchema } from "./mcpToolsListPageBudget.js";
 import { mcpToolFamiliesSchema } from "./mcpToolFamilies.js";
 import { parseLoaderArgs, parseStringArray } from "./parsers.js";
 import { processStartConfigurationSchema } from "./processStart.js";
@@ -44,6 +45,7 @@ const environmentSchema = z.object({
   REA_MCP_MAX_INPUT_ELEMENTS: mcpInputBudgetSchema.optional(),
   REA_MCP_INITIALIZE_BUDGET_MS: mcpInitializeBudgetMsSchema.optional(),
   REA_MCP_TOOLS_LIST_BUDGET_MS: mcpToolsListBudgetMsSchema.optional(),
+  REA_MCP_TOOLS_LIST_PAGE_BYTES: mcpToolsListPageBytesSchema.optional(),
   REA_MCP_FIRST_CATALOG_BUDGET_MS: mcpFirstCatalogBudgetMsSchema.optional(),
   REA_MCP_DOCTOR_DEADLINE_MS: mcpDoctorDeadlineMsSchema.optional(),
   REA_MCP_INPUT_SCHEMA_PROFILE: mcpInputSchemaProfileSchema.optional(),
@@ -276,19 +278,15 @@ export const parseEnvironment = (
         unresolvedSettings.has("REA_GHIDRA_PROJECT_PATH")
         ? []
         : ["REA_GHIDRA_PROGRAM_NAME"]
-      : [
-          "REA_GHIDRA_LANGUAGE_ID",
-          "REA_GHIDRA_COMPILER_SPEC_ID",
-          "REA_GHIDRA_SEED_FILE",
-          "REA_GHIDRA_DISABLED_ANALYZERS",
-          "REA_GHIDRA_NATIVEAOT_JAR",
-        ].filter(
-          (setting) =>
-            // Blank analyzer lists parse to no override, so they cannot conflict.
-            (setting === "REA_GHIDRA_DISABLED_ANALYZERS"
-              ? env[setting]
-              : environment[setting]) !== undefined,
-        );
+      : (
+          [
+            "REA_GHIDRA_LANGUAGE_ID",
+            "REA_GHIDRA_COMPILER_SPEC_ID",
+            "REA_GHIDRA_SEED_FILE",
+            "REA_GHIDRA_DISABLED_ANALYZERS",
+            "REA_GHIDRA_NATIVEAOT_JAR",
+          ] as const
+        ).filter((setting) => env[setting] !== undefined);
   if (incompatible.length > 0)
     return err(
       new ConfigurationError("Invalid existing Ghidra project configuration", {

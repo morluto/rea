@@ -1,11 +1,14 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
-import { resolveBuildComputerEnvironment } from "./BuildComputerEnvironment.js";
+import {
+  programOnPath,
+  resolveBuildComputerEnvironment,
+} from "./BuildComputerEnvironment.js";
 
 const host = async () => {
   const root = await createTestTempDirectory("rea-build-environment-");
@@ -28,6 +31,27 @@ const host = async () => {
   };
   return { bin, archive, environment };
 };
+
+it.runIf(process.platform === "win32")(
+  "skips a Windows PATH entry without a drive, which follows the current drive",
+  async () => {
+    const root = await createTestTempDirectory("rea-build-program-drive-");
+    const bin = join(root, "bin");
+    await mkdir(bin);
+    await writeFile(join(bin, "agent-env.exe"), "");
+    // On the same drive, `\...\bin` names the same existing file.
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(root);
+    onTestFinished(() => cwd.mockRestore());
+    const driveless = bin.slice(2);
+
+    expect(await programOnPath("agent-env", { PATH: driveless })).toBe(
+      undefined,
+    );
+    expect(await programOnPath("agent-env", { PATH: bin })).toBe(
+      join(bin, "agent-env.EXE"),
+    );
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "resolves every build setting on a host that exports none of them",

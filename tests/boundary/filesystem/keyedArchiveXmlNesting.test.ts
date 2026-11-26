@@ -24,6 +24,7 @@ it.each([129, 3000])(
     // exhausts the call stack.
     expect(rejected).toMatchObject({
       reason: "limit",
+      parserLimit: { name: "plist-nesting-depth", maximum: 128 },
       message: expect.stringMatching(
         /keyed archive.*128 nesting levels.*no runtime override/iu,
       ),
@@ -47,7 +48,7 @@ it.each([
     }).catch((cause: unknown) => cause);
     expect(rejected).toBeInstanceOf(ArtifactReaderFailure);
     expect(rejected).toMatchObject({
-      reason: "format",
+      reason: "malformed",
       cause: {
         name: "OpenStepPropertyListError",
         code,

@@ -1,4 +1,5 @@
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
+import { withInheritedCleanupOwnership } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisError,
   type AnalysisErrorOptions,
@@ -46,6 +47,7 @@ export const analysisClientFailureContext = (
   return {
     cause,
     ...(cause.limit === undefined ? {} : { limit: cause.limit }),
+    ...(cause.related === undefined ? {} : { related: cause.related }),
     ...(cause.continuingCallerGuidance === undefined
       ? {}
       : { continuingCallerGuidance: cause.continuingCallerGuidance }),
@@ -229,7 +231,7 @@ export const analysisClientFailureForOperation = (
   // is pending, otherwise the source's completed release with the resources
   // kept as history.
   return cause.cleanupIncomplete
-    ? result.bindCleanupDependencies([cause])
+    ? withInheritedCleanupOwnership(result, cause)
     : result.bindCleanupReleaseClaim({
         get cleanupReleased() {
           return !cause.cleanupIncomplete;

@@ -1,3 +1,4 @@
+import { appendToMapList } from "./appendToMapList.js";
 import type { BrowserScenarioEvent } from "./browserScenarioCaptureValues.js";
 
 type ResponseEvent = Extract<BrowserScenarioEvent, { kind: "response" }>;
@@ -25,20 +26,10 @@ export const indexBrowserScenarioTransactions = (
         (requestCounts.get(event.transaction_id) ?? 0) + 1,
       );
     else if (event.kind === "response")
-      append(responses, event.transaction_id, event);
+      appendToMapList(responses, event.transaction_id, event);
     else if (event.kind === "network-content")
-      append(contents, event.source_event_sequence, event);
+      appendToMapList(contents, event.source_event_sequence, event);
   }
 
   return { requestCounts, responses, contents };
-};
-
-const append = <Key, Value>(
-  map: Map<Key, Value[]>,
-  key: Key,
-  value: Value,
-): void => {
-  const existing = map.get(key);
-  if (existing === undefined) map.set(key, [value]);
-  else existing.push(value);
 };

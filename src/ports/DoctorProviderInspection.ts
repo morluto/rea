@@ -18,15 +18,42 @@ export interface DoctorCheck {
   readonly remediation?: string;
 }
 
-/** One provider-owned check projected without importing its adapter types. */
-export interface DoctorProviderCheck {
-  readonly name: string;
-  readonly ok: boolean;
+/** Why a failed check failed. A passing check is always `healthy`. */
+export type DoctorFailureClassification = Exclude<
+  DoctorCheck["classification"],
+  "healthy"
+>;
+
+/** What a provider reports when one of its checks fails. */
+export interface DoctorProviderCheckFailure {
   readonly code: string | null;
-  readonly detail: string;
   readonly remediation: string | null;
-  readonly classification: Exclude<DoctorCheck["classification"], "healthy">;
+  readonly classification: DoctorFailureClassification;
+}
+
+/**
+ * One provider-owned check projected without importing its adapter types. A
+ * failure classification, code, and remediation belong to failed checks only.
+ */
+export type DoctorProviderCheck = {
+  readonly name: string;
+  readonly detail: string;
   readonly details?: Readonly<Record<string, JsonValue>>;
+} & (
+  | {
+      readonly ok: true;
+      readonly code: null;
+      /** Advisory guidance a passing check may still carry. */
+      readonly remediation: string | null;
+      readonly classification: "healthy";
+    }
+  | ({ readonly ok: false } & DoctorProviderCheckFailure)
+);
+
+/** An observed provider setting and the input layer supplying it. */
+export interface DoctorProviderSetting {
+  readonly value: string;
+  readonly source: "env" | "config" | "auto";
 }
 
 /** Read-only provider inspection supplied by an outer composition adapter. */
@@ -40,5 +67,7 @@ export interface DoctorProviderInspection {
   /** Validated discoveries used as registration defaults. Setup preserves
    * caller-selected configuration separately from these readiness facts. */
   readonly registrationEnvironment: Readonly<Record<string, string>>;
+  /** Effective literal or discovered values with the source that supplied them. */
+  readonly providerSettings?: Readonly<Record<string, DoctorProviderSetting>>;
   readonly checks: readonly DoctorProviderCheck[];
 }

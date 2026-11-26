@@ -1,18 +1,17 @@
+import { registerCliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
+import { renderedText } from "../../support/cli/renderedText.js";
 import { join } from "node:path";
 import { Writable } from "node:stream";
-import { Cli } from "incur";
 import { expect, it } from "vitest";
 import { createMarkdownRenderer } from "vitepress";
-import { parseFragment, type DefaultTreeAdapterTypes } from "parse5";
+import { parseFragment } from "parse5";
 
 import {
   parseCliOutputArguments,
   renderCliDocument,
-} from "../../../src/cliOutput.js";
-import {
-  createCliResultOutput,
-  streamCliCommandResults,
-} from "../../../src/cli/cliResultOutput.js";
+} from "../../../src/cli/cliOutput.js";
+import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
@@ -30,8 +29,6 @@ it("keeps source keys literal in Markdown headings through CLI result output", a
     plain: Object.freeze({ nested: Object.freeze({ value: false }) }),
   });
   const original = JSON.stringify(value);
-  const cli = Cli.create("heading-facts-test", { sync: false });
-  cli.command("facts", { run: () => value });
   const args = ["facts", "--format", "md"];
   const chunks: Buffer[] = [];
   const output = createCliResultOutput(
@@ -44,7 +41,8 @@ it("keeps source keys literal in Markdown headings through CLI result output", a
     }),
   );
   if (output === undefined) throw new Error("Missing CLI result output owner");
-  streamCliCommandResults(cli, output);
+  const cli = createCommandCli(output);
+  registerCliCommand(cli, "facts", { run: () => value });
   let fallback = "";
   await cli.serve(args, {
     exit: (code) => expect(code).toBe(0),
@@ -84,18 +82,14 @@ it("retains nested facts in standalone Markdown table cells and mixed arrays", a
   const renderer = await createMarkdownRenderer(process.cwd(), {
     linkify: false,
   });
-  const text = (node: DefaultTreeAdapterTypes.Node): string =>
-    node.nodeName === "#text" && "value" in node
-      ? node.value
-      : "childNodes" in node
-        ? node.childNodes.map(text).join("")
-        : "";
-  const rendered = text(parseFragment(renderer.render(markdown)));
+  const rendered = renderedText(parseFragment(renderer.render(markdown)));
   expect(rendered).toContain('{"path":"alpha.txt"}');
   expect(rendered).toContain('[{"path":"sub/beta.txt"}]');
   const literal = "colon: :) ;-) x) #tag &#58;";
   const document = renderCliDocument({ [literal]: literal }, "md", false);
-  const renderedLiteral = text(parseFragment(renderer.render(document)));
+  const renderedLiteral = renderedText(
+    parseFragment(renderer.render(document)),
+  );
   expect(renderedLiteral.split(literal)).toHaveLength(3);
   expect(rendered).toContain("caller|value");
   expect(rendered).not.toContain("[object Object]");
@@ -104,7 +98,7 @@ it("retains nested facts in standalone Markdown table cells and mixed arrays", a
     "md",
     false,
   );
-  expect(text(parseFragment(renderer.render(mixed)))).toContain(
+  expect(renderedText(parseFragment(renderer.render(mixed)))).toContain(
     '{"path":"retained"}',
   );
   expect(JSON.parse(renderCliDocument(value, "json", false))).toEqual(value);

@@ -31,7 +31,7 @@ const failure = (argv: readonly string[]) => {
 };
 
 describe("parseCliArgv", () => {
-  it("binds kebab-case and camelCase spellings, values and negations", () => {
+  it("binds kebab-case spellings, values and negations", () => {
     expect(
       bound([
         "file",
@@ -48,11 +48,27 @@ describe("parseCliArgv", () => {
       args: { path: "file", rest: ["x", "y"] },
       options: { blockSize: 256, global: false, column: ["a", "b"] },
     });
-    expect(bound(["file", "--blockSize=512", "--global"]).options).toEqual({
+    expect(bound(["file", "--block-size=512", "--global"]).options).toEqual({
       blockSize: 512,
       global: true,
     });
   });
+
+  it.each([
+    [["file", "--blockSize", "512"], "--blockSize", "--block-size"],
+    [["file", "--blockSize=512"], "--blockSize", "--block-size"],
+    [["file", "--no-blockSize"], "--no-blockSize", "--no-block-size"],
+  ])(
+    "refuses the schema key spelling %j and names the documented flag",
+    (argv, flag, documented) => {
+      expect(failure(argv)).toEqual({
+        kind: "flag_spelling",
+        message: `Unknown flag: ${flag}. Did you mean ${documented}?`,
+        flag,
+        documented,
+      });
+    },
+  );
 
   it("stacks short aliases when all but the last are booleans", () => {
     expect(bound(["file", "-ym", "a"]).options).toMatchObject({
@@ -69,6 +85,7 @@ describe("parseCliArgv", () => {
     [["file", "--nope"], "Unknown flag: --nope"],
     [["file", "--nope=1"], "Unknown flag: --nope"],
     [["file", "--no-nope"], "Unknown flag: --no-nope"],
+    [["file", "--no-blockSize=1"], "Unknown flag: --no-blockSize=1"],
     [["file", "-z"], "Unknown flag: -z"],
     [["file", "--"], "Unknown flag: --"],
     [["file", "--block-size"], "Missing value for flag: --block-size"],
@@ -79,7 +96,7 @@ describe("parseCliArgv", () => {
 
   it("reports schema failures as field errors", () => {
     // Positionals are validated first, so the missing path is reported alone.
-    expect(failure(["--block-size", "abc", "--mode", "c"])).toEqual({
+    expect(failure(["--block-size", "abc", "--mode", "c"])).toMatchObject({
       kind: "validation",
       message: "Invalid input: expected string, received undefined",
       fieldErrors: [
@@ -94,7 +111,9 @@ describe("parseCliArgv", () => {
       ],
     });
     // Captured from incur 0.6.1's Parser.parse with the same schema and argv.
-    expect(failure(["file", "--block-size", "abc", "--mode", "c"])).toEqual({
+    expect(
+      failure(["file", "--block-size", "abc", "--mode", "c"]),
+    ).toMatchObject({
       kind: "validation",
       message:
         'Invalid input: expected number, received NaN; Invalid option: expected one of "a"|"b"',

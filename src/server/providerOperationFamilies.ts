@@ -1,12 +1,17 @@
 import type { AnalysisOperationPort } from "../ports/AnalysisProvider.js";
+import type { ManagedBinarySessionPort } from "../application/binary/BinarySessionPort.js";
+import { runManagedProviderExecution } from "../application/DirectAnalysis.js";
 import { isManagedToolName } from "../contracts/managed/managedToolContracts.js";
 import { artifactExtractionInputSchema } from "../contracts/artifactToolContracts.js";
 import { createArtifactExtractionDestination } from "../application/artifacts/ArtifactExtractionDestination.js";
+import {
+  executeArtifactPathInspection,
+  type ArtifactPathInspectionDependencies,
+} from "../application/artifacts/ArtifactPathInspection.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err } from "../domain/result.js";
-import { runManagedProviderExecution } from "../composition/directAnalysis.js";
 import type { ProviderOperation } from "./providerOperationToolHandler.js";
 
 /**
@@ -17,6 +22,9 @@ import type { ProviderOperation } from "./providerOperationToolHandler.js";
  */
 export const managedAnalysisForAdmission = (
   activeTarget: (() => BinaryTarget | undefined) | undefined,
+  createManagedBinarySession: () =>
+    | ManagedBinarySessionPort
+    | Promise<ManagedBinarySessionPort>,
 ): ((analysis: AnalysisOperationPort) => AnalysisOperationPort) => {
   let selectedManagedPath: string | undefined;
   return (analysis) => ({
@@ -44,6 +52,7 @@ export const managedAnalysisForAdmission = (
           ]),
         );
       const execution = await runManagedProviderExecution(
+        { createManagedBinarySession },
         path,
         operation,
         executionOptions?.signal,
@@ -55,6 +64,31 @@ export const managedAnalysisForAdmission = (
     },
   });
 };
+
+/**
+ * Route an `inspect_artifact` call that names a path to the path's own
+ * inspection, independently of the open target; a call without one keeps
+ * inspecting the open target. The path is a selection, not an inventory
+ * parameter, so the provider receives the remaining fields.
+ */
+export const artifactAnalysisForAdmission =
+  (
+    createPathInspection: () => Promise<ArtifactPathInspectionDependencies>,
+  ): ((analysis: AnalysisOperationPort) => AnalysisOperationPort) =>
+  (analysis) => ({
+    execute: async (operation, parameters, executionOptions) => {
+      const { path, ...inventoryParameters } = parameters;
+      if (operation !== "inspect_artifact" || typeof path !== "string")
+        return analysis.execute(operation, parameters, executionOptions);
+      return executeArtifactPathInspection(
+        await createPathInspection(),
+        path,
+        inventoryParameters,
+        executionOptions,
+        analysis.resourceScope,
+      );
+    },
+  });
 
 /** Extraction writes under a destination REA creates for the caller's root. */
 export const artifactExecutionParameters = (

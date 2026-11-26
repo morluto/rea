@@ -1,4 +1,5 @@
 import { setImmediate as immediate } from "node:timers/promises";
+import { CoverageAccumulator } from "../coverageAccumulator.js";
 import { err, ok, type Result } from "../result.js";
 import { dexDescriptorSchema } from "./dexTypes.js";
 import type {
@@ -7,10 +8,15 @@ import type {
   AndroidJniTableEntry,
   AndroidJniTableSlot,
 } from "./androidJniLibraryFacts.js";
-import { parseNativeExportsSteps } from "../native/nativeExportParser.js";
-import { readElfDirectoryFromBuffer } from "../native/nativeSectionDirectory.js";
-import { readElfImage } from "../native/elfImage.js";
+import { parseElfExportsFromDirectorySteps } from "../native/nativeExportParser.js";
+import type { ZstandardFramePause } from "../compression/zstandardExactFrame.js";
 import {
+  readElfDirectoryFromBuffer,
+  readElfDirectoryFromBufferCooperative,
+} from "../native/nativeSectionDirectory.js";
+import { readElfImageFromDirectory } from "../native/elfImage.js";
+import {
+  hasElfMagic,
   BinaryFormatFailure,
   BinaryMappingFailure,
   BinaryResourceFailure,
@@ -22,13 +28,16 @@ import {
   ElfPointerRelocationFailure,
   type ElfPointerOverlay,
 } from "../native/elfPointerRelocations.js";
-import { sha256Hex } from "../../kernel/sha256Hex.js";
+import { zstandardFrameAllowanceCause } from "../compression/zstandardFrameAllowance.js";
+
+const SYNTHETIC_ARTIFACT_SHA256 = "0".repeat(64);
 
 const MAXIMUM_STRING_BYTES = 65_535;
 const MAXIMUM_STRING_WORK = 64 * 1024 * 1024;
 const MAXIMUM_RETAINED_BYTES = 16 * 1024 * 1024;
 const MAXIMUM_SCAN_BYTES = 64 * 1024 * 1024;
 const MAXIMUM_TABLE_ENTRIES = 65_536;
+const OPERATION = "inspect_android_jni_bindings";
 const hex = (value: bigint): string => `0x${value.toString(16)}`;
 
 /** Strict Modified UTF-8: no four-byte UTF-8, overlong forms or replacements. */
@@ -90,20 +99,35 @@ const methodDescriptor = (descriptor: string): boolean => {
 /** Parse borrowed immutable ELF bytes; no filesystem, process or target execution. */
 export const inspectAndroidJniLibrary = async (
   bytes: Buffer,
-  options: { readonly signal?: AbortSignal } = {},
+  options: {
+    readonly signal?: AbortSignal;
+    readonly pause?: ZstandardFramePause;
+  } = {},
 ): Promise<Result<AndroidJniLibraryFacts, AndroidJniLibraryFailure>> => {
   const active = (): void => {
     if (options.signal?.aborted === true) throw options.signal;
   };
+  const pause = async (): Promise<void> => {
+    await immediate();
+    active();
+  };
   try {
     active();
-    if (!bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])))
+    if (!hasElfMagic(bytes))
       return err({
         kind: "unsupported",
         message: "JNI library inspection requires an ELF image",
       });
-    const directory = readElfDirectoryFromBuffer(bytes);
-    const image = readElfImage(bytes);
+    const directory =
+      options.pause === undefined && options.signal === undefined
+        ? readElfDirectoryFromBuffer(bytes, OPERATION)
+        : await readElfDirectoryFromBufferCooperative(
+            bytes,
+            options.pause ?? pause,
+            OPERATION,
+          );
+    active();
+    const image = readElfImageFromDirectory(bytes, directory);
     const mappings = createFileMappingIndex(image.mappings, image.zero_fills);
     if (image.executable_mappings === undefined)
       return err({
@@ -126,30 +150,31 @@ export const inspectAndroidJniLibrary = async (
           "JNI library facts exceed the 16 MiB retained representation allowance",
         );
     };
-    const exportSteps = parseNativeExportsSteps(bytes, {
-      path: "[admitted immutable ELF bytes]",
-      sha256: sha256Hex(bytes),
-      bytes: bytes.length,
-    });
+    const exportSteps = parseElfExportsFromDirectorySteps(
+      bytes,
+      {
+        path: "[admitted immutable ELF bytes]",
+        sha256: SYNTHETIC_ARTIFACT_SHA256,
+        bytes: bytes.length,
+      },
+      directory,
+    );
+    await pause();
     let exportStep = exportSteps.next();
     while (!exportStep.done) {
-      await immediate();
-      active();
+      await pause();
       exportStep = exportSteps.next();
     }
     const rawExports = exportStep.value;
-    if (rawExports.format !== "elf")
-      return err({
-        kind: "unsupported",
-        message: "JNI library inspection requires ELF exports",
-      });
     const exportRows: AndroidJniLibraryFacts["exports"] = [];
+    const exportsAcc = new CoverageAccumulator().recordComplete();
+    if (rawExports.coverage.status === "unsupported") {
+      exportsAcc.recordUnknown("Dynamic export inventory is unsupported");
+    } else if (rawExports.coverage.status !== "complete") {
+      exportsAcc.recordOmission("Dynamic export inventory is incomplete");
+    }
     let exportsStatus: AndroidJniLibraryFacts["coverage"]["exports_status"] =
-      rawExports.coverage.status === "complete"
-        ? "complete"
-        : rawExports.coverage.status === "unsupported"
-          ? "unknown"
-          : "partial";
+      exportsAcc.finalize().status;
     if (exportsStatus !== "complete")
       unknowns.add(
         rawExports.coverage.reason ?? "Dynamic export inventory is incomplete",
@@ -259,13 +284,17 @@ export const inspectAndroidJniLibrary = async (
       unknowns.add(
         `${overlay.unresolved.size} unresolved, conflicting or indirect relocation destinations have unknown values`,
       );
-    const relocationStatus = !overlay.pointer_coverage_known
-      ? "unknown"
-      : overlay.unresolved.size !== 0
-        ? "partial"
-        : "complete";
+    const relocationAcc = new CoverageAccumulator().recordComplete();
+    if (!overlay.pointer_coverage_known)
+      relocationAcc.recordUnknown("Pointer coverage is unknown");
+    if (overlay.unresolved.size !== 0)
+      relocationAcc.recordOmission("Unresolved relocation destinations");
+    const relocationStatus = relocationAcc.finalize().status;
+    const tablesAcc = new CoverageAccumulator().recordComplete();
+    if (!overlay.pointer_coverage_known)
+      tablesAcc.recordUnknown("Pointer coverage is unknown");
     let tablesStatus: AndroidJniLibraryFacts["coverage"]["tables_status"] =
-      !overlay.pointer_coverage_known ? "unknown" : "complete";
+      tablesAcc.finalize().status;
     const tables: AndroidJniLibraryFacts["tables"] = [];
     const word = directory.bits / 8;
     const strings = new Map<bigint, string | null>();
@@ -283,22 +312,25 @@ export const inspectAndroidJniLibrary = async (
       const allowance = Math.min(MAXIMUM_STRING_BYTES, remaining - 1);
       let scanned = false;
       try {
-        mappings.offset(address, 1);
-        scanned = true;
-        const raw = mappings.readCString(bytes, address, allowance);
-        stringWork += raw.length + 1;
-        if (stringWork > MAXIMUM_STRING_WORK)
-          throw new BinaryResourceFailure(
-            "search",
-            MAXIMUM_STRING_WORK,
-            "JNI string decoding exceeds the 64 MiB work allowance",
-          );
-        if (overlay.hasWrites(address, raw.length + 1)) {
-          tablesStatus = "partial";
-          unknowns.add(
-            "Some candidate strings overlap relocation writes; their text is not established by stored bytes",
-          );
-        } else value = decodeJniModifiedUtf8(raw);
+        if (mappings.tryOffset(address, 1) === undefined) {
+          stringWork += 1;
+        } else {
+          scanned = true;
+          const raw = mappings.readCString(bytes, address, allowance);
+          stringWork += raw.length + 1;
+          if (stringWork > MAXIMUM_STRING_WORK)
+            throw new BinaryResourceFailure(
+              "search",
+              MAXIMUM_STRING_WORK,
+              "JNI string decoding exceeds the 64 MiB work allowance",
+            );
+          if (overlay.hasWrites(address, raw.length + 1)) {
+            tablesStatus = "partial";
+            unknowns.add(
+              "Some candidate strings overlap relocation writes; their text is not established by stored bytes",
+            );
+          } else value = decodeJniModifiedUtf8(raw);
+        }
       } catch (cause) {
         if (cause instanceof BinaryMappingFailure) {
           if (cause.reason !== "unmapped") throw cause;
@@ -387,17 +419,8 @@ export const inspectAndroidJniLibrary = async (
           const fn = overlay.pointerAt(address + BigInt(2 * word));
           if (fn === undefined || fn.value === 0n) continue;
           const code = directory.machine === 40 ? fn.value & ~1n : fn.value;
-          let codeOffset: number;
-          try {
-            codeOffset = executable.offset(code, 1);
-          } catch (cause) {
-            if (
-              cause instanceof BinaryMappingFailure &&
-              cause.reason === "unmapped"
-            )
-              continue;
-            throw cause;
-          }
+          const codeOffset = executable.tryOffset(code, 1);
+          if (codeOffset === undefined) continue;
           const name = overlay.pointerAt(address),
             signature = overlay.pointerAt(address + BigInt(word));
           if (
@@ -479,12 +502,11 @@ export const inspectAndroidJniLibrary = async (
       jni_on_load: onLoad,
       tables,
       coverage: {
-        status:
-          exportsStatus === "complete" &&
-          tablesStatus === "complete" &&
-          relocationStatus === "complete"
-            ? "complete"
-            : "partial",
+        status: new CoverageAccumulator()
+          .merge(exportsStatus)
+          .merge(tablesStatus)
+          .merge(relocationStatus)
+          .finalizeKnown(),
         exports_status: exportsStatus,
         tables_status: tablesStatus,
         relocations_status: relocationStatus,
@@ -499,6 +521,9 @@ export const inspectAndroidJniLibrary = async (
         kind: "cancelled",
         message: "JNI library inspection was cancelled",
       });
+    const frameAllowance = zstandardFrameAllowanceCause(cause);
+    if (frameAllowance !== undefined)
+      return err({ kind: "capacity", message: frameAllowance.message });
     if (
       cause instanceof BinaryResourceFailure ||
       (cause instanceof ElfPointerRelocationFailure && cause.kind === "limit")

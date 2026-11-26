@@ -1,3 +1,4 @@
+import { registerContractDocumentCommand } from "./contractDocumentCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
@@ -7,10 +8,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { contractNamed } from "./contractCliDescription.js";
-import {
-  admittedContractInput,
-  registerContractDocumentCommand,
-} from "./contractCommand.js";
+import { admittedContractInput } from "./contractCommand.js";
 
 /** `observe-native-calls <path> <input-json>`: the MCP input object as JSON. */
 export const registerNativeCallCommands = (

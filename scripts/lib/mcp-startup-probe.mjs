@@ -1,8 +1,10 @@
 import { readFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 
-import { Client } from "@modelcontextprotocol/client";
+import { Client, SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { mcpPhaseBudgetRecovery } from "../../dist/config/mcpStartupBudgets.js";
+import { completeEvidenceClient } from "./complete-evidence.mjs";
 
 const RSS_SAMPLE_INTERVAL_MS = 10;
 const MAXIMUM_PROFILE_BUFFER_BYTES = 2 * 1_024 * 1_024;
@@ -28,10 +30,12 @@ export async function measureMcpStartup({
     stderr = boundedAppend(stderr, chunk.toString());
   });
   const rss = createLinuxRssSampler(() => transport.pid);
-  const client = new Client({
-    name: "package-startup-probe",
-    version: "1.0.0",
-  });
+  const client = completeEvidenceClient(
+    new Client({
+      name: "package-startup-probe",
+      version: "1.0.0",
+    }),
+  );
   const startedAt = performance.now();
   // One deadline for both phases. Each request also uses the time still left,
   // so a shorter first-catalog budget stops a pending initialize or tools/list
@@ -95,10 +99,12 @@ export async function profileMcpModuleLoading({
     stderr: "pipe",
   });
   transport.stderr?.on("data", (chunk) => profile.append(chunk.toString()));
-  const client = new Client({
-    name: "package-module-profile",
-    version: "1.0.0",
-  });
+  const client = completeEvidenceClient(
+    new Client({
+      name: "package-module-profile",
+      version: "1.0.0",
+    }),
+  );
   try {
     await withPhaseBudget(policy.doctor, () =>
       client.connect(transport, {
@@ -219,29 +225,16 @@ const createLinuxRssSampler = (pid) => {
   };
 };
 
-/** Same sentence as `mcpPhaseBudgetRecovery`; this script cannot import that TypeScript module. */
-export const mcpStartupPhaseBudgetRecovery = (budget) =>
-  [
-    `The effective ${budget.setting} value for the ${budget.phase} is ${String(budget.milliseconds)} ms (source ${budget.source}; default ${String(budget.defaultMilliseconds)} ms, floor ${String(budget.floorMilliseconds)} ms, maximum ${String(budget.maximumMilliseconds)} ms).`,
-    `Set ${budget.setting} in the environment that starts REA to a positive decimal integer from ${String(budget.floorMilliseconds)} to ${String(budget.maximumMilliseconds)}, then restart REA.`,
-  ].join(" ");
-
-const phaseTimeout = (cause) => {
-  const message = cause instanceof Error ? cause.message : String(cause);
-  return (
-    message.includes("Request timed out") ||
-    message.includes("Maximum total timeout exceeded") ||
-    message.includes("timed out")
-  );
-};
-
 const withPhaseBudget = async (budget, operation) => {
   try {
     return await operation();
   } catch (cause) {
-    if (!phaseTimeout(cause)) throw cause;
-    const detail = cause instanceof Error ? cause.message : String(cause);
-    throw new Error(`${detail} ${mcpStartupPhaseBudgetRecovery(budget)}`, {
+    if (
+      !(cause instanceof SdkError) ||
+      cause.code !== SdkErrorCode.RequestTimeout
+    )
+      throw cause;
+    throw new Error(`${cause.message} ${mcpPhaseBudgetRecovery(budget)}`, {
       cause,
     });
   }
@@ -249,7 +242,7 @@ const withPhaseBudget = async (budget, operation) => {
 
 const firstCatalogBudgetExceeded = (budget) =>
   new Error(
-    `packaged MCP exceeded the first-catalog phase budget. ${mcpStartupPhaseBudgetRecovery(budget)}`,
+    `packaged MCP exceeded the first-catalog phase budget. ${mcpPhaseBudgetRecovery(budget)}`,
   );
 
 /**
@@ -311,11 +304,11 @@ const assertStartupBudgets = (measurement, policy) => {
     policy.initialize.milliseconds
   )
     throw new Error(
-      `packaged MCP exceeded the initialize phase budget. ${mcpStartupPhaseBudgetRecovery(policy.initialize)}`,
+      `packaged MCP exceeded the initialize phase budget. ${mcpPhaseBudgetRecovery(policy.initialize)}`,
     );
   if (measurement.initialized_to_tools_list_ms > policy.toolsList.milliseconds)
     throw new Error(
-      `packaged MCP exceeded the tools/list phase budget. ${mcpStartupPhaseBudgetRecovery(policy.toolsList)}`,
+      `packaged MCP exceeded the tools/list phase budget. ${mcpPhaseBudgetRecovery(policy.toolsList)}`,
     );
   if (
     measurement.process_started_to_tools_list_ms >

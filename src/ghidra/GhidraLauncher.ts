@@ -3,11 +3,15 @@ import {
   processInspectionFailure,
   retainProcessInspectionCleanup,
 } from "../providers/OwnedCommandCleanup.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import { createHash } from "node:crypto";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
+import {
+  copyGhidraRegularFile,
+  ghidraFileDialect,
+} from "./GhidraFileArtifacts.js";
 import { copyExistingGhidraProject } from "./GhidraProjectSnapshot.js";
-import { hashGhidraPackedProgram } from "./GhidraCheckpoint.js";
-import { constants as fsConstants } from "node:fs";
 import type { ArtifactResourceScope } from "../resources/index.js";
 import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
 import {
@@ -15,9 +19,12 @@ import {
   type GhidraSeedCommitment,
 } from "./GhidraAnalysisSeeds.js";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
-import type { GhidraRiscvCallingConvention } from "./GhidraRiscvProfile.js";
+import type {
+  GhidraRiscvCallingConvention,
+  GhidraRiscvLoadPreparation,
+} from "./GhidraRiscvProfile.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
-import { copyFile, mkdir, realpath } from "node:fs/promises";
+import { mkdir, realpath } from "node:fs/promises";
 import { basename, dirname, join, posix, win32 } from "node:path";
 
 import { writeGhidraRuntimeFile } from "./GhidraRuntimeFile.js";
@@ -219,10 +226,23 @@ const ghidraLaunchCommandOutput = (
 export interface GhidraExistingProject {
   /** Directory holding the selected .gpr marker and .rep data directory. */
   readonly projectPath: string;
-  readonly projectName?: string;
-  readonly sha256?: string;
+  readonly projectName: string;
+  readonly sha256: string;
   /** Imported program name selected with -process. */
   readonly programName: string;
+}
+
+/** Committed raw-binary import: language, file mapping and entry seed. */
+export interface GhidraRawBinaryImport {
+  readonly languageId: string;
+  readonly compilerSpecId: string;
+  /** Address of file offset 0. */
+  readonly baseAddr: string;
+  readonly entryPoint: string;
+  /** Context register value the entry must have, such as TMode for Thumb. */
+  readonly entryContext?: { readonly register: string; readonly value: string };
+  /** False imports without the language's default labels; omitted keeps them. */
+  readonly applyProcessorLabels?: false;
 }
 
 /** Static coordinates for an extracted Ghidra release and packaged script. */
@@ -240,12 +260,9 @@ export interface GhidraHeadlessLauncherOptions {
   readonly comSpec?: string;
   /** Select the admitted 16-bit real-mode MZ import instead of auto-detection. */
   readonly dosMz?: true;
-  readonly dosCom?: true;
-  readonly rawBinary?: {
-    readonly languageId: string;
-    readonly compilerSpecId: string;
-    readonly baseAddr: string;
-  };
+  /** DOS COM import selected from the committed analysis profile. */
+  readonly dosCom?: { readonly loader: "ComLoader" | "BinaryLoader" };
+  readonly rawBinary?: GhidraRawBinaryImport;
   /** GameCube DOL import: committed language and the canonical section table text. */
   readonly gamecubeDol?: {
     readonly languageId: string;
@@ -264,8 +281,12 @@ export interface GhidraHeadlessLauncherOptions {
   readonly pspExtension?: GhidraPspExtension;
   /** Remap typed float storage for the soft-float o32 ABI after analysis. */
   readonly mipsSoftFloat?: true;
+  /** ELF image base (bare hex) committed by the analysis profile. */
+  readonly elfImageBase?: string;
   /** Apply this committed RISC-V calling-convention policy after analysis. */
   readonly riscvCallingConvention?: GhidraRiscvCallingConvention;
+  /** Prepare the memory map for this committed RISC-V section overlap before analysis. */
+  readonly riscvLoadPreparation?: GhidraRiscvLoadPreparation;
   /** Spawn seam for provider-boundary lifecycle tests. */
   readonly spawnProcess?: typeof spawnOwnedProviderProcess;
   /** LaunchSupport probe seam for Java-free launcher fixtures. */
@@ -344,18 +365,27 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
       let packedProgramPath: string | undefined;
       if (session.packedProgram !== undefined) {
         packedProgramPath = join(session.runtimeRoot, "restored-program.gzf");
-        await copyFile(
-          session.packedProgram.path,
-          packedProgramPath,
-          fsConstants.COPYFILE_EXCL,
-        );
-        if (
-          (await hashGhidraPackedProgram(
+        const packedHash = createHash("sha256");
+        try {
+          await copyGhidraRegularFile(
+            session.packedProgram.path,
             packedProgramPath,
             options.resourceScope,
-            options.signal,
-          )) !== session.packedProgram.sha256
-        )
+            {
+              signal: options.signal,
+              hash: packedHash,
+            },
+          );
+        } catch (cause: unknown) {
+          if (cause instanceof AnalysisError) throw cause;
+          throw classifyProviderFailure(
+            cause,
+            ghidraFileDialect("open_binary", {
+              path: session.packedProgram.path,
+            }),
+          );
+        }
+        if (packedHash.digest("hex") !== session.packedProgram.sha256)
           throw new GhidraLaunchError(
             "Ghidra checkpoint changed before its private import; reopen the target.",
           );
@@ -413,6 +443,13 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           ...(extensions.length === 0
             ? {}
             : { analysis_extensions: extensions }),
+          // The bridge reports this entry-context register in load-image observations.
+          ...(this.options.rawBinary?.entryContext === undefined
+            ? {}
+            : {
+                entry_context_register:
+                  this.options.rawBinary.entryContext.register,
+              }),
         })}\n`,
         platform,
       );
@@ -440,6 +477,9 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           : {
               riscvCallingConvention: this.options.riscvCallingConvention,
             }),
+        ...(this.options.riscvLoadPreparation === undefined
+          ? {}
+          : { riscvLoadPreparation: this.options.riscvLoadPreparation }),
         projectRoot: paths.projectRoot,
         targetPath: session.targetPath,
         ...(existingProject === undefined ? {} : { existingProject }),
@@ -457,6 +497,9 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         ...(this.options.rawBinary === undefined
           ? {}
           : { rawBinary: this.options.rawBinary }),
+        ...(this.options.elfImageBase === undefined
+          ? {}
+          : { elfImageBase: this.options.elfImageBase }),
         ...(this.options.gamecubeDol === undefined ||
         gamecubeDolSectionPath === undefined
           ? {}
@@ -793,19 +836,18 @@ export interface GhidraHeadlessArgumentOptions {
   readonly psp?: true;
   readonly mipsSoftFloat?: true;
   readonly riscvCallingConvention?: GhidraRiscvCallingConvention;
+  readonly riscvLoadPreparation?: GhidraRiscvLoadPreparation;
   readonly dosMz?: true;
-  readonly dosCom?: true;
-  readonly rawBinary?: {
-    readonly languageId: string;
-    readonly compilerSpecId: string;
-    readonly baseAddr: string;
-  };
+  readonly dosCom?: { readonly loader: "ComLoader" | "BinaryLoader" };
+  readonly rawBinary?: GhidraRawBinaryImport;
   readonly gamecubeDol?: {
     readonly languageId: string;
     readonly compilerSpecId?: string;
     readonly sectionFilePath: string;
   };
   readonly languageOverride?: GhidraLanguageOverride;
+  /** Bare-hex ElfLoader image base; the loader's default may shift the image. */
+  readonly elfImageBase?: string;
   /** Auto-analyzers disabled by the pre-analysis options script. */
   readonly disabledAnalyzers?: readonly string[];
   /** Canonical seed snapshot passed to the pre-analysis seed script. */
@@ -823,6 +865,8 @@ type ExistingProjectOptions = Pick<
   | "languageOverride"
   | "mipsSoftFloat"
   | "riscvCallingConvention"
+  | "riscvLoadPreparation"
+  | "elfImageBase"
   | "seedPath"
   | "disabledAnalyzers"
 > & { readonly analysisSeeds?: GhidraSeedCommitment };
@@ -843,7 +887,7 @@ const validateExistingProjectOptions = (
       throw new GhidraAdmissionError("existing_project_program_name");
     if (options.psp === true)
       throw new GhidraAdmissionError("existing_project_psp");
-    if (options.dosMz === true || options.dosCom === true)
+    if (options.dosMz === true || options.dosCom !== undefined)
       throw new GhidraAdmissionError("existing_project_dos");
     if (rawBinary !== undefined)
       throw new GhidraAdmissionError("existing_project_raw_binary");
@@ -855,6 +899,10 @@ const validateExistingProjectOptions = (
       throw new GhidraAdmissionError(
         "existing_project_riscv_calling_convention",
       );
+    if (options.riscvLoadPreparation !== undefined)
+      throw new GhidraAdmissionError("existing_project_riscv_load_preparation");
+    if (options.elfImageBase !== undefined)
+      throw new GhidraAdmissionError("existing_project_elf_image_base");
     if (
       options.seedPath !== undefined ||
       options.analysisSeeds !== undefined ||
@@ -882,9 +930,10 @@ export const ghidraHeadlessArguments = (
     gamecubeDol !== undefined &&
     (options.psp === true ||
       options.dosMz === true ||
-      options.dosCom === true ||
+      options.dosCom !== undefined ||
       options.mipsSoftFloat === true ||
       options.riscvCallingConvention !== undefined ||
+      options.riscvLoadPreparation !== undefined ||
       rawBinary !== undefined ||
       override !== undefined)
   )
@@ -892,7 +941,7 @@ export const ghidraHeadlessArguments = (
   if (
     options.psp === true &&
     (options.dosMz === true ||
-      options.dosCom === true ||
+      options.dosCom !== undefined ||
       override !== undefined)
   )
     throw new GhidraAdmissionError("psp_combined");
@@ -902,7 +951,7 @@ export const ghidraHeadlessArguments = (
     options.mipsSoftFloat === true &&
     (options.psp === true ||
       options.dosMz === true ||
-      options.dosCom === true ||
+      options.dosCom !== undefined ||
       rawBinary !== undefined)
   )
     throw new GhidraAdmissionError("mips_soft_float_scope");
@@ -911,22 +960,48 @@ export const ghidraHeadlessArguments = (
     (options.psp === true ||
       options.mipsSoftFloat === true ||
       options.dosMz === true ||
-      options.dosCom === true ||
+      options.dosCom !== undefined ||
       rawBinary !== undefined)
   )
     throw new GhidraAdmissionError("riscv_calling_convention_scope");
   if (
+    options.riscvLoadPreparation !== undefined &&
+    (options.psp === true ||
+      options.mipsSoftFloat === true ||
+      options.dosMz === true ||
+      options.dosCom !== undefined ||
+      options.elfImageBase !== undefined ||
+      rawBinary !== undefined)
+  )
+    throw new GhidraAdmissionError("riscv_load_preparation_scope");
+  if (
     override !== undefined &&
-    (options.dosMz === true || options.dosCom === true)
+    (options.dosMz === true || options.dosCom !== undefined)
   )
     throw new GhidraAdmissionError("language_override_dos");
   if (override !== undefined && rawBinary !== undefined)
     throw new GhidraAdmissionError("language_override_raw_binary");
   if (
     rawBinary !== undefined &&
-    (options.dosMz === true || options.dosCom === true)
+    (options.dosMz === true || options.dosCom !== undefined)
   )
     throw new GhidraAdmissionError("raw_binary_dos");
+  if (
+    options.elfImageBase !== undefined &&
+    (gamecubeDol !== undefined ||
+      options.psp === true ||
+      options.dosMz === true ||
+      options.dosCom !== undefined ||
+      options.riscvCallingConvention !== undefined ||
+      options.packedProgramPath !== undefined ||
+      rawBinary !== undefined)
+  )
+    throw new GhidraAdmissionError("elf_image_base_scope");
+  if (
+    options.elfImageBase !== undefined &&
+    !/^[0-9a-f]{1,8}$/u.test(options.elfImageBase)
+  )
+    throw new GhidraAdmissionError("elf_image_base_format");
   return [
     options.projectRoot,
     existing?.projectName ?? "rea-project",
@@ -956,12 +1031,15 @@ export const ghidraHeadlessArguments = (
                   "-cspec",
                   "default",
                 ]
-              : options.dosCom === true
+              : options.dosCom !== undefined
                 ? [
                     "-loader",
-                    "BinaryLoader",
-                    "-loader-baseAddr",
-                    "1000:0100",
+                    options.dosCom.loader,
+                    // ComLoader owns 0000:0100. BinaryLoader is the explicit
+                    // fallback and still needs the real-mode segment base.
+                    ...(options.dosCom.loader === "BinaryLoader"
+                      ? ["-loader-baseAddr", "1000:0100"]
+                      : []),
                     "-processor",
                     "x86:LE:16:Real Mode",
                     "-cspec",
@@ -977,20 +1055,33 @@ export const ghidraHeadlessArguments = (
                         "-cspec",
                         "default",
                       ]
-                    : override !== undefined
-                      ? [
-                          "-processor",
-                          override.languageId,
-                          ...(override.compilerSpecId === undefined
-                            ? []
-                            : ["-cspec", override.compilerSpecId]),
-                        ]
-                      : []
+                    : [
+                        ...(options.elfImageBase === undefined
+                          ? []
+                          : [
+                              "-loader",
+                              "ElfLoader",
+                              "-loader-imagebase",
+                              options.elfImageBase,
+                            ]),
+                        ...(override === undefined
+                          ? []
+                          : [
+                              "-processor",
+                              override.languageId,
+                              ...(override.compilerSpecId === undefined
+                                ? []
+                                : ["-cspec", override.compilerSpecId]),
+                            ]),
+                      ]
                   : [
                       "-loader",
                       "BinaryLoader",
                       "-loader-baseAddr",
                       rawBinary.baseAddr,
+                      ...(rawBinary.applyProcessorLabels === false
+                        ? ["-loader-applyLabels", "false"]
+                        : []),
                       "-processor",
                       rawBinary.languageId,
                       "-cspec",
@@ -1013,7 +1104,7 @@ export const ghidraHeadlessArguments = (
     options.scriptLogPath,
     "-scriptPath",
     bridgeDirectory,
-    ...(options.dosCom === true
+    ...(options.dosCom !== undefined
       ? [
           "-preScript",
           scriptPath.join(bridgeDirectory, GHIDRA_BRIDGE_SOURCES.prepareCom),
@@ -1026,6 +1117,10 @@ export const ghidraHeadlessArguments = (
           scriptPath.join(bridgeDirectory, GHIDRA_BRIDGE_SOURCES.prepareRaw),
           rawBinary.languageId,
           rawBinary.baseAddr,
+          rawBinary.entryPoint,
+          rawBinary.entryContext === undefined
+            ? "language-default"
+            : `${rawBinary.entryContext.register}=${rawBinary.entryContext.value}`,
         ]),
     ...(gamecubeDol === undefined
       ? []
@@ -1033,6 +1128,22 @@ export const ghidraHeadlessArguments = (
           "-preScript",
           scriptPath.join(bridgeDirectory, GHIDRA_BRIDGE_SOURCES.prepareDol),
           gamecubeDol.sectionFilePath,
+        ]),
+    // The memory map is final before seeds name addresses and analysis starts.
+    ...(options.riscvLoadPreparation === undefined
+      ? []
+      : [
+          "-preScript",
+          scriptPath.join(
+            bridgeDirectory,
+            GHIDRA_BRIDGE_SOURCES.prepareElfLoad,
+          ),
+          options.riscvLoadPreparation.policy,
+          options.riscvLoadPreparation.code.address,
+          options.riscvLoadPreparation.code.size,
+          options.riscvLoadPreparation.code.offset,
+          options.riscvLoadPreparation.reservation.address,
+          options.riscvLoadPreparation.reservation.size,
         ]),
     // Seeds follow any loader preparation and precede default auto-analysis.
     ...(options.seedPath === undefined
@@ -1056,6 +1167,7 @@ export const ghidraHeadlessArguments = (
           options.disabledAnalyzers.join(","),
         ]),
     ...(existing !== undefined ||
+    options.packedProgramPath !== undefined ||
     (options.platform ?? HOST_PLATFORM.platform) === "win32"
       ? []
       : [

@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
+import { validateRepository } from "./github-api.mjs";
 import { collectJobTimings } from "./job-timings.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -39,7 +40,7 @@ export async function collectJobTimingsBatch({
       status: "completed",
       createdAfter: cutoff,
       lookbackHours: 24,
-      overlap: "Each hourly run re-reads the preceding 24 hours.",
+      overlap: "Each scheduled run re-reads the preceding 24 hours.",
       pagination:
         "Run listings use the first 100; jobs are paginated within the remaining time and 16 MiB response limits.",
       maxRunsPerWorkflow: MAX_RUNS_PER_WORKFLOW,
@@ -67,7 +68,7 @@ export async function collectJobTimingsBatch({
     }
     try {
       const response = await apiJson(
-        `repos/${identity}/actions/workflows/${workflow.id}/runs?status=completed&created=%3E%3D${encodeURIComponent(cutoff)}&per_page=${String(MAX_RUNS_PER_WORKFLOW)}&page=1`,
+        `repos/${identity}/actions/workflows/${workflow.id}/runs?status=completed&exclude_pull_requests=true&created=%3E%3D${encodeURIComponent(cutoff)}&per_page=${String(MAX_RUNS_PER_WORKFLOW)}&page=1`,
         env,
         started,
         now,
@@ -159,6 +160,8 @@ export async function collectJobTimingsBatch({
       runRecord.status = "collected";
       runRecord.rawPath = result.rawPath;
       runRecord.reportPath = result.reportPath;
+      if (run.workflow === "CI" && run.event === "pull_request")
+        runRecord.selectionShadow = selectionShadowCost(result.report.jobs);
       manifest.coverage.collectedRuns += 1;
     } catch (cause) {
       runRecord.status = "error";
@@ -178,15 +181,30 @@ export async function collectJobTimingsBatch({
   return await writeManifest(outputDirectory, manifest, started, now, env);
 }
 
-function validateRepository(repository) {
+// A successful classifier upload identifies an actual cap-only candidate.
+function selectionShadowCost(jobs) {
+  const classifier = jobs.find((job) => job.name === "Classify changes");
   if (
-    typeof repository !== "string" ||
-    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)
+    !classifier?.steps.some(
+      (step) =>
+        step.name === "Record affected-test prediction before the full suite" &&
+        step.conclusion === "success",
+    )
   )
-    throw new Error(
-      "CI_REPOSITORY must be an owner/name repository identifier",
-    );
-  return repository;
+    return null;
+  let measuredSeconds = 0;
+  let unknownJobs = 0;
+  for (const job of jobs) {
+    if (
+      job.name !== "Source tests" &&
+      !/^Test shard \(\d+\/\d+\)$/u.test(job.name)
+    )
+      continue;
+    if (job.conclusion === "skipped" || job.runnerId === 0) continue;
+    if (job.runnerId === null || job.execution.seconds === null) unknownJobs++;
+    else measuredSeconds += job.execution.seconds;
+  }
+  return { measuredSeconds, unknownJobs };
 }
 
 async function apiJson(endpoint, env, started, now) {
@@ -233,11 +251,18 @@ async function appendBatchSummary(summaryPath, manifest, manifestPath) {
   const failed = manifest.runs.filter(
     ({ status }) => status === "error",
   ).length;
+  const shadows = manifest.runs.flatMap((run) =>
+    run.selectionShadow ? [run.selectionShadow] : [],
+  );
+  const minutes =
+    shadows.reduce((sum, shadow) => sum + shadow.measuredSeconds, 0) / 60;
+  const unknown = shadows.reduce((sum, shadow) => sum + shadow.unknownJobs, 0);
   const lines = [
     "### Batched CI timing snapshot",
     "",
     `Observed ${manifest.observedAt}; collected ${String(collected)} of ${String(manifest.coverage.selectedRuns)} selected recent completed runs (${String(failed)} run errors).`,
     `Coverage uses the first ${String(MAX_RUNS_PER_WORKFLOW)} runs per workflow created in the preceding 24 hours and a ${String(TIME_BUDGET_MS / 1_000)} second total budget. This sample is bounded and is not exhaustive.`,
+    `Recorded affected-test predictions: ${shadows.length} PR attempts, ${minutes.toFixed(1)} observed source and shard runner-minutes, ${unknown} jobs with unknown cost. These minutes measure the broad suites that actually ran.`,
     `Manifest: \`${manifestPath}\`.`,
     ...manifest.truncation.map((message) => `- Truncated: ${message}`),
     ...manifest.errors.map(

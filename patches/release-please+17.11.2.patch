@@ -1,0 +1,322 @@
+--- a/build/src/github-api.js
++++ b/build/src/github-api.js
+@@ -605,19 +605,47 @@
+      * @returns {string} HTML URL of the new file
+      */
+     async createFileOnNewBranch(filename, contents, newBranchName, baseBranchName) {
+-        // create or update new branch to match base branch
+-        await this.forkBranch(newBranchName, baseBranchName);
+-        // use the single file upload API
++        // Preserve existing notes until the replacement file is committed.
++        // A failed write must not leave an open proposal pointing at a missing file.
++        if (!(await this.getBranchSha(newBranchName))) {
++            const baseSha = await this.getBranchSha(baseBranchName);
++            if (!baseSha) {
++                throw new Error(`Unable to find base branch: ${baseBranchName}`);
++            }
++            await this.createNewBranch(newBranchName, baseSha);
++        }
++        let existingSha;
++        try {
++            const { data } = await this.octokit.repos.getContent({
++                owner: this.repository.owner,
++                repo: this.repository.repo,
++                path: filename,
++                ref: newBranchName,
++            });
++            if (Array.isArray(data) || data.type !== 'file' || !data.sha) {
++                throw new Error(`Expected a file at ${filename} on branch: ${newBranchName}`);
++            }
++            existingSha = data.sha;
++        }
++        catch (error) {
++            if (!(error && error.status === 404)) {
++                throw error;
++            }
++        }
+         const { data: { content }, } = await this.octokit.repos.createOrUpdateFileContents({
+             owner: this.repository.owner,
+             repo: this.repository.repo,
+             path: filename,
+             // contents need to be base64 encoded
+-            content: Buffer.from(contents, 'binary').toString('base64'),
++            content: Buffer.from(contents, 'utf8').toString('base64'),
++            ...(existingSha ? { sha: existingSha } : {}),
+             message: 'Saving release notes',
+             branch: newBranchName,
+         });
+-        return (content === null || content === void 0 ? void 0 : content.html_url) || '';
++        if (!(content === null || content === void 0 ? void 0 : content.html_url)) {
++            throw new Error(`Failed to write to file: ${filename} on branch: ${newBranchName}`);
++        }
++        return content.html_url;
+     }
+     /**
+      * Fork a branch from a base branch.
+--- a/build/src/github.js
++++ b/build/src/github.js
+@@ -14,6 +14,7 @@
+ // limitations under the License.
+ Object.defineProperty(exports, "__esModule", { value: true });
+ exports.sleepInMs = exports.GitHub = void 0;
++const graphql_1 = require("@octokit/graphql");
+ const request_error_1 = require("@octokit/request-error");
+ const code_suggester_1 = require("./util/code-suggester");
+ const errors_1 = require("./errors");
+@@ -25,6 +26,7 @@
+ const signoff_commit_message_1 = require("./util/signoff-commit-message");
+ const git_file_utils_1 = require("@google-automations/git-file-utils");
+ const composite_1 = require("./updaters/composite");
++class IncompleteGitBlobError extends Error {}
+ class GitHub {
+     constructor(options) {
+         var _a;
+@@ -72,14 +74,26 @@
+                     this.logger.trace('no GraphQL response, retrying');
+                 }
+                 catch (err) {
+-                    if (err.status !== 502) {
++                    // Octokit assigns status 500 to transport failures without an HTTP response.
++                    const disconnected = err instanceof request_error_1.RequestError &&
++                        err.status === 500 && err.response === undefined &&
++                        err.message === 'other side closed';
++                    // These extra retries apply only to commit-history reads.
++                    const retryHistoryError = options?.retryHistoryErrors && (err.status === 504 || disconnected ||
++                        err instanceof graphql_1.GraphqlResponseError &&
++                        err.errors.length > 0 &&
++                        err.errors.every(error => typeof error.message === 'string' &&
++                            error.message.startsWith('Something went wrong while executing your query')));
++                    if (err.status !== 502 && !retryHistoryError) {
+                         throw err;
+                     }
+                     if (maxRetries === 0) {
+                         this.logger.warn('ran out of retries and response is required');
+                         throw err;
+                     }
+-                    this.logger.info(`received 502 error, ${maxRetries} attempts remaining`);
++                    const failure = disconnected ? 'transport disconnect' :
++                        err.status === 502 || err.status === 504 ? `HTTP ${err.status}` : 'internal GraphQL error';
++                    this.logger.info(`received ${failure}, ${maxRetries} attempts remaining`);
+                     if (typeof opts.num === 'number') {
+                         if (maxRetries === 1) {
+                             this.logger.info('last retry, forcing batch size to 1');
+@@ -163,6 +177,16 @@
+         this.repository = options.repository;
+         this.octokit = options.octokitAPIs.octokit;
+         this.graphql = options.octokitAPIs.graphql;
++        // Check the parsed response before git-file-utils decodes or caches it.
++        this.octokit.hook.after('request', (response, request) => {
++            if (request.method === 'GET' &&
++                request.url === '/repos/{owner}/{repo}/git/blobs/{file_sha}' &&
++                (response.data?.encoding !== 'base64' ||
++                    typeof response.data?.content !== 'string' ||
++                    (response.data.size > 0 && response.data.content.length === 0))) {
++                throw new IncompleteGitBlobError('GitHub Git blob did not include a base64 payload');
++            }
++        });
+         this.fileCache = new git_file_utils_1.RepositoryFileCache(this.octokit, this.repository);
+         this.logger = (_a = options.logger) !== null && _a !== void 0 ? _a : logger_1.logger;
+         this.gitHubApi = new github_api_1.GitHubApi({
+@@ -244,8 +268,9 @@
+     async mergeCommitsGraphQL(targetBranch, cursor, options = {}) {
+         var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k;
+         var _l;
++        const includeFiles = options.includeFiles ?? true;
+         this.logger.debug(`Fetching merge commits on branch ${targetBranch} with cursor: ${cursor}`);
+-        const query = `query pullRequestsSince($owner: String!, $repo: String!, $num: Int!, $maxFilesChanged: Int, $targetBranch: String!, $cursor: String) {
++        const query = `query pullRequestsSince($owner: String!, $repo: String!, $num: Int!, $maxFilesChanged: Int, $includeFiles: Boolean!, $targetBranch: String!, $cursor: String) {
+       repository(owner: $owner, name: $repo) {
+         ref(qualifiedName: $targetBranch) {
+           target {
+@@ -267,7 +292,7 @@
+                       mergeCommit {
+                         oid
+                       }
+-                      files(first: $maxFilesChanged) {
++                      files(first: $maxFilesChanged) @include(if: $includeFiles) {
+                         nodes {
+                           path
+                         }
+@@ -305,11 +330,12 @@
+             num: (_a = options.batchSize) !== null && _a !== void 0 ? _a : 10,
+             targetBranch,
+             maxFilesChanged: 100, // max is 100
++            includeFiles,
+         };
+         const response = await this.graphqlRequest({
+             query,
+             ...params,
+-        });
++        }, { retryHistoryErrors: true });
+         if (!response) {
+             this.logger.warn(`Did not receive a response for query: ${query}`, params);
+             return null;
+@@ -369,10 +395,12 @@
+                     title: pullRequest.title,
+                     body: pullRequest.body,
+                     labels: pullRequest.labels.nodes.map(node => node.name),
+-                    files: (((_g = pullRequest.files) === null || _g === void 0 ? void 0 : _g.nodes) || []).map(node => node.path),
++                    ...(includeFiles ? {
++                        files: (((_g = pullRequest.files) === null || _g === void 0 ? void 0 : _g.nodes) || []).map(node => node.path),
++                    } : {}),
+                 };
+             }
+-            if (mergePullRequest) {
++            if (includeFiles && mergePullRequest) {
+                 if (((_j = (_h = mergePullRequest.files) === null || _h === void 0 ? void 0 : _h.pageInfo) === null || _j === void 0 ? void 0 : _j.hasNextPage) &&
+                     options.backfillFiles) {
+                     this.logger.info(`PR #${mergePullRequest.number} has many files, backfilling`);
+@@ -384,7 +412,7 @@
+                     commit.files = (((_k = mergePullRequest.files) === null || _k === void 0 ? void 0 : _k.nodes) || []).map(node => node.path);
+                 }
+             }
+-            else if (options.backfillFiles) {
++            else if (includeFiles && options.backfillFiles) {
+                 // In this case, there is no squashed merge commit. This could be a simple
+                 // merge commit, a rebase merge commit, or a direct commit to the branch.
+                 // Fallback to fetching the list of commits from the REST API. In the future
+@@ -475,14 +503,27 @@
+      */
+     async getFileContentsOnBranch(path, branch) {
+         this.logger.debug(`Fetching ${path} from branch ${branch}`);
+-        try {
+-            return await this.fileCache.getFileContents(path, branch);
+-        }
+-        catch (e) {
+-            if (e instanceof git_file_utils_1.FileNotFoundError) {
+-                throw new errors_1.FileNotFoundError(path);
+-            }
+-            throw e;
++        for (let attempt = 0; ; attempt++) {
++            try {
++                return await this.fileCache.getFileContents(path, branch);
++            }
++            catch (e) {
++                if (e instanceof git_file_utils_1.FileNotFoundError) {
++                    throw new errors_1.FileNotFoundError(path);
++                }
++                // Retrying this read is safe even when a release proposal is being updated.
++                const incompleteBlob = e instanceof IncompleteGitBlobError;
++                if (incompleteBlob && attempt >= 2) {
++                    throw new Error(`GitHub returned an incomplete Git blob for ${path} on ${branch}`, { cause: e });
++                }
++                if ((!incompleteBlob && e?.status !== 504) || attempt >= 2) {
++                    throw e;
++                }
++                this.logger.info(incompleteBlob
++                    ? 'Received an incomplete Git blob reading a repository file, retrying'
++                    : 'Received HTTP 504 reading a repository file, retrying');
++                await (0, exports.sleepInMs)(1000 * (attempt + 1));
++            }
+         }
+     }
+     async getFileJson(path, branch) {
+--- a/build/src/manifest.js
++++ b/build/src/manifest.js
+@@ -250,6 +250,14 @@
+                 releasesFound++;
+             }
+         }
++        // A recorded version requires its release boundary, even while a
++        // concurrent publisher has not created the matching release/tag yet.
++        for (const path of Object.keys(strategiesByPath)) {
++            const expectedVersion = this.releasedVersions[path];
++            if (expectedVersion && expectedVersion.toString() !== '0.0.0' && !releasesByPath[path]) {
++                throw new Error(`Missing expected release for path ${path} at version ${expectedVersion.toString()}: no matching release or tag found. Refusing to bootstrap an already released package.`);
++            }
++        }
+         const needsBootstrap = releasesFound < expectedReleases;
+         if (releasesFound < expectedReleases) {
+             this.logger.warn(`Expected ${expectedReleases} releases, only found ${releasesFound}`);
+@@ -263,9 +271,20 @@
+         this.logger.info('Collecting commits since all latest releases');
+         const commits = [];
+         this.logger.debug(`commit search depth: ${this.commitSearchDepth}`);
++        // The root receives every commit without path splitting. Node's strategy,
++        // default changelog and extra-file updaters do not inspect commit.files.
++        // Keep the general path for exclusions, plugins and other strategies.
++        const rootConfig = this.repositoryConfig[exports.ROOT_PROJECT_PATH];
++        const rootOnlyNode = Object.keys(this.repositoryConfig).length === 1 &&
++            rootConfig?.releaseType === 'node' &&
++            (!rootConfig.changelogType || rootConfig.changelogType === 'default') &&
++            (!rootConfig.versioning || ['default', 'always-bump-minor'].includes(rootConfig.versioning)) &&
++            !rootConfig.excludePaths?.length &&
++            this.plugins.length === 0;
+         const commitGenerator = this.github.mergeCommitIterator(this.targetBranch, {
+             maxResults: this.commitSearchDepth,
+-            backfillFiles: true,
++            backfillFiles: !rootOnlyNode,
++            includeFiles: !rootOnlyNode,
+             batchSize: this.commitBatchSize,
+         });
+         const releaseShas = new Set(Object.values(releaseShasByPath));
+@@ -274,6 +293,7 @@
+         // sha => release pull request
+         const releasePullRequestsBySha = {};
+         let releaseCommitsFound = 0;
++        let historyBoundaryFound = false;
+         for await (const commit of commitGenerator) {
+             if (releaseShas.has(commit.sha)) {
+                 if (commit.pullRequest) {
+@@ -286,14 +306,17 @@
+             }
+             if (this.lastReleaseSha && this.lastReleaseSha === commit.sha) {
+                 this.logger.info(`Using configured lastReleaseSha ${this.lastReleaseSha} as last commit.`);
++                historyBoundaryFound = true;
+                 break;
+             }
+             else if (needsBootstrap && commit.sha === this.bootstrapSha) {
+                 this.logger.info(`Needed bootstrapping, found configured bootstrapSha ${this.bootstrapSha}`);
++                historyBoundaryFound = true;
+                 break;
+             }
+             else if (!needsBootstrap && releaseCommitsFound >= expectedShas) {
+                 // found enough commits
++                historyBoundaryFound = true;
+                 break;
+             }
+             commits.push({
+@@ -303,16 +326,18 @@
+                 pullRequest: commit.pullRequest,
+             });
+         }
++        if (releaseCommitsFound < expectedShas && !historyBoundaryFound) {
++            throw new Error(`Incomplete release history: expected ${expectedShas} release boundaries, found ${releaseCommitsFound}. Refusing a partial release proposal.`);
++        }
+         if (releaseCommitsFound < expectedShas) {
+             this.logger.warn(`Expected ${expectedShas} commits, only found ${releaseCommitsFound}`);
+         }
+         // split commits by path
+         this.logger.info(`Splitting ${commits.length} commits by path`);
+-        const cs = new commit_split_1.CommitSplit({
++        const splitCommits = rootOnlyNode ? {} : new commit_split_1.CommitSplit({
+             includeEmpty: true,
+             packagePaths: Object.keys(this.repositoryConfig),
+-        });
+-        const splitCommits = cs.split(commits);
++        }).split(commits);
+         // limit paths to ones since the last release
+         let commitsPerPath = {};
+         for (const path in this.repositoryConfig) {
+--- a/build/src/pull-request.d.ts
++++ b/build/src/pull-request.d.ts
+@@ -6,6 +6,7 @@
+     readonly title: string;
+     readonly body: string;
+     readonly labels: string[];
+-    readonly files: string[];
++    /** Unknown when commit-history file collection is explicitly disabled. */
++    readonly files?: string[];
+     readonly sha?: string;
+ }
+--- a/build/src/scm.d.ts
++++ b/build/src/scm.d.ts
+@@ -15,6 +15,8 @@
+ export interface ScmCommitIteratorOptions {
+     maxResults?: number;
+     backfillFiles?: boolean;
++    /** Include PR files and permit REST backfill. Defaults to true. */
++    includeFiles?: boolean;
+     batchSize?: number;
+ }
+ export interface ScmReleaseIteratorOptions {

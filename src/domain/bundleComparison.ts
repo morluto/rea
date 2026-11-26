@@ -3,7 +3,7 @@ import { z } from "zod";
 import {
   parseEvidenceBundle,
   referencedEvidenceIds,
-  serializeEvidenceBundle,
+  serializeValidatedEvidenceBundle,
   type EvidenceBundle,
 } from "./evidenceBundle.js";
 import { AnalysisInputError } from "./analysisErrorCore.js";
@@ -29,7 +29,7 @@ export const bundleComparisonInputSchema = z.strictObject({
   right_bundle_path: localPathStringSchema,
   record_pairs: z
     .array(
-      z.object({
+      z.strictObject({
         left_evidence_id: evidenceIdSchema,
         right_evidence_id: evidenceIdSchema,
       }),
@@ -304,7 +304,7 @@ const historyEvidenceIds = (history: readonly ResidualUnknown[]): string[] =>
   [...new Set(history.flatMap(referencedEvidenceIds))].sort(ascii);
 
 const bundleDigest = (bundle: EvidenceBundle): string =>
-  sha256Hex(serializeEvidenceBundle(bundle));
+  sha256Hex(serializeValidatedEvidenceBundle(bundle));
 
 const same = (left: readonly string[], right: readonly string[]): boolean =>
   left.length === right.length &&

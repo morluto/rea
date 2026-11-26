@@ -12,14 +12,41 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 
+import { callerAnalysisParameters } from "../application/AnalysisInput.js";
+import type { JsonValue } from "../domain/jsonValue.js";
+import type { ProjectedErrorEncoding } from "./ToolResultDelivery.js";
+import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
+
 const currentRequest = new AsyncLocalStorage<McpToolRequest>();
 
 /** One SDK request owns validation, cancellation and its publication boundary. */
 export class McpToolRequest {
   readonly cancellation = new AbortController();
+  projectedErrorEncoding?: ProjectedErrorEncoding | undefined;
+  readonly #parameterSelections = new WeakMap<
+    object,
+    {
+      readonly tool: string;
+      readonly select: ReturnType<typeof callerAnalysisParameters>;
+    }
+  >();
   validation?: {
     readonly issues: readonly z.core.$ZodIssue[];
     readonly input: unknown;
+  };
+  /**
+   * The `detail` this request's tool call spelled before schema defaults,
+   * captured at canonical validation. An omitted `detail` leaves delivery to
+   * the agent result budget; without a capture nothing is known about it.
+   * `pageable` records whether the session advertises the view tool that
+   * pages a summary, without which the budget never replaces Evidence.
+   * `record` is the session's Evidence writer, which retains a failure's
+   * over-budget partial observation before its summary replaces it.
+   */
+  deliverySelection?: {
+    readonly detail: unknown;
+    readonly pageable: boolean;
+    readonly record?: EvidenceWriter["recordEvidence"] | undefined;
   };
   #handlerStarted = false;
   #finishHandler: () => void = () => undefined;
@@ -40,6 +67,31 @@ export class McpToolRequest {
     readonly id: RequestId,
     readonly tool: string,
   ) {}
+
+  /** Capture only selected names at canonical validation, not the raw input tree. */
+  captureCallerParameters(tool: string, input: unknown, parsed: unknown): void {
+    if (parsed !== null && typeof parsed === "object")
+      this.#parameterSelections.set(parsed, {
+        tool,
+        select: callerAnalysisParameters(input),
+      });
+  }
+
+  /** The exact parsed object identifies its validation, including nested tool calls. */
+  callerParameters(
+    tool: string,
+    parsed: unknown,
+    parameters: Readonly<Record<string, JsonValue>>,
+  ): Readonly<Record<string, JsonValue>> {
+    const selection =
+      parsed !== null && typeof parsed === "object"
+        ? this.#parameterSelections.get(parsed)
+        : undefined;
+    // Dropping properties from a validated JSON object preserves its value type.
+    return (
+      selection?.tool === tool ? selection.select(parameters) : parameters
+    ) as Readonly<Record<string, JsonValue>>;
+  }
 
   beginHandler(): void {
     this.#handlerStarted = true;

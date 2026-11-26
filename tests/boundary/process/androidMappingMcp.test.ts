@@ -114,7 +114,37 @@ it("keeps exact class and selected-method facts in summaries with readable compl
       throw new Error("Complete source was not retained");
     expect(parent.operation).toBe(name);
     expect(parent.raw_result).not.toBeNull();
-    expect(result.summary).toEqual(parent.normalized_result);
+    if (name === "inspect_android_method")
+      expect(result.summary).toEqual(parent.normalized_result);
+    else {
+      // The class summary counts members; the mapping symbols page in full.
+      const complete = androidResultSchemas.inspect_android_class.parse(
+        parent.normalized_result,
+      );
+      expect(result.summary).toMatchObject({
+        class_name: complete.class_name,
+        counts: { methods: complete.methods.length },
+        mapping: {
+          file: complete.mapping?.file,
+          records: complete.mapping?.records,
+          symbols: complete.mapping?.symbols.length,
+        },
+      });
+      const symbols = await client.callTool({
+        name: "inspect_analysis_view",
+        arguments: {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: parent.evidence_id,
+          },
+          view: { kind: "android-class", facet: "mapping-symbols", limit: 512 },
+        },
+      });
+      expect(symbols.isError, JSON.stringify(symbols)).not.toBe(true);
+      expect(
+        parseEvidence(symbols.structuredContent).normalized_result,
+      ).toMatchObject({ items: complete.mapping?.symbols });
+    }
     parents.push(parent.evidence_id);
   }
   await unlink(apk);
@@ -139,7 +169,20 @@ it("annotates class inspection with a caller-selected mapping and reuses one eng
   const first = join(root, "first.txt");
   const second = join(root, "second.txt");
   await writeFile(first, mappingText("com.example.Original"));
-  await writeFile(second, mappingText("com.example.Renamed"));
+  await writeFile(
+    second,
+    [
+      '# {"id":"com.android.tools.r8.mapping","version":"2.2"}',
+      "com.example.Renamed -> fixture.Target:",
+      '    # {"id":"com.android.tools.r8.residualsignature","signature":"()V"}',
+      '    # {"id":"sourceFile","fileName":"Renamed.java"}',
+      "    # An ordinary comment",
+      "    void onCreate(android.os.Bundle) -> onCreate",
+      "    void pick(java.lang.String) -> choose",
+      "    void pick(boolean) -> choose",
+      '    # {"id":"com.android.tools.r8.residualsignature","signature":"(I)V"}',
+    ].join("\n"),
+  );
   const wire = (await client.listTools()).tools.find(
     (tool) => tool.name === "inspect_android_class",
   );
@@ -155,9 +198,21 @@ it("annotates class inspection with a caller-selected mapping and reuses one eng
   const apkSha256 = createHash("sha256")
     .update(await readFile(apk))
     .digest("hex");
-  for (const [path, original] of [
-    [first, "com.example.Original"],
-    [second, "com.example.Renamed"],
+  for (const [path, original, parameterType, reported, malformed] of [
+    [
+      first,
+      "com.example.Original",
+      "int",
+      { compiler: "R8", pg_map_id: "7f00" },
+      [],
+    ],
+    [
+      second,
+      "com.example.Renamed",
+      "boolean",
+      { map_version: "2.2" },
+      [{ line: 3, reason: "metadata" }],
+    ],
   ] as const) {
     const response = await inspect(path);
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
@@ -183,7 +238,9 @@ it("annotates class inspection with a caller-selected mapping and reuses one eng
           .update(await readFile(path))
           .digest("hex"),
       },
-      reported: { compiler: "R8", pg_map_id: "7f00" },
+      reported,
+      records: { malformed: malformed.length },
+      malformed,
       coverage: { symbols: 4, mapped: 4, ambiguous: 0, unmapped: 0 },
     });
     expect(result.mapping?.symbols[0]?.resolution).toEqual({
@@ -192,8 +249,11 @@ it("annotates class inspection with a caller-selected mapping and reuses one eng
       verified_by: "class",
     });
     expect(result.mapping?.symbols[3]?.resolution).toMatchObject({
-      mapped: { name: "pick", parameter_types: ["int"] },
+      mapped: { name: "pick", parameter_types: [parameterType] },
     });
+    expect(
+      evidence.limitations.some((text) => text.includes("malformed records")),
+    ).toBe(malformed.length > 0);
   }
   expect(launches).toHaveLength(1);
   // Content changes invalidate the mapping without restarting the APK engine.

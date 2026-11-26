@@ -1,11 +1,7 @@
 import { z } from "zod";
 
-import type { ExecutableFormatHint } from "../domain/dosCom.js";
-import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
-import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
-import type { Logger } from "pino";
-import { OPEN_BINARY_TOOL_CONTRACT } from "../contracts/sessionToolContracts.js";
-import type { CliSessionTarget } from "./contractCliDescription.js";
+import { declaredTokenPattern } from "../domain/schemaConstraints.js";
+import { decimalTokenPattern } from "./decimalTokenPattern.js";
 
 /** Decimal integer argv text. Leading zeros stay decimal; `0x` and exponent spellings do not. */
 const DECIMAL_INTEGER_TOKEN = /^[0-9]+$/u;
@@ -18,9 +14,10 @@ type DecimalWrapper =
     };
 
 const decimalToken = (domain: z.ZodNumber) =>
-  z
-    .string()
-    .regex(DECIMAL_INTEGER_TOKEN, "Expected a decimal integer")
+  declaredTokenPattern(
+    z.string().regex(DECIMAL_INTEGER_TOKEN, "Expected a decimal integer"),
+    new RegExp(decimalTokenPattern(domain), "u"),
+  )
     .pipe(z.coerce.number<string>())
     .pipe(domain);
 
@@ -28,7 +25,7 @@ const unwrapSchema = (field: { unwrap: () => unknown }): z.ZodType =>
   field.unwrap() as z.ZodType;
 
 /**
- * Incur advertises Zod's output view. Publish the input view so an argv token
+ * Command schemas advertise Zod's output view. Publish the input view so an argv token
  * grammar that transforms text survives `--schema` and other SDK conversions.
  */
 export const publishArgvInput = <Field extends z.ZodType>(
@@ -150,83 +147,3 @@ export const cliDecimalShape = <Shape extends Record<string, z.ZodType>>(
       numericStack(field) === undefined ? field : cliDecimalField(field),
     ]),
   ) as Shape;
-
-/** Help of the flags that bind a native target interpretation. */
-const NATIVE_OPEN_HELP = {
-  format:
-    "Explicit interpretation: dos-com or raw-binary (headerless), or gamecube-dol (GameCube/Wii DOL, never auto-detected); omission preserves header-based detection",
-  architecture:
-    "Caller-supplied CPU family; required with --target-format raw-binary, must be omitted with gamecube-dol",
-  entryPoint:
-    "Caller-supplied load and entry address (0xhex); required with --target-format raw-binary, optional with gamecube-dol (must equal the DOL header entry)",
-  provider:
-    "Bind deep analysis to a provider ID or use deterministic auto selection",
-  snapshot: "Load and update a local analysis snapshot",
-} as const;
-
-/**
- * A native executable opened as an MCP client opens it, with `open_binary`'s
- * format, architecture, entry point and provider fields. An operation that
- * loads and updates an analysis snapshot also takes `snapshot_path`, with
- * `snapshot` as its help when it differs from the shared one.
- */
-export const nativeTarget = (
-  description: string,
-  snapshot?: true | string,
-): CliSessionTarget => ({
-  description,
-  open: {
-    contract: OPEN_BINARY_TOOL_CONTRACT,
-    fields: {
-      ...(snapshot === undefined
-        ? {}
-        : {
-            snapshot_path: {
-              name: "snapshot",
-              callerPath: true,
-              description:
-                snapshot === true ? NATIVE_OPEN_HELP.snapshot : snapshot,
-            },
-          }),
-      format: {
-        name: "target-format",
-        values: ["dos-com", "raw-binary", "gamecube-dol"],
-        description: NATIVE_OPEN_HELP.format,
-      },
-      architecture: { description: NATIVE_OPEN_HELP.architecture },
-      entry_point: {
-        name: "entry-point",
-        description: NATIVE_OPEN_HELP.entryPoint,
-      },
-      provider_id: { name: "provider", description: NATIVE_OPEN_HELP.provider },
-    },
-  },
-});
-
-/** Native CLI flags consumed when opening a target for one-shot analysis. */
-export interface NativeOpenCliFlags {
-  readonly snapshot?: string | undefined;
-  readonly provider?: AnalysisProviderSelector | undefined;
-  readonly "target-format"?: ExecutableFormatHint | undefined;
-  readonly architecture?: BinaryArchitecture | undefined;
-  readonly "entry-point"?: string | undefined;
-}
-
-/** Map native CLI flags onto the shared one-shot analysis options. */
-export const directAnalysisOptionsFromCli = (
-  logger: Logger,
-  options: NativeOpenCliFlags,
-) => ({
-  logger,
-  snapshotPath: options.snapshot,
-  ...(options["target-format"] === undefined
-    ? {}
-    : { formatHint: options["target-format"] }),
-  ...(options.architecture === undefined
-    ? {}
-    : { architecture: options.architecture }),
-  ...(options["entry-point"] === undefined
-    ? {}
-    : { entryPoint: options["entry-point"] }),
-  ...(options.provider === undefined ? {} : { providerId: options.provider }),
-});

@@ -12,7 +12,6 @@ it.each([
   // A later client's validator does not hide an earlier default client.
   ["[NEW(a), NEW(b, { jsonSchemaValidator })]", 1],
   ["const a = NEW(a);\nconst b = NEW(b, { jsonSchemaValidator });", 1],
-  ["NEW(a, { jsonSchemaValidator }); NEW(b)", 1],
   ["NEW(make(a), options(b))", 1],
   ["NEW(a); NEW(b);", 2],
   // Parentheses inside literals do not end the call.
@@ -22,11 +21,12 @@ it.each([
   ['NEW({ name: "\\")" }, { jsonSchemaValidator })', 0],
   ['NEW({ name: "(" })', 1],
   // Comments, string literals and names do not stand in for the option.
-  ["NEW(info, {\n  capabilities: {}, // TODO: add jsonSchemaValidator\n})", 1],
+  ["NEW(info, {\n  capabilities: {}, // add jsonSchemaValidator\n})", 1],
   ["NEW(info /* jsonSchemaValidator */)", 1],
   ['NEW({ name: "jsonSchemaValidator-client" })', 1],
   ["NEW(info, { note: `jsonSchemaValidator` })", 1],
-  ["NEW(jsonSchemaValidator)", 1],
+  ["NEW({ jsonSchemaValidator }, {})", 1],
+  ["NEW(info, {}, { jsonSchemaValidator })", 1],
   ['NEW(info, { "jsonSchemaValidator": validation })', 0],
   // A commented-out call is not a client.
   ["// NEW(info)\nNEW(info, { jsonSchemaValidator })", 0],

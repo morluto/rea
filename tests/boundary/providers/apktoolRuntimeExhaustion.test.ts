@@ -1,7 +1,8 @@
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, writeFile } from "node:fs/promises";
+
 import { join } from "node:path";
 import { expect, onTestFinished, test } from "vitest";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { ApktoolProvider } from "../../../src/apktool/ApktoolProvider.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 
@@ -9,8 +10,7 @@ const it = test.skipIf(process.platform === "win32");
 
 /** A launcher whose decode prints the given stderr and exits with status 1. */
 const failingDecode = async (stderr: string) => {
-  const root = await mkdtemp(join(tmpdir(), "rea-apktool-oom-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-apktool-oom-");
   const command = join(root, "apktool");
   await writeFile(
     command,
@@ -43,30 +43,35 @@ it("reports the decoder JVM's heap exhaustion as memory, not a target refusal", 
   expect(projected.code).not.toBe("unsupported_target");
   expect(projected).toMatchObject({
     code: "resource_constraint",
-    details: { resource: "memory" },
+    details: {
+      resource: "memory",
+      diagnostics: {
+        runtime_exhaustion_report: { runtime: "jvm", area: "heap" },
+      },
+    },
   });
-  expect(projected.message).toContain("heap");
-  expect(projected.remediation.action).toContain("-Xmx");
 });
 
 it.each([
-  ["Metaspace", "MaxMetaspaceSize", "memory"],
-  ["Requested array size exceeds VM limit", "smaller APK", "memory"],
-  ["unable to create native thread", "native memory", "capacity"],
+  ["Metaspace", "metaspace", "memory"],
+  ["Requested array size exceeds VM limit", "array-size", "memory"],
+  ["unable to create native thread", "native-thread", "capacity"],
 ])(
-  "advises the limit that governs a %s report rather than the heap",
-  async (detail, advice, resource) => {
+  "names the memory area a %s report exhausted",
+  async (detail, area, resource) => {
     const projected = await failingDecode(
       `printf 'Exception in thread "main" java.lang.OutOfMemoryError: ${detail}\\n' >&2`,
     );
     expect(projected).toMatchObject({
       code: "resource_constraint",
-      details: { resource },
+      retryable: false,
+      details: {
+        resource,
+        diagnostics: {
+          runtime_exhaustion_report: { runtime: "jvm", area },
+        },
+      },
     });
-    expect(projected.remediation.action).toContain(advice);
-    expect(projected.remediation.action).not.toMatch(/Raise the maximum heap/u);
-    // Repeating the unchanged decode is expected to fail the same way.
-    expect(projected.retryable).toBe(false);
   },
 );
 
@@ -77,11 +82,13 @@ it("observes the heap report while output streams, even past the capture allowan
   );
   expect(projected).toMatchObject({
     code: "resource_constraint",
-    details: { resource: "memory" },
+    details: {
+      resource: "memory",
+      diagnostics: {
+        runtime_exhaustion_report: { runtime: "jvm", area: "heap" },
+      },
+    },
   });
-  // The cause is the heap, not the capture allowance the trace overflowed.
-  expect(projected.message).toContain("heap");
-  expect(projected.remediation.action).toContain("-Xmx");
   // The retained stderr tail no longer holds the report; the claim keeps it.
   expect(projected.details).toMatchObject({
     diagnostics: {

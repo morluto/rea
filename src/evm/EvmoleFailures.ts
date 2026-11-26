@@ -3,7 +3,7 @@ import {
   MAX_NODE_TIMER_DELAY_MS,
 } from "../domain/analysisResourceLimits.js";
 import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
-import type { EvmWorkerLimits } from "./EvmWorkerLimits.js";
+import type { LinuxResourceLimits } from "../process/LinuxResourceLimits.js";
 import type { AnalysisErrorOptions } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -66,7 +66,7 @@ export interface EvmFileSizeFailureEvidence {
 interface EvmFailureContext {
   readonly phase: "configuration" | "artifact-read" | "worker";
   readonly path: string;
-  readonly workerLimits?: EvmWorkerLimits | undefined;
+  readonly workerLimits?: LinuxResourceLimits | undefined;
   readonly limiter?: string | undefined;
   readonly fileFailure?: EvmFileSizeFailureEvidence | undefined;
   readonly timeoutMs?: number | undefined;
@@ -234,21 +234,29 @@ const evmWorkerDiagnostics = ({
   path,
   ...(workerLimits === undefined
     ? {}
-    : { configured_resource_limits: { ...workerLimits } }),
+    : {
+        configured_resource_limits: {
+          addressSpaceBytes: workerLimits.address_space_bytes,
+          cpuSeconds: workerLimits.cpu_seconds,
+          fileSizeBytes: workerLimits.file_bytes,
+        },
+      }),
   ...(fileFailure === undefined
     ? {}
     : { file_size_failure_marker: { ...fileFailure } }),
 });
 
 /** Configured soft limits; the effective limits the worker ran under are unknown. */
-const configuredWorkerLimits = (workerLimits: EvmWorkerLimits | undefined) =>
+const configuredWorkerLimits = (
+  workerLimits: LinuxResourceLimits | undefined,
+) =>
   workerLimits === undefined
     ? null
     : {
         configured_soft_limits: {
-          address_space_bytes: workerLimits.addressSpaceBytes,
-          cpu_seconds: workerLimits.cpuSeconds,
-          file_size_bytes: workerLimits.fileSizeBytes,
+          address_space_bytes: workerLimits.address_space_bytes,
+          cpu_seconds: workerLimits.cpu_seconds,
+          file_size_bytes: workerLimits.file_bytes,
         },
         effective_soft_limits: null,
       };

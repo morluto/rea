@@ -23,11 +23,7 @@ const resourceOperations = [
 
 const expectUnsupportedArtifactOperations = (content: unknown) => {
   const parsed = toolContract("binary_session").outputSchema.parse(content);
-  for (const name of [
-    "inspect_artifact",
-    "extract_artifact",
-    "trace_dylib_resolution",
-  ])
+  for (const name of ["extract_artifact", "trace_dylib_resolution"])
     expect(
       parsed.result.tool_availability.groups.find((group) =>
         group.names.includes(name),
@@ -50,7 +46,9 @@ const expectIndependentResourceWorkflows = async (
     const parsed = toolContract("binary_session").outputSchema.parse(
       status.structuredContent,
     );
-    for (const name of ["inspect_desktop_application"])
+    // inspect_artifact inventories a caller-selected path without the open
+    // target, so a resource-only session still admits it.
+    for (const name of ["inspect_desktop_application", "inspect_artifact"])
       expect(
         parsed.result.tool_availability.groups.find((group) =>
           group.names.includes(name),
@@ -79,6 +77,11 @@ const expectIndependentResourceWorkflows = async (
     path: firstBundle,
   });
   expect(desktop.isError, JSON.stringify(desktop)).not.toBe(true);
+  const inventory = await call("inspect_artifact", {
+    path: firstBundle,
+    detail: "summary",
+  });
+  expect(inventory.isError, JSON.stringify(inventory)).not.toBe(true);
   if (!capability.available) return;
   const databasePath = join(root, "fixture.sqlite");
   const { DatabaseSync } = await import("node:sqlite");
@@ -106,19 +109,32 @@ cliTest.skipIf(process.platform !== "darwin")(
         response.exitCode,
         `${scenario.operation}: ${response.stdout} ${response.stderr}`,
       ).toBe(0);
-      const evidence = expectResourceEvidence(
-        response.json,
-        scenario.operation,
-        firstBundle,
-      );
-      if (scenario.operation === "inspect_keyed_archive")
-        expect(evidence.normalized_result).toMatchObject({
-          archive_path: "Resources/Archive.plist",
-          objects: expect.arrayContaining([
-            expect.objectContaining({ value: "resource-only-value" }),
-          ]),
-        });
+      expectResourceEvidence(response.json, scenario.operation, firstBundle);
     }
+  },
+);
+
+cliTest(
+  "inspects a keyed archive from a bundle with an empty Info.plist",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-keyless-archive-");
+    const bundle = await createKeylessBundle(root, "Archive");
+    await writeFile(join(bundle, "Info.plist"), "<plist><dict/></plist>");
+    const archive = "Resources/Archive.plist";
+    const reply = await cli.run({
+      arguments: ["inspect-keyed-archive", bundle, archive, "--json"],
+      environment: { REA_LOG_LEVEL: "silent" },
+    });
+    expect(reply.exitCode, `${reply.stdout} ${reply.stderr}`).toBe(0);
+    expect(
+      expectResourceEvidence(reply.json, "inspect_keyed_archive", bundle)
+        .normalized_result,
+    ).toMatchObject({
+      archive_path: archive,
+      objects: expect.arrayContaining([
+        expect.objectContaining({ value: "resource-only-value" }),
+      ]),
+    });
   },
 );
 
@@ -311,10 +327,6 @@ const cliScenarios = (bundle: string) =>
     {
       operation: "inspect_asset_catalog",
       arguments: ["inspect-asset-catalog", bundle],
-    },
-    {
-      operation: "inspect_keyed_archive",
-      arguments: ["inspect-keyed-archive", bundle, "Resources/Archive.plist"],
     },
   ] as const;
 

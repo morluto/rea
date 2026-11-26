@@ -96,7 +96,7 @@ it("reports a binary source-size refusal as a typed resource limit", async () =>
       },
     }),
   );
-  expect(runner.tools).toEqual(["file"]);
+  expect(runner.tools).toEqual([]);
 });
 
 const nested = (depth: number): PlistValue =>
@@ -108,7 +108,7 @@ it.each([
     // Three times the source length exceeds the 64 MiB decode estimate while
     // the source stays below the separate 64 MiB input ceiling.
     value: { data: Buffer.alloc(22 * 1024 * 1024, 0x78) },
-    limits: { maximum_decoded_bytes: 64 * 1024 * 1024 },
+    limits: { boundary: "plist-decode-bytes", maximum: 64 * 1024 * 1024 },
     refusal: {
       allowance: "The native binary plist decode allowance",
       limit: 64 * 1024 * 1024,
@@ -118,7 +118,7 @@ it.each([
   {
     budget: "nesting",
     value: nested(MAX_JSON_DEPTH - 1),
-    limits: { maximum_nesting_depth: MAX_JSON_DEPTH - 3 },
+    limits: { boundary: "plist-nesting-depth", maximum: MAX_JSON_DEPTH - 3 },
     refusal: {
       allowance: "The native plist nesting allowance",
       limit: MAX_JSON_DEPTH - 3,

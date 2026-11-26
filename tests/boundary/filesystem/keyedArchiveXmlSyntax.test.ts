@@ -42,7 +42,7 @@ it.each([
       parameters: { path: "Archive.plist" },
     }),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     cause: { _tag: "ParseFailureError", kind: "malformed" },
   });
 });

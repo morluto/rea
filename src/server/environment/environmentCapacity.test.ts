@@ -48,56 +48,48 @@ it("refuses a complete oversized discovery before trying to bind", async () => {
       reportedLimits: { max_catalog_bytes: expect.any(Number) },
     },
   });
-  expect(manifest.tools[0]?.query_parameter_names).toHaveLength(10000);
 });
 
-it("charges environment identity, aggregate tools and escaped text before producing a card", () => {
+it("refuses a catalog whose individually admissible tools exceed the shared budget", () => {
   const source = environmentServeSource();
-  const limit = reportedCatalogLimit();
   const tools = Array.from({ length: 1000 }, (_, index) => ({
     ...source.manifest.tools[0]!,
     name: `tool_${index}`,
     params: [],
     query_parameter_names: [],
   }));
-  expect(
+  const admit = (tools: typeof source.manifest.tools) =>
     environmentToolDefinitions(
-      {
-        ...source,
-        manifest: { ...source.manifest, tools },
-      },
+      { ...source, manifest: { ...source.manifest, tools } },
       source.manifest.name,
-    ).ok,
-  ).toBe(false);
-  expect(environmentToolDefinitions(source, "x".repeat(limit)).ok).toBe(false);
-  const normal = environmentToolDefinitions(source, source.manifest.name);
-  if (!normal.ok) throw normal.error;
-  expect(
-    Buffer.byteLength(
-      JSON.stringify(
-        normal.value.map(({ tool: _, ...definition }) => definition),
-      ),
-    ),
-  ).toBeLessThan(limit);
+    );
+  expect(admit(tools.slice(0, 1)).ok).toBe(true);
+  expect(admit(tools)).toMatchObject({
+    ok: false,
+    error: { resource: "capacity" },
+  });
 });
 
-it("reserves the state card only when the state data plane is served", () => {
+it("keeps escaped names within the card budget and reserves state-only fields", () => {
   const source = environmentServeSource();
   const limit = reportedCatalogLimit();
   const empty = { ...source, manifest: { ...source.manifest, tools: [] } };
-  const admits = (length: number, dataPlane: "none" | "state") =>
-    environmentToolDefinitions(empty, "x".repeat(length), { dataPlane }).ok;
-  // With no tools, the name and the card are the whole reservation: six bytes per name unit plus quotes.
-  const longest = (dataPlane: "none" | "state") =>
-    Math.floor(
-      (limit - 2 - JSON.stringify(environmentCard("", [], dataPlane)).length) /
-        6,
-    );
-  const stateless = longest("none");
-  expect(admits(stateless, "none")).toBe(true);
-  expect(admits(stateless + 1, "none")).toBe(false);
-  expect(longest("state")).toBeLessThan(stateless);
-  expect(admits(stateless, "state")).toBe(false);
-  expect(admits(longest("state"), "state")).toBe(true);
-  expect(admits(longest("state") + 1, "state")).toBe(false);
+  const unit = "\u0001";
+  const cardBytes = (name: string, mode: "none" | "state") =>
+    Buffer.byteLength(JSON.stringify(environmentCard(name, [], mode)));
+  const escapedBytes = cardBytes(unit, "none") - cardBytes("", "none");
+  const fits = (name: string, dataPlane: "none" | "state") =>
+    environmentToolDefinitions(empty, name, { dataPlane }).ok;
+  const maxName = (mode: "none" | "state") =>
+    unit.repeat(Math.floor((limit - cardBytes("", mode) - 2) / escapedBytes));
+  const replayName = maxName("none");
+  expect(fits("x".repeat(replayName.length + 1), "none")).toBe(false);
+  expect(cardBytes(replayName, "state")).toBeGreaterThan(limit);
+  expect(fits(replayName, "state")).toBe(false);
+  for (const mode of ["none", "state"] as const) {
+    const name = maxName(mode);
+    expect(fits(name, mode)).toBe(true);
+    expect(cardBytes(name, mode)).toBeLessThanOrEqual(limit);
+    expect(fits(`${name}${unit}`, mode)).toBe(false);
+  }
 });

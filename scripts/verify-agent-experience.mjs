@@ -1,7 +1,7 @@
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { closeAgentEvaluation } from "./lib/agent-evaluation-cleanup.mjs";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 
-import { createHash } from "node:crypto";
 import { chmod, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
@@ -10,7 +10,6 @@ import { tsImport } from "tsx/esm/api";
 
 import { PRODUCT_IDENTITY } from "../dist/identity.js";
 import { createAgentEvaluationCommands } from "./lib/agent-evaluation-commands.mjs";
-import { assertAgentEvaluationReportPassed } from "./lib/agent-evaluation-report-gate.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
@@ -43,13 +42,14 @@ const {
   ).href,
   import.meta.url,
 );
-const { summarizeFactualCorrectness } = await tsImport(
-  new URL(
-    "../tests/evaluation/model-evals/AgentEvaluationReport.ts",
+const { assertAgentEvaluationReportPassed, summarizeFactualCorrectness } =
+  await tsImport(
+    new URL(
+      "../tests/evaluation/model-evals/AgentEvaluationReport.ts",
+      import.meta.url,
+    ).href,
     import.meta.url,
-  ).href,
-  import.meta.url,
-);
+  );
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const verifierRun = createVerifierRun();
@@ -491,9 +491,7 @@ async function createTargets(root, includeManaged) {
     managed: join(managedOutput, "AgentEval.dll"),
     ...(includeManaged
       ? {
-          managedSha256: createHash("sha256")
-            .update(await readFile(join(managedOutput, "AgentEval.dll")))
-            .digest("hex"),
+          managedSha256: await sha256File(join(managedOutput, "AgentEval.dll")),
         }
       : {}),
   };

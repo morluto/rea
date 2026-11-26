@@ -1,18 +1,16 @@
 import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it } from "vitest";
 import { z } from "zod";
 
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it("delivers typed tool failures without violating the advertised success schema over stdio", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-tool-error-schema-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-tool-error-schema-");
   const missing = join(root, "not-present.bin");
   const { client, call } = await connectLocalToolsMcp();
   const tools = (await client.listTools()).tools;

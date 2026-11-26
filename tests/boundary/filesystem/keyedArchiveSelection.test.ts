@@ -9,7 +9,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 
-import { build } from "plist";
+import { build, buildBinary } from "plist";
 import { expect, it } from "vitest";
 
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
@@ -21,7 +21,7 @@ import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
-  AnalysisUnsupportedTargetError,
+  AnalysisTargetFailureError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -209,6 +209,39 @@ it.each([
     "inspect_plist",
   ],
   [
+    "plist with another archiver and scalar $top",
+    Buffer.from(
+      build({ $archiver: "MyArchiver", $objects: ["$null"], $top: "root" }),
+    ),
+    'its $archiver is "MyArchiver" without an $objects table and $top roots',
+    "inspect_plist",
+  ],
+  // A UID projects as an object but is not the $top roots dictionary.
+  [
+    "plist with another archiver and a binary UID $top",
+    Buffer.from(
+      buildBinary({
+        $archiver: "MyArchiver",
+        $objects: ["$null", "value"],
+        $top: { UID: 1 },
+      }),
+    ),
+    'its $archiver is "MyArchiver" without an $objects table and $top roots',
+    "inspect_plist",
+  ],
+  [
+    "plist with another archiver and an XML CF$UID $top",
+    Buffer.from(
+      build({
+        $archiver: "MyArchiver",
+        $objects: ["$null", "value"],
+        $top: { CF$UID: 1 },
+      }),
+    ),
+    'its $archiver is "MyArchiver" without an $objects table and $top roots',
+    "inspect_plist",
+  ],
+  [
     "compiled NIBArchive",
     Buffer.concat([Buffer.from("NIBArchive"), Buffer.alloc(40)]),
     "compiled NIBArchive",
@@ -222,7 +255,7 @@ it.each([
     const rejected = await inspect(root, {
       path: "Contents/Resources/Other.nib",
     }).catch((cause: unknown) => cause);
-    expect(rejected).toBeInstanceOf(AnalysisUnsupportedTargetError);
+    expect(rejected).toBeInstanceOf(AnalysisTargetFailureError);
     expect(projectAnalysisError(asAnalysisError(rejected))).toMatchObject({
       code: "unsupported_target",
       message: expect.stringContaining(reason),
@@ -236,14 +269,11 @@ it.each([
 );
 
 it.each([
-  ["darwin", "Inspect an ordinary property list with inspect_plist"],
-  [
-    "linux",
-    "inspect_plist, which reads ordinary property lists, requires a macOS host",
-  ],
+  ["darwin", "it has no $archiver key"],
+  ["linux", "the ordinary property list reader requires a macOS host"],
 ] as const)(
-  "names the property-list workflow available on a %s host",
-  async (platform, action) => {
+  "names the property-list workflow and its host on a %s host",
+  async (platform, reason) => {
     const root = await createTestTempDirectory("rea-keyed-kind-");
     const path = join(root, "Defaults.plist");
     const bytes = Buffer.from(build({ plain: true }));
@@ -259,11 +289,50 @@ it.each([
     if (result.ok) throw new Error("Expected an unsupported target");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "unsupported_target",
-      remediation: { action: expect.stringContaining(action) },
-      details: { path },
+      remediation: {
+        action: expect.stringContaining("Use inspect_plist for this target."),
+      },
+      details: {
+        path,
+        failure_kind: "unrecognized",
+        format: "keyed-archive",
+        reason: expect.stringContaining(reason),
+        related_operations: ["inspect_plist"],
+      },
     });
   },
 );
+
+it("decodes an archive another keyed archiver wrote, as Foundation does", async () => {
+  // SceneKit writes .scn scenes with SCNKeyedArchiver; NSKeyedUnarchiver reads them.
+  const root = await bundle();
+  await writeFile(
+    join(root, "Contents", "Resources", "Scene.scn"),
+    Buffer.from(
+      build({
+        $archiver: "SCNKeyedArchiver",
+        $version: 100000,
+        $objects: ["$null", "value"],
+        $top: { root: { CF$UID: 1 }, other: { CF$UID: 1 } },
+      }),
+    ),
+  );
+  const { archiver, roots, objects, references, limitations } = await inspect(
+    root,
+    { path: "Contents/Resources/Model.plist" },
+  );
+  expect(archiver).toBe("NSKeyedArchiver");
+  await expect(
+    inspect(root, { path: "Contents/Resources/Scene.scn" }),
+  ).resolves.toMatchObject({
+    archive_path: "Contents/Resources/Scene.scn",
+    archiver: "SCNKeyedArchiver",
+    roots,
+    objects,
+    references,
+    limitations,
+  });
+});
 
 it("keeps a damaged NSKeyedArchiver archive a format failure", async () => {
   const root = await bundle();
@@ -276,11 +345,10 @@ it("keeps a damaged NSKeyedArchiver archive a format failure", async () => {
   }).catch((cause: unknown) => cause);
   expect(rejected).toBeInstanceOf(ArtifactReaderFailure);
   expect(rejected).toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringContaining("$objects array"),
   });
 });
-
 it("selects a decomposed bundle path by its normalized spelling and reports the raw identity", async () => {
   const root = await bundle();
   const rawPath = `Contents/Resources/Caf\u0065\u0301.plist`;

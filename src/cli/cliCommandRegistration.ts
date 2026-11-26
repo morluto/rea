@@ -9,6 +9,7 @@ export interface CliRegistrationContext {
   readonly cli: CliInstance;
   readonly logger: Logger;
   readonly environment: Readonly<Record<string, string | undefined>>;
+  readonly savedDefaults: ReadonlySet<string> | undefined;
   readonly fridaInstrumentation: FridaInstrumentationPort | undefined;
 }
 
@@ -34,6 +35,35 @@ export const plain = <Module>(
   load: () => Promise<Module>,
   register: (module: Module, context: CliRegistrationContext) => void,
 ) => ({ analysis: false, load, register }) as const;
+
+type CommandRegistrar<Extra extends unknown[] = []> = (
+  cli: CliInstance,
+  logger: Logger,
+  ...extra: Extra
+) => void;
+
+export const cliRegistrar = <
+  Name extends string,
+  Module extends Record<Name, CommandRegistrar>,
+>(
+  load: () => Promise<Module>,
+  name: Name,
+) =>
+  plain(load, (module, context) => module[name](context.cli, context.logger));
+
+export const cliRegistrarWithEnvironment = <
+  Name extends string,
+  Module extends Record<
+    Name,
+    CommandRegistrar<[CliRegistrationContext["environment"]]>
+  >,
+>(
+  load: () => Promise<Module>,
+  name: Name,
+) =>
+  plain(load, (module, context) =>
+    module[name](context.cli, context.logger, context.environment),
+  );
 
 export const withAnalysis = <Module>(
   load: () => Promise<Module>,

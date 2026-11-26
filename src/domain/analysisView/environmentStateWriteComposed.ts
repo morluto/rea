@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
   ownMember,
@@ -107,9 +108,7 @@ interface CandidateIndex {
 const indexed = (candidates: readonly Candidate[]): CandidateIndex => {
   const byToken = new Map<string, Candidate[]>();
   for (const candidate of candidates) {
-    const same = byToken.get(candidate.token);
-    if (same === undefined) byToken.set(candidate.token, [candidate]);
-    else same.push(candidate);
+    appendToMapList(byToken, candidate.token, candidate);
   }
   const lengths = [...new Set(candidates.map(({ token }) => token.length))];
   return { byToken, lengths: lengths.sort((left, right) => right - left) };

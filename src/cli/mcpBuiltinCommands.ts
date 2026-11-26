@@ -1,15 +1,9 @@
 import { mcpRegistrationOptionsSchema } from "../contracts/mcpRegistration.js";
+import { PRODUCT_IDENTITY } from "../identity.js";
 
-import {
-  adaptCliOutputArgumentsForIncur,
-  parseCliGlobalArguments,
-  type CliGlobalArguments,
-} from "../cliBuiltinArguments.js";
-import {
-  readCliOutputArguments,
-  renderCliDocument,
-  type CliOutputFormat,
-} from "../cliOutput.js";
+import type { CliGlobalArguments } from "../cliBuiltinArguments.js";
+import { readCliOutputArguments, renderCliDocument } from "./cliOutput.js";
+import { jsonLinesErrorRecord } from "./jsonLines.js";
 import { renderFailure } from "./outputEnvelope.js";
 import { suggestCommand } from "./commandSuggestion.js";
 import { unknownCommandReply } from "./unknownCommandReply.js";
@@ -30,7 +24,7 @@ export const MCP_SUBCOMMANDS = new Map([
   ["doctor", { description: "Validate MCP server startup and tool listing" }],
 ]);
 
-/** Incur 0.6.1 builtins that it serves before its `mcp` subcommand branch. */
+/** Global documents take precedence over an unknown MCP subcommand. */
 const PRECEDING_BUILTIN_FLAGS: ReadonlySet<string> = new Set([
   "--incur-update-check",
   "--update",
@@ -39,13 +33,21 @@ const PRECEDING_BUILTIN_FLAGS: ReadonlySet<string> = new Set([
   "--mcp",
 ]);
 
+/** Whether this invocation targets `rea mcp add` rather than global discovery. */
+export const isMcpRegistrationCommand = (
+  global: CliGlobalArguments,
+): boolean => {
+  const offset = global.command[0] === PRODUCT_IDENTITY.cliBinary ? 1 : 0;
+  if (global.command[offset] !== "mcp" || global.command[offset + 1] !== "add")
+    return false;
+  for (const flag of global.flags)
+    if (PRECEDING_BUILTIN_FLAGS.has(flag)) return false;
+  return true;
+};
+
 /**
- * Incur 0.6.1 rejects an unknown `mcp` subcommand in TOON regardless of the
- * selected format. Report the same document in the explicitly selected format,
- * or preserve the default TOON/human presentation. Both paths honor explicit
- * sensitive-value declarations before rendering.
- * The caller's arguments are read before REA adapts output flags for Incur,
- * so the suggested command keeps the caller's selection.
+ * Report an unknown MCP subcommand through REA's diagnostic renderer, retaining
+ * caller arguments for suggestions and explicit sensitive-value declarations.
  */
 export const reportUnknownMcpSubcommand = (
   name: string,
@@ -55,30 +57,22 @@ export const reportUnknownMcpSubcommand = (
   const started = performance.now();
   const { arguments: arguments_, command } = global;
   const [entry, subcommand] = command;
-  // Incur receives JSON for REA's delimited formats and no `--columns`.
-  const incur = parseCliGlobalArguments(
-    adaptCliOutputArgumentsForIncur(arguments_),
-  );
-  const incurArguments = incur.arguments;
-  const incurOutputValues = new Set(
-    incur.outputValues.map(({ index }) => index),
-  );
+  const outputValues = new Set(global.outputValues.map(({ index }) => index));
   if (
     entry !== "mcp" ||
-    // Incur shows group help for an empty token and owns flag-shaped globals.
+    // An empty token shows group help.
     !subcommand ||
-    subcommand.startsWith("-") ||
     MCP_SUBCOMMANDS.has(subcommand) ||
-    // Incur serves these builtins before its `mcp` subcommand branch. An
+    // Global documents precede the MCP subcommand branch. An
     // output flag's value is data, even when it is spelled like a builtin.
-    incurArguments.some(
+    arguments_.some(
       (token, index) =>
-        !incurOutputValues.has(index) && PRECEDING_BUILTIN_FLAGS.has(token),
+        !outputValues.has(index) && PRECEDING_BUILTIN_FLAGS.has(token),
     )
   )
     return false;
-  const output = readCliOutputArguments(incur);
-  // Invalid output controls keep Incur's own parse diagnostic.
+  const output = readCliOutputArguments(global);
+  // The invocation boundary owns invalid output controls.
   if (!output.validation.ok) return false;
   // Preserve the existing explicit-format prefix policy and the default
   // dispatcher's edit-distance ranking while moving both replies to one owner.
@@ -98,12 +92,15 @@ export const reportUnknownMcpSubcommand = (
     commandIndex: 1,
     suggestion,
   });
+  const diagnostic = { ...failure, cta };
+  const format =
+    output.format === "csv" || output.format === "tsv" ? "json" : output.format;
   (options.stdout ?? ((value: string) => process.stdout.write(value)))(
     // REA's document renderer owns JSON layout and Markdown escaping.
     output.formatExplicit
       ? renderCliDocument(
-          { ...failure, cta },
-          output.format as CliOutputFormat,
+          format === "jsonl" ? jsonLinesErrorRecord(diagnostic) : diagnostic,
+          format,
           process.stdout.isTTY === true,
         )
       : renderFailure(

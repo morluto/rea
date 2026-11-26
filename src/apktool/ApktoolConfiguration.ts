@@ -4,12 +4,11 @@ import {
 } from "../providers/OwnedCommandCleanup.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { capturedApktoolFailureOutput } from "./ApktoolCommandOutput.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
 import { ok, err, type Result } from "../domain/result.js";
 import { ApktoolCommandCleanup } from "./ApktoolCommandCleanup.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
+import { ownershipPreparationError } from "../providers/ownedProcessAvailability.js";
 import { launcherFailureOf } from "../process/launchFailure.js";
 import { classifyLaunchFailure } from "../process/classifyProviderOutcome.js";
 import {
@@ -18,7 +17,7 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import { isAbsolute, win32 } from "node:path";
+import { isQualifiedCallerPath } from "../filesystem/callerPath.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { findWindowsExecutable } from "../process/WindowsExecutable.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
@@ -26,6 +25,7 @@ import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 import { randomUUID } from "node:crypto";
 import {
   OwnedCommandFailure,
+  preparationHostCapacityFailure,
   runOwnedCommand,
   prepareOwnedCommand,
 } from "../process/OwnedCommand.js";
@@ -80,11 +80,7 @@ export const resolveApktoolCommand = async (
   const selectedEnvironment = snapshotEnvironment(environment, platform);
   const configured = selectedEnvironment[APKTOOL_COMMAND_ENV];
   if (configured !== undefined && configured.trim() !== "") {
-    if (
-      !(platform === "win32"
-        ? win32.isAbsolute(configured)
-        : isAbsolute(configured))
-    )
+    if (!isQualifiedCallerPath(configured, platform))
       throw new ApktoolConfigurationFailure(
         "not_absolute",
         `${APKTOOL_COMMAND_ENV} must be an absolute path to the apktool launcher`,
@@ -488,28 +484,6 @@ const versionProbeFailure = (
       )
     );
   if (inspectionCancellation !== undefined) return inspectionCancellation;
-  if (
-    preparation !== undefined &&
-    !(cause instanceof OwnedCommandFailure && cause.reason === "timeout")
-  )
-    return new ProviderAdapterError("apktool", "inspect_apktool_client", {
-      cause,
-      diagnostics: {
-        stage: "ownership_preparation",
-        ...(!(preparation instanceof DarwinProcessOwnershipInspectionError) ||
-        preparation.compilerOutcome === undefined
-          ? {}
-          : {
-              compiler_outcome: jsonValueSchema.parse(
-                preparation.compilerOutcome,
-              ),
-            }),
-      },
-      ...(!(preparation instanceof DarwinProcessOwnershipInspectionError) ||
-      preparation.capturedOutput === undefined
-        ? {}
-        : { capturedOutput: preparation.capturedOutput }),
-    });
   if (cause instanceof OwnedCommandFailure && cause.reason === "timeout")
     return new AnalysisTimeoutError(
       "inspect_apktool_client",
@@ -520,7 +494,8 @@ const versionProbeFailure = (
         ...apktoolVersionProbeTimeoutGuidance(),
       },
     );
-  const launch = launcherFailureOf(cause);
+  const launch =
+    preparationHostCapacityFailure(cause) ?? launcherFailureOf(cause);
   // The host, not the selected launcher, refused this launch.
   if (launch?.kind === "host-exhausted" || launch?.kind === "argument-list")
     return classifyLaunchFailure(launch, {
@@ -537,6 +512,12 @@ const versionProbeFailure = (
         },
       },
     });
+  if (preparation !== undefined)
+    return ownershipPreparationError(
+      "apktool",
+      "inspect_apktool_client",
+      cause,
+    );
   if (launch?.kind === "missing" || launch?.kind === "not_executable") {
     const execDenied = launch.kind === "not_executable";
     return new ApktoolConfigurationFailure(
