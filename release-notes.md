@@ -103,6 +103,7 @@
 * **artifacts:** inventory and expand Android sparse images offline ([#13244](https://github.com/morluto/rea/issues/13244)) ([192177f](https://github.com/morluto/rea/commit/192177f0c91ed94cf9b8698f7ccdb3f2e44330fe))
 * **artifacts:** inventory and extract ISO 9660 disc images offline ([#13290](https://github.com/morluto/rea/issues/13290)) ([e896f60](https://github.com/morluto/rea/commit/e896f60540f03e2c1fe0f916412bddd656c1f296))
 * **artifacts:** inventory and extract stored and gzip-compressed tar archives ([#14245](https://github.com/morluto/rea/issues/14245)) ([225a19a](https://github.com/morluto/rea/commit/225a19ae7a39d06d03a8d5df4d9bf44e645a6c54))
+* **artifacts:** inventory Nintendo DS ROM binaries, overlays and file tables offline ([#14664](https://github.com/morluto/rea/issues/14664)) ([51b3671](https://github.com/morluto/rea/commit/51b3671b08714435cc6cc2188ab495db0b70d515))
 * **artifacts:** report declared DDS, GLB, KTX and KTX2 headers and regions ([#14248](https://github.com/morluto/rea/issues/14248)) ([78d2593](https://github.com/morluto/rea/commit/78d2593a4543592636a49c0cead0ca64dcef78ea))
 * **browser:** accept mitmproxy 12.3.1 for native capture decode ([#8088](https://github.com/morluto/rea/issues/8088)) ([4f43d74](https://github.com/morluto/rea/commit/4f43d7422f5b4666a12570105ff5e25a6df7ec6c))
 * **browser:** accept retained capture references in compare_web_captures ([523d44f](https://github.com/morluto/rea/commit/523d44f6d8241b7283c8b1d6d63db3abe5475fab))
