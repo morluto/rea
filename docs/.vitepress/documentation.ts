@@ -599,6 +599,11 @@ export const documentationSections = [
     text: "Provider setup and formats",
     items: [
       {
+        text: "Leandec provider",
+        source: "providers/leandec-provider.md",
+        route: "/leandec-provider",
+      },
+      {
         text: "Ghidra provider semantics",
         source: "providers/ghidra-provider.md",
         route: "/ghidra-provider",

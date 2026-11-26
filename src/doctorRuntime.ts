@@ -28,6 +28,10 @@ import {
   inspectKunaProvider,
   kunaSettingAffectsProbe,
 } from "./kuna/KunaDoctor.js";
+import {
+  inspectLeandecProvider,
+  LEANDEC_DOCTOR_SETTINGS,
+} from "./leandec/LeandecDoctor.js";
 import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
 import { ok } from "./domain/result.js";
@@ -236,6 +240,7 @@ const PROVIDER_SETTINGS: Readonly<Record<string, readonly string[]>> = {
   ida: IDA_DOCTOR_SETTINGS,
   jadx: JADX_DOCTOR_SETTINGS,
   kuna: KUNA_DOCTOR_SETTINGS,
+  leandec: LEANDEC_DOCTOR_SETTINGS,
 };
 
 /**
@@ -303,6 +308,7 @@ const PROVIDER_CONFIGURATION_KEYS: Readonly<Record<string, string>> = {
   ida: "REA_IDA_MCP_CONFIG",
   jadx: "REA_JADX_MCP_JAR",
   kuna: "REA_KUNA_COMMAND",
+  leandec: "LEANDEC_MCP_SERVER",
 };
 
 const providerConfigurationPresent = (
@@ -646,7 +652,17 @@ export const createSystemDoctorHost = (
         inspectionEnvironment,
         platform,
       );
+      const leandecUnresolved = unresolvedProvider(
+        "leandec",
+        unresolved,
+        inspectionEnvironment,
+        platform,
+      );
       const inspections = await settleConcurrent([
+        Promise.resolve(
+          leandecUnresolved ??
+            inspectLeandecProvider(inspectionEnvironment, platform),
+        ),
         ghidraUnresolved !== undefined
           ? Promise.resolve(ghidraUnresolved)
           : withProbeResourceScope(

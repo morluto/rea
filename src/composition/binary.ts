@@ -11,6 +11,7 @@ import { GhidraProvider } from "../ghidra/GhidraProvider.js";
 import { createIdaMcpConnection } from "../ida/IdaMcpConnection.js";
 import { IdaProvider } from "../ida/IdaProvider.js";
 import { KunaProvider } from "../kuna/KunaProvider.js";
+import { LeandecProvider } from "../leandec/LeandecProvider.js";
 import type { Logger } from "pino";
 import {
   auxiliaryAnalysisProviderDeclarations,
@@ -89,6 +90,12 @@ const composeDeepBinarySession = (
     regexMatchingDeadline: config.regexMatchingDeadline,
     regexWorkerHeapRequest: config.regexWorkerHeapRequest,
   });
+  const leandec = new LeandecProvider(
+    environment,
+    platform,
+    config.regexMatchingDeadline,
+    config.regexWorkerHeapRequest,
+  );
   const auxiliaryDeclarations = auxiliaryAnalysisProviderDeclarations(
     environment,
     platform,
@@ -103,7 +110,7 @@ const composeDeepBinarySession = (
     );
   return composeBinarySession(
     new AnalysisProviderRegistry(
-      [hopper, ghidra, ida, kuna],
+      [hopper, ghidra, ida, kuna, leandec],
       config.analysisProvider,
       nativeInspectionAvailable ? isAppleDispatchMetadataTarget : undefined,
     ),

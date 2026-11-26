@@ -24,6 +24,7 @@ const MIGRATED_PROVIDER_ROOTS = new Set([
   "ghidra",
   "hopper",
   "ida",
+  "leandec",
   "inspector",
   "javascript",
 ]);
