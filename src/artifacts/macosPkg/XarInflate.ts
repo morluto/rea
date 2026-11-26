@@ -12,6 +12,7 @@ import { errorMessage } from "../../kernel/errorMessage.js";
 import {
   ArtifactReaderFailure,
   artifactReaderLimitFailure,
+  malformedArtifact,
 } from "../../resources/index.js";
 
 const STORED_ENCODINGS = new Set([
@@ -85,6 +86,11 @@ export const extractedSizeMismatchError = (
   );
 
 export const isZlibOutputLimitError = (cause: unknown): boolean => {
+  const code =
+    typeof cause === "object" && cause !== null && "code" in cause
+      ? cause.code
+      : undefined;
+  if (code === "ERR_BUFFER_TOO_LARGE") return true;
   const message = errorMessage(cause);
   return (
     /exceeding/iu.test(message) ||
@@ -155,7 +161,10 @@ export const mapXarInflateStreamError = (
     cause instanceof Error
       ? `XAR member zlib inflate failed: ${path}: ${cause.message}`
       : `XAR member zlib inflate failed: ${path}`;
-  return new ArtifactReaderFailure("format", detail, { cause });
+  return malformedArtifact(MACOS_PKG_FORMAT, detail, {
+    field: "gzip",
+    cause,
+  });
 };
 
 /**

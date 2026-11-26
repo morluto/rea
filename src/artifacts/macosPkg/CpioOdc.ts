@@ -15,7 +15,7 @@ import {
   unsupportedInput,
 } from "../../domain/parseFailure.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { errorMessage } from "../../kernel/errorMessage.js";
+import { isZlibOutputLimitError } from "./XarInflate.js";
 
 export const CPIO_ODC_MAGIC = "070707";
 export const CPIO_ODC_HEADER_BYTES = 76;
@@ -265,16 +265,7 @@ const gunzipBounded = (
   try {
     return ok(gunzipSync(bytes, { maxOutputLength: limit }));
   } catch (cause: unknown) {
-    const message = errorMessage(cause);
-    const code =
-      typeof cause === "object" && cause !== null && "code" in cause
-        ? cause.code
-        : undefined;
-    if (
-      code === "ERR_BUFFER_TOO_LARGE" ||
-      /exceeding/iu.test(message) ||
-      /maxOutputLength/u.test(message)
-    )
+    if (isZlibOutputLimitError(cause))
       return err(
         macosPkgLimitFailure(
           `gzip payload exceeds the ${String(limit)}-byte decode allowance`,

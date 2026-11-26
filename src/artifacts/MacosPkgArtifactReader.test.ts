@@ -998,3 +998,51 @@ it("keeps a refusal from a cancelled preparation when another caller retries", a
     await reader.close();
   }
 });
+
+it("reports an oversize zlib XAR member as a limit rather than invalid gzip", () => {
+  const archived = deflateSync(Buffer.alloc(64 * 1024, 0x61));
+  const result = inflateXarMemberBytes(
+    archived,
+    "application/x-gzip",
+    1024,
+    "PackageInfo",
+  );
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error).toMatchObject({
+    kind: "limit",
+    failure: {
+      field: "gzip",
+      limit: { name: "macos_pkg_extracted_size", maximum: 1024 },
+    },
+  });
+});
+
+it("records an oversize refusal when a zlib PackageInfo inflates past its metadata cap despite a small declared size", async () => {
+  const overCap = Buffer.alloc(1024 * 1024 + 64, 0x20);
+  const { reader, entries } = await entriesOf(
+    buildXar({
+      files: [
+        {
+          path: "PackageInfo",
+          bytes: overCap,
+          encoding: "application/x-gzip",
+          extractedSize: 64,
+        },
+      ],
+    }),
+    "lying-declared-size.pkg",
+  );
+  try {
+    expect(reader.formatMetadata()?.packages).toEqual([]);
+    expect(reader.formatMetadata()?.refusals).toEqual([
+      expect.objectContaining({
+        code: "oversize",
+        path: "PackageInfo",
+      }),
+    ]);
+    expect(entries.map((entry) => entry.path)).toContain("PackageInfo");
+  } finally {
+    await reader.close();
+  }
+});

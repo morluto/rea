@@ -9,6 +9,7 @@ import type {
 } from "../domain/formatMetadata/macosPkgMetadata.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import {
+  MACOS_PKG_FORMAT,
   MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES,
   MACOS_PKG_MAX_METADATA_XML_BYTES,
   MACOS_PKG_MAX_TOC_UNCOMPRESSED_BYTES,
@@ -16,6 +17,7 @@ import {
   XAR_MAGIC_TEXT,
   XAR_VERSION,
   hasXarMagic,
+  macosPkgLimitFailure,
   type MacosPkgParseError,
 } from "../domain/macosPkgFormat.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
@@ -27,10 +29,12 @@ import {
   ArtifactFileSource,
   ArtifactReaderFailure,
   ArtifactResourceScope,
+  artifactFormatFailure,
   artifactReaderLimitFailure,
   assertArtifactReadActive,
   assertProducedEntry,
   copyArtifactEntry,
+  malformedArtifact,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactReaderTraversal,
@@ -52,6 +56,7 @@ import {
   inflateXarMemberBytes,
   isXarStoredEncoding,
   isXarZlibEncoding,
+  isZlibOutputLimitError,
   maxXarArchivedBytes,
 } from "./macosPkg/XarInflate.js";
 import {
@@ -64,8 +69,6 @@ import {
   parseXarTocXml,
   type XarTocFile,
 } from "./macosPkg/XarToc.js";
-
-const READ_CHUNK_BYTES = 64 * 1024;
 
 type StoredEntry = ArtifactEntry & {
   readonly formatMetadata: MacosPkgEntryMetadata;
@@ -208,9 +211,10 @@ const readerFailure = (error: MacosPkgParseError): ArtifactReaderFailure =>
   error.kind === "limit"
     ? new ArtifactReaderFailure("limit", error.message, {
         boundary: "capacity",
+        parserLimit: error.failure.limit,
         cause: error,
       })
-    : new ArtifactReaderFailure("format", error.message, { cause: error });
+    : artifactFormatFailure(error.failure, { cause: error });
 
 /** Inventory a macOS flat installer package (XAR `.pkg`) without executing it. */
 export class MacosPkgArtifactReader implements ArtifactReader {
@@ -411,6 +415,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
       this.#expandedBytes ?? artifactExpansionBudgetBytes(initial.size);
     const metadata = emptyMetadata();
     const prefix = await readArtifactFileBytes(
+      MACOS_PKG_FORMAT,
       handle,
       0,
       Math.min(initial.size, XAR_HEADER_MIN_BYTES),
@@ -418,9 +423,10 @@ export class MacosPkgArtifactReader implements ArtifactReader {
       signal,
     );
     if (!hasXarMagic(prefix))
-      throw new ArtifactReaderFailure(
-        "format",
+      throw malformedArtifact(
+        MACOS_PKG_FORMAT,
         "Installer package magic is not xar!",
+        { field: "magic" },
       );
     metadata.xar.magic = XAR_MAGIC_TEXT;
     if (prefix.length < XAR_HEADER_MIN_BYTES) {
@@ -479,6 +485,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
       return;
     }
     const compressedToc = await readArtifactFileBytes(
+      MACOS_PKG_FORMAT,
       handle,
       header.headerSize,
       header.tocCompressedLength,
@@ -491,6 +498,17 @@ export class MacosPkgArtifactReader implements ArtifactReader {
         maxOutputLength: MACOS_PKG_MAX_TOC_UNCOMPRESSED_BYTES,
       });
     } catch (cause: unknown) {
+      if (isZlibOutputLimitError(cause))
+        throw readerFailure(
+          macosPkgLimitFailure(
+            `XAR uncompressed TOC exceeds the ${String(MACOS_PKG_MAX_TOC_UNCOMPRESSED_BYTES)}-byte allowance`,
+            {
+              name: "macos_pkg_toc_uncompressed_bytes",
+              maximum: MACOS_PKG_MAX_TOC_UNCOMPRESSED_BYTES,
+            },
+            "toc",
+          ),
+        );
       metadata.refusals.push({
         code: "toc-inflate",
         message:
@@ -693,7 +711,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
   }
 
   async #decodeInstallerDocuments(
-    handle: Parameters<typeof readArtifactFileBytes>[0],
+    handle: Parameters<typeof readArtifactFileBytes>[1],
     metadata: MacosPkgMetadata,
     chargedXarBytes: number,
     signal?: AbortSignal,
@@ -848,7 +866,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
   }
 
   async #expandArchive(
-    handle: Parameters<typeof readArtifactFileBytes>[0],
+    handle: Parameters<typeof readArtifactFileBytes>[1],
     entry: StoredEntry | undefined,
     role: "scripts" | "payload",
     metadata: MacosPkgMetadata,
@@ -859,7 +877,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
     const bytes = await this.#readXarEntry(
       handle,
       entry,
-      MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES,
+      Math.min(remainingBudget, MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES),
       metadata,
       signal,
     );
@@ -1027,7 +1045,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
   }
 
   async #readXarEntry(
-    handle: Parameters<typeof readArtifactFileBytes>[0],
+    handle: Parameters<typeof readArtifactFileBytes>[1],
     entry: StoredEntry,
     maxBytes: number,
     metadata: MacosPkgMetadata,
@@ -1062,6 +1080,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
     // An unsupported encoding is refused by inflateXarMemberBytes; never read its range.
     const archived = supported
       ? await readArtifactFileBytes(
+          MACOS_PKG_FORMAT,
           handle,
           heapOffset,
           archivedLength,
@@ -1109,9 +1128,10 @@ export class MacosPkgArtifactReader implements ArtifactReader {
           ? entry.origin.archivedLength
           : entry.declaredSize;
     const mismatch = (): ArtifactReaderFailure =>
-      new ArtifactReaderFailure(
-        "format",
+      malformedArtifact(
+        MACOS_PKG_FORMAT,
         `${entry.path} extracted size ${String(expected)} does not match the ${String(bytes)}-byte decoded member`,
+        { field: "extracted-size" },
       );
     const check = async (): Promise<void> => {
       if (expected !== null && bytes !== expected) throw mismatch();
