@@ -274,6 +274,11 @@ it("names known flags and flags unknown bits as a limitation", () => {
   expect(facts.limitations.join(" ")).toContain("unrecognized bits 0x4");
 });
 
+it("reports unknown flag bits as unsigned hex", () => {
+  const facts = parsed(buildVbmetaImage({ flags: 0x8000_0000 }));
+  expect(facts.limitations.join(" ")).toContain("unrecognized bits 0x80000000");
+});
+
 it("names an unknown algorithm type instead of interpreting it", () => {
   const facts = parsed(buildVbmetaImage({ algorithmType: 42 }));
   expect(facts.algorithmTypeName).toBe("unknown");

@@ -1934,7 +1934,7 @@ const readAvbVbmetaImage = (
     limitations.push(
       `Algorithm type ${algorithmType} is not a known AvbAlgorithmType; the hash and signature layout was not interpreted.`,
     );
-  const unknownFlagBits = flags & ~0b11;
+  const unknownFlagBits = (flags & ~0b11) >>> 0;
   if (unknownFlagBits !== 0)
     limitations.push(
       `Flags carry unrecognized bits 0x${unknownFlagBits.toString(16)}; only hashtree-disabled and verification-disabled are decoded.`,
