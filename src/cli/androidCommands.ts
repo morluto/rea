@@ -164,7 +164,13 @@ export const registerAndroidCommands = (
           description:
             "Index among defined methods or observed external prototypes listed by an ambiguous query",
         },
+        view: {
+          description:
+            "JSON android-references top-classes or references view; requires --detail summary and --evidence_output",
+        },
       },
+      evidenceDelivery: true,
+      viewDelivery: { invalidJson: "view must be valid JSON" },
     },
     run("trace_android_references"),
   );

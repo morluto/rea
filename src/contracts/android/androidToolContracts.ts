@@ -5,6 +5,7 @@ import {
   androidSymbolInspectionInputSchemas,
   androidResultSchemas,
   androidJniInspectionInputSchema,
+  androidReferencesInspectionInputSchema,
 } from "../../domain/android/androidAnalysis.js";
 import {
   androidClassSummaryViewResultSchema,
@@ -15,6 +16,8 @@ import {
   androidManifestViewResultSchema,
   androidMethodSummaryViewResultSchema,
   androidPackageSummaryViewResultSchema,
+  androidReferencesPageViewResultSchema,
+  androidReferencesSummaryViewResultSchema,
 } from "../../domain/analysisView/summarySchemas/androidSummarySchemas.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
@@ -215,11 +218,15 @@ export const ANDROID_TOOL_CONTRACTS = [
       }),
     ),
     description:
-      "Trace incoming static using nodes to an exact Android class or selected method overload. A method target may be an external class directly named by DEX invokes: target_definition external and reference_scope direct_dex_invokes identify this narrower inventory, without inventing a class definition or body. Ambiguous external requests list observed DEX prototypes; select overload_index explicitly. For APK-defined targets use inspect_android_class. The total counts containing nodes, not individual invokes. External callers include source_selector for inspect_android_method. Source lines and the containing node dex_offset remain unknown. direct_invokes carries exact DEX code-unit offsets when available; direct_invokes_exhaustive false marks byte-bounded partial instruction evidence, and null means unknown. No reflection, JNI or runtime dispatch is inferred.",
+      'Trace incoming static using nodes to an exact Android class or selected method overload. A method target may be an external class directly named by DEX invokes: target_definition external and reference_scope direct_dex_invokes identify this narrower inventory, without inventing a class definition or body. Ambiguous external requests list observed DEX prototypes; select overload_index explicitly. For APK-defined targets use inspect_android_class. The total counts containing nodes, not individual invokes. External callers include source_selector for inspect_android_method. Source lines and the containing node dex_offset remain unknown. direct_invokes carries exact DEX code-unit offsets when available; direct_invokes_exhaustive false marks byte-bounded partial instruction evidence, and null means unknown. No reflection, JNI or runtime dispatch is inferred. Omitted detail returns the trace inline when it fits the agent result budget, else retains it and returns counts by kind, top class and package. With detail summary, view {kind: "android-references", facet: "top-classes"} lists distinct top classes with reference counts, and facet "references" pages using nodes with selected fields; both filter by kinds, packages or top_classes. Later pages use inspect_analysis_view with parent_evidence_id.',
     kind: "android-provider",
-    inputSchema: androidInputSchemas.trace_android_references,
+    inputSchema: androidReferencesInspectionInputSchema,
     outputSchema: evidenceResultOf(
-      androidResultSchemas.trace_android_references,
+      z.union([
+        androidResultSchemas.trace_android_references,
+        androidReferencesSummaryViewResultSchema,
+        androidReferencesPageViewResultSchema,
+      ]),
     ),
     examples: [
       {

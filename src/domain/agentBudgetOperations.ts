@@ -50,6 +50,7 @@ export const AGENT_BUDGET_OPERATIONS = [
   "resolve_containing_procedure",
   "search_procedures",
   "search_strings",
+  "trace_android_references",
   "trace_feature",
   "trace_web_source_location",
   "xrefs",

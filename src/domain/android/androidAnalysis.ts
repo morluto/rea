@@ -16,6 +16,7 @@ import {
   androidJniReportSchema,
 } from "./androidJniBindings.js";
 import { androidJniViewRequestSchema } from "./androidJniQuery.js";
+import { androidReferencesViewSchema } from "./androidReferencesQuery.js";
 
 const target = {
   path: localPathStringSchema.describe(
@@ -109,6 +110,15 @@ export const androidSymbolInspectionInputSchemas = {
     detail: z.enum(["complete", "summary"]).optional(),
   }),
 } as const;
+
+/** Reference delivery and its view never reach the engine. */
+export const androidReferencesInspectionInputSchema =
+  androidInputSchemas.trace_android_references
+    .extend({
+      detail: z.enum(["complete", "summary"]).optional(),
+      view: androidReferencesViewSchema.optional(),
+    })
+    .superRefine(validateAndroidPackageDelivery);
 
 /** JNI selection changes analysis; delivery only selects retained views. */
 export const androidJniInspectionInputSchema =

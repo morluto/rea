@@ -14,6 +14,7 @@ import type { AndroidAnalysisService } from "../application/android/AndroidAnaly
 import {
   androidJniInspectionInputSchema,
   androidPackageInspectionInputSchema,
+  androidReferencesInspectionInputSchema,
   androidSymbolInspectionInputSchemas,
 } from "../domain/android/androidAnalysis.js";
 import { dartAotInspectionInputSchema } from "../domain/flutter/flutterBuildAnalysis.js";
@@ -280,10 +281,19 @@ const SERVICE_TOOL_BINDINGS = {
     },
   })) satisfies Bind<FlutterBuildAnalysisService>,
   androidAnalysis: ((service, retention) => ({
-    ...contractServiceBindings(service, [
-      "search_android_classes",
-      "trace_android_references",
-    ]),
+    ...contractServiceBindings(service, ["search_android_classes"]),
+    trace_android_references: {
+      admission: "sdk",
+      run: (input, options) =>
+        executeRetainedSummaryOperation(
+          service,
+          "trace_android_references",
+          androidReferencesInspectionInputSchema,
+          input,
+          retention,
+          options,
+        ),
+    },
     inspect_android_package: {
       admission: "sdk",
       run: (input, options) =>
