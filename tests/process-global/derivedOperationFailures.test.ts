@@ -4,7 +4,7 @@ import { stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { InMemoryTransport, Client } from "@modelcontextprotocol/client";
-import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../../src/contracts/artifactComparisonExample.js";

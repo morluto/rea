@@ -105,7 +105,7 @@ export const runCliJavaScriptApplicationAnalysis = async (
   environment: Readonly<Record<string, string | undefined>>,
   signal?: AbortSignal,
   delivery?: {
-    readonly detail: "complete" | "summary";
+    readonly detail: "complete" | "summary" | undefined;
     readonly evidenceOutput: string | undefined;
     readonly view?: AnalysisViewRequest;
   },

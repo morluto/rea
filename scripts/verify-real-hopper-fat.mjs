@@ -1,3 +1,4 @@
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
@@ -30,6 +31,7 @@ import {
   relocateSingleFatSlice,
 } from "./lib/real-hopper-source-binding.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 const verifierRun = createVerifierRun();
 // xcrun resolves clang and lipo before a workspace exists. A failed probe must
@@ -119,7 +121,9 @@ let preparedImagePath;
 const before = (
   await snapshotHopperRuntime("/tmp", HOPPER_TARGET_LEASE_DIRECTORY)
 ).paths;
-const client = new Client({ name: "hopper-fat-verifier", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "hopper-fat-verifier", version: "1" }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: ["dist/main.js"],
@@ -391,9 +395,7 @@ try {
       );
     }
     assert.equal(
-      createHash("sha256")
-        .update(await readFile(path))
-        .digest("hex"),
+      await sha256File(path),
       sourceHash,
       "native analysis modified source executable bytes",
     );

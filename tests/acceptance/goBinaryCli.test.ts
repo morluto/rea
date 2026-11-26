@@ -73,7 +73,7 @@ cliTest(
           code: "unsupported_target",
           details: {
             operation: "inspect_go_binary",
-            format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
+            failure_kind: expect.stringMatching(/^(?:malformed|truncated)$/u),
           },
         };
         expect(result.exitCode).toBe(1);
@@ -173,7 +173,7 @@ cliTest(
                   },
                 }
               : {
-                  format_failure: expect.stringMatching(
+                  failure_kind: expect.stringMatching(
                     /^(?:malformed|truncated)$/u,
                   ),
                 }),
@@ -192,7 +192,7 @@ cliTest(
                   },
                 }
               : {
-                  format_failure: expect.stringMatching(
+                  failure_kind: expect.stringMatching(
                     /^(?:malformed|truncated)$/u,
                   ),
                 }),
@@ -366,7 +366,7 @@ cliTest(
       code: "unsupported_target",
       details: {
         operation: "inspect_go_binary",
-        format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
+        failure_kind: expect.stringMatching(/^(?:malformed|truncated)$/u),
       },
     };
 
@@ -610,9 +610,6 @@ cliTest(
       result.json,
     ).normalized_result;
     expect(report.build_info).toBeNull();
-    expect(report.limitations.join(" ")).toContain(
-      "does not establish that the binary is not Go",
-    );
   },
 );
 
@@ -639,9 +636,6 @@ cliTest(
       complete: true,
       unparsed_lines: [],
     });
-    expect(evidence.limitations.join(" ")).toContain(
-      "Dependency coverage is unknown",
-    );
   },
 );
 

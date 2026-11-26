@@ -1,3 +1,9 @@
+import {
+  uint32LE as pckU32,
+  uint64LE as pckU64,
+} from "../../src/native/BinaryInteger.fixture.js";
+
+export { pckU32, pckU64 };
 import { createHash } from "node:crypto";
 
 export interface GodotPckMember {
@@ -9,16 +15,6 @@ export interface GodotPckMember {
   readonly offset?: bigint;
 }
 
-export const pckU32 = (value: number): Buffer => {
-  const bytes = Buffer.alloc(4);
-  bytes.writeUInt32LE(value);
-  return bytes;
-};
-export const pckU64 = (value: bigint | number): Buffer => {
-  const bytes = Buffer.alloc(8);
-  bytes.writeBigUInt64LE(BigInt(value));
-  return bytes;
-};
 const pad4 = (bytes: Buffer): Buffer =>
   Buffer.concat([bytes, Buffer.alloc((4 - (bytes.length % 4)) % 4)]);
 

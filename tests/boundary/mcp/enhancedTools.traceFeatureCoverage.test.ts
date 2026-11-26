@@ -10,15 +10,12 @@ import {
 import { err, ok } from "../../../src/domain/result.js";
 
 import { closeEnhancedToolResources, connect } from "./enhancedToolsHarness.js";
+import { createFixtureProviderIdentity } from "../../fixtures/analysisExecution.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
 afterEach(closeEnhancedToolResources);
 
-const PROVIDER = {
-  id: "fixture",
-  name: "Fixture analysis provider",
-  version: "1",
-} as const;
+const PROVIDER = createFixtureProviderIdentity();
 
 type Coverage = boolean | undefined;
 

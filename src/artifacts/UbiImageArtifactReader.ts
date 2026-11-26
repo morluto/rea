@@ -13,6 +13,7 @@ import {
   ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
   copyArtifactEntry,
+  malformedArtifact,
   assertProducedEntry,
   type ArtifactEntry,
   type ArtifactReader,
@@ -37,6 +38,7 @@ import {
   type UbiVolume,
 } from "../domain/firmware/ubiImage.js";
 
+const FORMAT = "ubi-image";
 const LABEL = "UBI image";
 
 type UbiEntry = ArtifactEntry & {
@@ -170,7 +172,7 @@ export class UbiImageArtifactReader implements ArtifactReader {
     const parsed = await parseUbiImage(
       size,
       (offset, length) =>
-        readArtifactFileBytes(handle, offset, length, size, signal),
+        readArtifactFileBytes(FORMAT, handle, offset, length, size, signal),
       {
         checkpoint: async (yieldControl) => {
           if (yieldControl) await setImmediate();
@@ -263,11 +265,7 @@ const formatFailure = (
   detail: string,
   options?: ErrorOptions,
 ): ArtifactReaderFailure =>
-  new ArtifactReaderFailure(
-    "format",
-    `${LABEL} is malformed: ${detail}`,
-    options,
-  );
+  malformedArtifact(FORMAT, `${LABEL} is malformed: ${detail}`, options);
 
 const parseFailure = (failure: UbiImageParseError): ArtifactReaderFailure => {
   switch (failure.kind) {

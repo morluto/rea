@@ -1,5 +1,7 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { z } from "zod";
 import { coverageStatusSchema } from "../coverage.js";
+import { CoverageAccumulator } from "../coverageAccumulator.js";
 
 import {
   nativeMetadataEvidenceSchema,
@@ -231,9 +233,7 @@ export const traceNativeInvestigationGraph = (
   for (const edge of graph.edges) {
     const nodeId = direction === "forward" ? edge.from : edge.to;
     if (nodeId === null) continue;
-    const entries = adjacency.get(nodeId);
-    if (entries === undefined) adjacency.set(nodeId, [edge]);
-    else entries.push(edge);
+    appendToMapList(adjacency, nodeId, edge);
   }
 
   let queueHead = 0;
@@ -320,9 +320,7 @@ const indexTargetActionEdges = (
       continue;
     if (nodes.get(edge.to)?.kind === "objc_selector")
       selectorNodesByAction.set(edge.from, edge.to);
-    const list = edgesByAction.get(edge.from);
-    if (list === undefined) edgesByAction.set(edge.from, [edge]);
-    else list.push(edge);
+    appendToMapList(edgesByAction, edge.from, edge);
   }
   return { selectorNodesByAction, edgesByAction };
 };
@@ -340,19 +338,13 @@ const indexInstanceImplementations = (
   >();
   for (const candidate of implementations) {
     if (candidate.method_type !== "instance") continue;
-    const selectorCandidates = bySelector.get(candidate.selector);
-    if (selectorCandidates === undefined)
-      bySelector.set(candidate.selector, [candidate]);
-    else selectorCandidates.push(candidate);
+    appendToMapList(bySelector, candidate.selector, candidate);
     let byClass = bySelectorAndClass.get(candidate.selector);
     if (byClass === undefined) {
       byClass = new Map();
       bySelectorAndClass.set(candidate.selector, byClass);
     }
-    const classCandidates = byClass.get(candidate.class_name);
-    if (classCandidates === undefined)
-      byClass.set(candidate.class_name, [candidate]);
-    else classCandidates.push(candidate);
+    appendToMapList(byClass, candidate.class_name, candidate);
   }
   return { bySelector, bySelectorAndClass };
 };
@@ -507,10 +499,14 @@ export const joinInterfaceBuilderDispatch = (
       ...graph.coverage,
       {
         facet: "ui_to_objc_dispatch",
-        status:
-          examined === resolved && inferredWithoutOwnerClass === 0
-            ? "complete"
-            : "partial",
+        status: (() => {
+          const acc = new CoverageAccumulator().recordComplete();
+          if (examined !== resolved)
+            acc.recordOmission("unresolved native investigation graph entries");
+          if (inferredWithoutOwnerClass !== 0)
+            acc.recordOmission("inferred entries without owner class");
+          return acc.finalizeKnown();
+        })(),
         reason:
           examined === resolved && inferredWithoutOwnerClass === 0
             ? null

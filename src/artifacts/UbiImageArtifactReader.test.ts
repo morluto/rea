@@ -423,7 +423,7 @@ it("refuses an image whose layout LEBs are both unverified wear-leveling copies"
       }
     };
     await expect(readEntries()).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("no valid volume table"),
     });
   } finally {

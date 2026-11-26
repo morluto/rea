@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { sha256 } from "../support/sha256.js";
 import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -27,9 +28,6 @@ import { cliTest } from "../support/cli/cliFixture.js";
 const execute = promisify(execFile);
 const cli = fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url));
 
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
-
 const DRIVER_GUID = "9e21fd93-9c72-4c15-8c4b-e77f9db8d4d2";
 const PAD_GUID = "fff12b8d-d7da-47f8-b4cf-1a0a2a1c1b1c";
 const PAYLOAD = Buffer.from(
@@ -37,19 +35,19 @@ const PAYLOAD = Buffer.from(
   "hex",
 );
 
+const PE_SECTION = buildSection(0x10, PAYLOAD);
+const DRIVER_FILE = buildFfsFile({
+  guid: DRIVER_GUID,
+  typeCode: 0x07,
+  payload: PE_SECTION,
+});
+
 /**
  * One B550-shaped flash image: an erased lead-in with no volume at offset 0,
  * the platform volume at 0x1000 carrying two FFS files (one payload, one pad
  * file), and a second volume holding a third file.
  */
-const PE_SECTION = buildSection(0x10, PAYLOAD);
-
 const buildFlashImage = (): Buffer => {
-  const payloadFile = buildFfsFile({
-    guid: DRIVER_GUID,
-    typeCode: 0x07,
-    payload: PE_SECTION,
-  });
   const padFile = buildFfsFile({
     guid: PAD_GUID,
     typeCode: 0xf0,
@@ -62,7 +60,7 @@ const buildFlashImage = (): Buffer => {
   });
   const body = buildImage({
     volumes: [
-      buildFv({ files: [payloadFile, padFile] }).buffer,
+      buildFv({ files: [DRIVER_FILE, padFile] }).buffer,
       buildFv({ files: [trailingFile] }).buffer,
     ],
   });
@@ -342,16 +340,12 @@ it("retains an opaque volume and reports only the unparsed ranges in the selecte
   const nvDataGuid = "fff12b8d-7696-4c8b-a985-2747075b4f50";
   const valid = buildFv({
     fileSystemGuid: "5473c07a-3dcb-4dca-bd6f-1e9689e7349a",
-    files: [
-      buildFfsFile({ guid: DRIVER_GUID, typeCode: 0x07, payload: PE_SECTION }),
-    ],
+    files: [DRIVER_FILE],
   });
   const opaque = buildFv({
     fileSystemGuid: nvDataGuid,
     // These bytes could be walked as FFS if the volume GUID were ignored.
-    files: [
-      buildFfsFile({ guid: DRIVER_GUID, typeCode: 0x07, payload: PE_SECTION }),
-    ],
+    files: [DRIVER_FILE],
   });
   const opaqueOffset = valid.buffer.length;
   const suffix = Buffer.from("vendor footer");

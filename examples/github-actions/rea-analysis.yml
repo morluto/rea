@@ -45,7 +45,7 @@ jobs:
           REPORT_DIR: ${{ steps.reports.outputs.directory }}
         run: |
           set +e
-          rea analyze-javascript-application "${GITHUB_WORKSPACE}/${ARTIFACT_PATH}" --json --full-output \
+          rea analyze-javascript-application "${GITHUB_WORKSPACE}/${ARTIFACT_PATH}" --json --full-output --detail complete \
             > "${REPORT_DIR}/analysis.json" 2> "${REPORT_DIR}/analysis.stderr"
           status=$?
           set -e

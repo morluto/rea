@@ -131,7 +131,7 @@ describe("Intel HEX decoding", () => {
     ).toEqual({
       ok: false,
       error: {
-        kind: "format",
+        kind: "malformed",
         message: expect.stringMatching(
           /0x00000003\b.*different values.*line 1\b.*0x04\b.*line 2\b.*0x99\b/iu,
         ),
@@ -209,7 +209,7 @@ describe("Intel HEX malformed records", () => {
     const decoded = decode(text);
     expect(decoded.ok).toBe(false);
     if (decoded.ok) return;
-    expect(decoded.error.kind).toBe("format");
+    expect(decoded.error.kind).toBe("malformed");
     expect(decoded.error.message).toMatch(message);
   });
 });
@@ -247,7 +247,7 @@ describe("Intel HEX lines, termination and limits", () => {
     expect(decoded).toMatchObject({
       ok: false,
       error: {
-        kind: "format",
+        kind: "malformed",
         message: expect.stringMatching(/line 1.*521.*Intel HEX/iu),
       },
     });
@@ -381,7 +381,7 @@ describe("S-record decoding", () => {
     expect(decode(`${longest} \n`, "srec")).toMatchObject({
       ok: false,
       error: {
-        kind: "format",
+        kind: "malformed",
         message: expect.stringMatching(/line 1.*514.*S-record/iu),
       },
     });

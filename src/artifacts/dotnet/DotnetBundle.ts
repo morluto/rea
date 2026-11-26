@@ -10,6 +10,8 @@ import {
   ArtifactPathRegistry,
   normalizeArtifactPath,
   ArtifactReaderFailure,
+  malformedArtifact,
+  truncatedArtifact,
   artifactFixedLimitFailure,
   artifactReaderLimitFailure,
   abortIfNeeded,
@@ -169,15 +171,9 @@ export const readDotnetBundle = async (
   }
   const files: DotnetBundleFile[] = [];
   const paths = new ArtifactPathRegistry({
+    group: "dotnet_bundle",
     maxParts: limits.path_parts,
     maxNodes: limits.path_nodes,
-    limitFailure: (field, maximum, required) =>
-      artifactReaderLimitFailure(
-        `artifact_limits.dotnet_bundle.${field}`,
-        maximum,
-        "count",
-        required,
-      ),
   });
   let expandedBytes = 0n;
   for (let index = 0; index < count; index++) {
@@ -270,7 +266,16 @@ class BundleCursor {
 
   #requireRemaining(length: number): number {
     const remaining = this.remainingBytes;
-    if (length > remaining) fail("Truncated .NET bundle manifest");
+    if (length > remaining)
+      throw truncatedArtifact(
+        "dotnet-bundle",
+        "Truncated .NET bundle manifest",
+        {
+          offset: this.#position,
+          availableBytes: remaining,
+          requiredBytes: length,
+        },
+      );
     return remaining;
   }
 
@@ -305,7 +310,14 @@ class BundleCursor {
           cacheOffset + read,
         );
         abortIfNeeded(this.signal);
-        if (reply.bytesRead === 0) fail("Truncated .NET bundle manifest");
+        // The read stays inside the measured remainder, so a short read
+        // means the file changed underneath it.
+        if (reply.bytesRead === 0)
+          throw new ArtifactReaderFailure(
+            "integrity",
+            ".NET bundle manifest ended before the measured file size",
+            { integrityCheck: "read-coverage" },
+          );
         read += reply.bytesRead;
       }
       this.#cache = new BinaryReader(bytes, true, "dotnet-bundle");
@@ -366,10 +378,10 @@ class BundleCursor {
       try {
         return decodeStrictUtf8(bytes, "preserve");
       } catch (cause) {
-        throw new ArtifactReaderFailure(
-          "format",
+        throw malformedArtifact(
+          "dotnet-bundle",
           "Invalid UTF-8 in .NET bundle manifest",
-          { cause },
+          { cause, offset: this.#cacheOffset + at, field: "manifest-string" },
         );
       }
     }
@@ -398,5 +410,5 @@ const exactManifestInteger = (value: bigint): number => {
 };
 
 const fail = (message: string): never => {
-  throw new ArtifactReaderFailure("format", message);
+  throw malformedArtifact("dotnet-bundle", message);
 };

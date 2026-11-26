@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { expect } from "vitest";
 
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { PACKAGE_METADATA } from "../../../src/generatedPackageMetadata.js";
 import { webNetworkCaptureSchema } from "../../../src/domain/webNetworkCapture.js";
 import { historicalHar } from "../../fixtures/historicalHar.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
@@ -256,7 +257,7 @@ cliTest(
     const evidence = parseEvidence(output.json);
     const capture = webNetworkCaptureSchema.parse(evidence.normalized_result);
     expect(capture.decoder.version).toBe(
-      "har-schema@2.0.0;har-schema-corrections@1;jsonc-parser@3.3.1;lossless-json@4.3.3",
+      `har-schema@2.0.0;har-schema-corrections@1;jsonc-parser@${PACKAGE_METADATA.jsoncParserVersion};lossless-json@${PACKAGE_METADATA.losslessJsonVersion}`,
     );
     expect(capture.artifact).toMatchObject({
       path,

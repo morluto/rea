@@ -23,7 +23,7 @@ MCP accepts absolute local paths:
 }
 ```
 
-The paired workflow admits at most 64 MiB per acquisition. Its Evidence records
+The paired workflow reads each acquisition into memory up to `max_file_bytes` (64 MiB by default; CLI `--max-file-bytes`). A larger acquisition, including one retained from an earlier call, is refused with `details.limit` naming `max_file_bytes`. Its Evidence records
 both paths, lengths and SHA-256 digests. Keep the acquisitions and compare both
 digests between pages. Offsets refer to those original files, whose bytes remain
 unchanged; sector fixups are restored only in a scratch record before attribute

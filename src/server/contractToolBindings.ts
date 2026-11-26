@@ -274,6 +274,15 @@ type ApplicationBinding<Input = unknown> =
       readonly admission: "application";
     });
 
+/** Whether a contract input declares the delivery `detail` selector. */
+type HasDeliveryDetail<Input> = string extends keyof Input
+  ? false
+  : "detail" extends keyof Input
+    ? Input extends { readonly detail?: "complete" | "summary" | undefined }
+      ? true
+      : false
+    : false;
+
 /**
  * Run a provider-backed workflow on the analysis that admission grants for
  * the call. When `detail` selects delivery (`detail: "delivery"`), it never
@@ -283,22 +292,15 @@ type AnalysisBinding<Input> = {
   readonly admission: "sdk";
   readonly completionProgress?: AnalysisWorkflowOptions["completionProgress"];
 } & ExclusiveBinding<"analyze"> &
-  // A declared detail, required or size-aware optional, selects delivery; an
-  // index signature declares no field.
-  (string extends keyof Input
+  (HasDeliveryDetail<Input> extends true
     ? {
+        readonly detail: "delivery";
+        readonly analyze: AnalysisOperation<Omit<Input, "detail">>;
+      }
+    : {
         readonly detail?: never;
         readonly analyze: AnalysisOperation<Input>;
-      }
-    : "detail" extends keyof Input
-      ? {
-          readonly detail: "delivery";
-          readonly analyze: AnalysisOperation<Omit<Input, "detail">>;
-        }
-      : {
-          readonly detail?: never;
-          readonly analyze: AnalysisOperation<Input>;
-        });
+      });
 
 type AnalysisOperation<Input> = (
   input: Input,
@@ -329,7 +331,7 @@ export type ContractToolBinding<Name extends CatalogToolName> =
   | QueryBinding<ContractInput<Name>>
   // Only a provider operation binds a provider, and only to its own name.
   | (Name extends ProviderOperation ? ProviderBinding<Name> : never)
-  | (ContractInput<Name> extends { readonly detail: "complete" | "summary" }
+  | (HasDeliveryDetail<ContractInput<Name>> extends true
       ? RetainedSummaryBinding<ContractInput<Name>>
       : never);
 
@@ -421,7 +423,7 @@ type SummaryContract = ToolContract<
   string,
   z.ZodType<
     Readonly<Record<string, unknown>> & {
-      readonly detail: "complete" | "summary";
+      readonly detail?: "complete" | "summary" | undefined;
     }
   >
 >;
@@ -535,7 +537,6 @@ const createContractBindingHandler = (
       recordEvidence,
       withAdmittedAnalysis,
       binding.viewSource,
-      retention,
     )(contract);
   return createRetainedSummaryToolHandler(
     server,

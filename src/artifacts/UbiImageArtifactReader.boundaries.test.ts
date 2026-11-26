@@ -45,7 +45,7 @@ it("refuses a PEB size that does not divide the file as a format failure", async
   );
   try {
     await expect(entries(reader)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("is not a multiple"),
     });
   } finally {
@@ -60,7 +60,7 @@ it("refuses to expose rootfs from a truncated dump with embedded PEB headers", a
   );
   try {
     await expect(entries(reader)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("32768-byte eraseblock size"),
     });
   } finally {
@@ -76,7 +76,7 @@ it("refuses a header layout change between eraseblocks", async () => {
   const reader = new UbiImageArtifactReader(await fixture(image));
   try {
     await expect(entries(reader)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
     });
   } finally {
     await reader.close();
@@ -94,7 +94,7 @@ it("refuses an eraseblock size measured across a skipped eraseblock", async () =
   );
   try {
     await expect(entries(reader)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("eraseblock size is ambiguous"),
     });
   } finally {
@@ -131,7 +131,7 @@ it("refuses an eraseblock size that also fits with erased eraseblocks between", 
   );
   try {
     await expect(entries(reader)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("also fits a 32768-byte eraseblock"),
     });
   } finally {
@@ -200,7 +200,7 @@ it("refuses two copies of one LEB that share a sequence number", async () => {
   );
   try {
     await expect(entries(reader)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("so neither copy is newer"),
     });
   } finally {
@@ -499,7 +499,7 @@ it("refuses a header on a smaller eraseblock grid beyond the spacing check", asy
   );
   try {
     await expect(entries(reader)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining(
         "erase-counter header at offset 22528 contradicts the 4096-byte eraseblock size",
       ),
@@ -743,7 +743,7 @@ it("refuses a retry that would swallow neighboring eraseblock boundaries inside 
   const reader = new UbiImageArtifactReader(await fixture(bytes));
   try {
     await expect(entries(reader)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("no valid volume table"),
     });
   } finally {

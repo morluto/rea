@@ -209,6 +209,13 @@ emulation, so actions can complete while that page is in the background.
 Its environment owner clears these overrides before disconnecting; other pages
 keep their media settings. Connecting does not create a bootstrap page.
 
+A capture whose actions and selected event/body/privacy finalization have completed
+can still return Evidence with `browser.cleanup: "incomplete"` when resource
+cleanup fails. Its limitations identify the retained resources; provider close
+retries their cleanup. Completed actions alone are insufficient: unsettled
+selected content or privacy finalization keeps the failure and partial observation.
+Existing capture gaps still prevent complete or equality-eligible claims.
+
 That cleanup requires REA to remain running. Abrupt termination, including
 Windows process-tree termination or POSIX `SIGKILL`, can leave the launch
 profile and Playwright artifacts behind. A profile can retain cookies, history,
@@ -761,7 +768,10 @@ and their completeness records are not rewritten.
 ## Scenario comparison
 
 `compare_web_captures` and `compare-web-captures` also accept two complete
-browser scenario captures. Steps align only by exact, unique `step_id`.
+browser scenario captures. Over MCP, each may instead be a retained Evidence
+reference to the capture or its summary; see
+[comparison input shapes](../../reference/mcp-contracts.md#comparison-input-shapes).
+Steps align only by exact, unique `step_id`.
 Duplicate IDs, missing counterparts, changed action kinds, and incompatible
 browser/origin capture context are returned as alignment failures. They prevent
 an unchanged claim; observed differences may still prove a changed result.

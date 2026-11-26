@@ -17,6 +17,7 @@ import type { Element, Node } from "@xmldom/xmldom";
 import {
   assertArtifactReadActive,
   ArtifactReaderFailure,
+  malformedArtifact,
   decodeZipEntryText,
   zipEntryNameLimitations,
   typedZipFailure,
@@ -26,6 +27,7 @@ import {
 } from "../resources/index.js";
 import {
   isXmlElement,
+  parseTrueFalseText,
   parseXmlDocument,
   xmlChildElements,
   xmlChildrenNamed,
@@ -148,7 +150,10 @@ const wrapZipFailure = (cause: unknown, compressionMethod?: number): never => {
       `NuGet package ZIP uses an unsupported layout: ${typed.message}`,
       { cause: typed },
     );
-  if (typed instanceof ArtifactReaderFailure && typed.reason === "format")
+  if (
+    typed instanceof ArtifactReaderFailure &&
+    typed.parseFailure !== undefined
+  )
     throw malformedInput(NUGET_NUPKG_FORMAT, typed.message, { cause: typed });
   throw cause;
 };
@@ -303,14 +308,6 @@ const opcManifestTargets = (
   return [...targets.values()];
 };
 
-const parseBooleanAttribute = (value: string | null): boolean | null => {
-  if (value === null) return null;
-  const folded = value.toLowerCase();
-  if (folded === "true") return true;
-  if (folded === "false") return false;
-  return null;
-};
-
 const parseDependencies = (
   metadata: Element,
   namespace: string,
@@ -332,7 +329,7 @@ const parseDependencies = (
     version: attribute(element, "version"),
     include: attribute(element, "include"),
     exclude: attribute(element, "exclude"),
-    development_dependency: parseBooleanAttribute(
+    development_dependency: parseTrueFalseText(
       attribute(element, "developmentDependency"),
     ),
   });
@@ -531,8 +528,8 @@ class RandomAccessZipReader extends Reader<undefined> {
   ): Promise<Uint8Array> {
     const readBytes = Math.min(length, this.size - index);
     if (readBytes < 0)
-      throw new ArtifactReaderFailure(
-        "format",
+      throw malformedArtifact(
+        "zip",
         `ZIP archive is malformed: read at ${String(index)} extends beyond the ${String(this.size)}-byte archive`,
       );
     const bytes = await this.#source.readRange(index, readBytes);

@@ -7,7 +7,10 @@ import {
 import { electronFuseFailure } from "../electron/ElectronFuseFailures.js";
 import { basename, dirname } from "node:path";
 
-import { AnalysisUnsupportedTargetError } from "../domain/analysisErrorCore.js";
+import {
+  unsupportedTarget,
+  AnalysisTargetFailureError,
+} from "../domain/analysisErrorCore.js";
 import { resolveElectronFuseTarget } from "../electron/ElectronFusePath.js";
 import { readElectronFuseImage } from "../electron/ElectronFuseReader.js";
 
@@ -39,7 +42,7 @@ const appBundleDirectoryOf = (executablePath: string): string | null => {
  * flags and Playwright hangs until the 60-second startup deadline expires.
  *
  * When the fuse wire is present and index 3 is explicitly disabled or removed,
- * this check fast-fails with an AnalysisUnsupportedTargetError before any child
+ * this check fast-fails with an unsupported target failure before any child
  * process is launched. When the fuse state is unknown (missing sentinel, wire
  * version != 1, or unsupported container format), launch proceeds normally.
  */
@@ -90,19 +93,20 @@ export const assertNodeCliInspectArgumentsSupported = async (
           entry.name === "EnableNodeCliInspectArguments",
       );
       if (fuse?.state === "disabled" || fuse?.state === "removed") {
-        throw new AnalysisUnsupportedTargetError(
+        throw unsupportedTarget(
           OPERATION,
           executablePath,
-          "Target binary disables the EnableNodeCliInspectArguments fuse; Node CLI inspector arguments are ignored and active scenario capture cannot attach.",
+          "electron",
+          "Target binary disables the EnableNodeCliInspectArguments fuse; Node CLI inspector arguments are ignored and active scenario capture cannot attach. Active capture can still run against an Electron development build or a stock Electron runtime with the extracted app.",
           {
-            remediationAction:
-              "Use passive CDP observation tools (inspect_electron_page), or launch active capture against an Electron development build or a stock Electron runtime with the extracted app.",
+            field: "EnableNodeCliInspectArguments",
+            related: { operations: ["inspect_electron_page"] },
           },
         );
       }
     }
   } catch (cause: unknown) {
-    if (cause instanceof AnalysisUnsupportedTargetError) throw cause;
+    if (cause instanceof AnalysisTargetFailureError) throw cause;
     if (
       cause instanceof ArtifactReaderFailure &&
       (cause.cleanup !== undefined || cause.reason === "cancelled")
