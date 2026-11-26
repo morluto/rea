@@ -133,6 +133,7 @@
 * **errors:** add the TargetFailure model, its projection table and conformance registry ([#14247](https://github.com/morluto/rea/issues/14247)) ([40e9a3f](https://github.com/morluto/rea/commit/40e9a3f1a1769f3fbb24ca226aa853f42d78c42e))
 * **evidence:** find direct referrers by linked Evidence ID ([#11709](https://github.com/morluto/rea/issues/11709)) ([b57671c](https://github.com/morluto/rea/commit/b57671cb42ed16687d0b0ea8ff43d3643e045aef))
 * **evidence:** paginate retained evidence discovery summaries ([#9084](https://github.com/morluto/rea/issues/9084)) ([a16669a](https://github.com/morluto/rea/commit/a16669ab2adf8341b0261e9527bb26c98c1d7b21))
+* **firmware:** inspect Qualcomm MBN image headers and hash segments offline ([#14649](https://github.com/morluto/rea/issues/14649)) ([f78470e](https://github.com/morluto/rea/commit/f78470e36164aa4f84e7154628499bafebccfab4))
 * **firmware:** inspect uClinux bFLT flat executables offline ([#14663](https://github.com/morluto/rea/issues/14663)) ([04cb70c](https://github.com/morluto/rea/commit/04cb70c1a39270e8a1fd94a69382db01a6c7c159))
 * **flutter:** give Flutter APK admission per-call apk_limits ([#14623](https://github.com/morluto/rea/issues/14623)) ([49e2eca](https://github.com/morluto/rea/commit/49e2eca4f971bc154badfae47ac80c7edcf97018))
 * **frida:** add optional limit and offset paging to list_frida_processes ([#13854](https://github.com/morluto/rea/issues/13854)) ([9ec23ad](https://github.com/morluto/rea/commit/9ec23ad03bb6feef0ad208170652858eabcb3e4a))
