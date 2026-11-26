@@ -1,7 +1,7 @@
 import { isUtf8 } from "node:buffer";
 import { createHash } from "node:crypto";
 import {
-  ArtifactReaderFailure,
+  readAdmittedRange,
   type StableArtifactHandle,
 } from "../resources/index.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
@@ -10,10 +10,9 @@ import {
   malformedInput,
   truncatedInput,
 } from "../domain/parseFailure.js";
-import {
-  MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS,
-  type ErlangBeam,
-  type InspectErlangBeamInput,
+import type {
+  ErlangBeam,
+  InspectErlangBeamInput,
 } from "../domain/erlang/beam.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 
@@ -278,13 +277,13 @@ const buildErlangBeamReport = (
     (exportTable?.count ?? 0) +
     (importTable?.count ?? 0) +
     (lambdaTable?.count ?? 0);
-  if (tableRows > MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS)
+  if (tableRows > input.max_table_rows)
     throw decodeLimit(
       "beam",
-      `BEAM tables exceed the ${String(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS)}-row budget.`,
+      `BEAM tables hold ${String(tableRows)} rows, above max_table_rows (${String(input.max_table_rows)}).`,
       {
         name: "max_table_rows",
-        maximum: MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS,
+        maximum: input.max_table_rows,
         required: tableRows,
       },
     );
@@ -376,21 +375,6 @@ const buildErlangBeamReport = (
   };
 };
 
-const readAdmittedRange = async (
-  handle: StableArtifactHandle,
-  offset: number,
-  length: number,
-): Promise<Buffer> => {
-  const bytes = await handle.readRange(offset, length);
-  if (bytes.length !== length)
-    throw new ArtifactReaderFailure(
-      "integrity",
-      `BEAM read at offset ${String(offset)} ended before its ${String(length)} admitted bytes.`,
-      { integrityCheck: "read-coverage" },
-    );
-  return bytes;
-};
-
 const streamChunkDigest = async (
   handle: StableArtifactHandle,
   payloadOffset: number,
@@ -402,6 +386,7 @@ const streamChunkDigest = async (
   for (let offset = 0; offset < size; offset += STREAM_CHUNK_BYTES) {
     const length = Math.min(STREAM_CHUNK_BYTES, size - offset);
     const part = await readAdmittedRange(
+      "BEAM",
       handle,
       payloadOffset + offset,
       length,
@@ -437,7 +422,7 @@ export const parseErlangBeamFromHandle = async (
   const header =
     handle.prefix.length >= 12
       ? handle.prefix.subarray(0, 12)
-      : await readAdmittedRange(handle, 0, 12);
+      : await readAdmittedRange("BEAM", handle, 0, 12);
   if (header.subarray(0, 4).toString("latin1") !== "FOR1")
     fail("Expected a FOR1 IFF container.");
   const formSize = new BinaryReader(header, false, "beam").u32(4);
@@ -451,7 +436,7 @@ export const parseErlangBeamFromHandle = async (
   let at = 12;
   while (at < formEnd) {
     if (formEnd - at < 8) failTruncated("BEAM chunk header is truncated.");
-    const chunkHeader = await readAdmittedRange(handle, at, 8);
+    const chunkHeader = await readAdmittedRange("BEAM", handle, at, 8);
     const size = new BinaryReader(chunkHeader, false, "beam").u32(4);
     const payloadOffset = at + 8;
     if (size > formEnd - payloadOffset)
@@ -470,7 +455,7 @@ export const parseErlangBeamFromHandle = async (
       const payload =
         size === 0
           ? Buffer.alloc(0)
-          : await readAdmittedRange(handle, payloadOffset, size);
+          : await readAdmittedRange("BEAM", handle, payloadOffset, size);
       sha256 = sha256Hex(payload);
       payloads.set(name, { payload, payloadLength: size, offset: at });
     } else if (name === "Code") {

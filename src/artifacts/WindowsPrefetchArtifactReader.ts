@@ -15,6 +15,8 @@ import {
   ArtifactResourceScope,
   assertArtifactReadActive,
   artifactReadCancelledBy,
+  malformedArtifact,
+  truncatedArtifact,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
@@ -150,10 +152,12 @@ export class WindowsPrefetchArtifactReader implements ArtifactReader {
       await this.#source.read(signal);
       // An intact variant this reader does not decode is unavailable, not
       // malformed; only a genuine decode failure is a format failure.
-      throw new ArtifactReaderFailure(
-        parsed.error.kind === "unsupported" ? "unavailable" : parsed.error.kind,
-        parsed.error.message,
-      );
+      const { kind, message, extent } = parsed.error;
+      if (kind === "unsupported")
+        throw new ArtifactReaderFailure("unavailable", message);
+      if (kind === "truncated")
+        throw truncatedArtifact("windows-prefetch", message, extent);
+      throw malformedArtifact("windows-prefetch", message);
     }
     const metadata = parsed.value;
     // Accept the source identity before exposing any parsed fact, so a carrier

@@ -1,4 +1,7 @@
-import { BinaryReader } from "./binaryContainer.js";
+import {
+  BinaryReader,
+  DEFAULT_NATIVE_STRUCTURE_BYTES,
+} from "./binaryContainer.js";
 import { err, ok, type Result } from "./result.js";
 
 export const DT_NEEDED = 1n;
@@ -27,12 +30,14 @@ export const admitElfDynamicDirectory = (
   fileBytes: number,
   span: { readonly offset: bigint; readonly size: bigint },
   bits: 32 | 64,
+  maximum: number = DEFAULT_NATIVE_STRUCTURE_BYTES,
 ): Result<
   { readonly offset: number; readonly size: number; readonly width: number },
   | { readonly kind: "malformed"; readonly message: string }
   | {
       readonly kind: "capacity";
       readonly message: string;
+      readonly size: number;
       readonly maximum: number;
     }
 > => {
@@ -50,11 +55,11 @@ export const admitElfDynamicDirectory = (
   const size = Number(span.size);
   const { width, trailingBytes } = elfDynamicTableGeometry(size, bits);
   if (trailingBytes !== 0) return malformed();
-  const maximum = 16 * 1024 * 1024;
   if (size > maximum)
     return err({
       kind: "capacity",
-      message: "ELF dynamic directory exceeds the 16 MiB structural allowance",
+      message: `ELF dynamic directory requires ${String(size)} bytes, above the ${String(maximum)}-byte structural allowance`,
+      size,
       maximum,
     });
   return ok({ offset: Number(span.offset), size, width });

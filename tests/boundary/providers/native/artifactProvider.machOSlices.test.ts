@@ -1,5 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { buffer } from "node:stream/consumers";
 
 import { describe, expect, it, onTestFinished } from "vitest";
 
@@ -114,10 +115,8 @@ describe("artifact Mach-O slices", () => {
       reason: "integrity",
     });
     Reflect.set(secondEntry, "adapterKey", originalKey);
-    const chunks: Buffer[] = [];
     const stream = await reader.open({ ...secondEntry });
-    for await (const chunk of stream) chunks.push(Buffer.from(chunk));
-    expect(Buffer.compare(Buffer.concat(chunks), Buffer.from(arm))).toBe(0);
+    expect(Buffer.compare(await buffer(stream), Buffer.from(arm))).toBe(0);
     expect(reader.provenance()).toEqual([
       expect.objectContaining({ tool: "lipo", effects: ["read"] }),
     ]);
@@ -254,12 +253,14 @@ describe("artifact Mach-O slice integrity", () => {
         ],
       },
     ]);
-    const chunks: Buffer[] = [];
     const armEntry = entries[1];
     if (armEntry === undefined) throw new Error("Expected the arm64 slice");
-    for await (const chunk of await reader.open(armEntry))
-      chunks.push(Buffer.from(chunk as Uint8Array));
-    expect(Buffer.compare(Buffer.concat(chunks), Buffer.from(arm))).toBe(0);
+    expect(
+      Buffer.compare(
+        await buffer(await reader.open(armEntry)),
+        Buffer.from(arm),
+      ),
+    ).toBe(0);
   });
 });
 

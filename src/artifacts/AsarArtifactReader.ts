@@ -1,6 +1,9 @@
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import { localPathStringSchema } from "../domain/localPath.js";
-import type { AsarHeaderAdmission } from "../config/asarHeaderAdmission.js";
+import {
+  DEFAULT_ASAR_HEADER_ADMISSION,
+  type AsarHeaderAdmission,
+} from "../config/asarHeaderAdmission.js";
 import { artifactIntegrityDetails } from "../domain/artifactIntegrity.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -25,6 +28,9 @@ import { Readable } from "node:stream";
 import {
   ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
+  artifactFormatFailure,
+  malformedArtifact,
+  truncatedArtifact,
   copyArtifactEntry,
   sameArtifactEntry,
   type ArtifactEntry,
@@ -109,12 +115,18 @@ export class AsarArtifactReader implements ArtifactReader {
           );
         } catch (cause: unknown) {
           // Listing names members relative to this archive; keep which archive.
-          if (
-            cause instanceof ArtifactReaderFailure &&
-            (cause.reason === "format" || cause.reason === "path")
-          )
+          if (!(cause instanceof ArtifactReaderFailure)) throw cause;
+          if (cause.parseFailure !== undefined)
+            throw artifactFormatFailure(
+              {
+                ...cause.parseFailure,
+                detail: `${cause.parseFailure.detail} in ${this.path}`,
+              },
+              { cause },
+            );
+          if (cause.reason === "path")
             throw new ArtifactReaderFailure(
-              cause.reason,
+              "path",
               `${cause.message} in ${this.path}`,
               { cause },
             );
@@ -180,11 +192,13 @@ export class AsarArtifactReader implements ArtifactReader {
         }
       | { readonly ok: false; readonly cause: unknown };
     try {
-      const extents = await admitAsarHeader(
-        headerHandle,
-        signal,
-        this.options.headerAdmission,
-      );
+      const extents =
+        this.#reusableAdmittedExtents() ??
+        (await admitAsarHeader(
+          headerHandle,
+          signal,
+          this.options.headerAdmission,
+        ));
       admission = {
         ok: true,
         value: {
@@ -269,16 +283,28 @@ export class AsarArtifactReader implements ArtifactReader {
           false,
         ),
       );
+    // An absent, negative, padded or unsafe offset declaration is malformed;
+    // only a valid range that runs past the archive is truncated.
     if (
       archiveSize === undefined ||
       start === undefined ||
-      !Number.isSafeInteger(start) ||
-      start > archiveSize ||
-      facts.size > archiveSize - start
+      !Number.isSafeInteger(start)
     )
-      throw new ArtifactReaderFailure(
-        "format",
+      throw malformedArtifact(
+        "asar",
+        `ASAR entry declares an invalid offset: ${producedEntry.path}`,
+        { field: "offset" },
+      );
+    if (start > archiveSize || facts.size > archiveSize - start)
+      throw truncatedArtifact(
+        "asar",
         `ASAR entry range is outside its container: ${producedEntry.path}`,
+        {
+          offset: start,
+          field: "offset",
+          availableBytes: Math.max(0, archiveSize - start),
+          requiredBytes: facts.size,
+        },
       );
     const snapshotPath = this.#snapshotPath();
     if (facts.size === 0) return Readable.from([]);
@@ -800,9 +826,31 @@ export class AsarArtifactReader implements ArtifactReader {
     });
   }
 
+  #reusableAdmittedExtents(): AsarHeaderExtents | undefined {
+    const admitted = this.options.admittedExtents;
+    if (admitted === undefined || this.options.openFile !== undefined)
+      return undefined;
+    const effective =
+      this.options.headerAdmission ?? DEFAULT_ASAR_HEADER_ADMISSION;
+    if (
+      admitted.headerAdmission.maximumBytes !== effective.maximumBytes ||
+      this.#snapshot?.bytes !== admitted.extents.archiveBytes
+    )
+      return undefined;
+    return admitted.extents;
+  }
+
   #resetArchiveState(): void {
     this.#extents = undefined;
   }
+}
+
+/** Validated ASAR header extents carried from root classification. */
+export interface AsarAdmission {
+  readonly kind: "asar";
+  readonly source: StableRegularFileDescriptor;
+  readonly extents: AsarHeaderExtents;
+  readonly headerAdmission: AsarHeaderAdmission;
 }
 
 type AsarEntryState = {
@@ -828,6 +876,11 @@ export type AsarArtifactReaderOptions = {
   readonly selectedPath?: string;
   /** Pre-opened source descriptor admitted during classification to avoid re-opening. */
   readonly admitted?: StableRegularFileDescriptor;
+  /** Pre-validated header extents from root classification when admission matches. */
+  readonly admittedExtents?: {
+    readonly extents: AsarHeaderExtents;
+    readonly headerAdmission: AsarHeaderAdmission;
+  };
   readonly openFile?: OpenAsarFile;
   readonly openUnpackedFile?: OpenAsarFile;
   readonly removeSnapshot?: (path: string) => Promise<void>;

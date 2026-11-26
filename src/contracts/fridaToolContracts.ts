@@ -285,7 +285,7 @@ export const FRIDA_TOOL_CONTRACTS = [
     ...toolContractMetadata("frida_session_status", evidenceEffects),
     kind: "native-provider",
     description:
-      "Read observed Frida session state on each call. Default detail=complete returns queued script messages and capture truncation. detail=summary retains the complete observation in this session and returns identity, state, scripts, retained message count and truncation without payloads. Export the complete parent with export_evidence_bundle; retained summaries are historical and never refresh live state.",
+      "Read observed Frida session state on each call. Omitted detail returns queued script messages and capture truncation within the agent result budget, else the retained summary. detail=summary retains the complete observation in this session and returns identity, state, scripts, retained message count and truncation without payloads. Export the complete parent with export_evidence_bundle; retained summaries are historical and never refresh live state.",
     inputSchema: fridaSessionStatusInputSchema,
     outputSchema: analysisDetailOutputSchemaOf(
       fridaSessionStatusSchema,

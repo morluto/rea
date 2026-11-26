@@ -1,4 +1,7 @@
-import type { FileMapping } from "../domain/virtualFileMapping.js";
+import {
+  lastAtOrBelow,
+  type FileMapping,
+} from "../domain/virtualFileMapping.js";
 import { isUtf8 } from "node:buffer";
 import {
   GO_ANALYSIS_BUDGET_DEFAULTS,
@@ -449,7 +452,7 @@ const createReadableLoadRegionIndex = (
   return {
     contains: (address, size) => {
       if (size <= 0) return false;
-      const index = lastBigIntAtOrBelow(starts, address);
+      const index = lastAtOrBelow(starts, address);
       return index >= 0 && address + BigInt(size) <= (ends[index] as bigint);
     },
   };
@@ -683,20 +686,6 @@ const normalizeHeaderScanSpans = (
       left.startOffset - right.startOffset || left.endOffset - right.endOffset,
   );
   return merged;
-};
-
-const lastBigIntAtOrBelow = (
-  sorted: readonly bigint[],
-  value: bigint,
-): number => {
-  let low = 0;
-  let high = sorted.length;
-  while (low < high) {
-    const middle = (low + high) >>> 1;
-    if ((sorted[middle] as bigint) <= value) low = middle + 1;
-    else high = middle;
-  }
-  return low - 1;
 };
 
 const lastSpanAtOrBelow = (

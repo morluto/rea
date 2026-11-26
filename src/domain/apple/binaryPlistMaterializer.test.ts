@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 import {
-  binaryPlistObjectTable,
+  binaryPlistFromObjects,
   readBinaryPlistObjectTableLayout,
   writeBinaryPlistObjectOffset,
 } from "../../../tests/fixtures/binaryPlistObjectTable.js";
@@ -16,19 +16,6 @@ import { estimateBinaryPlistExpansion } from "./propertyListDecodeBudget.js";
 import { parseXmlPropertyList } from "../propertyListKeys.js";
 import { InternalInvariantError } from "../internalInvariant.js";
 
-const source = (objects: readonly Buffer[]): Buffer => {
-  const table =
-    8 + objects.reduce((length, object) => length + object.length, 0);
-  const bytes = Buffer.alloc(table + objects.length + 32);
-  let cursor = 8;
-  const offsets = objects.map((object) => {
-    const offset = cursor;
-    object.copy(bytes, cursor);
-    cursor += object.length;
-    return offset;
-  });
-  return binaryPlistObjectTable(bytes, offsets, table);
-};
 const text = (value: string): Buffer =>
   Buffer.concat([Buffer.from([0x50 | value.length]), Buffer.from(value)]);
 const decode = (bytes: Buffer) =>
@@ -41,7 +28,7 @@ const decode = (bytes: Buffer) =>
   );
 
 it("materializes own dictionary keys and keeps the last duplicate's source UID", () => {
-  const bytes = source([
+  const bytes = binaryPlistFromObjects([
     Buffer.from([0xd3, 1, 2, 1, 3, 4, 5]),
     text("__proto__"),
     text("constructor"),
@@ -60,7 +47,7 @@ it("expands shared containers and nonprimitive scalar references independently",
   const date = Buffer.alloc(9);
   date[0] = 0x33;
   date.writeDoubleBE(1, 1);
-  const bytes = source([
+  const bytes = binaryPlistFromObjects([
     Buffer.from([0xa8, 1, 1, 2, 2, 3, 3, 4, 4]),
     Buffer.from([0xd1, 5, 6]),
     date,
@@ -79,7 +66,7 @@ it("expands shared containers and nonprimitive scalar references independently",
 });
 
 it("keeps a source UID distinct from an ordinary UID-shaped dictionary", () => {
-  const bytes = source([
+  const bytes = binaryPlistFromObjects([
     Buffer.from([0xa2, 1, 2]),
     Buffer.from([0x80, 7]),
     Buffer.from([0xd1, 3, 4]),
@@ -94,7 +81,7 @@ it("keeps a source UID distinct from an ordinary UID-shaped dictionary", () => {
 });
 
 it("preserves binary dictionary identity through scalar and number projections", () => {
-  const bytes = source([
+  const bytes = binaryPlistFromObjects([
     Buffer.from([0xa2, 1, 2]),
     Buffer.from([0x80, 7]),
     Buffer.from([0xd1, 3, 4]),
@@ -193,7 +180,7 @@ const dictionary = (...references: readonly number[]): Buffer =>
 const budget = 1024 * 1024;
 
 it("reads a string no object references", () => {
-  const bytes = source([
+  const bytes = binaryPlistFromObjects([
     dictionary(1, 2),
     text("key"),
     text("kept"),
@@ -203,7 +190,7 @@ it("reads a string no object references", () => {
 });
 
 it("reads the value a later duplicate key replaced", () => {
-  const bytes = source([
+  const bytes = binaryPlistFromObjects([
     dictionary(1, 1, 2, 3),
     text("key"),
     text("replaced"),
@@ -219,7 +206,7 @@ it("reads an unreferenced UTF-16BE string and data object", () => {
     Buffer.from("é!", "utf16le").swap16(),
   ]);
   const data = Buffer.concat([Buffer.from([0x44]), Buffer.from("blob")]);
-  const bytes = source([
+  const bytes = binaryPlistFromObjects([
     dictionary(1, 2),
     text("key"),
     text("kept"),
@@ -242,14 +229,14 @@ it("honors a byte order mark in a data object", () => {
   for (const payload of [little, big])
     expect(
       decodeBinaryPlistText(
-        source([dictionary(1, 2), text("key"), data(payload)]),
+        binaryPlistFromObjects([dictionary(1, 2), text("key"), data(payload)]),
         budget,
       ),
     ).toEqual({ text: expect.stringContaining(header), complete: true });
   const wider = Buffer.from([0xff, 0xfe, 0, 0, 0x6b, 0, 0, 0]);
   expect(
     decodeBinaryPlistText(
-      source([dictionary(1, 2), text("key"), data(wider)]),
+      binaryPlistFromObjects([dictionary(1, 2), text("key"), data(wider)]),
       budget,
     ).complete,
   ).toBe(false);
@@ -260,7 +247,7 @@ it.each([
   ["UTF-16BE string", Buffer.from([0x62, 0, 0x61, 0xd8, 0])],
   ["UTF-16 data", Buffer.from([0x45, 0xff, 0xfe, 0x61, 0, 0x62])],
 ] as const)("reports partial text beside malformed %s", (_name, malformed) => {
-  const bytes = source([
+  const bytes = binaryPlistFromObjects([
     dictionary(1, 2),
     text("key"),
     text("kept"),
@@ -285,7 +272,7 @@ it.each([
   "tracks stored data text coverage for %s",
   (_name, payload, value, complete) => {
     const data = Buffer.from([0x40 | payload.length, ...payload]);
-    const bytes = source([dictionary(1, 2), text("key"), data]);
+    const bytes = binaryPlistFromObjects([dictionary(1, 2), text("key"), data]);
     expect(decodeBinaryPlistText(bytes, budget)).toEqual({
       text: `key\n${value}`,
       complete,
@@ -294,7 +281,7 @@ it.each([
 );
 
 it("keeps readable text beside an unreferenced string it cannot read", () => {
-  const bytes = source([
+  const bytes = binaryPlistFromObjects([
     dictionary(1, 2),
     text("key"),
     text("kept"),
@@ -307,7 +294,7 @@ it("keeps readable text beside an unreferenced string it cannot read", () => {
 });
 
 it("keeps readable text when an unreferenced string crosses the offset table", () => {
-  const bytes = source([
+  const bytes = binaryPlistFromObjects([
     dictionary(1, 2),
     text("key"),
     text("kept"),
@@ -320,7 +307,7 @@ it("keeps readable text when an unreferenced string crosses the offset table", (
 });
 
 it("keeps readable text when an unreferenced entry starts at the offset table", () => {
-  const bytes = source([
+  const bytes = binaryPlistFromObjects([
     dictionary(1, 2),
     text("key"),
     text("kept"),
@@ -374,7 +361,7 @@ it("bounds the text that overlapping table entries repeat", () => {
 });
 
 it("reports a plan without its binary source as a defect, not as bad input", () => {
-  const bytes = source([text("value")]);
+  const bytes = binaryPlistFromObjects([text("value")]);
   const { binaryValuePlan: _omitted, ...plan } = estimateBinaryPlistExpansion(
     bytes,
     1024 * 1024,

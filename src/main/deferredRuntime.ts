@@ -58,6 +58,7 @@ const initializeRuntime = async (
   context: McpRequestContext,
   config: AppConfig,
   startedAt: string,
+  signal: AbortSignal,
 ): Promise<void> => {
   let shutdown: (() => Promise<void>) | undefined;
   let closeSession: (() => Promise<void>) | undefined;
@@ -85,9 +86,12 @@ const initializeRuntime = async (
     import("./eagerRuntime.js"),
     import("../server/createServer.js"),
   ]);
+  // A close during module loading owns nothing yet; never start providers for it.
+  if (signal.aborted) return;
   const result = await runEager(
     {
       ...dependencies,
+      startupSignal: signal,
       // The outer SDK transport already owns and frames this stream. Eager
       // materialization owns providers only, never another copy of raw input.
       stdin: undefined,
@@ -129,6 +133,10 @@ const initializeRuntime = async (
     },
     config,
   );
+  // The eager result classifies cancellation before its cleanup await. A close
+  // during that await aborts this signal even when startup already failed.
+  // Only a zero result is a cancelled startup whose shutdown already ran.
+  if (result === 0 && signal.aborted && shutdown !== undefined) return;
   if (result !== 0 || shutdown === undefined)
     throw new Error(SERVER_START_FAILED);
 };
@@ -223,19 +231,21 @@ export const runDeferred = async (
               new ToolResultDelivery(
                 config.mcpMaxResponseBytes ?? STDIO_DEFAULT_MAX_BUFFER_SIZE,
               ),
-              (target) =>
+              (target, signal) =>
                 initializeRuntime(
                   target,
                   dependencies,
                   context,
                   config,
                   startedAt,
+                  signal,
                 ).catch((cause) => {
                   dependencies.setExitCode(1);
                   throw cause;
                 }),
               {
                 maximumInputElements: config.mcpMaxInputElements,
+                toolsListPageBudget: config.mcpToolsListPageBudget,
                 compactPresentation: COMPACT_INPUT_SCHEMA_PRESENTATION,
                 outputProfile: config.mcpOutputSchemaProfile,
                 toolFamilies,

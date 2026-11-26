@@ -937,6 +937,10 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
           REVERSE_EDGE_CASES,
           "retains an objdump command's unverified process owner until a later inspection stops it",
         ),
+        test(
+          REVERSE_EDGE_CASES,
+          "stops an owner registered during cleanup retry before admitting another command",
+        ),
       ),
     },
   },
@@ -1536,6 +1540,15 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
     typedFailures("tests/boundary/filesystem/peResources.test.ts"),
   ),
+  "rea-pe-unwind-ranges": inProcess(
+    covered(
+      test(
+        "tests/acceptance/peUnwindRangesCli.test.ts",
+        "reads x64 exception-directory ranges identically over CLI and MCP",
+      ),
+    ),
+    typedFailures("src/native/pe/PeUnwindRangesProvider.test.ts"),
+  ),
   "rea-playwright-browser-scenario": {
     ownership: "process",
     stages: {
@@ -1838,7 +1851,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cancel: covered(
         test(
           "tests/composition/reverseEngineeringCancellation.test.ts",
-          "waits for a cancelled Rizin process to exit before returning",
+          "waits for a Rizin process cancelled during its %s to exit before returning",
         ),
       ),
       cleanup: covered(

@@ -26,3 +26,13 @@ export const isClientJavaScriptEvidence = (value) =>
   typeof value === "object" &&
   typeof value.evidence_id === "string" &&
   Array.isArray(value.normalized_result?.graph?.nodes);
+
+/** Search string values in a native client message or reply. */
+export const containsText = (value, text) => {
+  if (typeof value === "string") return value.includes(text);
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    Object.values(value).some((item) => containsText(item, text))
+  );
+};

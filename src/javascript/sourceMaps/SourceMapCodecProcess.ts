@@ -1,7 +1,6 @@
 import { readStableArtifact } from "../../resources/index.js";
 import {
   selectedSourceMapLimits,
-  sourceMapLimitRecovery,
   sourceMapLimitsSchema,
 } from "../../domain/sourceMapLimits.js";
 import { traceSourceMap } from "./TraceSourceMap.js";
@@ -70,7 +69,7 @@ const execute = async (): Promise<string> => {
         !isSourceMapFailure(cause) ||
         cause.kind === "malformed" ||
         cause.kind === "truncated"
-          ? "format"
+          ? "malformed"
           : cause.kind,
       message: cause.message,
     });

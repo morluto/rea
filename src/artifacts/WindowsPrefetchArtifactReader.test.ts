@@ -100,13 +100,13 @@ it("identifies a Windows 8+ generation it does not parse", async () => {
   }
 });
 
-it("calls a truncated newer-generation capture malformed, not unsupported", async () => {
+it("calls a truncated newer-generation capture truncated, not unsupported", async () => {
   const reader = await readerFor(
     prefetchFixture({ version: "26" }).subarray(0, 60),
   );
   try {
     await expect(inventory(reader)).rejects.toMatchObject({
-      reason: "format",
+      reason: "truncated",
       message: expect.stringContaining(
         "ends inside the Prefetch header",
       ) as unknown,
@@ -147,13 +147,13 @@ it("recognizes a checksum-bearing MAM header as the same container", async () =>
   }
 });
 
-it("calls a file that ends inside the MAM header malformed, not unsupported", async () => {
+it("calls a file that ends inside the MAM header truncated, not unsupported", async () => {
   const reader = await readerFor(
     prefetchFixture({ version: "23", compressed: true }).subarray(0, 5),
   );
   try {
     await expect(inventory(reader)).rejects.toMatchObject({
-      reason: "format",
+      reason: "truncated",
       message: expect.stringContaining("MAM container header") as unknown,
     });
     expect(reader.formatMetadata()).toBeUndefined();
@@ -173,7 +173,7 @@ it("does not read a MAM prefix without the container version byte as Prefetch", 
   expect(snapshot.manifest.root_format).not.toBe("windows-prefetch");
 });
 
-it("calls a checksum-bearing capture ending before its checksum truncated", async () => {
+it("calls a checksum-bearing capture ending inside the MAM header truncated", async () => {
   const reader = await readerFor(
     prefetchFixture({
       version: "23",
@@ -183,7 +183,7 @@ it("calls a checksum-bearing capture ending before its checksum truncated", asyn
   );
   try {
     await expect(inventory(reader)).rejects.toMatchObject({
-      reason: "format",
+      reason: "truncated",
       message: expect.stringContaining("MAM container header") as unknown,
     });
   } finally {
@@ -212,7 +212,7 @@ it.each([
         await writePrefetch("MAM-truncated.bin", bytes),
       ),
     ).rejects.toMatchObject({
-      reason: "format",
+      reason: "truncated",
       message: expect.stringContaining(
         "ends inside the MAM container header",
       ) as unknown,

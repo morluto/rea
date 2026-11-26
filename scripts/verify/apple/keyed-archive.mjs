@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { sha256File } from "../../lib/verifier-file-sha256.mjs";
 import {
   artifactCli,
   artifactMcpResult,
@@ -43,9 +43,7 @@ await withVerifierFixture(fixture, async () => {
     archive,
   ]);
   const graph = await artifactCli("inspect-keyed-archive", archive);
-  const digest = createHash("sha256")
-    .update(await readFile(archive))
-    .digest("hex");
+  const digest = await sha256File(archive);
   assert.equal(graph.archive_sha256, digest);
   assert.equal(graph.target_sha256, digest);
   await withArtifactMcp(archive, async (client) => {

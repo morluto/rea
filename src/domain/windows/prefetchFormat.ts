@@ -93,8 +93,13 @@ export interface PrefetchMetadata {
 }
 
 export interface PrefetchDecodeFailure {
-  readonly kind: "format" | "limit" | "unsupported";
+  readonly kind: "malformed" | "limit" | "truncated" | "unsupported";
   readonly message: string;
+  /** The byte extent this file reached and the extent the field needed. */
+  readonly extent?: {
+    readonly availableBytes: number;
+    readonly requiredBytes: number;
+  };
 }
 
 const readVersionTag = (bytes: Uint8Array): PrefetchVersion | null => {
@@ -201,8 +206,12 @@ export const parsePrefetchFile = (
   if (hasMamMagic(bytes)) {
     if (bytes.length < mamHeaderBytes(bytes))
       return err({
-        kind: "format",
+        kind: "truncated",
         message: "The file ends inside the MAM container header.",
+        extent: {
+          availableBytes: bytes.length,
+          requiredBytes: mamHeaderBytes(bytes),
+        },
       });
     return err({
       kind: "unsupported",
@@ -212,16 +221,20 @@ export const parsePrefetchFile = (
   }
   const version = readVersionTag(bytes);
   if (version === null)
-    return err({ kind: "format", message: "No Prefetch generation." });
+    return err({ kind: "malformed", message: "No Prefetch generation." });
   if (!hasPrefetchSignature(bytes))
     return err({
-      kind: "format",
+      kind: "malformed",
       message: 'The Prefetch signature is not "SCCA".',
     });
   if (bytes.length < COMMON_HEADER_BYTES)
     return err({
-      kind: "format",
+      kind: "truncated",
       message: "The file ends inside the Prefetch header.",
+      extent: {
+        availableBytes: bytes.length,
+        requiredBytes: COMMON_HEADER_BYTES,
+      },
     });
   if (version !== "17" && version !== "23")
     return err({

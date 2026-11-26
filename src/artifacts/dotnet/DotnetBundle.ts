@@ -10,6 +10,8 @@ import {
   ArtifactPathRegistry,
   normalizeArtifactPath,
   ArtifactReaderFailure,
+  malformedArtifact,
+  truncatedArtifact,
   artifactFixedLimitFailure,
   artifactReaderLimitFailure,
   abortIfNeeded,
@@ -68,9 +70,10 @@ export const findDotnetBundleHeader = async (
       ).word(index - 8, 64);
       // HostWriter.IsBundle uses the first apphost marker. Later markers may
       // belong to embedded native apphosts, whose coordinates are not this host's.
-      if (offset === 0n) return null;
-      if (offset > BigInt(size - 12))
-        fail(".NET bundle header is outside the host file");
+      // An offset outside the host file cannot name a bundle header here, so treat
+      // the carrier as not holding a .NET bundle rather than aborting outer native
+      // classification.
+      if (offset === 0n || size < 12 || offset > BigInt(size - 12)) return null;
       return Number(offset);
     }
     return undefined;
@@ -168,15 +171,9 @@ export const readDotnetBundle = async (
   }
   const files: DotnetBundleFile[] = [];
   const paths = new ArtifactPathRegistry({
+    group: "dotnet_bundle",
     maxParts: limits.path_parts,
     maxNodes: limits.path_nodes,
-    limitFailure: (field, maximum, required) =>
-      artifactReaderLimitFailure(
-        `artifact_limits.dotnet_bundle.${field}`,
-        maximum,
-        "count",
-        required,
-      ),
   });
   let expandedBytes = 0n;
   for (let index = 0; index < count; index++) {
@@ -269,7 +266,16 @@ class BundleCursor {
 
   #requireRemaining(length: number): number {
     const remaining = this.remainingBytes;
-    if (length > remaining) fail("Truncated .NET bundle manifest");
+    if (length > remaining)
+      throw truncatedArtifact(
+        "dotnet-bundle",
+        "Truncated .NET bundle manifest",
+        {
+          offset: this.#position,
+          availableBytes: remaining,
+          requiredBytes: length,
+        },
+      );
     return remaining;
   }
 
@@ -304,7 +310,14 @@ class BundleCursor {
           cacheOffset + read,
         );
         abortIfNeeded(this.signal);
-        if (reply.bytesRead === 0) fail("Truncated .NET bundle manifest");
+        // The read stays inside the measured remainder, so a short read
+        // means the file changed underneath it.
+        if (reply.bytesRead === 0)
+          throw new ArtifactReaderFailure(
+            "integrity",
+            ".NET bundle manifest ended before the measured file size",
+            { integrityCheck: "read-coverage" },
+          );
         read += reply.bytesRead;
       }
       this.#cache = new BinaryReader(bytes, true, "dotnet-bundle");
@@ -365,10 +378,10 @@ class BundleCursor {
       try {
         return decodeStrictUtf8(bytes, "preserve");
       } catch (cause) {
-        throw new ArtifactReaderFailure(
-          "format",
+        throw malformedArtifact(
+          "dotnet-bundle",
           "Invalid UTF-8 in .NET bundle manifest",
-          { cause },
+          { cause, offset: this.#cacheOffset + at, field: "manifest-string" },
         );
       }
     }
@@ -397,5 +410,5 @@ const exactManifestInteger = (value: bigint): number => {
 };
 
 const fail = (message: string): never => {
-  throw new ArtifactReaderFailure("format", message);
+  throw malformedArtifact("dotnet-bundle", message);
 };

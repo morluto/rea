@@ -18,13 +18,14 @@ import { access, realpath, stat } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
 
 import {
-  ArtifactReaderFailure,
   type ArtifactResourceScope,
+  unsupportedArtifact,
 } from "../../resources/index.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
-  AnalysisUnsupportedTargetError,
+  unsupportedTarget,
+  unrecognizedTarget,
 } from "../../domain/analysisErrorCore.js";
 import { createJavaScriptArtifactReader as createReader } from "../../artifacts/javascript/JavaScriptArtifactReader.js";
 import type { JavaScriptApplicationGraph } from "../../domain/javascript/javascriptApplicationGraph.js";
@@ -53,7 +54,10 @@ import {
 import type { JavaScriptSourceAnalysisFactory } from "../../ports/javascript/JavaScriptSourceAnalysisFactory.js";
 import { JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS } from "../../domain/javascript/javascriptAnalysisResourceControls.js";
 import { createOwnedJavaScriptApplicationEvidenceCooperatively } from "./JavaScriptApplicationEvidence.js";
-import { readJavaScriptArtifactFiles } from "../../artifacts/javascript/JavaScriptArtifactFiles.js";
+import {
+  assertReconstructionActive,
+  readJavaScriptArtifactFiles,
+} from "../../artifacts/javascript/JavaScriptArtifactFiles.js";
 import { buildImmutableJavaScriptArtifactGraphSteps } from "./JavaScriptArtifactGraphBuilder.js";
 import { scanCanonicalArtifactInventoryInScope } from "../../artifacts/inventory/scanCanonical.js";
 import { createJavaScriptNextAppContext } from "./JavaScriptNextAppContext.js";
@@ -116,7 +120,7 @@ export const reconstructJavaScriptArtifact = async (
       });
       await checkpointJavaScriptAnalysis(signal);
     };
-    abortIfNeeded(signal);
+    assertReconstructionActive(signal);
     const selectedPath = absoluteCallerPath(input.input_path);
     const { path, metadata } = await resolveSelectedInput(selectedPath);
     const format = resolveFormat(path, metadata, input, selectedPath);
@@ -132,8 +136,8 @@ export const reconstructJavaScriptArtifact = async (
       selectedPath,
     );
     if (snapshot.manifest.root_format !== format)
-      throw new ArtifactReaderFailure(
-        "format",
+      throw unsupportedArtifact(
+        format,
         `Artifact inventory classified ${path} as ${snapshot.manifest.root_format}, not ${format}`,
       );
     const reader = createReader(
@@ -176,14 +180,13 @@ export const reconstructJavaScriptArtifact = async (
           inventory: snapshot,
         });
       if (javaScriptApplicationInputPresence(files, snapshot) === "absent")
-        throw new AnalysisUnsupportedTargetError(
+        throw unrecognizedTarget(
           OPERATION,
           path,
-          "the complete inventory has entries but no JavaScript, HTML, package.json, source map, or nested ASAR inputs",
+          snapshot.manifest.root_format,
+          "the complete inventory has entries but no JavaScript, HTML, package.json, source map, or nested ASAR inputs; details.diagnostics.entries_by_format lists what it holds",
           {
             diagnostics: javaScriptAbsentInputDiagnostics(files, snapshot),
-            remediationAction:
-              "Route by details.diagnostics.entries_by_format. For a native build or installation directory, call inspect_desktop_application or audit_release_exposure with the directory, or select one member file with inspect_artifact or open_binary.",
             related: { operations: [...JAVASCRIPT_ABSENT_INPUT_OPERATIONS] },
           },
         );
@@ -252,7 +255,7 @@ export const reconstructJavaScriptArtifact = async (
           worker,
           semanticProjection,
           async (file, completed, total) => {
-            abortIfNeeded(signal);
+            assertReconstructionActive(signal);
             const ast =
               javascriptArtifactAnalysisScopes[file.kind]?.authority ===
               "ast-static-analysis";
@@ -264,18 +267,18 @@ export const reconstructJavaScriptArtifact = async (
               total: 1,
               message: `${ast ? "Parsing and projecting" : "Processing metadata for"} ${file.path} (${String(completed + 1)}/${String(total)})`,
             });
-            abortIfNeeded(signal);
+            assertReconstructionActive(signal);
           },
           signal,
           async (file, phase) => {
-            abortIfNeeded(signal);
+            assertReconstructionActive(signal);
             await progress?.report({
               phase: `javascript_worker_${phase}`,
               completed: 0,
               total: 1,
               message: `JavaScript worker ${phase}: ${file.path}`,
             });
-            abortIfNeeded(signal);
+            assertReconstructionActive(signal);
           },
           preloads.paths,
           preloads.limitations,
@@ -569,14 +572,11 @@ const resolveFormat = (
       ? "asar"
       : undefined;
   if (observed === undefined)
-    throw new AnalysisUnsupportedTargetError(
+    throw unsupportedTarget(
       OPERATION,
       input.input_path,
-      "JavaScript application analysis accepts only a directory or an .asar file",
-      {
-        remediationAction:
-          "Select an extracted application directory, an app bundle, or an .asar file such as Contents/Resources/app.asar.",
-      },
+      "file",
+      "JavaScript application analysis accepts only a directory or an .asar file. Select an extracted application directory, an app bundle, or an .asar file such as Contents/Resources/app.asar.",
     );
   if (input.format !== "auto" && input.format !== observed)
     throw new AnalysisInputError(OPERATION, undefined, [
@@ -588,13 +588,4 @@ const resolveFormat = (
       },
     ]);
   return observed;
-};
-
-const abortIfNeeded = (signal?: AbortSignal): void => {
-  if (signal?.aborted === true)
-    throw new ArtifactReaderFailure(
-      "cancelled",
-      "JavaScript artifact reconstruction cancelled",
-      { cause: signal.reason },
-    );
 };

@@ -54,8 +54,8 @@ const preflight = (
     at += size;
     return start;
   };
-  // Strings return their text and unsigned integers their value, so map keys
-  // keep type identity until normalization.
+  // Strings return their text and non-negative integers their value, so map
+  // keys keep type identity until normalization.
   const value = (depth: number): string | bigint | undefined => {
     if (depth > AMD_METADATA_DEPTH)
       throw new BinaryResourceFailure(
@@ -118,6 +118,19 @@ const preflight = (
                 ? reader.u16(start)
                 : reader.u32(start),
           );
+    if (code >= 0xd0 && code <= 0xd3) {
+      const signed =
+        code === 0xd3
+          ? reader.i64(start)
+          : BigInt(
+              code === 0xd0
+                ? reader.i8(start)
+                : code === 0xd1
+                  ? reader.i16(start)
+                  : reader.i32(start),
+            );
+      return signed >= 0n ? signed : undefined;
+    }
     // Every declared child requires at least one encoded byte, regardless of
     // its type. Impossible extents are malformed independently of limits.
     if (count > bytes.length - at)
@@ -223,7 +236,7 @@ export const readAmdMetadata = (
         },
         mapKeyConverter: (key) => {
           if (typeof key === "string") return key;
-          // The preflight admitted only unsigned integer keys for this schema.
+          // The preflight admitted only non-negative integer keys for this schema.
           if (
             keys === "string-or-unsigned" &&
             (typeof key === "number" || typeof key === "bigint")

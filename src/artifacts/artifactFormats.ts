@@ -6,6 +6,7 @@ import {
 } from "../domain/artifactGraph.js";
 import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
 import { ANDROID_OTA_PAYLOAD_LIMITATIONS } from "../domain/firmware/androidOtaPayload.js";
+import { ANDROID_SPARSE_IMAGE_LIMITATIONS } from "../domain/firmware/androidSparseImage.js";
 import { ESP_IMAGE_LIMITATIONS } from "../domain/firmware/espImageFacts.js";
 import {
   ZIP_PACKAGE_FORMATS,
@@ -19,7 +20,10 @@ import {
 } from "../resources/index.js";
 import type { ArtifactReaderAdmission } from "./ArtifactReaderAdmission.js";
 import { AndroidBootImageArtifactReader } from "./AndroidBootImageArtifactReader.js";
-import { AsarArtifactReader } from "./AsarArtifactReader.js";
+import {
+  AsarArtifactReader,
+  type AsarAdmission,
+} from "./AsarArtifactReader.js";
 import type { BunStandaloneAdmission } from "./bun/BunStandaloneAdmission.js";
 import { BunStandaloneArtifactReader } from "./BunStandaloneArtifactReader.js";
 import type { DenoStandaloneAdmission } from "./deno/DenoStandaloneAdmission.js";
@@ -37,6 +41,7 @@ import { WindowsPrefetchArtifactReader } from "./WindowsPrefetchArtifactReader.j
 import type { GodotPckAdmission } from "./GodotPckLocation.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
 import { InesArtifactReader } from "./InesArtifactReader.js";
+import { Iso9660ArtifactReader } from "./Iso9660ArtifactReader.js";
 import { HexRecordArtifactReader } from "./HexRecordArtifactReader.js";
 import { MachOSliceArtifactReader } from "./MachOSliceArtifactReader.js";
 import { NativeDmgArtifactReader } from "./NativeDmgArtifactReader.js";
@@ -48,9 +53,11 @@ import { UefiArtifactReader } from "../uefi/UefiArtifactReader.js";
 import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
 import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
 import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactReader.js";
+import { AndroidSparseImageArtifactReader } from "./AndroidSparseImageArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
+import { TarArtifactReader } from "./tar/TarArtifactReader.js";
 import {
   GpuAssetArtifactReader,
   type GpuAssetFormat,
@@ -106,6 +113,10 @@ const sourceOf = (options: ArtifactReaderConstruction) => {
     : admission;
 };
 
+function admittedAs(
+  kind: "asar",
+  options: ArtifactReaderConstruction,
+): AsarAdmission | ReturnType<typeof sourceOf>;
 function admittedAs(
   kind: "dotnet-bundle",
   options: ArtifactReaderConstruction,
@@ -283,6 +294,8 @@ const NON_ZIP_FORMATS = {
       new DenoStandaloneArtifactReader(
         path,
         admittedAs("deno-standalone", options),
+        options.readerLimits?.deno,
+        options.readerLimits?.expanded_bytes,
       ),
   }),
   dmg: container("dmg", {
@@ -297,7 +310,18 @@ const NON_ZIP_FORMATS = {
     extractable: true,
     absentInventory: "unavailable",
     createReader: (path, options) => {
-      const admitted = sourceOf(options);
+      const admission = admittedAs("asar", options);
+      const admitted =
+        admission !== undefined && "kind" in admission
+          ? admission.source
+          : admission;
+      const admittedExtents =
+        admission !== undefined && "kind" in admission
+          ? {
+              extents: admission.extents,
+              headerAdmission: admission.headerAdmission,
+            }
+          : undefined;
       return new AsarArtifactReader(path, {
         ...(options.asarHeaderAdmission === undefined
           ? {}
@@ -306,6 +330,7 @@ const NON_ZIP_FORMATS = {
           ? {}
           : { selectedPath: options.selectedPath }),
         ...(admitted === undefined ? {} : { admitted }),
+        ...(admittedExtents === undefined ? {} : { admittedExtents }),
       });
     },
   }),
@@ -358,7 +383,27 @@ const NON_ZIP_FORMATS = {
     readerLimitation:
       "wxapkg inventory establishes packaged member names and stored bytes; wxml/wxss sources, compiled bundles and runtime behavior are not reconstructed. V1MMWX-encrypted packages are unsupported.",
     createReader: (path, options) =>
-      new WxapkgArtifactReader(path, sourceOf(options)),
+      new WxapkgArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.wxapkg,
+        options.readerLimits?.expanded_bytes,
+      ),
+  }),
+  tar: container("tar", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "tar inventory lists ustar, pax and GNU members of a plain or gzip-compressed tar stream. Hard links, devices, FIFOs and sparse members are reported as omissions and not read; member bytes are not interpreted.",
+    createReader: (path, options) =>
+      new TarArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+        options.readerLimits?.tar,
+      ),
   }),
   dds: gpuAsset("dds"),
   glb: gpuAsset("glb"),
@@ -372,7 +417,7 @@ const NON_ZIP_FORMATS = {
     readerLimitation:
       "uImage inventory establishes the 64-byte legacy header facts and stored payload bytes. Compressed payloads are not decompressed, and the image is not executed.",
     createReader: (path, options) =>
-      new UImageArtifactReader(path, sourceOf(options)),
+      new UImageArtifactReader(path, sourceOf(options), options.integrity),
   }),
   "android-boot-image": container("android-boot-image", {
     roleContainer: true,
@@ -392,6 +437,35 @@ const NON_ZIP_FORMATS = {
     readerLimitation: ANDROID_OTA_PAYLOAD_LIMITATIONS.inventoryScope,
     createReader: (path, options) =>
       new AndroidOtaPayloadArtifactReader(path, sourceOf(options)),
+  }),
+  "android-sparse-image": container("android-sparse-image", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation: ANDROID_SPARSE_IMAGE_LIMITATIONS.inventoryScope,
+    createReader: (path, options) =>
+      new AndroidSparseImageArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.android_sparse_image,
+        options.readerLimits?.expanded_bytes,
+      ),
+  }),
+  iso9660: container("iso9660", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "ISO 9660 inventory establishes volume descriptor facts, the directory tree (Joliet names when present) and stored file bytes. Rock Ridge and UDF structures and El Torito boot images are not decoded, and nothing is mounted or executed.",
+    createReader: (path, options) =>
+      new Iso9660ArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+        options.readerLimits?.iso9660,
+      ),
   }),
   "javascript-bundle": described("javascript-bundle", plain),
   "source-map": described("source-map", plain),
@@ -527,7 +601,7 @@ const NON_ZIP_FORMATS = {
     readerLimitation:
       "FIT inventory reports each /images node's stored bytes and its declared type, architecture, OS, compression, load and entry. Image data is not decompressed or decrypted, signatures are not verified, nothing is executed, and load and entry addresses are declarations.",
     createReader: (path, options) =>
-      new FitArtifactReader(path, sourceOf(options)),
+      new FitArtifactReader(path, sourceOf(options), options.integrity),
   }),
   "windows-prefetch": container("windows-prefetch", {
     roleContainer: true,

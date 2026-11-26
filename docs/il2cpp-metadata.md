@@ -482,17 +482,20 @@ Each category says which selected file is at fault:
 
 - **unsupported**: an `unsupported_target` refusal whose `details.path` is
   `binary_path`. The binary's form is outside coverage.
-- **malformed**: an `unsupported_target` refusal with `details.format_failure`
+- **malformed**: an `unsupported_target` refusal with `details.failure_kind`
   `malformed` or `truncated`, whose `details.path` is `binary_path`. The
   binary's own bytes are damaged. A damaged universal Mach-O container,
   including a slice that ends inside its header or disagrees with its FAT
   table entry, is reported the same way with `details.format` `macho`.
 - **conflict**: both files parsed but do not agree. They may come from
   different builds, either file may be damaged, or the binary's registration
-  layout may be outside coverage; nothing establishes which. The refusal is an
-  `invalid_request` with an `invalid_value` issue for each of `path` and
-  `binary_path` (`--binary` in the CLI) and no `inspect_input_contract`
-  recovery. Neither file is called malformed.
+  layout may be outside coverage; nothing establishes which. The refusal has
+  code `input_conflict`, `details.failure_kind` `conflict`, `retry`
+  `after_change` and no `recovery`. `details.inputs` lists both files as
+  `{ field, path }`: `path` for the metadata and `binary_path` for the binary
+  (`binary` in the CLI, after its `--binary` option). `details.path` names
+  the metadata. Neither file is called malformed; select a pair from the same
+  build. See [target failures](reference/target-failures.md).
 
 A token that is not a MethodDef row, or a row reused within one image, is
 the metadata's own fault, so linking refuses it as malformed metadata with
@@ -561,7 +564,7 @@ A version other than 24, 27, 29, 31 or 39 fails as an unsupported target with
 
 Damaged metadata is refused as a malformed target: an `unsupported_target`
 refusal whose `details.path` is the metadata file, `details.format` is
-`il2cpp-metadata`, `details.format_failure` is `truncated` for
+`il2cpp-metadata`, `details.failure_kind` is `truncated` for
 `truncated-header` and `malformed` otherwise, and `details.reason` names one
 reason. The request is not at fault, so no input recovery is offered:
 

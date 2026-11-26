@@ -10,7 +10,7 @@ import {
 } from "../native/functionMatching.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
@@ -293,15 +293,8 @@ export const projectNativeFunctionMatchingView = (
     | z.output<typeof nativeFunctionMatchingViewRequestSchema>
   >(admitted, "summary", "function-matches");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Native matching supports summary and function-matches pages",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Native matching supports summary and function-matches pages",
     );
   const parsed = checkedReport(parent);
   if (!parsed.ok) return parsed;
@@ -323,15 +316,8 @@ export const projectNativeFunctionMatchingView = (
     });
   if (view.collection === "byte-sources") {
     if (entry.report.byte_sources === undefined)
-      return err(
-        analysisViewInputError([
-          {
-            path: ["view"],
-            reason: "invalid_value",
-            message:
-              "This historical report did not record byte-source qualifications; inspect its linked Evidence.",
-          },
-        ]),
+      return invalidAnalysisView(
+        "This historical report did not record byte-source qualifications; inspect its linked Evidence.",
       );
     const sides = selected(view.sides),
       ids = selected(view.evidence_ids);

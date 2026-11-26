@@ -1,3 +1,4 @@
+import type { CliDeliveryDetail } from "./analysisEvidenceDeliveryOptions.js";
 import type { z } from "zod";
 
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -431,7 +432,8 @@ export interface CliOnlyOption {
 
 /** The Evidence delivery a command invocation selected. */
 export interface CliEvidenceDeliveryChoice {
-  readonly detail: "complete" | "summary";
+  /** Undefined leaves delivery to the agent result budget. */
+  readonly detail: CliDeliveryDetail;
   readonly evidenceOutput: string | undefined;
   /** The admitted view, for a projection with `viewDelivery`. */
   readonly view?: AnalysisViewRequest;

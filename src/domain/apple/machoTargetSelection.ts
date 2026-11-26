@@ -24,17 +24,18 @@ export const machoTargetSelectionSchema = z
       .nullable(),
   })
   .superRefine((selection, context) => {
-    if (
-      (selection.container === "thin" &&
-        (selection.offset !== 0 ||
-          selection.container_table_sha256 !== null)) ||
-      (selection.container === "fat" &&
-        selection.container_table_sha256 === null)
-    )
-      context.addIssue({
-        code: "custom",
-        message: "Invalid Mach-O container identity",
-      });
+    // Each refusal names the rule for its container, so the selection can be
+    // corrected without the canonical schema.
+    const problem =
+      selection.container === "thin"
+        ? selection.offset !== 0 || selection.container_table_sha256 !== null
+          ? "A thin Mach-O selection has offset 0 and container_table_sha256 null"
+          : undefined
+        : selection.container_table_sha256 === null
+          ? "A fat Mach-O selection requires the container_table_sha256 of its fat header table"
+          : undefined;
+    if (problem !== undefined)
+      context.addIssue({ code: "custom", message: problem });
   });
 
 export type MachoTargetSelection = z.infer<typeof machoTargetSelectionSchema>;

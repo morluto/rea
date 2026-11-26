@@ -13,7 +13,7 @@ import {
   spawnOwnedProviderProcess,
 } from "../dist/process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../dist/process/ProcessOwnership.js";
-import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { inspectVerifierGhidraFromEnvironment } from "./lib/ghidra-installation-inspection.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 import {
   VerifierFixture,
@@ -65,13 +65,7 @@ if (process.env.GHIDRA_INSTALL_DIR === undefined)
     "Set GHIDRA_INSTALL_DIR to a bring-your-own Ghidra installation.",
   );
 
-const installation = await inspectVerifierGhidraInstallation({
-  environment: process.env,
-  installDir: process.env.GHIDRA_INSTALL_DIR,
-  ...(process.env.JAVA_HOME === undefined
-    ? {}
-    : { javaHome: process.env.JAVA_HOME }),
-});
+const installation = await inspectVerifierGhidraFromEnvironment(process.env);
 assert.ok(
   installation.analyzeHeadlessPath !== null &&
     (installation.status === "available" ||

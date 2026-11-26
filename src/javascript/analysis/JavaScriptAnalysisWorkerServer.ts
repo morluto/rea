@@ -1,3 +1,4 @@
+import { writeWorkerControlFrame } from "../../process/writeWorkerControlFrame.js";
 import {
   javaScriptMemberMutationAllowanceFromField,
   type JavaScriptMemberMutationAllowance,
@@ -193,17 +194,11 @@ export const encodeJavaScriptStaticCheckpoint = (
 };
 
 const send = async (input: JavaScriptWorkerMessage): Promise<void> => {
-  const value = javaScriptWorkerMessageSchema.parse(input);
-  const frame = `${JSON.stringify(value)}\n`;
-  if (Buffer.byteLength(frame) > DEFAULTS.protocolBytes)
-    throw new RangeError(
-      "JavaScript worker control frame exceeds its byte budget",
-    );
-  await new Promise<void>((resolve, reject) => {
-    process.stdout.write(frame, (error) =>
-      error === null || error === undefined ? resolve() : reject(error),
-    );
-  });
+  await writeWorkerControlFrame(
+    javaScriptWorkerMessageSchema.parse(input),
+    DEFAULTS.protocolBytes,
+    "JavaScript worker control frame exceeds its byte budget",
+  );
 };
 
 /** Serve sequential inert-source requests from a parent-owned private runtime root. */

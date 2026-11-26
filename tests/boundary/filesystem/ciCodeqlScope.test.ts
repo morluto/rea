@@ -97,6 +97,9 @@ it.each([
   "tests/support/analysis-efficiency/resource-run.py",
   "scripts/fixtures/http3-lab.py",
   "scripts/fixtures/managed/pe.mjs",
+  "scripts/verify/advertised-schemas/engines.py",
+  "scripts/verify-real-browser.mjs",
+  "scripts/verify-qwen-client.mjs",
   "src/process/ExecFileOutput.test.ts",
   "src/process/ProcessOwnership.fixture.ts",
   "scripts/lib/http3-verifier-lifecycle.test.mjs",
@@ -166,6 +169,13 @@ it("uses the scope in a bounded workflow gated on administrator activation", () 
   expect(workflowDocument.jobs.scope.if).toBe(
     "vars.REA_CODEQL_ADVANCED == 'true'",
   );
+  const scopeCheckout = workflowDocument.jobs.scope.steps.find((step) =>
+    step.uses?.startsWith("actions/checkout@"),
+  );
+  // Numeric 0 is falsy in Actions expressions; keep the nonzero branch first.
+  expect(scopeCheckout?.with?.["fetch-depth"]).toBe(
+    "${{ github.event_name != 'pull_request' && 1 || 0 }}",
+  );
   const job = workflowDocument.jobs.analyze;
   expect(job.if).toBe(
     "vars.REA_CODEQL_ADVANCED == 'true' && needs.scope.outputs.run == 'true'",
@@ -221,15 +231,28 @@ it("selects affected CodeQL languages on pull requests and fails closed on share
       "src/process/ExecFileOutput.test.ts",
       "docs/development/testing.md",
       "bridge/ghidra/ReaGhidraBridge.java",
+      "scripts/verify/advertised-schemas/engines.py",
+      "scripts/verify-real-browser.mjs",
+      "scripts/verify-qwen-client.mjs",
     ]),
   ).toMatchObject({ run: false, languages: [] });
   expect(
-    selectPr(["src/process/ExecFileOutput.ts", "docs/.vitepress/config.ts"]),
+    selectPr([
+      "src/process/ExecFileOutput.ts",
+      "docs/.vitepress/config.ts",
+      "scripts/verify/advertised-schemas/engines.py",
+    ]),
   ).toMatchObject({
     run: true,
     languages: ["javascript-typescript"],
   });
-  expect(selectPr(["bridge/pwndbg/launch.py"])).toMatchObject({
+  expect(
+    selectPr([
+      "bridge/pwndbg/launch.py",
+      "scripts/verify-real-browser.mjs",
+      "scripts/verify-qwen-client.mjs",
+    ]),
+  ).toMatchObject({
     run: true,
     languages: ["python"],
   });

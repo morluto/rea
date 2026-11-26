@@ -1,19 +1,20 @@
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { logicalPathNfc } from "../domain/artifactIdentity.js";
-import { err, ok, type Result } from "../domain/result.js";
+import type { Result } from "../domain/result.js";
 import {
   ANDROID_BOOT_MAGIC,
   VENDOR_BOOT_MAGIC,
 } from "../domain/androidBootImageFormat.js";
 import {
+  captureParseFailure,
   decodeLimit,
   malformedInput,
-  ParseFailureError,
   truncatedInput,
   unsupportedInput,
   type LimitRef,
+  type ParseFailureError,
 } from "../domain/parseFailure.js";
-import { BinaryReader } from "../domain/binaryContainer.js";
+import { createBinaryReaderCache } from "../domain/binaryContainer.js";
 
 /**
  * Android boot (`ANDROID!`, versions 0-4) and vendor boot (`VNDRBOOT`,
@@ -51,7 +52,12 @@ const BOARD_ID_OFFSET = 12 + RAMDISK_NAME_SIZE;
 
 export type AndroidBootCompression = "gzip" | "lz4" | "zstd";
 
-export interface AndroidBootComponentPlan {
+interface BootImageRange {
+  readonly offset: number;
+  readonly size: number;
+}
+
+export interface AndroidBootComponentPlan extends BootImageRange {
   readonly role:
     | "kernel"
     | "ramdisk"
@@ -63,8 +69,6 @@ export interface AndroidBootComponentPlan {
     | "signature";
   readonly path: string;
   readonly index: number;
-  readonly offset: number;
-  readonly size: number;
   readonly loadAddress: number | null;
   readonly ramdiskType: number | null;
   readonly ramdiskTypeName: string | null;
@@ -113,19 +117,17 @@ export interface AndroidBootParse {
   /** Page-aligned end after the last component; trailing padding may be absent. */
   readonly imageEnd: number;
   readonly limitations: readonly string[];
-  readonly tableRange: {
-    readonly offset: number;
-    readonly size: number;
-  } | null;
-  readonly vendorRamdiskSection: {
-    readonly offset: number;
-    readonly size: number;
-  } | null;
+  /** Declared layout bytes before `imageEnd` that no component exposes. */
+  readonly unexposedLayoutBytes: boolean;
+  readonly tableRange: BootImageRange | null;
+  readonly vendorRamdiskSection: BootImageRange | null;
 }
 
 export interface VendorRamdiskTableParse {
   readonly components: readonly AndroidBootComponentPlan[];
   readonly limitations: readonly string[];
+  /** Vendor ramdisk section bytes that no table entry exposes. */
+  readonly unexposedSectionBytes: boolean;
 }
 
 export interface AvbFooterFacts {
@@ -175,15 +177,6 @@ export const ANDROID_BOOT_FIXED_LIMITS: ReadonlyMap<
   [VENDOR_RAMDISK_ENTRY_SIZE_LIMIT.name, VENDOR_RAMDISK_ENTRY_SIZE_LIMIT],
 ]);
 
-const parsed = <T>(read: () => T): Result<T, ParseFailureError> => {
-  try {
-    return ok(read());
-  } catch (cause) {
-    if (!(cause instanceof ParseFailureError)) throw cause;
-    return err(cause);
-  }
-};
-
 const requireBytes = (buffer: Buffer, length: number, what: string): void => {
   if (buffer.length < length)
     throw truncatedInput(
@@ -193,27 +186,20 @@ const requireBytes = (buffer: Buffer, length: number, what: string): void => {
     );
 };
 
-const LE_BOOT_READERS = new WeakMap<Buffer, BinaryReader>();
-const BE_BOOT_READERS = new WeakMap<Buffer, BinaryReader>();
-
-const cachedBootReader = (buffer: Buffer, little: boolean): BinaryReader => {
-  const cache = little ? LE_BOOT_READERS : BE_BOOT_READERS;
-  let reader = cache.get(buffer);
-  if (reader === undefined) {
-    reader = new BinaryReader(buffer, little, ANDROID_BOOT_FORMAT);
-    cache.set(buffer, reader);
-  }
-  return reader;
-};
+const littleEndianBootReader = createBinaryReaderCache(
+  true,
+  ANDROID_BOOT_FORMAT,
+);
+const bigEndianBootReader = createBinaryReaderCache(false, ANDROID_BOOT_FORMAT);
 
 const u32 = (buffer: Buffer, offset: number): number => {
   requireBytes(buffer, offset + 4, "header");
-  return cachedBootReader(buffer, true).u32(offset);
+  return littleEndianBootReader(buffer).u32(offset);
 };
 
 const u64 = (buffer: Buffer, offset: number, what: string): number => {
   requireBytes(buffer, offset + 8, what);
-  const reader = cachedBootReader(buffer, true);
+  const reader = littleEndianBootReader(buffer);
   const low = reader.u32(offset);
   const high = reader.u32(offset + 4);
   if (high > 0x1f_ffff) formatError(`${what} exceeds a safe integer`);
@@ -222,7 +208,7 @@ const u64 = (buffer: Buffer, offset: number, what: string): number => {
 
 const u64be = (buffer: Buffer, offset: number, what: string): number => {
   requireBytes(buffer, offset + 8, what);
-  const reader = cachedBootReader(buffer, false);
+  const reader = bigEndianBootReader(buffer);
   const high = reader.u32(offset);
   const low = reader.u32(offset + 4);
   if (high > 0x1f_ffff) formatError(`${what} exceeds a safe integer`);
@@ -294,10 +280,7 @@ const requireHeaderSize = (
 const requireFileCovers = (
   fileSize: number,
   headerSize: number,
-  ranges: readonly ({
-    readonly offset: number;
-    readonly size: number;
-  } | null)[],
+  ranges: readonly (BootImageRange | null)[],
 ): number => {
   if (!Number.isSafeInteger(fileSize) || fileSize < 0)
     formatError("file size is not a safe nonnegative integer");
@@ -492,6 +475,7 @@ const bootParse = (
   vendorRamdiskTableEntryCount: null,
   vendorRamdiskTableEntrySize: null,
   bootconfigSize: null,
+  unexposedLayoutBytes: false,
   tableRange: null,
   vendorRamdiskSection: null,
   ...fields,
@@ -537,6 +521,7 @@ const layoutLegacyTail = (
   limitations: string[],
 ): {
   readonly cursor: number;
+  readonly unexposedLayoutBytes: boolean;
   readonly recoveryDtboSize: number | null;
   readonly recoveryDtboOffset: number | null;
   readonly dtbSize: number | null;
@@ -545,6 +530,7 @@ const layoutLegacyTail = (
   if (version < 1)
     return {
       cursor,
+      unexposedLayoutBytes: false,
       recoveryDtboSize: null,
       recoveryDtboOffset: null,
       dtbSize: null,
@@ -557,6 +543,7 @@ const layoutLegacyTail = (
     "recovery_dtbo offset",
   );
   let next = cursor;
+  let unexposed = false;
   if (recoveryDtboSize > 0) {
     if (recoveryDtboOffset % page !== 0)
       formatError(
@@ -565,7 +552,8 @@ const layoutLegacyTail = (
     endOf(recoveryDtboOffset, recoveryDtboSize);
     if (recoveryDtboOffset < cursor)
       formatError("recovery_dtbo overlaps an earlier component");
-    if (recoveryDtboOffset > cursor)
+    unexposed = recoveryDtboOffset > cursor;
+    if (unexposed)
       limitations.push(
         "Bytes between the sequential layout and recovery_dtbo were not exposed as entries.",
       );
@@ -583,6 +571,7 @@ const layoutLegacyTail = (
   if (version < 2)
     return {
       cursor: next,
+      unexposedLayoutBytes: unexposed,
       recoveryDtboSize,
       recoveryDtboOffset,
       dtbSize: null,
@@ -597,6 +586,7 @@ const layoutLegacyTail = (
       page,
       dtbSize === 0 ? null : component("dtb", "dtb", next, dtbSize, dtbAddr),
     ),
+    unexposedLayoutBytes: unexposed,
     recoveryDtboSize,
     recoveryDtboOffset,
     dtbSize,
@@ -664,7 +654,8 @@ const parseLegacyBoot = (
       ? null
       : component("second", "second", cursor, secondSize, secondAddr),
   );
-  const tail = layoutLegacyTail(
+  // The tail's facts are named as the parse fields they become.
+  const { cursor: imageEnd, ...tail } = layoutLegacyTail(
     prefix,
     headerVersion,
     pageSize,
@@ -691,16 +682,13 @@ const parseLegacyBoot = (
     ramdiskAddr,
     secondAddr,
     tagsAddr: u32(prefix, 32),
-    dtbAddr: tail.dtbAddr,
     kernelSize,
     ramdiskSize,
     secondSize,
-    recoveryDtboSize: tail.recoveryDtboSize,
-    recoveryDtboOffset: tail.recoveryDtboOffset,
-    dtbSize: tail.dtbSize,
+    ...tail,
     components,
     dataEnd,
-    imageEnd: tail.cursor,
+    imageEnd,
     limitations,
   });
 };
@@ -905,7 +893,9 @@ const parseVendorHeader = (
       ? null
       : component("bootconfig", "bootconfig", cursor, bootconfigSize, null),
   );
-  if (table !== null && table.entryCount === 0 && vendorRamdiskSize > 0)
+  const sectionUnexposed =
+    table !== null && table.entryCount === 0 && vendorRamdiskSize > 0;
+  if (sectionUnexposed)
     limitations.push(
       "Vendor ramdisk section bytes outside the ramdisk table were not exposed as entries.",
     );
@@ -937,6 +927,7 @@ const parseVendorHeader = (
     dataEnd,
     imageEnd: cursor,
     limitations,
+    unexposedLayoutBytes: sectionUnexposed,
     tableRange,
     vendorRamdiskSection: section,
   });
@@ -964,7 +955,7 @@ export const parseAndroidBootHeader = (
   prefix: Buffer,
   fileSize: number,
 ): Result<AndroidBootParse, ParseFailureError> =>
-  parsed(() => {
+  captureParseFailure(() => {
     if (!Number.isSafeInteger(fileSize) || fileSize < 0)
       formatError("file size is not a safe nonnegative integer");
     requireBytes(prefix, 8, "header");
@@ -1004,9 +995,11 @@ const vendorRamdiskPath = (
 };
 
 const sectionCovered = (
-  entries: readonly AndroidBootComponentPlan[],
-  sectionOffset: number,
-  sectionSize: number,
+  entries: readonly BootImageRange[],
+  {
+    sectionOffset,
+    sectionSize,
+  }: { readonly sectionOffset: number; readonly sectionSize: number },
 ): boolean => {
   let covered = 0;
   const spans = entries
@@ -1022,14 +1015,16 @@ const sectionCovered = (
   return covered === sectionSize;
 };
 
+interface VendorRamdiskTableLayout {
+  readonly entryCount: number;
+  readonly entrySize: number;
+  readonly sectionOffset: number;
+  readonly sectionSize: number;
+}
+
 const readVendorRamdiskTable = (
   table: Buffer,
-  input: {
-    readonly entryCount: number;
-    readonly entrySize: number;
-    readonly sectionOffset: number;
-    readonly sectionSize: number;
-  },
+  input: VendorRamdiskTableLayout,
 ): VendorRamdiskTableParse => {
   const expected = vendorTableByteLength(input.entryCount, input.entrySize);
   requireBytes(table, expected, "vendor ramdisk table");
@@ -1041,15 +1036,15 @@ const readVendorRamdiskTable = (
   const used = new Set<string>();
   const empty: number[] = [];
   let longer = false;
+  let firstOverrunIndex: number | null = null;
   for (let index = 0; index < input.entryCount; index += 1) {
     const base = index * input.entrySize;
     const size = u32(table, base);
     const offset = u32(table, base + 4);
     const ramdiskType = u32(table, base + 8);
-    if (offset > input.sectionSize || size > input.sectionSize - offset)
-      formatError(
-        `vendor ramdisk table entry ${index} overruns the vendor ramdisk section`,
-      );
+    if (offset > input.sectionSize || size > input.sectionSize - offset) {
+      if (firstOverrunIndex === null) firstOverrunIndex = index;
+    }
     // An empty fragment carries no bytes to expose, like other zero-sized
     // components; omit it rather than rejecting the image.
     if (size === 0) {
@@ -1097,10 +1092,16 @@ const readVendorRamdiskTable = (
       current !== undefined &&
       previous.offset + previous.size > current.offset
     )
-      formatError(
+      throw malformedInput(
+        ANDROID_BOOT_FORMAT,
         `vendor ramdisk table entry ${current.index} overlaps entry ${previous.index}`,
+        { field: "vendor_ramdisk_table_overlap" },
       );
   }
+  if (firstOverrunIndex !== null)
+    formatError(
+      `vendor ramdisk table entry ${firstOverrunIndex} overruns the vendor ramdisk section`,
+    );
   const limitations: string[] = [];
   if (longer)
     limitations.push(
@@ -1110,26 +1111,24 @@ const readVendorRamdiskTable = (
     limitations.push(
       `Vendor ramdisk table entries ${empty.join(", ")} declare no bytes and were omitted.`,
     );
-  if (!sectionCovered(components, input.sectionOffset, input.sectionSize))
+  const unexposedSectionBytes = !sectionCovered(components, input);
+  if (unexposedSectionBytes)
     limitations.push(
       "Vendor ramdisk section bytes outside the ramdisk table were not exposed as entries.",
     );
-  return { components, limitations };
+  return { components, limitations, unexposedSectionBytes };
 };
 
 /** Split a v4 vendor ramdisk table into non-overlapping section slices. */
 export const parseVendorRamdiskTable = (
   table: Buffer,
-  input: {
-    readonly entryCount: number;
-    readonly entrySize: number;
-    readonly sectionOffset: number;
-    readonly sectionSize: number;
-  },
+  input: VendorRamdiskTableLayout,
 ): Result<VendorRamdiskTableParse, ParseFailureError> =>
-  parsed(() => readVendorRamdiskTable(table, input));
+  captureParseFailure(() => readVendorRamdiskTable(table, input));
 
-const absentFooter = (limitations: readonly string[] = []): AvbFooterFacts => ({
+export const absentAvbFooter = (
+  limitations: readonly string[] = [],
+): AvbFooterFacts => ({
   present: false,
   footerSize: null,
   versionMajor: null,
@@ -1140,15 +1139,19 @@ const absentFooter = (limitations: readonly string[] = []): AvbFooterFacts => ({
   limitations,
 });
 
+const avbOverlapError = (message: string): never => {
+  throw malformedInput(ANDROID_BOOT_FORMAT, message, { field: "avb_overlap" });
+};
+
 const rejectVbmetaOverlap = (
-  vbmeta: { readonly offset: number; readonly size: number },
+  vbmeta: BootImageRange,
   fileSize: number,
   headerOccupied: number,
-  components: readonly { readonly offset: number; readonly size: number }[],
+  components: readonly BootImageRange[],
 ): void => {
   if (vbmeta.size === 0) return;
   if (endOf(vbmeta.offset, vbmeta.size) > fileSize - AVB_FOOTER_SIZE)
-    formatError("AVB vbmeta overlaps the footer");
+    avbOverlapError("AVB vbmeta overlaps the footer");
   const occupied = [{ offset: 0, size: headerOccupied }, ...components];
   for (const componentRange of occupied)
     if (
@@ -1156,7 +1159,7 @@ const rejectVbmetaOverlap = (
       vbmeta.offset < componentRange.offset + componentRange.size &&
       componentRange.offset < vbmeta.offset + vbmeta.size
     )
-      formatError(
+      avbOverlapError(
         componentRange.offset === 0
           ? "AVB vbmeta overlaps the boot image header"
           : `AVB vbmeta overlaps a component at offset ${componentRange.offset}`,
@@ -1172,17 +1175,16 @@ export const avbFooterOffset = (
   return offset >= dataEnd ? offset : null;
 };
 
-const readAvbFooter = (input: {
+interface AvbFooterInput {
   readonly fileSize: number;
   readonly dataEnd: number;
   readonly imageEnd: number;
   readonly headerOccupied: number;
-  readonly components: readonly {
-    readonly offset: number;
-    readonly size: number;
-  }[];
+  readonly components: readonly BootImageRange[];
   readonly tail: Buffer | null;
-}): AvbFooterFacts => {
+}
+
+const readAvbFooter = (input: AvbFooterInput): AvbFooterFacts => {
   if (input.fileSize < input.dataEnd)
     throw truncatedInput(
       ANDROID_BOOT_FORMAT,
@@ -1195,39 +1197,40 @@ const readAvbFooter = (input: {
     return formatError("AVB footer bytes were not supplied");
   if (offset === null || !tail?.subarray(0, 4).equals(AVB_FOOTER_MAGIC_BYTES)) {
     const trailing = input.fileSize - input.imageEnd;
-    if (trailing <= 0) return absentFooter();
-    return absentFooter([
+    if (trailing <= 0) return absentAvbFooter();
+    return absentAvbFooter([
       trailing < AVB_FOOTER_SIZE
         ? `${trailing} trailing bytes follow the boot image and are shorter than a 64-byte AVB footer.`
         : `${trailing} trailing bytes follow the boot image and were not decoded as an AVB footer.`,
     ]);
   }
-  const originalImageSize = u64be(tail, 12, "AVB original image size");
   const vbmetaOffset = u64be(tail, 20, "AVB vbmeta offset");
   const vbmetaSize = u64be(tail, 28, "AVB vbmeta size");
-  if (originalImageSize < input.dataEnd)
-    formatError(
-      `AVB original image size ${originalImageSize} ends before boot image components at ${input.dataEnd}`,
-    );
-  if (originalImageSize > input.fileSize - AVB_FOOTER_SIZE)
-    formatError(
-      `AVB original image size ${originalImageSize} overlaps the footer`,
-    );
   rejectVbmetaOverlap(
     { offset: vbmetaOffset, size: vbmetaSize },
     input.fileSize,
     input.headerOccupied,
     input.components,
   );
+  const originalImageSize = u64be(tail, 12, "AVB original image size");
+  if (originalImageSize > input.fileSize - AVB_FOOTER_SIZE)
+    avbOverlapError(
+      `AVB original image size ${originalImageSize} overlaps the footer`,
+    );
   // vbmeta is appended after the original image, including any padding
   // within that image. Existing component checks name specific collisions.
   if (vbmetaSize > 0 && vbmetaOffset < originalImageSize)
-    formatError("AVB vbmeta overlaps the original boot image");
+    avbOverlapError("AVB vbmeta overlaps the original boot image");
+  if (originalImageSize < input.dataEnd)
+    formatError(
+      `AVB original image size ${originalImageSize} ends before boot image components at ${input.dataEnd}`,
+    );
+  const reader = bigEndianBootReader(tail);
   return {
     present: true,
     footerSize: AVB_FOOTER_SIZE,
-    versionMajor: new BinaryReader(tail, false, ANDROID_BOOT_FORMAT).u32(4),
-    versionMinor: new BinaryReader(tail, false, ANDROID_BOOT_FORMAT).u32(8),
+    versionMajor: reader.u32(4),
+    versionMinor: reader.u32(8),
     originalImageSize,
     vbmetaOffset,
     vbmetaSize,
@@ -1239,15 +1242,7 @@ const readAvbFooter = (input: {
  * Report an AVB footer when the last 64 bytes start with AVBf and sit past
  * the actual boot components. Sizes are recorded; the footer is not verified.
  */
-export const inspectAvbFooter = (input: {
-  readonly fileSize: number;
-  readonly dataEnd: number;
-  readonly imageEnd: number;
-  readonly headerOccupied: number;
-  readonly components: readonly {
-    readonly offset: number;
-    readonly size: number;
-  }[];
-  readonly tail: Buffer | null;
-}): Result<AvbFooterFacts, ParseFailureError> =>
-  parsed(() => readAvbFooter(input));
+export const inspectAvbFooter = (
+  input: AvbFooterInput,
+): Result<AvbFooterFacts, ParseFailureError> =>
+  captureParseFailure(() => readAvbFooter(input));

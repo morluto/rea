@@ -252,7 +252,12 @@ const ENHANCED_REQUIREMENTS: ReadonlyMap<string, ProviderComposition> = new Map(
     get_call_graph: CALL_RELATIONSHIP_COMPOSITION,
     trace_call_path: CALL_RELATIONSHIP_COMPOSITION,
     analyze_swift_types: ["list_procedures", { optional: "list_names" }],
-    find_xrefs_to_name: ["list_names", "xrefs"],
+    // Names resolve from the name inventory, then the procedure lookup.
+    find_xrefs_to_name: [
+      ["list_names", "procedure_address"],
+      { optional: "procedure_address" },
+      "xrefs",
+    ],
     binary_overview: [
       { optional: "read_binary_inventory_summary" },
       ["current_document", "list_documents"],

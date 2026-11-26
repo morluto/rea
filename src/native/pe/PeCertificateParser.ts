@@ -25,6 +25,7 @@ import {
   readPeImageFromReader,
   type PeImage,
 } from "../../domain/native/peImage.js";
+import { peImageBaseHex } from "../../domain/native/peAddressSpace.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** The format the certificate table's own parser names in its failures. */
@@ -38,15 +39,6 @@ const fail = (message: string, options?: ErrorOptions): never => {
 /** A declared certificate structure starts in the bytes but ends past them. */
 const failTruncated = (message: string): never => {
   throw truncatedInput(FORMAT, message);
-};
-
-/** Shared PE image admission, with malformed headers as format failures. */
-const readCertificateImage = (bytes: Buffer): PeImage => {
-  try {
-    return readPeImage(bytes, "headers");
-  } catch (cause) {
-    throw artifactParseFailure(cause, undefined);
-  }
 };
 
 const readCertificateImageAt = async (
@@ -78,6 +70,51 @@ const requireRange = (
 
 const align8 = (value: number): number => Math.ceil(value / 8) * 8;
 
+/** Index key for an Authenticode signer: encoded issuer Name bytes plus serial. */
+const issuerSerialKey = (issuer: Buffer, serialHex: string): string =>
+  `${serialHex}:${issuer.toString("hex")}`;
+
+/**
+ * One WIN_CERTIFICATE inside IMAGE_DIRECTORY_ENTRY_SECURITY. Offsets are relative
+ * to the certificate table start; `next` is the 8-byte-aligned successor offset.
+ */
+export interface WinCertificateEntryRange {
+  readonly at: number;
+  readonly length: number;
+  readonly entryEnd: number;
+  readonly next: number;
+}
+
+/**
+ * Lazily walk every WIN_CERTIFICATE entry for structural bounds and alignment.
+ * Throws {@link ParseFailureError} when the table is malformed or truncated so
+ * callers can enforce entry limits without materializing the full table first.
+ */
+export function* readWinCertificateEntryRanges(
+  table: Buffer,
+): Generator<WinCertificateEntryRange> {
+  const reader = new BinaryReader(table, true, FORMAT);
+  let at = 0;
+  while (at < table.length) {
+    // Alignment padding sits inside the gap before the next 8-byte boundary.
+    // Bytes that remain after that boundary are a short header, including
+    // zeros at the start of the table.
+    if (table.length - at < 8)
+      failTruncated("WIN_CERTIFICATE header is truncated.");
+    const length = reader.u32(at);
+    if (length < 8)
+      fail("WIN_CERTIFICATE dwLength is shorter than its header.");
+    const entryEnd = at + length;
+    if (entryEnd > table.length)
+      fail("WIN_CERTIFICATE dwLength exceeds the certificate table.");
+    const next = align8(entryEnd);
+    if (next > table.length)
+      failTruncated("WIN_CERTIFICATE alignment padding is truncated.");
+    yield { at, length, entryEnd, next };
+    at = next;
+  }
+}
+
 const LIMITATIONS = [
   "This workflow does not verify signatures, certificate chains, timestamps, or Authenticode digest coverage of image bytes.",
   "PKCS#7 fields are decoded structurally; cryptographic validity remains unobserved.",
@@ -94,7 +131,19 @@ const ABSENT_LIMITATIONS = [
   "This workflow does not verify signatures, certificate chains, timestamps, or Authenticode digest coverage of image bytes.",
 ] as const;
 
-const certificateTableRange = (image: PeImage, fileSize: number) => {
+/**
+ * Locate IMAGE_DIRECTORY_ENTRY_SECURITY in a PE image. Returns null when the
+ * directory is absent; throws {@link ParseFailureError} when it is present but
+ * structurally invalid.
+ */
+export const certificateTableRange = (
+  image: PeImage,
+  fileSize: number,
+): {
+  readonly tableOffset: number;
+  readonly tableSize: number;
+  readonly directoryAt: number;
+} | null => {
   const security = image.pe_data_directories[4];
   if (security === undefined || (security.address === 0 && security.size === 0))
     return null;
@@ -117,15 +166,18 @@ const parsePeCertificateTable = (
   table: Buffer,
   artifact: PeCertificates["artifact"],
   input: InspectPeCertificatesInput,
+  onSignerSubject?: (subject: string | undefined) => void,
 ): PeCertificates => {
   const format = image.bits === 64 ? "pe32-plus" : "pe32";
   const machine = image.pe_machine;
+  const imageBase = peImageBaseHex(image.image_base);
   const headerAnomalies = [...image.pe_header_anomalies];
   if (range === null)
     return {
       artifact,
       format,
       machine,
+      image_base: imageBase,
       table: null,
       entries: [],
       coverage: { status: "complete", examined_entries: 0, certificates: 0 },
@@ -140,33 +192,18 @@ const parsePeCertificateTable = (
       { integrityCheck: "read-coverage" },
     );
   const entries: PeCertificates["entries"] = [];
-  let at = 0;
   const reader = new BinaryReader(table, true, FORMAT);
   let examined = 0;
   let teletexStringCompatibilityUsed = false;
   let unsignedAttributesPresent = false;
-  while (at < table.length) {
-    // Alignment padding sits inside the gap before the next 8-byte boundary.
-    // Bytes that remain after that boundary are a short header, including
-    // zeros at the start of the table.
-    if (table.length - at < 8)
-      failTruncated("WIN_CERTIFICATE header is truncated.");
-    const length = reader.u32(at);
-    if (length < 8)
-      fail("WIN_CERTIFICATE dwLength is shorter than its header.");
-    const entryEnd = at + length;
-    if (entryEnd > table.length)
-      fail("WIN_CERTIFICATE dwLength exceeds the certificate table.");
-    const next = align8(entryEnd);
-    if (next > table.length)
-      failTruncated("WIN_CERTIFICATE alignment padding is truncated.");
-    examined += 1;
-    if (examined > input.max_entries)
+  for (const { at, length, entryEnd } of readWinCertificateEntryRanges(table)) {
+    if (examined >= input.max_entries)
       throw new ArtifactReaderFailure(
         "limit",
         `PE certificate table exceeds the ${String(input.max_entries)}-entry budget.`,
         { boundary: "capacity" },
       );
+    examined += 1;
     const revision = reader.u16(at + 4);
     const certificateType = reader.u16(at + 6);
     const entryPayload = table.subarray(at + 8, entryEnd);
@@ -189,6 +226,45 @@ const parsePeCertificateTable = (
           fail("WIN_CERTIFICATE has invalid PKCS#7 alignment padding.");
         payload = entryPayload.subarray(0, root.end);
         const parsed = parsePkcs7SignedData(root);
+        if (onSignerSubject !== undefined) {
+          const byIssuerSerial = new Map<
+            string,
+            { readonly subject: string; count: number }
+          >();
+          for (const certificate of parsed.certificates) {
+            if (certificate.serial_hex === null) continue;
+            const key = issuerSerialKey(
+              payload.subarray(
+                certificate.issuer.start,
+                certificate.issuer.end,
+              ),
+              certificate.serial_hex,
+            );
+            const existing = byIssuerSerial.get(key);
+            byIssuerSerial.set(key, {
+              subject: certificate.subject.text,
+              count: (existing?.count ?? 0) + 1,
+            });
+          }
+          for (const signer of parsed.signers) {
+            const issuer = signer.issuer;
+            if (issuer === null || signer.serial_hex === null) {
+              onSignerSubject(undefined);
+              continue;
+            }
+            const match = byIssuerSerial.get(
+              issuerSerialKey(
+                payload.subarray(issuer.start, issuer.end),
+                signer.serial_hex,
+              ),
+            );
+            onSignerSubject(
+              match !== undefined && match.count === 1
+                ? match.subject
+                : undefined,
+            );
+          }
+        }
         teletexStringCompatibilityUsed ||=
           parsed.teletexStringCompatibilityUsed;
         unsignedAttributesPresent ||= parsed.signers.some(
@@ -276,7 +352,6 @@ const parsePeCertificateTable = (
       },
       pkcs7,
     });
-    at = next;
   }
   const certificates = entries.reduce(
     (count, entry) => count + (entry.pkcs7?.certificates.length ?? 0),
@@ -286,6 +361,7 @@ const parsePeCertificateTable = (
     artifact,
     format,
     machine,
+    image_base: imageBase,
     table: {
       location: { offset: tableOffset, bytes: tableSize },
       data_directory_location: { offset: directoryAt, bytes: 8 },
@@ -305,21 +381,6 @@ const parsePeCertificateTable = (
   };
 };
 
-/** Decode IMAGE_DIRECTORY_ENTRY_SECURITY as a file-offset WIN_CERTIFICATE table. */
-export const parsePeCertificates = (
-  bytes: Buffer,
-  artifact: PeCertificates["artifact"],
-  input: InspectPeCertificatesInput,
-): PeCertificates => {
-  const image = readCertificateImage(bytes);
-  const range = certificateTableRange(image, bytes.length);
-  const table =
-    range === null
-      ? Buffer.alloc(0)
-      : bytes.subarray(range.tableOffset, range.tableOffset + range.tableSize);
-  return parsePeCertificateTable(image, range, table, artifact, input);
-};
-
 /**
  * Decode IMAGE_DIRECTORY_ENTRY_SECURITY from a verified random-access handle,
  * reading only the PE headers and the WIN_CERTIFICATE table range.
@@ -328,6 +389,7 @@ export const parsePeCertificatesFromHandle = async (
   handle: StableArtifactHandle,
   artifact: PeCertificates["artifact"],
   input: InspectPeCertificatesInput,
+  onSignerSubject?: (subject: string | undefined) => void,
 ): Promise<PeCertificates> => {
   const image = await readCertificateImageAt(handle);
   const range = certificateTableRange(image, handle.size);
@@ -335,5 +397,43 @@ export const parsePeCertificatesFromHandle = async (
     range === null
       ? Buffer.alloc(0)
       : await handle.readRange(range.tableOffset, range.tableSize);
-  return parsePeCertificateTable(image, range, table, artifact, input);
+  return parsePeCertificateTable(
+    image,
+    range,
+    table,
+    artifact,
+    input,
+    onSignerSubject,
+  );
+};
+
+/**
+ * Decode IMAGE_DIRECTORY_ENTRY_SECURITY from already-buffered PE bytes. Used by
+ * the ASAR signed-after-packing explanation path after a mismatch.
+ */
+export const parsePeCertificatesFromBytes = (
+  bytes: Buffer,
+  artifact: PeCertificates["artifact"],
+  input: InspectPeCertificatesInput,
+  onSignerSubject?: (subject: string | undefined) => void,
+): PeCertificates => {
+  let image: PeImage;
+  try {
+    image = readPeImage(bytes, "headers");
+  } catch (cause) {
+    throw artifactParseFailure(cause, undefined);
+  }
+  const range = certificateTableRange(image, bytes.length);
+  const table =
+    range === null
+      ? Buffer.alloc(0)
+      : bytes.subarray(range.tableOffset, range.tableOffset + range.tableSize);
+  return parsePeCertificateTable(
+    image,
+    range,
+    table,
+    artifact,
+    input,
+    onSignerSubject,
+  );
 };
