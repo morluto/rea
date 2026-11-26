@@ -2070,4 +2070,15 @@ it("bounds the ELF dynamic table by max_structure_bytes", () => {
     }),
   );
   expect(readElfHardening(bytes, undefined, dynamicSize).format).toBe("elf");
+  // A partial row stays a malformed target, not a budget refusal.
+  const partial = Buffer.from(bytes);
+  for (let index = 0; index < phnum; index++) {
+    const at = phoff + index * 56;
+    if (partial.readUInt32LE(at) !== 2) continue;
+    partial.writeBigUInt64LE(BigInt(dynamicSize - 8), at + 32);
+    partial.writeBigUInt64LE(BigInt(dynamicSize - 8), at + 40);
+  }
+  expect(() => readElfHardening(partial, undefined, tableBytes)).toThrow(
+    "not a whole number of entries",
+  );
 });

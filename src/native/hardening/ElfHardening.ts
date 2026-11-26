@@ -538,11 +538,12 @@ function* readDynamic(
 ): Generator<HardeningStep, DynamicTable, HardeningStepResult> {
   const offset = exact(program.offset, "PT_DYNAMIC offset");
   const size = exact(program.size, "PT_DYNAMIC size");
-  if (size > structureBytes)
-    throw nativeStructureFailure("The ELF dynamic table", size, structureBytes);
   const { width, trailingBytes } = elfDynamicTableGeometry(size, bits);
   if (trailingBytes !== 0)
     malformed("ELF PT_DYNAMIC size is not a whole number of entries");
+  // A malformed table is refused as malformed; only whole rows meet the budget.
+  if (size > structureBytes)
+    throw nativeStructureFailure("The ELF dynamic table", size, structureBytes);
   const count = size / width;
   budget(count, "ELF dynamic table");
   const entries = new Map<bigint, DynamicEntry>();
