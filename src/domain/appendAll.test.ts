@@ -21,7 +21,9 @@ it("appends a target to itself only once", () => {
   let yielded = 0;
   Object.defineProperty(values, Symbol.iterator, {
     value: function* () {
-      for (const value of Array.prototype.values.call(this) as Iterable<number>) {
+      for (const value of Array.prototype.values.call(
+        this,
+      ) as Iterable<number>) {
         if (++yielded > 2) throw new Error("reread appended item");
         yield value;
       }
