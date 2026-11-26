@@ -726,6 +726,48 @@ it("compares an ESP segment declaration without its layout or derived class", ()
   });
 });
 
+const ubiVolume: FormatMetadata = {
+  kind: "ubi-volume",
+  id: 0,
+  name: "rootfs",
+  name_bytes_hex: null,
+  type: "dynamic",
+  reserved_pebs: 4,
+  alignment: 1,
+  data_pad: 0,
+  update_marker: false,
+  flags: 0,
+  autoresize: false,
+  usable_leb_size: 126_976,
+  used_ebs: null,
+  mapped_leb_count: 2,
+  stale_leb_copy_count: 0,
+  missing_leb_count: 0,
+  first_missing_leb: null,
+  data_bytes: 253_952,
+  extractable: true,
+  source_ranges: [],
+};
+
+it("compares a UBI volume declaration without its PEB placement", () => {
+  expect(
+    compareArtifacts(
+      declared(ubiVolume),
+      declared({
+        ...ubiVolume,
+        source_ranges: [{ lnum: 0, peb: 7, offset: 7 * 131_072, length: 64 }],
+      }),
+    ),
+  ).toMatchObject({ status: "unchanged", changes: [] });
+  // A renumbered volume keeps its path and bytes but not its lookup identity.
+  expect(
+    compareArtifacts(declared(ubiVolume), declared({ ...ubiVolume, id: 1 })),
+  ).toMatchObject({
+    status: "changed",
+    changes: [{ classification: "changed", dimensions: ["metadata"] }],
+  });
+});
+
 it("retains a changed declaration when content is unavailable", () => {
   expect(
     compareArtifacts(

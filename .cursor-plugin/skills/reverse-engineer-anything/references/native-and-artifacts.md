@@ -1091,6 +1091,14 @@ and DONT_CARE blocks are written as zeros. The expanded child is classified
 again. See
 [Android sparse images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/android-sparse-image.md).
 
+UBI images (`UBI#` at offset 0, from `ubinize` or a NAND dump) use the same
+inspection/extraction workflows. Prefer a retained summary for eraseblock
+layout, PEB counts and volume counts. Each volume is `volumes/<name>`,
+reassembled from its LEBs by highest sqnum. A volume with a missing LEB
+stays inventoried with unavailable content. UBIFS inside a volume is not
+decoded. See
+[UBI images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/ubi-images.md).
+
 Nintendo Switch NSO modules (`NSO0`) and NRO executables (`NRO0` at `0x10`)
 use the same inspection and extraction workflows, without running or
 disassembling them. Root metadata holds the `module_id` build id and MOD0

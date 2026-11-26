@@ -17,6 +17,7 @@ import {
 import { recognizeAndroidOtaPayload } from "./firmware/androidOtaPayload.js";
 import { hasAndroidVbmetaMagic } from "./firmware/androidVbmeta.js";
 import { recognizeAndroidSparseImage } from "./firmware/androidSparseImage.js";
+import { recognizeUbiImage } from "./firmware/ubiImage.js";
 import { claimsExecutableHeader } from "./binaryTarget.js";
 import { hasQualcommMbnHeader } from "./qualcommMbnImage.js";
 import { hasUImageMagic } from "./uimageFormat.js";
@@ -63,6 +64,7 @@ export type RecognizedArtifactFormat = Extract<
   | "android-ota-payload"
   | "android-vbmeta"
   | "android-sparse-image"
+  | "ubi-image"
   | "iso9660"
   | "intel-hex"
   | "srec"
@@ -198,6 +200,13 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
             format: "android-ota-payload",
             reason: ota.reason,
           };
+    },
+    ({ prefix, fileSize }) => {
+      const ubi = recognizeUbiImage(prefix, fileSize);
+      if (ubi === undefined) return undefined;
+      return ubi.state === "recognized"
+        ? { state: "recognized", format: "ubi-image" }
+        : { state: "refused", format: "ubi-image", reason: ubi.reason };
     },
     ({ prefix }) => {
       const sparse = recognizeAndroidSparseImage(prefix);

@@ -24,6 +24,7 @@ import { devicetreeFixture } from "./firmware/devicetree.fixture.js";
 import { dfuseFile } from "./firmware/dfuse.fixture.js";
 import { DFUSE_SUFFIX_BYTES } from "./firmware/dfuse.js";
 import { ESP8266_REFUSAL } from "./firmware/espImage.js";
+import { twoVolumeUbiImage } from "./firmware/ubiImage.fixture.js";
 import { buildIso9660Image } from "./iso9660/iso9660.fixture.js";
 import { ISO9660_DESCRIPTOR_OFFSET } from "./iso9660/iso9660Structures.js";
 
@@ -68,6 +69,22 @@ it.each([
     bytes: buildAndroidSparseImage({ majorVersion: 2 }),
     format: "android-sparse-image",
     reason: androidSparseUnsupportedMajor(2),
+  },
+  {
+    label: "a UBI image with a bad erase-counter header CRC",
+    bytes: (() => {
+      const bytes = twoVolumeUbiImage();
+      bytes.writeUInt32BE(0, 60);
+      return bytes;
+    })(),
+    format: "ubi-image",
+    reason: expect.stringContaining("erase-counter header CRC mismatch"),
+  },
+  {
+    label: "a UBI# file shorter than its erase-counter header",
+    bytes: twoVolumeUbiImage().subarray(0, 32),
+    format: "ubi-image",
+    reason: expect.stringContaining("erase-counter header is truncated"),
   },
 ])("refuses $label in one place", (row) => {
   expect(recognize(row.bytes)).toEqual({
@@ -229,6 +246,13 @@ it.each([8, 12, 19])(
     });
   },
 );
+
+it("recognizes a UBI image by its erase-counter header", () => {
+  expect(recognize(twoVolumeUbiImage())).toMatchObject({
+    state: "recognized",
+    format: "ubi-image",
+  });
+});
 
 it("recognizes the descriptor signature at sector 16 or asks for it", () => {
   const { bytes } = buildIso9660Image();

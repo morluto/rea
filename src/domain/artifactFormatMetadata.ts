@@ -37,6 +37,8 @@ import {
   qualcommMbnMetadataSchema,
   uf2MetadataSchema,
   uf2RegionMetadataSchema,
+  ubiImageMetadataSchema,
+  ubiVolumeMetadataSchema,
   uImageEntryMetadataSchema,
   uImageMetadataSchema,
 } from "./formatMetadata/firmwareMetadata.js";
@@ -89,6 +91,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   androidOtaPayloadMetadataSchema,
   androidOtaPartitionMetadataSchema,
   androidSparseImageMetadataSchema,
+  ubiImageMetadataSchema,
+  ubiVolumeMetadataSchema,
   espImageMetadataSchema,
   espImageSegmentMetadataSchema,
   espImageSignatureBlockMetadataSchema,
@@ -299,6 +303,26 @@ const declarationsByKind: {
   "android-sparse-image": {
     notCompared:
       "Its header and chunk facts come from the image's own bytes, which content comparison covers. Checksums are recorded, not verified.",
+  },
+  "ubi-image": {
+    notCompared:
+      "Its header layout, eraseblock counts and volume table come from the image's own bytes, which content comparison covers.",
+  },
+  /**
+   * How the volume table declares a volume, independent of PEB placement.
+   * The volume ID is a lookup identity, so renumbering is a change.
+   */
+  "ubi-volume": {
+    declaration: (metadata) => ({
+      id: metadata.id,
+      name: metadata.name,
+      name_bytes_hex: metadata.name_bytes_hex,
+      type: metadata.type,
+      reserved_pebs: metadata.reserved_pebs,
+      alignment: metadata.alignment,
+      update_marker: metadata.update_marker,
+      flags: metadata.flags,
+    }),
   },
   "esp-image": {
     notCompared:

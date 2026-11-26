@@ -108,6 +108,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [Android OTA update payloads](guides/firmware/android-ota-payload.md)
 - [Android Verified Boot vbmeta images](guides/firmware/android-vbmeta.md)
 - [Android sparse images](guides/firmware/android-sparse-image.md)
+- [UBI images](guides/firmware/ubi-images.md)
 - [Flattened devicetree inspection](devicetree.md)
 - [ESP flash images](esp-flash-image.md)
 - [ESP images](esp-image.md)
