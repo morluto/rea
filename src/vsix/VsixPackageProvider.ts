@@ -41,12 +41,8 @@ import { parseVsixPackage } from "./VsixPackageParser.js";
 const OPERATION = "inspect_vsix_package";
 
 /** The refusal options for an exhausted per-call budget. */
-const budgetRecovery = (
-  parameter: VsixPackageBudget,
-  selected: number,
-  required?: number,
-) => ({
-  limit: vsixPackageBudgetLimit(parameter, selected, required),
+const budgetRecovery = (parameter: VsixPackageBudget, selected: number) => ({
+  limit: vsixPackageBudgetLimit(parameter, selected),
   remediationAction:
     selected >= VSIX_PACKAGE_BUDGETS[parameter].maximum
       ? `${parameter} is at this operation's maximum of ${String(VSIX_PACKAGE_BUDGETS[parameter].maximum)}; select a complete artifact within that bound.`
@@ -107,15 +103,13 @@ const vsixParseLimit = (
     {
       path: input.path,
       retryable: false,
+      // Early-stop parse limits (such as ZIP entry enumeration and streaming
+      // manifest reads) only know a lower bound, which parseLimitConstraint
+      // preserves in details.reported_limits; omit required_value unless the
+      // complete total admitting the whole request is known.
       ...(parameter === undefined
         ? {}
-        : budgetRecovery(
-            parameter,
-            cause.failure.limit.maximum,
-            typeof cause.failure.limit.required === "number"
-              ? cause.failure.limit.required
-              : undefined,
-          )),
+        : budgetRecovery(parameter, cause.failure.limit.maximum)),
     },
   );
 };

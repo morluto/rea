@@ -236,16 +236,22 @@ mcpTest(
         retryable: false,
         details: {
           operation: "inspect_vsix_package",
+          reported_limits: {
+            boundary: "max_entries",
+            maximum: 1,
+            required: 2,
+          },
           limit: {
             control_kind: "parameter",
             parameter: "max_entries",
             effective_value: 1,
-            required_value: 2,
             unit: "count",
             applies_at: "next_call",
           },
         },
       });
+      expect(error.details?.limit).not.toHaveProperty("required_value");
+      expect(error.details?.refusal).not.toHaveProperty("required_value");
     } finally {
       await session.close();
     }

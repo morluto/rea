@@ -55,7 +55,6 @@ export type VsixPackageBudget = keyof typeof VSIX_PACKAGE_BUDGETS;
 export const vsixPackageBudgetLimit = (
   parameter: VsixPackageBudget,
   effectiveValue: number,
-  requiredValue?: number,
 ): AnalysisParameterLimit => ({
   control_kind: "parameter",
   parameter,
@@ -63,7 +62,6 @@ export const vsixPackageBudgetLimit = (
   unit: parameter === "max_entries" ? "count" : "bytes",
   ...VSIX_PACKAGE_BUDGETS[parameter],
   applies_at: "next_call",
-  ...(requiredValue === undefined ? {} : { required_value: requiredValue }),
 });
 
 /** Path-derived or magic-derived ZIP member kinds for a .vsix package. */
