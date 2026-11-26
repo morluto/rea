@@ -450,6 +450,8 @@ export class RizinDebugSessionManager {
     const arguments_ = [
       "-N",
       "-0",
+      "-e",
+      "scr.color=0",
       "-d",
       // Rizin reads REA's commands from its own stdin. Without this key the
       // target inherits that stream and, once resumed, reads those commands.
