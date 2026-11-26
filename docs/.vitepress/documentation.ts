@@ -144,6 +144,11 @@ export const documentationSections = [
         route: "/ntfs-metadata",
       },
       {
+        text: "Windows Prefetch files",
+        source: "guides/native/windows-prefetch.md",
+        route: "/windows-prefetch",
+      },
+      {
         text: "Binary hardening",
         source: "binary-hardening.md",
         route: "/binary-hardening",
@@ -537,11 +542,6 @@ export const documentationSections = [
         text: "GPU asset headers: DDS, GLB, KTX and KTX2",
         source: "gpu-asset-headers.md",
         route: "/gpu-asset-headers",
-      },
-      {
-        text: "Windows Prefetch files",
-        source: "windows-prefetch.md",
-        route: "/windows-prefetch",
       },
     ],
   },

@@ -39,6 +39,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [Recorded crash evidence](guides/native/recorded-crashes.md)
 - [Windows Shell Link shortcuts](guides/native/windows-shortcut.md)
 - [Acquired NTFS metadata](guides/native/ntfs-metadata.md)
+- [Windows Prefetch files](guides/native/windows-prefetch.md)
 - [Binary hardening](binary-hardening.md)
 - [ELF note tables](elf-notes.md)
 - [ELF dependency tables](elf-dependencies.md)
@@ -136,7 +137,6 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [ISO 9660 disc images](guides/firmware/iso9660-images.md)
 - [tar and gzip-compressed tar archives](tar-archives.md)
 - [GPU asset headers: DDS, GLB, KTX and KTX2](gpu-asset-headers.md)
-- [Windows Prefetch files](windows-prefetch.md)
 
 ## WebAssembly
 
