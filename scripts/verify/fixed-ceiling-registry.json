@@ -291,13 +291,6 @@
       "reason": "The ELF dynamic table entry count is a resource policy; symbol-table excess already degrades to unresolved rows."
     }
   },
-  "src/native/initializers/NativeInitializersProvider.ts": {
-    "\"The native initializer structural allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
-    }
-  },
   "src/native/parsers/lipo.ts": {
     "\"The lipo field retention allowance\"": {
       "class": "derived",
