@@ -119,22 +119,49 @@ function initializeSectionEnhancements(t) {
   main.classList.add("has-toc");
   article.after(nav);
 
-  if ("IntersectionObserver" in window) {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          const link = links.get(entry.target.id);
-          if (!entry.isIntersecting || link === undefined) return;
-          links.forEach((candidate) =>
-            candidate.removeAttribute("aria-current"),
-          );
-          link.setAttribute("aria-current", "true");
-        });
-      },
-      { rootMargin: "-20% 0px -70% 0px" },
-    );
-    headings.forEach(({ section }) => observer.observe(section));
-  }
+  const entries = headings.map(({ section }) => ({
+    section,
+    link: links.get(section.id),
+  }));
+  let scheduled = false;
+  const updateCurrent = () => {
+    scheduled = false;
+    const offset = Math.max(88, Math.round(window.innerHeight * 0.2));
+    let current = entries[0];
+    entries.forEach((entry) => {
+      if (entry.section.getBoundingClientRect().top <= offset) {
+        current = entry;
+      }
+    });
+    if (
+      window.scrollY + window.innerHeight >=
+      document.documentElement.scrollHeight - 2
+    ) {
+      const selected = entries.find(
+        (entry) => entry.link.hash === window.location.hash,
+      );
+      const selectedTop = selected?.section.getBoundingClientRect().top;
+      current =
+        selectedTop !== undefined &&
+        selectedTop >= 0 &&
+        selectedTop < window.innerHeight
+          ? selected
+          : entries[entries.length - 1];
+    }
+    entries.forEach(({ link }) => {
+      if (link === current.link) link.setAttribute("aria-current", "true");
+      else link.removeAttribute("aria-current");
+    });
+  };
+  const scheduleUpdate = () => {
+    if (scheduled) return;
+    scheduled = true;
+    window.requestAnimationFrame(updateCurrent);
+  };
+  window.addEventListener("scroll", scheduleUpdate, { passive: true });
+  window.addEventListener("resize", scheduleUpdate, { passive: true });
+  window.addEventListener("hashchange", scheduleUpdate);
+  updateCurrent();
 }
 
 async function initializePageEnhancements() {
