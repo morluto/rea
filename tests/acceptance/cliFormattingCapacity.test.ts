@@ -149,72 +149,89 @@ const scenarios: readonly FormattingScenario[] = [
   },
 ];
 
-for (const scenario of scenarios)
-  for (const outcome of ["success", "failure"] as const)
-    workspaceCliTest(
-      `${scenario.name} returns a typed formatting constraint after ${outcome}`,
-      async ({ processes, workspace }) => {
-        const target = resolve(workspace.root, "fixture.dll");
-        if (outcome === "success")
-          await writeFile(target, buildManagedPeFixture());
-        const result = await processes.run(
-          process.execPath,
-          [
-            "--import",
-            scenario.human
-              ? `data:text/javascript,${encodeURIComponent('Object.defineProperty(process.stdout, "isTTY", { value: true });')}`
-              : "data:text/javascript,",
-            "--import",
-            scenario.format === "md"
-              ? markdownCapacityHook
-              : encoderCapacityHook,
-            resolve("scripts/rea.mjs"),
-            "inspect-managed-artifact",
-            target,
-            ...(scenario.format ? ["--format", scenario.format] : []),
-            ...scenario.arguments,
-          ],
-          { cwd: workspace.root, env: { PATH: process.env.PATH ?? "" } },
+// One real process per encoder boundary, presentation owner and outcome. The
+// remaining presentation and outcome pairings repeat the same recovery and
+// run in process in tests/boundary/cli/formattingRecovery.test.ts.
+const realProcessCases = [
+  ["default TOON", "success"],
+  ["default TOON", "failure"],
+  ["human TOON", "success"],
+  ["full TOON", "failure"],
+  ["TOON token count", "success"],
+  ["TOON token window", "failure"],
+  ["YAML", "failure"],
+  ["full YAML", "success"],
+  ["Markdown", "success"],
+  ["full Markdown", "failure"],
+  ["Markdown token window", "success"],
+] as const;
+
+for (const [name, outcome] of realProcessCases) {
+  const scenario = scenarios.find((candidate) => candidate.name === name);
+  if (scenario === undefined) throw new Error(`Unknown scenario ${name}`);
+  workspaceCliTest(
+    `${scenario.name} returns a typed formatting constraint after ${outcome}`,
+    async ({ processes, workspace }) => {
+      const target = resolve(workspace.root, "fixture.dll");
+      if (outcome === "success")
+        await writeFile(target, buildManagedPeFixture());
+      const result = await processes.run(
+        process.execPath,
+        [
+          "--import",
+          scenario.human
+            ? `data:text/javascript,${encodeURIComponent('Object.defineProperty(process.stdout, "isTTY", { value: true });')}`
+            : "data:text/javascript,",
+          "--import",
+          scenario.format === "md" ? markdownCapacityHook : encoderCapacityHook,
+          resolve("scripts/rea.mjs"),
+          "inspect-managed-artifact",
+          target,
+          ...(scenario.format ? ["--format", scenario.format] : []),
+          ...scenario.arguments,
+        ],
+        { cwd: workspace.root, env: { PATH: process.env.PATH ?? "" } },
+      );
+      expect(result.exitCode, result.stderr).toBe(1);
+      expect(result.stderr.trim()).toBe(
+        `REA_AUTHORED_FORMAT_CAPACITY${scenario.toonEncoder === undefined ? "" : `:${scenario.toonEncoder}`}`,
+      );
+      expect(result.stdout).toContain("resource_constraint");
+      expect(result.stdout).toContain("--format json");
+      expect(result.stdout).toContain("formatted_characters");
+      expect(result.stdout).not.toContain("[truncated:");
+      expect(result.stdout).not.toContain("UNKNOWN");
+      if (outcome === "failure")
+        expect(result.stdout).toContain("target_unavailable");
+      if (scenario.format === "md" && scenario.full) {
+        expect(result.stdout).toMatch(/^## ok\n\nfalse$/m);
+        expect(result.stdout).toMatch(
+          /^## error\.code\n\nresource_constraint$/m,
         );
-        expect(result.exitCode, result.stderr).toBe(1);
-        expect(result.stderr.trim()).toBe(
-          `REA_AUTHORED_FORMAT_CAPACITY${scenario.toonEncoder === undefined ? "" : `:${scenario.toonEncoder}`}`,
+        expect(result.stdout).toMatch(
+          /^## meta\n\n(?:\|[^\n]*\|\n)*\| command +\| inspect-managed-artifact +\|$/m,
         );
-        expect(result.stdout).toContain("resource_constraint");
-        expect(result.stdout).toContain("--format json");
-        expect(result.stdout).toContain("formatted_characters");
-        expect(result.stdout).not.toContain("[truncated:");
-        expect(result.stdout).not.toContain("UNKNOWN");
-        if (outcome === "failure")
-          expect(result.stdout).toContain("target_unavailable");
-        if (scenario.format === "md" && scenario.full) {
-          expect(result.stdout).toMatch(/^## ok\n\nfalse$/m);
-          expect(result.stdout).toMatch(
-            /^## error\.code\n\nresource_constraint$/m,
-          );
-          expect(result.stdout).toMatch(
-            /^## meta\n\n(?:\|[^\n]*\|\n)*\| command +\| inspect-managed-artifact +\|$/m,
-          );
-        }
-        if (scenario.format === "yaml") {
-          const document = parseYaml(result.stdout);
-          const error = scenario.full ? document.error : document;
-          expect(analysisErrorProjectionSchema.parse(error)).toMatchObject({
-            code: "resource_constraint",
-            retryable: false,
-            details: {
-              resource: "memory",
-              reported_limits: { formatted_characters: null },
-            },
+      }
+      if (scenario.format === "yaml") {
+        const document = parseYaml(result.stdout);
+        const error = scenario.full ? document.error : document;
+        expect(analysisErrorProjectionSchema.parse(error)).toMatchObject({
+          code: "resource_constraint",
+          retryable: false,
+          details: {
+            resource: "memory",
+            reported_limits: { formatted_characters: null },
+          },
+        });
+        if (scenario.full)
+          expect(document).toMatchObject({
+            ok: false,
+            meta: { command: "inspect-managed-artifact" },
           });
-          if (scenario.full)
-            expect(document).toMatchObject({
-              ok: false,
-              meta: { command: "inspect-managed-artifact" },
-            });
-        }
-      },
-    );
+      }
+    },
+  );
+}
 
 workspaceCliTest.skipIf(process.platform === "win32")(
   "keeps the SIGPIPE outcome when the reader closes before formatting recovery",

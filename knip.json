@@ -4,7 +4,7 @@
     "src/main.ts",
     "src/cli.ts",
     "src/cliOneShot.ts",
-    "src/cliOutput.ts",
+    "src/cli/cliOutput.ts",
     "src/cliBuiltinArguments.ts",
     "src/cli/cliResultOutput.ts",
     "src/mcpDoctor.ts",
@@ -18,13 +18,14 @@
     "scripts/verify-real-ghidra-decompiler-failure.mjs",
     "scripts/verify-real-ghidra-decompile-timeout.mjs",
     "scripts/verify-real-ghidra-function-bundle.mjs",
-    "tests/processOwnershipRunner.ts"
+    "tests/processOwnershipRunner.ts",
+    "tests/support/targetFailure/readers/*.ts"
   ],
   "project": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.mjs"],
   "vitepress": {
     "entry": ["docs/.vitepress/config.ts"]
   },
-  "ignoreBinaries": ["^g\\+\\+$", "mkfifo"],
+  "ignoreBinaries": ["^g\\+\\+$"],
   "ignoreDependencies": [
     "@stryker-mutator/command-runner",
     "electron",

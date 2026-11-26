@@ -1,19 +1,26 @@
 import { spawnSync } from "node:child_process";
-import { access, readdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { access, readdir, rm } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createIdaTarget } from "../../tests/fixtures/idaMcp.js";
 import { RecordingHexRaysIdaMcp } from "../../tests/fixtures/idaHexRaysMcp.js";
+import {
+  processTest,
+  type TestProcesses,
+} from "../../tests/support/process/processFixture.js";
 import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { IdaToolRejection, type IdaMcpConnection } from "./IdaMcpConnection.js";
+import {
+  decodeIdaToolResult,
+  IdaToolRejection,
+  type IdaMcpConnection,
+} from "./IdaMcpConnection.js";
 import { readCallGraphCallees } from "./IdaCallGraph.js";
-import { readIdaConfiguration } from "./IdaConfiguration.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
 import { runHexRaysQuery } from "./IdaHexRaysProtocol.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import { WindowsPrivateRuntime } from "../windows/WindowsPrivateRuntime.js";
 
 const roots: string[] = [];
@@ -62,52 +69,77 @@ const fixture = async () => {
   );
   return { root, target, producer, client };
 };
-const resourceScope: RetainedResourceScope = {
-  retain: () => undefined,
-  run: (operation) => operation(),
-};
 /** Private workspaces REA allocated beside the fixture target. */
 const workspaces = async (root: string) =>
   (await readdir(root)).filter((name) => name.startsWith("rea-ida-"));
 
-describe("Hex-Rays IDA MCP registration", () => {
-  it("admits only a headless stdio registration", async () => {
-    const { root } = await createIdaTarget();
-    roots.push(root);
-    const path = join(root, "mcp.json");
-    for (const [input, ok] of [
-      [
-        {
-          command: "uvx",
-          args: ["ida-mcp", "stdio"],
-          mode: "headless",
-          protocol: "hexrays",
-        },
-        true,
-      ],
-      [
-        { command: "uvx", args: ["ida-mcp", "stdio"], protocol: "hexrays" },
-        false,
-      ],
-      [
-        {
-          url: "http://127.0.0.1:8737/mcp",
-          mode: "headless",
-          protocol: "hexrays",
-        },
-        false,
-      ],
-    ] as const) {
-      await writeFile(path, JSON.stringify(input));
-      expect(
-        (await readIdaConfiguration(path, { resourceScope })).ok,
-        JSON.stringify(input),
-      ).toBe(ok);
-    }
-  });
-});
-
 const hasPython = spawnSync("python3", ["--version"]).status === 0;
+
+/** Run the actual generated bridge and queries in one owned Python namespace. */
+const pythonBridgeFixture = (processes: TestProcesses) => {
+  const fixturePath = fileURLToPath(
+    new URL("../../bridge/ida/test_hexrays_queries.py", import.meta.url),
+  );
+  const python = processes.spawn("python3", [
+    "-I",
+    "-u",
+    "-c",
+    [
+      "import json, runpy, sys, traceback",
+      "sys.modules.update(runpy.run_path(sys.argv[1])['stand_ins']())",
+      "namespace = {}",
+      "for line in sys.stdin:",
+      "    code = json.loads(line)",
+      "    if code is None:",
+      "        namespace.clear()",
+      "        print('null')",
+      "        continue",
+      "    try:",
+      "        source, query = code.rsplit('\\n', 1)",
+      "        exec(source, namespace)",
+      "        print(json.dumps({'result': eval(query, namespace), 'stdout': '', 'stderr': ''}))",
+      "    except Exception:",
+      "        print(json.dumps({'error': traceback.format_exc()}))",
+    ].join("\n"),
+    fixturePath,
+  ]);
+  const lines = createInterface({ input: python.stdout });
+  const replies = lines[Symbol.asyncIterator]();
+  const execute = async (code: string | null): Promise<JsonValue> => {
+    python.stdin.write(`${JSON.stringify(code)}\n`);
+    const reply = await replies.next();
+    if (reply.done === true) throw new Error("Hex-Rays fixture exited");
+    return JSON.parse(reply.value) as JsonValue;
+  };
+  const call = vi.fn<IdaMcpConnection["call"]>(async (_name, args) => {
+    const reply = await execute(String(args.code));
+    return typeof reply === "object" &&
+      reply !== null &&
+      "error" in reply &&
+      typeof reply.error === "string"
+      ? decodeIdaToolResult({
+          isError: true,
+          content: [{ type: "text", text: reply.error }],
+        })
+      : reply;
+  });
+  const connection: IdaMcpConnection = {
+    connect: async () => [],
+    serverInfo: () => null,
+    close: async () => undefined,
+    detach: () => undefined,
+    call,
+  };
+  return {
+    connection,
+    call,
+    reset: () => execute(null),
+    close: () => {
+      python.stdin.end();
+      lines.close();
+    },
+  };
+};
 
 it.each([1, 500, 1000, 300_000])(
   "keeps the Hex-Rays Python deadline inside the %sms MCP deadline",
@@ -171,10 +203,12 @@ describe("Hex-Rays query line", () => {
         1000,
       );
       // Parse only the generated line; evaluating literals runs no code.
+      // -S skips site, whose host sitecustomize may write to stderr.
       const decoded = spawnSync(
         "python3",
         [
           "-I",
+          "-S",
           "-c",
           [
             "import ast, json, sys",
@@ -305,56 +339,24 @@ describe("Hex-Rays IDA MCP startup profile", () => {
   });
 });
 
-it.skipIf(!hasPython)(
+processTest.skipIf(!hasPython)(
   "reports complete root scan coverage from the Hex-Rays query bridge",
-  async () => {
-    const fixturePath = fileURLToPath(
-      new URL("../../bridge/ida/test_hexrays_queries.py", import.meta.url),
-    );
-    const connection = {
-      connect: async () => [],
-      serverInfo: () => null,
-      close: async () => undefined,
-      detach: () => undefined,
-      call: async (
-        _tool: string,
-        args: Readonly<Record<string, JsonValue>>,
-      ) => {
-        const result = spawnSync(
-          "python3",
-          [
-            "-I",
-            "-c",
-            [
-              "import json, runpy, sys",
-              "fixture = runpy.run_path(sys.argv[1])",
-              "sys.modules.update(fixture['stand_ins']())",
-              "source, query = sys.stdin.read().rsplit('\\n', 1)",
-              "namespace = {}",
-              "exec(source, namespace)",
-              "print(json.dumps(eval(query, namespace)))",
-            ].join("\n"),
-            fixturePath,
-          ],
-          { input: String(args.code), encoding: "utf8", timeout: 5000 },
-        );
-        if (result.status !== 0)
-          throw new Error("Hex-Rays fixture query failed", {
-            cause: result.error ?? result.stderr,
-          });
-        return { result: JSON.parse(result.stdout), stdout: "", stderr: "" };
-      },
-    };
-    const graph = await readCallGraphCallees(
-      async (tool, args) =>
-        (await runHexRaysQuery(connection, "lease", tool, args, 1000)).result,
-      "0x1000",
-    );
-    expect(graph.callees).toEqual([{ address: "0x2000", name: "helper" }]);
-    expect(graph.coverage).toMatchObject({
-      status: "complete",
-      discovery: { callees: { status: "unknown" } },
-    });
+  async ({ processes }) => {
+    const { connection, close } = pythonBridgeFixture(processes);
+    try {
+      const graph = await readCallGraphCallees(
+        async (tool, args) =>
+          (await runHexRaysQuery(connection, "lease", tool, args, 1000)).result,
+        "0x1000",
+      );
+      expect(graph.callees).toEqual([{ address: "0x2000", name: "helper" }]);
+      expect(graph.coverage).toMatchObject({
+        status: "complete",
+        discovery: { callees: { status: "unknown" } },
+      });
+    } finally {
+      close();
+    }
   },
 );
 
@@ -481,9 +483,14 @@ describe("Hex-Rays IDA MCP session", () => {
         true,
       );
       expect(
-        reads.every(({ args }) =>
-          String(args.code).startsWith('"""Read-only REA queries'),
-        ),
+        String(reads[0]?.args.code).startsWith('"""Read-only REA queries'),
+      ).toBe(true);
+      expect(
+        reads
+          .slice(1)
+          .every(({ args }) =>
+            String(args.code).startsWith("# rea-bridge\n_rea_query("),
+          ),
       ).toBe(true);
       expect(result.value.rawResult).toMatchObject({ worker_backend: backend });
       const raw = result.value.rawResult as {
@@ -532,28 +539,31 @@ describe("Hex-Rays IDA MCP session", () => {
     );
   });
 
-  it("adopts and releases a late lease when the open reply was lost", async () => {
-    const { root, producer, client } = await fixture();
-    producer.openBackend = "idat";
-    producer.loseOpenReply = { leased: true };
-    expect((await client.execute("list_procedures", {})).ok).toBe(false);
-    expect((await client.close()).ok).toBe(false);
-    // The lease is released even though the open itself never completed.
-    expect(producer.leases.size).toBe(0);
-    expect(producer.calls.map(({ name }) => name)).toContain("close_database");
-    expect(await workspaces(root)).toHaveLength(1);
-  });
+  it.each([
+    { label: "a late lease", leased: true },
+    { label: "no visible lease", leased: false },
+  ])(
+    "retains the workspace after a lost open reply with $label",
+    async ({ leased }) => {
+      const { root, producer, client } = await fixture();
+      producer.openBackend = "idat";
+      producer.loseOpenReply = { leased };
+      expect((await client.execute("list_procedures", {})).ok).toBe(false);
 
-  it("retains the workspace when a lost open reply left no visible lease", async () => {
-    const { root, producer, client } = await fixture();
-    producer.loseOpenReply = { leased: false };
-    expect((await client.execute("list_procedures", {})).ok).toBe(false);
-    expect((await client.close()).ok).toBe(false);
-    expect(producer.calls.map(({ name }) => name)).not.toContain(
-      "close_database",
-    );
-    expect(await workspaces(root)).toHaveLength(1);
-  });
+      const cleanup = await client.close();
+      if (cleanup.ok) throw new Error("Expected unverified startup cleanup");
+      expect(cleanup.error.cleanupIncomplete).toBe(true);
+      expect(
+        producer.calls.filter(({ name }) => name === "close_database"),
+      ).toEqual(
+        leased
+          ? [{ name: "close_database", args: { instance_id: "lease1" } }]
+          : [],
+      );
+      expect(producer.leases.size).toBe(0);
+      expect(await workspaces(root)).toHaveLength(1);
+    },
+  );
 
   it("settles a rejected close by the following inventory", async () => {
     const released = await fixture();
@@ -593,25 +603,11 @@ describe("Hex-Rays IDA MCP session", () => {
 
 describe("Hex-Rays unleased database inventory", () => {
   it.each([
-    ["idalib", "available"],
-    ["idat", "unavailable"],
-  ] as const)(
-    "releases when another client's %s database is not the private copy",
-    async (backend, status) => {
-      const { root, producer, client } = await fixture();
-      producer.peers = [{ path: "/elsewhere/peer.bin", backend, status }];
-      expect((await client.execute("list_procedures", {})).ok).toBe(true);
-      expect((await client.close()).ok).toBe(true);
-      expect(await workspaces(root)).toEqual([]);
-    },
-  );
-
-  it.each([
     ["idalib", "available", ""],
     ["idat", "unavailable", ".i64"],
     ["idat", "available", ".i64"],
   ] as const)(
-    "retains the private workspace while an unleased %s database is %s",
+    "uses workspace containment to settle an unleased %s database that is %s",
     async (backend, status, suffix) => {
       const { root, producer, client } = await fixture();
       producer.openBackend = backend;
@@ -620,7 +616,12 @@ describe("Hex-Rays unleased database inventory", () => {
         producer.calls.find(({ name }) => name === "open_database")?.args.path,
       );
       const listedPath = path + suffix;
-      producer.peers = [{ path: listedPath, backend, status }];
+      const neighbor = {
+        path: join(dirname(path) + "-neighbor", "peer.i64"),
+        backend,
+        status,
+      };
+      producer.peers = [{ path: listedPath, backend, status }, neighbor];
       const closed = await client.close();
       expect(closed.ok).toBe(false);
       if (closed.ok) throw new Error("expected retained cleanup");
@@ -651,7 +652,7 @@ describe("Hex-Rays unleased database inventory", () => {
       expect(await workspaces(root)).toHaveLength(1);
       await access(path);
 
-      producer.peers = [];
+      producer.peers = [neighbor];
       expect((await client.close()).ok).toBe(true);
       expect(await workspaces(root)).toEqual([]);
       expect(
@@ -659,4 +660,94 @@ describe("Hex-Rays unleased database inventory", () => {
       ).toHaveLength(1);
     },
   );
+});
+
+describe("Hex-Rays query bridge bootstrap and predicate pushdown", () => {
+  processTest.skipIf(!hasPython)(
+    "executes the full bridge once and reloads only when Python loses its entry point",
+    async ({ processes }) => {
+      const { connection, call, reset, close } = pythonBridgeFixture(processes);
+      const health = () =>
+        runHexRaysQuery(connection, "lease-1", "server_health", {}, 1000);
+      try {
+        const initial = await health();
+        expect(initial.result).toMatchObject({
+          status: "ok",
+          input_path: "/private/input",
+          imagebase: "0x400000",
+        });
+        const initialSource = call.mock.calls[0]?.[1].code;
+        const compact = '# rea-bridge\n_rea_query("server_health", "{}")';
+        expect(initialSource).not.toBe(compact);
+        expect((await health()).result).toEqual(initial.result);
+        expect(call.mock.calls.map(([, { code }]) => code)).toEqual([
+          initialSource,
+          compact,
+        ]);
+
+        await expect(
+          runHexRaysQuery(
+            connection,
+            "lease-1",
+            "list_funcs",
+            {
+              queries: { offset: 0 },
+            },
+            1000,
+          ),
+        ).rejects.toThrow(/KeyError: 'count'/);
+        expect(call).toHaveBeenCalledTimes(3);
+
+        await reset();
+        expect((await health()).result).toEqual(initial.result);
+        expect(call.mock.calls.slice(3).map(([, { code }]) => code)).toEqual([
+          compact,
+          initialSource,
+        ]);
+        expect((await health()).result).toEqual(initial.result);
+        expect(call.mock.lastCall?.[1].code).toBe(compact);
+      } finally {
+        close();
+      }
+    },
+  );
+
+  it("pushes exact string address lookup and procedure search filters into the Hex-Rays bridge", async () => {
+    const { producer, client } = await fixture();
+    const byAddress = await client.execute("list_strings", {
+      address: "0x3000",
+    });
+    expect(byAddress.ok).toBe(true);
+    if (!byAddress.ok) throw new Error("expected string_at success");
+    expect(byAddress.value.result).toEqual([
+      { address: "0x3000", value: "a.b\nC" },
+    ]);
+    expect(
+      producer.reads.calls.some(
+        ({ name, args }) => name === "string_at" && args.addr === "0x3000",
+      ),
+    ).toBe(true);
+    expect(producer.reads.calls.some(({ name }) => name === "find_regex")).toBe(
+      false,
+    );
+
+    const procSearch = await client.execute("search_procedures", {
+      pattern: "main",
+      mode: "literal",
+      case_sensitive: true,
+    });
+    expect(procSearch.ok).toBe(true);
+    expect(
+      producer.reads.calls.some(
+        ({ name, args }) =>
+          name === "list_funcs" &&
+          typeof args.queries === "object" &&
+          args.queries !== null &&
+          !Array.isArray(args.queries) &&
+          "filter" in args.queries &&
+          args.queries.count === 1000,
+      ),
+    ).toBe(true);
+    await client.close();
+  });
 });

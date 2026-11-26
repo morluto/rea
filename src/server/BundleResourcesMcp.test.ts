@@ -272,7 +272,7 @@ it("exposes the production resource session through the MCP SDK for a keyless bu
 
   const decoded = await client.callTool({
     name: "decode_interface_builder",
-    arguments: {},
+    arguments: { detail: "complete" },
   });
   expect(decoded.isError).not.toBe(true);
   const decodedEvidence = toolContract(
@@ -442,6 +442,7 @@ const expectResourceSchemaBranches = async (client: Client): Promise<void> => {
         archive_path: "Resources/data.archive",
         archive_sha256: "b".repeat(64),
         archive_format: "binary-plist",
+        archiver: "NSKeyedArchiver",
         roots: {},
         objects: [],
         references: [],

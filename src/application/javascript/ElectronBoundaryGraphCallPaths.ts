@@ -1,3 +1,4 @@
+import { appendToMapList } from "../../domain/appendToMapList.js";
 import { javascriptSourceRangeKey } from "../../domain/javascript/javascriptSourceCoordinates.js";
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
 import { IPC_COVERAGE_LIMITED_PAIRING_BASIS } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
@@ -150,6 +151,7 @@ export const addElectronCallPaths = (
       projected.push({ file, path, coverage, nodes });
     }
   }
+  const projectedByKey = indexProjectedPaths(projected);
   const wrapperCandidates = [
     ...ipc.pairings.map((pairing) => ({ ...pairing, coverageLimited: false })),
     ...ipc.states.flatMap(({ transmission, coverageLimitedCandidate }) =>
@@ -165,11 +167,15 @@ export const addElectronCallPaths = (
     ),
   ];
   for (const { transmission, handler, coverageLimited } of wrapperCandidates) {
-    const sources = projected.filter(
-      (p) => p.path.entry_kind === "bridge-member" && matches(p, transmission),
+    const sources = lookupProjectedPaths(
+      projectedByKey,
+      "bridge-member",
+      transmission,
     );
-    const targets = projected.filter(
-      (p) => p.path.entry_kind === "ipc-handler" && matches(p, handler),
+    const targets = lookupProjectedPaths(
+      projectedByKey,
+      "ipc-handler",
+      handler,
     );
     for (const from of sources)
       for (const to of targets) {
@@ -211,6 +217,53 @@ export const addElectronCallPaths = (
         });
       }
   }
+};
+
+type ProjectedPathIndex = Readonly<
+  Record<
+    "bridge-member" | "ipc-handler",
+    ReadonlyMap<string, ReadonlyMap<string, readonly ProjectedPath[]>>
+  >
+>;
+
+const indexProjectedPaths = (
+  projected: readonly ProjectedPath[],
+): ProjectedPathIndex => {
+  const indexed: Record<
+    "bridge-member" | "ipc-handler",
+    Map<string, Map<string, ProjectedPath[]>>
+  > = {
+    "bridge-member": new Map(),
+    "ipc-handler": new Map(),
+  };
+  for (const entry of projected) {
+    const { entry_kind: entryKind, channel } = entry.path;
+    if (
+      channel === null ||
+      (entryKind !== "bridge-member" && entryKind !== "ipc-handler")
+    )
+      continue;
+    let byChannel = indexed[entryKind].get(entry.file.path);
+    if (byChannel === undefined) {
+      byChannel = new Map();
+      indexed[entryKind].set(entry.file.path, byChannel);
+    }
+    appendToMapList(byChannel, channel, entry);
+  }
+  return indexed;
+};
+
+const lookupProjectedPaths = (
+  indexed: ProjectedPathIndex,
+  entryKind: "bridge-member" | "ipc-handler",
+  record: ElectronIpcRecord,
+): ProjectedPath[] => {
+  const channel = record.finding.channel;
+  if (channel === null) return [];
+  const candidates = indexed[entryKind].get(record.file.path)?.get(channel);
+  return candidates === undefined
+    ? []
+    : candidates.filter((entry) => matches(entry, record));
 };
 
 const matches = (

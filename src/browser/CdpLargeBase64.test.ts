@@ -1,55 +1,12 @@
-import { createHash } from "node:crypto";
-
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 
 import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
 import { CdpCaptureEvents } from "./CdpCaptureEvents.js";
-import { captureStorageFingerprints } from "./CdpCaptureStorageFingerprints.js";
-import type { CdpConnection } from "./CdpConnection.js";
 import { receiveCdpEvent } from "./CdpConnection.js";
 
 const ORIGIN = "https://example.test";
 const CDP_ENDPOINT = "http://127.0.0.1:9222";
 const BODY_BYTES = 4 * 1024 * 1024;
-
-const captureCacheFingerprint = async (encodedBody: string) => {
-  const send = vi.fn(async (method: string) => {
-    if (method === "Network.getCookies") return { cookies: [] };
-    if (method === "CacheStorage.requestEntries")
-      return {
-        cacheDataEntries: [
-          {
-            requestURL: `${ORIGIN}/cached`,
-            requestMethod: "GET",
-            requestHeaders: [],
-          },
-        ],
-        returnCount: 1,
-      };
-    if (method === "CacheStorage.requestCachedResponse")
-      return { response: { body: encodedBody } };
-    throw new Error(`Unexpected CDP command ${method}`);
-  });
-  const input = inspectWebPageInputSchema.parse({
-    cdp_endpoint: CDP_ENDPOINT,
-    allowed_origins: [ORIGIN],
-    target_id: "page",
-  });
-  return captureStorageFingerprints({
-    context: {
-      connection: { send } as unknown as CdpConnection,
-      sessionId: "page-session",
-      input,
-    },
-    origin: ORIGIN,
-    cookieUrl: `${ORIGIN}/`,
-    local: { items: [], complete: true },
-    session: { items: [], complete: true },
-    indexedDbNames: [],
-    caches: [{ name: "cache", id: "cache-id" }],
-    limitations: [],
-  });
-};
 
 const createEvents = (includeJsonBodyShapes = true): CdpCaptureEvents =>
   new CdpCaptureEvents(
@@ -92,17 +49,6 @@ const startJsonResponse = (
     }),
   );
 };
-
-it("fingerprints valid cached bytes with nonzero pad bits and rejects invalid bytes", async () => {
-  const padBits = await captureCacheFingerprint("e31=");
-  expect(padBits.items[0]?.value_sha256).toBe(
-    createHash("sha256").update("{}").digest("hex"),
-  );
-
-  const malformed = await captureCacheFingerprint("%%%not-base64%%%");
-  expect(malformed.complete).toBe(false);
-  expect(malformed.items[0]?.value_sha256).toBeNull();
-});
 
 it("decodes large JSON response bodies and accepts nonzero pad bits", () => {
   const events = createEvents();

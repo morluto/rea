@@ -1,3 +1,4 @@
+import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
 import { ESP_IMAGE_LIMITATIONS } from "../domain/firmware/espImageFacts.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -6,7 +7,6 @@ import { expect, it, vi } from "vitest";
 
 import { EspImageArtifactReader } from "./EspImageArtifactReader.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import type { ArtifactEntry } from "../resources/ArtifactReader.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import * as espImageDecoding from "../domain/firmware/espImage.js";
 import {
@@ -34,12 +34,6 @@ const writeImage = async (bytes: Uint8Array, name = "app.bin") => {
   const path = join(await createTestTempDirectory("rea-esp-image-"), name);
   await writeFile(path, bytes);
   return path;
-};
-
-const list = async (reader: EspImageArtifactReader) => {
-  const entries: ArtifactEntry[] = [];
-  for await (const entry of reader.entries()) entries.push(entry);
-  return entries;
 };
 
 it("inventories segments and signature blocks with root and entry facts", async () => {
@@ -276,7 +270,7 @@ it("refuses an ESP8266 image with its specific reason", async () => {
     await writeImage(esp8266Image(), "esp8266.bin"),
   );
   try {
-    await expect(list(reader)).rejects.toMatchObject({
+    await expect(collectEntries(reader)).rejects.toMatchObject({
       reason: "unavailable",
       message: espImageDecoding.ESP8266_REFUSAL,
     });
@@ -289,7 +283,7 @@ it("rejects forged entries and changed carrier identity, then closes idempotentl
   const path = await writeImage(APP);
   const reader = new EspImageArtifactReader(path);
   try {
-    const [entry] = await list(reader);
+    const [entry] = await collectEntries(reader);
     if (entry === undefined) throw new Error("Missing segment");
     await expect(
       reader.open({ ...entry, declaredSize: 1 }),

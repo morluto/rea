@@ -1,5 +1,5 @@
+import { connectFixtureClient } from "../../support/mcp/mcpFixture.js";
 import { join } from "node:path";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { PROCEDURES, inventory, jsonResult } from "./enhancedToolsHarness.js";
 
@@ -10,32 +10,26 @@ import { SESSION_TOOL_CONTRACTS } from "../../../src/contracts/sessionToolContra
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import type {} from "../../../src/domain/jsonValue.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { observed as ok } from "../../fixtures/analysisExecution.js";
+import {
+  createFixtureProviderIdentity,
+  observed as ok,
+} from "../../fixtures/analysisExecution.js";
 import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { ok as resultOk, err } from "../../../src/domain/result.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { nativeDispatchMetadataResultSchema } from "../../../src/domain/native/objcSwiftMetadata.js";
-import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const targetObservation = (value: unknown) =>
   resultOk(
-    createAnalysisExecution(
-      value,
-      {
-        id: "fixture",
-        name: "Fixture analysis provider",
-        version: "1",
+    createAnalysisExecution(value, createFixtureProviderIdentity(), {
+      subject: {
+        path: "/fixture.app",
+        sha256: "a".repeat(64),
+        format: "mach-o",
+        architecture: "arm64",
       },
-      {
-        subject: {
-          path: "/fixture.app",
-          sha256: "a".repeat(64),
-          format: "mach-o",
-          architecture: "arm64",
-        },
-      },
-    ),
+    }),
   );
 
 const functionDossier = {
@@ -225,16 +219,11 @@ afterEach(async () => {
 
 const connect = async (analysis: AnalysisOperationPort = fixturePort()) => {
   const server = createServer({ kind: "fixed", analysis });
-  const client = new Client(
+  return connectFixtureClient(
+    server,
     { name: "enhanced-test", version: "1.0.0" },
-    { jsonSchemaValidator: createMcpSchemaValidation() },
+    resources,
   );
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  return client;
 };
 
 // oxlint-disable-next-line max-lines-per-function -- keep the complete production registration checks together.
@@ -349,6 +338,7 @@ describe("enhanced MCP tools", () => {
             relationship_coverage: {
               status: "unknown",
               reason: "Provider did not report relationship coverage.",
+              limited_directions: ["callees"],
             },
           },
         ],
@@ -361,6 +351,7 @@ describe("enhanced MCP tools", () => {
             relationship_coverage: {
               status: "unknown",
               reason: "Provider did not report relationship coverage.",
+              limited_directions: ["callees"],
             },
           },
           {
@@ -371,6 +362,7 @@ describe("enhanced MCP tools", () => {
             relationship_coverage: {
               status: "unknown",
               reason: "Provider did not report relationship coverage.",
+              limited_directions: ["callees"],
             },
           },
         ],

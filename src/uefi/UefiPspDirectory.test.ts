@@ -12,14 +12,20 @@ function table(magic: "$PSP" | "$PL2"): Buffer {
 }
 
 it("distinguishes an unreadable directory header from a truncated entry array", () => {
+  const partialEntries = table("$PL2").subarray(0, 16);
   const partialHeader = table("$PSP").subarray(0, 9);
-  const partialEntries = table("$PL2").subarray(0, 31);
-  expect(scanPspDirectories(partialHeader, () => true).candidates).toEqual([
-    { offset: 0, magic: "$PSP", reason: "truncated-header" },
-  ]);
-  expect(scanPspDirectories(partialEntries, () => true).candidates).toEqual([
-    { offset: 0, magic: "$PL2", reason: "truncated-entries" },
-  ]);
+  expect(
+    scanPspDirectories(
+      Buffer.concat([partialEntries, Buffer.alloc(6), partialHeader]),
+      () => true,
+    ),
+  ).toEqual({
+    tables: [],
+    candidates: [
+      { offset: 0, magic: "$PL2", reason: "truncated-entries" },
+      { offset: 22, magic: "$PSP", reason: "truncated-header" },
+    ],
+  });
 });
 
 it("uses the record budget in image order and charges entries only for confirmed directories", () => {

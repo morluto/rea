@@ -1,6 +1,23 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 
+/** Read one UTF-8 JSON body, counting bytes before retaining each chunk. */
+export async function readModelFixtureBody(
+  request,
+  budgetMessage = "Model fixture request exceeds 10 MiB budget",
+) {
+  const chunks = [];
+  let bytes = 0;
+  for await (const chunk of request) {
+    bytes += chunk.length;
+    assert(bytes <= 10 * 1024 * 1024, budgetMessage);
+    chunks.push(chunk);
+  }
+  return bytes === 0
+    ? null
+    : JSON.parse(Buffer.concat(chunks, bytes).toString("utf8"));
+}
+
 /** Own the HTTP transport and every admitted protocol handler through finalization. */
 export async function createModelFixtureServer(handleRequest) {
   const active = new Set();

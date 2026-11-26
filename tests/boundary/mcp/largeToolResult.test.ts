@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
+import { MCP_TRANSPORT_EVIDENCE_SUMMARY } from "../../../src/domain/analysisErrorPresentation.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import {
   createEvidence,
@@ -111,7 +112,7 @@ const callPseudoCode = async (
       throw new Error("Missing named procedure_pseudo_code output schema");
     const result = await client.callTool({
       name: "procedure_pseudo_code",
-      arguments: { procedure: "main" },
+      arguments: { detail: "complete", procedure: "main" },
     });
     return {
       result,
@@ -187,7 +188,7 @@ describe("MCP response budget recovery", () => {
     );
   });
 
-  it("keeps export advice when the evidence summary itself exceeds the budget", () => {
+  it("offers metadata pagination and export when the evidence summary exceeds the budget", () => {
     const tight = createToolResultDelivery(2048);
     const delivered = tight.toCallToolResult(
       ok({
@@ -202,9 +203,9 @@ describe("MCP response budget recovery", () => {
       .parse(delivered.structuredContent);
     const action = error.remediation.action;
     expect(error.details).toMatchObject({
-      reported_limits: { next_operation: "export_evidence_bundle" },
+      reported_limits: { next_operation: "get_evidence_bundle" },
     });
-    expect(action).not.toContain("get_evidence_bundle and detail: summary");
+    expect(action).toContain(MCP_TRANSPORT_EVIDENCE_SUMMARY);
     expect(action).toContain("export_evidence_bundle");
     expect(action).toContain("caller-selected path");
     expect(action).toContain("or use complete CLI JSON output");

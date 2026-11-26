@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   Client,
   InMemoryTransport,
@@ -15,8 +15,9 @@ import { z } from "zod";
 import { CallerAbort, OwnerCancellation } from "../domain/analysisErrorCore.js";
 import { InvestigationRecords } from "../application/investigation/InvestigationRecords.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
+import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
-import { forgetPendingMcpRequest } from "./EvidenceMcpServerCore.js";
+import { forgetPendingMcpRequest } from "./ErrorEvidenceTransport.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { createToolResultDelivery } from "./toolResult.js";
@@ -102,21 +103,24 @@ describe("MCP request bookkeeping", () => {
   it("releases list, tool, and completion state when cancellation arrives", () => {
     const completion = new AbortController();
     const pendingTools = new Map([[7, "inspect_artifact"]]);
-    const pendingToolLists = new Set([7]);
+    const pendingToolListCursors = new Map<number, string | undefined>([
+      [7, undefined],
+    ]);
     const pendingCompletions = new Map([[7, completion]]);
 
     const cancellation = new CallerAbort("request-cancelled", "user stopped");
 
     forgetPendingMcpRequest(
       pendingTools,
-      pendingToolLists,
+      pendingToolListCursors,
       pendingCompletions,
       7,
       cancellation,
     );
 
     expect(pendingTools.has(7)).toBe(false);
-    expect(pendingToolLists.has(7)).toBe(false);
+    expect(pendingToolListCursors.has(7)).toBe(false);
+    expect(completion.signal.aborted).toBe(true);
     expect(completion.signal.reason).toBe(cancellation);
     expect(pendingCompletions.has(7)).toBe(false);
   });
@@ -673,6 +677,297 @@ describe("SDK argument name guidance", () => {
       expect(payload.error.message).toContain("count");
     } finally {
       await session.close();
+    }
+  });
+});
+
+it("reuses the tool registration input projection across SDK listings", async () => {
+  const server = new EvidenceMcpServer(
+    { name: "input-projection-server", version: "1" },
+    { capabilities: {} },
+    undefined,
+    createToolResultDelivery(4096),
+  );
+  const schema = z.strictObject({ value: z.string() });
+  const standard = schema["~standard"];
+  const input = vi.fn(standard.jsonSchema.input);
+  Object.defineProperty(schema, "~standard", {
+    value: { ...standard, jsonSchema: { ...standard.jsonSchema, input } },
+  });
+  server.registerTool(
+    "counted_input",
+    { description: "Count input projections", inputSchema: schema },
+    async () => ({ content: [] }),
+  );
+  expect(input).toHaveBeenCalledExactlyOnceWith({ target: "draft-2020-12" });
+
+  const client = new Client({ name: "input-projection-client", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const serving = serveStdio(() => server, { transport: serverTransport });
+  try {
+    await client.connect(clientTransport);
+    const first = await client.listTools();
+    expect(first.tools).toMatchObject([
+      {
+        name: "counted_input",
+        description: "Count input projections",
+        inputSchema: {
+          type: "object",
+          properties: { value: { type: "string" } },
+          required: ["value"],
+        },
+      },
+    ]);
+    expect(input).toHaveBeenCalledTimes(1);
+    expect(await client.listTools()).toEqual(first);
+    expect(input).toHaveBeenCalledTimes(1);
+  } finally {
+    await Promise.all([client.close(), serving.close()]);
+  }
+});
+
+it("skips object-root output schema projection on output=off while keeping runtime validation and legacy wrapping", async () => {
+  const server = new EvidenceMcpServer(
+    { name: "output-off-skip-test", version: "1" },
+    { capabilities: {} },
+    undefined,
+    createToolResultDelivery(4096),
+    undefined,
+    "off",
+  );
+  let objectOutputCalls = 0;
+  const spyObjectOutput = z.strictObject({ count: z.int() });
+  const baseStandard = spyObjectOutput["~standard"];
+  Object.defineProperty(spyObjectOutput, "~standard", {
+    value: {
+      ...baseStandard,
+      jsonSchema: {
+        ...baseStandard.jsonSchema,
+        output: (options: unknown) => {
+          objectOutputCalls += 1;
+          return baseStandard.jsonSchema.output(options as never);
+        },
+      },
+    },
+  });
+  server.registerTool(
+    "object_tool",
+    {
+      inputSchema: z.strictObject({ n: z.int() }),
+      outputSchema: spyObjectOutput,
+    },
+    async ({ n }) => ({
+      content: [],
+      structuredContent: n >= 0 ? { count: n } : ({ count: "bad" } as never),
+    }),
+  );
+  const nonObjectUnionOutput = z.union([
+    z.strictObject({ status: z.literal("ok") }),
+    z.string(),
+  ]);
+  server.registerTool(
+    "union_tool",
+    {
+      inputSchema: z.strictObject({}),
+      outputSchema: nonObjectUnionOutput,
+    },
+    async () => ({
+      content: [],
+      structuredContent: { status: "ok" as const },
+    }),
+  );
+  const client = new Client(
+    { name: "output-off-client", version: "1" },
+    { supportedProtocolVersions: ["2025-11-25"] },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const serving = serveStdio(() => server, { transport: serverTransport });
+  try {
+    await client.connect(clientTransport);
+    expect(client.getNegotiatedProtocolVersion()).toBe("2025-11-25");
+    const listed = await client.listTools();
+    expect(objectOutputCalls).toBe(0);
+    for (const tool of listed.tools) expect(tool.outputSchema).toBeUndefined();
+
+    const valid = await client.callTool({
+      name: "object_tool",
+      arguments: { n: 42 },
+    });
+    expect(valid.isError).toBeFalsy();
+    expect(valid.structuredContent).toEqual({ count: 42 });
+
+    const invalidOutput = await client.callTool({
+      name: "object_tool",
+      arguments: { n: -1 },
+    });
+    expect(invalidOutput.isError).toBe(true);
+
+    // Non-object union root keeps 2025 legacy `{ result }` wrapping.
+    const wrapped = await client.callTool({
+      name: "union_tool",
+      arguments: {},
+    });
+    expect(wrapped.isError).toBeFalsy();
+    expect(wrapped.structuredContent).toEqual({ result: { status: "ok" } });
+  } finally {
+    await Promise.all([client.close(), serving.close()]);
+  }
+});
+
+describe("unknown MCP tool remediation", () => {
+  const registerRealCatalogServer = (
+    advertisedToolFamilies?: ReadonlySet<string>,
+  ) => {
+    const server = new EvidenceMcpServer(
+      { name: "unknown-tool-real-catalog-test", version: "1" },
+      {},
+      undefined,
+      createToolResultDelivery(64 * 1024),
+      undefined,
+      undefined,
+      undefined,
+      advertisedToolFamilies,
+    );
+    const noopInput = z.strictObject({});
+    for (const contract of TOOL_CONTRACTS) {
+      server.registerTool(
+        contract.name,
+        { description: contract.description, inputSchema: noopInput },
+        async () => ({ content: [{ type: "text", text: "ok" }] }),
+      );
+    }
+    return server;
+  };
+
+  const callUnknownMessage = async (
+    client: Client,
+    name: string,
+  ): Promise<string> => {
+    try {
+      await client.callTool({ name, arguments: {} });
+    } catch (error) {
+      expect(error).toMatchObject({ code: -32602 });
+      return error instanceof Error ? error.message : String(error);
+    }
+    throw new Error(`expected unknown tool call ${name} to fail`);
+  };
+
+  it("suggests batch_decompile, decompile_all, and procedure_pseudo_code for decompile on the real registered catalog", async () => {
+    const server = registerRealCatalogServer();
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "unknown-tool-client", version: "1" });
+    const serving = serveStdio(() => server, { transport: serverTransport });
+    try {
+      await client.connect(clientTransport);
+
+      const decompileMessage = await callUnknownMessage(client, "decompile");
+      expect(decompileMessage).toContain(
+        "Closest advertised tools: batch_decompile, decompile_all, decompile_jeb_item, inspect_android_method, procedure_pseudo_code.",
+      );
+      expect(decompileMessage).not.toContain("discover_tools");
+
+      const hyphenMessage = await callUnknownMessage(client, "open-binary");
+      expect(hyphenMessage).toContain("open_binary");
+
+      // Multi-word unknown name falls back to any-word ranking when no tool matches every word.
+      const fallbackMessage = await callUnknownMessage(
+        client,
+        "decompile_nonexistent_variant",
+      );
+      expect(fallbackMessage).toContain("batch_decompile");
+      expect(fallbackMessage).toContain("decompile_all");
+      expect(fallbackMessage).toContain("procedure_pseudo_code");
+
+      const secretProbe = `untrusted_probe_${"z".repeat(200)}`;
+      const oversizedMessage = await callUnknownMessage(client, secretProbe);
+      expect(oversizedMessage).toContain(
+        "Call tools/list, select an advertised tool, and retry; do not repeat the unknown tool name.",
+      );
+      expect(oversizedMessage).not.toContain("Closest advertised");
+      expect(oversizedMessage).not.toContain("untrusted_probe_");
+
+      // Session survives unknown tool calls and continues serving valid tools.
+      const followUp = await client.callTool({
+        name: "open_binary",
+        arguments: {},
+      });
+      expect(followUp.isError).toBeFalsy();
+      expect(firstText(followUp)).toBe("ok");
+    } finally {
+      await Promise.all([client.close(), serving.close()]);
+    }
+  });
+
+  it("points unknown decompile calls to discover_tools under hot/cold on the real catalog without leaking cold tools", async () => {
+    const server = registerRealCatalogServer();
+    server.enableProgressiveCatalog();
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const client = new Client({
+      name: "unknown-tool-progressive-client",
+      version: "1",
+    });
+    const serving = serveStdio(() => server, { transport: serverTransport });
+    try {
+      await client.connect(clientTransport);
+
+      const coldMessage = await callUnknownMessage(client, "decompile");
+      expect(coldMessage).toContain(
+        "Call discover_tools to find and load an in-scope tool, then retry; do not repeat the unknown tool name.",
+      );
+      expect(coldMessage).not.toContain("batch_decompile");
+      expect(coldMessage).not.toContain("decompile_all");
+      expect(coldMessage).not.toContain("procedure_pseudo_code");
+      expect(coldMessage).not.toContain("tools/list");
+
+      const hotMessage = await callUnknownMessage(client, "open-binary");
+      expect(hotMessage).toContain("open_binary");
+      expect(hotMessage).toContain("call discover_tools");
+
+      const loaded = await client.callTool({
+        name: "discover_tools",
+        arguments: { names: ["procedure_pseudo_code"] },
+      });
+      expect(loaded.isError).not.toBe(true);
+
+      const afterLoadMessage = await callUnknownMessage(client, "decompile");
+      expect(afterLoadMessage).toContain(
+        "Closest advertised tool: procedure_pseudo_code.",
+      );
+      expect(afterLoadMessage).not.toContain("batch_decompile");
+      expect(afterLoadMessage).not.toContain("decompile_all");
+    } finally {
+      await Promise.all([client.close(), serving.close()]);
+    }
+  });
+
+  it("excludes out-of-scope tools hidden by advertisedToolFamilies on the real catalog", async () => {
+    const server = registerRealCatalogServer(new Set(["session"]));
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "scoped-unknown-client", version: "1" });
+    const serving = serveStdio(() => server, { transport: serverTransport });
+    try {
+      await client.connect(clientTransport);
+      const message = await callUnknownMessage(client, "decompile");
+      expect(message).not.toContain("batch_decompile");
+      expect(message).not.toContain("decompile_all");
+      expect(message).not.toContain("procedure_pseudo_code");
+      expect(message).toContain(
+        "Call tools/list, select an advertised tool, and retry",
+      );
+      // In-scope session tools are still suggested on the same scoped server.
+      const inScopeMessage = await callUnknownMessage(client, "open-binary");
+      expect(inScopeMessage).toContain("Closest advertised tools: open_binary");
+      expect(inScopeMessage).not.toContain("decompile_all");
+      await expect(
+        client.callTool({ name: "decompile_all", arguments: {} }),
+      ).rejects.toThrow("disabled");
+    } finally {
+      await Promise.all([client.close(), serving.close()]);
     }
   });
 });

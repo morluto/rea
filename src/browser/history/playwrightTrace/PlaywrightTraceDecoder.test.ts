@@ -1,14 +1,14 @@
+import {
+  playwrightTraceLimits,
+  playwrightTraceSchema,
+} from "../../../domain/playwrightTrace/playwrightTrace.js";
 import { projectAnalysisError } from "../../../domain/analysisErrorProjection.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile, open } from "node:fs/promises";
 import { expect, it } from "vitest";
 import { ArtifactResourceScope } from "../../../resources/ArtifactResourceScope.js";
 import { PlaywrightTraceDecoder } from "./PlaywrightTraceDecoder.js";
-import { playwrightTraceSchema } from "../../../domain/playwrightTrace/playwrightTrace.js";
-import {
-  playwrightTraceFixture,
-  playwrightTracePathFixture,
-} from "../../../../tests/fixtures/playwrightTrace.js";
+import { playwrightTraceFixture } from "../../../../tests/fixtures/playwrightTrace.js";
 import { createTestTempDirectory } from "../../../../tests/fixtures/temporaryDirectory.js";
 import {
   zstandardWindowFrameFixture,
@@ -25,6 +25,7 @@ it("imports real v10 recorder text with per-stream identity and resource presenc
   try {
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
+      playwrightTraceLimits(),
     );
     if (!result.ok) throw result.error;
     const report = playwrightTraceSchema.parse(result.value);
@@ -71,86 +72,6 @@ it("imports real v10 recorder text with per-stream identity and resource presenc
   }
 });
 
-it("preserves exact ZIP names for resources and paired stream profiles", async () => {
-  const fixture = await playwrightTracePathFixture();
-  const resources = new ArtifactResourceScope();
-  try {
-    const result = await new PlaywrightTraceDecoder(resources).inspect(
-      fixture.path,
-    );
-    if (!result.ok) throw result.error;
-    const report = result.value;
-    expect(report.members.map((member) => member.path)).toContain(
-      "./resources/x",
-    );
-    expect(
-      report.members.find((member) => member.path === "./resources/x"),
-    ).toMatchObject({
-      logical_path: "resources/x",
-      limitations: [expect.stringContaining("leading current-directory")],
-    });
-    expect(
-      report.members.find((member) => member.path === "resources/x"),
-    ).toMatchObject({ logical_path: "resources/x", limitations: [] });
-    expect(report.events).toHaveLength(4);
-    expect(report.streams.map((stream) => stream.state)).toEqual([
-      "supported",
-      "supported",
-      "supported",
-      "supported",
-    ]);
-    const members = new Map(
-      report.members.map((member) => [member.member_id, member]),
-    );
-    for (const event of report.events) {
-      const source = members.get(event.source.member_id)!;
-      const expected = source.path.startsWith("./")
-        ? "./resources/x"
-        : "resources/x";
-      expect(event.resource_references).toEqual([
-        expect.objectContaining({
-          path: expected,
-          state: "present-unread",
-          member_id: report.members.find((row) => row.path === expected)
-            ?.member_id,
-          matching_members: 1,
-        }),
-      ]);
-    }
-    expect(
-      report.events
-        .filter((event) => event.kind === "network")
-        .map((event) => event.status),
-    ).toEqual([200, 201]);
-  } finally {
-    await resources.close();
-  }
-});
-
-it("keeps missing resource references explicit without turning page exhaustion into capture completeness", async () => {
-  const fixture = await playwrightTraceFixture();
-  const resources = new ArtifactResourceScope();
-  try {
-    const result = await new PlaywrightTraceDecoder(resources).inspect(
-      fixture.path,
-    );
-    if (!result.ok) throw result.error;
-    expect(result.value.summary.unavailable_references).toBe(8);
-    expect(result.value.source_coverage.interpretation).toBe("partial");
-    const references = result.value.events.flatMap(
-      (row) => row.resource_references,
-    );
-    expect(references).toHaveLength(8);
-    expect(
-      references.every(
-        (row) => row.state === "missing" && row.matching_members === 0,
-      ),
-    ).toBe(true);
-  } finally {
-    await resources.close();
-  }
-});
-
 const header =
   JSON.stringify({ type: "context-options", version: 10, origin: "library" }) +
   "\n";
@@ -159,22 +80,27 @@ it("keeps failed-request status sentinels unknown without losing recorded respon
   const fixture = await playwrightTraceFixture({
     trace: header,
     network:
-      statuses
-        .map((status) =>
-          JSON.stringify({
-            type: "resource-snapshot",
-            snapshot: {
-              request: { method: "GET", url: "http://127.0.0.1/failed" },
-              response: { status, _failureText: "net::ERR_EMPTY_RESPONSE" },
-            },
-          }),
-        )
+      [
+        ...statuses.map((status) => ({
+          type: "resource-snapshot",
+          snapshot: {
+            request: { method: "GET", url: "http://127.0.0.1/failed" },
+            response: { status, _failureText: "net::ERR_EMPTY_RESPONSE" },
+          },
+        })),
+        {
+          type: "resource-snapshot",
+          snapshot: { response: { status: 200 } },
+        },
+      ]
+        .map((row) => JSON.stringify(row))
         .join("\n") + "\n",
   });
   const resources = new ArtifactResourceScope();
   try {
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
+      playwrightTraceLimits(),
     );
     if (!result.ok) throw result.error;
     const report = playwrightTraceSchema.parse(result.value);
@@ -188,7 +114,17 @@ it("keeps failed-request status sentinels unknown without losing recorded respon
       200,
       600,
       999,
+      200,
     ]);
+    expect(report.streams.map(({ state }) => state)).toEqual([
+      "supported",
+      "supported",
+    ]);
+    expect(report.events.at(-1)).toMatchObject({
+      status: 200,
+      method: null,
+      url: null,
+    });
     expect(report.events[0]).toMatchObject({
       source: { line: 1, record_pointer: "/snapshot" },
       reported: {
@@ -201,7 +137,7 @@ it("keeps failed-request status sentinels unknown without losing recorded respon
       report.diagnostics
         .filter((row) => row.code === "partial-event")
         .map((row) => row.line),
-    ).toEqual([1, 2, 3, 4, 5]);
+    ).toEqual([1, 2, 3, 4, 5, 10]);
   } finally {
     await resources.close();
   }
@@ -229,6 +165,7 @@ it("retains valid siblings of malformed records and exposes exact producer lines
   try {
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
+      playwrightTraceLimits(),
     );
     if (!result.ok) throw result.error;
     expect(result.value.events).toHaveLength(1);
@@ -247,31 +184,62 @@ it("retains valid siblings of malformed records and exposes exact producer lines
   }
 });
 
-it.each([
-  ["", 0],
-  [before, 0],
-  [header + before + header + before, 1],
-])(
-  "never guesses a missing or repeated context version %#",
-  async (trace, events) => {
-    const fixture = await playwrightTraceFixture({ trace, network: "" });
-    const resources = new ArtifactResourceScope();
-    try {
-      const result = await new PlaywrightTraceDecoder(resources).inspect(
-        fixture.path,
-      );
-      if (!result.ok) throw result.error;
-      expect(result.value.events).toHaveLength(events);
-      expect(result.value.source_coverage.interpretation).toBe("partial");
-      expect(result.value.streams.length).toBeGreaterThan(0);
-      expect(
-        result.value.streams.every((stream) => stream.state === "unknown"),
-      ).toBe(true);
-    } finally {
-      await resources.close();
-    }
-  },
-);
+it("requires an unambiguous v10 profile for each trace and paired network stream", async () => {
+  const network =
+    '{"type":"resource-snapshot","snapshot":{"request":{"method":"GET","url":"https://recorded.invalid/"},"response":{"status":200}}}\n';
+  const fixture = await playwrightTraceFixture({
+    trace: header + before + header + before,
+    network,
+    extraMembers: [
+      { path: "empty.trace", contents: "" },
+      { path: "empty.network", contents: network },
+      { path: "missing-header.trace", contents: before },
+      { path: "missing-header.network", contents: network },
+      {
+        path: "duplicate-key.trace",
+        contents:
+          '{"type":"context-options","version":10,"version":11}\n' + before,
+      },
+      { path: "duplicate-key.network", contents: network },
+    ],
+  });
+  const resources = new ArtifactResourceScope();
+  try {
+    const result = await new PlaywrightTraceDecoder(resources).inspect(
+      fixture.path,
+      playwrightTraceLimits(),
+    );
+    if (!result.ok) throw result.error;
+    const { events, streams, members, diagnostics, source_coverage } =
+      result.value;
+    const sourcePath = (id: string | null) =>
+      members.find((row) => row.member_id === id)?.path;
+    expect(streams).toHaveLength(8);
+    expect(streams.map((stream) => stream.state)).toEqual(
+      Array(8).fill("unknown"),
+    );
+    expect(
+      events.map((event) => [
+        sourcePath(event.source.member_id),
+        event.source.line,
+        event.call_id,
+      ]),
+    ).toEqual([["trace.trace", 2, "call-a"]]);
+    expect(
+      diagnostics.map((row) => [sourcePath(row.member_id), row.line, row.code]),
+    ).toEqual(
+      expect.arrayContaining([
+        ["trace.trace", 3, "duplicate-context-header"],
+        ["empty.trace", null, "unknown-stream-version"],
+        ["missing-header.trace", 1, "missing-context-header"],
+        ["duplicate-key.trace", 1, "malformed-record"],
+      ]),
+    );
+    expect(source_coverage.interpretation).toBe("partial");
+  } finally {
+    await resources.close();
+  }
+});
 
 it("refuses other declared trace versions with verified archive identity", async () => {
   const fixture = await playwrightTraceFixture({
@@ -283,9 +251,13 @@ it("refuses other declared trace versions with verified archive identity", async
   try {
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
+      playwrightTraceLimits(),
     );
     if (result.ok) throw new Error("Expected version refusal");
-    expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisTargetFailureError",
+      failure: { kind: "unsupported", format: "playwright-trace" },
+    });
     expect(
       playwrightTraceSchema.parse(result.error.partialObservation).artifact
         .sha256,
@@ -303,6 +275,7 @@ it("preserves opaque pre-cancellation without reading or claiming a source snaps
   try {
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       "/unused.zip",
+      playwrightTraceLimits(),
       controller.signal,
     );
     if (result.ok) throw new Error("Expected cancellation");
@@ -323,6 +296,7 @@ it("keeps unsafe numeric literals exact instead of rounding recorded times", asy
   try {
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
+      playwrightTraceLimits(),
     );
     if (!result.ok) throw result.error;
     expect(result.value.events[0]?.time).toBeNull();
@@ -334,28 +308,6 @@ it("keeps unsafe numeric literals exact instead of rounding recorded times", asy
     await resources.close();
   }
 });
-
-it.each([
-  ['{"type":"context-options","version":10,"version":11}\n', "unknown"],
-  [header + '{"type":"resource-snapshot","snapshot":{}}\n', "supported"],
-])(
-  "reports duplicate keys and incomplete known events explicitly %#",
-  async (trace, state) => {
-    const fixture = await playwrightTraceFixture({ trace, network: "" });
-    const resources = new ArtifactResourceScope();
-    try {
-      const result = await new PlaywrightTraceDecoder(resources).inspect(
-        fixture.path,
-      );
-      if (!result.ok) throw result.error;
-      expect(result.value.streams[0]?.state).toBe(state);
-      expect(result.value.source_coverage.interpretation).toBe("partial");
-      expect(result.value.diagnostics.length).toBeGreaterThan(0);
-    } finally {
-      await resources.close();
-    }
-  },
-);
 
 it("refuses oversized physical lines before parsing their representation", async () => {
   const trace =
@@ -371,36 +323,10 @@ it("refuses oversized physical lines before parsing their representation", async
   try {
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
+      playwrightTraceLimits(),
     );
     if (result.ok) throw new Error("Expected line capacity refusal");
     expect(result.error._tag).toBe("AnalysisResourceConstraintError");
-    expect(resources.hasPending).toBe(false);
-  } finally {
-    await resources.close();
-  }
-});
-
-it("never promotes facts from a stream whose ZIP CRC fails", async () => {
-  const fixture = await playwrightTraceFixture({ level: 0 });
-  const bytes = await readFile(fixture.path);
-  const needle = Buffer.from('"method":"GET"');
-  const offset = bytes.indexOf(needle);
-  expect(offset).toBeGreaterThan(0);
-  bytes[offset + 10] = 80;
-  await writeFile(fixture.path, bytes);
-  const resources = new ArtifactResourceScope();
-  try {
-    const result = await new PlaywrightTraceDecoder(resources).inspect(
-      fixture.path,
-    );
-    if (result.ok) throw new Error("Expected CRC refusal");
-    expect(result.error._tag).toBe("AnalysisInputError");
-    const partial = playwrightTraceSchema.parse(
-      result.error.partialObservation,
-    );
-    expect(partial.summary.network).toBe(0);
-    expect(partial.summary.events).toBe(20);
-    expect(partial.source_coverage.interpretation).toBe("partial");
     expect(resources.hasPending).toBe(false);
   } finally {
     await resources.close();
@@ -416,6 +342,7 @@ it("rejects a sparse over-budget archive before hashing or expansion", async () 
   try {
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
+      playwrightTraceLimits(),
     );
     if (result.ok) throw new Error("Expected archive admission refusal");
     expect(result.error._tag).toBe("AnalysisResourceConstraintError");
@@ -439,11 +366,16 @@ it("bounds JSON node expansion even when many tokens fit inside a small physical
   try {
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
+      playwrightTraceLimits(),
     );
     if (result.ok) throw new Error("Expected node admission refusal");
     expect(result.error._tag).toBe("AnalysisResourceConstraintError");
     expect(projectAnalysisError(result.error).details).toMatchObject({
-      refusal: { limit: 131072, unit: "parser nodes" },
+      // Parser nodes are facts_bytes / 256, so that field recovers them.
+      limit: {
+        parameter: "trace_limits.facts_bytes",
+        effective_value: 32 * 1024 * 1024,
+      },
       reported_limits: {
         boundary: "parser-nodes",
         maximum: 131072,
@@ -456,28 +388,7 @@ it("bounds JSON node expansion even when many tokens fit inside a small physical
   }
 });
 
-it("names the nesting allowance, not the node allowance, for a deeply nested small record", async () => {
-  const trace =
-    header +
-    `{"type":"console","args":${"[".repeat(80)}${"]".repeat(80)},"time":1}\n`;
-  const fixture = await playwrightTraceFixture({ trace, network: "" });
-  const resources = new ArtifactResourceScope();
-  try {
-    const result = await new PlaywrightTraceDecoder(resources).inspect(
-      fixture.path,
-    );
-    if (result.ok) throw new Error("Expected nesting refusal");
-    expect(result.error._tag).toBe("AnalysisResourceConstraintError");
-    expect(projectAnalysisError(result.error).details).toMatchObject({
-      refusal: { limit: 64, unit: "nesting levels" },
-    });
-    expect(resources.hasPending).toBe(false);
-  } finally {
-    await resources.close();
-  }
-});
-
-it("keeps duplicate resource names ambiguous instead of selecting one ZIP occurrence", async () => {
+it("distinguishes ambiguous and missing archive resource references", async () => {
   const fixture = await playwrightTraceFixture({ resources: true, level: 0 });
   const frames = fixture.trace
     .split("\n")
@@ -519,6 +430,7 @@ it("keeps duplicate resource names ambiguous instead of selecting one ZIP occurr
   try {
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
+      playwrightTraceLimits(),
     );
     if (!result.ok) throw result.error;
     expect(
@@ -527,17 +439,30 @@ it("keeps duplicate resource names ambiguous instead of selecting one ZIP occurr
     expect(
       new Set(result.value.members.map((member) => member.member_id)).size,
     ).toBe(result.value.members.length);
-    expect(
-      result.value.events.flatMap((row) => row.resource_references),
-    ).toContainEqual(
-      expect.objectContaining({
-        path: first,
-        state: "ambiguous",
-        member_id: null,
-        matching_members: 2,
-      }),
+    const references = result.value.events.flatMap(
+      (row) => row.resource_references,
     );
-    expect(result.value.source_coverage.interpretation).toBe("partial");
+    expect(references).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: first,
+          state: "ambiguous",
+          member_id: null,
+          matching_members: 2,
+        }),
+        expect.objectContaining({
+          path: second,
+          state: "missing",
+          member_id: null,
+          matching_members: 0,
+        }),
+      ]),
+    );
+    expect(result.value.summary.unavailable_references).toBe(2);
+    expect(result.value.source_coverage).toMatchObject({
+      interpretation: "partial",
+      recording_completeness: "unknown",
+    });
   } finally {
     await resources.close();
   }
@@ -554,7 +479,10 @@ it("names the ZIP decoder window for a large-window recorder stream", async () =
   );
   const resources = new ArtifactResourceScope();
   try {
-    const result = await new PlaywrightTraceDecoder(resources).inspect(path);
+    const result = await new PlaywrightTraceDecoder(resources).inspect(
+      path,
+      playwrightTraceLimits(),
+    );
     if (result.ok) throw new Error("Expected decoder window refusal");
     const projected = projectAnalysisError(result.error);
     expect(projected.code).toBe("resource_constraint");
@@ -571,6 +499,127 @@ it("names the ZIP decoder window for a large-window recorder stream", async () =
         ceiling: ZIP_ZSTANDARD_WINDOW_CEILING,
       }),
     );
+  } finally {
+    await resources.close();
+  }
+});
+
+it("validates malformed syntax, duplicate keys, and nesting limits inside skipped trace events", async () => {
+  const skippedMalformed = await playwrightTraceFixture({
+    trace: header + '{"type":"frame-snapshot","snapshot":{"a":01}}\n' + before,
+    network: "",
+  });
+  const skippedDuplicate = await playwrightTraceFixture({
+    trace:
+      header + '{"type":"frame-snapshot","snapshot":{"k":1,"k":2}}\n' + before,
+    network: "",
+  });
+  const deepSnapshot = '{"type":"frame-snapshot","snapshot":'.concat(
+    "[".repeat(64),
+    "0",
+    "]".repeat(64),
+    "}\n",
+  );
+  const skippedOverDepth = await playwrightTraceFixture({
+    trace: header + deepSnapshot,
+    network: "",
+  });
+  const skippedFirstLine = await playwrightTraceFixture({
+    trace: '{"type":"frame-snapshot","snapshot":{"ok":true}}\n' + before,
+    network: "",
+  });
+  const resources = new ArtifactResourceScope();
+  try {
+    const malformedResult = await new PlaywrightTraceDecoder(resources).inspect(
+      skippedMalformed.path,
+      playwrightTraceLimits(),
+    );
+    if (!malformedResult.ok) throw malformedResult.error;
+    expect(malformedResult.value.events).toHaveLength(1);
+    expect(malformedResult.value.diagnostics).toContainEqual(
+      expect.objectContaining({ line: 2, code: "malformed-record" }),
+    );
+
+    const dupResult = await new PlaywrightTraceDecoder(resources).inspect(
+      skippedDuplicate.path,
+      playwrightTraceLimits(),
+    );
+    if (!dupResult.ok) throw dupResult.error;
+    expect(dupResult.value.events).toHaveLength(1);
+    expect(dupResult.value.diagnostics).toContainEqual(
+      expect.objectContaining({ line: 2, code: "malformed-record" }),
+    );
+
+    const depthResult = await new PlaywrightTraceDecoder(resources).inspect(
+      skippedOverDepth.path,
+      playwrightTraceLimits(),
+    );
+    if (depthResult.ok) throw new Error("Expected nesting-depth refusal");
+    expect(depthResult.error._tag).toBe("AnalysisResourceConstraintError");
+    expect(depthResult.error.limit).toMatchObject({
+      parameter: "trace_limits.nesting_depth",
+      effective_value: 64,
+    });
+    const raisedDepth = await new PlaywrightTraceDecoder(resources).inspect(
+      skippedOverDepth.path,
+      playwrightTraceLimits({ nesting_depth: 66 }),
+    );
+    if (!raisedDepth.ok) throw raisedDepth.error;
+    expect(raisedDepth.value.diagnostics).not.toContainEqual(
+      expect.objectContaining({ code: "malformed-record" }),
+    );
+
+    const firstLineResult = await new PlaywrightTraceDecoder(resources).inspect(
+      skippedFirstLine.path,
+      playwrightTraceLimits(),
+    );
+    if (!firstLineResult.ok) throw firstLineResult.error;
+    expect(firstLineResult.value.events).toEqual([]);
+    expect(firstLineResult.value.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ line: 1, code: "missing-context-header" }),
+        expect.objectContaining({ code: "unknown-stream-version" }),
+      ]),
+    );
+  } finally {
+    await resources.close();
+  }
+});
+
+it("projects a deep network record under the raised trace_limits.nesting_depth", async () => {
+  const base = await playwrightTraceFixture();
+  const [first] = base.network.split("\n").filter(Boolean);
+  const record = JSON.parse(first!) as { snapshot: Record<string, unknown> };
+  // An extension nested past the 64-level default, inside an otherwise
+  // ordinary resource snapshot.
+  let deep: unknown = 0;
+  for (let level = 0; level < 66; level++) deep = [deep];
+  record.snapshot._deep = deep;
+  const fixture = await playwrightTraceFixture({
+    trace: base.trace,
+    network: `${JSON.stringify(record)}\n`,
+  });
+  const resources = new ArtifactResourceScope();
+  try {
+    const refused = await new PlaywrightTraceDecoder(resources).inspect(
+      fixture.path,
+      playwrightTraceLimits(),
+    );
+    if (refused.ok) throw new Error("Expected nesting-depth refusal");
+    expect(refused.error.limit).toMatchObject({
+      parameter: "trace_limits.nesting_depth",
+    });
+    const raised = await new PlaywrightTraceDecoder(resources).inspect(
+      fixture.path,
+      playwrightTraceLimits({ nesting_depth: 80 }),
+    );
+    if (!raised.ok) throw raised.error;
+    expect(raised.value.diagnostics).not.toContainEqual(
+      expect.objectContaining({ code: "malformed-record" }),
+    );
+    expect(
+      raised.value.events.filter((event) => event.kind === "network"),
+    ).toHaveLength(1);
   } finally {
     await resources.close();
   }

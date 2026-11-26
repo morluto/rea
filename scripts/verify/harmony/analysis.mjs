@@ -1,8 +1,7 @@
+import { sha256File } from "../../lib/verifier-file-sha256.mjs";
 import { requireMcpOutput } from "../../lib/mcp-verifier-results.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
 import { access, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,6 +17,10 @@ import {
   VerifierFixture,
   withVerifierFixture,
 } from "../../lib/verifier-fixture.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "../../lib/complete-evidence.mjs";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const hap = process.env.REA_HARMONY_TEST_HAP;
@@ -26,13 +29,8 @@ if (hap === undefined)
     "verify:harmony requires REA_HARMONY_TEST_HAP. Run npm run fixtures:harmony and set it to the downloaded file; see docs/guides/harmony/harmony-analysis.md.",
   );
 await access(hap);
-const hashFile = async (path) => {
-  const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk);
-  return hash.digest("hex");
-};
 assert.equal(
-  await hashFile(hap),
+  await sha256File(hap),
   fixture.sha256,
   "Real HarmonyOS lane requires the pinned Harmony pipeline release fixture",
 );
@@ -48,7 +46,15 @@ const workspace = workspaceFixture.path;
 await withVerifierFixture(workspaceFixture, async () => {
   const inspectResponse = await execute(
     process.execPath,
-    [entrypoint, "inspect-artifact", path, "--format", "json"],
+    [
+      entrypoint,
+      ...(await completeEvidenceCliArguments([
+        "inspect-artifact",
+        path,
+        "--format",
+        "json",
+      ])),
+    ],
     { cwd: repository, timeout: 150_000, maxBuffer: 64 * 1024 * 1024 },
   );
   const inspection = parseEvidence(JSON.parse(inspectResponse.stdout));
@@ -154,10 +160,12 @@ await withVerifierFixture(workspaceFixture, async () => {
   transport.stderr?.on("data", (chunk) => {
     stderr += chunk.toString();
   });
-  const client = new Client({
-    name: "rea-real-harmony-verifier",
-    version: "1",
-  });
+  const client = completeEvidenceClient(
+    new Client({
+      name: "rea-real-harmony-verifier",
+      version: "1",
+    }),
+  );
   try {
     await client.connect(transport, { timeout: 30_000 });
     await client.listTools();
@@ -176,7 +184,7 @@ await withVerifierFixture(workspaceFixture, async () => {
     assert.equal(status.structuredContent?.result?.open, true);
     assert.equal(status.structuredContent?.result?.format, "hap");
     const inspected = await client.callTool(
-      { name: "inspect_artifact", arguments: {} },
+      { name: "inspect_artifact", arguments: { detail: "complete" } },
       { timeout: 150_000 },
     );
     assert.notEqual(inspected.structuredContent, undefined);
@@ -216,7 +224,7 @@ await withVerifierFixture(workspaceFixture, async () => {
     assert.notEqual(empty.isError, true, JSON.stringify(empty));
     assert.equal(empty.structuredContent?.result?.open, false);
     assert.equal(
-      await hashFile(path),
+      await sha256File(path),
       fixture.sha256,
       "MCP workflow must preserve source bytes",
     );

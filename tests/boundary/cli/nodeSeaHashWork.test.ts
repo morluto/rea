@@ -17,7 +17,7 @@ cliTest(
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
-      code: "truncated",
+      code: "partial",
       details: { reason: "limit", boundary: "capacity" },
     });
     expect((await readFile(path)).equals(bytes)).toBe(true);

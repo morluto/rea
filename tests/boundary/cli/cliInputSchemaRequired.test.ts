@@ -10,6 +10,7 @@ import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
+import { serveInProcessCli as serve } from "../../support/cli/serveInProcessCli.js";
 import { createCliInventory } from "../../../scripts/lib/catalog-cli.mjs";
 import { registerAdbCommands } from "../../../src/cli/adbCommands.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
@@ -37,24 +38,6 @@ const advertisedInputSchema = z.object({
   args: advertisedGroupSchema.optional(),
   options: advertisedGroupSchema.optional(),
 });
-
-const serve = async (
-  cli: CliInstance,
-  argv: readonly string[],
-): Promise<{ readonly stdout: string; readonly exitCode: number }> => {
-  let stdout = "";
-  let exitCode = 0;
-  await cli.serve([...argv], {
-    env: {},
-    exit: (code) => {
-      exitCode = code;
-    },
-    stdout: (text) => {
-      stdout += text;
-    },
-  });
-  return { stdout, exitCode };
-};
 
 const advertisedSchema = async (cli: CliInstance, command: string) => {
   const result = await serve(cli, [command, "--schema", "--json"]);
@@ -273,6 +256,48 @@ describe("CLI advertised input schemas", () => {
     );
     expect(advertised.args?.properties.scope).toBeDefined();
     expect(advertised.args?.required ?? []).not.toContain("scope");
+  });
+});
+
+describe("omittable defaults omission rules", () => {
+  it("preserves required status for strict and failing-default fields while marking valid omission wrappers optional", async () => {
+    const cli = createCommandCli();
+    registerCliCommand(cli, "fixture", {
+      args: z.object({
+        required: z.string(),
+        optional: z.string().optional(),
+        scope: z.enum(["all", "selected"]).default("all"),
+        prefaulted: z.string().prefault("fallback"),
+        caught: z.string().catch("safe"),
+        failingDefault: z
+          .string()
+          .default("bad")
+          .refine(() => false),
+        optionalTransform: z
+          .string()
+          .optional()
+          .transform((value) => value ?? "x"),
+      }),
+      run: () => ({ ok: true }),
+    });
+
+    presentOmittableDefaults(cli as unknown as CliInstance);
+
+    const advertised = await advertisedSchema(
+      cli as unknown as CliInstance,
+      "fixture",
+    );
+    expect(advertised.args?.required ?? []).toEqual(
+      expect.arrayContaining(["required", "failingDefault"]),
+    );
+    for (const key of [
+      "optional",
+      "scope",
+      "prefaulted",
+      "caught",
+      "optionalTransform",
+    ])
+      expect(advertised.args?.required ?? []).not.toContain(key);
   });
 });
 

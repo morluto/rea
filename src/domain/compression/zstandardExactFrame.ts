@@ -1,3 +1,4 @@
+import { reportedSystemCode } from "../../kernel/reportedSystemCode.js";
 import { constants as bufferConstants } from "node:buffer";
 import { promisify } from "node:util";
 import {
@@ -193,20 +194,13 @@ function* walkFrames(
   return { ok: true, frames, consumed: offset };
 }
 
-const decoderCode = (cause: unknown): string | undefined => {
-  if (typeof cause !== "object" || cause === null || !("code" in cause))
-    return undefined;
-  const code = cause.code;
-  return typeof code === "string" ? code : undefined;
-};
-
 const decoderFailure = (
   cause: unknown,
   offset: number,
 ): ZstandardFrameFailure => {
   if (hostRangeErrorKind(cause) === "host-capacity")
     return failure("output_limit", offset);
-  const code = decoderCode(cause);
+  const code = reportedSystemCode(cause);
   const detail = cause instanceof Error ? cause.message : undefined;
   if (code === "ZSTD_error_dstSize_tooSmall" || code === "ERR_BUFFER_TOO_LARGE")
     return failure("output_limit", offset, code, detail);

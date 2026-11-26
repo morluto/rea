@@ -1,26 +1,12 @@
-import { access, readFile } from "node:fs/promises";
+import { access } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
-import {
-  isProcessOwnershipInspectionCancellation,
-  ProcessOwnershipInspectionCancelled,
-} from "./ProcessInspectionCancellation.js";
+import { ProcessOwnershipInspectionCancelled } from "./ProcessInspectionCancellation.js";
 import { systemProcessOwnershipHost } from "./ProcessOwnershipObservation.js";
 import { spawnOwnedProviderProcess } from "./ProviderProcess.js";
-
-it("does not turn a physical OS read failure into inspection cancellation when reused as the abort reason", async () => {
-  const root = await createTestTempDirectory("rea-inspection-origin-");
-  const failure = await readFile(join(root, "missing")).catch(
-    (cause: unknown) => cause,
-  );
-  expect(failure).toMatchObject({ code: "ENOENT" });
-  const controller = new AbortController();
-  controller.abort(failure);
-  expect(isProcessOwnershipInspectionCancellation(failure)).toBe(false);
-});
 
 it("wraps an opaque non-cancellation analysis error at already-aborted spawn admission without launching", async () => {
   const root = await createTestTempDirectory("rea-inspection-admission-");

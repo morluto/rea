@@ -524,32 +524,22 @@ it("rejects a HeaderSize other than 0x4C", async () => {
   });
 });
 
-it("reports an ExtraData size that overruns the file", async () => {
-  const bytes = windowsShortcutBytes({ extraData: [], terminalBlock: false });
-  const overrun = Buffer.concat([
-    bytes,
-    Buffer.from([0x40, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0xa0]),
-  ]);
-  const report = await parse(overrun);
-  expect(report.coverage.status).toBe("partial");
-  expect(
-    report.issues.some((issue) => issue.code === "block_size_overrun"),
-  ).toBe(true);
-});
-
 it.each([
   [0xa0000001, null, null],
   [0xa0000007, true, ".dll"],
 ] as const)(
   "uses an admitted ExtraData signature to retain target uncertainty (%s)",
   async (signature, difference, extension) => {
-    const prefix = windowsShortcutBytes({
-      idList: null,
-      linkInfo: { localBasePath: "C:\\Tools\\ordinary.dll" },
-      iconLocation: "C:\\Tools\\intended.exe",
-      extraData: [],
-      terminalBlock: false,
-    });
+    const prefix = withLinkFlags(
+      windowsShortcutBytes({
+        idList: null,
+        linkInfo: { localBasePath: "C:\\Tools\\ordinary.dll" },
+        iconLocation: "C:\\Tools\\intended.exe",
+        extraData: [],
+        terminalBlock: false,
+      }),
+      LINK_FLAG.HasExpIcon,
+    );
     const header = Buffer.alloc(8);
     header.writeUInt32LE(0x314);
     header.writeUInt32LE(signature, 4);
@@ -559,20 +549,17 @@ it.each([
       failing_offset: prefix.length,
     });
     expect(report.extra_data.blocks).toEqual([]);
-    expect(report.observations).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          kind: "icon_location_differs_from_target",
-          value: difference,
-        }),
-        expect.objectContaining({ kind: "target_extension", extension }),
-      ]),
-    );
+    expect(report.issues).toMatchObject([
+      { code: "block_size_overrun", offset: prefix.length },
+    ]);
+    expect(iconDifference(report)).toBe(difference);
+    expect(report.observations).toContainEqual({
+      kind: "target_extension",
+      evidence_kind: "derived",
+      extension,
+    });
   },
 );
-
-const HAS_EXP_STRING = 0x00000200;
-const HAS_EXP_ICON = 0x00004000;
 
 /** Set extra LinkFlags on an already built shortcut. */
 const withLinkFlags = (bytes: Buffer, added: number): Buffer => {
@@ -584,46 +571,71 @@ const withLinkFlags = (bytes: Buffer, added: number): Buffer => {
 const missingBlockIssues = (report: { issues: readonly { code: string }[] }) =>
   report.issues.filter((issue) => issue.code === "missing_extra_data_block");
 
-it("reports an expected block as absent once the TerminalBlock is read", async () => {
-  const report = await parse(
-    withLinkFlags(
-      windowsShortcutBytes({ extraData: [] }),
-      HAS_EXP_STRING | HAS_EXP_ICON,
-    ),
-  );
-  expect(report.extra_data.terminal_offset).toEqual(expect.any(Number));
-  expect(missingBlockIssues(report)).toEqual([
-    expect.objectContaining({
-      message: "HasExpString is set and EnvironmentVariableDataBlock is absent",
-    }),
-    expect.objectContaining({
-      message: "HasExpIcon is set and IconEnvironmentDataBlock is absent",
-    }),
-  ]);
-  expect(windowsShortcutSchema.safeParse(report).success).toBe(true);
-});
+it.each([
+  ["terminal", "intended.exe", true, ".dll", "missing_extra_data_block"],
+  ["end of file", "intended.exe", null, null, "truncated"],
+  ["block overrun", "intended.exe", null, null, "block_size_overrun"],
+  ["block overrun", "ordinary.dll", false, null, "block_size_overrun"],
+] as const)(
+  "uses %s coverage with a declared environment target and icon %s",
+  async (ending, icon, difference, extension, issueCode) => {
+    const prefix = withLinkFlags(
+      windowsShortcutBytes({
+        idList: null,
+        linkInfo: { localBasePath: "C:\\Tools\\ordinary.dll" },
+        iconLocation: `C:\\Tools\\${icon}`,
+        extraData: [],
+        terminalBlock: false,
+      }),
+      LINK_FLAG.HasExpString | LINK_FLAG.HasExpIcon,
+    );
+    const trailer =
+      ending === "terminal"
+        ? Buffer.alloc(4)
+        : ending === "block overrun"
+          ? Buffer.from("40000000070000a0", "hex")
+          : Buffer.alloc(0);
+    const report = await parse(Buffer.concat([prefix, trailer]));
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      failing_offset: prefix.length,
+    });
+    expect(report.extra_data.terminal_offset).toBe(
+      ending === "terminal" ? prefix.length : null,
+    );
+    expect(report.issues[0]).toMatchObject({
+      code: issueCode,
+      offset: prefix.length,
+    });
+    expect(missingBlockIssues(report)).toMatchObject(
+      ending === "terminal"
+        ? [
+            {
+              message:
+                "HasExpString is set and EnvironmentVariableDataBlock is absent",
+            },
+            {
+              message:
+                "HasExpIcon is set and IconEnvironmentDataBlock is absent",
+            },
+          ]
+        : [],
+    );
+    expect(iconDifference(report)).toBe(difference);
+    expect(report.observations).toContainEqual({
+      kind: "target_extension",
+      evidence_kind: "derived",
+      extension,
+    });
+  },
+);
 
 it("keeps an expected block unknown when StringData stops before ExtraData", async () => {
   const report = await parse(
-    withLinkFlags(truncatedStringDataShortcut(), HAS_EXP_STRING),
+    withLinkFlags(truncatedStringDataShortcut(), LINK_FLAG.HasExpString),
   );
   expect(report.coverage.status).toBe("partial");
   expect(report.extra_data.terminal_offset).toBeNull();
-  expect(missingBlockIssues(report)).toEqual([]);
-});
-
-it("keeps an expected block unknown when an ExtraData block overruns the file", async () => {
-  const bytes = windowsShortcutBytes({ extraData: [], terminalBlock: false });
-  const report = await parse(
-    withLinkFlags(
-      Buffer.concat([
-        bytes,
-        Buffer.from([0x40, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0xa0]),
-      ]),
-      HAS_EXP_ICON,
-    ),
-  );
-  expect(report.coverage.status).toBe("partial");
   expect(missingBlockIssues(report)).toEqual([]);
 });
 
@@ -658,49 +670,30 @@ it("reports bytes appended after the ExtraData TerminalBlock", async () => {
   ]);
 });
 
-it("derives target facts from a stored environment target alone", async () => {
-  const report = await parse(
-    windowsShortcutBytes({
-      flags: LINK_FLAG.IsUnicode | LINK_FLAG.HasIconLocation,
-      iconLocation: "C:\\Tools\\app.exe",
-      extraData: [
-        {
-          kind: "environment",
-          ansi: "C:\\Tools\\app.exe",
-          unicode: "C:\\Tools\\app.exe",
-        },
-      ],
-    }),
-  );
-  expect(report.observations).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        kind: "target_extension",
-        extension: ".exe",
+it.each([
+  ["an undeclared block before the terminal", 0, true, "complete"],
+  ["a declared block before EOF", LINK_FLAG.HasExpString, false, "partial"],
+] as const)(
+  "derives target facts from %s",
+  async (_, declarations, terminalBlock, status) => {
+    const target = "C:\\Tools\\app.exe";
+    const report = await parse(
+      windowsShortcutBytes({
+        flags: LINK_FLAG.IsUnicode | LINK_FLAG.HasIconLocation | declarations,
+        terminalBlock,
+        iconLocation: target,
+        extraData: [{ kind: "environment", ansi: target, unicode: target }],
       }),
-      expect.objectContaining({
-        kind: "icon_location_differs_from_target",
-        value: false,
-      }),
-    ]),
-  );
-});
-
-it("reports partial coverage when an expected block has no ExtraData to read", async () => {
-  const report = await parse(
-    withLinkFlags(
-      windowsShortcutBytes({ extraData: [], terminalBlock: false }),
-      HAS_EXP_STRING,
-    ),
-  );
-  expect(report.coverage.status).toBe("partial");
-  expect(report.issues).toEqual([
-    expect.objectContaining({
-      code: "truncated",
-      message: "ExtraData TerminalBlock is absent",
-    }),
-  ]);
-});
+    );
+    expect(report.coverage.status).toBe(status);
+    expect(iconDifference(report)).toBe(false);
+    expect(report.observations).toContainEqual({
+      kind: "target_extension",
+      evidence_kind: "derived",
+      extension: ".exe",
+    });
+  },
+);
 
 it("reports an odd Unicode StringData remainder", async () => {
   const header = windowsShortcutBytes({

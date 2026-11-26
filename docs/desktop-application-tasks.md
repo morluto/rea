@@ -552,7 +552,8 @@ The rules both evaluators follow:
 - Equality is JSON equality: numbers by value, never a boolean for a number,
   objects by their keys whatever their order, arrays in order.
 - Pointers follow RFC 6901 (`~1` for `/`, `~0` for `~`) and must start with
-  `/`; on an array a segment may be a selector, below. Key files read as
+  `/`. Other `~` sequences are rejected, including within a selector. On an
+  array a segment may be a selector, below. Key files read as
   `{"groups": {"GROUP": {"KEY": "VALUE"}}}`, so a setting is
   `/groups/GROUP/KEY`; XML as `{"root": {"name", "attributes", "children"}}`;
   SQLite as `{"tables": {"TABLE": {"columns", "rows"}}}`; a zip archive as

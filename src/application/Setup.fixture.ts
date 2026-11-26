@@ -214,7 +214,7 @@ export class FakeSetupHost implements SetupHost {
         skill: scope?.skill === true,
         target: null,
       },
-      scope_checks: checks,
+      ...(scope === undefined ? {} : { scope_checks: checks }),
       informational_checks: [],
       ...(this.hopper === undefined ? {} : { hopperPath: this.hopper }),
       ...(this.providerInspections === undefined

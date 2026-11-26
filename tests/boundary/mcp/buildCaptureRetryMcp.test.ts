@@ -7,7 +7,10 @@ import { expect, it } from "vitest";
 
 import { seedEndCapture } from "../../../src/application/desktop/desktopCapture.fixture.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import type { DesktopApplicationCapture } from "../../../src/domain/desktop/desktopCapture.js";
+import {
+  captureProgressEvent,
+  type DesktopApplicationCapture,
+} from "../../../src/domain/desktop/desktopCapture.js";
 import {
   VARICAD_URL,
   varicadPackage,
@@ -68,30 +71,58 @@ it("stops a capture whose start reply was lost, and retries that stop before sta
   await callOk(client, "stop_build_capture", { computer_id: id });
 });
 
-it("returns a checkpoint taken in the computer when its reply was lost and the name is asked again", async () => {
-  const { client } = await fakes({ dropReplies: ["mark"] });
+it("recovers the original checkpoint acknowledgement after the caller cancels its screenshot", async () => {
+  const { rea, computer, client } = await fakes({
+    screenshotDelaysMs: [0, 0, 60_000],
+  });
   const id = await startBuildComputer(client, BUILD_REQUEST);
   await callOk(client, "start_build_capture", { computer_id: id });
-  const mark = (name: string) =>
-    call(client, "mark_build_checkpoint", { computer_id: id, name });
-  expect(parseMcpToolError(await mark("seed")).error.code).not.toBe(
-    "invalid_request",
-  );
-  const retried = await mark("seed");
-  expect(retried.isError, JSON.stringify(retried)).not.toBe(true);
-  expect(retried.structuredContent).toMatchObject({
-    checkpoint: { name: "seed", at_ms: 1000, changes: 1 },
-  });
-  await callOk(client, "mark_build_checkpoint", {
-    computer_id: id,
-    name: "end",
-  });
-  const stopped = await callOk(client, "stop_build_capture", {
-    computer_id: id,
-  });
-  expect(stopped.structuredContent).toMatchObject({
-    draft: { seed_checkpoint: "seed", end_checkpoint: "end" },
-  });
+  const request = {
+    name: "mark_build_checkpoint",
+    arguments: { computer_id: id, name: "seed" },
+  };
+  const controller = new AbortController();
+  const screenshots = () =>
+    computer.calls.filter(
+      ({ name, arguments: args }) =>
+        name === "computer_screenshot" && args.format === "jpeg",
+    ).length;
+  try {
+    const marking = client.callTool(request, { signal: controller.signal });
+    try {
+      await waitFor(() => expect(screenshots()).toBe(1));
+    } finally {
+      controller.abort();
+      await expect(marking).rejects.toThrow();
+    }
+    const recovered = toolContract("mark_build_checkpoint").outputSchema.parse(
+      (await callOk(client, request.name, request.arguments)).structuredContent,
+    );
+    expect(recovered.checkpoint).toMatchObject({
+      name: "seed",
+      at_ms: 1000,
+      changes: 1,
+      retained_files: 1,
+      retained_bytes: 5,
+    });
+    expect(screenshots()).toBe(1);
+    expect(parseMcpToolError(await client.callTool(request)).error.code).toBe(
+      "invalid_request",
+    );
+
+    const progress = await readFile(
+      join(rea.home, ".rea-build/captures/1/progress.log"),
+      "utf8",
+    );
+    const seeds = progress
+      .split("\n")
+      .filter((line) => line.startsWith('{"rea_progress"'))
+      .map(captureProgressEvent)
+      .filter((event) => event?.kind === "checkpoint" && event.name === "seed");
+    expect(seeds).toEqual([{ kind: "checkpoint", ...recovered.checkpoint }]);
+  } finally {
+    await call(client, "stop_build_capture", { computer_id: id });
+  }
 });
 
 it("finishes a stop whose draft reply was lost when stop is asked again, and repeats its result", async () => {
