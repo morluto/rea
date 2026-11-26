@@ -81,7 +81,7 @@ const runObjdump = async (
   if (command === undefined)
     throw new Error("objdump CLI command was not registered");
   return command.run({
-    formatExplicit: false,
+    structuredOutput: false,
     args: { path, operation: selection.operation ?? "file_headers" },
     options: {
       followDebugLinks: false,
@@ -161,7 +161,7 @@ it("lists objdump architectures without inventing an artifact path", async () =>
     throw new Error("architecture command was not registered");
 
   const result = await command.run({
-    formatExplicit: false,
+    structuredOutput: false,
     args: {},
     options: { detail: "complete" },
   });
@@ -505,7 +505,7 @@ it.each([false, true])(
       throw new Error("Rizin CLI command was not registered");
 
     await command.run({
-      formatExplicit: false,
+      structuredOutput: false,
       args: { path: "./sample.bin", command: "dr" },
       options: { inferiorTty: "/dev/pts/7" },
     });
@@ -658,7 +658,7 @@ it.each(["incomplete", "interrupt", "control"] as const)(
     try {
       process.exitCode = 0;
       const result = await command.run({
-        formatExplicit: false,
+        structuredOutput: false,
         args: { path: "./sample.bin", command: "dr" },
         options: { inferiorTty: "/dev/pts/7" },
       });
