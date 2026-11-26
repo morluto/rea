@@ -1089,6 +1089,7 @@
 * **apple:** consolidate bundle resource CLI coverage ([#12936](https://github.com/morluto/rea/issues/12936)) ([12ac054](https://github.com/morluto/rea/commit/12ac0541f68268e6562807e1168ca62d0efd9d7f))
 * **apple:** consolidate dylib resolution contract checks ([#13424](https://github.com/morluto/rea/issues/13424)) ([8925ec4](https://github.com/morluto/rea/commit/8925ec461e0f36d8109c8226650d5714c6da4bf5))
 * **apple:** expect path-selected inspect_artifact in resource-only sessions ([a4d9a24](https://github.com/morluto/rea/commit/a4d9a2412fb2958950e7b0941a3f8777e5bb950d))
+* **apple:** reuse the empty Interface Builder fixture ([#14674](https://github.com/morluto/rea/issues/14674)) ([94b1ce3](https://github.com/morluto/rea/commit/94b1ce3fe777ff9ac33da19b95ef7e053b669f78))
 * **apple:** share binary plist object layout fixtures ([#14488](https://github.com/morluto/rea/issues/14488)) ([6c51be5](https://github.com/morluto/rea/commit/6c51be53172fa9cc49a0f337b2e0e1906638b465))
 * **apple:** share the binary plist decoder invariant suite ([#14492](https://github.com/morluto/rea/issues/14492)) ([b06d82a](https://github.com/morluto/rea/commit/b06d82aa28e3aa7629e4a8f71f177f3a12b3622b))
 * **application:** share late cancellation evidence checks ([#14381](https://github.com/morluto/rea/issues/14381)) ([7fe9fc5](https://github.com/morluto/rea/commit/7fe9fc5ee9b950c060c536050bd77d51cf80cf25))
