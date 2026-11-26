@@ -467,9 +467,11 @@ it("names each disagreeing section of a multi-extent file and none of the next f
     snapshot.occurrences.map((row) => [row.logical_path, row]),
   );
   const disagreements = (path: string) =>
-    rows.get(path)?.limitations.filter((line) =>
-      line.startsWith("ISO 9660 directory record at byte"),
-    );
+    rows
+      .get(path)
+      ?.limitations.filter((line) =>
+        line.startsWith("ISO 9660 directory record at byte"),
+      );
   const disagreement = (record: number, length: number) =>
     `ISO 9660 directory record at byte ${String(record)} stores data_length ${String(length)} in its little-endian half and ${String(length + 1)} in its big-endian copy; the entry uses the little-endian value, and which half is correct is unknown.`;
   expect(rows.get("big.bin")).toMatchObject({
