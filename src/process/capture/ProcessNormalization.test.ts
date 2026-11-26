@@ -753,6 +753,13 @@ it("refuses a retained frame that no longer fits limits.output_bytes with detail
     default_value: DEFAULT_PROCESS_OUTPUT_BYTES,
     applies_at: "next_call",
   });
-  expect(projected.remediation?.action).toContain("capture_process_scenario");
-  expect(projected.remediation?.action).toContain("limits.output_bytes");
+  expect(projected.details?.refusal).toEqual({
+    kind: "adjustable_budget",
+    operation: "capture_process_scenario",
+    control: "limits.output_bytes",
+    effective_value: 64,
+    unit: "bytes",
+    range: { minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+    default_value: DEFAULT_PROCESS_OUTPUT_BYTES,
+  });
 });
