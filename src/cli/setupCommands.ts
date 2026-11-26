@@ -328,7 +328,8 @@ const runSetupCommand = async (
     if (result.status === "planned")
       renderSetupDryRun(
         result.plannedActions,
-        result.hopperInstallUnavailable?.remediation ?? result.remediation,
+        result.remediation,
+        result.hopperInstallUnavailable,
       );
     else renderInteractiveSetupResult(result, environment);
   }

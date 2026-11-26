@@ -13,6 +13,7 @@ import type {
   SetupConfirmationDecision,
   SetupConfirmationContext,
   SetupClientState,
+  SetupHopperInstallUnavailable,
   SetupProgressEvent,
   SetupResult,
 } from "../application/SetupTypes.js";
@@ -98,11 +99,17 @@ export const renderSetupProgress = (event: SetupProgressEvent): void => {
 export const renderSetupDryRun = (
   actions: readonly SetupAction[],
   remediation?: string,
+  hopper?: SetupHopperInstallUnavailable,
 ): void => {
   intro("REA setup plan", promptStreams);
   renderPreflight(actions);
-  // A known manual step belongs to the plan, as it does at approval.
-  if (remediation !== undefined) {
+  // Hopper's host diagnosis and any other manual step are both part of the plan.
+  if (hopper !== undefined) {
+    writeLine("│");
+    for (const line of hopperInstallUnavailableLines(hopper))
+      writeLine(`│  ${line}`);
+  }
+  if (remediation !== undefined && remediation !== hopper?.remediation) {
     writeLine("│");
     writeLine(`│  ${remediation}`);
   }
@@ -139,9 +146,9 @@ export const renderInteractiveSetupResult = (
   );
 };
 
-const renderHopperInstallUnavailable = (result: SetupResult): void => {
-  const unavailable = result.hopperInstallUnavailable;
-  if (unavailable === undefined) return;
+const hopperInstallUnavailableLines = (
+  unavailable: SetupHopperInstallUnavailable,
+): readonly string[] => {
   const { architecture, distribution, remediation } = unavailable;
   const host =
     distribution === null
@@ -149,9 +156,17 @@ const renderHopperInstallUnavailable = (result: SetupResult): void => {
       : JSON.stringify(
           [distribution.id, distribution.version].filter(Boolean).join(" "),
         );
-  writeLine(
-    `!  Automatic Hopper installation is unavailable on ${host} (${architecture}).`,
-  );
+  return [
+    `Automatic Hopper installation is unavailable on ${host} (${architecture}).`,
+    remediation,
+  ];
+};
+
+const renderHopperInstallUnavailable = (result: SetupResult): void => {
+  const unavailable = result.hopperInstallUnavailable;
+  if (unavailable === undefined) return;
+  const [diagnosis, remediation] = hopperInstallUnavailableLines(unavailable);
+  writeLine(`!  ${diagnosis}`);
   if (result.remediation?.includes(remediation) !== true)
     writeLine(`   ${remediation}`);
 };
