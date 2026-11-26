@@ -1,7 +1,7 @@
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect, it } from "vitest";
+import { afterEach, expect, it } from "vitest";
 
 import { createDebPackageService } from "../../../src/composition/debPackage.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
@@ -10,7 +10,15 @@ import {
   debPackageFixture,
   notArBytes,
 } from "../../../src/deb/DebPackage.fixture.js";
+import {
+  compressXz,
+  replaceXzBindingForTests,
+} from "../../../src/deb/xzDecoder.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+afterEach(() => {
+  replaceXzBindingForTests(undefined);
+});
 
 it("reports unavailable or non-file Debian package paths as caller input errors", async () => {
   const root = await createTestTempDirectory("rea-deb-files-");
@@ -139,5 +147,54 @@ it("reports a fixed reader allowance as a limit with the partial report", async 
       },
     },
     diagnostics: { partial: { ar: { format_version: "2.0" } } },
+  });
+});
+
+it("reports typed cancellation and preserves partial control facts during XZ data decoding", async () => {
+  const root = await createTestTempDirectory("rea-deb-xz-cancel-");
+  const path = join(root, "hello-xz.deb");
+  await writeFile(
+    path,
+    debPackageFixture({
+      controlCompression: "gzip",
+      dataCompression: "xz",
+    }),
+  );
+  const controller = new AbortController();
+  const reason = new Error("caller cancelled during xz data decoding");
+  replaceXzBindingForTests({
+    status: "ready",
+    api: {
+      compressSync: (input) =>
+        compressXz(typeof input === "string" ? Buffer.from(input) : input),
+      decompressStream: () =>
+        new ReadableStream<Buffer>({
+          pull() {
+            controller.abort(reason);
+            throw reason;
+          },
+        }),
+    },
+  });
+
+  const result = await createDebPackageService().inspect(
+    { path },
+    { signal: controller.signal },
+  );
+  if (result.ok) throw new Error("Expected cancellation during XZ decoding");
+  expect(result.error._tag).toBe("AnalysisCancelledError");
+  expect(result.error.cause).toBe(reason);
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "cancelled",
+  });
+  expect(result.error.diagnostics).toMatchObject({
+    partial: {
+      ar: { format_version: "2.0" },
+      control: {
+        package: "hello",
+        version: { raw: "1:2.03-1" },
+      },
+      coverage: { status: "partial" },
+    },
   });
 });

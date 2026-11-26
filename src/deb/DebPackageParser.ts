@@ -1,5 +1,11 @@
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { ellipsisExcerpt } from "../domain/excerpt.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  isAborted,
+} from "../domain/analysisErrorCore.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import { redactRecordedTransportUrl } from "../domain/recordedTransportUrl.js";
 import {
   isZeroBlock,
@@ -109,12 +115,10 @@ const BASE_LIMITATIONS = [
   DEB_PACKAGE_LIMITATIONS.md5NoHash,
 ] as const;
 
+const OPERATION = "inspect_deb_package";
+
 const throwIfAborted = (signal: AbortSignal | undefined): void => {
-  if (signal?.aborted) {
-    const error = new Error("Debian package inspection was cancelled");
-    error.name = "AbortError";
-    throw error;
-  }
+  if (isAborted(signal)) throw cancelledBy(OPERATION, signal);
 };
 
 const ascii = (bytes: Uint8Array): string =>
@@ -1079,6 +1083,16 @@ const md5Paths = (
 };
 
 const attachPartial = (cause: unknown, partial: DebPackage): never => {
+  if (
+    cause instanceof AnalysisCancelledError &&
+    cause.diagnostics?.partial === undefined
+  )
+    throw cancelledBy(OPERATION, cause, {
+      diagnostics: {
+        ...cause.diagnostics,
+        partial: partial satisfies JsonValue,
+      },
+    });
   if (cause instanceof DebPackageFormatFailure && cause.partial === undefined)
     throw new DebPackageFormatFailure(cause.kind, cause.message, partial, {
       cause,

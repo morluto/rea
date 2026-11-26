@@ -1,13 +1,20 @@
 import { createRequire } from "node:module";
 import { crc32 } from "node:zlib";
 
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  isAborted,
+} from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import { isAbortOf } from "../process/SignalAbort.js";
 
+const OPERATION = "inspect_deb_package";
 const XZ_MAGIC = Buffer.from([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
 const XZ_HEADER_SIZE = 12;
 const XZ_FOOTER_SIZE = 12;
+const XZ_MIN_BLOCK_SIZE = 8;
 const XZ_FILTER_LZMA2 = 0x21;
 const XZ_STREAM_INPUT_CHUNK_BYTES = 64 * 1024;
 
@@ -75,7 +82,7 @@ export const replaceXzBindingForTests = (
 };
 
 const throwIfAborted = (signal: AbortSignal | undefined): void => {
-  signal?.throwIfAborted();
+  if (isAborted(signal)) throw cancelledBy(OPERATION, signal);
 };
 
 const hasMagicAt = (bytes: Uint8Array, offset: number): boolean => {
@@ -164,6 +171,7 @@ interface XzPreflight {
  */
 const inspectXzStreams = (
   bytes: Uint8Array,
+  maxUncompressed?: number,
 ): Result<XzPreflight, XzDecodeFailure> => {
   if (bytes.length < XZ_HEADER_SIZE + XZ_FOOTER_SIZE)
     return err({ kind: "truncated" });
@@ -199,44 +207,54 @@ const inspectXzStreams = (
       return err({ kind: "malformed" });
 
     const index = bytes.subarray(indexStart, footer);
+    const indexBodyEnd = index.length - 4;
     if (index[0] !== 0x00) return err({ kind: "malformed" });
     if (
-      readU32LE(index, index.length - 4) !==
-      crc32(index.subarray(0, index.length - 4))
+      readU32LE(index, indexBodyEnd) !== crc32(index.subarray(0, indexBodyEnd))
     )
       return err({ kind: "malformed" });
 
-    const records = readMbInt(index, 1, index.length - 4);
+    const records = readMbInt(index, 1, indexBodyEnd);
     if (records === null) return err({ kind: "malformed" });
+
+    // Reject impossible record counts upfront before scanning: each block
+    // occupies at least XZ_MIN_BLOCK_SIZE bytes before the index and each
+    // index record occupies at least 2 bytes.
+    const availableBlockBytes = indexStart - XZ_HEADER_SIZE;
+    const maxPossibleBlocks = Math.min(
+      Math.floor(availableBlockBytes / XZ_MIN_BLOCK_SIZE),
+      Math.floor((indexBodyEnd - records.next) / 2),
+    );
+    if (records.value > maxPossibleBlocks) return err({ kind: "malformed" });
+
     let cursor = records.next;
     let totalBlocksPadded = 0;
-    const blocks: {
-      readonly padded: number;
-      readonly uncompressed: number;
-    }[] = [];
 
     for (let n = 0; n < records.value; n++) {
-      const unpadded = readMbInt(index, cursor, index.length - 4);
-      if (unpadded === null || unpadded.value < 8)
+      const unpadded = readMbInt(index, cursor, indexBodyEnd);
+      if (unpadded === null || unpadded.value < XZ_MIN_BLOCK_SIZE)
         return err({ kind: "malformed" });
-      const size = readMbInt(index, unpadded.next, index.length - 4);
+      const size = readMbInt(index, unpadded.next, indexBodyEnd);
       if (size === null) return err({ kind: "malformed" });
       const padded = Math.ceil(unpadded.value / 4) * 4;
       totalBlocksPadded += padded;
-      totalUncompressed += size.value;
       if (
         !Number.isSafeInteger(totalBlocksPadded) ||
-        !Number.isSafeInteger(totalUncompressed)
+        totalBlocksPadded > availableBlockBytes
       )
         return err({ kind: "malformed" });
-      blocks.push({ padded, uncompressed: size.value });
+      totalUncompressed += size.value;
+      if (!Number.isSafeInteger(totalUncompressed))
+        return err({ kind: "malformed" });
+      if (maxUncompressed !== undefined && totalUncompressed > maxUncompressed)
+        return err({ kind: "too_large" });
       cursor = size.next;
     }
 
-    const indexPadLength = index.length - 4 - cursor;
+    const indexPadLength = indexBodyEnd - cursor;
     if (indexPadLength < 0 || indexPadLength > 3)
       return err({ kind: "malformed" });
-    for (let i = cursor; i < index.length - 4; i++)
+    for (let i = cursor; i < indexBodyEnd; i++)
       if (index[i] !== 0) return err({ kind: "malformed" });
 
     const streamHeaderStart = indexStart - totalBlocksPadded - XZ_HEADER_SIZE;
@@ -253,14 +271,23 @@ const inspectXzStreams = (
     )
       return err({ kind: "malformed" });
 
+    // Rescan index records in place without retaining an array of block objects.
     let blockOffset = streamHeaderStart + XZ_HEADER_SIZE;
-    for (const block of blocks) {
+    let recordCursor = records.next;
+    for (let n = 0; n < records.value; n++) {
+      const unpadded = readMbInt(index, recordCursor, indexBodyEnd);
+      if (unpadded === null) return err({ kind: "malformed" });
+      const size = readMbInt(index, unpadded.next, indexBodyEnd);
+      if (size === null) return err({ kind: "malformed" });
+      const blockPadded = Math.ceil(unpadded.value / 4) * 4;
+      recordCursor = size.next;
+
       const encodedHeaderSize = bytes[blockOffset];
       if (encodedHeaderSize === undefined || encodedHeaderSize === 0)
         return err({ kind: "malformed" });
       const blockHeaderSize = (encodedHeaderSize + 1) * 4;
       if (
-        blockHeaderSize > block.padded ||
+        blockHeaderSize > blockPadded ||
         blockOffset + blockHeaderSize > indexStart
       )
         return err({ kind: "malformed" });
@@ -294,10 +321,7 @@ const inspectXzStreams = (
           headerCursor,
           headerBodyEnd,
         );
-        if (
-          uncompressedSize === null ||
-          uncompressedSize.value !== block.uncompressed
-        )
+        if (uncompressedSize === null || uncompressedSize.value !== size.value)
           return err({ kind: "malformed" });
         headerCursor = uncompressedSize.next;
       }
@@ -328,7 +352,7 @@ const inspectXzStreams = (
       for (let i = headerCursor; i < headerBodyEnd; i++)
         if (blockHeader[i] !== 0) return err({ kind: "malformed" });
 
-      blockOffset += block.padded;
+      blockOffset += blockPadded;
     }
 
     streamEnd = xzStreamEnd(bytes, streamHeaderStart);
@@ -379,22 +403,25 @@ export const decodeXz = async (
   if (binding.status === "unavailable") return err({ kind: "unavailable" });
   // Validate stream framing, CRCs, LZMA2 dictionary size, and index-declared
   // uncompressed size before any bytes reach the native decoder.
-  const preflight = inspectXzStreams(bytes);
+  const preflight = inspectXzStreams(bytes, limit);
   if (!preflight.ok) return preflight;
-  if (preflight.value.declaredUncompressed > limit)
-    return err({ kind: "too_large" });
 
   // Stream-decode with a hard chunk-by-chunk output cap so a spoofed index
   // cannot cause unbounded output allocation.
   const reader = binding.api
     .decompressStream(chunkedReadableStream(bytes))
     .getReader();
+  const onAbort = (): void => {
+    void reader.cancel().catch(() => {});
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
   const chunks: Uint8Array[] = [];
   let total = 0;
   try {
     for (;;) {
       throwIfAborted(signal);
       const { done, value } = await reader.read();
+      throwIfAborted(signal);
       if (done) break;
       if (value.length === 0) continue;
       total += value.length;
@@ -407,11 +434,13 @@ export const decodeXz = async (
     return ok(chunks.length === 1 ? chunks[0]! : Buffer.concat(chunks, total));
   } catch (cause: unknown) {
     await reader.cancel().catch(() => {});
-    if (isAbortOf(cause, signal)) throw cause;
+    if (cause instanceof AnalysisCancelledError) throw cause;
+    if (isAbortOf(cause, signal)) throw cancelledBy(OPERATION, signal);
     if (!hasMagicAt(bytes, 0) || bytes.length < 32 || isTruncatedXzError(cause))
       return err({ kind: "truncated" });
     return err({ kind: "malformed", cause });
   } finally {
+    signal?.removeEventListener("abort", onAbort);
     reader.releaseLock();
   }
 };

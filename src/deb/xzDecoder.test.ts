@@ -1,6 +1,7 @@
 import { crc32 } from "node:zlib";
 import { afterEach, expect, it } from "vitest";
 
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import {
   compressXz,
   decodeXz,
@@ -201,9 +202,102 @@ it("honors an already-aborted AbortSignal before decoding", async () => {
   const controller = new AbortController();
   const reason = new Error("caller cancelled xz decode");
   controller.abort(reason);
-  await expect(
-    decodeXz(compressXz(Buffer.from("hello")), 4096, controller.signal),
-  ).rejects.toBe(reason);
+  const error = await decodeXz(
+    compressXz(Buffer.from("hello")),
+    4096,
+    controller.signal,
+  ).catch((caught: unknown) => caught);
+  expect(error).toBeInstanceOf(AnalysisCancelledError);
+  expect(error).toMatchObject({
+    _tag: "AnalysisCancelledError",
+    operation: "inspect_deb_package",
+    cause: reason,
+  });
+});
+
+it("wraps a raw mid-stream abort reason as a typed AnalysisCancelledError", async () => {
+  const controller = new AbortController();
+  const reason = new Error("caller cancelled mid-stream xz decode");
+  const compressed = compressXz(Buffer.from("hello"));
+  replaceXzBindingForTests({
+    status: "ready",
+    api: {
+      compressSync: (input) =>
+        compressXz(typeof input === "string" ? Buffer.from(input) : input),
+      decompressStream: () =>
+        new ReadableStream<Buffer>({
+          pull() {
+            controller.abort(reason);
+            throw reason;
+          },
+        }),
+    },
+  });
+  const error = await decodeXz(compressed, 4096, controller.signal).catch(
+    (caught: unknown) => caught,
+  );
+  expect(error).toBeInstanceOf(AnalysisCancelledError);
+  expect(error).toMatchObject({
+    _tag: "AnalysisCancelledError",
+    operation: "inspect_deb_package",
+    cause: reason,
+  });
+});
+
+it("rejects a crafted high-record-count xz index upfront without retaining block objects", async () => {
+  const recordCount = 1_000_000;
+  // Valid 12-byte XZ Stream Header (CRC64 check type 0x04).
+  const header = Buffer.alloc(12);
+  Buffer.from([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00, 0x00, 0x04]).copy(header);
+  writeU32LE(header, 8, crc32(header.subarray(6, 8)));
+
+  // Crafted XZ Index with 1,000,000 two-byte (unpadded=8, uncompressed=0) records
+  // and no physical blocks before it (~2 MiB index, valid CRC32).
+  const countBytes = encodeMbInt(recordCount);
+  const recordsBytes = Buffer.alloc(recordCount * 2);
+  for (let i = 0; i < recordCount; i++) {
+    recordsBytes[i * 2] = 0x08; // unpadded = 8
+    recordsBytes[i * 2 + 1] = 0x00; // uncompressed = 0
+  }
+  const bodyLen = 1 + countBytes.length + recordsBytes.length;
+  const padLen = (4 - (bodyLen % 4)) % 4;
+  const index = Buffer.alloc(bodyLen + padLen + 4);
+  index[0] = 0x00;
+  countBytes.copy(index, 1);
+  recordsBytes.copy(index, 1 + countBytes.length);
+  writeU32LE(
+    index,
+    bodyLen + padLen,
+    crc32(index.subarray(0, bodyLen + padLen)),
+  );
+
+  // Valid 12-byte XZ Stream Footer pointing to the crafted index.
+  const footer = Buffer.alloc(12);
+  writeU32LE(footer, 4, index.length / 4 - 1);
+  footer[8] = 0x00;
+  footer[9] = 0x04;
+  footer[10] = 0x59;
+  footer[11] = 0x5a;
+  writeU32LE(footer, 0, crc32(footer.subarray(4, 10)));
+
+  const crafted = Buffer.concat([header, index, footer]);
+  let decodes = 0;
+  replaceXzBindingForTests({
+    status: "ready",
+    api: {
+      compressSync: (input) =>
+        compressXz(typeof input === "string" ? Buffer.from(input) : input),
+      decompressStream: (input) => {
+        decodes += 1;
+        return input as unknown as ReadableStream<Buffer>;
+      },
+    },
+  });
+
+  expect(xzUncompressedSize(crafted)).toBeNull();
+  const decoded = await decodeXz(crafted, 1 << 20);
+  expect(decoded).toEqual({ ok: false, error: { kind: "malformed" } });
+  expect(decodes).toBe(0);
 });
 
 it("refuses xz when the native binding cannot load", async () => {
