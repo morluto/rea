@@ -209,6 +209,13 @@ emulation, so actions can complete while that page is in the background.
 Its environment owner clears these overrides before disconnecting; other pages
 keep their media settings. Connecting does not create a bootstrap page.
 
+A capture whose actions and selected event/body/privacy finalization have completed
+can still return Evidence with `browser.cleanup: "incomplete"` when resource
+cleanup fails. Its limitations identify the retained resources; provider close
+retries their cleanup. Completed actions alone are insufficient: unsettled
+selected content or privacy finalization keeps the failure and partial observation.
+Existing capture gaps still prevent complete or equality-eligible claims.
+
 That cleanup requires REA to remain running. Abrupt termination, including
 Windows process-tree termination or POSIX `SIGKILL`, can leave the launch
 profile and Playwright artifacts behind. A profile can retain cookies, history,

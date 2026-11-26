@@ -139,6 +139,7 @@ class FakeSession implements BrowserScenarioSessionPort {
   captureCalls = 0;
   onPerform: (() => void) | undefined;
   onClose: (() => void) | undefined;
+  captureFinalized?: () => boolean;
   eventGaps: readonly string[] = [];
   storageGaps: readonly string[] = [];
   eventItems: readonly BrowserScenarioEvent[] = [];
@@ -546,6 +547,86 @@ describe("PlaywrightBrowserScenarioProvider cleanup", () => {
     });
     expect(session.closeCalls).toBe(1);
   });
+});
+
+it.each([false, true])(
+  "returns a completed capture after cleanup failure only when finalization settled (%s)",
+  async (finalized) => {
+    const session = new FakeSession("launch", {
+      close: new Error("browser close timed out"),
+    });
+    session.captureFinalized = () => finalized;
+    const provider = new PlaywrightBrowserScenarioProvider(async () => session);
+    try {
+      const result = await provider.captureScenario(scenario());
+      if (finalized) {
+        if (!result.ok) throw result.error;
+        expect(result.value.browser.cleanup).toBe("incomplete");
+        expect(result.value.completeness.status).toBe("complete");
+        expect(result.value.limitations).toContain(
+          "Browser cleanup could not be confirmed: browser close timed out. Reported resources may remain: browser_transport.",
+        );
+        await expect(provider.close()).rejects.toMatchObject({
+          cleanupIncomplete: true,
+        });
+      } else {
+        if (result.ok) throw new Error("Expected unfinished capture");
+        expect(result.error.cleanupIncomplete).toBe(true);
+        expect(result.error.partialObservation).toMatchObject({
+          capture: { browser: { cleanup: "incomplete" } },
+        });
+        expect(result.error.partialObservation).not.toHaveProperty(
+          "capture.completeness.status",
+          "complete",
+        );
+      }
+    } finally {
+      session.close = async () => "terminated-owned-process";
+      await provider.close();
+    }
+  },
+);
+
+it("preserves event gaps when finalized capture cleanup is incomplete", async () => {
+  const session = new FakeSession("launch", {
+    close: new Error("browser close timed out"),
+  });
+  session.captureFinalized = () => true;
+  session.eventGaps = ["Selected response content was unavailable."];
+  const provider = new PlaywrightBrowserScenarioProvider(async () => session);
+  try {
+    const result = await provider.captureScenario(scenario());
+    if (!result.ok) throw result.error;
+    expect(result.value.completeness).toMatchObject({
+      equality_eligible: false,
+      missing_sections: ["events"],
+    });
+  } finally {
+    session.close = async () => "terminated-owned-process";
+    await provider.close();
+  }
+});
+
+it("redacts finalized capture cleanup diagnostics through the session owner", async () => {
+  const session = new FakeSession("launch", {
+    close: new ProviderCleanupError("fixture", ["secret-profile"], {
+      reason: "secret close failed",
+    }),
+  });
+  session.captureFinalized = () => true;
+  const provider = new PlaywrightBrowserScenarioProvider(async () => session);
+  try {
+    const result = await provider.captureScenario(scenario());
+    if (!result.ok) throw result.error;
+    expect(result.value.limitations).toContain(
+      "Browser cleanup could not be confirmed: [REDACTED] close failed. Reported resources may remain: [REDACTED]-profile.",
+    );
+    expect(JSON.stringify(result.value)).not.toContain("secret-profile");
+    expect(JSON.stringify(result.value)).not.toContain("secret close failed");
+  } finally {
+    session.close = async () => "terminated-owned-process";
+    await provider.close();
+  }
 });
 
 describe("PlaywrightBrowserScenarioProvider operation failures", () => {
@@ -1168,9 +1249,13 @@ it("keeps an earlier physical failure primary when final cleanup also observes c
   }
 });
 
-it.each([false, true])(
-  "keeps planned secret screenshots unavailable through success and cleanup failure (failure: %s)",
-  async (cleanupFailure) => {
+it.each([
+  { cleanupFailure: false, finalized: true },
+  { cleanupFailure: true, finalized: false },
+  { cleanupFailure: true, finalized: true },
+])(
+  "keeps planned secret screenshots unavailable (cleanup failure: $cleanupFailure, finalized: $finalized)",
+  async ({ cleanupFailure, finalized }) => {
     const input = browserScenarioSchema.parse({
       ...scenario({ captures: ["screenshot"] }),
       actions: [
@@ -1191,6 +1276,7 @@ it.each([false, true])(
       "launch",
       cleanupFailure ? { close: new Error("cleanup failed") } : {},
     );
+    session.captureFinalized = () => finalized;
     session.capture = async (requested) =>
       capturePlaywrightStepArtifacts({
         context: {} as BrowserContext,
@@ -1209,7 +1295,7 @@ it.each([false, true])(
         missing_sections: ["screenshot"],
       },
     };
-    if (cleanupFailure)
+    if (cleanupFailure && !finalized)
       expect(result).toMatchObject({
         ok: false,
         error: { partialObservation: { capture: { steps: [step, step] } } },
