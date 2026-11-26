@@ -3183,6 +3183,16 @@ html[dir="rtl"] .scroll-progress {
 }
 
 @media print {
+  :root,
+  :root[data-theme="dark"] {
+    color-scheme: light;
+    --ink: #000;
+    --muted: #333;
+    --line: #ccc;
+    --soft: #f4f6f8;
+    --accent: #000;
+    --page: #fff;
+  }
   .site-header,
   .site-footer,
   .skip-link,
@@ -3197,6 +3207,20 @@ html[dir="rtl"] .scroll-progress {
     background: #fff;
     color: #000;
     font-size: 11pt;
+  }
+  :where(:root[data-theme="dark"]) .article p,
+  :where(:root[data-theme="dark"]) .article li,
+  :where(:root[data-theme="dark"]) .guide-route span,
+  .article p,
+  .article li,
+  .guide-route span {
+    color: #000;
+  }
+  :where(:root[data-theme="dark"]) .agent-terminal,
+  :where(:root[data-theme="dark"]) .flow-node,
+  :where(:root[data-theme="dark"]) .step-comparison .is-active {
+    background: var(--soft);
+    color: var(--ink);
   }
   .article-section {
     border: 0;
