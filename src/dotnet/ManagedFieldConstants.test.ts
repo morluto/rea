@@ -1,3 +1,4 @@
+import { int32LE as i4Value } from "../native/BinaryInteger.fixture.js";
 import { describe, expect, it } from "vitest";
 import { buildManagedPeFixture } from "../../scripts/fixtures/managed/pe.mjs";
 import { managedPeFixtureTarget } from "./ManagedPe.fixture.js";
@@ -221,12 +222,6 @@ it.each([
     );
   },
 );
-
-const i4Value = (n: number): Buffer => {
-  const buf = Buffer.alloc(4);
-  buf.writeInt32LE(n, 0);
-  return buf;
-};
 
 it("binds unique and duplicate defaults to their selected fields in a non-monotonic table", () => {
   const bytes = buildManagedPeFixture({

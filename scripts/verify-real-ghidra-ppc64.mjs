@@ -1,11 +1,12 @@
 #!/usr/bin/env node
+import { createGhidraVerifierMcpOperations } from "./lib/ghidra-verifier-mcp.mjs";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import {
   inspectPowerPc64Readelf,
@@ -17,7 +18,7 @@ import {
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
-import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { requireVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildPowerPc64Fixture } from "../tests/conformance/ghidra/ppc-fixture.mjs";
 import {
   requireMcpOperationResult,
@@ -31,6 +32,10 @@ import {
   fixtureCommand,
   requireLaneToolchain,
 } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 // Optional cross-target lane. No tool acquisition and no target execution.
 if (process.argv.length !== 2)
@@ -39,19 +44,7 @@ if (!["linux", "darwin"].includes(process.platform))
   throw new Error(
     "PPC64 verification requires a supported Linux/macOS Ghidra host",
   );
-if (process.env.GHIDRA_INSTALL_DIR === undefined)
-  throw new Error("Missing prerequisite: caller-supplied GHIDRA_INSTALL_DIR");
-const installation = await inspectVerifierGhidraInstallation({
-  environment: process.env,
-  installDir: process.env.GHIDRA_INSTALL_DIR,
-  ...(process.env.JAVA_HOME === undefined
-    ? {}
-    : { javaHome: process.env.JAVA_HOME }),
-});
-if (installation.status !== "available")
-  throw new Error(
-    `Ghidra prerequisite unavailable: ${JSON.stringify(installation)}`,
-  );
+const installation = await requireVerifierGhidraInstallation(process.env);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
 // Refuse a host without the fixture toolchain before allocating anything.
@@ -77,10 +70,7 @@ const env = {
 for (const setting of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"]) {
   if (process.env[setting] !== undefined) env[setting] = process.env[setting];
 }
-const sha256 = async (path) =>
-  createHash("sha256")
-    .update(await readFile(path))
-    .digest("hex");
+
 // Compiler, reader and CLI launches share one command owner. Its process group is what
 // a timeout stops, including a linker that would otherwise outlive Clang.
 const commands = await createVerifierCommands();
@@ -116,18 +106,16 @@ try {
     env,
     stderr: "pipe",
   });
-  const client = new Client({ name: "rea-real-ppc64-proof", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "rea-real-ppc64-proof", version: "1" }),
+  );
   let stderr = "";
   transport.stderr?.on("data", (chunk) => {
     stderr = (stderr + chunk.toString()).slice(-65536);
   });
-  const call = async (name, args = {}) => {
-    const reply = await client.callTool(
-      { name, arguments: args },
-      { timeout: 180000 },
-    );
-    return requireMcpOperationResult(reply, name);
-  };
+  const call = createGhidraVerifierMcpOperations(client, {
+    timeout: 180000,
+  }).decodedCall(requireMcpOperationResult);
   const dossier = async (procedure) =>
     functionDossierSchema.parse(
       await call("analyze_function", { procedure, detail: "complete" }),
@@ -232,6 +220,7 @@ try {
       const local = await dossier(entry.local);
       assertPowerPc64EntryPair(await dossier(entry.global), local, entry);
       const callees = await call("procedure_callees", {
+        detail: "complete",
         procedure: entry.local,
       });
       assert.ok(
@@ -295,12 +284,14 @@ try {
         process.execPath,
         [
           entrypoint,
-          "function",
-          fixture.path,
-          "rea_ppc64_entry",
-          "--provider",
-          "ghidra",
-          "--json",
+          ...(await completeEvidenceCliArguments([
+            "function",
+            fixture.path,
+            "rea_ppc64_entry",
+            "--provider",
+            "ghidra",
+            "--json",
+          ])),
         ],
         { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
       );
@@ -317,7 +308,7 @@ try {
       );
       assert.ok(cliDossier.pseudocode.trim().length > 0);
       assert.equal(
-        await sha256(fixture.path),
+        await sha256File(fixture.path),
         fixture.sha256,
         "Analysis modified the source executable",
       );
@@ -341,7 +332,7 @@ try {
     }
     reports.push({
       path: shared,
-      sha256: await sha256(shared),
+      sha256: await sha256File(shared),
       checks: ["ET_DYN refused before provider startup"],
       status: "passed",
     });

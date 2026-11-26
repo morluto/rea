@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { zstdCompressSync } from "node:zlib";
+import { buffer } from "node:stream/consumers";
 
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect, it, onTestFinished } from "vitest";
@@ -457,9 +458,7 @@ it("binds ZIP opens to the emitted entry metadata", async () => {
     Reflect.set(second, "adapterKey", originalKey);
 
     const stream = await reader.open({ ...second });
-    const chunks: Buffer[] = [];
-    for await (const chunk of stream) chunks.push(Buffer.from(chunk));
-    expect(Buffer.concat(chunks).toString()).toBe("second bytes");
+    expect((await buffer(stream)).toString()).toBe("second bytes");
   } finally {
     await reader.close();
   }
@@ -505,10 +504,9 @@ cliTest(
         [first.value, "first bytes\n"],
         [second.value, "later bytes\n"],
       ] as const) {
-        const chunks: Buffer[] = [];
-        for await (const chunk of await reader.open({ ...entry }))
-          chunks.push(Buffer.from(chunk));
-        expect(Buffer.concat(chunks).toString()).toBe(expected);
+        expect((await buffer(await reader.open({ ...entry }))).toString()).toBe(
+          expected,
+        );
       }
     } finally {
       await reader.close();
@@ -587,10 +585,9 @@ it("can enumerate case-distinct ZIP members again without losing entry identity"
       ]);
       const contents = [];
       for (const entry of entries) {
-        const chunks: Buffer[] = [];
-        for await (const chunk of await reader.open({ ...entry }))
-          chunks.push(Buffer.from(chunk));
-        contents.push(Buffer.concat(chunks).toString());
+        contents.push(
+          (await buffer(await reader.open({ ...entry }))).toString(),
+        );
       }
       expect(contents).toEqual(["first bytes\n", "later bytes\n"]);
     }

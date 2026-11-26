@@ -58,6 +58,7 @@ export {
   malformedArtifact,
   truncatedArtifact,
   unsupportedArtifact,
+  readFailureError,
   artifactPrimaryCleanupLeases,
   assertProducedEntry,
   copyArtifactEntry,
@@ -94,10 +95,15 @@ export {
 export type {
   ArtifactCleanupAttempt,
   ArtifactResourceOwner,
+  RetainedResourceScope,
 } from "./ArtifactResourceScope.js";
 export {
   imageFileSizeRemediation,
+  closeArtifactResources,
+  artifactFileCleanupError,
   projectArtifactCloseFailure,
+  withArtifactCleanupFailure,
+  artifactFileCancellationError,
   projectOwnedArtifactIdentityFailure,
   projectOwnedArtifactInputFailure,
   projectSelectedArtifactFileFailure,
@@ -118,6 +124,7 @@ export {
   assertStableArtifactState,
   completedStableArtifact,
   completedStableArtifactStream,
+  readAdmittedRange,
   readStableArtifact,
   streamStableArtifact,
   withStableArtifactHandle,

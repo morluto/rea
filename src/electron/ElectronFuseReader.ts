@@ -1,6 +1,6 @@
+import { hasElfMagic } from "../domain/binaryContainer.js";
 import { observeMzWindowsHeader } from "../domain/dosMz.js";
 import {
-  malformedInput,
   unsupportedInput,
   ParseFailureError,
   type LimitRef,
@@ -35,6 +35,7 @@ import {
   ArtifactResourceScope,
   assertArtifactReadActive,
   withArtifactRegularFile,
+  readFailureError,
 } from "../resources/index.js";
 
 /** Admission and search bounds for one Electron executable. */
@@ -205,7 +206,7 @@ const identifyContainer = async (
 }> => {
   const head = await readAt(0, Math.min(size, 8));
   if (hasMachoMagic(head)) return identifyMacho(readAt, size, head, path);
-  if (isElf(head)) {
+  if (hasElfMagic(head)) {
     const header = await readAt(0, 64);
     const parsed = readElfFixedHeader(Buffer.from(header), size);
     return {
@@ -245,13 +246,12 @@ const identifyMacho = async (
 }> => {
   const facts = await readMachoImage(readAt, size);
   if (facts.status !== "parsed") {
-    const reason =
-      facts.status === "not-mach-o"
-        ? `Selected artifact ${path} does not contain a Mach-O, ELF, or PE container.`
-        : facts.reason;
-    throw facts.status === "malformed"
-      ? malformedInput("macho", reason)
-      : unsupportedInput("macho", reason);
+    throw facts.status === "not-mach-o"
+      ? unsupportedInput(
+          "macho",
+          `Selected artifact ${path} does not contain a Mach-O, ELF, or PE container.`,
+        )
+      : readFailureError(facts.failure);
   }
   const fat = readFatHeaderPrefix(head);
   const format =
@@ -473,13 +473,6 @@ const readExact = async (
   if (buffer.length !== length) throw new RegularFileChangedError(path);
   return buffer;
 };
-
-const isElf = (head: Uint8Array): boolean =>
-  head.length >= 4 &&
-  head[0] === 0x7f &&
-  head[1] === 0x45 &&
-  head[2] === 0x4c &&
-  head[3] === 0x46;
 
 const identifyPe = async (
   readAt: ReadAt,

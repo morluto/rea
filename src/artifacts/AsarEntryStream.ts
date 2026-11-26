@@ -4,11 +4,7 @@ import { Readable } from "node:stream";
 
 import { ArtifactReaderFailure } from "../resources/index.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
-import {
-  assertAsarReadActive,
-  asarCancellationFailure,
-  asarFailure,
-} from "./AsarFailure.js";
+import { asarCancellationFailure, asarFailure } from "./AsarFailure.js";
 
 const ASAR_READ_CHUNK_BYTES = 256 * 1024;
 
@@ -111,15 +107,6 @@ export const readValidatedAsarRange = (
   });
   if (signal?.aborted) onAbort();
   return output;
-};
-
-/** Close an ASAR file handle before honoring cancellation of an empty member. */
-export const closeAsarHandle = async (
-  close: () => Promise<void>,
-  signal?: AbortSignal,
-): Promise<void> => {
-  await close();
-  assertAsarReadActive(signal);
 };
 
 /** Validate and contextualize bytes read from one ASAR member source. */

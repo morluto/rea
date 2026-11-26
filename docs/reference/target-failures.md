@@ -21,7 +21,7 @@ The four target refusals share `unsupported_target` because the caller cannot us
 
 The list of kinds can grow. Handle the kinds you know, and treat any other kind by its `code`.
 
-Inventory operations report a container, member or read range that changed during the read as `changed`, with `details.integrity_check` naming the check (`container-identity`, `member-identity`, `unpacked-entry-identity`, `read-coverage` or `traversal-coverage`). A selected target that no longer matches the one the session opened (`integrity_check: admitted-identity`) is not `changed`: reopen the target instead of repeating the request.
+Inventory operations report a container, member or read range that changed during the read as `changed`, with `details.integrity_check` naming the check (`container-identity`, `member-identity`, `unpacked-entry-identity`, `read-coverage` or `traversal-coverage`). Every operation that reads a selected artifact follows the same rule. A selected target that no longer matches the one the session opened (`integrity_check: admitted-identity`) is not `changed`: it reports `artifact_operation_failed` with `retryable: false`, and you reopen the target instead of repeating the request. Any other failed integrity check is likewise not retryable unchanged.
 
 A caller's cancellation (`cancelled`) and an admission limit (`resource_constraint`) describe the operation, not the target, so they keep their own error shapes. A result cut short by a delivery or decode limit reports code `partial`. `truncated` names only a target whose bytes end early.
 

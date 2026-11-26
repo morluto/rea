@@ -1,8 +1,5 @@
 import type { HostPlatform } from "../platform/HostPlatform.js";
-import {
-  absoluteCallerPath,
-  appendCallerPath,
-} from "../filesystem/callerPath.js";
+import { appendCallerPath } from "../filesystem/callerPath.js";
 import {
   DEFAULT_JADX_OPERATION_TIMEOUT_MS,
   MAX_NODE_TIMER_DELAY_MS,

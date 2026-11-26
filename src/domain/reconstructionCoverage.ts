@@ -1,3 +1,4 @@
+import { appendToMapList } from "./appendToMapList.js";
 import { reconstructionCoverageScope } from "./reconstructionCoverageScope.js";
 import { z } from "zod";
 import { AnalysisInputError } from "./analysisErrorCore.js";
@@ -423,9 +424,7 @@ const validateCoverageReferences = (
         ["owners", index, "surface_id"],
         `Owner surface is missing: ${owner.surface_id}`,
       );
-    const owners = ownersBySurface.get(owner.surface_id);
-    if (owners === undefined) ownersBySurface.set(owner.surface_id, [owner]);
-    else owners.push(owner);
+    appendToMapList(ownersBySurface, owner.surface_id, owner);
   }
   for (const [index, claim] of workspace.claims.entries()) {
     const missingSurface = claim.surface_ids.findIndex(

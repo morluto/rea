@@ -13,25 +13,23 @@ import {
   type TarPaxRecords,
 } from "../../domain/tarFormat.js";
 import type { ArtifactTraversalOmissionKind } from "../../domain/artifactGraph.js";
+import type { TarReaderLimits } from "../../domain/artifactReaderLimits.js";
 import {
-  artifactFixedLimitFailure,
+  artifactReaderLimitFailure,
   artifactParseFailure,
   assertArtifactReadActive,
 } from "../../resources/index.js";
 import { TarStreamEnded, type TarByteStream } from "./TarByteStream.js";
 
-/**
- * Largest pax extended header or GNU long-name record read into memory. Real
- * records hold one path or a few attributes; the allowance only stops a
- * declared size from forcing an arbitrary allocation.
+/*
+ * `artifact_limits.tar.extended_header_bytes` bounds one pax extended header
+ * or GNU long-name record read into memory. Real records hold one path or a
+ * few attributes; the allowance only stops a declared size from forcing an
+ * arbitrary allocation. `artifact_limits.tar.metadata_bytes` bounds retained
+ * member metadata: a fixed per-member charge plus decoded path and link
+ * bytes, and the global pax map, for streams of many tiny members or repeated
+ * pax global headers.
  */
-export const TAR_EXTENDED_HEADER_BYTES = 1024 * 1024;
-/**
- * Retained member metadata: a fixed per-member charge plus decoded path and
- * link bytes, and the global pax map. It bounds memory for tar streams of
- * many tiny members or repeated pax global headers.
- */
-export const TAR_RETAINED_METADATA_BYTES = 64 * 1024 * 1024;
 const MEMBER_OVERHEAD_BYTES = 512;
 /** One map entry retained with a pax keyword, besides its key and value bytes. */
 const PAX_ENTRY_OVERHEAD_BYTES = 64;
@@ -137,8 +135,20 @@ const invalidPaxNumber = (records: TarPaxRecords): string | undefined => {
 };
 
 /**
- * Apply pax records over earlier ones. POSIX: an empty value deletes the
- * keyword, so the header field applies again.
+ * Mutate a retained global pax map in place after budget accounting. POSIX: an
+ * empty value deletes the keyword, so the header field applies again.
+ */
+const applyPaxInPlace = (
+  target: Map<string, string>,
+  records: TarPaxRecords,
+): void => {
+  for (const [key, value] of records)
+    if (value === "") target.delete(key);
+    else target.set(key, value);
+};
+
+/**
+ * Apply pax records over earlier ones without mutating `base`.
  */
 const withPax = (
   base: TarPaxRecords,
@@ -146,9 +156,7 @@ const withPax = (
 ): TarPaxRecords => {
   if (records === undefined) return base;
   const merged = new Map(base);
-  for (const [key, value] of records)
-    if (value === "") merged.delete(key);
-    else merged.set(key, value);
+  applyPaxInPlace(merged, records);
   return merged;
 };
 
@@ -184,27 +192,21 @@ const typeflagText = (typeflag: number): string =>
 const tarFormatFailure = (detail: string, offset: number): unknown =>
   artifactParseFailure(malformedInput("tar", detail, { offset }), undefined);
 
-const extendedHeaderLimit = (size: bigint): Error =>
-  artifactFixedLimitFailure(
-    {
-      name: "The tar extended-header allowance",
-      kind: "parser",
-      limit: TAR_EXTENDED_HEADER_BYTES,
-      unit: "bytes",
-    },
-    `A tar pax or GNU long-name record declares ${String(size)} bytes, more than the ${String(TAR_EXTENDED_HEADER_BYTES)}-byte extended-header allowance.`,
+const extendedHeaderLimit = (limits: TarReaderLimits, size: bigint): Error =>
+  artifactReaderLimitFailure(
+    "artifact_limits.tar.extended_header_bytes",
+    limits.extended_header_bytes,
+    "bytes",
+    size,
     "memory",
   );
 
-const retainedMetadataLimit = (): Error =>
-  artifactFixedLimitFailure(
-    {
-      name: "The tar member metadata allowance",
-      kind: "parser",
-      limit: TAR_RETAINED_METADATA_BYTES,
-      unit: "bytes",
-    },
-    `The tar members need more than ${String(TAR_RETAINED_METADATA_BYTES)} bytes of retained metadata.`,
+const retainedMetadataLimit = (limits: TarReaderLimits) => (): Error =>
+  artifactReaderLimitFailure(
+    "artifact_limits.tar.metadata_bytes",
+    limits.metadata_bytes,
+    "bytes",
+    undefined,
     "memory",
   );
 
@@ -238,14 +240,16 @@ const countTrailingNonZero = async (
 export const walkTar = async (
   stream: TarByteStream,
   signal: AbortSignal | undefined,
+  limits: TarReaderLimits,
 ): Promise<TarWalk> => {
   const members: TarMember[] = [];
   const omissions: { path: string; kind: ArtifactTraversalOmissionKind }[] = [];
   const limitations: string[] = [];
   const dialects = new Set<TarHeaderDialect>();
   let paxHeaders = 0;
-  const retained = new Budget(TAR_RETAINED_METADATA_BYTES);
-  let global: TarPaxRecords = new Map();
+  const retained = new Budget(limits.metadata_bytes);
+  const metadataLimit = retainedMetadataLimit(limits);
+  const global = new Map<string, string>();
   let chargedGlobalPax = 0;
   let local: TarPaxRecords | undefined;
   let longName: Uint8Array | undefined;
@@ -356,8 +360,8 @@ export const walkTar = async (
       }
       const dataOffset = stream.position;
       if (extension) {
-        if (declaredSize > BigInt(TAR_EXTENDED_HEADER_BYTES))
-          throw extendedHeaderLimit(declaredSize);
+        if (declaredSize > BigInt(limits.extended_header_bytes))
+          throw extendedHeaderLimit(limits, declaredSize);
         const data = await stream.read(size, signal);
         const padding = await stream.skip(tarPaddedSize(size) - size, signal);
         if (data.length < size || padding < tarPaddedSize(size) - size) {
@@ -390,14 +394,11 @@ export const walkTar = async (
               chargedGlobalPax + mergedPaxBytesDelta(global, pax.records),
             );
             if (nextBytes > chargedGlobalPax)
-              retained.charge(
-                nextBytes - chargedGlobalPax,
-                retainedMetadataLimit,
-              );
+              retained.charge(nextBytes - chargedGlobalPax, metadataLimit);
             else if (nextBytes < chargedGlobalPax)
               retained.refund(chargedGlobalPax - nextBytes);
             chargedGlobalPax = nextBytes;
-            global = withPax(global, pax.records);
+            applyPaxInPlace(global, pax.records);
           } else local = pax.records;
         } else {
           const end = data.indexOf(0);
@@ -450,7 +451,7 @@ export const walkTar = async (
         retained.charge(
           MEMBER_OVERHEAD_BYTES +
             2 * (Buffer.byteLength(path) + Buffer.byteLength(linkTarget ?? "")),
-          retainedMetadataLimit,
+          metadataLimit,
         );
       if ("omit" in role)
         omissions.push({ path: path.replace(/\/+$/u, ""), kind: role.omit });
@@ -498,11 +499,12 @@ export const walkTar = async (
     }
   } catch (cause: unknown) {
     if (!(cause instanceof TarStreamEnded)) throw cause;
-    if (stream.position === 0) throw tarFormatFailure(cause.detail, 0);
+    // Nothing of the tar stream was read: the carrier's failure is the file's.
+    if (stream.position === 0) throw artifactParseFailure(cause, signal);
     endState = cause.kind;
     endOffset = stream.position;
     limitations.push(
-      `${cause.detail}; tar members after that point were not inventoried.`,
+      `${cause.message}; tar members after that point were not inventoried.`,
     );
     // A member whose data the stream did not finish is not usable.
     while (

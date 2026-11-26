@@ -1,5 +1,5 @@
 import { hasDosMzMagic, observeMzWindowsHeader } from "../domain/dosMz.js";
-import { BinaryReader } from "../domain/binaryContainer.js";
+import { hasElfMagic, BinaryReader } from "../domain/binaryContainer.js";
 import { readPeCoffHeader } from "../domain/peCoffHeader.js";
 import {
   hasGodotPckHeader,
@@ -242,16 +242,14 @@ export const inspectDesktopFile = async (
       offset: 0,
       value: { format: "IoStore TOC" },
     });
-  const native =
-    prefix.length >= 4 &&
-    (prefix.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])) ||
-      hasMachoMagic(prefix));
+  const elf = hasElfMagic(prefix);
+  const native = elf || (prefix.length >= 4 && hasMachoMagic(prefix));
   if (native)
     fact({
       kind: "native-image-header",
       offset: 0,
       value: {
-        format: prefix[0] === 0x7f ? "elf" : "mach-o",
+        format: elf ? "elf" : "mach-o",
         signature: prefix.subarray(0, 4).toString("hex"),
       },
     });

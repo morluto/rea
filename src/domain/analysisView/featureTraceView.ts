@@ -1,3 +1,4 @@
+import { analysisViewPageFields } from "./analysisViewPageFields.js";
 import { z } from "zod";
 import { prefixedDigestSchema } from "../digests.js";
 import { applicationCoverageSchema } from "../javascript/javascriptApplicationEvidenceSchemas.js";
@@ -42,11 +43,7 @@ const nodeIdsFilter = z
   .describe(
     "Exact trace node identities. Omitted selects all; [] selects none.",
   );
-const page = {
-  kind: z.literal("feature-trace"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
-};
+const page = analysisViewPageFields("feature-trace");
 
 const pathsRequestSchema = z.strictObject({
   ...page,

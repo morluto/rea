@@ -1,38 +1,11 @@
+import {
+  u32,
+  vendorAttributeSection,
+} from "../../tests/fixtures/elfVendorAttributes.js";
 import { describe, expect, it } from "vitest";
 import { parseMipsGnuAttributes } from "./MipsGnuAttributes.js";
 
-const u32 = (value: number, little: boolean): number[] => {
-  const bytes = Buffer.alloc(4);
-  if (little) bytes.writeUInt32LE(value);
-  else bytes.writeUInt32BE(value);
-  return [...bytes];
-};
-
-const section = (
-  attributes: readonly number[],
-  {
-    little = true,
-    vendor = "gnu",
-    scope = 1,
-  }: {
-    readonly little?: boolean;
-    readonly vendor?: string;
-    readonly scope?: number;
-  } = {},
-): Buffer => {
-  const scoped = [
-    scope,
-    ...u32(1 + 4 + attributes.length, little),
-    ...attributes,
-  ];
-  const name = [...Buffer.from(vendor, "latin1"), 0];
-  return Buffer.from([
-    0x41,
-    ...u32(4 + name.length + scoped.length, little),
-    ...name,
-    ...scoped,
-  ]);
-};
+const section = vendorAttributeSection("gnu");
 
 describe("MIPS GNU attribute parsing", () => {
   it.each([true, false])(

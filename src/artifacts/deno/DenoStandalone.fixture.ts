@@ -1,4 +1,13 @@
-import { write32, write64 } from "../../native/BinaryInteger.fixture.js";
+import {
+  machoSectionCarrier,
+  writeMachoName,
+} from "../apple/MachoSectionCarrier.fixture.js";
+import {
+  uint32LE as u32,
+  uint64LE as u64,
+  write32,
+  write64,
+} from "../../native/BinaryInteger.fixture.js";
 import { elfNote, elfNoteFixture } from "../../native/elf/ElfNotes.fixture.js";
 import { peResourceFixture } from "../../domain/pe/peResources.fixture.js";
 
@@ -45,18 +54,6 @@ export interface DenoSectionFixture {
 }
 
 const u8 = (value: number): Buffer => Buffer.from([value]);
-
-const u32 = (value: number): Buffer => {
-  const bytes = Buffer.alloc(4);
-  bytes.writeUInt32LE(value);
-  return bytes;
-};
-
-const u64 = (value: number | bigint): Buffer => {
-  const bytes = Buffer.alloc(8);
-  bytes.writeBigUInt64LE(BigInt(value));
-  return bytes;
-};
 
 const asBytes = (value: Buffer | string): Buffer =>
   typeof value === "string" ? Buffer.from(value, "utf8") : value;
@@ -160,59 +157,16 @@ export const denoMachO = (
   const blobs = Array.isArray(section) ? [...section] : [section];
   const little = options.littleEndian ?? true;
   const wide = (options.bits ?? 64) === 64;
-  const headerSize = wide ? 32 : 28;
-  const segmentHeader = wide ? 72 : 56;
-  const sectionSize = wide ? 80 : 68;
-  const cmdsize = segmentHeader + blobs.length * sectionSize;
-  const payloadAt = headerSize + cmdsize;
-  const payloadOffsets: number[] = [];
-  let cursor = payloadAt;
-  for (const blob of blobs) {
-    payloadOffsets.push(cursor);
-    cursor += blob.length;
-  }
-  const image = Buffer.alloc(cursor);
-  write32(image, 0, wide ? 0xfeedfacf : 0xfeedface, little);
-  write32(
-    image,
-    4,
-    options.architecture === "x64" ? 0x01000007 : wide ? 0x0100000c : 7,
+  return machoSectionCarrier(blobs, {
+    wide,
     little,
-  );
-  write32(image, 12, 2, little);
-  write32(image, 16, 1, little);
-  write32(image, 20, cmdsize, little);
-  const command = headerSize;
-  write32(image, command, wide ? 0x19 : 0x1, little);
-  write32(image, command + 4, cmdsize, little);
-  writeName(image, command + 8, "__SUI");
-  const payloadSize = cursor - payloadAt;
-  if (wide) {
-    write64(image, command + 32, payloadSize, little);
-    write64(image, command + 40, payloadAt, little);
-    write64(image, command + 48, payloadSize, little);
-    write32(image, command + 64, blobs.length, little);
-  } else {
-    write32(image, command + 28, payloadSize, little);
-    write32(image, command + 32, payloadAt, little);
-    write32(image, command + 36, payloadSize, little);
-    write32(image, command + 48, blobs.length, little);
-  }
-  blobs.forEach((blob, index) => {
-    const sectionAt = command + segmentHeader + index * sectionSize;
-    const fileOffset = payloadOffsets[index] ?? payloadAt;
-    writeName(image, sectionAt, "d3n0l4nd");
-    writeName(image, sectionAt + 16, "__SUI");
-    if (wide) {
-      write64(image, sectionAt + 40, blob.length, little);
-      write32(image, sectionAt + 48, fileOffset, little);
-    } else {
-      write32(image, sectionAt + 36, blob.length, little);
-      write32(image, sectionAt + 40, fileOffset, little);
-    }
-    blob.copy(image, fileOffset);
+    cpuType:
+      options.architecture === "x64" ? 0x01000007 : wide ? 0x0100000c : 7,
+    segmentName: "__SUI",
+    sectionName: "d3n0l4nd",
+    maxProtection: 0,
+    initialProtection: 0,
   });
-  return image;
 };
 
 /** x86_64 Mach-O with no `__SUI` section and a libsui Intel trailer. */
@@ -248,7 +202,7 @@ export const machOWithSegment = (segment: string, contents: Buffer): Buffer => {
   write32(image, 20, segmentHeader, little);
   write32(image, headerSize, 0x19, little);
   write32(image, headerSize + 4, segmentHeader, little);
-  writeName(image, headerSize + 8, segment);
+  writeMachoName(image, headerSize + 8, segment);
   write64(image, headerSize + 32, contents.length, little);
   write64(image, headerSize + 40, contentsAt, little);
   write64(image, headerSize + 48, contents.length, little);
@@ -327,10 +281,6 @@ const thinMachOWithoutDenoSection = (): Buffer => {
   write32(image, 20, segmentHeader, little);
   write32(image, headerSize, 0x19, little);
   write32(image, headerSize + 4, segmentHeader, little);
-  writeName(image, headerSize + 8, "__TEXT");
+  writeMachoName(image, headerSize + 8, "__TEXT");
   return image;
-};
-
-const writeName = (bytes: Buffer, offset: number, name: string): void => {
-  bytes.write(name, offset, Math.min(name.length, 16), "latin1");
 };

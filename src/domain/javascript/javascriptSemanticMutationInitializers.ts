@@ -125,6 +125,25 @@ const initializerPositionCache = (
   return created;
 };
 
+type StatementPositionResolver = (
+  node: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+) => StatementPosition | null;
+
+const cachedStatementPosition =
+  (
+    mode: "topLevel" | "direct" | "mutation" | "reference",
+    compute: StatementPositionResolver,
+  ): StatementPositionResolver =>
+  (node, parents) => {
+    const cache = initializerPositionCache(parents)[mode];
+    const cached = cache.get(node);
+    if (cached !== undefined) return cached;
+    const position = compute(node, parents);
+    cache.set(node, position);
+    return position;
+  };
+
 const siblingIndex = (
   node: t.Node,
   siblings: readonly t.Node[],
@@ -216,18 +235,15 @@ const computeTopLevelStatementPosition = (
 
 // Effect ordering asks for the same capture and effect positions once per
 // candidate record, so a growing record set would repeat each ancestry walk.
+const cachedTopLevelStatementPosition = cachedStatementPosition(
+  "topLevel",
+  computeTopLevelStatementPosition,
+);
 const topLevelStatementPosition = (
   node: t.Node | undefined,
   parents: WeakMap<t.Node, t.Node>,
-): StatementPosition | null => {
-  if (node === undefined) return null;
-  const cache = initializerPositionCache(parents);
-  const cached = cache.topLevel.get(node);
-  if (cached !== undefined) return cached;
-  const computed = computeTopLevelStatementPosition(node, parents);
-  cache.topLevel.set(node, computed);
-  return computed;
-};
+): StatementPosition | null =>
+  node === undefined ? null : cachedTopLevelStatementPosition(node, parents);
 
 /** Order effects only in a non-repeating top-level activation. */
 export const semanticTopLevelEffectFollowsCapture = (
@@ -605,10 +621,10 @@ const expressionEvaluationOrder = (
   return earlierIndex < laterIndex ? "before" : "after";
 };
 
-const computeDirectInitializerPosition = (
-  node: t.Node,
-  parents: WeakMap<t.Node, t.Node>,
-): StatementPosition | null => {
+const computeDirectInitializerPosition: StatementPositionResolver = (
+  node,
+  parents,
+) => {
   if (t.isClassDeclaration(node) && node.id !== null)
     return statementPosition(node, parents);
   if (
@@ -636,22 +652,15 @@ const computeDirectInitializerPosition = (
   return null;
 };
 
-const directInitializerPosition = (
-  node: t.Node,
-  parents: WeakMap<t.Node, t.Node>,
-): StatementPosition | null => {
-  const cache = initializerPositionCache(parents);
-  const cached = cache.direct.get(node);
-  if (cached !== undefined) return cached;
-  const computed = computeDirectInitializerPosition(node, parents);
-  cache.direct.set(node, computed);
-  return computed;
-};
+const directInitializerPosition = cachedStatementPosition(
+  "direct",
+  computeDirectInitializerPosition,
+);
 
-const computeDirectMutationPosition = (
-  node: t.Node,
-  parents: WeakMap<t.Node, t.Node>,
-): StatementPosition | null => {
+const computeDirectMutationPosition: StatementPositionResolver = (
+  node,
+  parents,
+) => {
   if (t.isForOfStatement(node)) return statementPosition(node, parents);
   if (t.isVariableDeclarator(node)) {
     const declaration = parents.get(node);
@@ -695,17 +704,10 @@ const computeDirectMutationPosition = (
   }
 };
 
-const directMutationPosition = (
-  node: t.Node,
-  parents: WeakMap<t.Node, t.Node>,
-): StatementPosition | null => {
-  const cache = initializerPositionCache(parents);
-  const cached = cache.mutation.get(node);
-  if (cached !== undefined) return cached;
-  const computed = computeDirectMutationPosition(node, parents);
-  cache.mutation.set(node, computed);
-  return computed;
-};
+const directMutationPosition = cachedStatementPosition(
+  "mutation",
+  computeDirectMutationPosition,
+);
 
 /** Prove that an unconditional member replacement precedes this read. */
 export const semanticDefiniteEffectPrecedesReference = (
@@ -760,10 +762,10 @@ export const semanticEffectTimingWithinActivation = (
   return semanticEffectTiming(site, effect, state);
 };
 
-const computeReferenceInitializerPosition = (
-  node: t.Node,
-  parents: WeakMap<t.Node, t.Node>,
-): StatementPosition | null => {
+const computeReferenceInitializerPosition: StatementPositionResolver = (
+  node,
+  parents,
+) => {
   // Defaults live inside the declaration pattern rather than its initializer.
   let current = node;
   while (true) {
@@ -795,17 +797,10 @@ const computeReferenceInitializerPosition = (
   }
 };
 
-const referenceInitializerPosition = (
-  node: t.Node,
-  parents: WeakMap<t.Node, t.Node>,
-): StatementPosition | null => {
-  const cache = initializerPositionCache(parents);
-  const cached = cache.reference.get(node);
-  if (cached !== undefined) return cached;
-  const computed = computeReferenceInitializerPosition(node, parents);
-  cache.reference.set(node, computed);
-  return computed;
-};
+const referenceInitializerPosition = cachedStatementPosition(
+  "reference",
+  computeReferenceInitializerPosition,
+);
 
 /** Parameter-to-body copies and ordinary expressions share one position owner. */
 const initializerPosition = (
