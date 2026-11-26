@@ -1,5 +1,4 @@
 import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import {
   recordingProducerFailureDialect,
@@ -7,6 +6,7 @@ import {
 } from "../providers/recordingProducerFailure.js";
 import {
   BOUNDED_PRODUCER_LIMITS as LIMITS,
+  producerLimitControl,
   resolveProducerLimits,
 } from "../domain/producerResourceLimits.js";
 import { SIGROK_PROVIDER_IDENTITY } from "./SigrokProviderIdentity.js";
@@ -16,10 +16,7 @@ import {
   type InspectSignalDecodersInput,
   signalDecodersSchema,
 } from "../domain/signals/signalDecoders.js";
-import {
-  DECODER_CATALOG_FORMAT,
-  parseDecoderDiscovery,
-} from "./parseDecoderDiscovery.js";
+import { parseDecoderDiscovery } from "./parseDecoderDiscovery.js";
 import {
   parseSigrokSelectorRejection,
   type SigrokSelection,
@@ -360,9 +357,11 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
       } else {
         const selected = await this.#resources.readSelectedArtifact({
           path: input.path,
-          maximumBytes: limits.input_bytes,
-          allowanceName: "the sigrok input allowance",
-          budgetParameter: "producer_limits.input_bytes",
+          budget: producerLimitControl(
+            "input_bytes",
+            limits.input_bytes,
+            LIMITS.input_bytes,
+          ),
           observedOutput: capturedOutput,
           signal: options?.signal,
         });
@@ -439,18 +438,9 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         phase,
         path: resourcePath,
         workspacePath: root?.path ?? null,
-        limits,
+        limits: { selected: limits, defaults: LIMITS },
         effectiveLimits,
         observedOutput: capturedOutput,
-        catalog: {
-          format: DECODER_CATALOG_FORMAT,
-          allowance: (maximum) =>
-            fixedAllowanceOptions(
-              "The sigrok decoder-discovery line allowance",
-              "capture",
-              { limit: maximum, unit: "lines" },
-            ),
-        },
         configurationHelp:
           "On Linux, configure sigrok-cli 0.7.2 through REA_SIGROK_COMMAND and util-linux prlimit through REA_SIGROK_PRLIMIT_COMMAND (default /usr/bin/prlimit).",
         configurationDiagnostics: (failure) =>
