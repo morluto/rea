@@ -196,9 +196,7 @@ const ANY_VALUE_MEMBERS = [
 ] as const;
 
 const isCanonicalBase64 = (text: string): boolean =>
-  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
-    text,
-  );
+  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(text);
 
 const readAttribute = (
   key: string,
