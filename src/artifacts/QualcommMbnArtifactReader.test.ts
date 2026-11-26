@@ -62,7 +62,7 @@ it("inventories a legacy MBN by content and lists its regions", async () => {
         code_size: 200,
         signature_size: 256,
         certificate_chain_size: 96,
-        ranges: { signature: { offset: 280, length: 256 } },
+        ranges: { signature: { offset: 240, length: 256 } },
       },
       elf: null,
     },
@@ -73,11 +73,24 @@ it("inventories a legacy MBN by content and lists its regions", async () => {
       .map((row) => [row.logical_path, row.source_location]),
   );
   expect(regions).toMatchObject({
-    "header.bin": { offset: 0, length: 80 },
-    "code.bin": { offset: 80, length: 200 },
-    "signature.bin": { offset: 280, length: 256 },
-    "certificate-chain.bin": { offset: 536, length: 96 },
+    "header.bin": { offset: 0, length: 40 },
+    "code.bin": { offset: 40, length: 200 },
+    "signature.bin": { offset: 240, length: 256 },
+    "certificate-chain.bin": { offset: 496, length: 96 },
   });
+});
+
+it("keeps a DOS MZ executable that resembles MBN v3 classified as dos-mz", async () => {
+  const dosMz = Buffer.alloc(1536);
+  dosMz.set([0x4d, 0x5a], 0);
+  dosMz.writeUInt16LE(3, 4);
+  dosMz.writeUInt16LE(4, 8);
+  dosMz.writeUInt16LE(256, 16);
+  dosMz.writeUInt16LE(256, 20);
+  const snapshot = await scanCanonicalArtifactInventory(
+    await writeMbn("program.exe", dosMz),
+  );
+  expect(snapshot.manifest.root_format).toBe("dos-mz");
 });
 
 it("opens region bytes and omits ranges past the file end", async () => {
@@ -93,9 +106,9 @@ it("opens region bytes and omits ranges past the file end", async () => {
       {
         status: "unknown",
         limitations: [
-          "image range 0+632 exceeds the 400-byte file",
-          "signature range 280+256 exceeds the 400-byte file",
-          "certificate chain range 536+96 exceeds the 400-byte file",
+          "image range 0+592 exceeds the 400-byte file",
+          "signature range 240+256 exceeds the 400-byte file",
+          "certificate chain range 496+96 exceeds the 400-byte file",
         ],
       },
     ]);
@@ -103,7 +116,7 @@ it("opens region bytes and omits ranges past the file end", async () => {
       true,
     );
     expect(reader.formatMetadata()?.header?.ranges.signature).toEqual({
-      offset: 280,
+      offset: 240,
       length: 256,
     });
   } finally {
@@ -144,7 +157,7 @@ it("reports an ELF MBN's hash segment header and hash count", async () => {
 
 it("keeps header.bin and decoded header metadata when an ELF hash table runs past EOF", async () => {
   const image = mbnElfWithHashSegment({ loads: 1 });
-  const truncated = image.subarray(0, 240);
+  const truncated = image.subarray(0, 200);
   const path = await writeMbn("truncated-table.mdt", truncated);
   const reader = new QualcommMbnArtifactReader(path);
   try {
@@ -152,17 +165,17 @@ it("keeps header.bin and decoded header metadata when an ELF hash table runs pas
     expect(entries.map((entry) => entry.path)).toEqual(["header.bin"]);
     expect(
       (await buffer(await reader.open(entries[0]!))).equals(
-        truncated.subarray(160, 240),
+        truncated.subarray(160, 200),
       ),
     ).toBe(true);
     expect(coverage).toEqual([
       {
         status: "unknown",
         limitations: [
-          "image range 160+528 exceeds the 240-byte file",
-          "hash table range 240+96 exceeds the 240-byte file",
-          "signature range 336+256 exceeds the 240-byte file",
-          "certificate chain range 592+96 exceeds the 240-byte file",
+          "image range 160+488 exceeds the 200-byte file",
+          "hash table range 200+96 exceeds the 200-byte file",
+          "signature range 296+256 exceeds the 200-byte file",
+          "certificate chain range 552+96 exceeds the 200-byte file",
         ],
       },
     ]);
@@ -171,13 +184,13 @@ it("keeps header.bin and decoded header metadata when an ELF hash table runs pas
       layout: "elf",
       header: {
         version: 3,
-        header_bytes: 80,
+        header_bytes: 40,
         code_size: 96,
         signature_size: 256,
         certificate_chain_size: 96,
         ranges: {
-          header: { offset: 160, length: 80 },
-          code: { offset: 240, length: 96 },
+          header: { offset: 160, length: 40 },
+          code: { offset: 200, length: 96 },
         },
       },
       elf: {

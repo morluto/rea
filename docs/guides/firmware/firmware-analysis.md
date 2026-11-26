@@ -586,7 +586,7 @@ to `inspect-devicetree`. See [Android boot images](../../android-boot-image.md).
 
 `inspect-artifact` / `extract-artifact` recognize a legacy Qualcomm MBN boot
 image by its header and payload sizes, with pointer checks for version 3.
-The headers are 80 bytes for v3, 40 for v5, and 48 for v6. Inventory lists the
+The headers are 40 bytes for v3 and v5, and 48 for v6. Inventory lists the
 header, code, signature, certificate-chain and v6 metadata regions. An ELF image whose program
 headers declare a Qualcomm hash segment is inventoried as `qualcomm-mbn` with its hash
 table and per program header hash offsets, while binary target resolution

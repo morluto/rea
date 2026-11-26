@@ -115,6 +115,19 @@ it("leaves bytes no recognizer claims to the native and named-format routes", ()
   expect(recognize(Buffer.from("ANDROID"))).toBeUndefined();
 });
 
+it("yields the no-magic Qualcomm MBN check to native DOS MZ executables", () => {
+  // Valid 1,536-byte DOS MZ executable whose header words also satisfy MBN v3:
+  // e_cp=3, e_crlc=0 -> u32(4)=3; e_cparhdr=4 -> 64-byte header; e_sp=256 and
+  // e_ip=256 -> u32(16)=u32(20)=256; remaining header words zero.
+  const dosMz = Buffer.alloc(1536);
+  dosMz.set([0x4d, 0x5a], 0);
+  dosMz.writeUInt16LE(3, 4);
+  dosMz.writeUInt16LE(4, 8);
+  dosMz.writeUInt16LE(256, 16);
+  dosMz.writeUInt16LE(256, 20);
+  expect(recognize(dosMz)).toBeUndefined();
+});
+
 it("recognizes Android boot and vendor boot image prefixes", () => {
   for (const magic of ["ANDROID!", "VNDRBOOT"])
     expect(recognize(Buffer.from(magic))).toMatchObject({

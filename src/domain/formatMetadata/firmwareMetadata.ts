@@ -567,7 +567,7 @@ export const qualcommMbnMetadataSchema = z.strictObject({
   header: z
     .strictObject({
       version: z.union([z.literal(3), z.literal(5), z.literal(6)]),
-      header_bytes: z.union([z.literal(40), z.literal(48), z.literal(80)]),
+      header_bytes: z.union([z.literal(40), z.literal(48)]),
       image_id: uint32,
       image_source: uint32.nullable(),
       image_source_name: z

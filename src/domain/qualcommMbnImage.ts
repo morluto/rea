@@ -10,7 +10,7 @@ import { CoverageAccumulator } from "./coverageAccumulator.js";
 /**
  * Qualcomm MBN header and ELF hash-segment facts.
  *
- * MBN headers are little-endian: 80 bytes for v3, 40 for v5 and 48 for v6. Those words stay
+ * MBN headers are little-endian: 40 bytes for v3 and v5, and 48 for v6. Those words stay
  * little-endian even when a surrounding ELF image is big-endian. An ELF
  * modem image keeps its ELF classification. A program header whose
  * `p_flags` bits 24-26 equal 2 (Linux `QCOM_MDT_TYPE_HASH`) carries the
@@ -31,8 +31,8 @@ import { CoverageAccumulator } from "./coverageAccumulator.js";
  * the file. That extent is the format's own bound, not a separate byte budget.
  */
 
-const HEADER_BYTES = { 3: 80, 5: 40, 6: 48 } as const;
-export const QUALCOMM_MBN_MAX_HEADER_BYTES = HEADER_BYTES[3];
+const HEADER_BYTES = { 3: 40, 5: 40, 6: 48 } as const;
+export const QUALCOMM_MBN_MAX_HEADER_BYTES = HEADER_BYTES[6];
 const HASH_SEGMENT_TYPE = 2;
 const EXTENDED_PROGRAM_COUNT = 0xffff;
 const UINT32_MAX = 0xffff_ffff;
@@ -320,8 +320,6 @@ const decodeMbnHeader = (
     [codeRole, ranges.code],
     ["QTI signature", ranges.qtiSignature],
     ["QTI certificate chain", ranges.qtiCertificateChain],
-    ["qti-signature", ranges.qtiSignature],
-    ["qti-certificate-chain", ranges.qtiCertificateChain],
     ["signature", ranges.signature],
     ["certificate chain", ranges.certificateChain],
   ] as const;

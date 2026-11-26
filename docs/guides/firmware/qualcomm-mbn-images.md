@@ -25,7 +25,7 @@ signature and certificate-chain pointers and sizes.
 
 | Version | Header size | Version-specific fields                                               |
 | ------- | ----------- | --------------------------------------------------------------------- |
-| 3       | 80 bytes    | Image source and destination at offsets 8 and 12                      |
+| 3       | 40 bytes    | Image source and destination at offsets 8 and 12                      |
 | 5       | 40 bytes    | QTI signature and certificate-chain sizes at offsets 8 and 12         |
 | 6       | 48 bytes    | Version 5 fields plus QTI and OEM metadata sizes at offsets 40 and 44 |
 
@@ -51,7 +51,7 @@ and `qti-certificate-chain.bin` when present.
 
 A region that extends past the end of the file is not listed and is not
 clamped. Its range is reported as a limitation, for example
-`signature range 280+256 exceeds the 400-byte file`, and inventory coverage
+`signature range 240+256 exceeds the 400-byte file`, and inventory coverage
 is `unknown`.
 
 ## ELF images

@@ -988,7 +988,7 @@ UDF, and El Torito boot images are not decoded. See
 Legacy Qualcomm MBN boot images (`sbl1.mbn`, `aboot.mbn`, `tz.mbn`) use the
 same inspection and extraction workflows. The header has no magic; REA claims
 it only when version 3, 5 or 6 sizes and pointers are self-consistent.
-MBN headers are 80 bytes for v3, 40 for v5, and 48 for v6. Inventory lists stored
+MBN headers are 40 bytes for v3 and v5, and 48 for v6. Inventory lists stored
 code, signature, certificate-chain and v6 metadata regions;
 ranges past the file end are limitations with `unknown` coverage. ELF images
 with a Qualcomm hash segment inventory as `qualcomm-mbn` (hash table and per

@@ -35,13 +35,13 @@ describe("legacy MBN headers", () => {
         signatureSize: 256,
         certificateChainSize: 96,
         metadata0Size: null,
-        headerBytes: 80,
+        headerBytes: 40,
       },
       ranges: {
-        header: { offset: 0, length: 80 },
-        code: { offset: 80, length: 200 },
-        signature: { offset: 280, length: 256 },
-        certificateChain: { offset: 536, length: 96 },
+        header: { offset: 0, length: 40 },
+        code: { offset: 40, length: 200 },
+        signature: { offset: 240, length: 256 },
+        certificateChain: { offset: 496, length: 96 },
         metadata0: null,
       },
       limitations: [],
@@ -50,16 +50,51 @@ describe("legacy MBN headers", () => {
     expect(qualcommMbnInventoryCoverage(inspection)).toBe("complete");
   });
 
+  it("decodes a raw 40-byte v3 header without relying on the fixture builder", () => {
+    const code = Buffer.from("v3-code-payload!");
+    const signature = Buffer.alloc(32, 0x5a);
+    const certs = Buffer.alloc(16, 0xc3);
+    const header = Buffer.alloc(40);
+    header.writeUInt32LE(21, 0); // image_id
+    header.writeUInt32LE(3, 4); // version 3
+    header.writeUInt32LE(3, 8); // image_source (emmc-user)
+    header.writeUInt32LE(0x8600_0028, 12); // image_dest_ptr
+    header.writeUInt32LE(code.length + signature.length + certs.length, 16);
+    header.writeUInt32LE(code.length, 20);
+    header.writeUInt32LE(0x8600_0028 + code.length, 24);
+    header.writeUInt32LE(signature.length, 28);
+    header.writeUInt32LE(0x8600_0028 + code.length + signature.length, 32);
+    header.writeUInt32LE(certs.length, 36);
+    const raw = Buffer.concat([header, code, signature, certs]);
+    const inspection = inspectQualcommMbnImage(raw);
+    expect(inspection).toMatchObject({
+      kind: "legacy",
+      header: { version: 3, headerBytes: 40, codeSize: 16 },
+      ranges: {
+        header: { offset: 0, length: 40 },
+        code: { offset: 40, length: 16 },
+        signature: { offset: 56, length: 32 },
+        certificateChain: { offset: 88, length: 16 },
+      },
+      limitations: [],
+    });
+    if (inspection.kind !== "legacy") throw new Error("not legacy");
+    const { offset, length } = inspection.ranges.code;
+    expect(raw.subarray(offset, offset + length).toString("ascii")).toBe(
+      "v3-code-payload!",
+    );
+  });
+
   it("reports ranges past the file end as limitations without clamping", () => {
     const truncated = LEGACY.subarray(0, 400);
     const inspection = inspectQualcommMbnImage(truncated);
     expect(inspection).toMatchObject({
       kind: "legacy",
-      ranges: { signature: { offset: 280, length: 256 } },
+      ranges: { signature: { offset: 240, length: 256 } },
       limitations: [
-        "image range 0+632 exceeds the 400-byte file",
-        "signature range 280+256 exceeds the 400-byte file",
-        "certificate chain range 536+96 exceeds the 400-byte file",
+        "image range 0+592 exceeds the 400-byte file",
+        "signature range 240+256 exceeds the 400-byte file",
+        "certificate chain range 496+96 exceeds the 400-byte file",
       ],
     });
     if (inspection.kind !== "legacy") throw new Error("not legacy");
@@ -79,14 +114,14 @@ describe("legacy MBN headers", () => {
 
   it("rejects an image size that also counts the header", () => {
     const withHeader = Buffer.from(LEGACY);
-    withHeader.writeUInt32LE(552 + 80, 16);
+    withHeader.writeUInt32LE(552 + 40, 16);
     expect(hasQualcommMbnHeader(withHeader)).toBe(false);
     expect(inspectQualcommMbnImage(withHeader).kind).toBe("unrecognized");
   });
 
   it("does not claim a header whose code region is not in the file", () => {
-    // 80 header bytes alone, then the header and 199 of 200 code bytes.
-    for (const length of [80, 279]) {
+    // 40 header bytes alone, then the header and 199 of 200 code bytes.
+    for (const length of [40, 239]) {
       const bytes = LEGACY.subarray(0, length);
       expect(hasQualcommMbnHeader(bytes)).toBe(false);
       expect(
@@ -97,7 +132,7 @@ describe("legacy MBN headers", () => {
         }),
       ).toBeUndefined();
     }
-    expect(hasQualcommMbnHeader(LEGACY.subarray(0, 280))).toBe(true);
+    expect(hasQualcommMbnHeader(LEGACY.subarray(0, 240))).toBe(true);
   });
 
   it("is recognized only after signature formats, and ELF stays ELF", () => {
@@ -181,6 +216,28 @@ describe("MBN v5 and v6 headers", () => {
       expect(inspectQualcommMbnImage(bytes).kind).toBe("unrecognized");
     },
   );
+
+  it("reports each missing QTI region once when a v5 image is truncated", () => {
+    const bytes = mbnLegacyImage({
+      version: 5,
+      code: Buffer.alloc(64, 1),
+      signature: Buffer.alloc(32, 2),
+      certificateChain: Buffer.alloc(16, 3),
+      qtiSignature: Buffer.alloc(12, 6),
+      qtiCertificateChain: Buffer.alloc(20, 7),
+    });
+    const truncated = bytes.subarray(0, 104); // 40-byte header + 64-byte code only
+    expect(inspectQualcommMbnImage(truncated)).toMatchObject({
+      kind: "legacy",
+      limitations: [
+        "image range 0+184 exceeds the 104-byte file",
+        "QTI signature range 104+12 exceeds the 104-byte file",
+        "QTI certificate chain range 116+20 exceeds the 104-byte file",
+        "signature range 136+32 exceeds the 104-byte file",
+        "certificate chain range 168+16 exceeds the 104-byte file",
+      ],
+    });
+  });
 });
 
 describe("ELF MBN hash segments", () => {
@@ -198,10 +255,10 @@ describe("ELF MBN hash segments", () => {
       facet: {
         header: { version: 3, codeSize: 128, signatureSize: 256 },
         ranges: {
-          header: { offset: 192, length: 80 },
-          code: { offset: 272, length: 128 },
-          signature: { offset: 400, length: 256 },
-          certificateChain: { offset: 656, length: 96 },
+          header: { offset: 192, length: 40 },
+          code: { offset: 232, length: 128 },
+          signature: { offset: 360, length: 256 },
+          certificateChain: { offset: 616, length: 96 },
         },
         hashSize: 32,
         hashCount: 4,
@@ -217,10 +274,10 @@ describe("ELF MBN hash segments", () => {
         hash.hashOffset,
       ]),
     ).toEqual([
-      [0, 7, 272],
-      [1, 2, 304],
-      [2, 0, 336],
-      [3, 0, 368],
+      [0, 7, 232],
+      [1, 2, 264],
+      [2, 0, 296],
+      [3, 0, 328],
     ]);
     expect(qualcommMbnInventoryCoverage(inspection)).toBe("complete");
   });
@@ -245,19 +302,19 @@ describe("ELF MBN hash segments", () => {
     const inspection = inspectQualcommMbnImage(truncated);
     expect(inspection).toMatchObject({
       kind: "elf",
-      facet: { ranges: { signature: { offset: 336, length: 256 } } },
+      facet: { ranges: { signature: { offset: 296, length: 256 } } },
     });
     if (inspection.kind !== "elf") throw new Error("not elf");
     expect(inspection.limitations).toContain(
-      "signature range 336+256 exceeds the 400-byte file",
+      "signature range 296+256 exceeds the 400-byte file",
     );
     expect(qualcommMbnInventoryCoverage(inspection)).toBe("unknown");
   });
 
   it("keeps a readable hash-segment header when its hash table runs past EOF", () => {
     const bytes = mbnElfWithHashSegment({ loads: 1 });
-    // Hash segment starts at 160: 80-byte header (160..240) and 96-byte hash table (240..336).
-    for (const length of [240, 280]) {
+    // Hash segment starts at 160: 40-byte header (160..200) and 96-byte hash table (200..296).
+    for (const length of [200, 240]) {
       const truncated = bytes.subarray(0, length);
       const inspection = inspectQualcommMbnImage(truncated);
       expect(inspection).toMatchObject({
@@ -266,16 +323,16 @@ describe("ELF MBN hash segments", () => {
         facet: {
           header: {
             version: 3,
-            headerBytes: 80,
+            headerBytes: 40,
             codeSize: 96,
             signatureSize: 256,
             certificateChainSize: 96,
           },
           ranges: {
-            header: { offset: 160, length: 80 },
-            code: { offset: 240, length: 96 },
-            signature: { offset: 336, length: 256 },
-            certificateChain: { offset: 592, length: 96 },
+            header: { offset: 160, length: 40 },
+            code: { offset: 200, length: 96 },
+            signature: { offset: 296, length: 256 },
+            certificateChain: { offset: 552, length: 96 },
           },
           hashSize: 32,
           hashCount: 3,
@@ -284,7 +341,7 @@ describe("ELF MBN hash segments", () => {
       if (inspection.kind !== "elf" || inspection.facet === null)
         throw new Error("expected decoded ELF facet");
       expect(inspection.limitations).toContain(
-        `hash table range 240+96 exceeds the ${String(length)}-byte file`,
+        `hash table range 200+96 exceeds the ${String(length)}-byte file`,
       );
       expect(
         inspection.limitations.some((message) =>
@@ -292,7 +349,7 @@ describe("ELF MBN hash segments", () => {
         ),
       ).toBe(false);
       expect(qualcommMbnStoredRegions(inspection)).toEqual([
-        { name: "header", range: { offset: 160, length: 80 } },
+        { name: "header", range: { offset: 160, length: 40 } },
       ]);
       expect(qualcommMbnInventoryCoverage(inspection)).toBe("unknown");
     }
