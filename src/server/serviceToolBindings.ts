@@ -17,6 +17,7 @@ import {
   androidSymbolInspectionInputSchemas,
 } from "../domain/android/androidAnalysis.js";
 import { dartAotInspectionInputSchema } from "../domain/flutter/flutterBuildAnalysis.js";
+import { decodeAndroidResourcesRequestSchema } from "../contracts/apktool/apktoolToolContracts.js";
 import {
   executeRetainedSummaryOperation,
   inspectAnalysisView,
@@ -332,11 +333,21 @@ const SERVICE_TOOL_BINDINGS = {
         ),
     },
   })) satisfies Bind<AndroidAnalysisService>,
-  apktoolAnalysis: ((service) =>
-    contractServiceBindings(service, [
-      "inspect_apktool_client",
-      "decode_android_resources",
-    ])) satisfies Bind<ApktoolResourceAnalysisService>,
+  apktoolAnalysis: ((service, retention) => ({
+    ...contractServiceBindings(service, ["inspect_apktool_client"]),
+    decode_android_resources: {
+      admission: "sdk",
+      run: (input, options) =>
+        executeRetainedSummaryOperation(
+          service,
+          "decode_android_resources",
+          decodeAndroidResourcesRequestSchema,
+          input,
+          retention,
+          options,
+        ),
+    },
+  })) satisfies Bind<ApktoolResourceAnalysisService>,
   jebAnalysis: ((service) =>
     contractServiceBindings(service, [
       "inspect_jeb_client",
