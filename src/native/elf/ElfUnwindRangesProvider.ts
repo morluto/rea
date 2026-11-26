@@ -4,7 +4,7 @@ import {
 } from "../../domain/parseFailureAnalysisError.js";
 import {
   projectStableArtifactFailure,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
   ArtifactResourceScope,
@@ -41,16 +41,12 @@ export class ElfUnwindRangesProvider implements ElfUnwindRangesPort {
   readonly identity = ELF_UNWIND_RANGES_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        ELF_UNWIND_RANGES_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      ELF_UNWIND_RANGES_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(
@@ -80,11 +76,7 @@ export class ElfUnwindRangesProvider implements ElfUnwindRangesPort {
           },
           (handle) =>
             parseElfUnwindRangesFromHandle(
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               { path: input.path, sha256: handle.sha256, bytes: handle.size },
               input,
               signal,

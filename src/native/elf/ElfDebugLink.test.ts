@@ -15,6 +15,7 @@ import { readElfImage } from "../../domain/native/elfImage.js";
 import {
   parseElfDebugLinkFromHandle,
   verifyElfDebugCandidate,
+  verifyElfDebugCandidateCooperative,
 } from "./ElfDebugLink.js";
 import {
   debugaltlinkSection,
@@ -384,19 +385,21 @@ const verify = async (
   candidatePath: string,
 ) => {
   const report = await parse(image);
-  return elfDebugLinkSchema.parse(
-    verifyElfDebugCandidate(
-      report,
-      {
-        path: candidatePath,
-        sha256: digest,
-        bytes: candidate.length,
-        crc32: crc32(candidate),
-        prefix: candidate,
-      },
-      inputFor(),
-    ),
+  const file = {
+    path: candidatePath,
+    sha256: digest,
+    bytes: candidate.length,
+    crc32: crc32(candidate),
+    prefix: candidate,
+  };
+  const input = inputFor();
+  const verified = await verifyElfDebugCandidateCooperative(
+    report,
+    file,
+    input,
   );
+  expect(verified).toEqual(verifyElfDebugCandidate(report, file, input));
+  return elfDebugLinkSchema.parse(verified);
 };
 
 it("counts legacy .zdebug_info as present candidate debug info", async () => {

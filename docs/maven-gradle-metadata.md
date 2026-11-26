@@ -96,9 +96,9 @@ unknowns, not guesses.
 
 The selected file is limited to 1 MiB by default (16 MiB maximum). Exceeding
 the budget fails without partial success. Malformed XML or JSON is also
-`unsupported_target`, with `details.format_failure` set to `malformed`. A
+`unsupported_target`, with `details.failure_kind` set to `malformed`. A
 well-formed document that is not a Maven project or Gradle module metadata file
-is `unsupported_target` without that field. Document type declarations are
+is `unsupported_target` with `details.failure_kind` set to `unsupported`. Document type declarations are
 unsupported. External entities are not resolved.
 
 A POM is counted as a stream before its document tree is built, and one with

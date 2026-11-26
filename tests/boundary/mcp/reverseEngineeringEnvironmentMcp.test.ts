@@ -1,5 +1,4 @@
-import { chmod, mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { Client } from "@modelcontextprotocol/client";

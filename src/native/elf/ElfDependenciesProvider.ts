@@ -5,7 +5,7 @@ import {
 } from "../../domain/parseFailureAnalysisError.js";
 import { decodeLimit } from "../../domain/parseFailure.js";
 import {
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   projectStableArtifactFailure,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
@@ -44,16 +44,12 @@ export class ElfDependenciesProvider {
   readonly identity = ELF_DEPENDENCIES_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        ELF_DEPENDENCIES_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      ELF_DEPENDENCIES_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(
@@ -83,11 +79,7 @@ export class ElfDependenciesProvider {
           async (handle) => {
             assertArtifactReadActive(options?.signal);
             const parsed = await parseElfDependenciesFromHandle(
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               {
                 path: input.path,
                 sha256: handle.sha256,

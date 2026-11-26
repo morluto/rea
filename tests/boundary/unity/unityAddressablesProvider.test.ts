@@ -7,9 +7,8 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
-  AnalysisMalformedTargetError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
+  AnalysisTargetFailureError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -183,25 +182,25 @@ it("keeps only bounded source facts when the decoded catalog exceeds the report 
 });
 
 it.each([
-  [
-    binaryCatalog(sampleCatalog(), { version: 1 }),
-    AnalysisUnsupportedTargetError,
-  ],
-  [Buffer.from("not a catalog"), AnalysisUnsupportedTargetError],
+  [binaryCatalog(sampleCatalog(), { version: 1 }), "unsupported"],
+  [Buffer.from("not a catalog"), "unsupported"],
   [
     jsonCatalog(sampleCatalog(), {
       patch: (catalog) => delete catalog.m_ProviderIds,
     }),
-    AnalysisMalformedTargetError,
+    "malformed",
   ],
-])(
-  "maps format failures to typed errors with source identity (%#)",
-  async (bytes, type) => {
+] as const)(
+  "maps format failures to target failures with source identity (%#)",
+  async (bytes, kind) => {
     const path = await write("catalog.bin", bytes);
     const result = await inspect({ path });
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error).toBeInstanceOf(type);
+    expect(result.error).toBeInstanceOf(AnalysisTargetFailureError);
+    expect((result.error as AnalysisTargetFailureError).failure.kind).toBe(
+      kind,
+    );
     expect(result.error.partialObservation).toMatchObject({
       normalized_result: { artifact: { path, bytes: bytes.length } },
     });

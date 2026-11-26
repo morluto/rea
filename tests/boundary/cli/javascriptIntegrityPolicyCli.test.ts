@@ -4,12 +4,17 @@ import { promisify } from "node:util";
 import { expect, it } from "vitest";
 
 import { createStrippedAsarAddon } from "../../fixtures/strippedAsarAddon.js";
+import { completeEvidenceCliArguments } from "../../support/completeEvidenceByDefault.js";
 
 const execute = promisify(execFile);
 const run = async (arguments_: readonly string[]): Promise<unknown> => {
   const { stdout } = await execute(
     process.execPath,
-    ["scripts/rea.mjs", ...arguments_, "--json"],
+    [
+      "scripts/rea.mjs",
+      ...(await completeEvidenceCliArguments(arguments_)),
+      "--json",
+    ],
     { cwd: process.cwd(), maxBuffer: 16 * 1024 * 1024 },
   );
   return JSON.parse(stdout);

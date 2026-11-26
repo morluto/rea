@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256 as digest } from "../support/sha256.js";
 import {
   lstat,
   readFile,
@@ -35,9 +35,6 @@ import {
   createSharedMcpSession,
   type TestCli,
 } from "../support/cli/cliFixture.js";
-
-const digest = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 // These stateless parity cases use the same default admission settings. Keep
 // their server file-owned, while lifecycle and configuration cases use fresh
@@ -945,21 +942,18 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
 
 /** Assert the refusal's facts, not the sentence that joins them. */
 const expectNotADatabaseRefusal = (error: unknown, selected: string): void => {
+  // The selected file's bytes are at fault, not the request.
   expect(error).toMatchObject({
-    code: "invalid_request",
+    code: "unsupported_target",
+    retry: "none",
     details: {
-      issues: [
-        {
-          path: ["path"],
-          reason: "invalid_format",
-          message: expect.stringContaining("file is not a database"),
-        },
-      ],
+      path: selected,
+      failure_kind: "malformed",
+      format: "sqlite",
+      reason: expect.stringContaining("file is not a database"),
     },
   });
-  expect(error).toMatchObject({
-    details: { issues: [{ message: expect.stringContaining(selected) }] },
-  });
+  expect(error).not.toHaveProperty("details.issues");
 };
 
 cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(

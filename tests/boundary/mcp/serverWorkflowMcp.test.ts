@@ -1,10 +1,10 @@
+import { connectFixtureClient } from "../../support/mcp/mcpFixture.js";
 import {
   canonicalOutputSchema,
   withCanonicalOutputSchema,
 } from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, expect, it } from "vitest";
 
@@ -23,7 +23,6 @@ import {
 } from "../../../src/contracts/toolContracts.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { advertisedToolPresentation } from "../../../src/contracts/mcpSchemaPresentation.js";
-import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
 
@@ -35,19 +34,14 @@ afterEach(async () => {
 
 const connect = async (analysis: AnalysisOperationPort) => {
   const server = createServer({ kind: "fixed", analysis });
-  const client = new Client(
+  return connectFixtureClient(
+    server,
     {
       name: "integration-test",
       version: "1.0.0",
     },
-    { jsonSchemaValidator: createMcpSchemaValidation() },
+    resources,
   );
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  return client;
 };
 
 const structured = (result: CallToolResult): Record<string, unknown> => {
@@ -121,18 +115,14 @@ it("advertises the complete currently available inventory with a session", async
       }) satisfies AnalysisClient,
   );
   const server = createServer({ kind: "session", session });
-  const client = new Client(
+  const client = await connectFixtureClient(
+    server,
     {
       name: "integration-test",
       version: "1.0.0",
     },
-    { jsonSchemaValidator: createMcpSchemaValidation() },
+    resources,
   );
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
 
   const listed = await client.listTools();
   const names = listed.tools.map((t) => t.name);

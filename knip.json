@@ -18,7 +18,8 @@
     "scripts/verify-real-ghidra-decompiler-failure.mjs",
     "scripts/verify-real-ghidra-decompile-timeout.mjs",
     "scripts/verify-real-ghidra-function-bundle.mjs",
-    "tests/processOwnershipRunner.ts"
+    "tests/processOwnershipRunner.ts",
+    "tests/support/targetFailure/readers/*.ts"
   ],
   "project": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.mjs"],
   "vitepress": {

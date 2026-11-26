@@ -19,7 +19,7 @@ export const SQLITE_WORKER_HEAP_BYTES =
  * can emit cannot be one the client refuses to parse.
  */
 export const SQLITE_INSPECTION_REASONS = [
-  "format",
+  "malformed",
   "selection",
   "column-selection",
   "row-offset",

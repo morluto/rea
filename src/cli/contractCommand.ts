@@ -17,7 +17,6 @@ import {
   describeOperationChoices,
 } from "./contractCliDescription.js";
 import type {
-  DocumentContract,
   CliContractProjection,
   CliEvidenceDeliveryChoice,
   CliOptionShape,
