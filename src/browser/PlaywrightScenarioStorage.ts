@@ -321,10 +321,7 @@ export class PlaywrightScenarioStorage {
       this.#popupSeedCoverageUnknown = true;
       return;
     }
-    if (
-      origin === undefined ||
-      (area !== "local" && area !== "session")
-    )
+    if (origin === undefined || (area !== "local" && area !== "session"))
       return false;
     if (command === "was") {
       if (area === "local") return this.#initializedLocalOrigins.has(origin);
@@ -644,10 +641,7 @@ export class PlaywrightScenarioStorage {
       { frameId },
     );
     const sessionKey = JSON.stringify([target.topLevelTargetId, storageKey]);
-    const sessionOriginKey = JSON.stringify([
-      target.topLevelTargetId,
-      origin,
-    ]);
+    const sessionOriginKey = JSON.stringify([target.topLevelTargetId, origin]);
     const local =
       this.#initializedLocal.has(storageKey) ||
       this.#initializedLocalOrigins.has(storageKey) ||
@@ -688,8 +682,7 @@ export class PlaywrightScenarioStorage {
     }
     if (session.length > 0) {
       this.#initializedSession.add(sessionKey);
-      if (storageKey === origin)
-        this.#initializedSession.add(sessionOriginKey);
+      if (storageKey === origin) this.#initializedSession.add(sessionOriginKey);
     }
   }
 

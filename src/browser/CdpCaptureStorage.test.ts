@@ -8,8 +8,7 @@ it("treats the legacy seed mark as examined when judging storage completeness", 
   const limitations: string[] = [];
   const connection = {
     send: async (method: string) => {
-      if (method === "Storage.getUsageAndQuota")
-        return { usage: 1, quota: 10 };
+      if (method === "Storage.getUsageAndQuota") return { usage: 1, quota: 10 };
       if (method === "DOMStorage.getDOMStorageItems")
         return {
           entries: [
