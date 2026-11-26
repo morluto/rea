@@ -46,7 +46,7 @@
   "engines": {
     "node": "^22.23.4 || ^24.22.1 || >=26.12.1"
   },
-  "packageManager": "npm@11.16.0",
+  "packageManager": "npm@11.21.3",
   "files": [
     "dist",
     "install.sh",
