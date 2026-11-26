@@ -1,6 +1,7 @@
 import { readElfDynamicEntry } from "../elfDynamicEntry.js";
 import { elfSymbolSize } from "../elfSymbol.js";
 import {
+  elfHashEntryLayout,
   readElfGnuHashSymbolCount,
   readElfHashSymbolCount,
   type ElfHashCountFailure,
@@ -165,7 +166,7 @@ function* readDynamicSymbolCount(
   reader: BinaryReader,
   mapping: FileMappingIndex,
   entries: ReadonlyMap<bigint, bigint>,
-  bits: 32 | 64,
+  directory: ElfExportDirectory,
 ): Generator<void, number | null> {
   const hashWords =
     (address: bigint): ElfHashWordReader =>
@@ -186,7 +187,11 @@ function* readDynamicSymbolCount(
     hash === undefined
       ? null
       : admitCount(
-          readElfHashSymbolCount(hashWords(hash), MAX_NATIVE_EXPORT_ROWS),
+          readElfHashSymbolCount(
+            hashWords(hash),
+            MAX_NATIVE_EXPORT_ROWS,
+            elfHashEntryLayout(directory),
+          ),
         );
   const gnuCount =
     gnu === undefined
@@ -194,7 +199,7 @@ function* readDynamicSymbolCount(
       : admitCount(
           yield* readElfGnuHashSymbolCount(
             hashWords(gnu),
-            bits === 64 ? 8 : 4,
+            directory.bits === 64 ? 8 : 4,
             MAX_NATIVE_EXPORT_ROWS,
           ),
         );
@@ -336,7 +341,7 @@ export function* readElfDynamicExportTables(
     new BinaryReader(bytes, directory.little, "elf"),
     mapping,
     entries,
-    directory.bits,
+    directory,
   );
   const steps = readAdmittedDynamicTables(
     bytes.length,
@@ -412,14 +417,16 @@ export const readElfDynamicExportTablesFromReader = async (
   const gnu = entries.get(DT_GNU_HASH);
   let classicCount: number | null = null;
   if (hash !== undefined) {
+    const hashEntry = elfHashEntryLayout(directory);
+    const headerBytes = 2 * hashEntry.bytes;
     let headerAt = -1;
     try {
-      headerAt = mapping.offset(hash, 8);
+      headerAt = mapping.offset(hash, headerBytes);
     } catch (cause) {
       if (!(cause instanceof BinaryFormatFailure)) throw cause;
     }
     const headerBuf =
-      headerAt < 0 ? Buffer.alloc(0) : await readRange(headerAt, 8);
+      headerAt < 0 ? Buffer.alloc(0) : await readRange(headerAt, headerBytes);
     const headerReader = new BinaryReader(headerBuf, directory.little, "elf");
     const readHashWord: ElfHashWordReader = (relative) => {
       try {
@@ -433,7 +440,7 @@ export const readElfDynamicExportTablesFromReader = async (
       }
     };
     classicCount = admitCount(
-      readElfHashSymbolCount(readHashWord, MAX_NATIVE_EXPORT_ROWS),
+      readElfHashSymbolCount(readHashWord, MAX_NATIVE_EXPORT_ROWS, hashEntry),
     );
   }
   let gnuCount: number | null = null;

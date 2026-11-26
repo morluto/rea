@@ -254,10 +254,16 @@ const verdefRecord = (
   return bytes;
 };
 
-const sysvHash = (symbolCount: number, little: boolean): Buffer => {
-  const bytes = Buffer.alloc(8 + 4 + 4 * symbolCount);
-  write32(bytes, 0, 1, little);
-  write32(bytes, 4, symbolCount, little);
+/** 64-bit s390x and Alpha store each DT_HASH entry in eight bytes. */
+const sysvHash = (
+  symbolCount: number,
+  little: boolean,
+  entryBytes: 4 | 8,
+): Buffer => {
+  const bytes = Buffer.alloc(entryBytes * (3 + symbolCount));
+  const low = entryBytes === 8 && !little ? 4 : 0;
+  write32(bytes, low, 1, little);
+  write32(bytes, entryBytes + low, symbolCount, little);
   return bytes;
 };
 
@@ -569,7 +575,15 @@ const buildDependencyTables = (config: FixtureConfig): DependencyTables => {
     dynstrBytes: dynstr.bytes({ dropLastNul: config.truncateDynstr }),
     dynsym: Buffer.concat(symbols),
     versym,
-    hash: config.omitHash ? Buffer.alloc(0) : sysvHash(symbols.length, little),
+    hash: config.omitHash
+      ? Buffer.alloc(0)
+      : sysvHash(
+          symbols.length,
+          little,
+          bits === 64 && (config.machine === 22 || config.machine === 0x9026)
+            ? 8
+            : 4,
+        ),
     gnuHashBytes: config.gnuHash
       ? gnuHashTable(
           symbols.length,

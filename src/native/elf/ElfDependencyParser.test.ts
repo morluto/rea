@@ -561,6 +561,29 @@ it("keeps the symbol section when the dynamic hash count is only file-backed", a
   }
 });
 
+it.each([
+  { machine: 22, little: false },
+  { machine: 0x9026, little: true },
+] as const)(
+  "reads eight-byte DT_HASH entries for 64-bit machine $machine",
+  async ({ machine, little }) => {
+    for (const stripped of [false, true]) {
+      const report = await parse(
+        elfDependencyFixture({ machine, little, stripped }),
+      );
+      expect(report.issues).toEqual([]);
+      expect(report.coverage.status).toBe("complete");
+      expect(report.imports.map((entry) => entry.name)).toEqual([
+        "printf",
+        "memcpy",
+        "_ZSt4cout",
+        "abort",
+        "_exit",
+      ]);
+    }
+  },
+);
+
 it("counts stripped dynsym rows from DT_GNU_HASH when DT_HASH is absent", async () => {
   const report = await parse(
     elfDependencyFixture({ stripped: true, omitHash: true, gnuHash: true }),

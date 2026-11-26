@@ -25,6 +25,8 @@ describe("ELF exports declared by PT_DYNAMIC", () => {
     { bits: 32, little: false, hash: "sysv" },
     { bits: 64, little: true, hash: "gnu" },
     { bits: 64, little: false, hash: "both" },
+    { bits: 64, little: false, hash: "both", machine: 22 },
+    { bits: 64, little: true, hash: "sysv", machine: 0x9026 },
   ] as const)(
     "enumerates $bits-bit exports with $hash hashes without section headers",
     (encoding) => {
