@@ -270,10 +270,11 @@ it.each([
 });
 
 it("ignores a prototype setter installed after the TLS call", () => {
+  // A reusable function could have installed the setter in an earlier call.
   expect(
-    acquisitionsFor(
-      `tls.connect(443, { path: null, socket: null, port: -1 }); ${inheritedPortSetter}`,
-    ),
+    analyzeJavaScriptSemantics(`import tls from "node:tls";
+      tls.connect(443, { path: null, socket: null, port: -1 });
+      ${inheritedPortSetter}`).resourceOperations,
   ).toEqual([]);
 });
 
