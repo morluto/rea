@@ -29,7 +29,10 @@ import {
   type InspectRustBinaryInput,
   type RustBinary,
 } from "../domain/rust/rustBinary.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import {
+  resolveRustDependencyBudgets,
+  rustDependencyParameterLimit,
+} from "../domain/rust/rustDependencyBudget.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   readRustBinaryImageFromHandle,
@@ -120,12 +123,14 @@ export class RustBinaryProvider implements RustBinaryPort {
               handle,
               input.architecture,
             );
+            const dependencyBudgets = resolveRustDependencyBudgets(input);
             const image = inFile(
               await readRustBinaryImageFromHandle(
                 selected.source,
                 input.max_rustc_hashes,
                 limits.output_bytes,
                 () => yieldArtifactRead(options?.signal),
+                dependencyBudgets,
                 input.max_structure_bytes,
                 input.max_wasm_sections,
               ),
@@ -150,10 +155,11 @@ export class RustBinaryProvider implements RustBinaryPort {
               limitations: [
                 ...limitationsFor(
                   image,
+                  dependencyBudgets,
                   input.max_wasm_sections ??
                     RUST_WASM_SECTION_BUDGET.default_value,
                 ),
-                `Selected producer_limits.input_bytes=${String(limits.input_bytes)} and output_bytes=${String(limits.output_bytes)} bytes; compressed/inflated dependency parser limits remain independent.`,
+                `Selected producer_limits.input_bytes=${String(limits.input_bytes)} and output_bytes=${String(limits.output_bytes)} bytes; max_compressed_dependency_bytes, max_inflated_dependency_bytes and max_dependency_inflate_ratio remain independent.`,
                 ...selected.limitations,
               ],
             };
@@ -227,10 +233,14 @@ const outputLimit = (path: string, maxOutputBytes: number) =>
   );
 
 /** Resource-guard guidance delivered with every Rust inspection report. */
-const RUST_RESOURCE_GUARD_LIMITATION = `Default input and complete-report admission are ${String(RUST_PRODUCER_DEFAULTS.input_bytes)} and ${String(RUST_PRODUCER_DEFAULTS.output_bytes)} bytes; producer_limits.input_bytes/output_bytes select larger or smaller values for the next call without restart. Independent parser guards bound the compressed dependency stream to 1 MiB and inflated JSON to the smaller of 8 MiB and 64 times the consumed compressed-stream length. Report admission applies before package schema cloning, graph objects, or reverse-edge allocation.`;
+const resourceGuardLimitation = (
+  budgets: ReturnType<typeof resolveRustDependencyBudgets>,
+): string =>
+  `Default input and complete-report admission are ${String(RUST_PRODUCER_DEFAULTS.input_bytes)} and ${String(RUST_PRODUCER_DEFAULTS.output_bytes)} bytes; producer_limits.input_bytes/output_bytes select larger or smaller values for the next call without restart. max_compressed_dependency_bytes=${String(budgets.compressedBytes)} bounds the compressed dependency stream. Inflated JSON is bounded by the smaller of max_inflated_dependency_bytes=${String(budgets.inflatedBytes)} and max_dependency_inflate_ratio=${String(budgets.inflateRatio)} times the consumed compressed-stream length. Report admission applies before package schema cloning, graph objects, or reverse-edge allocation.`;
 
 const limitationsFor = (
   image: RustBinaryImage,
+  budgets: ReturnType<typeof resolveRustDependencyBudgets>,
   maxWasmSections: number,
 ): string[] => [
   "Embedded dependency metadata is file content. It does not authenticate package names, versions, sources, or the compiler that produced the binary.",
@@ -240,7 +250,7 @@ const limitationsFor = (
         `WebAssembly declares no container word size, so bits is null. Memory address types were not inspected. At most ${String(maxWasmSections)} section payloads (max_wasm_sections) are examined.`,
       ]
     : []),
-  RUST_RESOURCE_GUARD_LIMITATION,
+  resourceGuardLimitation(budgets),
   ...(image.section_names_limitation === undefined
     ? []
     : [image.section_names_limitation]),
@@ -408,18 +418,17 @@ const failureFor = (
                 RUST_PRODUCER_DEFAULTS.output_bytes,
               ),
             });
-          return parseLimitConstraint(OPERATION, "memory", failure, {
-            path,
-            legacyMaximumKey: "maximum_bytes",
-            ...fixedAllowanceOptions(
-              "This Rust dependency parser allowance",
-              "parser",
-              {
-                limit: maximum,
-                unit: "bytes",
-              },
-            ),
-          });
+          const dependencyLimit = rustDependencyParameterLimit(
+            name,
+            maximum,
+            failure.failure.limit.required,
+          );
+          if (dependencyLimit !== undefined)
+            return parseLimitConstraint(OPERATION, "memory", failure, {
+              path,
+              retryable: false,
+              limit: dependencyLimit,
+            });
         }
         if (isParseLimit(failure, WASM_FORMAT))
           return parseLimitConstraint(OPERATION, "cpu", failure, {

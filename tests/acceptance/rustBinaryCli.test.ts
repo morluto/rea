@@ -374,8 +374,8 @@ cliTest(
     // inflate guidance names.
     expect(evidence.limitations).toEqual(
       expect.arrayContaining([
-        expect.stringMatching(
-          /inflated JSON.*64 times the consumed compressed-stream length/iu,
+        expect.stringContaining(
+          "max_dependency_inflate_ratio=64 times the consumed compressed-stream length",
         ),
       ]),
     );
@@ -415,22 +415,58 @@ cliTest(
     padRustPeDependencySection(bytes, alignedSize);
     await writeFile(path, bytes);
 
+    const requiredRatio = Math.ceil(document.length / compressed.length);
+    const limit = {
+      control_kind: "parameter",
+      parameter: "max_dependency_inflate_ratio",
+      effective_value: 64,
+      unit: "count",
+      minimum: 1,
+      maximum: Number.MAX_SAFE_INTEGER,
+      default_value: 64,
+      applies_at: "next_call",
+      required_value: requiredRatio,
+    };
+    const refusal = {
+      kind: "adjustable_budget",
+      operation: "inspect_rust_binary",
+      control: "max_dependency_inflate_ratio",
+      effective_value: 64,
+      unit: "count",
+      range: { minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+      default_value: 64,
+      required_value: requiredRatio,
+    };
     const expectedFailure = {
       code: "resource_constraint",
       retryable: false,
       details: {
         operation: "inspect_rust_binary",
         resource: "memory",
-        reported_limits: { maximum_bytes: compressed.length * 64 },
+        reported_limits: {
+          boundary: "max_dependency_inflate_ratio",
+          maximum: 64,
+          required: requiredRatio,
+        },
+        limit,
+        refusal,
       },
     };
     const result = await cli.run({
       arguments: ["inspect-rust-binary", path, "--json"],
     });
     expect(result.exitCode).toBe(1);
-    expect(result.json).toMatchObject(expectedFailure);
+    expect(result.json).toMatchObject({
+      ...expectedFailure,
+      details: {
+        ...expectedFailure.details,
+        limit: { ...limit, cli_flag: "--max-dependency-inflate-ratio" },
+      },
+    });
     const response = await call("inspect_rust_binary", { path });
-    expect(parseMcpToolError(response).error).toMatchObject(expectedFailure);
+    const mcpError = parseMcpToolError(response).error;
+    expect(mcpError).toMatchObject(expectedFailure);
+    expect(mcpError.details?.limit).not.toHaveProperty("cli_flag");
     await client.ping();
   },
 );
