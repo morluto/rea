@@ -97,9 +97,14 @@ export const machoSliceSchema = z.strictObject({
   fat_alignment_exponent: z.int().nonnegative().nullable(),
   file_type: z.enum(["execute", "dylib", "bundle", "other"]),
   file_type_code: z.int().nonnegative(),
-  /** Raw LC_BUILD_VERSION platform number; null means no such command was observed. */
+  /**
+   * The one build platform the image declares. Null when no
+   * LC_BUILD_VERSION/version-min command was observed, or when the
+   * declarations name more than one platform (for example a zippered macOS
+   * and macCatalyst image); `platforms` distinguishes the two.
+   */
   platform: z.int().nonnegative().nullable(),
-  /** Every distinct build platform declared by LC_BUILD_VERSION/version-min commands. */
+  /** Each LC_BUILD_VERSION/version-min platform declaration, in load-command order. */
   platforms: z.array(z.int().nonnegative()),
   install_name: z.string().nullable(),
   dependencies: z.array(dependencySchema),
