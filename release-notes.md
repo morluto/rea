@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **native:** inspect_devicetree's decoded-representation refusal reports reported_limits.boundary "max_decoded_bytes" with details.limit, instead of "decoded_bytes".
 * **limits:** the SQLite snapshot refusal reports details.limit for producer_limits.input_bytes, and the SQLite column and reply refusals carry a fixed_ceiling refusal in place of their authored remediation.
 * **limits:** per-call parameter refusals gain `details.refusal`, and their `remediation.action` wording changes to the generated form.
 * **trace:** PlaywrightTracePort.inspect takes the resolved limits, and trace archive and nesting refusals report details.limit instead of a fixed_ceiling refusal.
@@ -381,6 +382,7 @@
 * **native:** preserve Apple tool diagnostics across macOS versions ([a9d1031](https://github.com/morluto/rea/commit/a9d103167484234027415cf7816f4bd8335bf8a7))
 * **native:** preserve bundle provenance in partial reports ([9ffaca5](https://github.com/morluto/rea/commit/9ffaca54477d33c0f41f7042688b8e11f08d25b0))
 * **native:** refresh bundle provenance on reopen ([e35780d](https://github.com/morluto/rea/commit/e35780d042a9428c0a619ec42cf11794f5d7525c))
+* **native:** report details.limit for native reader per-call budgets ([#14622](https://github.com/morluto/rea/issues/14622)) ([50d13f9](https://github.com/morluto/rea/commit/50d13f9f08dd4f026f190b2ee27c885f95b6e0b5))
 * **native:** require dyld's __restrict section before reporting a restricted Mach-O ([#13024](https://github.com/morluto/rea/issues/13024)) ([7a11884](https://github.com/morluto/rea/commit/7a11884c0897062867e62c0c6d1079342ef8d861))
 * **native:** resolve name and import selectors through one owner ([#14250](https://github.com/morluto/rea/issues/14250)) ([cab39c6](https://github.com/morluto/rea/commit/cab39c640a50726d7766f202046a403ba8e72fff))
 * **native:** validate SHT_GNU_HASH bounds and fall back to DT_GNU_HASH ([#13713](https://github.com/morluto/rea/issues/13713)) ([e6b30f9](https://github.com/morluto/rea/commit/e6b30f945ec214e05ca13c36874e155737a6d4cb))
