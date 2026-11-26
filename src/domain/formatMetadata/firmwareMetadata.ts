@@ -567,13 +567,13 @@ export const qualcommMbnMetadataSchema = z.strictObject({
   header: z
     .strictObject({
       version: z.union([z.literal(3), z.literal(5), z.literal(6)]),
-      header_bytes: z.union([z.literal(40), z.literal(80)]),
+      header_bytes: z.union([z.literal(40), z.literal(48), z.literal(80)]),
       image_id: uint32,
-      image_source: uint32,
+      image_source: uint32.nullable(),
       image_source_name: z
         .enum(["nand", "nor", "emmc", "emmc-user"])
         .nullable(),
-      image_destination: uint32,
+      image_destination: uint32.nullable(),
       image_size: uint32,
       code_size: uint32,
       signature_pointer: uint32,
@@ -581,14 +581,16 @@ export const qualcommMbnMetadataSchema = z.strictObject({
       certificate_chain_pointer: uint32,
       certificate_chain_size: uint32,
       metadata0_size: uint32.nullable(),
-      metadata0_pointer: uint32.nullable(),
+      qti_signature_size: uint32.nullable(),
       metadata1_size: uint32.nullable(),
-      metadata1_pointer: uint32.nullable(),
+      qti_certificate_chain_size: uint32.nullable(),
       ranges: z.strictObject({
         header: qualcommMbnRangeSchema,
         code: qualcommMbnRangeSchema,
         signature: qualcommMbnRangeSchema,
         certificate_chain: qualcommMbnRangeSchema,
+        qti_signature: qualcommMbnRangeSchema.nullable(),
+        qti_certificate_chain: qualcommMbnRangeSchema.nullable(),
         metadata0: qualcommMbnRangeSchema.nullable(),
         metadata1: qualcommMbnRangeSchema.nullable(),
       }),

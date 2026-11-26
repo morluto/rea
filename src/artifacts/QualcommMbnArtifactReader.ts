@@ -73,24 +73,11 @@ export class QualcommMbnArtifactReader extends PositionalArtifactReader<Qualcomm
         "Qualcomm MBN header: no program header declares a Qualcomm hash segment",
         { offset: 0, field: "header" },
       );
-    const header =
-      inspection.kind === "legacy"
-        ? inspection
-        : inspection.facet === null
-          ? null
-          : inspection.facet;
-    const entries =
-      header === null
-        ? []
-        : qualcommMbnStoredRegions(
-            header.ranges,
-            inspection.kind,
-            fileSize,
-          ).map(regionEntry);
+    const entries = qualcommMbnStoredRegions(inspection).map(regionEntry);
     return {
       entries,
       coverage: {
-        status: qualcommMbnInventoryCoverage(inspection, fileSize),
+        status: qualcommMbnInventoryCoverage(inspection),
         limitations: [...inspection.limitations],
       },
       formatMetadata: metadataOf(inspection),
@@ -142,14 +129,20 @@ const headerMetadata = (
   certificate_chain_pointer: header.certificateChainPointer,
   certificate_chain_size: header.certificateChainSize,
   metadata0_size: header.metadata0Size,
-  metadata0_pointer: header.metadata0Pointer,
+  qti_signature_size: header.qtiSignatureSize,
   metadata1_size: header.metadata1Size,
-  metadata1_pointer: header.metadata1Pointer,
+  qti_certificate_chain_size: header.qtiCertificateChainSize,
   ranges: {
     header: rangeOf(ranges.header),
     code: rangeOf(ranges.code),
     signature: rangeOf(ranges.signature),
     certificate_chain: rangeOf(ranges.certificateChain),
+    qti_signature:
+      ranges.qtiSignature === null ? null : rangeOf(ranges.qtiSignature),
+    qti_certificate_chain:
+      ranges.qtiCertificateChain === null
+        ? null
+        : rangeOf(ranges.qtiCertificateChain),
     metadata0: ranges.metadata0 === null ? null : rangeOf(ranges.metadata0),
     metadata1: ranges.metadata1 === null ? null : rangeOf(ranges.metadata1),
   },

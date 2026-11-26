@@ -8,6 +8,7 @@ import {
 import {
   inspectQualcommMbnImage,
   qualcommMbnInventoryCoverage,
+  qualcommMbnStoredRegions,
 } from "./qualcommMbnImage.js";
 
 const HASH_FLAGS = 0x0220_0000;
@@ -97,9 +98,7 @@ describe("hostile ELF program header tables", () => {
       ],
     });
     if (inspection.kind !== "elf") throw new Error("not elf");
-    expect(qualcommMbnInventoryCoverage(inspection, bytes.length)).toBe(
-      "unknown",
-    );
+    expect(qualcommMbnInventoryCoverage(inspection)).toBe("unknown");
   });
 
   it("keeps a hash count that disagrees with the program headers unknown", () => {
@@ -116,9 +115,7 @@ describe("hostile ELF program header tables", () => {
       limitations: ["hash count 5 does not equal the 3 program headers"],
     });
     if (inspection.kind !== "elf") throw new Error("not elf");
-    expect(qualcommMbnInventoryCoverage(inspection, bytes.length)).toBe(
-      "unknown",
-    );
+    expect(qualcommMbnInventoryCoverage(inspection)).toBe("unknown");
   });
 });
 
@@ -130,27 +127,91 @@ describe("hash segment headers cut short", () => {
 
   it("names the segment size when p_filesz ends the header", () => {
     const bytes = patched(image, (copy) =>
-      copy.writeUInt32LE(60, hashRow + 16),
+      copy.writeUInt32LE(40, hashRow + 16),
     );
     expect(inspectQualcommMbnImage(bytes)).toMatchObject({
       kind: "elf",
-      hashSegment: { programHeaderIndex: 1, offset: hashOffset, fileSize: 60 },
+      hashSegment: { programHeaderIndex: 1, offset: hashOffset, fileSize: 40 },
       facet: null,
       limitations: [
-        "hash segment version 6 needs 80 header bytes; program header 1 declares 60 file bytes",
+        "hash segment version 6 needs 48 header bytes; program header 1 declares 40 file bytes",
       ],
     });
   });
 
   it("names the file end when the file ends the header", () => {
-    const bytes = image.subarray(0, hashOffset + 60);
+    const bytes = image.subarray(0, hashOffset + 40);
     expect(inspectQualcommMbnImage(bytes)).toMatchObject({
       kind: "elf",
       hashSegment: { programHeaderIndex: 1, offset: hashOffset },
       facet: null,
       limitations: [
-        `hash segment version 6 needs 80 header bytes; the ${String(bytes.length)}-byte file ends 60 bytes after offset ${String(hashOffset)}`,
+        `hash segment version 6 needs 48 header bytes; the ${String(bytes.length)}-byte file ends 40 bytes after offset ${String(hashOffset)}`,
       ],
     });
   });
+});
+
+it("bounds v5 payloads by p_filesz even when the bytes are present in the file", () => {
+  const image = mbnElfWithHashSegment({ version: 5 });
+  const control = inspectQualcommMbnImage(image);
+  expect(control).toMatchObject({
+    kind: "elf",
+    facet: { hashCount: 3 },
+    limitations: [],
+  });
+  const bytes = patched(image, (copy) =>
+    copy.writeUInt32LE(40, PHOFF + PHENT + 16),
+  );
+  const inspection = inspectQualcommMbnImage(bytes);
+  expect(inspection).toMatchObject({
+    kind: "elf",
+    hashSegment: { offset: 160, fileSize: 40 },
+    facet: { header: { version: 5, headerBytes: 40 }, segmentHashes: [] },
+    limitations: [
+      "image range 160+488 exceeds hash segment range 160+40 (p_filesz)",
+      "hash table range 200+96 exceeds hash segment range 160+40 (p_filesz)",
+      "signature range 296+256 exceeds hash segment range 160+40 (p_filesz)",
+      "certificate chain range 552+96 exceeds hash segment range 160+40 (p_filesz)",
+    ],
+  });
+  if (inspection.kind !== "elf") throw new Error("not elf");
+  expect(qualcommMbnStoredRegions(inspection)).toEqual([
+    { name: "header", range: { offset: 160, length: 40 } },
+  ]);
+  expect(qualcommMbnInventoryCoverage(inspection)).toBe("unknown");
+});
+
+it("reports v6 metadata that crosses the ELF hash segment boundary", () => {
+  const data = mbnLegacyImage({
+    version: 6,
+    code: Buffer.alloc(32),
+    signature: Buffer.alloc(0),
+    certificateChain: Buffer.alloc(0),
+    metadata0: Buffer.alloc(8),
+    metadata1: Buffer.alloc(12),
+  });
+  const image = mbnElfImage([{ type: 0, flags: HASH_FLAGS, data }]);
+  const control = inspectQualcommMbnImage(image);
+  expect(control).toMatchObject({
+    kind: "elf",
+    facet: { ranges: { code: { offset: 164, length: 32 } } },
+    limitations: [],
+  });
+  const bytes = patched(image, (copy) => copy.writeUInt32LE(56, PHOFF + 16));
+  const inspection = inspectQualcommMbnImage(bytes);
+  expect(inspection).toMatchObject({
+    kind: "elf",
+    facet: { header: { version: 6 }, segmentHashes: [] },
+    limitations: [
+      "image range 96+100 exceeds hash segment range 96+56 (p_filesz)",
+      "metadata 1 range 152+12 exceeds hash segment range 96+56 (p_filesz)",
+      "hash table range 164+32 exceeds hash segment range 96+56 (p_filesz)",
+    ],
+  });
+  if (inspection.kind !== "elf") throw new Error("not elf");
+  expect(qualcommMbnStoredRegions(inspection)).toEqual([
+    { name: "header", range: { offset: 96, length: 48 } },
+    { name: "metadata0", range: { offset: 144, length: 8 } },
+  ]);
 });

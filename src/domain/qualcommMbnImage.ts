@@ -10,8 +10,7 @@ import { CoverageAccumulator } from "./coverageAccumulator.js";
 /**
  * Qualcomm MBN header and ELF hash-segment facts.
  *
- * Legacy images use the little-endian boot image header: 40 bytes for
- * version 3 and 80 bytes for versions 5 and 6. Those words stay
+ * MBN headers are little-endian: 80 bytes for v3, 40 for v5 and 48 for v6. Those words stay
  * little-endian even when a surrounding ELF image is big-endian. An ELF
  * modem image keeps its ELF classification. A program header whose
  * `p_flags` bits 24-26 equal 2 (Linux `QCOM_MDT_TYPE_HASH`) carries the
@@ -23,7 +22,7 @@ import { CoverageAccumulator } from "./coverageAccumulator.js";
  * are then limitations, but a header-sized pattern with no code bytes behind
  * it is not an image. An already located ELF hash segment does not need that
  * recognition gate, so a readable header is decoded even when its hash table
- * runs past the file end; the truncated table is reported as a limitation and
+ * crosses the file or segment bound; the truncated table is reported as a limitation and
  * omitted from stored regions.
  *
  * `e_phnum` 65535 is the ELF extended numbering sentinel. This parser does
@@ -32,8 +31,8 @@ import { CoverageAccumulator } from "./coverageAccumulator.js";
  * the file. That extent is the format's own bound, not a separate byte budget.
  */
 
-const HEADER_V3_BYTES = 40;
-const HEADER_V5_BYTES = 80;
+const HEADER_BYTES = { 3: 80, 5: 40, 6: 48 } as const;
+export const QUALCOMM_MBN_MAX_HEADER_BYTES = HEADER_BYTES[3];
 const HASH_SEGMENT_TYPE = 2;
 const EXTENDED_PROGRAM_COUNT = 0xffff;
 const UINT32_MAX = 0xffff_ffff;
@@ -43,7 +42,7 @@ const IMAGE_SOURCE_NAMES = ["nand", "nor", "emmc", "emmc-user"] as const;
 
 type ImageSourceName = (typeof IMAGE_SOURCE_NAMES)[number];
 type MbnVersion = 3 | 5 | 6;
-type HeaderBytes = 40 | 80;
+type HeaderBytes = (typeof HEADER_BYTES)[MbnVersion];
 type HashSize = (typeof HASH_SIZES)[number];
 
 export interface QualcommMbnByteRange {
@@ -54,9 +53,9 @@ export interface QualcommMbnByteRange {
 export interface QualcommMbnHeader {
   readonly imageId: number;
   readonly version: MbnVersion;
-  readonly imageSource: number;
+  readonly imageSource: number | null;
   readonly imageSourceName: ImageSourceName | null;
-  readonly imageDestination: number;
+  readonly imageDestination: number | null;
   readonly imageSize: number;
   readonly codeSize: number;
   readonly signaturePointer: number;
@@ -64,9 +63,9 @@ export interface QualcommMbnHeader {
   readonly certificateChainPointer: number;
   readonly certificateChainSize: number;
   readonly metadata0Size: number | null;
-  readonly metadata0Pointer: number | null;
+  readonly qtiSignatureSize: number | null;
   readonly metadata1Size: number | null;
-  readonly metadata1Pointer: number | null;
+  readonly qtiCertificateChainSize: number | null;
   readonly headerBytes: HeaderBytes;
 }
 
@@ -77,6 +76,8 @@ export interface QualcommMbnRanges {
   readonly certificateChain: QualcommMbnByteRange;
   readonly metadata0: QualcommMbnByteRange | null;
   readonly metadata1: QualcommMbnByteRange | null;
+  readonly qtiSignature: QualcommMbnByteRange | null;
+  readonly qtiCertificateChain: QualcommMbnByteRange | null;
 }
 
 export interface QualcommMbnSegmentHash {
@@ -99,6 +100,7 @@ export interface QualcommMbnHashSegment {
 export interface QualcommMbnFacet {
   readonly header: QualcommMbnHeader;
   readonly ranges: QualcommMbnRanges;
+  readonly readableEnd: number;
   readonly hashSize: HashSize | null;
   readonly hashCount: number | null;
   readonly segmentHashes: readonly QualcommMbnSegmentHash[];
@@ -108,6 +110,7 @@ export interface QualcommMbnLegacyInspection {
   readonly kind: "legacy";
   readonly header: QualcommMbnHeader;
   readonly ranges: QualcommMbnRanges;
+  readonly readableEnd: number;
   readonly limitations: readonly string[];
 }
 
@@ -140,41 +143,7 @@ export interface QualcommMbnByteSpan {
   readonly length: number;
 }
 
-interface RawHeader {
-  readonly imageId: number;
-  readonly version: MbnVersion;
-  readonly imageSource: number;
-  readonly imageDestination: number;
-  readonly imageSize: number;
-  readonly codeSize: number;
-  readonly signaturePointer: number;
-  readonly signatureSize: number;
-  readonly certificateChainPointer: number;
-  readonly certificateChainSize: number;
-  readonly metadata0Size: number;
-  readonly metadata0Pointer: number;
-  readonly metadata1Size: number;
-  readonly metadata1Pointer: number;
-  readonly headerBytes: HeaderBytes;
-  readonly reservedNonZero: boolean;
-}
-
-interface RegionSizes {
-  readonly headerBytes: HeaderBytes;
-  readonly code: number;
-  readonly signature: number;
-  readonly certificate: number;
-  readonly metadata0: number;
-  readonly metadata1: number;
-}
-
-interface RegionStarts {
-  readonly code: number;
-  readonly signature: number;
-  readonly certificate: number;
-  readonly metadata0: number;
-  readonly metadata1: number;
-}
+type RawHeader = Omit<QualcommMbnHeader, "imageSourceName">;
 
 interface ProgramRow {
   readonly index: number;
@@ -190,9 +159,10 @@ type ParsedHeader =
       readonly kind: "header";
       readonly header: QualcommMbnHeader;
       readonly ranges: QualcommMbnRanges;
+      readonly readableEnd: number;
       readonly limitations: readonly string[];
     }
-  | { readonly kind: "truncated-version"; readonly version: 5 | 6 }
+  | { readonly kind: "truncated-version"; readonly version: MbnVersion }
   | { readonly kind: "rejected" };
 
 const sumBounded = (
@@ -218,15 +188,12 @@ const rangeLimitation = (
   role: string,
   offset: number,
   length: number,
-  fileSize: number,
+  boundDescription: string,
 ): string =>
-  `${role} range ${String(offset)}+${String(length)} exceeds the ${String(fileSize)}-byte file`;
+  `${role} range ${String(offset)}+${String(length)} exceeds ${boundDescription}`;
 
-const exceedsFile = (
-  offset: number,
-  length: number,
-  fileSize: number,
-): boolean => length > 0 && (offset > fileSize || length > fileSize - offset);
+const exceedsEnd = (offset: number, length: number, end: number): boolean =>
+  length > 0 && (offset > end || length > end - offset);
 
 const imageSourceName = (value: number): ImageSourceName | null =>
   IMAGE_SOURCE_NAMES[value] ?? null;
@@ -241,226 +208,138 @@ const unrecognized = (detail: string): QualcommMbnInspection => ({
   detail,
 });
 
-const regionStarts = (
-  origin: number,
-  includeHeader: boolean,
-  sizes: RegionSizes,
-  add: (values: readonly number[]) => number | null,
-): RegionStarts | null => {
-  const code = includeHeader ? add([origin, sizes.headerBytes]) : origin;
-  if (code === null) return null;
-  const signature = add([code, sizes.code]);
-  if (signature === null) return null;
-  const certificate = add([signature, sizes.signature]);
-  if (certificate === null) return null;
-  const metadata0 = add([certificate, sizes.certificate]);
-  if (metadata0 === null) return null;
-  const metadata1 = add([metadata0, sizes.metadata0]);
-  if (metadata1 === null) return null;
-  return { code, signature, certificate, metadata0, metadata1 };
-};
+const pointerOk = (
+  range: QualcommMbnByteRange,
+  pointer: number,
+  at: number,
+): boolean => pointer === at || (range.length === 0 && pointer === 0);
 
-const sizesOf = (header: RawHeader): RegionSizes => ({
-  headerBytes: header.headerBytes,
-  code: header.codeSize,
-  signature: header.signatureSize,
-  certificate: header.certificateChainSize,
-  metadata0: header.metadata0Size,
-  metadata1: header.metadata1Size,
-});
-
-const pointerOk = (size: number, pointer: number, at: number): boolean =>
-  size === 0 ? pointer === 0 || pointer === at : pointer === at;
-
-const matchesLayout = (header: RawHeader, starts: RegionStarts): boolean => {
-  if (
-    !pointerOk(header.signatureSize, header.signaturePointer, starts.signature)
-  )
-    return false;
-  if (
-    !pointerOk(
-      header.certificateChainSize,
-      header.certificateChainPointer,
-      starts.certificate,
-    )
-  )
-    return false;
-  if (header.signatureSize > 0 && header.certificateChainSize > 0) {
-    const next = sumUint32([header.signaturePointer, header.signatureSize]);
-    if (next !== header.certificateChainPointer) return false;
-  }
-  if (header.headerBytes === HEADER_V3_BYTES) return true;
-  return (
-    pointerOk(
-      header.metadata0Size,
-      header.metadata0Pointer,
-      starts.metadata0,
-    ) &&
-    pointerOk(header.metadata1Size, header.metadata1Pointer, starts.metadata1)
-  );
-};
-
-/** File offsets, header-relative offsets, or virtual addresses at image_destination. */
-const pointersPlausible = (header: RawHeader, base: number): boolean => {
-  const sizes = sizesOf(header);
-  const candidates = [
-    regionStarts(base, true, sizes, sumUint32),
-    regionStarts(0, true, sizes, sumUint32),
-    regionStarts(header.imageDestination, false, sizes, sumUint32),
-    regionStarts(header.imageDestination, true, sizes, sumUint32),
-  ];
-  return candidates.some(
-    (starts) => starts !== null && matchesLayout(header, starts),
-  );
+/** V3 pointers may use file, header-relative, or image destination addresses. */
+const v3PointersPlausible = (
+  raw: RawHeader,
+  ranges: QualcommMbnRanges,
+): boolean => {
+  const { code, signature, certificateChain, header } = ranges;
+  const relative = signature.offset - header.offset;
+  const destination = raw.imageDestination ?? 0;
+  return [
+    signature.offset,
+    relative,
+    destination + (signature.offset - code.offset),
+    destination + relative,
+  ].some((start) => {
+    const cert = sumUint32([start, signature.length]);
+    return (
+      cert !== null &&
+      pointerOk(signature, raw.signaturePointer, start) &&
+      pointerOk(certificateChain, raw.certificateChainPointer, cert)
+    );
+  });
 };
 
 const readRawHeader = (
   bytes: Buffer,
-): RawHeader | { readonly truncatedVersion: 5 | 6 } | null => {
+): RawHeader | { readonly truncatedVersion: MbnVersion } | null => {
   if (bytes.length < 8) return null;
   const reader = new BinaryReader(bytes, true, "qualcomm-mbn");
   const version = reader.u32(4);
   if (version !== 3 && version !== 5 && version !== 6) return null;
-  const headerBytes: HeaderBytes =
-    version === 3 ? HEADER_V3_BYTES : HEADER_V5_BYTES;
-  if (bytes.length < headerBytes)
-    return version === 3 ? null : { truncatedVersion: version };
-  let reservedNonZero = false;
-  if (headerBytes === HEADER_V5_BYTES) {
-    for (let offset = 56; offset < HEADER_V5_BYTES; offset += 4) {
-      if (reader.u32(offset) !== 0) reservedNonZero = true;
-    }
-  }
+  const headerBytes = HEADER_BYTES[version];
+  if (bytes.length < headerBytes) return { truncatedVersion: version };
   return {
     imageId: reader.u32(0),
     version,
-    imageSource: reader.u32(8),
-    imageDestination: reader.u32(12),
+    imageSource: version === 3 ? reader.u32(8) : null,
+    imageDestination: version === 3 ? reader.u32(12) : null,
     imageSize: reader.u32(16),
     codeSize: reader.u32(20),
     signaturePointer: reader.u32(24),
     signatureSize: reader.u32(28),
     certificateChainPointer: reader.u32(32),
     certificateChainSize: reader.u32(36),
-    metadata0Size: headerBytes === HEADER_V5_BYTES ? reader.u32(40) : 0,
-    metadata0Pointer: headerBytes === HEADER_V5_BYTES ? reader.u32(44) : 0,
-    metadata1Size: headerBytes === HEADER_V5_BYTES ? reader.u32(48) : 0,
-    metadata1Pointer: headerBytes === HEADER_V5_BYTES ? reader.u32(52) : 0,
+    metadata0Size: version === 6 ? reader.u32(40) : null,
+    metadata1Size: version === 6 ? reader.u32(44) : null,
+    qtiSignatureSize: version !== 3 ? reader.u32(8) : null,
+    qtiCertificateChainSize: version !== 3 ? reader.u32(12) : null,
     headerBytes,
-    reservedNonZero,
   };
 };
 
-const publicHeader = (raw: RawHeader): QualcommMbnHeader => ({
-  imageId: raw.imageId,
-  version: raw.version,
-  imageSource: raw.imageSource,
-  imageSourceName: imageSourceName(raw.imageSource),
-  imageDestination: raw.imageDestination,
-  imageSize: raw.imageSize,
-  codeSize: raw.codeSize,
-  signaturePointer: raw.signaturePointer,
-  signatureSize: raw.signatureSize,
-  certificateChainPointer: raw.certificateChainPointer,
-  certificateChainSize: raw.certificateChainSize,
-  metadata0Size: raw.headerBytes === HEADER_V5_BYTES ? raw.metadata0Size : null,
-  metadata0Pointer:
-    raw.headerBytes === HEADER_V5_BYTES ? raw.metadata0Pointer : null,
-  metadata1Size: raw.headerBytes === HEADER_V5_BYTES ? raw.metadata1Size : null,
-  metadata1Pointer:
-    raw.headerBytes === HEADER_V5_BYTES ? raw.metadata1Pointer : null,
-  headerBytes: raw.headerBytes,
-});
-
-const fileRanges = (raw: RawHeader, base: number): QualcommMbnRanges | null => {
-  const starts = regionStarts(base, true, sizesOf(raw), sumSafe);
-  if (starts === null) return null;
-  const wide = raw.headerBytes === HEADER_V5_BYTES;
+const fileRanges = (raw: RawHeader, base: number): QualcommMbnRanges => {
+  let offset = base;
+  const next = (length: number): QualcommMbnByteRange => {
+    const range = { offset, length };
+    offset += length;
+    return range;
+  };
+  const optional = (length: number | null): QualcommMbnByteRange | null =>
+    length === null ? null : next(length);
   return {
-    header: { offset: base, length: raw.headerBytes },
-    code: { offset: starts.code, length: raw.codeSize },
-    signature: { offset: starts.signature, length: raw.signatureSize },
-    certificateChain: {
-      offset: starts.certificate,
-      length: raw.certificateChainSize,
-    },
-    metadata0: wide
-      ? { offset: starts.metadata0, length: raw.metadata0Size }
-      : null,
-    metadata1: wide
-      ? { offset: starts.metadata1, length: raw.metadata1Size }
-      : null,
+    header: next(raw.headerBytes),
+    metadata0: optional(raw.metadata0Size),
+    metadata1: optional(raw.metadata1Size),
+    code: next(raw.codeSize),
+    qtiSignature: optional(raw.qtiSignatureSize),
+    qtiCertificateChain: optional(raw.qtiCertificateChainSize),
+    signature: next(raw.signatureSize),
+    certificateChain: next(raw.certificateChainSize),
   };
-};
-
-const rangeLimitations = (
-  raw: RawHeader,
-  ranges: QualcommMbnRanges,
-  fileSize: number,
-  codeRole: "code" | "hash table",
-): string[] => {
-  const limitations: string[] = [];
-  if (raw.reservedNonZero)
-    limitations.push(
-      "MBN header bytes 56-79 are non-zero and were not decoded.",
-    );
-  if (exceedsFile(ranges.header.offset, raw.imageSize, fileSize))
-    limitations.push(
-      rangeLimitation("image", ranges.header.offset, raw.imageSize, fileSize),
-    );
-  const named: readonly (readonly [string, QualcommMbnByteRange | null])[] = [
-    [codeRole, ranges.code],
-    ["signature", ranges.signature],
-    ["certificate chain", ranges.certificateChain],
-    ["metadata 0", ranges.metadata0],
-    ["metadata 1", ranges.metadata1],
-  ];
-  for (const [role, range] of named) {
-    if (range !== null && exceedsFile(range.offset, range.length, fileSize))
-      limitations.push(
-        rangeLimitation(role, range.offset, range.length, fileSize),
-      );
-  }
-  return limitations;
-};
-
-const headerIsPlausible = (raw: RawHeader, base: number): boolean => {
-  if (raw.codeSize === 0 || raw.imageSize === 0) return false;
-  const payload = sumUint32([
-    raw.codeSize,
-    raw.signatureSize,
-    raw.certificateChainSize,
-    raw.metadata0Size,
-    raw.metadata1Size,
-  ]);
-  if (payload === null || payload === 0) return false;
-  return raw.imageSize === payload && pointersPlausible(raw, base);
 };
 
 const decodeMbnHeader = (
   bytes: Buffer,
   base: number,
-  fileSize: number,
+  { end, description }: { readonly end: number; readonly description: string },
   codeRole: "code" | "hash table",
 ): ParsedHeader => {
-  if (!Number.isSafeInteger(fileSize) || fileSize < 0)
-    return { kind: "rejected" };
-  const raw = readRawHeader(bytes);
+  if (!Number.isSafeInteger(end) || base > end) return { kind: "rejected" };
+  const raw = readRawHeader(bytes.subarray(0, end - base));
   if (raw !== null && "truncatedVersion" in raw)
     return { kind: "truncated-version", version: raw.truncatedVersion };
-  if (raw === null || !headerIsPlausible(raw, base))
+  if (raw === null || raw.codeSize === 0) return { kind: "rejected" };
+  const payload = sumUint32([
+    raw.codeSize,
+    raw.signatureSize,
+    raw.certificateChainSize,
+    raw.metadata0Size ?? 0,
+    raw.metadata1Size ?? 0,
+    raw.qtiSignatureSize ?? 0,
+    raw.qtiCertificateChainSize ?? 0,
+  ]);
+  const imageLength = raw.headerBytes + raw.imageSize;
+  if (raw.imageSize !== payload || sumSafe([base, imageLength]) === null)
     return { kind: "rejected" };
   const ranges = fileRanges(raw, base);
-  if (
-    ranges === null ||
-    exceedsFile(ranges.header.offset, ranges.header.length, fileSize)
-  )
+  // V5 and V6 may leave OEM pointer words unused. Stored offsets follow the sizes.
+  if (raw.version === 3 && !v3PointersPlausible(raw, ranges))
     return { kind: "rejected" };
+  const named = [
+    ["image", { offset: base, length: imageLength }],
+    ["metadata 0", ranges.metadata0],
+    ["metadata 1", ranges.metadata1],
+    [codeRole, ranges.code],
+    ["QTI signature", ranges.qtiSignature],
+    ["QTI certificate chain", ranges.qtiCertificateChain],
+    ["qti-signature", ranges.qtiSignature],
+    ["qti-certificate-chain", ranges.qtiCertificateChain],
+    ["signature", ranges.signature],
+    ["certificate chain", ranges.certificateChain],
+  ] as const;
+  const limitations = named.flatMap(([name, range]) =>
+    range !== null && exceedsEnd(range.offset, range.length, end)
+      ? [rangeLimitation(name, range.offset, range.length, description)]
+      : [],
+  );
   return {
     kind: "header",
-    header: publicHeader(raw),
+    header: {
+      ...raw,
+      imageSourceName:
+        raw.imageSource === null ? null : imageSourceName(raw.imageSource),
+    },
     ranges,
-    limitations: rangeLimitations(raw, ranges, fileSize, codeRole),
+    readableEnd: end,
+    limitations,
   };
 };
 
@@ -468,16 +347,22 @@ const inspectLegacy = (
   bytes: Buffer,
   fileSize: number,
 ): QualcommMbnInspection => {
-  const parsed = decodeMbnHeader(bytes, 0, fileSize, "code");
+  const parsed = decodeMbnHeader(
+    bytes,
+    0,
+    { end: fileSize, description: `the ${String(fileSize)}-byte file` },
+    "code",
+  );
   if (
     parsed.kind !== "header" ||
-    exceedsFile(parsed.ranges.code.offset, parsed.ranges.code.length, fileSize)
+    exceedsEnd(parsed.ranges.code.offset, parsed.ranges.code.length, fileSize)
   )
     return unrecognized("bytes are not a Qualcomm MBN header");
   return {
     kind: "legacy",
     header: parsed.header,
     ranges: parsed.ranges,
+    readableEnd: parsed.readableEnd,
     limitations: parsed.limitations,
   };
 };
@@ -666,9 +551,9 @@ const hashHeaderRefusal = (
   if (row.fileSize === 0)
     return `hash segment program header ${String(row.index)} declares no file bytes`;
   const remaining = row.fileOffset > fileSize ? 0 : fileSize - row.fileOffset;
-  if (remaining < HEADER_V3_BYTES)
+  if (remaining < HEADER_BYTES[5])
     return `hash segment program header ${String(row.index)} has ${String(remaining)} bytes left in the ${String(fileSize)}-byte file, fewer than 40`;
-  if (Math.min(row.fileSize, remaining) < HEADER_V3_BYTES)
+  if (Math.min(row.fileSize, remaining) < HEADER_BYTES[5])
     return `hash segment program header ${String(row.index)} declares ${String(row.fileSize)} file bytes, fewer than a 40-byte MBN header`;
   return null;
 };
@@ -717,7 +602,11 @@ export const qualcommMbnHashHeaderSpan = (
       null,
       elfFindings(extras.limitations, extras.furtherHashSegments),
     );
-  const length = Math.min(HEADER_V5_BYTES, fileLength, fileSize - offset);
+  const length = Math.min(
+    QUALCOMM_MBN_MAX_HEADER_BYTES,
+    fileLength,
+    fileSize - offset,
+  );
   return { kind: "span", offset, length };
 };
 
@@ -787,13 +676,19 @@ const facetFromHeader = (
 ): { readonly facet: QualcommMbnFacet; readonly limitations: string[] } => {
   const chosen = chooseHash(parsed.header.codeSize, rows.length);
   const hashes =
-    chosen?.aligned === true
+    chosen?.aligned === true &&
+    !exceedsEnd(
+      parsed.ranges.code.offset,
+      parsed.ranges.code.length,
+      parsed.readableEnd,
+    )
       ? segmentHashes(rows, parsed.ranges.code.offset, chosen.hashSize)
       : [];
   return {
     facet: {
       header: parsed.header,
       ranges: parsed.ranges,
+      readableEnd: parsed.readableEnd,
       hashSize: chosen?.hashSize ?? null,
       hashCount: chosen?.hashCount ?? null,
       segmentHashes: hashes ?? [],
@@ -808,7 +703,7 @@ const facetFromHeader = (
 /** Which bound, the segment's `p_filesz` or the file end, cut the header short. */
 const truncatedHashHeader = (
   row: ProgramRow,
-  version: 5 | 6,
+  version: MbnVersion,
   offset: number,
   fileSize: number,
 ): string => {
@@ -817,7 +712,7 @@ const truncatedHashHeader = (
     row.fileSize !== null && row.fileSize <= left
       ? `program header ${String(row.index)} declares ${String(row.fileSize)} file bytes`
       : `the ${String(fileSize)}-byte file ends ${String(left)} bytes after offset ${String(offset)}`;
-  return `hash segment version ${String(version)} needs 80 header bytes; ${bound}`;
+  return `hash segment version ${String(version)} needs ${String(HEADER_BYTES[version])} header bytes; ${bound}`;
 };
 
 /** Decode a hash segment from a table and the header bytes at its file offset. */
@@ -850,12 +745,23 @@ export const inspectQualcommMbnElf = (input: {
       elfFindings([], extras.furtherHashSegments),
     );
   const located = locatedHash(first);
-  const parsed = decodeMbnHeader(
-    input.hashHeader,
-    input.hashOffset,
-    input.fileSize,
-    "hash table",
-  );
+  const { offset, fileSize: segmentSize } = located;
+  const remaining = input.fileSize - input.hashOffset;
+  const available = Math.min(segmentSize ?? 0, remaining);
+  const end = input.hashOffset + available;
+  const description =
+    segmentSize !== null && segmentSize <= remaining
+      ? `hash segment range ${String(offset)}+${String(segmentSize)} (p_filesz)`
+      : `the ${String(input.fileSize)}-byte file`;
+  const parsed =
+    offset === input.hashOffset && segmentSize !== null
+      ? decodeMbnHeader(
+          input.hashHeader,
+          offset,
+          { end, description },
+          "hash table",
+        )
+      : { kind: "rejected" as const };
   if (parsed.kind === "truncated-version")
     return elfInspection(
       preface,
@@ -941,26 +847,6 @@ export const inspectQualcommMbnImage = (
     ? inspectElfImage(bytes, fileSize)
     : inspectLegacy(bytes, fileSize);
 
-const rangesFit = (
-  header: QualcommMbnHeader,
-  ranges: QualcommMbnRanges,
-  fileSize: number,
-): boolean => {
-  const imageEnd = sumSafe([ranges.header.offset, header.imageSize]);
-  if (imageEnd === null || imageEnd > fileSize) return false;
-  const regions = [
-    ranges.code,
-    ranges.signature,
-    ranges.certificateChain,
-    ranges.metadata0,
-    ranges.metadata1,
-  ];
-  return regions.every(
-    (range) =>
-      range === null || !exceedsFile(range.offset, range.length, fileSize),
-  );
-};
-
 export type QualcommMbnRegionName =
   | "header"
   | "code"
@@ -968,27 +854,33 @@ export type QualcommMbnRegionName =
   | "signature"
   | "certificate-chain"
   | "metadata0"
-  | "metadata1";
+  | "metadata1"
+  | "qti-signature"
+  | "qti-certificate-chain";
 
 /**
- * Non-empty regions that lie wholly inside the file. A region outside it is
- * already an inspection limitation and is omitted here, never clamped. The
+ * Non-empty regions that fit within the inspected file and ELF segment. Any
+ * crossing is reported as a limitation. The
  * code region of an ELF hash segment is its hash table.
  */
 export const qualcommMbnStoredRegions = (
-  ranges: QualcommMbnRanges,
-  layout: "legacy" | "elf",
-  fileSize: number,
+  inspection: QualcommMbnLegacyInspection | QualcommMbnElfInspection,
 ): readonly {
   readonly name: QualcommMbnRegionName;
   readonly range: QualcommMbnByteRange;
 }[] => {
+  const layout = inspection.kind;
+  const decoded = layout === "legacy" ? inspection : inspection.facet;
+  if (decoded === null) return [];
+  const { ranges, readableEnd } = decoded;
   const regions: readonly (readonly [
     QualcommMbnRegionName,
     QualcommMbnByteRange | null,
   ])[] = [
     ["header", ranges.header],
     [layout === "elf" ? "hash-table" : "code", ranges.code],
+    ["qti-signature", ranges.qtiSignature],
+    ["qti-certificate-chain", ranges.qtiCertificateChain],
     ["signature", ranges.signature],
     ["certificate-chain", ranges.certificateChain],
     ["metadata0", ranges.metadata0],
@@ -997,7 +889,7 @@ export const qualcommMbnStoredRegions = (
   return regions.flatMap(([name, range]) =>
     range === null ||
     range.length === 0 ||
-    exceedsFile(range.offset, range.length, fileSize)
+    exceedsEnd(range.offset, range.length, readableEnd)
       ? []
       : [{ name, range }],
   );
@@ -1018,14 +910,12 @@ export const QUALCOMM_MBN_INLINE_SEGMENT_HASH_LIMIT = 64;
  */
 export const qualcommMbnInventoryCoverage = (
   inspection: QualcommMbnLegacyInspection | QualcommMbnElfInspection,
-  fileSize: number,
 ): "complete" | "unknown" => {
   const coverage = new CoverageAccumulator();
   const decoded = inspection.kind === "elf" ? inspection.facet : inspection;
   if (decoded === null) coverage.recordUnknown("no MBN header was decoded");
-  else if (rangesFit(decoded.header, decoded.ranges, fileSize))
-    coverage.recordComplete();
-  else coverage.recordUnknown("a declared range exceeds the file");
+  else if (inspection.limitations.length === 0) coverage.recordComplete();
+  else coverage.recordUnknown("the inspection has limitations");
   if (inspection.kind === "elf") {
     const further = inspection.furtherHashSegments;
     if (further === null)

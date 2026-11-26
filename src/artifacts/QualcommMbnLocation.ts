@@ -1,5 +1,6 @@
 import { hasElfMagic } from "../domain/binaryContainer.js";
 import {
+  QUALCOMM_MBN_MAX_HEADER_BYTES,
   inspectQualcommMbnElf,
   inspectQualcommMbnImage,
   qualcommMbnElfTableSpan,
@@ -7,8 +8,8 @@ import {
   type QualcommMbnInspection,
 } from "../domain/qualcommMbnImage.js";
 
-/** A legacy v5/v6 header is 80 bytes; an ELF64 fixed header is 64. */
-const PREFIX_BYTES = 80;
+/** Read enough for a standalone MBN header or the ELF64 fixed header. */
+const PREFIX_BYTES = Math.max(64, QUALCOMM_MBN_MAX_HEADER_BYTES);
 
 type ReadRange = (offset: number, length: number) => Promise<Buffer>;
 

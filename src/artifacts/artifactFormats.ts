@@ -593,7 +593,7 @@ const NON_ZIP_FORMATS = {
     extractable: true,
     absentInventory: "unavailable",
     readerLimitation:
-      "Qualcomm MBN inventory reports the legacy 40- or 80-byte header fields and the stored code, signature, certificate-chain and metadata ranges. For an ELF image whose program headers declare a Qualcomm hash segment it decodes the hash-segment header, hash count and per-program-header hash positions, listing the first 64 positions inline. Signatures and certificates are located, not verified; hashes are not recomputed and nothing is executed. Ranges outside the file are limitations and are not listed.",
+      "Qualcomm MBN inventory reports the header fields (80 bytes for v3, 40 for v5, 48 for v6) and the stored code, signature, certificate-chain and metadata ranges. For an ELF image whose program headers declare a Qualcomm hash segment it decodes the hash-segment header, hash count and per-program-header hash positions, listing the first 64 positions inline. Signatures and certificates are located, not verified; hashes are not recomputed and nothing is executed. Ranges outside the file or the ELF hash segment are reported as limitations and omitted from inventory.",
     createReader: (path, options) =>
       new QualcommMbnArtifactReader(path, sourceOf(options)),
   }),

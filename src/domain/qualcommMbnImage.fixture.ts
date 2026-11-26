@@ -9,6 +9,8 @@ export interface MbnHeaderFixture {
   readonly code: Buffer;
   readonly signature: Buffer;
   readonly certificateChain: Buffer;
+  readonly qtiSignature?: Buffer;
+  readonly qtiCertificateChain?: Buffer;
   readonly metadata0?: Buffer;
   readonly metadata1?: Buffer;
 }
@@ -22,47 +24,63 @@ export const mbnLegacyImage = ({
   code,
   signature,
   certificateChain,
+  qtiSignature = Buffer.alloc(0),
+  qtiCertificateChain = Buffer.alloc(0),
   metadata0 = Buffer.alloc(0),
   metadata1 = Buffer.alloc(0),
 }: MbnHeaderFixture): Buffer => {
-  const headerBytes = version === 3 ? 40 : 80;
+  const headerBytes = { 3: 80, 5: 40, 6: 48 }[version];
   const header = Buffer.alloc(headerBytes);
   const signaturePointer = destination + code.length;
   const certificatePointer = signaturePointer + signature.length;
-  const metadata0Pointer = certificatePointer + certificateChain.length;
-  const metadata1Pointer = metadata0Pointer + metadata0.length;
   const payload =
     code.length +
     signature.length +
     certificateChain.length +
+    qtiSignature.length +
+    qtiCertificateChain.length +
     metadata0.length +
     metadata1.length;
   header.writeUInt32LE(imageId, 0);
   header.writeUInt32LE(version, 4);
-  header.writeUInt32LE(imageSource, 8);
-  header.writeUInt32LE(destination, 12);
+  header.writeUInt32LE(version === 3 ? imageSource : qtiSignature.length, 8);
+  header.writeUInt32LE(
+    version === 3 ? destination : qtiCertificateChain.length,
+    12,
+  );
   header.writeUInt32LE(payload, 16);
   header.writeUInt32LE(code.length, 20);
-  header.writeUInt32LE(signature.length === 0 ? 0 : signaturePointer, 24);
+  header.writeUInt32LE(
+    version === 3
+      ? signature.length === 0
+        ? 0
+        : signaturePointer
+      : 0xffff_ffff,
+    24,
+  );
   header.writeUInt32LE(signature.length, 28);
   header.writeUInt32LE(
-    certificateChain.length === 0 ? 0 : certificatePointer,
+    version === 3
+      ? certificateChain.length === 0
+        ? 0
+        : certificatePointer
+      : 0xffff_ffff,
     32,
   );
   header.writeUInt32LE(certificateChain.length, 36);
-  if (headerBytes === 80) {
+  if (version === 6) {
     header.writeUInt32LE(metadata0.length, 40);
-    header.writeUInt32LE(metadata0.length === 0 ? 0 : metadata0Pointer, 44);
-    header.writeUInt32LE(metadata1.length, 48);
-    header.writeUInt32LE(metadata1.length === 0 ? 0 : metadata1Pointer, 52);
+    header.writeUInt32LE(metadata1.length, 44);
   }
   return Buffer.concat([
     header,
-    code,
-    signature,
-    certificateChain,
     metadata0,
     metadata1,
+    code,
+    qtiSignature,
+    qtiCertificateChain,
+    signature,
+    certificateChain,
   ]);
 };
 

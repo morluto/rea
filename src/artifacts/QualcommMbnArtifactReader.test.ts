@@ -62,7 +62,7 @@ it("inventories a legacy MBN by content and lists its regions", async () => {
         code_size: 200,
         signature_size: 256,
         certificate_chain_size: 96,
-        ranges: { signature: { offset: 240, length: 256 } },
+        ranges: { signature: { offset: 280, length: 256 } },
       },
       elf: null,
     },
@@ -73,10 +73,10 @@ it("inventories a legacy MBN by content and lists its regions", async () => {
       .map((row) => [row.logical_path, row.source_location]),
   );
   expect(regions).toMatchObject({
-    "header.bin": { offset: 0, length: 40 },
-    "code.bin": { offset: 40, length: 200 },
-    "signature.bin": { offset: 240, length: 256 },
-    "certificate-chain.bin": { offset: 496, length: 96 },
+    "header.bin": { offset: 0, length: 80 },
+    "code.bin": { offset: 80, length: 200 },
+    "signature.bin": { offset: 280, length: 256 },
+    "certificate-chain.bin": { offset: 536, length: 96 },
   });
 });
 
@@ -93,9 +93,9 @@ it("opens region bytes and omits ranges past the file end", async () => {
       {
         status: "unknown",
         limitations: [
-          "image range 0+552 exceeds the 400-byte file",
-          "signature range 240+256 exceeds the 400-byte file",
-          "certificate chain range 496+96 exceeds the 400-byte file",
+          "image range 0+632 exceeds the 400-byte file",
+          "signature range 280+256 exceeds the 400-byte file",
+          "certificate chain range 536+96 exceeds the 400-byte file",
         ],
       },
     ]);
@@ -103,7 +103,7 @@ it("opens region bytes and omits ranges past the file end", async () => {
       true,
     );
     expect(reader.formatMetadata()?.header?.ranges.signature).toEqual({
-      offset: 240,
+      offset: 280,
       length: 256,
     });
   } finally {
@@ -152,17 +152,17 @@ it("keeps header.bin and decoded header metadata when an ELF hash table runs pas
     expect(entries.map((entry) => entry.path)).toEqual(["header.bin"]);
     expect(
       (await buffer(await reader.open(entries[0]!))).equals(
-        truncated.subarray(160, 200),
+        truncated.subarray(160, 240),
       ),
     ).toBe(true);
     expect(coverage).toEqual([
       {
         status: "unknown",
         limitations: [
-          "image range 160+448 exceeds the 240-byte file",
-          "hash table range 200+96 exceeds the 240-byte file",
-          "signature range 296+256 exceeds the 240-byte file",
-          "certificate chain range 552+96 exceeds the 240-byte file",
+          "image range 160+528 exceeds the 240-byte file",
+          "hash table range 240+96 exceeds the 240-byte file",
+          "signature range 336+256 exceeds the 240-byte file",
+          "certificate chain range 592+96 exceeds the 240-byte file",
         ],
       },
     ]);
@@ -171,13 +171,13 @@ it("keeps header.bin and decoded header metadata when an ELF hash table runs pas
       layout: "elf",
       header: {
         version: 3,
-        header_bytes: 40,
+        header_bytes: 80,
         code_size: 96,
         signature_size: 256,
         certificate_chain_size: 96,
         ranges: {
-          header: { offset: 160, length: 40 },
-          code: { offset: 200, length: 96 },
+          header: { offset: 160, length: 80 },
+          code: { offset: 240, length: 96 },
         },
       },
       elf: {
@@ -186,6 +186,28 @@ it("keeps header.bin and decoded header metadata when an ELF hash table runs pas
         hash_size: 32,
         hash_count: 3,
       },
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
+it("omits stored regions that exceed the hash segment p_filesz", async () => {
+  const image = mbnElfWithHashSegment({ version: 5 });
+  image.writeUInt32LE(40, 52 + 32 + 16); // p_filesz of the second ELF32 program header
+  const path = await writeMbn("short-segment.mdt", image);
+  const reader = new QualcommMbnArtifactReader(path);
+  try {
+    const { entries, coverage } = await readAll(reader);
+    expect(entries.map((entry) => entry.path)).toEqual(["header.bin"]);
+    expect(coverage).toMatchObject([{ status: "unknown" }]);
+    expect(reader.formatMetadata()).toMatchObject({
+      header: {
+        version: 5,
+        header_bytes: 40,
+        ranges: { code: { offset: 200, length: 96 } },
+      },
+      elf: { hash_segment_file_size: 40, segment_hashes: [] },
     });
   } finally {
     await reader.close();
