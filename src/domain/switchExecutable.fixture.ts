@@ -1,20 +1,6 @@
 import { createHash } from "node:crypto";
 
-/** One LZ4 block holding `bytes` as a single literal run, which any decoder accepts. */
-export const lz4Literals = (bytes: Buffer): Buffer => {
-  const parts: number[] = [];
-  if (bytes.length < 15) parts.push(bytes.length << 4);
-  else {
-    parts.push(0xf0);
-    let rest = bytes.length - 15;
-    while (rest >= 255) {
-      parts.push(255);
-      rest -= 255;
-    }
-    parts.push(rest);
-  }
-  return Buffer.concat([Buffer.from(parts), bytes]);
-};
+import { lz4LiteralBlock } from "../../tests/fixtures/lz4LiteralBlock.js";
 
 export const MODULE_ID = Buffer.from(
   "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
@@ -59,7 +45,7 @@ export const buildNso = (options: NsoFixtureOptions = {}): Buffer => {
   segments.forEach((loaded, index) => {
     if (compress[index]) flags |= 1 << index;
     if (hashCheck[index]) flags |= 1 << (index + 3);
-    const bytes = compress[index] ? lz4Literals(loaded) : loaded;
+    const bytes = compress[index] ? lz4LiteralBlock(loaded) : loaded;
     const at = 0x10 + index * 0x10;
     header.writeUInt32LE(fileOffset, at);
     header.writeUInt32LE(memoryOffset, at + 4);

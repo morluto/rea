@@ -249,7 +249,6 @@ export class SwitchExecutableArtifactReader extends PositionalArtifactReader<
     const parsed = parseNsoHeader(headerBytes, fileSize);
     if (!parsed.ok) throw artifactParseFailure(parsed.error, signal);
     const header = parsed.value;
-    const budget = this.#budget;
     const entries: SwitchEntry[] = [];
     const limitations: string[] = [];
     let textPrefix: Buffer | undefined;
@@ -265,22 +264,6 @@ export class SwitchExecutableArtifactReader extends PositionalArtifactReader<
           unavailable(
             detail,
             malformedArtifact("nso", `NSO is malformed: ${detail}`),
-          ),
-        );
-      } else if (segment.compressed && segment.size > budget - this.#charged) {
-        const detail = `${segment.name} segment decompresses to ${String(segment.size)} bytes, over the remaining artifact_limits.expanded_bytes budget of ${String(budget - this.#charged)}`;
-        entryLimitations.push(detail);
-        const required = this.#charged + segment.size;
-        this.#refusals.set(adapterKey, () =>
-          unavailable(
-            detail,
-            artifactReaderLimitFailure(
-              "artifact_limits.expanded_bytes",
-              budget,
-              "bytes",
-              required,
-              "memory",
-            ),
           ),
         );
       } else {

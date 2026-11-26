@@ -7,17 +7,14 @@ import { expect, it, vi } from "vitest";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
+import { testWaitDeadline } from "../../tests/support/testWait.js";
 import { resolveArtifactReaderLimits } from "../domain/artifactReaderLimits.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import {
   ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
 } from "../resources/index.js";
-import {
-  buildNro,
-  buildNso,
-  lz4Literals,
-} from "../domain/switchExecutable.fixture.js";
+import { buildNro, buildNso } from "../domain/switchExecutable.fixture.js";
 import { SwitchExecutableArtifactReader } from "./SwitchExecutableArtifactReader.js";
 
 const fixture = (bytes: Buffer): Promise<string> =>
@@ -128,17 +125,19 @@ it("lists a truncated segment with a limitation and refuses its content", async 
 
 it("refuses to decompress a segment over the expansion budget", async () => {
   const big = Buffer.alloc(4096, 7);
+  const path = await fixture(
+    buildNso({
+      segments: [big, Buffer.from("ro"), Buffer.from("rw")],
+      compress: [true, false, false],
+    }),
+  );
   const reader = new SwitchExecutableArtifactReader(
-    await fixture(
-      buildNso({
-        segments: [big, Buffer.from("ro"), Buffer.from("rw")],
-        compress: [true, false, false],
-      }),
-    ),
+    path,
     "nso",
     undefined,
     1024,
   );
+  let requiredValue: number | undefined;
   try {
     const { entries, coverage } = await collect(reader);
     const text = entries.find((entry) => entry.path === "text.bin");
@@ -152,15 +151,32 @@ it("refuses to decompress a segment over the expansion budget", async () => {
     expect(failure).toBeInstanceOf(ArtifactEntryContentUnavailable);
     const cause = (failure as Error).cause;
     expect(cause).toBeInstanceOf(ArtifactReaderFailure);
+    const expectedRequired = text!.byteLength! + 4096;
     expect(cause).toMatchObject({
       readerLimit: {
         parameter: "artifact_limits.expanded_bytes",
         effective_value: 1024,
-        required_value: 4096,
+        required_value: expectedRequired,
       },
     });
+    requiredValue = expectedRequired;
   } finally {
     await reader.close();
+  }
+  const retried = new SwitchExecutableArtifactReader(
+    path,
+    "nso",
+    undefined,
+    requiredValue,
+  );
+  try {
+    const { entries, coverage } = await collect(retried);
+    const text = entries.find((entry) => entry.path === "text.bin");
+    expect(coverage?.status).toBe("complete");
+    expect(text?.formatMetadata).toMatchObject({ hash_status: "match" });
+    expect((await buffer(await retried.open(text!))).equals(big)).toBe(true);
+  } finally {
+    await retried.close();
   }
 });
 
@@ -396,12 +412,6 @@ it("reports uninterpreted bytes after an NRO without ASET", async () => {
   }
 });
 
-it("encodes long literal runs the decoder accepts", () => {
-  expect([...lz4Literals(Buffer.alloc(300)).subarray(0, 3)]).toEqual([
-    0xf0, 255, 30,
-  ]);
-});
-
 const occurrence = (
   snapshot: Awaited<ReturnType<typeof scanCanonicalArtifactInventory>>,
   path: string,
@@ -570,7 +580,7 @@ it("cancels a decoded segment when the caller aborts", async () => {
 const withDeadline = async <T>(
   operation: Promise<T>,
   label: string,
-  timeoutMs = 2_000,
+  timeoutMs = testWaitDeadline(),
 ): Promise<T> => {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
