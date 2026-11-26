@@ -198,6 +198,22 @@ it.each([false, true])(
   },
 );
 
+it("names the declared range when the certificate table leaves the file", async () => {
+  const bytes = peCertificateFixture();
+  const directoryAt = 0x98 + 96 + 4 * 8;
+  const size = bytes.readUInt32LE(directoryAt + 4);
+  bytes.writeUInt32LE(size + 8, directoryAt + 4);
+  await expect(parse(bytes)).rejects.toThrow(
+    tableFailure(
+      "truncated",
+      new RegExp(
+        `PE certificate table range leaves the artifact\\. Declared range: offset 512, size ${String(size + 8)}\\.`,
+        "u",
+      ),
+    ),
+  );
+});
+
 it("accepts only zero eight-byte alignment padding included in dwLength", async () => {
   for (const plus of [false, true]) {
     const bytes = peCertificateFixture(plus, undefined, undefined, true);
@@ -442,13 +458,15 @@ it("fails truncated WIN_CERTIFICATE payloads without partial success", async () 
   );
 });
 
-it("rejects a short security table instead of reporting it complete", async () => {
+it("rejects short and unaligned security directory sizes as truncated entries", async () => {
   for (const size of [4, 7]) {
     const bytes = peCertificateFixture();
     const tableOffset = bytes.readUInt32LE(securityDirectoryAt);
     bytes.writeUInt32LE(size, securityDirectoryAt + 4);
     bytes.fill(0, tableOffset, tableOffset + size);
-    await expect(parse(bytes)).rejects.toThrow(/header is truncated/u);
+    await expect(parse(bytes)).rejects.toThrow(
+      tableFailure("truncated", /header is truncated/u),
+    );
   }
   const bytes = peCertificateFixture();
   const tableOffset = bytes.readUInt32LE(securityDirectoryAt);
@@ -456,7 +474,9 @@ it("rejects a short security table instead of reporting it complete", async () =
   const extended = Buffer.concat([bytes, Buffer.alloc(4)]);
   extended.writeUInt32LE(tableSize + 4, securityDirectoryAt + 4);
   expect(extended.readUInt32LE(tableOffset)).toBeGreaterThan(0);
-  await expect(parse(extended)).rejects.toThrow(/header is truncated/u);
+  await expect(parse(extended)).rejects.toThrow(
+    tableFailure("truncated", /header is truncated/u),
+  );
 });
 
 it("fails PKCS#7 payloads that are not signedData", async () => {

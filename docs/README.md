@@ -47,6 +47,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [PE import and delay-load tables](pe-imports.md)
 - [PE TLS callbacks and load configuration](pe-load-config.md)
 - [PE x64 exception-directory function ranges](guides/native/pe-unwind-ranges.md)
+- [PE overlay](guides/native/pe-overlay.md)
 - [Match native functions across builds](native-function-matching.md)
 - [Rust binary dependency metadata](rust-binaries.md)
 - [Static CUDA and HIP code objects](gpu-code-objects.md)
@@ -97,6 +98,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 
 - [Managed-code analysis](guides/managed/managed-code-analysis.md)
 - [NuGet packages](guides/managed/nuget-nupkg.md)
+- [VS Code extension packages](guides/managed/vsix-package.md)
 - [.NET single-file bundles](dotnet-bundles.md)
 - [IL2CPP metadata](il2cpp-metadata.md)
 
@@ -111,6 +113,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [ESP flash images](esp-flash-image.md)
 - [ESP images](esp-image.md)
 - [U-Boot FIT images](fit-images.md)
+- [Qualcomm MBN images](guides/firmware/qualcomm-mbn-images.md)
 - [Intel HEX and S-record images](hex-records.md)
 - [UF2 and DfuSe images](uf2-dfuse.md)
 - [U-Boot legacy uImage containers](uimage.md)

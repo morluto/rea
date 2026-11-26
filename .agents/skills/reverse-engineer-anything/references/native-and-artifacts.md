@@ -220,6 +220,26 @@ separate functions. Leaf functions have no entry, so a missing entry is not
 absence. Compare provider addresses minus `image_base` with the RVAs. See
 [PE x64 exception-directory function ranges](https://github.com/morluto/rea/blob/main/docs/guides/native/pe-unwind-ranges.md).
 
+## PE overlay
+
+Use `inspect_pe_overlay` for an explicit local PE32/PE32+ image when the
+question concerns bytes appended after the image: where the image ends on
+disk, whether an overlay is present, and how much of that span is the
+Authenticode certificate table. No `open_binary`, Windows SDK, or target
+execution is required. The CLI equivalent is `inspect-pe-overlay PATH`.
+Preserve artifact SHA-256, image end, and each range's file offset and size.
+`certificate_table` is the security directory when it lies entirely in the
+overlay. A security directory that fails certificate-table checks, such as an
+unaligned offset, or that starts inside the image and ends in the overlay,
+stays in other ranges and adds a limitation. Each other range includes SHA-256, a fixed 4096-byte Shannon entropy
+sample, the first 16 bytes, and a leading format only when an existing
+recognizer names one. Packers are not identified. Signatures, chains, and
+digest coverage are not verified. Section slack inside the image is not
+reported as overlay. Image end uses each section's declared PointerToRawData
+plus SizeOfRawData; the loader's 512-byte rounded pointer is recorded per
+section and does not shorten that end. See
+[PE overlay](https://github.com/morluto/rea/blob/main/docs/guides/native/pe-overlay.md).
+
 ## Binary hardening
 
 Use `inspect_binary_hardening` for an explicit local ELF, PE, or Mach-O file
@@ -410,6 +430,21 @@ conventions). Missing, ambiguous, or malformed `.nuspec` members succeed with
 inventory and limitations. Encrypted members are listed and not extracted.
 Roles are folder conventions, not restore-time asset selection. See
 [NuGet packages](https://github.com/morluto/rea/blob/main/docs/guides/managed/nuget-nupkg.md).
+
+## VS Code extension packages
+
+Use `inspect_vsix_package` for an explicit local `.vsix` when the question
+concerns package identity from `extension.vsixmanifest` and
+`extension/package.json`, engine range, activation events, contributes,
+declared dependencies, native/wasm/executable members, or signature-file
+presence. No `open_binary`, install, marketplace access, or target execution
+is required. The CLI equivalent is `inspect-vsix-package PATH`. Preserve
+artifact SHA-256, both manifests as present, identity disagreements, and
+hashed interesting members with observed vs inferred classification. Missing
+or malformed manifests succeed with inventory and limitations. Encrypted
+members are listed and not extracted. Signature files are reported present or
+absent and are not verified. See
+[VS Code extension packages](https://github.com/morluto/rea/blob/main/docs/guides/managed/vsix-package.md).
 
 ## OCI image layouts
 
@@ -1018,6 +1053,18 @@ unnamed `fat/<id>.bin` files. A CRC mismatch, a partial table, or a range past
 the file end leaves coverage `unknown`. Secure-area encryption, compressed
 overlays, and NitroARC archives are not decoded. See
 [Nintendo DS ROMs](https://github.com/morluto/rea/blob/main/docs/guides/firmware/nds-roms.md).
+
+Legacy Qualcomm MBN boot images (`sbl1.mbn`, `aboot.mbn`, `tz.mbn`) use the
+same inspection and extraction workflows. The header has no magic; REA claims
+it only when version 3, 5 or 6 sizes and pointers are self-consistent.
+MBN headers are 40 bytes for v3 and v5, and 48 for v6. Inventory lists stored
+code, signature, certificate-chain and v6 metadata regions;
+ranges past the file end are limitations with `unknown` coverage. ELF images
+with a Qualcomm hash segment inventory as `qualcomm-mbn` (hash table and per
+program header hash offsets) but still resolve as ELF for native analysis.
+Signatures and certificates are located, not verified; hashes are not
+recomputed. See
+[Qualcomm MBN images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/qualcomm-mbn-images.md).
 
 Android A/B OTA `payload.bin` files (CrAU v2) use the same
 inspection/extraction workflows. Prefer a retained summary for header,
