@@ -190,9 +190,9 @@ export const readEvidenceFileSource = async (
     const resolved = await resolveSelected(selected.value, (id) =>
       bundle.value.records.find((record) => record.evidence_id === id),
     );
-    return resolved.ok && signal?.aborted
-      ? err(cancelledBy(operation, signal))
-      : resolved;
+    if (!resolved.ok) return resolved;
+    if (signal?.aborted) return err(cancelledBy(operation, signal));
+    return resolved;
   }
   const headroom = requireAuthenticationHeadroom(value, {
     operation,
@@ -223,7 +223,7 @@ export const readEvidenceFileSource = async (
   const resolved = await resolveSelected(parsed.value, (id) =>
     parsed.value.evidence_id === id ? parsed.value : undefined,
   );
-  return resolved.ok && signal?.aborted
-    ? err(cancelledBy(operation, signal))
-    : resolved;
+  if (!resolved.ok) return resolved;
+  if (signal?.aborted) return err(cancelledBy(operation, signal));
+  return resolved;
 };
