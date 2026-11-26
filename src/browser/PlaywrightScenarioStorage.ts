@@ -11,6 +11,7 @@ import type { BrowserContext, Page } from "playwright-core";
 
 import {
   applyDeclaredBrowserStorageSeeds,
+  declaredBrowserStorageTabSeedRecordExpression,
   type DeclaredBrowserStorageSeedOutcome,
   type DeclaredBrowserStorageSeedScript,
 } from "./declaredBrowserStorageSeed.js";
@@ -179,6 +180,7 @@ export class PlaywrightScenarioStorage {
   #loadingStopped = false;
   #popupSeedCoverageUnknown = false;
   #popupSeedsInstalled = false;
+  readonly #pendingPopupPages = new Set<Page>();
   #failure: BrowserObservationError | undefined;
   #closePromise: Promise<PlaywrightScenarioStorageCleanup> | undefined;
   #detachPromise: Promise<void> | undefined;
@@ -333,12 +335,13 @@ export class PlaywrightScenarioStorage {
   }
 
   private recordPopupSeed(
-    _sourcePage: Page,
+    sourcePage: Page,
     origin: string,
     localOutcome: DeclaredBrowserStorageSeedOutcome,
     sessionOutcome: DeclaredBrowserStorageSeedOutcome,
   ): void {
     if (this.#closed) return;
+    this.#pendingPopupPages.delete(sourcePage);
     if (localOutcome === "failed" || sessionOutcome === "failed")
       this.#popupSeedCoverageUnknown = true;
     if (localOutcome === "wrote") {
@@ -485,8 +488,15 @@ export class PlaywrightScenarioStorage {
     // popup script and cannot establish that page-session instrumentation
     // controlled that top-level document.
     const popup = (opened: Page): void => {
-      if (opened !== page && !this.#popupSeedsInstalled)
+      if (opened === page) return;
+      if (!this.#popupSeedsInstalled) {
         this.#popupSeedCoverageUnknown = true;
+        return;
+      }
+      // Installed hook must still confirm coverage per popup; otherwise an
+      // unseeded tab (denied storage, missed init) can look complete.
+      this.#pendingPopupPages.add(opened);
+      opened.once("close", () => this.#pendingPopupPages.delete(opened));
     };
     if (this.ownsContext) context.on("page", popup);
     else page.on("popup", popup);
@@ -504,7 +514,7 @@ export class PlaywrightScenarioStorage {
   }
 
   limitations(): readonly string[] {
-    return this.#popupSeedCoverageUnknown
+    return this.#popupSeedCoverageUnknown || this.#pendingPopupPages.size > 0
       ? [
           "Declared non-cookie storage seeds were controlled for the selected page's instrumented frames; initialization before the first script is unknown for discovered popup top-level contexts.",
         ]
@@ -717,12 +727,18 @@ export class PlaywrightScenarioStorage {
       "<",
       "\\u003c",
     );
+    const tabRecord = declaredBrowserStorageTabSeedRecordExpression(
+      this.#seedToken,
+      origin,
+      local.length > 0,
+      session.length > 0,
+    );
     const response = await this.sendObserved(
       target,
       "Debugger.evaluateOnCallFrame",
       {
         callFrameId: frame.callFrameId,
-        expression: `(() => { const seed = ${payload}; for (const [name, value] of seed.local) localStorage.setItem(name, value); for (const [name, value] of seed.session) sessionStorage.setItem(name, value); })()`,
+        expression: `(() => { const seed = ${payload}; for (const [name, value] of seed.local) localStorage.setItem(name, value); for (const [name, value] of seed.session) sessionStorage.setItem(name, value); ${tabRecord} })()`,
         returnByValue: true,
       },
     );

@@ -488,6 +488,7 @@ const applySeeds = (
     local: DeclaredBrowserStorageSeedOutcome;
     session: DeclaredBrowserStorageSeedOutcome;
   }[];
+  historyState: () => Record<string, unknown> | null;
 } => {
   const storage = options.storage ?? {
     local: memoryStorage(),
@@ -500,10 +501,22 @@ const applySeeds = (
     local: DeclaredBrowserStorageSeedOutcome;
     session: DeclaredBrowserStorageSeedOutcome;
   }[] = [];
+  let historyState: Record<string, unknown> | null = null;
   const context = vm.createContext({
     location: { origin },
     localStorage: storage.local,
     sessionStorage: storage.session,
+    history: {
+      get state() {
+        return historyState;
+      },
+      replaceState(data: unknown) {
+        historyState =
+          data && typeof data === "object" && !Array.isArray(data)
+            ? { ...(data as Record<string, unknown>) }
+            : null;
+      },
+    },
     [binding]: (
       notifiedOrigin: string,
       local: DeclaredBrowserStorageSeedOutcome,
@@ -526,6 +539,7 @@ const applySeeds = (
     local: storage.local.items,
     session: storage.session.items,
     notifications,
+    historyState: () => historyState,
   };
 };
 
@@ -606,6 +620,70 @@ it("does not restore deleted seed values on reload of the same popup tab", () =>
   expect(reloaded.local.has("probe")).toBe(false);
   expect(reloaded.session.has("probe")).toBe(false);
   expect(reloaded.notifications).toEqual([]);
+});
+
+it("does not restore session seeds after sessionStorage.clear on reload", () => {
+  const seeds: DeclaredBrowserStorageSeed[] = [
+    {
+      origin: "http://child.example",
+      local: [["probe", "seed-local"]],
+      session: [["probe", "seed-session"]],
+    },
+  ];
+  const sharedSession = memoryStorage();
+  const first = applySeeds("http://child.example", seeds, {
+    seedToken: "clear-token",
+    storage: { local: memoryStorage(), session: sharedSession },
+  });
+  expect(first.session.get("probe")).toBe("seed-session");
+  const flagKey = [...sharedSession.items.keys()].find((key) =>
+    key.startsWith("\0rea-tab-seed:"),
+  );
+  expect(flagKey).toBeDefined();
+  const historyEnvelope = first.historyState()?.[flagKey!];
+  expect(typeof historyEnvelope).toBe("string");
+  sharedSession.items.clear();
+
+  // history.state still carries once flags after sessionStorage.clear().
+  const cleared = memoryStorage();
+  if (typeof historyEnvelope === "string")
+    cleared.items.set(flagKey!, historyEnvelope);
+  // Simulate reload: sessionStorage empty, history.state restored by the browser.
+  const hostSession = memoryStorage();
+  const binding = "__reaStorageSeedTest";
+  const notifications: unknown[] = [];
+  let historyState: Record<string, unknown> = { [flagKey!]: historyEnvelope };
+  const context = vm.createContext({
+    location: { origin: "http://child.example" },
+    localStorage: memoryStorage(),
+    sessionStorage: hostSession,
+    history: {
+      get state() {
+        return historyState;
+      },
+      replaceState(data: unknown) {
+        historyState =
+          data && typeof data === "object" && !Array.isArray(data)
+            ? { ...(data as Record<string, unknown>) }
+            : {};
+      },
+    },
+    [binding]: () => {
+      notifications.push("notified");
+    },
+  });
+  context.top = context;
+  vm.runInContext(
+    `(${applyDeclaredBrowserStorageSeeds.toString()})(${JSON.stringify({
+      binding,
+      seedToken: "clear-token",
+      initializedLocalOrigins: [],
+      seeds,
+    })})`,
+    context,
+  );
+  expect(hostSession.items.has("probe")).toBe(false);
+  expect(notifications).toEqual([]);
 });
 
 it("seeds top-level documents without relying on window.opener", () => {
@@ -715,8 +793,11 @@ it("installs synchronous popup seeds in launch mode and avoids shared connect co
       session: [["session-seed", "session-value"]],
     },
   ]);
+  // A discovered popup without a seed notification must not look complete.
   launchContext.emit("page", new EventEmitter());
-  expect(launchOwner?.limitations()).toEqual([]);
+  expect(launchOwner?.limitations()).toEqual([
+    expect.stringContaining("unknown for discovered popup top-level contexts"),
+  ]);
   await launchOwner?.close();
   expect(contextScripts[0]?.disposed).toBe(true);
 
