@@ -1159,6 +1159,7 @@
 * **ci:** require planner directories in classifier checkouts ([#14553](https://github.com/morluto/rea/issues/14553)) ([0acafde](https://github.com/morluto/rea/commit/0acafdeafa5880c8e8a385ef0e5b737887a4cecf))
 * **ci:** reuse workflow inventory and verify cache authority ([#13525](https://github.com/morluto/rea/issues/13525)) ([eb1d540](https://github.com/morluto/rea/commit/eb1d54007576e0443c7200f8da4143ed38025699))
 * **ci:** verify selected shard and provider report refusals ([21051b9](https://github.com/morluto/rea/commit/21051b9d06f82d9da0a932d328cae8db87644f77))
+* **cli:** check the Go input budget recovery flag ([#14672](https://github.com/morluto/rea/issues/14672)) ([bcaf605](https://github.com/morluto/rea/commit/bcaf6056a86b231b774fdada5a8766dcbabbbb2e))
 * **cli:** consolidate Amp launcher registration coverage ([#12940](https://github.com/morluto/rea/issues/12940)) ([a31b80a](https://github.com/morluto/rea/commit/a31b80a4128502bcffda98d88e764db0a3544dc3))
 * **cli:** consolidate automatic client setup journeys ([#12807](https://github.com/morluto/rea/issues/12807)) ([f718e17](https://github.com/morluto/rea/commit/f718e17caaa8fa73d6a8705833e811a3be85b994))
 * **cli:** consolidate completed source evidence finalization checks ([688d129](https://github.com/morluto/rea/commit/688d129aef5eaf8155d2d1401d86c900effb6f33))
