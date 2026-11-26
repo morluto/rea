@@ -134,7 +134,9 @@ are bounded by the PE format. `inspect_binary_hardening` also accepts
 reports `details.limit` with `required_value`.
 
 For `inspect_native_exports` it also bounds the ELF dynamic, symbol and version
-tables located through PT_DYNAMIC.
+tables located through PT_DYNAMIC. For `inspect_native_initializers` it also
+bounds Android APS2 packed relocation tables (both compressed input bytes and
+equivalent unpacked REL/RELA work).
 
 `inspect_go_binary` and `inspect_rust_binary` accept it for their ELF directory
 and Mach-O load commands. The IL2CPP reader reads the same tables with the 16

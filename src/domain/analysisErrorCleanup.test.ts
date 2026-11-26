@@ -12,6 +12,7 @@ import {
   analysisErrorWithCleanupFailure,
   providerCleanupErrorFromFailures,
   withInheritedCleanupOwnership,
+  withSecondaryCleanupFailure,
 } from "./analysisErrorCleanup.js";
 import {
   projectAnalysisError,
@@ -124,6 +125,7 @@ it("reads completion through nested compositions from the releasing owner only",
     new ProviderCleanupError("fixture", ["later"], {}),
   ]);
   expect(outer.cleanupIncomplete).toBe(false);
+  expect(outer.cleanupResources).toEqual([]);
 });
 
 it("keeps completion when a dependency is bound after release without an intermediate read", () => {
@@ -638,4 +640,22 @@ it("follows an existing owner's release via withInheritedCleanupOwnership", () =
   );
   expect(cleanWrapper.hasCleanupOwner).toBe(false);
   expect(cleanWrapper.cleanupIncomplete).toBe(false);
+});
+
+it("keeps cleanupIncomplete and cleanupResources consistent when attaching secondary cleanup to a non-cleanup error", () => {
+  const primary = new AnalysisInputError("open", undefined, []);
+  const secondary = new ProviderCleanupError("fixture", ["leaked-fd"], {});
+  withSecondaryCleanupFailure(primary, secondary);
+  expect(primary.cleanupIncomplete).toBe(true);
+  expect(primary.cleanupResources).toEqual(["leaked-fd"]);
+
+  releaseOwnedCleanup(secondary);
+  expect(primary.cleanupIncomplete).toBe(false);
+  expect(primary.cleanupResources).toEqual([]);
+
+  primary.bindCleanupDependencies([
+    new ProviderCleanupError("fixture", ["after-settlement"], {}),
+  ]);
+  expect(primary.cleanupIncomplete).toBe(false);
+  expect(primary.cleanupResources).toEqual([]);
 });
