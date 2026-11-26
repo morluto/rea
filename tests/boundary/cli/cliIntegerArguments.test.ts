@@ -254,6 +254,8 @@ describe("pyc and BEAM limit options", () => {
     ["inspect-python-pyc", "--max-file-bytes", "maxFileBytes", ["0x10"]],
     ["inspect-python-pyc", "--max-objects", "maxObjects", ["1e2"]],
     ["inspect-python-pyc", "--max-string-bytes", "maxStringBytes", ["0x1"]],
+    ["inspect-deb-package", "--max-file-bytes", "maxFileBytes", ["0x10"]],
+    ["inspect-deb-package", "--max-ar-members", "maxArMembers", ["1e2"]],
     ["inspect-erlang-beam", "--max-file-bytes", "maxFileBytes", ["0x10"]],
     ["inspect-erlang-beam", "--max-chunks", "maxChunks", ["1e1"]],
     ["inspect-erlang-beam", "--max-atoms", "maxAtoms", ["0b1"]],
@@ -283,6 +285,7 @@ describe("pyc and BEAM limit options", () => {
 
   cliTest.for([
     ["inspect-python-pyc", "--max-depth=016"],
+    ["inspect-deb-package", "--max-ar-members=016"],
     ["inspect-erlang-beam", "--max-chunks=016"],
   ] as const)("keeps a decimal %s limit", async ([command, flag], { cli }) => {
     const result = await cli.run({

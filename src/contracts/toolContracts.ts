@@ -13,6 +13,7 @@ import { MODEL_TOOL_CONTRACTS } from "./model/modelToolContracts.js";
 import { IL2CPP_TOOL_CONTRACTS } from "./il2cpp/il2cppToolContracts.js";
 import { RUST_TOOL_CONTRACTS } from "./rust/rustToolContracts.js";
 import { PYTHON_PYC_TOOL_CONTRACTS } from "./python/pythonPycToolContracts.js";
+import { DEB_PACKAGE_TOOL_CONTRACTS } from "./deb/debPackageToolContracts.js";
 import { NUGET_NUPKG_TOOL_CONTRACTS } from "./nuget/nupkgToolContracts.js";
 import { VSIX_PACKAGE_TOOL_CONTRACTS } from "./vsix/vsixPackageToolContracts.js";
 import { OCI_IMAGE_LAYOUT_TOOL_CONTRACTS } from "./oci/ociImageLayoutToolContracts.js";
@@ -75,6 +76,7 @@ const CATALOG_CONTRACT_GROUPS = {
   GPU_TOOL_CONTRACTS,
   RUST_TOOL_CONTRACTS,
   PYTHON_PYC_TOOL_CONTRACTS,
+  DEB_PACKAGE_TOOL_CONTRACTS,
   NUGET_NUPKG_TOOL_CONTRACTS,
   VSIX_PACKAGE_TOOL_CONTRACTS,
   OCI_IMAGE_LAYOUT_TOOL_CONTRACTS,

@@ -81,6 +81,13 @@
       "reason": "Bounds aggregate UTF-8 bytes of expanded FNT member paths (16 MiB) before allocation so 61,440 files under deep prefixes cannot expand an 8 MiB FNT into gigabytes of retained path strings."
     }
   },
+  "src/artifacts/UbiImageArtifactReader.ts": {
+    "`The ${parserLimit.name} allowance`": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "UBI eraseblock size and count allowances are resource policies; the static payload CRC budget is derived from the admitted image length."
+    }
+  },
   "src/artifacts/WxapkgArtifactReader.ts": {
     "\"The wxapkg directory-and-chunk I/O work allowance\"": {
       "class": "derived",
@@ -128,6 +135,12 @@
     "\"The Playwright trace ZIP expansion allowance (derived from the archive size)\"": {
       "class": "derived",
       "reason": "The ZIP reader's plaintext-work budget is derived from the admitted trace archive's own size, which trace_limits.archive_bytes bounds."
+    }
+  },
+  "src/deb/DebPackageProvider.ts": {
+    "DEB_PACKAGE_FIXED_ALLOWANCES[cause.allowance]": {
+      "class": "forwarding",
+      "reason": "Reports the Debian parser's named ar name, tar extension, relationship alternative, Zstandard window, or XZ dictionary allowance using the parser's maximum."
     }
   },
   "src/domain/analysisErrorCore.ts": {

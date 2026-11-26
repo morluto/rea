@@ -429,6 +429,11 @@ export const documentationSections = [
         route: "/android-sparse-image",
       },
       {
+        text: "UBI images",
+        source: "guides/firmware/ubi-images.md",
+        route: "/ubi-images",
+      },
+      {
         text: "Flattened devicetree inspection",
         source: "devicetree.md",
         route: "/devicetree",
@@ -527,6 +532,11 @@ export const documentationSections = [
         text: "Python packaged applications",
         source: "python-packaged-applications.md",
         route: "/python-packaged-applications",
+      },
+      {
+        text: "Debian package inspection",
+        source: "deb-package.md",
+        route: "/deb-package",
       },
       {
         text: "CPython pyc inspection",

@@ -23,6 +23,7 @@ import { projectApkSignatureView } from "./apkSignatureView.js";
 import { byteEntropySchema } from "../native/byteEntropy.js";
 import { projectErlangBeamView } from "./erlangBeamView.js";
 import { projectPythonPycView } from "./pythonPycView.js";
+import { projectDebPackageView } from "./debPackageView.js";
 import { projectNugetNupkgView } from "./nugetNupkgView.js";
 import { projectVsixPackageView } from "./vsixPackageView.js";
 import { projectOciImageLayoutView } from "./ociImageLayoutView.js";
@@ -214,6 +215,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_elf_dependencies", projectElfDependenciesView),
   retain("inspect_native_load_image", projectNativeLoadImageView),
   retain("inspect_python_pyc", projectPythonPycView),
+  retain("inspect_deb_package", projectDebPackageView),
   retain("inspect_nuget_nupkg", projectNugetNupkgView),
   retain("inspect_vsix_package", projectVsixPackageView),
   retain("inspect_oci_image_layout", projectOciImageLayoutView),
