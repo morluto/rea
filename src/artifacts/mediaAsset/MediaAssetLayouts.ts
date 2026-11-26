@@ -429,6 +429,7 @@ export const riffXma2Layout = async (
   const declaredEnd = 8 + riffDeclaredSize;
   const containerEnd = Math.min(fileSize, declaredEnd);
   const chunks: { id: string; offset: number; length: number }[] = [];
+  const completeChunks: { id: string; offset: number; length: number }[] = [];
   let at = 12;
   let stopped = false;
   let incompleteFraming = false;
@@ -445,15 +446,17 @@ export const riffXma2Layout = async (
     const dataAt = at + 8;
     const payloadEnd = dataAt + size;
     const alignedEnd = payloadEnd + (size & 1);
+    const chunk = { id, offset: dataAt, length: size };
+    chunks.push(chunk);
     if (payloadEnd > containerEnd || alignedEnd > containerEnd) {
       stopped = true;
       incompleteFraming = true;
       limitations.push(
-        `RIFF chunk ${id.trimEnd() || "chunk"} at offset ${String(at)} declares a payload that does not fit inside the RIFF form ending at ${String(declaredEnd)}; the chunk was not listed.`,
+        `RIFF chunk ${id.trimEnd() || "chunk"} at offset ${String(at)} declares ${String(size)} byte(s) extending past the RIFF form end at ${String(containerEnd)}; its declared range is kept in metadata but omitted from extractable regions.`,
       );
       break;
     }
-    chunks.push({ id, offset: dataAt, length: size });
+    completeChunks.push(chunk);
     at = alignedEnd;
   }
   if (at < containerEnd && at + 8 > containerEnd) {
@@ -468,9 +471,35 @@ export const riffXma2Layout = async (
   if (fmt === undefined)
     throw malformed("riff-xma2", "WAVE fmt chunk is missing", 12);
   const fmtRead = Math.min(fmt.length, XMA2_FMT_READ_BYTES);
+  if (fmt.offset + fmtRead > fileSize)
+    throw truncatedInput("riff-xma2", "WAVE fmt chunk is cut off", {
+      offset: fmt.offset,
+      extent: {
+        availableBytes: Math.max(0, fileSize - fmt.offset),
+        requiredBytes: fmtRead,
+      },
+    });
+  if (fmt.offset + fmtRead > declaredEnd)
+    throw malformed(
+      "riff-xma2",
+      "WAVE fmt chunk extends past the declared RIFF form end",
+      fmt.offset,
+    );
   const fmtBytes = await readRange(fmt.offset, fmtRead);
-  if (fmtBytes === "truncated" || fmtBytes.length < 16)
-    throw malformed("riff-xma2", "WAVE fmt chunk is cut off", fmt.offset);
+  if (fmtBytes === "truncated")
+    throw truncatedInput("riff-xma2", "WAVE fmt chunk is cut off", {
+      offset: fmt.offset,
+      extent: {
+        availableBytes: Math.max(0, fileSize - fmt.offset),
+        requiredBytes: fmtRead,
+      },
+    });
+  if (fmtBytes.length < 16)
+    throw malformed(
+      "riff-xma2",
+      "WAVE fmt chunk is shorter than 16 bytes",
+      fmt.offset,
+    );
   const fmtFields = new BinaryReader(fmtBytes, true, "riff-xma2");
   const formatTag = fmtFields.u16(0);
   if (formatTag !== WAVE_FORMAT_XMA2)
@@ -502,7 +531,7 @@ export const riffXma2Layout = async (
         }
       : null;
 
-  const regions: MediaAssetRegion[] = chunks.map((chunk, index) => ({
+  const regions: MediaAssetRegion[] = completeChunks.map((chunk, index) => ({
     path: `chunks/${String(index)}.${chunk.id.trimEnd() || "chunk"}`,
     role: "riff-chunk" as const,
     index,

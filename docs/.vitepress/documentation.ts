@@ -538,6 +538,11 @@ export const documentationSections = [
         source: "gpu-asset-headers.md",
         route: "/gpu-asset-headers",
       },
+      {
+        text: "Media and cache asset headers: Ogg Opus, RIFF/XMA2, Bink 2 and Vulkan pipeline caches",
+        source: "media-asset-headers.md",
+        route: "/media-asset-headers",
+      },
     ],
   },
   {

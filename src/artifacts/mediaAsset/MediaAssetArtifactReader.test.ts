@@ -202,14 +202,34 @@ describe("RIFF XMA2 headers", () => {
     expect(result.coverage).toEqual([{ status: "complete", limitations: [] }]);
   });
 
-  it("reports a truncated data chunk as a size mismatch", async () => {
+  it("reports a truncated data chunk as a size mismatch while keeping declared chunk metadata", async () => {
     const whole = riffXma2Fixture(4096);
     const result = await read("riff-xma2", whole.subarray(0, 200));
     expect(result.metadata).toMatchObject({
       kind: "riff-xma2",
       extent_check: "truncated",
+      chunks: [
+        { id: "fmt ", offset: 20, length: 52 },
+        { id: "data", offset: 80, length: 4096 },
+      ],
     });
+    expect(regions(result.entries)).toEqual([
+      { path: "chunks/0.fmt", byteOffset: 20, declaredSize: 52 },
+    ]);
     expect(result.coverage[0]?.status).toBe("unknown");
+  });
+
+  it("reports a RIFF/XMA2 file cut inside its fmt chunk as truncated rather than missing", async () => {
+    const whole = riffXma2Fixture(64);
+    await expect(
+      read("riff-xma2", whole.subarray(0, 40)),
+    ).rejects.toMatchObject({
+      parseFailure: {
+        kind: "truncated",
+        format: "riff-xma2",
+        offset: 20,
+      },
+    });
   });
 
   it("does not invent WAVE members past the declared RIFF end", async () => {
