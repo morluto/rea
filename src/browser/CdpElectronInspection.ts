@@ -36,7 +36,10 @@ import {
 } from "./CdpElectronScriptEvents.js";
 import { captureElectronScripts } from "./CdpElectronScripts.js";
 import { captureElectronWorkers } from "./CdpElectronWorkers.js";
-import { authorizedElectronFile } from "./ElectronFileScope.js";
+import {
+  authorizedElectronFile,
+  type ElectronFileScope,
+} from "./ElectronFileScope.js";
 import {
   compareUnicodeCodePoints,
   compositeKey,
@@ -50,6 +53,8 @@ interface ElectronContext {
   readonly input: InspectElectronPageInput;
   /** Header admission resolved by the provider's composition root. */
   readonly asarHeaderAdmission: AsarHeaderAdmission;
+  /** The provider's own ASAR descriptor owner, retried at its shutdown. */
+  readonly files: ElectronFileScope;
   readonly signal?: AbortSignal;
   readonly progress?: ProgressReporter;
 }
@@ -67,6 +72,8 @@ interface ElectronInspectionState {
   readonly excludedFrameGenerations: Set<string>;
   readonly scriptGenerations: WeakMap<ElectronScriptDraft, number>;
   readonly limitations: string[];
+  /** Scripts parsed when script capture took its snapshot. */
+  capturedScriptCount: number | undefined;
   mainFrameId: string | undefined;
   lastProvenMainDocument: ElectronFrameDocument | undefined;
   navigationDuringCapture: boolean;
@@ -97,6 +104,7 @@ export const inspectCdpElectronPage = async (
   const state: ElectronInspectionState = {
     completeness: new CdpCaptureCompleteness(),
     scripts: [],
+    capturedScriptCount: undefined,
     scriptMetadataRetention: { bytes: 2 },
     executionContextFrames: new Map(),
     frameGenerations: new Map(),
@@ -211,6 +219,16 @@ const runElectronInspection = async (
       "inspect_electron_page",
       "target_changed",
     );
+  // Scripts parsed after the snapshot were observed but not captured. Count
+  // them after the last read, as web capture does, so the inventory reports
+  // the omission instead of looking complete.
+  const lateScripts =
+    state.scripts.length - (state.capturedScriptCount ?? state.scripts.length);
+  if (lateScripts > 0) state.completeness.drop("scripts", lateScripts);
+  const scripts =
+    lateScripts > 0
+      ? { ...captured.scripts, total: captured.scripts.total + lateScripts }
+      : captured.scripts;
   return {
     browser: context.discovery.version,
     target: {
@@ -228,6 +246,7 @@ const runElectronInspection = async (
     completeness: state.completeness.snapshot(),
     frames,
     ...captured,
+    scripts,
     limitations: state.limitations,
   };
 };
@@ -524,6 +543,7 @@ const readCurrentFrames = async (
     completeness,
     context.asarHeaderAdmission,
     context.signal,
+    context.files,
   );
   const main = selectedMainFrame(inventory, state.mainFrameId);
   return { ...inventory, main, generations, unprovenDocuments };
@@ -571,6 +591,8 @@ const captureElectronContent = async (
   const frameIds = new Set(frames.map((frame) => frame.frame_id));
   const resources = await captureResources(context, state.completeness);
   const dom = await captureDom(context, state.completeness);
+  // Script capture snapshots this list before its first await.
+  state.capturedScriptCount = state.scripts.length;
   const scripts = await captureElectronScripts({
     connection: context.connection,
     sessionId: context.sessionId,
@@ -590,6 +612,7 @@ const captureElectronContent = async (
     },
     completeness: state.completeness,
     asarHeaderAdmission: context.asarHeaderAdmission,
+    files: context.files,
   });
   const workers = await captureElectronWorkers({
     connection: context.connection,
@@ -600,6 +623,7 @@ const captureElectronContent = async (
     completeness: state.completeness,
     limitations: state.limitations,
     asarHeaderAdmission: context.asarHeaderAdmission,
+    files: context.files,
   });
   return { dom, scripts, resources, workers };
 };
@@ -644,6 +668,7 @@ export const captureFrames = async (
   completeness: CdpCaptureCompleteness,
   asarHeaderAdmission: AsarHeaderAdmission,
   signal?: AbortSignal,
+  files?: ElectronFileScope,
 ): Promise<ElectronFrameInventory> => {
   if (tree.omittedFrames)
     completeness.exclude("frames", "invalid_protocol_value", null);
@@ -677,6 +702,7 @@ export const captureFrames = async (
       signal,
       "inspect_electron_page",
       asarHeaderAdmission,
+      files,
     );
     if (path === undefined) {
       completeness.exclude("frames", "out_of_target_scope");
@@ -719,6 +745,7 @@ const captureResources = async (
       context.signal,
       "inspect_electron_page",
       context.asarHeaderAdmission,
+      context.files,
     );
     if (path === undefined) {
       completeness.exclude("resources", "out_of_target_scope");
@@ -787,6 +814,7 @@ const captureDom = async (
         context.signal,
         "inspect_electron_page",
         context.asarHeaderAdmission,
+        context.files,
       )) === undefined
     ) {
       completeness.exclude("dom", "out_of_target_scope");

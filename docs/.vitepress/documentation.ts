@@ -453,6 +453,11 @@ export const documentationSections = [
         source: "uimage.md",
         route: "/uimage",
       },
+      {
+        text: "uClinux bFLT flat executables",
+        source: "bflt-executables.md",
+        route: "/bflt-executables",
+      },
     ],
   },
   {

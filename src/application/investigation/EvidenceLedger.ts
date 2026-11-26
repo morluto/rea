@@ -20,6 +20,7 @@ import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import { UnknownRegistryError } from "../../domain/unknownRegistryError.js";
 import {
   isImmutableEvidence,
+  adoptEvidenceDisplayMetadata,
   evidenceDisplayMetadataAgree,
   evidenceFileTarget,
   type Evidence,
@@ -65,6 +66,11 @@ export interface EvidenceImportDelta {
   readonly recordsAdded: number;
   readonly unknownsAdded: number;
   readonly changed: boolean;
+  readonly replacements: readonly EvidenceMetadataReplacement[];
+}
+
+export interface EvidenceRecordDelta {
+  readonly disposition: "added" | "duplicate";
   readonly replacements: readonly EvidenceMetadataReplacement[];
 }
 
@@ -126,6 +132,42 @@ export class EvidenceLedger {
     this.#records.set(evidence.evidence_id, evidence);
     this.#commitAccounting(admitted.value);
     return ok("added");
+  }
+
+  /** Reconcile provenance supplied by an authenticated record, never inferred from a session. */
+  recordWithMetadata(
+    input: Evidence,
+  ): Result<EvidenceRecordDelta, AnalysisError> {
+    const authenticated = this.#readEvidence(
+      input,
+      "Evidence record validation failed",
+    );
+    if (!authenticated.ok) return authenticated;
+    const incoming = authenticated.value;
+    const previous = this.#records.get(incoming.evidence_id);
+    if (previous === undefined) {
+      const recorded = this.record(incoming);
+      return recorded.ok
+        ? ok({ disposition: recorded.value, replacements: [] })
+        : recorded;
+    }
+    if (incoming.provider_selection === undefined)
+      return ok({ disposition: "duplicate", replacements: [] });
+    const current = adoptEvidenceDisplayMetadata(previous, incoming);
+    if (current === previous)
+      return ok({ disposition: "duplicate", replacements: [] });
+    const admitted = this.#admitChanges(
+      "record_evidence",
+      new Map([[current.evidence_id, current]]),
+    );
+    if (!admitted.ok)
+      return err(this.#exposeRefusedEvidence(admitted.error, previous));
+    this.#records.set(current.evidence_id, current);
+    this.#commitAccounting(admitted.value);
+    return ok({
+      disposition: "duplicate",
+      replacements: [{ kind: "metadata", previous, current }],
+    });
   }
 
   /** Validate an entire bundle before atomically merging its records. */
