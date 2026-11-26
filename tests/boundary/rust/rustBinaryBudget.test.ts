@@ -264,10 +264,7 @@ it("names max_wasm_sections when a module has more sections than it", async () =
         refusal: { kind: "adjustable_budget" },
       },
     });
-    const admitted = await provider.inspect({
-      path,
-      max_wasm_sections: 8,
-    });
+    const admitted = await provider.inspect({ path, max_wasm_sections: 8 });
     if (!admitted.ok) throw admitted.error;
     expect(admitted.value.format).toBe("wasm");
   } finally {

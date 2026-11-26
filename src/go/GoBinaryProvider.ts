@@ -38,12 +38,14 @@ import {
   type GoBinaryImage,
 } from "./GoBinaryImage.js";
 import { requireSelectedNativeImageFromReader } from "../domain/apple/machoSliceSelection.js";
-import { NATIVE_STRUCTURE_BYTES } from "../domain/native/nativeStructureBudget.js";
 import {
   BinaryResourceFailure,
   isNativeStructureFailure,
 } from "../domain/binaryContainer.js";
-import { nativeStructureConstraint } from "../domain/native/nativeStructureBudget.js";
+import {
+  NATIVE_STRUCTURE_BYTES,
+  nativeStructureConstraint,
+} from "../domain/native/nativeStructureBudget.js";
 
 const OPERATION = "inspect_go_binary";
 const HEADER_PREFIX_BYTES = 4096;

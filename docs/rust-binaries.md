@@ -237,14 +237,14 @@ allowance still applies. Optional compiler paths are shortened before they can
 displace independently observed dependency facts.
 
 The synchronous WebAssembly section walk admits at most `max_wasm_sections`
-payloads (default 65,536, at most 16,777,216). A further section with a valid
-length and file extent triggers a `cpu` resource constraint whose
-`details.limit` names `max_wasm_sections`. The walk stops at the first excess,
-so the refusal reports no `required_value`. Invalid lengths and truncated
-extents retain their format diagnosis at the limit. Raise
-`max_wasm_sections` (CLI `--max-wasm-sections`) on the next call; it is
-independent of `producer_limits`. Bounds and recovery are in
-[Native table structure budget](reference/limits-and-recovery.md#native-table-structure-budget).
+section payloads (default 65,536, at most 16,777,216; see
+[limits and recovery](reference/limits-and-recovery.md#native-table-structure-budget)).
+A further section with a valid length and file extent triggers a `cpu` resource
+constraint whose `details.limit` names `max_wasm_sections`. Raise
+`max_wasm_sections` (CLI `--max-wasm-sections`) on the next call. The walk
+stops at the first excess, so no `required_value` is reported. Invalid lengths
+and truncated extents retain their format diagnosis at the limit.
+`producer_limits` does not raise it.
 
 Reader architecture names remain verbatim in the report. Evidence subjects use
 the recognized canonical family: `386` maps to `x86`, `amd64` to `x86_64`, and
