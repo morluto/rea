@@ -18,8 +18,10 @@ final sanitized URL capture are supplied by default. Set
 Add secret declarations, storage seeds, and additional artifact or event
 capture only when needed. Action, secret, and storage counts are not capped.
 Duration, action, and navigation
-timeouts remain fixed provider-owned liveness limits; the request does not
-accept a caller-controlled `limits` object.
+timeouts are not capped by the provider (Playwright's default and navigation
+timeouts are set to 0, meaning no timeout). The request does not accept a
+caller-controlled `limits` object; liveness is governed by the overall
+scenario deadline and host process limits.
 
 ## Minimal launch example
 
