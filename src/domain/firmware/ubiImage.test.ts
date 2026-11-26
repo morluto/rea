@@ -2667,6 +2667,142 @@ it("keeps total read bytes bounded when many dividing EC headers appear in a mos
   expect(bytesRead).toBeLessThanOrEqual(2 * probe.length);
 });
 
+it("verifies tens of thousands of erased blocks in linear time", async () => {
+  const geometry = { pebSize: 512, dataOffset: 128 };
+  const [layout0, layout1] = ubiLayoutPebs(
+    [{ id: 0, name: "rootfs", type: "dynamic", reservedPebs: 1 }],
+    geometry,
+  );
+  const prefix = ubiImage([layout0!, layout1!], geometry);
+  const freeBlock = ubiImage([{ kind: "free" }], geometry);
+  const erasedBlock = Buffer.alloc(geometry.pebSize, 0xff);
+  const consecutiveErased = 20_000;
+  const alternatingPairs = 10_000;
+  const pebCount = 2 + consecutiveErased + alternatingPairs * 2;
+  const fileSize = pebCount * geometry.pebSize;
+  const blockAt = (pebIndex: number): Buffer => {
+    if (pebIndex < 2)
+      return prefix.subarray(
+        pebIndex * geometry.pebSize,
+        (pebIndex + 1) * geometry.pebSize,
+      );
+    if (pebIndex < 2 + consecutiveErased) return erasedBlock;
+    return (pebIndex - 2 - consecutiveErased) % 2 === 0
+      ? freeBlock
+      : erasedBlock;
+  };
+  let bodyBytesRead = 0;
+  const parsed = await parseUbiImage(fileSize, (offset, length) => {
+    const pebIndex = Math.floor(offset / geometry.pebSize);
+    const inPeb = offset % geometry.pebSize;
+    if (inPeb === geometry.dataOffset && length === geometry.pebSize - inPeb)
+      bodyBytesRead += length;
+    if (inPeb + length <= geometry.pebSize)
+      return blockAt(pebIndex).subarray(inPeb, inPeb + length);
+    const out = Buffer.alloc(length);
+    let written = 0;
+    while (written < length) {
+      const pos = offset + written;
+      const idx = Math.floor(pos / geometry.pebSize);
+      const local = pos % geometry.pebSize;
+      const take = Math.min(length - written, geometry.pebSize - local);
+      blockAt(idx).copy(out, written, local, local + take);
+      written += take;
+    }
+    return out;
+  });
+  expect(parsed).toMatchObject({
+    ok: true,
+    value: {
+      geometry: { pebSize: geometry.pebSize, pebCount },
+      mappedPebCount: 2,
+      freePebCount: alternatingPairs,
+      erasedPebCount: consecutiveErased + alternatingPairs,
+      corruptPebCount: 0,
+    },
+  });
+  expect(bodyBytesRead).toBe(
+    (consecutiveErased + alternatingPairs) *
+      (geometry.pebSize - geometry.dataOffset),
+  );
+});
+
+it("reuses dynamic wear-leveling copy CRCs across PEB size candidates", async () => {
+  // 512 * 5040 = 2,580,480 bytes has 60 divisors; placing two competing dynamic
+  // wear-leveling copies at offsets 0 and 512 * 2520 puts both on the grid of
+  // every divisor of 2520 (48 divisors). Each copy's payload must be read and
+  // hashed once instead of once per trial candidate.
+  const unit = 512;
+  const units = 5040;
+  const half = 2520;
+  const dataOffset = 128;
+  const dataSize = unit - dataOffset;
+  const probe = Buffer.alloc(unit * units, 0xff);
+  const ecHeader = ubiImage([{ kind: "free" }], {
+    pebSize: unit,
+    dataOffset,
+  }).subarray(0, 64);
+  for (let d = 1; d < units; d += 1) {
+    if (units % d === 0) ecHeader.copy(probe, d * unit);
+  }
+  const copy0 = ubiImage(
+    [
+      {
+        kind: "leb",
+        volId: 0,
+        lnum: 0,
+        volType: "dynamic",
+        copyFlag: true,
+        data: Buffer.alloc(dataSize, 0x41),
+        sqnum: 1n,
+      },
+    ],
+    { pebSize: unit, dataOffset },
+  );
+  const copy1 = ubiImage(
+    [
+      {
+        kind: "leb",
+        volId: 0,
+        lnum: 0,
+        volType: "dynamic",
+        copyFlag: true,
+        data: Buffer.alloc(dataSize, 0x42),
+        sqnum: 2n,
+      },
+    ],
+    { pebSize: unit, dataOffset },
+  );
+  copy0.copy(probe, 0);
+  copy1.copy(probe, half * unit);
+
+  let bytesRead = 0;
+  const copyPayloadReads = new Map<number, number>();
+  const result = await parseUbiImage(probe.length, (offset, length) => {
+    bytesRead += length;
+    if (
+      length === dataSize &&
+      (offset === dataOffset || offset === half * unit + dataOffset)
+    )
+      copyPayloadReads.set(offset, (copyPayloadReads.get(offset) ?? 0) + 1);
+    return probe.subarray(offset, offset + length);
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      kind: "malformed",
+      message: expect.stringContaining("no valid volume table"),
+    },
+  });
+  expect(copyPayloadReads).toEqual(
+    new Map([
+      [dataOffset, 1],
+      [half * unit + dataOffset, 1],
+    ]),
+  );
+  expect(bytesRead).toBeLessThanOrEqual(2 * probe.length);
+});
+
 describe("layout volume VID validation", () => {
   const slots = ubiVolumeTableSlots();
   const staleTable = ubiVolumeTable(

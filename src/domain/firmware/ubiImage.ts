@@ -1559,9 +1559,9 @@ interface UbiErasedRange {
 interface UbiParseContext {
   readonly fileSize: number;
   staticPayloadCrcBytes: number;
-  readonly staticPayloadCrcs: Map<string, number | null>;
-  readonly erasedRanges: UbiErasedRange[];
-  readonly nonErasedOffsets: number[];
+  readonly payloadCrcs: Map<string, number | null>;
+  erasedRanges: UbiErasedRange[];
+  nonErasedOffsets: number[];
   readonly first: UbiEcHeader;
   readonly read: UbiImageRead;
   readonly checkpoint:
@@ -1574,14 +1574,12 @@ const verifyUbiPayload = async (
   offset: number,
   vid: UbiVidHeader,
 ): Promise<Result<boolean, ParseFailureError<"limit">>> => {
-  // Cache the computed CRC, since the expected value belongs to the VID.
-  const key =
-    vid.volType === VOLUME_TYPE_STATIC
-      ? `${String(offset)}/${String(vid.dataSize)}`
-      : null;
-  if (key !== null) {
-    const cached = ctx.staticPayloadCrcs.get(key);
-    if (cached !== undefined) return ok(cached === vid.dataCrc);
+  // Cache the computed CRC for both static and dynamic payloads across
+  // candidate block sizes, since the expected value belongs to the VID.
+  const key = `${String(offset)}/${String(vid.dataSize)}`;
+  const cached = ctx.payloadCrcs.get(key);
+  if (cached !== undefined) return ok(cached === vid.dataCrc);
+  if (vid.volType === VOLUME_TYPE_STATIC) {
     const maximum = 2 * ctx.fileSize;
     if (vid.dataSize > maximum - ctx.staticPayloadCrcBytes)
       return err(
@@ -1597,7 +1595,7 @@ const verifyUbiPayload = async (
   await ctx.checkpoint?.(true);
   const data = await ctx.read(offset, vid.dataSize);
   const crc = data.length === vid.dataSize ? ubiCrc(data) : null;
-  if (key !== null) ctx.staticPayloadCrcs.set(key, crc);
+  ctx.payloadCrcs.set(key, crc);
   return ok(crc === vid.dataCrc);
 };
 
@@ -1731,77 +1729,72 @@ const firstNonErasedByte = (bytes: Uint8Array): number => {
   return -1;
 };
 
-const recordErasedRange = (
+const appendErasedRange = (
   ranges: UbiErasedRange[],
   start: number,
   end: number,
 ): void => {
   if (start >= end) return;
-  let insertAt = 0;
-  while (insertAt < ranges.length && ranges[insertAt]!.end < start)
-    insertAt += 1;
-  let mergedStart = start;
-  let mergedEnd = end;
-  let removeCount = 0;
-  while (
-    insertAt + removeCount < ranges.length &&
-    ranges[insertAt + removeCount]!.start <= mergedEnd
-  ) {
-    const existing = ranges[insertAt + removeCount]!;
-    mergedStart = Math.min(mergedStart, existing.start);
-    mergedEnd = Math.max(mergedEnd, existing.end);
-    removeCount += 1;
+  const last = ranges.at(-1);
+  if (last !== undefined && last.end >= start) {
+    if (end > last.end) ranges[ranges.length - 1] = { start: last.start, end };
+    return;
   }
-  ranges.splice(insertAt, removeCount, { start: mergedStart, end: mergedEnd });
+  ranges.push({ start, end });
 };
 
-const unverifiedErasedGaps = (
-  ranges: readonly UbiErasedRange[],
-  start: number,
-  end: number,
+const mergeErasedRanges = (
+  left: readonly UbiErasedRange[],
+  right: readonly UbiErasedRange[],
 ): UbiErasedRange[] => {
-  const gaps: UbiErasedRange[] = [];
-  let cursor = start;
-  for (const range of ranges) {
-    if (range.end <= cursor) continue;
-    if (range.start >= end) break;
-    if (range.start > cursor) gaps.push({ start: cursor, end: range.start });
-    cursor = Math.max(cursor, range.end);
-    if (cursor >= end) break;
+  if (left.length === 0) return [...right];
+  if (right.length === 0) return [...left];
+  const merged: UbiErasedRange[] = [];
+  let leftIndex = 0;
+  let rightIndex = 0;
+  while (leftIndex < left.length && rightIndex < right.length) {
+    const next =
+      left[leftIndex]!.start <= right[rightIndex]!.start
+        ? left[leftIndex++]!
+        : right[rightIndex++]!;
+    appendErasedRange(merged, next.start, next.end);
   }
-  if (cursor < end) gaps.push({ start: cursor, end });
-  return gaps;
+  while (leftIndex < left.length) {
+    const next = left[leftIndex++]!;
+    appendErasedRange(merged, next.start, next.end);
+  }
+  while (rightIndex < right.length) {
+    const next = right[rightIndex++]!;
+    appendErasedRange(merged, next.start, next.end);
+  }
+  return merged;
 };
 
-const isRangeErased = async (
-  ctx: UbiParseContext,
-  start: number,
-  end: number,
-): Promise<boolean> => {
-  if (start >= end) return true;
-  if (ctx.nonErasedOffsets.some((offset) => offset >= start && offset < end))
-    return false;
-  let chunks = 0;
-  for (const gap of unverifiedErasedGaps(ctx.erasedRanges, start, end)) {
-    for (
-      let offset = gap.start;
-      offset < gap.end;
-      offset += SCAN_CHUNK_BYTES, chunks += 1
-    ) {
-      await ctx.checkpoint?.(chunks % 16 === 0);
-      const length = Math.min(SCAN_CHUNK_BYTES, gap.end - offset);
-      const chunk = await ctx.read(offset, length);
-      if (chunk.length < length) return false;
-      const nonErased = firstNonErasedByte(chunk);
-      if (nonErased !== -1) {
-        recordErasedRange(ctx.erasedRanges, offset, offset + nonErased);
-        ctx.nonErasedOffsets.push(offset + nonErased);
-        return false;
-      }
-      recordErasedRange(ctx.erasedRanges, offset, offset + length);
-    }
+const mergeSortedNumbers = (
+  left: readonly number[],
+  right: readonly number[],
+): number[] => {
+  if (left.length === 0) return [...right];
+  if (right.length === 0) return [...left];
+  const merged: number[] = [];
+  let leftIndex = 0;
+  let rightIndex = 0;
+  while (leftIndex < left.length && rightIndex < right.length) {
+    const next =
+      left[leftIndex]! <= right[rightIndex]!
+        ? left[leftIndex++]!
+        : right[rightIndex++]!;
+    if (merged.at(-1) !== next) merged.push(next);
   }
-  return true;
+  while (leftIndex < left.length) {
+    const next = left[leftIndex++]!;
+    if (merged.at(-1) !== next) merged.push(next);
+  }
+  while (rightIndex < right.length) {
+    const next = right[rightIndex++]!;
+    if (merged.at(-1) !== next) merged.push(next);
+  }
+  return merged;
 };
 
 const verifyErasedPebBodies = async (
@@ -1810,14 +1803,74 @@ const verifyErasedPebBodies = async (
   pebs: readonly UbiPeb[],
 ): Promise<readonly UbiPeb[]> => {
   let verified: UbiPeb[] | null = null;
+  let erasedCursor = 0;
+  let nonErasedCursor = 0;
+  let chunks = 0;
+  const newErasedRanges: UbiErasedRange[] = [];
+  const newNonErasedOffsets: number[] = [];
   for (let index = 0; index < pebs.length; index += 1) {
     const peb = pebs[index]!;
     if (peb.state !== "erased") continue;
-    const erased = await isRangeErased(
-      ctx,
-      index * geometry.pebSize + geometry.headerReadBytes,
-      (index + 1) * geometry.pebSize,
-    );
+    const pebStart = index * geometry.pebSize;
+    const bodyStart = pebStart + geometry.headerReadBytes;
+    const pebEnd = pebStart + geometry.pebSize;
+    // `classifyUbiPeb` already verified [pebStart, bodyStart) is all 0xFF, so
+    // recording it lets adjacent erased blocks coalesce into a single range.
+    appendErasedRange(newErasedRanges, pebStart, bodyStart);
+    while (
+      nonErasedCursor < ctx.nonErasedOffsets.length &&
+      ctx.nonErasedOffsets[nonErasedCursor]! < bodyStart
+    )
+      nonErasedCursor += 1;
+    let erased = true;
+    if (
+      nonErasedCursor < ctx.nonErasedOffsets.length &&
+      ctx.nonErasedOffsets[nonErasedCursor]! < pebEnd
+    ) {
+      erased = false;
+    } else if (bodyStart < pebEnd) {
+      while (
+        erasedCursor < ctx.erasedRanges.length &&
+        ctx.erasedRanges[erasedCursor]!.end <= bodyStart
+      )
+        erasedCursor += 1;
+      const gaps: UbiErasedRange[] = [];
+      let cursor = bodyStart;
+      while (erasedCursor < ctx.erasedRanges.length) {
+        const range = ctx.erasedRanges[erasedCursor]!;
+        if (range.start >= pebEnd) break;
+        if (range.start > cursor)
+          gaps.push({ start: cursor, end: range.start });
+        cursor = Math.max(cursor, range.end);
+        if (cursor >= pebEnd) break;
+        erasedCursor += 1;
+      }
+      if (cursor < pebEnd) gaps.push({ start: cursor, end: pebEnd });
+      for (const gap of gaps) {
+        for (
+          let offset = gap.start;
+          offset < gap.end;
+          offset += SCAN_CHUNK_BYTES, chunks += 1
+        ) {
+          await ctx.checkpoint?.(chunks % 16 === 0);
+          const length = Math.min(SCAN_CHUNK_BYTES, gap.end - offset);
+          const chunk = await ctx.read(offset, length);
+          if (chunk.length < length) {
+            erased = false;
+            break;
+          }
+          const nonErased = firstNonErasedByte(chunk);
+          if (nonErased !== -1) {
+            appendErasedRange(newErasedRanges, offset, offset + nonErased);
+            newNonErasedOffsets.push(offset + nonErased);
+            erased = false;
+            break;
+          }
+          appendErasedRange(newErasedRanges, offset, offset + length);
+        }
+        if (!erased) break;
+      }
+    }
     if (!erased) {
       verified ??= [...pebs];
       verified[index] = {
@@ -1827,6 +1880,13 @@ const verifyErasedPebBodies = async (
       };
     }
   }
+  if (newErasedRanges.length > 0)
+    ctx.erasedRanges = mergeErasedRanges(ctx.erasedRanges, newErasedRanges);
+  if (newNonErasedOffsets.length > 0)
+    ctx.nonErasedOffsets = mergeSortedNumbers(
+      ctx.nonErasedOffsets,
+      newNonErasedOffsets,
+    );
   return verified ?? pebs;
 };
 
@@ -1997,7 +2057,7 @@ export const parseUbiImage = async (
   const ctx: UbiParseContext = {
     fileSize,
     staticPayloadCrcBytes: 0,
-    staticPayloadCrcs: new Map(),
+    payloadCrcs: new Map(),
     erasedRanges: [],
     nonErasedOffsets: [],
     first: first.value,
