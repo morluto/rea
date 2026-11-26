@@ -34,7 +34,7 @@ import {
   type Keyed,
 } from "../keyedCollection.js";
 import {
-  MAX_NATIVE_EXPORT_ROWS,
+  DEFAULT_NATIVE_EXPORT_TEXT_BYTES,
   decodeElfExportName,
   type ElfExport,
   type NativeExportIssue,
@@ -42,8 +42,10 @@ import {
   type PeExport,
 } from "./nativeExports.js";
 import {
+  DEFAULT_ELF_EXPORT_TABLE_LIMITS,
   readElfDynamicExportTables,
   readElfDynamicExportTablesFromReader,
+  type ElfExportTableLimits,
   type ElfExportTableSelection,
   type ElfExportTables,
 } from "./elfDynamicExportTables.js";
@@ -62,8 +64,21 @@ const SHT_GNU_VERSYM = 0x6fffffff;
 const PE_EXPORT_DIRECTORY = 0;
 const PE_EXPORT_DIRECTORY_BYTES = 40;
 const MAXIMUM_NAME_BYTES = 4096;
-/** Text retained across all rows; names can repeat one long string table entry. */
-const MAXIMUM_RETAINED_TEXT_BYTES = 16 * 1024 * 1024;
+/**
+ * The caller's export inventory budgets: rows and declared symbol counts
+ * (`max_entries`), text retained across rows (`max_text_bytes`; names can
+ * repeat one long string-table entry), and one table read
+ * (`max_structure_bytes`).
+ */
+export interface NativeExportBudgets extends ElfExportTableLimits {
+  readonly textBytes: number;
+}
+
+/** The budgets an export reader uses when its caller selected none. */
+export const DEFAULT_NATIVE_EXPORT_BUDGETS: NativeExportBudgets = {
+  ...DEFAULT_ELF_EXPORT_TABLE_LIMITS,
+  textBytes: DEFAULT_NATIVE_EXPORT_TEXT_BYTES,
+};
 
 const retainedTextBytes = (...strings: readonly (string | null)[]): number =>
   strings.reduce(
@@ -72,13 +87,13 @@ const retainedTextBytes = (...strings: readonly (string | null)[]): number =>
     0,
   );
 
-/** Which fixed export inventory allowance refused the image. */
+/** Which inventory budget refused the image. */
 export const NATIVE_EXPORT_LIMITS = ["rows", "retained_text"] as const;
 
 /**
- * A fixed inventory allowance an image can exhaust. The failure's `LimitRef`
- * names it so consumers derive its units from the producer, not from text:
- * `rows` is an entry count and `retained_text` a byte budget.
+ * An inventory budget an image can exhaust. The failure's `LimitRef` names it
+ * so consumers derive its control from the producer, not from text: `rows` is
+ * `max_entries` and `retained_text` is `max_text_bytes`.
  */
 export type NativeExportLimit = (typeof NATIVE_EXPORT_LIMITS)[number];
 
@@ -86,31 +101,45 @@ const nativeExportLimit = (
   limit: NativeExportLimit,
   allowance: number,
   message: string,
+  required?: number,
 ): BinaryResourceFailure =>
-  new BinaryResourceFailure("structure", allowance, message, limit);
+  new BinaryResourceFailure(
+    "structure",
+    allowance,
+    message,
+    limit,
+    limit === "rows" ? "entries" : "bytes",
+    required,
+  );
 
-const checkRetainedText = (bytes: number): void => {
-  if (bytes > MAXIMUM_RETAINED_TEXT_BYTES)
+/** Retained text stops at the first excess, so only the budget is known. */
+const checkRetainedText = (bytes: number, maximum: number): void => {
+  if (bytes > maximum)
     throw nativeExportLimit(
       "retained_text",
-      MAXIMUM_RETAINED_TEXT_BYTES,
-      `Export names exceed the ${String(MAXIMUM_RETAINED_TEXT_BYTES)}-byte retained-text allowance`,
+      maximum,
+      `Export names exceed max_text_bytes (${String(maximum)})`,
     );
 };
 
 /** Charge retained text and rows at their owning storage boundary. */
-const createRetention = () => {
+const createRetention = (budgets: NativeExportBudgets) => {
   let rows = 0;
   let text = 0;
   const retainText = (...strings: readonly (string | null)[]): void => {
     text += retainedTextBytes(...strings);
-    checkRetainedText(text);
+    checkRetainedText(text, budgets.textBytes);
   };
   return {
     text: retainText,
     row: (...strings: readonly (string | null)[]): void => {
       rows++;
-      rowBudget(rows, "Export inventory");
+      if (rows > budgets.rows)
+        throw nativeExportLimit(
+          "rows",
+          budgets.rows,
+          `Export inventory exceeds max_entries (${String(budgets.rows)})`,
+        );
       retainText(...strings);
     },
   };
@@ -118,12 +147,14 @@ const createRetention = () => {
 
 const hex = (value: bigint | number) => `0x${value.toString(16)}`;
 
-const rowBudget = (count: number, label: string): void => {
-  if (count > MAX_NATIVE_EXPORT_ROWS)
+/** A declared table count is the complete need for that table. */
+const rowBudget = (count: number, label: string, rows: number): void => {
+  if (count > rows)
     throw nativeExportLimit(
       "rows",
-      MAX_NATIVE_EXPORT_ROWS,
-      `${label} declares ${String(count)} entries, above the ${String(MAX_NATIVE_EXPORT_ROWS)}-entry export inventory allowance`,
+      rows,
+      `${label} declares ${String(count)} entries, above max_entries (${String(rows)})`,
+      count,
     );
 };
 
@@ -201,8 +232,12 @@ type DecodedElfString = ReturnType<typeof decodeElfExportName>;
 class ElfVersionWorkFailure extends BinaryResourceFailure {}
 
 /** Charge both headers and auxiliary visits, including aliased record replays. */
-const versionRecordStep = (size: number, width: number): (() => boolean) => {
-  const allowance = Math.min(Math.floor(size / width), MAX_NATIVE_EXPORT_ROWS);
+const versionRecordStep = (
+  size: number,
+  width: number,
+  rows: number,
+): (() => boolean) => {
+  const allowance = Math.min(Math.floor(size / width), rows);
   let visited = 0;
   return () => {
     if (++visited > allowance)
@@ -216,18 +251,18 @@ const versionRecordStep = (size: number, width: number): (() => boolean) => {
 };
 
 /** One format owner decodes each selected string-table offset at most once. */
-const createVersionNameReader = () => {
+const createVersionNameReader = (textBytes: number) => {
   type CachedName =
     | { readonly value: DecodedElfString | null }
     | { readonly failure: BinaryFormatFailure | BinaryStringReadLimit };
   const decodedNames = new WeakMap<Buffer, Map<number, CachedName>>();
   let cacheBytes = 0;
   const chargeCache = (bytes: number): void => {
-    if (cacheBytes + bytes > MAXIMUM_RETAINED_TEXT_BYTES)
+    if (cacheBytes + bytes > textBytes)
       throw new ElfVersionWorkFailure(
         "structure",
-        MAXIMUM_RETAINED_TEXT_BYTES,
-        "ELF version name decoding exceeds its 16 MiB cache allowance; remaining version names are unknown",
+        textBytes,
+        `ELF version name decoding exceeds its ${String(textBytes)}-byte cache allowance (max_text_bytes); remaining version names are unknown`,
       );
     cacheBytes += bytes;
   };
@@ -327,6 +362,7 @@ export function* parseElfExportsFromDirectorySteps(
   bytes: Buffer,
   artifact: Artifact,
   directory: ReturnType<typeof readElfDirectoryFromBuffer>,
+  budgets: NativeExportBudgets = DEFAULT_NATIVE_EXPORT_BUDGETS,
 ): Generator<void, Extract<NativeExports, { format: "elf" }>> {
   const plan = elfExportPlan(artifact, directory);
   if (plan.state === "empty") return plan.result;
@@ -334,10 +370,16 @@ export function* parseElfExportsFromDirectorySteps(
   const { sections } = directory;
   let selection: ElfExportTableSelection;
   if (dynsym === undefined) {
-    selection = yield* readElfDynamicExportTables(bytes, directory);
+    selection = yield* readElfDynamicExportTables(bytes, directory, budgets);
   } else {
     selection = yield* runBufferedElfReads(
-      readElfSectionExportTableSteps(bytes.length, directory, dynsym, byType),
+      readElfSectionExportTableSteps(
+        bytes.length,
+        directory,
+        dynsym,
+        byType,
+        budgets.rows,
+      ),
       bytes,
     );
   }
@@ -352,6 +394,7 @@ export function* parseElfExportsFromDirectorySteps(
             directory.little,
             sections,
             selection.tables.issues,
+            budgets,
           ),
           bytes,
         );
@@ -361,6 +404,7 @@ export function* parseElfExportsFromDirectorySteps(
     selection.tables,
     versionNames,
     dynsym === undefined,
+    budgets,
   );
 }
 
@@ -399,6 +443,7 @@ function* projectElfExports(
   }: ElfExportTables,
   versionNames: ReadonlyMap<number, DecodedElfString | null>,
   sectionless: boolean,
+  budgets: NativeExportBudgets,
 ): Generator<void, Extract<NativeExports, { format: "elf" }>> {
   const directory = { bits: result.bits, little };
   const width = elfSymbolSize(directory.bits);
@@ -413,7 +458,7 @@ function* projectElfExports(
     tableOffset,
   );
   const unresolvedVersions = new Set<number>();
-  const retain = createRetention();
+  const retain = createRetention(budgets);
   const exports: ElfExport[] = [];
   for (let index = 1; index < count; index++) {
     if (index % 1024 === 0) yield;
@@ -526,16 +571,20 @@ function* projectElfExports(
 export function* parseNativeExportsSteps(
   bytes: Buffer,
   artifact: Artifact,
+  budgets: NativeExportBudgets = DEFAULT_NATIVE_EXPORT_BUDGETS,
 ): Generator<void, NativeExports> {
   yield;
   if (hasElfMagic(bytes))
     return yield* parseElfExportsFromDirectorySteps(
       bytes,
       artifact,
-      readElfDirectoryFromBuffer(bytes, OPERATION),
+      readElfDirectoryFromBuffer(bytes, OPERATION, {
+        structureBytes: budgets.structureBytes,
+      }),
+      budgets,
     );
   if (bytes.subarray(0, 2).equals(Buffer.from("MZ")))
-    return yield* parsePeExports(bytes, artifact);
+    return yield* parsePeExports(bytes, artifact, budgets);
   throw new BinaryFormatFailure(
     "unsupported",
     "Only PE and ELF images are supported; inspect Mach-O exports with inspect_macho",
@@ -546,7 +595,9 @@ export function* parseNativeExportsSteps(
 export const parseNativeExports = (
   bytes: Buffer,
   artifact: Artifact,
-): NativeExports => finishExports(parseNativeExportsSteps(bytes, artifact));
+  budgets: NativeExportBudgets = DEFAULT_NATIVE_EXPORT_BUDGETS,
+): NativeExports =>
+  finishExports(parseNativeExportsSteps(bytes, artifact, budgets));
 
 const finishExports = (
   steps: Generator<void, NativeExports>,
@@ -635,6 +686,7 @@ type PeExportRead =
 function* parsePeExportSteps(
   image: ReturnType<typeof readPeImage>,
   artifact: Artifact,
+  budgets: NativeExportBudgets,
 ): Generator<PeExportRead | undefined, NativeExports, Buffer | undefined> {
   const base = image.image_base ?? 0n;
   const directory = image.pe_data_directories?.[PE_EXPORT_DIRECTORY];
@@ -717,8 +769,8 @@ function* parsePeExportSteps(
   const functionsRva = headerReader.u32(28);
   const namesRva = headerReader.u32(32);
   const ordinalsRva = headerReader.u32(36);
-  rowBudget(functionCount, "PE export address table");
-  rowBudget(nameCount, "PE export name table");
+  rowBudget(functionCount, "PE export address table", budgets.rows);
+  rowBudget(nameCount, "PE export name table", budgets.rows);
   const functionsOffset =
     functionCount === 0 ? 0 : map(functionsRva, functionCount * 4);
   const namesOffset = nameCount === 0 ? 0 : map(namesRva, nameCount * 4);
@@ -755,7 +807,7 @@ function* parsePeExportSteps(
       message: `Export directory DLL name: ${failureMessage(cause)}`,
     });
   }
-  const retain = createRetention();
+  const retain = createRetention(budgets);
   const namesByFunction = new Map<number, string[]>();
   const namedFunctions = new Set<number>();
   for (let index = 0; index < nameCount; index++) {
@@ -843,8 +895,9 @@ function* parsePeExportSteps(
 function* parsePeExports(
   bytes: Buffer,
   artifact: Artifact,
+  budgets: NativeExportBudgets,
 ): Generator<void, NativeExports> {
-  const steps = parsePeExportSteps(readPeImage(bytes), artifact);
+  const steps = parsePeExportSteps(readPeImage(bytes), artifact, budgets);
   let step = steps.next();
   while (!step.done) {
     const read = step.value;
@@ -872,6 +925,7 @@ const parsePeExportsFromHandle = async (
   source: ByteSource,
   artifact: Artifact,
   pause: ZstandardFramePause,
+  budgets: NativeExportBudgets,
 ): Promise<NativeExports> => {
   const { readRange, readPrefix } = createSourceReaders(source);
   const image = await readPeImageFromReader({
@@ -879,7 +933,7 @@ const parsePeExportsFromHandle = async (
     prefix: await readRange(0, Math.min(64, source.size)),
     readRange,
   });
-  const steps = parsePeExportSteps(image, artifact);
+  const steps = parsePeExportSteps(image, artifact, budgets);
   let step = steps.next();
   while (!step.done) {
     const read = step.value;
@@ -919,6 +973,7 @@ function* readVersionNamesSteps(
   little: boolean,
   sections: readonly NativeSection[],
   issues: NativeExportIssue[],
+  budgets: NativeExportBudgets,
 ): Generator<
   ElfRangeRead | undefined,
   Map<number, DecodedElfString | null>,
@@ -970,7 +1025,7 @@ function* readVersionNamesSteps(
     };
   }
   const namesByIndex = new Map<number, DecodedElfString | null>();
-  const readName = createVersionNameReader();
+  const readName = createVersionNameReader(budgets.textBytes);
   let textBytes = 0;
   const addName = (index: number, decoded: DecodedElfString | null): void => {
     const previous = namesByIndex.get(index);
@@ -985,7 +1040,7 @@ function* readVersionNamesSteps(
         decoded?.name ?? null,
         decoded?.name_bytes_base64 ?? null,
       );
-    checkRetainedText(nextTextBytes);
+    checkRetainedText(nextTextBytes, budgets.textBytes);
     namesByIndex.set(index, decoded);
     textBytes = nextTextBytes;
   };
@@ -1028,7 +1083,7 @@ function* readVersionNamesSteps(
         "Version requirements",
       );
       const reader = new BinaryReader(tableBytes, little, "elf");
-      const visit = versionRecordStep(tableBytes.length, 16);
+      const visit = versionRecordStep(tableBytes.length, 16, budgets.rows);
       let offset = 0;
       for (let record = 0; record < verneed.info; record++) {
         if (offset + 16 > tableBytes.length)
@@ -1108,7 +1163,7 @@ function* readVersionNamesSteps(
         "Version definitions",
       );
       const reader = new BinaryReader(tableBytes, little, "elf");
-      const visit = versionRecordStep(tableBytes.length, 8);
+      const visit = versionRecordStep(tableBytes.length, 8, budgets.rows);
       let offset = 0;
       for (let index = 0; index < verdef.info; index++) {
         if (offset + 20 > tableBytes.length)
@@ -1240,6 +1295,7 @@ function* readElfSectionExportTableSteps(
   directory: ReturnType<typeof readElfDirectoryFromBuffer>,
   dynsym: NativeSection,
   byType: Keyed<NativeSection, number>,
+  rows: number,
 ): Generator<ElfRangeRead, ElfExportTableSelection, Buffer> {
   const { sections } = directory;
   const width = elfSymbolSize(directory.bits);
@@ -1280,7 +1336,7 @@ function* readElfSectionExportTableSteps(
     "ELF dynamic symbols",
   );
   const count = size / width;
-  rowBudget(count, "ELF dynamic symbol table");
+  rowBudget(count, "ELF dynamic symbol table", rows);
   const nameRange = requireElfFileRange(
     fileSize,
     strings.offset,
@@ -1354,10 +1410,13 @@ const parseElfExportsFromHandle = async (
   source: ByteSource,
   artifact: Artifact,
   pause: ZstandardFramePause,
+  budgets: NativeExportBudgets,
 ): Promise<Extract<NativeExports, { format: "elf" }>> => {
   const readers = createSourceReaders(source);
   const { readRange } = readers;
-  const directory = await readElfDirectoryFromReader(source, pause, OPERATION);
+  const directory = await readElfDirectoryFromReader(source, pause, OPERATION, {
+    structureBytes: budgets.structureBytes,
+  });
   const plan = elfExportPlan(artifact, directory);
   if (plan.state === "empty") return plan.result;
   const { result, byType, dynsym } = plan;
@@ -1369,6 +1428,7 @@ const parseElfExportsFromHandle = async (
           source.size,
           directory,
           pause,
+          budgets,
         )
       : await runPositionalElfReads(
           readElfSectionExportTableSteps(
@@ -1376,6 +1436,7 @@ const parseElfExportsFromHandle = async (
             directory,
             dynsym,
             byType,
+            budgets.rows,
           ),
           readers,
           pause,
@@ -1391,6 +1452,7 @@ const parseElfExportsFromHandle = async (
             directory.little,
             sections,
             selection.tables.issues,
+            budgets,
           ),
           readers,
           pause,
@@ -1401,6 +1463,7 @@ const parseElfExportsFromHandle = async (
     selection.tables,
     versionNames,
     dynsym === undefined,
+    budgets,
   );
   let step = steps.next();
   while (!step.done) {
@@ -1415,6 +1478,7 @@ export const parseNativeExportsFromHandle = async (
   source: ByteSource,
   artifact: Artifact,
   pause: ZstandardFramePause,
+  budgets: NativeExportBudgets = DEFAULT_NATIVE_EXPORT_BUDGETS,
 ): Promise<NativeExports> => {
   await pause();
   const magic =
@@ -1422,9 +1486,9 @@ export const parseNativeExportsFromHandle = async (
       ? source.prefix.subarray(0, 4)
       : await source.readRange(0, Math.min(4, source.size));
   if (hasElfMagic(magic))
-    return parseElfExportsFromHandle(source, artifact, pause);
+    return parseElfExportsFromHandle(source, artifact, pause, budgets);
   if (magic.length >= 2 && magic[0] === 0x4d && magic[1] === 0x5a)
-    return parsePeExportsFromHandle(source, artifact, pause);
+    return parsePeExportsFromHandle(source, artifact, pause, budgets);
   throw new BinaryFormatFailure(
     "unsupported",
     "Only PE and ELF images are supported; inspect Mach-O exports with inspect_macho",

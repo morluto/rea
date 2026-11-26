@@ -306,23 +306,6 @@
       "reason": "The 16 MiB symbol-name text decoded for one returned page is a resource policy; a smaller page (limit) stays within it."
     }
   },
-  "src/native/exports/NativeExportsProvider.ts": {
-    "\"The native export inventory allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
-    },
-    "\"The native export retained-text allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
-    },
-    "\"The native export structural decoding allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
-    }
-  },
   "src/native/hardening/BinaryHardeningProvider.ts": {
     "\"The binary hardening table-entry allowance\"": {
       "class": "pending",
