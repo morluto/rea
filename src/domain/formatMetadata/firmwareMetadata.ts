@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { completeOrUnknownCoverageSchema } from "../coverage.js";
+import { QUALCOMM_MBN_INLINE_SEGMENT_HASH_LIMIT } from "../qualcommMbnImage.js";
 import {
   byteRange,
   offset,
@@ -590,3 +591,79 @@ export const bfltSegmentMetadataSchema = z.strictObject({
   length: offset,
 });
 export type BfltSegmentMetadata = z.infer<typeof bfltSegmentMetadataSchema>;
+
+const qualcommMbnRangeSchema = z.strictObject({
+  offset,
+  length: offset,
+});
+
+/**
+ * Qualcomm MBN header facts. Pointers are declared words; ranges are the
+ * file offsets REA derived from the header position and region sizes.
+ * Signature and certificate bytes are located, never verified.
+ */
+export const qualcommMbnMetadataSchema = z.strictObject({
+  kind: z.literal("qualcomm-mbn"),
+  layout: z.enum(["legacy", "elf"]),
+  header: z
+    .strictObject({
+      version: z.union([z.literal(3), z.literal(5), z.literal(6)]),
+      header_bytes: z.union([z.literal(40), z.literal(48)]),
+      image_id: uint32,
+      image_source: uint32.nullable(),
+      image_source_name: z
+        .enum(["nand", "nor", "emmc", "emmc-user"])
+        .nullable(),
+      image_destination: uint32.nullable(),
+      image_size: uint32,
+      code_size: uint32,
+      signature_pointer: uint32,
+      signature_size: uint32,
+      certificate_chain_pointer: uint32,
+      certificate_chain_size: uint32,
+      metadata0_size: uint32.nullable(),
+      qti_signature_size: uint32.nullable(),
+      metadata1_size: uint32.nullable(),
+      qti_certificate_chain_size: uint32.nullable(),
+      ranges: z.strictObject({
+        header: qualcommMbnRangeSchema,
+        code: qualcommMbnRangeSchema,
+        signature: qualcommMbnRangeSchema,
+        certificate_chain: qualcommMbnRangeSchema,
+        qti_signature: qualcommMbnRangeSchema.nullable(),
+        qti_certificate_chain: qualcommMbnRangeSchema.nullable(),
+        metadata0: qualcommMbnRangeSchema.nullable(),
+        metadata1: qualcommMbnRangeSchema.nullable(),
+      }),
+    })
+    .nullable(),
+  elf: z
+    .strictObject({
+      elf_class: z.union([z.literal(32), z.literal(64)]),
+      byte_order: z.enum(["little", "big"]),
+      machine: uint16,
+      program_header_count: uint16.nullable(),
+      hash_segment_program_header: uint16.nullable(),
+      hash_segment_offset: offset.nullable(),
+      hash_segment_file_size: offset.nullable(),
+      hash_size: z
+        .union([z.literal(20), z.literal(32), z.literal(48)])
+        .nullable(),
+      hash_count: offset.nullable(),
+      /** The first rows; the hash table region holds every hash. */
+      segment_hashes: z
+        .array(
+          z.strictObject({
+            program_header: uint16,
+            segment_type: uint8,
+            file_offset: offset.nullable(),
+            file_size: offset.nullable(),
+            hash_offset: offset,
+          }),
+        )
+        .max(QUALCOMM_MBN_INLINE_SEGMENT_HASH_LIMIT),
+      omitted_segment_hashes: offset,
+    })
+    .nullable(),
+});
+export type QualcommMbnMetadata = z.infer<typeof qualcommMbnMetadataSchema>;

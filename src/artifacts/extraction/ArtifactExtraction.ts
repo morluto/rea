@@ -2,6 +2,7 @@ import { selectArtifactExtractionOccurrences } from "./ArtifactExtractionSelecti
 import type { ArtifactReaderLimits } from "../../domain/artifactReaderLimits.js";
 import { assertAdmittedRootDigest } from "../inventory/classify.js";
 import { InesArtifactReader } from "../InesArtifactReader.js";
+import { locatesQualcommMbnHashSegment } from "../QualcommMbnLocation.js";
 import {
   openRootArtifact,
   hashStableRootArtifactHandle,
@@ -25,6 +26,7 @@ import {
   resolveAsarHeaderAdmission,
 } from "../../resources/index.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
+import { readFileHandleRange } from "../../filesystem/readFileHandleRange.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
 import type { EspFlashSelection } from "../../domain/firmware/espFlashLocation.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
@@ -702,7 +704,15 @@ const requireExtractableFormat = async (
         const pack =
           (await probes.godotPck()) !== undefined ||
           ((format === "elf" || format === "pe" || format === "mach-o") &&
-            (await hasExecutablePack(probes)));
+            (await hasExecutablePack(probes))) ||
+          (format === "elf" &&
+            (await locatesQualcommMbnHashSegment(
+              (offset, length) =>
+                readFileHandleRange(source.handle, offset, length, () =>
+                  abortIfNeeded(signal),
+                ),
+              source.initial.size,
+            )));
         if (pack && input.expectedRootSha256 !== undefined) {
           const digest = await hashStableRootArtifactHandle(
             path,

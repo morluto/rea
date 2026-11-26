@@ -43,6 +43,7 @@ import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
 import { InesArtifactReader } from "./InesArtifactReader.js";
 import { NdsRomArtifactReader } from "./NdsRomArtifactReader.js";
 import { Iso9660ArtifactReader } from "./Iso9660ArtifactReader.js";
+import { QualcommMbnArtifactReader } from "./QualcommMbnArtifactReader.js";
 import { HexRecordArtifactReader } from "./HexRecordArtifactReader.js";
 import { MachOSliceArtifactReader } from "./MachOSliceArtifactReader.js";
 import { NativeDmgArtifactReader } from "./NativeDmgArtifactReader.js";
@@ -669,6 +670,16 @@ const NON_ZIP_FORMATS = {
       "FIT inventory reports each /images node's stored bytes and its declared type, architecture, OS, compression, load and entry. Image data is not decompressed or decrypted, signatures are not verified, nothing is executed, and load and entry addresses are declarations.",
     createReader: (path, options) =>
       new FitArtifactReader(path, sourceOf(options), options.integrity),
+  }),
+  "qualcomm-mbn": container("qualcomm-mbn", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Qualcomm MBN inventory reports the header fields (40 bytes for v3 and v5, 48 for v6) and the stored code, signature, certificate-chain and metadata ranges. For an ELF image whose program headers declare a Qualcomm hash segment it decodes the hash-segment header, hash count and per-program-header hash positions, listing the first 64 positions inline. Signatures and certificates are located, not verified; hashes are not recomputed and nothing is executed. Ranges outside the file or the ELF hash segment are reported as limitations and omitted from inventory.",
+    createReader: (path, options) =>
+      new QualcommMbnArtifactReader(path, sourceOf(options)),
   }),
   "ntfs-mft": described("ntfs-mft", {
     ...plain,

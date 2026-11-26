@@ -16,6 +16,7 @@ const MIGRATED_PROVIDER_ROOTS = new Set([
   "python",
   "deb",
   "nuget",
+  "vsix",
   "oci",
   "rust",
   "wasm",

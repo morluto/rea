@@ -36,6 +36,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   "android-vbmeta": "archive",
   "android-sparse-image": "archive",
   iso9660: "archive",
+  "qualcomm-mbn": "archive",
   dmg: "archive",
   pkg: "archive",
   "intel-hex": "archive",
