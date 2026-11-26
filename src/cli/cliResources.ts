@@ -12,10 +12,14 @@ export const ownCliProcessResource = (
   if (!closers.has(name)) closers.set(name, close);
 };
 
-/** Settle every process-owned resource, then report each failure. */
+/**
+ * Settle every process-owned resource, then report each failure.
+ * A closer can throw before it returns a promise. Each call starts on its
+ * own turn so that failure stays with its owner and the others still settle.
+ */
 export const closeCliResources = async (): Promise<void> => {
   const results = await Promise.allSettled(
-    [...closers.values()].map((close) => close()),
+    [...closers.values()].map((close) => Promise.resolve().then(close)),
   );
   const failures = results.flatMap((result) =>
     result.status === "rejected" ? [result.reason] : [],
