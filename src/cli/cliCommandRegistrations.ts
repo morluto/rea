@@ -143,6 +143,10 @@ export const CLI_COMMAND_REGISTRATIONS = {
     () => import("./firmwareCommands.js"),
     "registerFirmwareCommands",
   ),
+  harmony: cliRegistrarWithEnvironment(
+    () => import("./harmonyAbcCommands.js"),
+    "registerHarmonyAbcCommands",
+  ),
   uefi: cliRegistrar(() => import("./uefiCommands.js"), "registerUefiCommands"),
   android: cliRegistrarWithEnvironment(
     () => import("./androidCommands.js"),
@@ -313,6 +317,7 @@ const CLI_FAMILY_REGISTRATIONS: {
   ],
   managed: ["managed"],
   firmware: ["firmware"],
+  harmony: ["harmony"],
   uefi: ["uefi"],
   android: ["android"],
   pcap: ["pcap"],

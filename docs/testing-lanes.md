@@ -427,6 +427,23 @@ Native IDA MCP verification uses `"protocol": "native"` with an already-running 
 
 The initial Linux x64 IDA Free 9.4 run used native MCP 1.1.2 with a local navigation correction. Windows x64 verification uses **IDA Pro 9.3**, the two-function public fixture, and the shipped Windows `whoami.exe` application. The native plugin was built from upstream `c9d15d98e8a143fc74f6e14037c48f63889b6d6c`, including the merged navigation fix, with a local loopback-listener change. Production CLI/MCP parity, switching, identity and cleanup passed. Correctness and performance measurements are recorded in the [Windows native verification notes](https://github.com/morluto/rea/blob/a2e2c29b59e8775b0e6aedb09a9eb16adf32646b/experiments/analysis-efficiency/ida-native-windows.md). Stock 1.1.2 switching, native macOS, and Windows IDA Free remain unverified. See the [native bridge prerequisites](providers/ida-provider.md#native-ida-mcp-bridge).
 
+## xpanda lane
+
+`npm run verify:xpanda` requires a caller-supplied xpanda checkout with its
+dependencies installed, selected by absolute `REA_XPANDA_ROOT` (verified with
+3.6.0; 2.x and 3.x admitted, other majors refused). It runs the compiled CLI
+and the SDK-connected stdio MCP server against the checkout's `md5.abc` sample
+(`test/resources` for 2.x, `packages/xpanda-core/test/resources` for 3.x;
+override with `REA_XPANDA_TEST_ABC`) and verifies header facts, class
+inventory, class metadata, single-class and single-method decompilation, method
+disassembly, string, symbol and code search, references, call graphs,
+whole-file decompilation into a fresh directory, CLI/MCP parity of header and
+inventory facts, and a typed absent-class failure. HAP entry and resource
+checks run when `REA_XPANDA_TEST_HAP` names a package or a documented sample
+exists. It does not establish decompilation fidelity for arbitrary bytecode
+versions or untested xpanda releases. See
+[HarmonyOS Ark bytecode analysis](guides/harmony/harmony-abc-analysis.md).
+
 ## Kuna lane
 
 `npm run verify:kuna` requires a caller-supplied `kuna` in `REA_KUNA_COMMAND`

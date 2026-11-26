@@ -41,6 +41,7 @@ export const sessionAvailabilityPolicy = (
         binaryLayoutEnabled: features.binaryLayoutEnabled ?? false,
         firmwareInspectionEnabled: features.firmwareInspectionEnabled ?? false,
         firmwareExtractionEnabled: features.firmwareExtractionEnabled ?? false,
+        harmonyAbcEnabled: features.harmonyAbcEnabled ?? false,
         javascriptRecoveryEnabled: features.javascriptRecoveryEnabled ?? false,
         webModuleResolutionEnabled:
           features.webModuleResolutionEnabled ?? false,

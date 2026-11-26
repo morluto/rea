@@ -68,6 +68,7 @@ export const UNIT_LAYERS = Object.freeze(
       "ghidra",
       "go",
       "gpu",
+      "harmony",
       "hopper",
       "ida",
       "il2cpp",
@@ -300,6 +301,12 @@ export const ENTRY_FILES = Object.freeze(
         "devicetree/DevicetreeProvider.ts",
       ],
       flutter: ["FlutterBuildProvider.ts", "FlutterProviderIdentity.ts"],
+      harmony: [
+        "XpandaConfiguration.ts",
+        "XpandaDoctor.ts",
+        "XpandaProvider.ts",
+        "XpandaRelease.ts",
+      ],
       frida: ["FridaInstrumentationManager.ts", "FridaProviderIdentity.ts"],
       gdb: [
         "GdbCommandClassification.ts",

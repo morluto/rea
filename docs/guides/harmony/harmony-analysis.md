@@ -79,8 +79,10 @@ Every claim is path-presence only. Manifest semantics (module identity,
 abilities, entry points, permissions, dependencies), Ark bytecode contents and
 versions, resource resolution, signing verification, and observed native
 boundaries are out of scope for this increment and stay in the projection's
-`limitations` array until a dedicated HarmonyOS provider exists. REA fails
-closed on packages whose inventory cannot be authenticated.
+`limitations` array. Bytecode contents and versions are covered separately by
+the [HarmonyOS Ark bytecode analysis](./harmony-abc-analysis.md) provider; the
+projection itself still does not decode them. REA fails closed on packages whose
+inventory cannot be authenticated.
 
 `pkgContextInfo.json` is inventoried and listed as an unclassified component but
 never read, so its `isSO` declarations do not narrow `bridge_candidates`. When

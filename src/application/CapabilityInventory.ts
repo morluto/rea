@@ -51,6 +51,7 @@ import type {
   ProviderAvailability,
 } from "../ports/AnalysisProvider.js";
 import type { JebAnalysisAvailability } from "../ports/jeb/JebAnalysisPort.js";
+import type { HarmonyAbcAnalysisAvailability } from "../ports/harmony/HarmonyAbcAnalysisPort.js";
 import { FRIDA_TOOL_CONTRACTS } from "../contracts/fridaToolContracts.js";
 import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
@@ -100,10 +101,13 @@ export type AvailabilityPolicy = {
   readonly recordedCrashEnabled?: boolean;
   readonly firmwareInspectionEnabled?: boolean;
   readonly firmwareExtractionEnabled?: boolean;
+  /** Caller-supplied xpanda checkout configured for HarmonyOS Ark bytecode. */
+  readonly harmonyAbcEnabled?: boolean;
   readonly androidAnalysisAvailability?: ProviderAvailability;
   readonly adbAnalysisAvailability?: ProviderAvailability;
   readonly apktoolAnalysisAvailability?: ProviderAvailability;
   readonly jebAnalysisAvailability?: JebAnalysisAvailability;
+  readonly harmonyAbcAvailability?: HarmonyAbcAnalysisAvailability;
   readonly javascriptRecoveryEnabled?: boolean;
   readonly webModuleResolutionEnabled?: boolean;
   readonly browserObservationEnabled?: boolean;
@@ -577,6 +581,10 @@ const workflowAvailabilityFor = (
   if (declared === "standalone")
     return { reason: "available", remediation: null };
   if (declared !== undefined) {
+    if (declared.host === "harmonyAbc") {
+      const observed = harmonyAbcOperationAvailability(policy, name);
+      if (observed !== null) return observed;
+    }
     const host = hostFeatureAvailability(policy, declared.host);
     return declared.host === "evmInterface" && host.reason === "available"
       ? evmLimiterAvailability(policy)
@@ -668,6 +676,33 @@ const workflowAvailabilityFor = (
   return null;
 };
 
+/** Readiness and per-operation surface from the configured xpanda checkout. */
+const harmonyAbcOperationAvailability = (
+  policy: AvailabilityPolicy,
+  operation: string,
+): Availability | null => {
+  const observed = policy.harmonyAbcAvailability;
+  if (observed === undefined) return null;
+  if (observed.status === "unavailable")
+    return {
+      reason:
+        observed.code === "unsupported_host"
+          ? "unsupported_host"
+          : observed.code === "not_configured" ||
+              observed.code === "executable_missing" ||
+              observed.code === "runtime_missing"
+            ? "provider_missing"
+            : "provider_unavailable",
+      remediation: observed.remediation,
+    };
+  return (observed.supportedOperations as readonly string[]).includes(operation)
+    ? { reason: "available", remediation: null }
+    : {
+        reason: "provider_missing",
+        remediation: `The configured xpanda checkout does not advertise ${operation}. Update the caller-supplied checkout to a release that provides it; rea doctor --provider xpanda reports the observed surface.`,
+      };
+};
+
 const firmwareRemediation = (
   operation: "inspect_firmware_regions" | "extract_firmware",
 ): string => {
@@ -733,6 +768,11 @@ const HOST_FEATURES: Readonly<
   firmwareExtraction: {
     enabled: (policy) => policy.firmwareExtractionEnabled,
     remediation: firmwareRemediation("extract_firmware"),
+  },
+  harmonyAbc: {
+    enabled: (policy) => policy.harmonyAbcEnabled,
+    remediation:
+      "Set REA_XPANDA_ROOT to the absolute path of a caller-supplied xpanda checkout with its dependencies installed (verified with 2.1.0) on Linux or macOS. REA does not install or update xpanda.",
   },
 };
 

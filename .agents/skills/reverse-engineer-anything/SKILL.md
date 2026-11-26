@@ -110,6 +110,18 @@ explicit path or endpoint and do not need it.
 - Android APK code, classes, methods, or incoming references:
   `inspect_android_package`, then focused Android tools when advertised.
   Archive member inventory still uses the archive route above.
+- HarmonyOS Ark bytecode (`.abc`): `inspect_harmony_abc` when advertised, then
+  `list_harmony_abc_classes`; decompile one class with
+  `decompile_harmony_abc_class` or a whole module with `decompile_harmony_abc`
+  into an absent directory. Use `disassemble_harmony_abc_method` when output is
+  degraded and `search_harmony_abc_strings` for constants. For investigation
+  flow, use `search_harmony_abc_symbols` and `inspect_harmony_abc_class` before
+  decompiling, `search_harmony_abc_code` for decompiled-source text,
+  `trace_harmony_abc_references` and `build_harmony_abc_call_graph` for
+  relationships, and `inspect_harmony_hap_abc`/`inspect_harmony_hap_resources`
+  to reach bytecode and resources inside a `.hap`. These tools use a
+  caller-supplied xpanda 2.x/3.x checkout on Linux/macOS; see the
+  [HarmonyOS Ark bytecode guide](https://github.com/morluto/rea/blob/main/docs/guides/harmony/harmony-abc-analysis.md).
 - Managed PE/CLI assembly: `inspect_managed_artifact`.
 - UEFI firmware volumes and NVAR stores: use bundled `inspect_artifact`.
   For external firmware scanning or extraction on Linux, use

@@ -28,6 +28,8 @@ import {
   type UefiRequest,
 } from "../domain/uefi/uefiFirmwareAnalysis.js";
 import { ProviderOperationService } from "./ProviderOperationExecution.js";
+import { HarmonyAbcAnalysisService } from "./harmony/HarmonyAbcAnalysisService.js";
+import type { HarmonyAbcAnalysisPort } from "../ports/harmony/HarmonyAbcAnalysisPort.js";
 
 export type ApktoolResourceAnalysisService = ProviderOperationService<
   ApktoolOperation,
@@ -53,6 +55,8 @@ export type UefiAnalysisService = ProviderOperationService<
   UefiAnalysisPort
 >;
 
+export type HarmonyAbcService = HarmonyAbcAnalysisService;
+
 export type PcapAnalysisService = ProviderOperationService<
   PcapOperation,
   PcapRequest,
@@ -75,6 +79,10 @@ export const createJebAnalysisService = (
   new ProviderOperationService(provider, jebRequestSchema, (operation) =>
     operation === "decompile_jeb_item" ? "derived" : "observed",
   );
+
+export const createHarmonyAbcAnalysisService = (
+  provider: HarmonyAbcAnalysisPort,
+): HarmonyAbcService => new HarmonyAbcAnalysisService(provider);
 
 export const createUefiAnalysisService = (
   provider: UefiAnalysisPort,
