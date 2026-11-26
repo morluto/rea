@@ -33,6 +33,11 @@ const sectionCases = [
     reason: "Misaligned Objective-C category list",
   },
   {
+    section: "__objc_catlist2",
+    size: 12,
+    reason: "Misaligned Objective-C category list",
+  },
+  {
     section: "__swift5_types",
     size: 6,
     reason: "Misaligned Swift type section",

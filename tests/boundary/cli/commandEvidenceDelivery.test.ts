@@ -109,7 +109,7 @@ const fixture = async (kind: (typeof kinds)[number]) => {
   const invoke = async (options: Record<string, unknown>): Promise<unknown> =>
     execute({
       args: argsSchema.parse(args),
-      formatExplicit: false,
+      structuredOutput: false,
       options: optionsSchema.parse({
         ...(kind === "gdb" ? { inferiorTty: "/dev/pts/caller-fixture" } : {}),
         ...options,
@@ -160,13 +160,27 @@ it.each(kinds)(
       expect(parent).toEqual(f.parent);
       expect(selected.normalized_result).toMatchObject({
         artifact: null,
-        summary: { records: f.report.records },
+        // Stream records are reported by size, not repeated.
+        summary: {
+          records: ["unknown record", "5^done"],
+          available_counts: { records: 3, stream_records: 1 },
+        },
       });
       expect(f.close).toHaveBeenCalledOnce();
       expect(f.closeAll).toHaveBeenCalledOnce();
     } else {
+      const { stdout, stderr, ...facts } = z
+        .object({ stdout: z.string(), stderr: z.string() })
+        .passthrough()
+        .parse(parent.normalized_result);
       expect(selected.normalized_result).toMatchObject({
-        summary: parent.normalized_result,
+        summary: {
+          ...facts,
+          available_counts: {
+            stdout_utf16_units: stdout.length,
+            stderr_utf16_units: stderr.length,
+          },
+        },
       });
       expect(f.runProvider).toHaveBeenCalledOnce();
       expect(f.closeService).toHaveBeenCalledOnce();

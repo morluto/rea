@@ -18,8 +18,8 @@ rea inspect-evm-interface ./runtime.bin raw --json
 ```
 
 The provider runs on Linux x64 only; other hosts report `capability_unavailable`
-with category `unsupported_provider`. Real verification covers flat legacy
-bytecode on Linux x64 and unchanged bundled EVMole 0.9.6. EOF-style EF00 containers return `unsupported_target`,
+with category `unsupported_provider`. The Linux x64 verifier checks flat legacy
+bytecode with the locked EVMole package. EOF-style EF00 containers return `unsupported_target`,
 with the selected path and format reason. Selected-path resolution errors
 `ENOENT`, `ENOTDIR`, `ELOOP`, and `ENAMETOOLONG` are `invalid_request` path
 issues. Permission, resource, cancellation, provider, and cleanup failures retain
