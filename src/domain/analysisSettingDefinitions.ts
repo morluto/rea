@@ -204,7 +204,7 @@ export const ANALYSIS_SETTINGS = {
     unit: "count",
     appliesAt: "next_operation",
     provider: "rea-artifact-graph",
-    operations: ["inspect_artifact", "extract_artifact"],
+    operations: ["inspect_artifact", "inventory_artifact", "extract_artifact"],
   },
   "asar.max_listing_bytes": {
     updateMode: "runtime",

@@ -410,6 +410,39 @@ test("names artifact.member_count and both routes when the launch seed refuses a
   });
 });
 
+test("admits explicit member counts without reading an invalid artifact.member_count seed", async ({
+  cli,
+  workspace,
+}) => {
+  const path = workspace.path("explicit.bin");
+  const bytes = dotnetBundleFixture([
+    { path: "first.txt", bytes: Buffer.from("first") },
+    { path: "second.txt", bytes: Buffer.from("second") },
+  ]).bytes;
+  await writeFile(path, bytes);
+  const command = ["inspect-artifact", path, "--json"];
+  const environment = { REA_ARTIFACT_MEMBER_COUNT: "invalid" };
+  // Every field the setting backs is selected, so the seed is not consulted.
+  const explicit = await cli.run({
+    arguments: [
+      ...command,
+      "--artifact-limits",
+      JSON.stringify({
+        bun: { module_count: 2 },
+        dotnet_bundle: { entry_count: 2 },
+        node_sea: { asset_count: 2 },
+        deno: { vfs_entries: 2 },
+      }),
+    ],
+    environment,
+  });
+  expect(explicit.exitCode, explicit.stderr).toBe(0);
+  // A field left to the session value still reports the invalid seed.
+  const fallback = await cli.run({ arguments: command, environment });
+  expect(fallback.exitCode).toBe(1);
+  expect(fallback.json).toMatchObject({ code: "configuration_invalid" });
+});
+
 test("rejects unknown reader-policy fields before opening the selected artifact", async ({
   cli,
   workspace,

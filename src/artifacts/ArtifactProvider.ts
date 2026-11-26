@@ -694,6 +694,15 @@ class ArtifactReaderPolicy {
   }
 
   readerLimits(selected: ArtifactReaderLimitsInput | undefined) {
+    // The caller's fields come first: when every backed field is selected,
+    // the session value (and an invalid launch seed) is never consulted.
+    if (
+      selected !== undefined &&
+      ARTIFACT_MEMBER_COUNT_PARAMETERS.every((parameter) =>
+        artifactMemberCountSelected(selected, parameter),
+      )
+    )
+      return { readerLimits: resolveArtifactReaderLimits(selected) };
     const memberCount = this.#resolved();
     return selected === undefined && memberCount.source === "default"
       ? {}
@@ -713,9 +722,7 @@ class ArtifactReaderPolicy {
     error: AnalysisError,
     parameters: Readonly<Record<string, JsonValue>>,
   ): void {
-    const memberCount = this.#memberCount;
-    if (memberCount === undefined || !(error instanceof ArtifactOperationError))
-      return;
+    if (!(error instanceof ArtifactOperationError)) return;
     const fact = error.readerLimit;
     const parameter = ARTIFACT_MEMBER_COUNT_PARAMETERS.find(
       (candidate) => candidate === fact?.parameter,
@@ -726,11 +733,14 @@ class ArtifactReaderPolicy {
     );
     const requested =
       selected.success && artifactMemberCountSelected(selected.data, parameter);
+    // An unselected field took the session value this call resolved.
+    const source = requested ? "request" : this.#memberCount?.source;
+    if (source === undefined) return;
     error.bindLimit({
       ...analysisSettingLimit(
         ARTIFACT_MEMBER_COUNT_SETTING,
         fact.effective_value,
-        requested ? "request" : memberCount.source,
+        source,
       ),
       parameter,
       ...(typeof fact.required_value === "number"
