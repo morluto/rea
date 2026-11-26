@@ -286,6 +286,21 @@ it("fails both-endian disagreement, block size and a missing terminator with the
   ).toMatchObject({ ok: false, error: { failure: { kind: "truncated" } } });
 });
 
+it.each([false, true])(
+  "keeps a descriptor root record's data length halves in agreement (Joliet: %s)",
+  (joliet) => {
+    const { bytes, layout } = buildIso9660Image({ joliet });
+    const descriptor =
+      layout.primaryDescriptor + (joliet ? ISO9660_SECTOR_BYTES : 0);
+    const offset = descriptor + 156 + 10;
+    bytes.writeUInt32BE(bytes.readUInt32LE(offset) + 1, offset + 4);
+    expect(descriptors(bytes)).toMatchObject({
+      ok: false,
+      error: { failure: { kind: "malformed", offset, field: "data_length" } },
+    });
+  },
+);
+
 it("rejects a terminator whose descriptor version is not 1", () => {
   const { bytes, layout } = buildIso9660Image();
   expect(descriptors(bytes).ok).toBe(true);
