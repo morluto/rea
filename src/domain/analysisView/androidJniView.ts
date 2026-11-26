@@ -66,12 +66,102 @@ export const androidJniSummarySchema = reportSchema
     declaration_coverage: analysisViewCoverageSchema,
   });
 
-/**
- * Rows of each collection the summary previews. Every binding carries its
- * declarations and candidates, so 16 keep a large APK's summary within the
- * default agent result budget; collection pages read the rest.
- */
+/** Rows of each collection the summary previews at most. */
 const SUMMARY_PREVIEW = 16;
+/**
+ * Serialized bytes the previews may use, so a summary stays within the
+ * default agent result budget. A binding counts with the candidates and
+ * declarations it brings in: one registration candidate can name hundreds
+ * of same-signature declarations. Collection pages read the rest.
+ */
+const PREVIEW_BYTES = { relations: 16 * 1024, libraries: 8 * 1024 } as const;
+
+type JniReport = z.output<typeof reportSchema>;
+
+const rowBytes = (row: object): number =>
+  jsonValueByteLength(row as unknown as JsonValue);
+
+/** Leading rows within the preview's count and byte allowance. */
+const previewRows = <Row extends object>(
+  rows: readonly Row[],
+  bytes: number,
+): Row[] => {
+  const kept: Row[] = [];
+  let used = 0;
+  for (const row of boundedList(rows, SUMMARY_PREVIEW).items) {
+    used += rowBytes(row);
+    if (used > bytes) break;
+    kept.push(row);
+  }
+  return kept;
+};
+
+/**
+ * The selected declaration IDs and leading bindings the relation allowance
+ * admits, each with the declarations and candidates it adds to the closure.
+ */
+const previewRelations = (report: JniReport) => {
+  const declarations = new Map(
+    report.declarations.map((row) => [row.declaration_id, row]),
+  );
+  const candidates = new Map(
+    report.candidates.map((row) => [row.candidate_id, row]),
+  );
+  const declarationIds = new Set<string>();
+  const candidateIds = new Set<string>();
+  let used = 0;
+  /** Admit one row and its new relations, or report that it does not fit. */
+  const admit = (
+    row: object,
+    newCandidates: readonly string[],
+    newDeclarations: readonly string[],
+  ): boolean => {
+    let added = rowBytes(row);
+    const addedCandidates = newCandidates.filter((id) => !candidateIds.has(id));
+    for (const id of addedCandidates) {
+      const candidate = candidates.get(id);
+      if (candidate !== undefined) added += rowBytes(candidate);
+    }
+    const addedDeclarations = new Set(
+      [
+        ...newDeclarations,
+        ...addedCandidates.flatMap(
+          (id) => candidates.get(id)?.declaration_ids ?? [],
+        ),
+      ].filter((id) => !declarationIds.has(id)),
+    );
+    for (const id of addedDeclarations) {
+      const declaration = declarations.get(id);
+      if (declaration !== undefined) added += rowBytes(declaration);
+    }
+    if (used + added > PREVIEW_BYTES.relations) return false;
+    used += added;
+    for (const id of addedCandidates) candidateIds.add(id);
+    for (const id of addedDeclarations) declarationIds.add(id);
+    return true;
+  };
+  const selectedIds: string[] = [];
+  for (const id of boundedList(report.selected_declaration_ids, SUMMARY_PREVIEW)
+    .items) {
+    if (!admit({ id }, [], [id])) break;
+    selectedIds.push(id);
+  }
+  const bindings: JniReport["bindings"] = [];
+  for (const binding of boundedList(report.bindings, SUMMARY_PREVIEW).items) {
+    if (!admit(binding, binding.candidate_ids, [binding.declaration_id])) break;
+    bindings.push(binding);
+  }
+  return {
+    selectedIds,
+    bindings,
+    candidates: report.candidates.filter((row) =>
+      candidateIds.has(row.candidate_id),
+    ),
+    declarations: report.declarations.filter((row) =>
+      declarationIds.has(row.declaration_id),
+    ),
+  };
+};
 
 /** Source facts are already parsed; views never reopen the APK or rerun either reader. */
 export const projectAndroidJniView = (
@@ -116,23 +206,9 @@ export const projectAndroidJniView = (
       "JNI view exceeds its 1 MiB serialized allowance.",
     );
   if (view.kind === "summary") {
-    const bindings = [...boundedList(report.bindings, SUMMARY_PREVIEW).items];
-    const libraries = boundedList(report.libraries, SUMMARY_PREVIEW);
-    const selectedIds = boundedList(
-      report.selected_declaration_ids,
-      SUMMARY_PREVIEW,
-    );
-    const candidateIds = new Set(
-      bindings.flatMap((binding) => binding.candidate_ids),
-    );
-    const candidates = report.candidates.filter((candidate) =>
-      candidateIds.has(candidate.candidate_id),
-    );
-    const declarationIds = new Set([
-      ...selectedIds.items,
-      ...bindings.map((binding) => binding.declaration_id),
-      ...candidates.flatMap((candidate) => candidate.declaration_ids),
-    ]);
+    const { selectedIds, bindings, candidates, declarations } =
+      previewRelations(report);
+    const libraries = previewRows(report.libraries, PREVIEW_BYTES.libraries);
     const counts = {
       declarations: report.declarations.length,
       selected_declarations: report.selected_declaration_ids.length,
@@ -159,19 +235,17 @@ export const projectAndroidJniView = (
         counts,
         bindings,
         candidates,
-        declarations: report.declarations.filter((method) =>
-          declarationIds.has(method.declaration_id),
-        ),
-        libraries: [...libraries.items],
+        declarations,
+        libraries,
         library_coverage: pageViewCoverage(
           0,
-          libraries.items.length,
+          libraries.length,
           report.libraries.length,
         ),
-        selected_declaration_ids: [...selectedIds.items],
+        selected_declaration_ids: selectedIds,
         declaration_coverage: pageViewCoverage(
           0,
-          selectedIds.items.length,
+          selectedIds.length,
           report.selected_declaration_ids.length,
         ),
       },
