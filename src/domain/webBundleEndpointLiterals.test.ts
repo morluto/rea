@@ -472,6 +472,56 @@ it("keeps a result that already fits instead of reserving a record", () => {
   expect(fitted.endpoint_literal_candidates).toBeUndefined();
 });
 
+it("pays the wider omission record before admitting the literal that fills the budget", () => {
+  // `admitted_count` reaches two digits on the tenth literal, so the record
+  // grows by a byte. An estimate that charges the widest record only once, up
+  // front, lets the tenth literal look like it exactly fits; the exact pass
+  // then drops it and never retries the smaller literals behind it.
+  const paths = Array.from(
+    { length: 21 },
+    (_, index) =>
+      `/api/${"p".repeat(240 - index * 9)}-${String(index).padStart(2, "0")}`,
+  );
+  const captured = createWebPageInspection([
+    {
+      source: `const routes = ${JSON.stringify(paths)};
+fetch("/api/kept");
+function vendor() { return "some-vendor-marker"; }`,
+      scriptKey: `scr_${"9".repeat(64)}`,
+      url: "https://app.example.test/app.js",
+      origin: "https://app.example.test",
+      cdpHash: "hash",
+    },
+  ]);
+  const script = captured.scripts.items.find(isIncludedScript);
+  if (script === undefined) throw new Error("Missing included script");
+  const admission = { maximumCount: 32, source: "runtime" as const };
+  const full = analyzeCapturedWebScript(
+    script,
+    undefined,
+    undefined,
+    admission,
+  );
+  if (full.status !== "analyzed") throw new Error("Expected analyzed script");
+  const literals = full.inferences.filter(isLiteralEndpointCandidate);
+  expect(literals.length).toBe(21);
+  // 7,783 bytes is the smallest budget in a 20-byte sweep where charging the
+  // record growth changes the outcome: the estimate that ignores it keeps 13.
+  const budget = 7_783;
+  const fitted = fitWebBundleEndpointLiteralCandidates(full, budget, admission);
+  const retained = fitted.inferences.filter(isLiteralEndpointCandidate);
+  expect(retained.length).toBe(14);
+  expect(fitted.endpoint_literal_candidates).toMatchObject({
+    admitted_count: 14,
+    omitted_by_count: 0,
+    omitted_by_result_budget: 7,
+    omitted_count: 7,
+  });
+  expect(
+    jsonValueByteLength(fitted as unknown as JsonValue, budget),
+  ).toBeLessThanOrEqual(budget);
+});
+
 it("fits literals by cumulative bytes and keeps byte drops out of the count", () => {
   // Each candidate is long enough that the literals, not the omission record,
   // decide what fits; a short table already fits whole and is kept as it is.

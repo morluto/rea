@@ -71,8 +71,27 @@ export const fitWebBundleEndpointLiteralCandidates = (
   )
     return result;
   if (baseBytes > resultBudgetBytes) return assemble([]);
+  // The omission record carries `admitted_count` and the byte omission it
+  // implies, so it grows by a digit as literals are admitted. Charging that
+  // growth up front would over-reserve; charging nothing lets a literal that
+  // exactly fills the remaining space sit one byte over and be removed by the
+  // exact pass, with the smaller literals behind it never retried.
+  const literalCount = result.inferences.filter((inference) =>
+    isLiteralEndpointCandidate(inference),
+  ).length;
+  const recordBytes = (admitted: number): number => {
+    const record = webBundleEndpointLiteralRecord(admission, admitted, {
+      byCount: omittedByCount,
+      byCountExact: omittedByCountExact,
+      byResultBudget: literalCount - admitted,
+    });
+    return record === undefined
+      ? 0
+      : jsonValueByteLength(record as unknown as JsonValue);
+  };
+  const baseWithoutRecord = baseBytes - recordBytes(0);
   const kept: number[] = [];
-  let used = baseBytes;
+  let keptBytes = 0;
   let index = 0;
   // `assemble([])` keeps every non-literal inference, so the array already has
   // elements before the first literal arrives and that literal pays a comma
@@ -88,11 +107,13 @@ export const fitWebBundleEndpointLiteralCandidates = (
     const cost =
       jsonValueByteLength(inference as unknown as JsonValue) +
       (elements > 0 ? 1 : 0);
-    // The base measurement already carries the widest omission record, so the
-    // pass never has to reserve it again for each literal.
-    if (used + cost <= resultBudgetBytes) {
+    // Re-measure the record at the size it will have once this literal is
+    // admitted, so a wider `admitted_count` is paid before the literal is kept.
+    const projected =
+      baseWithoutRecord + keptBytes + cost + recordBytes(kept.length + 1);
+    if (projected <= resultBudgetBytes) {
       kept.push(index);
-      used += cost;
+      keptBytes += cost;
       elements += 1;
     }
     index += 1;
