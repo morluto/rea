@@ -600,8 +600,11 @@ names also remain unknown because unseen definitions may override them.
 `max_file_bytes`, the [read allowance](../../reference/limits-and-recovery.md#static-reader-read-allowance), defaults to 256 MiB (maximum 512 MiB;
 CLI `--max-file-bytes`); files up to 512 MiB are admitted whatever their size.
 Export directories in PE headers are read like those in sections. An export or
-dynamic symbol table above 262144 entries, more than 262144 rows, or more than
-16 MiB of retained names fails without partial success. Export rows do not establish that a symbol is reachable, safe to call
+dynamic symbol table above `max_entries` (default 262144, CLI `--max-entries`),
+more rows than `max_entries`, or more retained names than `max_text_bytes`
+(default 16 MiB) fails without partial success; the refusal's `details.limit`
+names the control to raise. `max_structure_bytes` (default 16 MiB) bounds each
+header, section and dynamic table read. Export rows do not establish that a symbol is reachable, safe to call
 or loaded at runtime.
 
 ## Portable ELF dependencies
