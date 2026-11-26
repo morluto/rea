@@ -5,6 +5,7 @@ import {
 } from "../analysisViewBase.js";
 import {
   byteEntropyPageContextSchema,
+  byteEntropyPageCoverageSchema,
   byteEntropySummarySchema,
   byteEntropyViewItemsSchema,
   byteEntropyViewRequestSchema,
@@ -19,6 +20,7 @@ export const byteEntropySummaryViewResultSchema = z.strictObject({
 /** One index page of the retained block or run series. */
 export const byteEntropyPageViewResultSchema = z.strictObject({
   ...viewResultBaseFields,
+  coverage: byteEntropyPageCoverageSchema,
   kind: z.literal("byte-entropy"),
   view: byteEntropyViewRequestSchema,
   entropy: byteEntropyPageContextSchema,

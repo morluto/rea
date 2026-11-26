@@ -226,6 +226,22 @@ export const ANALYSIS_VIEW_TOOL_CONTRACTS = [
           },
         },
       },
+      {
+        title: "Read byte-entropy boundary blocks around run transitions",
+        input: {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: RETAINED_EXAMPLE_ID,
+          },
+          view: {
+            kind: "byte-entropy",
+            collection: "blocks",
+            run_boundaries_only: true,
+            offset: 0,
+            limit: 64,
+          },
+        },
+      },
     ],
   },
 ] as const satisfies readonly ToolContract[];
