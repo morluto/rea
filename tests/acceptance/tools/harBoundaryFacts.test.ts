@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { expect } from "vitest";
 
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { PACKAGE_METADATA } from "../../../src/generatedPackageMetadata.js";
 import { webNetworkCaptureSchema } from "../../../src/domain/webNetworkCapture.js";
 import { historicalHar } from "../../fixtures/historicalHar.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
@@ -49,7 +50,10 @@ cliTest(
     const capture = await cli.run({
       arguments: ["inspect-web-network-capture", path, "har", "--json"],
     });
-    expect(capture.exitCode, capture.stderr).toBe(0);
+    expect(
+      capture.exitCode,
+      capture.stderr || JSON.stringify(capture.json),
+    ).toBe(0);
     const evidence = parseEvidence(capture.json);
     const { call } = await connectLocalToolsMcp();
     for (const detail of ["preview", "complete"] as const) {
@@ -253,7 +257,7 @@ cliTest(
     const evidence = parseEvidence(output.json);
     const capture = webNetworkCaptureSchema.parse(evidence.normalized_result);
     expect(capture.decoder.version).toBe(
-      "har-schema@2.0.0;har-schema-corrections@1;jsonc-parser@3.3.1;lossless-json@4.3.1",
+      `har-schema@2.0.0;har-schema-corrections@1;jsonc-parser@${PACKAGE_METADATA.jsoncParserVersion};lossless-json@${PACKAGE_METADATA.losslessJsonVersion}`,
     );
     expect(capture.artifact).toMatchObject({
       path,
@@ -313,5 +317,41 @@ cliTest(
       parseEvidence(stateReply.structuredContent).normalized_result,
     ).toEqual(stateEvidence.normalized_result);
     expect(await readFile(path, "utf8")).toBe(text);
+  },
+);
+
+cliTest(
+  "decodes HAR numeric literals with long zero-padded fractional parts without quadratic timeout",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-har-zero-fraction-");
+    const fixture = historicalHar();
+    const literal = `1.${"0".repeat(250_000)}1`;
+    const text = JSON.stringify(fixture).replace(
+      /"time":\s*-?\d+(?:\.\d+)?/u,
+      `"time": ${literal}`,
+    );
+    const path = join(root, "long-fraction.har");
+    await writeFile(path, text);
+
+    const capture = await cli.run({
+      arguments: [
+        "inspect-web-network-capture",
+        path,
+        "har",
+        "--capture-timeout-ms",
+        "4000",
+        "--json",
+      ],
+    });
+    expect(capture.exitCode, capture.stderr || capture.stdout).toBe(0);
+    const evidence = parseEvidence(capture.json);
+    const report = webNetworkCaptureSchema.parse(evidence.normalized_result);
+    expect(report.records[0]?.reported).toMatchObject({ time: null });
+    expect(report.records[0]?.numeric_literals).toContainEqual(
+      expect.objectContaining({
+        pointer: "/time",
+        literal,
+      }),
+    );
   },
 );

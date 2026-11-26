@@ -7,7 +7,7 @@ import { expect, it } from "vitest";
 import {
   registerRoutedCommand,
   commandRoute,
-} from "../../../src/cli/contractCommand.js";
+} from "../../../src/cli/routedContractCommand.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 import { absoluteLocalPathStringSchema } from "../../../src/domain/localPath.js";
 
@@ -68,9 +68,7 @@ const harness = () => {
     value: unknown,
   ) => Promise<unknown>;
   const parse = (key: "args" | "options", value: unknown) =>
-    (Reflect.get(registered, key) as { parse(v: unknown): unknown }).parse(
-      value,
-    );
+    registered[key]!.parse(value);
   // A refused command sets the shared worker's exit status; restore it.
   const invoke = async (
     path: string,
@@ -86,7 +84,7 @@ const harness = () => {
       process.exitCode = exitCode;
     }
   };
-  const options = Reflect.get(registered, "options") as z.ZodType;
+  const options = registered.options!;
   return { calls, invoke, options };
 };
 

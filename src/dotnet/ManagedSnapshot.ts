@@ -106,7 +106,10 @@ export const readManagedSnapshot = async (
       const signal = options.signal;
       if (metadata.size > maxBytes)
         throw managedSnapshotCapacityError(operation, maxBytes);
-      const bytes = await readBoundedFileBytes(handle, maxBytes, { signal });
+      const bytes = await readBoundedFileBytes(handle, maxBytes, {
+        signal,
+        expectedSize: metadata.size,
+      });
       if (bytes === undefined)
         throw managedSnapshotCapacityError(operation, maxBytes);
       signal?.throwIfAborted();

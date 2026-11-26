@@ -25,12 +25,9 @@ import {
   analysisViewCoverageSchema,
   nullableCollectionViewCoverageSchema,
 } from "./analysisViewCoverage.js";
-import {
-  artifactSchema,
-  summaryViewResultBase,
-  viewResultBaseFields,
-} from "./analysisViewBase.js";
+import { artifactSchema, viewResultBaseFields } from "./analysisViewBase.js";
 import { recordedArrayViewSchema } from "./analysisViewRequest.js";
+import { evidenceJsonViewRequestSchema } from "./evidenceJsonView.js";
 import {
   facetViewSchema,
   itemViewSchema,
@@ -43,7 +40,6 @@ import {
   artifactInventoryViewRequestSchema,
 } from "./artifactInventoryView.js";
 import {
-  batchDecompileSummarySchema,
   batchDecompileViewCollections,
   batchDecompileViewContextSchema,
 } from "./batchDecompileView.js";
@@ -103,6 +99,8 @@ import {
 } from "./interfaceBuilderView.js";
 import { javascriptApplicationSourceCoverageSchema } from "./javascriptApplicationCoverage.js";
 import {
+  javascriptFactGroupRowSchema,
+  javascriptFactGroupsViewRequestSchema,
   javascriptFactRowSchema,
   javascriptFactsViewRequestSchema,
 } from "./javascriptFactsView.js";
@@ -215,10 +213,21 @@ import { artifactInventorySummaryViewResultSchema } from "./summarySchemas/artif
 import { batchDecompileSummaryViewResultSchema } from "./summarySchemas/batchDecompileSummarySchema.js";
 import { binaryLayoutSummaryViewResultSchema } from "./summarySchemas/binaryLayoutSummarySchema.js";
 import { browserScenarioSummaryViewResultSchema } from "./summarySchemas/browserScenarioSummarySchema.js";
-import { byteEntropySummaryViewResultSchema } from "./summarySchemas/byteEntropySummarySchema.js";
+import {
+  byteEntropyPageViewResultSchema,
+  byteEntropySummaryViewResultSchema,
+} from "./summarySchemas/byteEntropySummarySchema.js";
 import { dartAotSummaryViewResultSchema } from "./summarySchemas/dartAotSummarySchema.js";
 import { desktopApplicationSummaryViewResultSchema } from "./summarySchemas/desktopApplicationSummarySchema.js";
 import { devicetreeSummaryViewResultSchema } from "./summarySchemas/devicetreeSummarySchema.js";
+import {
+  uefiExtractionPageViewResultSchema,
+  uefiExtractionSummaryViewResultSchema,
+} from "./summarySchemas/uefiExtractionSummarySchema.js";
+import {
+  uefiFirmwarePageViewResultSchema,
+  uefiFirmwareSummaryViewResultSchema,
+} from "./summarySchemas/uefiFirmwareSummarySchema.js";
 import { elfDependenciesSummaryViewResultSchema } from "./summarySchemas/elfDependenciesSummarySchema.js";
 import {
   endpointComparisonPageViewResultSchema,
@@ -288,6 +297,10 @@ import {
   webBundlePageViewResultSchema,
   webBundleSummaryViewResultSchema,
 } from "./summarySchemas/webBundleSummarySchemas.js";
+import {
+  webPagePageViewResultSchema,
+  webPageSummaryViewResultSchema,
+} from "./summarySchemas/webPageSummarySchemas.js";
 import { webNetworkCaptureSummaryViewResultSchema } from "./summarySchemas/webNetworkCaptureSummarySchema.js";
 import {
   webSourceLocationMatchesViewResultSchema,
@@ -312,6 +325,7 @@ export {
   batchDecompileSummaryViewResultSchema,
   binaryLayoutSummaryViewResultSchema,
   browserScenarioSummaryViewResultSchema,
+  byteEntropyPageViewResultSchema,
   byteEntropySummaryViewResultSchema,
   dartAotSummaryViewResultSchema,
   debPackageSummaryViewResultSchema,
@@ -361,9 +375,15 @@ export {
   rustBinarySummaryViewResultSchema,
   sourceToBundlePageViewResultSchema,
   sourceToBundleSummaryViewResultSchema,
+  uefiExtractionPageViewResultSchema,
+  uefiExtractionSummaryViewResultSchema,
+  uefiFirmwarePageViewResultSchema,
+  uefiFirmwareSummaryViewResultSchema,
   wasmArtifactSummaryViewResultSchema,
   webBundlePageViewResultSchema,
   webBundleSummaryViewResultSchema,
+  webPagePageViewResultSchema,
+  webPageSummaryViewResultSchema,
   webNetworkCaptureSummaryViewResultSchema,
   webSourceLocationMatchesViewResultSchema,
   webSourceLocationSummaryViewResultSchema,
@@ -502,6 +522,16 @@ const javascriptFactsViewResultSchema = z.strictObject({
   source_coverage: javascriptApplicationSourceCoverageSchema,
 });
 
+/** Distinct selected property combinations over retained observations. */
+const javascriptFactGroupsViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  kind: z.literal("javascript-fact-groups"),
+  view: javascriptFactGroupsViewRequestSchema,
+  parent_operation: z.literal("analyze_javascript_application"),
+  rows: z.array(javascriptFactGroupRowSchema),
+  source_coverage: javascriptApplicationSourceCoverageSchema,
+});
+
 const androidPackageViewResultSchema = z.discriminatedUnion("facet", [
   androidManifestViewResultSchema,
   androidComponentsViewResultSchema,
@@ -633,6 +663,18 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: recordedArrayViewSchema,
     rows: z.array(jsonValueSchema),
   }),
+  z.strictObject({
+    ...viewResultBaseFields,
+    parent_operation: z.string(),
+    artifact: artifactSchema.nullable(),
+    kind: z.literal("evidence-json"),
+    view: evidenceJsonViewRequestSchema,
+    text: z
+      .string()
+      .describe(
+        "This page of the parent Evidence JSON text; join pages in offset order.",
+      ),
+  }),
   playwrightTracePageViewResultSchema,
   z.strictObject({
     ...viewResultBase,
@@ -650,6 +692,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   nativeContextViewResultSchema,
   javaScriptRoutesViewResultSchema,
   webBundlePageViewResultSchema,
+  webPagePageViewResultSchema,
   sourceToBundlePageViewResultSchema,
   endpointComparisonPageViewResultSchema,
   apiContractPageViewResultSchema,
@@ -714,6 +757,8 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     nativeValueTraceSummaryViewResultSchema,
     erlangBeamSummaryViewResultSchema,
     devicetreeSummaryViewResultSchema,
+    uefiFirmwareSummaryViewResultSchema,
+    uefiExtractionSummaryViewResultSchema,
     pythonPycSummaryViewResultSchema,
     debPackageSummaryViewResultSchema,
     nativeExportsSummaryViewResultSchema,
@@ -759,6 +804,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     featureTraceSummaryViewResultSchema,
     batchDecompileSummaryViewResultSchema,
     webBundleSummaryViewResultSchema,
+    webPageSummaryViewResultSchema,
     nugetNupkgSummaryViewResultSchema,
   ]),
   z.strictObject({
@@ -769,6 +815,9 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     devicetree: devicetreePageContextSchema,
     items: devicetreeViewItemsSchema,
   }),
+  uefiFirmwarePageViewResultSchema,
+  uefiExtractionPageViewResultSchema,
+  byteEntropyPageViewResultSchema,
   webSourceLocationMatchesViewResultSchema,
   webSourceLocationTextViewResultSchema,
   erlangBeamTableViewResultSchema,
@@ -883,6 +932,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   }),
   javascriptModuleReferencesViewResultSchema,
   javascriptFactsViewResultSchema,
+  javascriptFactGroupsViewResultSchema,
   z.strictObject({
     kind: z.literal("native"),
     view: nativeViewSchema,

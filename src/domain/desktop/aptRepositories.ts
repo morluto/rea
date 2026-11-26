@@ -1,5 +1,6 @@
 import type { AptRepository } from "./desktopCapture.js";
 import { byteToHex } from "../../kernel/byteToHex.js";
+import { trimEdges } from "../../kernel/trimEdges.js";
 import { err, ok, type Result } from "../result.js";
 import { isStrictUtf8 } from "../strictUtf8.js";
 
@@ -347,8 +348,6 @@ const stanza = (
 /** Keep the position of undecodable lines without inserting replacement text. */
 function* sourceLines(text: string | Buffer): Generator<string | undefined> {
   if (typeof text === "string") {
-    // Yield lines one at a time so a caller that stops early never holds
-    // every line of a large input.
     for (let start = 0; ;) {
       const end = text.indexOf("\n", start);
       yield text.slice(start, end === -1 ? text.length : end);
@@ -524,27 +523,25 @@ export const parseOneLineSources = (
   });
 
 // Match the ASCII whitespace recognized by APT's tag reader within a line.
-const isDeb822LineSpace = (code: number): boolean =>
-  code === 0x20 || (code >= 0x09 && code <= 0x0d && code !== 0x0a);
+const isDeb822LineWhitespace = (character: string): boolean =>
+  character === " " ||
+  character === "\t" ||
+  character === "\v" ||
+  character === "\f" ||
+  character === "\r";
 
-// Scan from each end so a long interior whitespace run stays linear.
-const trimDeb822Line = (value: string): string => {
-  let start = 0;
-  let end = value.length;
-  while (start < end && isDeb822LineSpace(value.charCodeAt(start))) start++;
-  while (end > start && isDeb822LineSpace(value.charCodeAt(end - 1))) end--;
-  return value.slice(start, end);
-};
+const trimDeb822Line = (value: string): string =>
+  trimEdges(value, isDeb822LineWhitespace);
 
 /**
  * Fields of each deb822 paragraph by lowercase name; continuation lines keep
- * their line breaks. `limit` stops reading once that many paragraphs are
- * found, so a caller that needs only the first never builds the rest.
+ * their line breaks. Stop reading when the paragraph limit is reached.
  */
 export const deb822Paragraphs = (
   text: string | Buffer,
   limit = Number.POSITIVE_INFINITY,
 ): ReadonlyMap<string, string>[] => {
+  if (limit <= 0) return [];
   const found: Map<string, string>[] = [];
   let current = new Map<string, string>();
   let last: string | undefined;
@@ -594,7 +591,7 @@ export const deb822Paragraphs = (
     }
   }
   finish();
-  return found.length > limit ? found.slice(0, limit) : found;
+  return found;
 };
 
 // APT's numeric conversion skips leading ASCII whitespace, including a

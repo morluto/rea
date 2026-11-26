@@ -80,67 +80,6 @@ export const schemaDepth = (value: unknown, depth = 0): number => {
 /** Strict clients commonly reject advertised schemas deeper than ten nodes. */
 export const COMPACT_SCHEMA_MAX_DEPTH = 10;
 
-/** Rewrite every schema-valued position; literal data stays opaque. */
-const rebuildSchemaPositions = (
-  node: unknown,
-  rebuild: (child: unknown) => unknown,
-): unknown => {
-  if (Array.isArray(node)) {
-    let out: unknown[] | undefined;
-    for (let i = 0; i < node.length; i++) {
-      const child = node[i];
-      const mapped = rebuild(child);
-      if (mapped !== child) {
-        if (out === undefined) out = node.slice();
-        out[i] = mapped;
-      }
-    }
-    return out ?? node;
-  }
-  if (!isSchemaObject(node)) return node;
-  return mapSchemaChildren(node, rebuild);
-};
-
-/**
- * Drop annotation prose from every subschema while preserving all validation
- * keywords. The root keeps its own description because the root-union
- * projection encodes accepted input groups there; the root's echoed literal
- * examples leave with the rest of the annotation prose.
- */
-export const stripAnnotations = (
-  schema: Record<string, unknown>,
-): Record<string, unknown> => {
-  const rebuilt = rebuildSchemaPositions(
-    schema,
-    stripChildAnnotations,
-  ) as Record<string, unknown>;
-  const out: Record<string, unknown> = {};
-  for (const key in rebuilt) {
-    if (!Object.hasOwn(rebuilt, key)) continue;
-    if (annotationKeys.has(key) && key !== "description") continue;
-    out[key] = rebuilt[key];
-  }
-  return out;
-};
-
-const stripChildAnnotations = (child: unknown): unknown => {
-  const rebuilt = rebuildSchemaPositions(child, stripChildAnnotations);
-  if (!isSchemaObject(rebuilt)) return rebuilt;
-  let kept: Record<string, unknown> | undefined;
-  for (const key in rebuilt) {
-    if (!Object.hasOwn(rebuilt, key) || !annotationKeys.has(key)) continue;
-    if (kept === undefined) {
-      kept = {};
-      for (const copyKey in rebuilt) {
-        if (Object.hasOwn(rebuilt, copyKey) && !annotationKeys.has(copyKey))
-          kept[copyKey] = rebuilt[copyKey];
-      }
-    }
-    break;
-  }
-  return kept ?? rebuilt;
-};
-
 type SchemaPosition = "schema" | "map" | "data";
 type ObjectEmitMode = "normal" | "root" | "siblings" | "root-siblings";
 
@@ -398,6 +337,90 @@ class BudgetedSchemaSerializer {
   }
 }
 
+const depthPlaceholder = (
+  node: Record<string, unknown>,
+  depth: number,
+): Record<string, unknown> | undefined => {
+  const rawType = node.type;
+  const types =
+    typeof rawType === "string"
+      ? [rawType]
+      : Array.isArray(rawType)
+        ? rawType.filter((type): type is string => typeof type === "string")
+        : [];
+  // Declared types are preserved verbatim (integer included); widening an
+  // integer to number would also be sound, dropping it would not.
+  const deep = depth > COMPACT_SCHEMA_MAX_DEPTH - 3;
+  const arrayBranch = deep
+    ? { type: "array", items: {} }
+    : { type: "array", items: jsonValueSchema() };
+  let placeholder: Record<string, unknown> | undefined;
+  if (types.length === 1)
+    placeholder = types[0] === "array" ? arrayBranch : { type: types[0] };
+  else if (types.length > 1 && !deep)
+    placeholder = {
+      anyOf: types.map((type) => (type === "array" ? arrayBranch : { type })),
+    };
+  else if (types.length === 0) {
+    // Untyped schemas accept every JSON value (properties/items alone do not
+    // imply object/array), so the only sound placeholder is unconstrained.
+    placeholder = {};
+  }
+  return placeholder !== undefined &&
+    depth + schemaDepth(placeholder) <= COMPACT_SCHEMA_MAX_DEPTH
+    ? placeholder
+    : undefined;
+};
+
+/**
+ * Replace only the sub-schemas that push past the advertised depth limit with
+ * type-preserving placeholders, instead of reducing the whole schema. The walk
+ * follows schema positions only (literal data such as `enum`, `const` and
+ * `required` stays opaque), keeps branches that already fit, and returns
+ * `undefined` when an over-depth branch sits under `not` or `oneOf`, where
+ * widening a child can make its parent reject valid values — the caller then
+ * keeps the whole-schema reduction. Every replacement widens acceptance, so
+ * canonical validation is unaffected.
+ */
+export const pruneSchemaBeyondDepth = (
+  schema: Record<string, unknown>,
+): Record<string, unknown> | undefined => {
+  let unsafe = false;
+  const prune = (
+    node: unknown,
+    depth: number,
+    unsafeContext: boolean,
+  ): unknown => {
+    if (!isSchemaObject(node)) return node;
+    if (depth + schemaDepth(node) <= COMPACT_SCHEMA_MAX_DEPTH) return node;
+    if (unsafeContext) {
+      unsafe = true;
+      return node;
+    }
+    // Only deep nodes are replaced. Shallow nodes recurse first so fitting
+    // branches and unsafe combinators below them are observed.
+    if (depth >= COMPACT_SCHEMA_MAX_DEPTH - 3) {
+      const placeholder = depthPlaceholder(node, depth);
+      if (placeholder !== undefined) return placeholder;
+    }
+    const mapped = mapSchemaChildren(node, (child, keyword) =>
+      prune(
+        child,
+        depth + (schemaChildren.has(keyword) ? 1 : 2),
+        unsafeContext || keyword === "not" || keyword === "oneOf",
+      ),
+    );
+    if (unsafe) return node;
+    if (depth + schemaDepth(mapped) <= COMPACT_SCHEMA_MAX_DEPTH) return mapped;
+    const placeholder = depthPlaceholder(node, depth);
+    if (placeholder !== undefined) return placeholder;
+    unsafe = true;
+    return node;
+  };
+  const pruned = prune(schema, 0, false);
+  return unsafe ? undefined : (pruned as Record<string, unknown>);
+};
+
 /** Stop serialization at the budget before allocating an expanded schema. */
 export const inlineWithinBudget = (
   root: Record<string, unknown>,
@@ -560,9 +583,7 @@ const REDUCED_ITEM_MAX_DEPTH = 3;
  * nullable union, and other unions keep the typed branches every surveyed
  * target accepts below the root.
  */
-const typedAlternatives = (
-  types: readonly string[],
-): Record<string, unknown> =>
+const typedAlternatives = (types: readonly string[]): Record<string, unknown> =>
   types.length === 1
     ? { type: types[0] }
     : { anyOf: types.map((type) => ({ type })) };

@@ -185,7 +185,12 @@ it("keeps a retained root across every release and names why", async () => {
       closes += 1;
     },
   });
-  fixture.retain("Command cleanup is incomplete.");
+  const cause = new Error("cleanup failed");
+  const error = fixture.retainedError("Command cleanup is incomplete.", {
+    cause,
+  });
+  expect(error.message).toBe("Command cleanup is incomplete.");
+  expect(error.cause).toBe(cause);
   for (const _attempt of [1, 2]) {
     const failure: unknown = await fixture
       .release()

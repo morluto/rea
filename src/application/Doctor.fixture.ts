@@ -43,3 +43,20 @@ export const createDoctorHostFixture = (
     }),
   ...overrides,
 });
+
+/** The explicit scope's checks; an audit-wide report has none. */
+export const scopeChecksOf = <Check>(report: {
+  readonly scope_checks?: readonly Check[];
+}): readonly Check[] => {
+  if (report.scope_checks === undefined)
+    throw new Error("Expected an explicit-scope doctor report");
+  return report.scope_checks;
+};
+
+export const ubuntu2404Distribution: DoctorHost["linuxDistribution"] = () =>
+  Promise.resolve({
+    id: "ubuntu",
+    versionId: "24.04",
+    packageFamily: "deb",
+    hopperSetupSupported: true,
+  });

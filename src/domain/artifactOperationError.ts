@@ -8,7 +8,7 @@ import {
 } from "./analysisErrorBase.js";
 import type { ArtifactReaderLimitFact } from "./artifactReaderLimits.js";
 import type { FixedAllowance } from "./fixedAllowanceRemediation.js";
-import type { LimitRef, ParseFailureKind } from "./parseFailure.js";
+import type { LimitRef } from "./parseFailure.js";
 
 /** The resource class that refused an artifact operation. */
 export type ArtifactLimitBoundary = "file-size" | "capacity" | "memory";
@@ -26,7 +26,8 @@ export interface ArtifactAdmissionLimit {
  * not read the message: a member the reader did not produce, member metadata
  * that differs from inventory, a container or unpacked file whose identity
  * changed, a directory or archive member whose file identity or bytes
- * changed since inventory, short read coverage, bytes disagreeing with the
+ * changed since inventory, a selected target that no longer matches the
+ * one the session admitted, short read coverage, bytes disagreeing with the
  * declared size, a disk image whose stored checksum does not verify, a read
  * stream over a handle the reader does not own, a format-declared digest or
  * checksum that disagrees with content or cannot be checked, layout sources
@@ -41,6 +42,7 @@ export const ARTIFACT_INTEGRITY_CHECKS = [
   "foreign-entry",
   "entry-metadata",
   "container-identity",
+  "admitted-identity",
   "unpacked-entry-identity",
   "member-identity",
   "image-checksum",
@@ -57,7 +59,43 @@ export const ARTIFACT_INTEGRITY_CHECKS = [
 ] as const;
 export type ArtifactIntegrityCheck = (typeof ARTIFACT_INTEGRITY_CHECKS)[number];
 
-/** Artifact inventory or extraction failed a typed safety boundary. */
+/**
+ * Whether a failed integrity check means the target changed while REA read
+ * it (identity or coverage moved under the read), rather than bytes that
+ * contradict what the target itself declares or a REA-internal check.
+ */
+const INTEGRITY_CHECK_MEANS_CHANGED = {
+  "foreign-entry": false,
+  "entry-metadata": false,
+  "container-identity": true,
+  // The session's opened target no longer matches: reopening, not a repeat
+  // of the same request, is what helps.
+  "admitted-identity": false,
+  "unpacked-entry-identity": true,
+  "member-identity": true,
+  "image-checksum": false,
+  "read-coverage": true,
+  "declared-size": false,
+  "reader-ownership": false,
+  "declared-digest": false,
+  "layout-consistency": false,
+  reconstruction: false,
+  "inventory-node": false,
+  "output-readback": false,
+  "output-lifecycle": false,
+  "traversal-coverage": true,
+} as const satisfies Readonly<Record<ArtifactIntegrityCheck, boolean>>;
+
+/** The integrity checks whose failure is a changed target. */
+export const integrityCheckMeansChanged = (
+  check: ArtifactIntegrityCheck | undefined,
+): boolean => check !== undefined && INTEGRITY_CHECK_MEANS_CHANGED[check];
+
+/**
+ * Artifact inventory or extraction failed a typed safety boundary. A target
+ * whose bytes its format owner refuses is an `AnalysisTargetFailureError`
+ * instead, so this error never classifies the target itself.
+ */
 export class ArtifactOperationError extends AnalysisError {
   readonly _tag = "ArtifactOperationError";
   override readonly userMessage: string | undefined;
@@ -72,40 +110,11 @@ export class ArtifactOperationError extends AnalysisError {
   readonly integrityCheck: ArtifactIntegrityCheck | undefined;
 
   constructor(
-    readonly operation:
-      | "inventory_artifact"
-      | "inspect_artifact"
-      | "inspect_desktop_application"
-      | "inspect_pe_resources"
-      | "inspect_pe_certificates"
-      | "inspect_elf_notes"
-      | "inspect_dwarf_units"
-      | "inspect_elf_debug_link"
-      | "inspect_elf_unwind_ranges"
-      | "inspect_devicetree"
-      | "inspect_ntfs_journal"
-      | "inspect_api_contract"
-      | "inspect_playwright_trace"
-      | "inspect_kernel_module"
-      | "inspect_elf_dependencies"
-      | "inspect_kernel_build_config"
-      | "inspect_erlang_beam"
-      | "inspect_nuget_nupkg"
-      | "inspect_v8_code_cache"
-      | "inspect_maven_gradle_metadata"
-      | "extract_artifact"
-      | "decode_interface_builder"
-      | "inspect_asset_catalog"
-      | "inspect_keyed_archive"
-      | "trace_dylib_resolution"
-      | "export_web_scripts"
-      | "trace_web_module_imports"
-      | "trace_web_source_location"
-      | "analyze_javascript_application",
+    /** The public operation whose artifact read or write failed. */
+    readonly operation: string,
     readonly reason:
-      | ParseFailureKind
+      | "limit"
       | "cancelled"
-      | "format"
       | "integrity"
       | "path"
       | "unavailable"

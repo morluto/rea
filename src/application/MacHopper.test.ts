@@ -15,6 +15,7 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import { err, ok } from "../domain/result.js";
 import { resolveAppleBundleExecutable } from "./AppBundleExecutable.js";
 import {
+  HOPPER_DOWNLOAD_BYTES,
   HOPPER_METADATA_TIMEOUT_MS,
   type HopperDownload,
   type HopperDownloadFailure,
@@ -642,12 +643,32 @@ it.each([false, true])(
   },
 );
 
-it("refuses release URLs that normalize outside the public channel before package download", async () => {
+it.each([
+  {
+    defect: "a URL outside the public channel after normalization",
+    change: {
+      filename:
+        "https://www.hopperapp.com:443/downloader/public/%2e%2e/private/Hopper-demo.dmg",
+    },
+  },
+  { defect: "an empty package", change: { file_length: "0" } },
+  {
+    defect: "a package one byte above the download ceiling",
+    change: { file_length: String(HOPPER_DOWNLOAD_BYTES + 1) },
+  },
+])("refuses $defect before package download", async ({ change }) => {
   const host = new FakeMacHopperHost();
-  const row = JSON.parse(await feedText(host));
-  row["OS X"].filename =
-    "https://www.hopperapp.com:443/downloader/public/%2e%2e/private/Hopper-demo.dmg";
-  host.feedBytes = new TextEncoder().encode(JSON.stringify(row));
+  host.feedBytes = new TextEncoder().encode(
+    JSON.stringify({
+      "OS X": {
+        filename:
+          "https://www.hopperapp.com:443/downloader/public/Hopper-demo.dmg",
+        file_length: String(host.archive.byteLength),
+        file_hash: createHash("sha1").update(host.archive).digest("hex"),
+        ...change,
+      },
+    }),
+  );
 
   expect(await installMacHopper({}, host)).toMatchObject({
     status: "failed",

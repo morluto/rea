@@ -70,8 +70,8 @@
     "sha256": "cc535c21133c895b56b374c8a1dc1eb948d99003ed2b47372069456b62f42b24"
   },
   {
-    "file": "licenses/protobuf-es-v2.16.0-LICENSE.txt",
-    "source": "https://raw.githubusercontent.com/bufbuild/protobuf-es/b3b232f7f466eda27c66e8f63c82f930578b6cc6/LICENSE",
+    "file": "licenses/protobuf-es-v2.17.0-LICENSE.txt",
+    "source": "https://raw.githubusercontent.com/bufbuild/protobuf-es/01a8c3b7c95d17758c641b2b9e8ee2f14a3ee9d7/LICENSE",
     "sha256": "c04b4216f1cd4c5a4f7fb2f2a1b0ae70d847e9e0cac7c9dee9bf8cc03177c449"
   },
   {

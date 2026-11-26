@@ -1,6 +1,5 @@
 import * as rootHash from "../../../src/resources/StableRootArtifact.js";
-import { readFileHandlePrefix } from "../../../src/filesystem/readFileHandlePrefix.js";
-import { createHash } from "node:crypto";
+import { sha256 } from "../../support/sha256.js";
 import {
   lstat,
   mkdir,
@@ -33,9 +32,6 @@ import {
 import { abortIfNeeded } from "../../../src/resources/StreamDigest.js";
 
 const AGED_FIXTURE_TIME = new Date("2000-01-01T00:00:00Z");
-
-const sha256 = (bytes: Buffer) =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const fileReadPrototype = async (
   path: string,
@@ -380,21 +376,28 @@ it.each([
     name: "oversized NES 2.0",
     bytes: () => nes2Fixture({ header: { 9: 0x01 } }),
     reason: "truncated NES 2.0 payload",
+    kind: "truncated",
   },
-  { name: "UNIF", bytes: () => Buffer.from("UNIF"), reason: "unif" },
+  {
+    name: "UNIF",
+    bytes: () => Buffer.from("UNIF"),
+    reason: "unif",
+    kind: "unsupported",
+  },
   {
     name: "truncated",
     bytes: () => inesFixture().subarray(0, 20),
     reason: "truncated iNES payload",
+    kind: "truncated",
   },
 ])(
   "refuses $name during direct artifact inventory",
-  async ({ bytes, reason }) => {
+  async ({ bytes, reason, kind }) => {
     const root = await createTestTempDirectory("rea-ines-refusal-");
     const path = join(root, "invalid.nes");
     await writeFile(path, bytes());
     await expect(inventoryArtifact(path)).rejects.toMatchObject({
-      reason: "format",
+      reason: kind,
       message: expect.stringContaining(reason),
     });
   },
@@ -643,13 +646,8 @@ it("reports source loss during target hashing as a changed input", async () => {
   ) {
     const result = await originalRead.call(this, ...args);
     const readArguments: readonly unknown[] = args;
-    const [buffer, , , position] = readArguments;
-    if (
-      Buffer.isBuffer(buffer) &&
-      buffer.byteLength === 64 * 1024 &&
-      position === bytes.length &&
-      result.bytesRead === 0
-    ) {
+    const [, , , position] = readArguments;
+    if (position === 0 && result.bytesRead === bytes.length) {
       faultInjected = true;
       await unlink(path);
     }
@@ -860,63 +858,6 @@ it.each(["target", "inventory", "reader"])(
     } finally {
       read.mockRestore();
       await sample.close();
-    }
-  },
-);
-
-it.each(["eof", "cancelled"])(
-  "preserves %s while filling a short prefix",
-  async (mode) => {
-    const root = await createTestTempDirectory("rea-prefix-boundary-");
-    const path = join(root, "source");
-    const bytes = Buffer.from(
-      mode === "eof" ? "NES\x1a" : "NES\x1a123456789012",
-    );
-    await writeFile(path, bytes);
-    const handle = await open(path, "r");
-    const prototype = Object.getPrototypeOf(handle) as {
-      read(
-        buffer: Buffer,
-        offset: number,
-        length: number,
-        position: number,
-      ): Promise<{ bytesRead: number; buffer: Buffer }>;
-    };
-    const original = prototype.read;
-    const controller = new AbortController();
-    let reads = 0;
-    const read = vi.spyOn(prototype, "read").mockImplementation(async function (
-      this: typeof handle,
-      buffer,
-      offset,
-      length,
-      position,
-    ) {
-      reads++;
-      const observed = await original.call(
-        this,
-        buffer,
-        offset,
-        Math.min(length, 3),
-        position,
-      );
-      if (reads === 2 && mode === "cancelled") controller.abort();
-      return observed;
-    });
-    try {
-      const result = readFileHandlePrefix(handle, 16, () =>
-        abortIfNeeded(controller.signal),
-      );
-      if (mode === "eof") {
-        expect((await result).equals(bytes)).toBe(true);
-        expect(reads).toBe(3);
-      } else {
-        await expect(result).rejects.toMatchObject({ reason: "cancelled" });
-        expect(reads).toBe(2);
-      }
-    } finally {
-      read.mockRestore();
-      await handle.close();
     }
   },
 );

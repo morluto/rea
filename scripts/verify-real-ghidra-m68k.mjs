@@ -1,3 +1,4 @@
+import { createGhidraVerifierMcpOperations } from "./lib/ghidra-verifier-mcp.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
@@ -8,9 +9,8 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import {
-  requireMcpOperationResult,
-  requireMcpOutput,
   requireMcpToolError,
+  requireMcpAnalysisEvidenceOrSessionResult,
 } from "./lib/mcp-verifier-results.mjs";
 import {
   assertVerifierCleanupComplete,
@@ -20,6 +20,7 @@ import {
 import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 if (process.argv.length !== 2)
   throw new Error("Usage: node scripts/verify-real-ghidra-m68k.mjs");
@@ -62,11 +63,6 @@ const workspaceFixture = await VerifierFixture.open({
   parent: join(root, "build"),
 });
 const workspace = workspaceFixture.path;
-// A failed run keeps its workspace for diagnosis; the fixture records why.
-const retainWorkspace = (message, options) => {
-  workspaceFixture.retain(message);
-  return new Error(message, options);
-};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const path = join(workspace, "image.bin");
@@ -89,11 +85,16 @@ const transport = new StdioClientTransport({
   env,
   stderr: "pipe",
 });
-const client = new Client({ name: "rea-real-m68k-proof", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "rea-real-m68k-proof", version: "1" }),
+);
 let stderr = "";
 transport.stderr?.on("data", (chunk) => {
   stderr = (stderr + chunk.toString()).slice(-65536);
 });
+const call = createGhidraVerifierMcpOperations(client, {
+  timeout: 240000,
+}).decodedCall(requireMcpAnalysisEvidenceOrSessionResult);
 let report;
 let primaryFailure;
 try {
@@ -152,17 +153,26 @@ try {
     ),
   );
   const pseudo = evidence(
-    await call("procedure_pseudo_code", { procedure: "0x1012" }),
+    await call("procedure_pseudo_code", {
+      detail: "complete",
+      procedure: "0x1012",
+    }),
   );
   assert.match(pseudo.normalized_result, /\+\s*(?:3|0x3)\b/u);
   const caller = evidence(
-    await call("procedure_pseudo_code", { procedure: "0x1000" }),
+    await call("procedure_pseudo_code", {
+      detail: "complete",
+      procedure: "0x1000",
+    }),
   );
   assert.match(caller.normalized_result, /==\s*(?:10|0xa)\b/iu);
   assert.match(caller.normalized_result, /return\s+(?:42|0x2a)\s*;/iu);
   assert.match(caller.normalized_result, /return\s+0\s*;/u);
   const filePseudo = evidence(
-    await call("procedure_pseudo_code", { procedure: "file-offset:0x12" }),
+    await call("procedure_pseudo_code", {
+      detail: "complete",
+      procedure: "file-offset:0x12",
+    }),
   );
   assert.equal(filePseudo.normalized_result, pseudo.normalized_result);
   assert.ok(
@@ -208,6 +218,8 @@ try {
     [
       entrypoint,
       "inspect-native-load-image",
+      "--detail",
+      "complete",
       path,
       "--target-format",
       "raw-binary",
@@ -229,6 +241,8 @@ try {
     [
       entrypoint,
       "decompile",
+      "--detail",
+      "complete",
       path,
       "--file-offset=0x12",
       "--target-format",
@@ -317,7 +331,7 @@ if (primaryFailure === undefined) {
   try {
     const survivors = await readdir(runtime);
     if (survivors.length > 0)
-      primaryFailure = retainWorkspace(
+      primaryFailure = workspaceFixture.retainedError(
         `Runtime resources survived server shutdown (${survivors.join(", ")}); retained workspace: ${workspace}`,
       );
   } catch (cause) {
@@ -328,13 +342,13 @@ const verifierRun = await completeVerifierRun(run);
 try {
   assertVerifierCleanupComplete(verifierRun.process_lineage);
 } catch (cause) {
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `Cleanup unverified; retained diagnostic workspace: ${workspace}`,
     { cause: primaryFailure ?? cause },
   );
 }
 if (primaryFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `m68k verification failed; retained workspace: ${workspace}`,
     { cause: primaryFailure },
   );
@@ -342,16 +356,6 @@ await workspaceFixture.release();
 process.stdout.write(
   JSON.stringify({ verifier_run: verifierRun, ...report }) + "\n",
 );
-
-async function call(name, args = {}) {
-  const result = await client.callTool(
-    { name, arguments: args },
-    { timeout: 240000 },
-  );
-  if (["open_binary", "binary_session", "close_binary"].includes(name))
-    return requireMcpOperationResult(result, name);
-  return requireMcpOutput(result, name);
-}
 
 function evidence(value) {
   const result = parseEvidence(value);

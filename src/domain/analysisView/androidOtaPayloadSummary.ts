@@ -2,9 +2,9 @@ import { z } from "zod";
 
 import {
   androidOtaPayloadMetadataSchema,
-  uint32,
   type AndroidOtaPayloadMetadata,
-} from "../artifactFormatMetadata.js";
+} from "../formatMetadata/androidAndSystemMetadata.js";
+import { uint32 } from "../formatMetadata/primitives.js";
 
 /**
  * An Android OTA payload's root facts in the summary view, under their own

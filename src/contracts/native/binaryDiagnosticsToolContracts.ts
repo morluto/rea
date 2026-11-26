@@ -11,6 +11,10 @@ import {
   inspectPeLoadConfigInputSchema,
 } from "../../domain/native/peLoadConfig.js";
 import {
+  peUnwindRangesSchema,
+  inspectPeUnwindRangesInputSchema,
+} from "../../domain/native/peUnwindRanges.js";
+import {
   binaryHardeningSchema,
   inspectBinaryHardeningInputSchema,
 } from "../../domain/native/binaryHardening.js";
@@ -259,6 +263,23 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     ],
   },
   {
+    name: "inspect_pe_unwind_ranges",
+    availability: "standalone",
+    cli: true,
+    ...toolContractMetadata("inspect_pe_unwind_ranges", evidenceEffects),
+    kind: "native-provider",
+    description:
+      "Inspect the x64 PE exception directory (.pdata RUNTIME_FUNCTION entries): paged function begin/end/unwind RVAs, whether each entry starts a function or is a chained fragment of another, and each chain's parent and primary entry. Counts cover every entry; malformed, unsorted, overlapping or unreadable entries are flagged. Leaf functions have no entry, so a missing entry does not prove no function starts there. No execution or disassembler; other machines report unsupported_machine.",
+    inputSchema: inspectPeUnwindRangesInputSchema,
+    outputSchema: evidenceResultOf(peUnwindRangesSchema),
+    examples: [
+      {
+        title: "Count primary x64 function entries and chained fragments",
+        input: { path: "/artifacts/program.exe", limit: 0 },
+      },
+    ],
+  },
+  {
     name: "inspect_apple_ips",
     availability: "standalone",
     cli: true,
@@ -307,7 +328,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     ...toolContractMetadata("inspect_elf_dependencies", evidenceEffects),
     kind: "native-provider",
     description:
-      "Inspect one explicit local ELF32/ELF64 ET_EXEC or ET_DYN image's load-time dynamic dependencies without executing it, invoking the dynamic loader, or opening a disassembler. Returns ordered DT_NEEDED libraries (duplicates preserved), DT_SONAME, DT_RPATH and DT_RUNPATH as written including $ORIGIN/$LIB/$PLATFORM tokens, decoded DT_FLAGS and DT_FLAGS_1, PT_INTERP, GNU version requirements and definitions, derived per-namespace version maxima, and undefined .dynsym imports joined to library@version when known. A missing PT_DYNAMIC is an observed empty inventory. Relocatable objects use inspect_kernel_module; core dumps use inspect_recorded_crash. Reads a stable regular file; cyclic version chains and exhausted named budgets return no partial success. Unreadable strings or missing tables are reported as partial coverage with issues; complete coverage never retains issues. Omitted/complete detail preserves inline delivery. Select detail summary to retain complete Evidence and return identity, counts and source coverage. Query inspect_analysis_view kind elf-dependencies, collection needed, versions, definitions, maxima or imports, with exact names/original indices, fields and matching-row pagination; collection issues takes original indices and pagination only. Portable on supported Node hosts.",
+      "Inspect one explicit local ELF32/ELF64 ET_EXEC or ET_DYN image's load-time dynamic dependencies without executing it, invoking the dynamic loader, or opening a disassembler. Returns ordered DT_NEEDED libraries (duplicates preserved), DT_SONAME, DT_RPATH and DT_RUNPATH as written including $ORIGIN/$LIB/$PLATFORM tokens, decoded DT_FLAGS and DT_FLAGS_1, PT_INTERP, GNU version requirements and definitions, derived per-namespace version maxima, and undefined .dynsym imports joined to library@version when known. A missing PT_DYNAMIC is an observed empty inventory. Relocatable objects use inspect_kernel_module; core dumps use inspect_recorded_crash. Reads a stable regular file; cyclic version chains and exhausted named budgets return no partial success. Unreadable strings or missing tables are reported as partial coverage with issues; complete coverage never retains issues. Omitted/complete detail preserves inline delivery. Select detail summary to retain complete Evidence and return identity, counts and source coverage. Query inspect_analysis_view kind elf-dependencies, collection needed, versions, definitions, maxima or imports, with exact names, name_prefixes, original indices, fields and matching-row pagination (coverage.total counts every match); collection issues takes original indices and pagination only. Portable on supported Node hosts.",
     inputSchema: inspectElfDependenciesRequestSchema,
     outputSchema: analysisDetailOutputSchemaOf(
       elfDependenciesSchema,
@@ -351,7 +372,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     ...toolContractMetadata("inspect_byte_entropy", evidenceEffects),
     kind: "native-provider",
     description:
-      "Inspect Shannon byte entropy for one explicit local file offline, without execution, extraction or external tools. Returns file-wide SHA-256 and entropy, fixed-block entropy for an optional offset/length window, and adjacent high (>=7.2) and low (<=1.0) runs with exact file offsets. Block size is a power of two from 256 to 65536 (default 4096). Complete output can become very large because it includes one row per selected block, and summary detail still retains that full list. Use a shorter length or a larger block_size; the selected window is limited to 32,768 output blocks. Entropy cannot distinguish compression from encryption. Summary detail returns file entropy plus the ten longest runs; retrieve parent Evidence for the full series. The entire file is read even for a window.",
+      'Inspect Shannon byte entropy for one explicit local file offline, without execution, extraction or external tools. Returns file-wide SHA-256 and entropy, fixed-block entropy for an optional offset/length window, and adjacent high (>=7.2) and low (<=1.0) runs with exact file offsets. Block size is a power of two from 256 to 65536 (default 4096). Complete Evidence has one row per selected block; omitted detail returns it only within the agent result budget and otherwise the retained summary: file entropy, block and run counts, the first 64 runs in offset order and the ten longest. inspect_analysis_view view {kind:"byte-entropy",collection:"blocks" or "runs",offset,limit} pages the retained series by index. The selected window is limited to 32,768 output blocks. Entropy cannot distinguish compression from encryption. The entire file is read even for a window.',
     inputSchema: inspectByteEntropyRequestSchema,
     outputSchema: byteEntropyOutputSchema,
     examples: [
@@ -446,7 +467,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     ...toolContractMetadata("inspect_native_exports", evidenceEffects),
     kind: "native-provider",
     description:
-      "Inspect PE/ELF exports without execution or an analysis engine; use inspect_macho for Mach-O. Returns named/ordinal/forwarded PE exports or defined ELF dynamic symbols with binding/type/version, preserving aliases, hidden versions and raw-name qualifications. Without SHT_DYNSYM, ELF uses PT_DYNAMIC with DT_HASH or DT_GNU_HASH; an indeterminate symbol count is unsupported. Readable fallback version indices and hidden flags are retained; unresolved version names or unreadable entries make coverage partial. An empty complete inventory means no declared exports. detail summary retains full Evidence for inspect_analysis_view kind native-exports, collection exports/issues, with exact names/indices, fields and paging; source_index is parent-scoped.",
+      "Inspect PE/ELF exports without execution or an analysis engine; use inspect_macho for Mach-O. Returns named/ordinal/forwarded PE exports (ordinal, RVA, address) or defined ELF dynamic symbols with binding/type/version, preserving aliases, hidden versions and raw-name qualifications. Without SHT_DYNSYM, ELF uses PT_DYNAMIC with DT_HASH or DT_GNU_HASH; an indeterminate symbol count is unsupported. Readable fallback version indices and hidden flags are retained; unresolved version names or unreadable entries make coverage partial. An empty complete inventory means no declared exports. detail summary retains full Evidence for inspect_analysis_view kind native-exports, collection exports/issues, with exact names, name_prefixes, indices, fields and paging; coverage.total counts every match, so limit 1 returns a count. source_index is parent-scoped.",
     inputSchema: inspectNativeExportsRequestSchema,
     outputSchema: analysisDetailOutputSchemaOf(
       nativeExportsSchema,

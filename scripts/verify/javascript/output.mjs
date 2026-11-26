@@ -1,3 +1,4 @@
+import { sha256File } from "../../lib/verifier-file-sha256.mjs";
 import assert from "node:assert/strict";
 import { constants } from "node:buffer";
 import { createHash } from "node:crypto";
@@ -14,7 +15,7 @@ import { createCliShell } from "#dist/cli/cliShell.js";
 import { registerCliCommand } from "#dist/cli/commandRegistry.js";
 import { estimateTokenCount } from "tokenx";
 
-import { parseCliOutputArguments } from "#dist/cliOutput.js";
+import { parseCliOutputArguments } from "#dist/cli/cliOutput.js";
 import { createCliResultOutput } from "#dist/cli/cliResultOutput.js";
 import { createEvidence } from "#dist/domain/evidence.js";
 import { unknownTarget } from "#dist/domain/targetIdentity.js";
@@ -157,9 +158,7 @@ await withVerifierFixture(fixture, async () => {
   assert.equal(output.error, undefined);
   assert.equal(unexpectedOutputBytes, 0);
 
-  const actualHash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) actualHash.update(chunk);
-  const digest = actualHash.digest("hex");
+  const digest = await sha256File(path);
   assert.equal(digest, expectedHash.digest("hex"));
   assert.equal((await stat(path)).size, expectedBytes);
   let verifiedTokenCount;

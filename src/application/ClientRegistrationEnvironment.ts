@@ -21,9 +21,9 @@ import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   effectiveClientServer,
-  clientConfigurationRecordSchema,
   type ClientConfigurationDocument,
 } from "./ClientConfigurationDocument.js";
+import { clientConfigurationRecordSchema } from "./ClientConfigurationValues.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
@@ -84,6 +84,25 @@ const environmentSchema = clientConfigurationRecordSchema.transform(
     return Object.fromEntries(entries);
   },
 );
+
+/** Invalid recorded shape, with literal environment keys kept for source attribution. */
+export class ClientRegistrationEnvironmentShapeError extends ConfigurationError {
+  constructor(
+    field: string,
+    readonly invalidKeys: readonly string[],
+  ) {
+    super("Invalid REA server environment", {
+      settings: (invalidKeys.length === 0
+        ? [field]
+        : invalidKeys.map((key) => `${field}.${key}`)
+      ).map((setting) => ({
+        setting,
+        constraint:
+          "Server environment must be an object containing only string values",
+      })),
+    });
+  }
+}
 
 /**
  * Clients that expand `$VAR` and `${VAR}` in a recorded `env` value from the
@@ -164,17 +183,12 @@ export const clientRegistrationEnvironmentDetails = (
   const existing = environmentSchema.safeParse(raw === undefined ? {} : raw);
   if (!existing.success)
     return err(
-      new ConfigurationError("Invalid REA server environment", {
-        settings: existing.error.issues.map((issue) => ({
-          setting: [
-            ...(source.nested ? ["transport"] : []),
-            field.value,
-            ...issue.path,
-          ].join("."),
-          constraint:
-            "Server environment must be an object containing only string values",
-        })),
-      }),
+      new ClientRegistrationEnvironmentShapeError(
+        source.nested ? `transport.${field.value}` : field.value,
+        existing.error.issues.flatMap(({ path: [key] }) =>
+          typeof key === "string" ? [key] : [],
+        ),
+      ),
     );
   // Validate known settings with the runtime's parser, but retain the original
   // string overrides, including unknown client-specific keys and no defaults.

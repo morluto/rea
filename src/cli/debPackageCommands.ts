@@ -3,10 +3,8 @@ import type { Logger } from "pino";
 import { createDebPackageService } from "../composition/debPackage.js";
 import { DEB_PACKAGE_TOOL_CONTRACTS } from "../contracts/deb/debPackageToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
-import {
-  inspectWithService,
-  registerContractCommand,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { inspectWithService } from "./contractCommandRunners.js";
 import type { CliInstance } from "./types.js";
 
 /** Resolve an operator-selected Debian package through the shared inspection workflow. */

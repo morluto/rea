@@ -125,7 +125,6 @@ const failureDialect = (
       OPERATION,
       input.path,
       cause,
-      "path",
       partialDiagnostics(cause),
     );
   },

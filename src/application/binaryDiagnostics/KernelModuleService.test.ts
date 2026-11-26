@@ -1,11 +1,10 @@
+import { lateCancellationEvidence } from "../../../tests/support/lateCancellationEvidence.js";
 import { expect, it } from "vitest";
 import { KernelModuleService } from "./KernelModuleService.js";
 import { KERNEL_MODULE_PROVIDER } from "../../domain/investigationProviders.js";
 import type { KernelModule } from "../../domain/native/kernelModule.js";
 import { ok } from "../../domain/result.js";
-import { parseEvidence } from "../../domain/evidence.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
@@ -102,17 +101,55 @@ it("rejects relative paths, extra arguments and invalid field budgets before rea
   expect(calls).toBe(0);
 });
 
-it("records an applicable module and its x86_64 architecture", async () => {
-  const result = await new KernelModuleService({
-    identity,
-    inspect: () => Promise.resolve(ok(report)),
-  }).inspect({ path: report.artifact.path });
-  if (!result.ok) throw result.error;
-  expect(result.value).toMatchObject({
-    confidence: "observed",
-    subject: { identity: { format: "elf", architecture: "x86_64" } },
-    normalized_result: report,
-  });
+it("requires a nonempty PKCS#7 range ending at the file trailer", async () => {
+  const valid = {
+    status: "present",
+    reason: null,
+    magic: { offset: 484, bytes: 28 },
+    info: {
+      location: { offset: 472, bytes: 12 },
+      algo: 0,
+      hash: 0,
+      id_type: 2,
+      signer_len: 0,
+      key_id_len: 0,
+      pad: [0, 0, 0],
+      sig_len: 5,
+    },
+    pkcs7: { location: { offset: 467, bytes: 5 }, sha256: digest },
+  } satisfies KernelModule["signature"];
+  const empty = {
+    ...valid,
+    info: { ...valid.info, sig_len: 0 },
+    pkcs7: {
+      location: { offset: valid.info.location.offset, bytes: 0 },
+      sha256:
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    },
+  };
+  const beforeEof = {
+    ...valid,
+    magic: { ...valid.magic, offset: 483 },
+    info: { ...valid.info, location: { ...valid.info.location, offset: 471 } },
+    pkcs7: {
+      ...valid.pkcs7,
+      location: { ...valid.pkcs7.location, offset: 466 },
+    },
+  };
+  const outcomes = await Promise.all(
+    [valid, empty, beforeEof].map((signature) =>
+      new KernelModuleService({
+        identity,
+        inspect: () => Promise.resolve(ok({ ...report, signature })),
+      }).inspect({ path: report.artifact.path }),
+    ),
+  );
+  expect(outcomes.map((outcome) => outcome.ok)).toEqual([true, false, false]);
+  for (const outcome of outcomes.slice(1)) {
+    if (outcome.ok)
+      throw new Error("Expected inconsistent signature rejection");
+    expect(outcome.error).toBeInstanceOf(AnalysisOutputError);
+  }
 });
 
 it("rejects a report whose entry count does not match the examined sections", async () => {
@@ -163,27 +200,12 @@ it.each([
 );
 
 it("retains a completed observation if the caller cancels while the provider completes", async () => {
-  const controller = new AbortController();
-  const reason = { request: "late kernel module cancellation" };
-  const service = new KernelModuleService({
-    identity,
-    inspect: () => {
-      controller.abort(reason);
-      return Promise.resolve(ok(report));
-    },
-  });
-  const late = await service.inspect(
-    { path: report.artifact.path },
-    { signal: controller.signal },
+  const evidence = await lateCancellationEvidence(
+    report,
+    "late kernel module cancellation",
+    (inspect) => new KernelModuleService({ identity, inspect }),
   );
-  expect(late).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisCancelledError" },
-  });
-  if (late.ok) throw new Error("Expected late cancellation");
-  expect(late.error).toBeInstanceOf(AnalysisCancelledError);
-  expect(late.error.cause).toBe(reason);
-  expect(parseEvidence(late.error.partialObservation)).toMatchObject({
+  expect(evidence).toMatchObject({
     operation: "inspect_kernel_module",
     confidence: "observed",
     subject: { identity: { format: "elf", architecture: "x86_64" } },

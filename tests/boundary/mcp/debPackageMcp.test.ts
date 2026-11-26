@@ -120,9 +120,11 @@ it("delivers the parsed control facts when data.tar is refused", async () => {
     expect(response.isError).toBe(true);
     const { error } = parseMcpToolError(response);
     expect(error).toMatchObject({
-      code: "invalid_request",
+      code: "unsupported_target",
       details: {
         operation: "inspect_deb_package",
+        failure_kind: "malformed",
+        format: "deb",
         diagnostics: {
           partial: {
             ar: {
@@ -168,15 +170,11 @@ it("refuses malformed ar bytes and inspects xz-compressed members", async () => 
       arguments: { path: malformed },
     });
     expect(parseMcpToolError(invalid).error).toMatchObject({
-      code: "invalid_request",
+      code: "unsupported_target",
       details: {
         operation: "inspect_deb_package",
-        issues: [
-          expect.objectContaining({
-            path: ["path"],
-            reason: "invalid_format",
-          }),
-        ],
+        failure_kind: "malformed",
+        format: "deb",
       },
     });
     const inspected = await client.callTool({

@@ -12,19 +12,16 @@ import {
 } from "../../../src/deb/DebPackage.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-it("reports non-file and malformed Debian package selections as caller input errors", async () => {
+it("reports unavailable or non-file Debian package paths as caller input errors", async () => {
   const root = await createTestTempDirectory("rea-deb-files-");
   const path = join(root, "hello.deb");
   const alias = join(root, "alias.deb");
-  const malformed = join(root, "malformed.deb");
   await writeFile(path, debPackageFixture());
-  await writeFile(malformed, notArBytes());
   await symlink(path, alias);
   const service = createDebPackageService();
   for (const [candidate, reason] of [
     [root, "invalid_format"],
     [alias, "invalid_format"],
-    [malformed, "invalid_format"],
     [join(root, "missing.deb"), "invalid_value"],
     [join(path, "child.deb"), "invalid_value"],
   ] as const) {
@@ -42,6 +39,20 @@ it("reports non-file and malformed Debian package selections as caller input err
       ],
     });
   }
+});
+
+it("reports malformed Debian package bytes as a target failure", async () => {
+  const root = await createTestTempDirectory("rea-deb-malformed-");
+  const path = join(root, "malformed.deb");
+  await writeFile(path, notArBytes());
+  const result = await createDebPackageService().inspect({ path });
+  if (result.ok) throw new Error("Expected malformed target failure");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisTargetFailureError",
+    operation: "inspect_deb_package",
+    path,
+    failure: { kind: "malformed", format: "deb" },
+  });
 });
 
 it("returns typed resource and cancellation failures", async () => {

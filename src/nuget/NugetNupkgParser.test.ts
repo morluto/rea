@@ -21,6 +21,7 @@ import {
 } from "./NugetNupkg.fixture.js";
 import { ArtifactReaderFailure } from "../resources/index.js";
 import { NUPKG_LIMITATIONS, parseNugetNupkg } from "./NugetNupkgParser.js";
+import { bufferByteSource } from "../domain/byteSource.js";
 
 const defaults = inspectNugetNupkgInputSchema.parse({
   path: "/artifacts/Demo.Package.nupkg",
@@ -36,7 +37,11 @@ it("redacts an unfollowed authority manifest target before package-path normaliz
   const bytes = await nugetNupkgFixture({
     relsTarget: "//user:password@feed.invalid/missing.nuspec?token=visible",
   });
-  const result = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+  const result = await parseNugetNupkg(
+    bufferByteSource(bytes),
+    artifactOf(bytes),
+    defaults,
+  );
   expect(JSON.stringify(result)).not.toContain("user:password");
   expect(result.limitations.join(" ")).toContain(
     "//feed.invalid/missing.nuspec?token=visible",
@@ -48,7 +53,11 @@ it("keeps missing manifest target provenance separate from its normalized lookup
   const bytes = await nugetNupkgFixture({
     relsTarget: "./part/../missing.nuspec",
   });
-  const result = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+  const result = await parseNugetNupkg(
+    bufferByteSource(bytes),
+    artifactOf(bytes),
+    defaults,
+  );
   expect(result.limitations).toContain(
     'OPC manifest relationship Target "./part/../missing.nuspec" is missing from the package; identity was not decoded from that path.',
   );
@@ -65,7 +74,7 @@ it("preserves a non-Error ZIP failure without classifying the package as malform
     });
   try {
     await expect(
-      parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+      parseNugetNupkg(bufferByteSource(bytes), artifactOf(bytes), defaults),
     ).rejects.toBe(cause);
   } finally {
     enumeration.mockRestore();
@@ -75,7 +84,7 @@ it("preserves a non-Error ZIP failure without classifying the package as malform
 it("reads identity, license, repository, dependency groups and folder roles", async () => {
   const bytes = await nugetNupkgFixture();
   const report = nugetNupkgSchema.parse(
-    await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+    await parseNugetNupkg(bufferByteSource(bytes), artifactOf(bytes), defaults),
   );
   expect(report.identity).toEqual({
     id: "Demo.Package",
@@ -142,7 +151,7 @@ it("keeps the stored ZIP member name beside its logical path", async () => {
     extraMembers: { "./lib/net8.0/Extra.txt": "x" },
   });
   const report = nugetNupkgSchema.parse(
-    await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+    await parseNugetNupkg(bufferByteSource(bytes), artifactOf(bytes), defaults),
   );
   expect(
     report.contents.find((entry) => entry.path === "lib/net8.0/Extra.txt"),
@@ -162,7 +171,7 @@ it("records ungrouped dependencies as a group with a null target framework", asy
     includeRels: false,
   });
   const report = nugetNupkgSchema.parse(
-    await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+    await parseNugetNupkg(bufferByteSource(bytes), artifactOf(bytes), defaults),
   );
   expect(report.nuspec?.source).toBe("root-nuspec");
   expect(report.dependency_groups).toEqual([
@@ -201,7 +210,11 @@ it.for([
       includeRels: false,
     });
     const report = nugetNupkgSchema.parse(
-      await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+      await parseNugetNupkg(
+        bufferByteSource(bytes),
+        artifactOf(bytes),
+        defaults,
+      ),
     );
     expect(report.dependency_groups).toEqual([
       {
@@ -226,7 +239,7 @@ it.for([
 it("inventories a package with no .nuspec and leaves identity unknown", async () => {
   const bytes = await nugetNupkgMissingNuspecFixture();
   const report = nugetNupkgSchema.parse(
-    await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+    await parseNugetNupkg(bufferByteSource(bytes), artifactOf(bytes), defaults),
   );
   expect(report.identity).toBeNull();
   expect(report.nuspec).toBeNull();
@@ -237,7 +250,7 @@ it("inventories a package with no .nuspec and leaves identity unknown", async ()
 it("inventories a package with an ambiguous pair of root .nuspec members", async () => {
   const bytes = await nugetNupkgAmbiguousNuspecFixture();
   const report = nugetNupkgSchema.parse(
-    await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+    await parseNugetNupkg(bufferByteSource(bytes), artifactOf(bytes), defaults),
   );
   expect(report.identity).toBeNull();
   expect(report.nuspec).toBeNull();
@@ -250,7 +263,7 @@ it("inventories a package with an ambiguous pair of root .nuspec members", async
 it("inventories a package whose .nuspec is not well-formed XML", async () => {
   const bytes = await nugetNupkgMalformedNuspecFixture();
   const report = nugetNupkgSchema.parse(
-    await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+    await parseNugetNupkg(bufferByteSource(bytes), artifactOf(bytes), defaults),
   );
   expect(report.identity).toBeNull();
   expect(report.nuspec?.path).toBe("Demo.Package.nuspec");
@@ -279,7 +292,7 @@ it("stops ZIP enumeration as soon as the entry budget is exceeded", async () => 
     });
   try {
     await expect(
-      parseNugetNupkg(bytes, artifactOf(bytes), {
+      parseNugetNupkg(bufferByteSource(bytes), artifactOf(bytes), {
         ...defaults,
         max_entries: 2,
       }),
@@ -318,7 +331,7 @@ it("reports cancellation during a member read with the caller's reason", async (
     });
   try {
     const failure: unknown = await parseNugetNupkg(
-      bytes,
+      bufferByteSource(bytes),
       artifactOf(bytes),
       defaults,
       controller.signal,
@@ -362,7 +375,7 @@ it.each(["before a visible row", "at enumeration completion"] as const)(
       });
     try {
       const failure: unknown = await parseNugetNupkg(
-        bytes,
+        bufferByteSource(bytes),
         artifactOf(bytes),
         defaults,
         controller.signal,
@@ -406,7 +419,7 @@ it("keeps the ZIP directory failure when cancellation reuses that error", async 
     });
   try {
     const failure: unknown = await parseNugetNupkg(
-      bytes,
+      bufferByteSource(bytes),
       artifactOf(bytes),
       defaults,
       controller.signal,
@@ -473,7 +486,7 @@ it.each([
       });
     try {
       await expect(
-        parseNugetNupkg(bytes, artifactOf(bytes), {
+        parseNugetNupkg(bufferByteSource(bytes), artifactOf(bytes), {
           ...defaults,
           max_nuspec_bytes: 1024,
         }),
@@ -522,7 +535,11 @@ it.each([
       },
     });
     const report = nugetNupkgSchema.parse(
-      await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+      await parseNugetNupkg(
+        bufferByteSource(bytes),
+        artifactOf(bytes),
+        defaults,
+      ),
     );
     expect(report.nuspec).toMatchObject({
       path: selected ? "content/Other.nuspec" : "Demo.Package.nuspec",
@@ -557,7 +574,11 @@ it("uses the root nuspec when an unrelated relationship ends in /manifest", asyn
       "content/Other.nuspec": ungroupedNuspec,
     },
   });
-  const report = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+  const report = await parseNugetNupkg(
+    bufferByteSource(bytes),
+    artifactOf(bytes),
+    defaults,
+  );
   expect(report.nuspec).toMatchObject({
     path: "Demo.Package.nuspec",
     source: "root-nuspec",
@@ -621,7 +642,11 @@ it.each([
         "content/Other.nuspec": ungroupedNuspec,
       },
     });
-    const report = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+    const report = await parseNugetNupkg(
+      bufferByteSource(bytes),
+      artifactOf(bytes),
+      defaults,
+    );
     expect(report.nuspec).toMatchObject({
       path: selected ? "content/Other.nuspec" : "Demo.Package.nuspec",
       source: selected ? "opc-relationship" : "root-nuspec",
@@ -643,7 +668,11 @@ it.for(["manifests/./Actual.nuspec", "/manifests/extra/../Actual.nuspec"])(
       },
     });
     const report = nugetNupkgSchema.parse(
-      await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+      await parseNugetNupkg(
+        bufferByteSource(bytes),
+        artifactOf(bytes),
+        defaults,
+      ),
     );
     expect(report.nuspec).toMatchObject({
       path: "manifests/Actual.nuspec",
@@ -659,7 +688,7 @@ it("does not follow a manifest relationship Target that resolves above the packa
     extraMembers: { "_rels/.rels": manifestRels("../Actual.nuspec") },
   });
   const report = nugetNupkgSchema.parse(
-    await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+    await parseNugetNupkg(bufferByteSource(bytes), artifactOf(bytes), defaults),
   );
   expect(report.limitations).toContain(
     'OPC manifest relationship Target "../Actual.nuspec" leaves the package and was not followed.',
@@ -683,7 +712,11 @@ it.for([true, false])(
       nuspecBytes: utf16Nuspec(littleEndian),
     });
     const report = nugetNupkgSchema.parse(
-      await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+      await parseNugetNupkg(
+        bufferByteSource(bytes),
+        artifactOf(bytes),
+        defaults,
+      ),
     );
     expect(report.identity?.id).toBe("Ungrouped.Package");
     expect(report.dependency_groups).not.toEqual([]);
@@ -729,7 +762,7 @@ it.each([
       });
     try {
       const failure: unknown = await parseNugetNupkg(
-        bytes,
+        bufferByteSource(bytes),
         artifactOf(bytes),
         defaults,
       ).catch((cause: unknown) => cause);
@@ -757,7 +790,7 @@ it("reads manifest text written as CDATA and as mixed text and CDATA", async () 
       ),
   });
   const report = nugetNupkgSchema.parse(
-    await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+    await parseNugetNupkg(bufferByteSource(bytes), artifactOf(bytes), defaults),
   );
   expect(report.identity).toMatchObject({
     id: "Ungrouped.Package",
@@ -775,7 +808,7 @@ it("applies XML end-of-line handling to manifest text", async () => {
       ),
   });
   const report = nugetNupkgSchema.parse(
-    await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+    await parseNugetNupkg(bufferByteSource(bytes), artifactOf(bytes), defaults),
   );
   expect(report.identity?.description).toBe(
     "First line.\nSecond line.\nThird line.",
@@ -787,7 +820,11 @@ it.for(["constructor/file.txt", "__proto__/file.txt", "toString/file.txt"])(
   async (name) => {
     const bytes = await nugetNupkgFixture({ extraMembers: { [name]: "x" } });
     const report = nugetNupkgSchema.parse(
-      await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+      await parseNugetNupkg(
+        bufferByteSource(bytes),
+        artifactOf(bytes),
+        defaults,
+      ),
     );
     expect(report.contents.find((entry) => entry.path === name)?.role).toBe(
       "unknown",
@@ -807,7 +844,11 @@ it.each(["/FIRST.nuspec", "/First.nuspec", "/first.nuspec"])(
       },
     });
     const report = nugetNupkgSchema.parse(
-      await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+      await parseNugetNupkg(
+        bufferByteSource(bytes),
+        artifactOf(bytes),
+        defaults,
+      ),
     );
     expect(report.identity).toBeNull();
     expect(report.nuspec).toBeNull();
@@ -841,7 +882,11 @@ it.each([
         "content/É.nuspec": ungroupedNuspec,
       },
     });
-    const report = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+    const report = await parseNugetNupkg(
+      bufferByteSource(bytes),
+      artifactOf(bytes),
+      defaults,
+    );
     expect(report.nuspec?.source).toBe(source);
     expect(report.identity?.id).toBe(id);
     const warnings = report.limitations.filter((line) =>
@@ -869,7 +914,7 @@ it("reports an encrypted manifest above the metadata budget without decoding it"
     max_nuspec_bytes: 1,
   });
   const report = nugetNupkgSchema.parse(
-    await parseNugetNupkg(bytes, artifactOf(bytes), input),
+    await parseNugetNupkg(bufferByteSource(bytes), artifactOf(bytes), input),
   );
   expect(report.nuspec).toEqual({
     path: "Demo.Package.nuspec",
@@ -888,7 +933,7 @@ it("follows no relationships when two members normalize to _rels/.rels", async (
     },
   });
   const report = nugetNupkgSchema.parse(
-    await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+    await parseNugetNupkg(bufferByteSource(bytes), artifactOf(bytes), defaults),
   );
   expect(report.nuspec).toMatchObject({
     path: "Demo.Package.nuspec",
@@ -913,7 +958,7 @@ it("reports unknown coverage when the central directory leaves bytes unaccounted
   ]);
   bytes.writeUInt32LE(directory + hidden.length, eocd + hidden.length + 16);
   const report = nugetNupkgSchema.parse(
-    await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+    await parseNugetNupkg(bufferByteSource(bytes), artifactOf(bytes), defaults),
   );
   expect(report.coverage.status).toBe("unknown");
   expect(report.identity?.id).toBe("Demo.Package");
@@ -935,7 +980,11 @@ it("follows multiple relationship spellings of a single physical manifest", asyn
       "content/Other.nuspec": ungroupedNuspec,
     },
   });
-  const report = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+  const report = await parseNugetNupkg(
+    bufferByteSource(bytes),
+    artifactOf(bytes),
+    defaults,
+  );
   expect(report.nuspec).toMatchObject({
     path: "content/Other.nuspec",
     source: "opc-relationship",
@@ -958,7 +1007,11 @@ it("keeps a foreign group from suppressing ungrouped NuGet dependencies", async 
       </metadata>
     </package>`,
   });
-  const result = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+  const result = await parseNugetNupkg(
+    bufferByteSource(bytes),
+    artifactOf(bytes),
+    defaults,
+  );
   expect(result.dependency_groups).toMatchObject([
     { target_framework: null, dependencies: [{ id: "Declared" }] },
   ]);
@@ -980,7 +1033,11 @@ it("selects the first nonempty leaf for indexed publisher metadata", async () =>
         "<ID>Ignored</ID><id>Ungrouped.Package</id>",
       ),
   });
-  const report = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+  const report = await parseNugetNupkg(
+    bufferByteSource(bytes),
+    artifactOf(bytes),
+    defaults,
+  );
   expect(report.identity).toMatchObject({
     id: "Ungrouped.Package",
     authors: "First publisher",
@@ -999,6 +1056,10 @@ it.each([
       first + "<authors>Later</authors>",
     ),
   });
-  const report = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+  const report = await parseNugetNupkg(
+    bufferByteSource(bytes),
+    artifactOf(bytes),
+    defaults,
+  );
   expect(report.identity?.authors).toBe(expected);
 });

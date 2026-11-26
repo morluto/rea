@@ -1,5 +1,5 @@
+import { sha256File } from "../../lib/verifier-file-sha256.mjs";
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
 import { link, mkdir, open, rm } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,11 +16,6 @@ const directory = resolve(
     ),
 );
 await mkdir(directory, { recursive: true });
-const hashFile = async (path) => {
-  const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk);
-  return hash.digest("hex");
-};
 for (const item of [
   {
     url: JADX_RELEASE.url,
@@ -31,7 +26,7 @@ for (const item of [
 ]) {
   const path = join(directory, item.filename);
   try {
-    const digest = await hashFile(path);
+    const digest = await sha256File(path);
     if (digest !== item.sha256)
       throw new Error(
         `Existing ${path} has a different SHA-256; it was not overwritten`,

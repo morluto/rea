@@ -2,6 +2,7 @@ import { ParseFailureError } from "../domain/parseFailure.js";
 import {
   artifactOperationCause,
   ArtifactReaderFailure,
+  artifactParseFailure,
   copyArtifactEntry,
   assertProducedEntry,
   type ArtifactEntry,
@@ -11,7 +12,7 @@ import {
   abortIfNeeded,
   ArtifactResourceScope,
 } from "../resources/index.js";
-import { readFileHandlePrefix } from "../filesystem/readFileHandlePrefix.js";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { Transform, pipeline, type Readable } from "node:stream";
 import {
   parseInesLayout,
@@ -72,7 +73,7 @@ export class InesArtifactReader implements ArtifactReader {
   ): AsyncIterable<ArtifactEntry> {
     const layout = await this.#scope.run(async () => {
       await this.#verifySource(signal);
-      const prefix = await readFileHandlePrefix(this.source.handle, 16, () =>
+      const prefix = await readFileHandleRange(this.source.handle, 0, 16, () =>
         abortIfNeeded(signal),
       );
       abortIfNeeded(signal);
@@ -80,9 +81,7 @@ export class InesArtifactReader implements ArtifactReader {
       await this.#verifySource(signal);
       const parsed = parseInesLayout(prefix, this.source.initial.size);
       if (!parsed.ok)
-        throw new ArtifactReaderFailure("format", parsed.error.detail, {
-          cause: new ParseFailureError(parsed.error),
-        });
+        throw artifactParseFailure(new ParseFailureError(parsed.error), signal);
       this.#layout = parsed.value;
       this.#entries.clear();
       return parsed.value;

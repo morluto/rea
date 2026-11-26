@@ -85,16 +85,12 @@ cliTest("refuses a file that is not a Debian ar archive", async ({ cli }) => {
   });
   expect(result.exitCode).toBe(1);
   expect(result.json).toMatchObject({
-    code: "invalid_request",
+    code: "unsupported_target",
     details: {
       operation: "inspect_deb_package",
-      issues: [
-        {
-          path: ["path"],
-          reason: "invalid_format",
-          message: expect.stringContaining("ar magic"),
-        },
-      ],
+      failure_kind: "malformed",
+      format: "deb",
+      reason: expect.stringContaining("ar magic"),
     },
   });
 });

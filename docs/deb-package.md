@@ -58,13 +58,13 @@ Complete Evidence remains the default. `inspect_analysis_view` can project a
 ## Failed inspection
 
 A file that is not a Debian ar archive, a member whose declared size runs past
-EOF, or a tar header whose checksum fails is a typed `invalid_request`
-failure. Members and control facts already parsed stay on the refusal as
-partial diagnostics; they are not replaced with zeros.
+EOF, or a tar header whose checksum fails reports `unsupported_target` with
+a `failure_kind` of `malformed` or `truncated`. Members and control facts
+already parsed stay on the refusal as partial diagnostics.
 
 A bzip2 or lzma control or data member is `unsupported_target`. An xz member
 whose native decoder cannot load on this platform is the same refusal. Truncated
-or corrupt xz is `invalid_request`. Earlier ar members and a successfully
+or corrupt xz reports `unsupported_target`. Earlier ar members and a successfully
 parsed control archive remain available on that refusal.
 
 Caller-selected budgets (`max_file_bytes`, `max_ar_members`,

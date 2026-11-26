@@ -13,7 +13,7 @@ import {
   universalFuseImage,
 } from "../../tests/fixtures/electron/fuseImage.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
-import { AnalysisUnsupportedTargetError } from "../domain/analysisErrorCore.js";
+import { AnalysisTargetFailureError } from "../domain/analysisErrorCore.js";
 import { assertNodeCliInspectArgumentsSupported } from "./PlaywrightElectronActiveFuses.js";
 
 const thinWithInspectState = (state: "enabled" | "removed") => {
@@ -36,10 +36,10 @@ describe("Electron inspect argument preflight", () => {
       await expect(
         assertNodeCliInspectArgumentsSupported(path),
       ).rejects.toMatchObject({
-        _tag: "AnalysisUnsupportedTargetError",
+        _tag: "AnalysisTargetFailureError",
         operation: "capture_electron_scenario",
         path,
-        remediationAction: expect.stringContaining("inspect_electron_page"),
+        related: { operations: ["inspect_electron_page"] },
       });
     },
   );
@@ -107,7 +107,7 @@ describe("Electron inspect argument preflight", () => {
     await expect(
       assertNodeCliInspectArgumentsSupported(launcherBinary),
     ).rejects.toMatchObject({
-      _tag: "AnalysisUnsupportedTargetError",
+      _tag: "AnalysisTargetFailureError",
       operation: "capture_electron_scenario",
       path: launcherBinary,
     });
@@ -127,7 +127,7 @@ describe("Electron inspect argument preflight", () => {
     } else {
       await expect(
         assertNodeCliInspectArgumentsSupported(binaryPath),
-      ).rejects.toThrow(AnalysisUnsupportedTargetError);
+      ).rejects.toThrow(AnalysisTargetFailureError);
     }
   });
 });
