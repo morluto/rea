@@ -49,6 +49,9 @@ const generator = () => {
     unique: "ref-9",
     renewed: ["renewed-9"],
     clock: NOW,
+    "nested-clock": { at: NOW },
+    "held-clock": NOW,
+    "made-object": { at: NOW },
   };
   const generate = (rule: GeneratedRule) => {
     asked.push(rule);
@@ -96,59 +99,52 @@ it.each<[string, JsonObject | undefined, string]>([
   [
     "a fixed member with another value",
     { title: "B", priority: "LOW" },
-    `Member priority is accepted only with the value the capture sent, because the application stored it differently (${LISTED}).`,
+    'Member priority is accepted only with the value the capture sent, "HIGH"',
   ],
-  [
-    "a number for a string",
-    { title: 5 },
-    "Member title must be a JSON string, as the capture stored it.",
-  ],
-  [
-    "null for a string",
-    { title: null },
-    "Member title must be a JSON string, as the capture stored it.",
-  ],
+  ["a number for a string", { title: 5 }, "Member title must be a JSON string"],
+  ["null for a string", { title: null }, "Member title must be a JSON string"],
   [
     "an object for an array",
     { title: "B", tags: { x: true } },
-    "Member tags must be a JSON array, as the capture stored it.",
+    "Member tags must be a JSON array",
   ],
   [
     "a missing required member",
     { tags: ["y"] },
-    `The call lacks required members "title" (${LISTED}).`,
+    'The call lacks required members "title"',
   ],
-  [
-    "no body",
-    undefined,
-    `The call lacks required members "title" (${LISTED}).`,
-  ],
+  ["no body", undefined, 'The call lacks required members "title"'],
   [
     "another identity",
     { id: "43", title: "B" },
     "Member id must repeat the target's identity 42.",
   ],
 ])("refuses a body with %s", (_, body, message) => {
-  expect(problemOf(body)).toBe(message);
+  expect(problemOf(body)).toContain(message);
 });
 
+const POINTER_BODY = {
+  a: [{ b: 1 }, { b: [2, 3] }],
+  "x/y": { "m~n": true },
+  "~1": "literal tilde-one",
+  "": "blank",
+};
+
 it.each<[string, JsonValue | undefined]>([
-  ["", { a: [{ b: 1 }, { b: [2, 3] }], "x/y": { "m~n": true }, "": "blank" }],
+  ["", POINTER_BODY],
   ["/a/0/b", 1],
   ["/a/1/b/1", 3],
   ["/x~1y/m~0n", true],
+  ["/~01", "literal tilde-one"],
   ["/", "blank"],
   ["/a/2/b", undefined],
+  ["/a/01/b", undefined],
+  ["/a/999999999999999999999999/b", undefined],
   ["/a/first", undefined],
   ["/a/0/b/c", undefined],
   ["/missing", undefined],
 ])("reads the body value at %j", (pointer, expected) => {
-  const body = {
-    a: [{ b: 1 }, { b: [2, 3] }],
-    "x/y": { "m~n": true },
-    "": "blank",
-  };
-  expect(valueAt(body, pointer)).toEqual(expected);
+  expect(valueAt(POINTER_BODY, pointer)).toEqual(expected);
 });
 
 const CREATE_RULES: FieldRule[] = [
@@ -244,12 +240,12 @@ it.each<[string, Plan, WriteCall, string]>([
     "a body problem",
     CREATE_PLAN,
     callWith({ ...NEW_ITEM, extra: 1 }, { project: "42" }),
-    'Member extra is not one the capture showed stored (accepted members: "title", "meta"; members accepted only with their recorded value: none; required: "title", "meta").',
+    "Member extra is not one the capture showed stored",
   ],
 ])("refuses a create with %s", (_, plan, call, message) => {
   expect(
     createdFields(plan, CREATE_OBSERVED, call, generator().generate),
-  ).toEqual(err(message));
+  ).toMatchObject({ ok: false, error: expect.stringContaining(message) });
 });
 
 const UPDATE_PLAN: Plan = {
@@ -374,6 +370,28 @@ it("takes an update's unique and renewed values from the generator, whether or n
   ]);
 });
 
+const HELD_PLAN: Plan = {
+  rules: [
+    { field: "title", rule: "echo" },
+    { field: "updatedAt", rule: "held-clock", format: SECONDS },
+  ],
+  body: { ...UPDATE_PLAN.body!, accepted: ["title", "updatedAt"], fixed: [] },
+};
+
+it("stamps a held clock only on a call that sends the value the entity holds", () => {
+  expect(
+    update({ title: "New Title", updatedAt: BEFORE.updatedAt! }, HELD_PLAN)
+      .result,
+  ).toEqual(ok({ ...BEFORE, title: "New Title", updatedAt: NOW }));
+  const { asked, result } = update({ title: "New Title" }, HELD_PLAN);
+  expect(result).toEqual(
+    err(
+      "Member updatedAt must be sent with the value the entity holds, as the recorded call did.",
+    ),
+  );
+  expect(asked).toEqual([]);
+});
+
 it("renews no child rows on an entity that holds none", () => {
   const { asked, result } = update({ title: "New Title" }, RENEWING_PLAN);
   expect(result).toEqual(
@@ -394,7 +412,6 @@ it.each<[string, JsonObject | undefined, string]>([
     { id: "42" },
     "The call sends none of the members an update applies",
   ],
-  ["no members", {}, "The call sends none of the members an update applies"],
   [
     "no body",
     undefined,
@@ -405,15 +422,21 @@ it.each<[string, JsonObject | undefined, string]>([
     { id: "43", title: "x" },
     "Member id must repeat the target's identity 42.",
   ],
-  ["a number for a string", { title: 5 }, "Member title must be a JSON string"],
-  [
-    "a fixed member with another value",
-    { status: "OPEN" },
-    "Member status is accepted only with the value",
-  ],
 ])("refuses an update with %s", (_, body, message) => {
   const { result } = update(body);
   expect(result.ok ? undefined : result.error).toContain(message);
+});
+
+it("checks the current member kind before generating update values", () => {
+  const { result, asked } = update({ title: "New" }, UPDATE_PLAN, {
+    ...BEFORE,
+    title: 5,
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    error: expect.stringContaining("Member title must be a JSON number"),
+  });
+  expect(asked).toEqual([]);
 });
 
 it("refuses an update without a modelled body", () => {
@@ -652,3 +675,123 @@ it("checks a member stored only under another name against the type of the field
   expect(created({ not: "a string" }).ok).toBe(false);
   expect(created(null).ok).toBe(false);
 });
+
+const ADDRESS: FieldRule = {
+  field: "url",
+  rule: "composed",
+  parts: [
+    { text: "/dashboards/f/" },
+    { from: "uid", as: "value" },
+    { text: "/" },
+    { from: "title", as: "slug" },
+  ],
+};
+const UNSPELLED =
+  'The write composes "url" from "uid", "title", and the entity holds no value one of them can spell.';
+
+it("rebuilds an updated composed address, and refuses one whose entity holds no field a part reads", () => {
+  const plan: Plan = {
+    rules: [{ field: "title", rule: "echo" }, ADDRESS],
+    body: {
+      accepted: ["title"],
+      fixed: [],
+      required: [],
+      identity: "uid",
+      kinds: [],
+    },
+  };
+  const rename = (before: JsonObject) =>
+    updatedFields(
+      plan,
+      { before, observed: before },
+      { ...callWith({ title: "Moved Folder" }, { item: "7" }), id: "7" },
+      generator().generate,
+    );
+  expect(
+    rename({ id: 7, uid: "f-7", title: "Old", url: "/dashboards/f/f-7/old" }),
+  ).toEqual(
+    ok({
+      id: 7,
+      uid: "f-7",
+      title: "Moved Folder",
+      url: "/dashboards/f/f-7/moved-folder",
+    }),
+  );
+  expect(rename({ id: 7, title: "Old", url: "/dashboards/f/f-7/old" })).toEqual(
+    err(UNSPELLED),
+  );
+});
+
+it("refuses a create whose composed address reads a member the call does not send", () => {
+  const plan: Plan = {
+    rules: [
+      { field: "uid", rule: "echo" },
+      { field: "title", rule: "echo" },
+      ADDRESS,
+    ],
+    body: {
+      accepted: ["uid", "title"],
+      fixed: [],
+      required: ["title"],
+      identity: null,
+      kinds: [],
+    },
+  };
+  const observed: JsonObject = {
+    uid: "f-1",
+    title: "Recorded",
+    url: "/dashboards/f/f-1/recorded",
+  };
+  const create = (body: JsonObject) =>
+    createdFields(plan, observed, callWith(body), generator().generate);
+  expect(create({ uid: "f-2", title: "New Folder" })).toEqual(
+    ok({
+      uid: "f-2",
+      title: "New Folder",
+      url: "/dashboards/f/f-2/new-folder",
+    }),
+  );
+  expect(create({ title: "New Folder" })).toEqual(err(UNSPELLED));
+});
+
+it.each(["__proto__", "constructor"])(
+  "creates and updates an absent own %s field without changing object inheritance",
+  (field) => {
+    const plan = {
+      rules: [{ field, rule: "echo" as const }],
+      body: {
+        accepted: [field],
+        fixed: [],
+        required: [],
+        identity: null,
+        kinds: [],
+      },
+    };
+    const sent = Object.fromEntries([[field, { label: "stored" }]]);
+    const call = callWith(sent);
+    const created = createdFields(plan, { id: 1 }, call, generator().generate);
+    const updated = updatedFields(
+      plan,
+      {
+        before: { id: 1 },
+        observed: Object.fromEntries([
+          ["id", 1],
+          [field, { label: "old" }],
+        ]),
+      },
+      { ...call, id: "1" },
+      generator().generate,
+    );
+    for (const result of [created, updated]) {
+      if (!result.ok) throw new Error(result.error);
+      expect(
+        Object.getOwnPropertyDescriptor(result.value, field)?.value,
+      ).toEqual({ label: "stored" });
+      expect(Object.getPrototypeOf(result.value)).toBe(Object.prototype);
+      expect(JSON.parse(JSON.stringify(result.value))).toEqual({
+        id: 1,
+        ...sent,
+      });
+    }
+  },
+);

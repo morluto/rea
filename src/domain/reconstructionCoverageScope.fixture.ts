@@ -1,3 +1,4 @@
+import { unknownTarget } from "./targetIdentity.js";
 import { createEvidence } from "./evidence.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
 import {
@@ -25,7 +26,7 @@ const conflictingPackageProof = (
   status: "fail" | "unknown",
 ): string => {
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("derived-from-linked-evidence"),
     {
       id: "package-proof-fixture",
       name: "Package proof fixture",

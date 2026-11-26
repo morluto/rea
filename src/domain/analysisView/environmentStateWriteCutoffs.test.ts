@@ -4,16 +4,27 @@ import {
   rootOf,
   type StateRecordFacts,
 } from "./environmentStateRules.js";
+import { offsetDateTimeInstantFromEpochMilliseconds } from "../offsetDateTime.js";
 import { StateWriteCutoffs } from "./environmentStateWriteCutoffs.js";
 
-const write = (path: string, ordinal: number): StateRecordFacts => ({
+const write = (
+  path: string,
+  ordinal: number,
+  start = ordinal,
+): StateRecordFacts => ({
   path,
   ordinal,
   method: "POST",
   query: undefined,
   status: 200,
-  start: ordinal,
-  end: ordinal,
+  timing: {
+    start: {
+      instant: offsetDateTimeInstantFromEpochMilliseconds(start),
+      ms: start,
+    },
+    end: offsetDateTimeInstantFromEpochMilliseconds(start),
+    endMs: start,
+  },
 });
 
 it("matches prefix and parameter semantics against an independent linear oracle", () => {
@@ -21,15 +32,14 @@ it("matches prefix and parameter semantics against an independent linear oracle"
     ["api", 8],
     ["other", 8],
   ]);
-  const paths = [
-    "/api/a",
-    "/api/b/c",
-    "/api/{owner}/d",
-    "/other/x",
-    "/api/a/{item}/e",
-    "",
+  const writes = [
+    write("/api/a", 0, 4),
+    write("/api/b/c", 1, 2),
+    write("/api/{owner}/d", 2, 3),
+    write("/other/x", 3, 5),
+    write("/api/a/{item}/e", 4, 1),
+    write("", 5, 6),
   ];
-  const writes = paths.map(write);
   const patterns: string[][] = [[]];
   let level: string[][] = [[]];
   for (let depth = 0; depth < 4; depth += 1) {
@@ -46,23 +56,23 @@ it("matches prefix and parameter semantics against an independent linear oracle"
     const index = new StateWriteCutoffs(
       selection,
       bases,
-      (a, b) => a.start < b.start,
+      (a, b) => a.timing.start!.ms < b.timing.start!.ms,
       () => {},
     );
+    const chronological = [...selection]
+      .sort((a, b) => a.timing.start!.ms - b.timing.start!.ms)
+      .map((record) => ({ record, candidate: rootOf(record.path, bases) }));
     for (const root of patterns) {
-      const expected = [...selection]
-        .sort((a, b) => a.start - b.start)
-        .find((record) => {
-          const candidate = rootOf(record.path, bases);
-          const shared = Math.min(root.length, candidate.length);
-          return Array.from({ length: shared }, (_, i) => i).every(
-            (i) =>
-              root[i] === candidate[i] ||
-              isParam(root[i]!) ||
-              isParam(candidate[i]!),
-          );
-        });
-      expect(index.first(root), JSON.stringify(root)).toBe(expected);
+      const expected = chronological.find(({ candidate }) => {
+        const shared = Math.min(root.length, candidate.length);
+        return Array.from({ length: shared }, (_, i) => i).every(
+          (i) =>
+            root[i] === candidate[i] ||
+            isParam(root[i]!) ||
+            isParam(candidate[i]!),
+        );
+      });
+      expect(index.first(root), JSON.stringify(root)).toBe(expected?.record);
     }
   }
 });

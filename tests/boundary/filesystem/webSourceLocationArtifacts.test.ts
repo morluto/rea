@@ -1,83 +1,83 @@
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
 import { LocalWebSourceLocationArtifacts } from "../../../src/browser/assets/WebSourceLocationArtifacts.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { ok } from "../../../src/domain/result.js";
-import { WEB_SOURCE_MAP_LIMITS } from "../../../src/domain/webSourceLocation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
-  webSourceLocationArgs,
+  webSourceLocationArgs as args,
   webSourceLocationFixture,
 } from "../../fixtures/webSourceLocation.js";
 
-const reader = () => {
-  const { sourceMap: _sourceMap, ...script } = webSourceLocationFixture();
-  return new LocalWebSourceLocationArtifacts({
-    load: () => Promise.resolve(ok(script)),
-  });
-};
-it("reads exact selected map bytes, retaining a BOM and explicitly selected URL context", async () => {
+it("retains exact selected map bytes and completed reads across failures", async () => {
   const root = await createTestTempDirectory("rea-map-artifacts-");
-  const path = join(root, "app.map");
+  const good = join(root, "valid.map");
+  const invalid = join(root, "invalid-utf8.map");
+  const oversized = join(root, "oversized.map");
+  const mapBytes = 128;
   const text = '\uFEFF{"version":3,"sources":[],"names":[],"mappings":""}';
-  await writeFile(path, text);
-  const response = await reader().load({
-    ...webSourceLocationArgs,
-    source_map: { ...webSourceLocationArgs.source_map, path },
+  const malformed = Buffer.from([255, 254]);
+  await Promise.all([
+    writeFile(good, text),
+    writeFile(invalid, malformed),
+    writeFile(oversized, Buffer.alloc(mapBytes + 1)),
+  ]);
+  const file = (path: string, bytes: string | Buffer) => ({
+    path,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    bytes: Buffer.byteLength(bytes),
   });
-  if (!response.ok) throw response.error;
-  expect(response.value.sourceMap).toEqual({
-    file: {
-      path,
-      sha256: createHash("sha256").update(text).digest("hex"),
-      bytes: Buffer.byteLength(text),
+  const { sourceMap: _fixtureMap, ...script } = webSourceLocationFixture();
+  const reader = new LocalWebSourceLocationArtifacts({
+    load: async () => ok(script),
+  });
+  const load = (path: string) =>
+    reader.load({
+      ...args,
+      source_map: { ...args.source_map, path },
+      source_map_limits: { map_bytes: mapBytes },
+    });
+  onTestFinished(() => reader.close());
+  const rejected = await load(invalid);
+  if (rejected.ok) throw new Error("Accepted invalid UTF-8");
+  // Invalid UTF-8 is the selected map's fault, not the request's.
+  expect(projectAnalysisError(rejected.error)).toMatchObject({
+    code: "unsupported_target",
+    retryable: false,
+    details: {
+      path: invalid,
+      failure_kind: "malformed",
+      reason: expect.stringContaining("UTF-8"),
     },
-    url: webSourceLocationArgs.source_map.url,
+  });
+  expect(rejected.error.partialObservation).toMatchObject({
+    kind: "web-artifact-acquisition",
+    analysis: "not-performed",
+    files: [
+      { role: "manifest" },
+      { role: "source" },
+      { role: "source-map", admission: "read", file: file(invalid, malformed) },
+    ],
+  });
+
+  const refused = await load(oversized);
+  if (refused.ok) throw new Error("Accepted oversized map");
+  expect(refused.error).toMatchObject({
+    _tag: "ArtifactOperationError",
+    reason: "limit",
+    detail: expect.stringContaining(oversized),
+    remediationAction: expect.stringContaining(
+      "source_map_limits.map_bytes is 128 bytes",
+    ),
+  });
+
+  const accepted = await load(good);
+  if (!accepted.ok) throw accepted.error;
+  expect(accepted.value.sourceMap).toEqual({
+    file: file(good, text),
+    url: args.source_map.url,
     text,
   });
 });
-it.each(["unavailable", "invalid-utf8", "oversized"])(
-  "preserves the selected map reader failure: %s",
-  async (variant) => {
-    const root = await createTestTempDirectory("rea-map-artifacts-");
-    const path = join(root, "app.map");
-    if (variant === "invalid-utf8")
-      await writeFile(path, Buffer.from([255, 254]));
-    if (variant === "oversized")
-      await writeFile(
-        path,
-        Buffer.alloc(WEB_SOURCE_MAP_LIMITS.mapBytes + 1, 32),
-      );
-    const response = await reader().load({
-      ...webSourceLocationArgs,
-      source_map: { ...webSourceLocationArgs.source_map, path },
-    });
-    if (response.ok) throw new Error("expected map failure");
-    const projection = projectAnalysisError(response.error);
-    if (variant === "oversized")
-      expect(response.error).toMatchObject({
-        _tag: "ArtifactOperationError",
-        reason: "limit",
-        detail: expect.stringContaining(path),
-      });
-    else
-      expect(projection).toMatchObject({
-        code: "invalid_request",
-        details: {
-          issues: [
-            {
-              path: ["source_map", "path"],
-              ...(variant === "unavailable"
-                ? { reason: "invalid_value" }
-                : { reason: "invalid_format" }),
-              message: expect.stringContaining(
-                variant === "unavailable" ? `(ENOENT): ${path}` : "UTF-8",
-              ),
-            },
-          ],
-        },
-      });
-  },
-);

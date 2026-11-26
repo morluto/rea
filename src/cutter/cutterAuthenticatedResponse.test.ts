@@ -2,8 +2,7 @@ import { expect, it } from "vitest";
 
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
-  MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
-  MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
+  bridgeMaxRequestBytesRecovery,
   type BridgeMaxRequestBytes,
 } from "../config/bridgeMaxRequestBytes.js";
 import {
@@ -43,21 +42,21 @@ it("decodes an authenticated response split at escape and proof boundaries", () 
     output:
       'quote " slash \\ newline \n unit \u0001 line \u2028 snow 雪 emoji 😀',
     empty: "",
+    replacement: "\uFFFD",
   });
   const frame = envelope(response);
-  const parsed = JSON.parse(frame.toString("utf8")) as {
-    response: string;
-    proof: string;
-  };
-  expect(decode(frame, frame.length).response).toBe(parsed.response);
-  expect(decode(frame, frame.length).proof).toBe(PROOF);
-  for (const size of splitPoints(frame.length))
-    expect(decode(frame, frame.length, size).response).toBe(response);
-  expect(decode(envelope(""), envelope("").length).response).toBe("");
+  for (const size of [frame.length, ...splitPoints(frame.length)])
+    expect(decode(frame, frame.length, size)).toEqual({
+      response,
+      proof: PROOF,
+    });
+  const empty = envelope("");
+  expect(decode(empty, empty.length).response).toBe("");
   const slashes = "\\".repeat(32_000);
-  expect(
-    decode(envelope(slashes), envelope(slashes).length, 64 * 1024).response,
-  ).toBe(slashes);
+  const escapeHeavy = envelope(slashes);
+  expect(decode(escapeHeavy, escapeHeavy.length, 64 * 1024).response).toBe(
+    slashes,
+  );
   expect(
     decode(Buffer.from(`{"response":"\\u0041","proof":"${PROOF}"}`), 256)
       .response,
@@ -79,13 +78,6 @@ it("accepts a raw UTF-8 line separator inside the response string", () => {
     Buffer.from(`","proof":"${PROOF}"}`),
   ]);
   expect(decode(frame, frame.length, 5).response).toBe(response);
-  expect(
-    (
-      JSON.parse(frame.toString("utf8")) as {
-        response: string;
-      }
-    ).response,
-  ).toBe(response);
 });
 
 it("decodes a surrogate-pair escape into one code point", () => {
@@ -105,6 +97,13 @@ it("refuses a malformed envelope, a bad escape, and an unfinished frame", () => 
   refuse(Buffer.from(`{"ok":false,"proof":"${PROOF}"}`));
   refuse(Buffer.from(`{"response":"\\x","proof":"${PROOF}"}`));
   refuse(Buffer.from(`{"response":"\\uD800","proof":"${PROOF}"}`));
+  refuse(
+    Buffer.concat([
+      Buffer.from('{"response":"'),
+      Buffer.from([0xff]),
+      Buffer.from(`","proof":"${PROOF}"}`),
+    ]),
+  );
   refuse(Buffer.from(`{"response":"ok","proof":"${"AB".repeat(32)}"}`));
   refuse(Buffer.from(`{"response":"ok","proof":"${PROOF}"} `));
   const decoder = new CutterAuthenticatedResponseDecoder(ceiling);
@@ -128,12 +127,9 @@ it("reports the configured ceiling when a response frame does not fit", () => {
   expect(error.operation).toBe("cutter_command");
   expect(error.resource).toBe("transport");
   expect(error.reportedLimits).toMatchObject({ max_request_bytes: 64 });
-  expect(error.reason).toContain("REA_BRIDGE_MAX_REQUEST_BYTES");
-  expect(error.reason).toContain("value is 64 bytes");
-  expect(error.reason).toContain("source setting");
-  expect(error.reason).toContain(String(MINIMUM_BRIDGE_MAX_REQUEST_BYTES));
-  expect(error.reason).toContain(String(MAXIMUM_BRIDGE_MAX_REQUEST_BYTES));
-  expect(error.reason).toContain("restart");
+  expect(error.remediationAction).toBe(
+    bridgeMaxRequestBytesRecovery(ceiling, "Cutter"),
+  );
 });
 
 it("reads one challenge and one response without buffering a third frame", () => {
@@ -164,9 +160,20 @@ it("reads one challenge and one response without buffering a third frame", () =>
   );
 });
 
-it("refuses an oversized authentication challenge before the response", () => {
+it("refuses oversized or invalid UTF-8 authentication challenges before the response", () => {
   const frames = new CutterBridgeResponseFrames(limit(4096));
   expect(() => frames.push(Buffer.alloc(2049, 0x7b), () => true)).toThrow(
     "invalid authentication challenge",
   );
+  const malformed = new CutterBridgeResponseFrames(limit(4096));
+  expect(() =>
+    malformed.push(
+      Buffer.concat([
+        Buffer.from('{"extra":"'),
+        Buffer.from([0xff]),
+        Buffer.from('"}\n'),
+      ]),
+      () => true,
+    ),
+  ).toThrow("invalid authentication challenge");
 });

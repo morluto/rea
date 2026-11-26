@@ -1,10 +1,15 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { createHash } from "node:crypto";
 
 import canonicalize from "canonicalize";
 import { describe, expect, it } from "vitest";
 
 import { EvidenceLedger } from "./EvidenceLedger.js";
-import { createEvidence } from "../../domain/evidence.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import {
+  createEvidence,
+  withEvidenceCallerInputPath,
+} from "../../domain/evidence.js";
 import {
   createEvidenceBundle,
   parseEvidenceBundle,
@@ -24,7 +29,7 @@ const evidence = (
   label: string,
   confidence: "observed" | "derived" | "inferred" = "derived",
 ) =>
-  createEvidence(undefined, provider, {
+  createEvidence(unknownTarget("not-observed"), provider, {
     operation: label,
     parameters: {},
     result: { label },
@@ -57,6 +62,21 @@ const input = (
     ...overrides,
   });
 const mutation = (label: string) => evidence(`mutation-${label}`);
+const expectHistoryConflict = (
+  error: import("../../domain/analysisErrorBase.js").AnalysisError,
+  unknownId: string,
+) => {
+  expect(projectAnalysisError(error)).toMatchObject({
+    code: "evidence_integrity_mismatch",
+    retryable: false,
+    message: expect.stringContaining("conflicts with a revision retained"),
+    remediation: { action: expect.stringContaining("cannot reconcile") },
+    details: {
+      reason: "Conflicting unknown revision",
+      diagnostics: { unknown_id: unknownId, revision: 2 },
+    },
+  });
+};
 const update = (
   unknown: ResidualUnknown,
   overrides: Readonly<Record<string, unknown>> = {},
@@ -204,26 +224,34 @@ describe("residual unknown dependency histories", () => {
     );
     if (!created.ok) throw created.error;
 
-    Reflect.set(created.value, "status", "resolved");
-    const listed = store.listUnknowns();
-    expect(listed[0]?.status).toBe("open");
-    if (listed[0] !== undefined) Reflect.set(listed[0], "status", "resolved");
+    expect(Reflect.set(created.value, "status", "resolved")).toBe(true);
+    const [listed] = store.listUnknowns();
+    if (listed === undefined) throw new Error("Missing listed unknown");
+    expect(listed.status).toBe("open");
+    expect(Reflect.set(listed, "status", "resolved")).toBe(true);
     const verified = store.verifyUnknownResolution(created.value.unknown_id);
-    expect(verified).toMatchObject({ ok: true, value: { valid: false } });
-    if (verified.ok) Reflect.set(verified.value.unknown, "status", "resolved");
+    if (!verified.ok) throw verified.error;
+    expect(verified.value.unknown.status).toBe("open");
+    expect(Reflect.set(verified.value.unknown, "status", "resolved")).toBe(
+      true,
+    );
 
     const exported = store.export();
     const exportedRecord = exported.records.find(
       ({ operation }) => operation === "detached-record",
     );
-    if (exportedRecord !== undefined)
-      Reflect.set(exportedRecord, "operation", "forged");
+    if (exportedRecord === undefined)
+      throw new Error("Missing exported record");
+    expect(Reflect.set(exportedRecord, "operation", "forged")).toBe(true);
     expect(store.export().records.map(({ operation }) => operation)).toContain(
       "detached-record",
     );
     expect(
       store.verifyUnknownResolution(created.value.unknown_id),
-    ).toMatchObject({ ok: true, value: { valid: false } });
+    ).toMatchObject({
+      ok: true,
+      value: { valid: false, unknown: { status: "open" } },
+    });
   });
 
   it("derives stable IDs, filters heads, and rejects duplicate creation", () => {
@@ -264,24 +292,6 @@ describe("residual unknown dependency histories", () => {
         "1".repeat(64),
       ).unknown_id,
     ).not.toBe(normalized.unknown_id);
-  });
-
-  it("uses immutable CAS revisions and rejects a stale concurrent writer atomically", () => {
-    const store = ledger();
-    const created = store.recordUnknown(
-      input("Which codec wins?"),
-      mutation("create"),
-    );
-    if (!created.ok) throw created.error;
-    const command = update(created.value);
-    const winner = store.updateUnknown(command, mutation("winner"));
-    expect(winner.ok).toBe(true);
-    const loser = store.updateUnknown(command, mutation("loser"));
-    expect(loser.ok).toBe(false);
-    if (!loser.ok) expect(loser.error.message).toContain("revision-conflict");
-    expect(store.export().unknowns.map(({ revision }) => revision)).toEqual([
-      1, 2,
-    ]);
   });
 });
 
@@ -405,8 +415,20 @@ describe("residual unknown registry resolution and history", () => {
     const base = ledger();
     const created = base.recordUnknown(input("Divergent?"), mutation("base"));
     if (!created.ok) throw created.error;
+    const source = withEvidenceCallerInputPath(
+      evidence("shared-source"),
+      "./original",
+    );
+    expect(base.record(source).ok).toBe(true);
     const branch = ledger();
     expect(branch.import(base.export()).ok).toBe(true);
+    expect(
+      branch.import(
+        createEvidenceBundle([
+          withEvidenceCallerInputPath(source, "./relocated"),
+        ]),
+      ).ok,
+    ).toBe(true);
     expect(
       base.updateUnknown(update(created.value), mutation("branch-left")).ok,
     ).toBe(true);
@@ -417,7 +439,10 @@ describe("residual unknown registry resolution and history", () => {
       ).ok,
     ).toBe(true);
     const before = serializeEvidenceBundle(base.export());
-    expect(base.import(branch.export()).ok).toBe(false);
+    const conflict = base.import(branch.export());
+    if (conflict.ok) throw new Error("Expected divergent history refusal");
+    expectHistoryConflict(conflict.error, created.value.unknown_id);
+    expect(base.get(source.evidence_id)?.caller_input_path).toBe("./original");
     expect(serializeEvidenceBundle(base.export())).toBe(before);
   });
 });

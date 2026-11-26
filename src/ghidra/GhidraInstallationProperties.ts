@@ -1,23 +1,26 @@
-import { createHash } from "node:crypto";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import {
   artifactFileCompletion,
   mapArtifactFileFailure,
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import { RegularFileCapacityError } from "../filesystem/readStableFileBytes.js";
+import {
+  RegularFileCapacityError,
+  readStableFileBytes,
+} from "../filesystem/readStableFileBytes.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { fixedProducerInputAllowance } from "../domain/fixedAllowanceRemediation.js";
 import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
-import { readStableFileBytes } from "../filesystem/readStableFileBytes.js";
 import { ghidraApplicationProperties } from "./GhidraInstallationPolicy.js";
-import { ghidraFileFailure } from "./GhidraFileArtifacts.js";
+import { ghidraFileDialect } from "./GhidraFileArtifacts.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /** Metadata admission budget, not a Java Properties format limit. */
-export const MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES = 1024 * 1024;
+const MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES = 1024 * 1024;
 export interface GhidraInstallationFileOptions {
   readonly resourceOwner: RetainedResourceScope;
   readonly signal?: AbortSignal;
@@ -40,7 +43,7 @@ export const readGhidraInstallationProperties = async (
             ),
         },
         options.signal,
-        async (file) =>
+        async ({ handle: file }) =>
           (
             await readStableFileBytes(
               file,
@@ -80,9 +83,7 @@ export const readGhidraInstallationProperties = async (
         : {
             completed_properties: {
               bytes: Buffer.byteLength(completed, "latin1"),
-              sha256: createHash("sha256")
-                .update(completed, "latin1")
-                .digest("hex"),
+              sha256: sha256Hex(completed, "latin1"),
               properties: jsonValueSchema.parse(
                 ghidraApplicationProperties(completed),
               ),
@@ -110,6 +111,9 @@ export const readGhidraInstallationProperties = async (
           )
         : primary,
     );
-    throw ghidraFileFailure(qualified, "ghidra:installation", diagnostics);
+    throw classifyProviderFailure(
+      qualified,
+      ghidraFileDialect("ghidra:installation", diagnostics),
+    );
   }
 };

@@ -1,3 +1,8 @@
+import {
+  unknownTarget,
+  type ProcessTargetIdentity,
+  type UnknownTargetIdentity,
+} from "../../domain/targetIdentity.js";
 import type { z } from "zod";
 import { posix, win32 } from "node:path";
 
@@ -10,13 +15,19 @@ import {
   PROCESS_PROVIDER,
   isProcessEvidenceProvider,
 } from "../../domain/process/processEvidenceProvider.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
 import {
   safeParseProcessCapture,
   type ProcessCapture,
 } from "../../domain/process/processCaptureParsing.js";
-import { safeParseEvidence } from "../../domain/evidenceValidation.js";
-import type { ProcessScenario } from "../../domain/process/processScenario.js";
+import {
+  safeParseEvidence,
+  type EvidenceReadFailure,
+} from "../../domain/evidenceValidation.js";
+import {
+  processScenarioPlanProjection,
+  processScenarioPlanSchema,
+  type ProcessScenario,
+} from "../../domain/process/processScenario.js";
 import type { ParsedProcessCaptureEvidence } from "../../domain/process/processComparisonEvidence.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
@@ -25,9 +36,14 @@ const PROCESS_CAPTURE_EVIDENCE = {
   predicate: "rea.process-capture",
 } as const;
 
+const PROCESS_SCENARIO_PLAN_EVIDENCE = {
+  operation: "capture_process_scenario",
+  predicate: "rea.process-scenario-plan",
+} as const;
+
 /** Semantic rejection facts; CLI and MCP retain their own error projections. */
 export type ProcessCaptureEvidenceFailure =
-  | { readonly kind: "invalid-evidence"; readonly cause: z.ZodError }
+  | { readonly kind: "invalid-evidence"; readonly cause: EvidenceReadFailure }
   | {
       readonly kind: "wrong-workflow";
       readonly expected: typeof PROCESS_CAPTURE_EVIDENCE;
@@ -41,6 +57,20 @@ export type ProcessCaptureEvidenceFailure =
       readonly provider: EvidenceProvider;
     }
   | { readonly kind: "invalid-capture"; readonly cause: z.ZodError };
+
+/** The workflow a capture input must come from and the one it came from, as input-issue facts. */
+export const wrongWorkflowIssueFacts = (
+  failure: Extract<ProcessCaptureEvidenceFailure, { kind: "wrong-workflow" }>,
+) => ({
+  expected: {
+    operation: failure.expected.operation,
+    predicate_type: failure.expected.predicate,
+  },
+  observed: {
+    operation: failure.actual.operation,
+    predicate_type: failure.actual.predicate,
+  },
+});
 
 /** Authenticate capture Evidence before admitting its workflow, provider and payload. */
 export const parseProcessCaptureEvidence = (
@@ -69,7 +99,7 @@ export const parseProcessCaptureEvidence = (
 
 /** Project one process scenario into secret-free Evidence parameters. */
 const processEvidenceParameters = (
-  scenario: ProcessScenario,
+  scenario: Omit<ProcessScenario, "dry_run">,
   platform: ProcessCapture["manifest"]["platform"],
 ): Readonly<Record<string, JsonValue>> => ({
   executable_name: (platform === "win32" ? win32 : posix).basename(
@@ -82,24 +112,79 @@ const processEvidenceParameters = (
   normalization: scenario.normalization,
 });
 
+/**
+ * The captured root process as the Evidence subject: its PID, start identity
+ * and stable executable digest; withheld when the caller normalized PIDs;
+ * otherwise not observed.
+ */
+const processCaptureSubject = (
+  manifest: ProcessCapture["manifest"],
+): ProcessTargetIdentity | UnknownTargetIdentity => {
+  const root = manifest.root_process;
+  switch (root.state) {
+    case "observed":
+      return {
+        kind: "process",
+        pid: root.pid,
+        start_time: root.start_time,
+        executable_sha256: manifest.executable_sha256,
+      };
+    case "withheld-by-caller":
+      return unknownTarget("withheld-by-caller");
+    case "unknown":
+      return unknownTarget("not-observed");
+  }
+};
+
 /** Create one canonical observed process capture Evidence record. */
 export const createProcessCaptureEvidence = (
   scenario: ProcessScenario,
   capture: ProcessCapture,
 ) => {
-  return createEvidence(undefined, PROCESS_PROVIDER, {
-    predicateType: PROCESS_CAPTURE_EVIDENCE.predicate,
-    operation: PROCESS_CAPTURE_EVIDENCE.operation,
-    parameters: processEvidenceParameters(scenario, capture.manifest.platform),
-    result: jsonValueSchema.parse(capture),
-    confidence: "observed",
-    authority: "controlled-replay",
-    environment: {
-      id: `${capture.manifest.platform}-${capture.manifest.architecture}`,
-      platform: capture.manifest.platform,
-      architecture: capture.manifest.architecture,
-      isolation: "process",
+  return createEvidence(
+    processCaptureSubject(capture.manifest),
+    PROCESS_PROVIDER,
+    {
+      predicateType: PROCESS_CAPTURE_EVIDENCE.predicate,
+      operation: PROCESS_CAPTURE_EVIDENCE.operation,
+      parameters: processEvidenceParameters(
+        scenario,
+        capture.manifest.platform,
+      ),
+      result: capture,
+      confidence: "observed",
+      authority: "controlled-replay",
+      environment: {
+        id: `${capture.manifest.platform}-${capture.manifest.architecture}`,
+        platform: capture.manifest.platform,
+        architecture: capture.manifest.architecture,
+        isolation: "process",
+      },
+      limitations: capture.limitations,
     },
-    limitations: capture.limitations,
+  );
+};
+
+/** Create one canonical planned-scenario Evidence record without observing a process. */
+export const createProcessScenarioPlanEvidence = (
+  scenario: Omit<ProcessScenario, "dry_run">,
+  platform: ProcessCapture["manifest"]["platform"],
+) => {
+  const plan = processScenarioPlanSchema.parse({
+    status: "planned",
+    scenario: processScenarioPlanProjection(scenario),
+    ambient_environment: "inherited-at-run",
+  });
+  return createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
+    predicateType: PROCESS_SCENARIO_PLAN_EVIDENCE.predicate,
+    operation: PROCESS_SCENARIO_PLAN_EVIDENCE.operation,
+    parameters: processEvidenceParameters(scenario, platform),
+    result: plan,
+    confidence: "derived",
+    authority: "controlled-replay",
+    environment: null,
+    limitations: [
+      "Planned only; no process was launched. Runtime behavior, exit, cleanup and the inherited ambient environment remain unobserved.",
+    ],
   });
 };

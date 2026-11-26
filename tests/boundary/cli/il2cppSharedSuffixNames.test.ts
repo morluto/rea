@@ -59,7 +59,7 @@ cliTest(
       expect(mcpOutput.isError, JSON.stringify(mcpOutput)).not.toBe(true);
       const mcpResult = parseResult(mcpOutput.structuredContent);
       expect(mcpResult).toEqual(cliResult);
-      expect(await readFile(path)).toEqual(bytes);
+      expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     }
   },
 );

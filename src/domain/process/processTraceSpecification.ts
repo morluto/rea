@@ -1,4 +1,4 @@
-import canonicalize from "canonicalize";
+import { canonicalJsonSerializer } from "../canonicalDigest.js";
 import { z } from "zod";
 
 import { IDENTIFIER_PATTERN } from "../stringPatterns.js";
@@ -8,6 +8,7 @@ import {
   comparableProcessObservationPayload,
   processObservationSourceSchema,
 } from "./processObservation.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /**
  * A declared trace, event or variant identifier. The specification owns this
@@ -128,12 +129,9 @@ type AcyclicGraphFacts =
     };
 type GraphFacts = { readonly kind: "cyclic" } | AcyclicGraphFacts;
 
-export const canonicalTraceJson = (value: unknown): string => {
-  const serialized = canonicalize(value);
-  if (serialized === undefined)
-    throw new TypeError("Trace specification contains a non-JSON value");
-  return serialized;
-};
+export const canonicalTraceJson = canonicalJsonSerializer(
+  "Trace specification contains a non-JSON value",
+);
 
 export const processTraceCardinalityBounds = (
   cardinality: ProcessTraceSpecification["events"][number]["cardinality"],
@@ -660,11 +658,7 @@ export const processTraceSpecificationSchema =
       ignoredFieldsBySource.set(event.source, ignoredKey);
       if (
         ignoredFields.some(
-          (field) =>
-            typeof event.exact === "object" &&
-            event.exact !== null &&
-            !Array.isArray(event.exact) &&
-            field in event.exact,
+          (field) => isRecord(event.exact) && field in event.exact,
         )
       )
         context.addIssue({

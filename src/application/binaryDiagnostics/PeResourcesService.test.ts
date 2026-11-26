@@ -1,29 +1,14 @@
-import { createHash } from "node:crypto";
+import { fileIdentity } from "../../../tests/fixtures/evidenceSubject.js";
 import { expect, it } from "vitest";
 import { PeResourcesService } from "./PeResourcesService.js";
 import { PE_RESOURCES_PROVIDER } from "../../domain/investigationProviders.js";
-import { inspectPeResourcesInputSchema } from "../../domain/native/peResources.js";
-import { parsePeResources } from "../../native/pe/PeResourceParser.js";
-import { peResourceFixture } from "../../native/pe/PeResources.fixture.js";
+import { peResourceReportFixture } from "../../../tests/fixtures/binaryDiagnostics/peResources.js";
 import { ok } from "../../domain/result.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
-
-const observedReport = () => {
-  const { bytes } = peResourceFixture();
-  return parsePeResources(
-    bytes,
-    {
-      path: "/fixtures/example.exe",
-      bytes: bytes.length,
-      sha256: createHash("sha256").update(bytes).digest("hex"),
-    },
-    inspectPeResourcesInputSchema.parse({ path: "/fixtures/example.exe" }),
-  );
-};
 
 it.each([
   "different-path",
@@ -36,7 +21,7 @@ it.each([
 ])(
   "rejects invalid provider output before creating Evidence: %s",
   async (problem) => {
-    const report = await observedReport();
+    const report = await peResourceReportFixture();
     if (problem === "different-path") report.artifact.path = "/other.exe";
     if (problem === "outside-range")
       report.resources[0]!.payload.location.offset = report.artifact.bytes;
@@ -86,7 +71,7 @@ it.each([
 ] as const)(
   "names the subject architecture from the COFF machine: %s",
   async (_case, machine, format, architecture) => {
-    const report = await observedReport();
+    const report = await peResourceReportFixture();
     report.machine = machine;
     report.format = format;
     const service = new PeResourcesService({
@@ -95,12 +80,14 @@ it.each([
     });
     const result = await service.inspect({ path: report.artifact.path });
     if (!result.ok) throw result.error;
-    expect(result.value.subject?.architecture ?? null).toBe(architecture);
+    expect(fileIdentity(result.value.subject).architecture ?? null).toBe(
+      architecture,
+    );
   },
 );
 
 it("retains a completed observation on late cancellation and keeps output errors primary", async () => {
-  const report = await observedReport();
+  const report = await peResourceReportFixture();
   const controller = new AbortController();
   const reason = { request: "late PE cancellation" };
   const service = new PeResourcesService({
@@ -122,12 +109,12 @@ it("retains a completed observation on late cancellation and keeps output errors
     expect(late.error.cause).toBe(reason);
     expect(parseEvidence(late.error.partialObservation)).toMatchObject({
       operation: "inspect_pe_resources",
-      subject: { architecture: "x86" },
+      subject: { identity: { architecture: "x86" } },
       normalized_result: report,
     });
   }
 
-  const malformed = await observedReport();
+  const malformed = await peResourceReportFixture();
   malformed.artifact.path = "/other.exe";
   const outputController = new AbortController();
   const invalid = await new PeResourcesService({
@@ -169,7 +156,6 @@ it.each([
       },
     });
     const result = await service.inspect(null, { signal: controller.signal });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected cancelled admission");
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
     expect(result.error.cause).toBe(reason);

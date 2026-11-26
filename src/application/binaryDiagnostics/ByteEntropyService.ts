@@ -1,46 +1,53 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
+import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { open, stat } from "node:fs/promises";
-import { isAbsolute } from "node:path";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import { open, realpath, stat } from "node:fs/promises";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { BYTE_ENTROPY_PROVIDER } from "../../domain/investigationProviders.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisOutputError,
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
+import {
+  createEvidence,
+  withEvidenceCallerInputPath,
+  type Evidence,
+} from "../../domain/evidence.js";
 import {
   byteEntropySchema,
-  computeBlockEntropy,
+  byteEntropyWindowLimit,
+  createBlockEntropyCalculator,
+  MAX_BYTE_ENTROPY_BLOCKS,
   entropyFromCounts,
+  countByteValues,
+  wholeFileByteCounts,
   inspectByteEntropyInputSchema,
   mergeEntropyRuns,
   type ByteEntropy,
 } from "../../domain/native/byteEntropy.js";
 import { err, type Result } from "../../domain/result.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {
+  ArtifactResourceScope,
   withArtifactFileHandle,
   bindArtifactFileCleanup,
   ArtifactFileCleanupFailure,
   artifactFileCompletion,
   assertArtifactReadActive,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   artifactSelectedPathErrno,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+  ArtifactReaderFailure,
+} from "../../resources/index.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { sameRegularFileState } from "../../filesystem/RegularFile.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-
-/** Bound retained result rows before constructing the Evidence representation. */
-export const MAX_BYTE_ENTROPY_BLOCKS = 32_768;
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 /** Generated files such as Linux /proc entries report size 0 but still hold bytes. */
 const ZERO_SIZE_LIMITATION =
@@ -62,6 +69,8 @@ export class ByteEntropyService {
       "open" | "stat"
     > = { open, stat },
     resources: ArtifactResourceScope = new ArtifactResourceScope(),
+    // The selected path is read on this host unless a caller selects one.
+    private readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
   ) {
     this.#resources = resources;
   }
@@ -97,40 +106,37 @@ export class ByteEntropyService {
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
-    const parsed = inspectByteEntropyInputSchema.safeParse(rawInput);
-    if (!parsed.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, parsed.error.issues, rawInput, {
-          cause: parsed.error,
-        }),
-      );
-    const input = parsed.data;
-    if (!isAbsolute(input.path))
-      return err(
-        invalid("path", "Expected an absolute filesystem path on this host."),
-      );
+    const parsed = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      inspectByteEntropyInputSchema,
+      options?.signal,
+    );
+    if (!parsed.ok) return parsed;
+    let input = parsed.value;
+    const callerInputPath = input.path;
+    input = { ...input, path: absoluteCallerPath(input.path) };
     const evidenceFromReport = (report: ByteEntropy): Evidence =>
-      createEvidence(
-        { path: input.path, format: "file", sha256: report.artifact.sha256 },
-        BYTE_ENTROPY_PROVIDER,
-        {
-          operation: OPERATION,
-          parameters: {
-            path: input.path,
-            block_size: input.block_size,
-            offset: input.offset,
-            ...(input.length === undefined ? {} : { length: input.length }),
+      withEvidenceCallerInputPath(
+        createEvidence(
+          { path: input.path, format: "file", sha256: report.artifact.sha256 },
+          BYTE_ENTROPY_PROVIDER,
+          {
+            operation: OPERATION,
+            parameters: {
+              path: input.path,
+              block_size: input.block_size,
+              offset: input.offset,
+              ...(input.length === undefined ? {} : { length: input.length }),
+            },
+            result: report,
+            rawResult: null,
+            confidence: "observed",
+            limitations: report.limitations,
+            locations: [{ kind: "artifact-path", path: input.path }],
           },
-          result: report,
-          rawResult: null,
-          confidence: "observed",
-          limitations: report.limitations,
-          locations: [{ kind: "artifact-path", path: input.path }],
-        },
+        ),
+        callerInputPath,
       );
     // Cleanup errors erase the callback's generic type. Validate their completed
     // value before publishing it as this operation's observation.
@@ -183,8 +189,17 @@ export class ByteEntropyService {
     };
     try {
       const before = await this.files.stat(input.path, { bigint: true });
+      assertArtifactReadActive(options?.signal);
       if (!before.isFile()) throw invalid("path", "Expected a regular file.");
       admitted = true;
+      // Only an admitted selected file may consult filesystem spelling. Do not
+      // replace symlink/junction/8.3 aliases or touch source-derived paths.
+      if (this.platform === "win32") {
+        const canonical = await realpath(input.path).catch(() => undefined);
+        assertArtifactReadActive(options?.signal);
+        if (canonical?.toLowerCase() === input.path.toLowerCase())
+          input = { ...input, path: canonical };
+      }
       const file = await this.files.open(
         input.path,
         constants.O_RDONLY | constants.O_NONBLOCK,
@@ -235,14 +250,21 @@ export class ByteEntropyService {
               },
               {
                 retryable: false,
-                remediationAction:
-                  "Reduce the selected window length or increase block_size so the selected window contains at most 32768 blocks.",
+                limit: byteEntropyWindowLimit(
+                  input.block_size,
+                  length,
+                  size - input.offset,
+                ),
               },
             );
           const end = input.offset + length;
           const blocks: ByteEntropy["blocks"] = [];
-          const buffer = Buffer.alloc(input.block_size);
-          const counts = new Float64Array(256);
+          // Physical reads must not shrink with report resolution, including
+          // outside the selected window. Every admitted power-of-two block
+          // size divides this buffer, so only the window's final block is short.
+          const buffer = Buffer.alloc(65_536);
+          const counts = wholeFileByteCounts();
+          const computeBlockEntropy = createBlockEntropyCalculator(counts);
           const hash = createHash("sha256");
           let position = 0;
           while (position < size) {
@@ -250,7 +272,7 @@ export class ByteEntropyService {
             const selected = position >= input.offset && position < end;
             const boundary =
               position < input.offset ? input.offset : selected ? end : size;
-            const wanted = Math.min(input.block_size, boundary - position);
+            const wanted = Math.min(buffer.length, boundary - position);
             let filled = 0;
             while (filled < wanted) {
               assertArtifactReadActive(options?.signal);
@@ -265,13 +287,22 @@ export class ByteEntropyService {
             }
             const bytes = buffer.subarray(0, filled);
             hash.update(bytes);
-            for (const byte of bytes) counts[byte] = (counts[byte] ?? 0) + 1;
-            if (selected)
-              blocks.push({
-                offset: position,
-                length: filled,
-                entropy: computeBlockEntropy(bytes),
-              });
+            if (selected) {
+              for (
+                let offset = 0;
+                offset < filled;
+                offset += input.block_size
+              ) {
+                const block = bytes.subarray(offset, offset + input.block_size);
+                blocks.push({
+                  offset: position + offset,
+                  length: block.length,
+                  entropy: computeBlockEntropy(block),
+                });
+              }
+            } else {
+              countByteValues(bytes, counts);
+            }
             position += filled;
           }
           if (
@@ -330,43 +361,46 @@ export class ByteEntropyService {
           outcome.cause instanceof ArtifactReaderFailure &&
           outcome.cause.reason === "cancelled"
         ) {
-          const cancelled = new AnalysisCancelledError(OPERATION, {
-            cause: artifactFileCancellationCause(outcome.cause),
-            cleanup: cause.cleanup,
-          }).retainSecondaryFailure(cleanup);
+          const cancelled = artifactFileCancellationError(
+            OPERATION,
+            outcome.cause,
+            { cleanup: cause.cleanup },
+          ).retainSecondaryFailure(cleanup);
           bindArtifactFileCleanup(cause, cancelled);
           return err(cancelled);
         }
         const cancellation = completion?.cancellation;
         if (cancellation !== undefined) {
-          const cancelled = new AnalysisCancelledError(OPERATION, {
-            cause: cancellation.reason,
-            partialObservation: cleanup.partialObservation,
-            cleanup: cause.cleanup,
-          }).retainSecondaryFailure(cleanup);
+          const cancelled = cancelledBy(
+            OPERATION,
+            carriedReason(cancellation.reason),
+            {
+              partialObservation: cleanup.partialObservation,
+              cleanup: cause.cleanup,
+            },
+          ).retainSecondaryFailure(cleanup);
           bindArtifactFileCleanup(cause, cancelled);
           return err(cancelled);
         }
         if (outcome.kind === "failed") {
           const primary = readFailure(outcome.cause);
           return err(
-            analysisErrorWithCleanupFailure(
-              primary,
-              cleanup,
-              OPERATION,
-            ).bindCleanupDependencies([primary, cleanup]),
+            analysisErrorWithCleanupDependencies(primary, cleanup, OPERATION),
           );
         }
         return err(cleanup);
       }
       if (cause instanceof ArtifactReaderFailure) {
         if (cause.reason === "cancelled") {
-          const cancelled = new AnalysisCancelledError(OPERATION, {
-            cause: artifactFileCancellationCause(cause),
-            ...(completion === undefined
+          const cancelled = artifactFileCancellationError(
+            OPERATION,
+            cause,
+            completion === undefined
               ? {}
-              : { partialObservation: completedObservation(completion.value) }),
-          });
+              : {
+                  partialObservation: completedObservation(completion.value),
+                },
+          );
           bindArtifactFileCleanup(cause, cancelled);
           return err(cancelled);
         }

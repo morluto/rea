@@ -12,9 +12,14 @@ import type {
   RetainedJavaScriptExportShapes,
 } from "./javascriptExportShapeSelection.js";
 
-type Primitive = string | number | boolean | null;
 type Shape = RetainedJavaScriptExportShapes["shapes"][number];
-type Field = Shape["fields"][number];
+type Field =
+  | Shape["fields"][number]
+  | {
+      readonly state: "container";
+      readonly path: string;
+      readonly presence: "present";
+    };
 type SelectorResult = JavaScriptExportShapeComparisonResult["left"];
 type ValueAvailability = JavaScriptExportShapeComparisonChange["left"];
 type PropertyPresence =
@@ -155,7 +160,7 @@ const inventoryFor = (
   source_range: shape.source_range,
   properties: uniqueSorted([
     ...shape.fields
-      .filter((field) => fieldPresence(shape, field, field.path) === "present")
+      .filter((field) => field.presence === "present")
       .map(({ path }) => path),
     ...shape.property_coverage.map(({ path }) => path),
   ]).filter((path) => path !== ""),
@@ -172,10 +177,7 @@ export const hasPartialJavaScriptExportPropertyCoverage = (
   shapes.some(
     (shape) =>
       shape.property_coverage.some(({ status }) => status === "partial") ||
-      shape.fields.some(
-        (field) =>
-          fieldPresence(shape, field, field.path) === "unknown-coverage",
-      ),
+      shape.fields.some((field) => field.presence === "unknown-coverage"),
   );
 
 interface DiscriminantOccurrence {
@@ -189,10 +191,9 @@ const discriminantOccurrences = (
   const output = new Map<string, DiscriminantOccurrence>();
   shapes.forEach((shape, index) => {
     for (const field of shape.fields) {
-      if (fieldPresence(shape, field, field.path) !== "present") continue;
-      const value = literalValue(field);
-      if (!value.found) continue;
-      const discriminant = { path: field.path, value: value.value };
+      if (field.presence !== "present") continue;
+      if (field.state !== "literal") continue;
+      const discriminant = { path: field.path, value: field.value };
       const key = canonicalJson(
         discriminant,
         "JavaScript export shape comparison",
@@ -301,19 +302,39 @@ const diffPair = (
   discriminant: Discriminant,
   evidenceLinks: [string, string],
 ): JavaScriptExportShapeComparisonChange[] => {
-  const leftFields = new Map(left.fields.map((field) => [field.path, field]));
-  const rightFields = new Map(right.fields.map((field) => [field.path, field]));
+  const leftFields = new Map<string, Field>();
+  for (const field of left.fields)
+    if (!leftFields.has(field.path)) leftFields.set(field.path, field);
+  const rightFields = new Map<string, Field>();
+  for (const field of right.fields)
+    if (!rightFields.has(field.path)) rightFields.set(field.path, field);
+  const leftCoverage = new Map<string, Shape["property_coverage"][number]>();
+  for (const entry of left.property_coverage)
+    if (!leftCoverage.has(entry.path)) leftCoverage.set(entry.path, entry);
+  const rightCoverage = new Map<string, Shape["property_coverage"][number]>();
+  for (const entry of right.property_coverage)
+    if (!rightCoverage.has(entry.path)) rightCoverage.set(entry.path, entry);
   const paths = uniqueSorted([
     ...leftFields.keys(),
     ...rightFields.keys(),
-    ...left.property_coverage.map(({ path }) => path),
-    ...right.property_coverage.map(({ path }) => path),
+    ...leftCoverage.keys(),
+    ...rightCoverage.keys(),
   ]);
   return paths.flatMap((path) => {
-    const leftField = fieldAtPath(left, leftFields, path);
-    const rightField = fieldAtPath(right, rightFields, path);
-    const leftPresence = fieldPresence(left, leftField, path);
-    const rightPresence = fieldPresence(right, rightField, path);
+    const leftField = fieldAtPath(leftFields, leftCoverage, path);
+    const rightField = fieldAtPath(rightFields, rightCoverage, path);
+    const leftPresence = fieldPresence(
+      leftFields,
+      leftCoverage,
+      leftField,
+      path,
+    );
+    const rightPresence = fieldPresence(
+      rightFields,
+      rightCoverage,
+      rightField,
+      path,
+    );
     const status = fieldChangeStatus({
       leftPresence,
       rightPresence,
@@ -347,21 +368,17 @@ const diffPair = (
 };
 
 const fieldAtPath = (
-  shape: Shape,
   fields: ReadonlyMap<string, Field>,
+  coverageByPath: ReadonlyMap<string, Shape["property_coverage"][number]>,
   path: string,
 ): Field | undefined => {
   const field = fields.get(path);
   if (field !== undefined) return field;
-  if (!shape.property_coverage.some((coverage) => coverage.path === path))
-    return undefined;
+  if (!coverageByPath.has(path)) return undefined;
   return {
     path,
     presence: "present",
-    state: "unknown",
-    value: null,
-    reason:
-      "A static container is retained at this path, but no primitive field value is projected.",
+    state: "container",
   };
 };
 
@@ -380,13 +397,6 @@ const fieldChangeStatus = ({
 }: FieldChangeInput):
   | JavaScriptExportShapeComparisonChange["status"]
   | null => {
-  if (
-    leftField !== undefined &&
-    rightField !== undefined &&
-    canonicalJson(leftField, "JavaScript export shape comparison") ===
-      canonicalJson(rightField, "JavaScript export shape comparison")
-  )
-    return null;
   if (leftPresence === "absent" && rightPresence === "absent") return null;
   if (
     leftPresence === "unknown-coverage" ||
@@ -395,8 +405,15 @@ const fieldChangeStatus = ({
     return "unknown";
   if (leftPresence === "absent") return "added";
   if (rightPresence === "absent") return "removed";
+  if (leftField?.state === "unknown" || rightField?.state === "unknown")
+    return "unknown";
   if (leftField !== undefined && rightField !== undefined) {
-    return leftField.state === "unknown" || rightField.state === "unknown"
+    if (
+      canonicalJson(leftField, "JavaScript export shape comparison") ===
+      canonicalJson(rightField, "JavaScript export shape comparison")
+    )
+      return null;
+    return leftField.state === "container" || rightField.state === "container"
       ? "unknown"
       : "changed";
   }
@@ -404,7 +421,8 @@ const fieldChangeStatus = ({
 };
 
 const fieldPresence = (
-  shape: Shape,
+  fields: ReadonlyMap<string, Field>,
+  coverageByPath: ReadonlyMap<string, Shape["property_coverage"][number]>,
   field: Field | undefined,
   path: string,
 ): PropertyPresence => {
@@ -414,11 +432,9 @@ const fieldPresence = (
     parent !== null;
     parent = parentPointer(parent)
   ) {
-    const coverage = shape.property_coverage.find(
-      (entry) => entry.path === parent,
-    );
+    const coverage = coverageByPath.get(parent);
     if (coverage?.status === "complete") return "absent";
-    const ancestor = shape.fields.find((entry) => entry.path === parent);
+    const ancestor = fields.get(parent);
     if (ancestor !== undefined)
       return ancestor.presence === "absent" ? "absent" : "unknown-coverage";
     if (coverage !== undefined) return "unknown-coverage";
@@ -449,15 +465,15 @@ const fieldAvailability = (
       availability: "unknown",
       reason: field.reason ?? "Static field value is unknown.",
     };
+  if (field.state === "container")
+    return {
+      availability: "unknown",
+      reason:
+        "A static container is retained at this path, but no primitive field value is projected.",
+    };
   if (field.state === "union")
-    return { availability: "union", values: primitiveArray(field.value) };
-  const literal = literalValue(field);
-  return literal.found
-    ? { availability: "literal", value: literal.value }
-    : {
-        availability: "unknown",
-        reason: "Static literal field failed its projection boundary.",
-      };
+    return { availability: "union", values: field.value };
+  return { availability: "literal", value: field.value };
 };
 
 const selectionAvailability = (
@@ -520,24 +536,6 @@ const changeWithId = (
   ...semantic,
   change_id: `jesc_change_${digestCanonicalValue(semantic, "JavaScript export shape comparison")}`,
 });
-
-const literalValue = (
-  field: Field,
-):
-  | { readonly found: true; readonly value: Primitive }
-  | { readonly found: false } =>
-  field.state === "literal" && isPrimitive(field.value)
-    ? { found: true, value: field.value }
-    : { found: false };
-
-const primitiveArray = (value: unknown): Primitive[] =>
-  Array.isArray(value) ? value.filter(isPrimitive) : [];
-
-const isPrimitive = (value: unknown): value is Primitive =>
-  value === null ||
-  typeof value === "string" ||
-  typeof value === "number" ||
-  typeof value === "boolean";
 
 const capitalize = (value: string): string =>
   `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;

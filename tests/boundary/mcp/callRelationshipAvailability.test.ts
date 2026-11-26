@@ -8,12 +8,13 @@ import type {
   AnalysisClient,
   AnalysisProvider,
   CapabilityDescriptor,
-} from "../../../src/application/AnalysisProvider.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { ok } from "../../../src/domain/result.js";
-import type { ProviderRejectionCode } from "../../../src/contracts/providerSelection.js";
+import type { ProviderRejectionCode } from "../../../src/domain/providerSelection.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { createFixtureProviderIdentity } from "../../fixtures/analysisExecution.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createSessionMcpHarness } from "./sessionMcpHarness.js";
@@ -28,11 +29,7 @@ afterEach(async () => {
   directory = undefined;
 });
 
-const providerIdentity = {
-  id: "fixture",
-  name: "Fixture analysis provider",
-  version: "1",
-};
+const providerIdentity = createFixtureProviderIdentity();
 const effects = {
   mutatesArtifact: false,
   launchesProcess: false,
@@ -106,6 +103,10 @@ describe("call relationship capability inventory at the public MCP boundary", ()
         directory,
         () => relationshipProvider(scenario, calls),
         resources,
+        undefined,
+        // The full scenario retains default advertisement coverage; the
+        // remaining cases exercise availability and canonical call results.
+        scenario === FULL_SCENARIO ? undefined : "off",
       );
       const toolsBefore = await mcp.listTools();
       const before = await sessionInventory(mcp);

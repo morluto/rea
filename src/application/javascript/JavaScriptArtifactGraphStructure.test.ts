@@ -1,12 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { addElectronIpcBoundaries } from "./ElectronBoundaryGraphIpc.js";
+import { createElectronIpcContext } from "./ElectronBoundaryAnalysis.js";
+import { expect, it } from "vitest";
 import { createHash } from "node:crypto";
 
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
-import { analyzeJavaScriptStaticSource } from "../../domain/javascript/javascriptStaticAnalysis.js";
+import {
+  analyzeJavaScriptStaticSource,
+  analyzeParsedJavaScriptStaticSource,
+} from "../../../tests/fixtures/javascriptStaticAnalysis.js";
+import { parseJavaScriptSource } from "../../domain/javascript/javascriptSourceParser.js";
 import type {
   AnalyzedJavaScriptArtifactFile,
-  JavaScriptModuleArtifactAnalysis,
+  JavaScriptArtifactAnalysis,
 } from "./JavaScriptArtifactAnalysisTypes.js";
 import { javascriptArtifactAnalysisScopes } from "./JavaScriptArtifactAnalysisTypes.js";
 import { JavaScriptArtifactGraphAccumulator } from "./JavaScriptArtifactGraphAccumulator.js";
@@ -22,6 +28,13 @@ import { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 const SHA256 = "a".repeat(64);
 const REASON =
   "main.js: Resource constraint during analyze_javascript_application: Owned JavaScript worker exhausted its heap while analyzing main.js during static";
+
+/** Preserve the explicit artifact filename when analyzing owned test fixtures. */
+const analyzeOwnedSource = (source: string, path: string) => {
+  const parsed = parseJavaScriptSource(source, path);
+  if (parsed === null) throw new Error(`Unable to parse ${path}`);
+  return analyzeParsedJavaScriptStaticSource(source, parsed);
+};
 
 const skippedFile = (): JavaScriptArtifactFile => ({
   path: "main.js",
@@ -51,7 +64,7 @@ const skippedEntry = (
 
 const analysisFor = (
   entries: readonly AnalyzedJavaScriptArtifactFile[],
-): JavaScriptModuleArtifactAnalysis => ({
+): JavaScriptArtifactAnalysis => ({
   jsonDocuments: new JavaScriptJsonDocuments(),
   files: entries,
   packages: [],
@@ -67,8 +80,7 @@ const analysisFor = (
 });
 
 const contextFor = (
-  file: JavaScriptArtifactFile,
-  analysis: JavaScriptModuleArtifactAnalysis,
+  analysis: JavaScriptArtifactAnalysis,
 ): JavaScriptArtifactGraphContext => {
   const accumulator = new JavaScriptArtifactGraphAccumulator();
   const snapshot = {
@@ -84,11 +96,12 @@ const contextFor = (
     // remain on the individual files and do not imply missing inventory paths.
     coverage: { scope: "root", status: "complete" },
   } as unknown as ArtifactInventorySnapshot;
+  const files = analysis.files.map(({ file }) => file);
   const fileSet = {
-    files: [file],
+    files,
     unavailable_relevant_files: [],
     containers: [],
-    text_bytes_read: file.bytes,
+    text_bytes_read: files.reduce((total, { bytes }) => total + bytes, 0),
     invalid_utf8_files: 0,
   };
   return {
@@ -98,7 +111,7 @@ const contextFor = (
     analysis,
     directoryPaths: new Set<string>(),
     root: createJavaScriptArtifactRootNode(accumulator, snapshot),
-    filesByPath: new Map([[file.path, file]]),
+    filesByPath: new Map(files.map((entry) => [entry.path, entry])),
     unanalyzedFiles: undefined,
     fileNodes: new Map(),
     assetNodes: new Map(),
@@ -114,60 +127,54 @@ const contextFor = (
   };
 };
 
-const fileObservation = (context: JavaScriptArtifactGraphContext) => {
-  const node = context.accumulator
+it("distinguishes interrupted JavaScript analysis from unattempted analysis", () => {
+  const interrupted = skippedFile();
+  const text = "export const ignored = true;";
+  const unattempted: JavaScriptArtifactFile = {
+    ...interrupted,
+    path: "unattempted.js",
+    sha256: createHash("sha256").update(text).digest("hex"),
+    bytes: Buffer.byteLength(text),
+    text: { included: true, value: text },
+  };
+  const analysis = analysisFor([
+    skippedEntry(interrupted),
+    { file: unattempted, javascript: null, semantic: null },
+  ]);
+  const context = contextFor(analysis);
+  addJavaScriptArtifactFiles(context);
+
+  const observations = context.accumulator
     .nodes()
-    .find(({ kind }) => kind === "javascript-asset");
-  if (node === undefined) throw new Error("Expected a javascript-asset node");
-  const observation = node.observations[0];
-  if (observation === undefined) throw new Error("Expected a file observation");
-  return observation.properties;
-};
-
-describe("skipped JavaScript parse reporting", () => {
-  it("marks parse_status skipped for a JavaScript file whose worker analysis failed", () => {
-    const file = skippedFile();
-    const context = contextFor(file, analysisFor([skippedEntry(file)]));
-    addJavaScriptArtifactFiles(context);
-    expect(fileObservation(context).parse_status).toBe("skipped");
-  });
-
-  it("keeps parse_status null for a JavaScript file never attempted", () => {
-    const file = skippedFile();
-    const entry: AnalyzedJavaScriptArtifactFile = {
-      file,
-      javascript: null,
-      semantic: null,
-    };
-    const context = contextFor(file, analysisFor([entry]));
-    addJavaScriptArtifactFiles(context);
-    expect(fileObservation(context).parse_status).toBeNull();
-  });
-
-  it("keeps the parsed status for an analyzed JavaScript file", () => {
-    const file = skippedFile();
-    const javascript = analyzeJavaScriptStaticSource(
-      "const {ipcMain}=require('electron');\n",
+    .filter(({ kind }) => kind === "javascript-asset")
+    .flatMap(({ observations }) => observations);
+  expect(observations).toHaveLength(2);
+  for (const [path, status, reason] of [
+    ["main.js", "skipped", "JavaScript analysis did not complete."],
+    ["unattempted.js", null, "JavaScript source analysis was not performed."],
+  ] as const) {
+    const observation = observations.find(
+      ({ properties }) => properties.path === path,
     );
-    const entry: AnalyzedJavaScriptArtifactFile = {
-      file,
-      javascript,
-      semantic: null,
-    };
-    const context = contextFor(file, analysisFor([entry]));
-    addJavaScriptArtifactFiles(context);
-    expect(fileObservation(context).parse_status).toBe(javascript.parse_status);
-  });
+    expect(observation?.properties).toMatchObject({
+      parse_status: status,
+      analysis_coverage: {
+        syntax: { status: "not-examined", error_count: null },
+        semantics: { unknown_findings: null },
+        examination: { status: "not-examined" },
+        unexamined_reason: reason,
+      },
+    });
+  }
 });
 
 it("preserves omitted inventory facts on an unavailable artifact", () => {
   const file = skippedFile();
-  const base = contextFor(file, analysisFor([]));
+  const base = contextFor(analysisFor([]));
   const context: JavaScriptArtifactGraphContext = {
     ...base,
     fileSet: {
       ...base.fileSet,
-      files: [],
       unavailable_relevant_files: [
         {
           path: file.path,
@@ -223,27 +230,23 @@ it.each([false, true])(
     const analysis = analysisFor([
       {
         file: setter,
-        javascript: analyzeJavaScriptStaticSource(
+        javascript: analyzeOwnedSource(
           'const { app } = require("electron"); app.setAppPath("/changed");',
+          setter.path,
         ),
         semantic: null,
       },
       {
         file: window,
-        javascript: analyzeJavaScriptStaticSource(
+        javascript: analyzeOwnedSource(
           'const { BrowserWindow } = require("electron"); new BrowserWindow().loadFile("index.html");',
+          window.path,
         ),
         semantic: null,
       },
       { file: page, javascript: null, semantic: null },
     ]);
-    const base = contextFor(window, analysis);
-    const files = [setter, window, page];
-    const context: JavaScriptArtifactGraphContext = {
-      ...base,
-      fileSet: { ...base.fileSet, files },
-      filesByPath: new Map(files.map((file) => [file.path, file])),
-    };
+    const context = contextFor(analysis);
     context.applicationRootsBySource.set(setter.path, new Set(["a"]));
     context.applicationRootsBySource.set(window.path, new Set(["b"]));
     if (possibleOwner)
@@ -339,20 +342,21 @@ it.each([
     const entries: AnalyzedJavaScriptArtifactFile[] = [
       {
         file: main,
-        javascript: analyzeJavaScriptStaticSource(statement + window),
+        javascript: analyzeOwnedSource(statement + window, main.path),
         semantic: null,
       },
       {
         file: other,
-        javascript: analyzeJavaScriptStaticSource(window),
+        javascript: analyzeOwnedSource(window, other.path),
         semantic: null,
       },
       ...(gap === "transitive-unselected"
         ? [
             {
               file: makeFile("a/middle.cjs"),
-              javascript: analyzeJavaScriptStaticSource(
+              javascript: analyzeOwnedSource(
                 'require("./change.cjs");',
+                "a/middle.cjs",
               ),
               semantic: null,
             },
@@ -363,12 +367,9 @@ it.each([
       { file: otherPage, javascript: null, semantic: null },
     ];
     const analysis = analysisFor(entries);
-    const base = contextFor(main, analysis);
-    const files = entries.map(({ file }) => file);
+    const base = contextFor(analysis);
     const context: JavaScriptArtifactGraphContext = {
       ...base,
-      fileSet: { ...base.fileSet, files },
-      filesByPath: new Map(files.map((file) => [file.path, file])),
       unanalyzedFiles:
         gap === "opaque"
           ? {
@@ -423,3 +424,80 @@ it.each([
     }
   },
 );
+
+it("attaches sender validation to the innermost handler after a long minified line", () => {
+  const source = `const {ipcMain}=require('electron');/*${"x".repeat(2_000_010)}*/ipcMain.handle('outer', event=>{
+  ipcMain.handle('inner', event=>{ if(event.senderFrame.url === 'https://trusted.test') return true; });
+});`;
+  const file = {
+    ...skippedFile(),
+    bytes: Buffer.byteLength(source),
+    text: { included: true as const, value: source },
+  };
+  const javascript = analyzeJavaScriptStaticSource(source);
+  expect(javascript.electron.sender_validations).toHaveLength(1);
+  const analysis = analysisFor([{ file, javascript, semantic: null }]);
+  const context = contextFor(analysis);
+  addJavaScriptArtifactFiles(context);
+  addElectronIpcBoundaries(
+    context,
+    createElectronIpcContext(analysis, () => "app", true),
+  );
+  const handlers = context.accumulator
+    .nodes()
+    .filter(({ kind }) => kind === "ipc-handler");
+  const validated = handlers.filter(({ observations }) =>
+    observations.some(
+      ({ properties }) =>
+        properties.fact_kind === "sender-validation-candidate",
+    ),
+  );
+  expect(validated).toHaveLength(1);
+  expect(
+    validated[0]?.observations.some(
+      ({ properties }) => properties.channel === "inner",
+    ),
+  ).toBe(true);
+});
+
+it("projects package parse status from the package observation", () => {
+  const file = {
+    ...skippedFile(),
+    path: "package.json",
+    kind: "package-json" as const,
+  };
+  const entry: AnalyzedJavaScriptArtifactFile = {
+    file,
+    javascript: null,
+    semantic: null,
+  };
+  const analysis = {
+    ...analysisFor([entry]),
+    packages: [
+      {
+        path: file.path,
+        sha256: file.sha256,
+        status: "included" as const,
+        name: "fixture",
+        version: null,
+        main: null,
+        main_status: "default" as const,
+        main_entrypoint: "index.js",
+        renderer_declarations: {},
+        renderer_entrypoint: null,
+        limitation: null,
+      },
+    ],
+  };
+  const context = contextFor(analysis);
+  addJavaScriptArtifactFiles(context);
+  const observation = context.accumulator
+    .nodes()
+    .flatMap(({ observations }) => observations)
+    .find(({ properties }) => properties.file_kind === "package-json");
+  expect(observation?.properties).toMatchObject({
+    file_kind: "package-json",
+    package_parse_status: "included",
+    json_parse_status: null,
+  });
+});

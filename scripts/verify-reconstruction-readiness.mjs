@@ -8,10 +8,11 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { tsImport } from "tsx/esm/api";
 
-import { toolContract } from "../dist/contracts/toolContracts.js";
+import { requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { createEvidenceBundle } from "../dist/domain/evidenceBundle.js";
-import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 const [
   { RECONSTRUCTION_READINESS_EXAMPLE },
@@ -43,15 +44,25 @@ const environment = {
   ...process.env,
 };
 await access(nativePath);
-const nativeEvidence = await runCli(["inspect-artifact", nativePath, "--json"]);
+const nativeEvidence = await runCli([
+  "inspect-artifact",
+  nativePath,
+  "--detail",
+  "complete",
+  "--json",
+]);
 const javascriptCliEvidence = await runCli([
   "analyze-javascript-application",
   javascriptPath,
+  "--detail",
+  "complete",
   "--json",
 ]);
 const electronCliEvidence = await runCli([
   "analyze-javascript-application",
   electronPath,
+  "--detail",
+  "complete",
   "--json",
 ]);
 
@@ -62,15 +73,16 @@ const transport = new StdioClientTransport({
   env: environment,
   stderr: "pipe",
 });
-const client = new Client({
-  name: "rea-readiness-verifier",
-  version: "1",
-  capabilities: { elicitation: {} },
-});
+const client = completeEvidenceClient(
+  new Client({
+    name: "rea-readiness-verifier",
+    version: "1",
+    capabilities: { elicitation: {} },
+  }),
+);
 
 let verificationReport;
-let primaryError;
-try {
+await withVerifierCleanup(async () => {
   await client.connect(transport);
   const catalog = await client.listTools();
   const sessionTool = catalog.tools.find(
@@ -81,10 +93,8 @@ try {
     { name: "binary_session", arguments: {} },
     { toolDefinition: sessionTool },
   );
-  assert.notEqual(sessionReply.isError, true);
-  const sessionStatus = toolContract("binary_session").outputSchema.parse(
-    sessionReply.structuredContent,
-  ).result;
+  assert.notEqual(sessionReply.structuredContent, undefined);
+  const sessionStatus = requireMcpOutput(sessionReply, "binary_session").result;
   const javascriptMcp = await analyzeMcp(client, javascriptPath);
   const electronMcp = await analyzeMcp(client, electronPath);
   assert.equal(
@@ -149,15 +159,7 @@ try {
     },
     evaluator_conformance: verifySyntheticEvaluator(),
   };
-} catch (cause) {
-  primaryError = cause;
-  throw cause;
-} finally {
-  await closeVerifierResources(
-    [() => client.close(), () => transport.close()],
-    primaryError,
-  );
-}
+}, [() => client.close(), () => transport.close()]);
 
 if (process.env.REA_READINESS_REPORT_PATH !== undefined)
   await writeFile(
@@ -201,13 +203,12 @@ async function runCli(arguments_) {
 async function analyzeMcp(client_, inputPath) {
   const response = await client_.callTool({
     name: "analyze_javascript_application",
-    arguments: { input_path: inputPath },
+    arguments: { input_path: inputPath, detail: "complete" },
   });
-  assert.notEqual(response.isError, true);
-  toolContract("analyze_javascript_application").outputSchema.parse(
-    response.structuredContent,
+  assert.notEqual(response.structuredContent, undefined);
+  return parseEvidence(
+    requireMcpOutput(response, "analyze_javascript_application"),
   );
-  return parseEvidence(response.structuredContent);
 }
 
 function verifySyntheticEvaluator() {

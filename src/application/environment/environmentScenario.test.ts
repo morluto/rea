@@ -7,10 +7,7 @@ import {
 } from "../../../tests/fixtures/browserScenarioCapture.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
-import {
-  planEnvironmentBundle,
-  registryPackageSource,
-} from "./environmentBundle.js";
+import { planEnvironmentBundle } from "./environmentBundle.js";
 import { replayEnvironmentTool } from "./environmentReplay.js";
 import { loadEnvironmentSource } from "./environmentSource.js";
 import { prepareServedState } from "./environmentState.js";
@@ -44,8 +41,10 @@ describe("environment manifests from capture_browser_scenario parents", () => {
     expect(
       manifest.tools.some((entry) => entry.name.includes("redacted")),
     ).toBe(false);
-    expect(manifest.limitations).toContain(
-      "Scenario records are the capture's network transactions in request order; each record ordinal is the transaction's zero-based position.",
+    expect(manifest.limitations).toContainEqual(
+      expect.stringMatching(
+        /network transactions in request order.*ordinal.*zero-based position/iu,
+      ),
     );
   });
 
@@ -76,15 +75,15 @@ describe("environment manifests from capture_browser_scenario parents", () => {
         kind: "inline",
         evidence: scenarioCaptureEvidence(scenarioCaptureFixture()),
       },
-      view: { kind: "summary" },
+      view: { kind: "dart-aot", collection: "package_uris" },
     });
     if (refused.ok) throw new Error("Expected the unsupported view refusal");
     expect(projectAnalysisError(refused.error)).toMatchObject({
-      code: "unsupported_target",
-      message: expect.stringContaining(
-        "supports only the environment-manifest and environment-state views",
-      ),
+      code: "invalid_request",
     });
+    expect(JSON.stringify(projectAnalysisError(refused.error))).toContain(
+      "supports summary and browser-scenario views",
+    );
   });
 
   it("serves and exports a scenario-built manifest from the same capture", () => {
@@ -114,7 +113,6 @@ describe("environment manifests from capture_browser_scenario parents", () => {
       replay: { body_encoding: "base64" },
     });
     const planned = planEnvironmentBundle(source.value, {
-      packageSource: registryPackageSource(),
       served: (name) =>
         prepareServedState(source.value, fixture.capture, { name }),
     });

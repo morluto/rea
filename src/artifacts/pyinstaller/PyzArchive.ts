@@ -1,18 +1,24 @@
 import type { FileHandle } from "node:fs/promises";
 import { hashReadable } from "../ArtifactHash.js";
-import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
+import {
+  ArtifactReaderFailure,
+  readArtifactFileChunks,
+} from "../../resources/index.js";
 import { readPyInstallerBytes } from "./PyInstallerBytes.js";
 
+import { BinaryReader } from "../../domain/binaryContainer.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { readMarshalSubset, type MarshalValue } from "./MarshalSubset.js";
 import {
   pyInstallerFailure,
+  pyInstallerLayoutFailure,
   type PyInstallerFailure,
 } from "./PyInstallerFailure.js";
 import { pythonVersionForMagic } from "./PythonBytecode.js";
 
 const PYZ_MAGIC = Buffer.from("PYZ\0");
 const PYZ_HEADER_BYTES = 12;
+const PYZ_ENTRY_ROLES = ["module", "package", "data", "namespace"] as const;
 
 /** One PYZ table entry. Type codes follow the archive's module, package, data, and namespace values. */
 export interface PyzEntry {
@@ -23,8 +29,7 @@ export interface PyzEntry {
   readonly length: number;
   /** PYZ compresses every nonempty payload, independently of its logical module type. */
   readonly compressionFlag: 0 | 1;
-  readonly package: boolean;
-  readonly namespace: boolean;
+  readonly role: (typeof PYZ_ENTRY_ROLES)[number];
 }
 
 export type PyzArchive =
@@ -38,12 +43,43 @@ export type PyzArchive =
   | {
       readonly kind: "opaque";
       readonly pythonMagic: Buffer;
+      readonly pythonVersion: string | undefined;
       readonly sha256: string;
       readonly limitation: string;
     };
 
 /** Bound the transient marshal table allocation independently of image expansion. */
-export const MAX_PYZ_TABLE_BYTES = 16 * 1024 * 1024;
+const MAX_PYZ_TABLE_BYTES = 16 * 1024 * 1024;
+
+interface PyzHeaderFacts {
+  readonly pythonMagic: Buffer;
+  readonly pythonVersion: string | undefined;
+  readonly tocOffset: number;
+  /** Null means the declaration lies outside this image, not an empty table. */
+  readonly tableBytes: number | null;
+}
+
+/** Called only after the exact fixed-header read has succeeded. */
+const readPyzHeaderFacts = (
+  header: Buffer,
+  size: number,
+): Result<PyzHeaderFacts, PyInstallerFailure> => {
+  if (!header.subarray(0, 4).equals(PYZ_MAGIC))
+    return err(
+      pyInstallerFailure("malformed", "PYZ archive magic does not match"),
+    );
+  const pythonMagic = Buffer.from(header.subarray(4, 8));
+  const tocOffset = new BinaryReader(header, false, "pyz").u32(8);
+  return ok({
+    pythonMagic,
+    pythonVersion: pythonVersionForMagic(pythonMagic),
+    tocOffset,
+    tableBytes:
+      tocOffset >= PYZ_HEADER_BYTES && tocOffset <= size
+        ? size - tocOffset
+        : null,
+  });
+};
 
 /** Parse only the header and table in memory; hash the complete file range in chunks. */
 export const readPyzArchive = async (
@@ -51,24 +87,25 @@ export const readPyzArchive = async (
   start: number,
   size: number,
   signal?: AbortSignal,
+  measuredEnd?: number,
 ): Promise<Result<PyzArchive, PyInstallerFailure>> => {
   if (size < PYZ_HEADER_BYTES)
     return err(
-      pyInstallerFailure("format", "PYZ archive magic does not match"),
+      pyInstallerFailure("malformed", "PYZ archive magic does not match"),
     );
   const headerRead = await readPyInstallerBytes(handle, {
+    ...(measuredEnd === undefined ? {} : { measuredEnd }),
     position: start,
     length: PYZ_HEADER_BYTES,
     label: "PYZ header",
     signal,
   });
   if (!headerRead.ok) return headerRead;
-  const header = headerRead.value;
-  const tocOffset =
-    header.length === PYZ_HEADER_BYTES ? header.readUInt32BE(8) : size;
-  const validOffset = tocOffset >= PYZ_HEADER_BYTES && tocOffset <= size;
-  const knownMagic = pythonVersionForMagic(header.subarray(4, 8)) !== undefined;
-  const tableSize = validOffset && knownMagic ? size - tocOffset : 0;
+  const admitted = readPyzHeaderFacts(headerRead.value, size);
+  if (!admitted.ok) return admitted;
+  const header = admitted.value;
+  const tableSize =
+    header.pythonVersion === undefined ? 0 : (header.tableBytes ?? 0);
   if (tableSize > MAX_PYZ_TABLE_BYTES)
     return err(
       pyInstallerFailure(
@@ -77,7 +114,8 @@ export const readPyzArchive = async (
       ),
     );
   const read = await readPyInstallerBytes(handle, {
-    position: start + tocOffset,
+    ...(measuredEnd === undefined ? {} : { measuredEnd }),
+    position: start + header.tocOffset,
     length: tableSize,
     label: "PYZ table",
     signal,
@@ -92,59 +130,59 @@ export const readPyzArchive = async (
     }),
     signal,
   );
-  if (digest.bytes !== size)
+  if (digest.bytes !== size) {
+    if (measuredEnd !== undefined && start + size <= measuredEnd)
+      throw new ArtifactReaderFailure(
+        "integrity",
+        "PYZ image ended before the measured file size",
+        { integrityCheck: "read-coverage" },
+      );
     return err(
-      pyInstallerFailure("format", "PYZ image extends outside the file"),
+      pyInstallerFailure("malformed", "PYZ image extends outside the file"),
     );
-  return parsePyzParts(header, table, size, digest.sha256);
+  }
+  return parsePyzParts(header, table, digest.sha256);
 };
 
 const parsePyzParts = (
-  header: Buffer,
+  header: PyzHeaderFacts,
   table: Buffer,
-  size: number,
   sha256: string,
 ): Result<PyzArchive, PyInstallerFailure> => {
-  if (
-    header.length < PYZ_HEADER_BYTES ||
-    !header.subarray(0, 4).equals(PYZ_MAGIC)
-  )
-    return err(
-      pyInstallerFailure("format", "PYZ archive magic does not match"),
-    );
-  const pythonMagic = Buffer.from(header.subarray(4, 8));
-  const pythonVersion = pythonVersionForMagic(pythonMagic);
+  const { pythonMagic, pythonVersion, tocOffset } = header;
   if (pythonVersion === undefined)
     return ok({
       kind: "opaque",
       pythonMagic,
+      pythonVersion,
       sha256,
       limitation: `PYZ Python magic ${pythonMagic.toString("hex")} is not in the supported set; the member was left opaque.`,
     });
-  const tocOffset = header.readUInt32BE(8);
-  if (tocOffset < PYZ_HEADER_BYTES || tocOffset > size)
+  if (header.tableBytes === null)
     return err(
       pyInstallerFailure(
-        "format",
+        "malformed",
         "PYZ table of contents is outside the archive",
       ),
     );
   const marshalled = readMarshalSubset(table);
   if (!marshalled.ok) {
-    if (marshalled.error.reason !== "format") return marshalled;
+    if (marshalled.error.reason !== "malformed") return marshalled;
     return ok({
       kind: "opaque",
       pythonMagic,
+      pythonVersion,
       sha256,
       limitation: `PYZ table of contents could not be parsed (${marshalled.error.message}); the member was left opaque.`,
     });
   }
   const entries = pyzEntries(marshalled.value, tocOffset, table.length);
   if (!entries.ok)
-    return entries.error.reason === "format"
+    return entries.error.reason === "malformed"
       ? ok({
           kind: "opaque",
           pythonMagic,
+          pythonVersion,
           sha256,
           limitation: `${entries.error.message}; the member was left opaque.`,
         })
@@ -160,8 +198,9 @@ const parsePyzParts = (
 
 /**
  * Marshal back-references let one stored row appear many times, so a small
- * table can name far more bytes than it holds. Each genuine entry stores its
- * own name inline, so the expanded names can never exceed the table itself.
+ * table can name far more bytes than it holds. Inline one-byte Unicode names
+ * can double in UTF-8; UTF-8 marshal names do not expand. Allow that decoding
+ * expansion while bounding the total names repeated by back-references.
  */
 const pyzEntries = (
   value: MarshalValue,
@@ -170,19 +209,20 @@ const pyzEntries = (
 ): Result<readonly PyzEntry[], PyInstallerFailure> => {
   if (!Array.isArray(value))
     return err(
-      pyInstallerFailure("format", "PYZ table of contents is not a list"),
+      pyInstallerFailure("malformed", "PYZ table of contents is not a list"),
     );
   const entries: PyzEntry[] = [];
+  const nameByteBudget = tableBytes * 2;
   let nameBytes = 0;
   for (const item of value) {
     const entry = onePyzEntry(item, payloadEnd, entries.length);
     if (!entry.ok) return entry;
     nameBytes += Buffer.byteLength(entry.value.name, "utf8");
-    if (nameBytes > tableBytes)
+    if (nameBytes > nameByteBudget)
       return err(
         pyInstallerFailure(
           "limit",
-          `PYZ table entry names expand past the ${String(tableBytes)}-byte table that stores them`,
+          `PYZ table entry names expand past the ${String(nameByteBudget)}-byte decoded-name budget`,
         ),
       );
     entries.push(entry.value);
@@ -198,7 +238,7 @@ const onePyzEntry = (
   if (!Array.isArray(item) || item.length !== 2)
     return err(
       pyInstallerFailure(
-        "format",
+        "malformed",
         "PYZ table entry is not a name and position pair",
       ),
     );
@@ -210,7 +250,7 @@ const onePyzEntry = (
   )
     return err(
       pyInstallerFailure(
-        "format",
+        "malformed",
         "PYZ table entry is not a name, type, offset, and length",
       ),
     );
@@ -222,21 +262,22 @@ const onePyzEntry = (
   )
     return err(
       pyInstallerFailure(
-        "format",
+        "malformed",
         "PYZ table entry positions are not integers",
       ),
     );
-  if (typeCode < 0 || typeCode > 3)
+  const role = PYZ_ENTRY_ROLES[typeCode];
+  if (role === undefined)
     return err(
       pyInstallerFailure(
-        "format",
+        "malformed",
         `PYZ table entry type ${String(typeCode)} is not a known module, package, data, or namespace code`,
       ),
     );
-  if (typeCode !== 3 && length === 0)
+  if (role !== "namespace" && length === 0)
     return err(
       pyInstallerFailure(
-        "format",
+        "malformed",
         `PYZ entry at table index ${String(index)} has no compressed bytes`,
       ),
     );
@@ -248,8 +289,7 @@ const onePyzEntry = (
     (length > 0 && offset < PYZ_HEADER_BYTES)
   )
     return err(
-      pyInstallerFailure(
-        "integrity",
+      pyInstallerLayoutFailure(
         `PYZ entry at table index ${String(index)} extends outside the archive payload region`,
       ),
     );
@@ -260,7 +300,6 @@ const onePyzEntry = (
     offset,
     length,
     compressionFlag: length === 0 ? 0 : 1,
-    package: typeCode === 1 || typeCode === 3,
-    namespace: typeCode === 3,
+    role,
   });
 };

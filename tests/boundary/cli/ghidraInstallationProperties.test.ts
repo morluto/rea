@@ -1,18 +1,35 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdir, truncate, writeFile } from "node:fs/promises";
+import { access, mkdir, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES } from "../../../src/ghidra/GhidraInstallationProperties.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-cliTest.skipIf(process.platform === "win32").for(["pipe", "capacity"] as const)(
+const MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES = 1024 * 1024;
+
+cliTest.for(["pipe", "capacity"] as const)(
   "doctor reports selected properties %s without launching Java",
-  async (kind, { cli }) => {
+  async (kind, { cli, skip }) => {
+    if (kind === "pipe" && process.platform === "win32") {
+      skip();
+      return;
+    }
     const root = await createTestTempDirectory("rea-doctor-properties-");
     const install = join(root, "ghidra");
     const path = join(install, "Ghidra/application.properties");
+    const javaHome = join(root, "java-home");
+    const java = join(javaHome, "bin", "java");
+    if (process.platform !== "win32") {
+      await mkdir(join(javaHome, "bin"), { recursive: true });
+      await writeFile(
+        java,
+        '#!/bin/sh\nprintf "launched\\n" > "$0.was-run"\n',
+        {
+          mode: 0o700,
+        },
+      );
+    }
     await mkdir(join(install, "Ghidra"), { recursive: true });
     if (kind === "pipe") await promisify(execFile)("mkfifo", [path]);
     else {
@@ -23,13 +40,16 @@ cliTest.skipIf(process.platform === "win32").for(["pipe", "capacity"] as const)(
       arguments: ["doctor", "--provider", "ghidra", "--json"],
       environment: {
         GHIDRA_INSTALL_DIR: install,
-        JAVA_HOME: join(root, "missing-jdk"),
+        JAVA_HOME: javaHome,
         REA_LOG_LEVEL: "silent",
       },
-      timeoutMs: 5000,
     });
     expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(1);
     expect(result.signal).toBeNull();
+    if (process.platform !== "win32")
+      await expect(access(`${java}.was-run`)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     expect(result.json).toMatchObject({
       code: kind === "pipe" ? "execution_failure" : "resource_constraint",
       details: {
@@ -37,5 +57,25 @@ cliTest.skipIf(process.platform === "win32").for(["pipe", "capacity"] as const)(
         diagnostics: { path, stage: "installation_properties" },
       },
     });
+    if (kind === "capacity") {
+      expect(result.json).toMatchObject({
+        retryable: false,
+        details: {
+          reported_limits: {
+            maximum_bytes: MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES,
+            observed_bytes: String(
+              MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES + 1,
+            ),
+          },
+        },
+        remediation: {
+          action: expect.stringContaining("installation-properties"),
+        },
+      });
+      expect(JSON.stringify(result.json)).toContain("no runtime override");
+      expect(JSON.stringify(result.json)).not.toContain(
+        "Retry with a sufficient file-size allowance",
+      );
+    }
   },
 );

@@ -110,14 +110,16 @@ cliTest(
               {
                 path: ["protobuf", "schema", "descriptor_set_path"],
                 reason: "invalid_format",
+                message: expect.stringContaining(
+                  "Duplicate fully qualified type name",
+                ),
               },
             ],
           },
         };
-        // Both orders cross the actual CLI adapter; other geometries reuse
-        // the production MCP session and the same application workflow.
-        if (scope === "same-file") {
-          const output = await cli.sharedCliRun!({
+        // Keep CLI refusal parity on one collision and both orders in MCP.
+        if (scope === "same-file" && !reverse) {
+          const output = await cli.run({
             arguments: [
               "inspect-web-network-capture",
               capture,
@@ -149,7 +151,9 @@ cliTest(
           parseMcpToolError(response).error,
           `${scope}-${reverse}`,
         ).toMatchObject(expected);
-        expect(await readFile(descriptor)).toEqual(Buffer.from(bytes));
+        expect(
+          Buffer.compare(await readFile(descriptor), Buffer.from(bytes)),
+        ).toBe(0);
       }
     expect(await readFile(capture, "utf8")).toBe(text);
   },
@@ -216,6 +220,8 @@ cliTest(
         { number: 1, schema_name: fieldName, schema_value: "1" },
       ]);
     }
-    expect(await readFile(descriptor)).toEqual(Buffer.from(bytes));
+    expect(Buffer.compare(await readFile(descriptor), Buffer.from(bytes))).toBe(
+      0,
+    );
   },
 );

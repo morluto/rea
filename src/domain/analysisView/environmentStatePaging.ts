@@ -3,18 +3,24 @@ import {
   parseUrlQueryParameterNames,
 } from "../recordedTransportUrl.js";
 
-/** Query parameters that page or bound a list without filtering it. */
-const PAGING_PARAMETERS = new Set([
+/** Paging parameters that bound how many items a page holds. */
+const PAGE_SIZE_PARAMETERS = new Set([
   "limit",
-  "offset",
-  "page",
+  "max_results",
+  "maxresults",
+  "maxsize",
   "per_page",
   "perpage",
   "page_size",
   "pagesize",
   "size",
-  "start",
-  "_start",
+]);
+
+const PAGE_POSITION_PARAMETERS = new Set(["offset", "start", "_start", "page"]);
+
+const PAGING_PARAMETERS = new Set([
+  ...PAGE_SIZE_PARAMETERS,
+  ...PAGE_POSITION_PARAMETERS,
   "_end",
 ]);
 
@@ -26,8 +32,6 @@ export const isPagingParameter = (name: string): boolean =>
 export const pagesOnly = (query: string | undefined): boolean =>
   query === undefined ||
   [...parseUrlQueryParameterNames(query)].every(isPagingParameter);
-
-const PAGE_POSITION_PARAMETERS = new Set(["offset", "start", "_start", "page"]);
 
 /** A paging-only line that can start at the collection's beginning. Positive page numbers are ambiguous (zero- or one-based); malformed or conflicting positions do not establish whole membership. */
 export const startsAtBeginning = (query: string | undefined): boolean => {
@@ -41,38 +45,29 @@ export const startsAtBeginning = (query: string | undefined): boolean => {
   return true;
 };
 
-/** Paging parameters that bound how many items a page holds. */
-const PAGE_SIZE_PARAMETERS = new Set([
-  "limit",
-  "per_page",
-  "perpage",
-  "page_size",
-  "pagesize",
-  "size",
-]);
-
-/** The most items a query's page holds: its smallest whole-number page-size value or `_start`–`_end` range width, or undefined without one; with `unboundedZero`, a size of zero is no bound. */
-const pageLimit = (
+/** The most items a line's call lists. A size of zero is no bound on a line whose own recording listed items under it, as an application reading zero as no limit does; every other size and range still bounds the page. */
+export const pageBound = (
   query: string | undefined,
-  unboundedZero: boolean,
+  recorded: number,
 ): number | undefined => {
+  const unboundedZero = recorded > 0;
   let size = Infinity;
   const range = { start: 0, end: Infinity };
+  let unsafeNumber = false;
   for (const [name, value] of iterateUrlQueryParameters(query ?? "")) {
     const key = name.toLowerCase();
     if (!/^\d+$/u.test(value)) continue;
     const number = Number(value);
+    if (!Number.isSafeInteger(number)) {
+      unsafeNumber = true;
+      continue;
+    }
     if (PAGE_SIZE_PARAMETERS.has(key)) {
       if (number > 0 || !unboundedZero) size = Math.min(size, number);
     } else if (key === "_start") range.start = number;
     else if (key === "_end") range.end = number;
   }
+  if (unsafeNumber) return undefined;
   const width = Math.min(size, Math.max(range.end - range.start, 0));
   return Number.isFinite(width) ? width : undefined;
 };
-
-/** The most items a line's call lists. A size of zero is no bound on a line whose own recording listed items under it, as an application reading zero as no limit does; every other size and range still bounds the page. */
-export const pageBound = (
-  query: string | undefined,
-  recorded: number,
-): number | undefined => pageLimit(query, recorded > 0);

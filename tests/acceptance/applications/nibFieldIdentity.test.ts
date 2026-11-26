@@ -11,6 +11,7 @@ import { interfaceBuilderAnalysisSchema } from "../../../src/domain/apple/interf
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const createIdentityArchive = () =>
   encodeNibArchiveFixture({
@@ -104,7 +105,10 @@ cliTest(
       },
       stderr: "pipe",
     });
-    const client = new Client({ name: "nib-field-identity", version: "1" });
+    const client = new Client(
+      { name: "nib-field-identity", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     try {
       await client.connect(transport);
       const opened = await client.callTool({
@@ -194,7 +198,6 @@ cliTest(
     expect(report.limitations).toContainEqual(
       expect.stringContaining("NSString NS.bytes is not valid UTF-8"),
     );
-    expect(await readFile(path)).toEqual(archive);
+    expect(Buffer.compare(await readFile(path), archive)).toBe(0);
   },
-  60_000,
 );

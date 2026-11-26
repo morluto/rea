@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256 } from "../support/sha256.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -11,9 +11,6 @@ import {
 import { artifactExtractionResultSchema } from "../../src/domain/artifactGraph.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import { createTestTempDirectory } from "./temporaryDirectory.js";
-
-const sha256 = (bytes: Uint8Array): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 /** Self-owned Mach-O headers; lipo reads these bytes without executing the target. */
 export const createArmSliceFixture = async () => {
@@ -97,7 +94,7 @@ export const expectArmSliceExtraction = async (
   for (const slice of fixture.slices) {
     const relativePath = `slices/${slice.name}`;
     const bytes = await readFile(join(extracted.output_root, relativePath));
-    expect(bytes).toEqual(Buffer.from(slice.bytes));
+    expect(Buffer.compare(bytes, Buffer.from(slice.bytes))).toBe(0);
     expect(
       extracted.artifacts.find(
         ({ relative_path }) => relative_path === relativePath,
@@ -107,6 +104,6 @@ export const expectArmSliceExtraction = async (
       bytes_written: slice.bytes.length,
     });
   }
-  expect(await readFile(fixture.path)).toEqual(fixture.bytes);
+  expect(Buffer.compare(await readFile(fixture.path), fixture.bytes)).toBe(0);
   return extracted.manifest;
 };

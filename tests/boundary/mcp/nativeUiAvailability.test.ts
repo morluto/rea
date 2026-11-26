@@ -11,8 +11,9 @@ import type {
   AnalysisClient,
   AnalysisProvider,
   CapabilityDescriptor,
-} from "../../../src/application/AnalysisProvider.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+  AnalysisOperation,
+} from "../../../src/ports/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -27,9 +28,9 @@ import { nativeInvestigationTraceSchema } from "../../../src/domain/native/nativ
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { err, ok, type Result } from "../../../src/domain/result.js";
-import type { AnalysisOperation } from "../../../src/application/AnalysisProvider.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { createFixtureProviderIdentity } from "../../fixtures/analysisExecution.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createSessionMcpHarness } from "./sessionMcpHarness.js";
@@ -55,11 +56,7 @@ afterEach(async () => {
   await Promise.all(resources.splice(0).map((resource) => resource.close()));
 });
 
-const identity = {
-  id: "fixture",
-  name: "Fixture analysis provider",
-  version: "1",
-};
+const identity = createFixtureProviderIdentity();
 const controllerName = "BuildViewController";
 const selector = "buildTapped:";
 const handlerAddress = "0x1000";

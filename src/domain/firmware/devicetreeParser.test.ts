@@ -1,0 +1,475 @@
+import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
+import {
+  DEVICETREE_READ_BUDGETS,
+  devicetreeSchema,
+  inspectDevicetreeInputSchema,
+} from "./devicetree.js";
+import { devicetreeLimitFailure, parseDevicetree } from "./devicetreeParser.js";
+import {
+  cells,
+  devicetreeFixture,
+  emptyStringsAtReservationBoundaryFixture,
+  type FixtureNode,
+} from "./devicetree.fixture.js";
+const parse = (b: Buffer, limits = {}) =>
+  parseDevicetree(
+    b,
+    {
+      path: "/board.dtb",
+      bytes: b.length,
+      sha256: createHash("sha256").update(b).digest("hex"),
+    },
+    inspectDevicetreeInputSchema.parse({ path: "/board.dtb", ...limits }),
+  ).report;
+describe("flattened devicetree", () => {
+  it.each([16, 17])(
+    "decodes v%s with derived facts and unresolved references",
+    (version) => {
+      const report = devicetreeSchema.parse(
+        parse(devicetreeFixture(undefined, version)),
+      );
+      expect(report.summary).toMatchObject({
+        compatible: ["test,board"],
+        model: "Test board",
+        bootargs: "console=ttyS0",
+        aliases: [{ name: "serial0", path: "/serial@1000" }],
+      });
+      expect(report.reservations[0]).toMatchObject({
+        address: "0x80000000",
+        size: "0x1000",
+      });
+      expect(
+        report.nodes
+          .find((n) => n.path === "/serial@1000")
+          ?.properties.find((p) => p.name === "reg")?.derived.reg,
+      ).toEqual([{ address: "0x1000", size: "0x100" }]);
+      expect(report.references.map((r) => r.target)).toEqual([
+        null,
+        "/serial@1000",
+      ]);
+    },
+  );
+  it.each([
+    ["truncated header", (b: Buffer) => b.subarray(0, 32)],
+    [
+      "overlapping blocks",
+      (b: Buffer) => {
+        b.writeUInt32BE(72, 12);
+        return b;
+      },
+    ],
+    [
+      "unterminated node",
+      (b: Buffer) => {
+        b.fill(65, 76, b.readUInt32BE(12));
+        return b;
+      },
+    ],
+    [
+      "bad string offset",
+      (b: Buffer) => {
+        b.writeUInt32BE(0xffffffff, 88);
+        return b;
+      },
+    ],
+    [
+      "misaligned structure",
+      (b: Buffer) => {
+        b.writeUInt32BE(73, 8);
+        return b;
+      },
+    ],
+    [
+      "missing end",
+      (b: Buffer) => {
+        b.writeUInt32BE(4, b.readUInt32BE(12) - 4);
+        return b;
+      },
+    ],
+  ] as const)("rejects %s", (_name, mutate) =>
+    expect(() => parse(mutate(devicetreeFixture()))).toThrow(),
+  );
+  it.each([16, 17])(
+    "checks padding and required closing tokens before the v%s property limit",
+    (version) => {
+      const valid = devicetreeFixture(
+        {
+          name: "",
+          properties: { first: Buffer.from([0]), second: Buffer.from([1]) },
+        },
+        version,
+      );
+      expect(() => parse(valid, { max_properties: 1 })).toThrow(
+        "max_properties",
+      );
+      expect(
+        parse(valid, { max_properties: 2 }).nodes[0]?.properties,
+      ).toHaveLength(2);
+
+      const structureEnd = valid.readUInt32BE(12);
+      for (const removed of [4, 11]) {
+        // Remove END or padding plus closing tokens from the structure,
+        // preserving the separately declared string table.
+        const end = structureEnd - removed;
+        const truncated = Buffer.concat([
+          valid.subarray(0, end),
+          valid.subarray(structureEnd),
+        ]);
+        truncated.writeUInt32BE(truncated.length, 4);
+        truncated.writeUInt32BE(end, 12);
+        if (version === 17)
+          truncated.writeUInt32BE(end - valid.readUInt32BE(8), 36);
+        expect(() => parse(truncated, { max_properties: 1 })).toThrow(
+          "Truncated FDT structure token or property",
+        );
+      }
+    },
+  );
+
+  it("bounds depth, nodes and properties", () => {
+    let root: FixtureNode = { name: "leaf" };
+    for (let i = 0; i < 10; i++) root = { name: `n${i}`, children: [root] };
+    expect(() =>
+      parse(devicetreeFixture({ name: "", children: [root] }), {
+        max_depth: 4,
+      }),
+    ).toThrow("max_depth");
+    expect(() => parse(devicetreeFixture(), { max_nodes: 2 })).toThrow(
+      "max_nodes",
+    );
+    expect(() => parse(devicetreeFixture(), { max_properties: 2 })).toThrow(
+      "max_properties",
+    );
+  });
+  it("bounds raw previews and preserves ambiguous values", () => {
+    const report = parse(
+      devicetreeFixture({
+        name: "",
+        properties: { opaque: Buffer.alloc(500), model: cells(1) },
+      }),
+    );
+    expect(report.nodes[0]?.properties[0]).toMatchObject({
+      bytes: 500,
+      truncated: true,
+      hex: "00".repeat(256),
+    });
+    expect(report.summary.model).toBeNull();
+  });
+});
+it("keeps multi-cell addresses exact and supports zero size cells", () => {
+  const r = parse(
+    devicetreeFixture({
+      name: "",
+      properties: { "#address-cells": cells(2), "#size-cells": cells(0) },
+      children: [
+        { name: "device", properties: { reg: cells(0xfedcba98, 0x76543210) } },
+      ],
+    }),
+  );
+  expect(r.nodes[1]?.properties[0]?.derived.reg).toEqual([
+    { address: "0xfedcba9876543210", size: null },
+  ]);
+});
+it("does not guess malformed reg tuples or duplicate phandle targets", () => {
+  const r = parse(
+    devicetreeFixture({
+      name: "",
+      children: [
+        { name: "a", properties: { phandle: cells(1), reg: cells(1) } },
+        {
+          name: "b",
+          properties: { phandle: cells(1), "interrupt-parent": cells(1) },
+        },
+      ],
+    }),
+  );
+  expect(r.references[0]?.target).toBeNull();
+  expect(
+    r.nodes[1]?.properties.find((p) => p.name === "reg")?.derived.reg,
+  ).toBeNull();
+  expect(r.limitations.some((s) => s.includes("reg at /a"))).toBe(true);
+});
+it("leaves conflicting phandle declarations unresolved", () => {
+  const r = parse(
+    devicetreeFixture({
+      name: "",
+      children: [
+        {
+          name: "same",
+          properties: { phandle: cells(3), "linux,phandle": cells(3) },
+        },
+        {
+          name: "split",
+          properties: { phandle: cells(1), "linux,phandle": cells(2) },
+        },
+        {
+          name: "consumer",
+          properties: {
+            "interrupt-parent": cells(1),
+            "msi-parent": cells(2),
+            "remote-endpoint": cells(3),
+          },
+        },
+      ],
+    }),
+  );
+  expect(r.references.map((ref) => [ref.phandle, ref.target])).toEqual([
+    [1, null],
+    [2, null],
+    [3, "/same"],
+  ]);
+  expect(r.limitations.filter((s) => s.includes("conflicts"))).toEqual([
+    expect.stringMatching(
+      /\/split.*conflicts.*linux,phandle.*0x1.*0x2.*unresolved/iu,
+    ),
+  ]);
+});
+it.each([
+  ["short", Buffer.from([0, 0])],
+  ["multiple cells", cells(1, 2)],
+])(
+  "does not use a legacy phandle when the canonical value is %s",
+  (_name, canonical) => {
+    const r = parse(
+      devicetreeFixture({
+        name: "",
+        children: [
+          {
+            name: "target",
+            properties: { phandle: canonical, "linux,phandle": cells(3) },
+          },
+          { name: "consumer", properties: { "interrupt-parent": cells(3) } },
+        ],
+      }),
+    );
+    expect(r.references).toMatchObject([
+      { source: "/consumer", phandle: 3, target: null },
+    ]);
+    expect(r.nodes[1]?.properties[0]).toMatchObject({
+      name: "phandle",
+      bytes: canonical.length,
+      hex: canonical.toString("hex"),
+      derived: { cells: null },
+    });
+    expect(r.limitations).toContainEqual(
+      expect.stringMatching(
+        /phandle.*\/target.*not a single cell.*unresolved/iu,
+      ),
+    );
+  },
+);
+it.each([
+  ["empty", Buffer.alloc(0)],
+  ["short", Buffer.from([0, 0])],
+  ["multiple cells", cells(1, 2)],
+])(
+  "reports a malformed linux,phandle (%s) and keeps canonical phandle unresolved",
+  (_name, legacy) => {
+    const r = parse(
+      devicetreeFixture({
+        name: "",
+        children: [
+          {
+            name: "target",
+            properties: { phandle: cells(3), "linux,phandle": legacy },
+          },
+          {
+            name: "legacy_only",
+            properties: { "linux,phandle": legacy },
+          },
+          { name: "consumer", properties: { "interrupt-parent": cells(3) } },
+        ],
+      }),
+    );
+    expect(r.references).toMatchObject([
+      { source: "/consumer", phandle: 3, target: null },
+    ]);
+    expect(r.nodes[1]?.properties[1]).toMatchObject({
+      name: "linux,phandle",
+      bytes: legacy.length,
+      hex: legacy.toString("hex"),
+      derived: { cells: null },
+    });
+    expect(r.limitations).toContainEqual(
+      expect.stringMatching(
+        /linux,phandle.*\/target.*not a single cell.*unresolved/iu,
+      ),
+    );
+    expect(r.limitations).toContainEqual(
+      expect.stringMatching(
+        /linux,phandle.*\/legacy_only.*not a single cell.*unresolved/iu,
+      ),
+    );
+  },
+);
+it("reports both limitations when phandle and linux,phandle are both malformed", () => {
+  const r = parse(
+    devicetreeFixture({
+      name: "",
+      children: [
+        {
+          name: "both_bad",
+          properties: {
+            phandle: Buffer.from([0, 1]),
+            "linux,phandle": cells(1, 2),
+          },
+        },
+      ],
+    }),
+  );
+  expect(r.limitations).toContainEqual(
+    expect.stringMatching(
+      /^phandle at \/both_bad is not a single cell; this node's reference identity remains unresolved\.$/u,
+    ),
+  );
+  expect(r.limitations).toContainEqual(
+    expect.stringMatching(
+      /^linux,phandle at \/both_bad is not a single cell; this node's reference identity remains unresolved\.$/u,
+    ),
+  );
+});
+it("resolves a legacy phandle only when the canonical property is absent", () => {
+  const r = parse(
+    devicetreeFixture({
+      name: "",
+      children: [
+        { name: "legacy", properties: { "linux,phandle": cells(3) } },
+        { name: "canonical", properties: { phandle: cells(4) } },
+        {
+          name: "consumer",
+          properties: {
+            "interrupt-parent": cells(3),
+            "remote-endpoint": cells(4),
+          },
+        },
+      ],
+    }),
+  );
+  expect(r.references.map((ref) => [ref.phandle, ref.target])).toEqual([
+    [3, "/legacy"],
+    [4, "/canonical"],
+  ]);
+});
+it("rejects unterminated reservations and unknown tokens", () => {
+  const reservation = devicetreeFixture();
+  reservation.fill(1, 56, 72);
+  expect(() => parse(reservation)).toThrow("reservation");
+  const token = devicetreeFixture();
+  token.writeUInt32BE(0x12345678, 72);
+  expect(() => parse(token)).toThrow("Unknown FDT token");
+});
+it.each([
+  [16, 0],
+  [16, 44],
+  [16, 56],
+  [16, 60],
+  [16, 72],
+  [17, 0],
+  [17, 44],
+  [17, 56],
+  [17, 60],
+  [17, 72],
+] as const)(
+  "accepts a v%s empty strings block at offset %s",
+  (version, offset) => {
+    const bytes = emptyStringsAtReservationBoundaryFixture(version);
+    bytes.writeUInt32BE(offset, 12);
+    expect(parse(bytes)).toMatchObject({
+      header: { off_dt_strings: offset, size_dt_strings: 0 },
+      nodes: [{ path: "/" }],
+      reservations: [],
+    });
+  },
+);
+it.each([16, 17] as const)(
+  "rejects an empty strings offset beyond totalsize in v%s",
+  (version) => {
+    const bytes = emptyStringsAtReservationBoundaryFixture(version);
+    bytes.writeUInt32BE(bytes.length + 1, 12);
+    expect(() => parse(bytes)).toThrow("FDT block outside totalsize");
+  },
+);
+it("bounds expansion of repeated paths before allocation", () => {
+  const longName = "a".repeat(4096);
+  let node: FixtureNode = { name: longName };
+  for (let i = 0; i < 100; i++) node = { name: longName, children: [node] };
+  expect(() =>
+    parse(devicetreeFixture({ name: "", children: [node] }), {
+      max_depth: 256,
+    }),
+  ).toThrow("max_decoded_bytes");
+});
+it.each(["compatible", "status"])(
+  "bounds NUL-heavy %s string-list expansion",
+  (name) => {
+    const bytes = devicetreeFixture({
+      name: "",
+      properties: { [name]: Buffer.alloc(6 * 1024 * 1024) },
+    });
+    expect(() => parse(bytes, { max_file_bytes: 16777216 })).toThrow(
+      devicetreeLimitFailure(
+        "max_decoded_bytes",
+        DEVICETREE_READ_BUDGETS.max_decoded_bytes.default_value,
+      ),
+    );
+  },
+);
+it("accounts for string values serialized again in the summary", () => {
+  const value = Buffer.alloc(6 * 1024 * 1024, 0x22);
+  value[value.length - 1] = 0;
+  const child = { name: "device", properties: { compatible: value } };
+  const report = parse(devicetreeFixture({ name: "", children: [child] }), {
+    max_file_bytes: 16777216,
+  });
+  expect(report.nodes[1]?.properties[0]?.derived.strings?.[0]?.length).toBe(
+    value.length - 1,
+  );
+  expect(() =>
+    parse(devicetreeFixture({ ...child, name: "" }), {
+      max_file_bytes: 16777216,
+    }),
+  ).toThrow(
+    devicetreeLimitFailure(
+      "max_decoded_bytes",
+      DEVICETREE_READ_BUDGETS.max_decoded_bytes.default_value,
+    ),
+  );
+  expect(() =>
+    parse(devicetreeFixture({ ...child, name: "" }), {
+      max_file_bytes: 16777216,
+      max_decoded_bytes: 64 * 1024 * 1024,
+    }),
+  ).not.toThrow();
+});
+it("retains undecodable alias identities and labels the summary derived", () => {
+  const report = parse(
+    devicetreeFixture({
+      name: "",
+      children: [
+        {
+          name: "aliases",
+          properties: { serial0: Buffer.from("unterminated") },
+        },
+      ],
+    }),
+  );
+  expect(report.summary).toMatchObject({
+    confidence: "derived",
+    aliases: [{ name: "serial0", path: null }],
+  });
+});
+it("bounds repeated reference paths before Evidence serialization", () => {
+  const bytes = devicetreeFixture({
+    name: "",
+    children: [
+      { name: "target".repeat(1400), properties: { phandle: cells(1) } },
+      ...Array.from({ length: 2000 }, (_, i) => ({
+        name: `consumer${i}`,
+        properties: { "interrupt-parent": cells(1) },
+      })),
+    ],
+  });
+  expect(bytes.length).toBeLessThan(100_000);
+  expect(() => parse(bytes)).toThrow("max_decoded_bytes");
+});

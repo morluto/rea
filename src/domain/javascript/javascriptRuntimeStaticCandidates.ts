@@ -1,3 +1,8 @@
+import { appendToMapList } from "../appendToMapList.js";
+import {
+  isJavaScriptModuleUnit,
+  isJavaScriptSourceModule,
+} from "./javascriptModuleUnits.js";
 import { posix, win32 } from "node:path";
 
 import type { ApplicationNode } from "./javascriptApplicationGraphSchemas.js";
@@ -156,19 +161,15 @@ const candidateCategory = (
 ): StaticRuntimeCandidate["category"] | null => {
   if (node.kind === "electron-renderer") return "renderer";
   if (
-    node.kind === "javascript-asset" ||
-    (node.kind === "javascript-module" && !isStaticSourceModule(node))
+    isJavaScriptModuleUnit(node) &&
+    (node.kind === "javascript-asset" ||
+      (node.kind === "javascript-module" && !isJavaScriptSourceModule(node)))
   )
     return "javascript";
   if (node.kind === "worker") return "worker";
   if (node.kind === "service-worker") return "service-worker";
   return null;
 };
-
-const isStaticSourceModule = (node: ApplicationNode): boolean =>
-  node.observations.some(
-    ({ properties }) => properties.semantic_role === "source-module",
-  );
 
 const indexStaticPaths = (
   graph: JavaScriptApplicationGraph,
@@ -181,10 +182,7 @@ const indexStaticPaths = (
     if (edge.relation !== "maps_to") continue;
     const target = nodes.get(edge.target_node_id);
     if (target === undefined) continue;
-    const related = relatedBySource.get(edge.source_node_id);
-    if (related === undefined)
-      relatedBySource.set(edge.source_node_id, [target]);
-    else related.push(target);
+    appendToMapList(relatedBySource, edge.source_node_id, target);
   }
   return new Map(
     graph.nodes.map((node) => [

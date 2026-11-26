@@ -24,7 +24,7 @@ const ambiguousGgmlType = (id: number, candidates: string): GgmlType => [
   },
 ];
 
-/** Modern names/sizes: ggml da8e2a54 enum and block sizeof assertions.
+/** Modern names/sizes: ggml 57e2c2ca (v0.29.0) enum and block sizeof assertions.
  * Historical collisions: llama.cpp b1500/b1803/b1871/b2100/b2172/b2221/
  * b2253/b2275/b2300. Their GGUF v3 / quantization v2 do not select a layout.
  * A common row multiple is necessary, but need not be a known storage block.
@@ -71,12 +71,17 @@ const GGML_TYPES: Readonly<Record<number, GgmlType>> = {
   28: ["F64", 1, 8],
   29: ["IQ1_M", 256, 56],
   30: ["BF16", 1, 2],
+  // Interleaved Q4_0 types later removed from ggml; see llama.cpp b4000 (c02e5ab2).
+  31: ["Q4_0_4_4", 32, 18],
+  32: ["Q4_0_4_8", 32, 18],
+  33: ["Q4_0_8_8", 32, 18],
   34: ["TQ1_0", 256, 54],
   35: ["TQ2_0", 256, 66],
   39: ["MXFP4", 32, 17],
   40: ["NVFP4", 64, 36],
   41: ["Q1_0", 128, 18],
   42: ["Q2_0", 64, 18],
+  43: ["F8_E4M3", 1, 1],
 };
 
 export const ggmlType = (id: number): GgmlType | undefined => GGML_TYPES[id];

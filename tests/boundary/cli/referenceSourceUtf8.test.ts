@@ -53,14 +53,16 @@ cliTest(
       {
         path: "comment.ts",
         parser: "utf-8",
-        reason:
-          "Source bytes are not valid UTF-8; import targets were not parsed.",
+        reason: expect.stringMatching(
+          /not valid UTF-8.*import targets.*not parsed/i,
+        ),
       },
       {
         path: "invalid.mjs",
         parser: "utf-8",
-        reason:
-          "Source bytes are not valid UTF-8; import targets were not parsed.",
+        reason: expect.stringMatching(
+          /not valid UTF-8.*import targets.*not parsed/i,
+        ),
       },
     ]);
     expect(graph.relationships).toEqual([
@@ -185,8 +187,11 @@ cliTest.skipIf(process.platform === "win32")(
       }),
     );
     expect(
-      await readlink(join(root, "alias.ts"), { encoding: "buffer" }),
-    ).toEqual(rawTarget);
+      Buffer.compare(
+        await readlink(join(root, "alias.ts"), { encoding: "buffer" }),
+        rawTarget,
+      ),
+    ).toBe(0);
   },
 );
 

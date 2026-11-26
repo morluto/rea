@@ -1,3 +1,4 @@
+import { Budget } from "../domain/budget.js";
 import {
   noRuntimeOverrideSentence,
   selectedCdpCommandTimeoutMs,
@@ -15,14 +16,11 @@ export const cdpScriptSourceDeadlineOmissionReason = (
 ): string =>
   `script source was omitted because the ${String(timeoutMs)} ms command_timeout_ms source collection deadline elapsed (deadlineExpired). This is not the caller observation window. ${noRuntimeOverrideSentence(`The ${String(WEB_RUNTIME_LIMITS.sourceBytes)}-byte source budget stays fixed.`, "command_timeout_ms")}`;
 
-export const CDP_SCRIPT_SOURCE_DEADLINE_OMISSION_REASON =
-  cdpScriptSourceDeadlineOmissionReason(selectedCdpCommandTimeoutMs(undefined));
-
 /** Shared admission for source text retained from passive CDP script reads. */
 export class CdpScriptSourceBudget {
   readonly #deadline: ProviderStartupDeadline;
   readonly commandTimeoutMs: number;
-  #retainedBytes = 0;
+  readonly #retained = new Budget(WEB_RUNTIME_LIMITS.sourceBytes);
 
   constructor(
     signal?: AbortSignal,
@@ -42,11 +40,7 @@ export class CdpScriptSourceBudget {
 
   /** Admit exact UTF-8 source bytes before building or retaining its artifact. */
   admit(text: string): boolean {
-    const bytes = Buffer.byteLength(text, "utf8");
-    if (bytes > WEB_RUNTIME_LIMITS.sourceBytes - this.#retainedBytes)
-      return false;
-    this.#retainedBytes += bytes;
-    return true;
+    return this.#retained.tryCharge(Buffer.byteLength(text, "utf8"));
   }
 
   dispose(): void {

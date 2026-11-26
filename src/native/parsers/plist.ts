@@ -1,50 +1,56 @@
-import { z } from "zod";
-import { parseBinary } from "plist";
+import { decodeBinaryPropertyList } from "../../domain/apple/binaryPlistMaterializer.js";
+import { parseLastWinsJson } from "../../domain/jsonDuplicateMember.js";
+import {
+  plistDuplicateKeyLimitations,
+  type PlistDuplicateKeys,
+} from "../../domain/apple/plistDuplicateKeys.js";
 
 import {
   AnalysisOutputError,
-  AnalysisResourceConstraintError,
+  type AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
+import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
-import { MAX_JSON_DEPTH, type JsonValue } from "../../domain/jsonValue.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 import {
   binaryDatePrecisionOverlapLimitation,
   negativeZeroReal,
   negativeZeroRealLimitation,
   nonFiniteRealLimitation,
   projectPlistValue,
+  MAX_NATIVE_PLIST_NESTING_DEPTH,
   unknownDateLimitation,
   unknownScalarLimitation,
   type ProjectedPlistValue,
   PlistNestingLimitError,
 } from "../../domain/apple/plistValue.js";
+import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
 import {
-  omitPrototypeKeys,
-  omittedPrototypeKeysLimitation,
-  parseXmlPropertyList,
-} from "../../domain/propertyListKeys.js";
+  malformedInput,
+  type ParseFailureError,
+} from "../../domain/parseFailure.js";
+import { InternalInvariantError } from "../../domain/internalInvariant.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
 import {
   incompletePlistNumberLimitation,
   createPlistNumberProjection,
+  resolvePlistNumberSource,
   type PlistNumberLiterals,
 } from "../../domain/apple/plistNumbers.js";
-import {
-  decodeBinaryPlistScalars,
-  scanBinaryPlistScalars,
-  UnsupportedBinaryPlistUidError,
-} from "../../artifacts/apple/PlistScalars.js";
+import { UnsupportedBinaryPlistUidError } from "../../domain/apple/plistScalars.js";
 import {
   estimateBinaryPlistExpansion,
+  isPlistDecodeBudgetFailure,
   preflightPropertyListDecode,
-  PropertyListDecodeBudgetFailure,
-} from "../../artifacts/apple/PropertyListDecodeBudget.js";
+} from "../../domain/apple/propertyListDecodeBudget.js";
 import { hasBinaryPlistSignature } from "../../domain/apple/appleArchiveFormat.js";
 import {
   decodeXmlPlistText,
   XmlPlistTextDecodeError,
 } from "../../domain/propertyListXmlText.js";
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 /**
  * Input ceiling matches native command output; projection is bounded separately.
@@ -54,16 +60,12 @@ export const MAX_NATIVE_PLIST_BYTES = 64 * 1024 * 1024;
 /** Provisional decode allowance. This release has no runtime override. */
 const MAX_NATIVE_PLIST_DECODE_BYTES = 64 * 1024 * 1024;
 
-// Reserve one level for typed scalar fields and one for normalized_result.value.
-export const MAX_NATIVE_PLIST_NESTING_DEPTH = MAX_JSON_DEPTH - 2;
-
-const mebibytes = (bytes: number): string =>
-  `${String(bytes / (1024 * 1024))} MiB`;
-
-/** Recovery name for the fixed source-size ceiling. */
-export const NATIVE_PLIST_INPUT_ALLOWANCE = `the fixed ${mebibytes(MAX_NATIVE_PLIST_BYTES)} (${String(MAX_NATIVE_PLIST_BYTES)}-byte) native plist input allowance (no runtime override)`;
-
-const plistObject = z.record(z.string(), z.unknown());
+/** Recovery for the fixed source-size ceiling. */
+export const nativePlistInputAllowance = () =>
+  fixedAllowanceOptions("The native plist input allowance", "input", {
+    limit: MAX_NATIVE_PLIST_BYTES,
+    unit: "bytes",
+  });
 
 /** Stable bundle metadata projected from one plist value. */
 export interface PlistBundleMetadata {
@@ -103,29 +105,46 @@ export interface PlistJsonParseAttempt {
 
 type PlistParseError = AnalysisOutputError | AnalysisResourceConstraintError;
 
-const plistNestingError = (cause: unknown): AnalysisResourceConstraintError =>
-  new AnalysisResourceConstraintError(
+const plistNestingError = (
+  cause: PlistNestingLimitError,
+): AnalysisResourceConstraintError =>
+  parseLimitConstraint(
     "inspect_plist",
     "memory",
-    cause instanceof Error ? cause.message : String(cause),
-    { maximum_nesting_depth: MAX_NATIVE_PLIST_NESTING_DEPTH },
-    {
-      cause,
-      ...fixedAllowanceOptions(
-        `The ${String(MAX_NATIVE_PLIST_NESTING_DEPTH)}-level native plist nesting allowance (no runtime override)`,
-        "parser",
-      ),
-    },
+    cause,
+    fixedAllowanceOptions("The native plist nesting allowance", "parser", {
+      limit: MAX_NATIVE_PLIST_NESTING_DEPTH,
+      unit: "levels",
+    }),
   );
 
-const plistOutputError = (cause: unknown, reason?: string): PlistParseError =>
-  cause instanceof PlistNestingLimitError
+const plistDecodeBudgetError = (
+  cause: ParseFailureError<"limit">,
+  encoding: "XML" | "binary",
+): AnalysisResourceConstraintError =>
+  parseLimitConstraint(
+    "inspect_plist",
+    "memory",
+    cause,
+    fixedAllowanceOptions(
+      `The native ${encoding} plist decode allowance`,
+      "parser",
+      { limit: MAX_NATIVE_PLIST_DECODE_BYTES, unit: "bytes" },
+    ),
+  );
+
+/**
+ * Project a decode failure. A broken internal assumption is a REA defect, not
+ * a plist fault, so it is rethrown rather than reported as plist output.
+ */
+const plistOutputError = (cause: unknown, reason?: string): PlistParseError => {
+  if (cause instanceof InternalInvariantError) throw cause;
+  return cause instanceof PlistNestingLimitError
     ? plistNestingError(cause)
-    : new AnalysisOutputError(
-        "inspect_plist",
-        reason ?? (cause instanceof Error ? cause.message : String(cause)),
-        { cause },
-      );
+    : new AnalysisOutputError("inspect_plist", reason ?? errorMessage(cause), {
+        cause,
+      });
+};
 
 /**
  * Read plutil JSON once, retaining exact unsafe integral literals. Optional XML
@@ -139,7 +158,7 @@ export const readPlistJson = (output: string): PlistJsonParseAttempt => {
     // plutil output can carry a UTF-8 BOM, which JSON.parse rejects outright.
     const text = output.replace(/^\uFEFF/u, "");
     decoded = ok(
-      JSON.parse(
+      parseLastWinsJson(
         text,
         (
           _key: string,
@@ -184,9 +203,7 @@ export const readPlistJsonSource = (
   bytes: Buffer,
 ): PlistJsonParseAttempt | undefined => {
   try {
-    return readPlistJson(
-      new TextDecoder("utf-8", { fatal: true }).decode(bytes),
-    );
+    return readPlistJson(decodeStrictUtf8(bytes, "strip-signature"));
   } catch {
     return undefined;
   }
@@ -209,17 +226,17 @@ const projectPlistJsonAttempt = (
       return negativeZeroReal();
     }
     if (item instanceof PlistJsonIntegerLiteral) {
-      const integer =
-        literals?.incomplete === false &&
-        literals.integers.get(item.value)?.has(item.digits) === true;
-      const real =
-        literals?.incomplete === false && literals.reals.has(item.value);
-      if (integer && !real) {
+      const source = resolvePlistNumberSource(
+        item.value,
+        literals,
+        item.digits,
+      );
+      if (source.kind === "integer") {
         exactIntegerCount += 1;
-        return { $plist_type: "integer", decimal: item.digits };
+        return { $plist_type: "integer", decimal: source.decimal };
       }
       // An integral <real> decodes exactly; only its JSON spelling is integral.
-      if (real && !integer) return item.value;
+      if (source.kind === "real") return item.value;
       ambiguousNumberCount += 1;
       return item.value;
     }
@@ -234,7 +251,7 @@ const projectPlistJsonAttempt = (
       );
     return item;
   };
-  let decoded: ReturnType<typeof omitPrototypeKeys>;
+  let value: unknown;
   try {
     // Preserve XML-before-JSON failure precedence during final projection.
     literals =
@@ -243,12 +260,10 @@ const projectPlistJsonAttempt = (
         : parseXmlPropertyList(xmlConversion, MAX_NATIVE_PLIST_NESTING_DEPTH)
             .numberLiterals;
     if (!attempt.ok) return err(plistOutputError(attempt.error));
-    // Numeric limitations also account for values under omitted source keys.
-    decoded = omitPrototypeKeys(project(attempt.value, 0));
+    value = project(attempt.value, 0);
   } catch (cause: unknown) {
     return err(plistOutputError(cause));
   }
-  const { value } = decoded;
   return ok({
     value,
     bundle: projectPlistBundle(value),
@@ -258,7 +273,6 @@ const projectPlistJsonAttempt = (
         ? [incompletePlistNumberLimitation]
         : []),
       ...numberLimitations(exactIntegerCount, ambiguousNumberCount),
-      ...prototypeKeyLimitations(decoded.omittedPrototypeKeys),
     ],
   });
 };
@@ -298,22 +312,8 @@ export const parsePlistXmlSource = (
     return projectPlistXml(text);
   } catch (cause: unknown) {
     if (cause instanceof XmlPlistTextDecodeError) return err(cause);
-    if (cause instanceof PropertyListDecodeBudgetFailure)
-      return err(
-        new AnalysisResourceConstraintError(
-          "inspect_plist",
-          "memory",
-          cause.message,
-          { maximum_decoded_bytes: MAX_NATIVE_PLIST_DECODE_BYTES },
-          {
-            cause,
-            ...fixedAllowanceOptions(
-              `The ${mebibytes(MAX_NATIVE_PLIST_DECODE_BYTES)} (${String(MAX_NATIVE_PLIST_DECODE_BYTES)}-byte) native XML plist decode allowance (no runtime override)`,
-              "parser",
-            ),
-          },
-        ),
-      );
+    if (isPlistDecodeBudgetFailure(cause))
+      return err(plistDecodeBudgetError(cause, "XML"));
     return err(plistOutputError(cause));
   }
 };
@@ -323,15 +323,15 @@ const projectPlistXml = (
   failureReason?: string,
 ): Result<ParsedPlist, PlistParseError> => {
   let projected: ProjectedPlistValue;
-  let omittedPrototypeKeys: number;
   let literals: PlistNumberLiterals;
+  let duplicateKeys: PlistDuplicateKeys;
   try {
     const decoded = parseXmlPropertyList(
       output,
       MAX_NATIVE_PLIST_NESTING_DEPTH,
     );
-    omittedPrototypeKeys = decoded.omittedPrototypeKeys;
     literals = decoded.numberLiterals;
+    duplicateKeys = decoded.duplicateKeys;
     projected = projectPlistValue(
       decoded.value,
       undefined,
@@ -345,20 +345,14 @@ const projectPlistXml = (
   let exactIntegerCount = 0;
   let ambiguousNumberCount = 0;
   const value = mapJsonNumbers(projected.value, (item) => {
-    const decimals = literals.integers.get(item);
-    if (decimals === undefined) return item;
-    const [decimal] = decimals;
-    if (
-      literals.incomplete ||
-      decimals.size !== 1 ||
-      decimal === undefined ||
-      literals.reals.has(item)
-    ) {
+    if (!literals.integers.has(item)) return item;
+    const source = resolvePlistNumberSource(item, literals);
+    if (source.kind !== "integer") {
       ambiguousNumberCount += 1;
       return item;
     }
     exactIntegerCount += 1;
-    return { $plist_type: "integer", decimal };
+    return { $plist_type: "integer", decimal: source.decimal };
   });
   return ok({
     value,
@@ -367,7 +361,7 @@ const projectPlistXml = (
       ...projectedScalarLimitations(projected),
       ...(literals.incomplete ? [incompletePlistNumberLimitation] : []),
       ...numberLimitations(exactIntegerCount, ambiguousNumberCount),
-      ...prototypeKeyLimitations(omittedPrototypeKeys),
+      ...plistDuplicateKeyLimitations(duplicateKeys),
     ],
   });
 };
@@ -383,32 +377,27 @@ export const parsePlistBinary = (
 > => {
   try {
     if (!hasBinaryPlistSignature(bytes))
-      throw new TypeError("selected file does not have a binary plist header");
+      throw malformedInput(
+        "plist",
+        "selected file does not have a binary plist header",
+      );
     const expansion = estimateBinaryPlistExpansion(
       bytes,
       MAX_NATIVE_PLIST_DECODE_BYTES,
       {
         budget: "the native plist decode budget",
         numberProjection: true,
+        uidProjection: true,
         maximumDepth: MAX_NATIVE_PLIST_NESTING_DEPTH,
-        fail: (kind, message) =>
-          kind === "cycle"
-            ? new TypeError(
-                "binary plist object references form a cycle, which a property list cannot represent",
-              )
-            : new PropertyListDecodeBudgetFailure(kind, message),
       },
     );
-    const scalarMetadata = scanBinaryPlistScalars(bytes, expansion);
-    const decoded = parseBinary(
-      decodeBinaryPlistScalars(bytes, scalarMetadata, expansion),
-    );
+    const decoded = decodeBinaryPropertyList(bytes, expansion);
     const projected = projectPlistValue(
-      decoded,
+      decoded.value,
       undefined,
       MAX_NATIVE_PLIST_NESTING_DEPTH,
     );
-    const numbers = createPlistNumberProjection(scalarMetadata.literals);
+    const numbers = createPlistNumberProjection(decoded.numberLiterals);
     const value = numbers.project(projected.value);
     return ok({
       value,
@@ -423,47 +412,16 @@ export const parsePlistBinary = (
               ),
             ]),
         ...numbers.limitations(),
-        ...(expansion.binaryPrototypeKeyObserved
-          ? [omittedPrototypeKeysLimitation(null)]
-          : []),
+        ...plistDuplicateKeyLimitations(decoded.duplicateKeys),
       ],
     });
   } catch (cause: unknown) {
     if (cause instanceof UnsupportedBinaryPlistUidError) return err(cause);
-    if (
-      cause instanceof PlistNestingLimitError ||
-      (cause instanceof PropertyListDecodeBudgetFailure &&
-        cause.kind === "depth")
-    )
-      return err(plistNestingError(cause));
-    if (cause instanceof PropertyListDecodeBudgetFailure)
-      return err(
-        new AnalysisResourceConstraintError(
-          "inspect_plist",
-          "memory",
-          cause.message,
-          { maximum_decoded_bytes: MAX_NATIVE_PLIST_DECODE_BYTES },
-          {
-            cause,
-            ...fixedAllowanceOptions(
-              `The ${mebibytes(MAX_NATIVE_PLIST_DECODE_BYTES)} (${String(MAX_NATIVE_PLIST_DECODE_BYTES)}-byte) native binary plist decode allowance (no runtime override)`,
-              "parser",
-            ),
-          },
-        ),
-      );
-    return err(
-      new AnalysisOutputError(
-        "inspect_plist",
-        cause instanceof Error ? cause.message : String(cause),
-        { cause },
-      ),
-    );
+    if (isPlistDecodeBudgetFailure(cause))
+      return err(plistDecodeBudgetError(cause, "binary"));
+    return err(plistOutputError(cause));
   }
 };
-
-const prototypeKeyLimitations = (count: number): string[] =>
-  count === 0 ? [] : [omittedPrototypeKeysLimitation(count)];
 
 const projectedScalarLimitations = (
   projected: ProjectedPlistValue,
@@ -517,10 +475,13 @@ const mapJsonNumbers = (
 };
 
 const projectPlistBundle = (value: unknown): PlistBundleMetadata => {
-  const object = plistObject.safeParse(value);
+  const object =
+    value !== null && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : undefined;
   const field = (name: string): string | null => {
-    if (!object.success) return null;
-    const candidate = object.data[name];
+    if (object === undefined || !Object.hasOwn(object, name)) return null;
+    const candidate = object[name];
     return typeof candidate === "string" ? candidate : null;
   };
   return {

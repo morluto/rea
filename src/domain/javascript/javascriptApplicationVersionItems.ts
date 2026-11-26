@@ -1,11 +1,14 @@
+import { countValues } from "../valueCounts.js";
+import { appendToMapList } from "../appendToMapList.js";
 import { absenceClaimable, canonicalJson } from "../comparisonSemantics.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import type { Evidence } from "../evidence.js";
+import { evidenceFileTarget, type Evidence } from "../evidence.js";
 import type {
   ApplicationEdge,
   ApplicationNode,
 } from "./javascriptApplicationGraphSchemas.js";
+import { IPC_COVERAGE_LIMITED_PAIRING_BASIS } from "./javascriptApplicationGraphSchemas.js";
 import type { JavaScriptApplicationGraph } from "./javascriptApplicationGraph.js";
 import { javaScriptFileOccurrenceSchema } from "./javascriptArtifactFiles.js";
 import { applicationEndpointCorrespondence } from "./javascriptApplicationEndpointCorrespondence.js";
@@ -54,6 +57,7 @@ interface IndexedRelationship {
   readonly direction: "in" | "out";
   readonly relation: ApplicationEdge["relation"];
   readonly neighborId: string;
+  readonly coverageLimited: boolean;
 }
 
 interface RelationshipIndex {
@@ -151,7 +155,13 @@ const matchedItem = (
   context: ItemContext,
 ): ApplicationVersionComparisonItem => {
   const relationships = compareRelationships(pair, context);
-  const dimensions = changedDimensions(pair, relationships);
+  const sourceAnalysisUncertain =
+    hasUnexaminedSourceFile(pair.left) || hasUnexaminedSourceFile(pair.right);
+  const dimensions = changedDimensions(
+    pair,
+    relationships,
+    sourceAnalysisUncertain,
+  );
   const complete = graphsComplete(context);
   const ownEvidenceUncertain =
     ownPresenceUncertain(pair.left) || ownPresenceUncertain(pair.right);
@@ -164,6 +174,7 @@ const matchedItem = (
   // content, property, or relationship change.
   const completeChange =
     !ownEvidenceUncertain &&
+    !sourceAnalysisUncertain &&
     complete &&
     dimensions.some((dimension) => dimension !== "location");
   const status: ApplicationVersionComparisonItem["status"] =
@@ -171,12 +182,16 @@ const matchedItem = (
       ? "unknown"
       : observedChange || completeChange
         ? "changed"
-        : complete && !relationships.unresolved && !endpointTargetUncertain
+        : complete &&
+            !relationships.unresolved &&
+            !relationships.coverageLimited &&
+            !endpointTargetUncertain &&
+            !sourceAnalysisUncertain
           ? "unchanged"
           : "unknown";
   const finalDimensions = ownEvidenceUncertain
     ? []
-    : status === "unknown" && !complete
+    : status === "unknown" && (!complete || sourceAnalysisUncertain)
       ? [...dimensions, "coverage" as const]
       : dimensions;
   const semantic: ComparisonItemSemantic = {
@@ -193,6 +208,11 @@ const matchedItem = (
         ...ownComparisonLimitations(pair.right),
       ]),
       ...matchLimitations(pair),
+      ...(sourceAnalysisUncertain
+        ? [
+            "Source file analysis was not complete on both sides; retained file identity does not establish equality of unexamined facts.",
+          ]
+        : []),
       ...(status === "unknown" && !complete
         ? [
             "Incomplete graph coverage prevents a complete node-level conclusion.",
@@ -203,6 +223,11 @@ const matchedItem = (
             "Relationship target identity remains unresolved; equal node kinds do not establish cross-version alignment.",
           ]
         : []),
+      ...(relationships.coverageLimited
+        ? [
+            "Incomplete source coverage leaves some candidate relationships unconfirmed.",
+          ]
+        : []),
     ],
   };
   return itemWithId(semantic);
@@ -211,140 +236,95 @@ const matchedItem = (
 const unmatchedItem = (
   member: OneSidedNode,
   context: ItemContext,
-): ApplicationVersionComparisonItem =>
-  member.left === undefined
-    ? rightOnlyItem(member.right, member.candidateLeftNodeIds, context)
-    : leftOnlyItem(member.left, member.candidateRightNodeIds, context);
-
-const leftOnlyItem = (
-  node: ApplicationNode,
-  candidateNodeIds: readonly string[],
-  context: ItemContext,
 ): ApplicationVersionComparisonItem => {
-  const [firstCandidate, ...remainingCandidates] = candidateNodeIds;
+  const onLeft = member.left !== undefined;
+  const node = onLeft ? member.left : member.right;
+  const [first, ...rest] = onLeft
+    ? member.candidateRightNodeIds
+    : member.candidateLeftNodeIds;
   const common = {
     node_kind: node.kind,
-    evidence_links: itemEvidenceLinks(node, undefined, context),
+    evidence_links: itemEvidenceLinks(member.left, member.right, context),
   };
-  if (firstCandidate !== undefined)
+  if (first !== undefined) {
+    const candidates: [string, ...string[]] = [first, ...rest];
+    const empty: [] = [];
+    const ambiguous = {
+      status: "ambiguous",
+      basis: "none",
+      confidence: "unknown",
+    } as const;
     return itemWithId({
       ...common,
       status: "unknown",
-      left_node_id: node.node_id,
-      right_node_id: null,
-      match: {
-        status: "ambiguous",
-        basis: "none",
-        confidence: "unknown",
-        candidate_left_node_ids: [],
-        candidate_right_node_ids: [firstCandidate, ...remainingCandidates],
-      },
+      ...(onLeft
+        ? {
+            left_node_id: node.node_id,
+            right_node_id: null,
+            match: {
+              ...ambiguous,
+              candidate_left_node_ids: empty,
+              candidate_right_node_ids: candidates,
+            },
+          }
+        : {
+            left_node_id: null,
+            right_node_id: node.node_id,
+            match: {
+              ...ambiguous,
+              candidate_left_node_ids: candidates,
+              candidate_right_node_ids: empty,
+            },
+          }),
       dimensions: ["availability"],
       limitations: [
         ...ownComparisonLimitations(node),
         AMBIGUOUS_MATCH_LIMITATION,
       ],
     });
-  if (ownPresenceUncertain(node) || unresolvedEndpointTarget(node))
-    return itemWithId({
-      ...common,
-      status: "unknown",
-      left_node_id: node.node_id,
-      right_node_id: null,
-      match: unmatchedMatch(),
-      dimensions: ["availability"],
-      limitations: ownComparisonLimitations(node),
-    });
-  const endpointGap = oppositeEndpointUncertain(
-    node,
-    context.rightUnresolvedEndpointKinds,
-  );
-  const absenceObserved =
-    !endpointGap && absenceClaimable(context.rightGraph.coverage);
+  }
+  const dimensions: ApplicationVersionComparisonItem["dimensions"] = [
+    "availability",
+  ];
+  let absenceObserved = false;
+  let limitation: string | undefined;
+  if (!ownPresenceUncertain(node) && !unresolvedEndpointTarget(node)) {
+    const endpointGap = oppositeEndpointUncertain(
+      node,
+      onLeft
+        ? context.rightUnresolvedEndpointKinds
+        : context.leftUnresolvedEndpointKinds,
+    );
+    if (endpointGap) limitation = ENDPOINT_ABSENCE_LIMITATION;
+    else if (
+      absenceClaimable(
+        (onLeft ? context.rightGraph : context.leftGraph).coverage,
+      )
+    )
+      absenceObserved = true;
+    else {
+      dimensions.push("coverage");
+      limitation = INCOMPLETE_GRAPH_LIMITATION;
+    }
+  }
+  const limitations = ownComparisonLimitations(node);
+  if (limitation !== undefined) limitations.push(limitation);
   return itemWithId({
     ...common,
-    status: absenceObserved ? "removed" : "unknown",
-    left_node_id: node.node_id,
-    right_node_id: null,
+    ...(onLeft
+      ? ({
+          status: absenceObserved ? "removed" : "unknown",
+          left_node_id: node.node_id,
+          right_node_id: null,
+        } as const)
+      : ({
+          status: absenceObserved ? "added" : "unknown",
+          left_node_id: null,
+          right_node_id: node.node_id,
+        } as const)),
     match: unmatchedMatch(),
-    dimensions:
-      absenceObserved || endpointGap
-        ? ["availability"]
-        : ["availability", "coverage"],
-    limitations: [
-      ...ownComparisonLimitations(node),
-      ...(endpointGap
-        ? [ENDPOINT_ABSENCE_LIMITATION]
-        : absenceObserved
-          ? []
-          : [INCOMPLETE_GRAPH_LIMITATION]),
-    ],
-  });
-};
-
-const rightOnlyItem = (
-  node: ApplicationNode,
-  candidateNodeIds: readonly string[],
-  context: ItemContext,
-): ApplicationVersionComparisonItem => {
-  const [firstCandidate, ...remainingCandidates] = candidateNodeIds;
-  const common = {
-    node_kind: node.kind,
-    evidence_links: itemEvidenceLinks(undefined, node, context),
-  };
-  if (firstCandidate !== undefined)
-    return itemWithId({
-      ...common,
-      status: "unknown",
-      left_node_id: null,
-      right_node_id: node.node_id,
-      match: {
-        status: "ambiguous",
-        basis: "none",
-        confidence: "unknown",
-        candidate_left_node_ids: [firstCandidate, ...remainingCandidates],
-        candidate_right_node_ids: [],
-      },
-      dimensions: ["availability"],
-      limitations: [
-        ...ownComparisonLimitations(node),
-        AMBIGUOUS_MATCH_LIMITATION,
-      ],
-    });
-  if (ownPresenceUncertain(node) || unresolvedEndpointTarget(node))
-    return itemWithId({
-      ...common,
-      status: "unknown",
-      left_node_id: null,
-      right_node_id: node.node_id,
-      match: unmatchedMatch(),
-      dimensions: ["availability"],
-      limitations: ownComparisonLimitations(node),
-    });
-  const endpointGap = oppositeEndpointUncertain(
-    node,
-    context.leftUnresolvedEndpointKinds,
-  );
-  const absenceObserved =
-    !endpointGap && absenceClaimable(context.leftGraph.coverage);
-  return itemWithId({
-    ...common,
-    status: absenceObserved ? "added" : "unknown",
-    left_node_id: null,
-    right_node_id: node.node_id,
-    match: unmatchedMatch(),
-    dimensions:
-      absenceObserved || endpointGap
-        ? ["availability"]
-        : ["availability", "coverage"],
-    limitations: [
-      ...ownComparisonLimitations(node),
-      ...(endpointGap
-        ? [ENDPOINT_ABSENCE_LIMITATION]
-        : absenceObserved
-          ? []
-          : [INCOMPLETE_GRAPH_LIMITATION]),
-    ],
+    dimensions,
+    limitations,
   });
 };
 
@@ -458,6 +438,7 @@ const ownComparisonLimitations = (node: ApplicationNode): string[] => {
 const changedDimensions = (
   pair: ApplicationVersionNodePair,
   relationships: RelationshipComparison,
+  sourceAnalysisUncertain: boolean,
 ): ApplicationVersionComparisonItem["dimensions"] => {
   const dimensions: ApplicationVersionComparisonItem["dimensions"] = [];
   const leftContent = contentIdentity(pair.left);
@@ -468,13 +449,13 @@ const changedDimensions = (
     leftContent !== rightContent
   )
     dimensions.push("content");
-  if (
-    canonicalJson(locations(pair.left)) !== canonicalJson(locations(pair.right))
-  )
+  if (!sameStringList(locationKeys(pair.left), locationKeys(pair.right)))
     dimensions.push("location");
   if (
-    canonicalJson(properties(pair.left)) !==
-    canonicalJson(properties(pair.right))
+    !sameStringList(
+      propertyKeys(pair.left, sourceAnalysisUncertain),
+      propertyKeys(pair.right, sourceAnalysisUncertain),
+    )
   )
     dimensions.push("properties");
   if (relationships.different) dimensions.push("relationships");
@@ -494,39 +475,103 @@ const contentIdentity = (node: ApplicationNode): string | null => {
   return null;
 };
 
-const locations = (node: ApplicationNode) =>
+const sameStringList = (
+  left: readonly string[],
+  right: readonly string[],
+): boolean => {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1)
+    if (left[index] !== right[index]) return false;
+  return true;
+};
+
+const locationKeys = (node: ApplicationNode): string[] =>
   node.observations
     .map(({ evidence }) =>
-      evidence.location.available ? evidence.location.value : evidence.location,
+      canonicalJson(
+        evidence.location.available
+          ? evidence.location.value
+          : evidence.location,
+      ),
     )
-    .sort((left, right) =>
-      compareUnicodeCodePoints(canonicalJson(left), canonicalJson(right)),
-    );
+    .sort(compareUnicodeCodePoints);
 
-const properties = (node: ApplicationNode) =>
+const SOURCE_FILE_KINDS = new Set([
+  "javascript",
+  "html",
+  "json",
+  "package-json",
+  "source-map",
+]);
+
+const hasUnexaminedSourceFile = (node: ApplicationNode): boolean =>
+  node.observations.some(
+    ({ properties: values }) =>
+      typeof values.file_kind === "string" &&
+      SOURCE_FILE_KINDS.has(values.file_kind) &&
+      (values.text_status === "outside-analysis-scope" ||
+        values.text_status === "invalid-utf8" ||
+        (values.file_kind === "json" &&
+          "json_parse_status" in values &&
+          values.json_parse_status !== "included") ||
+        (values.file_kind === "package-json" &&
+          values.package_parse_status !== "included") ||
+        (values.file_kind === "javascript" &&
+          (("parse_status" in values && values.parse_status === null) ||
+            values.parse_status === "failed" ||
+            values.parse_status === "skipped" ||
+            values.parse_status === "partial"))),
+  );
+
+const UNCERTAIN_SOURCE_OMITTED_KEYS = new Set([
+  "text_status",
+  "parse_status",
+  "analysis_coverage",
+  "vendor_markers",
+  "json_parse_status",
+  "package_parse_status",
+  "json_top_level_keys",
+  "omitted_json_top_level_keys",
+]);
+
+const propertyKeys = (
+  node: ApplicationNode,
+  sourceAnalysisUncertain: boolean,
+): string[] =>
   node.observations
-    .map(({ label, properties: values, source_map_reference }) => ({
-      label,
-      properties: comparisonPropertyValues(values),
-      source_map_reference,
-    }))
-    .sort((left, right) =>
-      compareUnicodeCodePoints(canonicalJson(left), canonicalJson(right)),
-    );
+    .map(({ label, properties: values, source_map_reference }) =>
+      canonicalJson({
+        label,
+        properties: comparisonPropertyValues(values, sourceAnalysisUncertain),
+        source_map_reference,
+      }),
+    )
+    .sort(compareUnicodeCodePoints);
 
 const comparisonPropertyValues = (
   values: ApplicationNode["observations"][number]["properties"],
+  sourceAnalysisUncertain: boolean,
 ) => {
+  const comparable =
+    sourceAnalysisUncertain &&
+    typeof values.file_kind === "string" &&
+    SOURCE_FILE_KINDS.has(values.file_kind)
+      ? Object.fromEntries(
+          Object.entries(values).filter(
+            ([key]) => !UNCERTAIN_SOURCE_OMITTED_KEYS.has(key),
+          ),
+        )
+      : values;
   const occurrence = javaScriptFileOccurrenceSchema.safeParse(
-    values.file_occurrence,
+    comparable.file_occurrence,
   );
-  if (!occurrence.success) return values;
+  if (!occurrence.success) return comparable;
   // A containing artifact's digest locates this occurrence in one version;
   // sibling changes do not establish a change to this file's own facts.
   // Keep the occurrence's path and content digest comparable, and retain the
   // complete provenance record on the original observation.
   return {
-    ...values,
+    ...comparable,
     file_occurrence: {
       path: occurrence.data.path,
       sha256: occurrence.data.sha256,
@@ -538,22 +583,21 @@ const indexRelationships = (
   graph: JavaScriptApplicationGraph,
 ): RelationshipIndex => {
   const adjacency = new Map<string, IndexedRelationship[]>();
-  const add = (nodeId: string, relationship: IndexedRelationship): void => {
-    const existing = adjacency.get(nodeId);
-    if (existing === undefined) adjacency.set(nodeId, [relationship]);
-    else existing.push(relationship);
-  };
   for (const edge of graph.edges) {
-    add(edge.source_node_id, {
+    const coverageLimited =
+      edge.properties.pairing_basis === IPC_COVERAGE_LIMITED_PAIRING_BASIS;
+    appendToMapList(adjacency, edge.source_node_id, {
       direction: "out",
       relation: edge.relation,
       neighborId: edge.target_node_id,
+      coverageLimited,
     });
     if (edge.target_node_id !== edge.source_node_id)
-      add(edge.target_node_id, {
+      appendToMapList(adjacency, edge.target_node_id, {
         direction: "in",
         relation: edge.relation,
         neighborId: edge.source_node_id,
+        coverageLimited,
       });
   }
   return {
@@ -566,6 +610,7 @@ const indexRelationships = (
 interface RelationshipComparison {
   readonly different: boolean;
   readonly unresolved: boolean;
+  readonly coverageLimited: boolean;
 }
 
 const compareRelationships = (
@@ -576,10 +621,43 @@ const compareRelationships = (
   const right = relationshipFacts(pair.right, "right", context);
   return {
     different:
-      left.paired !== right.paired ||
-      left.unpairedShape !== right.unpairedShape,
+      unexplainedRelationshipDifference(
+        left.paired,
+        right.paired,
+        left.possiblePaired,
+        right.possiblePaired,
+      ) ||
+      unexplainedRelationshipDifference(
+        left.unpairedShape,
+        right.unpairedShape,
+        left.possibleUnpairedShape,
+        right.possibleUnpairedShape,
+      ),
     unresolved: left.unresolved || right.unresolved,
+    coverageLimited: left.coverageLimited || right.coverageLimited,
   };
+};
+
+/** A candidate can explain a missing counterpart but cannot prove a change. */
+const unexplainedRelationshipDifference = (
+  left: readonly string[],
+  right: readonly string[],
+  leftPossible: readonly string[],
+  rightPossible: readonly string[],
+): boolean => {
+  const leftCounts = countValues(left);
+  const rightCounts = countValues(right);
+  const leftCandidateCounts = countValues(leftPossible);
+  const rightCandidateCounts = countValues(rightPossible);
+  for (const key of new Set([...leftCounts.keys(), ...rightCounts.keys()])) {
+    const difference = (leftCounts.get(key) ?? 0) - (rightCounts.get(key) ?? 0);
+    if (
+      difference > (rightCandidateCounts.get(key) ?? 0) ||
+      -difference > (leftCandidateCounts.get(key) ?? 0)
+    )
+      return true;
+  }
+  return false;
 };
 
 const relationshipFacts = (
@@ -587,30 +665,46 @@ const relationshipFacts = (
   side: "left" | "right",
   context: ItemContext,
 ): {
-  readonly paired: string;
-  readonly unpairedShape: string;
+  readonly paired: readonly string[];
+  readonly unpairedShape: readonly string[];
+  readonly possiblePaired: readonly string[];
+  readonly possibleUnpairedShape: readonly string[];
   readonly unresolved: boolean;
+  readonly coverageLimited: boolean;
 } => {
   const { nodeById, adjacency } =
     side === "left" ? context.leftRelationships : context.rightRelationships;
   const paired = side === "left" ? context.pairByLeft : context.pairByRight;
   const matched: string[] = [];
   const unpaired: string[] = [];
-  for (const { direction, relation, neighborId } of adjacency.get(
-    node.node_id,
-  ) ?? []) {
+  const possibleMatched: string[] = [];
+  const possibleUnpaired: string[] = [];
+  let coverageLimited = false;
+  for (const {
+    direction,
+    relation,
+    neighborId,
+    coverageLimited: candidate,
+  } of adjacency.get(node.node_id) ?? []) {
     const mapped = paired.get(neighborId);
-    if (mapped !== undefined)
-      matched.push(`${direction}\0${relation}\0${mapped}`);
-    else
-      unpaired.push(
+    if (candidate) coverageLimited = true;
+    if (mapped !== undefined) {
+      (candidate ? possibleMatched : matched).push(
+        `${direction}\0${relation}\0${mapped}`,
+      );
+    } else {
+      (candidate ? possibleUnpaired : unpaired).push(
         `${direction}\0${relation}\0${nodeById.get(neighborId)?.kind ?? "unknown"}`,
       );
+    }
   }
   return {
-    paired: canonicalJson(matched.sort(compareUnicodeCodePoints)),
-    unpairedShape: canonicalJson(unpaired.sort(compareUnicodeCodePoints)),
-    unresolved: unpaired.length > 0,
+    paired: matched,
+    unpairedShape: unpaired,
+    possiblePaired: possibleMatched,
+    possibleUnpairedShape: possibleUnpaired,
+    unresolved: unpaired.length > 0 || possibleUnpaired.length > 0,
+    coverageLimited,
   };
 };
 
@@ -642,12 +736,11 @@ const indexNativeEvidence = (
   evidence: readonly Evidence[],
 ): ReadonlyMap<string, readonly string[]> => {
   const evidenceByDigest = new Map<string, string[]>();
-  for (const { evidence_id: id, subject } of evidence) {
-    const digest = subject?.digest.sha256;
+  for (const record of evidence) {
+    const id = record.evidence_id;
+    const digest = evidenceFileTarget(record)?.sha256;
     if (digest === undefined) continue;
-    const ids = evidenceByDigest.get(digest);
-    if (ids === undefined) evidenceByDigest.set(digest, [id]);
-    else ids.push(id);
+    appendToMapList(evidenceByDigest, digest, id);
   }
   return evidenceByDigest;
 };

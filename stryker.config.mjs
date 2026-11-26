@@ -98,16 +98,22 @@ export default {
         name: "execFileOutputFailure",
       },
     ]),
-    ...mutationRanges("src/server/providerEnvironment.ts", [
+    ...mutationRanges("src/server/createServer.ts", [
       {
         kind: "declaration",
-        name: "captureProviderEnvironment",
+        name: "providerEnvironment",
       },
     ]),
-    ...mutationRanges("src/server/registerReverseEngineeringTools.ts", [
+    ...mutationRanges("src/server/externalMutationToolHandler.ts", [
       {
         kind: "declaration",
-        name: "registerReverseEngineeringTools",
+        name: "createExternalMutationToolHandler",
+      },
+    ]),
+    ...mutationRanges("src/server/serviceToolBindings.ts", [
+      {
+        kind: "declaration",
+        name: "prepareRizinCommand",
       },
     ]),
     ...mutationRanges("src/gdb/GdbSessionManager.ts", [
@@ -122,10 +128,6 @@ export default {
       {
         kind: "constructor",
         owner: "GdbSessionManager",
-      },
-      {
-        kind: "declaration",
-        name: "DEFAULT_MAX_SESSIONS",
       },
       {
         kind: "declaration",
@@ -211,6 +213,12 @@ export default {
         owner: "RizinDebugSessionManager",
         method: "#receive",
         name: "nextOffset",
+      },
+    ]),
+    ...mutationRanges("src/domain/analysisResourceLimits.ts", [
+      {
+        kind: "declaration",
+        name: "DEFAULT_DEBUGGER_MAX_SESSIONS",
       },
     ]),
     ...mutationRanges("src/cli/reverseEngineeringCommands.ts", [

@@ -4,9 +4,9 @@ import { z } from "zod";
 import type {
   AnalysisExecution,
   AnalysisOperationPort,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -14,9 +14,15 @@ import {
 } from "../../../src/domain/analysisErrorCore.js";
 import { inspectNativeDispatchMetadata } from "../../../src/domain/native/objcSwiftMetadata.js";
 import { nativeInvestigationTraceSchema } from "../../../src/domain/native/nativeInvestigationGraph.js";
+import {
+  buildInterfaceBuilderAnalysis,
+  interfaceBuilderLimitsSchema,
+} from "../../../src/domain/apple/interfaceBuilderGraph.js";
+import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { err, ok, type Result } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const identity = { id: "typed", name: "Typed provider", version: "1" };
 const fallback = { id: "fallback", name: "Fallback provider", version: "1" };
@@ -111,7 +117,17 @@ const noClassifiedReferences = {
 };
 
 type Plan = {
+  readonly ui?: ReturnType<typeof buildInterfaceBuilderAnalysis>;
+  readonly implementations?: ReturnType<
+    typeof inspectNativeDispatchMetadata
+  >["objc_dispatch_implementations"];
+  readonly action?: string;
+  readonly maxDepth?: number;
   readonly references?: unknown;
+  readonly referencesFailure?: AnalysisError;
+  readonly uiFailure?: AnalysisError;
+  readonly metadataFailure?: AnalysisError;
+  readonly calls?: string[];
   readonly callees?: readonly string[];
   readonly fallbackProvider?: typeof identity;
   readonly fallbackFailure?: "unavailable" | "output" | "cancelled";
@@ -122,6 +138,28 @@ function publicTrace(plan: Plan, maxNodes = 12, maxEdges = 500) {
       operation,
       parameters,
     ): Promise<Result<AnalysisExecution, AnalysisError>> => {
+      plan.calls?.push(operation);
+      if (
+        operation === "decode_interface_builder" &&
+        plan.uiFailure !== undefined
+      )
+        return err(plan.uiFailure);
+      if (
+        operation === "inspect_native_dispatch_metadata" &&
+        plan.metadataFailure !== undefined
+      )
+        return err(plan.metadataFailure);
+      if (
+        operation === "procedure_references" &&
+        plan.referencesFailure !== undefined
+      )
+        return err(plan.referencesFailure);
+      if (operation === "decode_interface_builder" && plan.ui !== undefined)
+        return ok(
+          createAnalysisExecution(jsonValueSchema.parse(plan.ui), identity, {
+            subject,
+          }),
+        );
       if (operation === "decode_interface_builder")
         return err(
           new AnalysisCapabilityUnavailableError(
@@ -137,7 +175,12 @@ function publicTrace(plan: Plan, maxNodes = 12, maxEdges = 500) {
               target_sha256: sha256,
               provider: identity,
               analysis_profile_digest: null,
-              result: inspectNativeDispatchMetadata([], 1),
+              result: {
+                ...inspectNativeDispatchMetadata([], 1),
+                ...(plan.implementations === undefined
+                  ? {}
+                  : { objc_dispatch_implementations: plan.implementations }),
+              },
             },
             identity,
             { subject },
@@ -185,7 +228,10 @@ function publicTrace(plan: Plan, maxNodes = 12, maxEdges = 500) {
     },
   };
   const server = createServer({ kind: "fixed", analysis });
-  const client = new Client({ name: "native-ui-partial-routes", version: "1" });
+  const client = new Client(
+    { name: "native-ui-partial-routes", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push({
@@ -200,10 +246,10 @@ function publicTrace(plan: Plan, maxNodes = 12, maxEdges = 500) {
     const result = await client.callTool({
       name: "trace_native_ui_action",
       arguments: {
-        action: "0x1000",
+        action: plan.action ?? "0x1000",
         max_nodes: maxNodes,
         max_edges: maxEdges,
-        max_depth: 1,
+        max_depth: plan.maxDepth ?? 1,
       },
     });
     return result;
@@ -216,6 +262,93 @@ const traceFrom = (result: { structuredContent?: unknown }) =>
       normalized_result: nativeInvestigationTraceSchema,
     })
     .parse(result.structuredContent).normalized_result;
+
+it.each([
+  { label: "thin record", recordOffset: 1944 },
+  { label: "selected-slice container record", recordOffset: 6040 },
+  { label: "symbol-only record", recordOffset: null },
+])(
+  "keeps handler offsets distinct from $label Evidence through public MCP",
+  async ({ recordOffset }) => {
+    // Explicit synthetic decoded facts; no AppKit, Ghidra or Kuna runtime claim.
+    const ui = buildInterfaceBuilderAnalysis({
+      targetSha256: sha256,
+      toolVersion: "synthetic",
+      documents: [
+        {
+          relativePath: "Main.storyboardc/scene.nib/objects.nib",
+          archiveSha256: "b".repeat(64),
+          documentKind: "storyboard_scene",
+          raw: {
+            "com.apple.ibtool.document.objects": {
+              receiver: { customClass: "AuditController" },
+              button: { class: "UIButton" },
+            },
+            "com.apple.ibtool.document.connections": {
+              button: [
+                {
+                  type: "action",
+                  label: "runAction:",
+                  destinationId: "receiver",
+                },
+              ],
+            },
+          },
+        },
+      ],
+      limits: interfaceBuilderLimitsSchema.parse({}),
+    });
+    const recordLocation = {
+      address: recordOffset === null ? "0x10000077c" : "0x100000798",
+      file_offset: recordOffset,
+    };
+    const recordEvidence = [
+      {
+        kind:
+          recordOffset === null
+            ? ("symbol" as const)
+            : ("binary_metadata" as const),
+        description: "Explicit synthetic method entry",
+        location: recordLocation,
+        artifact_path: subject.path,
+        artifact_sha256: sha256,
+      },
+    ];
+    const response = await publicTrace({
+      ui,
+      action: "runAction:",
+      maxDepth: 4,
+      references: completeReferences([]),
+      callees: [],
+      implementations: [
+        {
+          class_name: "AuditController",
+          selector: "runAction:",
+          method_type: "instance",
+          implementation_address: "0x10000077c",
+          location: recordLocation,
+          decode: { status: "decoded", reason: null },
+          evidence: recordEvidence,
+        },
+      ],
+    });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    const trace = traceFrom(response);
+    const handler = trace.nodes.find(
+      ({ id }) => id === "native:function:0x10000077c",
+    );
+    expect(handler?.location).toEqual({
+      address: "0x10000077c",
+      file_offset: null,
+    });
+    expect(handler?.evidence).toEqual(recordEvidence);
+    expect(
+      trace.edges.find(({ relation }) => relation === "objc_dispatch")
+        ?.evidence,
+    ).toEqual(expect.arrayContaining(recordEvidence));
+    expect(recordEvidence[0]?.location).toEqual(recordLocation);
+  },
+);
 
 it("keeps typed callsite evidence and distinct fallback-provider routes for mixed reference kinds", async () => {
   const response = await publicTrace({});
@@ -280,8 +413,8 @@ it.each(["unavailable", "output"] as const)(
         resolution: "unresolved",
         reason:
           failure === "unavailable"
-            ? "This analysis is unavailable for the current target. Choose another analysis or target."
-            : expect.stringContaining("unreadable result"),
+            ? expect.stringMatching(/unavailable.*target/iu)
+            : expect.stringContaining("result REA could not read"),
         limitations: expect.arrayContaining([
           "The provider could not complete callee enumeration.",
         ]),
@@ -638,7 +771,7 @@ it("reports malformed partial CallReference as unreadable route evidence", async
     expect.objectContaining({
       relation: "provider_call",
       resolution: "unresolved",
-      reason: expect.stringContaining("unreadable result"),
+      reason: expect.stringContaining("result REA could not read"),
     }),
   );
 });
@@ -714,5 +847,74 @@ it.each([
       "direct_call",
       "provider_call",
     ]);
+  },
+);
+
+it.each([false, true])(
+  "keeps unsupported reference fallback conditional on completed cleanup through MCP (incomplete=%s)",
+  async (incomplete) => {
+    const calls: string[] = [];
+    const failure = new AnalysisCapabilityUnavailableError(
+      identity.id,
+      "procedure_references",
+      "Typed references unavailable",
+      incomplete
+        ? { cleanup: { reason: "release failed", resources: ["route-owner"] } }
+        : undefined,
+    );
+    const response = await publicTrace({ referencesFailure: failure, calls });
+    if (incomplete) {
+      expect(calls).not.toContain("procedure_callees");
+      expect(parseMcpToolError(response).error).toMatchObject({
+        code: "cleanup_incomplete",
+        details: { resources: ["route-owner"] },
+      });
+      expect(failure.cleanupResources).toEqual(["route-owner"]);
+    } else {
+      expect(response.isError).not.toBe(true);
+      expect(calls).toContain("procedure_callees");
+      expect(traceFrom(response).edges).toContainEqual(
+        expect.objectContaining({
+          to: "native:function:0x3000",
+          relation: "provider_call",
+        }),
+      );
+    }
+  },
+);
+
+it.each([false, true])(
+  "retains initial UI cleanup failure with failed metadata peer=%s",
+  async (failedPeer) => {
+    const cleanupFailure = (operation: string, resource: string) =>
+      new AnalysisCapabilityUnavailableError(
+        identity.id,
+        operation,
+        "unavailable after cleanup failed",
+        { cleanup: { reason: "release failed", resources: [resource] } },
+      );
+    const calls: string[] = [];
+    const response = await publicTrace({
+      calls,
+      uiFailure: cleanupFailure("decode_interface_builder", "ui-owner"),
+      ...(failedPeer
+        ? {
+            metadataFailure: cleanupFailure(
+              "inspect_native_dispatch_metadata",
+              "metadata-owner",
+            ),
+          }
+        : {}),
+    });
+    expect(parseMcpToolError(response).error).toMatchObject({
+      code: "cleanup_incomplete",
+      details: {
+        resources: expect.arrayContaining(
+          failedPeer ? ["ui-owner", "metadata-owner"] : ["ui-owner"],
+        ),
+      },
+    });
+    expect(calls).not.toContain("procedure_address");
+    expect(calls).not.toContain("list_names");
   },
 );

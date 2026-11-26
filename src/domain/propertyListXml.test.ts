@@ -185,7 +185,7 @@ it("decodes a signed integer zero as zero and a negative-zero real with its sign
   ]);
 });
 
-it("interprets failures in omitted entries before reporting partial evidence", () => {
+it("validates values under every dictionary key", () => {
   expect(() =>
     parseXmlPropertyList(
       "<plist><dict><key>__proto__</key><unsupported/></dict></plist>",
@@ -301,6 +301,20 @@ it("binds raw literals to their nodes across normalized line endings and UTF-16 
   ]);
 });
 
+it("keeps literal carriage returns in keys and strings, as CoreFoundation does", () => {
+  // plutil reads these four keys as distinct and each value as written.
+  const parsed = parseXmlPropertyList(
+    "<plist>\r<dict>\r<key>a\r\nb</key><string>x\ry\r\nz</string>\r<key>a\nb</key><string><![CDATA[c\rd]]></string>\r<key>a\rb</key>\r<integer>42</integer>\r<key>data</key>\r<data>\rAAEC\r\n</data>\r</dict>\r</plist>\r",
+  );
+  expect(parsed.value).toEqual({
+    "a\r\nb": "x\ry\r\nz",
+    "a\nb": "c\rd",
+    "a\rb": 42,
+    data: new Uint8Array([0, 1, 2]),
+  });
+  expect(parsed.duplicateKeys).toMatchObject({ dictionaries: 0 });
+});
+
 it("preserves Unicode line separators in plist string values", () => {
   const value = "a\u0085b\u2028c\u2029d";
   expect(
@@ -335,3 +349,16 @@ it("expands real references outside CDATA without changing scalar source policy"
     false,
   ]);
 });
+
+it.each(["__proto__", "constructor", "ordinary"])(
+  "retains %s key elements used as scalar values",
+  (value) => {
+    expect(
+      parseXmlPropertyList(`<plist><key>${value}</key></plist>`).value,
+    ).toBe(value);
+    expect(
+      parseXmlPropertyList(`<plist><array><key>${value}</key></array></plist>`)
+        .value,
+    ).toEqual([value]);
+  },
+);

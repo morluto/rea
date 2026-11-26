@@ -1,3 +1,8 @@
+import {
+  swiftFixtureEvidence,
+  swiftFixtureLocation,
+} from "./AppleSwiftReaders.fixture.js";
+import { ParseFailureError, malformedInput } from "../domain/parseFailure.js";
 import { expect, it } from "vitest";
 
 import { objcSwiftMetadataSchema } from "../domain/native/objcSwiftMetadata.js";
@@ -8,35 +13,19 @@ import {
 
 const readers = (bytes: Buffer) => ({
   u32: (address: bigint) => bytes.readUInt32LE(Number(address)),
+  i32: (address: bigint) => bytes.readInt32LE(Number(address)),
   pointer: (address: bigint) => bytes.readBigUInt64LE(Number(address)),
   resolvePointer: (address: bigint) => ({
     kind: "raw" as const,
     target: bytes.readBigUInt64LE(Number(address)),
   }),
   string: () => "fixture",
-  location: (address: bigint) => ({
-    address: `0x${address.toString(16)}`,
-    file_offset: Number(address),
-  }),
-  targetLocation: (address: bigint) => ({
-    address: `0x${address.toString(16)}`,
-    file_offset: Number(address),
-  }),
-  evidence: (address: bigint, description: string) => [
-    {
-      kind: "binary_metadata" as const,
-      description,
-      location: {
-        address: `0x${address.toString(16)}`,
-        file_offset: Number(address),
-      },
-      artifact_path: "/fixture",
-      artifact_sha256: "a".repeat(64),
-    },
-  ],
+  location: swiftFixtureLocation,
+  targetLocation: swiftFixtureLocation,
+  evidence: swiftFixtureEvidence,
   offset: (address: bigint, size = 1) => {
     if (address < 0n || address + BigInt(size) > BigInt(bytes.length))
-      throw new RangeError("outside fixture bytes");
+      throw malformedInput("macho", "outside fixture bytes");
     return Number(address);
   },
 });
@@ -58,7 +47,6 @@ it("keeps an encoded null distinct from a nonzero relative offset to address zer
   bytes.writeBigUInt64LE(0x60n, 0x50);
   const result = objcSwiftMetadataSchema.parse({ db_save_result: null });
   const relative = createSwiftRelativeReader({
-    bytes,
     readers: readers(bytes),
     budget: budget(),
     result,
@@ -87,7 +75,6 @@ it("resolves zero offsets for nonnullable fields to their own field address", ()
   bytes.writeInt32LE(0, 0x20);
   const result = objcSwiftMetadataSchema.parse({ db_save_result: null });
   const relative = createSwiftRelativeReader({
-    bytes,
     readers: readers(bytes),
     budget: budget(),
     result,
@@ -114,7 +101,6 @@ it("accepts encoded zero only for nullable direct Swift fields", () => {
   const bytes = Buffer.alloc(0x80);
   const result = objcSwiftMetadataSchema.parse({ db_save_result: null });
   const relative = createSwiftRelativeReader({
-    bytes,
     readers: readers(bytes),
     budget: budget(),
     result,
@@ -137,7 +123,6 @@ it("masks only the verified direct type metadata tag and keeps other tags unsupp
   bytes.writeInt32LE(0x27, 0x30);
   const result = objcSwiftMetadataSchema.parse({ db_save_result: null });
   const relative = createSwiftRelativeReader({
-    bytes,
     readers: readers(bytes),
     budget: budget(),
     result,
@@ -182,7 +167,6 @@ it("treats a zero pointer loaded through a nullable indirect field as null", () 
   bytes.writeInt32LE(-0x23, 0x24); // odd-tagged displacement to cell address 0
   const result = objcSwiftMetadataSchema.parse({ db_save_result: null });
   const relative = createSwiftRelativeReader({
-    bytes,
     readers: readers(bytes),
     budget: budget(),
     result,
@@ -200,12 +184,12 @@ it("keeps a fixup rebase to VM address zero as an address, not null", () => {
   bytes.writeInt32LE(-0x23, 0x24);
   const result = objcSwiftMetadataSchema.parse({ db_save_result: null });
   const relative = createSwiftRelativeReader({
-    bytes,
     readers: {
       ...readers(bytes),
       resolvePointer: () => ({ kind: "rebase", target: 0n }),
       offset: (address, size = 1) => {
-        if (address === 0n) throw new RangeError("unmapped target address");
+        if (address === 0n)
+          throw malformedInput("macho", "unmapped target address");
         return readers(bytes).offset(address, size);
       },
     },
@@ -228,7 +212,6 @@ it("preserves an indirect import binding instead of reading VM address zero", ()
   bytes.writeInt32LE(-0x23, 0x24);
   const result = objcSwiftMetadataSchema.parse({ db_save_result: null });
   const relative = createSwiftRelativeReader({
-    bytes,
     readers: {
       ...readers(bytes),
       resolvePointer: () => ({
@@ -261,7 +244,6 @@ it("retains unsafe target addresses as partial decode facts", () => {
   bytes.writeInt32LE(0x100, 0x20);
   const result = objcSwiftMetadataSchema.parse({ db_save_result: null });
   const relative = createSwiftRelativeReader({
-    bytes,
     readers: readers(bytes),
     budget: budget(),
     result,
@@ -276,3 +258,40 @@ it("retains unsafe target addresses as partial decode facts", () => {
     decode: { status: "partial", reason: "outside fixture bytes" },
   });
 });
+
+it.each([
+  malformedInput("macho", "indirect pointer cell is unreadable"),
+  new Error("reader invariant failed"),
+  // Host failures say nothing about the metadata, so they are not partial
+  // decode reasons.
+  new RangeError("Maximum call stack size exceeded"),
+  new RangeError("Invalid string length"),
+])(
+  "distinguishes indirect pointer read failure from a known unmapped target: %s",
+  (failure) => {
+    const bytes = Buffer.alloc(0x80);
+    bytes.writeInt32LE(0x25, 0x24);
+    const result = objcSwiftMetadataSchema.parse({ db_save_result: null });
+    const relative = createSwiftRelativeReader({
+      readers: {
+        ...readers(bytes),
+        resolvePointer: () => {
+          throw failure;
+        },
+      },
+      budget: budget(),
+      result,
+    });
+    if (failure instanceof ParseFailureError) {
+      expect(relative(0x24n, "conformanceProtocol")).toEqual({
+        kind: "unknown",
+        reason: failure.message,
+      });
+      expect(result.relative_pointers[0]).toMatchObject({
+        target: { address: null, file_offset: null },
+        decode: { status: "partial", reason: failure.message },
+      });
+    } else
+      expect(() => relative(0x24n, "conformanceProtocol")).toThrow(failure);
+  },
+);

@@ -1,17 +1,17 @@
 import { analysisOperationInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import type { EvidenceWriter } from "../investigation/InvestigationRecordPort.js";
 import { summarizeRetainedAndroidSearch } from "./AndroidSearchEvidenceSummary.js";
-import type { AndroidAnalysisPort } from "./AndroidAnalysisPort.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { AndroidAnalysisPort } from "../../ports/android/AndroidAnalysisPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { parseBinaryTarget } from "../BinaryTargetResolver.js";
 import {
   androidRequestSchema,
   type AndroidOperation,
 } from "../../domain/android/androidAnalysis.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { cancelledBy } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
-import { jsonObjectSchema } from "../../domain/jsonValue.js";
+import type { Evidence } from "../../domain/evidence.js";
+import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
@@ -29,9 +29,7 @@ export class AndroidAnalysisService {
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError(operation, { cause: options.signal.reason }),
-      );
+      return err(cancelledBy(operation, options.signal));
     const request = androidRequestSchema.safeParse({ operation, input });
     if (!request.success)
       return err(
@@ -55,21 +53,18 @@ export class AndroidAnalysisService {
     if (!executed.ok) return executed;
     const execution = executed.value;
     const completed = completeProviderEvidence(
-      createEvidence(
-        execution.subject === undefined
-          ? target.value
-          : (execution.subject ?? undefined),
-        execution.provider,
+      createAnalysisExecutionEvidence(
+        operation,
+        request.data.input,
         {
-          operation,
-          parameters: jsonObjectSchema.parse(request.data.input),
-          result: execution.result,
-          rawResult: execution.rawResult,
-          limitations: execution.limitations,
-          locations: execution.locations,
-          confidence:
-            operation === "inspect_android_method" ? "derived" : "observed",
+          ...execution,
+          subject:
+            execution.subject === undefined ? target.value : execution.subject,
         },
+        operation === "inspect_android_method" ||
+          operation === "inspect_android_jni_bindings"
+          ? "derived"
+          : "observed",
       ),
       options?.signal,
     );

@@ -34,8 +34,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
+          package-manager-cache: false
           node-version-file: .nvmrc
       - name: Cache npm package downloads
         id: npm-cache
@@ -46,7 +47,8 @@ jobs:
           build_cache_artifact: ${{ inputs.build_cache_artifact }}
       - name: Install the pinned compiler into an isolated fixture directory
         run: npm install --prefix "$RUNNER_TEMP/rea-web-source-map-compiler" --no-audit --no-fund --package-lock=false esbuild@0.25.10
-      - run: npm run verify:browser:source-maps
+      # Own a fresh bus so Chromium never depends on an inherited session address.
+      - run: dbus-run-session -- npm run verify:browser:source-maps
         env:
           # Retain browser launch argv/PID/stderr in the verifier's captured
           # CLI failure diagnostics without changing its deadline or retrying.

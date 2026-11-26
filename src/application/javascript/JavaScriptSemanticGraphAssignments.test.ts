@@ -3,6 +3,42 @@ import { expect, it } from "vitest";
 import { graphForJavaScript } from "../../../tests/fixtures/javascriptSemanticGraph.js";
 import { queryJavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticQuery.js";
 
+it("retains nested initializer literals as uncertain candidates after a dynamic-scope write", () => {
+  const graph = graphForJavaScript(`
+    const config = { nested: { flag: "before", items: ["inside"] }, stable: "unchanged" };
+    with (env) { config.nested = replacement; }
+  `);
+  for (const [value, pointer] of [
+    ["before", "/nested/flag"],
+    ["inside", "/nested/items/0"],
+  ]) {
+    const trace = queryJavaScriptSemanticGraph(
+      graph,
+      javaScriptSemanticQueryInputSchema.parse({
+        seed: { kind: "literal", value },
+        direction: "forward-influence",
+        include_ambiguous_dynamic_edges: true,
+      }),
+    );
+    const slot = trace.nodes.find(
+      (node) =>
+        node.kind === "property-slot" &&
+        node.properties.property_pointer === pointer,
+    );
+    expect(slot?.properties.presence).toBe("unknown-coverage");
+    expect(trace.relations).toContainEqual(
+      expect.objectContaining({
+        target_node_id: slot?.node_id,
+        relation: "defines",
+        resolution: "candidate",
+      }),
+    );
+    expect(
+      trace.unknowns.some((unknown) => unknown.reason === "unknown-value"),
+    ).toBe(true);
+  }
+});
+
 it.each([
   ["binding", "speed = accel; return speed;", "speed"],
   ["property", "state.speed = accel; return state.speed;", "read:/speed"],
@@ -150,48 +186,36 @@ it.each([
   },
 );
 
-it("keeps assignments in computed methods' parameter defaults in the method", () => {
+it("keeps assignments with the callable that evaluates them inside computed methods", () => {
   const graph = graphForJavaScript(`
-    const accel = 0.001; let speed = 6;
-    const obj = { ["tick"](value = (speed = accel)) { return speed; } };
+    const accel = 0.001; let parameterSpeed = 6; let callbackSpeed = 6; let callback;
+    const withDefault = { ["tick"](value = (parameterSpeed = accel)) { return parameterSpeed; } };
+    const withKeyCallback = { [(() => { callbackSpeed = accel; return "tick"; })()]() {} };
+    const withDeferredCallback = { [(callback = () => accel)]() {} };
   `);
   const nodes = new Map(graph.nodes.map((node) => [node.node_id, node]));
-  const assignment = graph.relations.find(
-    (edge) => edge.properties.assignment_operator === "=",
-  );
-  expect(assignment).toBeDefined();
-  const source = nodes.get(assignment!.source_node_id);
-  const target = nodes.get(assignment!.target_node_id);
-  expect(source?.function_node_id).toBeTypeOf("string");
-  expect(source?.function_node_id).toBe(target?.function_node_id);
-});
-
-it("does not treat a callback body nested in a computed key as a key-time assignment input", () => {
-  const graph = graphForJavaScript(`
-    const accel = 0.001; let callback;
-    const obj = { [(callback = () => accel)]() {} };
-  `);
-  expect(
-    graph.relations.filter(
-      (edge) => edge.properties.assignment_operator !== undefined,
-    ),
-  ).toEqual([]);
-});
-
-it("retains an assignment owned by a callback inside a computed key", () => {
-  const graph = graphForJavaScript(`
-    const accel = 0.001; let speed = 6;
-    const obj = { [(() => { speed = accel; return "tick"; })()]() {} };
-  `);
-  const nodes = new Map(graph.nodes.map((node) => [node.node_id, node]));
-  const assignment = graph.relations.find(
-    (edge) => edge.properties.assignment_operator === "=",
-  );
-  expect(assignment).toBeDefined();
-  const source = nodes.get(assignment!.source_node_id);
-  const target = nodes.get(assignment!.target_node_id);
-  expect(source?.label).toBe("accel");
-  expect(target?.label).toBe("speed");
-  expect(source?.function_node_id).toBeTypeOf("string");
-  expect(source?.function_node_id).toBe(target?.function_node_id);
+  const assignments = graph.relations
+    .filter(({ properties }) => properties.assignment_operator === "=")
+    .map(({ source_node_id, target_node_id }) => ({
+      source: nodes.get(source_node_id),
+      target: nodes.get(target_node_id),
+    }));
+  expect(assignments.map(({ target }) => target?.label).sort()).toEqual([
+    "callbackSpeed",
+    "parameterSpeed",
+  ]);
+  for (const { source, target } of assignments) {
+    expect(source?.label).toBe("accel");
+    const owner = source?.function_node_id;
+    if (owner == null) throw new Error("Expected an assignment owner");
+    expect(target?.function_node_id).toBe(owner);
+    expect(nodes.get(owner)).toMatchObject({
+      kind: "function",
+      identity: {
+        source_range: {
+          start: { line: target?.label === "parameterSpeed" ? 3 : 4 },
+        },
+      },
+    });
+  }
 });
