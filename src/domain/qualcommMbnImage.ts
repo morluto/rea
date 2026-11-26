@@ -38,9 +38,6 @@ const EXTENDED_PROGRAM_COUNT = 0xffff;
 const UINT32_MAX = 0xffff_ffff;
 const HASH_SIZES = [32, 48, 20] as const;
 
-const IMAGE_SOURCE_NAMES = ["nand", "nor", "emmc", "emmc-user"] as const;
-
-type ImageSourceName = (typeof IMAGE_SOURCE_NAMES)[number];
 type MbnVersion = 3 | 5 | 6;
 type HeaderBytes = (typeof HEADER_BYTES)[MbnVersion];
 type HashSize = (typeof HASH_SIZES)[number];
@@ -54,7 +51,7 @@ export interface QualcommMbnHeader {
   readonly imageId: number;
   readonly version: MbnVersion;
   readonly imageSource: number | null;
-  readonly imageSourceName: ImageSourceName | null;
+  readonly imageSourceName: null;
   readonly imageDestination: number | null;
   readonly imageSize: number;
   readonly codeSize: number;
@@ -143,8 +140,6 @@ export interface QualcommMbnByteSpan {
   readonly length: number;
 }
 
-type RawHeader = Omit<QualcommMbnHeader, "imageSourceName">;
-
 interface ProgramRow {
   readonly index: number;
   readonly type: number;
@@ -195,9 +190,6 @@ const rangeLimitation = (
 const exceedsEnd = (offset: number, length: number, end: number): boolean =>
   length > 0 && (offset > end || length > end - offset);
 
-const imageSourceName = (value: number): ImageSourceName | null =>
-  IMAGE_SOURCE_NAMES[value] ?? null;
-
 const safeUint = (value: bigint): number | null =>
   value >= 0n && value <= BigInt(Number.MAX_SAFE_INTEGER)
     ? Number(value)
@@ -216,7 +208,7 @@ const pointerOk = (
 
 /** V3 pointers may use file, header-relative, or image destination addresses. */
 const v3PointersPlausible = (
-  raw: RawHeader,
+  raw: QualcommMbnHeader,
   ranges: QualcommMbnRanges,
 ): boolean => {
   const { code, signature, certificateChain, header } = ranges;
@@ -239,7 +231,7 @@ const v3PointersPlausible = (
 
 const readRawHeader = (
   bytes: Buffer,
-): RawHeader | { readonly truncatedVersion: MbnVersion } | null => {
+): QualcommMbnHeader | { readonly truncatedVersion: MbnVersion } | null => {
   if (bytes.length < 8) return null;
   const reader = new BinaryReader(bytes, true, "qualcomm-mbn");
   const version = reader.u32(4);
@@ -250,6 +242,8 @@ const readRawHeader = (
     imageId: reader.u32(0),
     version,
     imageSource: version === 3 ? reader.u32(8) : null,
+    // Offset 8 in v3 is image_src (flash source offset), not a boot-device enum.
+    imageSourceName: null,
     imageDestination: version === 3 ? reader.u32(12) : null,
     imageSize: reader.u32(16),
     codeSize: reader.u32(20),
@@ -265,7 +259,10 @@ const readRawHeader = (
   };
 };
 
-const fileRanges = (raw: RawHeader, base: number): QualcommMbnRanges => {
+const fileRanges = (
+  raw: QualcommMbnHeader,
+  base: number,
+): QualcommMbnRanges => {
   let offset = base;
   const next = (length: number): QualcommMbnByteRange => {
     const range = { offset, length };
@@ -330,11 +327,7 @@ const decodeMbnHeader = (
   );
   return {
     kind: "header",
-    header: {
-      ...raw,
-      imageSourceName:
-        raw.imageSource === null ? null : imageSourceName(raw.imageSource),
-    },
+    header: raw,
     ranges,
     readableEnd: end,
     limitations,

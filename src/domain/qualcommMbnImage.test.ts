@@ -27,8 +27,8 @@ describe("legacy MBN headers", () => {
       header: {
         imageId: 21,
         version: 3,
-        imageSource: 3,
-        imageSourceName: "emmc-user",
+        imageSource: 0,
+        imageSourceName: null,
         imageSize: 552,
         codeSize: 200,
         signaturePointer: 0x8600_0028 + 200,
@@ -57,7 +57,7 @@ describe("legacy MBN headers", () => {
     const header = Buffer.alloc(40);
     header.writeUInt32LE(21, 0); // image_id
     header.writeUInt32LE(3, 4); // version 3
-    header.writeUInt32LE(3, 8); // image_source (emmc-user)
+    header.writeUInt32LE(3, 8); // image_src (flash source offset)
     header.writeUInt32LE(0x8600_0028, 12); // image_dest_ptr
     header.writeUInt32LE(code.length + signature.length + certs.length, 16);
     header.writeUInt32LE(code.length, 20);
@@ -69,7 +69,13 @@ describe("legacy MBN headers", () => {
     const inspection = inspectQualcommMbnImage(raw);
     expect(inspection).toMatchObject({
       kind: "legacy",
-      header: { version: 3, headerBytes: 40, codeSize: 16 },
+      header: {
+        version: 3,
+        headerBytes: 40,
+        imageSource: 3,
+        imageSourceName: null,
+        codeSize: 16,
+      },
       ranges: {
         header: { offset: 0, length: 40 },
         code: { offset: 40, length: 16 },
@@ -83,6 +89,25 @@ describe("legacy MBN headers", () => {
     expect(raw.subarray(offset, offset + length).toString("ascii")).toBe(
       "v3-code-payload!",
     );
+  });
+
+  it("keeps raw v3 image_src without guessing a boot-device name", () => {
+    for (const imageSource of [0, 1, 2, 3, 0x1000]) {
+      const bytes = mbnLegacyImage({
+        imageSource,
+        code: Buffer.alloc(64, 0xab),
+        signature: Buffer.alloc(32, 0x5a),
+        certificateChain: Buffer.alloc(16, 0xc3),
+      });
+      expect(inspectQualcommMbnImage(bytes)).toMatchObject({
+        kind: "legacy",
+        header: {
+          version: 3,
+          imageSource,
+          imageSourceName: null,
+        },
+      });
+    }
   });
 
   it("reports ranges past the file end as limitations without clamping", () => {

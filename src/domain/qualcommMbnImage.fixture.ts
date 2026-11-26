@@ -3,6 +3,7 @@
 export interface MbnHeaderFixture {
   readonly version?: 3 | 5 | 6;
   readonly imageId?: number;
+  /** Flash source offset (v3 `image_src`). */
   readonly imageSource?: number;
   /** Header-relative virtual address of the code region. */
   readonly destination?: number;
@@ -19,7 +20,7 @@ export interface MbnHeaderFixture {
 export const mbnLegacyImage = ({
   version = 3,
   imageId = 21,
-  imageSource = 3,
+  imageSource = 0,
   destination = 0x8600_0028,
   code,
   signature,

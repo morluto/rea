@@ -58,7 +58,8 @@ it("inventories a legacy MBN by content and lists its regions", async () => {
       header: {
         version: 3,
         image_id: 21,
-        image_source_name: "emmc-user",
+        image_source: 0,
+        image_source_name: null,
         code_size: 200,
         signature_size: 256,
         certificate_chain_size: 96,

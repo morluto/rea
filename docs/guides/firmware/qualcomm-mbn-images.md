@@ -23,17 +23,19 @@ Root `format_metadata` has kind `qualcomm-mbn` and layout `legacy`. The
 header records the image ID, version, image size, code size, and OEM
 signature and certificate-chain pointers and sizes.
 
-| Version | Header size | Version-specific fields                                               |
-| ------- | ----------- | --------------------------------------------------------------------- |
-| 3       | 40 bytes    | Image source and destination at offsets 8 and 12                      |
-| 5       | 40 bytes    | QTI signature and certificate-chain sizes at offsets 8 and 12         |
-| 6       | 48 bytes    | Version 5 fields plus QTI and OEM metadata sizes at offsets 40 and 44 |
+| Version | Header size | Version-specific fields                                                  |
+| ------- | ----------- | ------------------------------------------------------------------------ |
+| 3       | 40 bytes    | Flash source offset (`image_source`) and destination at offsets 8 and 12 |
+| 5       | 40 bytes    | QTI signature and certificate-chain sizes at offsets 8 and 12            |
+| 6       | 48 bytes    | Version 5 fields plus QTI and OEM metadata sizes at offsets 40 and 44    |
 
-In version 6, QTI and OEM metadata follow the header and precede the code.
-In versions 5 and 6, the QTI signature and certificate chain follow the code
-and precede the OEM signature and certificate chain. The image size counts
-all payload regions and excludes the header. Fields absent from a version
-are reported as null.
+In version 3, `image_source` reports the raw flash source offset from header
+offset 8, and `image_source_name` is `null` when not independently established
+(REA does not map `image_src` to a boot-device enum). In version 6, QTI and OEM
+metadata follow the header and precede the code. In versions 5 and 6, the QTI
+signature and certificate chain follow the code and precede the OEM signature
+and certificate chain. The image size counts all payload regions and excludes
+the header. Fields absent from a version are reported as null.
 
 `header.ranges` gives the file offset and length REA derived for each
 region. The regions are listed as occurrences:
