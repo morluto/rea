@@ -22,7 +22,9 @@ export const NUGET_NUPKG_BUDGETS = {
   max_file_bytes: {
     minimum: 16,
     maximum: MAX_INSPECT_NUGET_NUPKG_FILE_BYTES,
-    default_value: 64 * 1024 * 1024,
+    // Above nuget.org's 250 MB package ceiling. The ZIP is read by range and
+    // hashed in one streaming pass; only the .nuspec and directory are retained.
+    default_value: 256 * 1024 * 1024,
   },
   max_entries: {
     minimum: 1,
@@ -119,7 +121,9 @@ export const inspectNugetNupkgInputSchema = z.strictObject({
     .min(NUGET_NUPKG_BUDGETS.max_file_bytes.minimum)
     .max(NUGET_NUPKG_BUDGETS.max_file_bytes.maximum)
     .default(NUGET_NUPKG_BUDGETS.max_file_bytes.default_value)
-    .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
+    .describe(
+      `Maximum stable artifact bytes to read (default ${String(NUGET_NUPKG_BUDGETS.max_file_bytes.default_value)})`,
+    ),
   max_entries: z
     .number()
     .int()

@@ -253,7 +253,7 @@ cliTest(
       }),
     );
     const { call } = await connectLocalToolsMcp();
-    for (const maximum of [undefined, 67108864, 8192]) {
+    for (const maximum of [undefined, 268435456, 8192]) {
       const input = {
         path,
         ...(maximum === undefined ? {} : { max_file_bytes: maximum }),
