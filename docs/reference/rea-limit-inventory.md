@@ -223,14 +223,21 @@ each operation's schema owns its bounds, and a refusal reports
 `details.limit` with `control_kind: "parameter"` and `applies_at: "next_call"`.
 These parameters report that limit:
 
-| Operation                                     | Parameter                         | Default    | Floor |                              Maximum | Owner                                     |
-| --------------------------------------------- | --------------------------------- | ---------- | ----: | -----------------------------------: | ----------------------------------------- |
-| `inspect_il2cpp_metadata`                     | `max_native_index_bytes`          | 1073741824 |     1 |            `Number.MAX_SAFE_INTEGER` | `src/domain/il2cpp/il2cppMetadata.ts`     |
-| `inspect_elf_notes`, `inspect_elf_debug_link` | `max_file_bytes`                  | 67108864   |    64 |                            536870912 | `src/domain/native/elfReadBudgets.ts`     |
-| `inspect_elf_notes`, `inspect_elf_debug_link` | `max_entries`                     | 128        |     1 |                                  256 | `src/domain/native/elfReadBudgets.ts`     |
-| `inspect_rust_binary`                         | `max_compressed_dependency_bytes` | 1048576    |     1 |        `buffer.constants.MAX_LENGTH` | `src/domain/rust/rustDependencyBudget.ts` |
-| `inspect_rust_binary`                         | `max_inflated_dependency_bytes`   | 8388608    |     1 | `buffer.constants.MAX_STRING_LENGTH` | `src/domain/rust/rustDependencyBudget.ts` |
-| `inspect_rust_binary`                         | `max_dependency_inflate_ratio`    | 64         |     1 |            `Number.MAX_SAFE_INTEGER` | `src/domain/rust/rustDependencyBudget.ts` |
+| Operation                                     | Parameter                         | Default    | Floor |                              Maximum | Owner                                          |
+| --------------------------------------------- | --------------------------------- | ---------- | ----: | -----------------------------------: | ---------------------------------------------- |
+| `inspect_il2cpp_metadata`                     | `max_native_index_bytes`          | 1073741824 |     1 |            `Number.MAX_SAFE_INTEGER` | `src/domain/il2cpp/il2cppMetadata.ts`          |
+| `inspect_apk_signature`                       | `max_file_bytes`                  | 536870912  |    22 |                           2147483648 | `src/domain/apkSignature/apkSignatureQuery.ts` |
+| `inspect_apk_signature`                       | `max_output_bytes`                | 8388608    |  1024 |                             67108864 | `src/domain/apkSignature/apkSignatureQuery.ts` |
+| `inspect_apk_signature`                       | `max_signing_block_pairs`         | 4096       |     1 |                                65536 | `src/domain/apkSignature/apkSignatureQuery.ts` |
+| `inspect_apk_signature`                       | `max_signers`                     | 32         |     1 |                                 1024 | `src/domain/apkSignature/apkSignatureQuery.ts` |
+| `inspect_apk_signature`                       | `max_lineage_nodes`               | 32         |     1 |                                 1024 | `src/domain/apkSignature/apkSignatureQuery.ts` |
+| `inspect_apk_signature`                       | `max_signer_elements`             | 4096       |     1 |                                65536 | `src/domain/apkSignature/apkSignatureQuery.ts` |
+| `inspect_apk_signature`                       | `max_v1_signature_entries`        | 4096       |     1 |                                65536 | `src/domain/apkSignature/apkSignatureQuery.ts` |
+| `inspect_elf_notes`, `inspect_elf_debug_link` | `max_file_bytes`                  | 67108864   |    64 |                            536870912 | `src/domain/native/elfReadBudgets.ts`          |
+| `inspect_elf_notes`, `inspect_elf_debug_link` | `max_entries`                     | 128        |     1 |                                  256 | `src/domain/native/elfReadBudgets.ts`          |
+| `inspect_rust_binary`                         | `max_compressed_dependency_bytes` | 1048576    |     1 |        `buffer.constants.MAX_LENGTH` | `src/domain/rust/rustDependencyBudget.ts`      |
+| `inspect_rust_binary`                         | `max_inflated_dependency_bytes`   | 8388608    |     1 | `buffer.constants.MAX_STRING_LENGTH` | `src/domain/rust/rustDependencyBudget.ts`      |
+| `inspect_rust_binary`                         | `max_dependency_inflate_ratio`    | 64         |     1 |            `Number.MAX_SAFE_INTEGER` | `src/domain/rust/rustDependencyBudget.ts`      |
 
 Refusals that still name a per-call control only in prose are counted by
 `scripts/verify/fixed-ceilings.mjs` against

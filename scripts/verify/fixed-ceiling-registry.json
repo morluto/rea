@@ -21,38 +21,6 @@
       "reason": "One eighth of the JADX bridge's 8 MiB local MCP frame less its envelope, so the prototype and reference replies and their retained, Evidence and MCP copies fit together; raising it needs a paged bridge reply, not a larger allowance."
     }
   },
-  "src/apkSignature/apkSignatureFailures.ts": {
-    "\"The decoded APK signing report allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "APK signing-block pair, signer, entry and report counts are REA resource policies, not APK Signature Scheme maxima."
-    },
-    "`The APK Signature Scheme ${scheme} allowance of ${String(maximum)} ${name} (this release has no runtime override)`": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "APK signing-block pair, signer, entry and report counts are REA resource policies, not APK Signature Scheme maxima."
-    },
-    "`The APK Signing Block allowance of ${String(maximum)} pairs (this release has no runtime override)`": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "APK signing-block pair, signer, entry and report counts are REA resource policies, not APK Signature Scheme maxima."
-    },
-    "`The APK v1 allowance of ${String(limit)} signers (this release has no runtime override)`": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "APK signing-block pair, signer, entry and report counts are REA resource policies, not APK Signature Scheme maxima."
-    },
-    "`The APK v1 allowance of ${String(maximum)} META-INF signing entries (this release has no runtime override)`": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "APK signing-block pair, signer, entry and report counts are REA resource policies, not APK Signature Scheme maxima."
-    },
-    "\"The APK signature input allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "The 512 MiB whole-APK read is a resource policy; the content digest needs the whole file."
-    }
-  },
   "src/apktool/ApktoolConfiguration.ts": {
     "\"The apktool version-output capture allowance (decode_timeout_ms does not raise it)\"": {
       "class": "protocol",

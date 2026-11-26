@@ -229,31 +229,37 @@ Not yet read: v4 `.apk.idsig` (a sibling file), verity (`0x0421`/`0x0423`/`0x042
 
 ## Bounds and errors
 
-The archive is read once, bounded at 512 MiB, without following symlinks and
+The archive is read once, bounded at 512 MiB by default (`max_file_bytes` /
+`--max-file-bytes`, 22 bytes to 2 GiB), without following symlinks and
 with change detection. ZIP tail offsets, the central-directory size and signing
 block spans used by the reader are checked against their containing sections,
 including the complete central-directory extent before ZIP end records. A process-wide queue permits
 one active whole-file inspection and eight pending scans across provider
 instances; pending scans retain no APK bytes and can be cancelled with their
 original reason. Further requests receive a capacity error. The active slot
-is held through parsing and cleanup. Signers per scheme, v1 signers and
-lineage nodes are capped at 32 each as resource admission limits, not format
-maxima (apksig separately accepts at most 10 v1 signers). Each v1 block is
+is held through parsing and cleanup. Signers per scheme (v1, v2, v3, and v3.1)
+default to 32 (`max_signers` / `--max-signers`, 1 to 1,024; apksig separately
+accepts at most 10 v1 signers), and v3/v3.1 lineage nodes default to 32
+(`max_lineage_nodes` / `--max-lineage-nodes`, 1 to 1,024); per-signer digests,
+certificates, signatures, and attributes default to 4,096
+(`max_signer_elements` / `--max-signer-elements`, 1 to 65,536). Each v1 block is
 inflated to at most 1 MiB, and its BER is read within 32 levels of nesting and
 65,536 elements, with at most 32 certificates and 32 `SignerInfo`s; BER
 indefinite lengths and constructed OCTET STRING fields are accepted. Embedded
 X.509 certificates retain their DER requirement. The report's size is
 bounded from above by those counts before anything is materialised, and the exact
 serialized size of the report together with its limitations (which repeat
-archive names) is then checked against an 8 MiB output budget (the exact check
+archive names) is then checked against an 8 MiB output budget by default
+(`max_output_bytes` / `--max-output-bytes`, 1 KiB to 64 MiB; the exact check
 is authoritative); an over-budget report is refused, not truncated.
 
-Signing blocks admit at most 4096 ID/value pairs; at most 4096 signing-relevant
-META-INF entries are retained. These fixed counts, signer/lineage counts and the
-report byte budget return nonretryable `resource_constraint` errors naming the
-effective allowance. This release has no runtime override for them. Waiting for
-an active scan cannot raise a fixed count, and complete CLI JSON cannot raise the
-report budget. Occupied scan-queue capacity remains retryable after a scan finishes.
+Signing blocks admit at most 4,096 ID/value pairs by default
+(`max_signing_block_pairs` / `--max-signing-block-pairs`, 1 to 65,536), and at
+most 4,096 signing-relevant META-INF entries are retained by default
+(`max_v1_signature_entries` / `--max-v1-signature-entries`, 1 to 65,536). These
+per-call budgets return nonretryable `resource_constraint` errors naming the
+controlling parameter in `details.limit`. Occupied scan-queue capacity remains
+retryable after a scan finishes.
 
 The whole-file reader allocates the selected snapshot and bounded read scratch;
 total process memory exceeds the selected file's size. It also computes the complete

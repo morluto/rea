@@ -147,8 +147,9 @@ const decodeAlgorithmRecords = <T>(
     bytes: Uint8Array,
     uninterpretedBytes: number,
   ) => T,
+  maxElements: number = MAX_ELEMENTS,
 ): Result<T[], ApkSchemeError> => {
-  const items = elements(seq, what, version);
+  const items = elements(seq, what, version, maxElements);
   if (!items.ok) return items;
   const records: T[] = [];
   for (const item of items.value) {
@@ -165,8 +166,9 @@ const decodeAlgorithmRecords = <T>(
 const decodeAttributes = (
   seq: Uint8Array | null,
   version: ApkSchemeVersion,
+  maxElements: number = MAX_ELEMENTS,
 ): Result<ApkSignerAttribute[], ApkSchemeError> => {
-  const items = elements(seq, "attributes", version);
+  const items = elements(seq, "attributes", version, maxElements);
   if (!items.ok) return items;
   const attributes: ApkSignerAttribute[] = [];
   for (const item of items.value) {
@@ -181,6 +183,7 @@ const decodeAttributes = (
 const decodeSignedData = (
   signedData: Uint8Array,
   version: ApkSchemeVersion,
+  maxElements: number = MAX_ELEMENTS,
 ): Result<
   Omit<ApkSigner, "signatures" | "publicKey" | "uninterpretedSignerBytes">,
   ApkSchemeError
@@ -195,9 +198,15 @@ const decodeSignedData = (
       digest,
       uninterpretedBytes,
     }),
+    maxElements,
   );
   if (!digests.ok) return digests;
-  const certificates = elements(reader.lenChunk(), "certificates", version);
+  const certificates = elements(
+    reader.lenChunk(),
+    "certificates",
+    version,
+    maxElements,
+  );
   if (!certificates.ok) return certificates;
   let minSdk: number | null = null;
   let maxSdk: number | null = null;
@@ -207,7 +216,7 @@ const decodeSignedData = (
     if (minSdk === null || maxSdk === null)
       return malformed("min/max SDK truncated");
   }
-  const attributes = decodeAttributes(reader.lenChunk(), version);
+  const attributes = decodeAttributes(reader.lenChunk(), version, maxElements);
   if (!attributes.ok) return attributes;
   return ok({
     certificates: certificates.value,
@@ -223,11 +232,12 @@ const decodeSignedData = (
 const decodeSigner = (
   chunk: Uint8Array,
   version: ApkSchemeVersion,
+  maxElements: number = MAX_ELEMENTS,
 ): Result<ApkSigner, ApkSchemeError> => {
   const reader = new LeReader(chunk);
   const signedData = reader.lenChunk();
   if (signedData === null) return malformed("signed data missing or truncated");
-  const decoded = decodeSignedData(signedData, version);
+  const decoded = decodeSignedData(signedData, version, maxElements);
   if (!decoded.ok) return decoded;
   if (version !== "v2") {
     const min = reader.u32(),
@@ -246,6 +256,7 @@ const decodeSigner = (
       signature,
       uninterpretedBytes,
     }),
+    maxElements,
   );
   if (!signatures.ok) return signatures;
   const publicKey = reader.lenChunk();
@@ -267,13 +278,19 @@ export interface ApkDecodedScheme {
 export const decodeSigners = (
   value: Uint8Array,
   version: ApkSchemeVersion,
+  limits?: {
+    readonly maxSigners?: number;
+    readonly maxElements?: number;
+  },
 ): Result<ApkDecodedScheme, ApkSchemeError> => {
+  const maxSigners = limits?.maxSigners ?? MAX_SIGNERS;
+  const maxElements = limits?.maxElements ?? MAX_ELEMENTS;
   const reader = new LeReader(value);
-  const chunks = elements(reader.lenChunk(), "signers", version, MAX_SIGNERS);
+  const chunks = elements(reader.lenChunk(), "signers", version, maxSigners);
   if (!chunks.ok) return chunks;
   const signers: ApkSigner[] = [];
   for (const [index, chunk] of chunks.value.entries()) {
-    const signer = decodeSigner(chunk, version);
+    const signer = decodeSigner(chunk, version, maxElements);
     if (!signer.ok)
       return signer.error.kind === "malformed-signer"
         ? malformed(`signer ${String(index)}: ${signer.error.detail}`)
@@ -305,6 +322,7 @@ export interface ApkLineageNode {
 export const decodeRotationLineage = (
   value: Uint8Array,
   version: Exclude<ApkSchemeVersion, "v2">,
+  maxLineageNodes: number = MAX_LINEAGE_NODES,
 ): Result<ApkLineageNode[], ApkSchemeError> => {
   const reader = new LeReader(value);
   const lineageVersion = reader.u32();
@@ -315,8 +333,8 @@ export const decodeRotationLineage = (
   while (reader.remaining > 0) {
     const node = reader.lenChunk();
     if (node === null) return malformed("lineage node truncated");
-    if (nodes.length >= MAX_LINEAGE_NODES)
-      return schemeLimit(version, "lineage-nodes", MAX_LINEAGE_NODES);
+    if (nodes.length >= maxLineageNodes)
+      return schemeLimit(version, "lineage-nodes", maxLineageNodes);
     const nodeReader = new LeReader(node);
     const signedData = nodeReader.lenChunk();
     const flags = nodeReader.u32();

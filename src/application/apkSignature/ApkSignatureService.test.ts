@@ -135,3 +135,36 @@ it("rejects a live provider subject path that differs from the selected APK", as
     await provider.close();
   }
 });
+
+it("keeps omitted budget defaults out of Evidence parameters and preserves caller-selected budgets", async () => {
+  const root = await createTestTempDirectory("rea-apk-params-");
+  const provider = new ApkSignatureProvider();
+  try {
+    const path = join(root, "unsigned.apk");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add("classes.dex", new TextReader("x"));
+    await writeFile(path, await writer.close());
+    const service = new ApkSignatureService(provider);
+
+    const omitted = await service.inspect({ path, detail: "complete" });
+    if (!omitted.ok) throw omitted.error;
+    expect(omitted.value.parameters).toEqual({ path });
+
+    const explicit = await service.inspect({
+      path,
+      detail: "complete",
+      max_file_bytes: 1024 * 1024,
+      max_signing_block_pairs: 64,
+      max_v1_signature_entries: 16,
+    });
+    if (!explicit.ok) throw explicit.error;
+    expect(explicit.value.parameters).toEqual({
+      path,
+      max_file_bytes: 1024 * 1024,
+      max_signing_block_pairs: 64,
+      max_v1_signature_entries: 16,
+    });
+  } finally {
+    await provider.close();
+  }
+});
