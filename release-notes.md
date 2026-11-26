@@ -1258,6 +1258,7 @@
 * **artifacts:** share inventory view and reader fixtures ([#14380](https://github.com/morluto/rea/issues/14380)) ([4255a96](https://github.com/morluto/rea/commit/4255a96e0fb227ff41314d860421e2f590135dcc))
 * **artifacts:** share temporary fixture file writes ([#14540](https://github.com/morluto/rea/issues/14540)) ([7e12b4f](https://github.com/morluto/rea/commit/7e12b4f32d172ef6ff993461d54506a278743de4))
 * **artifacts:** share thin Mach-O section fixtures ([#14480](https://github.com/morluto/rea/issues/14480)) ([2e1cc32](https://github.com/morluto/rea/commit/2e1cc32586c60ae59c0bea66ddd091be7f49df9b))
+* **artifacts:** share UBI reader fixture helpers ([#14809](https://github.com/morluto/rea/issues/14809)) ([26b4154](https://github.com/morluto/rea/commit/26b415462fbe9b3740d5e250771efd2fc89a47d1))
 * **artifacts:** use the native byte stream consumer ([#14533](https://github.com/morluto/rea/issues/14533)) ([82c3b29](https://github.com/morluto/rea/commit/82c3b2972ffb8d15ad9b0d595b7f109bda2395f8))
 * **artifacts:** verify cleanup at the physical ownership boundary ([#13486](https://github.com/morluto/rea/issues/13486)) ([809c550](https://github.com/morluto/rea/commit/809c550f502a47d3127bce2b4524b736bbb6efd1))
 * **asar:** consolidate CLI hash-uncertainty coverage ([#12951](https://github.com/morluto/rea/issues/12951)) ([2ff9917](https://github.com/morluto/rea/commit/2ff9917d20ef5e788c6d61c4a45db90c1bfde63e))
