@@ -98,6 +98,7 @@
 * **artifacts:** back archive member counts with the artifact.member_count setting ([#14650](https://github.com/morluto/rea/issues/14650)) ([3129747](https://github.com/morluto/rea/commit/31297470ef829a404dc38c2acf327272e222c404))
 * **artifacts:** give Deno, wxapkg and tar readers artifact_limits controls ([#14620](https://github.com/morluto/rea/issues/14620)) ([3dae567](https://github.com/morluto/rea/commit/3dae567185ac08126d40ea38435d5cbe9aa64afe))
 * **artifacts:** inspect and compare directories by a content-addressed root digest ([#14270](https://github.com/morluto/rea/issues/14270)) ([56cf155](https://github.com/morluto/rea/commit/56cf15566ee1fee1cb0d3573bf0e23b1a682e635))
+* **artifacts:** inventory and expand Android sparse images offline ([#13244](https://github.com/morluto/rea/issues/13244)) ([192177f](https://github.com/morluto/rea/commit/192177f0c91ed94cf9b8698f7ccdb3f2e44330fe))
 * **artifacts:** inventory and extract ISO 9660 disc images offline ([#13290](https://github.com/morluto/rea/issues/13290)) ([e896f60](https://github.com/morluto/rea/commit/e896f60540f03e2c1fe0f916412bddd656c1f296))
 * **artifacts:** inventory and extract stored and gzip-compressed tar archives ([#14245](https://github.com/morluto/rea/issues/14245)) ([225a19a](https://github.com/morluto/rea/commit/225a19ae7a39d06d03a8d5df4d9bf44e645a6c54))
 * **artifacts:** report declared DDS, GLB, KTX and KTX2 headers and regions ([#14248](https://github.com/morluto/rea/issues/14248)) ([78d2593](https://github.com/morluto/rea/commit/78d2593a4543592636a49c0cead0ca64dcef78ea))
