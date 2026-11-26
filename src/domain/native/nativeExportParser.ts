@@ -34,6 +34,7 @@ import {
   type Keyed,
 } from "../keyedCollection.js";
 import {
+  DEFAULT_NATIVE_EXPORT_ROWS,
   DEFAULT_NATIVE_EXPORT_TEXT_BYTES,
   decodeElfExportName,
   type ElfExport,
@@ -231,9 +232,14 @@ type DecodedElfString = ReturnType<typeof decodeElfExportName>;
 
 class ElfVersionWorkFailure extends BinaryResourceFailure {}
 
-/** Charge both headers and auxiliary visits, bounded by the admitted version section. */
+const MAX_VERSION_DIAGNOSTIC_ISSUES = 64;
+
+/** Charge both headers and auxiliary visits, bounded independently of max_entries. */
 const versionRecordStep = (size: number, width: number): (() => boolean) => {
-  const allowance = Math.floor(size / width);
+  const allowance = Math.min(
+    Math.floor(size / width),
+    DEFAULT_NATIVE_EXPORT_ROWS,
+  );
   let visited = 0;
   return () => {
     if (++visited > allowance)
@@ -1161,6 +1167,8 @@ function* readVersionNamesSteps(
       const reader = new BinaryReader(tableBytes, little, "elf");
       const visit = versionRecordStep(tableBytes.length, 8);
       let offset = 0;
+      let verdefIssueCount = 0;
+      let omittedVerdefIssues = 0;
       for (let index = 0; index < verdef.info; index++) {
         if (offset + 20 > tableBytes.length)
           throw new BinaryFormatFailure(
@@ -1211,11 +1219,16 @@ function* readVersionNamesSteps(
           }
         } catch (cause) {
           if (!(cause instanceof BinaryFormatFailure)) throw cause;
-          issues.push({
-            code: "version_unresolved",
-            location: hex(verdef.offset + BigInt(offset)),
-            message: `Version definitions: ${cause.message}`,
-          });
+          if (verdefIssueCount < MAX_VERSION_DIAGNOSTIC_ISSUES) {
+            verdefIssueCount += 1;
+            issues.push({
+              code: "version_unresolved",
+              location: hex(verdef.offset + BigInt(offset)),
+              message: `Version definitions: ${cause.message}`,
+            });
+          } else {
+            omittedVerdefIssues += 1;
+          }
         }
         if (index + 1 < verdef.info) {
           if (next < 20)
@@ -1225,6 +1238,13 @@ function* readVersionNamesSteps(
             );
           offset += next;
         }
+      }
+      if (omittedVerdefIssues > 0) {
+        issues.push({
+          code: "version_unresolved",
+          location: hex(verdef.offset),
+          message: `Version definitions: ${String(omittedVerdefIssues)} additional malformed version definition issues omitted`,
+        });
       }
     } catch (cause) {
       if (
