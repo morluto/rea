@@ -340,6 +340,7 @@
 * **elf:** name the auxv types current Linux kernels write ([#13569](https://github.com/morluto/rea/issues/13569)) ([0aecef3](https://github.com/morluto/rea/commit/0aecef3726c216d931d7b085725a50f099eb9e58))
 * **elf:** preserve kernel config framing and location provenance ([#14021](https://github.com/morluto/rea/issues/14021)) ([fabe0da](https://github.com/morluto/rea/commit/fabe0da74b5f2c3807b5e01be88bff476ea74a38))
 * **elf:** read build IDs without decoding unrelated notes ([#13776](https://github.com/morluto/rea/issues/13776)) ([4a62303](https://github.com/morluto/rea/commit/4a623037170d4e50e2c5e7c83f84150a726a19a6))
+* **elf:** read eight-byte DT_HASH entries on 64-bit s390x and Alpha ([#14630](https://github.com/morluto/rea/issues/14630)) ([a140853](https://github.com/morluto/rea/commit/a140853e9fc43ae08d378677654c48c40d5915ac))
 * **elf:** report proven version and dynamic symbol facts ([#13441](https://github.com/morluto/rea/issues/13441)) ([c7f89cd](https://github.com/morluto/rea/commit/c7f89cd8b5b11025b72672af3c010e33e40496f3))
 * **elf:** respect compressed note storage across inspectors ([#13762](https://github.com/morluto/rea/issues/13762)) ([a4f9c23](https://github.com/morluto/rea/commit/a4f9c2309bc8cb2a8ababee9a8b7583d633e019d))
 * **elf:** retain authenticated debug-link evidence on interruption ([#13437](https://github.com/morluto/rea/issues/13437)) ([7fc333f](https://github.com/morluto/rea/commit/7fc333ffa0cf6546716120152c2cbf5f54cd0457))
