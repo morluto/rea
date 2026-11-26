@@ -289,6 +289,14 @@ export const sqliteInspectionParameters = (
     : { schema_scope: input.schema_scope }),
   ...(input.row_limit === undefined ? {} : { row_limit: input.row_limit }),
   ...(input.row_offset === undefined ? {} : { row_offset: input.row_offset }),
+  ...(input.producer_limits === undefined
+    ? {}
+    : {
+        producer_limits:
+          input.producer_limits.input_bytes === undefined
+            ? {}
+            : { input_bytes: input.producer_limits.input_bytes },
+      }),
 });
 
 /** One contract owner interprets omitted scope for adapters and selection checks. */
