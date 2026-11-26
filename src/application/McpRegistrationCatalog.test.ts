@@ -289,6 +289,7 @@ const REVIEWED_CLIENT_IDS = [
   "kimi-code",
   "kiro-cli",
   "mastracode",
+  "muse-code",
   "mcporter",
   "opencode",
   "pi",
