@@ -1,9 +1,9 @@
 import { promptArgumentsSchema } from "./promptArguments.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
-import { currentMcpRequestSignal } from "./EvidenceMcpServerCore.js";
+import { currentMcpRequestSignal } from "./ErrorEvidenceTransport.js";
 import type { RegisteredPrompt } from "@modelcontextprotocol/server";
 
-import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../ports/AnalysisProvider.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import {
   guidedPromptArgumentValues,
@@ -38,21 +38,23 @@ export const registerGuidedPrompts = (
     },
   });
   const prompts = new Map<string, RegisteredPrompt>();
-  // Only workflows whose complete tool set is advertised: a partially
-  // available workflow would name disabled calls in its rendered steps.
+  // The shared projection keeps required tools and removes disabled routes.
   for (const contract of promptsForToolFamilies(server.advertisedToolFamilies))
     prompts.set(contract.name, registerPrompt(server, contract, completion));
   return {
     update(contract) {
       const prompt = prompts.get(contract.name);
-      if (prompt === undefined)
+      const scoped = promptsForToolFamilies(server.advertisedToolFamilies, [
+        contract,
+      ])[0];
+      if (prompt === undefined || scoped === undefined)
         throw new RangeError(`Unknown guided prompt ${contract.name}`);
-      const argsSchema = promptArgumentsSchema(contract, completion);
+      const argsSchema = promptArgumentsSchema(scoped, completion);
       prompt.update({
-        title: contract.title,
-        description: contract.description,
+        title: scoped.title,
+        description: scoped.description,
         argsSchema,
-        callback: (arguments_) => promptResult(contract, arguments_),
+        callback: (arguments_) => promptResult(scoped, arguments_),
       });
     },
   };

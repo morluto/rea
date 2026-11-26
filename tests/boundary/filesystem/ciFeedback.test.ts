@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { workflowFixtureEnvironment } from "../../support/workflowGit.js";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +13,7 @@ import {
   parseStaticTaskContext,
   recordStaticTaskContext,
 } from "../../../scripts/ci/static-task-context.mjs";
+import { testShards } from "../../../scripts/ci/test-selection.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const execute = promisify(execFile);
@@ -72,6 +74,67 @@ const evaluateCondition = (
       ),
     );
 
+it("fetches historical durations when portable tests can use them", async () => {
+  const steps = (await workflow()).build!.steps!;
+  const condition = z
+    .string()
+    .parse(steps.find((step) => step.id === "history")?.if);
+  for (const [code, tier, mode, files, expected] of [
+    ["true", "fast", "selected", ["a.test.ts"], false],
+    ["true", "fast", "selected", ["a.test.ts", "b.test.ts"], true],
+    ["true", "fast", "full", [], true],
+    ["true", "full", "full", [], true],
+    ["true", "warm", "full", [], false],
+    ["false", "fast", "full", [], false],
+  ] as const) {
+    const selection = mode === "selected" ? { mode, files } : { mode };
+    const outputs = {
+      code,
+      tier,
+      test_mode: mode,
+      test_selection: JSON.stringify(selection),
+    };
+    expect(
+      evaluateCondition(condition, {
+        needs: { changes: { outputs } },
+        fromJSON: JSON.parse,
+      }),
+    ).toBe(expected);
+  }
+});
+
+it("looks up a baseline only when main selection can use it", async () => {
+  const steps = (await workflow()).changes!.steps!;
+  const qualification = steps.findIndex((step) => step.id === "qualification");
+  const baseline = steps.findIndex((step) => step.id === "baseline");
+  const plan = steps.findIndex((step) => step.id === "plan");
+  expect(qualification).toBeGreaterThanOrEqual(0);
+  expect(baseline).toBeGreaterThan(qualification);
+  expect(plan).toBeGreaterThan(baseline);
+  const condition = z.string().parse(steps[baseline]?.if);
+  const fast = "23 1,5,7,11,13,17,19,23 * * *";
+  const full = "23 3 * * *";
+  for (const [event, schedule, runFull, fullOnPush, sourceSha, expected] of [
+    ["schedule", fast, "false", "", "", false],
+    ["schedule", fast, "true", "", "", true],
+    ["schedule", fast, "", "", "", true],
+    ["schedule", full, "true", "", "", false],
+    ["push", "", "", "true", "", true],
+    ["push", "", "", "", "", false],
+    ["push", "", "", "true", "caller-sha", false],
+    ["pull_request", "", "", "", "", false],
+  ] as const) {
+    expect(
+      evaluateCondition(condition, {
+        github: { event_name: event, event: { schedule } },
+        inputs: { source_sha: sourceSha },
+        steps: { qualification: { outputs: { run_full: runFull } } },
+        vars: { REA_CI_FULL_ON_PUSH: fullOnPush },
+      }),
+    ).toBe(expected);
+  }
+});
+
 it.each(["fast", "full"] as const)(
   "requires coverage and both actual mutation preflights in %s qualification",
   async (tier) => {
@@ -121,6 +184,7 @@ it.each(["fast", "full"] as const)(
           flags.map((flag) => [flag, tier === "full" ? "true" : "false"]),
         ),
         tier,
+        test_mode: "full",
         code: "true",
         reverse_tools: "true",
       },
@@ -144,7 +208,7 @@ it.each(["fast", "full"] as const)(
         ],
         {
           env: {
-            ...process.env,
+            ...workflowFixtureEnvironment(),
             CI_JOBS: JSON.stringify(needs),
             CI_QUALIFICATION_DIRECTORY: "",
           },
@@ -214,9 +278,16 @@ it("starts source feedback before build and requires both groups without waiving
     env: { CI_STATIC_CONTEXT_SCRIPT: "check:ci:deep:tasks" },
   });
   const deepUpload = jobs["static-deep"]?.steps?.find(
-    (step) => step.with?.name === "static-deep-check-reports",
+    (step) => step.name === "Upload complete deep static diagnostics",
   );
   expect(deepUpload?.if).toBe("always()");
+  expect(deepUpload?.with?.name).toContain(
+    "static-deep-check-reports-attempt-{0}",
+  );
+  const fastUpload = jobs.static?.steps?.find(
+    (step) => step.name === "Upload complete static diagnostics",
+  );
+  expect(fastUpload?.with?.name).toContain("static-check-reports-attempt-{0}");
   expect(deepUpload?.with).toMatchObject({
     path: ".cache/static-checks/",
     "if-no-files-found": "ignore",
@@ -230,7 +301,7 @@ it("starts source feedback before build and requires both groups without waiving
     (step) => step.run === "npm run check:ci:deep",
   );
   const uploadIndex = deepSteps.findIndex(
-    (step) => step.with?.name === "static-deep-check-reports",
+    (step) => step.name === "Upload complete deep static diagnostics",
   );
   expect(contextIndex).toBeGreaterThanOrEqual(0);
   expect(checkIndex).toBeGreaterThan(contextIndex);
@@ -265,6 +336,7 @@ it("starts source feedback before build and requires both groups without waiving
           flags.map((flag) => [flag, tier === "full" ? "true" : "false"]),
         ),
         tier,
+        test_mode: "full",
         code: "true",
       };
       const context: Record<
@@ -275,7 +347,7 @@ it("starts source feedback before build and requires both groups without waiving
       else context["test-source"] = { result };
       const run = execute(process.execPath, [required], {
         env: {
-          ...process.env,
+          ...workflowFixtureEnvironment(),
           CI_JOBS: JSON.stringify(context),
           CI_QUALIFICATION_DIRECTORY: "",
         },
@@ -346,6 +418,8 @@ it("collects basic CI telemetry before optional dependency installation can fail
           steps: z.array(
             z.object({
               id: z.string().optional(),
+              uses: z.string().optional(),
+              with: z.record(z.string(), z.unknown()).optional(),
               run: z.string().optional(),
               if: z.string().optional(),
               "continue-on-error": z.boolean().optional(),
@@ -371,8 +445,17 @@ it("collects basic CI telemetry before optional dependency installation can fail
     expect(collection).toBeGreaterThanOrEqual(0);
     expect(installation).toBeGreaterThan(collection);
   }
+  for (const name of ["ci-job-timings-batch", "ci-health-diagnostics"]) {
+    const uploads = steps.filter(
+      (step) =>
+        step.uses?.startsWith("actions/upload-artifact@") &&
+        step.with?.name === name,
+    );
+    expect(uploads).toHaveLength(1);
+    expect(uploads[0]?.with?.overwrite, name).toBe(true);
+  }
   expect(steps[installation]).toMatchObject({
-    run: "npm ci",
+    run: "npm ci --omit=dev --ignore-scripts",
     "continue-on-error": true,
   });
   expect(
@@ -398,7 +481,19 @@ it("merges source and built reports exactly once using the workflow's shard matr
         matrix.slice(3, -2),
         {
           fromJSON: JSON.parse,
-          needs: { changes: { outputs: { tier: "fast" } } },
+          needs: {
+            changes: {
+              outputs: {
+                test_shards: JSON.stringify(
+                  testShards("fast", {
+                    version: 3,
+                    mode: "full",
+                    reason: "Complete fast suite",
+                  }),
+                ),
+              },
+            },
+          },
         },
         { timeout: 1_000 },
       ),
@@ -420,7 +515,7 @@ it("merges source and built reports exactly once using the workflow's shard matr
   const config = join(root, "vitest.config.mjs");
   await writeFile(
     config,
-    `export default { test: { maxWorkers: 1, projects: [${["source", "built"].map((name) => `{ test: { name: "${name}", globals: true, include: ["${name}*.test.js"] } }`).join(",")}] } };`,
+    `export default { test: { fsModuleCache: false, maxWorkers: 1, projects: [${["source", "built"].map((name) => `{ test: { name: "${name}", fsModuleCache: false, globals: true, include: ["${name}*.test.js"] } }`).join(",")}] } };`,
   );
   const files = [
     "source.test.js",
@@ -457,7 +552,10 @@ it("merges source and built reports exactly once using the workflow's shard matr
       ],
       {
         cwd: root,
-        env: { ...process.env, VITEST_BLOB_LABEL: labels[group]! },
+        env: {
+          ...workflowFixtureEnvironment(),
+          VITEST_BLOB_LABEL: labels[group]!,
+        },
         timeout: 20_000,
       },
     );

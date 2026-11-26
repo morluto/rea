@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+import {
+  assertCanonicalOutput,
+  canonicalOutputSchema,
+} from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import {
   requireMcpEvidenceBundle,
@@ -15,10 +19,13 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 if (process.platform !== "linux")
   throw new Error(
@@ -30,8 +37,21 @@ if (!isAbsolute(process.env.REA_SIGROK_COMMAND ?? ""))
   );
 const entrypoint =
   process.argv[2] ?? fileURLToPath(new URL("./rea.mjs", import.meta.url));
+// Read host limits before acquiring the root so a failure cannot leak it.
+const inheritedAddressSpace = (await readFile("/proc/self/limits", "utf8"))
+  .split("\n")
+  .find((line) => line.startsWith("Max address space "))
+  ?.trim()
+  .match(/^Max address space\s+(\S+)\s+(\S+)\s+bytes$/u);
+assert.ok(inheritedAddressSpace);
+const expectedAddressSpace = Math.min(
+  1073741824,
+  ...inheritedAddressSpace
+    .slice(1)
+    .map((value) => (value === "unlimited" ? Infinity : Number(value))),
+);
 const run = createVerifierRun();
-const root = await PrivateRuntimeRoot.create({
+const root = await VerifierFixture.open({
   prefix: "rea-signal-verifier-",
 });
 const path = join(root.path, "recording with spaces.vcd");
@@ -43,7 +63,9 @@ const environment = {
   TMP: root.path,
   TEMP: root.path,
 };
-const client = new Client({ name: "signal-recording-verifier", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "signal-recording-verifier", version: "1" }),
+);
 // Real sigrok refusals of an unknown decoder ID must name the caller's field.
 const assertRejectedSelector = (
   response,
@@ -67,6 +89,9 @@ const transport = new StdioClientTransport({
   env: environment,
   stderr: "pipe",
 });
+// The MCP server child reads files under the root until it has exited.
+root.releaseAfter(() => client.close());
+root.releaseAfter(() => transport.close());
 // Independently synthesize 9600-baud 8N1 samples at 1 MHz: bytes 52 45 41.
 const lines = [
   "$timescale 1 us $end",
@@ -93,29 +118,17 @@ lines.push(`#${tick + 1000}`, "1!");
 const source = lines.join("\n") + "\n";
 let cases = 0;
 const discoveryMeasurements = [];
-const inheritedAddressSpace = (await readFile("/proc/self/limits", "utf8"))
-  .split("\n")
-  .find((line) => line.startsWith("Max address space "))
-  ?.trim()
-  .match(/^Max address space\s+(\S+)\s+(\S+)\s+bytes$/u);
-assert.ok(inheritedAddressSpace);
-const expectedAddressSpace = Math.min(
-  1073741824,
-  ...inheritedAddressSpace
-    .slice(1)
-    .map((value) => (value === "unlimited" ? Infinity : Number(value))),
-);
 
-await withVerifierCleanup(async () => {
+await withVerifierFixture(root, async () => {
   await writeFile(path, source);
   await client.connect(transport);
   const advertised = (await client.listTools()).tools.find(
     ({ name }) => name === "decode_signal_recording",
   );
-  assert.ok(advertised?.outputSchema);
+  assert.ok(advertised);
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   assert.ok(ajv.validateSchema(advertised.inputSchema));
-  assert.ok(ajv.validateSchema(advertised.outputSchema));
+  assert.ok(ajv.validateSchema(canonicalOutputSchema(advertised.name)));
   for (const extra of [
     { input_format: "vcd", annotations: "uart=rx-data" },
     {},
@@ -125,10 +138,7 @@ await withVerifierCleanup(async () => {
       name: advertised.name,
       arguments: input,
     });
-    assert.ok(
-      ajv.validate(advertised.outputSchema, response.structuredContent),
-      JSON.stringify(ajv.errors),
-    );
+    assertCanonicalOutput(ajv, advertised, response);
     const evidence = parseEvidence(
       requireMcpOutput(response, "decode_signal_recording"),
     );
@@ -241,10 +251,7 @@ await withVerifierCleanup(async () => {
       name: advertised.name,
       arguments: input,
     });
-    assert.ok(
-      ajv.validate(advertised.outputSchema, response.structuredContent),
-      JSON.stringify(ajv.errors),
-    );
+    assertCanonicalOutput(ajv, advertised, response);
     const evidence = parseEvidence(
       requireMcpOutput(response, "decode_signal_recording"),
     );
@@ -318,9 +325,9 @@ await withVerifierCleanup(async () => {
   const discoveryTool = (await client.listTools()).tools.find(
     ({ name }) => name === "inspect_signal_decoders",
   );
-  assert.ok(discoveryTool?.outputSchema);
+  assert.ok(discoveryTool);
   assert.ok(ajv.validateSchema(discoveryTool.inputSchema));
-  assert.ok(ajv.validateSchema(discoveryTool.outputSchema));
+  assert.ok(ajv.validateSchema(canonicalOutputSchema(discoveryTool.name)));
   const nativeHelp = (
     await execute(
       process.env.REA_SIGROK_COMMAND,
@@ -371,10 +378,7 @@ await withVerifierCleanup(async () => {
       name: discoveryTool.name,
       arguments: input,
     });
-    assert.ok(
-      ajv.validate(discoveryTool.outputSchema, response.structuredContent),
-      JSON.stringify(ajv.errors),
-    );
+    assertCanonicalOutput(ajv, discoveryTool, response);
     const evidence = parseEvidence(
       requireMcpOutput(response, "inspect_signal_decoders"),
     );
@@ -410,6 +414,8 @@ await withVerifierCleanup(async () => {
       matching: matched.length,
       returned: page.length,
       has_more: offset + page.length < matched.length,
+      // Verified selections fit one page; the page budget is covered by boundary tests.
+      record_budget_reached: false,
     });
     const flags = Object.entries(input).flatMap(([key, value]) =>
       value === null ? ["--all"] : [`--${key}`, String(value)],
@@ -437,7 +443,7 @@ await withVerifierCleanup(async () => {
     "paged.vcd",
     "recording with spaces.vcd",
   ]);
-}, [() => client.close(), () => transport.close(), () => root.close()]);
+});
 console.log(
   JSON.stringify(
     {

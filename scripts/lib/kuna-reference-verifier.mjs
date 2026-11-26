@@ -28,8 +28,14 @@ export const verifyKunaReferences = async ({
     entries(join(cacheRoot, "projects")),
     entries(join(cacheRoot, "staging")),
   ]);
-  const callers = await call("procedure_callers", { procedure: address });
-  const callees = await call("procedure_callees", { procedure: address });
+  const callers = await call("procedure_callers", {
+    detail: "complete",
+    procedure: address,
+  });
+  const callees = await call("procedure_callees", {
+    detail: "complete",
+    procedure: address,
+  });
   const incoming = await call("xrefs", { address });
   for (const [label, result] of [
     ["callers", callers],
@@ -72,6 +78,7 @@ export const verifyKunaReferences = async ({
       `${name} incoming references differ from exact-target native sites`,
     );
     const graph = await call("get_call_graph", {
+      detail: "complete",
       address: expectedCaller,
       direction: "forward",
     });
@@ -84,7 +91,10 @@ export const verifyKunaReferences = async ({
     assert.equal(path.value.goal_status, "reached");
     let traceMs;
     if (verifyNamedTrace) {
-      const trace = await call("trace_feature", { query: name });
+      const trace = await call("trace_feature", {
+        detail: "complete",
+        query: name,
+      });
       traceMs = trace.ms;
       assert.ok(
         trace.value.matches.some(
@@ -114,6 +124,46 @@ export const verifyKunaReferences = async ({
         );
       }
       assert.equal(trace.value.truncated, false);
+      const summary = await call("trace_feature", {
+        query: name,
+        detail: "summary",
+      });
+      assert.equal(
+        summary.value.parent_evidence_id,
+        trace.structured.evidence_id,
+      );
+      assert.equal(
+        summary.value.summary.references,
+        trace.value.references.length,
+      );
+      assert.equal(
+        summary.value.summary.unknowns,
+        trace.value.residual_unknowns.length,
+      );
+      for (const [collection, values] of [
+        ["matches", trace.value.matches],
+        ["references", trace.value.references],
+        ["unknowns", trace.value.residual_unknowns],
+      ]) {
+        const view = await call("inspect_analysis_view", {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: trace.structured.evidence_id,
+          },
+          view: {
+            kind: "native-feature-trace",
+            collection,
+            offset: 0,
+            limit: 1,
+          },
+        });
+        assert.equal(view.value.coverage.total, values.length);
+        assert.deepEqual(
+          view.value.items.rows.map(({ value }) => value),
+          values.slice(0, 1),
+        );
+        assert.equal(view.value.items.collection, collection);
+      }
     }
     composed = {
       graph_ms: graph.ms,
@@ -129,7 +179,10 @@ export const verifyKunaReferences = async ({
     before,
     "A reference-only workflow started a C project export",
   );
-  const repeated = await call("procedure_callees", { procedure: address });
+  const repeated = await call("procedure_callees", {
+    detail: "complete",
+    procedure: address,
+  });
   assert.deepEqual(repeated.value, callees.value);
   return {
     callers: callers.value.length,

@@ -1,9 +1,13 @@
+import { isRecord } from "../../kernel/isRecord.js";
 import {
   projectProtobufCapturePage,
   protobufViewRequestSchema,
 } from "./protobufCaptureView.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
-import { createHash } from "node:crypto";
+import {
+  analysisViewInputError,
+  invalidAnalysisViewSubject,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { parseAnalysisViewResult } from "./analysisViewParent.js";
@@ -36,10 +40,13 @@ import {
   summarizeQlogCapture,
   projectQlogCapturePage,
 } from "./qlogCaptureView.js";
+import { evidenceFileTarget } from "../evidence.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** Offsets page the parent's retained record order, preserving producer ordinals. */
 export const captureViewRequestSchema = z.strictObject({
   kind: z.literal("capture"),
+  // detail-level: how much of the capture the caller asks to see, not what was examined.
   detail: z.enum(["preview", "complete"]).default("preview"),
   offset: z.int().nonnegative().default(0),
   limit: z.int().positive().default(64),
@@ -85,12 +92,8 @@ export const captureSummarySchema = z.strictObject({
   qlog: qlogSummarySchema.optional(),
 });
 
-const object = (
-  value: JsonValue,
-): Readonly<Record<string, JsonValue>> | null =>
-  value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value
-    : null;
+const object = (value: JsonValue): Readonly<Record<string, JsonValue>> | null =>
+  isRecord(value) ? value : null;
 
 // Field names have different meanings across producers. In particular, HAR
 // entry extensions named `name` or `type` are not qlog or mitmproxy headlines.
@@ -174,7 +177,7 @@ const describesText = (descriptor: BinaryField, text: string): boolean => {
     utf8.toString("utf8") === text &&
     descriptor.bytes === utf8.length &&
     descriptor.content_base64 === utf8.toString("base64") &&
-    descriptor.sha256 === createHash("sha256").update(utf8).digest("hex")
+    descriptor.sha256 === sha256Hex(utf8)
   );
 };
 /**
@@ -247,37 +250,43 @@ const ancestorsOf = (pointer: string): string[] => {
     ancestors.push(pointer.slice(0, at));
   return ancestors;
 };
-/** Add a pointer's strict ancestors, stopping at one already present (its own ancestors are too). */
-const addAncestors = (pointer: string, into: Set<string>): void => {
-  for (
-    let at = pointer.lastIndexOf("/");
-    at !== -1;
-    at = at === 0 ? -1 : pointer.lastIndexOf("/", at - 1)
-  ) {
-    const ancestor = pointer.slice(0, at);
-    if (into.has(ancestor)) return;
-    into.add(ancestor);
-  }
+/** The only coordinates a mitmproxy headline check asks about. */
+const HEADLINE_POINTERS: ReadonlySet<string> = new Set([
+  "/type",
+  ...Object.entries(MITMPROXY_HEADLINE_FIELDS).flatMap(([side, fields]) =>
+    fields.map((field) => `/${side}/${field}`),
+  ),
+]);
+const HEADLINE_CHILD_PREFIXES = [...HEADLINE_POINTERS].map(
+  (pointer) => [pointer, `${pointer}/`] as const,
+);
+/** Headline coordinates and their ancestors: the only pointers whose own facets matter. */
+const INDEXED_POINTERS: ReadonlySet<string> = new Set(
+  [...HEADLINE_POINTERS].flatMap((pointer) => [
+    pointer,
+    ...ancestorsOf(pointer),
+  ]),
+);
+/** Mark the headline coordinates a facet lies beneath, without deriving strings from its pointer. */
+const markContainers = (pointer: string, into: Set<string>): void => {
+  for (const [coordinate, prefix] of HEADLINE_CHILD_PREFIXES)
+    if (pointer.startsWith(prefix)) into.add(coordinate);
 };
-const groupByPointer = <T extends { readonly pointer: string }>(
-  facets: readonly T[],
-): Map<string, T[]> => {
-  const groups = new Map<string, T[]>();
-  for (const facet of facets) {
-    const group = groups.get(facet.pointer);
-    if (group === undefined) groups.set(facet.pointer, [facet]);
-    else group.push(facet);
-  }
-  return groups;
+/** Two entries already decide every representation check, so keep no more. */
+const keep = <T>(groups: Map<string, T[]>, pointer: string, facet: T): void => {
+  const group = groups.get(pointer);
+  if (group === undefined) groups.set(pointer, [facet]);
+  else if (group.length < 2) group.push(facet);
 };
 
-/** A record's facet coordinates, indexed once for every headline check. */
+/** A record's facets at headline coordinates and their ancestors, indexed once. */
 type FacetIndex = {
+  /** At most two facets per pointer; a second already fails every check. */
   readonly sidecars: ReadonlyMap<string, readonly NumericSidecar[]>;
   readonly bytes: ReadonlyMap<string, readonly BinaryField[]>;
   /** The producer held a number or bytes here. */
   readonly scalars: ReadonlySet<string>;
-  /** A facet lies beneath: the producer held a container here. */
+  /** Headline coordinates with a facet beneath: the producer held a container there. */
   readonly containers: ReadonlySet<string>;
   /**
    * Withheld by a value redaction or a redacted byte descriptor; either facet
@@ -287,22 +296,30 @@ type FacetIndex = {
   /** The parent of an omitted property name; it hides no sibling values. */
   readonly omittedNames: ReadonlySet<string>;
 };
+/**
+ * Facets elsewhere in the record only mark containers, so the index holds a
+ * fixed number of entries however many facets an admitted record carries.
+ */
 const indexFacets = (record: WebNetworkCaptureRecord): FacetIndex => {
+  const sidecars = new Map<string, NumericSidecar[]>();
+  const bytes = new Map<string, BinaryField[]>();
   const containers = new Set<string>();
   const withheld = new Set<string>();
   const omittedNames = new Set<string>();
-  for (const { pointer } of record.numeric_literals)
-    addAncestors(pointer, containers);
-  for (const { pointer, state } of record.binary_fields) {
-    addAncestors(pointer, containers);
-    if (state === "redacted") withheld.add(pointer);
-  }
-  for (const redaction of record.redactions) {
-    addAncestors(redaction.pointer, containers);
-    ("scope" in redaction ? omittedNames : withheld).add(redaction.pointer);
-  }
-  const sidecars = groupByPointer(record.numeric_literals);
-  const bytes = groupByPointer(record.binary_fields);
+  const indexed = (pointer: string): boolean => {
+    markContainers(pointer, containers);
+    return INDEXED_POINTERS.has(pointer);
+  };
+  for (const sidecar of record.numeric_literals)
+    if (indexed(sidecar.pointer)) keep(sidecars, sidecar.pointer, sidecar);
+  for (const field of record.binary_fields)
+    if (indexed(field.pointer)) {
+      keep(bytes, field.pointer, field);
+      if (field.state === "redacted") withheld.add(field.pointer);
+    }
+  for (const redaction of record.redactions)
+    if (indexed(redaction.pointer))
+      ("scope" in redaction ? omittedNames : withheld).add(redaction.pointer);
   return {
     sidecars,
     bytes,
@@ -444,28 +461,23 @@ const preview = (record: WebNetworkCaptureRecord, format: string) => {
   };
 };
 
-const captureParser = { safeParse: safeParseOwnedWebNetworkCapture };
-
 /** Authenticate the retained report and its subject at one owning boundary. */
 const parseCaptureParent = (
   parent: AnalysisViewParent,
 ): Result<WebNetworkCapture, AnalysisError> => {
-  const parsed = parseAnalysisViewResult(captureParser, parent);
+  const parsed = parseAnalysisViewResult(
+    { safeParse: safeParseOwnedWebNetworkCapture },
+    parent,
+  );
   if (!parsed.ok) return parsed;
   const report = parsed.value;
-  const subject = parent.subject;
+  const subject = evidenceFileTarget(parent);
   if (
     report.artifact.sha256 !== null &&
-    (subject == null || subject.digest.sha256 !== report.artifact.sha256)
+    (subject == null || subject.sha256 !== report.artifact.sha256)
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message: "Capture parent subject must identify the report's SHA-256.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "Capture parent subject must identify the report's SHA-256.",
     );
   return ok(report);
 };
@@ -481,15 +493,8 @@ export const projectWebNetworkCaptureView = (
     view.kind !== "protobuf" &&
     view.kind !== "qlog"
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Historical captures support summary, capture record pages, qlog fact pages and admitted api-surface, environment-manifest, environment-state or environment-coverage views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Historical captures support summary, capture record pages, qlog fact pages and admitted api-surface, environment-manifest, environment-state or environment-coverage views.",
     );
   assertOwnedView<
     | SummaryAnalysisView
@@ -528,7 +533,8 @@ export const projectWebNetworkCaptureView = (
         "Decoding covers selected retained bodies only. Exhausting wire fields does not establish schema completeness or business meaning; compressed bodies and unsupported schema facets remain unknown.",
       ],
     });
-  if (view.kind === "summary")
+  if (view.kind === "summary") {
+    const protobufSummary = summarizeProtobuf(report.records);
     return ok({
       kind: "summary" as const,
       view,
@@ -543,18 +549,14 @@ export const projectWebNetworkCaptureView = (
         ...(report.protobuf_coverage === undefined
           ? {}
           : { protobuf_coverage: report.protobuf_coverage }),
-        ...(summarizeProtobuf(report.records) === undefined
-          ? {}
-          : { protobuf: summarizeProtobuf(report.records)! }),
+        ...(protobufSummary === undefined ? {} : { protobuf: protobufSummary }),
         ...(report.format === "qlog"
           ? { qlog: summarizeQlogCapture(report.qlog) }
           : {}),
       },
-      coverage: completeWithinViewCoverage(
-        report.records.length,
-        report.records.length,
-      ),
+      coverage: completeWithinViewCoverage(report.records.length),
     });
+  }
   if (view.kind === "qlog") {
     if (report.format !== "qlog")
       return err(

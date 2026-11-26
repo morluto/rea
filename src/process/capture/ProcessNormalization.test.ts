@@ -2,12 +2,17 @@ import { expect, it } from "vitest";
 
 import {
   createBoundedProcessTextNormalizer,
-  createProcessTextNormalizer,
   createProcessIdentifierLookup,
   normalizeProcessSamples,
   normalizeProcessText,
+  normalizeRetainedTerminalFrames,
 } from "./ProcessNormalization.js";
-import { processScenarioSchema } from "../../domain/process/processScenario.js";
+import {
+  DEFAULT_PROCESS_OUTPUT_BYTES,
+  processScenarioSchema,
+} from "../../domain/process/processScenario.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 
 const rootPid = 41_010;
 const samples = Object.freeze(
@@ -205,6 +210,7 @@ it("counts UTF-8 bytes across replacement boundaries like the final JavaScript s
     "/temporary",
     rootPid,
   );
+  expect(expected).toBe("\ude00😀");
   expect(
     createBoundedProcessTextNormalizer(
       emptyPattern,
@@ -237,6 +243,7 @@ it("counts UTF-8 bytes across replacement boundaries like the final JavaScript s
     "/temporary",
     rootPid,
   );
+  expect(loneExpected).toBe("\ud83dy");
   expect(
     createBoundedProcessTextNormalizer(
       loneSurrogate,
@@ -277,11 +284,17 @@ it("lets a later pattern shrink text when an earlier pattern does not match", ()
 
 it("reuses matchers while observing the terminal PID after launch", () => {
   let pid = -1;
-  const normalize = createProcessTextNormalizer(
+  const bounded = createBoundedProcessTextNormalizer(
     scenario({ ports: false, patterns: [] }),
     "/temporary",
     () => pid,
   );
+  const normalize = (text: string) => {
+    const result = bounded(text, 4096);
+    if (result.state !== "normalized")
+      throw new Error("unexpected budget failure");
+    return result.value;
+  };
   expect(normalize("root 41010 /workspace/item")).toBe(
     "root 41010 <working-directory>/item",
   );
@@ -300,8 +313,10 @@ it("keeps equal-path priority and replacement aliases local to each capture", ()
     filesystem_observation_paths: ["/selected", "<working-directory>"],
     normalization: { paths: true, pids: false, ports: false, patterns: [] },
   });
-  const normalize = createProcessTextNormalizer(declared, "/selected", -1);
-  const other = createProcessTextNormalizer(declared, "/other", -1);
+  const normalize = (text: string) =>
+    normalizeProcessText(text, declared, "/selected", -1);
+  const other = (text: string) =>
+    normalizeProcessText(text, declared, "/other", -1);
   const text = "/selected/item <working-directory>/source";
   expect(normalize(text)).toBe(
     "<temporary-root>/item <filesystem-root-1>/source",
@@ -603,11 +618,12 @@ it.each([
       pids: enabled,
       patterns: enabled ? [{ pattern: "marker", replacement: "selected" }] : [],
     });
-    const expected = createProcessTextNormalizer(
+    const expected = normalizeProcessText(
+      input,
       settings,
       "/temporary",
       rootPid,
-    )(input);
+    );
     expect(
       createBoundedProcessTextNormalizer(
         settings,
@@ -645,7 +661,17 @@ it("shares sampled identifiers before custom patterns in terminal and command no
       { pattern: "200", replacement: "wrong-order" },
     ],
   });
-  const normalize = createProcessTextNormalizer(declared, "/temporary", lookup);
+  const bounded = createBoundedProcessTextNormalizer(
+    declared,
+    "/temporary",
+    lookup,
+  );
+  const normalize = (text: string) => {
+    const result = bounded(text, 4096);
+    if (result.state !== "normalized")
+      throw new Error("unexpected budget failure");
+    return result.value;
+  };
   expect(normalize("root=100 child=200 other=201")).toBe(
     "root=selected child=wrong-order other=201",
   );
@@ -664,4 +690,76 @@ it("shares sampled identifiers before custom patterns in terminal and command no
   expect(normalizeProcessSamples(observed, declared, 100)[1]?.command).toBe(
     "root=selected child=selected other=201",
   );
+});
+
+it("does not alias the temporary-root absence marker in sampled command data", () => {
+  const command = "/usr/bin/node --marker <no-temporary-root>";
+  const selected = [{ ...samples[0]!, command }];
+  const normalized = normalizeProcessSamples(
+    selected,
+    scenario({ pids: false, ports: false, patterns: [] }),
+    rootPid,
+  );
+  expect(normalized[0]?.command).toBe(
+    "<executable> --marker <no-temporary-root>",
+  );
+  expect(selected[0]?.command).toBe(command);
+});
+
+it("preserves literal absence text while normalizing selected paths with and without a temporary root", () => {
+  const selected = scenario({ pids: false, ports: false, patterns: [] });
+  const text =
+    "/usr/bin/node /workspace/file <no-temporary-root> /capture/file";
+  for (const temporaryRoot of [undefined, "/capture"]) {
+    const expected = `<executable> <working-directory>/file <no-temporary-root> ${temporaryRoot === undefined ? "/capture/file" : "<temporary-root>/file"}`;
+    expect(normalizeProcessText(text, selected, temporaryRoot, rootPid)).toBe(
+      expected,
+    );
+    expect(
+      createBoundedProcessTextNormalizer(
+        selected,
+        temporaryRoot,
+        rootPid,
+      )(text, 1024),
+    ).toEqual({
+      state: "normalized",
+      value: expected,
+      utf8Bytes: Buffer.byteLength(expected),
+    });
+  }
+});
+
+it("refuses a retained frame that no longer fits limits.output_bytes with details.limit", () => {
+  let thrown: unknown;
+  try {
+    normalizeRetainedTerminalFrames(
+      [{ sequence: 3, at_ms: 0, data: "pid 41010" }],
+      () => ({ state: "over_budget", reason: "retention" }),
+      64,
+    );
+  } catch (cause) {
+    thrown = cause;
+  }
+  if (!(thrown instanceof AnalysisResourceConstraintError))
+    throw new Error("Expected the retained-output refusal");
+  const projected = projectAnalysisError(thrown);
+  expect(projected.details?.limit).toEqual({
+    control_kind: "parameter",
+    parameter: "limits.output_bytes",
+    effective_value: 64,
+    unit: "bytes",
+    minimum: 1,
+    maximum: Number.MAX_SAFE_INTEGER,
+    default_value: DEFAULT_PROCESS_OUTPUT_BYTES,
+    applies_at: "next_call",
+  });
+  expect(projected.details?.refusal).toEqual({
+    kind: "adjustable_budget",
+    operation: "capture_process_scenario",
+    control: "limits.output_bytes",
+    effective_value: 64,
+    unit: "bytes",
+    range: { minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+    default_value: DEFAULT_PROCESS_OUTPUT_BYTES,
+  });
 });

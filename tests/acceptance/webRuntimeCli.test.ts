@@ -3,6 +3,7 @@ import { once } from "node:events";
 import { createServer } from "node:http";
 import type { Socket } from "node:net";
 import { fileURLToPath } from "node:url";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { promisify } from "node:util";
 import { expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
@@ -64,18 +65,31 @@ it("advertises the canonical observation duration bounds through the compiled CL
     [entrypoint, "observe-web-execution", "--schema", "--json"],
     { env: environment(), timeout: 20_000 },
   );
-  expect(JSON.parse(stdout)).toMatchObject({
-    options: {
-      properties: {
-        observationMs: {
-          type: "integer",
-          minimum: 1,
-          maximum: 2_147_483_647,
-          default: 10_000,
-        },
+  const observationMs = (
+    JSON.parse(stdout) as {
+      options: {
+        properties: Record<string, Parameters<Ajv2020["compile"]>[0]>;
+      };
+    }
+  ).options.properties.observationMs;
+  if (observationMs === undefined)
+    throw new Error("observe-web-execution advertises no observationMs");
+  expect(observationMs).toMatchObject({
+    default: 10_000,
+    anyOf: [
+      {
+        type: "integer",
+        minimum: 1,
+        maximum: 2_147_483_647,
       },
-    },
+      { type: "string" },
+    ],
   });
+  const validate = new Ajv2020({ strict: false }).compile(observationMs);
+  for (const token of ["1", "010000", "2147483647"])
+    expect(validate(token), token).toBe(true);
+  for (const token of ["0", "2147483648", "0x10"])
+    expect(validate(token), token).toBe(false);
 });
 
 it("runs the compiled public listener command through its default native CDP composition", async () => {
@@ -173,106 +187,59 @@ const cancellationSignals =
 interface CliCancellationCommand {
   readonly command: string;
   readonly operation: string;
-  readonly buildArgs: (endpoint: string) => readonly string[];
+  readonly arguments: readonly string[];
 }
 
 const cancellationCommands: readonly CliCancellationCommand[] = [
   {
     command: "observe-web-execution",
     operation: "observe_web_execution",
-    buildArgs: (endpoint) => [
-      "observe-web-execution",
-      endpoint,
-      "page-fixture",
-      "--observation-ms",
-      "30000",
-      "--json",
-    ],
+    arguments: ["page-fixture", "--observation-ms", "30000"],
   },
   {
     command: "inspect-web-event-listeners",
     operation: "inspect_web_event_listeners",
-    buildArgs: (endpoint) => [
-      "inspect-web-event-listeners",
-      endpoint,
-      "page-fixture",
-      "body",
-      "--json",
-    ],
+    arguments: ["page-fixture", "body"],
   },
   {
     command: "list-browser-targets",
     operation: "list_browser_targets",
-    buildArgs: (endpoint) => ["list-browser-targets", endpoint, "--json"],
+    arguments: [],
   },
   {
     command: "inspect-web-page",
     operation: "inspect_web_page",
-    buildArgs: (endpoint) => [
-      "inspect-web-page",
-      endpoint,
-      "page-fixture",
-      "--json",
-    ],
+    arguments: ["page-fixture"],
   },
   {
     command: "analyze-web-bundle",
     operation: "analyze_web_bundle",
-    buildArgs: (endpoint) => [
-      "analyze-web-bundle",
-      endpoint,
-      "page-fixture",
-      "--json",
-    ],
+    arguments: ["page-fixture"],
   },
   {
     command: "observe-web-session",
     operation: "observe_web_session",
-    buildArgs: (endpoint) => [
-      "observe-web-session",
-      endpoint,
-      "page-fixture",
-      "--json",
-    ],
+    arguments: ["page-fixture"],
   },
   {
     command: "discover-webmcp-tools",
     operation: "discover_webmcp_tools",
-    buildArgs: (endpoint) => [
-      "discover-webmcp-tools",
-      endpoint,
-      "page-fixture",
-      "--json",
-    ],
+    arguments: ["page-fixture"],
   },
   {
     command: "capture-web-screenshot",
     operation: "capture_web_screenshot",
-    buildArgs: (endpoint) => [
-      "capture-web-screenshot",
-      endpoint,
-      "page-fixture",
-      "--json",
-    ],
+    arguments: ["page-fixture"],
   },
   {
     command: "list-javascript-runtime-targets",
     operation: "list_javascript_runtime_targets",
-    buildArgs: (endpoint) => [
-      "list-javascript-runtime-targets",
-      endpoint,
-      "--json",
-    ],
+    arguments: [],
   },
   {
     command: "observe-javascript-runtime",
     operation: "observe_javascript_runtime",
-    buildArgs: (endpoint) => [
-      "observe-javascript-runtime",
-      endpoint,
-      "target-fixture",
-      "--json",
-    ],
+    arguments: ["target-fixture"],
   },
 ];
 
@@ -286,7 +253,7 @@ const cancellationCases = cancellationCommands.flatMap((command) =>
 
 it.each(cancellationCases)(
   "$command preserves $signal status and awaited cleanup during CDP discovery",
-  async ({ command, operation, buildArgs, signal, expectedExitCode }) => {
+  async ({ command, operation, arguments: args, signal, expectedExitCode }) => {
     const sockets = new Set<Socket>();
     const server = createServer(() => undefined);
     server.on("connection", (socket) => {
@@ -303,7 +270,7 @@ it.each(cancellationCases)(
 
     const child = spawn(
       process.execPath,
-      [entrypoint, ...buildArgs(endpoint)],
+      [entrypoint, command, endpoint, ...args, "--json"],
       {
         env: environment(),
         stdio: ["ignore", "pipe", "pipe"],

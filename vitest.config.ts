@@ -10,6 +10,13 @@ import {
 } from "./scripts/lib/test-projects.mjs";
 
 import { CiTestSequencer } from "./tests/ciTestSequencer.js";
+import {
+  COVERAGE_DEADLINE_SCALE,
+  HOSTED_RUNNER_DEADLINE_SCALE,
+  LONG_RUNNING_DEADLINE_MS,
+  remainingTestDeadline,
+  TEST_DEADLINE_MS as BASE_TEST_DEADLINE_MS,
+} from "./tests/support/testDeadlines.js";
 
 // Playwright's registry does not derive a cache directory for Termux's
 // `android` platform. Match the production CLI fallback before workers import
@@ -32,26 +39,58 @@ const { options: testOptions } = parseCLI(
 );
 const COVERAGE_ENABLED = testOptions.coverage?.enabled === true;
 const COVERAGE_SHARD = testOptions.shard !== undefined;
-// Keep local and CI concurrency bounded by the runner rather than command locks.
-const MAX_TEST_WORKERS = Math.min(2, availableParallelism());
+// Bound concurrency by the runner rather than command locks. A hosted CI job
+// owns its whole four-core runner, so it may use every core; other hosts stay
+// at two workers because developers and agents share them with other checks.
+const DEDICATED_CI_RUNNER = process.env.GITHUB_ACTIONS === "true";
+const MAX_TEST_WORKERS = Math.min(
+  DEDICATED_CI_RUNNER ? 4 : 2,
+  availableParallelism(),
+);
+// A test deadline only turns a hang into a named failure; it is not a
+// performance assertion. Projects own it so tests do not hard-code host speed.
+// Built projects launch compiled CLI, MCP, and provider processes while other
+// lanes share the runner, and coverage instrumentation slows every lane. Hosted
+// CI runs a worker per core, so CPU-bound cases there share every core with
+// other workers and their subprocesses.
+const DEADLINE_SCALE =
+  (COVERAGE_ENABLED ? COVERAGE_DEADLINE_SCALE : 1) *
+  (DEDICATED_CI_RUNNER ? HOSTED_RUNNER_DEADLINE_SCALE : 1);
+const TEST_DEADLINE_MS = {
+  source: BASE_TEST_DEADLINE_MS.source * DEADLINE_SCALE,
+  built: BASE_TEST_DEADLINE_MS.built * DEADLINE_SCALE,
+} as const;
+
+// Vitest's one-second `expect.poll` default is a host-speed guess. A poll the
+// project owns waits as long as its test may run, less a reporting reserve, so
+// a condition that never holds still fails with the poll's own diagnostics.
+const pollPolicy = (deadlineMs: number) => {
+  const timeout = remainingTestDeadline(deadlineMs, 0);
+  return timeout === undefined ? {} : { timeout };
+};
 
 const TEST_PROJECTS = [...SOURCE_TEST_PROJECTS, ...BUILT_TEST_PROJECTS];
+// Source projects that share a module graph still run in forked workers.
+// Thread workers share one process, so the source lane's workers once grew
+// one 3.8 GiB process; Linux CI then refused to fork test subprocesses from it
+// (`spawnSync ... ENOMEM`). A forked worker keeps its own heap and main-thread
+// stack, so the largest process stays near one worker's size.
 const PROJECT_POLICIES = {
   domain: {
-    pool: "threads" as const,
+    pool: "forks" as const,
     maxWorkers: MAX_TEST_WORKERS,
     // Domain and contract modules are pure and own no process-global state, so
     // per-file module isolation adds startup cost without protecting a seam.
   },
   services: {
-    pool: "threads" as const,
+    pool: "forks" as const,
     maxWorkers: MAX_TEST_WORKERS,
     // Service tests use recording ports and own no process-global state. Share
     // their module graph so file startup does not dominate the lane.
   },
   adapters: { pool: "forks" as const, maxWorkers: MAX_TEST_WORKERS },
   composition: {
-    pool: "threads" as const,
+    pool: "forks" as const,
     maxWorkers: MAX_TEST_WORKERS,
     // Composition tests use provider-neutral sessions and test-scoped cleanup;
     // sharing their immutable module graph avoids per-file startup work.
@@ -69,7 +108,7 @@ const PROJECT_POLICIES = {
   },
   "process-boundary": {
     pool: "forks" as const,
-    maxWorkers: MAX_TEST_WORKERS,
+    maxWorkers: 1,
     // Process-tree observations share host sampling resources; keep this small
     // lane serial while the independent projects run together.
     fileParallelism: false,
@@ -84,12 +123,12 @@ const PROJECT_POLICIES = {
   acceptance: { pool: "forks" as const, maxWorkers: MAX_TEST_WORKERS },
   "process-global": { pool: "forks" as const, maxWorkers: MAX_TEST_WORKERS },
   conformance: {
-    pool: "threads" as const,
+    pool: "forks" as const,
     maxWorkers: MAX_TEST_WORKERS,
     // Contract cases use recording providers and own no process-global state.
   },
   evaluation: {
-    pool: "threads" as const,
+    pool: "forks" as const,
     maxWorkers: MAX_TEST_WORKERS,
     // Evaluator tests inspect deterministic inputs without mutating shared state.
   },
@@ -126,6 +165,9 @@ const projects = TEST_PROJECTS.map((project) => {
       include: [...project.include],
       ...(project.exclude ? { exclude: [...project.exclude] } : {}),
       isolate: project.isolate !== false,
+      testTimeout: TEST_DEADLINE_MS[project.group],
+      hookTimeout: TEST_DEADLINE_MS[project.group],
+      expect: { poll: pollPolicy(TEST_DEADLINE_MS[project.group]) },
       ...policy,
     },
   };
@@ -133,7 +175,16 @@ const projects = TEST_PROJECTS.map((project) => {
 
 export default defineConfig({
   test: {
-    env: { TMPDIR: CANONICAL_TEMPORARY_DIRECTORY },
+    env: {
+      TMPDIR: CANONICAL_TEMPORARY_DIRECTORY,
+      // Tests read analysis facts, so a CLI or server they spawn delivers
+      // complete Evidence, as the in-process harness default does. Delivery
+      // tests set their own budget; this is the largest accepted seed.
+      REA_AGENT_RESULT_BUDGET_BYTES: String(10 * 1024 * 1024),
+      // Nothing a test runs writes to the user's retained-Evidence cache;
+      // retention tests select a temporary cache and their own size.
+      REA_CLI_RETAINED_EVIDENCE_BYTES: "0",
+    },
     maxWorkers: MAX_TEST_WORKERS,
     projects,
     ...(process.env.REA_CI_TEST_HISTORY
@@ -142,10 +193,19 @@ export default defineConfig({
     retry: 0,
     reporters: ["default"],
     runner: "./tests/processOwnershipRunner.ts",
-    // Boundary projects may compete with TypeScript, docs, and package checks
-    // under Turbo. Keep the deadline bounded while avoiding false failures from
-    // host-level CPU and filesystem contention.
-    testTimeout: COVERAGE_ENABLED ? 60_000 : 30_000,
+    testTimeout: TEST_DEADLINE_MS.source,
+    hookTimeout: TEST_DEADLINE_MS.source,
+    expect: { poll: pollPolicy(TEST_DEADLINE_MS.source) },
+    // Deadline probes compare what Vitest applies with the configured policy.
+    provide: { testDeadlineScale: DEADLINE_SCALE },
+    tags: [
+      {
+        name: "long-running",
+        description:
+          "A bounded workload that needs more than its project's deadline",
+        timeout: LONG_RUNNING_DEADLINE_MS * DEADLINE_SCALE,
+      },
+    ],
     coverage: {
       enabled: false,
       provider: "v8",
@@ -178,3 +238,9 @@ export default defineConfig({
     },
   },
 });
+
+declare module "vitest" {
+  export interface ProvidedContext {
+    readonly testDeadlineScale: number;
+  }
+}

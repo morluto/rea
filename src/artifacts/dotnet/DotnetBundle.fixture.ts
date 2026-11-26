@@ -1,3 +1,7 @@
+import {
+  uint32LE as u32,
+  uint64LE as u64,
+} from "../../native/BinaryInteger.fixture.js";
 import { deflateRawSync } from "node:zlib";
 
 /** Source-owned Microsoft bundle-layout fixture; no target executable is run. */
@@ -18,7 +22,8 @@ export const dotnetBundleFixture = (
     },
   ],
   majorVersion = 6,
-): { bytes: Buffer; headerOffset: number; offsets: readonly number[] } => {
+  bundleId = "owned-fixture",
+) => {
   const host = Buffer.alloc(1024);
   host.write("MZ");
   host.writeUInt32LE(128, 60);
@@ -61,39 +66,45 @@ export const dotnetBundleFixture = (
   });
   const headerOffset = offset;
   host.writeBigUInt64LE(BigInt(headerOffset), 536);
-  const header = [
-    u32(majorVersion),
-    u32(0),
-    u32(files.length),
-    text("owned-fixture"),
-  ];
-  if (majorVersion >= 2) header.push(Buffer.alloc(40));
-  const table = files.flatMap((file, index) => [
-    u64(file.declaredOffset ?? offsets[index]!),
-    u64(file.declaredSize ?? file.bytes.length),
-    ...(majorVersion === 6
-      ? [u64(file.compressed ? payloads[index]!.length : 0)]
-      : []),
-    Buffer.from([file.fileType ?? 1]),
-    text(file.path),
-  ]);
+  const chunks: Buffer[] = [];
+  let position = headerOffset;
+  const append = (bytes: Buffer): number => {
+    const at = position;
+    chunks.push(bytes);
+    position += bytes.length;
+    return at;
+  };
+  append(u32(majorVersion));
+  append(u32(0));
+  const entryCount = append(u32(files.length));
+  append(text(bundleId));
+  const configuration =
+    majorVersion < 2
+      ? undefined
+      : {
+          deps: { offset: append(u64(0)), size: append(u64(0)) },
+          runtimeConfig: { offset: append(u64(0)), size: append(u64(0)) },
+          flags: append(u64(0)),
+        };
+  const entries = files.map((file, index) => {
+    const offset = append(u64(file.declaredOffset ?? offsets[index]!));
+    const size = append(u64(file.declaredSize ?? file.bytes.length));
+    const compressedSize =
+      majorVersion === 6
+        ? append(u64(file.compressed ? payloads[index]!.length : 0))
+        : undefined;
+    append(Buffer.from([file.fileType ?? 1]));
+    append(text(file.path));
+    return { offset, size, compressedSize };
+  });
   return {
-    bytes: Buffer.concat([host, ...payloads, ...header, ...table]),
+    bytes: Buffer.concat([host, ...payloads, ...chunks]),
     headerOffset,
     offsets,
+    fields: { entryCount, configuration, entries },
   };
 };
 
-const u32 = (value: number): Buffer => {
-  const out = Buffer.alloc(4);
-  out.writeUInt32LE(value);
-  return out;
-};
-const u64 = (value: number): Buffer => {
-  const out = Buffer.alloc(8);
-  out.writeBigUInt64LE(BigInt(value));
-  return out;
-};
 const text = (value: string): Buffer => {
   const bytes = Buffer.from(value);
   const length: number[] = [];

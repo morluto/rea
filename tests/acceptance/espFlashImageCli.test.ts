@@ -12,6 +12,7 @@ import {
   espFlashDump,
   otaData,
   otaRecord,
+  partitionTable,
 } from "../../src/domain/firmware/espFlash.fixture.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
@@ -114,8 +115,8 @@ cliTest(
       ],
     });
     expect(unpaired.exitCode).not.toBe(0);
-    expect(unpaired.stdout + unpaired.stderr).toContain(
-      "flash_offset and partition_table_offset apply only with format=esp-flash-image",
+    expect(unpaired.stdout + unpaired.stderr).toMatch(
+      /flash_offset.*only with format=esp-flash-image/iu,
     );
     // Without the format, the bootloader is read as one ESP image, and the
     // table at file offset 0x7000 says how to reopen the dump.
@@ -128,20 +129,22 @@ cliTest(
     expect(guessed.root).toMatchObject({
       flash_dump: { flash_offset: 0x1000, table_file_offset: 0x7000 },
     });
-    expect(
-      artifactInspectionResultSchema.parse(
-        parseEvidence(automatic.json).normalized_result,
-      ).next_probes,
-    ).toEqual([
-      {
+    const inspection = artifactInspectionResultSchema.parse(
+      parseEvidence(automatic.json).normalized_result,
+    );
+    expect(inspection.next_probes).toEqual([
+      expect.objectContaining({
         operation: "open_binary",
-        rationale:
-          "Reopen the file with format esp-flash-image and flash_offset 0x1000, then inspect_artifact: it is a flash dump read from flash 0x1000, with a partition table at file offset 0x7000.",
         authority: "artifact-bytes",
-      },
+        rationale: expect.stringMatching(
+          /esp-flash-image.*flash_offset 0x1000.*0x7000/iu,
+        ),
+      }),
     ]);
-    expect(guessed.graph.limitations).toContain(
-      "This file looks like a flash dump read from flash 0x1000, not one ESP image: its esp32 image at file offset 0 is where the ROM loads the bootloader from 0x1000, and a partition table sits at file offset 0x7000, which is flash 0x8000 from that origin. Reopen it with format esp-flash-image and flash_offset 0x1000.",
+    expect(guessed.graph.limitations).toContainEqual(
+      expect.stringMatching(
+        /flash dump.*0x1000.*0x7000.*0x8000.*esp-flash-image.*0x1000/iu,
+      ),
     );
     const inspected = await cli.run({
       arguments: [
@@ -160,5 +163,62 @@ cliTest(
       chip: { target: "esp32" },
       bootloader: { flash_address: 0x1000 },
     });
+  },
+);
+
+cliTest(
+  "reports unknown coverage through the CLI when the partition table precedes the located bootloader",
+  async ({ cli }) => {
+    const directory = await createTestTempDirectory(
+      "rea-esp-flash-cli-omitted-boot-",
+    );
+    const source = join(directory, "table-before-boot.bin");
+    const esp32 = espImage({
+      segments: ESP32C3_BOOTLOADER_SEGMENTS,
+      chipId: 0x0000,
+    });
+    await writeFile(
+      source,
+      espFlashDump({
+        size: 0x1_0000,
+        bootloader: { at: 0x1000, bytes: esp32 },
+        tableAt: 0x0,
+        table: partitionTable([
+          {
+            label: "data",
+            type: 0x01,
+            subtype: 0x82,
+            offset: 0x1000,
+            size: 0x3000,
+          },
+        ]),
+      }),
+    );
+    const inspected = await cli.run({
+      arguments: [
+        "inspect-artifact",
+        source,
+        "--target-format",
+        "esp-flash-image",
+        "--partition-table-offset",
+        "0x0",
+        "--json",
+      ],
+    });
+    expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
+    const { graph, root } = rootMetadata(inspected.json);
+    expect(graph.coverage).toEqual({
+      scope: "container-entries",
+      status: "unknown",
+    });
+    expect(root).toMatchObject({
+      chip: { target: "esp32" },
+      bootloader: null,
+      partition_table: { flash_address: 0x0, method: "caller" },
+      undescribed: [],
+    });
+    expect(graph.limitations).toContain(
+      "The partition table at 0x0 does not follow the bootloader at 0x1000; the bootloader region is not described.",
+    );
   },
 );

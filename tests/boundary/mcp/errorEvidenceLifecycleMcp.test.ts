@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { InMemoryTransport } from "@modelcontextprotocol/client";
 import {
   isCallToolResult,
@@ -7,6 +8,7 @@ import {
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect, it, vi } from "vitest";
+import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
 import { z } from "zod";
 
 import { createEvidence } from "../../../src/domain/evidence.js";
@@ -19,10 +21,8 @@ import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import {
   createCacheProvider,
-  createDeferred,
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -61,7 +61,7 @@ const readBundle = async (path: string) =>
 
 const authoredRecord = () =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     {
       id: "fixture",
       name: "Authored request publication fixture",
@@ -92,7 +92,7 @@ const customFixture = () => {
           mcpServer: server,
           delivery,
           logger: silentLogger,
-          environment: { REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+          environment: {},
         },
       }),
   };
@@ -104,14 +104,13 @@ it("publishes an oversized validation-error reference only after an earlier rese
   const checkpoint = join(root, "previous.json");
   const exported = join(root, "current.json");
   const previous = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Authored retained observation", version: "1" },
     { operation: "fixture_observation", parameters: {}, result: true },
   );
   expect(test.session.recordEvidence(previous).ok).toBe(true);
-  const entered = createDeferred<void>();
-  const release = createDeferred<void>();
-  const queued = createDeferred<void>();
+  const checkpointCleanup = phaseGate();
+  const recoveryQueue = phaseArrival();
   const originalClose = OwnedStagedOutput.prototype.close;
   const originalAdmission = test.session.withAdmittedAnalysis.bind(
     test.session,
@@ -121,15 +120,14 @@ it("publishes an oversized validation-error reference only after an earlier rese
     .mockImplementation(async function (this: OwnedStagedOutput) {
       await originalClose.call(this);
       if (dirname(this.directory) === root) {
-        entered.resolve();
-        await release.promise;
+        await checkpointCleanup.hold();
       }
     });
   const admission = vi
     .spyOn(test.session, "withAdmittedAnalysis")
     .mockImplementation((operationName, signal, operation) => {
       const admitted = originalAdmission(operationName, signal, operation);
-      if (operationName === invalidRequest.name) queued.resolve();
+      if (operationName === invalidRequest.name) recoveryQueue.arrive();
       return admitted;
     });
   const resetting = test.client.callTool({
@@ -138,19 +136,11 @@ it("publishes an oversized validation-error reference only after an earlier rese
   });
   let invalid: Promise<CallToolResult> | undefined;
   try {
-    await awaitAcknowledgement(
-      entered.promise,
-      resetting,
-      "checkpoint cleanup",
-    );
+    await checkpointCleanup.reached(resetting, "checkpoint cleanup");
     invalid = test.client.callTool(invalidRequest);
-    await awaitAcknowledgement(
-      queued.promise,
-      invalid,
-      "queued error recovery",
-    );
+    await recoveryQueue.reached(invalid, "queued error recovery");
     expect(test.session.exportEvidenceBundle().records).toEqual([previous]);
-    release.resolve();
+    checkpointCleanup.release();
     const [reset, reply] = await Promise.all([resetting, invalid]);
     expect(reset.isError, JSON.stringify(reset)).not.toBe(true);
     const id = retainedReference(reply);
@@ -170,7 +160,7 @@ it("publishes an oversized validation-error reference only after an earlier rese
       raw_result: { content: [{ text: expect.stringContaining(invalidKey) }] },
     });
   } finally {
-    release.resolve();
+    checkpointCleanup.release();
     await Promise.allSettled([
       resetting,
       ...(invalid === undefined ? [] : [invalid]),
@@ -185,9 +175,8 @@ it("drains retained error publication before checkpointing a later reset", async
   const test = await fixture();
   const root = await createTestTempDirectory("rea-error-before-reset-");
   const checkpoint = join(root, "saved.json");
-  const entered = createDeferred<void>();
-  const release = createDeferred<void>();
-  const resettingEntered = createDeferred<void>();
+  const errorPublication = phaseGate();
+  const resetAdmission = phaseArrival();
   const originalSend = InMemoryTransport.prototype.send;
   const originalReset = test.session.resetInvestigation.bind(test.session);
   let held = false;
@@ -205,8 +194,7 @@ it("drains retained error publication before checkpointing a later reset", async
         message.result.isError === true
       ) {
         held = true;
-        entered.resolve();
-        await release.promise;
+        await errorPublication.hold();
       }
       await originalSend.call(this, message, options);
     });
@@ -214,24 +202,20 @@ it("drains retained error publication before checkpointing a later reset", async
     .spyOn(test.session, "resetInvestigation")
     .mockImplementation((options) => {
       const resetting = originalReset(options);
-      resettingEntered.resolve();
+      resetAdmission.arrive();
       return resetting;
     });
   const invalid = test.client.callTool(invalidRequest);
   let resetting: Promise<CallToolResult> | undefined;
   try {
-    await awaitAcknowledgement(entered.promise, invalid, "error publication");
+    await errorPublication.reached(invalid, "error publication");
     expect(test.session.exportEvidenceBundle().records).toHaveLength(1);
     resetting = test.client.callTool({
       name: "reset_investigation",
       arguments: { save_path: checkpoint },
     });
-    await awaitAcknowledgement(
-      resettingEntered.promise,
-      resetting,
-      "later reset admission",
-    );
-    release.resolve();
+    await resetAdmission.reached(resetting, "later reset admission");
+    errorPublication.release();
     const [reply, cleared] = await Promise.all([invalid, resetting]);
     const id = retainedReference(reply);
     expect(cleared.isError, JSON.stringify(cleared)).not.toBe(true);
@@ -240,7 +224,7 @@ it("drains retained error publication before checkpointing a later reset", async
     expect(saved.records[0]).toMatchObject({ evidence_id: id });
     expect(test.session.exportEvidenceBundle().records).toEqual([]);
   } finally {
-    release.resolve();
+    errorPublication.release();
     await Promise.allSettled([
       invalid,
       ...(resetting === undefined ? [] : [resetting]),
@@ -271,10 +255,9 @@ it("cancels queued SDK error recovery before it can write into the next investig
   const test = await fixture();
   const root = await createTestTempDirectory("rea-error-reset-cancellation-");
   const checkpoint = join(root, "saved.json");
-  const entered = createDeferred<void>();
-  const release = createDeferred<void>();
-  const queued = createDeferred<void>();
-  const cancelled = createDeferred<void>();
+  const checkpointCleanup = phaseGate();
+  const recoveryQueue = phaseArrival();
+  const recoveryCancellation = phaseArrival();
   const originalClose = OwnedStagedOutput.prototype.close;
   const originalAdmission = test.session.withAdmittedAnalysis.bind(
     test.session,
@@ -284,8 +267,7 @@ it("cancels queued SDK error recovery before it can write into the next investig
     .mockImplementation(async function (this: OwnedStagedOutput) {
       await originalClose.call(this);
       if (dirname(this.directory) === root) {
-        entered.resolve();
-        await release.promise;
+        await checkpointCleanup.hold();
       }
     });
   const admission = vi
@@ -293,10 +275,10 @@ it("cancels queued SDK error recovery before it can write into the next investig
     .mockImplementation((operationName, signal, operation) => {
       const admitted = originalAdmission(operationName, signal, operation);
       if (operationName === invalidRequest.name) {
-        signal?.addEventListener("abort", () => cancelled.resolve(), {
+        signal?.addEventListener("abort", () => recoveryCancellation.arrive(), {
           once: true,
         });
-        queued.resolve();
+        recoveryQueue.arrive();
       }
       return admitted;
     });
@@ -307,25 +289,16 @@ it("cancels queued SDK error recovery before it can write into the next investig
   });
   let invalid: Promise<unknown> | undefined;
   try {
-    await awaitAcknowledgement(
-      entered.promise,
-      resetting,
-      "checkpoint cleanup",
-    );
+    await checkpointCleanup.reached(resetting, "checkpoint cleanup");
     invalid = test.client
       .callTool(invalidRequest, { signal: controller.signal })
       .then(
         (reply) => reply,
         (cause: unknown) => cause,
       );
-    await awaitAcknowledgement(
-      queued.promise,
-      invalid,
-      "queued cancellable recovery",
-    );
+    await recoveryQueue.reached(invalid, "queued cancellable recovery");
     controller.abort(new Error("Caller cancelled queued validation recovery"));
-    await awaitAcknowledgement(
-      cancelled.promise,
+    await recoveryCancellation.reached(
       test.client.ping(),
       "transport cancellation notification",
     );
@@ -334,7 +307,7 @@ it("cancels queued SDK error recovery before it can write into the next investig
         "Caller cancelled queued validation recovery",
       ),
     });
-    release.resolve();
+    checkpointCleanup.release();
     expect((await resetting).isError).not.toBe(true);
     // A public read after reset confirms the new investigation has no late write.
     const current = await test.client.callTool({
@@ -346,7 +319,7 @@ it("cancels queued SDK error recovery before it can write into the next investig
     expect((await readBundle(checkpoint)).records).toEqual([]);
   } finally {
     controller.abort();
-    release.resolve();
+    checkpointCleanup.release();
     await Promise.allSettled([
       resetting,
       ...(invalid === undefined ? [] : [invalid]),
@@ -414,9 +387,8 @@ it.each(["handler throws", "output fails validation"] as const)(
 it("waits for handler cleanup when cancellation suppresses its unsent SDK reply", async () => {
   const fixture = customFixture();
   const record = authoredRecord();
-  const entered = createDeferred<void>();
-  const cleanupEntered = createDeferred<void>();
-  const release = createDeferred<void>();
+  const handlerEntry = phaseArrival();
+  const handlerCleanup = phaseGate();
   fixture.server.registerTool(
     "fixture_publication",
     { inputSchema: z.strictObject({}) },
@@ -437,15 +409,14 @@ it("waits for handler cleanup when cancellation suppresses its unsent SDK reply"
               );
             for (let index = 0; index <= requestId; index += 1)
               await context.mcpReq.send({ method: "ping" });
-            entered.resolve();
+            handlerEntry.arrive();
             await new Promise<void>((resolve) =>
               context.mcpReq.signal.addEventListener("abort", () => resolve(), {
                 once: true,
               }),
             );
           } finally {
-            cleanupEntered.resolve();
-            await release.promise;
+            await handlerCleanup.hold();
           }
           return null;
         },
@@ -458,13 +429,13 @@ it("waits for handler cleanup when cancellation suppresses its unsent SDK reply"
   const test = await fixture.connect();
   const root = await createTestTempDirectory("rea-cancelled-handler-cleanup-");
   const path = join(root, "saved.json");
-  const resetEntered = createDeferred<void>();
+  const resetAdmission = phaseArrival();
   const originalReset = test.session.resetInvestigation.bind(test.session);
   const reset = vi
     .spyOn(test.session, "resetInvestigation")
     .mockImplementation((options) => {
       const resetting = originalReset(options);
-      resetEntered.resolve();
+      resetAdmission.arrive();
       return resetting;
     });
   const controller = new AbortController();
@@ -479,14 +450,9 @@ it("waits for handler cleanup when cancellation suppresses its unsent SDK reply"
     );
   let resetting: Promise<CallToolResult> | undefined;
   try {
-    await awaitAcknowledgement(
-      entered.promise,
-      operation,
-      "fixture handler admission",
-    );
+    await handlerEntry.reached(operation, "fixture handler admission");
     controller.abort(new Error("Cancel before handler cleanup"));
-    await awaitAcknowledgement(
-      cleanupEntered.promise,
+    await handlerCleanup.reached(
       test.client.ping(),
       "cancelled handler cleanup",
     );
@@ -494,19 +460,15 @@ it("waits for handler cleanup when cancellation suppresses its unsent SDK reply"
       name: "reset_investigation",
       arguments: { save_path: path },
     });
-    await awaitAcknowledgement(
-      resetEntered.promise,
-      resetting,
-      "reset after suppressed reply",
-    );
+    await resetAdmission.reached(resetting, "reset after suppressed reply");
     expect(test.session.exportEvidenceBundle().records).toEqual([record]);
-    release.resolve();
+    handlerCleanup.release();
     expect((await resetting).isError).not.toBe(true);
     expect((await readBundle(path)).records).toEqual([record]);
     expect(test.session.exportEvidenceBundle().records).toEqual([]);
   } finally {
     controller.abort();
-    release.resolve();
+    handlerCleanup.release();
     await Promise.allSettled([
       operation,
       ...(resetting === undefined ? [] : [resetting]),

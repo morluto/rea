@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { androidResultSchemas } from "../android/androidAnalysis.js";
 import {
@@ -24,34 +23,22 @@ import {
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 import {
-  ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
+  ANALYSIS_VIEW_PAGE_BYTES as PAGE_BYTES,
+  analysisViewPageTooLarge,
   analysisViewInputError,
+  invalidAnalysisViewSubject,
+  invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import {
   analysisTextPage,
   analysisTextPageItemSchema,
 } from "./analysisViewText.js";
-
-export {
-  androidViewRequestSchema,
-  androidManifestViewRequestSchema,
-  androidComponentsViewRequestSchema,
-  androidComponentSummaryViewRequestSchema,
-} from "../android/androidPackageQuery.js";
+import { evidenceSubjectTarget } from "../evidence.js";
 
 const packageSchema = androidResultSchemas.inspect_android_package;
 const readReport = createAnalysisViewResultReader(packageSchema);
-const PAGE_BYTES = 1024 * 1024;
 const DIGEST_BYTES = jsonValueByteLength({ view_digest: "0".repeat(64) }) - 1;
 const PROJECTION_BYTES = PAGE_BYTES - DIGEST_BYTES;
-
-/** Legacy package summary preserves its declarations; only manifest text is retained. */
-export const androidPackageSummarySchema = packageSchema.extend({
-  manifest: packageSchema.shape.manifest.omit({ text: true }).extend({
-    text_code_units: z.int().nonnegative(),
-    text_included: z.literal(false),
-  }),
-});
 
 export const androidManifestViewItemSchema = analysisTextPageItemSchema.extend({
   source_status: packageSchema.shape.manifest.shape.status,
@@ -90,9 +77,53 @@ export const androidComponentSummarySchema = z.strictObject({
   declaration_coverage: z.strictObject({
     complete: z.int().nonnegative(),
     partial: z.int().nonnegative(),
-    unknown: z.int().nonnegative(),
   }),
 });
+
+/** Package declarations with component counts; components and manifest text page separately. */
+export const androidPackageSummarySchema = packageSchema.extend({
+  manifest: packageSchema.shape.manifest.omit({ text: true }).extend({
+    text_code_units: z.int().nonnegative(),
+    text_included: z.literal(false),
+  }),
+  components: androidManifestComponentsSchema
+    .omit({ items: true })
+    .extend(androidComponentSummarySchema.shape)
+    .describe(
+      "Component counts; page declarations with view facet components, or count a filtered set with component-summary",
+    ),
+});
+
+/** Count components that satisfy `matches`, by kind, export and coverage. */
+const countComponents = (
+  rows: readonly AndroidManifestComponent[],
+  matches: (row: AndroidManifestComponent) => boolean,
+): z.output<typeof androidComponentSummarySchema> => {
+  const summary: z.output<typeof androidComponentSummarySchema> = {
+    matching_components: 0,
+    by_kind: {
+      activity: 0,
+      "activity-alias": 0,
+      service: 0,
+      receiver: 0,
+      provider: 0,
+    },
+    exported_declarations: { true: 0, false: 0, unknown: 0 },
+    exported_defaults: { true: 0, false: 0, unknown: 0 },
+    declaration_coverage: { complete: 0, partial: 0 },
+  };
+  const state = (value: boolean | null) =>
+    value === null ? "unknown" : value ? "true" : "false";
+  for (const row of rows) {
+    if (!matches(row)) continue;
+    summary.matching_components++;
+    summary.by_kind[row.kind]++;
+    summary.exported_declarations[state(row.exported)]++;
+    summary.exported_defaults[state(row.exported_default)]++;
+    summary.declaration_coverage[row.declaration_coverage]++;
+  }
+  return summary;
+};
 
 const choose = <T extends object>(
   row: T,
@@ -111,15 +142,8 @@ export const projectAndroidPackageView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "summary" && view.kind !== "android")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Android package Evidence supports summary, manifest and component views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Android package Evidence supports summary, manifest and component views.",
     );
   assertOwnedView<
     SummaryAnalysisView | z.output<typeof androidViewRequestSchema>
@@ -138,26 +162,17 @@ export const projectAndroidPackageView = (
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
   // The engine digest identifies the JAR, never the authenticated APK subject.
-  if (parent.subject == null)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message:
-            "Android package views require the recorded APK subject identity.",
-        },
-      ]),
+  const subject = evidenceSubjectTarget(parent.subject);
+  if (subject === undefined)
+    return invalidAnalysisViewSubject(
+      "Android package views require the recorded APK subject identity.",
     );
   const report = parsed.value;
   const shared = {
     parent_evidence_id: parent.evidenceId,
     parent_operation: "inspect_android_package" as const,
     parent_digest: parent.evidenceId.slice(3),
-    artifact: {
-      path: parent.subject.local_path,
-      sha256: parent.subject.digest.sha256,
-    },
+    artifact: { path: subject.path, sha256: subject.sha256 },
     limitations: [...parent.limitations],
     unknowns: [
       "APK signatures were not verified; package declarations do not establish authenticity or runtime behavior.",
@@ -170,6 +185,7 @@ export const projectAndroidPackageView = (
   };
   if (view.kind === "summary") {
     const { text, ...manifest } = report.manifest;
+    const { items, ...components } = report.components;
     return ok({
       kind: "summary" as const,
       view,
@@ -181,8 +197,12 @@ export const projectAndroidPackageView = (
           text_code_units: text.length,
           text_included: false as const,
         },
+        components: {
+          ...components,
+          ...countComponents(items, () => true),
+        },
       },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   }
   if (view.facet === "manifest") {
@@ -195,6 +215,7 @@ export const projectAndroidPackageView = (
     if (!page.ok) return page;
     return ok({
       kind: "android" as const,
+      facet: "manifest" as const,
       view,
       ...shared,
       item: {
@@ -219,7 +240,7 @@ export const projectAndroidPackageView = (
     unknowns: boundedViewMessages(
       [
         ...shared.unknowns,
-        "Components are static declarations. Omitted historical declaration fields remain unknown; exported declarations and SDK defaults are distinct.",
+        "Components are static declarations; exported declarations and SDK defaults are distinct.",
         ...(report.components.status === "complete"
           ? []
           : [
@@ -231,18 +252,10 @@ export const projectAndroidPackageView = (
     ),
   };
   const tooLarge = (): Result<never, AnalysisError> =>
-    err(
-      new AnalysisResourceConstraintError(
-        "inspect_analysis_view",
-        "transport",
-        "The Android component view exceeds the analysis-view byte budget; select fewer fields or a smaller page. Complete parent Evidence remains retained.",
-        {
-          parent_evidence_id: parent.evidenceId,
-          limit_bytes: PAGE_BYTES,
-          facet: view.facet,
-        },
-        ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
-      ),
+    analysisViewPageTooLarge(
+      parent.evidenceId,
+      "The Android component view exceeds the analysis-view byte budget; select fewer fields or a smaller page. Complete parent Evidence remains retained.",
+      { facet: view.facet },
     );
   // Admit caller selections and provenance before building filter indexes or output rows.
   if (
@@ -271,42 +284,14 @@ export const projectAndroidPackageView = (
     (view.exported === undefined || row.exported === view.exported);
 
   if (view.facet === "component-summary") {
-    const summary: z.output<typeof androidComponentSummarySchema> = {
-      matching_components: 0,
-      by_kind: {
-        activity: 0,
-        "activity-alias": 0,
-        service: 0,
-        receiver: 0,
-        provider: 0,
-      },
-      exported_declarations: { true: 0, false: 0, unknown: 0 },
-      exported_defaults: { true: 0, false: 0, unknown: 0 },
-      declaration_coverage: { complete: 0, partial: 0, unknown: 0 },
-    };
-    for (const row of rows) {
-      if (!matches(row)) continue;
-      summary.matching_components++;
-      summary.by_kind[row.kind]++;
-      summary.exported_declarations[
-        row.exported === null ? "unknown" : row.exported ? "true" : "false"
-      ]++;
-      summary.exported_defaults[
-        row.exported_default === null
-          ? "unknown"
-          : row.exported_default
-            ? "true"
-            : "false"
-      ]++;
-      summary.declaration_coverage[row.declaration_coverage]++;
-    }
+    const summary = countComponents(rows, matches);
     const result = {
       ...context,
       kind: "android" as const,
       facet: "component-summary" as const,
       view,
       summary,
-      coverage: completeWithinViewCoverage(rows.length, rows.length),
+      coverage: completeWithinViewCoverage(rows.length),
     };
     return jsonValueByteLength(
       result as unknown as JsonValue,

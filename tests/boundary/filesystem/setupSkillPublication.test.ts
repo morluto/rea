@@ -1,6 +1,7 @@
 import { constants as fsConstants } from "node:fs";
 import * as filesystem from "node:fs/promises";
 import {
+  appendFile,
   chmod,
   copyFile,
   mkdir,
@@ -8,13 +9,19 @@ import {
   readdir,
   rename,
   stat,
+  type FileHandle,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
+import { runSetup } from "../../../src/application/Setup.js";
+import {
+  FakeSetupHost,
+  options,
+} from "../../../src/application/Setup.fixture.js";
 import { SkillFilePublication } from "../../../src/application/SkillFilePublication.js";
 import {
   canonicalSkillNeedsInstall,
@@ -24,6 +31,13 @@ import {
   type SkillInstallFileOperations,
 } from "../../../src/application/SetupSkill.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+/** The host whose skill locations these tests exercise. */
+const testPlatform = process.platform;
+
+/** The shared skill manifest path setup selects for `home`. */
+const skillManifest = (home: string): string =>
+  join(skillDestinations(home, [], {}, testPlatform)[0]!.path, "SKILL.md");
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:fs/promises")>();
@@ -53,7 +67,7 @@ describe("skill publication ownership", () => {
       const home = await createTestTempDirectory(
         "rea-skill-published-conflict-",
       );
-      const manifest = join(skillDestinations(home, [])[0]!.path, "SKILL.md");
+      const manifest = skillManifest(home);
       await mkdir(dirname(manifest), { recursive: true });
       if (existing)
         await writeFile(manifest, "original instructions\n", { mode: 0o640 });
@@ -110,7 +124,7 @@ describe("skill publication ownership", () => {
     const home = await createTestTempDirectory(
       "rea-skill-first-install-conflict-",
     );
-    const manifest = join(skillDestinations(home, [])[0]!.path, "SKILL.md");
+    const manifest = skillManifest(home);
     const result = await installCanonicalSkill(home, [], {}, process.platform, {
       ...skillPublicationOperations,
       prepare: async (...args) => {
@@ -138,7 +152,7 @@ describe("skill publication ownership", () => {
 
   it("reports a destination changed before readback without overwriting it", async () => {
     const home = await createTestTempDirectory("rea-skill-readback-conflict-");
-    const manifest = join(skillDestinations(home, [])[0]!.path, "SKILL.md");
+    const manifest = skillManifest(home);
     const result = await installCanonicalSkill(home, [], {}, process.platform, {
       ...skillPublicationOperations,
       prepare: async (...args) => {
@@ -167,7 +181,7 @@ describe("skill publication ownership", () => {
 
 it("preserves a destination created immediately before exclusive publication", async () => {
   const home = await createTestTempDirectory("rea-skill-link-conflict-");
-  const manifest = join(skillDestinations(home, [])[0]!.path, "SKILL.md");
+  const manifest = skillManifest(home);
   const originalLink = (
     await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises")
   ).link;
@@ -195,62 +209,99 @@ it("preserves a destination created immediately before exclusive publication", a
   }
 });
 
-describe("skill publication recovery", () => {
-  it.each([
-    Buffer.alloc(0),
-    Buffer.from([0xff, 0xfe, 0x61, 0x00]),
-    Buffer.from("\ufefforiginal BOM instructions\r\n"),
-  ])(
-    "restores byte-exact originals and mode after ambiguous readback",
-    async (bytes) => {
-      const home = await createTestTempDirectory(
-        "rea-skill-readback-recovery-",
-      );
-      const manifest = join(skillDestinations(home, [])[0]!.path, "SKILL.md");
-      await mkdir(dirname(manifest), { recursive: true });
-      await writeFile(manifest, bytes, { mode: 0o640 });
-      const result = await installCanonicalSkill(
-        home,
-        [],
-        {},
-        process.platform,
-        {
-          ...skillPublicationOperations,
-          prepare: async (...args) => {
-            const publication = await SkillFilePublication.prepare(...args);
-            if (publication.path === manifest)
-              vi.spyOn(publication, "assertCurrent").mockRejectedValueOnce(
-                new Error("readback unavailable"),
-              );
-            return publication;
-          },
-        },
-      );
-      if (result.ok) throw new Error("Expected readback failure");
-      expect(result.error.stage).toBe("readback");
-      expect(result.error.reason).toBe("readback unavailable");
-      expect(Buffer.compare(await readFile(manifest), bytes)).toBe(0);
-      expect(
-        Buffer.compare(await readFile(`${manifest}.rea.backup`), bytes),
-      ).toBe(0);
-      if (process.platform !== "win32")
-        expect((await stat(manifest)).mode & 0o777).toBe(0o640);
-      expect(
-        result.error.rollbackFailures.every(({ reason }) =>
-          reason.includes("First-install skill recovery"),
-        ),
-      ).toBe(true);
-      expect(result.error.rollbackFailures).toHaveLength(
-        MANAGED_SKILL_FILES.length - 1,
-      );
-    },
-  );
+it.each([
+  { label: "empty", bytes: Buffer.alloc(0), edit: "" },
+  { label: "binary", bytes: Buffer.from([0xff, 0xfe, 0x61, 0x00]), edit: "" },
+  {
+    label: "BOM",
+    bytes: Buffer.from("\ufefforiginal BOM instructions\r\n"),
+    edit: "",
+  },
+  {
+    label: "concurrent append",
+    bytes: Buffer.from("original user instructions\n"),
+    edit: "added by another editor\n",
+  },
+])(
+  "checks restoration bytes, mode and recovery after ambiguous $label readback",
+  async ({ bytes, edit }) => {
+    const home = await createTestTempDirectory("rea-skill-readback-recovery-");
+    const manifest = skillManifest(home);
+    await mkdir(dirname(manifest), { recursive: true });
+    await writeFile(manifest, bytes, { mode: 0o640 });
+    let edited = false;
+    const result = await installCanonicalSkill(home, [], {}, process.platform, {
+      ...skillPublicationOperations,
+      prepare: async (...args) => {
+        const publication = await SkillFilePublication.prepare(...args);
+        if (publication.path !== manifest) return publication;
+        vi.spyOn(publication, "assertCurrent").mockRejectedValueOnce(
+          new Error("readback unavailable"),
+        );
+        if (edit === "") return publication;
+        const restore = publication.restore.bind(publication);
+        vi.spyOn(publication, "restore").mockImplementationOnce(async () => {
+          const probe = await filesystem.open(manifest);
+          const prototype = Object.getPrototypeOf(probe) as Pick<
+            FileHandle,
+            "read"
+          >;
+          await probe.close();
+          const native = prototype.read;
+          const read = vi
+            .spyOn(prototype, "read")
+            .mockImplementation(async function (this: FileHandle, ...args) {
+              const observed = await native.apply(this, args);
+              if (
+                !edited &&
+                Buffer.isBuffer(observed.buffer) &&
+                observed.buffer.subarray(0, observed.bytesRead).equals(bytes)
+              ) {
+                await appendFile(manifest, edit);
+                edited = true;
+              }
+              return observed;
+            });
+          try {
+            await restore();
+          } finally {
+            read.mockRestore();
+          }
+        });
+        return publication;
+      },
+    });
+    if (result.ok) throw new Error("Expected readback failure");
+    expect(result.error.stage).toBe("readback");
+    expect(result.error.reason).toBe("readback unavailable");
+    expect(edited).toBe(edit !== "");
+    expect(
+      (await readFile(manifest)).equals(
+        Buffer.concat([bytes, Buffer.from(edit)]),
+      ),
+    ).toBe(true);
+    expect((await readFile(`${manifest}.rea.backup`)).equals(bytes)).toBe(true);
+    if (process.platform !== "win32")
+      expect((await stat(manifest)).mode & 0o777).toBe(0o640);
+    const { rollbackFailures } = result.error;
+    const others = rollbackFailures.filter(({ path }) => path !== manifest);
+    expect(others).toHaveLength(MANAGED_SKILL_FILES.length - 1);
+    expect(
+      others.every(({ reason }) =>
+        reason.includes("First-install skill recovery"),
+      ),
+    ).toBe(true);
+    expect(rollbackFailures.some(({ path }) => path === manifest)).toBe(edited);
+    expect(await result.error.retryCleanup()).toEqual([]);
+  },
+);
 
+describe("skill publication recovery", () => {
   it("retains a first-install publication after failed verification", async () => {
     const home = await createTestTempDirectory(
       "rea-skill-first-install-readback-",
     );
-    const manifest = join(skillDestinations(home, [])[0]!.path, "SKILL.md");
+    const manifest = skillManifest(home);
     const result = await installCanonicalSkill(home, [], {}, process.platform, {
       ...skillPublicationOperations,
       prepare: async (...args) => {
@@ -271,7 +322,9 @@ describe("skill publication recovery", () => {
         reason.includes("manual removal"),
       ),
     ).toBe(true);
-    expect(await canonicalSkillNeedsInstall(home)).toBe(false);
+    expect(await canonicalSkillNeedsInstall(home, [], {}, testPlatform)).toBe(
+      false,
+    );
     expect(
       (await readdir(dirname(manifest))).some((name) =>
         name.startsWith(".rea-skill-"),
@@ -284,7 +337,7 @@ describe("skill publication recovery", () => {
     async (scoped) => {
       const resources = scoped ? new ArtifactResourceScope() : undefined;
       const home = await createTestTempDirectory("rea-skill-cleanup-retry-");
-      const manifest = join(skillDestinations(home, [])[0]!.path, "SKILL.md");
+      const manifest = skillManifest(home);
       let closeAttempts = 0;
       const result = await installCanonicalSkill(
         home,
@@ -312,13 +365,19 @@ describe("skill publication recovery", () => {
       );
       if (result.ok) throw new Error("Expected cleanup failure");
       expect(result.error.reason).toContain("cleanup incomplete");
+      expect(result.error).toMatchObject({ completed: true });
+      expect(result.error.message).toContain("installed and verified");
+      expect(result.error.message).not.toContain("Rollback");
+      expect(result.error.remediation).toContain("staging cleanup");
       expect(result.error.rollbackFailures).toEqual([
         {
           path: expect.stringContaining(".rea-skill-"),
           reason: "staging close denied",
         },
       ]);
-      expect(await canonicalSkillNeedsInstall(home)).toBe(false);
+      expect(await canonicalSkillNeedsInstall(home, [], {}, testPlatform)).toBe(
+        false,
+      );
       expect(resources?.hasPending).toBe(scoped ? true : undefined);
       if (resources !== undefined) {
         await resources.retryCleanup();
@@ -337,7 +396,7 @@ describe("skill publication recovery", () => {
 describe("skill staging preparation", () => {
   it("retains the primary failure and staging owner when preparation cleanup fails", async () => {
     const home = await createTestTempDirectory("rea-skill-prepare-cleanup-");
-    const manifest = join(skillDestinations(home, [])[0]!.path, "SKILL.md");
+    const manifest = skillManifest(home);
     await mkdir(dirname(manifest), { recursive: true });
     await writeFile(manifest, "original instructions\n");
     const ready = vi
@@ -348,7 +407,7 @@ describe("skill staging preparation", () => {
       .mockRejectedValueOnce(new Error("staging cleanup denied"))
       .mockRejectedValueOnce(new Error("staging cleanup still denied"));
     try {
-      const result = await installCanonicalSkill(home);
+      const result = await installCanonicalSkill(home, [], {}, testPlatform);
       if (result.ok) throw new Error("Expected preparation failure");
       expect(result.error.reason).toContain("staging verification denied");
       expect(result.error.reason).toContain("staging cleanup denied");
@@ -372,3 +431,172 @@ describe("skill staging preparation", () => {
     }
   });
 });
+
+it.each([false, true])(
+  "reports verified multi-file publication after transient cleanup succeeds (scope: %s)",
+  async (scoped) => {
+    const home = await createTestTempDirectory("rea-skill-transient-cleanup-");
+    const manifest = skillManifest(home);
+    const resources = scoped ? new ArtifactResourceScope() : undefined;
+    let attempts = 0;
+    const result = await installCanonicalSkill(
+      home,
+      [],
+      {},
+      process.platform,
+      {
+        ...skillPublicationOperations,
+        prepare: async (...args) => {
+          const publication = await SkillFilePublication.prepare(...args);
+          if (publication.path === manifest) {
+            const release = publication.lease.release.bind(publication.lease);
+            vi.spyOn(publication.lease, "release").mockImplementation(
+              async () => {
+                if (++attempts === 1)
+                  throw new Error("transient staging close failure");
+                await release();
+              },
+            );
+          }
+          return publication;
+        },
+      },
+      resources,
+    );
+    expect(result).toEqual({ ok: true, value: "installed" });
+    expect(attempts).toBe(2);
+    expect(await canonicalSkillNeedsInstall(home, [], {}, testPlatform)).toBe(
+      false,
+    );
+    expect(resources?.hasPending).toBe(scoped ? false : undefined);
+  },
+);
+
+it("preserves a readback failure with mixed rollback and retryable cleanup failures", async () => {
+  const home = await createTestTempDirectory("rea-skill-mixed-finalization-");
+  const manifest = skillManifest(home);
+  await mkdir(dirname(manifest), { recursive: true });
+  await writeFile(manifest, "original skill\n");
+  let attempts = 0;
+  const result = await installCanonicalSkill(home, [], {}, process.platform, {
+    ...skillPublicationOperations,
+    prepare: async (...args) => {
+      const publication = await SkillFilePublication.prepare(...args);
+      if (publication.path === manifest) {
+        vi.spyOn(publication, "assertCurrent").mockRejectedValueOnce(
+          new Error("selected readback failed"),
+        );
+        const release = publication.lease.release.bind(publication.lease);
+        vi.spyOn(publication.lease, "release").mockImplementation(async () => {
+          if (++attempts <= 1) throw new Error("staging cleanup failed");
+          await release();
+        });
+      }
+      return publication;
+    },
+  });
+  if (result.ok) throw new Error("Expected readback failure");
+  expect(result.error).toMatchObject({
+    completed: false,
+    stage: "readback",
+    reason: "selected readback failed",
+  });
+  expect(result.error.rollbackFailures).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        reason: expect.stringContaining("manual removal"),
+      }),
+      expect.objectContaining({ reason: "staging cleanup failed" }),
+    ]),
+  );
+  expect(await readFile(manifest, "utf8")).toBe("original skill\n");
+  expect(await result.error.retryCleanup()).toEqual([]);
+});
+
+it.each(["settled", "unresolved", "hopper-failed"] as const)(
+  "finalizes verified skill installation with %s cleanup and independent outcomes",
+  async (scenario) => {
+    const home = await createTestTempDirectory("rea-skill-final-host-close-");
+    const manifest = skillManifest(home);
+    const resources = new ArtifactResourceScope();
+    const host = Object.assign(new FakeSetupHost(), {
+      close: async () => {
+        await resources.close();
+        return undefined;
+      },
+    });
+    if (scenario === "hopper-failed") host.hopperInstallSucceeds = false;
+    else host.hopper = "/Applications/Hopper";
+    let attempts = 0;
+    let blocked = scenario === "unresolved";
+    host.installSkill = () =>
+      installCanonicalSkill(
+        home,
+        [],
+        {},
+        process.platform,
+        {
+          ...skillPublicationOperations,
+          prepare: async (...args) => {
+            const publication = await SkillFilePublication.prepare(...args);
+            if (publication.path === manifest) {
+              const release = publication.lease.release.bind(publication.lease);
+              vi.spyOn(publication.lease, "release").mockImplementation(
+                async () => {
+                  if (++attempts <= 2 || blocked)
+                    throw new Error("temporary staging close failure");
+                  await release();
+                },
+              );
+            }
+            return publication;
+          },
+        },
+        resources,
+      );
+    const progress: string[] = [];
+    const result = await runSetup(
+      {
+        ...options(true, scenario === "hopper-failed"),
+        clientIds: [],
+        installSkill: true,
+        onProgress: (event) => {
+          if (event.actionId === "install_skill") progress.push(event.state);
+        },
+      },
+      host,
+    );
+    expect(attempts).toBe(3);
+    expect(await canonicalSkillNeedsInstall(home, [], {}, testPlatform)).toBe(
+      false,
+    );
+    expect(result.appliedActions).toContain("installed_skill");
+    if (scenario === "unresolved") {
+      expect(result).toMatchObject({
+        status: "needs_human",
+        code: "skill_install_failed",
+        cleanup: { resources: [expect.stringContaining(".rea-skill-")] },
+      });
+      expect(result.remediation).toContain("staging cleanup");
+      expect(resources.hasPending).toBe(true);
+      expect(progress).toEqual(["started", "warning"]);
+      blocked = false;
+      await resources.retryCleanup();
+      expect(resources.hasPending).toBe(false);
+    } else {
+      expect(resources.hasPending).toBe(false);
+      expect(progress).toEqual(["started", "warning", "completed"]);
+      if (scenario === "settled") {
+        expect(result.status).toBe("ready");
+        expect(result.code).toBeUndefined();
+        expect(result.remediation).toBeUndefined();
+      } else {
+        expect(result).toMatchObject({
+          status: "needs_human",
+          code: "download_failed",
+          remediation: "Download failed.",
+        });
+      }
+    }
+  },
+);

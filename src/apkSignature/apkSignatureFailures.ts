@@ -1,23 +1,25 @@
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  fixedAllowanceOptions,
+  fixedProducerInputAllowance,
+} from "../domain/fixedAllowanceRemediation.js";
+import {
+  ArtifactReaderFailure,
+  stableArtifactInputFailure,
+  readerIntegrityFailure,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-  artifactFileCancellationCause,
-  bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { completedStableArtifactObservation } from "../artifacts/StableArtifactObservation.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+  artifactFileCancellationError,
+  projectStableArtifactFailure,
+} from "../resources/index.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
+  unsupportedTarget,
+  unrecognizedTarget,
 } from "../domain/analysisErrorCore.js";
+import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
 import type { ApkSchemeError } from "../domain/apkSignature/apkSignatureSchemes.js";
 import type { ApkSigningBlockError } from "../domain/apkSignature/apkSigningBlock.js";
 import type { ApkCentralDirectoryError } from "../domain/apkSignature/apkV1Signature.js";
@@ -26,6 +28,7 @@ import {
   APK_SIGNATURE_LIMITS,
   APK_SIGNATURE_PROVIDER_IDENTITY,
 } from "./ApkSignatureRelease.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_apk_signature";
 
@@ -41,17 +44,26 @@ export const mapApkBlockError = (
 ): AnalysisError => {
   switch (error.kind) {
     case "not-a-zip":
-      return new AnalysisUnsupportedTargetError(
+      return unrecognizedTarget(
         OPERATION,
         path,
-        `The selected file is not a ZIP/APK (${error.detail}).`,
-        { remediationAction: "Select a local .apk/.zip/.aab archive." },
+        "zip",
+        `The selected file is not a ZIP/APK (${error.detail}). Select a local .apk/.zip/.aab archive.`,
       );
     case "zip64-unsupported":
-      return new AnalysisUnsupportedTargetError(
+      return unsupportedTarget(
         OPERATION,
         path,
+        "zip",
         `This archive uses a Zip64 structure this reader does not decode (${error.detail}).`,
+        { undecodedContent: true },
+      );
+    case "multi-disk-unsupported":
+      return unsupportedTarget(
+        OPERATION,
+        path,
+        "zip",
+        `The selected archive declares an unsupported multi-disk ZIP layout (${error.detail}). Select a complete single-disk APK/ZIP archive.`,
       );
     case "malformed-zip":
       return inputError(
@@ -61,17 +73,16 @@ export const mapApkBlockError = (
       return inputError(
         `Malformed APK Signing Block at byte ${String(error.offset)}: ${error.detail}.`,
       );
-    case "budget-exceeded":
-      return new AnalysisResourceConstraintError(
-        OPERATION,
-        "capacity",
-        `APK Signing Block holds more ${error.resource} than the ${String(error.limit)} limit.`,
-        { max_signing_block_pairs: error.limit },
-        fixedAllowanceOptions(
-          `The APK Signing Block allowance of ${String(error.limit)} pairs (this release has no runtime override)`,
+    case "limit": {
+      const { name, maximum } = error.failure.limit;
+      return parseLimitConstraint(OPERATION, "capacity", error, {
+        legacyMaximumKey: name,
+        ...fixedAllowanceOptions(
+          `The APK Signing Block allowance of ${String(maximum)} pairs (this release has no runtime override)`,
           "count",
         ),
-      );
+      });
+    }
   }
 };
 
@@ -79,40 +90,38 @@ export const mapApkBlockError = (
 export const mapApkSchemeError = (
   error: ApkSchemeError,
   scheme: string,
-): AnalysisError =>
-  error.kind === "malformed-signer"
-    ? inputError(
-        `Malformed APK Signature Scheme ${scheme} block: ${error.detail}.`,
-      )
-    : new AnalysisResourceConstraintError(
-        OPERATION,
-        "capacity",
-        `APK Signature Scheme ${scheme} holds more ${error.resource} than the ${String(error.limit)} limit.`,
-        { [`max_${error.resource.replace(/-/g, "_")}`]: error.limit },
-        fixedAllowanceOptions(
-          `The APK Signature Scheme ${scheme} allowance of ${String(error.limit)} ${error.resource} (this release has no runtime override)`,
-          "count",
-        ),
-      );
+): AnalysisError => {
+  if (error.kind === "malformed-signer")
+    return inputError(
+      `Malformed APK Signature Scheme ${scheme} block: ${error.detail}.`,
+    );
+  const { name, maximum } = error.failure.limit;
+  return parseLimitConstraint(OPERATION, "capacity", error, {
+    legacyMaximumKey: `max_${name.replace(/-/g, "_")}`,
+    ...fixedAllowanceOptions(
+      `The APK Signature Scheme ${scheme} allowance of ${String(maximum)} ${name} (this release has no runtime override)`,
+      "count",
+    ),
+  });
+};
 
 /** A central directory that cannot be walked leaves v1 presence unknown: refuse. */
 export const mapCentralDirectoryError = (
   error: ApkCentralDirectoryError,
-): AnalysisError =>
-  error.kind === "budget-exceeded"
-    ? new AnalysisResourceConstraintError(
-        OPERATION,
-        "capacity",
-        `The central directory holds more than ${String(error.limit)} META-INF v1 signing entries.`,
-        { max_v1_signature_entries: error.limit },
-        fixedAllowanceOptions(
-          `The APK v1 allowance of ${String(error.limit)} META-INF signing entries (this release has no runtime override)`,
-          "count",
-        ),
-      )
-    : inputError(
-        `Malformed ZIP central directory at byte ${String(error.offset)}: ${error.detail}.`,
-      );
+): AnalysisError => {
+  if (error.kind !== "limit")
+    return inputError(
+      `Malformed ZIP central directory at byte ${String(error.offset)}: ${error.detail}.`,
+    );
+  const { name, maximum } = error.failure.limit;
+  return parseLimitConstraint(OPERATION, "capacity", error, {
+    legacyMaximumKey: name,
+    ...fixedAllowanceOptions(
+      `The APK v1 allowance of ${String(maximum)} META-INF signing entries (this release has no runtime override)`,
+      "count",
+    ),
+  });
+};
 
 /** More v1 signers than a signed APK carries: refused rather than decoded. */
 export const v1SignerCapacityError = (limit: number): AnalysisError =>
@@ -135,8 +144,12 @@ export const apkOutputBudgetError = (projectedBytes: number): AnalysisError =>
     `The decoded signing report (${String(projectedBytes)} bytes) exceeds the ${String(APK_SIGNATURE_LIMITS.outputBytes)}-byte output budget.`,
     { max_output_bytes: APK_SIGNATURE_LIMITS.outputBytes },
     fixedAllowanceOptions(
-      `The decoded APK signing report allowance of ${String(APK_SIGNATURE_LIMITS.outputBytes)} bytes (this release has no runtime override)`,
+      "The decoded APK signing report allowance",
       "report",
+      {
+        limit: APK_SIGNATURE_LIMITS.outputBytes,
+        unit: "bytes",
+      },
     ),
   );
 
@@ -148,22 +161,16 @@ export const apkOutputBudgetError = (projectedBytes: number): AnalysisError =>
 export const apkSignatureFailure = (
   cause: unknown,
   path: string,
-): AnalysisError => {
-  const primary = primaryFailure(artifactFilePrimaryFacts(cause), path);
-  const observation = completedStableArtifactObservation(cause, path);
-  if (observation !== undefined) primary.retainPartialObservation(observation);
-  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
-    return primary;
-  const cleanup = new ProviderCleanupError(
+  identity?: { readonly sha256: string; readonly bytes: number },
+): AnalysisError =>
+  projectStableArtifactFailure(
+    cause,
+    primaryFailure(artifactFilePrimaryFacts(cause), path),
+    path,
     APK_SIGNATURE_PROVIDER_IDENTITY.id,
-    cause.cleanup.resources,
-    { reason: cause.cleanup.reason },
-    { cause, operation: OPERATION },
+    OPERATION,
+    identity,
   );
-  const error = analysisErrorWithCleanupFailure(primary, cleanup, OPERATION);
-  bindArtifactFileCleanup(cause, error);
-  return error;
-};
 
 /** Distinguish cancellation, access, integrity and limits for the primary failure. */
 const primaryFailure = (
@@ -210,13 +217,9 @@ const artifactReaderFailure = (
 ): AnalysisError => {
   switch (cause.reason) {
     case "integrity":
-      return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
-        cause,
-      });
+      return readerIntegrityFailure(OPERATION, path, cause);
     case "cancelled":
-      return new AnalysisCancelledError(OPERATION, {
-        cause: artifactFileCancellationCause(cause),
-      });
+      return artifactFileCancellationError(OPERATION, cause);
     case "limit":
       return new AnalysisResourceConstraintError(
         OPERATION,
@@ -225,14 +228,14 @@ const artifactReaderFailure = (
         { max_input_bytes: APK_SIGNATURE_LIMITS.inputBytes },
         {
           cause,
-          remediationAction:
-            "The size budget is fixed; select a smaller archive.",
+          ...fixedProducerInputAllowance(
+            APK_SIGNATURE_LIMITS.inputBytes,
+            "The APK signature input allowance",
+          ),
         },
       );
     case "path":
-      return new AnalysisInputError(OPERATION, { cause }, [
-        { path: ["path"], reason: "invalid_format", message: cause.message },
-      ]);
+      return stableArtifactInputFailure(cause, OPERATION);
     default:
       return adapterFailure(cause, path);
   }
@@ -243,6 +246,6 @@ const adapterFailure = (cause: unknown, path: string): AnalysisError =>
     cause,
     diagnostics: {
       path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });

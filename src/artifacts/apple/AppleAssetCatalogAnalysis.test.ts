@@ -2,19 +2,110 @@ import { createHash } from "node:crypto";
 import { access, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import * as processOutput from "../../process/ExecFileOutput.js";
+import { spawnFailure } from "../../../tests/support/process/spawnFailure.js";
+import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
+import { spawnOwnedProviderProcess } from "../../process/ProviderProcess.js";
+import { cleanupOwnedProcessGroup } from "../../process/ProcessOwnership.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { encodeNibArchiveFixture } from "./NibArchive.fixture.js";
 import type { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
-import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import {
+  AnalysisError,
+  primaryAnalysisError,
+} from "../../domain/analysisErrorBase.js";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { runWithAnalysisOperationSnapshot } from "../../domain/analysisOperationSnapshot.js";
+import {
+  DEFAULT_ASSETUTIL_OUTPUT_BYTES,
+  MAX_ASSETUTIL_OUTPUT_BYTES,
+} from "../../domain/apple/appleAssetCatalog.js";
 import {
   analyzeAppleAssetCatalogs,
   collectInterfaceBuilderResourceKeys,
+  type AssetUtilLauncher,
 } from "./AppleAssetCatalogAnalysis.js";
+import { waitFor } from "../../../tests/support/testWait.js";
+import {
+  InternalInvariantError,
+  invariantViolation,
+} from "../../domain/internalInvariant.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+
+const noInterfaceBuilder = async () =>
+  ({
+    graph: { nodes: [], truncated: false, coverage: [] },
+  }) as unknown as Awaited<ReturnType<typeof analyzeInterfaceBuilderBundle>>;
+
+/**
+ * Run a stand-in Node script as assetutil under the real owned-process
+ * launcher. The script reads its own arguments first, then `--info <path>`.
+ */
+const standInAssetUtil = (
+  script: string,
+  ...scriptArguments: string[]
+): AssetUtilLauncher & { readonly pids: number[] } => {
+  const pids: number[] = [];
+  const launcher: AssetUtilLauncher = async (options) => {
+    const spawned = await spawnOwnedProviderProcess({
+      ...options,
+      command: process.execPath,
+      arguments: ["-e", script, "--", ...scriptArguments, ...options.arguments],
+      expectedCommand: process.execPath,
+    });
+    if (spawned.process.pid !== undefined) pids.push(spawned.process.pid);
+    return spawned;
+  };
+  return Object.assign(launcher, { pids });
+};
+
+const alive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** A completed assetutil run the owned command reports as failed. */
+const assetUtilCommandFailure = (
+  reason: OwnedCommandFailure["reason"],
+  output: {
+    readonly stdout?: string;
+    readonly stderr: string;
+    readonly exitCode: number | null;
+    readonly signal: NodeJS.Signals | null;
+    readonly truncated?: boolean;
+    readonly stopRequested?: boolean;
+    readonly collectionFailure?: boolean;
+  },
+): OwnedCommandFailure => {
+  const stream = (text: string) => ({
+    text,
+    bytes: Buffer.byteLength(text),
+    observedBytes: Buffer.byteLength(text),
+  });
+  return new OwnedCommandFailure(
+    reason,
+    "Command failed; inspect its exit status and diagnostics.",
+    {
+      stdout: stream(output.stdout ?? ""),
+      stderr: stream(output.stderr),
+      exitCode: output.exitCode,
+      signal: output.signal,
+      ...(output.truncated === true ? { diagnosticTruncated: true } : {}),
+      ...(output.stopRequested === true ? { stopRequested: true } : {}),
+    },
+    null,
+    { collectionFailure: output.collectionFailure === true },
+  );
+};
 
 describe("Apple asset catalog traversal coverage", () => {
   it.for([false, true])(
@@ -146,8 +237,10 @@ describe("Apple asset catalog application workflow", () => {
         next_offset: null,
         truncated: false,
       });
-      expect(result.limitations).toContain(
-        "No compiled Assets.car catalog was found among the app bundle's regular files (symlinks are not followed); any resource keys are reported as unmatched.",
+      expect(result.limitations).toContainEqual(
+        expect.stringMatching(
+          /Assets\.car.*symlinks.*not followed.*unmatched/iu,
+        ),
       );
     },
   );
@@ -224,8 +317,10 @@ it.skipIf(process.platform === "win32")(
         throw new Error("No catalog is present");
       },
     });
-    expect(result.limitations).toContain(
-      "Interface Builder resource-key joins may be incomplete because the decoded object inventory is incomplete.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(
+        /resource-key joins.*incomplete.*object inventory.*incomplete/iu,
+      ),
     );
   },
 );
@@ -362,7 +457,7 @@ describe("Apple asset catalog and Interface Builder concurrency", () => {
       },
     });
     expect(result.catalogs).toHaveLength(1);
-  }, 5_000);
+  });
 
   it("cancels the Interface Builder analysis and reports a catalog failure", async () => {
     let cancelled = false;
@@ -408,7 +503,7 @@ describe("Apple asset catalog and Interface Builder concurrency", () => {
       settled = true;
     });
     analysis.catch(() => undefined);
-    await vi.waitFor(() => expect(catalogStarted).toBe(true));
+    await waitFor(() => expect(catalogStarted).toBe(true));
     await new Promise((resolve) => setImmediate(resolve));
     expect(settled).toBe(false);
     finishCatalog("[]");
@@ -423,21 +518,7 @@ describe("Apple asset catalog and Interface Builder concurrency", () => {
       const ready = join(work, "ready");
       const exited = join(work, "exited");
       const script = `const fs=require("node:fs");process.on("SIGTERM",()=>{setTimeout(()=>{fs.writeFileSync(process.argv[2],"exited");process.exit(0)},500)});fs.writeFileSync(process.argv[1],"ready");setInterval(()=>{},1000);`;
-      const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
-      const realExecFileOutput = processOutput.execFileOutput;
-      Object.defineProperty(process, "platform", {
-        ...platform,
-        value: "darwin",
-      });
-      const spy = vi
-        .spyOn(processOutput, "execFileOutput")
-        .mockImplementation((_command, _args, options) =>
-          realExecFileOutput(
-            process.execPath,
-            ["-e", script, ready, exited],
-            options,
-          ),
-        );
+      const launcher = standInAssetUtil(script, ready, exited);
       const controller = new AbortController();
       let settled: Promise<unknown> | undefined;
       try {
@@ -447,19 +528,265 @@ describe("Apple asset catalog and Interface Builder concurrency", () => {
           targetSha256: "a".repeat(64),
           signal: controller.signal,
           analyzeInterfaceBuilder: async () => emptyGraph,
+          assetUtilLauncher: launcher,
+          platform: "darwin",
         }).catch((cause: unknown) => cause);
-        await vi.waitFor(() => expect(access(ready)).resolves.toBeUndefined());
+        await waitFor(() => expect(access(ready)).resolves.toBeUndefined());
         controller.abort("stop asset inspection");
-        expect(await settled).toMatchObject({ reason: "cancelled" });
-        await expect(access(exited)).resolves.toBeUndefined();
+        expect(await settled).toMatchObject({
+          _tag: "AnalysisCancelledError",
+          cause: "stop asset inspection",
+        });
+        expect(launcher.pids).toHaveLength(1);
+        expect(launcher.pids.filter(alive)).toEqual([]);
       } finally {
         controller.abort("stop asset inspection");
         await settled;
-        spy.mockRestore();
-        Object.defineProperty(process, "platform", platform);
       }
     },
   );
+});
+
+it.skipIf(process.platform === "win32")(
+  "reports an assetutil that cannot be launched as unavailable",
+  async () => {
+    const bundle = await createTestTempDirectory("rea-assetutil-launch-");
+    await mkdir(join(bundle, "Contents", "Resources"), { recursive: true });
+    await writeFile(
+      join(bundle, "Contents", "Resources", "Assets.car"),
+      "catalog",
+    );
+    const missing = join(
+      await createTestTempDirectory("rea-assetutil-missing-"),
+      "assetutil",
+    );
+    let launches = 0;
+    await expect(
+      analyzeAppleAssetCatalogs({
+        environment: {},
+        bundlePath: bundle,
+        targetSha256: "a".repeat(64),
+        analyzeInterfaceBuilder: noInterfaceBuilder,
+        assetUtilLauncher: (options) => {
+          launches++;
+          return spawnOwnedProviderProcess({ ...options, command: missing });
+        },
+        platform: "darwin",
+      }),
+    ).rejects.toMatchObject({
+      _tag: "AnalysisCapabilityUnavailableError",
+      reason: "macOS assetutil is unavailable",
+      cause: { code: "ENOENT" },
+      diagnostics: { catalog_path: "Contents/Resources/Assets.car" },
+    });
+    expect(launches).toBe(1);
+  },
+);
+
+it.each([
+  ["EAGAIN", "processes"],
+  ["EMFILE", "file-descriptors"],
+])(
+  "reports a host that lacks capacity to launch assetutil (%s) as a retryable constraint",
+  async (code, resource) => {
+    const bundle = await createTestTempDirectory("rea-assetutil-capacity-");
+    await mkdir(join(bundle, "Contents", "Resources"), { recursive: true });
+    await writeFile(
+      join(bundle, "Contents", "Resources", "Assets.car"),
+      "catalog",
+    );
+    await expect(
+      analyzeAppleAssetCatalogs({
+        environment: {},
+        bundlePath: bundle,
+        targetSha256: "a".repeat(64),
+        analyzeInterfaceBuilder: noInterfaceBuilder,
+        assetUtilLauncher: async () => {
+          throw spawnFailure(code, "/usr/bin/assetutil");
+        },
+        platform: "darwin",
+      }),
+    ).rejects.toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      retryable: true,
+      reportedLimits: { spawn_error: code, exhausted_resource: resource },
+      diagnostics: {
+        catalog_path: "Contents/Resources/Assets.car",
+        boundary: "host-capacity",
+        system_code: code,
+      },
+    });
+  },
+);
+
+describe("assetutil process cleanup", () => {
+  /**
+   * A stand-in assetutil that completes, while its process-group cleanup
+   * proof is withheld until `allowCleanup`.
+   */
+  const withheldCleanup = async (onRefusedCleanup?: () => void) => {
+    const bundle = await createTestTempDirectory("rea-assetutil-cleanup-");
+    await writeFile(join(bundle, "Assets.car"), "catalog");
+    let mayClean = false;
+    let launches = 0;
+    const standIn = standInAssetUtil('process.stdout.write("[]");');
+    const resources = new ArtifactResourceScope();
+    onTestFinished(async () => {
+      mayClean = true;
+      await resources.close();
+    });
+    const inspect = (signal?: AbortSignal) =>
+      analyzeAppleAssetCatalogs({
+        ...(signal === undefined ? {} : { signal }),
+        environment: {},
+        bundlePath: bundle,
+        targetSha256: "a".repeat(64),
+        resources,
+        analyzeInterfaceBuilder: noInterfaceBuilder,
+        assetUtilLauncher: async (options) => {
+          launches++;
+          const spawned = await standIn(options);
+          return {
+            ...spawned,
+            cleanup: async () => {
+              if (mayClean) return cleanupOwnedProcessGroup(spawned.ownership);
+              onRefusedCleanup?.();
+              return {
+                cleaned: false,
+                reason: "assetutil process owner remains unverified",
+              };
+            },
+          };
+        },
+        platform: "darwin",
+      });
+    return {
+      inspect,
+      resources,
+      launches: () => launches,
+      allowCleanup: () => {
+        mayClean = true;
+      },
+    };
+  };
+
+  it.skipIf(process.platform === "win32")(
+    "retains an unproven assetutil process cleanup for a later retry",
+    async () => {
+      const f = await withheldCleanup();
+      const failure = await f.inspect().catch((cause: unknown) => cause);
+      if (!(failure instanceof AnalysisError)) throw failure;
+      // The run itself completed; only its process cleanup is unproven.
+      expect(failure).toBeInstanceOf(ProviderCleanupError);
+      expect(failure.cleanupIncomplete).toBe(true);
+      expect(projectAnalysisError(failure)).toMatchObject({
+        code: "cleanup_incomplete",
+        details: {
+          operation: "inspect_asset_catalog",
+          // The completed run's output is kept with its cleanup report.
+          captured_output: { stdout: "[]", exit_code: 0 },
+          resources: expect.arrayContaining([
+            expect.stringMatching(/^process-group:\d+$/u),
+          ]),
+          diagnostics: {
+            reason: "assetutil process owner remains unverified",
+          },
+        },
+      });
+      expect(failure.cleanupResources).toContainEqual(
+        expect.stringMatching(/^process-group:\d+$/u),
+      );
+      expect(f.resources.hasPending).toBe(true);
+      expect(f.resources.cleanupResources).toEqual(failure.cleanupResources);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "keeps a cancellation during refused assetutil cleanup through the retry",
+    async () => {
+      const controller = new AbortController();
+      const reason = { caller: "stop during assetutil cleanup" };
+      const f = await withheldCleanup(() => controller.abort(reason));
+      const failure = await f
+        .inspect(controller.signal)
+        .catch((cause: unknown) => cause);
+      if (!(failure instanceof AnalysisError)) throw failure;
+      // The caller's cancellation is the outcome; the unproven cleanup is
+      // retained beside it rather than replacing it.
+      const cancelled = primaryAnalysisError(failure);
+      expect(cancelled).toBeInstanceOf(AnalysisCancelledError);
+      expect(cancelled.cause).toBe(reason);
+      expect(projectAnalysisError(failure)).toMatchObject({
+        category: "cancelled",
+        details: { cleanup: "incomplete" },
+      });
+      expect(failure.cleanupIncomplete).toBe(true);
+      expect(f.resources.hasPending).toBe(true);
+      f.allowCleanup();
+      await f.resources.close();
+      expect(failure.cleanupIncomplete).toBe(false);
+      expect(f.resources.hasPending).toBe(false);
+      expect(primaryAnalysisError(failure)).toBe(cancelled);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "releases a retained assetutil cleanup before the next inspection launches",
+    async () => {
+      const f = await withheldCleanup();
+      const first = await f.inspect().catch((cause: unknown) => cause);
+      if (!(first instanceof AnalysisError)) throw first;
+      expect(first.cleanupIncomplete).toBe(true);
+      // While the retained owner still cannot be proven stopped, no new
+      // assetutil process is admitted.
+      await expect(f.inspect()).rejects.toMatchObject({
+        reason: "unavailable",
+        cleanup: { resources: first.cleanupResources },
+      });
+      expect(f.launches()).toBe(1);
+      f.allowCleanup();
+      const retried = await f.inspect();
+      expect(retried.catalogs).toHaveLength(1);
+      expect(f.launches()).toBe(2);
+      expect(first.cleanupIncomplete).toBe(false);
+      expect(f.resources.hasPending).toBe(false);
+    },
+  );
+});
+
+it("joins the Interface Builder cleanup failure to a catalog defect", async () => {
+  const bundle = await createTestTempDirectory("rea-asset-catalog-defect-");
+  await mkdir(join(bundle, "Contents", "Resources"), { recursive: true });
+  await writeFile(
+    join(bundle, "Contents", "Resources", "Assets.car"),
+    "catalog",
+  );
+  const retained = join(bundle, "Contents", "Resources", "Main.nib");
+  const rejected = await analyzeAppleAssetCatalogs({
+    environment: {},
+    bundlePath: bundle,
+    targetSha256: "a".repeat(64),
+    analyzeInterfaceBuilder: ({ signal }) =>
+      new Promise((_, reject) => {
+        signal?.addEventListener("abort", () =>
+          reject(
+            new ArtifactReaderFailure("io", "reader close failed", {
+              cleanup: { reason: "close failed", resources: [retained] },
+            }),
+          ),
+        );
+      }),
+    runAssetUtil: () =>
+      Promise.reject(invariantViolation("Catalog plan is missing")),
+  }).catch((cause: unknown) => cause);
+  expect(rejected).toBeInstanceOf(ProviderAdapterError);
+  if (!(rejected instanceof ProviderAdapterError))
+    throw new Error("expected an adapter failure");
+  // The defect stays the primary failure beside the reader's cleanup.
+  expect(rejected.cleanupPrimary).toBeInstanceOf(ProviderAdapterError);
+  expect(rejected.cleanupPrimary?.cause).toBeInstanceOf(InternalInvariantError);
+  expect(rejected.cleanupIncomplete).toBe(true);
+  expect(rejected.cleanupResources).toContain(retained);
 });
 
 it.each(["not json", "{}", "[null]"])(
@@ -483,20 +810,18 @@ it.each(["not json", "{}", "[null]"])(
   },
 );
 it.each([
-  ["ETIMEDOUT", "AnalysisTimeoutError"],
-  ["ENOENT", "AnalysisCapabilityUnavailableError"],
-  ["ERR_CHILD_PROCESS_STDIO_MAXBUFFER", "AnalysisResourceConstraintError"],
-  [1, "AnalysisOutputError"],
+  ["timeout", "AnalysisTimeoutError"],
+  ["output-limit", "AnalysisResourceConstraintError"],
+  ["process", "AnalysisOutputError"],
 ] as const)(
   "preserves assetutil command failure %s and diagnostics",
-  async (code, tag) => {
+  async (reason, tag) => {
     const bundle = await createTestTempDirectory("rea-asset-command-");
     await writeFile(join(bundle, "Assets.car"), "inert catalog");
-    const cause = Object.assign(new Error("native refusal"), {
-      code,
-      stdout: "",
+    const cause = assetUtilCommandFailure(reason, {
       stderr: "specific catalog diagnostic",
-      signal: code === "ETIMEDOUT" ? "SIGTERM" : null,
+      exitCode: reason === "process" ? 1 : null,
+      signal: reason === "timeout" ? "SIGKILL" : null,
     });
     await expect(
       analyzeAppleAssetCatalogs({
@@ -512,7 +837,15 @@ it.each([
       cause,
       diagnostics: { catalog_path: "Assets.car" },
       capturedOutput: { stderr: "specific catalog diagnostic" },
-      ...(code === "ETIMEDOUT" ? { timeoutMs: 60000 } : {}),
+      ...(reason === "timeout" ? { timeoutMs: 60000 } : {}),
+      ...(reason === "output-limit"
+        ? {
+            limit: {
+              parameter: "producer_limits.output_bytes",
+              effective_value: DEFAULT_ASSETUTIL_OUTPUT_BYTES,
+            },
+          }
+        : {}),
     });
   },
 );
@@ -539,10 +872,10 @@ it.each(["reported carutil", "tab-indented carutil", "observed assetutil"])(
         ? `assetutil Error: Unable to read file at '${path}'\n` +
           `carutil: error:\n${variant === "tab-indented carutil" ? "\t" : "    "}${path} is not a valid AssetCatalog\n`
         : `assetutil: file error error exiting: 'can't read from: '${path}' Undefined error: 0' invalid file\n`);
-    const cause = Object.assign(new Error("assetutil exited 1"), {
-      code: 1,
+    const cause = assetUtilCommandFailure("process", {
       stdout: "partial metadata",
       stderr,
+      exitCode: 1,
       signal: null,
     });
     const error = await analyzeAppleAssetCatalogs({
@@ -557,13 +890,14 @@ it.each(["reported carutil", "tab-indented carutil", "observed assetutil"])(
     if (!(error instanceof AnalysisError)) throw error;
     expect(error.cause).toBe(cause);
     expect(projectAnalysisError(error)).toMatchObject({
-      code: "artifact_operation_failed",
-      message:
-        "Artifact is invalid or has changed. Get a fresh copy and try again.",
+      code: "unsupported_target",
+      retryable: false,
       details: {
         operation: "inspect_asset_catalog",
-        reason: "format",
-        detail: expect.stringContaining(relativePath),
+        path,
+        reason: expect.stringContaining(relativePath),
+        failure_kind: "malformed",
+        format: "asset-catalog",
         diagnostics: { catalog_path: relativePath },
         captured_output: {
           stdout: "partial metadata",
@@ -599,12 +933,11 @@ it.each([
       : scenario.startsWith("different file-error")
         ? `assetutil: file error error exiting: 'can't read from: '${path}' Undefined error: ${scenario === "different file-error code" ? "13" : "0"}' ${scenario === "different file-error text" ? "access denied" : "invalid file"}\n`
         : `carutil: error:\n${scenario.startsWith("tab-indented") ? "\t" : "    "}${rejectedPath} is not a valid AssetCatalog\n`;
-  const cause = Object.assign(new Error("assetutil failed"), {
-    code: 1,
-    stdout: "",
+  const cause = assetUtilCommandFailure("process", {
     stderr,
+    exitCode: scenario === "signal" ? null : 1,
     signal: scenario === "signal" ? "SIGTERM" : null,
-    outputTruncated: scenario === "truncated capture",
+    truncated: scenario === "truncated capture",
     collectionFailure: scenario === "failed capture",
   });
   await expect(
@@ -726,24 +1059,15 @@ it.skipIf(process.platform === "win32")(
       targetSha256: "a".repeat(64),
       environment: {},
       signal: controller.signal,
-      runAssetUtil: async (_path, signal) =>
-        (
-          await processOutput.execFileOutput(
-            process.execPath,
-            ["-e", program],
-            {
-              signal,
-              stopSignal: "SIGTERM",
-            },
-          )
-        ).stdout,
+      assetUtilLauncher: standInAssetUtil(program),
+      platform: "darwin",
     })
       .catch((cause: unknown) => cause)
       .finally(() => {
         settled = true;
       });
     try {
-      await vi.waitFor(() => expect(access(exited)).resolves.toBeUndefined());
+      await waitFor(() => expect(access(exited)).resolves.toBeUndefined());
       expect(settled).toBe(false);
       controller.abort("late cancellation");
       expect(settled).toBe(false);
@@ -760,3 +1084,171 @@ it.skipIf(process.platform === "win32")(
     }
   },
 );
+
+describe("assetutil producer_limits.output_bytes", () => {
+  const outputLimit = (effective: number) => ({
+    control_kind: "parameter",
+    parameter: "producer_limits.output_bytes",
+    effective_value: effective,
+    unit: "bytes",
+    minimum: 1,
+    maximum: MAX_ASSETUTIL_OUTPUT_BYTES,
+    default_value: DEFAULT_ASSETUTIL_OUTPUT_BYTES,
+    applies_at: "next_call",
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "refuses one assetutil stream above the selected budget with details.limit",
+    async () => {
+      const bundle = await createTestTempDirectory("rea-assetutil-output-");
+      const resources = join(bundle, "Contents", "Resources");
+      await mkdir(resources, { recursive: true });
+      await writeFile(join(resources, "Assets.car"), "catalog");
+      const launcher = standInAssetUtil(
+        `process.stdout.write(JSON.stringify([{ Name: "x".repeat(256) }]));`,
+      );
+      const refused = await analyzeAppleAssetCatalogs({
+        environment: {},
+        bundlePath: bundle,
+        targetSha256: "a".repeat(64),
+        page: { producer_limits: { output_bytes: 64 } },
+        analyzeInterfaceBuilder: noInterfaceBuilder,
+        assetUtilLauncher: launcher,
+        platform: "darwin",
+      }).catch((cause: unknown) => cause);
+      if (!(refused instanceof AnalysisError))
+        throw new Error("Expected the assetutil output refusal");
+      expect(projectAnalysisError(refused).details?.limit).toEqual(
+        outputLimit(64),
+      );
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "refuses combined catalog output above the selected budget and admits it once raised",
+    async () => {
+      const bundle = await createTestTempDirectory("rea-assetutil-combined-");
+      for (const name of ["A", "B"]) {
+        const resources = join(bundle, name, "Resources");
+        await mkdir(resources, { recursive: true });
+        await writeFile(join(resources, "Assets.car"), `catalog ${name}`);
+      }
+      const output = JSON.stringify([{ Name: "Toolbar" }]);
+      const launcher = standInAssetUtil(
+        `process.stdout.write(${JSON.stringify(output)});`,
+      );
+      const inspect = (outputBytes: number) =>
+        analyzeAppleAssetCatalogs({
+          environment: {},
+          bundlePath: bundle,
+          targetSha256: "a".repeat(64),
+          page: { producer_limits: { output_bytes: outputBytes } },
+          analyzeInterfaceBuilder: noInterfaceBuilder,
+          assetUtilLauncher: launcher,
+          platform: "darwin",
+        });
+      const refused = await inspect(output.length * 2 - 1).catch(
+        (cause: unknown) => cause,
+      );
+      if (!(refused instanceof AnalysisError))
+        throw new Error("Expected the combined assetutil output refusal");
+      expect(projectAnalysisError(refused).details?.limit).toEqual(
+        outputLimit(output.length * 2 - 1),
+      );
+      await expect(inspect(output.length * 2)).resolves.toMatchObject({
+        total_records: 2,
+      });
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "keeps the 64 MiB assetutil default when producer.output_bytes is unset and clamps an explicit value",
+    async () => {
+      const bundle = await createTestTempDirectory("rea-assetutil-setting-");
+      const resources = join(bundle, "Contents", "Resources");
+      await mkdir(resources, { recursive: true });
+      await writeFile(join(resources, "Assets.car"), "catalog");
+      const large = standInAssetUtil(
+        `process.stdout.write(JSON.stringify([{ Name: "x".repeat(${String(5 * 1024 * 1024)}) }]));`,
+      );
+      const admitted = await analyzeAppleAssetCatalogs({
+        environment: {},
+        bundlePath: bundle,
+        targetSha256: "a".repeat(64),
+        analyzeInterfaceBuilder: noInterfaceBuilder,
+        assetUtilLauncher: large,
+        platform: "darwin",
+      });
+      expect(admitted.total_records).toBe(1);
+
+      const small = standInAssetUtil(
+        `process.stdout.write(JSON.stringify([{ Name: "x".repeat(256) }]));`,
+      );
+      const refused = await runWithAnalysisOperationSnapshot(
+        { revision: 1, overrides: { "producer.output_bytes": 64 } },
+        () =>
+          analyzeAppleAssetCatalogs({
+            environment: {},
+            bundlePath: bundle,
+            targetSha256: "a".repeat(64),
+            analyzeInterfaceBuilder: noInterfaceBuilder,
+            assetUtilLauncher: small,
+            platform: "darwin",
+          }),
+      ).catch((cause: unknown) => cause);
+      if (!(refused instanceof AnalysisError))
+        throw new Error("Expected the session output refusal");
+      expect(projectAnalysisError(refused).details?.limit).toMatchObject({
+        setting: "producer.output_bytes",
+        parameter: "producer_limits.output_bytes",
+        effective_value: 64,
+        source: "runtime",
+        maximum: MAX_ASSETUTIL_OUTPUT_BYTES,
+      });
+
+      const aboveCap = MAX_ASSETUTIL_OUTPUT_BYTES + 1;
+      const overflowing = standInAssetUtil(
+        `process.stdout.write("x".repeat(${String(aboveCap)}));`,
+      );
+      const clampedRuntime = await runWithAnalysisOperationSnapshot(
+        { revision: 1, overrides: { "producer.output_bytes": aboveCap } },
+        () =>
+          analyzeAppleAssetCatalogs({
+            environment: {},
+            bundlePath: bundle,
+            targetSha256: "a".repeat(64),
+            analyzeInterfaceBuilder: noInterfaceBuilder,
+            assetUtilLauncher: overflowing,
+            platform: "darwin",
+          }),
+      ).catch((cause: unknown) => cause);
+      if (!(clampedRuntime instanceof AnalysisError))
+        throw new Error("Expected the above-cap runtime value to be reduced");
+      expect(projectAnalysisError(clampedRuntime).details?.limit).toMatchObject(
+        {
+          setting: "producer.output_bytes",
+          effective_value: MAX_ASSETUTIL_OUTPUT_BYTES,
+          source: "runtime",
+          maximum: MAX_ASSETUTIL_OUTPUT_BYTES,
+        },
+      );
+
+      const clampedSeed = await analyzeAppleAssetCatalogs({
+        environment: { REA_PRODUCER_OUTPUT_BYTES: String(aboveCap) },
+        bundlePath: bundle,
+        targetSha256: "a".repeat(64),
+        analyzeInterfaceBuilder: noInterfaceBuilder,
+        assetUtilLauncher: overflowing,
+        platform: "darwin",
+      }).catch((cause: unknown) => cause);
+      if (!(clampedSeed instanceof AnalysisError))
+        throw new Error("Expected the above-cap launch seed to be reduced");
+      expect(projectAnalysisError(clampedSeed).details?.limit).toMatchObject({
+        setting: "producer.output_bytes",
+        effective_value: MAX_ASSETUTIL_OUTPUT_BYTES,
+        source: "setting",
+        maximum: MAX_ASSETUTIL_OUTPUT_BYTES,
+      });
+    },
+  );
+});

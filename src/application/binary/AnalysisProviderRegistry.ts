@@ -1,8 +1,9 @@
-import { ProviderInspectionScope } from "../ProviderInspectionScope.js";
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
+import { ProviderInspectionScope } from "../../ports/ProviderInspectionScope.js";
+import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
+} from "../../resources/index.js";
 import { SharedStartupAttempt } from "../../process/SharedStartupAttempt.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
@@ -13,15 +14,20 @@ import {
   type AnalysisProviderSelector,
 } from "../../domain/providerSelection.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
+import type { ProviderReleaseVerification } from "../../domain/providerReleaseVerification.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import {
   AnalysisCancelledError,
-  AnalysisUnsupportedTargetError,
+  isAborted,
+  cancelledBy,
+  carriedReason,
+  AnalysisTargetFailureError,
+  targetFailureOfKind,
 } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
 import {
   ProviderSelectionError,
-  type ProviderRejectionOrigin,
   type ProviderSelectionErrorOptions,
   type ProviderSelectionFailureReason,
   type ProviderSelectionRejection,
@@ -42,13 +48,21 @@ import type {
   ProviderIdentity,
   ProviderTargetSupport,
   RetainedResourceScope,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import {
   evaluateAnalysisProviderCandidate,
   type AnalysisProviderCandidateEvaluation,
 } from "./AnalysisProviderEvaluation.js";
+import { withCandidateRejections } from "./AnalysisProviderCandidateDiagnostics.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
-import { ownedProcessPrerequisiteAvailability } from "../ownedProcessAvailability.js";
+import { ownedProcessPrerequisiteAvailability } from "../../providers/ownedProcessAvailability.js";
+import { targetFailureRecovery } from "../../domain/targetFailure.js";
+
+/** Where a selected provider's choice came from; never a priority or fallback. */
+export type AnalysisProviderSelectionSource =
+  | "request"
+  | "environment"
+  | "auto-single-candidate";
 
 /** Deterministic discovery truth for one configured deep provider. */
 export interface AnalysisProviderCandidateStatus {
@@ -72,14 +86,21 @@ export interface AnalysisProviderCandidateStatus {
       };
   readonly selected: boolean;
   readonly capabilities: readonly CapabilityDescriptor[];
+  /** How this candidate became selected; null when it was not selected. */
+  readonly selectionSource: AnalysisProviderSelectionSource | null;
+  /** Stable availability and target-support reasons that excluded this candidate. */
+  readonly rejections: readonly ProviderSelectionRejection[];
 }
 
 /** One immutable deep-provider binding selected before client startup. */
 export interface AnalysisProviderBinding {
   readonly provider: AnalysisProviderCandidate;
   readonly identity: ProviderIdentity & { readonly version: string };
-  readonly selectionSource: "request" | "environment" | "auto-single-candidate";
+  readonly selectionSource: AnalysisProviderSelectionSource;
   readonly profile: AnalysisProfileCommitment;
+  readonly releaseVerification?: ProviderReleaseVerification;
+
+  readonly refreshAfterRetirement?: true;
   readonly createClient?: AnalysisProviderBoundClientFactory;
   /** The provider's capabilities, attributed to its resolved identity. */
   readonly capabilities: readonly CapabilityDescriptor[];
@@ -118,16 +139,13 @@ export class AnalysisProviderRegistry {
     >
   >();
   readonly #selectionCleanup = new Set<AnalysisError>();
+  /** Each candidate's unconfirmed resource close; its failures read it. */
+  readonly #candidateCleanup = new Map<
+    AnalysisProviderCandidate,
+    AnalysisCleanupRelease
+  >();
   readonly #profileResources = new ArtifactResourceScope();
-  readonly #profileOwner: RetainedResourceScope = {
-    retain: (owner, resource) =>
-      this.#profileResources.retain({
-        kind: "lease",
-        resource,
-        lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
-      }),
-    run: (operation) => this.#profileResources.run(operation),
-  };
+  readonly #profileOwner = this.#profileResources.forCloseOwners();
   #closing: Promise<Result<null, AnalysisError>> | undefined;
 
   constructor(
@@ -204,6 +222,15 @@ export class AnalysisProviderRegistry {
     );
   }
 
+  /** Wait until no close is in progress, including closes that start meanwhile. */
+  async #settleClosing(): Promise<Result<null, AnalysisError>> {
+    while (this.#closing !== undefined) {
+      const closed = await this.#closing;
+      if (!closed.ok) return closed;
+    }
+    return ok(null);
+  }
+
   /** Close candidate-owned resources even when no target client was opened. */
   closeOwnedResources(): Promise<Result<null, AnalysisError>> {
     this.#closing ??= Promise.resolve()
@@ -242,8 +269,41 @@ export class AnalysisProviderRegistry {
     }
     for (const provider of this.#providers) {
       if (provider.closeOwnedResources === undefined) continue;
-      const result = await provider.closeOwnedResources();
-      if (!result.ok) failures.push(result.error);
+      let result: Result<null, unknown>;
+      try {
+        result = await provider.closeOwnedResources();
+      } catch (cause: unknown) {
+        result = err(cause);
+      }
+      if (result.ok) {
+        this.#candidateCleanup.get(provider)?.confirm();
+        this.#candidateCleanup.delete(provider);
+      } else {
+        const failure =
+          result.error instanceof AnalysisError &&
+          result.error.cleanupIncomplete
+            ? result.error
+            : new ProviderCleanupError(
+                provider.identity().id,
+                ["provider-owned resources"],
+                {
+                  reason: "provider resource close did not confirm completion",
+                },
+                {
+                  cause: result.error,
+                  cleanupPrimary:
+                    result.error instanceof AnalysisError
+                      ? result.error
+                      : undefined,
+                },
+              );
+        failures.push(failure);
+        const release =
+          this.#candidateCleanup.get(provider) ?? new AnalysisCleanupRelease();
+        release.bind(failure);
+        this.#candidateCleanup.set(provider, release);
+        this.#selectionCleanup.add(failure);
+      }
     }
     for (const failure of this.#selectionCleanup) {
       if (failure.cleanupIncomplete) failures.push(failure);
@@ -274,9 +334,7 @@ export class AnalysisProviderRegistry {
     options: { readonly signal?: AbortSignal } = {},
   ): Promise<readonly AnalysisProviderCandidateStatus[]> {
     if (options.signal?.aborted)
-      throw new AnalysisCancelledError("binary_session", {
-        cause: options.signal.reason,
-      });
+      throw cancelledBy("binary_session", options.signal);
     if (this.#closing !== undefined)
       return this.#providers.map((provider) => ({
         provider: structuredClone(provider.identity()),
@@ -306,6 +364,8 @@ export class AnalysisProviderRegistry {
         capabilities: provider
           .capabilities()
           .map((capability) => structuredClone(capability)),
+        selectionSource: null,
+        rejections: [],
       }));
     const scope = new ProviderInspectionScope();
     const discovery = new SharedStartupAttempt<
@@ -327,8 +387,7 @@ export class AnalysisProviderRegistry {
       const result = await discovery.promise;
       if (!result.ok) throw result.error;
       if (discovery.signal.aborted)
-        throw new AnalysisCancelledError("binary_session", {
-          cause: discovery.signal.reason,
+        throw cancelledBy("binary_session", discovery.signal, {
           diagnostics: {
             readiness_candidates: jsonValueSchema.parse(result.value),
           },
@@ -352,10 +411,7 @@ export class AnalysisProviderRegistry {
     Result<readonly AnalysisProviderCandidateStatus[], AnalysisError>
   > {
     const { signal, operation } = context;
-    if (signal.aborted)
-      return err(
-        new AnalysisCancelledError(operation, { cause: signal.reason }),
-      );
+    if (signal.aborted) return err(cancelledBy(operation, signal));
     const results = await Promise.allSettled(
       this.#providers.map((provider) =>
         candidateStatus(provider, target, context),
@@ -400,15 +456,11 @@ export class AnalysisProviderRegistry {
     requestedSelector?: AnalysisProviderSelector,
     options: { readonly signal?: AbortSignal } = {},
   ): Promise<SelectionResult> {
-    if (signalIsAborted(options.signal))
-      return err(
-        new AnalysisCancelledError("open_binary", {
-          cause: options.signal?.reason,
-        }),
-      );
+    if (isAborted(options.signal))
+      return err(cancelledBy("open_binary", options.signal));
     if (this.#closing !== undefined) {
-      const closed = await this.#closing;
-      if (!closed.ok) return closed;
+      const settled = await this.#settleClosing();
+      if (!settled.ok) return settled;
     }
     for (const failure of this.#selectionCleanup)
       if (!failure.cleanupIncomplete) this.#selectionCleanup.delete(failure);
@@ -426,12 +478,16 @@ export class AnalysisProviderRegistry {
       const closed = await this.closeOwnedResources();
       if (!closed.ok) return closed;
     }
-    if (signalIsAborted(options.signal))
-      return err(
-        new AnalysisCancelledError("open_binary", {
-          cause: options.signal?.reason,
-        }),
-      );
+    if (isAborted(options.signal))
+      return err(cancelledBy("open_binary", options.signal));
+    // Admission must follow the last close synchronously: a close that began
+    // while this caller awaited cleanup would not see this selection.
+    if (this.#closing !== undefined) {
+      const admitted = await this.#settleClosing();
+      if (!admitted.ok) return admitted;
+      if (isAborted(options.signal))
+        return err(cancelledBy("open_binary", options.signal));
+    }
     const selection = new SharedStartupAttempt<SelectionResult>(
       (signal) =>
         Promise.resolve().then(() =>
@@ -454,17 +510,9 @@ export class AnalysisProviderRegistry {
     if (waited.status !== "cancelled") {
       if (!waited.value.ok) return waited.value;
       if (!selection.signal.aborted) return waited.value;
-      return err(
-        new AnalysisCancelledError("open_binary", {
-          cause: selection.signal.reason,
-        }),
-      );
+      return err(cancelledBy("open_binary", selection.signal));
     }
-    return err(
-      new AnalysisCancelledError("open_binary", {
-        cause: options.signal?.reason,
-      }),
-    );
+    return err(cancelledBy("open_binary", carriedReason(waited.reason)));
   }
 
   async #selectTarget(
@@ -474,10 +522,7 @@ export class AnalysisProviderRegistry {
   ): Promise<SelectionResult> {
     const scope = new ProviderInspectionScope();
     try {
-      if (signalIsAborted(signal))
-        return err(
-          new AnalysisCancelledError("open_binary", { cause: signal.reason }),
-        );
+      if (isAborted(signal)) return err(cancelledBy("open_binary", signal));
       const discovery = await this.#discoverCandidates(target, {
         signal,
         scope,
@@ -502,10 +547,7 @@ export class AnalysisProviderRegistry {
         );
       const request = parsedRequest?.data;
       const selector = request ?? this.#defaultSelector;
-      if (signalIsAborted(signal))
-        return err(
-          new AnalysisCancelledError("open_binary", { cause: signal.reason }),
-        );
+      if (isAborted(signal)) return err(cancelledBy("open_binary", signal));
       if (selector === "auto" && this.canInspectWithoutDeepProvider?.(target))
         return ok({
           requestedProviderId: selector,
@@ -599,21 +641,28 @@ export class AnalysisProviderRegistry {
     );
     if (!evaluation.ok) return evaluation;
     const evaluated = evaluation.value;
-    const statuses = replaceCandidate(baseline, evaluated.status);
+    const statuses = replaceCandidate(
+      baseline,
+      withCandidateRejections(evaluated.status),
+    );
     const refusal = evaluated.profileError;
     // A selected provider refusing the target is a selection outcome that keeps the
     // refusal's reason, recovery and evidence; unconfirmed cleanup stays with the refusal.
     if (
-      refusal instanceof AnalysisUnsupportedTargetError &&
+      refusal instanceof AnalysisTargetFailureError &&
+      targetFailureOfKind(refusal, "unsupported", "unrecognized") !==
+        undefined &&
       !refusal.cleanupIncomplete
     )
       return err(
         selectionError("target_unsupported", providerId, statuses, {
           refusal: {
             userMessage: refusal.message,
-            ...(refusal.remediationAction === undefined
-              ? {}
-              : { remediationAction: refusal.remediationAction }),
+            remediationAction: targetFailureRecovery(
+              refusal.operation,
+              refusal.failure,
+              refusal.related,
+            ),
             capturedOutput: refusal.capturedOutput,
             diagnostics: refusal.diagnostics,
             partialObservation: refusal.partialObservation,
@@ -681,7 +730,7 @@ export class AnalysisProviderRegistry {
     if (
       results.some((result) => !result.ok) ||
       failures.some(({ error }) => error.cleanupIncomplete) ||
-      signalIsAborted(signal)
+      isAborted(signal)
     )
       return err(
         providerInspectionFailure(
@@ -690,7 +739,9 @@ export class AnalysisProviderRegistry {
           signal,
         ),
       );
-    const statuses = evaluations.map(({ status }) => status);
+    const statuses = evaluations.map(({ status }) =>
+      withCandidateRejections(status),
+    );
     const usable = evaluations.filter(
       (
         evaluation,
@@ -733,8 +784,7 @@ const candidateStatus = async (
   },
 ): Promise<AnalysisProviderCandidateStatus> => {
   const { signal, scope, resourceScope, operation } = context;
-  if (signal.aborted)
-    throw new AnalysisCancelledError(operation, { cause: signal.reason });
+  if (signal.aborted) throw cancelledBy(operation, signal);
   let readiness: AnalysisProviderReadinessSnapshot;
   try {
     readiness =
@@ -777,7 +827,7 @@ const projectCandidateStatus = async (
   },
   options: AnalysisProviderInspectionOptions,
 ): Promise<AnalysisProviderCandidateStatus> => {
-  return {
+  return withCandidateRejections({
     provider: structuredClone(provider.identity()),
     availability: cloneAvailability(readiness.availability),
     targetSupport:
@@ -798,15 +848,14 @@ const projectCandidateStatus = async (
     capabilities: readiness.capabilities.map((capability) =>
       structuredClone(capability),
     ),
-  };
+    selectionSource: null,
+    rejections: [],
+  });
 };
-
-const signalIsAborted = (signal: AbortSignal | undefined): boolean =>
-  signal?.aborted === true;
 
 const selectedResult = (
   requestedProviderId: string,
-  source: AnalysisProviderBinding["selectionSource"],
+  source: AnalysisProviderSelectionSource,
   evaluated: AnalysisProviderCandidateEvaluation & {
     readonly profile: AnalysisProfileCommitment;
     readonly createClient?: AnalysisProviderBoundClientFactory;
@@ -818,12 +867,13 @@ const selectedResult = (
     ...capability,
     provider: structuredClone(identity),
   }));
-  const selectedStatus = {
+  const selectedStatus = withCandidateRejections({
     ...evaluated.status,
     provider: structuredClone(identity),
     selected: true,
     capabilities,
-  } satisfies AnalysisProviderCandidateStatus;
+    selectionSource: source,
+  });
   return {
     requestedProviderId,
     binding: {
@@ -831,6 +881,15 @@ const selectedResult = (
       identity: structuredClone(identity),
       selectionSource: source,
       profile: structuredClone(evaluated.profile),
+      ...(evaluated.releaseVerification === undefined
+        ? {}
+        : {
+            releaseVerification: structuredClone(evaluated.releaseVerification),
+          }),
+
+      ...(evaluated.refreshAfterRetirement === undefined
+        ? {}
+        : { refreshAfterRetirement: evaluated.refreshAfterRetirement }),
       ...(evaluated.createClient === undefined
         ? {}
         : { createClient: evaluated.createClient }),
@@ -872,52 +931,15 @@ const selectionError = (
     reason,
     requestedProviderId,
     candidateIds: candidateChoices.map(({ provider }) => provider.id),
-    rejections: candidateRejections(
+    rejections: selectionRejections(
       options.rejectionCandidates ?? candidateChoices,
     ),
   });
 
-const candidateRejections = (
+const selectionRejections = (
   candidates: readonly AnalysisProviderCandidateStatus[],
 ): readonly ProviderSelectionRejection[] =>
-  candidates.flatMap((candidate) => {
-    const rejections: ProviderSelectionRejection[] = [];
-    if (candidate.availability.status === "unavailable")
-      rejections.push(
-        selectedRejection(candidate, "availability", candidate.availability),
-      );
-    if (candidate.targetSupport.status === "unsupported")
-      rejections.push(
-        selectedRejection(candidate, "target", candidate.targetSupport),
-      );
-    return rejections;
-  });
-
-/** One availability or target-support observation that rejected a candidate. */
-type RejectionObservation =
-  | Extract<
-      AnalysisProviderCandidateStatus["availability"],
-      { status: "unavailable" }
-    >
-  | Extract<
-      AnalysisProviderCandidateStatus["targetSupport"],
-      { status: "unsupported" }
-    >;
-
-/** Name the observation a rejection came from so availability cannot read as a refusal. */
-const selectedRejection = (
-  candidate: AnalysisProviderCandidateStatus,
-  origin: ProviderRejectionOrigin,
-  rejection: RejectionObservation,
-): ProviderSelectionRejection => ({
-  providerId: candidate.provider.id,
-  origin,
-  code: rejection.code,
-  reason: rejection.reason,
-  ...("remediation" in rejection ? { remediation: rejection.remediation } : {}),
-  // ProviderSelectionError owns the single defensive diagnostic copy.
-  diagnostics: rejection.diagnostics,
-});
+  candidates.flatMap(({ rejections }) => rejections);
 
 const cloneAvailability = (
   availability: AnalysisProviderCandidateStatus["availability"],
@@ -950,12 +972,13 @@ const providerInspectionFailure = (
   const primary =
     failures.find(({ error }) => !(error instanceof AnalysisCancelledError)) ??
     failures[0];
+  // No child failed, so only the caller's abort ended inspection.
   if (primary === undefined)
-    return new AnalysisCancelledError(
+    return cancelledBy(
       context.operation === "resolve_analysis_profile"
         ? "open_binary"
         : context.operation,
-      { cause: signal?.reason },
+      carriedReason(signal?.reason),
     );
   if (
     failures.length === 1 &&
@@ -1000,14 +1023,12 @@ const providerInspectionFailure = (
   };
   const failure =
     primary.error instanceof AnalysisCancelledError
-      ? new AnalysisCancelledError(
+      ? cancelledBy(
           context.operation === "resolve_analysis_profile"
             ? "open_binary"
             : context.operation,
-          {
-            ...options,
-            cause: primary.error.cause,
-          },
+          carriedReason(primary.error.cause),
+          { ...options },
         )
       : new ProviderAdapterError("rea", context.operation, {
           ...options,

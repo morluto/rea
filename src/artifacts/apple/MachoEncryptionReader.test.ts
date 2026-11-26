@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { CPU, fatImage, machoImage, readerOf } from "./MachoImage.fixture.js";
-import { readMachoEncryption } from "./MachoEncryptionReader.js";
+import { readMachoEncryption } from "../../domain/apple/machoEncryptionReader.js";
 import {
   MAX_LOAD_COMMAND_BYTES,
   readMachoImage,
-} from "./MachoLoadCommandReader.js";
+} from "../../domain/apple/machoLoadCommandReader.js";
 
 const LC_SEGMENT = 0x1;
 const LC_SEGMENT_64 = 0x19;
@@ -123,6 +123,24 @@ const onlySlice = async (bytes: Uint8Array) => {
   return facts.slices[0]!;
 };
 
+const fullTextMapping = {
+  status: "mapped",
+  fragments: [
+    {
+      slice_start: 0x4000,
+      slice_end: 0x8000,
+      segment: "__TEXT",
+      vm_start: "0x100004000",
+      vm_end: "0x100008000",
+    },
+  ],
+  // Zero-fill sections occupy no file bytes, whatever their offset.
+  sections: [
+    { segment: "__TEXT", section: "__text" },
+    { segment: "__TEXT", section: "__cstring" },
+  ],
+};
+
 describe("Mach-O encryption reader: thin images", () => {
   it("reports absent only after reading every load command", async () => {
     expect(await onlySlice(machoImage({ commands: [text()] }))).toEqual({
@@ -132,6 +150,7 @@ describe("Mach-O encryption reader: thin images", () => {
       container_file_offset: 0,
       size: expect.any(Number),
       status: "absent",
+      malformed_kind: null,
       reason: null,
       commands: [],
       range: null,
@@ -169,23 +188,7 @@ describe("Mach-O encryption reader: thin images", () => {
         slice_end: 0x8000,
         container_start: 0x4000,
         container_end: 0x8000,
-        mapping: {
-          status: "mapped",
-          fragments: [
-            {
-              slice_start: 0x4000,
-              slice_end: 0x8000,
-              segment: "__TEXT",
-              vm_start: "0x100004000",
-              vm_end: "0x100008000",
-            },
-          ],
-          // Zero-fill sections occupy no file bytes, whatever their offset.
-          sections: [
-            { segment: "__TEXT", section: "__text" },
-            { segment: "__TEXT", section: "__cstring" },
-          ],
-        },
+        mapping: fullTextMapping,
       },
     });
   });
@@ -270,9 +273,13 @@ describe("Mach-O encryption reader: thin image edge cases", () => {
     });
   });
 
-  it("reports an unreadable segment mapping as unknown, not unmapped", async () => {
-    const broken = text();
-    new DataView(broken.buffer).setUint32(64, 9, true);
+  it("reports a disjoint segment's malformed section table as unknown mapping", async () => {
+    const broken = segment("__BROKEN", {
+      vmAddress: 0x100008000n,
+      fileOffset: 0x8000,
+      fileSize: 0x2000,
+    });
+    new DataView(broken.buffer).setUint32(64, 1, true);
     const slice = await onlySlice(
       padded(
         machoImage({
@@ -302,12 +309,14 @@ describe("Mach-O encryption reader: segment mapping", () => {
     cryptid: 1,
   });
 
-  it("never reports a byte twice when segment file ranges overlap", async () => {
+  it("maps a high-VM segment without reporting overlapping bytes twice", async () => {
     const first = segment("__A", {
       vmAddress: 0x1000n,
+      vmSize: 0x3000n,
       fileOffset: 0x4000,
       fileSize: 0x1800,
     });
+    new DataView(first.buffer).setUint32(68, 0x1, true); // SG_HIGHVM
     const second = segment("__B", {
       vmAddress: 0x9000n,
       fileOffset: 0x5000,
@@ -319,7 +328,13 @@ describe("Mach-O encryption reader: segment mapping", () => {
     expect(slice.range?.mapping).toMatchObject({
       status: "mapped",
       fragments: [
-        { slice_start: 0x4000, slice_end: 0x5800, segment: "__A" },
+        {
+          slice_start: 0x4000,
+          slice_end: 0x5800,
+          segment: "__A",
+          vm_start: "0x2800",
+          vm_end: "0x4000",
+        },
         {
           slice_start: 0x5800,
           slice_end: 0x6000,
@@ -352,7 +367,9 @@ describe("Mach-O encryption reader: segment mapping", () => {
       range: {
         mapping: {
           status: "unknown",
-          reason: "load command 0 LC_SEGMENT_64 appears in a 32-bit image",
+          reason: expect.stringMatching(
+            /load command 0\b.*LC_SEGMENT_64.*appears.*32-bit/iu,
+          ),
         },
       },
     });
@@ -365,6 +382,8 @@ describe("Mach-O encryption reader: segment mapping", () => {
       fileSize: 0x2000,
       sections: [
         { name: "__text", offset: 0x3000, size: 0x2000 },
+        { name: "__empty", offset: 0x4200, size: 0 },
+        { name: "__zero", offset: 0x4300, size: 0x100, flags: S_ZEROFILL },
         // Declared past the segment's file-backed bytes.
         { name: "__stray", offset: 0x7000, size: 0x1000 },
       ],
@@ -477,6 +496,27 @@ describe("Mach-O encryption reader: segment VM extent", () => {
 });
 
 describe("Mach-O encryption reader: defects are never absent", () => {
+  it.each([0, 1, 2])(
+    "keeps a structural encryption defect at index %i ahead of duplicate ambiguity",
+    async (index) => {
+      const commands = Array.from({ length: 3 }, () =>
+        encryption({ cryptoff: 0, cryptsize: 0, cryptid: 1 }),
+      );
+      commands[index] = encryption(
+        { cryptoff: 0, cryptsize: 0, cryptid: 1 },
+        true,
+        8,
+      );
+      const slice = await onlySlice(machoImage({ commands }));
+      expect(slice).toMatchObject({
+        status: "malformed",
+        malformed_kind: "structure",
+        reason: `slice has 3 encryption load commands; load command ${index} LC_ENCRYPTION_INFO_64 has cmdsize 8, expected 24`,
+        range: null,
+      });
+      expect(slice.commands.map(({ index }) => index)).toEqual([0, 1]);
+    },
+  );
   it.each([
     {
       name: "a 64-bit command in a 32-bit image",
@@ -486,7 +526,9 @@ describe("Mach-O encryption reader: defects are never absent", () => {
           wide: false,
           commands: [encryption({ cryptoff: 0, cryptsize: 0, cryptid: 0 })],
         }),
-      reason: "load command 0 LC_ENCRYPTION_INFO_64 appears in a 32-bit image",
+      reason: expect.stringMatching(
+        /load command 0\b.*LC_ENCRYPTION_INFO_64.*appears.*32-bit/iu,
+      ),
     },
     {
       name: "an unexpected cmdsize",
@@ -496,8 +538,9 @@ describe("Mach-O encryption reader: defects are never absent", () => {
             encryption({ cryptoff: 0, cryptsize: 0, cryptid: 0 }, true, 32),
           ],
         }),
-      reason:
-        "load command 0 LC_ENCRYPTION_INFO_64 has cmdsize 32, expected 24",
+      reason: expect.stringMatching(
+        /load command 0\b.*LC_ENCRYPTION_INFO_64.*cmdsize 32\b.*expected 24\b/iu,
+      ),
     },
     {
       name: "a range beyond the slice",
@@ -539,6 +582,7 @@ describe("Mach-O encryption reader: defects are never absent", () => {
     expect(slice).toMatchObject({
       status: "malformed",
       reason: "slice has 1000 encryption load commands",
+      malformed_kind: "duplicate-commands",
       range: null,
     });
     expect(slice.commands.map(({ index }) => index)).toEqual([0, 1]);
@@ -578,19 +622,6 @@ describe("Mach-O encryption reader: defects are never absent", () => {
     });
   });
 
-  it("reports unread load commands as unknown", async () => {
-    const oversized = machoImage({});
-    new DataView(oversized.buffer).setUint32(
-      20,
-      MAX_LOAD_COMMAND_BYTES + 8,
-      true,
-    );
-    expect(await onlySlice(oversized)).toMatchObject({
-      status: "unknown",
-      reason: expect.stringContaining("above the"),
-    });
-  });
-
   it("keeps file-level failures distinct from slice status", async () => {
     expect(await read(Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8]))).toEqual({
       status: "not-mach-o",
@@ -598,9 +629,30 @@ describe("Mach-O encryption reader: defects are never absent", () => {
     expect(
       await read(Uint8Array.from([0xfe, 0xed, 0xfa, 0xcf, 0, 0, 0, 0])),
     ).toEqual({
-      status: "unsupported",
-      reason: "big-endian Mach-O images are not supported",
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "unsupported",
+        detail: "big-endian Mach-O images are not supported",
+      }),
     });
+  });
+});
+
+it("distinguishes unread load commands from a table outside the slice", async () => {
+  const commandBytes = MAX_LOAD_COMMAND_BYTES + 8;
+  const image = machoImage({ commands: [text()] });
+  const header = new DataView(image.buffer, image.byteOffset, image.byteLength);
+  header.setUint32(20, commandBytes, true);
+  const oversized = padded(image, 32 + commandBytes);
+  expect(await onlySlice(oversized)).toMatchObject({
+    status: "unknown",
+    malformed_kind: null,
+    reason: expect.stringContaining("above the"),
+  });
+  expect(await onlySlice(image)).toMatchObject({
+    status: "malformed",
+    malformed_kind: "structure",
+    commands: [],
   });
 });
 
@@ -669,12 +721,15 @@ describe("Mach-O encryption reader: universal files", () => {
       },
       {
         status: "malformed",
-        reason:
-          "FAT architecture 1 CPU type/subtype disagrees with its Mach-O header",
+        reason: expect.stringMatching(
+          /FAT architecture 1\b.*CPU type\/subtype.*disagree.*Mach-O header/iu,
+        ),
       },
       {
         status: "malformed",
-        reason: "FAT architecture 2 slice range extends beyond the file",
+        reason: expect.stringMatching(
+          /FAT architecture 2\b.*slice range.*beyond.*file/iu,
+        ),
       },
       { status: "encrypted", reason: null },
     ]);
@@ -745,7 +800,9 @@ describe("Mach-O encryption reader: universal files", () => {
         {
           cpu_type: CPU.arm64.type,
           status: "malformed",
-          reason: "FAT architecture 1 slice range extends beyond the file",
+          reason: expect.stringMatching(
+            /FAT architecture 1\b.*slice range.*beyond.*file/iu,
+          ),
           commands: [],
         },
       ],
@@ -794,28 +851,41 @@ describe("Mach-O encryption reader: large universal files", () => {
         {
           container_file_offset: size,
           status: "malformed",
-          reason: "FAT architecture 1 slice range extends beyond the file",
+          reason: expect.stringMatching(
+            /FAT architecture 1\b.*slice range.*beyond.*file/iu,
+          ),
         },
       ],
     });
     // The confirmed container reports the sibling's real fault, not an
     // unresolved JVM identity.
     expect(await readMachoImage(sparseReadAt, size)).toEqual({
-      status: "malformed",
-      reason: "FAT architecture 1 slice range extends beyond the file",
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "truncated",
+        detail: expect.stringMatching(
+          /FAT architecture 1\b.*slice range.*beyond.*file/iu,
+        ),
+      }),
     });
   });
 });
 
 describe("Mach-O encryption reader: mapping budget", () => {
   it.each([
-    "section bytes",
-    "VM size",
-    "VM overflow",
-    "command width",
+    ["section bytes", "load command 0 section records exceed cmdsize"],
+    [
+      "VM size",
+      "load command 0 segment __BROKEN file size 65536 exceeds its VM size 65535",
+    ],
+    [
+      "VM overflow",
+      "load command 0 segment __BROKEN VM range exceeds the 64-bit address space",
+    ],
+    ["command width", "load command 0 LC_SEGMENT appears in a 64-bit image"],
   ] as const)(
     "releases failed %s mappings before admitting the next slice",
-    async (failure) => {
+    async (failure, reason) => {
       const invalid = segment(
         "__BROKEN",
         {
@@ -857,14 +927,9 @@ describe("Mach-O encryption reader: mapping budget", () => {
       if (facts.status !== "parsed") throw new Error(facts.status);
       expect(facts.slices[0]).toMatchObject({
         status: "encrypted",
-        range: { mapping: { status: "unknown", reason: expect.any(String) } },
+        range: { mapping: { status: "unknown", reason } },
       });
-      const healthy = await read(encrypted());
-      if (healthy.status !== "parsed") throw new Error(healthy.status);
-      expect(facts.slices[1]?.range?.mapping).toEqual(
-        healthy.slices[0]?.range?.mapping,
-      );
-      expect(facts.slices[1]?.range?.mapping.status).toBe("mapped");
+      expect(facts.slices[1]?.range?.mapping).toEqual(fullTextMapping);
     },
   );
 
@@ -909,8 +974,9 @@ describe("Mach-O encryption reader: mapping budget", () => {
     ]);
     expect(facts.slices[1]?.range?.mapping).toEqual({
       status: "unknown",
-      reason:
-        "mapping needs more than the 5 segment and section records shared by all slices",
+      reason: expect.stringMatching(
+        /mapping.*more than.*5 segment and section records.*slices/iu,
+      ),
     });
   });
 });

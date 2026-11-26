@@ -1,15 +1,15 @@
-import { createHash } from "node:crypto";
-
 import * as t from "@babel/types";
 
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
 
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import { semanticStaticPropertyKey } from "./javascriptAstValues.js";
-import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
+import {
+  stringValue,
+  semanticStaticPropertyKey,
+} from "./javascriptAstValues.js";
 import {
   withoutUnusedFactoryDefaults,
   type JavaScriptBundlerFactoryRoles,
@@ -18,9 +18,10 @@ import {
   resolveSemanticBindingState,
   type JavaScriptBindingIndex,
 } from "./javascriptSemanticState.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** Static CommonJS export names. */
-export interface StaticExports {
+interface StaticExports {
   readonly values: readonly string[];
   /** Export-shaped writes whose receiver role could not be resolved. */
   readonly unknown: number;
@@ -35,13 +36,13 @@ export const fingerprintJavaScriptAst = (node: t.Node): string => {
       return undefined;
     },
   });
-  return createHash("sha256").update(JSON.stringify(tokens)).digest("hex");
+  return sha256Hex(JSON.stringify(tokens));
 };
 
 /** Collect statically declared CommonJS/bundler export names from one factory. */
 export const collectJavaScriptExports = (
   node: t.Node,
-  factory?: {
+  factory: {
     readonly roles: Pick<
       JavaScriptBundlerFactoryRoles,
       "module" | "exports" | "loader" | "unusedDefaults"
@@ -52,20 +53,13 @@ export const collectJavaScriptExports = (
     >;
   },
 ): StaticExports => {
-  const roles = factory?.roles;
-  const index = factory?.index;
-  const bindings = index?.bindings;
+  const { roles, index } = factory;
+  const { bindings } = index;
   const exports = new Set<string>();
   let unknown = 0;
   const bindingId = (reference: t.Identifier): string | undefined =>
-    bindings === undefined
-      ? undefined
-      : resolveSemanticBindingState(bindings, reference, reference.name)
-          ?.bindingId;
-  const identity = (
-    parameters: readonly (t.Identifier | undefined)[],
-    fallback: string,
-  ) => {
+    resolveSemanticBindingState(bindings, reference, reference.name)?.bindingId;
+  const identity = (parameters: readonly (t.Identifier | undefined)[]) => {
     const ids = new Set(
       parameters.flatMap((parameter) => {
         const id = parameter === undefined ? undefined : bindingId(parameter);
@@ -74,9 +68,6 @@ export const collectJavaScriptExports = (
     );
     return (reference: t.Node | null): ReceiverRole => {
       if (!t.isIdentifier(reference)) return undefined;
-      if (roles === undefined)
-        return reference.name === fallback ? "role" : undefined;
-      if (bindings === undefined) return undefined;
       const binding = resolveSemanticBindingState(
         bindings,
         reference,
@@ -89,7 +80,7 @@ export const collectJavaScriptExports = (
       const read = semanticBindingAtRead(
         withoutUnusedFactoryDefaults(binding, roles),
         reference,
-        bindings.parentsByNode,
+        bindings,
       );
       if (read.status !== "ordered") return "unresolved";
       return read.binding.initializers.length === 0 &&
@@ -98,9 +89,9 @@ export const collectJavaScriptExports = (
         : undefined;
     };
   };
-  const isExportsAlias = identity(roles?.exports ?? [], "exports");
-  const isModuleAlias = identity([roles?.module], "module");
-  const isLoaderAlias = identity([roles?.loader], "__webpack_require__");
+  const isExportsAlias = identity(roles.exports);
+  const isModuleAlias = identity([roles.module]);
+  const isLoaderAlias = identity([roles.loader]);
   const receivers: ExportReceivers = {
     isExportsAlias,
     isModuleAlias,
@@ -110,7 +101,7 @@ export const collectJavaScriptExports = (
   };
   traverseJavaScriptAst(node, {
     // A default the calling convention never runs declares no exports.
-    skip: (current) => roles?.unusedDefaults.has(current) === true,
+    skip: (current) => roles.unusedDefaults.has(current),
     enter: (current) => {
       if (t.isAssignmentExpression(current))
         collectAssignmentExports(
@@ -120,16 +111,14 @@ export const collectJavaScriptExports = (
           receivers,
         );
       if (t.isCallExpression(current)) {
-        const intrinsic =
-          bindings !== undefined &&
-          isUnmodifiedGlobalReference(current.callee, bindings, [
-            "Object",
-            "defineProperty",
-          ]);
+        const intrinsic = isUnmodifiedGlobalReference(
+          current.callee,
+          bindings,
+          ["Object", "defineProperty"],
+        );
         collectCallExports(current, exports, receivers, intrinsic, (root) => {
           const loader = isLoaderAlias(root);
           if (loader !== "role" || root === null) return loader;
-          if (index === undefined) return "role";
           const facts = index.effectsForReferenceWithinActivationAt(
             current,
             root,

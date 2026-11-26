@@ -1,6 +1,9 @@
+import { javaScriptMemberMutationAllowanceSchema } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
+import { javaScriptSemanticPrecisionSchema } from "../domain/javascript/javascriptSemanticPrecision.js";
 import { z } from "zod";
 import { JAVASCRIPT_STATIC_FACT_BYTES } from "../domain/javascript/javascriptAnalysisResourceControls.js";
 import { digestSchema } from "../domain/digests.js";
+import { ownedJsonValueSchema } from "../domain/jsonValue.js";
 import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
 import { webPageInspectionSchema } from "../domain/browserObservationSchemas.js";
 import { webTextArtifactSchema } from "../domain/webContentArtifact.js";
@@ -35,6 +38,8 @@ export const includedWebScriptSchema = browserScriptSchema
 
 export const webBundleWorkerRequestSchema = z.strictObject({
   kind: z.literal("analyze"),
+  semantic_precision: javaScriptSemanticPrecisionSchema.exactOptional(),
+  member_mutation_allowance: javaScriptMemberMutationAllowanceSchema,
   id: z.uuid(),
   source: z.strictObject({
     bytes: z.number().int().min(0).max(WEB_BUNDLE_WORKER_LIMITS.sourceBytes),
@@ -72,6 +77,8 @@ export const webBundleWorkerMessageSchema = z.discriminatedUnion("kind", [
     kind: z.literal("failure"),
     ...identity,
     reason: z.enum(["input", "resource", "output", "io"]),
+    /** Limits a typed resource refusal reported, such as a fixed work allowance. */
+    limits: z.record(z.string(), ownedJsonValueSchema).exactOptional(),
     message: z.string(),
   }),
 ]);

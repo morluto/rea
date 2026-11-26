@@ -4,6 +4,7 @@ import {
   type CommittedProviderIdentity,
 } from "../analysisProfile.js";
 import { digestSchema } from "../digests.js";
+import { pseudocodeAbsenceSchema } from "../native/pseudocodeAbsence.js";
 import { providerSchema } from "../evidence.js";
 import {
   batchDecompileResultSchema,
@@ -12,14 +13,17 @@ import {
   type BatchDecompileItem,
   type BatchDecompileResult,
 } from "../native/batchDecompile.js";
-import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../analysisErrorProjectionSchema.js";
 import { err, ok } from "../result.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import {
   createAnalysisViewResultReader,
   type AnalysisViewParent,
@@ -33,7 +37,7 @@ import {
   analysisTextPage,
   analysisTextPageItemSchema,
 } from "./analysisViewText.js";
-import { selectViewRows } from "./selectViewRows.js";
+import { selectIndexedViewRows, selectViewRows } from "./selectViewRows.js";
 
 const OPERATION = "batch_decompile" as const;
 
@@ -65,7 +69,7 @@ const itemsRequestSchema = z.strictObject({
           "Exact observed canonical entries. An item with unknown procedure identity never matches. Omitted selects all; [] selects none.",
         ),
       statuses: z
-        .array(z.enum(["ok", "error"]))
+        .array(z.enum(["ok", "unavailable", "error"]))
         .optional()
         .describe("Item outcomes. Omitted selects all; [] selects none."),
     })
@@ -114,6 +118,14 @@ const batchDecompileRowSchema = z.discriminatedUnion("status", [
     status: z.literal("ok"),
     pseudocode_code_units: z.int().positive(),
     pseudocode: z.string().min(1).exactOptional(),
+    limitations: batchItemLimitationsSchema,
+  }),
+  z.strictObject({
+    ...itemIdentity,
+    status: z.literal("unavailable"),
+    reason: z.literal("no_pseudocode"),
+    pseudocode_absence: pseudocodeAbsenceSchema.exactOptional(),
+    limitations: batchItemLimitationsSchema,
   }),
   z.strictObject({
     ...itemIdentity,
@@ -247,7 +259,7 @@ const batchUnknowns = (items: readonly BatchDecompileItem[]): string[] => {
       : [
           `${String(unknownIdentity)} items have unknown procedure identity; their address is the caller's selector, not an observed entry.`,
         ]),
-    "Evidence limitations aggregate every item's provider observations and are not attributed to one successful item. A batch covers only its selected procedures, and exhausting a page establishes nothing outside it.",
+    "Evidence limitations aggregate every item's provider observations; each item row also carries its own observation's limitations. A batch covers only its selected procedures, and exhausting a page establishes nothing outside it.",
   ];
 };
 
@@ -270,6 +282,21 @@ const itemRow = (
       status: "ok",
       pseudocode_code_units: item.pseudocode.length,
       ...(includePseudocode ? { pseudocode: item.pseudocode } : {}),
+      ...(item.limitations === undefined
+        ? {}
+        : { limitations: item.limitations }),
+    };
+  if (item.status === "unavailable")
+    return {
+      ...identity,
+      status: "unavailable",
+      reason: item.reason,
+      ...(item.pseudocode_absence === undefined
+        ? {}
+        : { pseudocode_absence: item.pseudocode_absence }),
+      ...(item.limitations === undefined
+        ? {}
+        : { limitations: item.limitations }),
     };
   return {
     ...identity,
@@ -299,15 +326,8 @@ export const projectBatchDecompileView = (
     "batch-decompile",
   );
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "batch_decompile Evidence supports summary and batch-decompile views of items or pseudocode.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "batch_decompile Evidence supports summary and batch-decompile views of items or pseudocode.",
     );
   const parsed = checkedBatch(parent);
   if (!parsed.ok) return parsed;
@@ -340,25 +360,31 @@ export const projectBatchDecompileView = (
         ...summarizeBatch(batch.items),
         limitation_count: new Set(parent.limitations).size,
       },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   if (view.collection === "items") {
     const indices = selected(view.where.indices);
     const addresses = selected(view.where.addresses);
     const entries = selected(view.where.procedure_addresses);
     const statuses = selected<string>(view.where.statuses);
-    const { rows, total } = selectViewRows(
-      batch.items,
-      view,
-      (item, index) =>
-        (indices === undefined || indices.has(index)) &&
-        (addresses === undefined || addresses.has(item.address)) &&
-        (statuses === undefined || statuses.has(item.status)) &&
-        (entries === undefined ||
-          (item.procedure.status === "resolved" &&
-            entries.has(item.procedure.address))),
-      (item, index) => itemRow(item, index, view.include_pseudocode),
-    );
+    const matches = (item: (typeof batch.items)[number]) =>
+      (addresses === undefined || addresses.has(item.address)) &&
+      (statuses === undefined || statuses.has(item.status)) &&
+      (entries === undefined ||
+        (item.procedure.status === "resolved" &&
+          entries.has(item.procedure.address)));
+    const projectItem = (item: (typeof batch.items)[number], index: number) =>
+      itemRow(item, index, view.include_pseudocode);
+    const { rows, total } =
+      indices !== undefined
+        ? selectIndexedViewRows(
+            batch.items,
+            indices,
+            view,
+            matches,
+            projectItem,
+          )
+        : selectViewRows(batch.items, view, matches, projectItem);
     return ok({
       kind: "batch-decompile" as const,
       view,
@@ -375,7 +401,7 @@ export const projectBatchDecompileView = (
     );
   if (item.status !== "ok")
     return pseudocodeRefusal(
-      `Item ${String(view.index)} has status error and no pseudocode; read its error and limitations through the items collection.`,
+      `Item ${String(view.index)} has status ${item.status} and no pseudocode; read its reason or error and limitations through the items collection.`,
     );
   const page = analysisTextPage(item.pseudocode, view.offset, view.limit);
   if (!page.ok) return page;

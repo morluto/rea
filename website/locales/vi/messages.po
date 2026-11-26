@@ -86,7 +86,7 @@ msgstr "Bởi N0zoM1z0 * 10 tháng mười 2026"
 #, python-brace-format
 msgctxt "shared"
 msgid "{ph0}↑{ph1} Top"
-msgstr "{ph0}↑{ph1} Hàng đầu"
+msgstr "{ph0}↑{ph1} Lên đầu trang"
 
 #: website/public/blog/index.html:6
 msgctxt "page:blog/index.html"
@@ -169,7 +169,7 @@ msgstr "Điều hướng chính"
 #: website/public/showcase/th04/index.html:137
 msgctxt "shared"
 msgid "REA on GitHub"
-msgstr "REA TRÊN GitHub"
+msgstr "REA trên GitHub"
 
 #: website/public/blog/index.html:157
 #: website/public/blog/reverse-engineering-models/index.html:157
@@ -215,7 +215,7 @@ msgstr "Tham gia Discord của REA"
 #: website/public/showcase/th04/index.html:176
 msgctxt "shared"
 msgid "Follow REA on X"
-msgstr "Theo DÕI REA Trên X"
+msgstr "Theo dõi REA trên X"
 
 #: website/public/blog/index.html:253
 msgctxt "page:blog/index.html"
@@ -601,9 +601,10 @@ msgid ""
 " continuation began on 13 August. By 19 August, the ledger recorded source "
 "for all 1,107 identified game functions."
 msgstr ""
-"Lịch sử nhập khẩu kết thúc tại trạm kiểm soát ngày 10 tháng 8 công cộng. Sự "
-"tiếp tục độc lập của tôi bắt đầu vào ngày 13 tháng tám. Đến ngày 19 tháng 8,"
-" sổ cái đã ghi lại nguồn cho tất cả 1.107 chức năng trò chơi được xác định."
+"Lịch sử commit được import kết thúc tại checkpoint công khai ngày 10 tháng "
+"8. Quá trình tiếp tục độc lập của tôi bắt đầu vào ngày 13 tháng 8. Đến ngày "
+"19 tháng 8, tiến độ đã ghi nhận mã nguồn cho toàn bộ 1.107 hàm game được xác"
+" định."
 
 #: website/public/blog/touhou-reconstruction/index.html:440
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -1023,11 +1024,11 @@ msgid ""
 "working together. That lesson helped shape how we approached TH095's whole-"
 "program build."
 msgstr ""
-"VÍ dụ, TH08 đã dạy chúng ta chú ý đến chương trình lắp ráp sớm. Nếu một số "
-"chức năng được phục hồi phụ thuộc vào cùng một trạng thái, các so sánh biệt "
-"lập của chúng sẽ để lại một câu hỏi quan trọng. Chúng ta cần thấy họ làm "
-"việc cùng nhau. Bài học đó đã giúp định hình cách chúng tôi tiếp cận BẢN "
-"dựng toàn bộ CHƯƠNG trình CỦA TH095."
+"Ví dụ, TH08 đã dạy chúng tôi phải chú ý sớm đến chương trình sau khi "
+"assemble. Nếu nhiều hàm được phục hồi phụ thuộc vào cùng một trạng thái, "
+"việc so sánh riêng lẻ từng hàm sẽ bỏ lửng câu hỏi quan trọng: liệu chúng có "
+"phối hợp nhịp nhàng khi ghép lại? Bài học đó đã định hình cách chúng tôi "
+"tiếp cận bản build toàn chương trình của TH095."
 
 #: website/public/blog/touhou-reconstruction/index.html:655
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -1209,10 +1210,10 @@ msgid ""
 "follow the game's logic without keeping the executable's memory layout in "
 "their head."
 msgstr ""
-"Đối với tôi, lắp ráp và bù đắp thô có thể cảm thấy như những người bạn cũ. "
-"Tôi nhận ra đây là một định nghĩa hơi bất thường về \"có thể đọc được.\"Hầu "
-"hết mọi người muốn tuân theo logic của trò chơi mà không giữ bố cục bộ nhớ "
-"của tệp thực thi trong đầu."
+"Với tôi, mã assembly và các raw offset quen thuộc như những người bạn cũ. "
+"Tôi hiểu đây là định nghĩa hơi khác thường về tính 'dễ đọc'. Hầu hết mọi "
+"người muốn theo dõi logic game mà không cần phải ghi nhớ layout bộ nhớ của "
+"file thực thi trong đầu."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -2001,9 +2002,9 @@ msgid ""
 " returned the loaded {ph2}, including this branch in the game’s update "
 "function:"
 msgstr ""
-"Chúng tôi đã kiểm tra {ph0}PHIÊN bản trình duyệt CÓ NGUỒN GỐC TỪ Chromium "
-"của wayou{ph1} VỚI REA . Nó trả lại tải {ph2}, bao gồm chi nhánh này trong "
-"chức năng cập nhật của trò chơi:"
+"Chúng tôi dùng REA kiểm tra {ph0}phiên bản web bắt nguồn từ Chromium của "
+"wayou{ph1}. REA trả về {ph2} đã tải, bao gồm nhánh rẽ này trong hàm update "
+"của trò chơi:"
 
 #. {ph0}: <code>SPEED: 6</code>
 #. {ph1}: <code>ACCELERATION: 0.001</code>
@@ -2094,8 +2095,9 @@ msgid ""
 "Values rounded to three decimals. The branch checks before adding, so the "
 "final increment can take speed just above 13."
 msgstr ""
-"Giá trị làm tròn đến ba số thập phân. Chi nhánh kiểm tra trước khi thêm, vì "
-"vậy gia số cuối cùng có thể mất tốc độ chỉ trên 13."
+"Các giá trị được làm tròn tới 3 chữ số thập phân. Nhánh logic kiểm tra điều "
+"kiện trước khi cộng, nên bước tăng cuối cùng có thể đẩy tốc độ nhỉnh hơn 13 "
+"một chút."
 
 #: website/public/examples/dino-lab/index.html:405
 msgctxt "page:examples/dino-lab/index.html"
@@ -2308,7 +2310,7 @@ msgstr "Cài đặt REA thế nào?"
 #: website/public/faq/index.html:232
 msgctxt "page:faq/index.html"
 msgid "Terminal · agent setup"
-msgstr "Thiết bị đầu cuối · thiết lập agent"
+msgstr "Terminal · cài đặt agent"
 
 #: website/public/faq/index.html:233 website/public/faq/index.html:274
 #: website/public/faq/index.html:292 website/public/faq/index.html:376
@@ -2378,7 +2380,7 @@ msgstr ""
 #: website/public/faq/index.html:273
 msgctxt "page:faq/index.html"
 msgid "Terminal · installed CLI"
-msgstr "Thiết bị đầu cuối * CÀI ĐẶT CLI"
+msgstr "Terminal · CLI đã cài đặt"
 
 #. {ph0}: <code>npx</code>
 #: website/public/faq/index.html:285
@@ -2394,7 +2396,7 @@ msgstr ""
 #: website/public/faq/index.html:291
 msgctxt "page:faq/index.html"
 msgid "Terminal · refresh agent setup"
-msgstr "Thiết bị đầu cuối · thiết lập agent làm mới"
+msgstr "Terminal · làm mới cài đặt agent"
 
 # Reviewed for readable setup and analysis terminology.
 #. {ph0}: <code>npx -y rea-agents@latest</code>
@@ -2453,8 +2455,8 @@ msgid ""
 "{ph0}Native executables and libraries{ph1}: functions, assembly, pseudocode "
 "and references."
 msgstr ""
-"{ph0}Các tệp thực thi và thư viện gốc{ph1}: chức năng, lắp ráp, mã giả và "
-"tài liệu tham khảo."
+"{ph0}File thực thi và thư viện native{ph1}: các hàm, mã assembly, mã giả "
+"(pseudocode) và tham chiếu."
 
 #. {ph0}: <a href="../guides/javascript/" >
 #. {ph1}: </a >
@@ -2465,8 +2467,8 @@ msgid ""
 "{ph0}JavaScript and Electron apps{ph1}: modules, imports, IPC and source "
 "locations."
 msgstr ""
-"{ph0} JavaScript và Electron ứng dụng{ph1}: mô-đun, nhập KHẨU, IPC và vị trí"
-" nguồn."
+"{ph0}Ứng dụng JavaScript và Electron{ph1}: modules, imports, IPC và vị trí "
+"mã nguồn."
 
 #. {ph0}: <a href="../guides/browser/">
 #. {ph1}: </a>
@@ -2538,7 +2540,7 @@ msgstr ""
 #: website/public/faq/index.html:375
 msgctxt "page:faq/index.html"
 msgid "Terminal · static application analysis"
-msgstr "Thiết bị đầu cuối · phân tích ứng dụng tĩnh"
+msgstr "Terminal · phân tích ứng dụng tĩnh"
 
 #. {ph0}: <a href="../get-started/#terminal">
 #. {ph1}: </a>
@@ -2650,7 +2652,7 @@ msgstr ""
 #: website/public/faq/index.html:462
 msgctxt "page:faq/index.html"
 msgid "Terminal · check one client"
-msgstr "Thiết bị đầu cuối * kiểm tra một khách hàng"
+msgstr "Terminal · kiểm tra một client"
 
 #. {ph0}: <code>codex</code>
 #. {ph1}: <code>claude_code</code>
@@ -2669,7 +2671,7 @@ msgstr ""
 #: website/public/faq/index.html:482
 msgctxt "page:faq/index.html"
 msgid "Terminal · repair one client's setup"
-msgstr "Thiết bị đầu cuối · sửa chữa thiết lập của một khách hàng"
+msgstr "Terminal · sửa cài đặt cho một client"
 
 #. {ph0}: <a href="../get-started/#help">
 #. {ph1}: </a>
@@ -2872,7 +2874,7 @@ msgstr "{ph0}Nhà{ph1} / Cuộc điều tra đầu tiên của bạn"
 #, python-brace-format
 msgctxt "page:first-investigation/index.html"
 msgid "Find out where{ph0}exported notes go."
-msgstr "Tìm ra nơi{ph0}xuất khẩu ghi chú đi."
+msgstr "Tìm hiểu xem{ph0}các ghi chú được export đi đâu."
 
 #: website/public/first-investigation/index.html:205
 msgctxt "page:first-investigation/index.html"
@@ -2902,7 +2904,7 @@ msgstr "{ph0}1. Thiết lập{ph1}"
 #, python-brace-format
 msgctxt "page:first-investigation/index.html"
 msgid "{ph0}2. Ask about export{ph1}"
-msgstr "{ph0}2. Hỏi về xuất khẩu{ph1}"
+msgstr "{ph0}2. Hỏi về tính năng export{ph1}"
 
 #. {ph0}: <a href="#answer">
 #. {ph1}: </a>
@@ -2962,7 +2964,7 @@ msgstr "Sao chép"
 #: website/public/first-investigation/index.html:260
 msgctxt "page:first-investigation/index.html"
 msgid "Or run this command in your terminal:"
-msgstr "Hoặc chạy lệnh này trong thiết bị đầu cuối của bạn:"
+msgstr "Hoặc chạy lệnh này trong terminal của bạn:"
 
 #: website/public/first-investigation/index.html:272
 msgctxt "page:first-investigation/index.html"
@@ -3103,7 +3105,7 @@ msgstr "Tự chạy kiểm tra"
 #, python-brace-format
 msgctxt "page:first-investigation/index.html"
 msgid "Open a terminal in the unpacked {ph0} folder:"
-msgstr "Mở một thiết bị đầu cuối trong giải nén {ph0} thư mục:"
+msgstr "Mở terminal trong thư mục {ph0} vừa giải nén:"
 
 #: website/public/first-investigation/index.html:488
 msgctxt "page:first-investigation/index.html"
@@ -3251,12 +3253,12 @@ msgstr "Thiết LẬP REA ."
 #: website/public/get-started/index.html:267
 msgctxt "page:get-started/index.html"
 msgid "Open a terminal and check:"
-msgstr "Mở một thiết bị đầu cuối và kiểm tra:"
+msgstr "Mở terminal và kiểm tra:"
 
 #: website/public/get-started/index.html:270
 msgctxt "page:get-started/index.html"
 msgid "Terminal"
-msgstr "Thiết bị đầu cuối"
+msgstr "Terminal"
 
 #: website/public/get-started/index.html:271
 #: website/public/get-started/index.html:294
@@ -3370,7 +3372,7 @@ msgstr "Hoặc tự chạy thiết lập"
 #: website/public/get-started/index.html:233
 msgctxt "page:get-started/index.html"
 msgid "How do I open a terminal?"
-msgstr "Làm cách nào để mở một thiết bị đầu cuối?"
+msgstr "Làm cách nào để mở terminal?"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -3525,8 +3527,7 @@ msgstr ""
 msgctxt "page:get-started/index.html"
 msgid "In a terminal, put quotes around a path that contains spaces."
 msgstr ""
-"Trong một thiết bị đầu cuối, đặt dấu ngoặc kép xung quanh một đường dẫn có "
-"chứa khoảng trắng."
+"Trong terminal, hãy đặt dấu ngoặc kép quanh đường dẫn có chứa khoảng trắng."
 
 #: website/public/get-started/index.html:1594
 msgctxt "page:get-started/index.html"
@@ -3655,12 +3656,12 @@ msgstr "Kết NỐI Ghidra TRÊN Windows"
 msgctxt "page:get-started/index.html"
 msgid ""
 "Windows x64 has experimental, read-only support for native x86 and x64 PE "
-"applications and DLLs on fixed local NTFS drives. Use an existing Ghidra "
-"12.1.x installation and a 64-bit JDK 21 or newer:"
+"applications and DLLs on fixed local NTFS/ReFS drives. Use an existing "
+"Ghidra 12.2 installation and a 64-bit JDK 25 or newer:"
 msgstr ""
-"Windows x64 có hỗ trợ thử nghiệm, chỉ đọc cho các ứng dụng VÀ Dll X86 và x64"
-" pe gốc trên các ổ đĩa ntfs cục bộ cố định. Sử DỤNG Ghidra 12.1 hiện có.x "
-"cài đặt VÀ 64-bit JDK 21 hoặc mới hơn:"
+"Windows x64 có hỗ trợ thử nghiệm (chỉ đọc) cho ứng dụng PE và DLL native x86"
+" / x64 trên ổ đĩa cục bộ cố định NTFS/ReFS. Sử dụng bản cài đặt Ghidra 12.2 "
+"hiện có cùng JDK 25 64-bit trở lên:"
 
 #: website/public/get-started/index.html:1182
 msgctxt "page:get-started/index.html"
@@ -3853,7 +3854,7 @@ msgstr "Về đầu trang"
 #: website/public/guides/browser/index.html:111
 msgctxt "page:guides/browser/index.html"
 msgid "Skip to content"
-msgstr "Bỏ qua nội dung"
+msgstr "Chuyển đến nội dung chính"
 
 #. {ph0}: <a href="../../">
 #. {ph1}: </a>
@@ -3863,14 +3864,15 @@ msgstr "Bỏ qua nội dung"
 #, python-brace-format
 msgctxt "page:guides/browser/index.html"
 msgid "{ph0}Home{ph1} / {ph2}Guides{ph3} / Browser observation"
-msgstr "{ph0}Nhà{ph1} / {ph2}Hướng dẫn{ph3} / Quan sát trình duyệt"
+msgstr ""
+"{ph0}Trang chủ{ph1} / {ph2}Hướng dẫn{ph3} / Quan sát hành vi trình duyệt"
 
 #. {ph0}: <br />
 #: website/public/guides/browser/index.html:205
 #, python-brace-format
 msgctxt "page:guides/browser/index.html"
 msgid "See what happens{ph0}when you click."
-msgstr "Xem những gì xảy ra{ph0}khi bạn nhấp vào."
+msgstr "Khám phá điều gì diễn ra{ph0}khi bạn click chuột."
 
 #: website/public/guides/browser/index.html:206
 msgctxt "page:guides/browser/index.html"
@@ -3878,8 +3880,8 @@ msgid ""
 "Use a small browser app to connect an action, its network request and the "
 "JavaScript that builds a download."
 msgstr ""
-"Sử dụng một ứng dụng trình duyệt nhỏ để kết nối một hành động, yêu cầu mạng "
-"của nó và JavaScript xây dựng tải xuống."
+"Sử dụng một web app nhỏ để liên kết hành động người dùng, network request "
+"tương ứng và đoạn JavaScript tạo file tải về."
 
 #: website/public/guides/browser/index.html:213
 msgctxt "page:guides/browser/index.html"
@@ -3892,7 +3894,7 @@ msgstr "Trong hướng dẫn này"
 #, python-brace-format
 msgctxt "page:guides/browser/index.html"
 msgid "{ph0}The example{ph1}"
-msgstr "{ph0}Ví dụ{ph1}"
+msgstr "{ph0}Ứng dụng mẫu{ph1}"
 
 #. {ph0}: <a href="#prepare">
 #. {ph1}: </a>
@@ -3908,7 +3910,7 @@ msgstr "{ph0}Mở trình duyệt{ph1}"
 #, python-brace-format
 msgctxt "page:guides/browser/index.html"
 msgid "{ph0}Ask your agent{ph1}"
-msgstr "{ph0}Hỏi agent của bạn{ph1}"
+msgstr "{ph0}Yêu cầu agent{ph1}"
 
 #. {ph0}: <a href="#capture">
 #. {ph1}: </a>
@@ -3916,7 +3918,7 @@ msgstr "{ph0}Hỏi agent của bạn{ph1}"
 #, python-brace-format
 msgctxt "page:guides/browser/index.html"
 msgid "{ph0}Capture from CLI{ph1}"
-msgstr "{ph0}Chụp TỪ CLI {ph1}"
+msgstr "{ph0}Capture từ CLI{ph1}"
 
 #. {ph0}: <a href="#result">
 #. {ph1}: </a>
@@ -3924,12 +3926,12 @@ msgstr "{ph0}Chụp TỪ CLI {ph1}"
 #, python-brace-format
 msgctxt "page:guides/browser/index.html"
 msgid "{ph0}Read the request and script{ph1}"
-msgstr "{ph0}Đọc yêu cầu và tập lệnh{ph1}"
+msgstr "{ph0}Đọc request và script{ph1}"
 
 #: website/public/guides/browser/index.html:224
 msgctxt "page:guides/browser/index.html"
 msgid "What happens when you click Export?"
-msgstr "Điều gì xảy ra khi bạn nhấp Vào Xuất?"
+msgstr "Điều gì xảy ra khi bạn bấm nút Export?"
 
 #. {ph0}: <a href="../../examples/notes-web/">
 #. {ph1}: </a>
@@ -3944,14 +3946,14 @@ msgid ""
 "Clicking it loads {ph4}, formats the two notes as CSV, and starts a "
 "download."
 msgstr ""
-"Các {ph0}Ghi chú ví dụ trình duyệt{ph1} có một {ph2}Xuất ghi chú{ph3} nút. "
-"Nhấp vào nó tải {ph4}, định dạng hai ghi chú DƯỚI DẠNG CSV và bắt đầu tải "
-"xuống."
+"Ứng dụng {ph0}Notes mẫu trên trình duyệt{ph1} có nút {ph2}Export notes{ph3}."
+" Khi click, ứng dụng tải {ph4}, định dạng hai ghi chú thành CSV và bắt đầu "
+"tải xuống."
 
 #: website/public/guides/browser/index.html:233
 msgctxt "page:guides/browser/index.html"
 msgid "From the click to the CSV download"
-msgstr "Từ nhấp VÀO TẢI XUỐNG CSV"
+msgstr "Từ thao tác click đến file CSV tải về"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -3966,8 +3968,8 @@ msgid ""
 "{ph0}01 · You{ph1}{ph2}Click Export notes{ph3}{ph4}Perform the action in "
 "your browser while the capture is running.{ph5}"
 msgstr ""
-"{ph0}01 * Bạn{ph1}{ph2}Nhấp Vào Xuất ghi chú{ph3}{ph4}Thực hiện hành động "
-"trong trình duyệt của bạn trong khi chụp đang chạy.{ph5}"
+"{ph0}01 · Bạn{ph1}{ph2}Bấm Export notes{ph3}{ph4}Thực hiện thao tác trên "
+"trình duyệt trong khi quá trình capture đang chạy.{ph5}"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -3982,8 +3984,8 @@ msgid ""
 "{ph0}02 · REA{ph1}{ph2}Record the request{ph3}{ph4}Capture the request URL, "
 "response status and JSON structure from the selected page.{ph5}"
 msgstr ""
-"{ph0}02 * REA {ph1}{ph2}Ghi lại yêu cầu{ph3}{ph4}Chụp URL yêu cầu, trạng "
-"thái phản hồi và cấu trúc JSON từ trang đã chọn.{ph5}"
+"{ph0}02 · REA{ph1}{ph2}Ghi lại request{ph3}{ph4}Capture URL của request, "
+"response status và cấu trúc JSON từ trang được chọn.{ph5}"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -4000,18 +4002,18 @@ msgid ""
 "{ph0}03 · Your agent{ph1}{ph2}Read the export code{ph3}{ph4}Connect the "
 "observed request to {ph5} in {ph6}.{ph7}"
 msgstr ""
-"{ph0}03 * agent của Bạn{ph1}{ph2}Đọc mã xuất{ph3}{ph4}Kết nối yêu cầu quan "
-"sát được với {ph5} trong {ph6}.{ph7}"
+"{ph0}03 · Coding agent của bạn{ph1}{ph2}Đọc mã nguồn export{ph3}{ph4}Liên "
+"kết request quan sát được với {ph5} trong {ph6}.{ph7}"
 
 #: website/public/guides/browser/index.html:264
 msgctxt "page:guides/browser/index.html"
 msgid "Start the capture before clicking Export notes."
-msgstr "Bắt đầu chụp trước khi nhấp Vào xuất ghi chú."
+msgstr "Bắt đầu quá trình capture trước khi bấm Export notes."
 
 #: website/public/guides/browser/index.html:270
 msgctxt "page:guides/browser/index.html"
 msgid "Open Chrome with remote debugging"
-msgstr "MỞ Chrome với gỡ lỗi từ xa"
+msgstr "Mở Chrome với cổng remote debugging"
 
 #: website/public/guides/browser/index.html:271
 msgctxt "page:guides/browser/index.html"
@@ -4019,13 +4021,13 @@ msgid ""
 "Open the hosted Notes example with a separate browser profile and a local "
 "debugging port. On Linux:"
 msgstr ""
-"Mở Ví Dụ Ghi chú được lưu trữ với cấu hình trình duyệt riêng biệt và cổng gỡ"
-" lỗi cục bộ. TRÊN Linux :"
+"Mở ứng dụng Notes mẫu với một profile trình duyệt riêng biệt và cổng "
+"debugging cục bộ. Trên Linux:"
 
 #: website/public/guides/browser/index.html:277
 msgctxt "page:guides/browser/index.html"
 msgid "Start the example browser"
-msgstr "Khởi động trình duyệt ví dụ"
+msgstr "Khởi động trình duyệt mẫu"
 
 #: website/public/guides/browser/index.html:278
 #: website/public/guides/browser/index.html:310
@@ -4042,9 +4044,8 @@ msgid ""
 "Use your installed browser's executable path on macOS or Windows. You can "
 "replace the page URL with another page you want to inspect."
 msgstr ""
-"Sử dụng đường dẫn thực thi của trình duyệt đã cài đặt của BẠN TRÊN macOS "
-"hoặc Windows . BẠN có thể thay THẾ url trang bằng một trang khác mà bạn muốn"
-" kiểm tra."
+"Sử dụng đường dẫn file thực thi của trình duyệt trên macOS hoặc Windows. Bạn"
+" có thể thay đổi URL bằng trang web bạn muốn kiểm tra."
 
 #: website/public/guides/browser/index.html:297
 msgctxt "page:guides/browser/index.html"
@@ -4052,13 +4053,13 @@ msgid ""
 "REA connects to this existing browser. You keep control of the page, perform"
 " the action, and close the browser when finished."
 msgstr ""
-"REA kết nối với trình duyệt hiện có này. Bạn giữ quyền kiểm soát trang, thực"
-" hiện hành động và đóng trình duyệt khi hoàn tất."
+"REA kết nối với trình duyệt đang mở này. Bạn nắm toàn quyền kiểm soát trang,"
+" thực hiện thao tác và đóng trình duyệt khi hoàn thành."
 
 #: website/public/guides/browser/index.html:303
 msgctxt "page:guides/browser/index.html"
 msgid "Ask your agent to watch one action"
-msgstr "Yêu cầu agent của bạn xem một hành động"
+msgstr "Yêu cầu agent theo dõi một thao tác"
 
 #. {ph0}: <span class="terminal-dots" aria-hidden="true" >
 #. {ph1}: <i>
@@ -4072,7 +4073,7 @@ msgstr "Yêu cầu agent của bạn xem một hành động"
 #, python-brace-format
 msgctxt "page:guides/browser/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
-msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Agent mã hóa của bạn"
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Coding agent của bạn"
 
 #. {ph0}: <span class="prompt-symbol" aria-hidden="true">
 #. {ph1}: </span >
@@ -4087,8 +4088,8 @@ msgid ""
 "{ph0}›{ph1}{ph2}Use REA to inspect this page while I click Export notes. "
 "What request does it make, and how is the CSV built?{ph3}{ph4}{ph5}"
 msgstr ""
-"{ph0}›{ph1}{ph2}Sử dụng REA để kiểm tra trang này trong khi tôi nhấp Vào "
-"xuất ghi chú. NÓ đưa ra yêu cầu gì và CSV được xây dựng như thế "
+"{ph0}›{ph1}{ph2}Dùng REA kiểm tra trang này trong lúc tôi click Export "
+"notes. Trang gửi request nào và file CSV được tạo ra như thế "
 "nào?{ph3}{ph4}{ph5}"
 
 #. {ph0}: <code>http://127.0.0.1:9222</code>
@@ -4099,8 +4100,8 @@ msgid ""
 "Example prompt. Give your agent the debugging endpoint, {ph0}, and the page "
 "URL. Let it start the capture before you click."
 msgstr ""
-"Ví dụ nhắc nhở. Cung cấp cho agent của bạn điểm cuối gỡ lỗi, {ph0}, VÀ url "
-"trang. Hãy để nó bắt đầu chụp trước khi bạn nhấp vào."
+"Prompt mẫu. Cung cấp cho agent endpoint debugging, {ph0}, và URL của trang. "
+"Hãy để agent bắt đầu capture trước khi bạn click chuột."
 
 #: website/public/guides/browser/index.html:332
 msgctxt "page:guides/browser/index.html"
@@ -4109,19 +4110,18 @@ msgid ""
 "reads the resulting evidence. It can then inspect the script behind the "
 "export."
 msgstr ""
-"Agent của bạn phát hiện ra mục tiêu trang, bắt đầu một cửa sổ quan sát và "
-"đọc bằng chứng kết quả. Sau đó, nó có thể kiểm tra tập lệnh đằng sau xuất "
-"khẩu."
+"Agent nhận diện page target, bắt đầu cửa sổ quan sát và đọc Evidence thu "
+"được. Sau đó, agent có thể kiểm tra mã nguồn script xử lý tác vụ export."
 
 #: website/public/guides/browser/index.html:339
 msgctxt "page:guides/browser/index.html"
 msgid "Or capture from the terminal"
-msgstr "Hoặc chụp từ thiết bị đầu cuối"
+msgstr "Hoặc capture trực tiếp từ terminal"
 
 #: website/public/guides/browser/index.html:340
 msgctxt "page:guides/browser/index.html"
 msgid "Find the page's target ID:"
-msgstr "Tìm ID mục tiêu của trang:"
+msgstr "Tìm target ID của trang:"
 
 #: website/public/guides/browser/index.html:343
 msgctxt "page:guides/browser/index.html"
@@ -4136,13 +4136,13 @@ msgid ""
 "Choose the target with the Notes example URL. Replace {ph0} below with its "
 "ID, then run:"
 msgstr ""
-"Chọn mục tiêu với Url Ví dụ Ghi chú. Thay thế {ph0} BÊN dưới VỚI ID của NÓ, "
-"sau đó chạy:"
+"Chọn target có URL ứng dụng Notes mẫu. Thay {ph0} bên dưới bằng ID đó, rồi "
+"chạy:"
 
 #: website/public/guides/browser/index.html:362
 msgctxt "page:guides/browser/index.html"
 msgid "Capture the next ten seconds"
-msgstr "Chụp mười giây tiếp theo"
+msgstr "Capture trong 10 giây tiếp theo"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -4153,8 +4153,8 @@ msgid ""
 "Let the command connect for a few seconds, then click {ph0}Export notes{ph1}"
 " in that browser. The result arrives after the observation window ends."
 msgstr ""
-"Để lệnh kết nối trong vài giây, sau đó nhấp vào {ph0}Xuất ghi chú{ph1} trong"
-" trình duyệt đó. Kết quả đến sau khi cửa sổ quan sát kết thúc."
+"Để lệnh kết nối trong vài giây, sau đó bấm {ph0}Export notes{ph1} trên trình"
+" duyệt đó. Kết quả sẽ hiển thị sau khi cửa sổ quan sát kết thúc."
 
 #: website/public/guides/browser/index.html:383
 msgctxt "page:guides/browser/index.html"
@@ -4163,23 +4163,24 @@ msgid ""
 " window, and the shape of the JSON response. Earlier requests are outside "
 "this capture."
 msgstr ""
-"Kết quả đã chụp bao gồm trang đã chọn, hoạt động mạng trong cửa sổ đó và "
-"hình dạng của phản hồi JSON. Yêu cầu trước đó là bên ngoài chụp này."
+"Kết quả capture gồm trang được chọn, lưu lượng mạng trong khoảng thời gian "
+"đó và cấu trúc của response JSON. Các request diễn ra trước đó sẽ không nằm "
+"trong bản capture này."
 
 #: website/public/guides/browser/index.html:390
 msgctxt "page:guides/browser/index.html"
 msgid "Read the request and export script"
-msgstr "Đọc yêu cầu và xuất tập lệnh"
+msgstr "Đọc request và script export"
 
 #: website/public/guides/browser/index.html:393
 msgctxt "page:guides/browser/index.html"
 msgid "Recorded with REA 4.1.0 on the local Notes example"
-msgstr "Được ghi BẰNG REA 4.1.0 trên Ví Dụ Ghi chú cục Bộ"
+msgstr "Ghi nhận bởi REA 4.1.0 trên ứng dụng Notes mẫu"
 
 #: website/public/guides/browser/index.html:398
 msgctxt "page:guides/browser/index.html"
 msgid "Captured fact"
-msgstr "Thực tế bị bắt"
+msgstr "Dữ kiện ghi nhận (Captured fact)"
 
 #: website/public/guides/browser/index.html:399
 msgctxt "page:guides/browser/index.html"
@@ -4189,29 +4190,29 @@ msgstr "Giá trị"
 #: website/public/guides/browser/index.html:404
 msgctxt "page:guides/browser/index.html"
 msgid "Request"
-msgstr "Yêu cầu"
+msgstr "Request"
 
 #: website/public/guides/browser/index.html:408
 msgctxt "page:guides/browser/index.html"
 msgid "Response"
-msgstr "Phản hồi"
+msgstr "Response"
 
 #: website/public/guides/browser/index.html:412
 msgctxt "page:guides/browser/index.html"
 msgid "Request initiator"
-msgstr "Yêu cầu người khởi xướng"
+msgstr "Request initiator (Nguồn kích hoạt)"
 
 #. {ph0}: <code>export.js</code>
 #: website/public/guides/browser/index.html:413
 #, python-brace-format
 msgctxt "page:guides/browser/index.html"
 msgid "{ph0} · script"
-msgstr "{ph0} * kịch bản"
+msgstr "{ph0} · script"
 
 #: website/public/guides/browser/index.html:416
 msgctxt "page:guides/browser/index.html"
 msgid "Response structure"
-msgstr "Cấu trúc phản hồi"
+msgstr "Cấu trúc Response"
 
 #. {ph0}: <code>notes[]</code>
 #. {ph1}: <code>id</code>
@@ -4220,12 +4221,12 @@ msgstr "Cấu trúc phản hồi"
 #, python-brace-format
 msgctxt "page:guides/browser/index.html"
 msgid "{ph0} with {ph1} and {ph2} fields"
-msgstr "{ph0} với {ph1} và {ph2} lĩnh vực"
+msgstr "{ph0} với các trường {ph1} và {ph2}"
 
 #: website/public/guides/browser/index.html:427
 msgctxt "page:guides/browser/index.html"
 msgid "Read the loaded scripts"
-msgstr "Đọc các tập lệnh đã tải"
+msgstr "Đọc các script đã tải"
 
 #. {ph0}: <code>export.js</code>
 #: website/public/guides/browser/index.html:441
@@ -4235,8 +4236,8 @@ msgid ""
 "The request identifies the data source, and REA records {ph0} as its "
 "initiator. Read the captured script source to see how the data is used:"
 msgstr ""
-"Yêu cầu xác định nguồn dữ liệu và BẢN ghi REA {ph0} là người khởi xướng nó. "
-"Đọc nguồn tập lệnh đã chụp để xem dữ liệu được sử dụng như thế nào:"
+"Request xác định nguồn dữ liệu, và REA ghi nhận {ph0} là initiator của "
+"request. Đọc mã nguồn script đã capture để xem dữ liệu được sử dụng ra sao:"
 
 #. {ph0}: <code>notes.json</code>
 #: website/public/guides/browser/index.html:461
@@ -4247,9 +4248,9 @@ msgid ""
 "formatting step comes from the script; the network capture establishes that "
 "this click requested {ph0}."
 msgstr ""
-"Việc tải xuống được xây dựng trong trang bằng phản hồi JSON. BƯỚC ĐỊNH DẠNG "
-"CSV xuất phát từ tập lệnh; chụp mạng thiết lập rằng nhấp chuột này được yêu "
-"cầu {ph0}."
+"File tải về được tạo ngay trên trang bằng response JSON. Bước định dạng CSV "
+"xuất phát từ script; bản capture mạng xác nhận cú click này đã request "
+"{ph0}."
 
 #. {ph0}: <code>notes.json</code>
 #: website/public/guides/browser/index.html:477
@@ -4259,8 +4260,8 @@ msgid ""
 "Find the script that requests {ph0}. How does it escape titles containing "
 "commas or quotation marks?"
 msgstr ""
-"Tìm tập lệnh yêu cầu {ph0}. Làm thế nào để nó thoát khỏi tiêu đề chứa dấu "
-"phẩy hoặc dấu ngoặc kép?"
+"Tìm script gửi request {ph0}. Đoạn script escape tiêu đề chứa dấu phẩy hoặc "
+"dấu ngoặc kép như thế nào?"
 
 #. {ph0}: <a href="../javascript/">
 #. {ph1}: </a>
@@ -4271,14 +4272,13 @@ msgid ""
 "For an installed JavaScript or Electron app, continue with the "
 "{ph0}application workflow{ph1} to follow files and process boundaries."
 msgstr ""
-"ĐỐI với ỨNG DỤNG JavaScript hoặc Electron đã cài đặt, hãy tiếp tục với "
-"{ph0}quy trình làm việc ứng dụng{ph1} để theo dõi các tệp và xử lý ranh "
-"giới."
+"Với ứng dụng JavaScript hoặc Electron đã cài đặt, tiếp tục với {ph0}quy "
+"trình phân tích ứng dụng{ph1} để theo dõi các file và ranh giới tiến trình."
 
 #: website/public/guides/browser/index.html:6
 msgctxt "page:guides/browser/index.html"
 msgid "Browser and Network Analysis — REA"
-msgstr "Phân tích Trình duyệt Và Mạng-REA"
+msgstr "Phân tích Trình duyệt và Lưu lượng mạng — REA"
 
 #: website/public/guides/browser/index.html:7
 msgctxt "page:guides/browser/index.html"
@@ -4286,8 +4286,8 @@ msgid ""
 "Observe a Notes export with REA: select a browser page, capture a click, "
 "inspect the request and follow the export script."
 msgstr ""
-"Quan sát Một Ghi chú xuất KHẨU VỚI REA : chọn một trang trình duyệt, chụp "
-"một nhấp chuột, kiểm tra các yêu cầu và làm theo các kịch bản xuất khẩu."
+"Quan sát tính năng export của Notes với REA: chọn trang trình duyệt, capture"
+" thao tác click, kiểm tra request và lần theo script export."
 
 #: website/public/guides/browser/index.html:212
 msgctxt "page:guides/browser/index.html"
@@ -4302,27 +4302,27 @@ msgstr "Quan sát trình duyệt"
 #: website/public/guides/browser/index.html:278
 msgctxt "page:guides/browser/index.html"
 msgid "Copy start the example browser"
-msgstr "Sao chép bắt đầu trình duyệt ví dụ"
+msgstr "Sao chép lệnh khởi động trình duyệt mẫu"
 
 #: website/public/guides/browser/index.html:310
 msgctxt "page:guides/browser/index.html"
 msgid "Copy example prompt"
-msgstr "Sao chép ví dụ dấu nhắc"
+msgstr "Sao chép prompt mẫu"
 
 #: website/public/guides/browser/index.html:344
 msgctxt "page:guides/browser/index.html"
 msgid "Copy find the page"
-msgstr "Sao chép tìm trang"
+msgstr "Sao chép lệnh tìm trang"
 
 #: website/public/guides/browser/index.html:363
 msgctxt "page:guides/browser/index.html"
 msgid "Copy capture the next ten seconds"
-msgstr "Sao chép chụp mười giây tiếp theo"
+msgstr "Sao chép lệnh capture 10 giây"
 
 #: website/public/guides/browser/index.html:428
 msgctxt "page:guides/browser/index.html"
 msgid "Copy read the loaded scripts"
-msgstr "Sao chép đọc các tập lệnh đã tải"
+msgstr "Sao chép lệnh đọc script đã tải"
 
 #: website/public/guides/browser/index.html:516
 msgctxt "page:guides/browser/index.html"
@@ -4332,7 +4332,7 @@ msgstr "Về đầu trang"
 #: website/public/guides/index.html:111
 msgctxt "page:guides/index.html"
 msgid "Skip to content"
-msgstr "Bỏ qua nội dung"
+msgstr "Chuyển đến nội dung chính"
 
 #. {ph0}: <a href="../">
 #. {ph1}: </a>
@@ -4340,12 +4340,12 @@ msgstr "Bỏ qua nội dung"
 #, python-brace-format
 msgctxt "page:guides/index.html"
 msgid "{ph0}Home{ph1} / Guides"
-msgstr "{ph0}Nhà{ph1} / Hướng dẫn"
+msgstr "{ph0}Trang chủ{ph1} / Hướng dẫn"
 
 #: website/public/guides/index.html:202
 msgctxt "page:guides/index.html"
 msgid "REA guides."
-msgstr "REA hướng dẫn."
+msgstr "Tài liệu hướng dẫn REA."
 
 #: website/public/guides/index.html:203
 msgctxt "page:guides/index.html"
@@ -4353,38 +4353,38 @@ msgid ""
 "Analyze a native function, an Electron export or a browser request. Each "
 "guide includes a prompt, code and results."
 msgstr ""
-"Phân tích chức năng gốc, xuất Electron hoặc yêu cầu trình duyệt. Mỗi hướng "
-"dẫn bao gồm một lời nhắc, mã và kết quả."
+"Phân tích hàm native, luồng export trong Electron hoặc một request trình "
+"duyệt. Mỗi hướng dẫn gồm prompt, mã nguồn và kết quả."
 
 #: website/public/guides/index.html:210
 msgctxt "page:guides/index.html"
 msgid "First investigation"
-msgstr "Điều tra đầu tiên"
+msgstr "Cuộc điều tra đầu tiên"
 
 #: website/public/guides/index.html:212
 msgctxt "page:guides/index.html"
 msgid "Set up REA"
-msgstr "Thiết LẬP REA"
+msgstr "Cài đặt REA"
 
 #: website/public/guides/index.html:213
 msgctxt "page:guides/index.html"
 msgid "Connect your coding agent or use REA from the terminal."
-msgstr "Kết nối agent mã hóa của bạn hoặc SỬ dụng REA từ thiết bị đầu cuối."
+msgstr "Kết nối coding agent của bạn hoặc sử dụng REA từ terminal."
 
 #: website/public/guides/index.html:214
 msgctxt "page:guides/index.html"
 msgid "Get started with REA"
-msgstr "Bắt đầu VỚI REA"
+msgstr "Bắt đầu với REA"
 
 #: website/public/guides/index.html:218
 msgctxt "page:guides/index.html"
 msgid "Native binaries"
-msgstr "Chương trình mã máy"
+msgstr "File nhị phân Native"
 
 #: website/public/guides/index.html:220
 msgctxt "page:guides/index.html"
 msgid "Recover a sound-pan calculation"
-msgstr "Khôi phục tính toán vị trí âm thanh trái/phải"
+msgstr "Khôi phục thuật toán tính pan âm thanh"
 
 #: website/public/guides/index.html:221
 msgctxt "page:guides/index.html"
@@ -4392,13 +4392,13 @@ msgid ""
 "Start with a Windows game executable. Inspect instructions, follow a caller,"
 " read numeric constants and check the recovered C."
 msgstr ""
-"Bắt đầu với MỘT TRÒ CHƠI Windows thực thi. Kiểm tra hướng dẫn, theo dõi hàm "
-"gọi, đọc hằng Số và kiểm Tra C đã khôi Phục."
+"Bắt đầu từ file thực thi của game Windows. Kiểm tra chỉ lệnh assembly, lần "
+"theo hàm caller, đọc hằng số và kiểm tra mã C đã phục hồi."
 
 #: website/public/guides/index.html:231
 msgctxt "page:guides/index.html"
 msgid "Native analysis guide"
-msgstr "Phân tích hướng dẫn chương trình mã máy"
+msgstr "Hướng dẫn phân tích Native binary"
 
 #: website/public/guides/index.html:235
 msgctxt "page:guides/index.html"
@@ -4408,7 +4408,7 @@ msgstr "JavaScript & Electron"
 #: website/public/guides/index.html:237
 msgctxt "page:guides/index.html"
 msgid "Follow a CSV export"
-msgstr "Thực HIỆN theo một CSV xuất KHẨU"
+msgstr "Theo dõi tính năng export CSV"
 
 #: website/public/guides/index.html:238
 msgctxt "page:guides/index.html"
@@ -4416,14 +4416,13 @@ msgid ""
 "A small Notes app spreads one feature across the renderer, preload and main "
 "process. Use REA to connect the API, IPC channel and file writer."
 msgstr ""
-"Một Ứng dụng Ghi chú nhỏ trải rộng một tính năng trên trình kết xuất, tải "
-"trước và quy trình chính. SỬ DỤNG REA để kết nối api, KÊNH IPC và trình ghi "
-"tệp."
+"Một ứng dụng Notes nhỏ phân bổ tính năng qua renderer, preload script và "
+"main process. Dùng REA để kết nối API, kênh IPC và trình ghi file."
 
 #: website/public/guides/index.html:248
 msgctxt "page:guides/index.html"
 msgid "JavaScript & Electron guide"
-msgstr "JavaScript & Electron hướng dẫn"
+msgstr "Hướng dẫn JavaScript & Electron"
 
 #. {ph0}: <a href="../showcase/notion/">
 #. {ph1}: </a>
@@ -4432,7 +4431,7 @@ msgstr "JavaScript & Electron hướng dẫn"
 msgctxt "page:guides/index.html"
 msgid "For a larger packaged app, follow {ph0}Notion's clipboard bridge{ph1}."
 msgstr ""
-"Đối với một ứng dụng đóng gói lớn hơn, hãy làm theo {ph0} Cầu clipboard CỦA "
+"Đối với ứng dụng đóng gói lớn hơn, hãy xem {ph0}cầu nối clipboard của "
 "Notion{ph1}."
 
 #: website/public/guides/index.html:258
@@ -4443,7 +4442,7 @@ msgstr "Hành vi trình duyệt"
 #: website/public/guides/index.html:260
 msgctxt "page:guides/index.html"
 msgid "Observe a click"
-msgstr "Quan sát một cú nhấp chuột"
+msgstr "Quan sát một thao tác click"
 
 #: website/public/guides/index.html:261
 msgctxt "page:guides/index.html"
@@ -4451,18 +4450,18 @@ msgid ""
 "Open a working Notes example, capture an export request and find the code "
 "that turns its response into a download."
 msgstr ""
-"Mở Một Ví Dụ Ghi chú làm việc, chụp yêu cầu xuất và tìm mã biến phản hồi của"
-" nó thành tải xuống."
+"Mở ứng dụng Notes mẫu đang chạy, capture request export và tìm đoạn code xử "
+"lý response thành file tải về."
 
 #: website/public/guides/index.html:270
 msgctxt "page:guides/index.html"
 msgid "Browser observation guide"
-msgstr "Hướng dẫn quan sát trình duyệt"
+msgstr "Hướng dẫn quan sát hành vi trình duyệt"
 
 #: website/public/guides/index.html:6
 msgctxt "page:guides/index.html"
 msgid "Reverse Engineering Guides — REA"
-msgstr "Hướng Dẫn kỹ thuật đảo ngược-REA"
+msgstr "Hướng dẫn dịch ngược — REA"
 
 #: website/public/guides/index.html:7
 msgctxt "page:guides/index.html"
@@ -4470,8 +4469,8 @@ msgid ""
 "Learn REA through short worked examples: a native calculation, an Electron "
 "CSV export and a browser request."
 msgstr ""
-"Tìm HIỂU REA thông qua các ví dụ làm việc ngắn: tính toán gốc, xuất Electron"
-" CSV và yêu cầu trình duyệt."
+"Làm quen với REA qua các ví dụ thực hành ngắn: tính toán hàm native, export "
+"CSV trong Electron và bắt request trên trình duyệt."
 
 #: website/public/guides/index.html:310
 msgctxt "page:guides/index.html"
@@ -4481,7 +4480,7 @@ msgstr "Về đầu trang"
 #: website/public/guides/javascript/index.html:111
 msgctxt "page:guides/javascript/index.html"
 msgid "Skip to content"
-msgstr "Bỏ qua nội dung"
+msgstr "Chuyển đến nội dung chính"
 
 #. {ph0}: <a href="../../">
 #. {ph1}: </a>
@@ -4491,14 +4490,14 @@ msgstr "Bỏ qua nội dung"
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid "{ph0}Home{ph1} / {ph2}Guides{ph3} / JavaScript & Electron"
-msgstr "{ph0}Nhà{ph1} / {ph2}Hướng dẫn{ph3} / JavaScript & Electron"
+msgstr "{ph0}Trang chủ{ph1} / {ph2}Hướng dẫn{ph3} / JavaScript & Electron"
 
 #. {ph0}: <br />
 #: website/public/guides/javascript/index.html:205
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid "Trace an Electron{ph0}CSV export."
-msgstr "Theo dõi Electron {ph0} CSV xuất khẩu."
+msgstr "Lần theo tính năng export{ph0}CSV trong Electron."
 
 #: website/public/guides/javascript/index.html:206
 msgctxt "page:guides/javascript/index.html"
@@ -4506,8 +4505,8 @@ msgid ""
 "Follow a button click from the page API, through Electron IPC, to the CSV "
 "file writer."
 msgstr ""
-"Thực hiện theo một nút bấm từ api trang, THÔNG qua Electron IPC, ĐẾN TRÌNH "
-"ghi tệp CSV."
+"Theo dõi thao tác click nút từ API trên trang, qua kênh Electron IPC, đến "
+"trình ghi file CSV."
 
 #: website/public/guides/javascript/index.html:213
 msgctxt "page:guides/javascript/index.html"
@@ -4520,7 +4519,7 @@ msgstr "Trong hướng dẫn này"
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid "{ph0}The example{ph1}"
-msgstr "{ph0}Ví dụ{ph1}"
+msgstr "{ph0}Ứng dụng mẫu{ph1}"
 
 #. {ph0}: <a href="#ask">
 #. {ph1}: </a>
@@ -4528,7 +4527,7 @@ msgstr "{ph0}Ví dụ{ph1}"
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid "{ph0}Ask your agent{ph1}"
-msgstr "{ph0}Hỏi agent của bạn{ph1}"
+msgstr "{ph0}Yêu cầu agent{ph1}"
 
 #. {ph0}: <a href="#follow">
 #. {ph1}: </a>
@@ -4536,7 +4535,7 @@ msgstr "{ph0}Hỏi agent của bạn{ph1}"
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid "{ph0}Trace the export code{ph1}"
-msgstr "{ph0}Theo dõi mã xuất{ph1}"
+msgstr "{ph0}Lần theo mã nguồn export{ph1}"
 
 #. {ph0}: <a href="#try">
 #. {ph1}: </a>
@@ -4544,7 +4543,7 @@ msgstr "{ph0}Theo dõi mã xuất{ph1}"
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid "{ph0}Try the example{ph1}"
-msgstr "{ph0}Hãy thử ví dụ{ph1}"
+msgstr "{ph0}Thử nghiệm ứng dụng mẫu{ph1}"
 
 #. {ph0}: <a href="#next">
 #. {ph1}: </a>
@@ -4552,12 +4551,12 @@ msgstr "{ph0}Hãy thử ví dụ{ph1}"
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid "{ph0}Inspect the CSV writer{ph1}"
-msgstr "{ph0}Kiểm TRA NHÀ văn CSV{ph1}"
+msgstr "{ph0}Kiểm tra trình ghi CSV{ph1}"
 
 #: website/public/guides/javascript/index.html:224
 msgctxt "page:guides/javascript/index.html"
 msgid "Where does “Export notes” go?"
-msgstr "\"Xuất ghi chú\" đi đâu?"
+msgstr "Nút “Export notes” kích hoạt luồng xử lý nào?"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -4569,14 +4568,14 @@ msgid ""
 "an API in the page, crosses into the main process, and writes a CSV. The "
 "behavior is spread across several files."
 msgstr ""
-"Hướng dẫn này sử dụng MỘT ỨNG dụng Electron nhỏ. Nhấp chuột {ph0}Xuất ghi "
-"chú{ph1} gọi MỘT API trong trang, đi vào quy trình chính và VIẾT CSV . Hành "
-"vi được trải rộng trên một số tệp."
+"Hướng dẫn này dùng một ứng dụng Electron nhỏ. Khi click {ph0}Export "
+"notes{ph1}, trang gọi API, chuyển tiếp sang main process và ghi file CSV. "
+"Luồng xử lý nằm rải rác trên nhiều file."
 
 #: website/public/guides/javascript/index.html:232
 msgctxt "page:guides/javascript/index.html"
 msgid "The CSV export across Electron processes"
-msgstr "XUẤT CSV qua CÁC quy TRÌNH Electron"
+msgstr "Luồng export CSV qua các tiến trình Electron"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -4594,8 +4593,8 @@ msgid ""
 "{ph0}Renderer → preload{ph1}{ph2}{ph3}{ph4}{ph5}{ph6} calls the API exposed "
 "by {ph7}.{ph8}"
 msgstr ""
-"{ph0}Trình kết xuất → tải trước{ph1}{ph2}{ph3}{ph4}{ph5}{ph6} gọi API được "
-"hiển thị bởi {ph7}.{ph8}"
+"{ph0}Renderer → preload{ph1}{ph2}{ph3}{ph4}{ph5}{ph6} gọi API được export "
+"bởi {ph7}.{ph8}"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -4611,8 +4610,8 @@ msgid ""
 "{ph0}Between processes{ph1}{ph2}{ph3}{ph4}{ph5}The preload invokes an IPC "
 "channel: a named message to the main process.{ph6}"
 msgstr ""
-"{ph0}Giữa các quy trình{ph1}{ph2}{ph3}{ph4}{ph5}Tải trước gọi một KÊNH IPC: "
-"một thông báo được đặt tên cho quy trình chính.{ph6}"
+"{ph0}Giữa các tiến trình{ph1}{ph2}{ph3}{ph4}{ph5}Preload script gọi kênh "
+"IPC: gửi message có tên định danh sang main process.{ph6}"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -4628,8 +4627,8 @@ msgid ""
 "{ph0}Main process{ph1}{ph2}An export handler{ph3}{ph4}{ph5} handles that "
 "channel and calls the CSV writer.{ph6}"
 msgstr ""
-"{ph0}Quy trình chính{ph1}{ph2}Một trình xử lý xuất khẩu{ph3}{ph4}{ph5} xử lý"
-" kênh đó và gọi CHO NHÀ văn CSV.{ph6}"
+"{ph0}Main process{ph1}{ph2}Export handler{ph3}{ph4}{ph5} lắng nghe kênh đó "
+"và gọi hàm ghi file CSV.{ph6}"
 
 #. {ph0}: <code>csv.js</code>
 #. {ph1}: <code>main.js</code>
@@ -4638,7 +4637,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid "{ph0} formats the notes → {ph1} writes {ph2}."
-msgstr "{ph0} định dạng các ghi chú → {ph1} viết {ph2}."
+msgstr "{ph0} định dạng ghi chú → {ph1} ghi file {ph2}."
 
 #: website/public/guides/javascript/index.html:265
 msgctxt "page:guides/javascript/index.html"
@@ -4647,14 +4646,14 @@ msgid ""
 "API. The path is inferred from code; a runtime capture can check what "
 "executes."
 msgstr ""
-"REA khớp với lệnh GỌI IPC theo nghĩa đen với trình xử lý của NÓ và xác định "
-"API được hiển thị. Đường dẫn được suy ra từ mã; chụp thời gian chạy có thể "
-"kiểm tra những gì thực thi."
+"REA khớp chuỗi gọi IPC với handler tương ứng và xác định API được mở ra. "
+"Luồng thực thi được suy luận từ mã nguồn; bạn có thể dùng capture runtime để"
+" kiểm chứng thực tế khi chạy."
 
 #: website/public/guides/javascript/index.html:273
 msgctxt "page:guides/javascript/index.html"
 msgid "Ask about the CSV export"
-msgstr "Hỏi VỀ xuất CSV"
+msgstr "Yêu cầu phân tích luồng export CSV"
 
 #. {ph0}: <a href="../../get-started/#agent">
 #. {ph1}: </a>
@@ -4665,8 +4664,8 @@ msgid ""
 "{ph0}Connect your agent to REA{ph1} and give it the app directory or ASAR "
 "file:"
 msgstr ""
-"{ph0}Kết nối agent CỦA BẠN VỚI REA {ph1} và cung cấp cho nó thư mục ứng dụng"
-" hoặc TỆP ASAR:"
+"{ph0}Kết nối agent của bạn với REA{ph1} và cung cấp đường dẫn thư mục ứng "
+"dụng hoặc file ASAR:"
 
 #. {ph0}: <span class="terminal-dots" aria-hidden="true" >
 #. {ph1}: <i>
@@ -4680,7 +4679,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
-msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Agent mã hóa của bạn"
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Coding agent của bạn"
 
 #: website/public/guides/javascript/index.html:284
 #: website/public/guides/javascript/index.html:441
@@ -4701,8 +4700,8 @@ msgid ""
 "{ph0}›{ph1}{ph2}Use REA to find what happens when I export notes in this "
 "app. Where is the CSV created?{ph3}{ph4}{ph5}"
 msgstr ""
-"{ph0}›{ph1}{ph2}SỬ DỤNG REA để tìm những gì xảy ra khi tôi xuất ghi chú "
-"trong ứng dụng này. CSV được tạo ở đâu?{ph3}{ph4}{ph5}"
+"{ph0}›{ph1}{ph2}Dùng REA tìm hiểu điều gì xảy ra khi tôi export notes trong "
+"app này. File CSV được tạo ở đâu?{ph3}{ph4}{ph5}"
 
 #. {ph0}: <code>app.asar</code>
 #: website/public/guides/javascript/index.html:301
@@ -4712,7 +4711,8 @@ msgid ""
 "Example prompt. Include the absolute path to the application folder or "
 "{ph0}."
 msgstr ""
-"Ví dụ nhắc nhở. Bao gồm đường dẫn tuyệt đối đến thư mục ứng dụng hoặc {ph0}."
+"Prompt mẫu. Kèm theo đường dẫn tuyệt đối đến thư mục ứng dụng hoặc file "
+"{ph0}."
 
 #: website/public/guides/javascript/index.html:305
 msgctxt "page:guides/javascript/index.html"
@@ -4721,19 +4721,19 @@ msgid ""
 " process boundaries. Your agent uses that map to narrow the investigation to"
 " the export feature."
 msgstr ""
-"REA đọc các tệp ứng dụng và xây dựng bản đồ các điểm vào, mô-đun và ranh "
-"giới quy trình. Agent của bạn sử dụng bản đồ đó để thu hẹp cuộc điều tra về "
-"tính năng xuất."
+"REA đọc các file ứng dụng và xây dựng bản đồ entrypoint, module cùng ranh "
+"giới tiến trình. Agent sử dụng bản đồ đó để thu hẹp phạm vi điều tra vào "
+"tính năng export."
 
 #: website/public/guides/javascript/index.html:312
 msgctxt "page:guides/javascript/index.html"
 msgid "Trace the export code"
-msgstr "Theo dõi mã xuất"
+msgstr "Lần theo mã nguồn export"
 
 #: website/public/guides/javascript/index.html:313
 msgctxt "page:guides/javascript/index.html"
 msgid "The page calls a small API"
-msgstr "Trang gọi MỘT API nhỏ"
+msgstr "Trang gọi một API nhỏ"
 
 #: website/public/guides/javascript/index.html:333
 msgctxt "page:guides/javascript/index.html"
@@ -4741,8 +4741,8 @@ msgid ""
 "The page knows the method name. The implementation lives in the preload, "
 "which exposes it to the renderer."
 msgstr ""
-"Trang biết tên phương thức. Việc triển khai sống trong tải trước, điều này "
-"cho thấy nó với trình kết xuất."
+"Trang chỉ biết tên method. Phần hiện thực nằm trong preload script, nơi "
+"export method ra renderer."
 
 #. {ph0}: <code>notes.exportCsv</code>
 #. {ph1}: <code>notes:export</code>
@@ -4753,8 +4753,8 @@ msgid ""
 "REA records {ph0} and the literal channel {ph1}. It pairs that invocation "
 "with the single matching handler in the main process."
 msgstr ""
-"Hồ SƠ REA {ph0} và kênh theo nghĩa đen {ph1}. Nó ghép nối lời gọi đó với "
-"trình xử lý khớp duy nhất trong quy trình chính."
+"REA ghi nhận {ph0} cùng tên kênh IPC {ph1}. Lệnh gọi này được ghép nối trực "
+"tiếp với handler duy nhất tương ứng trong main process."
 
 #. {ph0}: <code>csv.js</code>
 #. {ph1}: <code>notes.csv</code>
@@ -4765,13 +4765,13 @@ msgid ""
 "Reading the handler answers the original question: {ph0} formats the notes, "
 "and the main process writes {ph1} into the user's Downloads folder."
 msgstr ""
-"Đọc trình xử lý trả lời câu hỏi ban đầu: {ph0} định dạng các ghi chú và quá "
-"trình chính viết {ph1} vào Thư mục Tải xuống của người dùng."
+"Đọc handler sẽ giải đáp câu hỏi ban đầu: {ph0} định dạng ghi chú, và main "
+"process ghi file {ph1} vào thư mục Downloads của người dùng."
 
 #: website/public/guides/javascript/index.html:388
 msgctxt "page:guides/javascript/index.html"
 msgid "Analyze the example yourself"
-msgstr "Tự phân tích ví dụ"
+msgstr "Tự mình phân tích ví dụ"
 
 #. {ph0}: <a class="button" href="../../examples/notes-example.zip"
 #. download="notes-example.zip" >
@@ -4780,12 +4780,12 @@ msgstr "Tự phân tích ví dụ"
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid "{ph0}Download example ZIP{ph1}"
-msgstr "{ph0}Tải xuống VÍ DỤ ZIP{ph1}"
+msgstr "{ph0}Tải file ZIP mẫu{ph1}"
 
 #: website/public/guides/javascript/index.html:404
 msgctxt "page:guides/javascript/index.html"
 msgid "Browse the six source files"
-msgstr "Duyệt qua sáu tệp nguồn"
+msgstr "Duyệt xem 6 file mã nguồn"
 
 #: website/public/guides/javascript/index.html:440
 msgctxt "page:guides/javascript/index.html"
@@ -4801,8 +4801,8 @@ msgid ""
 "Replace the path with the folder you unzipped. You should find one IPC "
 "channel and one matching handler in {ph0}. Source locations are in {ph1}."
 msgstr ""
-"Thay thế đường dẫn bằng thư mục bạn đã giải nén. Bạn sẽ tìm thấy một KÊNH "
-"IPC và một trình xử lý phù hợp trong {ph0}. Vị trí nguồn đang ở {ph1}."
+"Thay đường dẫn bằng thư mục bạn vừa giải nén. Bạn sẽ tìm thấy một kênh IPC "
+"và một handler tương ứng trong {ph0}. Vị trí mã nguồn nằm tại {ph1}."
 
 #: website/public/guides/javascript/index.html:459
 msgctxt "page:guides/javascript/index.html"
@@ -4811,14 +4811,14 @@ msgid ""
 "agent can follow a literal string, API name or IPC channel with REA's "
 "feature tracing tools."
 msgstr ""
-"Đối với ứng dụng của riêng bạn, hãy sử dụng cùng một lệnh với thư mục HOẶC "
-"đường DẪN ASAR của nó. Một tác nhân có thể theo một chuỗi ký tự, TÊN API "
-"hoặc KÊNH IPC VỚI CÁC CÔNG cụ truy tìm tính năng CỦA REA."
+"Với ứng dụng của bạn, hãy dùng cùng lệnh này kèm đường dẫn thư mục hoặc file"
+" ASAR. Agent có thể lần theo chuỗi literal, tên API hoặc kênh IPC bằng công "
+"cụ feature tracing của REA."
 
 #: website/public/guides/javascript/index.html:466
 msgctxt "page:guides/javascript/index.html"
 msgid "Inspect the CSV writer"
-msgstr "Kiểm TRA NHÀ văn CSV"
+msgstr "Kiểm tra hàm ghi CSV (CSV writer)"
 
 #. {ph0}: <code>notes:export</code>
 #: website/public/guides/javascript/index.html:468
@@ -4828,8 +4828,8 @@ msgid ""
 "Follow {ph0} to its handler. Which inputs reach the CSV writer, and what "
 "happens if writing the file fails?"
 msgstr ""
-"Theo dõi {ph0} để xử lý của nó. Đầu vào nào đạt đến trình ghi CSV và điều gì"
-" sẽ xảy ra nếu việc ghi tệp không thành công?"
+"Lần theo {ph0} đến handler của nó. Dữ liệu đầu vào nào được truyền tới trình"
+" ghi CSV, và điều gì xảy ra nếu việc ghi file thất bại?"
 
 #: website/public/guides/javascript/index.html:474
 msgctxt "page:guides/javascript/index.html"
@@ -4838,9 +4838,9 @@ msgid ""
 "and ambiguous handlers can remain unresolved; runtime observations give you "
 "another way to investigate them."
 msgstr ""
-"Sử dụng các vị trí nguồn để kiểm tra các chi tiết đó. Tên kênh được tính "
-"toán và trình xử lý mơ hồ có thể vẫn chưa được giải quyết; các quan sát thời"
-" gian chạy cung cấp cho bạn một cách khác để điều tra chúng."
+"Dùng các vị trí mã nguồn để kiểm tra chi tiết. Tên kênh được tính toán động "
+"hoặc handler không rõ ràng có thể chưa giải quyết được ngay; quan sát "
+"runtime sẽ giúp bạn điều tra chúng theo hướng khác."
 
 #. {ph0}: <a href="../../showcase/notion/" >
 #. {ph1}: </a >
@@ -4853,8 +4853,8 @@ msgid ""
 "{ph0}Follow Notion's clipboard bridge{ph1} {ph2}Apply the same approach to a"
 " packaged Electron app.{ph3}"
 msgstr ""
-"{ph0}Theo Notion ' s clipboard cầu{ph1} {ph2}Áp dụng cách tiếp cận tương tự "
-"cho ỨNG dụng Electron đóng gói.{ph3}"
+"{ph0}Lần theo cầu nối clipboard của Notion{ph1} {ph2}Áp dụng cùng cách tiếp "
+"cận này cho một ứng dụng Electron đã đóng gói.{ph3}"
 
 #. {ph0}: <a href="../browser/">
 #. {ph1}: </a >
@@ -4867,8 +4867,8 @@ msgid ""
 "{ph0}Observe a browser export{ph1}{ph2}Capture a real click and see which "
 "request it makes.{ph3}"
 msgstr ""
-"{ph0}Quan sát xuất trình duyệt{ph1}{ph2}Chụp một cú nhấp chuột thực sự và "
-"xem yêu cầu nào nó thực hiện.{ph3}"
+"{ph0}Quan sát luồng export trên trình duyệt{ph1}{ph2}Capture một cú click "
+"thực tế và xem request được gửi đi.{ph3}"
 
 #. {ph0}: <a href="../native/">
 #. {ph1}: </a >
@@ -4881,13 +4881,13 @@ msgid ""
 "{ph0}Follow a native function{ph1}{ph2}Continue into a binary when a feature"
 " depends on native code.{ph3}"
 msgstr ""
-"{ph0}Thực hiện theo một chức năng gốc{ph1}{ph2}Tiếp tục vào nhị phân khi một"
-" tính năng phụ thuộc vào mã gốc.{ph3}"
+"{ph0}Lần theo hàm native{ph1}{ph2}Tiếp tục đi sâu vào binary khi tính năng "
+"phụ thuộc mã native.{ph3}"
 
 #: website/public/guides/javascript/index.html:6
 msgctxt "page:guides/javascript/index.html"
 msgid "JavaScript and Electron Analysis — REA"
-msgstr "PHÂN Tích JavaScript và Electron — REA"
+msgstr "Phân tích JavaScript và Electron — REA"
 
 #: website/public/guides/javascript/index.html:7
 msgctxt "page:guides/javascript/index.html"
@@ -4896,9 +4896,9 @@ msgid ""
 "with REA. Includes downloadable example files and a verified analysis "
 "result."
 msgstr ""
-"Theo Dõi Một Ghi CHÚ CSV xuất thông qua TRÌNH kết xuất API, tải trước và "
-"TRÌNH xử lý IPC với REA . Bao gồm các tệp ví dụ có thể tải xuống và kết quả "
-"phân tích đã được xác minh."
+"Lần theo tính năng export CSV của Notes qua API renderer, preload script và "
+"IPC handler với REA. Bao gồm file mẫu tải về và kết quả phân tích đã kiểm "
+"chứng."
 
 #: website/public/guides/javascript/index.html:212
 msgctxt "page:guides/javascript/index.html"
@@ -4913,12 +4913,12 @@ msgstr "JavaScript & Electron"
 #: website/public/guides/javascript/index.html:284
 msgctxt "page:guides/javascript/index.html"
 msgid "Copy example prompt"
-msgstr "Sao chép ví dụ dấu nhắc"
+msgstr "Sao chép prompt mẫu"
 
 #: website/public/guides/javascript/index.html:441
 msgctxt "page:guides/javascript/index.html"
 msgid "Copy static application analysis"
-msgstr "Sao chép phân tích ứng dụng tĩnh"
+msgstr "Sao chép lệnh phân tích ứng dụng tĩnh"
 
 #: website/public/guides/javascript/index.html:520
 msgctxt "page:guides/javascript/index.html"
@@ -4928,7 +4928,7 @@ msgstr "Về đầu trang"
 #: website/public/guides/native/index.html:111
 msgctxt "page:guides/native/index.html"
 msgid "Skip to content"
-msgstr "Bỏ qua nội dung"
+msgstr "Chuyển đến nội dung chính"
 
 #. {ph0}: <a href="../../">
 #. {ph1}: </a>
@@ -4938,15 +4938,14 @@ msgstr "Bỏ qua nội dung"
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid "{ph0}Home{ph1} / {ph2}Guides{ph3} / Native analysis"
-msgstr ""
-"{ph0}Nhà{ph1} / {ph2}Hướng dẫn{ph3} / Phân tích các chương trình mã máy"
+msgstr "{ph0}Trang chủ{ph1} / {ph2}Hướng dẫn{ph3} / Phân tích Native binary"
 
 #. {ph0}: <br />
 #: website/public/guides/native/index.html:204
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid "Recover DX-Ball's{ph0}sound-pan calculation."
-msgstr "Khôi PHỤC DX-Ball ' s{ph0}tính toán vị trí âm thanh trái/phải."
+msgstr "Khôi phục thuật toán tính{ph0}pan âm thanh của DX-Ball."
 
 #: website/public/guides/native/index.html:205
 msgctxt "page:guides/native/index.html"
@@ -4954,8 +4953,8 @@ msgid ""
 "Inspect the original instructions, identify the input and constants, then "
 "check the recovered C."
 msgstr ""
-"Kiểm Tra các hướng dẫn ban Đầu, xác Định đầu vào và hằng số, sau Đó kiểm Tra"
-" C đã khôi Phục."
+"Kiểm tra các chỉ lệnh assembly gốc, xác định input và hằng số, sau đó kiểm "
+"tra mã C đã phục hồi."
 
 #: website/public/guides/native/index.html:212
 msgctxt "page:guides/native/index.html"
@@ -4968,7 +4967,7 @@ msgstr "Trong hướng dẫn này"
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid "{ph0}The example{ph1}"
-msgstr "{ph0}Ví dụ{ph1}"
+msgstr "{ph0}Ứng dụng mẫu{ph1}"
 
 #. {ph0}: <a href="#ask">
 #. {ph1}: </a>
@@ -4976,7 +4975,7 @@ msgstr "{ph0}Ví dụ{ph1}"
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid "{ph0}Ask your agent{ph1}"
-msgstr "{ph0}Hỏi agent của bạn{ph1}"
+msgstr "{ph0}Yêu cầu agent{ph1}"
 
 #. {ph0}: <a href="#follow">
 #. {ph1}: </a>
@@ -4984,7 +4983,7 @@ msgstr "{ph0}Hỏi agent của bạn{ph1}"
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid "{ph0}Read the REA results{ph1}"
-msgstr "{ph0}Đọc KẾT QUẢ REA{ph1}"
+msgstr "{ph0}Đọc kết quả REA{ph1}"
 
 #. {ph0}: <a href="#result">
 #. {ph1}: </a>
@@ -5000,12 +4999,12 @@ msgstr "{ph0}Phục hồi và kiểm tra{ph1}"
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid "{ph0}Use your own binary{ph1}"
-msgstr "{ph0}Sử dụng nhị phân của riêng bạn{ph1}"
+msgstr "{ph0}Dùng với binary của bạn{ph1}"
 
 #: website/public/guides/native/index.html:223
 msgctxt "page:guides/native/index.html"
 msgid "Calculate left/right sound panning"
-msgstr "Tính toán trái / phải định vị âm thanh stereo"
+msgstr "Tính toán panning âm thanh trái/phải"
 
 #: website/public/guides/native/index.html:224
 msgctxt "page:guides/native/index.html"
@@ -5013,8 +5012,8 @@ msgid ""
 "In DX-Ball, a brick hit supplies a horizontal screen position. The sound "
 "code turns it into a left/right panning value."
 msgstr ""
-"TRONG DX-Ball, một cú đánh bằng gạch cung cấp vị trí màn hình nằm ngang. Mã "
-"âm thanh biến nó thành giá trị xoay trái/phải."
+"Trong game DX-Ball, cú va chạm gạch cung cấp tọa độ ngang màn hình. Mã xử lý"
+" âm thanh chuyển tọa độ này thành giá trị pan trái/phải."
 
 #. {ph0}: <code>0x00406400</code>
 #. {ph1}: <code>__ftol()</code>
@@ -5026,14 +5025,14 @@ msgid ""
 "{ph1}. REA also returns its instructions and callers, which give the agent a"
 " way to investigate the missing arithmetic."
 msgstr ""
-"Chức năng bắt đầu, {ph0}, có một kết quả dịch ngược ngắn: một cuộc gọi đến "
-"{ph1}.  REA cũng trả về các hướng dẫn và hàm gọi của nó, cung cấp cho tác "
-"nhân một cách để điều tra số học bị thiếu."
+"Hàm bắt đầu, {ph0}, có kết quả decompile ngắn: một lệnh gọi đến {ph1}. REA "
+"cũng trả về các chỉ lệnh (instructions) và callers của hàm, giúp agent điều "
+"tra phần tính toán số học còn thiếu."
 
 #: website/public/guides/native/index.html:235
 msgctxt "page:guides/native/index.html"
 msgid "New to these terms?"
-msgstr "Mới đối với các điều khoản này?"
+msgstr "Bạn mới làm quen với các thuật ngữ này?"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -5046,8 +5045,8 @@ msgid ""
 "{ph0}Instructions:{ph1} the steps the processor runs, shown in readable form"
 " such as {ph2} or {ph3}."
 msgstr ""
-"{ph0}Hướng dẫn:{ph1} các bước bộ xử lý chạy, được hiển thị ở dạng có thể đọc"
-" được như {ph2} hoặc {ph3}."
+"{ph0}Instructions (Chỉ lệnh):{ph1} các thao tác bộ vi xử lý thực thi, hiển "
+"thị ở dạng đọc được như {ph2} hoặc {ph3}."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -5058,9 +5057,9 @@ msgid ""
 "{ph0}Decompiler result / pseudocode:{ph1} an analysis tool's attempt to turn"
 " instructions back into C-like code. It can miss parts, as in this example."
 msgstr ""
-"{ph0}Kết quả dịch ngược / mã giả:{ph1} nỗ lực của một công cụ phân tích để "
-"biến các hướng dẫn trở lại thành mã C-like. Nó có thể bỏ lỡ các bộ phận, như"
-" trong ví dụ này."
+"{ph0}Kết quả decompiler / mã giả (pseudocode):{ph1} nỗ lực của công cụ phân "
+"tích nhằm chuyển chỉ lệnh ngược lại thành mã tương tự C. Nó có thể bỏ sót "
+"một số phần, như trong ví dụ này."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -5071,8 +5070,8 @@ msgid ""
 "{ph0}Caller:{ph1} a function that calls this one. It shows which values are "
 "passed in."
 msgstr ""
-"{ph0}Người gọi:{ph1} một hàm gọi cái này. Nó cho thấy những giá trị nào được"
-" truyền vào."
+"{ph0}Caller (Hàm gọi):{ph1} hàm gọi đến hàm hiện tại. Nó cho thấy các giá "
+"trị nào được truyền vào."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -5084,8 +5083,8 @@ msgid ""
 "{ph0}Address:{ph1} a location in the program, written in hexadecimal, such "
 "as {ph2}."
 msgstr ""
-"{ph0}Địa chỉ:{ph1} một vị trí trong chương trình, được viết bằng hệ thập lục"
-" phân, chẳng hạn như {ph2}."
+"{ph0}Address (Địa chỉ):{ph1} vị trí trong chương trình, viết dưới dạng số "
+"hex, chẳng hạn {ph2}."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -5096,13 +5095,13 @@ msgid ""
 "{ph0}Constants:{ph1} fixed numbers stored in the program, read as raw bytes "
 "and decoded."
 msgstr ""
-"{ph0}Hằng số:{ph1} số cố định được lưu trữ trong chương trình, đọc như byte "
-"thô và giải mã."
+"{ph0}Constants (Hằng số):{ph1} các số cố định lưu trong chương trình, được "
+"đọc dưới dạng byte thô và giải mã."
 
 #: website/public/guides/native/index.html:262
 msgctxt "page:guides/native/index.html"
 msgid "Three pieces of evidence, one calculation"
-msgstr "Ba bằng chứng, một phép tính"
+msgstr "Ba mảnh Evidence, một phép tính"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -5117,8 +5116,9 @@ msgid ""
 "{ph0}01 · Instructions{ph1}{ph2}An integer input{ph3}{ph4}A stack read "
 "supplies the value used by the floating-point instructions.{ph5}"
 msgstr ""
-"{ph0}01 * Hướng dẫn{ph1}{ph2}Một đầu vào số nguyên{ph3}{ph4}Một stack read "
-"cung cấp giá trị được sử dụng bởi các hướng dẫn dấu phẩy động.{ph5}"
+"{ph0}01 · Instructions{ph1}{ph2}Một input số nguyên{ph3}{ph4}Một lệnh đọc từ"
+" stack cung cấp giá trị cho các chỉ lệnh dấu phẩy động (floating-"
+"point).{ph5}"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -5134,8 +5134,8 @@ msgid ""
 "{ph0}02 · Caller{ph1}{ph2}A screen coordinate{ph3}{ph4}The brick-hit caller "
 "passes {ph5}.{ph6}"
 msgstr ""
-"{ph0}02 * Người Gọi{ph1}{ph2}Tọa độ màn hình{ph3}{ph4}Người gọi gạch-hit đi "
-"{ph5}.{ph6}"
+"{ph0}02 · Caller{ph1}{ph2}Tọa độ màn hình{ph3}{ph4}Hàm caller khi va chạm "
+"gạch truyền vào {ph5}.{ph6}"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -5152,8 +5152,8 @@ msgid ""
 "{ph0}03 · Data bytes{ph1}{ph2}The numeric constants{ph3}{ph4}Referenced "
 "bytes decode to {ph5}, {ph6} and a scale value.{ph7}"
 msgstr ""
-"{ph0}03 * Byte Dữ liệu{ph1}{ph2}Các hằng số số{ph3}{ph4}Tham chiếu byte giải"
-" mã để {ph5}, {ph6} và một giá trị quy mô.{ph7}"
+"{ph0}03 · Data bytes{ph1}{ph2}Các hằng số số học{ph3}{ph4}Các byte được tham"
+" chiếu giải mã thành {ph5}, {ph6} và một giá trị tỷ lệ (scale).{ph7}"
 
 #: website/public/guides/native/index.html:294
 msgctxt "page:guides/native/index.html"
@@ -5161,13 +5161,13 @@ msgid ""
 "REA supplies the instructions, call relationship and bytes. The agent "
 "interprets them together."
 msgstr ""
-"REA cung cấp các hướng dẫn, mối quan hệ cuộc gọi chức năng và byte. Các "
-"agent giải thích chúng cùng nhau."
+"REA cung cấp các chỉ lệnh, quan hệ cuộc gọi hàm và các byte dữ liệu. Agent "
+"sẽ tổng hợp và diễn giải chúng cùng nhau."
 
 #: website/public/guides/native/index.html:301
 msgctxt "page:guides/native/index.html"
 msgid "Ask about the behavior"
-msgstr "Hỏi về hành vi"
+msgstr "Yêu cầu phân tích hành vi"
 
 #. {ph0}: <a href="../../get-started/#agent" >
 #. {ph1}: </a >
@@ -5180,8 +5180,8 @@ msgid ""
 "After {ph0}connecting REA to your agent{ph1} and {ph2}setting up a native "
 "analysis tool{ph3}, provide the local executable and a question:"
 msgstr ""
-"Sau {ph0}kết NỐI REA với agent của bạn{ph1} và {ph2}thiết lập phân tích công"
-" cụ chương trình mã máy{ph3}, cung cấp thực thi cục bộ và một câu hỏi:"
+"Sau khi {ph0}kết nối REA với agent của bạn{ph1} và {ph2}cài đặt công cụ phân"
+" tích native{ph3}, cung cấp file thực thi cục bộ cùng câu hỏi phân tích:"
 
 #: website/public/guides/native/index.html:313
 msgctxt "page:guides/native/index.html"
@@ -5191,7 +5191,7 @@ msgstr "Tôi nên sử dụng công cụ phân tích nào?"
 #: website/public/guides/native/index.html:314
 msgctxt "page:guides/native/index.html"
 msgid "REA needs one of these to read native programs:"
-msgstr "REA cần một trong số này để đọc các chương trình gốc:"
+msgstr "REA cần một trong các công cụ sau để đọc chương trình native:"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -5200,10 +5200,10 @@ msgstr "REA cần một trong số này để đọc các chương trình gốc:
 msgctxt "page:guides/native/index.html"
 msgid ""
 "{ph0}Ghidra{ph1} (macOS or Linux; experimental on Windows): free, but needs "
-"an existing Ghidra 12.1.x installation and a 64-bit JDK 21 or newer."
+"an existing Ghidra 12.2 installation and a 64-bit JDK 25 or newer."
 msgstr ""
-"{ph0} Ghidra {ph1} (macOS hoặc Linux ; thử nghiệm TRÊN Windows ): miễn phí, "
-"nhưng cần Ghidra 12.1 hiện có.x cài đặt và 64-bit JDK 21 hoặc mới hơn."
+"{ph0}Ghidra{ph1} (macOS hoặc Linux; thử nghiệm trên Windows): miễn phí, "
+"nhưng yêu cầu bản cài đặt Ghidra 12.2 và JDK 25 64-bit trở lên."
 
 #. {ph0}: <a href="../../get-started/#native">
 #. {ph1}: </a>
@@ -5211,8 +5211,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid "See {ph0}Set up native analysis{ph1} for the steps."
-msgstr ""
-"Xem {ph0}Thiết lập phân tích các chương trình mã máy{ph1} đối với các bước."
+msgstr "Xem {ph0}Cài đặt phân tích native{ph1} để biết các bước thực hiện."
 
 #. {ph0}: <span class="terminal-dots" aria-hidden="true" >
 #. {ph1}: <i>
@@ -5226,7 +5225,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
-msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Agent mã hóa của bạn"
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Coding agent của bạn"
 
 #: website/public/guides/native/index.html:347
 #: website/public/guides/native/index.html:478
@@ -5247,8 +5246,8 @@ msgid ""
 "{ph0}›{ph1}{ph2}Use REA to find how DX-Ball calculates sound panning. "
 "Explain the calculation and show the code.{ph3}{ph4}{ph5}"
 msgstr ""
-"{ph0}›{ph1}{ph2}SỬ dụng REA để tìm CÁCH DX-Ball tính toán định vị âm thanh "
-"nổi. Giải thích tính toán và hiển thị mã.{ph3}{ph4}{ph5}"
+"{ph0}›{ph1}{ph2}Dùng REA tìm hiểu cách DX-Ball tính toán pan âm thanh. Giải "
+"thích phép tính và hiển thị mã nguồn.{ph3}{ph4}{ph5}"
 
 #: website/public/guides/native/index.html:364
 msgctxt "page:guides/native/index.html"
@@ -5257,15 +5256,14 @@ msgid ""
 "executable. REA doesn't include DX-Ball, so use your own copy, or ask the "
 "same kind of question about another small Windows program you have."
 msgstr ""
-"Ví dụ nhắc nhở. Cung cấp cho agent của bạn đường dẫn ĐẾN tệp THỰC thi DX-"
-"Ball 1.07 cục BỘ của bạn.  REA không bao gồm DX-Ball , vì vậy hãy sử dụng "
-"bản sao của riêng bạn hoặc hỏi cùng một loại câu hỏi về một chương trình "
-"Windows nhỏ khác mà bạn có."
+"Prompt mẫu. Cung cấp cho agent đường dẫn đến file thực thi DX-Ball 1.07 trên"
+" máy bạn. REA không đi kèm file game DX-Ball, vì vậy hãy dùng bản cài đặt "
+"của bạn, hoặc đặt câu hỏi tương tự với một chương trình Windows nhỏ khác."
 
 #: website/public/guides/native/index.html:371
 msgctxt "page:guides/native/index.html"
 msgid "How do I get a file's full path?"
-msgstr "Làm cách nào để có được đường dẫn đầy đủ của tệp?"
+msgstr "Làm thế nào để lấy đường dẫn đầy đủ của một file?"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -5278,9 +5276,9 @@ msgid ""
 "{ph0}Windows:{ph1} in File Explorer, right-click the file and choose "
 "{ph2}Copy as path{ph3}. On Windows 10, hold Shift while right-clicking."
 msgstr ""
-"{ph0} Windows :{ph1} Trong File Explorer, nhấp chuột phải vào tệp và chọn "
-"{ph2}Sao chép dưới dạng đường dẫn{ph3}. TRÊN Windows 10, giữ Shift trong khi"
-" nhấp chuột phải."
+"{ph0}Windows:{ph1} trong File Explorer, click chuột phải vào file và chọn "
+"{ph2}Copy as path{ph3}. Trên Windows 10, giữ phím Shift khi click chuột "
+"phải."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -5293,8 +5291,8 @@ msgid ""
 "{ph0}macOS:{ph1} in Finder, right-click the file, hold Option and choose "
 "{ph2}Copy \"…\" as Pathname{ph3}."
 msgstr ""
-"{ph0} macOS :{ph1} trong Finder, nhấp chuột phải vào tệp, Giữ Tùy chọn và "
-"chọn {ph2}Sao chép \" ... \" dưới Dạng Tên Đường Dẫn{ph3}."
+"{ph0}macOS:{ph1} trong Finder, click chuột phải vào file, giữ phím Option và"
+" chọn {ph2}Copy \"…\" as Pathname{ph3}."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -5305,18 +5303,18 @@ msgid ""
 "{ph0}Any system:{ph1} drag the file into a terminal window and its path "
 "appears."
 msgstr ""
-"{ph0}Bất kỳ hệ thống:{ph1} kéo tệp vào cửa sổ đầu cuối và đường dẫn của nó "
-"xuất hiện."
+"{ph0}Mọi hệ điều hành:{ph1} kéo thả file vào cửa sổ terminal, đường dẫn sẽ "
+"tự động xuất hiện."
 
 #: website/public/guides/native/index.html:390
 msgctxt "page:guides/native/index.html"
 msgid "Read the REA results"
-msgstr "Đọc KẾT QUẢ REA"
+msgstr "Đọc kết quả từ REA"
 
 #: website/public/guides/native/index.html:391
 msgctxt "page:guides/native/index.html"
 msgid "Read the input"
-msgstr "Đọc đầu vào"
+msgstr "Đọc input dữ liệu"
 
 #: website/public/guides/native/index.html:400
 msgctxt "page:guides/native/index.html"
@@ -5324,13 +5322,13 @@ msgid ""
 "The instructions load an integer argument and convert it for floating-point "
 "arithmetic. This is the input absent from the first pseudocode view."
 msgstr ""
-"Các hướng dẫn tải một đối số nguyên và chuyển đổi nó cho số học dấu phẩy "
-"động. Đây là đầu vào vắng mặt từ chế độ xem mã giả đầu tiên."
+"Các chỉ lệnh nạp một tham số số nguyên và chuyển đổi nó cho phép tính dấu "
+"phẩy động. Đây chính là input bị thiếu trong giao diện mã giả ban đầu."
 
 #: website/public/guides/native/index.html:405
 msgctxt "page:guides/native/index.html"
 msgid "Follow the caller"
-msgstr "Theo dõi hàm gọi"
+msgstr "Lần theo hàm caller"
 
 #. {ph0}: <code>0x14</code>
 #: website/public/guides/native/index.html:414
@@ -5340,8 +5338,9 @@ msgid ""
 "REA identifies the brick-hit caller. Its earlier instructions multiply the "
 "tile coordinate by 30; adding {ph0} (20) gives the brick's screen position."
 msgstr ""
-"REA xác định hàm gọi gạch-hit. Các hướng dẫn trước đó của nó nhân tọa độ "
-"gạch với 30; thêm {ph0} (20) cho vị trí màn hình của gạch."
+"REA nhận diện hàm caller khi bóng va chạm gạch. Các chỉ lệnh trước đó nhân "
+"tọa độ ô gạch với 30; cộng thêm {ph0} (20) sẽ cho ra tọa độ màn hình của "
+"viên gạch."
 
 #: website/public/guides/native/index.html:419
 msgctxt "page:guides/native/index.html"
@@ -5354,13 +5353,13 @@ msgid ""
 "The arithmetic references these addresses. Reading the bytes supplies the "
 "actual values; the instruction order tells the agent how they are used."
 msgstr ""
-"Số học tham chiếu các địa chỉ này. Đọc các byte cung cấp các giá trị thực "
-"tế; thứ tự hướng dẫn cho tác nhân biết cách chúng được sử dụng."
+"Phép toán tham chiếu tới các địa chỉ này. Đọc dữ liệu byte cung cấp giá trị "
+"thực tế; thứ tự chỉ lệnh cho agent biết chúng được sử dụng ra sao."
 
 #: website/public/guides/native/index.html:437
 msgctxt "page:guides/native/index.html"
 msgid "Write and check the recovered function"
-msgstr "Viết và kiểm tra chức năng đã khôi phục"
+msgstr "Viết và kiểm tra hàm đã phục hồi"
 
 #: website/public/guides/native/index.html:446
 msgctxt "page:guides/native/index.html"
@@ -5369,9 +5368,9 @@ msgid ""
 "before integer conversion. The calculation puts the center of the screen at "
 "the center of the stereo field."
 msgstr ""
-"Với tỷ lệ 1.0, vị trí màn hình 0, 320 và 640 bản đồ đến -500, 0 và 500 trước"
-" khi chuyển đổi số nguyên. Tính toán đặt trung tâm của màn hình ở trung tâm "
-"của trường âm thanh nổi."
+"Với hệ số scale 1.0, các vị trí màn hình 0, 320 và 640 tương ứng với −500, 0"
+" và 500 trước khi ép kiểu sang số nguyên. Phép tính đặt tâm màn hình vào "
+"chính giữa trường âm thanh stereo."
 
 #: website/public/guides/native/index.html:451
 msgctxt "page:guides/native/index.html"
@@ -5380,9 +5379,9 @@ msgid ""
 " inputs against the original x86 function and reproduced all 63 compiled "
 "bytes of the complete function."
 msgstr ""
-"Tác nhân đã sử dụng REA phát hiện của để viết C. Kiểm tra Riêng biệt so sánh"
-" 3.205 đầu vào với hàm x86 ban đầu và sao chép tất cả 63 byte được biên dịch"
-" của hàm hoàn chỉnh."
+"Agent sử dụng các phát hiện của REA để viết mã C. Các kiểm thử độc lập đã so"
+" sánh 3.205 bộ input với hàm x86 gốc và tái tạo chính xác toàn bộ 63 byte "
+"biên dịch của toàn hàm."
 
 #. {ph0}: <a href="../../showcase/dx-ball/#sound-pan" >
 #. {ph1}: </a >
@@ -5390,12 +5389,13 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid "{ph0}See the full investigation and assembly-to-C comparison{ph1}"
-msgstr "{ph0}Xem điều tra đầy đủ và so sánh assembly-To-c{ph1}"
+msgstr ""
+"{ph0}Xem toàn bộ quá trình điều tra và so sánh giữa Assembly và mã C{ph1}"
 
 #: website/public/guides/native/index.html:463
 msgctxt "page:guides/native/index.html"
 msgid "Try it with your own binary"
-msgstr "Hãy thử nó với nhị phân của riêng bạn"
+msgstr "Thử nghiệm với binary của bạn"
 
 #. {ph0}: <a href="../../get-started/#native" >
 #. {ph1}: </a >
@@ -5408,10 +5408,10 @@ msgid ""
 "questions include “How is this file parsed?” or “Which function handles this"
 " menu action?”"
 msgstr ""
-"{ph0}Kết nối phân tích nhà cung cấp chương trình mã máy{ph1}, sau đó cung "
-"cấp cho agent của bạn một tệp thực thi hoặc thư viện cục bộ và một tính năng"
-" để điều tra. Các câu hỏi bắt đầu hữu ích bao gồm \" tệp này được phân tích "
-"cú pháp Như thế nào?\"hoặc\" chức năng nào xử lý hành động menu này?”"
+"{ph0}Kết nối một native analysis provider{ph1}, sau đó cung cấp cho agent "
+"file thực thi hoặc thư viện cục bộ cùng tính năng cần phân tích. Các câu hỏi"
+" khởi đầu gợi ý gồm: “File này được parse như thế nào?” hoặc “Hàm nào xử lý "
+"hành động menu này?”"
 
 #: website/public/guides/native/index.html:471
 msgctxt "page:guides/native/index.html"
@@ -5419,13 +5419,13 @@ msgid ""
 "If you already know a function name or address, you can query it from the "
 "terminal. For a configured Ghidra installation:"
 msgstr ""
-"Nếu bạn đã biết tên hoặc địa chỉ chức năng, bạn có thể truy vấn nó từ thiết "
-"bị đầu cuối. Để CÀI ĐẶT Ghidra được định cấu HÌNH:"
+"Nếu đã biết tên hàm hoặc địa chỉ, bạn có thể truy vấn trực tiếp từ terminal."
+" Với cài đặt Ghidra đã cấu hình:"
 
 #: website/public/guides/native/index.html:477
 msgctxt "page:guides/native/index.html"
 msgid "Function analysis"
-msgstr "Phân tích chức năng"
+msgstr "Phân tích hàm"
 
 #. {ph0}: <code>main</code>
 #: website/public/guides/native/index.html:490
@@ -5437,10 +5437,10 @@ msgid ""
 "session. Your agent's MCP queries reuse the imported binary while that "
 "session is open."
 msgstr ""
-"Thay thế đường dẫn mục tiêu và {ph0} với tên chức năng hoặc địa chỉ của "
-"riêng bạn. Mỗi LẦN NHẬP lệnh GỌI CLI và phân tích nhị phân, sau đó đóng "
-"phiên của NÓ. Các truy vấn MCP của agent của bạn sử dụng lại nhị phân đã "
-"nhập trong khi phiên đó đang mở."
+"Thay thế đường dẫn target và {ph0} bằng tên hàm hoặc địa chỉ của bạn. Mỗi "
+"lệnh gọi CLI sẽ import và phân tích binary, sau đó đóng phiên làm việc. Các "
+"truy vấn MCP của agent sẽ tái sử dụng binary đã import trong suốt phiên làm "
+"việc đó."
 
 #: website/public/guides/native/index.html:496
 msgctxt "page:guides/native/index.html"
@@ -5448,14 +5448,14 @@ msgid ""
 "Read the pseudocode alongside instructions and references. When a result "
 "leaves a call or value unresolved, use that location as the next question."
 msgstr ""
-"Đọc mã giả cùng với hướng dẫn và tài liệu tham khảo. Khi một kết quả để lại "
-"một cuộc gọi hoặc giá trị chưa được giải quyết, hãy sử dụng vị trí đó làm "
-"câu hỏi tiếp theo."
+"Đọc mã giả song song với các chỉ lệnh và tham chiếu. Khi một kết quả chưa "
+"giải quyết được lệnh gọi hoặc giá trị nào đó, hãy dùng vị trí đó làm câu hỏi"
+" tiếp theo."
 
 #: website/public/guides/native/index.html:6
 msgctxt "page:guides/native/index.html"
 msgid "Native Binary Analysis — REA"
-msgstr "Phân Tích nhị phân gốc-REA"
+msgstr "Phân tích Native Binary — REA"
 
 #: website/public/guides/native/index.html:7
 msgctxt "page:guides/native/index.html"
@@ -5463,8 +5463,8 @@ msgid ""
 "Recover a native calculation with REA: inspect instructions, follow a "
 "caller, read constants and check reconstructed C."
 msgstr ""
-"Khôi phục tính toán gốc VỚI REA : kiểm Tra hướng Dẫn, theo dõi hàm gọi, đọc "
-"hằng số và kiểm Tra Tái Tạo C."
+"Khôi phục phép tính native với REA: kiểm tra chỉ lệnh assembly, lần theo hàm"
+" caller, đọc hằng số và kiểm tra mã C tái dựng."
 
 #: website/public/guides/native/index.html:211
 msgctxt "page:guides/native/index.html"
@@ -5474,17 +5474,17 @@ msgstr "Trên trang này"
 #: website/public/guides/native/index.html:221
 msgctxt "page:guides/native/index.html"
 msgid "Native analysis"
-msgstr "Phân tích các chương trình mã máy"
+msgstr "Phân tích Native binary"
 
 #: website/public/guides/native/index.html:347
 msgctxt "page:guides/native/index.html"
 msgid "Copy example prompt"
-msgstr "Sao chép ví dụ dấu nhắc"
+msgstr "Sao chép prompt mẫu"
 
 #: website/public/guides/native/index.html:478
 msgctxt "page:guides/native/index.html"
 msgid "Copy function analysis"
-msgstr "Sao chép phân tích chức năng"
+msgstr "Sao chép lệnh phân tích hàm"
 
 #: website/public/guides/native/index.html:521
 msgctxt "page:guides/native/index.html"
@@ -5505,7 +5505,7 @@ msgstr "Trên trang này"
 #: website/public/index.html:218 website/public/index.html:313
 msgctxt "page:index.html"
 msgid "Set up REA"
-msgstr "Thiết LẬP REA"
+msgstr "Cài đặt REA"
 
 #. {ph0}: <a href="#setup" aria-current="location">
 #. {ph1}: </a>
@@ -5513,7 +5513,7 @@ msgstr "Thiết LẬP REA"
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}Set up REA{ph1}"
-msgstr "{ph0}Thiết LẬP REA {ph1}"
+msgstr "{ph0}Cài đặt REA{ph1}"
 
 #. {ph0}: <a href="#dinosaur">
 #. {ph1}: </a>
@@ -5521,7 +5521,7 @@ msgstr "{ph0}Thiết LẬP REA {ph1}"
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}Dinosaur game{ph1}"
-msgstr "{ph0}Chơi Dinosaur miễn phí{ph1}"
+msgstr "{ph0}Trò chơi Dinosaur{ph1}"
 
 #. {ph0}: <a href="#calculator">
 #. {ph1}: </a>
@@ -5529,7 +5529,7 @@ msgstr "{ph0}Chơi Dinosaur miễn phí{ph1}"
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}Calculator{ph1}"
-msgstr "{ph0}Máy tính{ph1}"
+msgstr "{ph0}Máy tính Calculator{ph1}"
 
 #. {ph0}: <a href="#try-rea">
 #. {ph1}: </a>
@@ -5537,7 +5537,7 @@ msgstr "{ph0}Máy tính{ph1}"
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}Try REA{ph1}"
-msgstr "{ph0}Thử REA {ph1}"
+msgstr "{ph0}Thử dùng REA{ph1}"
 
 #. {ph0}: <a href="#analyze">
 #. {ph1}: </a>
@@ -5545,12 +5545,12 @@ msgstr "{ph0}Thử REA {ph1}"
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}Go deeper{ph1}"
-msgstr "{ph0}Tìm hiểu sâu hơn{ph1}"
+msgstr "{ph0}Khám phá sâu hơn{ph1}"
 
 #: website/public/index.html:205
 msgctxt "page:index.html"
 msgid "Reverse engineering, with your coding agent"
-msgstr "Kỹ thuật đảo ngược, với agent mã hóa của bạn"
+msgstr "Kỹ thuật dịch ngược cùng AI coding agent của bạn"
 
 #. {ph0}: <br />
 #: website/public/index.html:206
@@ -5562,7 +5562,7 @@ msgstr "Tìm hiểu cách{ph0}phần mềm hoạt động."
 #: website/public/index.html:219
 msgctxt "page:index.html"
 msgid "Copy this into your coding agent:"
-msgstr "Dán lời nhắc này vào trợ lý lập trình AI của bạn:"
+msgstr "Dán prompt này vào coding agent của bạn:"
 
 #. {ph0}: <span class="terminal-dots" aria-hidden="true" >
 #. {ph1}: <i>
@@ -5576,7 +5576,7 @@ msgstr "Dán lời nhắc này vào trợ lý lập trình AI của bạn:"
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
-msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Agent mã hóa của bạn"
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Coding agent của bạn"
 
 #: website/public/index.html:227 website/public/index.html:251
 #: website/public/index.html:539 website/public/index.html:620
@@ -5589,12 +5589,12 @@ msgstr "Sao chép"
 #: website/public/index.html:248
 msgctxt "page:index.html"
 msgid "Or run this in your terminal:"
-msgstr "Hoặc chạy lệnh này trong terminal:"
+msgstr "Hoặc chạy lệnh này trong terminal của bạn:"
 
 #: website/public/index.html:260
 msgctxt "page:index.html"
 msgid "Approve the setup plan, then restart your agent."
-msgstr "Xem và chấp thuận kế hoạch cài đặt, rồi khởi động lại trợ lý."
+msgstr "Xác nhận kế hoạch cài đặt, sau đó khởi động lại agent."
 
 #. {ph0}: <span>
 #. {ph1}: </span>
@@ -5602,7 +5602,7 @@ msgstr "Xem và chấp thuận kế hoạch cài đặt, rồi khởi động l�
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}01{ph1} Decode branches"
-msgstr "{ph0}01{ph1} Giải mã chi nhánh"
+msgstr "{ph0}01{ph1} Giải mã các nhánh rẽ"
 
 #. {ph0}: <span>
 #. {ph1}: </span>
@@ -5610,7 +5610,7 @@ msgstr "{ph0}01{ph1} Giải mã chi nhánh"
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}02{ph1} Trace calls"
-msgstr "{ph0}02{ph1} Theo dõi cuộc gọi"
+msgstr "{ph0}02{ph1} Lần theo các lệnh gọi hàm"
 
 #. {ph0}: <span>
 #. {ph1}: </span>
@@ -5618,7 +5618,7 @@ msgstr "{ph0}02{ph1} Theo dõi cuộc gọi"
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}03{ph1} Recover the rule"
-msgstr "{ph0}03{ph1} Khôi phục quy tắc"
+msgstr "{ph0}03{ph1} Phục hồi quy tắc tính toán"
 
 #. {ph0}: <span>
 #. {ph1}: </span>
@@ -5628,12 +5628,12 @@ msgstr "{ph0}03{ph1} Khôi phục quy tắc"
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}Original x64 · selected instructions{ph1} {ph2}{ph3}"
-msgstr "{ph0}Ban đầu x64 * lựa chọn hướng dẫn{ph1} {ph2}{ph3}"
+msgstr "{ph0}x64 gốc · các chỉ lệnh được chọn{ph1} {ph2}{ph3}"
 
 #: website/public/index.html:457
 msgctxt "page:index.html"
 msgid "01 · Which branch?"
-msgstr "01 * chi Nhánh Nào?"
+msgstr "01 · Nhánh rẽ nào?"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -5644,13 +5644,13 @@ msgid ""
 "“{ph0}0x5b? 0x5c?{ph1} Two jumps to the same place. Which operators are "
 "these?”"
 msgstr ""
-"“{ph0}0x5b? 0x5c?{ph1} Hai bước nhảy đến cùng một nơi. Những nhà khai thác "
-"này là gì?”"
+"“{ph0}0x5b? 0x5c?{ph1} Hai lệnh jump đến cùng một đích. Đây là những toán tử"
+" nào?”"
 
 #: website/public/index.html:462
 msgctxt "page:index.html"
 msgid "Look up the command IDs, then label the branch."
-msgstr "Tra Cứu id lệnh, sau đó gắn nhãn nhánh."
+msgstr "Tra cứu mã lệnh, sau đó đặt nhãn cho nhánh rẽ."
 
 #: website/public/index.html:468
 msgctxt "page:index.html"
@@ -5665,7 +5665,7 @@ msgstr "Nhân ×"
 #: website/public/index.html:477
 msgctxt "page:index.html"
 msgid "02 · What do the calls do?"
-msgstr "02 · Các hàm được gọi làm gì?"
+msgstr "02 · Các lệnh gọi hàm thực hiện gì?"
 
 #. {ph0}: <strong >
 #. {ph1}: </strong >
@@ -5682,7 +5682,7 @@ msgstr ""
 #: website/public/index.html:484
 msgctxt "page:index.html"
 msgid "Inspect the helpers and trace the stored values."
-msgstr "Kiểm tra các chức năng trợ giúp và theo dõi các giá trị được lưu trữ."
+msgstr "Kiểm tra các hàm trợ giúp và lần theo giá trị lưu trữ."
 
 #: website/public/index.html:494
 msgctxt "page:index.html"
@@ -5692,7 +5692,7 @@ msgstr "Chia"
 #: website/public/index.html:499
 msgctxt "page:index.html"
 msgid "03 · What is the rule?"
-msgstr "03 * quy tắc Là gì?"
+msgstr "03 · Quy tắc tính là gì?"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -5709,12 +5709,17 @@ msgstr ""
 #: website/public/index.html:504
 msgctxt "page:index.html"
 msgid "Name the operands and check both operator paths."
-msgstr "Đặt tên cho các toán hạng và kiểm tra cả hai đường dẫn toán tử."
+msgstr "Đặt tên các toán hạng và kiểm tra cả hai nhánh toán tử."
+
+#: website/public/index.html:524
+msgctxt "page:index.html"
+msgid "An analyst thinking at a computer"
+msgstr "Nhà phân tích đang suy nghĩ trước máy tính"
 
 #: website/public/index.html:520 website/public/index.html:447
 msgctxt "page:index.html"
 msgid "Illustrative expert reasoning"
-msgstr "Lý luận chuyên gia minh họa"
+msgstr "Minh họa quy trình suy luận chuyên sâu"
 
 #. {ph0}: <strong >
 #. {ph1}: </strong >
@@ -5740,12 +5745,12 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Example prompt · Calculator"
-msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Ví dụ nhắc · Máy tính"
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Prompt mẫu · Calculator"
 
 #: website/public/index.html:556
 msgctxt "page:index.html"
 msgid "Example answer · based on the findings"
-msgstr "Câu trả lời ví dụ · dựa trên những phát hiện"
+msgstr "Câu trả lời mẫu · dựa trên các dữ kiện phát hiện"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -5754,7 +5759,7 @@ msgstr "Câu trả lời ví dụ · dựa trên những phát hiện"
 msgctxt "page:index.html"
 msgid ""
 "After +, the % button takes {ph0}a percentage of the first number.{ph1}"
-msgstr "Sau +, nút % mất {ph0}một tỷ lệ phần trăm của số đầu tiên.{ph1}"
+msgstr "Sau dấu +, nút % sẽ tính {ph0}tỷ lệ phần trăm theo số đầu tiên.{ph1}"
 
 #: website/public/index.html:572
 msgctxt "page:index.html"
@@ -5764,22 +5769,22 @@ msgstr "REA cung cấp"
 #: website/public/index.html:573
 msgctxt "page:index.html"
 msgid "The handler’s instructions, decompiled code and calls."
-msgstr "Hướng dẫn của trình xử lý, mã dịch ngược và các cuộc gọi."
+msgstr "Chỉ lệnh của handler, mã decompile và các lệnh gọi hàm."
 
 #: website/public/index.html:578
 msgctxt "page:index.html"
 msgid "Your agent explains"
-msgstr "Trợ lý giải thích"
+msgstr "Agent giải thích"
 
 #: website/public/index.html:579
 msgctxt "page:index.html"
 msgid "Which branch applies, what it calculates and how to rebuild it."
-msgstr "Chi nhánh nào áp dụng, những gì nó tính toán và cách xây dựng lại nó."
+msgstr "Nhánh rẽ nào được áp dụng, giá trị tính toán và cách dựng lại mã."
 
 #: website/public/index.html:603
 msgctxt "page:index.html"
 msgid "Example 01 · Chrome’s dinosaur game"
-msgstr "Ví dụ 01 * Chrome ' s trò chơi khủng long"
+msgstr "Ví dụ 01 · Trò chơi khủng long của Chrome"
 
 #: website/public/index.html:604
 msgctxt "page:index.html"
@@ -5809,19 +5814,19 @@ msgstr "Tốc độ"
 #: website/public/index.html:700
 msgctxt "page:index.html"
 msgid "Use the recovered acceleration rule"
-msgstr "Sử dụng quy tắc tăng tốc đã khôi phục"
+msgstr "Sử dụng quy tắc tăng tốc đã phục hồi"
 
 #: website/public/index.html:704
 msgctxt "page:index.html"
 msgid "Original rule: start at 6, then increase toward 13."
-msgstr "Quy tắc ban đầu: bắt đầu từ 6, sau đó tăng lên 13."
+msgstr "Quy tắc gốc: bắt đầu ở mức 6, sau đó tăng dần lên 13."
 
 #: website/public/index.html:707
 msgctxt "page:index.html"
 msgid "Move the slider to set your own speed. Space or Jump clears a cactus."
 msgstr ""
-"Di chuyển thanh trượt để thiết lập tốc độ của riêng bạn. Không gian Hoặc "
-"Nhảy xóa một cây xương rồng."
+"Kéo thanh trượt để chỉnh tốc độ. Bấm Space hoặc Nhảy để vượt qua cây xương "
+"rồng."
 
 #. {ph0}: <span class="prompt-symbol" aria-hidden="true">
 #. {ph1}: </span >
@@ -5847,19 +5852,17 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "Inspected target: {ph0}wayou’s Chromium-derived browser edition{ph1}."
-msgstr ""
-"Mục tiêu được kiểm tra: {ph0}PHIÊN bản trình duyệt CÓ NGUỒN GỐC TỪ Chromium "
-"của wayou{ph1}."
+msgstr "Mục tiêu kiểm tra: {ph0}bản web dựa trên Chromium của wayou{ph1}."
 
 #: website/public/index.html:718
 msgctxt "page:index.html"
 msgid "Open the speed lab →"
-msgstr "Mở phòng thí nghiệm tốc độ →"
+msgstr "Mở speed lab →"
 
 #: website/public/index.html:749
 msgctxt "page:index.html"
 msgid "What each part does"
-msgstr "Mỗi phần làm gì"
+msgstr "Vai trò từng phần"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -5913,7 +5916,7 @@ msgstr ""
 #: website/public/index.html:724
 msgctxt "page:index.html"
 msgid "See the script, checks and how to try the analysis"
-msgstr "Xem kịch bản, kiểm tra và cách thử phân tích"
+msgstr "Xem script, bài test và cách thử nghiệm phân tích"
 
 #. {ph0}: <code>index.js</code>
 #: website/public/index.html:776
@@ -5985,27 +5988,27 @@ msgstr ""
 #: website/public/index.html:827
 msgctxt "page:index.html"
 msgid "Example 02 · Windows Calculator"
-msgstr "Ví dụ 02 * Windows Máy Tính"
+msgstr "Ví dụ 02 · Windows Calculator"
 
 #: website/public/index.html:828
 msgctxt "page:index.html"
 msgid "Rebuild Calculator’s % button."
-msgstr "Dựng lại nút % của Máy tính."
+msgstr "Tái dựng nút % của Calculator."
 
 #: website/public/index.html:933
 msgctxt "page:index.html"
 msgid "Reset"
-msgstr "Đặt lại"
+msgstr "Reset"
 
 #: website/public/index.html:941
 msgctxt "page:index.html"
 msgid "10% of 200 = 20. Then 200 + 20 = 220."
-msgstr "10% của 200 = 20. Sau đó, 200 + 20 = 220."
+msgstr "10% của 200 = 20. Sau đó 200 + 20 = 220."
 
 #: website/public/index.html:944
 msgctxt "page:index.html"
 msgid "Interactive illustration of the inspected percentage rule."
-msgstr "Minh họa tương tác của quy tắc phần trăm được kiểm tra."
+msgstr "Minh họa tương tác về quy tắc tính phần trăm đã được phân tích."
 
 #. {ph0}: <code>previous = 200</code>
 #. {ph1}: <code>current = 10</code>
@@ -6013,7 +6016,7 @@ msgstr "Minh họa tương tác của quy tắc phần trăm được kiểm tra
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "For this example, {ph0} and {ph1}."
-msgstr "Đối với ví dụ này, {ph0} và {ph1}."
+msgstr "Với ví dụ này, {ph0} và {ph1}."
 
 #. {ph0}: <span class="prompt-symbol" aria-hidden="true">
 #. {ph1}: </span >
@@ -6036,7 +6039,7 @@ msgstr ""
 #: website/public/index.html:869
 msgctxt "page:index.html"
 msgid "With +"
-msgstr "Với +"
+msgstr "Với phép +"
 
 #. {ph0}: <span>
 #. {ph1}: </span >
@@ -6045,12 +6048,12 @@ msgstr "Với +"
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}Take 10% of the first number.{ph1}{ph2}"
-msgstr "{ph0}Lấy 10% số đầu tiên.{ph1}{ph2}"
+msgstr "{ph0}Tính 10% theo số đầu tiên.{ph1}{ph2}"
 
 #: website/public/index.html:876
 msgctxt "page:index.html"
 msgid "With ×"
-msgstr "Với ×"
+msgstr "Với phép ×"
 
 #. {ph0}: <span>
 #. {ph1}: </span>
@@ -6059,12 +6062,12 @@ msgstr "Với ×"
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}Turn 10% into 0.1.{ph1}{ph2}"
-msgstr "{ph0}Biến 10% thành 0,1.{ph1}{ph2}"
+msgstr "{ph0}Đổi 10% thành 0.1.{ph1}{ph2}"
 
 #: website/public/index.html:967
 msgctxt "page:index.html"
 msgid "From the installed app to a working % button"
-msgstr "Từ ứng dụng đã cài đặt đến nút % hoạt động"
+msgstr "Từ ứng dụng đã cài đặt đến nút % hoạt động hoàn chỉnh"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -6105,7 +6108,7 @@ msgstr ""
 #: website/public/index.html:951
 msgctxt "page:index.html"
 msgid "See the real code and how the answer was checked"
-msgstr "Xem mã thực và câu trả lời đã được kiểm tra như thế nào"
+msgstr "Xem mã nguồn thực tế và cách kiểm chứng câu trả lời"
 
 #: website/public/index.html:1023
 msgctxt "page:index.html"
@@ -6146,7 +6149,7 @@ msgstr "Cuộc điều tra đầu tiên của bạn"
 #: website/public/index.html:1163
 msgctxt "page:index.html"
 msgid "Try REA on a small app."
-msgstr "Hãy thử REA trên một ứng dụng nhỏ."
+msgstr "Thử dùng REA trên một ứng dụng nhỏ."
 
 #: website/public/index.html:1164
 msgctxt "page:index.html"
@@ -6160,12 +6163,12 @@ msgstr ""
 #: website/public/index.html:1169
 msgctxt "page:index.html"
 msgid "Try the guided example"
-msgstr "Hãy thử ví dụ hướng dẫn"
+msgstr "Thử ứng dụng mẫu có hướng dẫn"
 
 #: website/public/index.html:1186
 msgctxt "page:index.html"
 msgid "Native binaries"
-msgstr "Chương trình mã máy"
+msgstr "File nhị phân Native"
 
 #: website/public/index.html:1187
 msgctxt "page:index.html"
@@ -6179,7 +6182,7 @@ msgstr ""
 #: website/public/index.html:1191
 msgctxt "page:index.html"
 msgid "Native analysis guide"
-msgstr "Phân tích hướng dẫn chương trình mã máy"
+msgstr "Hướng dẫn phân tích Native binary"
 
 #: website/public/index.html:1194
 msgctxt "page:index.html"
@@ -6189,12 +6192,12 @@ msgstr "JavaScript & Electron"
 #: website/public/index.html:1196
 msgctxt "page:index.html"
 msgid "Application workflows"
-msgstr "Quy trình làm việc ứng dụng"
+msgstr "Quy trình phân tích ứng dụng"
 
 #: website/public/index.html:1199
 msgctxt "page:index.html"
 msgid "Browser & runtime activity"
-msgstr "Hoạt động trình duyệt và thời gian chạy"
+msgstr "Hoạt động trình duyệt & runtime"
 
 #: website/public/index.html:1200
 msgctxt "page:index.html"
@@ -6208,12 +6211,12 @@ msgstr ""
 #: website/public/index.html:1204
 msgctxt "page:index.html"
 msgid "Browser observation guide"
-msgstr "Hướng dẫn quan sát trình duyệt"
+msgstr "Hướng dẫn quan sát hành vi trình duyệt"
 
 #: website/public/index.html:1275
 msgctxt "page:index.html"
 msgid "Any questions?"
-msgstr "Bạn có câu hỏi?"
+msgstr "Bạn có câu hỏi nào không?"
 
 #: website/public/index.html:7
 msgctxt "page:index.html"
@@ -6227,22 +6230,22 @@ msgstr ""
 #: website/public/index.html:227
 msgctxt "page:index.html"
 msgid "Copy REA installation prompt"
-msgstr "Sao CHÉP lời nhắc cài ĐẶT REA"
+msgstr "Sao chép prompt cài đặt REA"
 
 #: website/public/index.html:251
 msgctxt "page:index.html"
 msgid "Copy setup command"
-msgstr "Sao chép lệnh thiết lập"
+msgstr "Sao chép lệnh cài đặt"
 
 #: website/public/index.html:383
 msgctxt "page:index.html"
 msgid "Follow the manual Calculator analysis"
-msgstr "Thực hiện theo phân tích máy tính thủ công"
+msgstr "Theo dõi phân tích Calculator thủ công"
 
 #: website/public/index.html:539
 msgctxt "page:index.html"
 msgid "Copy Calculator percentage question"
-msgstr "Sao chép câu hỏi tỷ lệ phần Trăm máy Tính"
+msgstr "Sao chép câu hỏi về phần trăm Calculator"
 
 #: website/public/index.html:673
 msgctxt "page:index.html"
@@ -6256,17 +6259,17 @@ msgstr ""
 #: website/public/index.html:620
 msgctxt "page:index.html"
 msgid "Copy dinosaur analysis prompt"
-msgstr "Sao chép dấu nhắc phân tích khủng long"
+msgstr "Sao chép prompt phân tích khủng long"
 
 #: website/public/index.html:890
 msgctxt "page:index.html"
 msgid "Choose the calculation"
-msgstr "Chọn tính toán"
+msgstr "Chọn phép tính"
 
 #: website/public/index.html:844
 msgctxt "page:index.html"
 msgid "Copy Calculator analysis prompt"
-msgstr "Sao chép lời nhắc phân tích máy tính"
+msgstr "Sao chép prompt phân tích Calculator"
 
 #: website/public/index.html:1312
 msgctxt "page:index.html"
@@ -9237,11 +9240,11 @@ msgid ""
 "harnesses; their outputs describe those probes rather than a captured "
 "desktop UI session."
 msgstr ""
-"Các ví dụ về clipboard và Markdown ảo đến từ các tài sản web được lưu trong "
-"bộ nhớ cache vào ngày 13 tháng 7 năm 2026, bao gồm các mô-đun {ph0}, {ph1}, "
-"{ph2} và {ph3}. Những tài sản đó có phiên bản riêng. Các đầu dò đã lưu thực "
-"thi các mô-đun được trích xuất và các dây nịt nhỏ; đầu ra của chúng mô tả "
-"các đầu dò đó thay vì một phiên GIAO diện người dùng máy tính để bàn bị bắt."
+"Các ví dụ về clipboard ảo và Markdown lấy từ web asset được cache ngày 13 "
+"tháng 7 năm 2026, bao gồm các module {ph0}, {ph1}, {ph2} và {ph3}. Các asset"
+" đó có phiên bản riêng. Các probe đã lưu thực thi các module được trích xuất"
+" và test harness nhỏ; output của chúng mô tả các probe đó thay vì một phiên "
+"capture giao diện desktop."
 
 #: website/public/showcase/notion/index.html:586
 msgctxt "page:showcase/notion/index.html"
@@ -9400,7 +9403,7 @@ msgstr ""
 #: website/public/showcase/th04/index.html:211
 msgctxt "page:showcase/th04/index.html"
 msgid "PC-98 · 16-bit DOS · C++ and assembly"
-msgstr "PC-98 * 16-bit DOS * c++ và lắp ráp"
+msgstr "PC-98 · 16-bit DOS · C++ và Assembly"
 
 #: website/public/showcase/th04/index.html:212
 msgctxt "page:showcase/th04/index.html"
@@ -9515,7 +9518,7 @@ msgstr "{ph0}REA trả về gì{ph1}"
 #, python-brace-format
 msgctxt "page:showcase/th04/index.html"
 msgid "{ph0}Assembly to C++{ph1}"
-msgstr "{ph0}Lắp Ráp Để C C{ph1}"
+msgstr "{ph0}Từ Assembly sang C++{ph1}"
 
 #. {ph0}: <a href="#checking">
 #. {ph1}: </a>
@@ -9718,7 +9721,7 @@ msgstr ""
 #: website/public/showcase/th04/index.html:459
 msgctxt "page:showcase/th04/index.html"
 msgid "From assembly to readable C++"
-msgstr "Từ lắp Ráp Đến có Thể đọc Được c C"
+msgstr "Từ Assembly đến mã C++ dễ đọc"
 
 #: website/public/showcase/th04/index.html:460
 msgctxt "page:showcase/th04/index.html"
@@ -9863,9 +9866,9 @@ msgid ""
 " The C++ above is a readable summary. Compiler checks below apply to the "
 "maintained source in the linked project."
 msgstr ""
-"Việc lắp ráp chọn nhánh vòng nhắm, tính toán mục tiêu và cửa hàng cuối cùng."
-" C++ ở trên là một bản tóm tắt có thể đọc được. Kiểm tra trình biên dịch bên"
-" dưới áp dụng cho nguồn được duy trì trong dự án được liên kết."
+"Mã assembly chọn nhánh vòng đạn ngắm, tính toán đường ngắm và lưu giá trị "
+"cuối. Đoạn mã C++ phía trên là bản tóm tắt dễ hiểu. Kiểm tra trình biên dịch"
+" bên dưới áp dụng cho mã nguồn trong dự án được liên kết."
 
 #: website/public/showcase/th04/index.html:617
 msgctxt "page:showcase/th04/index.html"
@@ -10063,9 +10066,9 @@ msgid ""
 "assembly. Beyond bullet generation, the source covers stages, bosses, "
 "rendering, input, menus, endings and score handling."
 msgstr ""
-"Dự án xây dựng bốn sản phẩm dos của trò chơi từ C++ và lắp ráp được duy trì."
-" Ngoài bullet generation, nguồn bao gồm các giai đoạn, ông chủ, kết xuất, "
-"đầu vào, menu, kết thúc và xử lý điểm."
+"Dự án build 4 sản phẩm DOS của trò chơi từ mã C++ và assembly được duy trì. "
+"Ngoài cơ chế bắn đạn, mã nguồn còn bao gồm các màn chơi, boss, rendering, "
+"input, menu, ending và xử lý điểm số."
 
 #. {ph0}: <a class="text-link" href="https://github.com/N0zoM1z0/th04" >
 #. {ph1}: </a >
@@ -10135,8 +10138,9 @@ msgid ""
 "recovered C++ to see how a ring of bullets is spaced and aimed at the "
 "player."
 msgstr ""
-"KIỂM tra MÃ DOS 16 bit gốc CỦA TH04 VỚI REA . Thực hiện theo lắp Ráp Và phục"
-" Hồi C++ để xem cách một vòng đạn được đặt cách nhau và nhắm vào người chơi."
+"Dùng REA kiểm tra mã 16-bit DOS gốc của TH04. Lần theo mã assembly và C++ "
+"phục hồi để xem vòng đạn được tính khoảng cách và nhắm vào người chơi như "
+"thế nào."
 
 #: website/public/showcase/th04/index.html:258
 msgctxt "page:showcase/th04/index.html"
@@ -10187,7 +10191,7 @@ msgstr "Thực HIỆN THEO CÁC TH04 nhằm mục đích tính vòng"
 #: website/public/showcase/th04/index.html:516
 msgctxt "page:showcase/th04/index.html"
 msgid "Copy TH04 assembly excerpt"
-msgstr "Sao CHÉP TH04 lắp ráp đoạn trích"
+msgstr "Sao chép đoạn trích Assembly của TH04"
 
 #: website/public/showcase/th04/index.html:550
 msgctxt "page:showcase/th04/index.html"
@@ -10698,7 +10702,7 @@ msgstr "Khoảng cách tương tự: 256 ÷ 16 = 16 đơn vị góc = 22,5°"
 #: website/public/showcase/th04/index.html:122
 msgctxt "shared"
 msgid "Showcases"
-msgstr "Ví dụ thực tế"
+msgstr "Showcases"
 
 #: website/public/blog/index.html:123
 #: website/public/blog/reverse-engineering-models/index.html:123
@@ -10879,32 +10883,32 @@ msgstr "Đầu ra định dạng dự kiến"
 #: website/public/guides/index.html:226
 msgctxt "page:guides/index.html"
 msgid "Instructions"
-msgstr "Hướng dẫn"
+msgstr "Instructions"
 
 #: website/public/guides/index.html:227
 msgctxt "page:guides/index.html"
 msgid "Caller"
-msgstr "Người gọi"
+msgstr "Caller"
 
 #: website/public/guides/index.html:228
 msgctxt "page:guides/index.html"
 msgid "Constants"
-msgstr "Hằng số"
+msgstr "Constants"
 
 #: website/public/guides/index.html:229
 msgctxt "page:guides/index.html"
 msgid "C function"
-msgstr "Chức năng C"
+msgstr "Hàm C"
 
 #: website/public/guides/index.html:244
 msgctxt "page:guides/index.html"
 msgid "Button"
-msgstr "Nút"
+msgstr "Nút bấm"
 
 #: website/public/guides/index.html:245
 msgctxt "page:guides/index.html"
 msgid "Preload API"
-msgstr "TẢI TRƯỚC API"
+msgstr "Preload API"
 
 #: website/public/guides/index.html:246
 msgctxt "page:guides/index.html"
@@ -10914,72 +10918,72 @@ msgstr "IPC"
 #: website/public/guides/index.html:246
 msgctxt "page:guides/index.html"
 msgid "CSV file"
-msgstr "CSV tập tin"
+msgstr "File CSV"
 
 #: website/public/guides/index.html:266
 msgctxt "page:guides/index.html"
 msgid "Your click"
-msgstr "Nhấp chuột của bạn"
+msgstr "Thao tác click"
 
 #: website/public/guides/index.html:267
 msgctxt "page:guides/index.html"
 msgid "Captured request"
-msgstr "Yêu cầu bị bắt"
+msgstr "Captured request"
 
 #: website/public/guides/index.html:268
 msgctxt "page:guides/index.html"
 msgid "Export script"
-msgstr "Xuất tập lệnh"
+msgstr "Script export"
 
 #: website/public/guides/javascript/index.html:371
 msgctxt "page:guides/javascript/index.html"
 msgid "REA result · summary.ipc excerpt"
-msgstr "KẾT quả REA · tóm tắt.trích đoạn ipc"
+msgstr "Kết quả REA · đoạn trích summary.ipc"
 
 #: website/public/guides/native/index.html:394
 msgctxt "page:guides/native/index.html"
 msgid "REA instruction excerpt · 0x406409"
-msgstr "TRÍCH ĐOẠN HƯỚNG dẫn REA · 0x406409"
+msgstr "Đoạn trích chỉ lệnh REA · 0x406409"
 
 #: website/public/guides/native/index.html:408
 msgctxt "page:guides/native/index.html"
 msgid "REA caller excerpt · 0x411f5b"
-msgstr "REA hàm gọi trích đoạn * 0x411f5b"
+msgstr "Đoạn trích caller REA · 0x411f5b"
 
 #: website/public/guides/native/index.html:422
 msgctxt "page:guides/native/index.html"
 msgid "REA byte results · interpreted as little-endian doubles"
-msgstr "KẾT quả byte REA * được hiểu là đôi endian nhỏ"
+msgstr "Dữ liệu byte REA · diễn giải dưới dạng số thực double little-endian"
 
 #: website/public/guides/native/index.html:439
 msgctxt "page:guides/native/index.html"
 msgid "Recovered C · excerpt"
-msgstr "Phục Hồi C · trích Đoạn"
+msgstr "Mã C phục hồi · đoạn trích"
 
 #: website/public/index.html:300 website/public/index.html:1054
 msgctxt "page:index.html"
 msgid "Showcases →"
-msgstr "Giới thiệu →"
+msgstr "Showcases →"
 
 #: website/public/index.html:783
 msgctxt "page:index.html"
 msgid "Selected settings from the inspected script"
-msgstr "Cài đặt đã chọn từ tập lệnh được kiểm tra"
+msgstr "Các thiết lập được chọn từ script đã kiểm tra"
 
 #: website/public/index.html:958
 msgctxt "page:index.html"
 msgid "Readable summary of the % handler"
-msgstr "Tóm tắt có thể đọc được của trình xử lý %"
+msgstr "Tóm tắt dễ hiểu về handler nút %"
 
 #: website/public/index.html:1002
 msgctxt "page:index.html"
 msgid "REA · selected original instructions"
-msgstr "REA * hướng dẫn ban đầu được chọn"
+msgstr "REA · các chỉ lệnh gốc được chọn"
 
 #: website/public/index.html:1013
 msgctxt "page:index.html"
 msgid "Operator IDs · Microsoft’s source"
-msgstr "Id nhà điều Hành * Nguồn Của Microsoft"
+msgstr "Mã định danh toán tử · Nguồn từ Microsoft"
 
 #: website/public/showcase/aegis/index.html:406
 #: website/public/showcase/aegis/index.html:438
@@ -11273,7 +11277,7 @@ msgstr "Tương Ứng Duy Trì C C"
 #: website/public/showcase/th04/index.html:620
 msgctxt "page:showcase/th04/index.html"
 msgid "Ring macro · TH04 branch, excerpt"
-msgstr "Vòng macro * chi NHÁNH TH04, đoạn trích"
+msgstr "Macro vòng đạn · Nhánh TH04, đoạn trích"
 
 #: website/public/showcase/th04/index.html:630
 msgctxt "page:showcase/th04/index.html"
@@ -11566,7 +11570,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/browser/index.html"
 msgid "{ph0} · example source excerpt"
-msgstr "{ph0} * trích đoạn nguồn ví dụ"
+msgstr "{ph0} · đoạn trích mã nguồn mẫu"
 
 #. {ph0}: <a href="../../examples/notes-web/">
 #. {ph1}: </a>
@@ -11582,7 +11586,8 @@ msgctxt "page:guides/browser/index.html"
 msgid ""
 "{ph0}Open the example{ph1} · {ph2}Download {ph3}{ph4} · {ph5}Download "
 "{ph6}{ph7}"
-msgstr "{ph0}Mở ví dụ{ph1} · {ph2}Tải về {ph3}{ph4} · {ph5}Tải về {ph6}{ph7}"
+msgstr ""
+"{ph0}Mở ứng dụng mẫu{ph1} · {ph2}Tải về {ph3}{ph4} · {ph5}Tải về {ph6}{ph7}"
 
 #. {ph0}: <span translate="no">renderer.js</span>
 #: website/public/guides/javascript/index.html:316
@@ -11591,7 +11596,7 @@ msgstr "{ph0}Mở ví dụ{ph1} · {ph2}Tải về {ph3}{ph4} · {ph5}Tải về
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid "{ph0} · example source"
-msgstr "{ph0} * nguồn ví dụ"
+msgstr "{ph0} · mã nguồn mẫu"
 
 #. {ph0}: <code>notes-example</code>
 #. {ph1}: <span translate="no">Node.js</span>
@@ -11603,8 +11608,8 @@ msgid ""
 "folder. Analyze it with {ph1} and npm; Electron is not needed for this "
 "example."
 msgstr ""
-"Tải xuống ví dụ và giải nén nó. Kho lưu trữ chứa đầy đủ {ph0} thư mục. Phân "
-"tích nó với {ph1} và npm; Electron không cần thiết cho ví dụ này."
+"Tải file mẫu và giải nén. File nén chứa toàn bộ thư mục {ph0}. Phân tích "
+"bằng {ph1} và npm; bạn không cần cài Electron để phân tích ví dụ này."
 
 #. {ph0}: <span translate="no">Node.js</span>
 #. {ph1}: <a href="get-started/">
@@ -11641,7 +11646,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "REA · loaded {ph0} · selected lines"
-msgstr "REA · đã tải {ph0} * các dòng đã chọn"
+msgstr "REA · đã tải {ph0} · các dòng được chọn"
 
 #. {ph0}: <span class="flow-label" >
 #. {ph1}: <span translate="no">calc.exe</span>
@@ -11719,7 +11724,8 @@ msgctxt "runtime"
 msgid "Switch to dark mode"
 msgstr "Chuyển sang giao diện tối"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/web-network-
+#. {ph0}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/web/web-network-
 #. captures.md" >
 #. {ph1}: </a >
 #: website/public/guides/browser/index.html:487
@@ -11731,10 +11737,10 @@ msgid ""
 "capture Evidence, or connect Everywhere's MCP server to inspect captured "
 "traffic with your agent."
 msgstr ""
-"Để kiểm tra phần thân yêu cầu và phản hồi HTTP, hãy dùng {ph0}Fiddler "
-"Everywhere: bản ghi SAZ, MCP và kỹ năng công khai{ph1}. Xuất SAZ ho?c HAR "
-"1.2 để lấy Evidence từ bản ghi trong REA ngoại tuyến, hoặc kết nối máy chủ "
-"MCP của Everywhere để kiểm tra lưu lượng đã ghi cùng trợ lý của bạn."
+"Để kiểm tra body của request và response HTTP, hãy dùng {ph0}Fiddler "
+"Everywhere: bản ghi SAZ, MCP và skill công khai{ph1}. Xuất SAZ hoặc HAR 1.2 "
+"để làm Evidence cho REA ngoại tuyến, hoặc kết nối MCP server của Everywhere "
+"để cùng agent phân tích traffic đã capture."
 
 #. {ph0}: <br />
 #: website/public/blog/index.html:207
@@ -12069,10 +12075,10 @@ msgid ""
 "{ph0}GPT-6.1-Sol's earlier work{ph1} got parts of the function to match, but"
 " the branches still joined up differently from the original."
 msgstr ""
-"Hàm TH09 thứ hai cho biết tại sao hướng đi mới đó lại quan trọng. Ở đây, trở"
-" ngại là làm thế nào một số chi nhánh chia sẻ công việc cuối cùng của họ. "
-"Công việc trước đó của {ph0}GPT-6.1-Sol{ph1} có các phần của hàm khớp với "
-"nhau, nhưng các nhánh vẫn được nối với nhau khác với ban đầu."
+"Hàm TH09 thứ hai minh chứng tại sao hướng đi mới đó lại quan trọng. Trở ngại"
+" ở đây là cách nhiều nhánh logic cùng chia sẻ bước xử lý cuối. Công việc "
+"trước đó của {ph0}GPT-6.1-Sol{ph1} đã làm khớp được một phần hàm, nhưng các "
+"nhánh rẽ vẫn kết nối khác với bản gốc."
 
 #. {ph0}: <a
 #. href="https://github.com/N0zoM1z0/th09/commit/da33a646221198ceb7f3df2b96e2ca0e9b2f705f"
@@ -13104,42 +13110,42 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}Showcases{ph1}"
-msgstr "{ph0}Ví dụ thực tế{ph1}"
+msgstr "{ph0}Showcases{ph1}"
 
 #: website/public/index.html:1048
 msgctxt "page:index.html"
 msgid "REA case studies."
-msgstr "REA nghiên cứu trường hợp."
+msgstr "Các case study của REA."
 
 #: website/public/index.html:1058
 msgctxt "page:index.html"
 msgid "Android · APK analysis"
-msgstr "Android * PHÂN tích APK"
+msgstr "Android · Phân tích file APK"
 
 #: website/public/index.html:1059
 msgctxt "page:index.html"
 msgid "How an authenticator generates a login code"
-msgstr "Cách trình xác thực tạo mã đăng nhập"
+msgstr "Cách ứng dụng authenticator tạo mã đăng nhập"
 
 #: website/public/index.html:1064
 msgctxt "page:index.html"
 msgid "Read the Android case study"
-msgstr "Đọc nghiên Cứu điển Hình Android"
+msgstr "Đọc case study Android"
 
 #: website/public/index.html:1069
 msgctxt "page:index.html"
 msgid "Electron · Feature tracing"
-msgstr "Electron * Tính năng truy tìm"
+msgstr "Electron · Feature tracing (Lần theo tính năng)"
 
 #: website/public/index.html:1070
 msgctxt "page:index.html"
 msgid "How Notion copies text and HTML"
-msgstr "Notion sao chép văn bản và HTML như thế nào"
+msgstr "Cách Notion copy text và HTML"
 
 #: website/public/index.html:1075
 msgctxt "page:index.html"
 msgid "Read the Notion case study"
-msgstr "Đọc nghiên CỨU điển HÌNH Notion"
+msgstr "Đọc case study Notion"
 
 #: website/public/index.html:1080
 msgctxt "page:index.html"
@@ -13379,8 +13385,8 @@ msgstr "Claude Desktop · trò chuyện qua ứng dụng máy tính"
 
 #. {ph0}: <a href="https://claude.ai/download">
 #. {ph1}: </a>
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
-#. configuration.md#claude-desktop" >
+#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/client-configuration.md#claude-desktop" >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:597
 #, python-brace-format
@@ -13426,12 +13432,11 @@ msgctxt "page:get-started/index.html"
 msgid "Setup ID"
 msgstr "ID thiết lập"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
-#. configuration.md" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/client-configuration.md" >
 #. {ph1}: </a >
-#. {ph2}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#released-
-#. package-and-main" >
+#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#released-package-and-main" >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:757
 #, python-brace-format
@@ -13459,8 +13464,8 @@ msgstr ""
 "Trong cuộc trò chuyện với Grok Bot, yêu cầu Bot thêm máy chủ MCP tùy chỉnh "
 "tên {ph0}, dùng lệnh này trên máy tính của Bot:"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
-#. configuration.md#other-client-settings" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/client-configuration.md#other-client-settings" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:788
 #, python-brace-format
@@ -13729,9 +13734,8 @@ msgstr ""
 "Nếu macOS yêu cầu quyền Automation, cho phép ứng dụng khởi chạy REA trong "
 "System Settings → Privacy & Security → Automation, rồi thử lại."
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#hopper"
-#. >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#hopper" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1099
 #, python-brace-format
@@ -13747,22 +13751,22 @@ msgstr "Ghidra · cài công cụ phân tích miễn phí và Java"
 #: website/public/get-started/index.html:1111
 msgctxt "page:get-started/index.html"
 msgid ""
-"Install a 64-bit JDK 21 or newer, including the Java compiler. Choose the "
+"Install a 64-bit JDK 25 or newer, including the Java compiler. Choose the "
 "package matching your computer's architecture."
 msgstr ""
-"Cài JDK 21 trở lên bản 64-bit, có cả trình biên dịch Java. Chọn gói phù hợp "
-"với kiến trúc máy tính của bạn."
+"Cài đặt JDK 25 64-bit trở lên, bao gồm cả trình biên dịch Java. Hãy chọn gói"
+" cài đặt phù hợp với kiến trúc máy tính của bạn."
 
 #. {ph0}: <code>ghidra_…_PUBLIC_….zip</code>
 #: website/public/get-started/index.html:1116
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
-"Download Ghidra 12.1.4 from the release's Assets list and extract the {ph0} "
+"Download Ghidra 12.2 from the release's Assets list and extract the {ph0} "
 "archive. Choose the release archive, not “Source code”."
 msgstr ""
-"Tải Ghidra 12.1.4 từ danh sách Assets của bản phát hành rồi giải nén tệp "
-"{ph0}. Chọn gói phát hành, không chọn “Source code”."
+"Tải Ghidra 12.2 từ danh sách Assets của bản phát hành và giải nén file "
+"{ph0}. Hãy chọn file nén bản phát hành, không chọn “Source code”."
 
 #. {ph0}: <code>ghidraRun</code>
 #. {ph1}: <code>ghidraRun.bat</code>
@@ -13776,17 +13780,17 @@ msgid ""
 msgstr ""
 "Tìm thư mục đã giải nén chứa {ph0} hoặc {ph1}. Dùng thư mục đó cho {ph2}."
 
-#. {ph0}: <a href="https://adoptium.net/temurin/releases/?version=21" >
+#. {ph0}: <a href="https://adoptium.net/temurin/releases/?version=25" >
 #. {ph1}: </a >
 #. {ph2}: <a
-#. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.1.4_build"
+#. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.2_build"
 #. >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:1127
 #, python-brace-format
 msgctxt "page:get-started/index.html"
-msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.1.4{ph3}"
-msgstr "{ph0}Tải JDK{ph1} · {ph2}Tải Ghidra 12.1.4{ph3}"
+msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.2{ph3}"
+msgstr "{ph0}Tải JDK{ph1} · {ph2}Tải Ghidra 12.2{ph3}"
 
 #. {ph0}: <code>java.home</code>
 #. {ph1}: <code>JAVA_HOME</code>
@@ -13811,11 +13815,11 @@ msgstr ""
 " lại trình thiết lập, chấp thuận cấu hình ứng dụng đã cập nhật, rồi khởi "
 "động lại trợ lý AI."
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#ghidra"
-#. >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#ghidra" >
 #. {ph1}: </a >
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/windows-
+#. {ph2}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/providers/windows-
 #. ghidra-p0.md" >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:1258
@@ -13865,7 +13869,8 @@ msgstr ""
 "Dùng tệp đăng ký JSON đã chuẩn bị theo hướng dẫn công cụ phân tích, rồi chạy"
 " lại trình thiết lập và khởi động lại trợ lý AI."
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/ida-
+#. {ph0}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/providers/ida-
 #. provider.md" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1376
@@ -14013,13 +14018,16 @@ msgctxt "page:get-started/index.html"
 msgid "Process behavior"
 msgstr "Hành vi tiến trình"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/flutter-
+#. {ph0}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/android/flutter-
 #. analysis.md" >
 #. {ph1}: </a >
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/javascript-
+#. {ph2}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/javascript/javascript-
 #. artifact-reconstruction.md" >
 #. {ph3}: </a >
-#. {ph4}: <a href="https://github.com/morluto/rea/blob/main/docs/evm-
+#. {ph4}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/evm/evm-
 #. bytecode.md" >
 #. {ph5}: </a >
 #. {ph6}: <a href="../guides/">
@@ -14122,9 +14130,8 @@ msgstr ""
 "Nếu đã cài CLI toàn cục, cập nhật bằng {ph0}. Dùng {ph1} để gỡ cấu hình ứng "
 "dụng và skill của REA."
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#diagnose-
-#. update-and-remove" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#diagnose-update-and-remove" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1812
 #, python-brace-format
@@ -14351,9 +14358,8 @@ msgstr ""
 "Trên macOS, việc biên dịch cần Xcode Command Line Tools, make và bison. Dùng"
 " hướng dẫn phù hợp với máy tính của bạn:"
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#missing-
-#. macos-native-decompiler" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#missing-macos-native-decompiler" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1216
 #, python-brace-format
@@ -14361,9 +14367,8 @@ msgctxt "page:get-started/index.html"
 msgid "{ph0}macOS · Intel{ph1}"
 msgstr "{ph0}macOS · Intel{ph1}"
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#macos-
-#. arm64-native-decompiler" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#macos-arm64-native-decompiler" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1222
 #, python-brace-format
@@ -14372,7 +14377,7 @@ msgid "{ph0}macOS · Apple Silicon{ph1}"
 msgstr "{ph0}macOS · Apple Silicon{ph1}"
 
 #. {ph0}: <a
-#. href="https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.1.4_build/GhidraDocs/GettingStarted.md#building-
+#. href="https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.2_build/GhidraDocs/GettingStarted.md#building-
 #. native-components" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1228
@@ -14538,8 +14543,8 @@ msgid ""
 "Selected assembly from the installed Calculator DLL. The thoughts and reply "
 "illustrate the findings. {ph0}Continue with the Calculator example ↓{ph1}"
 msgstr ""
-"Lắp ráp được chọn từ DLL Máy tính đã cài đặt. Những suy nghĩ và trả lời minh"
-" họa những phát hiện. {ph0}Tiếp tục với ví dụ máy tính ↓{ph1}"
+"Mã assembly được chọn từ file DLL của Calculator. Các dòng suy luận và câu "
+"trả lời minh họa rõ các dữ kiện. {ph0}Tiếp tục với ví dụ Calculator ↓{ph1}"
 
 #. {ph0}: <span class="terminal-dots" aria-hidden="true" >
 #. {ph1}: <i>
@@ -14917,15 +14922,6 @@ msgctxt "page:contributors/index.html"
 msgid "Find a contributor"
 msgstr "Tìm người đóng góp"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/graphs/contributors">
-#. {ph1}: </a>
-#. {ph2}: <time datetime="2026-10-15" translate="no">2026-10-15</time>
-#: website/public/contributors/index.html:1114
-#, python-brace-format
-msgctxt "page:contributors/index.html"
-msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
-msgstr "Từ {ph0}danh sách người đóng góp trên GitHub{ph1} · Cập nhật: {ph2}."
-
 #: website/public/contributors/index.html:1119
 msgctxt "page:contributors/index.html"
 msgid "No matching contributors. Try another username."
@@ -14967,7 +14963,7 @@ msgstr "Môi trường RL"
 #: website/public/guides/index.html:276
 msgctxt "page:guides/index.html"
 msgid "Build an environment for agents"
-msgstr "Xây dựng môi trường cho tác tử"
+msgstr "Xây dựng môi trường cho agent"
 
 #: website/public/guides/index.html:277
 msgctxt "page:guides/index.html"
@@ -14975,8 +14971,8 @@ msgid ""
 "Record a web app session, turn it into tools and local data, then add tasks "
 "and reward checks."
 msgstr ""
-"Ghi phiên ứng dụng web, chuyển thành công cụ và dữ liệu cục bộ, rồi thêm tác"
-" vụ và kiểm tra phần thưởng."
+"Ghi lại phiên làm việc trên web app, chuyển thành công cụ và dữ liệu cục bộ,"
+" rồi thêm task cùng kiểm tra phần thưởng (reward)."
 
 #: website/public/guides/index.html:282
 msgctxt "page:guides/index.html"
@@ -14986,7 +14982,7 @@ msgstr "Ghi lại"
 #: website/public/guides/index.html:282
 msgctxt "page:guides/index.html"
 msgid "Build"
-msgstr "Xây dựng"
+msgstr "Build"
 
 #: website/public/guides/index.html:283
 msgctxt "page:guides/index.html"
@@ -15001,12 +14997,55 @@ msgstr "Đánh giá"
 #: website/public/guides/index.html:287
 msgctxt "page:guides/index.html"
 msgid "Build an RL environment"
-msgstr "Hướng dẫn xây dựng môi trường"
+msgstr "Xây dựng môi trường RL"
+
+#. {ph0}: <a href="#desktop">
+#. {ph1}: </a>
+#: website/public/guides/rl-environments/index.html:228
+#, python-brace-format
+msgctxt "page:guides/rl-environments/index.html"
+msgid "{ph0}Build a desktop app environment{ph1}"
+msgstr "{ph0}Xây dựng môi trường ứng dụng desktop{ph1}"
+
+#: website/public/guides/rl-environments/index.html:492
+msgctxt "page:guides/rl-environments/index.html"
+msgid "Build a desktop app environment"
+msgstr "Xây dựng môi trường ứng dụng desktop"
+
+#: website/public/guides/rl-environments/index.html:493
+msgctxt "page:guides/rl-environments/index.html"
+msgid ""
+"For a Linux desktop app, describe the task you want an agent to practice. "
+"For example, ask it to build a Gnote environment where the agent adds olive "
+"oil to a shopping list. The agent installs the app on a local build "
+"computer, writes the task, exports the environment, and checks it on a fresh"
+" computer using screenshots, the mouse, and the keyboard."
+msgstr ""
+"Với ứng dụng desktop Linux, hãy mô tả tác vụ bạn muốn agent luyện tập. Ví "
+"dụ: yêu cầu agent xây dựng môi trường Gnote để thêm dầu ô-liu vào danh sách "
+"mua sắm. Agent cài đặt ứng dụng trên máy build cục bộ, viết task, export môi"
+" trường rồi kiểm thử trên máy mới bằng ảnh chụp màn hình, chuột và bàn phím."
+
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
+#. build-
+#. computer.md#set-up-a-build-host">
+#. {ph1}: </a>
+#: website/public/guides/rl-environments/index.html:501
+#, python-brace-format
+msgctxt "page:guides/rl-environments/index.html"
+msgid ""
+"The build host needs Linux on amd64 or arm64, Docker, and the pinned "
+"AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
+"installation and readiness checks."
+msgstr ""
+"Máy host build cần Linux trên kiến trúc amd64 hoặc arm64, Docker và phiên "
+"bản AgentEnv được ghim. Xem {ph0}hướng dẫn cài đặt build desktop{ph1} để "
+"biết các bước cài đặt và kiểm tra tính sẵn sàng."
 
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Skip to content"
-msgstr ""
+msgstr "Chuyển đến nội dung chính"
 
 #. {ph0}: <a href="../../">
 #. {ph1}: </a>
@@ -15016,12 +15055,12 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Home{ph1} / {ph2}Guides{ph3} / RL environments"
-msgstr ""
+msgstr "{ph0}Trang chủ{ph1} / {ph2}Hướng dẫn{ph3} / Môi trường RL"
 
 #: website/public/guides/rl-environments/index.html:204
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build RL environments."
-msgstr ""
+msgstr "Xây dựng môi trường RL."
 
 #: website/public/guides/rl-environments/index.html:205
 #: website/public/guides/rl-environments/index.html:7
@@ -15030,6 +15069,8 @@ msgid ""
 "Turn a recorded web app session into a runnable environment for training and"
 " testing AI agents."
 msgstr ""
+"Chuyển một phiên ghi lại từ web app thành môi trường có thể chạy được để "
+"huấn luyện và đánh giá AI agent."
 
 #. {ph0}: <a href="https://x.com/reatools/status/2112574822584918075?s=20" >
 #. {ph1}: </a >
@@ -15037,33 +15078,33 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Watch the announcement video on X{ph1}"
-msgstr ""
+msgstr "{ph0}Xem video công bố trên X{ph1}"
 
 #: website/public/guides/rl-environments/index.html:217
 #: website/public/guides/rl-environments/index.html:216
 msgctxt "page:guides/rl-environments/index.html"
 msgid "On this page"
-msgstr ""
+msgstr "Trên trang này"
 
 #: website/public/guides/rl-environments/index.html:230
 msgctxt "page:guides/rl-environments/index.html"
 msgid "What REA builds"
-msgstr ""
+msgstr "Những gì REA xây dựng"
 
 #: website/public/guides/rl-environments/index.html:273
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Before you start"
-msgstr ""
+msgstr "Trước khi bắt đầu"
 
 #: website/public/guides/rl-environments/index.html:374
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Run the environment"
-msgstr ""
+msgstr "Chạy môi trường"
 
 #: website/public/guides/rl-environments/index.html:455
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Check what works"
-msgstr ""
+msgstr "Kiểm tra hoạt động"
 
 #: website/public/guides/rl-environments/index.html:231
 msgctxt "page:guides/rl-environments/index.html"
@@ -15073,6 +15114,10 @@ msgid ""
 "calls, the local data those tools use, and a basic test that checks the "
 "environment starts and responds."
 msgstr ""
+"Agent có thể luyện tập tìm lỗi, tạo thư mục hoặc chỉnh sửa bản ghi mà không "
+"cần chạy ứng dụng gốc. REA xây dựng các công cụ để agent gọi, dữ liệu cục bộ"
+" cho các công cụ đó và một bài kiểm tra cơ bản nhằm đảm bảo môi trường khởi "
+"động và phản hồi."
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -15087,6 +15132,8 @@ msgid ""
 "{ph0}01 · Record{ph1}{ph2}Use a test app{ph3}{ph4}Capture requests, "
 "responses, and the results of changes.{ph5}"
 msgstr ""
+"{ph0}01 · Record{ph1}{ph2}Dùng ứng dụng thử nghiệm{ph3}{ph4}Capture các "
+"request, response và kết quả của những thay đổi.{ph5}"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -15102,6 +15149,9 @@ msgid ""
 "state{ph3}{ph4}Export a runnable AgentEnv folder with the recording and a "
 "test.{ph5}"
 msgstr ""
+"{ph0}02 · Build với REA{ph1}{ph2}Tạo công cụ và trạng thái cục "
+"bộ{ph3}{ph4}Export thư mục AgentEnv có thể chạy được cùng bản ghi và bài "
+"test.{ph5}"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -15117,6 +15167,9 @@ msgid ""
 "agent{ph3}{ph4}Add task goals and reward checks for evaluation or RL "
 "training.{ph5}"
 msgstr ""
+"{ph0}03 · Chạy với AgentEnv{ph1}{ph2}Cung cấp môi trường cho "
+"agent{ph3}{ph4}Thêm mục tiêu tác vụ và kiểm tra điểm thưởng (reward) để đánh"
+" giá hoặc huấn luyện RL.{ph5}"
 
 #: website/public/guides/rl-environments/index.html:265
 msgctxt "page:guides/rl-environments/index.html"
@@ -15124,6 +15177,8 @@ msgid ""
 "The recording determines which operations the environment can support. "
 "Changes are supported when the recording confirms their effects."
 msgstr ""
+"Bản ghi quyết định môi trường có thể hỗ trợ những thao tác nào. Các thay đổi"
+" được hỗ trợ khi bản ghi xác nhận được kết quả của chúng."
 
 #. {ph0}: <a href="../../get-started/">
 #. {ph1}: </a >
@@ -15136,6 +15191,10 @@ msgid ""
 "create, edit, and delete data. REA records the app you provide; you start it"
 " and prepare its test data."
 msgstr ""
+"{ph0}Cài đặt REA cùng coding agent của bạn{ph1}. Để ghi lại ứng dụng, bạn "
+"cần có trình duyệt thuộc họ Chrome và một phiên bản ứng dụng thử nghiệm đang"
+" chạy nơi agent có thể tạo, sửa và xóa dữ liệu. REA ghi lại ứng dụng bạn "
+"cung cấp; bạn chỉ cần khởi chạy và chuẩn bị dữ liệu thử nghiệm."
 
 #. {ph0}: <a href="https://github.com/scaleapi/agentenv-framework#install" >
 #. {ph1}: </a >
@@ -15148,11 +15207,14 @@ msgid ""
 "and start Docker. REA's compatibility check uses AgentEnv version {ph2} with"
 " Python 3.12."
 msgstr ""
+"Để chạy môi trường đã export, hãy cài đặt {ph0}framework AgentEnv{ph1} và "
+"khởi động Docker. Kiểm tra tương thích của REA sử dụng AgentEnv phiên bản "
+"{ph2} với Python 3.12."
 
 #: website/public/guides/rl-environments/index.html:291
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Record and build with your agent"
-msgstr ""
+msgstr "Ghi lại và build cùng agent của bạn"
 
 #: website/public/guides/rl-environments/index.html:292
 msgctxt "page:guides/rl-environments/index.html"
@@ -15160,6 +15222,8 @@ msgid ""
 "Tell your agent which app and operations to cover. For an app with folders, "
 "adapt this example:"
 msgstr ""
+"Cho agent biết ứng dụng và các thao tác cần bao phủ. Với một app quản lý thư"
+" mục, hãy tham khảo ví dụ này:"
 
 #. {ph0}: <span class="terminal-dots" aria-hidden="true" >
 #. {ph1}: <i>
@@ -15174,7 +15238,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
-msgstr ""
+msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Coding agent của bạn"
 
 #: website/public/guides/rl-environments/index.html:302
 #: website/public/guides/rl-environments/index.html:347
@@ -15182,7 +15246,7 @@ msgstr ""
 #: website/public/guides/rl-environments/index.html:419
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Copy"
-msgstr ""
+msgstr "Sao chép"
 
 #. {ph0}: <span class="prompt-symbol" aria-hidden="true">
 #. {ph1}: </span >
@@ -15205,6 +15269,12 @@ msgid ""
 " {ph6}, which does not exist yet. Check which operations are supported and "
 "report any gaps.{ph7}{ph8}{ph9}"
 msgstr ""
+"{ph0}›{ph1}{ph2}Dùng REA để xây dựng môi trường AgentEnv từ web app thử "
+"nghiệm của tôi tại {ph3}. Bao quát các thao tác liệt kê, tạo, đổi tên và xóa"
+" thư mục. Bạn có thể tạo và xóa các thư mục test; giữ nguyên dữ liệu hiện "
+"có. Đăng nhập với quyền admin bằng mật khẩu trong {ph4}. Sử dụng trình duyệt"
+" tại {ph5} và export ra {ph6} (chưa tồn tại). Kiểm tra các thao tác được hỗ "
+"trợ và báo cáo phần còn thiếu.{ph7}{ph8}{ph9}"
 
 #. {ph0}: <code>APP_PASSWORD</code>
 #: website/public/guides/rl-environments/index.html:326
@@ -15215,6 +15285,9 @@ msgid ""
 "in the environment that starts REA's MCP server so the password stays out of"
 " the prompt."
 msgstr ""
+"Prompt mẫu. Hãy thay thế URL, thao tác, tài khoản và đường dẫn. Thiết lập "
+"{ph0} trong môi trường khởi chạy MCP server của REA để tránh đưa mật khẩu "
+"trực tiếp vào prompt."
 
 #. {ph0}: <a href="#run">
 #. {ph1}: </a>
@@ -15226,11 +15299,14 @@ msgid ""
 "operations, and exports the environment. After export, continue with "
 "{ph0}running the environment{ph1}."
 msgstr ""
+"Agent kiểm tra ứng dụng, ghi lại phiên làm việc, xác minh các thao tác được "
+"hỗ trợ và export môi trường. Sau khi export, tiếp tục với bước {ph0}chạy môi"
+" trường{ph1}."
 
 #: website/public/guides/rl-environments/index.html:338
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Or use a saved recording"
-msgstr ""
+msgstr "Hoặc sử dụng bản ghi đã lưu"
 
 #: website/public/guides/rl-environments/index.html:339
 msgctxt "page:guides/rl-environments/index.html"
@@ -15239,11 +15315,14 @@ msgid ""
 "with API response bodies from the browser's network panel, then build into a"
 " new or empty folder:"
 msgstr ""
+"File HAR ghi lại các request và response mạng của trình duyệt. Hãy export "
+"file HAR kèm body response của API từ tab Network của trình duyệt, sau đó "
+"build vào một thư mục mới hoặc trống:"
 
 #: website/public/guides/rl-environments/index.html:346
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build the environment"
-msgstr ""
+msgstr "Build môi trường"
 
 #. {ph0}: <code>capture-browser-scenario</code>
 #. {ph1}: <code>--dry-run</code>
@@ -15256,6 +15335,10 @@ msgid ""
 " build reads local data and writes the folder without contacting the app. "
 "Add {ph1} to review the report without writing files."
 msgstr ""
+"Bạn cũng có thể truyền file Evidence JSON lưu bởi {ph0} của REA hoặc từ kiểm"
+" tra HAR. Evidence là bản ghi đã lưu kèm thông tin nguồn gốc. Quá trình "
+"build đọc dữ liệu cục bộ và xuất thư mục mà không cần kết nối tới ứng dụng. "
+"Thêm {ph1} để xem trước báo cáo mà không ghi file ra đĩa."
 
 #: website/public/guides/rl-environments/index.html:366
 msgctxt "page:guides/rl-environments/index.html"
@@ -15264,6 +15347,9 @@ msgid ""
 " because the recording did not establish their effects. Each withheld "
 "operation has a reason and a hint about what to record next."
 msgstr ""
+"Báo cáo liệt kê các thao tác đọc, thay đổi được hỗ trợ và các thao tác bị "
+"giữ lại do bản ghi chưa xác nhận được kết quả của chúng. Mỗi thao tác bị giữ"
+" lại đều kèm lý do và gợi ý những gì cần ghi lại tiếp theo."
 
 #: website/public/guides/rl-environments/index.html:375
 msgctxt "page:guides/rl-environments/index.html"
@@ -15271,11 +15357,13 @@ msgid ""
 "Whether your agent exported the folder or you built it from a recording, run"
 " it with AgentEnv:"
 msgstr ""
+"Dù agent export thư mục hay bạn tự build từ bản ghi, hãy chạy môi trường "
+"bằng AgentEnv:"
 
 #: website/public/guides/rl-environments/index.html:381
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Run the environment test"
-msgstr ""
+msgstr "Chạy bài kiểm tra môi trường"
 
 #: website/public/guides/rl-environments/index.html:393
 msgctxt "page:guides/rl-environments/index.html"
@@ -15283,6 +15371,9 @@ msgid ""
 "Use the path your agent reported if it differs. The first run builds the "
 "container image and needs access to its image and package sources."
 msgstr ""
+"Dùng đường dẫn agent báo cáo nếu có sự khác biệt. Lần chạy đầu tiên sẽ build"
+" image container và cần quyền truy cập tới image registry cùng nguồn gói "
+"phần mềm."
 
 #: website/public/guides/rl-environments/index.html:398
 msgctxt "page:guides/rl-environments/index.html"
@@ -15291,11 +15382,15 @@ msgid ""
 "a suitable read tool exists, calls it and checks its response status. "
 "Passing it shows the environment starts and responds in that setup."
 msgstr ""
+"Smoke task đi kèm là bài kiểm tra cơ bản. Nó kiểm tra số lượng công cụ và "
+"khi có công cụ đọc phù hợp, nó sẽ gọi và kiểm tra status code của response. "
+"Vượt qua bài test chứng minh môi trường khởi động và phản hồi trong cấu hình"
+" đó."
 
 #: website/public/guides/rl-environments/index.html:406
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Add tasks and reward checks"
-msgstr ""
+msgstr "Thêm task và hàm kiểm tra điểm thưởng (reward)"
 
 #: website/public/guides/rl-environments/index.html:407
 msgctxt "page:guides/rl-environments/index.html"
@@ -15304,6 +15399,9 @@ msgid ""
 "and run training. Your coding agent can help write the tasks and checks. "
 "Start with one operation the environment supports:"
 msgstr ""
+"Sử dụng môi trường với framework RL của bạn để định nghĩa mục tiêu, chấm "
+"điểm kết quả và tiến hành huấn luyện. Coding agent có thể giúp viết các task"
+" và hàm kiểm tra. Hãy bắt đầu từ một thao tác mà môi trường hỗ trợ:"
 
 #. {ph0}: <span class="prompt-symbol" aria-hidden="true">
 #. {ph1}: </span >
@@ -15321,6 +15419,11 @@ msgid ""
 "the result. Reset the environment before each run. Use the AgentEnv task and"
 " verifier formats.{ph3}{ph4}{ph5}"
 msgstr ""
+"{ph0}›{ph1}{ph2}Sử dụng môi trường đã export này để thêm một task AgentEnv "
+"yêu cầu agent tạo thư mục tên Practice. Kiểm tra trạng thái môi trường để "
+"xác nhận thư mục tồn tại với tên đó, và dùng kiểm tra này để tính điểm kết "
+"quả. Đặt lại (reset) môi trường trước mỗi lần chạy. Sử dụng định dạng task "
+"và verifier của AgentEnv.{ph3}{ph4}{ph5}"
 
 #: website/public/guides/rl-environments/index.html:440
 msgctxt "page:guides/rl-environments/index.html"
@@ -15329,6 +15432,9 @@ msgid ""
 " changes data should check the resulting state; a retrieval task can check "
 "an answer against a recorded value."
 msgstr ""
+"Prompt mẫu cho môi trường hỗ trợ tạo thư mục. Tác vụ thay đổi dữ liệu cần "
+"kiểm tra trạng thái kết quả; tác vụ truy xuất dữ liệu có thể so sánh câu trả"
+" lời với giá trị đã ghi nhận."
 
 #. {ph0}: <a href="https://www.agentenvframework.com/docs" >
 #. {ph1}: </a >
@@ -15340,6 +15446,9 @@ msgid ""
 "specific grading is added in the evaluation workflow. See the {ph0}AgentEnv "
 "documentation{ph1} for tasks, verifiers, and agent connections."
 msgstr ""
+"Bản export bao gồm môi trường có thể chạy được và bài test cơ bản. Phần chấm"
+" điểm cho từng task sẽ được thêm trong quy trình đánh giá. Xem {ph0}tài liệu"
+" AgentEnv{ph1} để biết thêm về task, verifier và cách kết nối agent."
 
 #: website/public/guides/rl-environments/index.html:456
 msgctxt "page:guides/rl-environments/index.html"
@@ -15349,6 +15458,10 @@ msgid ""
 "change. Repeat with different values. For deletes, record the missing-item "
 "response and the updated list."
 msgstr ""
+"Để các thay đổi được hỗ trợ, hãy ghi lại cả kết quả lẫn hành động: đọc một "
+"mục, thay đổi nó, sau đó đọc lại mục đó và danh sách trước khi thực hiện "
+"thay đổi tiếp theo. Lặp lại với các giá trị khác nhau. Với thao tác xóa, hãy"
+" ghi lại response báo thiếu mục đó và danh sách đã cập nhật."
 
 #. {ph0}: <code>environment-compare</code>
 #: website/public/guides/rl-environments/index.html:462
@@ -15360,6 +15473,10 @@ msgid ""
 "separate recording of calls made against the app from the same starting "
 "data."
 msgstr ""
+"Bài test khởi động thành công, agent hoàn thành task và việc khớp với ứng "
+"dụng gốc là các bước kiểm tra riêng biệt. Với bước kiểm tra cuối, hãy dùng "
+"{ph0} kèm bản ghi độc lập của các cuộc gọi tới ứng dụng từ cùng dữ liệu khởi"
+" đầu."
 
 #: website/public/guides/rl-environments/index.html:468
 msgctxt "page:guides/rl-environments/index.html"
@@ -15368,6 +15485,10 @@ msgid ""
 "paths. Custom headers, query values, and body tokens can remain. Credential-"
 "name warnings identify places to review; they do not remove those values."
 msgstr ""
+"Trước khi chia sẻ thư mục, hãy kiểm tra lại các response body và đường dẫn "
+"cục bộ còn giữ lại. Custom headers, giá trị truy vấn và token trong body có "
+"thể vẫn còn. Cảnh báo tên thông tin xác thực giúp chỉ ra những chỗ cần rà "
+"soát; chúng không tự động xóa các giá trị đó."
 
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/agent-
 #. environments-quickstart.md" >
@@ -15383,36 +15504,39 @@ msgid ""
 "reports and comparison commands. The {ph2}environment reference{ph3} covers "
 "direct MCP serving, state controls, and limits."
 msgstr ""
+"Xem {ph0}hướng dẫn ghi lại và kiểm chứng đầy đủ{ph1} để biết thêm về báo cáo"
+" độ bao phủ và các lệnh so sánh. Tài liệu {ph2}tham khảo về môi trường{ph3} "
+"cung cấp chi tiết về phục vụ MCP trực tiếp, quản lý trạng thái và giới hạn."
 
 #: website/public/guides/rl-environments/index.html:6
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build RL environments with REA"
-msgstr ""
+msgstr "Xây dựng môi trường RL với REA"
 
 #: website/public/guides/rl-environments/index.html:302
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Copy environment prompt"
-msgstr ""
+msgstr "Sao chép prompt môi trường"
 
 #: website/public/guides/rl-environments/index.html:347
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Copy environment build command"
-msgstr ""
+msgstr "Sao chép lệnh build môi trường"
 
 #: website/public/guides/rl-environments/index.html:382
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Copy environment run command"
-msgstr ""
+msgstr "Sao chép lệnh chạy môi trường"
 
 #: website/public/guides/rl-environments/index.html:419
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Copy task prompt"
-msgstr ""
+msgstr "Sao chép prompt task"
 
 #: website/public/guides/rl-environments/index.html:507
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Back to top"
-msgstr ""
+msgstr "Về đầu trang"
 
 #. {ph0}: <a href="#rl-environments">
 #. {ph1}: </a>
@@ -15453,7 +15577,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}What REA builds{ph1}"
-msgstr ""
+msgstr "{ph0}Những gì REA xây dựng{ph1}"
 
 #. {ph0}: <a href="#prepare">
 #. {ph1}: </a>
@@ -15461,7 +15585,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Before you start{ph1}"
-msgstr ""
+msgstr "{ph0}Trước khi bắt đầu{ph1}"
 
 #. {ph0}: <a href="#record">
 #. {ph1}: </a>
@@ -15469,7 +15593,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Record with your agent{ph1}"
-msgstr ""
+msgstr "{ph0}Ghi lại cùng agent của bạn{ph1}"
 
 #. {ph0}: <a href="#build">
 #. {ph1}: </a>
@@ -15477,7 +15601,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Use a saved recording{ph1}"
-msgstr ""
+msgstr "{ph0}Sử dụng bản ghi đã lưu{ph1}"
 
 #. {ph0}: <a href="#run">
 #. {ph1}: </a>
@@ -15485,7 +15609,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Run the environment{ph1}"
-msgstr ""
+msgstr "{ph0}Chạy môi trường{ph1}"
 
 #. {ph0}: <a href="#tasks">
 #. {ph1}: </a>
@@ -15493,7 +15617,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Add tasks and rewards{ph1}"
-msgstr ""
+msgstr "{ph0}Thêm task và reward{ph1}"
 
 #. {ph0}: <a href="#check">
 #. {ph1}: </a>
@@ -15501,7 +15625,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Check what works{ph1}"
-msgstr ""
+msgstr "{ph0}Kiểm tra hoạt động{ph1}"
 
 #: website/public/showcase/index.html:301
 msgctxt "page:showcase/index.html"
@@ -15601,48 +15725,24 @@ msgctxt "page:index.html"
 msgid "Methods and reconstruction notes."
 msgstr "Phương pháp và ghi chép về tái tạo phần mềm."
 
-#: website/public/blog/index.html:83 website/public/blog/index.html:96
-#: website/public/blog/reverse-engineering-models/index.html:83
-#: website/public/blog/reverse-engineering-models/index.html:96
-#: website/public/blog/touhou-reconstruction/index.html:83
-#: website/public/blog/touhou-reconstruction/index.html:96
-#: website/public/contributors/index.html:83
-#: website/public/contributors/index.html:96
-#: website/public/examples/dino-lab/index.html:83
-#: website/public/examples/dino-lab/index.html:96
-#: website/public/faq/index.html:83 website/public/faq/index.html:96
-#: website/public/first-investigation/index.html:83
-#: website/public/first-investigation/index.html:96
-#: website/public/get-started/index.html:83
-#: website/public/get-started/index.html:96
-#: website/public/guides/browser/index.html:83
-#: website/public/guides/browser/index.html:96
-#: website/public/guides/index.html:83 website/public/guides/index.html:96
-#: website/public/guides/javascript/index.html:83
-#: website/public/guides/javascript/index.html:96
-#: website/public/guides/native/index.html:83
-#: website/public/guides/native/index.html:96
-#: website/public/guides/rl-environments/index.html:83
-#: website/public/guides/rl-environments/index.html:96
-#: website/public/index.html:83 website/public/index.html:96
-#: website/public/showcase/aegis/index.html:83
-#: website/public/showcase/aegis/index.html:96
-#: website/public/showcase/ctf/index.html:83
-#: website/public/showcase/ctf/index.html:96
-#: website/public/showcase/dx-ball/index.html:83
-#: website/public/showcase/dx-ball/index.html:96
-#: website/public/showcase/index.html:83 website/public/showcase/index.html:96
-#: website/public/showcase/notion/index.html:83
-#: website/public/showcase/notion/index.html:96
-#: website/public/showcase/th04/index.html:83
-#: website/public/showcase/th04/index.html:96
+#: website/public/blog/index.html:105 website/public/blog/index.html:118
+#: website/public/blog/reverse-engineering-models/index.html:105
+#: website/public/blog/reverse-engineering-models/index.html:118
+#: website/public/contributors/index.html:105
+#: website/public/contributors/index.html:118
+#: website/public/examples/dino-lab/index.html:105
+#: website/public/examples/dino-lab/index.html:118
+#: website/public/faq/index.html:105 website/public/faq/index.html:118
+#: website/public/first-investigation/index.html:105
+#: website/public/first-investigation/index.html:118
+#: website/public/get-started/index.html:105
+#: website/public/get-started/index.html:118 website/public/index.html:105
+#: website/public/index.html:118
 msgctxt "shared"
-msgid ""
-"REA: Find out how software works. Reverse engineering with your coding "
-"agent."
+msgid "Blue REA lettering beside disassembly, hex data and an agent workflow."
 msgstr ""
-"REA-Tìm hiểu cách thức hoạt động của phần mềm. Kỹ thuật đảo ngược với agent "
-"mã hóa của bạn."
+"Dòng chữ REA màu xanh bên cạnh mã disassembly, dữ liệu hex và quy trình của "
+"agent."
 
 #: website/public/index.html:357
 msgctxt "page:index.html"
@@ -15721,6 +15821,9 @@ msgid ""
 "renderer has since changed; the recorded source locations accompany the API,"
 " channel and handler findings."
 msgstr ""
+"Ghi nhận bởi REA 4.1.0 trên phiên bản trước của ví dụ bên dưới. Renderer sau"
+" đó đã thay đổi; các vị trí mã nguồn được ghi nhận đi kèm phát hiện về API, "
+"channel và handler."
 
 #. {ph0}: <code>--client</code>
 #: website/public/get-started/index.html:635
@@ -15730,6 +15833,8 @@ msgid ""
 "Use the ID with {ph0} when choosing a client explicitly. These clients are "
 "supported in npm 6.8.0 and later."
 msgstr ""
+"Sử dụng ID này với {ph0} khi chọn client một cách tường minh. Các client này"
+" được hỗ trợ trong npm 6.8.0 trở lên."
 
 #. {ph0}: <code>droid</code>
 #. {ph1}: <code>dsh</code>
@@ -15746,6 +15851,8 @@ msgid ""
 "{ph0}, {ph1}, {ph2}, {ph3}, {ph4}, {ph5} and {ph6} require npm 6.5.0 or "
 "later. {ph7} requires npm 6.8.0 or later."
 msgstr ""
+"{ph0}, {ph1}, {ph2}, {ph3}, {ph4}, {ph5} và {ph6} yêu cầu npm 6.5.0 trở lên."
+" {ph7} yêu cầu npm 6.8.0 trở lên."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -15757,15 +15864,19 @@ msgid ""
 "with an MCP registration. The macOS headless profile requires a source build"
 " or a release that includes it."
 msgstr ""
+"{ph0}IDA{ph1} (Windows; macOS arm64 headless): sử dụng bản cài IDA hiện có "
+"với đăng ký MCP. Profile macOS headless yêu cầu build từ nguồn hoặc bản phát"
+" hành có hỗ trợ."
 
 #: website/public/get-started/index.html:1042
 msgctxt "page:get-started/index.html"
 msgid "x86_64 installer on supported distributions"
-msgstr ""
+msgstr "Trình cài đặt x86_64 trên các bản phân phối được hỗ trợ"
 
 #. {ph0}: <a href="../../get-started/">
 #. {ph1}: </a>
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/android-
+#. {ph2}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/android/android-
 #. analysis.md" >
 #. {ph3}: </a >
 #: website/public/showcase/aegis/index.html:714
@@ -15778,6 +15889,11 @@ msgid ""
 "prerequisites and PowerShell setup. A Linux environment such as WSL is "
 "another option."
 msgstr ""
+"{ph0}Cài đặt REA{ph1}, sau đó tải hai file này vào cùng một thư mục. Trên "
+"Windows x64, sử dụng package có hỗ trợ native control Windows phù hợp và "
+"stdin giao thức; xem {ph2}hướng dẫn Android provider{ph3} để biết các điều "
+"kiện tiên quyết và cách thiết lập PowerShell. Môi trường Linux như WSL cũng "
+"là một lựa chọn khác."
 
 #: website/public/get-started/index.html:1072
 msgctxt "page:get-started/index.html"
@@ -15788,6 +15904,11 @@ msgid ""
 "arm64, use Ghidra. Hopper is commercial software; its demo has vendor-"
 "defined limits."
 msgstr ""
+"Thiết lập tự động trên Linux yêu cầu máy chủ x86_64 chạy Ubuntu 24.04+, "
+"Fedora 41+, Nobara 44+, Arch Linux, CachyOS hoặc Omarchy. Trình khởi chạy "
+"Hopper hiện có cũng có thể được cấu hình trên các bản phân phối Linux được "
+"hỗ trợ khác. Trên Linux arm64, hãy sử dụng Ghidra. Hopper là phần mềm thương"
+" mại; bản demo có các giới hạn do nhà phát triển quy định."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -15800,6 +15921,10 @@ msgid ""
 "license before your first analysis. Automated Linux setup requires x86_64; "
 "use Ghidra on Linux arm64."
 msgstr ""
+"{ph0}Hopper{ph1} (macOS hoặc Linux): REA setup sẽ phát hiện hoặc đề xuất cài"
+" đặt. Trên macOS, mở Hopper một lần và chọn demo mode hoặc kích hoạt license"
+" trước lần phân tích đầu tiên. Thiết lập tự động trên Linux yêu cầu kiến "
+"trúc x86_64; hãy dùng Ghidra trên Linux arm64."
 
 #~ msgctxt "page:get-started/index.html"
 #~ msgid ""
@@ -17471,3 +17596,26 @@ msgstr ""
 #~ msgctxt "page:showcase/th04/index.html"
 #~ msgid "{ph0}Angle and velocity · source excerpt{ph1}"
 #~ msgstr ""
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "Windows x64 has experimental, read-only support for native x86 and x64 PE "
+#~ "applications and DLLs on fixed local NTFS drives. Use an existing Ghidra "
+#~ "12.1.x installation and a 64-bit JDK 21 or newer:"
+#~ msgstr ""
+#~ "Windows x64 có hỗ trợ thử nghiệm, chỉ đọc cho các ứng dụng VÀ Dll X86 và x64"
+#~ " pe gốc trên các ổ đĩa ntfs cục bộ cố định. Sử DỤNG Ghidra 12.1 hiện có.x "
+#~ "cài đặt VÀ 64-bit JDK 21 hoặc mới hơn:"
+
+#, python-brace-format
+#~ msgctxt "page:contributors/index.html"
+#~ msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
+#~ msgstr "Từ {ph0}danh sách người đóng góp trên GitHub{ph1} · Cập nhật: {ph2}."
+
+#~ msgctxt "shared"
+#~ msgid ""
+#~ "REA: Find out how software works. Reverse engineering with your coding "
+#~ "agent."
+#~ msgstr ""
+#~ "REA-Tìm hiểu cách thức hoạt động của phần mềm. Kỹ thuật đảo ngược với agent "
+#~ "mã hóa của bạn."

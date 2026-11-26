@@ -10,14 +10,14 @@ English sources are in `website/public/`; translations are standard gettext PO
 catalogs in `website/locales/`. The site uses HTML, CSS and small
 scripts for copying code, following code comparisons and playing the dinosaur
 speed reconstruction. Small Python commands maintain shared HTML, prepare
-downloads and check the site. There is no frontend framework, bundler or npm
-dependency. A build generates all editions in `website/_site/`. The resulting
-files work as ordinary static files; language switching needs no JavaScript.
+downloads and check the site. The site uses ordinary static files without a
+frontend framework or bundler. A build generates all editions in
+`website/_site/`. Language switching needs no JavaScript.
 
 Korean editions load the variable Noto Sans KR webfont through Google Fonts
 (`fonts.googleapis.com` and `fonts.gstatic.com`) so the preferred Korean font
 does not depend on fonts installed on the reader's PC. Other editions keep
-system fonts. Text remains visible while the font loads (`display=swap`), and
+system fonts. The Korean font stylesheet loads at low priority. Text remains visible while the font loads (`display=swap`), and
 local Korean fonts are used if Google Fonts is unavailable. The stylesheet is
 added during translation rendering; generated `_site/` pages are not authored.
 
@@ -26,12 +26,15 @@ visual system and review process. Read it before adding or revising a page.
 
 ## Local preview
 
-From the repository root:
+From the repository root, use the Node.js version pinned in `.nvmrc`.
+Preparing and checking the site uses the repository's locked YAML parser
+without building the REA package.
 
 ```sh
 python3 -m venv website/.venv
 source website/.venv/bin/activate
 python3 -m pip install -r website/requirements.txt
+npm ci --omit=dev --ignore-scripts
 python3 scripts/website.py serve
 ```
 
@@ -44,7 +47,7 @@ install them with `sudo apt-get install libcairo2 fonts-dejavu-core`. On an
 Apple Silicon Mac, enter an ARM shell first with `/usr/bin/arch -arm64 /bin/zsh`. Install
 the ARM build with `/opt/homebrew/bin/brew install cairo pkg-config`. Install
 the sharing-card font with `/opt/homebrew/bin/brew install --cask font-dejavu`.
-The card in `public/assets/social-card.svg` requests DejaVu Sans, so Cairo output
+The SVG sharing artwork requests DejaVu fonts, so Cairo output
 uses a fallback font without it. Verify with `fc-match "DejaVu Sans"`. The result
 should name DejaVu. A plain
 `brew` call can select the Intel brew when `/usr/local/bin` comes first or the
@@ -89,15 +92,15 @@ Edit the page's HTML in `public/`. Keep the question, evidence and result easy t
 follow. The writing and design guidance in [style-guide.md](style-guide.md)
 applies to every page.
 
-| Change                          | Edit                                                             | Then run                                        |
-| ------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------- |
-| Page text, examples or figures  | The page's HTML outside the marked shared regions                | `python3 scripts/website.py check`              |
-| Search title or description     | The page's `<title>` and first description meta tag              | `python3 scripts/website.py sync`, then `check` |
-| Main navigation                 | `NAVIGATION` in `scripts/website.py`                             | `sync`, then `check`                            |
-| Header, social links or footer  | `templates/header.html.tmpl` or `templates/footer.html.tmpl`     | `sync`, then `check`                            |
-| Theme loading and browser color | `templates/theme.html.tmpl` and `public/assets/theme.js`         | `sync`, then `check`                            |
-| Shared link previews            | `templates/sharing.html.tmpl` or `public/assets/social-card.svg` | `sync`, then `check`                            |
-| Translation                     | `locales/<language>/messages.po`                                 | `translations check`, then `check`              |
+| Change                          | Edit                                                               | Then run                                        |
+| ------------------------------- | ------------------------------------------------------------------ | ----------------------------------------------- |
+| Page text, examples or figures  | The page's HTML outside the marked shared regions                  | `python3 scripts/website.py check`              |
+| Search title or description     | The page's `<title>` and first description meta tag                | `python3 scripts/website.py sync`, then `check` |
+| Main navigation                 | `NAVIGATION` in `scripts/website.py`                               | `sync`, then `check`                            |
+| Header, social links or footer  | `templates/header.html.tmpl` or `templates/footer.html.tmpl`       | `sync`, then `check`                            |
+| Theme loading and browser color | `templates/theme.html.tmpl` and `public/assets/theme.js`           | `sync`, then `check`                            |
+| Shared link previews            | `templates/sharing.html.tmpl`, `artwork/` and `scripts/website.py` | `sync`, then `check`                            |
+| Translation                     | `locales/<language>/messages.po`                                   | `translations check`, then `check`              |
 
 After changing English text, run `python3 scripts/website.py translations extract`
 before `check`. Existing translations and reviewer comments survive extraction;
@@ -161,7 +164,7 @@ This network audit runs separately so third-party uptime does not block every PR
 Keep its report outside public assets.
 
 Links are only part of a content review. When updating setup or support claims,
-compare them with [installation.md](../docs/installation.md), the relevant
+compare them with [installation.md](../docs/getting-started/installation.md), the relevant
 provider guide and the released package. A case study's pinned version and date
 describe its recorded investigation; update them only when repeating that work.
 
@@ -181,7 +184,7 @@ describe its recorded investigation; update them only when repeating that work.
 - `public/showcase/ctf/index.html`: DownUnderCTF's masked-squares flag checker, extracted equations and real process captures.
 - `public/get-started/index.html`: agent setup, first CLI result and provider guides.
 - `public/faq/index.html`: concise answers about setup, updates, analysis and troubleshooting.
-- `public/contributors/index.html`: one searchable, alphabetical grid of GitHub contributors, with profile links and contribution guidance.
+- `public/contributors/index.html`: one searchable, commit-ranked grid of GitHub contributors, with profile links and contribution guidance.
 - `public/guides/`: a guide hub and native, JavaScript/Electron and browser examples.
 - `public/guides/rl-environments/index.html`: recording a web app, exporting a runnable environment, and adding tasks and reward checks.
 - `public/examples/`: downloadable Electron source and an interactive Notes browser app.
@@ -193,11 +196,9 @@ root and a GitHub Pages project path such as `/rea/`.
 ### Update contributors
 
 `public/contributors/people.json` is a dated snapshot of the repository's public
-GitHub contributor list, including accounts GitHub identifies as bots. Every
-profile has the same presentation; there are no team tiers or contribution
-rankings. The page links the source list and shows the snapshot date. Avatars
-load from GitHub; usernames and profile links remain usable without images or
-JavaScript. Search is a small progressive enhancement.
+commit authors and co-authors on `main`. Profiles appear in descending commit
+order, with ties sorted by username. The website and README avatar grid use the
+same snapshot. Usernames and profile links work without images or JavaScript.
 
 Refresh the snapshot with GitHub CLI available, then regenerate the marked
 `website:contributors` region from `templates/contributors.html.tmpl`:
@@ -209,9 +210,11 @@ python3 scripts/website.py translations extract
 python3 scripts/website.py check
 ```
 
-Refresh fetches every API page and validates the complete result before replacing
-the snapshot. Review and commit the JSON, rendered page and catalog updates
-together. Builds and offline checks use that snapshot, not the live API.
+Refresh pins the branch revision and joins GitHub’s paginated REST commit
+authors and GraphQL commit authors by SHA. It counts a linked account once per
+commit and fetches its public avatar for `public/contributors/avatars.png`.
+Review and commit the JSON, PNG, rendered page, and catalog updates together.
+Builds and offline checks use the saved snapshot.
 
 ## Search and sharing metadata
 
@@ -245,10 +248,12 @@ live response after publication. The mirrored `/rea/robots.txt` is not the
 hostname-root robots file for `morluto.github.io`; canonical HTML tags establish
 the mirror's preference.
 
-`public/assets/social-card.svg` is the maintained 1200 × 630 preview source.
-CairoSVG generates `social-card.png` for sharing clients. Commit the SVG, not the
-PNG. Both hosts receive the generated image in the same publishing artifact.
-The preview uses the site's typography, palette and direct headline.
+The default card uses the original blue REA wordmark and the refined analysis panel. `SOCIAL_FIGURES` in `scripts/website.py` maps
+individual routes to their figures. The build renders 1200 × 630 PNGs for both
+hosts. Each language edition uses its own title and description and shares the
+same artwork for a given route. Open Graph, X Cards and Google structured data
+reference the same image. Pages permit large image previews, and blog posts
+also include `BlogPosting` structured data.
 
 Verification checks route-specific canonicals, unique titles, descriptions,
 sharing fields, image dimensions, indexing policy and complete sitemap coverage.
@@ -332,8 +337,8 @@ language editions and tabs on the same host. If storage is blocked, the button
 still works for the current page. Without JavaScript, the site stays light and
 the button stays hidden.
 
-The shared `theme` head region loads `assets/theme.js` before the stylesheet so a
-saved choice applies before the first paint. That script owns the resolved
+The shared `theme` head region applies the saved choice inline before the first
+paint. The deferred `assets/theme.js` then synchronizes the resolved
 `data-theme`, browser `theme-color` and `website-theme-change` event. The CSS
 palette, embedded SVGs and dinosaur canvas follow that choice. Keep the theme
 region in the page scaffold and run `sync` after editing its template.
@@ -388,8 +393,9 @@ script reads the displayed position when opening or closing the menu.
 On narrower screens it becomes a sticky, native disclosure after the opening
 section; selecting a link
 closes the menu and focuses the destination. The homepage script follows
-the reading position and marks the current link. Without JavaScript, the
-menu stays open and its fragment links remain usable.
+the reading position and marks the current link. Escape and a pointer press
+outside the menu close the overlay. Without JavaScript, the disclosure starts
+closed; opening it keeps the fragment links usable.
 The RL environments section pairs its explanation and guide links with a
 copyable agent prompt on a contrasting surface. It follows the case studies
 and stacks into reading order on small screens.
@@ -494,8 +500,10 @@ It generates these public files in ignored `_site/`:
 - `.well-known/agent-skills/index.json`: the draft v0.2.0 skills discovery index.
   Its archive contains the maintained
   `.agents/skills/reverse-engineer-anything/SKILL.md` and Markdown references.
-  The name and description come from YAML frontmatter; SHA-256 covers the
-  complete, reproducible ZIP, so reference changes invalidate the digest too.
+  The name and description come from the same authored manifest reader used
+  during packaging. The website archives the original manifest as it appears in
+  the repository. SHA-256 covers the complete, reproducible ZIP, so reference
+  changes invalidate the digest too.
 - `.well-known/ard.json`: an ARD manifest with representative analyst queries.
 - `.well-known/ai-catalog.json`: an AI Catalog 1.0 document listing that same
   downloadable skill. These advertise installation instructions for the local
@@ -611,6 +619,10 @@ Verify <https://rea.tools/>, <https://rea.tools/guides/javascript/>,
 404, and directory pages retain trailing slashes so relative assets and links
 resolve correctly. The root README and browser guide use `https://rea.tools/`
 as the public website URL.
+
+The build minifies the shared stylesheet. It also publishes permanent redirects
+from `/showcases` to `/showcase/` and from `/environments` to
+`/guides/rl-environments/`. GitHub Pages serves static redirects for the same URLs.
 
 Production publication uses the synchronized GitHub Actions workflow below.
 Local Wrangler commands above publish only the separate preview Worker.

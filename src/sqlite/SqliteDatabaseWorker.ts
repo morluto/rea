@@ -9,6 +9,7 @@ import {
   SqliteInspectionFailure,
   sqlitePrimaryResultCode,
 } from "./SqliteDatabaseLimits.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const requestSchema = z.strictObject({
   snapshot_path: z.string(),
@@ -33,7 +34,7 @@ const main = async (): Promise<void> => {
     };
   } catch (cause: unknown) {
     const code = sqlitePrimaryResultCode(cause);
-    const message = cause instanceof Error ? cause.message : String(cause);
+    const message = errorMessage(cause);
     reply =
       cause instanceof SqliteColumnEvaluationFailure
         ? {
@@ -59,7 +60,7 @@ const main = async (): Promise<void> => {
                     ? "memory"
                     : code === 18
                       ? "output-limit"
-                      : "format",
+                      : "malformed",
               message,
             };
   }

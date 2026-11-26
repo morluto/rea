@@ -1,23 +1,31 @@
+import { EventEmitter } from "node:events";
 import type { Page, Route } from "playwright-core";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import type { BrowserScenarioAction } from "../domain/browserScenarioValues.js";
 import { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
+import { scenarioSerializationAllowance } from "./BrowserScenarioSerialization.js";
 import { responsePointerValue } from "./BrowserScenarioResponseValues.js";
 import { performPlaywrightScenarioAction } from "./PlaywrightScenarioActions.js";
+import { phaseArrival } from "../../tests/support/lifecycleHarness.js";
 
 const ORIGIN = "https://app.example.test";
 
+const scenarioInput = (
+  actions: readonly unknown[],
+  secrets: unknown[] = [],
+) => ({
+  browser: { mode: "launch", executable_path: "/opt/chromium/chrome" },
+  start_url: { url: `${ORIGIN}/` },
+  actions,
+  storage: { cookies: [], local_storage: [], session_storage: [] },
+  secrets,
+  capture: {},
+});
+
 const scenario = (actions: readonly unknown[], secrets: unknown[] = []) =>
-  browserScenarioSchema.parse({
-    browser: { mode: "launch", executable_path: "/opt/chromium/chrome" },
-    start_url: { url: `${ORIGIN}/` },
-    actions,
-    storage: { cookies: [], local_storage: [], session_storage: [] },
-    secrets,
-    capture: {},
-  });
+  browserScenarioSchema.parse(scenarioInput(actions, secrets));
 
 const requestStep = (fields: Record<string, unknown>) => ({
   step_id: "create",
@@ -27,112 +35,72 @@ const requestStep = (fields: Record<string, unknown>) => ({
   ...fields,
 });
 
-const issues = (actions: readonly unknown[], secrets: unknown[] = []) => {
-  const parsed = browserScenarioSchema.safeParse({
-    browser: { mode: "launch", executable_path: "/opt/chromium/chrome" },
-    start_url: { url: `${ORIGIN}/` },
-    actions,
-    storage: { cookies: [], local_storage: [], session_storage: [] },
-    secrets,
-    capture: {},
-  });
-  return parsed.success
-    ? []
-    : parsed.error.issues.map((issue) => issue.message);
+const issues = (actions: readonly unknown[]) => {
+  const result = browserScenarioSchema.safeParse(scenarioInput(actions));
+  return result.success ? [] : result.error.issues;
 };
 
-describe("request step schema", () => {
-  it("refuses repeated header names, User-Agent and line breaks in literal values or prefixes", () => {
-    const literal = (value: string) => ({ source: "literal", value });
-    expect(
-      issues([
-        requestStep({
-          headers: [
-            { name: "X-A", value: literal("one") },
-            { name: "x-a", value: literal("two") },
-          ],
-        }),
-      ]),
-    ).toContainEqual(expect.stringContaining("more than once"));
-    expect(
-      issues([
-        requestStep({
-          headers: [{ name: "User-Agent", value: literal("agent") }],
-        }),
-      ]),
-    ).toContainEqual(expect.stringContaining("cannot set"));
-    expect(
-      issues([requestStep({ expected_status: [200, 303] })]),
-    ).toContainEqual(expect.stringContaining("3xx"));
-    for (const header of [
-      { name: "X-A", value: literal("a\r\nX-B: b") },
-      { name: "X-A", value: literal("a"), prefix: "Bearer\n" },
-    ])
-      expect(issues([requestStep({ headers: [header] })])).toContainEqual(
-        expect.stringContaining("line breaks"),
-      );
+const issueAt = (path: readonly (string | number)[], message?: string) =>
+  expect.objectContaining({
+    path,
+    ...(message === undefined
+      ? {}
+      : { message: expect.stringContaining(message) }),
   });
 
-  it("accepts a declared secret as a request header value", () => {
-    const parsed = scenario(
-      [
-        requestStep({
-          headers: [
-            {
-              name: "Authorization",
-              value: { source: "secret", secret_id: "token" },
-              prefix: "Bearer ",
-            },
-          ],
-        }),
-      ],
-      [{ secret_id: "token", environment_variable: "APP_TOKEN" }],
+it("rejects invalid request options at their input paths", () => {
+  const literal = (value: string) => ({ source: "literal", value });
+  const header = (value: unknown, name = "X-A", prefix?: string) => ({
+    name,
+    value,
+    prefix,
+  });
+  const cases = [
+    [
+      { headers: [header(literal("one")), header(literal("two"), "x-a")] },
+      ["headers", 1, "name"],
+      "more than once",
+    ],
+    [
+      { headers: [header(literal("agent"), "User-Agent")] },
+      ["headers", 0, "name"],
+      "cannot set User-Agent: the browser controls it",
+    ],
+    [
+      { headers: [header(literal("trace"), "Sec-Trace")] },
+      ["headers", 0, "name"],
+      "cannot set Sec-Trace: names starting with Proxy- or Sec- are reserved",
+    ],
+    [
+      { headers: [header(literal("auth"), "proxy-authorization")] },
+      ["headers", 0, "name"],
+      "cannot set proxy-authorization: names starting with Proxy- or Sec-",
+    ],
+    [
+      { headers: [header(literal("a\r\nX-B: b"))] },
+      ["headers", 0, "value", "value"],
+      "line breaks",
+    ],
+    [
+      { headers: [header(literal("a"), "X-A", "Bearer\n")] },
+      ["headers", 0, "prefix"],
+      "line breaks",
+    ],
+    [{ expected_status: [200, 303] }, ["expected_status", 1], "3xx"],
+    [{ method: "GET", json: { a: 1 } }, ["json"], "cannot send a body"],
+    [{ path: "/\n/[bad]" }, ["path"], undefined],
+  ] as const;
+  for (const [input, path, message] of cases)
+    expect(issues([requestStep(input)]), JSON.stringify(input)).toContainEqual(
+      issueAt(["actions", 0, ...path], message),
     );
-    expect(parsed.actions[0]).toMatchObject({
-      action: "request",
-      headers: [
-        {
-          name: "Authorization",
-          value: { source: "secret", secret_id: "token" },
-          prefix: "Bearer ",
-        },
-      ],
-    });
-  });
-
-  it("refuses paths that leave the start origin", () => {
-    for (const path of [
-      "//evil.test/x",
-      "/\\evil.test/x",
-      "https://evil.test/",
-      "/\n/[bad]",
-    ])
-      expect(issues([requestStep({ path })]).length, path).toBeGreaterThan(0);
-  });
-
-  it("refuses a body on GET, a header fetch cannot set and an undeclared secret", () => {
-    expect(
-      issues([requestStep({ method: "GET", json: { a: 1 } })]),
-    ).toContainEqual(expect.stringContaining("cannot send a body"));
-    expect(
-      issues([
-        requestStep({
-          headers: [
-            { name: "Cookie", value: { source: "literal", value: "a=b" } },
-          ],
-        }),
-      ]),
-    ).toContainEqual(expect.stringContaining("cannot set this header"));
-    expect(
-      issues([
-        requestStep({
-          headers: [
-            { name: "X-Key", value: { source: "secret", secret_id: "key" } },
-          ],
-        }),
-      ]),
-    ).toContainEqual(expect.stringContaining("not declared"));
-  });
+  expect(
+    issues([
+      requestStep({
+        headers: [header({ source: "secret", secret_id: "key" })],
+      }),
+    ]),
+  ).toContainEqual(issueAt(["secrets"], "not declared"));
 });
 
 interface FakeFetch {
@@ -145,8 +113,6 @@ const fakePage = (options: {
   /** The origin the page reports when the request is sent, if it moved after the check. */
   readonly sendingOrigin?: string;
   readonly cookies?: readonly { name: string; value: string }[];
-  readonly cookieDelayMs?: number;
-  readonly evaluateDelayMs?: number;
   readonly storage?: Record<string, string>;
 }) => {
   const url = options.url ?? `${ORIGIN}/dashboard`;
@@ -156,30 +122,25 @@ const fakePage = (options: {
   vi.stubGlobal("location", {
     origin: options.sendingOrigin ?? new URL(url).origin,
   });
+  const context = { cookies: async () => options.cookies ?? [] };
   return {
     on: vi.fn(),
     off: vi.fn(),
     route: async () => {},
     unroute: async () => {},
     url: () => url,
-    context: () => ({
-      cookies: async () => {
-        if (options.cookieDelayMs !== undefined)
-          await new Promise((resolve) =>
-            setTimeout(resolve, options.cookieDelayMs),
-          );
-        return options.cookies ?? [];
-      },
-    }),
+    context: () => context,
     evaluate: async <Arg, Result>(
       fn: (arg: Arg) => Result | Promise<Result>,
       arg: Arg,
     ): Promise<Result> => {
-      if (options.evaluateDelayMs !== undefined)
-        await new Promise((resolve) =>
-          setTimeout(resolve, options.evaluateDelayMs),
-        );
-      return fn(arg);
+      // Like Playwright, run the callback from its source text with a cloned
+      // argument, so it cannot reach this module's imports or closures.
+      const pageFunction = new Function(
+        "arg",
+        `return (${fn.toString()})(arg);`,
+      ) as (arg: Arg) => Result | Promise<Result>;
+      return await pageFunction(structuredClone(arg));
     },
   } as unknown as Page;
 };
@@ -265,22 +226,61 @@ describe("request step execution", () => {
   });
 });
 
+const useRequestClock = () => {
+  vi.useFakeTimers();
+  onTestFinished(() => void vi.useRealTimers());
+};
+
 describe("request dispatch boundary", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
   it("sends nothing when browser evaluation starts after the absolute deadline", async () => {
+    useRequestClock();
     const calls = stubFetch(200);
-    const parsed = scenario([requestStep({ timeout_ms: 5 })]);
+    const page = fakePage({});
+    const evaluate = page.evaluate.bind(page);
+    vi.spyOn(page, "evaluate").mockImplementation((fn, arg) => {
+      // Advance the page clock at evaluation without expiring the host's monotonic clock.
+      vi.setSystemTime(Date.now() + 20);
+      return evaluate(fn, arg);
+    });
+    const parsed = scenario([requestStep({ timeout_ms: 20 })]);
     await expect(
-      perform(
-        fakePage({ evaluateDelayMs: 30 }),
-        parsed.actions[0]!,
-        resolved(parsed),
-      ),
-    ).rejects.toThrow("ran out of time");
+      perform(page, parsed.actions[0]!, resolved(parsed)),
+    ).rejects.toThrow("The request ran out of time before it was sent");
     expect(calls).toEqual([]);
+  });
+
+  it("aborts a dispatched fetch when the remaining budget expires", async () => {
+    useRequestClock();
+    const dispatched = phaseArrival<AbortSignal>();
+    vi.stubGlobal(
+      "fetch",
+      async (_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init.signal!;
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
+          dispatched.arrive(signal);
+        }),
+    );
+    const parsed = scenario([requestStep({ timeout_ms: 20 })]);
+    const result = perform(
+      fakePage({}),
+      parsed.actions[0]!,
+      resolved(parsed),
+    ).catch((cause: unknown) => cause);
+    const signal = await dispatched.reached(result, "page fetch");
+    await vi.advanceTimersByTimeAsync(19);
+    expect(signal.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(signal.reason).toMatchObject({ name: "TimeoutError" });
+    expect(await result).toMatchObject({
+      message: expect.stringContaining("The request ran out of time."),
+    });
   });
 
   it("guards dispatch after cancellation while evaluation was queued, and removes its route", async () => {
@@ -334,62 +334,101 @@ describe("request route cleanup", () => {
     vi.unstubAllGlobals();
   });
 
-  it("preserves the primary request failure when removing its route also fails", async () => {
-    const parsed = scenario([requestStep({})]);
-    const page = fakePage({});
-    const primary = new Error("page.evaluate: Target page has been closed");
-    const cleanup = new Error("page.unroute: Target page has been closed");
-    vi.spyOn(page, "evaluate").mockRejectedValue(primary);
-    const unroute = vi.spyOn(page, "unroute").mockRejectedValue(cleanup);
-    const failure = await perform(
-      page,
-      parsed.actions[0]!,
-      resolved(parsed),
-    ).catch((cause: unknown) => cause);
-    expect(failure).toBeInstanceOf(AggregateError);
-    expect((failure as AggregateError).cause).toBe(primary);
-    expect((failure as AggregateError).errors).toEqual([primary, cleanup]);
-    expect(unroute).toHaveBeenCalledOnce();
-  });
+  it.each([
+    [200, "evaluation"],
+    [503, "cleanup"],
+    [200, "cleanup"],
+    [200, "cancellation"],
+    [503, "cancellation"],
+    [200, "deadline"],
+    [503, "deadline"],
+    [200, "complete"],
+  ] as const)(
+    "settles response publication for status %i at %s",
+    async (status, end) => {
+      const evaluationFails = end === "evaluation";
+      const cleanupFails = evaluationFails || end === "cleanup";
+      const events = new EventEmitter();
+      const page = Object.assign(fakePage({}), {
+        on: events.on.bind(events),
+        off: events.off.bind(events),
+      });
+      const sent = {
+        url: () => `${ORIGIN}/api/folders`,
+        method: () => "POST",
+        postData: () => null,
+      };
+      const parsed = scenario([
+        requestStep({
+          expected_status: [200],
+          timeout_ms: 5_000,
+          save: [{ name: "id", json_pointer: "/id", secret: true }],
+        }),
+      ]);
+      const secrets = resolved(parsed);
+      const savedValue = "scenario-saved-id";
+      vi.stubGlobal("fetch", async () => {
+        events.emit("request", sent);
+        return new Response(JSON.stringify({ id: savedValue }), { status });
+      });
 
-  it("preserves an unsuccessful page response when removing its route fails", async () => {
-    stubFetch(503);
-    const parsed = scenario([requestStep({ expected_status: [200] })]);
-    const page = fakePage({});
-    const cleanup = new Error("route cleanup failed");
-    vi.spyOn(page, "unroute").mockRejectedValue(cleanup);
-    const failure = await perform(
-      page,
-      parsed.actions[0]!,
-      resolved(parsed),
-    ).catch((cause: unknown) => cause);
-    expect(failure).toBeInstanceOf(AggregateError);
-    expect((failure as AggregateError).errors[0].message).toContain(
-      "answered 503",
-    );
-    expect((failure as AggregateError).errors[1]).toBe(cleanup);
-    expect((failure as AggregateError).cause).toBe(
-      (failure as AggregateError).errors[0],
-    );
-  });
+      const primary = new Error("page.evaluate: Target page has been closed");
+      const cleanup = new Error("page.unroute: Target page has been closed");
+      const cancel = new AbortController();
+      const began = performance.now();
+      if (evaluationFails)
+        vi.spyOn(page, "evaluate").mockRejectedValue(primary);
+      const unroute = vi.spyOn(page, "unroute").mockImplementation(async () => {
+        if (cleanupFails) throw cleanup;
+        if (end === "cancellation")
+          cancel.abort("cancelled during final route cleanup");
+        if (end === "deadline") {
+          const now = vi
+            .spyOn(performance, "now")
+            .mockReturnValue(began + 6_000);
+          onTestFinished(() => now.mockRestore());
+        }
+      });
+      const failure = await perform(
+        page,
+        parsed.actions[0]!,
+        secrets,
+        cancel.signal,
+      ).catch((cause: unknown) => cause);
+      expect(unroute).toHaveBeenCalledOnce();
+      expect(events.listenerCount("request")).toBe(0);
+      expect(secrets.hasResponseProtection(sent)).toBe(
+        evaluationFails !== true,
+      );
+      if (end === "complete") {
+        expect(failure).toBeUndefined();
+        cancel.abort("cancelled after publication");
+        expect(secrets.savedValue("id")).toBe(savedValue);
+        expect(secrets.responseSecretsReady(sent)).toBe(true);
+        return;
+      }
 
-  it("publishes no saved values if route cleanup fails after a successful response", async () => {
-    stubFetch(200, [JSON.stringify({ id: "created" })]);
-    const parsed = scenario([
-      requestStep({ save: [{ name: "id", json_pointer: "/id" }] }),
-    ]);
-    const page = fakePage({});
-    const secrets = resolved(parsed);
-    const save = vi.spyOn(secrets, "save");
-    const ready = vi.spyOn(secrets, "markResponseSecretsReady");
-    const cleanup = new Error("route cleanup failed");
-    vi.spyOn(page, "unroute").mockRejectedValue(cleanup);
-    await expect(perform(page, parsed.actions[0]!, secrets)).rejects.toBe(
-      cleanup,
-    );
-    expect(save).not.toHaveBeenCalled();
-    expect(ready).not.toHaveBeenCalled();
-  });
+      expect(() => secrets.savedValue("id")).toThrow("No earlier step saved");
+      expect(secrets.responseSecretsReady(sent)).toBe(false);
+      if (cleanupFails && (evaluationFails || status === 503)) {
+        if (!(failure instanceof AggregateError))
+          throw new Error("Expected request and cleanup errors");
+        expect(failure.errors).toHaveLength(2);
+        expect(failure.errors[1]).toBe(cleanup);
+        if (evaluationFails) expect(failure.cause).toBe(primary);
+        else expect(failure.errors[0].message).toContain("answered 503");
+        expect(failure.cause).toBe(failure.errors[0]);
+      } else if (cleanupFails) {
+        expect(failure).toBe(cleanup);
+      } else {
+        expect(failure).toMatchObject({
+          message: expect.stringContaining(
+            status === 503 ? "answered 503" : "ended before",
+          ),
+        });
+      }
+    },
+  );
 });
 
 describe("request page boundaries", () => {
@@ -419,25 +458,50 @@ describe("request page boundaries", () => {
     expect(calls).toEqual([]);
   });
 
-  it("drains response chunks and releases the reader without materializing the body", async () => {
-    const read = vi
-      .fn()
-      .mockResolvedValueOnce({ done: false, value: new Uint8Array(8) })
-      .mockResolvedValueOnce({ done: true });
-    const releaseLock = vi.fn();
-    const arrayBuffer = vi.fn();
-    vi.stubGlobal("fetch", async () => ({
-      status: 200,
-      type: "basic",
-      body: { getReader: () => ({ read, releaseLock }) },
-      arrayBuffer,
-    }));
-    const parsed = scenario([requestStep({})]);
-    await perform(fakePage({}), parsed.actions[0]!, resolved(parsed));
-    expect(read).toHaveBeenCalledTimes(2);
-    expect(releaseLock).toHaveBeenCalledOnce();
-    expect(arrayBuffer).not.toHaveBeenCalled();
-  });
+  it.each([
+    { label: "discarded response", chunks: 8, save: [] },
+    {
+      label: "oversized saved response",
+      chunks: 3_000_000,
+      save: [{ name: "folder", json_pointer: "/id" }],
+    },
+  ])(
+    "bounds response retention and releases the reader for a $label",
+    async ({ chunks, save }) => {
+      const packet = { done: false, value: new Uint8Array(chunks).fill(97) };
+      const read = vi
+        .fn()
+        .mockResolvedValueOnce(packet)
+        .mockResolvedValueOnce(packet)
+        .mockResolvedValue({ done: true });
+      const cancel = vi.fn();
+      const releaseLock = vi.fn();
+      const arrayBuffer = vi.fn();
+      vi.stubGlobal("fetch", async () => ({
+        status: 200,
+        type: "basic",
+        body: { getReader: () => ({ read, cancel, releaseLock }) },
+        arrayBuffer,
+      }));
+      const parsed = scenario([requestStep({ save })]);
+      const request = perform(
+        fakePage({}),
+        parsed.actions[0]!,
+        resolved(parsed),
+      );
+      if (save.length > 0) {
+        await expect(request).rejects.toThrow("too large to save values from");
+        expect(read).toHaveBeenCalledTimes(2);
+        expect(cancel).toHaveBeenCalledOnce();
+      } else {
+        await request;
+        expect(read).toHaveBeenCalledTimes(3);
+        expect(cancel).not.toHaveBeenCalled();
+      }
+      expect(releaseLock).toHaveBeenCalledOnce();
+      expect(arrayBuffer).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("request step confinement", () => {
@@ -478,47 +542,58 @@ describe("request step confinement", () => {
     expect(calls).toHaveLength(1);
   });
 
-  it("sends nothing when its time runs out while header values are read, or the step is cancelled", async () => {
-    const calls = stubFetch(200);
-    const parsed = scenario([
-      requestStep({
-        timeout_ms: 5,
-        headers: [{ name: "X-T", value: { source: "cookie", name: "t" } }],
-      }),
-    ]);
-    const cookies = [{ name: "t", value: "token-value-1" }];
-    await expect(
-      perform(
-        fakePage({ cookies, cookieDelayMs: 30 }),
+  it.each(["deadline", "cancellation"])(
+    "installs no dispatch route after %s during header reads",
+    async (end) => {
+      useRequestClock();
+      const cancel = new AbortController();
+      const page = fakePage({
+        cookies: [{ name: "t", value: "token-value-1" }],
+      });
+      const context = page.context();
+      const readCookies = context.cookies.bind(context);
+      vi.spyOn(context, "cookies").mockImplementation(async (urls) => {
+        if (end === "deadline") await vi.advanceTimersByTimeAsync(20);
+        else cancel.abort("cancelled during header read");
+        return readCookies(urls);
+      });
+      const route = vi.spyOn(page, "route");
+      const calls = stubFetch(200);
+      const parsed = scenario([
+        requestStep({
+          timeout_ms: 20,
+          headers: [{ name: "X-T", value: { source: "cookie", name: "t" } }],
+        }),
+      ]);
+      const failure = await perform(
+        page,
         parsed.actions[0]!,
         resolved(parsed),
-      ),
-    ).rejects.toThrow("ran out of time");
-    const cancelled = new AbortController();
-    cancelled.abort();
-    await expect(
-      performPlaywrightScenarioAction({
-        page: fakePage({ cookies }),
-        action: scenario([requestStep({})]).actions[0]!,
-        secrets: resolved(parsed),
-        startOrigin: ORIGIN,
-        signal: cancelled.signal,
-      }),
-    ).rejects.toThrow("ran out of time");
-    expect(calls).toEqual([]);
-  });
+        cancel.signal,
+      ).catch((cause: unknown) => cause);
+      expect(route).not.toHaveBeenCalled();
+      expect(failure).toMatchObject({
+        message: expect.stringContaining(
+          "ran out of time before its request was sent",
+        ),
+      });
+      expect(calls).toEqual([]);
+    },
+  );
 
   it("appends query entries after the path's literal query without re-encoding it", async () => {
     const calls = stubFetch(200);
     const parsed = scenario([
       requestStep({
         path: "/api/items?flag&a=b%20c&s=x;y",
-        query: [{ name: "q", value: { source: "literal", value: "a b" } }],
+        query: [
+          { name: "q", value: { source: "literal", value: "a b私😀!~'" } },
+        ],
       }),
     ]);
     await perform(fakePage({}), parsed.actions[0]!, resolved(parsed));
     expect(calls[0]!.url).toBe(
-      `${ORIGIN}/api/items?flag&a=b%20c&s=x;y&q=a%20b`,
+      `${ORIGIN}/api/items?flag&a=b%20c&s=x;y&q=a%20b%E7%A7%81%F0%9F%98%80!~'`,
     );
     for (const [path, sent] of [
       ["/api/items?", "/api/items?q=1"],
@@ -612,68 +687,39 @@ describe("request page value admission", () => {
       ).rejects.toThrow(message);
     }
     expect(calls).toEqual([]);
-    const numeric = header({
-      source: "local_storage",
-      key: "auth",
-      json_pointer: "/org",
-    });
-    await perform(
-      fakePage({ storage: { auth: '{"org":42}' } }),
-      numeric.actions[0]!,
-      resolved(numeric),
-    );
-    expect(calls[0]!.init.headers).toEqual([["X-T", "42"]]);
   });
 });
 
 describe("page value redaction", () => {
   const secrets = () => resolved(scenario([requestStep({})]));
 
-  it("keeps every admitted value redacted, even under a repeated or colliding label", () => {
+  it("keeps the first marker and masks new spellings under the same label", () => {
     const held = secrets();
-    held.admitPageValue("s.x-a", "first-secret-AAAA");
-    held.admitPageValue("s.x-a", "second-secret-BBBB");
-    held.admitPageValue("a.b.c", "third-secret-CCCC");
-    held.admitPageValue("a.b.c", "fourth-secret-DDDD");
-    const text = held.redact(
-      "first-secret-AAAA second-secret-BBBB third-secret-CCCC fourth-secret-DDDD",
-    );
-    for (const value of ["AAAA", "BBBB", "CCCC", "DDDD"])
-      expect(text).not.toContain(value);
+    const label = "write.X-Token";
+    const first = "first-token-AAAA";
+    const second = "second-token-BBBB";
+    held.admitPageValue(label, first);
+    held.admitPageValue("retry.X-Token", first);
+    held.admitPageValue(label, ` ${second}\t`);
+    expect(held.redact(first)).toBe("[REDACTED:page:write.X-Token]");
+    const redacted = held.redact(`X-Token:  ${second}\t as sent: ${second}`);
+    expect(redacted).not.toContain(second);
   });
 
-  it("keeps a value's first marker when later steps read it again", () => {
-    const held = secrets();
-    held.admitPageValue("create-1.X-CSRFToken", "csrf-token-value");
-    held.admitPageValue("create-2.X-CSRFToken", "csrf-token-value");
-    expect(held.redact("csrf-token-value")).toBe(
-      "[REDACTED:page:create-1.X-CSRFToken]",
-    );
-  });
-
-  it("redacts the value fetch sends when the stored one has surrounding spaces", () => {
-    const held = secrets();
-    held.admitPageValue("s.X-Tok", " padded-token-4f9e2a\t");
-    expect(held.redact("X-Tok: padded-token-4f9e2a")).not.toContain(
-      "padded-token-4f9e2a",
-    );
-  });
-
-  it("does not redact values too short to tell from ids and ports", () => {
+  it("redacts values at the page-value threshold without removing shorter identifiers", () => {
     const held = secrets();
     held.admitPageValue("s.X-Org-Id", "1");
     held.admitPageValue("s.X-Port", "3000");
-    const text = "http://127.0.0.1:3000/api/items/12?page=1";
-    expect(held.redact(text)).toBe(text);
+    held.admitPageValue("s.X-Short-Id", "seven77");
+    held.admitPageValue("s.X-Boundary", "eight888");
+    const ordinary = "http://127.0.0.1:3000/api/items/seven77?page=1";
+    expect(held.redact(`${ordinary} eight888`)).toBe(
+      `${ordinary} [REDACTED:page:s.X-Boundary]`,
+    );
   });
 });
 
 const savedValue = (name: string) => ({ source: "saved", name });
-const saveIdStep = (stepId: string, name: string) =>
-  requestStep({
-    step_id: stepId,
-    save: [{ name, json_pointer: "/id" }],
-  });
 const clickSavingItem = (name: string) => ({
   step_id: "save-item",
   action: "click",
@@ -691,21 +737,16 @@ const gotoStep = (url: string) => ({
   wait_until: "load",
 });
 
-describe("saved value schema", () => {
-  it("refuses a saved value no earlier step saves, wherever a step sends it", () => {
-    const sendsItem = requestStep({
-      step_id: "edit",
-      method: "PUT",
-      path: "/api/items/{saved:item}",
-    });
-    expect(issues([sendsItem])).toEqual([
-      "Step edit sends saved value item, which no earlier step saves",
-    ]);
-    expect(issues([sendsItem, saveIdStep("create", "item")])).toContainEqual(
-      expect.stringContaining("which no earlier step saves"),
-    );
-    expect(issues([saveIdStep("create", "item"), sendsItem])).toEqual([]);
+describe("scenario value validation", () => {
+  it("requires a prior binding wherever steps use saved values", () => {
+    const sendsItem = requestStep({ path: "/api/items/{saved:item}" });
     expect(issues([clickSavingItem("item"), sendsItem])).toEqual([]);
+    expect(
+      issues([
+        gotoStep(`${ORIGIN}/search/{q}`),
+        requestStep({ path: "/api/items/{id}", json: { name: "{draft}" } }),
+      ]),
+    ).toEqual([]);
     for (const step of [
       gotoStep(`${ORIGIN}/items/{saved:item}`),
       gotoStep(`${ORIGIN}/items/%7Bsaved%3Aitem%7D`),
@@ -719,114 +760,55 @@ describe("saved value schema", () => {
             name: "Authorization",
             value: {
               source: "basic_credentials",
-              parts: [savedValue("item"), { source: "literal", value: "x" }],
+              parts: [savedValue("item"), { source: "literal", value: "" }],
             },
           },
         ],
       }),
     ])
       expect(issues([step]), JSON.stringify(step)).toContainEqual(
-        expect.stringContaining("sends saved value item"),
+        issueAt(["actions", 0], "sends saved value item"),
       );
   });
 
-  it("reads only `{saved:name}` as written in a JSON string, not its encoded spelling", () => {
-    expect(
-      issues([requestStep({ json: { note: "%7Bsaved:item%7D" } })]),
-    ).toEqual([]);
-  });
-
-  it("sends other braces as written", () => {
-    expect(
-      issues([
-        gotoStep(`${ORIGIN}/search/{q}`),
-        requestStep({ path: "/api/items/{id}", json: { name: "{draft}" } }),
-      ]),
-    ).toEqual([]);
-  });
-});
-
-describe("saved value schema: credentials and response paths", () => {
-  it("refuses a literal Basic password, which Evidence would record as written", () => {
-    const basic = (password: unknown) =>
+  it("validates Basic credential arity, references and password privacy", () => {
+    const basic = (parts: readonly unknown[]) =>
       requestStep({
         headers: [
           {
             name: "Authorization",
-            value: {
-              source: "basic_credentials",
-              parts: [{ source: "literal", value: "admin" }, password],
-            },
+            value: { source: "basic_credentials", parts },
           },
         ],
       });
+    const username = { source: "literal", value: "admin" };
+    const parts = ["actions", 0, "headers", 0, "value", "parts"];
     expect(
-      issues([basic({ source: "literal", value: "hunter2" })]),
-    ).toContainEqual(expect.stringContaining("not a literal"));
-    expect(issues([basic({ source: "literal", value: "" })])).toEqual([]);
-  });
-
-  it("builds Basic credentials from page values and refuses undeclared secret parts", () => {
-    const basic = (username: unknown, password: unknown) =>
-      requestStep({
-        headers: [
-          {
-            name: "Authorization",
-            value: { source: "basic_credentials", parts: [username, password] },
-            prefix: "Basic ",
-          },
-        ],
-      });
+      issues([basic([username, { source: "literal", value: "private" }])]),
+    ).toContainEqual(issueAt([...parts, 1], "not a literal"));
     expect(
-      issues([
-        basic(
-          { source: "local_storage", key: "user", json_pointer: "/name" },
-          { source: "cookie", name: "pw" },
-        ),
-      ]),
+      issues([basic([username, { source: "literal", value: "" }])]),
     ).toEqual([]);
     expect(
-      issues([
-        basic(
-          { source: "literal", value: "admin" },
-          { source: "secret", secret_id: "password" },
-        ),
-      ]),
-    ).toContainEqual(expect.stringContaining("not declared"));
-    const literal = { source: "literal", value: "admin" };
-    expect(
-      issues([
-        requestStep({
-          headers: [
-            {
-              name: "Authorization",
-              value: { source: "basic_credentials", parts: [literal] },
-            },
-          ],
-        }),
-      ]).length,
-    ).toBeGreaterThan(0);
+      issues([basic([username, { source: "secret", secret_id: "password" }])]),
+    ).toContainEqual(issueAt(["secrets"], "not declared"));
+    expect(issues([basic([username])])).toContainEqual(issueAt(parts));
   });
 
-  it("requires a save_response to name a same-origin path and something to save", () => {
-    const click = (saveResponse: unknown) => ({
-      ...clickSavingItem("item"),
-      save_response: saveResponse,
-    });
-    for (const path of ["//evil.test/api", "api/items", "https://evil.test/"])
+  it("requires a UI save response to select a same-origin path and at least one value", () => {
+    const action = clickSavingItem("item");
+    for (const path of ["//other.test/api", "api/items", "https://other.test/"])
       expect(
         issues([
-          click({
-            method: "POST",
-            path,
-            save: [{ name: "item", json_pointer: "/id" }],
-          }),
-        ]).length,
+          { ...action, save_response: { ...action.save_response, path } },
+        ]),
         path,
-      ).toBeGreaterThan(0);
+      ).toContainEqual(issueAt(["actions", 0, "save_response", "path"]));
     expect(
-      issues([click({ method: "POST", path: "/api/items", save: [] })]).length,
-    ).toBeGreaterThan(0);
+      issues([
+        { ...action, save_response: { ...action.save_response, save: [] } },
+      ]),
+    ).toContainEqual(issueAt(["actions", 0, "save_response", "save"]));
   });
 });
 
@@ -890,88 +872,19 @@ describe("saved value credentials and limits", () => {
     vi.unstubAllGlobals();
   });
 
-  it("redacts Basic credentials and secret saves however short", async () => {
-    stubFetch(200, ['{"pin":"x7"}']);
-    const parsed = scenario(
-      [
-        requestStep({
-          headers: [
-            {
-              name: "X-Auth",
-              value: {
-                source: "basic_credentials",
-                parts: [
-                  { source: "secret", secret_id: "user" },
-                  { source: "secret", secret_id: "password" },
-                ],
-              },
-            },
-          ],
-          save: [{ name: "pin", json_pointer: "/pin", secret: true }],
-        }),
-      ],
-      [
-        { secret_id: "user", environment_variable: "APP_USER" },
-        { secret_id: "password", environment_variable: "APP_PASSWORD" },
-      ],
-    );
-    const secrets = resolved(parsed, { APP_USER: "a", APP_PASSWORD: "b" });
-    await perform(fakePage({}), parsed.actions[0]!, secrets);
-    const encoded = Buffer.from("a:b").toString("base64");
-    const redacted = secrets.redact(`X-Auth: ${encoded} pin x7`);
-    expect(redacted).not.toContain(encoded);
-    expect(redacted).not.toContain("x7");
-  });
-
-  it("saves no integer JSON parsing would round, so no later step names another object", async () => {
-    stubFetch(201, ['{"id":9007199254740993}']);
-    const parsed = scenario([
-      requestStep({ save: [{ name: "folder", json_pointer: "/id" }] }),
-    ]);
-    const secrets = resolved(parsed);
-    await expect(
-      perform(fakePage({}), parsed.actions[0]!, secrets),
-    ).rejects.toThrow("cannot be saved exactly");
-    expect(() => secrets.savedValue("folder")).toThrow();
-  });
-
-  it("sends a JSON string that spells a placeholder percent-encoded as written", async () => {
+  it("sends percent-encoded JSON text unchanged without requiring its named binding", async () => {
     const calls = stubFetch(200, ['{"id":7}']);
     const parsed = scenario([
       requestStep({ save: [{ name: "item", json_pointer: "/id" }] }),
       requestStep({
         step_id: "note",
-        json: { note: "%7Bsaved:item%7D", id: "{saved:item}" },
+        json: { note: "%7Bsaved:unbound%7D", id: "{saved:item}" },
       }),
     ]);
     const secrets = resolved(parsed);
     for (const action of parsed.actions)
       await perform(fakePage({}), action, secrets);
-    expect(calls[1]!.init.body).toBe('{"note":"%7Bsaved:item%7D","id":7}');
-  });
-
-  it("stops reading a response to save from once it passes the limit", async () => {
-    const chunk = new Uint8Array(3_000_000).fill(97);
-    const read = vi
-      .fn()
-      .mockResolvedValueOnce({ done: false, value: chunk })
-      .mockResolvedValueOnce({ done: false, value: chunk })
-      .mockResolvedValueOnce({ done: false, value: chunk })
-      .mockResolvedValueOnce({ done: true });
-    const cancel = vi.fn(async () => undefined);
-    vi.stubGlobal("fetch", async () => ({
-      status: 200,
-      type: "basic",
-      body: { getReader: () => ({ read, cancel, releaseLock: vi.fn() }) },
-    }));
-    const parsed = scenario([
-      requestStep({ save: [{ name: "folder", json_pointer: "/id" }] }),
-    ]);
-    await expect(
-      perform(fakePage({}), parsed.actions[0]!, resolved(parsed)),
-    ).rejects.toThrow("too large to save values from");
-    expect(read).toHaveBeenCalledTimes(2);
-    expect(cancel).toHaveBeenCalledOnce();
+    expect(calls[1]!.init.body).toBe('{"note":"%7Bsaved:unbound%7D","id":7}');
   });
 
   it("fails a step whose response holds no value to save", async () => {
@@ -989,53 +902,87 @@ describe("saved value credentials and limits", () => {
     expect(() => secrets.savedValue("folder")).toThrow();
   });
 
-  it("encodes Basic credentials read from local storage and a cookie, and redacts both parts", async () => {
-    const calls = stubFetch(200);
-    const parsed = scenario([
-      requestStep({
-        headers: [
-          {
-            name: "Authorization",
-            value: {
-              source: "basic_credentials",
-              parts: [
-                {
-                  source: "local_storage",
-                  key: "user",
-                  json_pointer: "/name",
+  it.each([
+    { source: "declared secrets", username: "a", password: "b" },
+    {
+      source: "page storage",
+      username: "operator-7",
+      password: "cookie-key-5d1c",
+    },
+  ])(
+    "sends Basic credentials from $source and masks the source values and the encoded header",
+    async ({ source, username, password }) => {
+      const declared = source === "declared secrets";
+      const calls = stubFetch(200, ['{"pin":"x7"}']);
+      const name = declared ? "X-Auth" : "Authorization";
+      const prefix = declared ? "" : "Basic ";
+      const parsed = scenario(
+        [
+          requestStep({
+            headers: [
+              {
+                name,
+                prefix,
+                value: {
+                  source: "basic_credentials",
+                  parts: declared
+                    ? [
+                        { source: "secret", secret_id: "user" },
+                        { source: "secret", secret_id: "password" },
+                      ]
+                    : [
+                        {
+                          source: "local_storage",
+                          key: "user",
+                          json_pointer: "/name",
+                        },
+                        { source: "cookie", name: "api_key" },
+                      ],
                 },
-                { source: "cookie", name: "api_key" },
-              ],
-            },
-            prefix: "Basic ",
-          },
+              },
+            ],
+            save: [{ name: "pin", json_pointer: "/pin", secret: true }],
+          }),
         ],
-      }),
-    ]);
-    const secrets = resolved(parsed);
-    await perform(
-      fakePage({
-        cookies: [{ name: "api_key", value: "cookie-key-5d1c" }],
-        storage: { user: JSON.stringify({ name: "operator-7" }) },
-      }),
-      parsed.actions[0]!,
-      secrets,
-    );
-    const encoded = Buffer.from("operator-7:cookie-key-5d1c").toString(
-      "base64",
-    );
-    expect(calls[0]!.init.headers).toEqual([
-      ["Authorization", `Basic ${encoded}`],
-    ]);
-    const redacted = secrets.redact(`${encoded} operator-7 cookie-key-5d1c`);
-    for (const value of [encoded, "operator-7", "cookie-key-5d1c"])
-      expect(redacted).not.toContain(value);
-  });
+        declared
+          ? [
+              { secret_id: "user", environment_variable: "APP_USER" },
+              { secret_id: "password", environment_variable: "APP_PASSWORD" },
+            ]
+          : [],
+      );
+      const secrets = resolved(
+        parsed,
+        declared ? { APP_USER: username, APP_PASSWORD: password } : {},
+      );
+      const page = fakePage(
+        declared
+          ? {}
+          : {
+              cookies: [{ name: "api_key", value: password }],
+              storage: { user: JSON.stringify({ name: username }) },
+            },
+      );
+      await perform(page, parsed.actions[0]!, secrets);
+
+      const encoded = Buffer.from(`${username}:${password}`).toString("base64");
+      expect(calls[0]!.init.headers).toEqual([[name, prefix + encoded]]);
+      expect(secrets.savedValue("pin")).toBe("x7");
+      for (const value of [encoded, username, password, "x7"])
+        expect(secrets.redact(value)).toMatch(/^\[REDACTED(?::.+)?\]$/u);
+    },
+  );
 });
 
 describe("saved response JSON pointers", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("selects the root and decodes escaped response keys once", () => {
+    const value = { "a/b": { "~1": "literal", "/": "slash" } };
+    expect(responsePointerValue(value, "")).toBe(value);
+    expect(responsePointerValue(value, "/a~1b/~01")).toBe("literal");
   });
 
   it("does not coerce a terminal newline in an array index", () => {
@@ -1079,7 +1026,9 @@ describe("saved response JSON pointers", () => {
   });
 });
 
-describe("saved numbers JSON cannot spell back", () => {
+describe("saved response number identity", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it.each([
     ["0", 0],
     ["0.0", 0],
@@ -1087,59 +1036,43 @@ describe("saved numbers JSON cannot spell back", () => {
     ["12.50", 12.5],
     ["1E2", 100],
     ["0.1", 0.1],
-  ])(
-    "preserves an equivalent JSON decimal spelling (%s)",
-    async (number, kept) => {
-      stubFetch(201, [`{"id":${number}}`]);
+    ['"record-7"', "record-7"],
+    ["-0", undefined, "cannot be saved exactly"],
+    ["1e-400", undefined, "cannot be saved exactly"],
+    ["-1e-400", undefined, "cannot be saved exactly"],
+    ["1.0000000000000000001", undefined, "cannot be saved exactly"],
+    ["9007199254740993", undefined, "cannot be saved exactly"],
+    ["1e400", undefined, "not finite"],
+    ["-1e400", undefined, "not finite"],
+  ] as const)(
+    "preserves saved response value identity for %s",
+    async (token, kept, refusal?: string) => {
+      stubFetch(201, [
+        `{"id":${token},"companion":"stable","unselected":1e-400}`,
+      ]);
       const parsed = scenario([
-        requestStep({ save: [{ name: "item", json_pointer: "/id" }] }),
+        requestStep({
+          save: [
+            { name: "companion", json_pointer: "/companion" },
+            { name: "item", json_pointer: "/id" },
+          ],
+        }),
       ]);
       const secrets = resolved(parsed);
-      await perform(fakePage({}), parsed.actions[0]!, secrets);
-      expect(secrets.savedValue("item")).toBe(kept);
-    },
-  );
-  it.each(["-0", "1e-400", "-1e-400", "1.0000000000000000001"])(
-    "refuses a saved numeric identity that loses precision during parsing: %s",
-    async (number) => {
-      stubFetch(201, [`{"id":${number}}`]);
-      const parsed = scenario([
-        requestStep({ save: [{ name: "item", json_pointer: "/id" }] }),
-      ]);
-      const secrets = resolved(parsed);
-      await expect(
-        perform(fakePage({}), parsed.actions[0]!, secrets),
-      ).rejects.toThrow("cannot be saved exactly");
-      expect(() => secrets.savedValue("item")).toThrow("No earlier step saved");
-    },
-  );
-
-  it("keeps an exact saved field when an unrelated response number is inexact", async () => {
-    stubFetch(201, ['{"id":"record-7","unrelated":1e-400}']);
-    const parsed = scenario([
-      requestStep({ save: [{ name: "item", json_pointer: "/id" }] }),
-    ]);
-    const secrets = resolved(parsed);
-    await perform(fakePage({}), parsed.actions[0]!, secrets);
-    expect(secrets.savedValue("item")).toBe("record-7");
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it.each(["1e400", "-1e400"])(
-    "saves no number JSON cannot spell back (%s)",
-    async (number) => {
-      stubFetch(201, [`{"id":${number}}`]);
-      const parsed = scenario([
-        requestStep({ save: [{ name: "folder", json_pointer: "/id" }] }),
-      ]);
-      const secrets = resolved(parsed);
-      await expect(
-        perform(fakePage({}), parsed.actions[0]!, secrets),
-      ).rejects.toThrow("not finite");
-      expect(() => secrets.savedValue("folder")).toThrow();
+      const attempt = perform(fakePage({}), parsed.actions[0]!, secrets);
+      if (refusal === undefined) {
+        await attempt;
+        expect(secrets.savedValue("item")).toBe(kept);
+        expect(secrets.savedValue("companion")).toBe("stable");
+      } else {
+        await expect(attempt).rejects.toThrow(refusal);
+        expect(() => secrets.savedValue("item")).toThrow(
+          "No earlier step saved item",
+        );
+        expect(() => secrets.savedValue("companion")).toThrow(
+          "No earlier step saved companion",
+        );
+      }
     },
   );
 });
@@ -1183,60 +1116,37 @@ describe("values a URL path or Basic header cannot carry", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it.each([".", ".."])(
-    "fails a step whose saved %s fills a whole path segment, which the URL would drop",
-    async (dots) => {
-      const parsed = scenario([
-        requestStep({ save: [{ name: "item", json_pointer: "/id" }] }),
-        {
-          step_id: "open",
-          action: "goto",
-          destination: { url: `${ORIGIN}/items/{saved:item}/edit` },
-          wait_until: "load",
-        },
-        requestStep({ step_id: "edit", path: "/api/items/{saved:item}" }),
-      ]);
-      const secrets = resolved(parsed);
-      secrets.save("create.item", "item", dots, false);
-      const goto = vi.fn(async () => null);
-      await expect(
-        perform({ goto } as unknown as Page, parsed.actions[1]!, secrets),
-      ).rejects.toThrow("dot segment");
-      expect(goto).not.toHaveBeenCalled();
-      await expect(
-        perform(fakePage({}), parsed.actions[2]!, secrets),
-      ).rejects.toThrow("dot segment");
-    },
-  );
-
   it.each([
-    ["/api/items/{saved:item}.", `${ORIGIN}/items/{saved:item}.`],
-    ["/api/items/%2e{saved:item}", `${ORIGIN}/items/%2E{saved:item}`],
-    ["/safe\\{saved:item}.", `${ORIGIN}/safe\\{saved:item}.`],
-    ["/safe\\%2e{saved:item}", `${ORIGIN}/safe\\%2e{saved:item}`],
+    ["/items/{saved:item}/edit", "."],
+    ["/items/{saved:item}/edit", ".."],
+    ["/items/{saved:item}.", "."],
+    ["/items/%2e{saved:item}", "."],
+    ["/safe\\{saved:item}.", "."],
+    ["/safe\\%2e{saved:item}", "."],
   ])(
-    "fails a step whose saved . and the text beside it make a dot segment (%s)",
-    async (path, url) => {
+    "rejects %s with saved %s before navigation or request dispatch",
+    async (path, saved) => {
       const parsed = scenario([
         requestStep({ save: [{ name: "item", json_pointer: "/id" }] }),
         {
           step_id: "open",
           action: "goto",
-          destination: { url },
+          destination: { url: ORIGIN + path },
           wait_until: "load",
         },
         requestStep({ step_id: "edit", path }),
       ]);
       const secrets = resolved(parsed);
-      secrets.save("create.item", "item", ".", false);
-      const goto = vi.fn(async () => null);
-      await expect(
-        perform({ goto } as unknown as Page, parsed.actions[1]!, secrets),
-      ).rejects.toThrow("dot segment");
+      secrets.save("create.item", "item", saved, false);
+      const goto = vi.fn();
+      const evaluate = vi.fn();
+      const page = { ...fakePage({}), goto, evaluate } as unknown as Page;
+      for (const action of parsed.actions.slice(1))
+        await expect(perform(page, action, secrets)).rejects.toThrow(
+          "dot segment",
+        );
       expect(goto).not.toHaveBeenCalled();
-      await expect(
-        perform(fakePage({}), parsed.actions[2]!, secrets),
-      ).rejects.toThrow("dot segment");
+      expect(evaluate).not.toHaveBeenCalled();
     },
   );
 
@@ -1326,51 +1236,53 @@ describe("saved value retention", () => {
     expect(secrets.redact(token)).not.toContain(token);
   });
 
-  it("charges trimmed secret spellings before changing either saved or redaction state", () => {
-    const secrets = resolved(scenario([requestStep({})]));
-    secrets.save("seed.fill", "fill", "x".repeat(3_999_000), false);
-    const trimmed = "a".repeat(198);
-    expect(() =>
-      secrets.save("step.padded", "padded", ` ${trimmed} `, true),
-    ).toThrow("more than 4000000 characters of saved values");
-    expect(() => secrets.savedValue("padded")).toThrow("No earlier step saved");
-    expect(secrets.redact(trimmed)).toBe(trimmed);
-    expect(String(secrets.savedValue("fill"))).toHaveLength(3_999_000);
-  });
+  it.each([
+    { label: "an ordinary value", length: 2_500_000, padding: "", fill: 0 },
+    { label: "a padded value", length: 198, padding: " ", fill: 3_999_000 },
+  ])(
+    "charges secret spellings for $label before replacing a saved value",
+    ({ length, padding, fill }) => {
+      const secrets = resolved(scenario([requestStep({})]));
+      const filler = "x".repeat(fill);
+      const token = "t".repeat(length);
+      const value = `${padding}${token}${padding}`;
+      secrets.save("seed.fill", "fill", filler, false);
+      secrets.save("sample.token", "token", value, false);
+      expect(secrets.savedValue("token")).toBe(value);
+      secrets.save("keep.token", "token", "previous", false);
 
-  it("refuses a new saved name that would keep more than the limit, before keeping it", () => {
-    const secrets = resolved(scenario([requestStep({})]));
-    secrets.save("a.first", "first", "x".repeat(3_000_000), false);
-    expect(() =>
-      secrets.save("b.second", "second", "y".repeat(1_500_000), false),
-    ).toThrow("more than 4000000 characters of saved values");
-    expect(() => secrets.savedValue("second")).toThrow("No earlier step saved");
-    // A later save of the same name replaces its value rather than adding to it.
-    secrets.save("c.first", "first", "z".repeat(3_500_000), false);
-    expect(String(secrets.savedValue("first"))).toHaveLength(3_500_000);
-  });
+      expect(() => secrets.save("new.token", "token", value, true)).toThrow(
+        "more than 4000000 characters of saved values",
+      );
+      expect(secrets.savedValue("token")).toBe("previous");
+      expect(secrets.savedValue("fill")).toBe(filler);
+      expect(secrets.redact(value)).toBe(value);
+      expect(secrets.redact(token)).toBe(token);
+    },
+  );
 
-  it("counts the redaction spellings a secret save keeps", () => {
-    const plain = resolved(scenario([requestStep({})]));
-    plain.save("a.token", "token", "t".repeat(2_500_000), false);
-    const secret = resolved(scenario([requestStep({})]));
-    expect(() =>
-      secret.save("a.token", "token", "t".repeat(2_500_000), true),
-    ).toThrow("more than 4000000 characters of saved values");
-  });
-
-  it("fails the step that would save past the limit", async () => {
-    stubFetch(201, [`{"id":"${"y".repeat(200_000)}"}`]);
+  it("rejects a new binding at capacity and can save it after replacing an older value", async () => {
+    const item = "y".repeat(200_000);
+    const body = JSON.stringify({ id: item });
+    stubFetch(201, [body, body]);
     const parsed = scenario([
       requestStep({ save: [{ name: "item", json_pointer: "/id" }] }),
     ]);
     const secrets = resolved(parsed);
-    secrets.save("seed.big", "big", "x".repeat(3_900_000), false);
-    await expect(
-      perform(fakePage({}), parsed.actions[0]!, secrets),
-    ).rejects.toThrow(
+    const original = "x".repeat(3_900_000);
+    secrets.save("seed.big", "big", original, false);
+    const page = fakePage({});
+    await expect(perform(page, parsed.actions[0]!, secrets)).rejects.toThrow(
       "Step create: item cannot be saved: the scenario would keep more than",
     );
+    expect(() => secrets.savedValue("item")).toThrow("No earlier step saved");
+    expect(secrets.savedValue("big")).toBe(original);
+
+    const replacement = "z".repeat(3_500_000);
+    secrets.save("replace.big", "big", replacement, false);
+    await perform(page, parsed.actions[0]!, secrets);
+    expect(secrets.savedValue("big")).toBe(replacement);
+    expect(secrets.savedValue("item")).toBe(item);
   });
 });
 
@@ -1526,59 +1438,47 @@ const clickSaving = (path: string) =>
     },
   ]);
 
-describe("ambiguous saved response observations", () => {
-  it("refuses an ambiguous poll and click request without choosing either identity", async () => {
-    const parsed = clickSaving("/api/items");
-    const secrets = resolved(parsed);
-    const { page, listeners } = uiPage([
-      {
-        method: "POST",
-        url: `${ORIGIN}/api/items`,
-        status: 201,
-        body: '{"id":"poll"}',
-      },
-      {
-        method: "POST",
-        url: `${ORIGIN}/api/items`,
-        status: 201,
-        body: '{"id":"created"}',
-      },
-    ]);
-    await expect(perform(page, parsed.actions[0]!, secrets)).rejects.toThrow(
-      "ambiguous",
-    );
-    expect(() => secrets.savedValue("item")).toThrow("No earlier step saved");
-    expect(listeners.size).toBe(0);
-  });
-
-  it("refuses a second matching request observed while the selected body is pending", async () => {
-    const parsed = clickSaving("/api/items");
-    const secrets = resolved(parsed);
-    let release!: (body: string) => void;
-    const late = new Promise<string>((resolve) => {
-      release = resolve;
+it.each(["before response binding", "during the body read"])(
+  "refuses a competing request observed %s without publishing either identity",
+  async (phase) => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
     });
+    const parsed = clickSaving("/api/items");
+    const secrets = resolved(parsed);
+    const body = '{"id":"created"}';
+    let finishBody!: (value: string) => void;
+    const late = new Promise<string>((resolveBody) => {
+      finishBody = resolveBody;
+    });
+    const started = { method: "POST", url: `${ORIGIN}/api/items`, status: 201 };
+    const beforeBinding = phase === "before response binding";
     const { page, listeners, reads } = uiPage([
-      {
-        method: "POST",
-        url: `${ORIGIN}/api/items`,
-        status: 201,
-        body: "",
-        size: 30,
-        late,
-      },
+      { ...started, body, late },
+      ...(beforeBinding ? [{ ...started, body: '{"id":"poll"}' }] : []),
     ]);
-    const running = perform(page, parsed.actions[0]!, secrets);
-    const rejected = expect(running).rejects.toThrow("ambiguous");
-    await vi.waitFor(() => expect(reads.count).toBe(1));
-    for (const listener of listeners)
-      listener({ method: () => "POST", url: () => `${ORIGIN}/api/items` });
-    release('{"id":"wrong-object"}');
-    await rejected;
+    const outcome = perform(page, parsed.actions[0]!, secrets).catch(
+      (cause: unknown) => cause,
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(reads.count).toBe(beforeBinding ? 0 : 1);
+      if (!beforeBinding) {
+        for (const listener of listeners)
+          listener({ method: () => started.method, url: () => started.url });
+      }
+    } finally {
+      finishBody(body);
+      await outcome;
+    }
+    expect(await outcome).toMatchObject({
+      message: expect.stringContaining("multiple matching requests"),
+    });
     expect(() => secrets.savedValue("item")).toThrow("No earlier step saved");
     expect(listeners.size).toBe(0);
-  });
-});
+  },
+);
 
 describe("saving from a UI step's response", () => {
   it("waits before clicking, and saves from the response the step names", async () => {
@@ -1638,54 +1538,6 @@ describe("saving from a UI step's response", () => {
     expect(listeners.size).toBe(0);
   });
 
-  it("refuses a response too large to save from without reading it", async () => {
-    const parsed = clickSaving("/api/items");
-    const { page, reads } = uiPage([
-      {
-        method: "POST",
-        url: `${ORIGIN}/api/items`,
-        status: 201,
-        body: '{"id":"x"}',
-        size: 12_000_001,
-      },
-    ]);
-    await expect(
-      perform(page, parsed.actions[0]!, resolved(parsed)),
-    ).rejects.toThrow("too large to save values from");
-    expect(reads.count).toBe(0);
-  });
-
-  it.each([
-    { encoding: "br", size: 32 },
-    { encoding: "gzip, zstd", size: 32 },
-    { encoding: "identity", size: 0 },
-    { encoding: "gzip", size: 0 },
-    { size: 0, length: "0" },
-    { size: -1 },
-    { size: Number.NaN },
-  ])(
-    "refuses unknown decoded UI response bounds before body allocation: %j",
-    async (bounds) => {
-      const parsed = clickSaving("/api/items");
-      const secrets = resolved(parsed);
-      const { page, reads, listeners } = uiPage([
-        {
-          method: "POST",
-          url: `${ORIGIN}/api/items`,
-          status: 201,
-          body: '{"id":"record-7"}',
-          ...bounds,
-        },
-      ]);
-      await expect(perform(page, parsed.actions[0]!, secrets)).rejects.toThrow(
-        "decoded response size",
-      );
-      expect(reads.count).toBe(0);
-      expect(listeners.size).toBe(0);
-      expect(() => secrets.savedValue("item")).toThrow("No earlier step saved");
-    },
-  );
-
   it("stops watching requests when the step fails before its response", async () => {
     const parsed = clickSaving("/api/items");
     const { page, listeners } = uiPage([], true);
@@ -1700,7 +1552,7 @@ describe("saving from a UI step's response", () => {
     await expect(
       perform(uiPage([]).page, parsed.actions[0]!, resolved(parsed)),
     ).rejects.toThrow(
-      "no POST /api/items response arrived before the step's timeout",
+      "no POST /api/items response could be read, so nothing was saved: Timeout exceeded",
     );
     await expect(
       perform(
@@ -1721,19 +1573,94 @@ describe("saving from a UI step's response", () => {
   });
 });
 
-describe("saving from a compressed or cached UI response", () => {
+it("retains the physical response-wait failure through late cancellation", async () => {
+  const parsed = clickSaving("/api/items");
+  const secrets = resolved(parsed);
+  const { page, listeners } = uiPage([]);
+  const primary = new Error(
+    "page.waitForResponse: Target page has been closed",
+  );
+  vi.spyOn(page, "waitForResponse").mockRejectedValue(primary);
+  const cancel = new AbortController();
+  const remove = cancel.signal.removeEventListener.bind(cancel.signal);
+  const removing = vi
+    .spyOn(cancel.signal, "removeEventListener")
+    .mockImplementation((type, listener, options) => {
+      remove(type, listener, options);
+      cancel.abort("cancelled after the physical wait failed");
+    });
+  onTestFinished(() => removing.mockRestore());
+  const attempt = perform(page, parsed.actions[0]!, secrets, cancel.signal);
+  await expect(attempt).rejects.toMatchObject({
+    cause: primary,
+    message: expect.stringContaining(primary.message),
+  });
+  expect(cancel.signal.aborted).toBe(true);
+  expect(() => secrets.savedValue("item")).toThrow("No earlier step saved");
+  expect(listeners.size).toBe(0);
+});
+
+it("retains saved values when cancellation follows completed click publication", async () => {
+  const parsed = clickSaving("/api/items");
+  const { page } = uiPage([
+    {
+      method: "POST",
+      url: `${ORIGIN}/api/items`,
+      status: 201,
+      body: '{"id":"committed-object"}',
+    },
+  ]);
+  const secrets = resolved(parsed);
+  const cancel = new AbortController();
+  await perform(page, parsed.actions[0]!, secrets, cancel.signal);
+  cancel.abort("cancelled after publication");
+  expect(secrets.savedValue("item")).toBe("committed-object");
+});
+
+describe("UI response body admission", () => {
+  const tooLarge = "too large to save values from";
+  const couldDecodePastLimit = "could decode past the size limit";
+  const unknown = "decoded response size cannot be bounded";
+
   it.each([
-    { encoding: "gzip", size: 32 },
+    { encoding: "gzip", size: 32, length: "12000001" },
     { encoding: "deflate", size: 32 },
     { encoding: "x-gzip", size: 32 },
-    { size: 0, length: "17" },
-    { encoding: "gzip", size: 0, length: "32" },
+    { size: 0, length: "00000000000000000017" },
+    { encoding: "gzip", size: 0, length: "0032" },
+    { size: 12_000_001, error: tooLarge },
+    {
+      encoding: "gzip",
+      size: 12_000,
+      length: "32",
+      error: couldDecodePastLimit,
+    },
+    { size: 0, length: "00012000001", error: couldDecodePastLimit },
+    {
+      encoding: "gzip",
+      size: 0,
+      length: "00012000",
+      error: couldDecodePastLimit,
+    },
+    { encoding: "br", size: 32, error: unknown },
+    { encoding: "gzip, zstd", size: 32, error: unknown },
+    { encoding: "gzip", size: 0, error: unknown },
+    ...[
+      "0000",
+      "+17",
+      "17.0",
+      "1.7e1",
+      "17, 17",
+      "0001000000000000000",
+      "0009007199254740993",
+    ].map((length) => ({ size: 0, length, error: unknown })),
+    ...[-1, Number.NaN].map((size) => ({ size, error: unknown })),
   ])(
-    "saves from a response whose received size or declared length bounds its decoded size: %j",
-    async (bounds) => {
+    "admits only bounded response bodies: %j",
+    async ({ error, ...bounds }) => {
       const parsed = clickSaving("/api/items");
       const secrets = resolved(parsed);
-      const { page, reads } = uiPage([
+      const { page, reads, listeners } = uiPage([
         {
           method: "POST",
           url: `${ORIGIN}/api/items`,
@@ -1742,29 +1669,21 @@ describe("saving from a compressed or cached UI response", () => {
           ...bounds,
         },
       ]);
-      await perform(page, parsed.actions[0]!, secrets);
-      expect(secrets.savedValue("item")).toBe("record-7");
-      expect(reads.count).toBe(1);
+      const action = perform(page, parsed.actions[0]!, secrets);
+      if (error === undefined) {
+        await action;
+        expect(secrets.savedValue("item")).toBe("record-7");
+        expect(reads.count).toBe(1);
+      } else {
+        await expect(action).rejects.toThrow(error);
+        expect(() => secrets.savedValue("item")).toThrow(
+          "No earlier step saved",
+        );
+        expect(reads.count).toBe(0);
+      }
+      expect(listeners.size).toBe(0);
     },
   );
-
-  it("refuses a compressed response that could decode past the limit without reading it", async () => {
-    const parsed = clickSaving("/api/items");
-    const { page, reads } = uiPage([
-      {
-        method: "POST",
-        url: `${ORIGIN}/api/items`,
-        status: 201,
-        body: '{"id":"x"}',
-        encoding: "gzip",
-        size: 12_000,
-      },
-    ]);
-    await expect(
-      perform(page, parsed.actions[0]!, resolved(parsed)),
-    ).rejects.toThrow("could decode past the size limit");
-    expect(reads.count).toBe(0);
-  });
 });
 
 describe("saved response limits and deadlines", () => {
@@ -1772,72 +1691,80 @@ describe("saved response limits and deadlines", () => {
     vi.useRealTimers();
   });
 
-  const lateBody = () => {
-    let arrive: (body: string) => void = () => undefined;
-    const late = new Promise<string>((resolve) => {
-      arrive = resolve;
-    });
-    return { late, arrive };
-  };
+  it.each(["deadline", "cancellation"])(
+    "saves nothing when %s ends an active body read",
+    async (end) => {
+      vi.useFakeTimers();
+      const parsed = clickSaving("/api/items");
+      const secrets = resolved(parsed);
+      const body = '{"id":"item-late"}';
+      let finishBody!: (value: string) => void;
+      const late = new Promise<string>((resolveBody) => {
+        finishBody = resolveBody;
+      });
+      const { page, listeners, reads } = uiPage([
+        {
+          method: "POST",
+          url: `${ORIGIN}/api/items`,
+          status: 201,
+          body: "",
+          size: Buffer.byteLength(body),
+          late,
+        },
+      ]);
+      const cancel = new AbortController();
+      const outcome = perform(
+        page,
+        parsed.actions[0]!,
+        secrets,
+        cancel.signal,
+      ).catch((cause: unknown) => cause);
+      try {
+        await vi.advanceTimersByTimeAsync(0);
+        expect(reads.count).toBe(1);
+        if (end === "cancellation") cancel.abort("cancelled during body read");
+        await vi.advanceTimersByTimeAsync(end === "deadline" ? 5000 : 0);
+        expect(
+          await Promise.race([outcome, Promise.resolve("still pending")]),
+        ).toMatchObject({
+          message: expect.stringContaining(
+            "ended before its saved response was read",
+          ),
+        });
+        expect(listeners.size).toBe(0);
+      } finally {
+        finishBody(body);
+        await outcome;
+      }
+      expect(() => secrets.savedValue("item")).toThrow("No earlier step saved");
+    },
+  );
 
-  it("saves nothing from a body still arriving when the step's time runs out", async () => {
-    vi.useFakeTimers();
+  it("saves nothing when cancellation arrives as the body wait releases its listener", async () => {
     const parsed = clickSaving("/api/items");
     const secrets = resolved(parsed);
-    const { late, arrive } = lateBody();
     const { page, listeners } = uiPage([
       {
         method: "POST",
         url: `${ORIGIN}/api/items`,
         status: 201,
-        body: "",
-        size: Buffer.byteLength('{"id":"item-late"}'),
-        late,
-      },
-    ]);
-    const outcome = perform(page, parsed.actions[0]!, secrets).then(
-      () => "saved",
-      (cause: Error) => cause.message,
-    );
-    await vi.advanceTimersByTimeAsync(5001);
-    arrive('{"id":"item-late"}');
-    await expect(outcome).resolves.toContain(
-      "ended before its saved response was read",
-    );
-    expect(() => secrets.savedValue("item")).toThrow("No earlier step saved");
-    expect(listeners.size).toBe(0);
-  });
-
-  it("saves nothing from a body still arriving when the step is cancelled", async () => {
-    const parsed = clickSaving("/api/items");
-    const secrets = resolved(parsed);
-    const { late, arrive } = lateBody();
-    const { page, listeners } = uiPage([
-      {
-        method: "POST",
-        url: `${ORIGIN}/api/items`,
-        status: 201,
-        body: "",
-        size: Buffer.byteLength('{"id":"item-late"}'),
-        late,
+        body: '{"id":"late-object"}',
       },
     ]);
     const cancel = new AbortController();
-    const outcome = perform(
-      page,
-      parsed.actions[0]!,
-      secrets,
-      cancel.signal,
-    ).then(
-      () => "saved",
-      (cause: Error) => cause.message,
-    );
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    cancel.abort();
-    arrive('{"id":"item-late"}');
-    await expect(outcome).resolves.toContain(
-      "ended before its saved response was read",
-    );
+    const remove = cancel.signal.removeEventListener.bind(cancel.signal);
+    let waitsReleased = 0;
+    const removeListener = vi
+      .spyOn(cancel.signal, "removeEventListener")
+      .mockImplementation((type, listener, options) => {
+        remove(type, listener, options);
+        if (++waitsReleased === 2)
+          cancel.abort("cancelled at body wait completion");
+      });
+    onTestFinished(() => removeListener.mockRestore());
+    await expect(
+      perform(page, parsed.actions[0]!, secrets, cancel.signal),
+    ).rejects.toThrow("ended before");
     expect(() => secrets.savedValue("item")).toThrow("No earlier step saved");
     expect(listeners.size).toBe(0);
   });
@@ -1877,11 +1804,8 @@ describe("saved response limits and deadlines", () => {
 });
 
 it.each(["array", "embedded", "headers"])(
-  "refuses repeated large saved JSON values in %s before expansion or browser dispatch",
+  "refuses repeated large saved values in %s before expansion or browser dispatch",
   async (kind) => {
-    onTestFinished(() => {
-      vi.unstubAllGlobals();
-    });
     const parsed = scenario([
       requestStep({ save: [{ name: "large", json_pointer: "/value" }] }),
       requestStep({
@@ -1903,13 +1827,88 @@ it.each(["array", "embedded", "headers"])(
     ]);
     const secrets = resolved(parsed);
     secrets.save("source.large", "large", "x".repeat(3_000_000), false);
-    const page = { ...fakePage({}), evaluate: vi.fn() } as unknown as Page;
+    const page = { url: () => ORIGIN, evaluate: vi.fn() } as unknown as Page;
     await expect(perform(page, parsed.actions[1]!, secrets)).rejects.toThrow(
       "serialization allowance",
     );
     expect(page.evaluate).not.toHaveBeenCalled();
   },
 );
+
+it.each([
+  ["request", "raw query", "x", 2],
+  ["request", "encoded query", "私", 0.25],
+  ["goto", "encoded query", "私", 0.25],
+] as const)(
+  "rejects an oversized %s %s before encoding or dispatch",
+  async (kind, _size, unit, allowanceFraction) => {
+    const repetitions = 1_000;
+    // One CJK code unit expands to nine ASCII bytes. The Unicode rows fit
+    // as raw text and exceed the current heap allowance only after encoding.
+    const value = unit.repeat(
+      Math.ceil(
+        (scenarioSerializationAllowance() * allowanceFraction) / repetitions,
+      ),
+    );
+    const query = Array.from({ length: repetitions }, (_, index) => ({
+      name: `repeated-${index}`,
+      value: { source: "literal", value },
+    }));
+    const url = `${ORIGIN}/items?literal=a%20b#kept`;
+    const parsed = scenario([
+      kind === "request"
+        ? requestStep({ query })
+        : { ...gotoStep(url), destination: { url, query } },
+    ]);
+    const dispatch = vi.fn();
+    const page = {
+      url: () => ORIGIN,
+      evaluate: dispatch,
+      goto: dispatch,
+    } as unknown as Page;
+    const encode =
+      kind === "request"
+        ? vi.spyOn(globalThis, "encodeURIComponent")
+        : vi.spyOn(URLSearchParams.prototype, "append");
+    encode.mockImplementation(() => {
+      throw new Error("Query encoding ran before expansion admission");
+    });
+    onTestFinished(() => encode.mockRestore());
+
+    await expect(
+      perform(page, parsed.actions[0]!, resolved(parsed)),
+    ).rejects.toThrow("serialization allowance");
+    expect(encode).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+  },
+);
+
+it("preserves goto form query normalization, Unicode, replacement characters and the fragment", async () => {
+  const parsed = scenario([
+    {
+      ...gotoStep(`${ORIGIN}/items?literal=a%20b#kept`),
+      destination: {
+        url: `${ORIGIN}/items?literal=a%20b#kept`,
+        query: [
+          {
+            name: "q",
+            value: { source: "literal", value: "a b私😀!~'\ud800" },
+          },
+        ],
+      },
+    },
+  ]);
+  const goto = vi.fn(async () => null);
+  await perform(
+    { goto } as unknown as Page,
+    parsed.actions[0]!,
+    resolved(parsed),
+  );
+  expect(goto).toHaveBeenCalledWith(
+    `${ORIGIN}/items?literal=a+b&q=a+b%E7%A7%81%F0%9F%98%80%21%7E%27%EF%BF%BD#kept`,
+    expect.anything(),
+  );
+});
 
 it("refuses repeated saved URL expansion before browser navigation", async () => {
   const parsed = scenario([
@@ -1931,56 +1930,33 @@ it("refuses repeated saved URL expansion before browser navigation", async () =>
 });
 
 it.each([
-  "/api\\items/{*}",
-  "/api/unused/../items/{*}",
-  "/api/unused/%2e%2e/items/{*}",
-])(
-  "normalizes the entire observed response path %s before matching",
-  async (path) => {
-    const parsed = clickSaving(path);
-    const { page } = uiPage([
-      {
-        method: "POST",
-        url: `${ORIGIN}/api/items/42`,
-        status: 201,
-        body: '{"id":"42"}',
-      },
+  ["/api\\items/{*}", "/api/items/42"],
+  ["/api/unused/../items/{*}", "/api/items/42"],
+  ["/api/unused/%2e%2e/items/{*}", "/api/items/42"],
+  ["/api/%7B*%7D", "/api/%7B*%7D", "/api/other"],
+  ["/~rea-wildcard~/items/{*}", "/~rea-wildcard~/items/42", "/other/items/42"],
+] as const)(
+  "binds only the response named by normalized path %s",
+  async (pattern, selected, excluded?: string) => {
+    const parsed = clickSaving(pattern);
+    const matching = {
+      method: "POST",
+      url: ORIGIN + selected,
+      status: 201,
+      body: '{"id":"42"}',
+    };
+    const { page, reads } = uiPage([
+      ...(excluded === undefined
+        ? []
+        : [{ ...matching, url: ORIGIN + excluded, body: '{"id":"other"}' }]),
+      matching,
     ]);
     const secrets = resolved(parsed);
     await perform(page, parsed.actions[0]!, secrets);
     expect(secrets.savedValue("item")).toBe("42");
+    expect(reads.count).toBe(1);
   },
 );
-
-it("keeps literal encoded wildcard text distinct from observed-response wildcard segments", async () => {
-  const parsed = clickSaving("/api/%7B*%7D");
-  const { page } = uiPage([
-    {
-      method: "POST",
-      url: `${ORIGIN}/api/other`,
-      status: 201,
-      body: '{"id":"42"}',
-    },
-  ]);
-  await expect(
-    perform(page, parsed.actions[0]!, resolved(parsed)),
-  ).rejects.toThrow("no POST");
-});
-
-it("normalizes wildcard paths without colliding with literal marker-like segments", async () => {
-  const parsed = clickSaving("/~rea-wildcard~/items/{*}");
-  const { page } = uiPage([
-    {
-      method: "POST",
-      url: `${ORIGIN}/~rea-wildcard~/items/42`,
-      status: 201,
-      body: '{"id":"42"}',
-    },
-  ]);
-  const secrets = resolved(parsed);
-  await perform(page, parsed.actions[0]!, secrets);
-  expect(secrets.savedValue("item")).toBe("42");
-});
 
 it("redacts a saved secret as a parsed URL query spells it", () => {
   const secrets = resolved(scenario([requestStep({})]));

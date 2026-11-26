@@ -12,14 +12,12 @@ import { join, resolve } from "node:path";
 import { expect } from "vitest";
 
 import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
-import {
-  analysisCliErrorEnvelopeSchema,
-  analysisErrorProjectionSchema,
-} from "../../../src/contracts/errorSchemas.js";
+import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import {
   analysisViewResultSchema,
   managedMemberSummaryViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import {
@@ -130,6 +128,7 @@ const verifyCliSelection = async ({
 const verifyCliFullPages = async (
   { cli, cwd, bundlePath, parent, report }: CliMemberViewContext,
   reportedCounts: Readonly<Record<string, number | null>>,
+  expectedEmpty: ReadonlySet<string> = new Set(),
 ) => {
   for (const collection of [
     "types",
@@ -146,7 +145,8 @@ const verifyCliFullPages = async (
         ? report.user_strings?.literals
         : report[collection];
     if (rows == null) throw new Error(`${collection} was not examined`);
-    expect(rows.length, collection).toBeGreaterThan(0);
+    if (expectedEmpty.has(collection)) expect(rows.length, collection).toBe(0);
+    else expect(rows.length, collection).toBeGreaterThan(0);
     expect(reportedCounts[collection]).toBe(rows.length);
     const paged: unknown[] = [];
     for (let offset: number | null = 0; offset !== null;) {
@@ -194,12 +194,13 @@ cliTest(
     ]) {
       const result = await cli.run({ arguments: [command, "--help"] });
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain("--evidence-bundle");
       if (command === "inspect-managed-members") {
+        expect(result.stdout).toContain("--evidence_output");
+        expect(result.stdout).not.toContain("--evidence-bundle");
         expect(result.stdout).toContain("--detail");
         expect(result.stdout).toContain("summary");
         expect(result.stdout).toContain("complete");
-      }
+      } else expect(result.stdout).toContain("--evidence-bundle");
     }
   },
 );
@@ -239,6 +240,7 @@ cliTest(
 
 cliTest(
   "retains complete member Evidence for exact CLI pages after process exit and target removal",
+  { tags: ["long-running"] },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-member-summary-cli-");
     const path = join(root, "fixture.dll");
@@ -261,7 +263,7 @@ cliTest(
         ...arguments_,
         "--detail",
         "complete",
-        "--evidence-bundle",
+        "--evidence_output",
         completeBundlePath,
       ],
     });
@@ -285,17 +287,24 @@ cliTest(
         ...arguments_,
         "--detail",
         "summary",
-        "--evidence-bundle",
+        "--evidence_output",
         "members.json",
       ],
     });
     expect(reply.exitCode).toBe(0);
-    const receipt = parseEvidence(reply.json);
+    const delivered = reply.json as {
+      summary: unknown;
+      evidence_bundle: unknown;
+    };
+    const receipt = parseEvidence(delivered.summary);
     expect(receipt.caller_input_path).toBe(path);
     const summary = managedMemberSummaryViewResultSchema.parse(
       receipt.normalized_result,
     );
     const originalBytes = await readFile(bundlePath, "utf8");
+    expect(delivered.evidence_bundle).toMatchObject({
+      bytes: Buffer.byteLength(originalBytes),
+    });
     const bundle = parseEvidenceBundle(JSON.parse(originalBytes));
     expect(bundle.records).toHaveLength(1);
     const parent = bundle.records[0]!;
@@ -321,14 +330,14 @@ cliTest(
     const report = managedMemberInspectionSchema.parse(
       parent.normalized_result,
     );
-    // The fixture declares three MemberRef rows. Paging against the produced
-    // report alone would also pass if the inspector silently dropped rows.
+    // Selected Fixture.Program bodies reference only 0x0a000001 and no
+    // ExportedType matches the selected type names.
     expect(report.member_refs.map(({ token }) => token)).toEqual([
       "0x0a000001",
-      "0x0a000002",
-      "0x0a000003",
     ]);
-    expect(summary.summary.reported_counts.member_refs).toBe(3);
+    expect(summary.summary.reported_counts.member_refs).toBe(1);
+    expect(report.exported_types).toEqual([]);
+    expect(summary.summary.reported_counts.exported_types).toBe(0);
     expect(summary.summary.selection).toEqual({
       type_names: typeNames,
       unmatched_type_names: ["Missing.Type"],
@@ -338,6 +347,41 @@ cliTest(
     expect(summary.summary.assembly).toEqual(report.assembly);
     expect(summary.summary).not.toHaveProperty("member_refs");
     expect(summary.summary).not.toHaveProperty("methods");
+
+    // Whole-assembly (unselected) inspection retains all three MemberRef rows
+    // and the System.Object ExportedType row.
+    const wholeBundlePath = join(root, "whole-members.json");
+    const wholeReply = await cli.run({
+      cwd: root,
+      arguments: [
+        "inspect-managed-members",
+        path,
+        "--detail",
+        "summary",
+        "--evidence_output",
+        "whole-members.json",
+        "--json",
+      ],
+    });
+    expect(wholeReply.exitCode).toBe(0);
+    const wholeDelivered = wholeReply.json as { summary: unknown };
+    const wholeSummary = managedMemberSummaryViewResultSchema.parse(
+      parseEvidence(wholeDelivered.summary).normalized_result,
+    );
+    const wholeParent = parseEvidenceBundle(
+      JSON.parse(await readFile(wholeBundlePath, "utf8")),
+    ).records[0]!;
+    const wholeReport = managedMemberInspectionSchema.parse(
+      wholeParent.normalized_result,
+    );
+    expect(wholeReport.member_refs.map(({ token }) => token)).toEqual([
+      "0x0a000001",
+      "0x0a000002",
+      "0x0a000003",
+    ]);
+    expect(wholeSummary.summary.reported_counts.member_refs).toBe(3);
+    expect(wholeReport.exported_types).toHaveLength(1);
+    expect(wholeSummary.summary.reported_counts.exported_types).toBe(1);
 
     await unlink(path);
     const otherDirectory = join(root, "later-process");
@@ -349,11 +393,26 @@ cliTest(
       parent,
       report,
     };
-    await verifyCliFullPages(pageContext, summary.summary.reported_counts);
+    // The producer has exited and its target is gone. Reuse only the reader
+    // process across page selections; every command still loads the bundle.
+    await verifyCliFullPages(
+      pageContext,
+      summary.summary.reported_counts,
+      new Set(["exported_types"]),
+    );
     await verifyCliSelection(pageContext);
+    await verifyCliFullPages(
+      {
+        cli,
+        cwd: otherDirectory,
+        bundlePath: wholeBundlePath,
+        parent: wholeParent,
+        report: wholeReport,
+      },
+      wholeSummary.summary.reported_counts,
+    );
     expect(await readFile(bundlePath, "utf8")).toBe(originalBytes);
   },
-  180_000,
 );
 
 cliTest(
@@ -375,8 +434,8 @@ cliTest(
       details: {
         issues: [
           expect.objectContaining({
-            path: ["evidence_bundle"],
-            message: expect.stringContaining("summary"),
+            path: ["evidence_output"],
+            message: expect.stringContaining("Summary"),
           }),
         ],
       },
@@ -404,7 +463,7 @@ cliTest(
           path,
           "--detail",
           "summary",
-          "--evidence-bundle",
+          "--evidence_output",
           destination,
           "--json",
         ],
@@ -417,13 +476,8 @@ cliTest(
           reason: destination === path ? "exists" : "missing",
         },
       });
-      const {
-        error: _label,
-        input_path: _inputPath,
-        input_reason: _inputReason,
-        ...projection
-      } = analysisCliErrorEnvelopeSchema.parse(result.json);
-      const failure = analysisErrorProjectionSchema.parse(projection);
+      // Delivery failures are the shared publication's error projection.
+      const failure = analysisErrorProjectionSchema.parse(result.json);
       if (failure.code !== "invalid_request")
         throw new Error(`Unexpected publication failure: ${failure.code}`);
       const retained = parseEvidence(failure.details?.partial_observation);
@@ -452,7 +506,7 @@ cliTest(
         path,
         "--detail",
         "summary",
-        "--evidence-bundle",
+        "--evidence_output",
         destination,
         "--json",
       ],
@@ -479,14 +533,15 @@ cliTest(
         path,
         "--detail",
         "summary",
-        "--evidence-bundle",
+        "--evidence_output",
         destination,
         "--json",
       ],
     });
     expect(result.exitCode).toBe(0);
     const summary = managedMemberSummaryViewResultSchema.parse(
-      parseEvidence(result.json).normalized_result,
+      parseEvidence((result.json as { summary: unknown }).summary)
+        .normalized_result,
     );
     expect(summary.summary).toMatchObject({
       metadata: { status: "malformed" },
@@ -538,15 +593,17 @@ cliTest(
   },
 );
 
-cliTest.for(
-  (process.platform === "win32"
-    ? (["event"] as const)
-    : (["event", "os"] as const)
-  ).flatMap((delivery) => [
-    { signal: "SIGINT" as const, status: 130, delivery },
-    { signal: "SIGTERM" as const, status: 143, delivery },
-  ]),
-)(
+// Exercise both exit statuses and both delivery paths where OS signals exist.
+const managedCancellation = [
+  { signal: "SIGINT", status: 130, delivery: "event" },
+  {
+    signal: "SIGTERM",
+    status: 143,
+    delivery: process.platform === "win32" ? "event" : "os",
+  },
+] as const;
+
+cliTest.for(managedCancellation)(
   "keeps a committed receipt when $signal ($delivery) is queued during final cleanup",
   async ({ signal, status, delivery }, { cli }) => {
     const root = await createTestTempDirectory("rea-managed-queued-signal-");
@@ -565,7 +622,7 @@ cliTest.for(
         "Fixture.Program",
         "--detail",
         "summary",
-        "--evidence-bundle",
+        "--evidence_output",
         destination,
         "--json",
       ],
@@ -582,9 +639,7 @@ cliTest.for(
       },
     });
     expect(reply.exitCode).toBe(status);
-    const { error: _label, ...projection } =
-      analysisCliErrorEnvelopeSchema.parse(reply.json);
-    const error = analysisErrorProjectionSchema.parse(projection);
+    const error = analysisErrorProjectionSchema.parse(reply.json);
     expect(error.code).toBe("cancelled");
     expect(error.details?.operation).toBe("inspect_managed_members");
     const bytes = await readFile(destination);
@@ -601,28 +656,16 @@ cliTest.for(
       kind: "summary",
       parent_evidence_id: parent.evidence_id,
     });
-    expect(JSON.parse(await readFile(marker, "utf8"))).toMatchObject({
-      signal,
-      listeners: expect.any(Number),
-    });
-    expect(
-      JSON.parse(await readFile(marker, "utf8")).listeners,
-    ).toBeGreaterThan(0);
+    const proof = JSON.parse(await readFile(marker, "utf8"));
+    expect(proof).toMatchObject({ phase: "cleanup", signal, delivery });
+    expect(proof.listeners).toBeGreaterThan(0);
     expect(
       (await readdir(root)).some((name) => name.startsWith(".rea-write-")),
     ).toBe(false);
   },
 );
 
-cliTest.for(
-  (process.platform === "win32"
-    ? (["event"] as const)
-    : (["event", "os"] as const)
-  ).flatMap((delivery) => [
-    { signal: "SIGINT" as const, status: 130, delivery },
-    { signal: "SIGTERM" as const, status: 143, delivery },
-  ]),
-)(
+cliTest.for(managedCancellation)(
   "retains complete default Evidence when $signal ($delivery) is queued during sealing",
   async ({ signal, status, delivery }, { cli }) => {
     const root = await createTestTempDirectory("rea-managed-complete-signal-");

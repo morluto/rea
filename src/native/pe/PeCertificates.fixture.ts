@@ -3,9 +3,15 @@ const concat = (...parts: Buffer[]): Buffer => Buffer.concat(parts);
 const encodeLength = (length: number): Buffer => {
   if (length < 0x80) return Buffer.from([length]);
   if (length <= 0xff) return Buffer.from([0x81, length]);
-  const bytes = Buffer.alloc(3);
-  bytes[0] = 0x82;
-  bytes.writeUInt16BE(length, 1);
+  if (length <= 0xffff) {
+    const bytes = Buffer.alloc(3);
+    bytes[0] = 0x82;
+    bytes.writeUInt16BE(length, 1);
+    return bytes;
+  }
+  const bytes = Buffer.alloc(4);
+  bytes[0] = 0x83;
+  bytes.writeUIntBE(length, 1, 3);
   return bytes;
 };
 
@@ -67,32 +73,51 @@ export const pkcs7SignedDataFixture = (
   commonName = "REA Fixture",
   organization = "REA Tests",
   signature = octet(Buffer.from("sig")),
-  unsignedAttributes?: readonly (readonly number[])[],
+  // An OID gets a placeholder value; a Buffer is a complete encoded attribute.
+  unsignedAttributes?: readonly (readonly number[] | Buffer)[],
+  fields: Partial<
+    Record<
+      "issuer" | "subject" | "signerIssuer" | "extensions" | "signedAttributes",
+      Buffer
+    >
+  > = {},
+  /** Extra certificate sharing the signer serial, for ambiguous-match fixtures. */
+  extraCertificateName?: string,
 ): Buffer => {
   const serial = Buffer.from([0x11, 0x22, 0x33, 0x44]);
   const subject = name(commonName, organization);
-  const tbs = seq(
-    context(0, integer(2)),
-    integer(serial),
-    algorithm(SHA256_RSA),
-    subject,
-    seq(utc("250101000000Z"), utc("260101000000Z")),
-    subject,
-    seq(algorithm(RSA), bitString(Buffer.from("pubkey"))),
-    context(
-      3,
-      seq(seq(oid([2, 5, 29, 14]), octet(Buffer.from([0x04, 0x01, 0xaa])))),
-    ),
-  );
-  const certificate = seq(
-    tbs,
-    algorithm(SHA256_RSA),
-    bitString(Buffer.from("signature")),
+  const certificateOf = (issuer: Buffer, owner: Buffer) =>
+    seq(
+      seq(
+        context(0, integer(2)),
+        integer(serial),
+        algorithm(SHA256_RSA),
+        issuer,
+        seq(utc("250101000000Z"), utc("260101000000Z")),
+        owner,
+        seq(algorithm(RSA), bitString(Buffer.from("pubkey"))),
+        context(
+          3,
+          fields.extensions ??
+            seq(
+              seq(oid([2, 5, 29, 14]), octet(Buffer.from([0x04, 0x01, 0xaa]))),
+            ),
+        ),
+      ),
+      algorithm(SHA256_RSA),
+      bitString(Buffer.from("signature")),
+    );
+  const certificate = certificateOf(
+    fields.issuer ?? subject,
+    fields.subject ?? subject,
   );
   const signer = seq(
     integer(1),
-    seq(subject, integer(serial)),
+    seq(fields.signerIssuer ?? subject, integer(serial)),
     algorithm(SHA256),
+    ...(fields.signedAttributes === undefined
+      ? []
+      : [context(0, fields.signedAttributes)]),
     algorithm(SHA256_RSA),
     signature,
     ...(unsignedAttributes === undefined
@@ -101,8 +126,10 @@ export const pkcs7SignedDataFixture = (
           context(
             1,
             concat(
-              ...unsignedAttributes.map((type) =>
-                seq(oid(type), set(octet(Buffer.from([1])))),
+              ...unsignedAttributes.map((entry) =>
+                Buffer.isBuffer(entry)
+                  ? entry
+                  : seq(oid(entry), set(octet(Buffer.from([1])))),
               ),
             ),
           ),
@@ -112,10 +139,55 @@ export const pkcs7SignedDataFixture = (
     integer(1),
     set(algorithm(SHA256)),
     seq(DATA),
-    context(0, certificate),
+    context(
+      0,
+      extraCertificateName === undefined
+        ? certificate
+        : concat(
+            certificateOf(
+              name(extraCertificateName, organization),
+              name(extraCertificateName, organization),
+            ),
+            certificate,
+          ),
+    ),
     set(signer),
   );
   return seq(SIGNED_DATA, context(0, signedData));
+};
+
+const NESTED_SIGNATURE = oid([1, 3, 6, 1, 4, 1, 311, 2, 4, 1]);
+const RFC3161_TIMESTAMP = oid([1, 3, 6, 1, 4, 1, 311, 3, 3, 1]);
+const SIGNING_CERTIFICATE_V2 = oid([1, 2, 840, 113549, 1, 9, 16, 2, 47]);
+
+/**
+ * Windows dual-signing shape, 34 levels deep like signed system binaries: the
+ * signature's unsigned attributes embed a nested signature, whose own unsigned
+ * attributes embed an RFC 3161 timestamp. The timestamp's signed ESS
+ * signingCertificateV2 issuer name is the deepest branch.
+ */
+export const pkcs7DualSignedTimestampedFixture = (): Buffer => {
+  const issuerSerial = seq(
+    seq(context(4, name("REA Timestamp CA", "REA Tests"))),
+    integer(Buffer.from([0x11, 0x22, 0x33, 0x44])),
+  );
+  const signingCertificate = attribute(
+    SIGNING_CERTIFICATE_V2,
+    set(seq(seq(seq(octet(Buffer.alloc(32)), issuerSerial)))),
+  );
+  const timestamp = pkcs7SignedDataFixture(
+    "REA Timestamp",
+    "REA Tests",
+    undefined,
+    undefined,
+    { signedAttributes: signingCertificate },
+  );
+  const nested = pkcs7SignedDataFixture("REA Nested", "REA Tests", undefined, [
+    attribute(RFC3161_TIMESTAMP, set(timestamp)),
+  ]);
+  return pkcs7SignedDataFixture(undefined, undefined, undefined, [
+    attribute(NESTED_SIGNATURE, set(nested)),
+  ]);
 };
 
 /** Same CMS fields with a BER indefinite-length outer ContentInfo SEQUENCE. */

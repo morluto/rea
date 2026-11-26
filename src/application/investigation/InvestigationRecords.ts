@@ -10,7 +10,11 @@ import type {
   UpdateUnknownInput,
 } from "../../domain/residualUnknown.js";
 import type { Result } from "../../domain/result.js";
-import { EvidenceLedger, type EvidenceImportDelta } from "./EvidenceLedger.js";
+import {
+  EvidenceLedger,
+  type EvidenceImportDelta,
+  type EvidenceRecordDelta,
+} from "./EvidenceLedger.js";
 import { unknownMutationEvidence } from "./UnknownEvidence.js";
 import type {
   EvidenceReader,
@@ -48,11 +52,35 @@ export class InvestigationRecords
     return this.#evidence.statistics();
   }
 
+  /** Check live headroom before constructing a recovery representation. */
+  admitRecoveryObservation(
+    input: unknown,
+    operation: string,
+    additional: {
+      readonly valueBytes: number;
+      readonly serializedUtf16Bytes: number;
+    },
+  ): Result<void, AnalysisError> {
+    return admitInvestigationAuthentication(
+      input,
+      operation,
+      this.retentionPolicy,
+      additional,
+    );
+  }
+
   /** Record immutable Evidence idempotently; reject conflicting content. */
   recordEvidence(
     evidence: Evidence,
   ): Result<"added" | "duplicate", AnalysisError> {
     return this.#evidence.record(evidence);
+  }
+
+  /** Return the ledger's actual metadata delta without inventing provenance. */
+  recordEvidenceWithMetadata(
+    evidence: Evidence,
+  ): Result<EvidenceRecordDelta, AnalysisError> {
+    return this.#evidence.recordWithMetadata(evidence);
   }
 
   /** Check one semantic Evidence ID without exposing stored values. */

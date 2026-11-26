@@ -1,30 +1,45 @@
+import { WindowsChangeTimeConfigurationError } from "../config/windowsChangeTimeSettle.js";
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
 import { jsonRecordSchema } from "../domain/jsonRecord.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import { AnalysisCleanupLease } from "../resources/index.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
 import type { AnalysisInputIssue } from "../domain/analysisErrorCore.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   withOwnedRegularFile,
   regularFileCancellation,
+  RegularFileCancelled,
   RegularFileCleanupFailure,
+  type RegularFileOperationOutcome,
 } from "../filesystem/OwnedRegularFile.js";
 import {
   RegularFileOperationCancelled,
   NonRegularFileReadError,
 } from "../filesystem/RegularFile.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Omitted registration `timeoutMs` for each upstream IDA MCP request. */
 export const DEFAULT_IDA_REQUEST_TIMEOUT_MS = 300_000;
 /** Shortest valid registration request timeout. */
 const MIN_IDA_REQUEST_TIMEOUT_MS = 1;
-/** Node timer ceiling. Larger registration values would be clamped instead of honored. */
-export const MAX_IDA_REQUEST_TIMEOUT_MS = 2_147_483_647;
+/** Loopback names plus the Docker and Podman gateway names for the container's host. */
+const LOCAL_IDA_HTTP_HOSTS: ReadonlySet<string> = new Set([
+  "localhost",
+  "127.0.0.1",
+  "[::1]",
+  "host.docker.internal",
+  "host.containers.internal",
+]);
 
 const common = {
   sensitive: z
@@ -34,17 +49,28 @@ const common = {
     })
     .optional(),
   mode: z.enum(["attached", "headless"]).default("attached"),
-  protocol: z.literal("native").optional(),
+  /**
+   * An attached registration names its upstream protocol. `"legacy"` (the
+   * removed ida-pro-mcp 1.4 GUI proxy) is still recognized so that a stored
+   * registration is refused with migration guidance rather than reported as an
+   * unknown value or read as another protocol. Headless mode uses the database
+   * supervisor when `protocol` is omitted, or `"hexrays"` for the official
+   * Hex-Rays IDA MCP.
+   */
+  protocol: z.enum(["legacy", "native", "hexrays"]).optional(),
   timeoutMs: z
     .int()
     .min(MIN_IDA_REQUEST_TIMEOUT_MS)
-    .max(MAX_IDA_REQUEST_TIMEOUT_MS)
+    .max(MAX_NODE_TIMER_DELAY_MS)
     .default(DEFAULT_IDA_REQUEST_TIMEOUT_MS),
   workspaceRoot: z
     .string()
     .refine(isAbsolute, "workspaceRoot must be absolute on the REA host")
     .optional(),
 };
+/** Refusal for a stored registration that still selects the removed 1.4 proxy. */
+export const LEGACY_PROTOCOL_REMOVED =
+  'the legacy ida-pro-mcp 1.4 attached protocol was removed. Replace this registration with the native ida-free-mcp plugin ("protocol": "native") for an open GUI database, or an ida-pro-mcp 2.x database supervisor in headless mode, as described in "Migrate a legacy attached registration"';
 const registrationSchema = z
   .union([
     z
@@ -64,7 +90,7 @@ const registrationSchema = z
           const url = new URL(value);
           return (
             ["http:", "https:"].includes(url.protocol) &&
-            ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) &&
+            LOCAL_IDA_HTTP_HOSTS.has(url.hostname) &&
             url.username === "" &&
             url.password === ""
           );
@@ -74,9 +100,36 @@ const registrationSchema = z
       .strict(),
   ])
   .refine(
-    (config) => config.protocol !== "native" || config.mode === "attached",
-    "The native IDA MCP protocol requires attached mode",
-  );
+    (config) =>
+      config.protocol === undefined ||
+      config.protocol === "hexrays" ||
+      config.mode === "attached",
+    'An IDA MCP protocol requires attached mode; a headless registration omits protocol or sets "hexrays"',
+  )
+  .refine(
+    (config) => config.protocol !== undefined || config.mode !== "attached",
+    'attached IDA registrations must set protocol to "native" (ida-free-mcp plugin)',
+  )
+  // Hex-Rays database leases belong to the MCP server process. Only a stdio
+  // registration gives REA a server, and therefore leases, of its own.
+  .refine(
+    (config) =>
+      config.protocol !== "hexrays" ||
+      (config.mode === "headless" && "command" in config),
+    "The Hex-Rays IDA MCP protocol requires a headless stdio registration",
+  )
+  // Resolve the upstream protocol once; consumers never infer it from mode.
+  .transform((config, context) => {
+    if (config.protocol === "legacy") {
+      context.addIssue({
+        code: "custom",
+        path: ["protocol"],
+        message: LEGACY_PROTOCOL_REMOVED,
+      });
+      return z.NEVER;
+    }
+    return { ...config, protocol: config.protocol ?? ("modern" as const) };
+  });
 
 /** An upstream MCP registration plus REA's database lifecycle selection. */
 export type IdaConfiguration = z.infer<typeof registrationSchema>;
@@ -86,7 +139,7 @@ const registrationConstraint = (
   issue: AnalysisInputIssue,
 ): string | undefined => {
   if (issue.path.length === 1 && issue.path[0] === "timeoutMs")
-    return `timeoutMs must be an integer from ${String(MIN_IDA_REQUEST_TIMEOUT_MS)} to ${String(MAX_IDA_REQUEST_TIMEOUT_MS)} milliseconds`;
+    return `timeoutMs must be an integer from ${String(MIN_IDA_REQUEST_TIMEOUT_MS)} to ${String(MAX_NODE_TIMER_DELAY_MS)} milliseconds`;
   return issue.message === undefined
     ? undefined
     : `${issue.path.join(".") || "registration"}: ${issue.message}`;
@@ -94,19 +147,19 @@ const registrationConstraint = (
 
 /** Resolved compatibility facts; persisted identities and diagnostics intentionally differ. */
 export const IDA_COMPATIBILITY_PROFILES = {
-  legacy: {
-    protocol: "legacy",
-    mode: "attached",
-    identity: "legacy-1.4",
-    diagnosticIdentity: "legacy-1.4",
-    diagnosticLabel: "attached",
-  },
   modern: {
     protocol: "modern",
     mode: "headless",
     identity: "database-supervisor",
     diagnosticIdentity: "database-supervisor",
     diagnosticLabel: "headless",
+  },
+  hexrays: {
+    protocol: "hexrays",
+    mode: "headless",
+    identity: "hexrays-ida-mcp",
+    diagnosticIdentity: "hexrays",
+    diagnosticLabel: "Hex-Rays",
   },
   native: {
     protocol: "native",
@@ -119,13 +172,10 @@ export const IDA_COMPATIBILITY_PROFILES = {
 export type IdaCompatibilityProfile =
   (typeof IDA_COMPATIBILITY_PROFILES)[keyof typeof IDA_COMPATIBILITY_PROFILES];
 
-/** Preserve existing attached/headless registrations when protocol is omitted. */
+/** The compatibility facts of the registration's resolved protocol. */
 export const idaCompatibilityProfile = (
   config: IdaConfiguration,
-): IdaCompatibilityProfile =>
-  IDA_COMPATIBILITY_PROFILES[
-    config.protocol ?? (config.mode === "attached" ? "legacy" : "modern")
-  ];
+): IdaCompatibilityProfile => IDA_COMPATIBILITY_PROFILES[config.protocol];
 
 /** Read one explicit registration without starting or installing a provider. */
 export const readIdaConfiguration = (
@@ -138,7 +188,9 @@ export const readIdaConfiguration = (
   options.resourceScope.run(async () => {
     let closeLease: AnalysisCleanupLease | undefined;
     try {
-      const text = await withOwnedRegularFile<string>(
+      const text = await withOwnedRegularFile<
+        Result<string, ConfigurationError>
+      >(
         path,
         {
           ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -157,21 +209,23 @@ export const readIdaConfiguration = (
         },
         async ({ handle, initial: metadata }) => {
           if (metadata.size > MAXIMUM_REGISTRATION_BYTES)
-            throw registrationTooLarge();
+            return err(registrationTooLarge());
           const bytes = await readBoundedFileBytes(
             handle,
             MAXIMUM_REGISTRATION_BYTES,
             {
               signal: options.signal,
+              expectedSize: metadata.size,
               cancellationFailure: (reason) =>
                 new RegularFileOperationCancelled(reason),
             },
           );
-          if (bytes === undefined) throw registrationTooLarge();
-          return bytes.toString("utf8");
+          if (bytes === undefined) return err(registrationTooLarge());
+          return ok(bytes.toString("utf8"));
         },
       );
-      const input: unknown = JSON.parse(text);
+      if (!text.ok) return text;
+      const input: unknown = JSON.parse(text.value);
       const envelope = z
         .object({ mcpServers: z.object({ "ida-pro-mcp": z.unknown() }) })
         .safeParse(input);
@@ -192,13 +246,13 @@ export const readIdaConfiguration = (
       if (constraints.length === 0)
         return err(
           idaConfigurationError(
-            "REA_IDA_MCP_CONFIG must contain an IDA MCP command/args or local url registration; see docs/ida-provider.md.",
+            "REA_IDA_MCP_CONFIG must contain an IDA MCP command/args or local url registration; see docs/providers/ida-provider.md.",
             parsed.error,
           ),
         );
       return err(
         new ConfigurationError(
-          `REA_IDA_MCP_CONFIG: ${constraints.join("; ")}. See docs/ida-provider.md.`,
+          `REA_IDA_MCP_CONFIG: ${constraints.join("; ")}. See docs/providers/ida-provider.md.`,
           {
             cause: parsed.error,
             settings: constraints.map((constraint) => ({
@@ -209,7 +263,20 @@ export const readIdaConfiguration = (
         ),
       );
     } catch (cause: unknown) {
-      if (cause instanceof ConfigurationError) return err(cause);
+      if (cause instanceof WindowsChangeTimeConfigurationError)
+        return err(cause);
+      const rejection =
+        cause instanceof RegularFileCancelled ||
+        cause instanceof RegularFileCleanupFailure
+          ? completedRegistrationRejection(cause.outcome)
+          : undefined;
+      const cancellation = regularFileCancellation(cause);
+      if (cause instanceof RegularFileCancelled && rejection !== undefined)
+        return err(
+          rejection.retainSecondaryFailure(
+            cancelledBy("ida:registration", carriedReason(cause.reason)),
+          ),
+        );
       if (cause instanceof NonRegularFileReadError)
         return err(
           idaConfigurationError(
@@ -218,46 +285,45 @@ export const readIdaConfiguration = (
           ),
         );
       if (cause instanceof AnalysisCancelledError) throw cause;
-      const cancellation = regularFileCancellation(cause);
-      if (cancellation !== undefined) {
+      if (cancellation !== undefined && rejection === undefined) {
         if (cause instanceof RegularFileCleanupFailure) {
-          const error = new AnalysisCancelledError("ida:registration", {
-            cause: cancellation.reason,
-            cleanup: {
-              reason:
-                cause.cleanupCause instanceof Error
-                  ? cause.cleanupCause.message
-                  : String(cause.cleanupCause),
-              resources: [path],
+          const error = cancelledBy(
+            "ida:registration",
+            carriedReason(cancellation.reason),
+            {
+              cleanup: {
+                reason: errorMessage(cause.cleanupCause),
+                resources: [path],
+              },
             },
-          });
+          );
           closeLease?.bindCleanupError(error);
           throw error;
         }
-        throw new AnalysisCancelledError("ida:registration", {
-          cause: cancellation.reason,
-        });
+        throw cancelledBy(
+          "ida:registration",
+          carriedReason(cancellation.reason),
+        );
       }
       if (cause instanceof RegularFileCleanupFailure) {
+        // A size rejection is a completed outcome holding a rejected Result,
+        // so the close failure must keep that primary reason, not replace it.
         const primary =
           cause.outcome.kind === "failed"
             ? cause.outcome.cause
-            : cause.cleanupCause;
+            : (rejection ?? cause.cleanupCause);
         const primaryMessage =
-          cause.outcome.kind === "failed"
-            ? primary instanceof ConfigurationError
-              ? primary.message
-              : primary instanceof NonRegularFileReadError
+          primary instanceof ConfigurationError
+            ? primary.message
+            : cause.outcome.kind === "failed"
+              ? primary instanceof NonRegularFileReadError
                 ? `REA_IDA_MCP_CONFIG must select a regular JSON file: ${path}`
-                : `Cannot read IDA MCP registration ${path}: ${primary instanceof Error ? primary.message : String(primary)}`
-            : `Cannot close IDA MCP registration ${path}; provide a readable JSON configuration.`;
+                : `Cannot read IDA MCP registration ${path}: ${errorMessage(primary)}`
+              : `Cannot close IDA MCP registration ${path}; provide a readable JSON configuration.`;
         const error = new ConfigurationError(primaryMessage, {
           cause,
           cleanup: {
-            reason:
-              cause.cleanupCause instanceof Error
-                ? cause.cleanupCause.message
-                : String(cause.cleanupCause),
+            reason: errorMessage(cause.cleanupCause),
             resources: [path],
           },
           settings: [
@@ -267,6 +333,10 @@ export const readIdaConfiguration = (
             },
           ],
         });
+        if (cancellation !== undefined)
+          error.retainSecondaryFailure(
+            cancelledBy("ida:registration", carriedReason(cancellation.reason)),
+          );
         closeLease?.bindCleanupError(error);
         return err(error);
       }
@@ -291,6 +361,22 @@ const registrationTooLarge = (): ConfigurationError =>
     "REA_IDA_MCP_CONFIG exceeds the 64 KiB registration size.",
   );
 
+/** Recognize the size rejection carried by a completed read whose close failed. */
+const completedRegistrationRejection = (
+  outcome: RegularFileOperationOutcome<unknown>,
+): ConfigurationError | undefined => {
+  if (outcome.kind !== "completed") return undefined;
+  const value: unknown = outcome.value;
+  return typeof value === "object" &&
+    value !== null &&
+    "ok" in value &&
+    value.ok === false &&
+    "error" in value &&
+    value.error instanceof ConfigurationError
+    ? value.error
+    : undefined;
+};
+
 /**
  * Name the registration key that sets an IDA request or readiness deadline.
  * `ceilingMs` is the parsed `timeoutMs`; a shorter effective value is the time
@@ -307,7 +393,19 @@ export const idaRegistrationTimeoutGuidance = (
       : ceilingMs === timeoutMs
         ? `This IDA request reached the registration timeoutMs deadline of ${String(timeoutMs)} ms (deadlineExpired).`
         : `This IDA request reached its ${String(timeoutMs)} ms deadline (deadlineExpired), within the registration timeoutMs ceiling of ${String(ceilingMs)} ms.`,
-  remediationAction: `Set timeoutMs in the JSON file named by REA_IDA_MCP_CONFIG to an integer from 1 to ${String(MAX_IDA_REQUEST_TIMEOUT_MS)} (omitted means ${String(DEFAULT_IDA_REQUEST_TIMEOUT_MS)}). REA applies the edited file on the next IDA connection after it re-reads the registration; an already open session keeps the timeout it connected with. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
+  remediationAction: `Set timeoutMs in the JSON file named by REA_IDA_MCP_CONFIG to an integer from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)} (omitted means ${String(DEFAULT_IDA_REQUEST_TIMEOUT_MS)}). REA applies the edited file on the next IDA connection after it re-reads the registration; an already open session keeps the timeout it connected with. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
+});
+
+/**
+ * Name the upstream supervisor setting that ended an open. It belongs to the
+ * process that runs ida-pro-mcp, not to REA's registration timeoutMs.
+ */
+export const idaSupervisorOpenTimeoutGuidance = (
+  seconds: number,
+): { readonly userMessage: string; readonly remediationAction: string } => ({
+  userMessage: `The IDA database supervisor stopped opening and analyzing the input after its IDA_MCP_OPEN_TIMEOUT deadline of ${String(seconds)} s. That deadline is an ida-pro-mcp setting, separate from REA's registration timeoutMs.`,
+  remediationAction:
+    "Raise IDA_MCP_OPEN_TIMEOUT (0 waits indefinitely) in the environment that starts the ida-pro-mcp supervisor, then restart it. Keep the registration timeoutMs in the JSON file named by REA_IDA_MCP_CONFIG above the expected analysis time as well. Confirm retained cleanup before retrying.",
 });
 
 /** A REA_IDA_MCP_CONFIG rejection that names the setting it concerns. */

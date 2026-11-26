@@ -1,4 +1,9 @@
 #!/usr/bin/env node
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
+import {
+  assertCanonicalOutput,
+  canonicalOutputSchema,
+} from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import {
   requireMcpEvidenceBundle,
@@ -7,7 +12,6 @@ import {
 } from "./lib/mcp-verifier-results.mjs";
 import { estimateTokenCount } from "tokenx";
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import { readFile, writeFile, readdir, mkdir, rm } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,10 +19,16 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 if (process.platform !== "linux")
   throw new Error(
@@ -29,7 +39,7 @@ if (!isAbsolute(process.env.REA_TSHARK_COMMAND ?? ""))
 const entrypoint =
   process.argv[2] ?? fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
-const root = await PrivateRuntimeRoot.create({
+const root = await VerifierFixture.open({
   prefix: "rea-capture-verifier-",
 });
 const path = join(root.path, "network with spaces.pcap");
@@ -41,7 +51,9 @@ const environment = {
   TMP: root.path,
   TEMP: root.path,
 };
-const client = new Client({ name: "packet-capture-verifier", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "packet-capture-verifier", version: "1" }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -112,36 +124,31 @@ const expectedAddressSpace = Math.min(
     .map((value) => (value === "unlimited" ? Infinity : Number(value))),
 );
 
-await withVerifierCleanup(async () => {
+// The root is removed only after the client and transport confirm.
+root.releaseAfter(() => client.close());
+root.releaseAfter(() => transport.close());
+await withVerifierFixture(root, async () => {
   await writeFile(path, source);
   await writeFile(bluetooth, bluetoothSource);
   await client.connect(transport);
   const tool = (await client.listTools()).tools.find(
     ({ name }) => name === "inspect_packet_capture",
   );
-  assert.ok(tool?.outputSchema);
+  assert.ok(tool);
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   assert.ok(ajv.validateSchema(tool.inputSchema));
-  assert.ok(ajv.validateSchema(tool.outputSchema));
+  assert.ok(ajv.validateSchema(canonicalOutputSchema(tool.name)));
   const inspect = async (input) => {
     const response = await client.callTool({
       name: tool.name,
       arguments: input,
     });
-    assert.ok(
-      ajv.validate(tool.outputSchema, response.structuredContent),
-      JSON.stringify(ajv.errors),
-    );
+    assertCanonicalOutput(ajv, tool, response);
     const evidence = parseEvidence(
       requireMcpOutput(response, "inspect_packet_capture"),
     );
     const report = evidence.normalized_result;
-    assert.equal(
-      report.artifact.sha256,
-      createHash("sha256")
-        .update(await readFile(input.path))
-        .digest("hex"),
-    );
+    assert.equal(report.artifact.sha256, await sha256File(input.path));
     assert.equal(report.hardware_acquisition, "not-performed");
     assert.equal(report.limits.address_space_bytes, expectedAddressSpace);
     assert.equal(report.tool.configured_path, process.env.REA_TSHARK_COMMAND);
@@ -275,10 +282,10 @@ await withVerifierCleanup(async () => {
   const pcapTool = (await client.listTools()).tools.find(
     (t) => t.name === "inspect_pcap_capture",
   );
-  assert.ok(pcapTool?.outputSchema);
+  assert.ok(pcapTool);
   const pcapAjv = new Ajv2020({ strict: false, validateFormats: false });
   assert.ok(pcapAjv.validateSchema(pcapTool.inputSchema));
-  assert.ok(pcapAjv.validateSchema(pcapTool.outputSchema));
+  assert.ok(pcapAjv.validateSchema(canonicalOutputSchema(pcapTool.name)));
   for (const capturePath of [path, bluetooth]) {
     const capinfosOutput = (
       await execute(
@@ -315,7 +322,10 @@ await withVerifierCleanup(async () => {
       arguments: { path: capturePath, detail: "summary" },
     });
     assert.ok(
-      pcapAjv.validate(pcapTool.outputSchema, response.structuredContent),
+      pcapAjv.validate(
+        canonicalOutputSchema(pcapTool.name),
+        response.structuredContent,
+      ),
       pcapAjv.errorsText(),
     );
     const summary = parseEvidence(
@@ -323,18 +333,20 @@ await withVerifierCleanup(async () => {
     ).normalized_result;
     assert.equal(summary.summary.capture_start, expectedCaptureStart);
     assert.equal(summary.summary.capture_end, expectedCaptureEnd);
-    assert.equal(
-      summary.summary.target.sha256,
-      createHash("sha256")
-        .update(await readFile(capturePath))
-        .digest("hex"),
-    );
+    assert.equal(summary.summary.target.sha256, await sha256File(capturePath));
     const cli = parseEvidence(
       JSON.parse(
         (
           await execute(
             process.execPath,
-            [entrypoint, "inspect-pcap-capture", capturePath, "--json"],
+            [
+              entrypoint,
+              ...(await completeEvidenceCliArguments([
+                "inspect-pcap-capture",
+                capturePath,
+                "--json",
+              ])),
+            ],
             { env: environment, timeout: 60000, maxBuffer: 16 * 1024 * 1024 },
           )
         ).stdout,
@@ -392,9 +404,9 @@ await withVerifierCleanup(async () => {
   const discovery = (await client.listTools()).tools.find(
     ({ name }) => name === "inspect_packet_fields",
   );
-  assert.ok(discovery?.outputSchema);
+  assert.ok(discovery);
   assert.ok(ajv.validateSchema(discovery.inputSchema));
-  assert.ok(ajv.validateSchema(discovery.outputSchema));
+  assert.ok(ajv.validateSchema(canonicalOutputSchema(discovery.name)));
   const nativeProfile = join(root.path, "native-profile");
   await mkdir(nativeProfile);
   const native = (
@@ -420,10 +432,7 @@ await withVerifierCleanup(async () => {
       name: discovery.name,
       arguments: input,
     });
-    assert.ok(
-      ajv.validate(discovery.outputSchema, response.structuredContent),
-      JSON.stringify(ajv.errors),
-    );
+    assertCanonicalOutput(ajv, discovery, response);
     const evidence = parseEvidence(
       requireMcpOutput(response, "inspect_packet_fields"),
     );
@@ -466,6 +475,8 @@ await withVerifierCleanup(async () => {
       returned: expectedPage.length,
       has_more:
         Math.max(0, expectedMatches.length - offset) > expectedPage.length,
+      // Verified selections fit one page; the page budget is covered by boundary tests.
+      record_budget_reached: false,
     });
     discoveryMeasurements.push({
       input,
@@ -523,7 +534,7 @@ await withVerifierCleanup(async () => {
     "network with spaces.pcap",
     "paged.pcap",
   ]);
-}, [() => client.close(), () => transport.close(), () => root.close()]);
+});
 console.log(
   JSON.stringify(
     {

@@ -1,12 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { compareInspectionDimension } from "../../tests/support/browser/webCaptureComparison.js";
 
 import { passiveNetworkCapture } from "../../tests/fixtures/passiveNetworkCapture.js";
-import {
-  browserCaptureComparisonInputSchema,
-  compareBrowserCaptures,
-} from "./browserCaptureComparison.js";
 import type { WebPageInspection } from "./browserObservationSchemas.js";
-import { webCaptureDiffSchema } from "./webCaptureDiffSchemas.js";
 import { stableWebResources } from "./webInventory.js";
 
 const resource = (
@@ -26,18 +22,7 @@ const capture = (resources: readonly ReturnType<typeof resource>[]) => {
   return inspection;
 };
 
-const compareResources = (
-  before: WebPageInspection,
-  after: WebPageInspection,
-) =>
-  webCaptureDiffSchema.parse(
-    compareBrowserCaptures(
-      browserCaptureComparisonInputSchema.parse({
-        before: { inspection: before },
-        after: { inspection: after },
-      }),
-    ),
-  ).dimensions.resources;
+const compareResources = compareInspectionDimension("resources");
 
 describe("web resource comparison identity and optional size", () => {
   it.each([
@@ -56,14 +41,7 @@ describe("web resource comparison identity and optional size", () => {
     ).toMatchObject({ status: "unknown", total_changes: 0, changes: [] });
   });
 
-  it("compares distinct all-known size variants and keeps exact deduplication", () => {
-    const before = stableWebResources([resource(128), resource(256)]);
-    const after = stableWebResources([resource(128), resource(512)]);
-    expect(before).toHaveLength(2);
-    expect(after).toHaveLength(2);
-    expect(before.map(({ resource_key }) => resource_key)).not.toEqual(
-      after.map(({ resource_key }) => resource_key),
-    );
+  it("reports a modified resource group when a known size variant changes", () => {
     expect(
       compareResources(
         capture([resource(128), resource(256)]),
@@ -73,17 +51,6 @@ describe("web resource comparison identity and optional size", () => {
       status: "changed",
       total_changes: 1,
       changes: [{ change: "modified" }],
-    });
-    expect(stableWebResources([resource(128), resource(128)])).toHaveLength(1);
-    expect(
-      compareResources(
-        capture([resource(128), resource(128)]),
-        capture([resource(128)]),
-      ),
-    ).toMatchObject({
-      status: "unchanged",
-      total_changes: 0,
-      changes: [],
     });
   });
 
@@ -110,3 +77,67 @@ describe("web resource comparison identity and optional size", () => {
     });
   });
 });
+
+it("does not claim membership from an unavailable resource inventory", () => {
+  const before = capture([resource(128)]);
+  const after = capture([
+    resource(128),
+    resource(256, "https://app.example.test/child.css"),
+  ]);
+  after.completeness.unavailable_sections.push("resources");
+  for (const [left, right] of [
+    [before, after],
+    [after, before],
+    [after, after],
+  ] as const)
+    expect(compareResources(left, right)).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
+      changes: [],
+      reason: expect.stringContaining("Resource inventory"),
+    });
+});
+
+it.each([
+  [[128, 256], [128], [false, true], "unknown"],
+  [[128], [256], [true, true], "unknown"],
+  [[128], [128], [true, true], "unknown"],
+  [[128], [128, 256], [false, true], "changed"],
+  [[], [128], [false, true], "changed"],
+  [[128], [], [true, true], "unknown"],
+  [[128], [null], [false, true], "unknown"],
+] as const)(
+  "uses directional resource coverage for %j vs %j (limited=%j): %s",
+  (leftSizes, rightSizes, [leftLimited, rightLimited], status) => {
+    const before = capture(leftSizes.map((size) => resource(size)));
+    const after = capture(rightSizes.map((size) => resource(size)));
+    if (leftLimited) before.completeness.truncated_sections.push("resources");
+    if (rightLimited) after.completeness.truncated_sections.push("resources");
+    for (const [left, right] of [
+      [before, after],
+      [after, before],
+    ] as const)
+      expect(compareResources(left, right)).toMatchObject({
+        status,
+        total_changes: status === "changed" ? 1 : 0,
+        changes:
+          status === "changed"
+            ? [
+                {
+                  identity: expect.stringMatching(/^resg_/u),
+                  change:
+                    left.resources.length === 0
+                      ? "added"
+                      : right.resources.length === 0
+                        ? "removed"
+                        : "modified",
+                },
+              ]
+            : [],
+        reason:
+          status === "changed"
+            ? null
+            : expect.stringContaining("Resource inventory"),
+      });
+  },
+);

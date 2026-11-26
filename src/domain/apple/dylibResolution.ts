@@ -1,6 +1,9 @@
 import { z } from "zod";
+import type { MachoReadFailure } from "./machoContainer.js";
+import { knownCoverageStatusSchema } from "../coverage.js";
+import { CoverageAccumulator } from "../coverageAccumulator.js";
 import { machoArchitectureFamily } from "./machoCpuIdentity.js";
-import { AnalysisCancelledError } from "../analysisErrorCore.js";
+import { cancelledBy } from "../analysisErrorCore.js";
 
 import {
   compatibleSlice,
@@ -21,6 +24,7 @@ import {
   isLazyLoadCommand,
   type TracedRootSlice,
 } from "./dylibResolutionFindings.js";
+import { appendAll } from "../appendAll.js";
 
 /**
  * Normalized path below the analyzed root: nonempty segments joined by single
@@ -93,9 +97,14 @@ export const machoSliceSchema = z.strictObject({
   fat_alignment_exponent: z.int().nonnegative().nullable(),
   file_type: z.enum(["execute", "dylib", "bundle", "other"]),
   file_type_code: z.int().nonnegative(),
-  /** Raw LC_BUILD_VERSION platform number; null means no such command was observed. */
+  /**
+   * The one build platform the image declares. Null when no
+   * LC_BUILD_VERSION/version-min command was observed, or when the
+   * declarations name more than one platform (for example a zippered macOS
+   * and macCatalyst image); `platforms` distinguishes the two.
+   */
   platform: z.int().nonnegative().nullable(),
-  /** Every distinct build platform declared by LC_BUILD_VERSION/version-min commands. */
+  /** Each LC_BUILD_VERSION/version-min platform declaration, in load-command order. */
   platforms: z.array(z.int().nonnegative()),
   install_name: z.string().nullable(),
   dependencies: z.array(dependencySchema),
@@ -107,7 +116,7 @@ export const machoSliceSchema = z.strictObject({
 export type MachoDependency = z.infer<typeof dependencySchema>;
 export type MachoSlice = z.infer<typeof machoSliceSchema>;
 
-/** Header parse of one file; malformed and unsupported images keep their reason. */
+/** Header parse of one file; an unreadable image keeps the owner's failure. */
 export type MachoImageFacts =
   | {
       readonly status: "parsed";
@@ -115,10 +124,7 @@ export type MachoImageFacts =
       /** Apple lipo's ARM64 compatibility row, stored beyond raw nfat_arch. */
       readonly hiddenSlices?: readonly MachoSlice[];
     }
-  | {
-      readonly status: "malformed" | "unsupported";
-      readonly reason: string;
-    }
+  | { readonly status: "failed"; readonly failure: MachoReadFailure }
   | { readonly status: "not-mach-o" };
 
 /** Return every slice that can participate in architecture selection. */
@@ -188,8 +194,9 @@ const edgeSchema = z.strictObject({
   }),
   install_name_matches: z.boolean().nullable(),
   /**
-   * The loader was reached through a conditional edge, so it might not load;
-   * this edge describes what happens only if it does.
+   * The loader's dependency-expansion chain crosses a conditional edge.
+   * This edge applies only if that chain is used, even when another edge
+   * independently loads the same image.
    */
   loader_conditional: z.boolean(),
 });
@@ -227,7 +234,7 @@ export const dylibResolutionResultSchema = z.strictObject({
   edges: z.array(edgeSchema),
   findings: z.array(findingSchema),
   coverage: z.strictObject({
-    status: z.enum(["complete", "partial"]),
+    status: knownCoverageStatusSchema,
     unparsed_images: z.array(z.string()),
     roots_without_architecture: z.array(z.string()),
   }),
@@ -253,9 +260,14 @@ export type DylibTrace = Omit<
 
 interface LoadedImage {
   readonly slice: MachoSlice;
-  /** Images from the process root to this image; the rpath stack, outermost first. */
+  /** Some edge that first loaded this image has unresolved facts. */
+  readonly conditional: boolean;
+}
+
+interface DependencyExpansion {
+  readonly image: string;
+  /** Images on this traversal's rpath stack, outermost first. */
   readonly chain: readonly string[];
-  /** Some edge on the chain has unresolved candidate or platform facts. */
   readonly conditional: boolean;
 }
 
@@ -268,6 +280,7 @@ interface ProcessContext {
   >;
   readonly searchOverrides: readonly DyldSearchOverride[];
   readonly environmentRoots: Set<string>;
+  readonly unknownArchitectureCandidates: Set<string>;
   readonly unknownPlatformCandidates: Set<string>;
   readonly undecodableSymlinkTargets: Map<string, string>;
   readonly implicitMacOSPlatformCandidates: Set<string>;
@@ -307,25 +320,22 @@ const candidateTemplates = (
   dependency: MachoDependency,
   loader: string,
   context: ProcessContext,
+  chain: readonly string[],
 ): CandidateTemplate[] => {
   const name = dependency.install_name;
   if (!name.startsWith("@rpath/")) {
-    const source = name.startsWith("@executable_path")
-      ? "executable_path"
-      : name.startsWith("@loader_path")
-        ? "loader_path"
-        : "literal";
+    const expansion = expandCandidatePath(name, directoryOf(loader), context);
     return [
       {
-        expansion: expandCandidatePath(name, directoryOf(loader), context),
-        source,
+        expansion,
+        source: expansion.prefix ?? "literal",
         rpath: null,
         rpathOwner: null,
       },
     ];
   }
   const rest = name.slice("@rpath/".length);
-  const owners = [...(context.loaded.get(loader)?.chain ?? [loader])].reverse();
+  const owners = [...chain].reverse();
   return owners.flatMap((owner) =>
     (context.loaded.get(owner)?.slice.rpaths ?? []).map((rpath) => {
       const base = expandCandidatePath(rpath, directoryOf(owner), context);
@@ -373,14 +383,19 @@ const evaluateCandidate = async (
     return { ...base, outcome: "absent", resolved_path: null };
   const facts = await imageFacts(context, lookup.path);
   let outcome: Candidate["outcome"];
-  if (facts.status !== "parsed") outcome = facts.status;
+  if (facts.status === "not-mach-o") outcome = facts.status;
+  else if (facts.status === "failed")
+    outcome =
+      facts.failure.kind === "unsupported" ? "unsupported" : "malformed";
   else {
     const selection = compatibleSlice(
       machoImageSlices(facts),
       context.processIdentity,
     );
-    if (selection.kind === "unknown") outcome = "undetermined";
-    else if (selection.kind === "missing") outcome = "architecture-missing";
+    if (selection.kind === "unknown") {
+      outcome = "undetermined";
+      context.unknownArchitectureCandidates.add(lookup.path);
+    } else if (selection.kind === "missing") outcome = "architecture-missing";
     // Dependency commands require a dylib; generic dyld image loadability
     // also admits main executables and bundles for different operations.
     else if (selection.slice.file_type_code !== 6) outcome = "not-loadable";
@@ -523,11 +538,10 @@ const resolution = (candidates: readonly Candidate[]): Edge["resolution"] => {
 
 const resolveDependency = async (
   dependency: MachoDependency,
-  loader: string,
+  expansion: DependencyExpansion,
   context: ProcessContext,
 ): Promise<Edge> => {
-  const current = context.loaded.get(loader);
-  const chain = current?.chain ?? [loader];
+  const { image: loader, chain, conditional: loaderConditional } = expansion;
   const loaded = dependency.install_name.startsWith("@rpath/")
     ? context.byInstallName.get(dependency.install_name)
     : undefined;
@@ -542,7 +556,12 @@ const resolveDependency = async (
       resolved_path: loaded,
     });
   else
-    for (const template of candidateTemplates(dependency, loader, context)) {
+    for (const template of candidateTemplates(
+      dependency,
+      loader,
+      context,
+      chain,
+    )) {
       const candidate = await evaluateCandidate(template, context);
       candidates.push(candidate);
       // dyld stops at the first loadable candidate.
@@ -591,13 +610,14 @@ const resolveDependency = async (
       slice === undefined || slice.install_name === null
         ? null
         : slice.install_name === dependency.install_name,
-    loader_conditional: current?.conditional ?? false,
+    loader_conditional: loaderConditional,
   };
 };
 
 /**
  * Follow dyld4's dependents-first order: resolve every dependency of one
- * image, then recurse into the images it newly loaded, in load-command order.
+ * image, then recurse into all its dependencies in load-command order. An image
+ * can already be loaded by a sibling before its dependents have been expanded.
  */
 const traceProcess = async (
   context: ProcessContext,
@@ -607,7 +627,6 @@ const traceProcess = async (
   const edges: Edge[] = [];
   context.loaded.set(context.root, {
     slice: rootSlice,
-    chain: [context.root],
     conditional: false,
   });
   if (
@@ -615,23 +634,38 @@ const traceProcess = async (
     rootSlice.install_name.startsWith("@rpath/")
   )
     context.byInstallName.set(rootSlice.install_name, context.root);
-  const pending = [context.root];
+  const expanded = new Set<string>();
+  const pending: DependencyExpansion[] = [
+    { image: context.root, chain: [context.root], conditional: false },
+  ];
   while (pending.length > 0) {
-    if (signal?.aborted)
-      throw new AnalysisCancelledError("trace_dylib_resolution", {
-        cause: signal.reason,
-      });
-    const loader = pending.pop() ?? "";
-    const current = context.loaded.get(loader);
-    if (current === undefined) continue;
-    const created: string[] = [];
-    for (const dependency of current.slice.dependencies) {
-      const edge = await resolveDependency(dependency, loader, context);
+    if (signal?.aborted) throw cancelledBy("trace_dylib_resolution", signal);
+    const next = pending.pop();
+    if (next === undefined || expanded.has(next.image)) continue;
+    const loader = next.image;
+    const loaded = context.loaded.get(loader);
+    if (loaded === undefined) continue;
+    expanded.add(loader);
+    const current = {
+      ...next,
+      conditional: loaded.conditional || next.conditional,
+    };
+    const dependents: DependencyExpansion[] = [];
+    for (const dependency of loaded.slice.dependencies) {
+      const edge = await resolveDependency(dependency, current, context);
       edges.push(edge);
       // dyld loads lazy images on first use, not at launch.
       if (isLazyLoadCommand(dependency.command)) continue;
       const image = edge.resolution.image;
-      if (image === null || context.loaded.has(image)) continue;
+      if (image === null || expanded.has(image)) continue;
+      const conditional =
+        current.conditional || edge.resolution.status === "conditional";
+      dependents.push({
+        image,
+        chain: [...next.chain, image],
+        conditional,
+      });
+      if (context.loaded.has(image)) continue;
       const facts = context.images.get(image);
       const selection =
         facts?.status === "parsed"
@@ -641,10 +675,8 @@ const traceProcess = async (
       const { slice } = selection;
       context.loaded.set(image, {
         slice,
-        chain: [...current.chain, image],
         // A modeled earlier search uncertainty can make this image conditional.
-        conditional:
-          current.conditional || edge.resolution.status === "conditional",
+        conditional,
       });
       if (
         slice.install_name !== null &&
@@ -652,9 +684,8 @@ const traceProcess = async (
         !context.byInstallName.has(slice.install_name)
       )
         context.byInstallName.set(slice.install_name, image);
-      created.push(image);
     }
-    pending.push(...created.reverse());
+    for (const dependent of dependents.reverse()) pending.push(dependent);
   }
   return edges;
 };
@@ -672,6 +703,7 @@ const projectTraceResult = (input: {
   readonly edges: readonly Edge[];
   readonly withoutArchitecture: readonly string[];
   readonly environmentRoots: ReadonlySet<string>;
+  readonly unknownArchitectureCandidates: ReadonlySet<string>;
   readonly unknownPlatformCandidates: ReadonlySet<string>;
   readonly undecodableSymlinkTargets: ReadonlyMap<string, string>;
   readonly implicitMacOSPlatformCandidates: ReadonlySet<string>;
@@ -687,12 +719,16 @@ const projectTraceResult = (input: {
     roots: input.roots,
     images: reported.map(([path, facts]) => ({
       path,
+      // The published status keeps its two refusal values: a form outside
+      // coverage, or bytes that cannot be read (broken, cut short or changed).
       parse_status:
-        facts.status === "not-mach-o" ? "unsupported" : facts.status,
-      reason:
-        facts.status === "parsed" || facts.status === "not-mach-o"
-          ? null
-          : facts.reason,
+        facts.status === "parsed"
+          ? "parsed"
+          : facts.status === "not-mach-o" ||
+              facts.failure.kind === "unsupported"
+            ? "unsupported"
+            : "malformed",
+      reason: facts.status === "failed" ? facts.failure.detail : null,
       slices:
         facts.status === "parsed"
           ? machoImageSlices(facts).map(withoutDependencies)
@@ -701,15 +737,23 @@ const projectTraceResult = (input: {
     edges: [...input.edges],
     findings: deriveFindings(input.edges, input.rootSlices),
     coverage: {
-      status:
-        unparsed.length === 0 &&
-        input.withoutArchitecture.length === 0 &&
-        input.environmentRoots.size === 0 &&
-        input.unknownPlatformCandidates.size === 0 &&
-        input.undecodableSymlinkTargets.size === 0 &&
-        input.rootEnumeration?.status !== "unknown"
-          ? "complete"
-          : "partial",
+      status: (() => {
+        const acc = new CoverageAccumulator().recordComplete();
+        if (unparsed.length > 0) acc.recordOmission("unparsed images");
+        if (input.withoutArchitecture.length > 0)
+          acc.recordOmission("roots without architecture");
+        if (input.environmentRoots.size > 0)
+          acc.recordOmission("environment roots");
+        if (input.unknownArchitectureCandidates.size > 0)
+          acc.recordOmission("unknown architecture candidates");
+        if (input.unknownPlatformCandidates.size > 0)
+          acc.recordOmission("unknown platform candidates");
+        if (input.undecodableSymlinkTargets.size > 0)
+          acc.recordOmission("undecodable symlink targets");
+        if (input.rootEnumeration?.status === "unknown")
+          acc.recordOmission("root enumeration unknown");
+        return acc.finalizeKnown();
+      })(),
       unparsed_images: unparsed,
       roots_without_architecture: [...input.withoutArchitecture],
     },
@@ -725,6 +769,11 @@ const projectTraceResult = (input: {
         ? []
         : [
             `Roots ${[...input.environmentRoots].join(", ")} request applicable image-selection inputs through LC_DYLD_ENVIRONMENT that are not modeled; affected dependencies or inserted images remain uncertain.`,
+          ]),
+      ...(input.unknownArchitectureCandidates.size === 0
+        ? []
+        : [
+            `In-root dylib candidates ${[...input.unknownArchitectureCandidates].sort(compare).join(", ")} have unknown architecture compatibility and are not treated as incompatible. Their dependent graphs may be incomplete.`,
           ]),
       ...(input.unknownPlatformCandidates.size === 0
         ? []
@@ -760,6 +809,7 @@ export const traceDylibLoading = async (
   const edges: Edge[] = [];
   const withoutArchitecture: string[] = [];
   const environmentRoots = new Set<string>();
+  const unknownArchitectureCandidates = new Set<string>();
   const unknownPlatformCandidates = new Set<string>();
   const undecodableSymlinkTargets = new Map<string, string>();
   const implicitMacOSPlatformCandidates = new Set<string>();
@@ -790,8 +840,9 @@ export const traceDylibLoading = async (
         environmentRoots.add(root);
       roots.push({ image: root, architecture: slice.architecture });
       rootSlices.push({ image: root, slice });
-      edges.push(
-        ...(await traceProcess(
+      appendAll(
+        edges,
+        await traceProcess(
           {
             view,
             root,
@@ -802,6 +853,7 @@ export const traceDylibLoading = async (
             },
             searchOverrides,
             environmentRoots,
+            unknownArchitectureCandidates,
             unknownPlatformCandidates,
             undecodableSymlinkTargets,
             implicitMacOSPlatformCandidates,
@@ -813,7 +865,7 @@ export const traceDylibLoading = async (
           },
           slice,
           request.signal,
-        )),
+        ),
       );
     }
   }
@@ -824,6 +876,7 @@ export const traceDylibLoading = async (
     edges,
     withoutArchitecture,
     environmentRoots,
+    unknownArchitectureCandidates,
     unknownPlatformCandidates,
     undecodableSymlinkTargets,
     implicitMacOSPlatformCandidates,

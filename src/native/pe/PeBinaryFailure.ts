@@ -1,0 +1,90 @@
+import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
+import {
+  artifactFileCeilingConstraint,
+  artifactReadBudgetConstraint,
+  projectStableArtifactFailure,
+  artifactFilePrimaryFacts,
+} from "../../resources/index.js";
+import type {
+  AnalysisError,
+  AnalysisErrorOptions,
+  AnalysisPartialObservation,
+} from "../../domain/analysisErrorBase.js";
+import type { ResourceConstraintRecovery } from "../../domain/analysisErrorCore.js";
+import {
+  BinaryResourceFailure,
+  binaryResourceAllowance,
+} from "../../domain/binaryContainer.js";
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
+import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
+
+interface PeBinaryInput {
+  readonly path: string;
+  readonly max_file_bytes: number;
+}
+interface PeBinaryFailureOptions<Limit extends string> {
+  readonly operation: string;
+  readonly providerId: string;
+  /** The whole-file ceiling of the identity pass; `max_file_bytes` does not raise it. */
+  readonly fileCeiling: { readonly name: string; readonly bytes: number };
+  /** The allowances the parser names in its `BinaryResourceFailure`; no other reaches these readers. */
+  readonly limits: readonly Limit[];
+  /** The control or recovery of the named allowance. */
+  readonly limitRecovery: (
+    limit: Limit,
+    failure: BinaryResourceFailure,
+  ) => ResourceConstraintRecovery & {
+    readonly limit?: AnalysisErrorOptions["limit"];
+  };
+  /** A verified report the failure keeps, such as one completed before final cleanup failed. */
+  readonly completed?: AnalysisPartialObservation;
+}
+
+/** Keep one PE error interpretation while preserving the provider's cleanup and partial facts. */
+export const projectPeBinaryFailure = <Limit extends string>(
+  cause: unknown,
+  input: PeBinaryInput,
+  options: PeBinaryFailureOptions<Limit>,
+  snapshot?: Parameters<typeof projectStableArtifactFailure>[5],
+): AnalysisError => {
+  const { operation, providerId } = options;
+  const facts = artifactFilePrimaryFacts(cause);
+  const primary = classifyProviderFailure(
+    facts.cause,
+    offlineArtifactFailureDialect(facts, {
+      providerId,
+      operation,
+      path: input.path,
+      description: "image",
+      recognise: (failure) => {
+        const readBudget = artifactReadBudgetConstraint(operation, failure, {
+          max_file_bytes: input.max_file_bytes,
+        });
+        if (readBudget !== undefined) return readBudget;
+        if (failure instanceof BinaryResourceFailure) {
+          const limit = binaryResourceAllowance(failure, options.limits);
+          if (limit === null) return undefined;
+          return parseLimitConstraint(operation, "capacity", failure, {
+            path: input.path,
+            ...options.limitRecovery(limit, failure),
+          });
+        }
+        return undefined;
+      },
+      fileSize: (failure) =>
+        artifactFileCeilingConstraint(operation, failure, options.fileCeiling, {
+          max_file_bytes: input.max_file_bytes,
+        }),
+    }),
+  );
+  if (options.completed !== undefined)
+    primary.retainPartialObservation(options.completed);
+  return projectStableArtifactFailure(
+    cause,
+    primary,
+    input.path,
+    providerId,
+    operation,
+    snapshot,
+  );
+};

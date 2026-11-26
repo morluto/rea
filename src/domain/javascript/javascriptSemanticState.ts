@@ -1,3 +1,6 @@
+import type { JavaScriptSemanticPrecision } from "./javascriptSemanticPrecision.js";
+import type { JavaScriptMemberMutationAllowance } from "./javascriptSemanticWorkAllowance.js";
+import type { SemanticPropertyReadSource } from "./javascriptSemanticIterationSources.js";
 import * as t from "@babel/types";
 import {
   semanticStaticPropertyKey,
@@ -29,6 +32,8 @@ import type {
 export interface JavaScriptSemanticInitializer {
   readonly node: t.Node;
   readonly projection: readonly (string | number | null)[];
+  /** Binding occurrence that must be reached before this source is used. */
+  readonly patternTarget?: t.Identifier;
   readonly entryBody?: t.BlockStatement;
   readonly iterationSources?: readonly {
     readonly node: t.Node;
@@ -81,6 +86,7 @@ export interface JavaScriptSemanticReferenceEffectsAtSite {
 
 export interface JavaScriptSemanticRequiredModuleEffect extends JavaScriptSemanticMemberEffect {
   readonly kind: "write" | "escape";
+  readonly loaderAuthority?: "candidate";
 }
 
 export interface JavaScriptSemanticBindingState {
@@ -91,6 +97,8 @@ export interface JavaScriptSemanticBindingState {
   kind: JavaScriptSemanticDefinition["kind"];
   /** Source declaration form retained internally for CommonJS wrapper bindings. */
   declarationKinds: Set<"var" | "let" | "const" | "using" | "await using">;
+  /** Declaration site even when a let binding has no initializer. */
+  letDeclarator?: t.VariableDeclarator | null;
   mutable: boolean;
   readonly memberWrites: JavaScriptSemanticMemberEffect[];
   readonly escapedPaths: JavaScriptSemanticMemberEffect[];
@@ -100,6 +108,8 @@ export interface JavaScriptSemanticBindingState {
   readonly directOrigins: JavaScriptModuleOrigin[];
   /** An ECMAScript import that exists at runtime, excluding type-only and import-equals syntax. */
   runtimeImport: boolean;
+  /** Immutable self-name binding created by evaluating a class or named function expression. */
+  selfNameAssignment?: "always-throws" | "throws-in-strict-mode";
 }
 
 /** Mutable lexical-scope state used only during AST recovery. */
@@ -119,27 +129,62 @@ export interface JavaScriptSemanticScopeState {
 /** One source owns sites and the minimal scope tree reaching them; O(AST) storage. */
 export interface JavaScriptOpaqueScopeEffects {
   /** Cheap source evidence collected with declarations, before alias queries. */
-  mayReferenceGlobalEval: boolean;
+  mayReferenceGlobalCode: boolean;
   readonly sites: WeakSet<t.Node>;
   readonly sloppySites: WeakSet<t.Node>;
   readonly byScope: Map<string, t.CallExpression[]>;
   readonly children: Map<string, Set<string>>;
-  readonly globalSites: (t.CallExpression | t.OptionalCallExpression)[];
+  readonly globalSites: (
+    | t.CallExpression
+    | t.OptionalCallExpression
+    | t.NewExpression
+    | t.TaggedTemplateExpression
+  )[];
 }
 
-/** Shared state for semantic collection and evaluation. */
-export interface JavaScriptSemanticAnalysisState {
-  arrayIterationUnknown: boolean;
-  readonly program: t.Program;
-  readonly opaqueEffects: JavaScriptOpaqueScopeEffects;
-  /** Effective loader for static imports in this source artifact. */
-  readonly staticImportResolutionMode: JavaScriptModuleResolutionMode;
+/** Intrinsic prototypes tracked from mutation sites to inherited reads. */
+export const semanticPrototypeOwners = [
+  "Object",
+  "Array",
+  "String",
+  "Function",
+  "Number",
+  "Boolean",
+  "RegExp",
+  "BigInt",
+] as const;
+export type SemanticPrototypeOwner = (typeof semanticPrototypeOwners)[number];
+
+/** Uncertainty one derivation encountered; it qualifies that derivation's results. */
+export interface JavaScriptSemanticObservations {
   /** Bounds encountered during this analysis, independent of later projections. */
   readonly valueResourceLimits: Set<JavaScriptSemanticResourceLimit>;
   /** Getter query bounds encountered while resolving object and class properties. */
   readonly getterResourceLimits: Set<JavaScriptSemanticResourceLimit>;
   /** Callee sites whose possible local returns needed a broader projection. */
   readonly returnedReferenceWidenings: Set<t.Node>;
+}
+
+/** Shared state for semantic collection and evaluation. */
+export interface JavaScriptSemanticAnalysisState {
+  readonly precision: JavaScriptSemanticPrecision;
+  /** Alias states the member-mutation phase may schedule for this source. */
+  readonly memberMutationAllowance: JavaScriptMemberMutationAllowance;
+  arrayIterationUnknown: boolean;
+  /** Receiver isolation requires the completed member-effect inventory. */
+  memberMutationFactsComplete: boolean;
+  readonly program: t.Program;
+  readonly opaqueEffects: JavaScriptOpaqueScopeEffects;
+  /** Effective loader for static imports in this source artifact. */
+  readonly staticImportResolutionMode: JavaScriptModuleResolutionMode;
+  /**
+   * The log the current derivation records into: an index step's own log
+   * while it runs, otherwise the active consumer's. See
+   * `javascriptSemanticConsumer.ts`.
+   */
+  observations: JavaScriptSemanticObservations;
+  /** What the index steps themselves encountered; every consumer starts from it. */
+  readonly indexObservations: JavaScriptSemanticObservations;
   readonly parentsByNode: WeakMap<t.Node, t.Node>;
   /** TypeScript syntax omitted from JavaScript value evaluation. */
   readonly erasedSyntaxNodes: WeakSet<t.Node>;
@@ -154,6 +199,14 @@ export interface JavaScriptSemanticAnalysisState {
   prototypeRequireMutationObserved: boolean | undefined;
   /** Source evidence that Object.prototype may add inherited enumerable keys. */
   prototypeEnumerationMayAffect: boolean | undefined;
+  readonly implicitPropertyReads: WeakMap<
+    t.Node,
+    readonly SemanticPropertyReadSource[]
+  >;
+  readonly prototypeMutationSites: {
+    readonly owner: SemanticPrototypeOwner;
+    readonly node: t.Node;
+  }[];
   /** Effects on a cached require exports object, independent of local projections. */
   readonly requiredModuleEffects: Map<
     string,
@@ -163,7 +216,9 @@ export interface JavaScriptSemanticAnalysisState {
   readonly callableNodesById: Map<string, t.Node>;
   readonly moduleLinks: JavaScriptSemanticModuleLink[];
   /** Exact calls already represented by binding or dependency links. */
-  readonly linkedRequireCalls: WeakSet<t.CallExpression>;
+  readonly linkedRequireCalls: WeakSet<
+    t.CallExpression | t.OptionalCallExpression
+  >;
   readonly moduleLinkBindings: WeakMap<
     JavaScriptSemanticModuleLink,
     JavaScriptSemanticBindingState
@@ -179,8 +234,20 @@ export interface JavaScriptSemanticAnalysisState {
   readonly ambientBindingWrites: Map<string, t.Node[]>;
   /** Source-local writes, tagged by global, import.meta or CJS module identity. */
   readonly ambientWrites: SemanticPropertyPathCoverage;
-  /** Browser receivers proven to be only the ambient global identity. */
+  /**
+   * Call receivers that ambient indexing proved the call does not expose:
+   * browser receivers that are only the ambient global identity, and the
+   * constructor of an unchanged native `Object`/`Reflect` static method.
+   * Member mutation indexing skips their receiver escape.
+   */
   readonly retainedGlobalCallReceivers: WeakSet<t.Node>;
+  /**
+   * Throw statements whose value leaves the enclosing function or class
+   * body, or the program (reaching host uncaught-exception handlers). Their
+   * handlers are not linked to the thrown value, so effect indexing treats
+   * the value as escaping at the throw.
+   */
+  readonly escapingThrows: t.ThrowStatement[];
   /** Store targets whose ownership is unknown or ambient, as classified by ambient indexing. */
   readonly escapingReferenceStores: WeakSet<t.MemberExpression>;
   /** Ambient object identities passed to calls whose effects are not evaluated. */
@@ -197,7 +264,7 @@ export const recordSemanticValueLimit = (
   value: JavaScriptSemanticValue,
 ): void => {
   if (value.status === "unknown" && value.resourceLimit !== undefined)
-    state.valueResourceLimits.add(value.resourceLimit);
+    state.observations.valueResourceLimits.add(value.resourceLimit);
 };
 
 /** One parsed source owns its optional indexes and their per-source lifetime. */
@@ -221,11 +288,16 @@ export interface JavaScriptBindingIndex {
     referenceNode: t.Node,
     propertyPath?: JavaScriptSemanticPropertyPath,
   ): JavaScriptSemanticReferenceEffectsAtSite;
-  /** Stop at the first relevant prior/uncertain effect without retaining a report. */
-  referenceMayHaveChangedAt(
-    site: t.Node,
-    referenceNode: t.Node,
-    propertyPath?: JavaScriptSemanticPropertyPath,
+  /**
+   * The effect log's read query: whether reading `target` (at `path`, or the
+   * member path `target` spells) at `read` may observe a recorded effect. It
+   * stops at the first such effect, and answers true until member-mutation
+   * facts are complete.
+   */
+  mayObserve(
+    read: t.Node,
+    target: t.Node,
+    path?: JavaScriptSemanticPropertyPath,
   ): boolean;
   referencesSteps(): Generator<void, readonly JavaScriptSemanticReference[]>;
 }
@@ -501,7 +573,7 @@ const semanticWithPrototypeKind = (
       t.isObjectProperty(property) &&
       !property.computed &&
       !property.shorthand &&
-      t.isIdentifier(property.key, { name: "__proto__" })
+      semanticStaticPropertyKey(property.key, false) === "__proto__"
     )
       return t.isNullLiteral(unwrapJavaScriptExpression(property.value).node)
         ? "null"

@@ -6,7 +6,7 @@ import {
   selectReplayExchange,
 } from "./environmentReplay.js";
 import { callQuery } from "./environmentStateCallLines.js";
-import { pinnedRequest } from "./environmentStateWriteQuery.js";
+import { admitWriteQuery } from "./environmentStateWriteQuery.js";
 
 it.each(["__proto__", "constructor", "toString"])(
   "preserves an own %s probe argument and treats omission as absent",
@@ -46,7 +46,7 @@ it.each(["__proto__", "constructor", "toString"])(
 );
 
 it.each(["__proto__", "constructor"])(
-  "fills an omitted pinned %s argument as an own member",
+  "admits the pinned %s value and preserves whether the caller supplied it",
   (name) => {
     const serving = servedFrom();
     const tool = {
@@ -66,15 +66,17 @@ it.each(["__proto__", "constructor"])(
       ...serving.state.writes.values().next().value!,
       exemplar_ordinal: exchange.ordinal,
     };
-    for (const args of [{}, Object.fromEntries([[name, "selected"]])]) {
-      const result = pinnedRequest(
+    for (const [args, supplied] of [
+      [{}, false],
+      [Object.fromEntries([[name, "selected"]]), true],
+    ] as const) {
+      const result = admitWriteQuery(
         { source, store: serving.store },
         { tool, plan, args },
       );
-      expect(result.ok).toBe(true);
       if (!result.ok) throw result.error;
-      expect(Object.hasOwn(result.value.args, name)).toBe(true);
-      expect(result.value.args[name]).toBe("selected");
+      expect(Object.hasOwn(result.value.args, name)).toBe(supplied);
+      if (supplied) expect(result.value.args[name]).toBe("selected");
     }
   },
 );

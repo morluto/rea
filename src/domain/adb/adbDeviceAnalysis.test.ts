@@ -2,11 +2,11 @@ import { expect, it } from "vitest";
 
 import { adbInputSchemas } from "./adbDeviceAnalysis.js";
 
-it("preserves ADB key, action and component admission when making advertised patterns portable", () => {
+it("matches portable patterns for ADB keys, actions and complete components", () => {
   const serial = "emulator-5554";
   const variants = [
     {
-      previous: /^[A-Za-z0-9._-]+$/u,
+      expectedPattern: /^[A-Za-z0-9._-]+$/u,
       max: 256,
       accepts: (key: string) =>
         adbInputSchemas.read_adb_setting.safeParse({
@@ -16,7 +16,7 @@ it("preserves ADB key, action and component admission when making advertised pat
         }).success,
     },
     {
-      previous: /^[A-Za-z0-9._-]+$/u,
+      expectedPattern: /^[A-Za-z0-9._-]+$/u,
       max: 256,
       accepts: (key: string) =>
         adbInputSchemas.start_adb_activity.safeParse({
@@ -26,14 +26,14 @@ it("preserves ADB key, action and component admission when making advertised pat
         }).success,
     },
     {
-      previous: /^[A-Za-z][A-Za-z0-9._-]*$/u,
+      expectedPattern: /^[A-Za-z][A-Za-z0-9._-]*$/u,
       max: 256,
       accepts: (action: string) =>
         adbInputSchemas.start_adb_activity.safeParse({ serial, action })
           .success,
     },
     {
-      previous: /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._$-]*)?$/u,
+      expectedPattern: /^[A-Za-z0-9._-]+\/[A-Za-z0-9._$-]+$/u,
       max: 512,
       accepts: (component: string) =>
         adbInputSchemas.start_adb_activity.safeParse({
@@ -53,6 +53,7 @@ it("preserves ADB key, action and component admission when making advertised pat
     "android.intent.action.VIEW",
     "com.example/.MainActivity",
     "com.example/.Outer$InnerActivity",
+    "com.example/com.example.Outer$InnerActivity",
     "com.example.Outer$InnerActivity",
     "com.example/",
     "com.example/a/b",
@@ -75,11 +76,11 @@ it("preserves ADB key, action and component admission when making advertised pat
     for (const sample of samples)
       expect(
         variant.accepts(sample),
-        JSON.stringify({ pattern: variant.previous.source, sample }),
+        JSON.stringify({ pattern: variant.expectedPattern.source, sample }),
       ).toBe(
         sample.length > 0 &&
           sample.length <= variant.max &&
-          variant.previous.test(sample),
+          variant.expectedPattern.test(sample),
       );
 });
 
@@ -97,6 +98,9 @@ it("admits empty string extras and validates typed extra text at domain admissio
   const accepted = [
     { type: "boolean", value: "false" },
     { type: "int", value: "-2147483648" },
+    { type: "int", value: "0002147483647" },
+    { type: "long", value: "-0009223372036854775808" },
+    { type: "long", value: "9223372036854775807" },
     { type: "long", value: "9007199254740993" },
     { type: "float", value: "-1.25" },
     { type: "float", value: "1e-3" },
@@ -106,14 +110,13 @@ it("admits empty string extras and validates typed extra text at domain admissio
     { type: "float", value: "0x1.8p1" },
     { type: "float", value: "NaN" },
   ] as const;
-  for (const { type, value } of accepted)
+  for (const { type, value } of accepted) {
+    const extras = [{ key: "value", type, value }];
     expect(
-      adbInputSchemas.start_adb_activity.safeParse({
-        ...input,
-        extras: [{ key: "value", type, value }],
-      }).success,
+      adbInputSchemas.start_adb_activity.parse({ ...input, extras }).extras,
       `${type}: ${value}`,
-    ).toBe(true);
+    ).toEqual(extras);
+  }
   const rejected = [
     { type: "boolean", value: "True" },
     { type: "int", value: "1.5" },

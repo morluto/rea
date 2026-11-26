@@ -1,6 +1,6 @@
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
-import type { NativeCommandCapture } from "./CommandRunner.js";
+import type { NativeCommandCapture } from "../providers/NativeCommandRunner.js";
 import { withoutEchoedPathHeader } from "./parsers/echoedPath.js";
 
 /** Path the command received. Diagnostics echo this operand, not the selected subject. */
@@ -33,31 +33,34 @@ export const isVtoolContainerRefusal = (
 
 const MISSING_UUID_DIAGNOSTIC = "missing LC_UUID load command";
 
-const dyldFailureDiagnostics = (
-  capture: NativeCommandCapture,
-  outputs: readonly string[],
-): readonly string[] =>
-  capture.tool !== "dyld_info" ||
-  capture.exitCode === null ||
-  capture.exitCode === 0 ||
-  capture.signal !== null
-    ? []
-    : outputs.flatMap((output) =>
-        withoutEchoedPathHeader(output, capture.arguments.at(-1))
-          .split(/\r?\n/u)
-          .map((line) => line.trim().replace(/^(?:dyld_info:\s*)/u, ""))
-          .filter(Boolean),
-      );
+/** dyld_info refusals of a slice that nm and the load table still describe. */
+const UNSUPPORTED_SLICE_DIAGNOSTICS: ReadonlySet<string> = new Set([
+  "unknown platform",
+  "old arm64e bind opcodes not supported",
+]);
 
-/** Admit the observed refusal only when it is the sole settled diagnostic. */
+/** Xcode 16 and 26 use different exit codes for the same sole refusal. */
 const dyldFailureDiagnostic = (
   capture: NativeCommandCapture,
 ): string | null => {
-  const diagnostics = dyldFailureDiagnostics(capture, [
-    capture.stdout,
-    capture.stderr,
-  ]);
-  return diagnostics.length === 1 ? (diagnostics[0] ?? null) : null;
+  if (
+    capture.tool !== "dyld_info" ||
+    capture.exitCode === null ||
+    capture.signal !== null
+  )
+    return null;
+
+  let diagnostic: string | null = null;
+  for (const output of [capture.stdout, capture.stderr]) {
+    const body = withoutEchoedPathHeader(output, nativeCommandOperand(capture));
+    for (const match of body.matchAll(/[^\n]+/gu)) {
+      const line = match[0].trim().replace(/^(?:dyld_info:\s*)/u, "");
+      if (!line) continue;
+      if (diagnostic !== null) return null;
+      diagnostic = line;
+    }
+  }
+  return diagnostic;
 };
 
 /** Keep missing-UUID admission limited to its observed stdout-only refusal. */
@@ -67,6 +70,17 @@ export const isMissingUuidDyldFailure = (
   capture.stderr.trim().length === 0 &&
   dyldFailureDiagnostic(capture) === MISSING_UUID_DIAGNOSTIC;
 
+/** The sole diagnostic when dyld_info refuses the slice itself; nm and the load table still describe it. */
+export const dyldSliceRefusal = (
+  capture: NativeCommandCapture,
+): string | null => {
+  if (isMissingUuidDyldFailure(capture)) return MISSING_UUID_DIAGNOSTIC;
+  const diagnostic = dyldFailureDiagnostic(capture);
+  return diagnostic !== null && UNSUPPORTED_SLICE_DIAGNOSTICS.has(diagnostic)
+    ? diagnostic
+    : null;
+};
+
 /** Admit the observed dSYM refusal only when no other diagnostic is present. */
 export const isUnbackedTextDyldFailure = (
   capture: NativeCommandCapture,
@@ -74,22 +88,19 @@ export const isUnbackedTextDyldFailure = (
   dyldFailureDiagnostic(capture) ===
   "section '__TEXT/__text' has offset=0 but is not a zero-fill section type";
 
-/** Reported CORE/FVMLIB refusals still require an independently matching header. */
+/** A sole CORE/FVMLIB refusal still requires an independently matching header. */
 export const parseDyldFileTypeRefusal = (
   capture: NativeCommandCapture,
 ): {
-  readonly fileType: "3" | "4";
+  readonly fileType: 3 | 4;
   readonly diagnostic: string;
 } | null => {
-  for (const line of dyldFailureDiagnostics(capture, [
-    capture.stdout,
-    capture.stderr,
-  ])) {
-    const fileType = /^unknown (?:mh\.)?filetype ([34])$/u.exec(line)?.[1];
-    if (fileType === "3" || fileType === "4")
-      return { fileType, diagnostic: line };
-  }
-  return null;
+  const diagnostic = dyldFailureDiagnostic(capture);
+  if (diagnostic === null) return null;
+  const fileType = Number(
+    /^unknown (?:mh\.)?filetype ([34])$/u.exec(diagnostic)?.[1],
+  );
+  return fileType === 3 || fileType === 4 ? { fileType, diagnostic } : null;
 };
 
 /** Complete captures come from the settled native command owner. */
@@ -106,10 +117,13 @@ export const nativeMachoCapturedOutput = (
 });
 
 /** Keep the exact target diagnostic beside the incomplete collection. */
-export const missingUuidLimitation = (mode: "imports" | "exports"): string =>
+export const dyldRefusalLimitation = (
+  mode: "imports" | "exports",
+  diagnostic: string,
+): string =>
   mode === "imports"
-    ? "dyld_info -imports reported 'missing LC_UUID load command'; import observations are unavailable."
-    : "dyld_info -exports reported 'missing LC_UUID load command'; exports include nm symbol-table observations only.";
+    ? `dyld_info -imports reported '${diagnostic}'; import observations are unavailable.`
+    : `dyld_info -exports reported '${diagnostic}'; exports include nm symbol-table observations only.`;
 
 /** Preserve unrecognized nonzero command output as an inspection failure. */
 export const unusableNativeCommandOutput = (

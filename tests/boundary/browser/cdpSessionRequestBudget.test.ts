@@ -31,7 +31,8 @@ it.each([1, 2])(
       .mockImplementation(function (this: CdpConnection, listener) {
         return onEvent.call(this, (event) => {
           listener(event);
-          if (event.method === "Network.requestWillBeSent") received();
+          if (event.registered?.method === "Network.requestWillBeSent")
+            received();
         });
       });
     const browser = await startFakeCdpBrowser({ commandEvents: () => [] });

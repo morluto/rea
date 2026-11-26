@@ -1,11 +1,12 @@
+import { successfulTool as call } from "../../support/mcp/mcpFixture.js";
 import type { Client } from "@modelcontextprotocol/client";
-import type { CallToolResult } from "@modelcontextprotocol/server";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { z } from "zod";
 
-import type { AnalysisClient } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisClient } from "../../../src/ports/AnalysisProvider.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
 import {
   createEvidenceBundle,
@@ -23,13 +24,11 @@ import { observed } from "../../fixtures/analysisExecution.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import {
   createCacheProvider,
-  createDeferred,
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 // Native behavior is simulated here. The real SDK, session, ledger, source
@@ -73,17 +72,6 @@ const fixture = async (
   };
 };
 
-const call = async (
-  client: Client,
-  name: string,
-  arguments_: Record<string, unknown> = {},
-): Promise<CallToolResult> => {
-  const reply = await client.callTool({ name, arguments: arguments_ });
-  expect(reply.isError, `${name}: ${JSON.stringify(reply.content)}`).not.toBe(
-    true,
-  );
-  return reply;
-};
 const bundle = async (client: Client) =>
   parseMcpEvidenceBundle(await call(client, "get_evidence_bundle"));
 const reference = (record: Evidence) => ({
@@ -392,16 +380,14 @@ it("saves the complete history before clearing and restores it in a fresh public
 });
 
 it("drains a late valid observation before saving and prevents it from entering the reset investigation", async () => {
-  const entered = createDeferred<void>();
-  const release = createDeferred<void>();
+  const analysisBeforeResetEntry = phaseGate();
   let addressCalls = 0;
   const test = await fixture({
     execute: async (operation) => {
       if (operation === "health") return observed(null);
       addressCalls += 1;
       if (addressCalls === 1) {
-        entered.resolve();
-        await release.promise;
+        await analysisBeforeResetEntry.hold();
         return observed("late-before-reset");
       }
       return observed("fresh-after-reset");
@@ -414,8 +400,7 @@ it("drains a late valid observation before saving and prevents it from entering 
   });
   const pending: Promise<unknown>[] = [earlier];
   try {
-    await awaitAcknowledgement(
-      entered.promise,
+    await analysisBeforeResetEntry.reached(
       earlier,
       "analysis before reset entry",
     );
@@ -433,7 +418,7 @@ it("drains a late valid observation before saving and prevents it from entering 
     pending.push(later);
     await test.client.ping();
     expect(addressCalls).toBe(1);
-    release.resolve();
+    analysisBeforeResetEntry.release();
     const [, reset, next] = await Promise.all([earlier, resetting, later]);
     expect(reset.isError, JSON.stringify(reset)).not.toBe(true);
     expect(next.isError, JSON.stringify(next)).not.toBe(true);
@@ -452,7 +437,7 @@ it("drains a late valid observation before saving and prevents it from entering 
     expect(test.createClient).toHaveBeenCalledTimes(1);
     expect(test.providerClose).not.toHaveBeenCalled();
   } finally {
-    release.resolve();
+    analysisBeforeResetEntry.release();
     await Promise.allSettled(pending);
   }
 });
@@ -506,8 +491,7 @@ it("preserves the investigation when SDK cancellation arrives during final save 
   const test = await fixture();
   const seeded = await seedHistory(test.client);
   const path = join(test.root, "cancelled-reset.json");
-  const entered = createDeferred<void>();
-  const release = createDeferred<void>();
+  const resetFinalCleanupEntry = phaseGate();
   const original = OwnedStagedOutput.prototype.close;
   let held = false;
   const seam = vi
@@ -516,12 +500,11 @@ it("preserves the investigation when SDK cancellation arrives during final save 
       await original.call(this);
       if (dirname(this.directory) === test.root && !held) {
         held = true;
-        entered.resolve();
-        await release.promise;
+        await resetFinalCleanupEntry.hold();
       }
     });
   onTestFinished(() => {
-    release.resolve();
+    resetFinalCleanupEntry.release();
     seam.mockRestore();
   });
   const controller = new AbortController();
@@ -535,8 +518,7 @@ it("preserves the investigation when SDK cancellation arrives during final save 
       (error: unknown) => error,
     );
   try {
-    await awaitAcknowledgement(
-      entered.promise,
+    await resetFinalCleanupEntry.reached(
       resetting,
       "reset final cleanup entry",
     );
@@ -547,7 +529,7 @@ it("preserves the investigation when SDK cancellation arrives during final save 
       message: expect.stringContaining("Caller cancelled reset"),
     });
     await test.client.ping();
-    release.resolve();
+    resetFinalCleanupEntry.release();
     // A later admitted read joins server settlement even when SDK cancellation
     // suppresses the reset reply. The published file and all records must survive.
     expect(await bundle(test.client)).toEqual(seeded.before);
@@ -558,7 +540,7 @@ it("preserves the investigation when SDK cancellation arrives during final save 
       (await call(test.client, "reset_investigation")).structuredContent,
     ).toEqual({ result: cleared(seeded.before, false) });
   } finally {
-    release.resolve();
+    resetFinalCleanupEntry.release();
     await Promise.allSettled([resetting]);
     await test.session.withAdmittedAnalysis(
       "fixture_reset_settlement",
@@ -574,8 +556,7 @@ it("drains admitted work before retrying process cleanup and refuses reset while
   const path = join(test.root, "process-cleanup-checkpoint.json");
   const originalBytes = Buffer.from("caller-owned checkpoint");
   await writeFile(path, originalBytes);
-  const entered = createDeferred<void>();
-  const release = createDeferred<void>();
+  const metadataBeforeCleanupEntry = phaseGate();
   const events: string[] = [];
   let cleanupAllowed = false;
   const retainedProcessRoot = join(
@@ -606,15 +587,13 @@ it("drains admitted work before retrying process cleanup and refuses reset while
     "fixture_metadata_before_reset",
     undefined,
     async () => {
-      entered.resolve();
-      await release.promise;
+      await metadataBeforeCleanupEntry.hold();
       events.push("metadata_drained");
     },
   );
   const pending: Promise<unknown>[] = [admitted];
   try {
-    await awaitAcknowledgement(
-      entered.promise,
+    await metadataBeforeCleanupEntry.reached(
       admitted,
       "metadata before cleanup entry",
     );
@@ -625,7 +604,7 @@ it("drains admitted work before retrying process cleanup and refuses reset while
     pending.push(resetting);
     await test.client.ping();
     expect(retry).not.toHaveBeenCalled();
-    release.resolve();
+    metadataBeforeCleanupEntry.release();
     await admitted;
     expect(parseMcpToolError(await resetting)).toMatchObject({
       error: {
@@ -658,7 +637,7 @@ it("drains admitted work before retrying process cleanup and refuses reset while
     expect(test.createClient).not.toHaveBeenCalled();
   } finally {
     cleanupAllowed = true;
-    release.resolve();
+    metadataBeforeCleanupEntry.release();
     await Promise.allSettled(pending);
     retry.mockRestore();
   }

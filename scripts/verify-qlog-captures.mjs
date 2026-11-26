@@ -1,4 +1,9 @@
 #!/usr/bin/env node
+import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "./lib/verifier-cleanup.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -15,6 +20,7 @@ import {
   requireMcpOutput,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 // Caller-supplied producer evidence stays local; no fixture capture or secrets are bundled.
 const [controlPath, lossPath, reportPath] = process.argv.slice(2);
@@ -27,7 +33,9 @@ if (
     "Usage: node scripts/verify-qlog-captures.mjs /absolute/control/origin.qlog /absolute/loss/origin.qlog /absolute/new-report.json",
   );
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
-const client = new Client({ name: "qlog-producer-verifier", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "qlog-producer-verifier", version: "1" }),
+);
 const environment = {
   PATH: process.env.PATH ?? "/usr/bin:/bin",
   REA_LOG_LEVEL: "silent",
@@ -46,7 +54,7 @@ transport.stderr?.on("data", (bytes) => {
 const ajv = new Ajv2020({ strict: false, validateFormats: false });
 const measurements = [];
 const contract = toolContract("inspect_web_network_capture");
-try {
+const report = await withVerifierCleanup(async () => {
   try {
     await client.connect(transport);
   } catch (cause) {
@@ -55,10 +63,10 @@ try {
   const tool = (await client.listTools()).tools.find(
     (tool) => tool.name === "inspect_web_network_capture",
   );
-  assert.ok(tool?.outputSchema);
-  for (const schema of [tool.inputSchema, tool.outputSchema])
+  assert.ok(tool);
+  for (const schema of [tool.inputSchema, canonicalOutputSchema(tool.name)])
     assert.ok(ajv.validateSchema(schema));
-  const validateOutput = ajv.compile(tool.outputSchema);
+  const validateOutput = ajv.compile(canonicalOutputSchema(tool.name));
   for (const [lane, path] of [
     ["control", controlPath],
     ["loss", lossPath],
@@ -83,7 +91,15 @@ try {
     );
     const completed = await promisify(execFile)(
       process.execPath,
-      [entrypoint, "inspect-web-network-capture", path, "qlog", "--json"],
+      [
+        entrypoint,
+        "inspect-web-network-capture",
+        "--detail",
+        "complete",
+        path,
+        "qlog",
+        "--json",
+      ],
       { env: environment, timeout: 40_000, maxBuffer: 96 * 1024 * 1024 },
     );
     const cli = parseEvidence(JSON.parse(completed.stdout));
@@ -192,7 +208,7 @@ try {
     });
   }
   await client.ping();
-  const report = {
+  return {
     status: "passed",
     profile: "aioquic-1.5.0-json-0.3",
     measurements,
@@ -202,18 +218,23 @@ try {
       "No PCAP or keylog is read by this verifier; repeated STREAM coverage is not proof of retransmission or network loss.",
     ],
   };
-  await writeFile(reportPath, JSON.stringify(report, null, 2) + "\n", {
-    flag: "wx",
-    mode: 0o600,
-  });
-  console.log(
-    JSON.stringify({
-      status: report.status,
-      cases: measurements.length,
-      report: reportPath,
-    }),
-  );
-} finally {
-  await client.close();
-  await transport.close();
-}
+}, [
+  async () => {
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+    ]);
+  },
+]);
+
+await writeFile(reportPath, JSON.stringify(report, null, 2) + "\n", {
+  flag: "wx",
+  mode: 0o600,
+});
+console.log(
+  JSON.stringify({
+    status: report.status,
+    cases: measurements.length,
+    report: reportPath,
+  }),
+);

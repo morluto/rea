@@ -122,8 +122,8 @@ it.each([
         ),
       ).toEqual([semanticResourceLimitReason(limit)]);
       expect(evidence.coverage.status).toBe("partial");
-      expect(evidence.limitations).toContain(
-        "Static syntax does not prove that this relationship executes at runtime.",
+      expect(evidence.limitations).toContainEqual(
+        expect.stringMatching(/static syntax.*not prove.*runtime/iu),
       );
       expect(evidence.limitations).toContain(
         "Values and aliases were recovered from inert syntax only; no JavaScript was executed.",
@@ -667,7 +667,7 @@ it("does not assign one module origin to an export with colliding path encodings
 });
 
 describe("complete static application projections", () => {
-  it("retains exports and JSON keys beyond the former projection prefix", async () => {
+  it("retains all 140 exports and JSON keys", async () => {
     const root = await moduleFixture();
     const exportNames = Array.from(
       { length: 140 },
@@ -749,3 +749,145 @@ const moduleFixture = async (): Promise<string> => {
   });
   return root;
 };
+
+it("retains CommonJS exports through erased receiver wrappers", async () => {
+  const root = await createTestTempDirectory("rea-wrapped-commonjs-");
+  await writeFixtureFiles(root, {
+    "app.cts": `
+          (exports as Record<string, unknown>).asserted = 1;
+          (module!.exports satisfies Record<string, unknown>).checked = 2;
+          (<Record<string, unknown>>module.exports).cast = 3;
+          module.exports!.nonNull = 4;
+    `,
+  });
+  const graph = await relationshipGraph(root);
+  const module = findSourceModule(graph, "app.cts");
+  const names = ["asserted", "cast", "checked", "nonNull"];
+  expect(
+    module?.observations.find(
+      ({ properties }) => properties.semantic_role === "source-module",
+    )?.properties.export_names,
+  ).toEqual(names);
+  for (const name of names) {
+    const exported = findExportNode(graph, "app.cts", name);
+    expect(exported).toBeDefined();
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        source_node_id: module?.node_id,
+        target_node_id: exported?.node_id,
+        relation: "exposes",
+      }),
+    );
+  }
+});
+
+it.each([
+  ["app.cts", ["direct", "indirect"], 0],
+  ["app.ts", [], 2],
+  ["app.mts", [], 0],
+] as const)(
+  "preserves runtime authority for wrapped CommonJS exports in %s",
+  async (path, names, candidates) => {
+    const root = await createTestTempDirectory("rea-wrapped-commonjs-host-");
+    await writeFixtureFiles(root, {
+      [path]: `
+        var exports;
+        var module;
+        (exports as any).direct = 1;
+        (module as any).exports.indirect = 2;
+      `,
+    });
+    const graph = await relationshipGraph(root);
+    expect(
+      findSourceModule(graph, path)?.observations.find(
+        ({ properties }) => properties.semantic_role === "source-module",
+      )?.properties,
+    ).toMatchObject({
+      export_names: names,
+      omitted_export_names: candidates,
+    });
+    for (const name of ["direct", "indirect"]) {
+      const exported = findExportNode(graph, path, name);
+      if (path === "app.mts") expect(exported).toBeUndefined();
+      else {
+        expect(exported).toBeDefined();
+        expect(
+          exported?.observations.find(
+            ({ properties }) => properties.semantic_role === "export-binding",
+          )?.properties.loader_authority,
+        ).toBe(candidates > 0 ? "candidate" : undefined);
+      }
+    }
+  },
+);
+
+it("preserves CommonJS receiver lifetime and shadowing through erased wrappers", async () => {
+  const root = await createTestTempDirectory("rea-wrapped-commonjs-");
+  await writeFixtureFiles(root, {
+    "app.cts": `
+          (module as any).exports = {};
+          (exports as any).detached = 1;
+          (module.exports as any).connected = 2;
+          delete (exports as any).connected;
+          delete ((exports as any).connected as any);
+          {
+            const exports = { connected: 3 };
+            const module = { exports: { connected: 4 } };
+            delete (exports.connected as any);
+            delete (module.exports.connected as any);
+          }
+          function local(exports: any, module: any) {
+            exports!.shadowed = 3;
+            module!.exports.shadowed = 4;
+          }
+    `,
+  });
+  const graph = await relationshipGraph(root);
+  const module = findSourceModule(graph, "app.cts");
+  expect(
+    module?.observations.find(
+      ({ properties }) => properties.semantic_role === "source-module",
+    )?.properties.export_names,
+  ).toEqual(["connected", "default"]);
+});
+
+it.each([
+  [
+    "(exports as Record<string, unknown>)",
+    "((exports as any).wrappedDeleted as any)",
+  ],
+  [
+    "(module!.exports satisfies Record<string, unknown>)",
+    "(module!.exports.wrappedDeleted satisfies unknown)",
+  ],
+  [
+    "(<Record<string, unknown>>module.exports)",
+    "(<unknown>(<Record<string, unknown>>module.exports).wrappedDeleted)",
+  ],
+  ["module.exports!", "module.exports!.wrappedDeleted!"],
+])(
+  "applies field deletion to wrapped CommonJS receiver %s",
+  async (receiver, argument) => {
+    const root = await createTestTempDirectory(
+      "rea-wrapped-commonjs-deletion-",
+    );
+    await writeFixtureFiles(root, {
+      "app.cts": `
+      ${receiver}.deleted = 1;
+      ${receiver}.wrappedDeleted = 2;
+      ${receiver}.intact = 3;
+      delete ${receiver}.deleted;
+      delete ${argument};
+    `,
+    });
+    const graph = await relationshipGraph(root);
+    const module = findSourceModule(graph, "app.cts");
+    expect(
+      module?.observations.find(
+        ({ properties }) => properties.semantic_role === "source-module",
+      )?.properties.export_names,
+    ).toEqual(["intact"]);
+    for (const name of ["deleted", "wrappedDeleted"])
+      expect(findExportNode(graph, "app.cts", name)).toBeUndefined();
+  },
+);

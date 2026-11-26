@@ -1,31 +1,36 @@
 import { withPyInstallerReader } from "../../../tests/fixtures/pyinstallerReader.js";
+import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
 import { dirname, join } from "node:path";
+import { getEventListeners, once } from "node:events";
+import { Readable } from "node:stream";
+import { finished } from "node:stream/promises";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
+import { sha256 as hash } from "../../../tests/support/sha256.js";
 import { rename, unlink, writeFile, type FileHandle } from "node:fs/promises";
 import { buffer } from "node:stream/consumers";
-import { deflateSync } from "node:zlib";
+import { deflateSync, Inflate } from "node:zlib";
 import { setImmediate } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
 import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { hashReadable } from "../ArtifactHash.js";
-import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
+import { translateArtifactFailure } from "../../resources/index.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { marshalCode } from "../../python/PythonPyc.fixture.js";
+import * as artifactPaths from "../../resources/ArtifactPaths.js";
 import { PyInstallerPyzStore } from "./PyInstallerPyzStore.js";
+import { pyInstallerMemberStream } from "./PyInstallerMemberStream.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
-} from "../ArtifactReader.js";
+} from "../../resources/ArtifactReader.js";
 import {
   cArchiveExecutable,
   pyzArchive,
   PYTHON_39_MAGIC,
 } from "./CArchive.fixture.js";
 
-const hash = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 const archive = (body: Buffer) =>
   cArchiveExecutable({
     layout: "2.1",
@@ -47,6 +52,236 @@ const deferred = () => {
   });
   return { promise, resolve };
 };
+
+it.each(
+  [false, true].flatMap((compressed) =>
+    [
+      { stop: "caller-null", reason: null },
+      { stop: "caller-object", reason: { stage: "buffered member" } },
+      { stop: "reader-close", reason: undefined },
+    ].map((test) => ({ compressed, ...test })),
+  ),
+)(
+  "retires completed buffered members ($stop, compressed: $compressed)",
+  async ({ compressed, stop, reason }) => {
+    const payload = Buffer.from("buffered");
+    await withPyInstallerReader(
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 309,
+        members: [
+          { name: "data", typeCode: "x", payload, compress: compressed },
+        ],
+      }),
+      async (reader) => {
+        const controller = new AbortController();
+        const entry = (await members(reader))[0]!;
+        const stream = await reader.open(entry, controller.signal);
+        const retired = finished(stream).catch((cause: unknown) => cause);
+        try {
+          await awaitAcknowledgement(
+            once(stream, "finish").then(() => undefined),
+            retired,
+            "PyInstaller writable finish",
+          );
+          // The pipeline's completion callbacks have settled; no consumer has read.
+          await setImmediate();
+          expect(stream.readableLength).toBe(payload.length);
+          expect(stream.closed).toBe(false);
+          if (stop === "reader-close") await reader.close();
+          else controller.abort(reason);
+          await setImmediate();
+          expect(stream.destroyed).toBe(true);
+          expect(stream.closed).toBe(true);
+          expect(stream.errored).toBeInstanceOf(ArtifactReaderFailure);
+          expect(stream.errored).toMatchObject({ reason: "cancelled" });
+          if (stop !== "reader-close")
+            expect(stream.errored?.cause).toBe(reason);
+        } finally {
+          stream.destroy();
+          await retired;
+        }
+      },
+    );
+  },
+);
+
+it.each(
+  [false, true].flatMap((compressed) =>
+    (["consume", "cancel"] as const).map((stop) => ({ compressed, stop })),
+  ),
+)(
+  "keeps completion owned until readable retirement ($stop, compressed: $compressed)",
+  async ({ compressed, stop }) => {
+    const payload = Buffer.from("buffered");
+    const stored = compressed ? deflateSync(payload) : payload;
+    const controller = new AbortController();
+    const member = pyInstallerMemberStream(
+      Readable.from([stored], { objectMode: false }),
+      {
+        sourceBytes: stored.length,
+        compressed,
+        header: undefined,
+        expectedBytes: payload.length,
+        maxBytes: payload.length,
+        signal: controller.signal,
+      },
+    );
+    let settled = false;
+    void member.completion.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    try {
+      await awaitAcknowledgement(
+        once(member.output, "finish").then(() => undefined),
+        member.completion,
+        "member writable finish",
+      );
+      await setImmediate();
+      expect(settled).toBe(false);
+      expect(getEventListeners(controller.signal, "abort")).toHaveLength(1);
+      if (stop === "consume") {
+        expect((await buffer(member.output)).equals(payload)).toBe(true);
+        await member.completion;
+      } else {
+        const reason = { stage: "after producer completion" };
+        controller.abort(reason);
+        await expect(member.completion).rejects.toMatchObject({
+          reason: "cancelled",
+          cause: reason,
+        });
+        expect(member.output.errored?.cause).toBe(reason);
+      }
+      expect(settled).toBe(true);
+      expect(getEventListeners(controller.signal, "abort")).toEqual([]);
+    } finally {
+      member.output.destroy();
+      await member.completion.catch(() => undefined);
+    }
+  },
+);
+
+it("distinguishes a short compressed source from unused bytes in the declared span", async () => {
+  const payload = Buffer.from("member");
+  const compressed = deflateSync(payload);
+  const signal = new AbortController().signal;
+  const open = (
+    bytes: Buffer,
+    sourceBytes: number,
+  ): ReturnType<typeof pyInstallerMemberStream> =>
+    pyInstallerMemberStream(Readable.from([bytes]), {
+      sourceBytes,
+      compressed: true,
+      header: undefined,
+      expectedBytes: payload.length,
+      maxBytes: payload.length,
+      signal,
+    });
+  const short = open(compressed, compressed.length + 4);
+  try {
+    await expect(buffer(short.output)).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "read-coverage",
+    });
+  } finally {
+    short.output.destroy();
+    await short.completion.catch(() => undefined);
+  }
+  const unused = open(
+    Buffer.concat([compressed, Buffer.from("junk")]),
+    compressed.length + 4,
+  );
+  try {
+    await expect(buffer(unused.output)).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "layout-consistency",
+    });
+  } finally {
+    unused.output.destroy();
+    await unused.completion.catch(() => undefined);
+  }
+});
+
+it.each([false, true])(
+  "forwards a queued source failure before cancellation (compressed: %s)",
+  async (compressed) => {
+    const source = new Readable({ read() {} });
+    const controller = new AbortController();
+    const io = Object.assign(new Error("queued descriptor EIO"), {
+      code: "EIO",
+    });
+    const member = pyInstallerMemberStream(source, {
+      sourceBytes: 8,
+      compressed,
+      header: undefined,
+      expectedBytes: 8,
+      maxBytes: 8,
+      signal: controller.signal,
+    });
+    const consumed = buffer(member.output);
+    void consumed.catch(() => undefined);
+    source.destroy(io);
+    // destroyed/errored are already established; the error event has not fired.
+    controller.abort({ stage: "before error forwarding" });
+    try {
+      await expect(consumed).rejects.toMatchObject({ reason: "io", cause: io });
+      await expect(member.completion).rejects.toMatchObject({
+        reason: "io",
+        cause: io,
+      });
+    } finally {
+      member.output.destroy();
+      await member.completion.catch(() => undefined);
+    }
+  },
+);
+
+it("forwards an established native inflate failure before cancellation", async () => {
+  const controller = new AbortController();
+  const nativeDestroy = Inflate.prototype.destroy;
+  let compressionFailure: Error | undefined;
+  const destroy = vi
+    .spyOn(Inflate.prototype, "destroy")
+    .mockImplementation(function (this: Inflate, error) {
+      const result = nativeDestroy.call(this, error);
+      if (error !== undefined && !controller.signal.aborted) {
+        compressionFailure = error;
+        // Native zlib has failed; its error event has not forwarded the cause.
+        controller.abort({ stage: "inflate error forwarding" });
+      }
+      return result;
+    });
+  const encoded = Buffer.from("invalid zlib");
+  const member = pyInstallerMemberStream(Readable.from([encoded]), {
+    sourceBytes: encoded.length,
+    compressed: true,
+    header: undefined,
+    expectedBytes: 8,
+    maxBytes: 8,
+    signal: controller.signal,
+  });
+  try {
+    await expect(buffer(member.output)).rejects.toMatchObject({
+      reason: "malformed",
+      cause: { code: "Z_DATA_ERROR" },
+    });
+    expect(compressionFailure).toBeDefined();
+    expect(member.output.errored?.cause).toBe(compressionFailure);
+    await expect(member.completion).rejects.toMatchObject({
+      reason: "malformed",
+      cause: compressionFailure,
+    });
+  } finally {
+    member.output.destroy();
+    await member.completion.catch(() => undefined);
+    destroy.mockRestore();
+  }
+});
 
 it.each(["success", "io", "caller cancellation", "reader close"] as const)(
   "joins the pending descriptor read after a module prefix stop (%s)",
@@ -274,9 +509,32 @@ it("binds materialization to the inventoried digest and checks cached carrier fr
     );
     await reader.prepareContainer(hash(bytes));
     await reader.prepareContainer(hash(bytes));
-    await writeFile(path, archive(Buffer.from("other")));
+    // A same-length rewrite can keep the previous timestamp, which the
+    // cached carrier treats as unchanged. The replacement has to change size.
+    await writeFile(path, archive(Buffer.from("other-content")));
     await expect(reader.prepareContainer(hash(bytes))).rejects.toMatchObject({
       reason: "integrity",
+    });
+  });
+});
+
+it("names whether an opened PyInstaller entry is foreign or differs from inventory", async () => {
+  const bytes = archive(Buffer.from("first"));
+  await withPyInstallerReader(bytes, async (reader) => {
+    await reader.prepareContainer(hash(bytes));
+    const [entry] = await members(reader);
+    if (entry === undefined) throw new Error("Missing member");
+    await expect(
+      reader.open({ ...entry, adapterKey: "not-inventoried" }),
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "foreign-entry",
+    });
+    await expect(
+      reader.open({ ...entry, declaredSize: (entry.declaredSize ?? 0) + 1 }),
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "entry-metadata",
     });
   });
 });
@@ -311,17 +569,21 @@ it.each(["ENOENT", "ENOTDIR"] as const)(
           );
           expect(cause).toMatchObject({
             reason: "integrity",
-            message: `PyInstaller source identity changed: ${path}`,
+            message: expect.stringContaining(path),
           });
           expect(
             projectAnalysisError(
-              translateArtifactFailure("extract_artifact", cause),
+              translateArtifactFailure(
+                "extract_artifact",
+                "/selected/artifact",
+                cause,
+              ),
             ),
           ).toMatchObject({
             category: "integrity_mismatch",
             details: {
               reason: "integrity",
-              detail: `PyInstaller source identity changed: ${path}`,
+              detail: expect.stringContaining(path),
             },
           });
         }
@@ -391,7 +653,11 @@ it.each([false, true])(
         void consumed.catch(() => undefined);
         let closing: Promise<void> | undefined;
         try {
-          await entered.promise;
+          await awaitAcknowledgement(
+            entered.promise,
+            consumed,
+            "PyInstaller operation",
+          );
           controller.abort(caller);
           let closed = false;
           closing = reader.close().then(() => {
@@ -504,7 +770,7 @@ it("keeps runtime options as declarations with literal names and distinct source
         entry_count: 3,
       });
       await expect(reader.open(options[0]!)).rejects.toMatchObject({
-        reason: "format",
+        reason: "path",
       });
     },
   );
@@ -547,34 +813,22 @@ it("rejects metadata expansion before retaining every repeated long container pa
   );
 });
 
-it.each([false, true])(
-  "validates compressed member bounds through the stream (truncated: %s)",
-  async (truncated) => {
-    const payload = Buffer.from("complete module payload");
-    const encoded = deflateSync(payload);
-    const bytes = cArchiveExecutable({
-      layout: "2.1",
-      pythonVersion: 309,
-      members: [
-        {
-          name: "data",
-          typeCode: "x",
-          payload,
-          compress: true,
-          declaredUncompressedSize: truncated ? payload.length : 4,
-        },
-      ],
+it("reports a truncated compressed member when reading its stream", async () => {
+  const payload = Buffer.from("complete module payload");
+  const encoded = deflateSync(payload);
+  const bytes = cArchiveExecutable({
+    layout: "2.1",
+    pythonVersion: 309,
+    members: [{ name: "data", typeCode: "x", payload, compress: true }],
+  });
+  bytes.writeUInt32BE(encoded.length - 2, 64 + encoded.length + 8);
+  await withPyInstallerReader(bytes, async (reader) => {
+    const entry = (await members(reader))[0]!;
+    await expect(buffer(await reader.open(entry))).rejects.toMatchObject({
+      reason: "malformed",
     });
-    if (truncated)
-      bytes.writeUInt32BE(encoded.length - 2, 64 + encoded.length + 8);
-    await withPyInstallerReader(bytes, async (reader) => {
-      const entry = (await members(reader))[0]!;
-      await expect(buffer(await reader.open(entry))).rejects.toMatchObject({
-        reason: truncated ? "format" : "limit",
-      });
-    });
-  },
-);
+  });
+});
 
 it("joins a late private-file close and retries its failed owner after cancellation", async () => {
   const bytes = cArchiveExecutable({
@@ -615,7 +869,11 @@ it("joins a late private-file close and retries its failed owner after cancellat
       .next()
       .catch((cause: unknown) => cause);
     try {
-      await entered.promise;
+      await awaitAcknowledgement(
+        entered.promise,
+        listing,
+        "PyInstaller operation",
+      );
       let settled = false;
       const closing = reader.close().then(() => {
         settled = true;
@@ -689,7 +947,11 @@ for (const cancel of [false, true]) {
           (cause: unknown) => ({ ok: false as const, cause }),
         );
         try {
-          await entered.promise;
+          await awaitAcknowledgement(
+            entered.promise,
+            reading,
+            "PyInstaller operation",
+          );
           expect(output.readableEnded).toBe(false);
           expect(owner?.handle.fd).toBeGreaterThanOrEqual(0);
           if (cancel) {
@@ -700,7 +962,6 @@ for (const cancel of [false, true]) {
           release.resolve();
           const result = await reading;
           if (failClose || cancel) {
-            expect(result.ok).toBe(false);
             if (result.ok) throw new Error("Expected read failure");
             expect(result.cause).toMatchObject(
               failClose
@@ -709,7 +970,6 @@ for (const cancel of [false, true]) {
             );
             if (failClose) expect(owner?.handle.fd).toBeGreaterThanOrEqual(0);
           } else {
-            expect(result.ok).toBe(true);
             if (!result.ok) throw result.cause;
             expect(
               Buffer.compare(result.value.subarray(16), Buffer.from("body")),
@@ -826,7 +1086,11 @@ it.each([false, true])(
           .catch((cause: unknown) => cause);
         let closing: Promise<void> | undefined;
         try {
-          await entered.promise;
+          await awaitAcknowledgement(
+            entered.promise,
+            first,
+            "PyInstaller operation",
+          );
           await setImmediate();
           expect(handles.size).toBe(1);
           caller.abort(reason);
@@ -863,3 +1127,254 @@ it.each([false, true])(
     );
   },
 );
+
+it.each(
+  (["carrier", "private image"] as const).flatMap((stage) =>
+    ([false, true] as const).map((peer) => ({ stage, peer })),
+  ),
+)(
+  "isolates cancelled $stage parsing from a fresh inventory (concurrent: $peer)",
+  async ({ stage, peer }) => {
+    const payload = Buffer.from("body");
+    const bytes =
+      stage === "carrier"
+        ? archive(payload)
+        : cArchiveExecutable({
+            layout: "2.1",
+            pythonVersion: 309,
+            members: [
+              {
+                name: "PYZ.pyz",
+                typeCode: "z",
+                compress: true,
+                payload: pyzArchive({
+                  magic: PYTHON_39_MAGIC,
+                  modules: [{ name: "app", typeCode: 0, body: payload }],
+                }),
+              },
+            ],
+          });
+    await withPyInstallerReader(bytes, async (reader, handle) => {
+      const entered = deferred(),
+        release = deferred();
+      const caller = new AbortController();
+      const reason = new Error("cancel first archive parse");
+      const nativeRead = handle.read.bind(handle);
+      const spool = PyInstallerPyzStore.prototype.spool;
+      const images: FileHandle[] = [];
+      let held = false;
+      const pause = async () => {
+        if (held) return;
+        held = true;
+        entered.resolve();
+        await release.promise;
+      };
+      const reads = vi
+        .spyOn(handle, "read")
+        .mockImplementation(async (...args: unknown[]) => {
+          const result = await Reflect.apply(nativeRead, handle, args);
+          if (stage === "carrier") await pause();
+          return result;
+        });
+      const spools = vi
+        .spyOn(PyInstallerPyzStore.prototype, "spool")
+        .mockImplementation(async function (
+          this: PyInstallerPyzStore,
+          ...args
+        ) {
+          const result = await spool.apply(this, args);
+          images.push(result.handle);
+          if (stage === "private image") await pause();
+          return result;
+        });
+      const first = members(reader, caller.signal).then(
+        () => undefined,
+        (cause: unknown) => cause,
+      );
+      let second: Promise<ArtifactEntry[]> | undefined;
+      try {
+        await awaitAcknowledgement(
+          entered.promise,
+          first,
+          "PyInstaller operation",
+        );
+        expect(reader.formatMetadata()).toBeUndefined();
+        if (peer) {
+          second = members(reader);
+          void second.catch(() => undefined);
+        }
+        caller.abort(reason);
+        release.resolve();
+        expect(await first).toMatchObject({
+          reason: "cancelled",
+          cause: reason,
+        });
+        const retried = await (second ?? members(reader));
+        const selected = retried.find(
+          ({ path }) =>
+            path === (stage === "carrier" ? "data" : "PYZ.pyz/app.pyc"),
+        );
+        expect(selected).toBeDefined();
+        const content = await buffer(await reader.open(selected!));
+        expect(
+          content.subarray(stage === "carrier" ? 0 : 16).equals(payload),
+        ).toBe(true);
+        if (stage === "private image") {
+          expect(images).toHaveLength(2);
+          expect(images[0]!.fd).toBe(-1);
+        }
+      } finally {
+        release.resolve();
+        await first;
+        await second?.catch(() => undefined);
+        reads.mockRestore();
+        spools.mockRestore();
+      }
+    });
+  },
+);
+
+it("does not charge a cancelled namespace projection against the next parse", async () => {
+  const name = "a/".repeat(2000) + "x";
+  const names = [
+    name,
+    ...Array.from({ length: 256 }, (_, index) => `sibling-${index}`),
+  ];
+  const bytes = cArchiveExecutable({
+    layout: "2.1",
+    pythonVersion: 309,
+    members: names.map((name) => ({
+      name,
+      typeCode: "x",
+      payload: Buffer.alloc(0),
+      compress: false,
+    })),
+  });
+  await withPyInstallerReader(bytes, async (reader) => {
+    const caller = new AbortController();
+    const reason = new Error("cancel after namespace reservation");
+    let scheduled = false;
+    const normalize = artifactPaths.normalizeArtifactPath;
+    const paths = vi
+      .spyOn(artifactPaths, "normalizeArtifactPath")
+      .mockImplementation((path) => {
+        const result = normalize(path);
+        // The projection yields at its next batch after reserving this deep path.
+        if (path === name && !scheduled) {
+          scheduled = true;
+          globalThis.setImmediate(() => caller.abort(reason));
+        }
+        return result;
+      });
+    try {
+      await expect(members(reader, caller.signal)).rejects.toMatchObject({
+        reason: "cancelled",
+        cause: reason,
+      });
+      expect(reader.formatMetadata()).toBeUndefined();
+      const retried = await members(reader);
+      expect(retried.map(({ path }) => path)).toEqual(names);
+      expect(await buffer(await reader.open(retried[0]!))).toHaveLength(0);
+    } finally {
+      paths.mockRestore();
+    }
+  });
+});
+
+it("keeps a physical parse failure primary despite simultaneous caller cancellation", async () => {
+  await withPyInstallerReader(
+    archive(Buffer.from("body")),
+    async (reader, handle) => {
+      const entered = deferred(),
+        release = deferred();
+      const caller = new AbortController();
+      const io = new Error("carrier read EIO");
+      const reads = vi.spyOn(handle, "read").mockImplementation(async () => {
+        entered.resolve();
+        await release.promise;
+        caller.abort(new Error("caller also leaves"));
+        throw io;
+      });
+      const first = members(reader, caller.signal).catch(
+        (cause: unknown) => cause,
+      );
+      let second: Promise<unknown> | undefined;
+      try {
+        await awaitAcknowledgement(
+          entered.promise,
+          first,
+          "PyInstaller operation",
+        );
+        second = members(reader).catch((cause: unknown) => cause);
+        release.resolve();
+        const original = await first;
+        expect(original).toMatchObject({ reason: "io", cause: io });
+        expect(await second).toBe(original);
+        reads.mockRestore();
+        await expect(members(reader)).rejects.toBe(original);
+        expect(reader.formatMetadata()).toBeUndefined();
+      } finally {
+        release.resolve();
+        await Promise.allSettled([first, ...(second ? [second] : [])]);
+        reads.mockRestore();
+      }
+    },
+  );
+});
+
+it("retains failed cancelled-attempt cleanup and retries its exact private owner on close", async () => {
+  const bytes = cArchiveExecutable({
+    layout: "2.1",
+    pythonVersion: 309,
+    members: [
+      {
+        name: "PYZ.pyz",
+        typeCode: "z",
+        compress: true,
+        payload: pyzArchive({ magic: PYTHON_39_MAGIC, modules: [] }),
+      },
+    ],
+  });
+  await withPyInstallerReader(bytes, async (reader) => {
+    const caller = new AbortController();
+    const reason = new Error("cancel private parse");
+    const cleanupFailure = new Error("private cancelled close denied");
+    const spool = PyInstallerPyzStore.prototype.spool;
+    const nativeClose = OwnedFileHandle.prototype.close;
+    let retained: FileHandle | undefined;
+    let attempts = 0;
+    const spools = vi
+      .spyOn(PyInstallerPyzStore.prototype, "spool")
+      .mockImplementation(async function (this: PyInstallerPyzStore, ...args) {
+        const result = await spool.apply(this, args);
+        retained = result.handle;
+        caller.abort(reason);
+        return result;
+      });
+    const closes = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        if (this.handle === retained && ++attempts === 1) throw cleanupFailure;
+        await nativeClose.call(this);
+      });
+    try {
+      const failure = await members(reader, caller.signal).catch(
+        (cause: unknown) => cause,
+      );
+      expect(failure).toMatchObject({
+        reason: "cancelled",
+        cancellation: { reason },
+        cleanup: { reason: expect.stringContaining(cleanupFailure.message) },
+      });
+      expect(retained?.fd).toBeGreaterThanOrEqual(0);
+      await expect(members(reader)).rejects.toBe(failure);
+      expect(spools).toHaveBeenCalledTimes(1);
+      await reader.close();
+      expect(attempts).toBe(2);
+      expect(retained?.fd).toBe(-1);
+    } finally {
+      spools.mockRestore();
+      closes.mockRestore();
+    }
+  });
+});

@@ -1,18 +1,16 @@
-import { FIRMWARE_OPERATION_ENGINES } from "../contracts/firmware/firmwareToolRequirements.js";
-import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
-import { z } from "incur";
+import type { Logger } from "pino";
+
 import { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
 import { createFirmwareAnalysisProvider } from "../composition/firmware.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { logCliCommand } from "../cliLogging.js";
-import { firmwareInputSchemas } from "../domain/firmware/firmwareAnalysis.js";
-import { localPathStringSchema } from "../domain/localPath.js";
+import { FIRMWARE_TOOL_CONTRACTS } from "../contracts/firmware/firmwareToolContracts.js";
+import { FIRMWARE_OPERATION_ENGINES } from "../contracts/firmware/firmwareToolRequirements.js";
 import type { FirmwareOperation } from "../domain/firmware/firmwareAnalysis.js";
-import type { Logger } from "pino";
+import { contractNamed } from "./contractCliDescription.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { inspectWithService } from "./contractCommandRunners.js";
 import type { CliInstance } from "./types.js";
-import { withCommandCancellation } from "./commandCancellation.js";
-import { absoluteCallerPath } from "../filesystem/callerPath.js";
-import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
+
+const FIRMWARE_PATH_HELP = "Local firmware path; never executed";
 
 /** One-shot firmware CLI commands backed by the same workflows as MCP. */
 export const registerFirmwareCommands = (
@@ -23,89 +21,49 @@ export const registerFirmwareCommands = (
   const service = new FirmwareAnalysisService(
     createFirmwareAnalysisProvider(environment),
   );
-  const extractInput = firmwareInputSchemas.extract_firmware.shape;
-  const range = extractInput.range.unwrap().shape;
-  const execute = (
-    name: string,
-    operation: FirmwareOperation,
-    input: unknown,
-    callerPath: string,
-  ) =>
-    withCommandCancellation((signal) =>
-      logCliCommand(logger, name, () =>
-        finishCliEvidenceCommand(
-          callerPath,
-          () => service.execute(operation, input, { signal }),
-          service,
-          FIRMWARE_OPERATION_ENGINES[operation],
-          operation,
-          signal,
-        ).then(projectCliAnalysisResult),
-      ),
+  const run = (operation: FirmwareOperation) =>
+    inspectWithService(
+      () => ({
+        inspect: (input, options) => service.execute(operation, input, options),
+        close: () => service.close(),
+      }),
+      FIRMWARE_OPERATION_ENGINES[operation],
     );
-  const path = localPathStringSchema.describe(
-    "Local firmware path; never executed",
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(FIRMWARE_TOOL_CONTRACTS, "inspect_firmware_regions"),
+    {
+      description:
+        "Inspect firmware signature candidates without extracting them",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: { path: { description: FIRMWARE_PATH_HELP } },
+    },
+    run("inspect_firmware_regions"),
   );
-  cli.command(CLI_COMMANDS.inspectFirmwareRegions, {
-    description:
-      "Inspect firmware signature candidates without extracting them",
-    args: z.object({ path }),
-    options: z.object({ analysisTimeoutMs: extractInput.analysis_timeout_ms }),
-    run: ({ args, options }) =>
-      execute(
-        CLI_COMMANDS.inspectFirmwareRegions,
-        "inspect_firmware_regions",
-        // CLI paths are operator-relative; resolve before shared validation.
-        {
-          path: absoluteCallerPath(args.path),
-          ...(options.analysisTimeoutMs === undefined
-            ? {}
-            : { analysis_timeout_ms: options.analysisTimeoutMs }),
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(FIRMWARE_TOOL_CONTRACTS, "extract_firmware"),
+    {
+      description:
+        "Extract selected firmware bytes and return verified files and provenance",
+      positionals: ["path", "output_directory"],
+      callerPaths: ["path", "output_directory"],
+      flatten: {
+        range: {
+          offset: { description: "Selected byte offset; requires length" },
+          length: { description: "Selected byte length; requires offset" },
         },
-        args.path,
-      ),
-  });
-  cli.command(CLI_COMMANDS.extractFirmware, {
-    description:
-      "Extract selected firmware bytes and return verified files and provenance",
-    args: z.object({
-      path,
-      outputDirectory: localPathStringSchema.describe(
-        "Absent output directory; parent must exist",
-      ),
-    }),
-    options: z.object({
-      offset: range.offset
-        .optional()
-        .describe("Selected byte offset; requires length"),
-      length: range.length
-        .optional()
-        .describe("Selected byte length; requires offset"),
-      maxDepth: extractInput.max_depth,
-      maxOutputBytes: extractInput.max_output_bytes,
-      maxOutputFiles: extractInput.max_output_files,
-      publicationTimeoutMs: extractInput.publication_timeout_ms,
-      analysisTimeoutMs: extractInput.analysis_timeout_ms,
-    }),
-    run: ({ args, options }) =>
-      execute(
-        CLI_COMMANDS.extractFirmware,
-        "extract_firmware",
-        {
-          path: absoluteCallerPath(args.path),
-          output_directory: absoluteCallerPath(args.outputDirectory),
-          ...(options.offset === undefined && options.length === undefined
-            ? {}
-            : { range: { offset: options.offset, length: options.length } }),
-          max_depth: options.maxDepth,
-          max_output_bytes: options.maxOutputBytes,
-          max_output_files: options.maxOutputFiles,
-          publication_timeout_ms: options.publicationTimeoutMs,
-          ...(options.analysisTimeoutMs === undefined
-            ? {}
-            : { analysis_timeout_ms: options.analysisTimeoutMs }),
+      },
+      fields: {
+        path: { description: FIRMWARE_PATH_HELP },
+        output_directory: {
+          description: "Absent output directory; parent must exist",
         },
-        args.path,
-      ),
-  });
+      },
+    },
+    run("extract_firmware"),
+  );
 };

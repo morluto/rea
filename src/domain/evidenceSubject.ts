@@ -5,34 +5,25 @@ import {
   RAW_ONLY_ARCHITECTURES,
 } from "./binaryTargetTypes.js";
 
+import {
+  BINARY_TARGET_FORMAT_KINDS,
+  BINARY_TARGET_FORMATS,
+  targetFormatsOfKind,
+} from "./targetFormats.js";
+
+// Keep the historical catalog order. Artifact targets, universal Mach-O and
+// Evidence-only values interrupt the resolved-target list at these positions.
+const nonArtifactTargetFormats = BINARY_TARGET_FORMATS.filter(
+  (format) =>
+    format !== "mach-o-universal" &&
+    BINARY_TARGET_FORMAT_KINDS[format] !== "artifact",
+);
+const trailingArchiveIndex = nonArtifactTargetFormats.indexOf("intel-hex");
+
 export const evidenceSubjectFormatSchema = z.enum([
   "hopper",
-  "analysis-database",
-  "mach-o",
-  "elf",
-  "pe",
-  "dos-mz",
-  "dos-com",
-  "raw-binary",
-  "gamecube-dol",
-  "zip",
-  "ipa",
-  "apk",
-  "msix",
-  "appx",
-  "hap",
-  "hsp",
-  "app-pack",
-  "asar",
-  "ines",
-  "godot-pck",
-  "unityfs",
-  "uimage",
-  "dmg",
-  "pkg",
-  "plist",
-  "javascript",
-  "source-map",
+  ...nonArtifactTargetFormats.slice(0, trailingArchiveIndex),
+  ...targetFormatsOfKind("artifact"),
   "directory",
   "file",
   "unknown",
@@ -43,13 +34,8 @@ export const evidenceSubjectFormatSchema = z.enum([
   "node-sea",
   "dotnet-bundle",
   "bun-standalone",
-  "intel-hex",
-  "srec",
-  "esp-image",
-  "uf2",
-  "dfuse",
-  "esp-flash-image",
-  "fit",
+  "deno-standalone",
+  ...nonArtifactTargetFormats.slice(trailingArchiveIndex),
 ]);
 
 /** Format-owned architecture declarations shared by Evidence and persisted executions. */

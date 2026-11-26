@@ -5,13 +5,14 @@ import { finished } from "node:stream/promises";
 import { setImmediate } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
 import { BunStandaloneArtifactReader } from "../../../src/artifacts/BunStandaloneArtifactReader.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import * as layout from "../../../src/artifacts/bun/BunModuleGraphLayout.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { decodeBunModuleGraph } from "../../../src/artifacts/bun/BunModuleGraphMembers.js";
 import {
+  locateBunGraphFixture,
   bunModuleGraphPayload,
   bunPrefixedPayload,
   peBunSection,
+  observeBunFixtureReads,
 } from "../../../src/artifacts/bun/BunStandalone.fixture.js";
 import { extractArtifact } from "../../../src/artifacts/extraction/ArtifactExtraction.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -31,23 +32,12 @@ it("reads bounded metadata instead of the stored Bun asset body", async () => {
   const bytes = host(Buffer.alloc(8 * 1024 * 1024, 97));
   await writeFile(path, bytes);
   const handle = await open(path, "r");
-  const read = handle.read.bind(handle);
   let bytesRead = 0;
-  const counted = new Proxy(handle, {
-    get: (target, key) =>
-      key === "read"
-        ? async (...args: Parameters<typeof read>) => {
-            const result = await read(...args);
-            bytesRead += result.bytesRead;
-            return result;
-          }
-        : Reflect.get(target, key),
+  const counted = observeBunFixtureReads(handle, (count) => {
+    bytesRead += count;
   });
   try {
-    const located = await layout.locateBunStandaloneGraph(
-      counted,
-      bytes.length,
-    );
+    const located = await locateBunGraphFixture(counted, bytes.length);
     if (located.status !== "present" || located.graph === undefined)
       throw new Error("Missing graph");
     const decoded = await decodeBunModuleGraph(located.graph);

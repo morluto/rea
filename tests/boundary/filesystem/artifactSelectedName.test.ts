@@ -1,5 +1,5 @@
 import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
-import { readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect, it, vi } from "vitest";
@@ -15,38 +15,48 @@ import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-const fixture = async (storedName = "content-addressed-archive") => {
+const fixture = async (
+  storedName = "content-addressed-archive",
+  includeAndroidManifest = true,
+) => {
   const root = await createTestTempDirectory("rea-artifact-selected-name-");
   const canonical = join(root, storedName);
   const writer = new ZipWriter(new Uint8ArrayWriter());
-  await writer.add(
-    "AndroidManifest.xml",
-    new TextReader(
-      '<manifest package="example.fixture"><application /></manifest>',
-    ),
-  );
+  if (includeAndroidManifest)
+    await writer.add(
+      "AndroidManifest.xml",
+      new TextReader(
+        '<manifest package="example.fixture"><application /></manifest>',
+      ),
+    );
   await writer.add("payload.txt", new TextReader("same packed bytes"));
   await writeFile(canonical, await writer.close());
   return { root, canonical };
 };
 
 it.skipIf(process.platform === "win32").each([
-  ["selected.apk", "content", "apk"],
-  ["selected.ipa", "content", "ipa"],
-  ["selected.apk", "canonical.ipa", "apk"],
-  ["selected.ipa", "canonical.apk", "ipa"],
-  ["selected.unknown", "canonical.apk", "apk"],
-  ["selected.asar", "content", "zip"],
+  ["selected.apk", "canonical.ipa", "apk", "apk", true],
+  ["selected.ipa", "canonical.apk", "ipa", "ipa", true],
+  ["selected.unknown", "canonical.apk", "apk", "apk", true],
+  ["selected.aab", "content", "zip", "zip", true],
+  ["selected.asar", "content", "apk", "zip", true],
+  ["selected.asar", "content", "zip", "zip", false],
 ] as const)(
-  "keeps selected %s and stored %s consistent across admission, inventory and extraction",
-  async (name, stored, format) => {
-    const { root, canonical } = await fixture(stored);
+  "keeps selected %s and stored %s identity with admission %s, inventory %s and Android manifest %s",
+  async (
+    name,
+    stored,
+    admittedFormat,
+    inventoryFormat,
+    includeAndroidManifest,
+  ) => {
+    const { root, canonical } = await fixture(stored, includeAndroidManifest);
     const selected = join(root, name);
     await symlink(canonical, selected);
     const admitted = await parseBinaryTarget(selected);
     if (!admitted.ok) throw admitted.error;
     expect(admitted.value.path).toBe(canonical);
-    expect(admitted.value.format).toBe(format);
+    expect(admitted.value.format).toBe(admittedFormat);
     const { runProviderAnalysis } = createDirectAnalysis({});
     const observed = parseEvidence(
       await runProviderAnalysis(selected, "inventory_artifact", {}).then(
@@ -57,7 +67,7 @@ it.skipIf(process.platform === "win32").each([
     expect(
       artifactInventoryResultSchema.parse(observed.normalized_result).manifest
         .root_format,
-    ).toBe(format);
+    ).toBe(inventoryFormat);
     const provider = new ArtifactProvider({});
     const client = provider.createClient(admitted.value);
     try {
@@ -70,12 +80,12 @@ it.skipIf(process.platform === "win32").each([
       const result = artifactExtractionResultSchema.parse(
         execution.value.result,
       );
-      expect(result.manifest.root_format).toBe(format);
+      expect(result.manifest.root_format).toBe(inventoryFormat);
       expect(
         await readFile(join(result.output_root, "payload.txt"), "utf8"),
       ).toBe("same packed bytes");
     } finally {
-      await client.close();
+      expect(await client.close()).toEqual({ ok: true, value: null });
     }
   },
 );
@@ -127,5 +137,60 @@ it.skipIf(process.platform === "win32")(
     if (!admitted.ok) throw admitted.error;
     expect(admitted.value.format).toBe("elf");
     expect(admitted.value.kind).toBe("executable");
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "classifies a bundle's executable by its own name and keeps the bundle facts",
+  async () => {
+    const root = await createTestTempDirectory("rea-artifact-bundle-name-");
+    const bundle = join(root, "Fixture.app");
+    await mkdir(bundle);
+    const infoPlist = join(bundle, "Info.plist");
+    await writeFile(
+      infoPlist,
+      "<plist><dict><key>CFBundleExecutable</key><string>main.js</string></dict></plist>",
+    );
+    const executable = join(bundle, "main.js");
+    await writeFile(executable, "export const value = 1;\n");
+    const admitted = await parseBinaryTarget(bundle);
+    if (!admitted.ok) throw admitted.error;
+    expect(admitted.value).toMatchObject({
+      path: executable,
+      kind: "artifact",
+      format: "javascript",
+      bundleInfoPlist: infoPlist,
+      artifactSelectedPath: bundle,
+    });
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "keeps the bundle facts when the executable is a script stub with a trailing archive",
+  async () => {
+    const root = await createTestTempDirectory("rea-artifact-bundle-zip-");
+    const bundle = join(root, "Fixture.app");
+    await mkdir(bundle);
+    const infoPlist = join(bundle, "Info.plist");
+    await writeFile(
+      infoPlist,
+      "<plist><dict><key>CFBundleExecutable</key><string>main</string></dict></plist>",
+    );
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add("payload.txt", new TextReader("appended archive"));
+    const executable = join(bundle, "main");
+    await writeFile(
+      executable,
+      Buffer.concat([Buffer.from("#!/bin/sh\nexit 0\n"), await writer.close()]),
+    );
+    const admitted = await parseBinaryTarget(bundle);
+    if (!admitted.ok) throw admitted.error;
+    expect(admitted.value).toMatchObject({
+      path: executable,
+      kind: "archive",
+      format: "zip",
+      bundleInfoPlist: infoPlist,
+      artifactSelectedPath: bundle,
+    });
   },
 );

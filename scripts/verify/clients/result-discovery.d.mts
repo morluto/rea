@@ -17,3 +17,4 @@ export function findClientResult(
   matches: (value: object) => boolean,
   decodeText?: (text: string) => unknown,
 ): object | undefined;
+export function containsText(value: unknown, text: string): boolean;

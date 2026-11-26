@@ -1,3 +1,8 @@
+import {
+  coverageStatusSchema,
+  knownCoverageStatusSchema,
+} from "../coverage.js";
+import { CoverageAccumulator, knownCoverage } from "../coverageAccumulator.js";
 import { javascriptSourceRangeSchema } from "./javascriptSourceCoordinates.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { z } from "zod";
@@ -20,7 +25,7 @@ import {
   type NextAppSourceContext,
 } from "./javascriptRoutePaths.js";
 
-const sourceStatus = z.enum(["complete", "partial", "unavailable", "unknown"]);
+const sourceStatus = z.enum([...coverageStatusSchema.options, "unavailable"]);
 const confidence = javaScriptRouteCandidateSchema.shape.confidence;
 const sourceShape = {
   id: z.string().regex(/^jss:[a-f0-9]{32}$/u),
@@ -102,8 +107,8 @@ const inventoryShape = z.strictObject({
   unknowns: z.array(javaScriptRouteGapSchema),
   coverage: z.strictObject({
     scope: z.literal("provided-code-sources"),
-    source_parsing: z.enum(["complete", "partial", "unknown"]),
-    candidate_enumeration: z.enum(["complete", "partial"]),
+    source_parsing: coverageStatusSchema,
+    candidate_enumeration: knownCoverageStatusSchema,
     application_routes: z.literal("unknown"),
   }),
   statistics: z.strictObject({
@@ -699,14 +704,20 @@ export function* buildJavaScriptRouteInventorySteps(
     capacity,
     coverage: {
       scope: "provided-code-sources",
-      source_parsing:
-        sources.length === 0
-          ? "unknown"
-          : sources.some((source) => source.status !== "complete") ||
-              capacity !== null
-            ? "partial"
-            : "complete",
-      candidate_enumeration: partial ? "partial" : "complete",
+      source_parsing: (() => {
+        const acc = new CoverageAccumulator();
+        if (sources.length === 0) return acc.finalize().status;
+        acc.recordComplete();
+        if (sources.some((source) => source.status !== "complete"))
+          acc.recordOmission("one or more sources did not parse completely");
+        if (capacity !== null)
+          acc.recordOmission("route inventory capacity reached");
+        return acc.finalize().status;
+      })(),
+      candidate_enumeration: knownCoverage(
+        !partial,
+        "route enumeration partial",
+      ),
       application_routes: "unknown",
     },
     statistics: {

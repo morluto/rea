@@ -1,9 +1,19 @@
+import { malformedInput } from "../domain/parseFailure.js";
+import { expectedAppleMetadataReadFailure } from "./AppleMetadataReadFailure.js";
 import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
-import type { Section } from "./AppleMachoSelection.js";
+import type { Section } from "../domain/apple/appleMachoSelection.js";
 import type { ObjcDispatchReaders } from "./AppleObjcDispatchFacets.js";
-import { readObjcPropertiesOf } from "./AppleObjcProperties.js";
-import { issue, type DecodeIssue } from "./AppleDispatchDecodeFacts.js";
-import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
+import {
+  inspectUndecodedClassPropertyList,
+  readObjcPropertiesOf,
+} from "./AppleObjcProperties.js";
+import {
+  issue,
+  type DecodeIssue,
+} from "../domain/apple/appleDispatchDecodeFacts.js";
+import { BinaryFormatFailure } from "../domain/binaryContainer.js";
+import type { ObjcProtocolListResult } from "./AppleObjcProtocols.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const CLASS_SYMBOL = /^_OBJC_(?:META)?CLASS_\$_(.+)$/u;
 
@@ -33,8 +43,126 @@ const unnamedClassReference = (
 };
 
 /**
- * Decode `__objc_catlist` `category_t` records:
+ * Swift lists categories on a class reached through a Swift class stub in
+ * `__objc_catlist2`, out of sight of runtimes without stub support, and the
+ * Objective-C runtime loads both lists the same way.
+ */
+const CATEGORY_LISTS: ReadonlySet<string> = new Set([
+  "__objc_catlist",
+  "__objc_catlist2",
+]);
+
+/**
+ * Whether a class reference is a Swift class stub rather than a `class_t`.
+ * Like the runtime's `isStubClass`, a stub's first word is a plain value
+ * from 1 to 15 where a class has its isa pointer. A stub holds only that
+ * word and an initializer, so its class name is not in the stub.
+ */
+const isSwiftClassStub = (
+  read: Pick<ObjcDispatchReaders, "resolvePointer">,
+  address: bigint,
+): boolean => {
+  const isa = read.resolvePointer(address);
+  return isa.kind === "raw" && isa.target >= 1n && isa.target < 16n;
+};
+
+/** `objc_image_info` flag: this image's `category_t` records end in `_classProperties`. */
+const HAS_CATEGORY_CLASS_PROPERTIES = 1 << 6;
+
+/** Size of `objc_image_info`: a version word, then the flags word. */
+const IMAGE_INFO_SIZE = 8;
+
+/**
+ * Whether this image's `category_t` records end in `_classProperties`. Images
+ * built before the field existed end at `instanceProperties`, so the bytes
+ * after it are a field only when an image info declares them.
+ */
+type ClassPropertyDeclaration =
+  | { readonly kind: "absent" | "declared" }
+  | {
+      readonly kind: "unknown";
+      readonly location: bigint;
+      readonly reason: string;
+    };
+
+/**
+ * Read the image's declaration once for every category. Same-named image
+ * infos are read together and one that declares the field decides. An image
+ * info that cannot be read, or is too short to hold its flags, leaves the
+ * field's presence unknown rather than absent.
+ */
+const readClassPropertyDeclaration = (
+  read: Pick<ObjcDispatchReaders, "u32">,
+  imageInfos: readonly Section[],
+): ClassPropertyDeclaration => {
+  let unknown: ClassPropertyDeclaration | undefined;
+  for (const imageInfo of imageInfos) {
+    if (imageInfo.size < IMAGE_INFO_SIZE) {
+      unknown ??= {
+        kind: "unknown",
+        location: imageInfo.address,
+        reason: `image info holds ${imageInfo.size} of the ${IMAGE_INFO_SIZE} bytes that carry its flags`,
+      };
+    } else {
+      const flags = imageInfo.address + 4n;
+      try {
+        if ((read.u32(flags) & HAS_CATEGORY_CLASS_PROPERTIES) !== 0)
+          return { kind: "declared" };
+      } catch (cause: unknown) {
+        if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
+        unknown ??= {
+          kind: "unknown",
+          location: flags,
+          reason: errorMessage(cause),
+        };
+      }
+    }
+  }
+  return unknown ?? { kind: "absent" };
+};
+
+/**
+ * Why a category's `_classProperties` list is unaccounted for, or null when
+ * the record has none. Only a raw or rebased zero is a null list: a bound
+ * field names a list in another image, and a zero whose fixups are unknown
+ * may be either. A field that cannot be resolved is reported at its address
+ * so the category keeps the facts already decoded.
+ */
+const categoryClassPropertyIssue = (
+  read: Pick<ObjcDispatchReaders, "resolvePointer">,
+  declaration: ClassPropertyDeclaration,
+  category: bigint,
+  name: string,
+): DecodeIssue | null => {
+  if (declaration.kind === "absent") return null;
+  const field = category + 48n;
+  const unreadable = (location: bigint, reason: string) =>
+    issue(
+      "objc_properties_categories",
+      "category_class_properties_unreadable",
+      `Category ${name} class property list: ${reason}`,
+      `0x${location.toString(16)}`,
+    );
+  if (declaration.kind === "unknown")
+    return unreadable(declaration.location, declaration.reason);
+  const list = inspectUndecodedClassPropertyList(read, field);
+  if (list.kind === "absent") return null;
+  if (list.kind === "unreadable") return unreadable(field, list.reason);
+  return issue(
+    "objc_properties_categories",
+    "category_class_properties_not_decoded",
+    list.symbol === undefined
+      ? `Category ${name} class property list is not decoded`
+      : `Category ${name} class property list is bound to ${list.symbol} and is not decoded`,
+    `0x${field.toString(16)}`,
+  );
+};
+
+/**
+ * Decode `__objc_catlist` and `__objc_catlist2` `category_t` records:
  * name, cls, instanceMethods, classMethods, protocols, instanceProperties.
+ * A declared `_classProperties` list is reported, not decoded: the public
+ * property shape has no class/instance discriminator.
  */
 export const decodeObjcCategories = (input: {
   readonly sections: readonly Section[];
@@ -50,14 +178,22 @@ export const decodeObjcCategories = (input: {
     category: string,
     onTruncated?: () => void,
   ) => string[];
-  readonly protocols: (list: bigint, onTruncated?: () => void) => string[];
+  /** Read the protocol-list pointer field, retaining known names on failure. */
+  readonly protocolList: (
+    field: bigint,
+    onTruncated?: () => void,
+  ) => ObjcProtocolListResult;
   /** Name of a class defined in this image, from its class_ro_t. */
   readonly localClassName: (address: bigint) => string;
 }): number => {
   const { read, result } = input;
   let examined = 0;
-  for (const section of input.sections.filter(
-    ({ name }) => name === "__objc_catlist",
+  const classPropertyDeclaration = readClassPropertyDeclaration(
+    read,
+    input.sections.filter(({ name }) => name === "__objc_imageinfo"),
+  );
+  for (const section of input.sections.filter(({ name }) =>
+    CATEGORY_LISTS.has(name),
   )) {
     if (section.size % 8 !== 0)
       throw new BinaryFormatFailure(
@@ -72,21 +208,34 @@ export const decodeObjcCategories = (input: {
         const category = read.pointer(field);
         const name = read.string(read.pointer(category));
         if (name.length === 0)
-          throw new TypeError("Objective-C category has an empty name");
+          throw malformedInput(
+            "macho",
+            "Objective-C category has an empty name",
+          );
         const external = boundClassName(read, category + 8n);
         const local = read.pointer(category + 8n);
         let className = external ?? null;
         if (external === undefined && local !== 0n)
           try {
-            className = input.localClassName(local);
+            if (isSwiftClassStub(read, local))
+              input.issues.push(
+                issue(
+                  "objc_properties_categories",
+                  "category_class_unresolved",
+                  `Category ${name} class reference 0x${local.toString(16)} is a Swift class stub, which is not read as an Objective-C class name`,
+                  `0x${(category + 8n).toString(16)}`,
+                ),
+              );
+            else className = input.localClassName(local);
           } catch (cause: unknown) {
+            if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
             // The category's own name and methods do not depend on its owner;
             // keep them and report the unreadable class reference.
             input.issues.push(
               issue(
                 "objc_properties_categories",
                 "category_class_unresolved",
-                `Category ${name} class reference 0x${local.toString(16)}: ${cause instanceof Error ? cause.message : String(cause)}`,
+                `Category ${name} class reference 0x${local.toString(16)}: ${errorMessage(cause)}`,
                 `0x${(category + 8n).toString(16)}`,
               ),
             );
@@ -119,23 +268,33 @@ export const decodeObjcCategories = (input: {
           name,
           onTruncated,
         );
-        const protocols = input.protocols(
-          read.pointer(category + 32n),
+        const protocols = input.protocolList(category + 32n, onTruncated);
+        if (!protocols.ok)
+          input.issues.push(
+            issue(
+              "objc_properties_categories",
+              "protocol_list_unreadable",
+              `Category ${name} adopted protocol list: ${protocols.error.reason}`,
+              `0x${(category + 32n).toString(16)}`,
+            ),
+          );
+        const properties = readObjcPropertiesOf(read, category + 40n, {
+          owner: `category ${name}`,
+          admit: input.admit,
+          issues: input.issues,
           onTruncated,
-        );
-        const properties = readObjcPropertiesOf(
+        });
+        const classProperties = categoryClassPropertyIssue(
           read,
-          read.pointer(category + 40n),
-          {
-            owner: `category ${name}`,
-            admit: input.admit,
-            issues: input.issues,
-            location: `0x${read.pointer(category + 40n).toString(16)}`,
-            onTruncated,
-          },
+          classPropertyDeclaration,
+          category,
+          name,
         );
+        if (classProperties !== null) input.issues.push(classProperties);
         const decodeReasons = [
           ...(className === null ? ["category_class_unresolved"] : []),
+          ...(protocols.ok ? [] : ["protocol_list_unreadable"]),
+          ...(classProperties === null ? [] : [classProperties.code]),
           ...(budgetTruncated ? ["max_records_reached"] : []),
         ];
         result.objc_categories.push({
@@ -149,7 +308,7 @@ export const decodeObjcCategories = (input: {
                 : "local",
           instance_methods: instanceMethods,
           class_methods: classMethods,
-          protocols,
+          protocols: protocols.ok ? protocols.value : protocols.error.names,
           properties,
           location: read.location(category),
           decode:
@@ -159,7 +318,8 @@ export const decodeObjcCategories = (input: {
           evidence: read.evidence(category, "Objective-C category_t record"),
         });
       } catch (cause: unknown) {
-        const message = cause instanceof Error ? cause.message : String(cause);
+        if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
+        const message = errorMessage(cause);
         input.issues.push(
           issue(
             "objc_properties_categories",

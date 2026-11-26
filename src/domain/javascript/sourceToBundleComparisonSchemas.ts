@@ -1,3 +1,4 @@
+import { coverageStatusSchema } from "../coverage.js";
 import { z } from "zod";
 import { javaScriptFileOccurrenceSchema } from "./javascriptArtifactFiles.js";
 
@@ -5,10 +6,10 @@ import { evidenceSchema } from "../evidence.js";
 import { JAVASCRIPT_APPLICATION_NODE_KINDS } from "./javascriptApplicationGraphSchemas.js";
 import { historicalSourceGraphSchema } from "../referenceSourceGraph.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
+import { nonEmptyTextSchema } from "../textSchemas.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const nodeIdSchema = prefixedDigestSchema("jag_node");
-const textSchema = z.string().min(1);
 
 export const SOURCE_TO_BUNDLE_SIGNAL_WEIGHTS = [
   ["exact-source-digest", 100],
@@ -39,8 +40,8 @@ export const compareSourceToBundleInputSchema = z.strictObject({
 const sourceToBundleSignalSchema = z.strictObject({
   kind: sourceToBundleSignalKindSchema,
   weight: z.int().min(1).max(100),
-  source_value: textSchema,
-  current_values: z.array(textSchema).min(1),
+  source_value: nonEmptyTextSchema,
+  current_values: z.array(nonEmptyTextSchema).min(1),
 });
 
 const sourceToBundleCandidateSchema = z.strictObject({
@@ -55,9 +56,9 @@ const sourceToBundleCandidateSchema = z.strictObject({
 
 const sourceToBundleItemSchema = z.strictObject({
   mapping_id: prefixedDigestSchema("stbc_item"),
-  source_path: textSchema,
+  source_path: nonEmptyTextSchema,
   source_sha256: digestSchema.nullable(),
-  source_language: textSchema.nullable(),
+  source_language: nonEmptyTextSchema.nullable(),
   status: z.enum([
     "unchanged",
     "modified",
@@ -70,7 +71,7 @@ const sourceToBundleItemSchema = z.strictObject({
   confidence: z.enum(["exact", "high", "medium", "unknown"]),
   current_node_ids: z.array(nodeIdSchema),
   candidates: z.array(sourceToBundleCandidateSchema),
-  limitations: z.array(textSchema),
+  limitations: z.array(nonEmptyTextSchema),
 });
 
 /** Deterministic, evidence-bearing historical-source to shipped-bundle comparison. */
@@ -78,7 +79,7 @@ export const sourceToBundleComparisonResultSchema = z.strictObject({
   comparison_id: prefixedDigestSchema("stbc"),
   reference: z.strictObject({
     root_sha256: digestSchema,
-    inventory_state: z.enum(["complete", "partial", "unknown"]),
+    inventory_state: coverageStatusSchema,
   }),
   application: z.strictObject({
     evidence_id: evidenceIdSchema,
@@ -107,12 +108,14 @@ export const sourceToBundleComparisonResultSchema = z.strictObject({
   items: z.array(sourceToBundleItemSchema),
   unmapped_current_node_ids: z.array(nodeIdSchema),
   coverage: z.strictObject({
-    status: z.enum(["complete-within-inputs", "partial"]),
-    reference_inventory_state: z.enum(["complete", "partial", "unknown"]),
+    status: z
+      .enum(["complete-within-inputs", "partial", "unknown"])
+      .describe(
+        "complete-within-inputs only when the source inventory and graph coverage are both complete; unknown when either could not tell.",
+      ),
+    reference_inventory_state: coverageStatusSchema,
     application_graph_status: z.enum([
-      "complete",
-      "partial",
-      "unknown",
+      ...coverageStatusSchema.options,
       "unavailable",
     ]),
     retained_source_files: z.int().min(0),
@@ -120,7 +123,7 @@ export const sourceToBundleComparisonResultSchema = z.strictObject({
     candidate_evaluations: z.int().min(0),
   }),
   evidence_links: z.array(evidenceIdSchema).length(1),
-  limitations: z.array(textSchema),
+  limitations: z.array(nonEmptyTextSchema),
 });
 
 export type SourceToBundleComparisonResult = z.infer<

@@ -1,3 +1,4 @@
+import { defaultedNumberSettingParser } from "./optionalSetting.js";
 import {
   DEFAULT_REGEX_WORKER_HEAP_REQUEST_MIB,
   MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
@@ -5,8 +6,7 @@ import {
 } from "../domain/analysisResourceLimits.js";
 import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
-import { ConfigurationError } from "../domain/configurationErrors.js";
-import { err, ok, type Result } from "../domain/result.js";
+import { currentAnalysisSettingOverride } from "../domain/analysisOperationSnapshot.js";
 
 export const REGEX_WORKER_HEAP_REQUEST_SETTING =
   "REA_REGEX_WORKER_HEAP_REQUEST_MIB";
@@ -22,7 +22,7 @@ export const DEFAULT_REGEX_WORKER_HEAP_REQUEST: RegexWorkerHeapRequest = {
   source: "default",
 };
 
-export const regexWorkerHeapRequestConstraint = `${REGEX_WORKER_HEAP_REQUEST_SETTING} must be a decimal integer from ${String(MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)} to ${String(MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)} MiB; the default is ${String(DEFAULT_REGEX_WORKER_HEAP_REQUEST_MIB)} MiB. A request below ${String(MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)} MiB aborts the worker during startup, and a larger value is refused.`;
+const regexWorkerHeapRequestConstraint = `${REGEX_WORKER_HEAP_REQUEST_SETTING} must be a decimal integer from ${String(MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)} to ${String(MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)} MiB; the default is ${String(DEFAULT_REGEX_WORKER_HEAP_REQUEST_MIB)} MiB. A request below ${String(MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)} MiB aborts the worker during startup, and a larger value is refused.`;
 
 /** Optional decimal mebibyte count for the regex worker old-generation request. */
 export const regexWorkerHeapRequestMiBSchema = positiveDecimalIntegerSchema(
@@ -32,24 +32,14 @@ export const regexWorkerHeapRequestMiBSchema = positiveDecimalIntegerSchema(
 );
 
 /** Resolve the effective request from one environment value. */
-export const parseRegexWorkerHeapRequest = (
-  value: string | undefined,
-): Result<RegexWorkerHeapRequest, ConfigurationError> => {
-  if (value === undefined) return ok(DEFAULT_REGEX_WORKER_HEAP_REQUEST);
-  const parsed = regexWorkerHeapRequestMiBSchema.safeParse(value);
-  return parsed.success
-    ? ok({ heapMiB: parsed.data, source: "setting" })
-    : err(
-        new ConfigurationError(regexWorkerHeapRequestConstraint, {
-          settings: [
-            {
-              setting: REGEX_WORKER_HEAP_REQUEST_SETTING,
-              constraint: regexWorkerHeapRequestConstraint,
-            },
-          ],
-        }),
-      );
-};
+export const parseRegexWorkerHeapRequest =
+  defaultedNumberSettingParser<RegexWorkerHeapRequest>(
+    REGEX_WORKER_HEAP_REQUEST_SETTING,
+    regexWorkerHeapRequestMiBSchema,
+    regexWorkerHeapRequestConstraint,
+    DEFAULT_REGEX_WORKER_HEAP_REQUEST,
+    (heapMiB) => ({ heapMiB, source: "setting" }),
+  );
 
 /**
  * Resolve the request from a composition root's selected environment. An
@@ -59,6 +49,10 @@ export const parseRegexWorkerHeapRequest = (
 export const resolveRegexWorkerHeapRequest = (
   environment: Readonly<Record<string, string | undefined>>,
 ): RegexWorkerHeapRequest => {
+  const override = currentAnalysisSettingOverride(
+    "regex.worker_heap_request_mib",
+  );
+  if (override !== undefined) return { heapMiB: override, source: "runtime" };
   const parsed = parseRegexWorkerHeapRequest(
     environment[REGEX_WORKER_HEAP_REQUEST_SETTING],
   );
@@ -66,12 +60,25 @@ export const resolveRegexWorkerHeapRequest = (
   return parsed.value;
 };
 
-/** How to read and change the regex worker old-generation request. */
+const regexWorkerHeapFacts = (request: RegexWorkerHeapRequest): string =>
+  `The effective ${REGEX_WORKER_HEAP_REQUEST_SETTING} value is ${String(request.heapMiB)} MiB (source ${request.source}; default ${String(DEFAULT_REGEX_WORKER_HEAP_REQUEST_MIB)} MiB, floor ${String(MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)} MiB, maximum ${String(MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)} MiB).`;
+
+/** Recovery after this REA process has exited. */
 export const regexWorkerHeapRequestRecovery = (
   request: RegexWorkerHeapRequest,
 ): string =>
   [
-    `The effective ${REGEX_WORKER_HEAP_REQUEST_SETTING} value is ${String(request.heapMiB)} MiB (source ${request.source}; default ${String(DEFAULT_REGEX_WORKER_HEAP_REQUEST_MIB)} MiB, floor ${String(MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)} MiB, maximum ${String(MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)} MiB).`,
-    `Set ${REGEX_WORKER_HEAP_REQUEST_SETTING} in the environment that starts REA to a decimal integer from ${String(MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)} to ${String(MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)}, then restart REA. In a running MCP server, use update_analysis_settings with setting regex.worker_heap_request_mib and action set instead; the new value applies to new work without a REA restart.`,
+    regexWorkerHeapFacts(request),
+    `Set ${REGEX_WORKER_HEAP_REQUEST_SETTING} in the environment that starts the next REA invocation. It must be a decimal integer from ${String(MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)} to ${String(MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)}.`,
+    "A positive Node --max-old-space-size, including NODE_OPTIONS, overrides this request and sets the effective heap. That flag is not limited by this setting's floor or maximum. Raising host memory alone does not raise the request.",
+  ].join(" ");
+
+/** Recovery while this session can still call update_analysis_settings. */
+export const regexWorkerHeapRequestContinuingRecovery = (
+  request: RegexWorkerHeapRequest,
+): string =>
+  [
+    regexWorkerHeapFacts(request),
+    `Call update_analysis_settings with setting regex.worker_heap_request_mib. It changes the request for the next worker in this session. The launch seed remains ${REGEX_WORKER_HEAP_REQUEST_SETTING}.`,
     "A positive Node --max-old-space-size, including NODE_OPTIONS, overrides this request and sets the effective heap. That flag is not limited by this setting's floor or maximum. Raising host memory alone does not raise the request.",
   ].join(" ");

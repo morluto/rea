@@ -1,25 +1,26 @@
+import { ArtifactPreparation } from "./ArtifactPreparation.js";
+import { Budget } from "../domain/budget.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import type { FileHandle } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
-import { Readable } from "node:stream";
+import type { Readable } from "node:stream";
 import {
   ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
   copyArtifactEntry,
-  sameArtifactEntry,
+  assertProducedEntry,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+  ArtifactResourceScope,
+  assertArtifactReadActive,
+  ArtifactFileSource,
+} from "../resources/index.js";
+import { OwnedAsyncArtifactStreams } from "./OwnedAsyncArtifactStreams.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
-import type {
-  ArtifactFormatMetadata,
-  UnityFsMetadata,
-} from "../domain/artifactFormatMetadata.js";
+import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
+import type { UnityFsMetadata } from "../domain/formatMetadata/packageAndGameMetadata.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { UNITYFS_COMPRESSION_NONE } from "../domain/unityfsFormat.js";
 import {
   decodeUnityFsLz4,
@@ -31,9 +32,7 @@ import {
 } from "./UnityFsStructures.js";
 
 const CHUNK_BYTES = 64 * 1024;
-// A decode can retain both encoded and 64 MiB decoded buffers. Bound active
-// decodes/paused block owners as well as the single completed cache entry.
-const MAX_MEMBER_STREAMS = 4;
+
 type UnityFsEntry = ArtifactEntry & {
   readonly declaredSize: number;
   readonly formatMetadata: Extract<
@@ -52,14 +51,18 @@ interface UnityFsEntryState {
 export class UnityFsArtifactReader implements ArtifactReader {
   readonly format = "unityfs" as const;
   readonly #scope = new ArtifactResourceScope();
-  readonly #entries = new Map<string, UnityFsEntryState>();
-  readonly #streams = new Map<Readable, AbortController>();
+  #entries = new Map<string, UnityFsEntryState>();
+  readonly #streams = new OwnedAsyncArtifactStreams(
+    this.#scope,
+    "UnityFS",
+    CHUNK_BYTES,
+  );
   readonly #source: ArtifactFileSource;
-  #prepared: Promise<void> | undefined;
+  readonly #preparation = new ArtifactPreparation();
   #header: UnityFsMetadata | undefined;
   #blocks: readonly UnityFsBlock[] = [];
   #dataStart = 0;
-  #remainingDecodeBytes = 0;
+  #decodeBytes = new Budget(0);
   #remainingReadOperations = 0;
   #cachedBlock: { readonly index: number; readonly bytes: Buffer } | undefined;
   #closing = false;
@@ -88,8 +91,11 @@ export class UnityFsArtifactReader implements ArtifactReader {
   ): AsyncIterable<ArtifactEntry> {
     await this.#scope.run(async () => {
       this.#assertOpen(signal);
-      this.#prepared ??= this.#prepare(signal);
-      await this.#prepared;
+      await this.#preparation.run(
+        signal,
+        () => this.#prepare(signal),
+        () => this.#assertOpen(signal),
+      );
       await this.#source.read(signal);
     });
     this.#assertOpen(signal);
@@ -104,6 +110,7 @@ export class UnityFsArtifactReader implements ArtifactReader {
               : "UnityFS blocks-and-directory table uses an unsupported compression; member identities remain unknown.",
         ],
       });
+      this.#assertOpen(signal);
       return;
     }
     let index = 0;
@@ -114,17 +121,18 @@ export class UnityFsArtifactReader implements ArtifactReader {
     }
     // A close while paused at yield must not turn a cleared map into completion.
     this.#assertOpen(signal);
+    options?.onCoverage?.({ status: "complete", limitations: [] });
   }
 
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
     return this.#scope.run(async () => {
       this.#assertOpen(signal);
       const state = this.#entries.get(entry.adapterKey);
-      if (state === undefined || !sameArtifactEntry(entry, state.entry))
-        throw new ArtifactReaderFailure(
-          "integrity",
-          "UnityFS entry does not match its owning inventory",
-        );
+      assertProducedEntry(
+        entry,
+        state?.entry,
+        "UnityFS entry does not match its owning inventory",
+      );
       // Validate carrier freshness even when a cached block or unavailable fact suffices.
       const { handle } = await this.#source.read(signal);
       this.#assertOpen(signal);
@@ -142,67 +150,15 @@ export class UnityFsArtifactReader implements ArtifactReader {
           { traversal: { status: "unknown", limitations: [limitation] } },
         );
       }
-      if (this.#streams.size >= MAX_MEMBER_STREAMS)
-        throw new ArtifactReaderFailure(
-          "limit",
-          "UnityFS reader already owns four active member streams",
-          { boundary: "capacity" },
-        );
-      const controller = new AbortController();
-      const output = Readable.from(
-        this.#memberChunks(handle, state, controller.signal),
-        {
-          objectMode: false,
-          highWaterMark: CHUNK_BYTES,
-        },
+      return this.#streams.open(signal, (active) =>
+        this.#memberChunks(handle, state, active),
       );
-      const onAbort = (): void => {
-        controller.abort(signal?.reason);
-        output.destroy(
-          new ArtifactReaderFailure(
-            "cancelled",
-            "UnityFS member read cancelled",
-            { cause: signal?.reason },
-          ),
-        );
-      };
-      output.on("error", () => undefined);
-      this.#streams.set(output, controller);
-      const completion = new Promise<void>((resolve) => {
-        output.once("close", () => {
-          signal?.removeEventListener("abort", onAbort);
-          this.#streams.delete(output);
-          resolve();
-        });
-      });
-      // Readable.from waits for its async iterator to retire before close. Keep
-      // that whole lifetime owned, including a suspended positional read/decoder.
-      void this.#scope
-        .run(() => completion)
-        .catch((cause: unknown) => {
-          controller.abort(cause);
-          output.destroy(
-            cause instanceof Error
-              ? cause
-              : new Error("UnityFS stream ownership failed", { cause }),
-          );
-        });
-      signal?.addEventListener("abort", onAbort, { once: true });
-      if (signal?.aborted === true) onAbort();
-      return output;
     });
   }
 
   async close(): Promise<void> {
     this.#closing = true;
-    for (const [stream, controller] of this.#streams) {
-      const cause = new ArtifactReaderFailure(
-        "unavailable",
-        "UnityFS reader closed",
-      );
-      controller.abort(cause);
-      stream.destroy(cause);
-    }
+    this.#streams.close();
     await this.#scope.close();
     await this.#source.close();
     this.#entries.clear();
@@ -229,7 +185,7 @@ export class UnityFsArtifactReader implements ArtifactReader {
     if (header === undefined)
       throw unityFsFormatFailure("no complete UnityFS header");
     const status = header.layout.status;
-    this.#header = {
+    const metadata: UnityFsMetadata = {
       kind: "unityfs",
       signature: "UnityFS",
       format_version: header.formatVersion,
@@ -245,58 +201,73 @@ export class UnityFsArtifactReader implements ArtifactReader {
       data_hash: null,
       directory_status: status,
     };
-    if (status !== "available") return;
+    if (status !== "available") {
+      await this.#source.read(signal);
+      this.#assertOpen(signal);
+      this.#header = metadata;
+      return;
+    }
     const { dataHash, blocks, nodes, dataStart } = await readUnityFsBlocksInfo(
       handle,
       header,
-      initial.size,
       signal,
     );
-    const budget = artifactExpansionBudgetBytes(initial.size);
+    const budget = artifactExpansionBudgetBytes(header.declaredSize);
     let streamBytes = 0n;
     for (const block of blocks) {
       streamBytes += BigInt(block.uncompressedSize);
       if (streamBytes > BigInt(budget))
         throw expansionLimit("declared virtual stream", streamBytes, budget);
     }
-    this.#header = {
-      ...this.#header,
+    const preparedMetadata: UnityFsMetadata = {
+      ...metadata,
       data_hash: dataHash,
       block_count: blocks.length,
       data_start: dataStart,
     };
-    this.#dataStart = dataStart;
     // Keep the source block count above, but do not revisit zero-output rows
     // for every member. Parsed stream/compressed offsets remain authoritative.
-    this.#blocks = blocks.filter((block) => block.uncompressedSize > 0);
-    this.#remainingDecodeBytes = budget;
-    await this.#registerNodes(nodes, budget, signal);
+    const readableBlocks = blocks.filter((block) => block.uncompressedSize > 0);
+    const registered = await this.#registerNodes(
+      nodes,
+      readableBlocks,
+      budget,
+      signal,
+    );
     await this.#source.read(signal);
+    this.#assertOpen(signal);
+    this.#header = preparedMetadata;
+    this.#dataStart = dataStart;
+    this.#blocks = readableBlocks;
+    this.#decodeBytes = new Budget(budget);
+    this.#entries = registered.entries;
+    this.#remainingReadOperations = registered.remainingReadOperations;
   }
 
   async #registerNodes(
     nodes: readonly UnityFsNode[],
+    blocks: readonly UnityFsBlock[],
     budget: number,
     signal?: AbortSignal,
-  ): Promise<void> {
+  ): Promise<{
+    entries: Map<string, UnityFsEntryState>;
+    remainingReadOperations: number;
+  }> {
+    const entries = new Map<string, UnityFsEntryState>();
     let readableBytes = 0n;
     for (let index = 0; index < nodes.length; index++) {
       if (index % 256 === 0) await setImmediate();
       this.#assertOpen(signal);
       const node = nodes[index]!;
       const firstBlock =
-        node.size === 0 ? -1 : blockEndingAfter(this.#blocks, node.offset);
+        node.size === 0 ? -1 : blockEndingAfter(blocks, node.offset);
       const lastBlock =
         node.size === 0
           ? -1
-          : blockEndingAfter(this.#blocks, node.offset + node.size - 1);
+          : blockEndingAfter(blocks, node.offset + node.size - 1);
       if (node.size !== 0 && (firstBlock < 0 || lastBlock < firstBlock))
         throw unityFsFormatFailure("member has no block range");
-      const unavailable = firstUnavailableBlock(
-        this.#blocks,
-        firstBlock,
-        lastBlock,
-      );
+      const unavailable = firstUnavailableBlock(blocks, firstBlock, lastBlock);
       const kind =
         (node.flags & 1) !== 0 ? ("directory" as const) : ("file" as const);
       if (kind === "file" && unavailable === undefined) {
@@ -331,7 +302,7 @@ export class UnityFsArtifactReader implements ArtifactReader {
           flags: node.flags,
         },
       } satisfies UnityFsEntry;
-      this.#entries.set(adapterKey, {
+      entries.set(adapterKey, {
         entry,
         firstBlock,
         lastBlock,
@@ -340,14 +311,15 @@ export class UnityFsArtifactReader implements ArtifactReader {
     }
     // Four ordinary passes over admitted blocks, nodes and plaintext chunks,
     // with a small-reader floor. Byte quotas alone cannot bound tiny-block I/O.
-    this.#remainingReadOperations =
+    const remainingReadOperations =
       4 *
       Math.max(
         1024,
-        this.#blocks.length +
+        blocks.length +
           nodes.length +
           Math.ceil(Number(readableBytes) / CHUNK_BYTES),
       );
+    return { entries, remainingReadOperations };
   }
 
   async *#memberChunks(
@@ -381,6 +353,7 @@ export class UnityFsArtifactReader implements ArtifactReader {
         const chunk =
           plain === undefined
             ? await readArtifactFileBytes(
+                "unityfs",
                 handle,
                 this.#dataStart + block.compressedStart + offset,
                 size,
@@ -405,16 +378,18 @@ export class UnityFsArtifactReader implements ArtifactReader {
   ): Promise<Buffer> {
     if (this.#cachedBlock?.index === index) return this.#cachedBlock.bytes;
     const block = this.#blocks[index]!;
-    if (block.uncompressedSize > this.#remainingDecodeBytes)
-      throw expansionLimit(
+    const exhausted = () =>
+      expansionLimit(
         "cumulative block decoding",
         BigInt(block.uncompressedSize),
-        this.#remainingDecodeBytes,
+        this.#decodeBytes.remaining,
       );
+    if (block.uncompressedSize > this.#decodeBytes.remaining) throw exhausted();
     // Charge attempts too, before I/O/allocation; failed/cancelled work is not free.
     this.#reserveMemberRead();
-    this.#remainingDecodeBytes -= block.uncompressedSize;
+    this.#decodeBytes.charge(block.uncompressedSize, exhausted);
     const encoded = await readArtifactFileBytes(
+      "unityfs",
       handle,
       this.#dataStart + block.compressedStart,
       block.compressedSize,

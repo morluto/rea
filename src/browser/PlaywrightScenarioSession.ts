@@ -1,16 +1,19 @@
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/index.js";
 import type { BrowserContext } from "playwright-core";
 
 import type { BrowserScenario } from "../domain/browserScenario.js";
 import type { BrowserScenarioAction } from "../domain/browserScenarioValues.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema } from "../domain/jsonValue.js";
 import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "./providerIdentities.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { BrowserObservationError } from "../domain/browserObservationError.js";
+import {
+  BrowserObservationError,
+  browserCleanupObservation,
+} from "../domain/browserObservationError.js";
 import type {
   RetainBrowserScenarioCleanup,
   BrowserScenarioSessionPort,
@@ -141,7 +144,9 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
           throw new BrowserObservationError(OPERATION, "cleanup_failed", {
             cause,
             cleanup: {
-              reason: this.redactError(cause),
+              reason: this.redactError(
+                new Error(browserCleanupObservation(cause).reason),
+              ),
               resources: this.cleanupLease.cleanupResources ?? [],
             },
           });
@@ -329,6 +334,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
   ): Promise<PlaywrightScenarioSession> {
     let events: PlaywrightScenarioEvents | undefined;
     let storage: PlaywrightScenarioStorage | undefined;
+    let pageInitialization: Promise<void> | undefined;
     const serviceWorkers =
       scenario.browser.mode === "connect" &&
       scenario.environment.service_workers === "block"
@@ -341,10 +347,19 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
         : undefined;
     try {
       await withPlaywrightExecutionBoundary(
-        async () => {
-          await serviceWorkers?.initialize();
-          await initializePage(opened.context, scenario, secrets);
-        },
+        () => serviceWorkers?.initialize() ?? Promise.resolve(),
+        undefined,
+        options.signal,
+      );
+      throwIfScenarioCancelled(options.signal);
+      const initializingPage = initializePage(
+        opened.context,
+        scenario,
+        secrets,
+      );
+      pageInitialization = initializingPage;
+      await withPlaywrightExecutionBoundary(
+        () => initializingPage,
         undefined,
         options.signal,
       );
@@ -386,6 +401,9 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
         storage !== undefined && options.signal?.aborted === true;
       let policyStopsLoading = !storageStopsLoading;
       const cleanup = async () => {
+        // Cancelling the wait cannot revoke an already-sent cookie mutation.
+        // Join its acknowledgement before releasing the browser transport.
+        await pageInitialization?.catch(() => undefined);
         let storageFailure: { readonly cause: unknown } | undefined;
         let policyFailure: { readonly cause: unknown } | undefined;
         let browserFailure: { readonly cause: unknown } | undefined;
@@ -473,6 +491,10 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
     return this.eventCapture.limitations();
   }
 
+  captureFinalized(): boolean {
+    return this.eventCapture.captureFinalized();
+  }
+
   storageLimitations(): readonly string[] {
     return this.storage?.limitations() ?? [];
   }
@@ -481,6 +503,9 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
     action: BrowserScenarioAction,
     signal?: AbortSignal,
   ): Promise<void> {
+    // A policy connection lost after the previous step's check would leave
+    // this action's documents unprotected; report it before acting.
+    this.serviceWorkers?.assertConnected();
     await withPlaywrightExecutionBoundary(
       () =>
         performPlaywrightScenarioAction({
@@ -544,7 +569,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
               { cause },
             );
       failure.retainDiagnostics({
-        collected_artifacts: jsonValueSchema.parse(artifacts),
+        collected_artifacts: ownedJsonValueSchema.parse(artifacts),
       });
       throw failure;
     }
@@ -566,7 +591,9 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
           : new BrowserObservationError(OPERATION, "cleanup_failed", {
               cause,
               cleanup: {
-                reason: this.redactError(cause),
+                reason: this.redactError(
+                  new Error(browserCleanupObservation(cause).reason),
+                ),
                 resources: this.cleanupLease.cleanupResources ?? [],
               },
             });

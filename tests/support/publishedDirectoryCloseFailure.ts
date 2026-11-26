@@ -2,7 +2,7 @@ import { stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { vi } from "vitest";
 
-import { SafeOutputTree } from "../../src/artifacts/SafeOutputTree.js";
+import { SafeOutputTree } from "../../src/resources/SafeOutputTree.js";
 import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
 
 /** Fail closing the parent directory after publication until retry is allowed. */
