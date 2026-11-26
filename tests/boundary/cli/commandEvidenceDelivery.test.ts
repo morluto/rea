@@ -165,8 +165,18 @@ it.each(kinds)(
       expect(f.close).toHaveBeenCalledOnce();
       expect(f.closeAll).toHaveBeenCalledOnce();
     } else {
+      const { stdout, stderr, ...facts } = z
+        .object({ stdout: z.string(), stderr: z.string() })
+        .passthrough()
+        .parse(parent.normalized_result);
       expect(selected.normalized_result).toMatchObject({
-        summary: parent.normalized_result,
+        summary: {
+          ...facts,
+          available_counts: {
+            stdout_utf16_units: stdout.length,
+            stderr_utf16_units: stderr.length,
+          },
+        },
       });
       expect(f.runProvider).toHaveBeenCalledOnce();
       expect(f.closeService).toHaveBeenCalledOnce();
