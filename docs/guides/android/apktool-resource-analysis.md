@@ -151,7 +151,11 @@ the CLI, `--detail summary` and `--view` require `--evidence_output`.
 - **Metadata comes from apktool.yml as apktool printed it.** Version codes
   keep their own spelling (`'7'` versus `7`). The `package_name` field
   follows the [decoded manifest rules](android-analysis.md#manifest-component-projection)
-  and preserves the decoded attribute value.
+  and preserves the decoded attribute value. If a complete decoded manifest has
+  no package attribute, REA uses the name recorded in tagged Apktool 2 metadata
+  (current name, then original name) or Apktool 3 resource metadata when present.
+  An explicitly empty package attribute or a missing or truncated manifest
+  leaves the package name unknown.
   The `version: 2.9.0`-or-later header that Apktool 2.9+ and 3 emit selects
   their single-line string dialect: literal hashes, single quotes, empty
   strings, and the text `null` stay part of the value; producer backslashes
