@@ -176,7 +176,7 @@ cliTest(
           code: "unsupported_target",
           details: {
             operation: "inspect_unreal_pak",
-            format_failure: "malformed",
+            failure_kind: "malformed",
           },
           message: expect.stringContaining("entry-out-of-bounds"),
         },
