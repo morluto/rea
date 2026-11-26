@@ -326,8 +326,22 @@ export function* projectSemanticExpressionInfluence(
       properties: { conditional },
     });
   };
-  for (const flow of context.ir.initializerFlows)
-    connect(expressions.get(key(flow.source)), bindings.get(key(flow.target)));
+  for (const flow of context.ir.initializerFlows) {
+    const target = bindings.get(key(flow.target));
+    const expression = expressions.get(key(flow.source));
+    if (expression !== undefined) {
+      connect(expression, target);
+      continue;
+    }
+    const read = reads.get(key(flow.source));
+    if (read !== undefined)
+      addSemanticGraphRelation(context.state, {
+        source: read,
+        target,
+        relation: "aliases",
+        resolution: "resolved",
+      });
+  }
   for (const flow of context.ir.assignmentFlows) {
     const source = expressions.get(key(flow.source));
     const target = writes.get(key(flow.target));

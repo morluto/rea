@@ -1,5 +1,8 @@
 #!/usr/bin/env node
-import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
+import {
+  assertCanonicalOutput,
+  canonicalOutputSchema,
+} from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -295,13 +298,7 @@ try {
       arguments: { ...input, detail: "complete" },
     });
     assert.notEqual(reply.isError, true, mcpTextValue(reply));
-    assert.ok(
-      ajv.validate(
-        canonicalOutputSchema(advertised.name),
-        reply.structuredContent,
-      ),
-      JSON.stringify(ajv.errors),
-    );
+    assertCanonicalOutput(ajv, advertised, reply);
     const mcp = parseEvidence(requireMcpOutput(reply, "inspect_wasm_artifact"));
     assert.equal(cli.evidence_id, mcp.evidence_id);
     assertEvidenceParity(cli, mcp, input);
@@ -539,13 +536,7 @@ try {
       arguments: { ...input, detail: "complete" },
     });
     assert.notEqual(reply.isError, true, mcpTextValue(reply));
-    assert.ok(
-      ajv.validate(
-        canonicalOutputSchema(advertised.name),
-        reply.structuredContent,
-      ),
-      JSON.stringify(ajv.errors),
-    );
+    assertCanonicalOutput(ajv, advertised, reply);
     const mcp = parseEvidence(requireMcpOutput(reply, "inspect_wasm_artifact"));
     assertEvidenceParity(cli, mcp, input);
     const report = mcp.normalized_result;
@@ -608,13 +599,7 @@ try {
       arguments: { ...input, detail: "complete" },
     });
     assert.notEqual(reply.isError, true, mcpTextValue(reply));
-    assert.ok(
-      ajv.validate(
-        canonicalOutputSchema(advertised.name),
-        reply.structuredContent,
-      ),
-      JSON.stringify(ajv.errors),
-    );
+    assertCanonicalOutput(ajv, advertised, reply);
     const mcp = parseEvidence(requireMcpOutput(reply, "inspect_wasm_artifact"));
     assertEvidenceParity(cli, mcp, input);
     const report = mcp.normalized_result;

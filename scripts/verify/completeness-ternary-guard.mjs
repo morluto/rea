@@ -69,6 +69,30 @@ const isCompleteLiteral = (source, token) => {
   );
 };
 
+/** @param {import("./source-tokens.d.mts").SourceToken} token */
+const opensGroup = (token) =>
+  token.opensSubstitution === true ||
+  (token.kind === "punct" && OPENERS.has(token.text));
+
+/** @param {import("./source-tokens.d.mts").SourceToken} token */
+const closesGroup = (token) =>
+  token.kind === "substitution-end" ||
+  (token.kind === "punct" && CLOSERS.has(token.text));
+
+/**
+ * A close at depth zero returns -1. Non-grouping tokens return undefined.
+ * A template substitution can close one group and open the next on the same token.
+ * @param {import("./source-tokens.d.mts").SourceToken} token
+ * @param {number} depth
+ */
+const groupDepthAfter = (token, depth) => {
+  if (closesGroup(token)) {
+    if (depth === 0) return -1;
+    return opensGroup(token) ? depth : depth - 1;
+  }
+  return opensGroup(token) ? depth + 1 : undefined;
+};
+
 const TYPE_CONTINUATIONS = new Set(["|", "&", ".", "[", "<", "=>"]);
 const TYPE_PREFIX_OPERATORS = new Set([
   "keyof",
@@ -113,26 +137,10 @@ const skipTypeAnnotation = (source, tokens, start, end, allowAsi) => {
         break;
       }
     }
-    if (token.kind === "substitution-end") {
-      if (bracketDepth === 0) break;
-      bracketDepth -= 1;
-      if (token.opensSubstitution === true) bracketDepth += 1;
-      index += 1;
-      continue;
-    }
-    if (token.opensSubstitution === true) {
-      bracketDepth += 1;
-      index += 1;
-      continue;
-    }
-    if (token.kind === "punct" && OPENERS.has(token.text)) {
-      bracketDepth += 1;
-      index += 1;
-      continue;
-    }
-    if (token.kind === "punct" && CLOSERS.has(token.text)) {
-      if (bracketDepth === 0) break;
-      bracketDepth -= 1;
+    const nextDepth = groupDepthAfter(token, bracketDepth);
+    if (nextDepth !== undefined) {
+      if (nextDepth < 0) break;
+      bracketDepth = nextDepth;
       index += 1;
       continue;
     }
@@ -239,23 +247,10 @@ const isArrowReturnTypeColon = (tokens, colonIndex) => {
   for (let index = colonIndex + 1; index < tokens.length; index += 1) {
     const token = tokens[index];
     if (token === undefined) continue;
-    if (token.kind === "substitution-end") {
-      if (bracketDepth === 0) return false;
-      bracketDepth -= 1;
-      if (token.opensSubstitution === true) bracketDepth += 1;
-      continue;
-    }
-    if (token.opensSubstitution === true) {
-      bracketDepth += 1;
-      continue;
-    }
-    if (token.kind === "punct" && OPENERS.has(token.text)) {
-      bracketDepth += 1;
-      continue;
-    }
-    if (token.kind === "punct" && CLOSERS.has(token.text)) {
-      if (bracketDepth === 0) return false;
-      bracketDepth -= 1;
+    const nextDepth = groupDepthAfter(token, bracketDepth);
+    if (nextDepth !== undefined) {
+      if (nextDepth < 0) return false;
+      bracketDepth = nextDepth;
       continue;
     }
     if (bracketDepth === 0) {
@@ -291,23 +286,10 @@ const isArrowReturnTypeColon = (tokens, colonIndex) => {
   for (let index = arrowIndex + 1; index < tokens.length; index += 1) {
     const token = tokens[index];
     if (token === undefined) continue;
-    if (token.kind === "substitution-end") {
-      if (exprDepth === 0) return false;
-      exprDepth -= 1;
-      if (token.opensSubstitution === true) exprDepth += 1;
-      continue;
-    }
-    if (token.opensSubstitution === true) {
-      exprDepth += 1;
-      continue;
-    }
-    if (token.kind === "punct" && OPENERS.has(token.text)) {
-      exprDepth += 1;
-      continue;
-    }
-    if (token.kind === "punct" && CLOSERS.has(token.text)) {
-      if (exprDepth === 0) return false;
-      exprDepth -= 1;
+    const nextDepth = groupDepthAfter(token, exprDepth);
+    if (nextDepth !== undefined) {
+      if (nextDepth < 0) return false;
+      exprDepth = nextDepth;
       continue;
     }
     if (exprDepth > 0) continue;
@@ -362,7 +344,9 @@ export const adhocCompletenessTernaryCount = (content) => {
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
     if (token === undefined) continue;
-    if (token.kind === "substitution-end") {
+    const closing = closesGroup(token);
+    const opening = opensGroup(token);
+    if (closing) {
       while (
         ternaryStack.length > 0 &&
         /** @type {{ depth: number }} */ (ternaryStack.at(-1)).depth >= depth
@@ -370,35 +354,13 @@ export const adhocCompletenessTernaryCount = (content) => {
         ternaryStack.pop();
       }
       depth = Math.max(0, depth - 1);
-      if (token.opensSubstitution === true) {
-        depth += 1;
-        sawExtendsAtDepth[depth] = false;
-        extendsAngleDepth[depth] = 0;
-      }
-      continue;
     }
-    if (token.opensSubstitution === true) {
+    if (opening) {
       depth += 1;
       sawExtendsAtDepth[depth] = false;
       extendsAngleDepth[depth] = 0;
-      continue;
     }
-    if (token.kind === "punct" && OPENERS.has(token.text)) {
-      depth += 1;
-      sawExtendsAtDepth[depth] = false;
-      extendsAngleDepth[depth] = 0;
-      continue;
-    }
-    if (token.kind === "punct" && CLOSERS.has(token.text)) {
-      while (
-        ternaryStack.length > 0 &&
-        /** @type {{ depth: number }} */ (ternaryStack.at(-1)).depth >= depth
-      ) {
-        ternaryStack.pop();
-      }
-      depth = Math.max(0, depth - 1);
-      continue;
-    }
+    if (closing || opening) continue;
     if (isId(token, "extends")) {
       const previous = tokens[index - 1];
       if (

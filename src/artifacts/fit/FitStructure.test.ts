@@ -480,6 +480,21 @@ describe("FIT configurations", () => {
 });
 
 describe("FIT fixed limits", () => {
+  it("reports the devicetree decoded-representation limit as memory", () => {
+    expect(
+      failureOf(
+        devicetreeFixture({
+          name: "",
+          properties: { compatible: Buffer.alloc(6 * 1024 * 1024) },
+        }),
+      ),
+    ).toMatchObject({
+      reason: "limit",
+      boundary: "memory",
+      parserLimit: { name: "max_decoded_bytes" },
+    });
+  });
+
   it("fails more images than the fixed allowance", () => {
     const make = (count: number) =>
       fitFixture({

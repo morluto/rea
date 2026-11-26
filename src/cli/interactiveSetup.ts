@@ -32,14 +32,25 @@ const promptStreams = {
   withGuide: true,
 } as const;
 
+/** One setup invocation's terminal rail: it opens exactly once. */
+export interface SetupJourney {
+  introduced: boolean;
+}
+
+export const createSetupJourney = (): SetupJourney => ({ introduced: false });
+
 /** Select agent targets, then review the resolved plan before consent. */
 export const confirmInteractiveSetup = async (
   actions: readonly SetupAction[],
   accessible: boolean,
   context?: SetupConfirmationContext,
   signal?: AbortSignal,
+  journey: SetupJourney = createSetupJourney(),
 ): Promise<SetupConfirmationDecision> => {
-  if (context?.stage === "select" || context === undefined) {
+  // A scoped run skips selection and starts at confirmation; either stage
+  // opens the rail when it is the first to render.
+  if (!journey.introduced) {
+    journey.introduced = true;
     intro("REA setup", promptStreams);
     writeLine(
       "│  Understand local apps and binaries from your terminal or agent.",
@@ -94,10 +105,14 @@ export const renderSetupProgress = (event: SetupProgressEvent): void => {
   writeLine(`${symbol}  ${event.label}${suffix}`);
 };
 
-/** Show the resolved dry-run plan to a human at an interactive terminal. */
-export const renderSetupDryRun = (
+/**
+ * Show a resolved plan that was not applied to a human at a terminal: a dry
+ * run, or a plan that still needs approval the terminal could not prompt for.
+ */
+export const renderSetupPlan = (
   actions: readonly SetupAction[],
-  remediation?: string,
+  remediation: string | undefined,
+  closing: string,
 ): void => {
   intro("REA setup plan", promptStreams);
   renderPreflight(actions);
@@ -106,14 +121,20 @@ export const renderSetupDryRun = (
     writeLine("│");
     writeLine(`│  ${remediation}`);
   }
-  outro("Dry run complete. No changes were made.", promptStreams);
+  outro(closing, promptStreams);
 };
 
 /** Finish an interactive setup journey without exposing the full doctor catalog. */
 export const renderInteractiveSetupResult = (
   result: SetupResult,
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
+  journey?: SetupJourney,
 ): void => {
+  if (result.status === "planned" || result.status === "cancelled") return;
+  if (journey !== undefined && !journey.introduced) {
+    journey.introduced = true;
+    intro("REA setup", promptStreams);
+  }
   if (result.status === "ready") {
     const changedClients = Object.entries(result.clients)
       .filter(([, client]) => client.status === "configured")
@@ -128,7 +149,6 @@ export const renderInteractiveSetupResult = (
     );
     return;
   }
-  if (result.status === "planned" || result.status === "cancelled") return;
   writeLine(`!  ${result.remediation ?? "Setup needs attention."}`);
   for (const resource of result.cleanup?.resources ?? [])
     writeLine(`   Pending cleanup: ${resource}`);

@@ -1,4 +1,7 @@
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import {
+  fixedAllowanceOptions,
+  fixedProducerInputAllowance,
+} from "../domain/fixedAllowanceRemediation.js";
 import {
   ArtifactReaderFailure,
   stableArtifactInputFailure,
@@ -225,8 +228,10 @@ const artifactReaderFailure = (
         { max_input_bytes: APK_SIGNATURE_LIMITS.inputBytes },
         {
           cause,
-          remediationAction:
-            "The size budget is fixed; select a smaller archive.",
+          ...fixedProducerInputAllowance(
+            APK_SIGNATURE_LIMITS.inputBytes,
+            "The APK signature input allowance",
+          ),
         },
       );
     case "path":

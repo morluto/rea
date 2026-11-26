@@ -286,10 +286,10 @@ const liveComputer = (
         attempt(() => witness.readers.release()),
         attempt(() => judge.close()),
       ]);
-      // Reader cleanup can be retried against the live computer. An unsettled
-      // long run cannot: its stop already ended, and the computer teardown is
-      // what removes a descendant the supervisor does not own.
-      if (!readers.verified) {
+      // Reader cleanup can be retried against the live computer while its
+      // command/cleanup state is still retryable. Once every remaining reader
+      // or long run is uncertain, container teardown is what removes it.
+      if (!readers.verified && witness.readers.hasRetryablePending()) {
         const failed = [commands, readers, judgeResult].filter(
           (result) => !result.verified,
         );
@@ -307,11 +307,14 @@ const liveComputer = (
         closedComputer = computerResult;
         if (!commands.verified)
           capture.longRuns.resolveAfterVerifiedComputerTeardown();
+        if (!readers.verified)
+          witness.readers.resolveAfterVerifiedComputerTeardown();
       }
       const failed = [
         judgeResult,
         computerResult,
         ...(!computerResult.verified && !commands.verified ? [commands] : []),
+        ...(!computerResult.verified && !readers.verified ? [readers] : []),
       ].filter((result) => !result.verified);
       if (failed.length === 0 && computerResult.verified) return computerResult;
       return {

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { expect } from "vitest";
 
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { PACKAGE_METADATA } from "../../../src/generatedPackageMetadata.js";
 import { webNetworkCaptureSchema } from "../../../src/domain/webNetworkCapture.js";
 import { historicalHar } from "../../fixtures/historicalHar.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
@@ -256,7 +257,7 @@ cliTest(
     const evidence = parseEvidence(output.json);
     const capture = webNetworkCaptureSchema.parse(evidence.normalized_result);
     expect(capture.decoder.version).toBe(
-      "har-schema@2.0.0;har-schema-corrections@1;jsonc-parser@3.3.1;lossless-json@4.3.3",
+      `har-schema@2.0.0;har-schema-corrections@1;jsonc-parser@${PACKAGE_METADATA.jsoncParserVersion};lossless-json@${PACKAGE_METADATA.losslessJsonVersion}`,
     );
     expect(capture.artifact).toMatchObject({
       path,
@@ -352,5 +353,93 @@ cliTest(
         literal,
       }),
     );
+  },
+);
+
+cliTest(
+  "reports credential-named HAR postData.params when postData.text is empty or unreadable without double counting readable text",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-har-postdata-params-");
+    const fixture = historicalHar();
+    const baseEntry = fixture.log.entries[0];
+    if (baseEntry === undefined) throw new Error("fixture missing");
+    const params = [
+      { name: "api_key", value: "secret-1" },
+      { name: "token", value: "secret-2" },
+    ];
+    for (const [label, postData] of [
+      [
+        "empty-text",
+        {
+          mimeType: "application/x-www-form-urlencoded",
+          text: "",
+          params,
+        },
+      ],
+      [
+        "multipart-text",
+        {
+          mimeType: "multipart/form-data; boundary=---b",
+          text: '-----b\r\nContent-Disposition: form-data; name="api_key"\r\n\r\nsecret-1\r\n-----b--',
+          params,
+        },
+      ],
+      [
+        "readable-urlencoded",
+        {
+          mimeType: "application/x-www-form-urlencoded",
+          text: "api_key=secret-1&token=secret-2",
+          params,
+        },
+      ],
+    ] as const) {
+      const path = join(root, `${label}.har`);
+      await writeFile(
+        path,
+        JSON.stringify({
+          log: {
+            ...fixture.log,
+            entries: [
+              {
+                ...baseEntry,
+                request: {
+                  ...baseEntry.request,
+                  method: "POST",
+                  headers: [],
+                  queryString: [],
+                  postData,
+                },
+                response: {
+                  ...baseEntry.response,
+                  headers: [],
+                  content: {
+                    size: 2,
+                    mimeType: "application/json",
+                    text: "{}",
+                  },
+                },
+              },
+            ],
+          },
+        }),
+      );
+      const capture = await cli.run({
+        arguments: ["inspect-web-network-capture", path, "har", "--json"],
+      });
+      expect(capture.exitCode, capture.stderr || capture.stdout).toBe(0);
+      const evidence = parseEvidence(capture.json);
+      const report = webNetworkCaptureSchema.parse(evidence.normalized_result);
+      const credentialNotes = report.limitations.filter((line) =>
+        line.includes("look like credentials"),
+      );
+      expect(credentialNotes, label).toHaveLength(1);
+      expect(credentialNotes[0], label).toContain(
+        "2 recorded header, query parameter or body member names look like credentials",
+      );
+      expect(credentialNotes[0], label).toContain("record 0 request /api_key");
+      expect(credentialNotes[0], label).toContain("record 0 request /token");
+      expect(credentialNotes[0], label).not.toContain("secret-1");
+      expect(credentialNotes[0], label).not.toContain("secret-2");
+    }
   },
 );

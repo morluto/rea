@@ -82,7 +82,8 @@ export class V8InspectorAdmission {
     operation: BrowserObservationOperation,
     work: () => Promise<Value>,
   ): Promise<Value> {
-    if (this.#closing && this.#closePromise !== undefined)
+    // A close can start while this caller waits for an earlier one.
+    while (this.#closing && this.#closePromise !== undefined)
       await this.#closePromise;
     if (this.#closing)
       throw new ProviderAdapterError(

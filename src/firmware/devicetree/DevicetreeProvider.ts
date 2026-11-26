@@ -15,7 +15,9 @@ import type { DevicetreePort } from "../../ports/binaryDiagnostics/DevicetreePor
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import {
-  MAX_DEVICETREE_FILE_BYTES,
+  DEVICETREE_READ_BUDGETS,
+  devicetreeReadBudgetLimit,
+  type DevicetreeReadBudget,
   type InspectDevicetreeInput,
 } from "../../domain/firmware/devicetree.js";
 import { err, ok } from "../../domain/result.js";
@@ -28,6 +30,12 @@ import { classifyProviderFailure } from "../../providers/classifyProviderFailure
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 
 const OPERATION = "inspect_devicetree";
+
+/** The per-call budget a parser limit names, or undefined for a fixed allowance. */
+const devicetreeReadBudget = (name: string): DevicetreeReadBudget | undefined =>
+  (Object.keys(DEVICETREE_READ_BUDGETS) as DevicetreeReadBudget[]).find(
+    (budget) => budget === name,
+  );
 
 /** Portable parser over one bounded, identity-checked regular file. */
 export class DevicetreeProvider implements DevicetreePort {
@@ -87,15 +95,20 @@ const devicetreeFailure = (
         description: "devicetree blob",
         fallbackMessage: "devicetree inspection failed.",
         recognise: (failure, origin) => {
-          if (isParseLimit(failure, DEVICETREE_FORMAT))
-            return parseLimitConstraint(
-              OPERATION,
-              failure.failure.limit.name === "decoded_bytes"
-                ? "memory"
-                : "capacity",
-              failure,
-              { retryable: false, remediationAction: failure.failure.detail },
-            );
+          if (isParseLimit(failure, DEVICETREE_FORMAT)) {
+            const { name, maximum } = failure.failure.limit;
+            const parameter = devicetreeReadBudget(name);
+            if (parameter !== undefined)
+              return parseLimitConstraint(
+                OPERATION,
+                parameter === "max_decoded_bytes" ? "memory" : "capacity",
+                failure,
+                {
+                  retryable: false,
+                  limit: devicetreeReadBudgetLimit(parameter, maximum),
+                },
+              );
+          }
           if (
             origin === "owned-or-classified" &&
             failure instanceof ArtifactReaderFailure &&
@@ -109,10 +122,10 @@ const devicetreeFailure = (
               {
                 cause: failure,
                 retryable: false,
-                remediationAction:
-                  input.max_file_bytes < MAX_DEVICETREE_FILE_BYTES
-                    ? "Raise max_file_bytes within its schema ceiling or select a smaller DTB."
-                    : "Select a smaller DTB; the fixed file-byte ceiling has been reached.",
+                limit: devicetreeReadBudgetLimit(
+                  "max_file_bytes",
+                  input.max_file_bytes,
+                ),
               },
             );
           return undefined;

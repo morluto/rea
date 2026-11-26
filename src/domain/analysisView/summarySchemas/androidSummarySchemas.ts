@@ -20,10 +20,29 @@ import {
   androidManifestViewItemSchema,
   androidPackageSummarySchema,
 } from "../androidPackageView.js";
+import { androidMethodSummarySchema } from "../androidSymbolView.js";
 import {
   androidClassSummarySchema,
-  androidMethodSummarySchema,
-} from "../androidSymbolView.js";
+  androidClassFieldRowSchema,
+  androidClassMappingSymbolRowSchema,
+  androidClassMethodRowSchema,
+} from "../androidClassView.js";
+import {
+  androidClassFieldsViewRequestSchema,
+  androidClassInnerClassesViewRequestSchema,
+  androidClassMappingSymbolsViewRequestSchema,
+  androidClassMethodsViewRequestSchema,
+} from "../../android/androidClassQuery.js";
+import {
+  androidReferencesViewRequestSchema,
+  androidReferenceTopClassesViewRequestSchema,
+} from "../../android/androidReferencesQuery.js";
+import {
+  androidReferenceRowSchema,
+  androidReferencesSummarySchema,
+  androidReferencesTargetSchema,
+  androidReferenceTopClassRowSchema,
+} from "../androidReferencesView.js";
 
 /** Exact package declarations with retained decoded manifest text. */
 export const androidPackageSummaryViewResultSchema = z.strictObject({
@@ -51,7 +70,7 @@ export const androidJniPageViewResultSchema = z.strictObject({
   }),
 });
 
-/** Exact class facts with complete raw protocol Evidence retained separately. */
+/** Class identity and counts; members page through the android-class view. */
 export const androidClassSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   parent_operation: z.literal("inspect_android_class"),
@@ -95,3 +114,77 @@ export const androidComponentSummaryViewResultSchema = z.strictObject({
   summary: androidComponentSummarySchema,
   parent_operation: z.literal("inspect_android_package"),
 });
+
+/** Counts of one retained trace_android_references result. */
+export const androidReferencesSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("trace_android_references"),
+  summary: androidReferencesSummarySchema,
+});
+
+const referencesPageBase = {
+  ...viewResultBaseFields,
+  kind: z.literal("android-references"),
+  parent_operation: z.literal("trace_android_references"),
+  target: androidReferencesTargetSchema,
+};
+
+/** One page of retained using nodes, or of their distinct top classes. */
+export const androidReferencesPageViewResultSchema = z.discriminatedUnion(
+  "facet",
+  [
+    z.strictObject({
+      ...referencesPageBase,
+      facet: z.literal("references"),
+      view: androidReferencesViewRequestSchema,
+      items: z.array(androidReferenceRowSchema),
+      byte_limited: z.boolean(),
+    }),
+    z.strictObject({
+      ...referencesPageBase,
+      facet: z.literal("top-classes"),
+      view: androidReferenceTopClassesViewRequestSchema,
+      items: z.array(androidReferenceTopClassRowSchema),
+      byte_limited: z.boolean(),
+    }),
+  ],
+);
+
+const classPageBase = {
+  ...viewResultBaseFields,
+  kind: z.literal("android-class"),
+  parent_operation: z.literal("inspect_android_class"),
+};
+const classPage = <View extends z.ZodType, Row extends z.ZodType>(
+  view: View,
+  row: Row,
+) =>
+  z.strictObject({
+    ...classPageBase,
+    view,
+    class_name: z.string(),
+    items: z.array(row),
+    byte_limited: z.boolean(),
+  });
+
+/** Dispatch by kind and validate each member page against its selected facet. */
+export const androidClassPageViewResultSchema = z
+  .object({ kind: classPageBase.kind })
+  .passthrough()
+  .pipe(
+    z.union([
+      classPage(
+        androidClassMethodsViewRequestSchema,
+        androidClassMethodRowSchema,
+      ),
+      classPage(
+        androidClassFieldsViewRequestSchema,
+        androidClassFieldRowSchema,
+      ),
+      classPage(androidClassInnerClassesViewRequestSchema, z.string()),
+      classPage(
+        androidClassMappingSymbolsViewRequestSchema,
+        androidClassMappingSymbolRowSchema,
+      ),
+    ]),
+  );

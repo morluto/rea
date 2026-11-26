@@ -937,6 +937,10 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
           REVERSE_EDGE_CASES,
           "retains an objdump command's unverified process owner until a later inspection stops it",
         ),
+        test(
+          REVERSE_EDGE_CASES,
+          "stops an owner registered during cleanup retry before admitting another command",
+        ),
       ),
     },
   },
@@ -1239,6 +1243,15 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     },
   },
+  "rea-deb-package": inProcess(
+    covered(
+      test(
+        "tests/acceptance/debPackageCli.test.ts",
+        "inspects a fixture .deb without installing it or running maintainer scripts",
+      ),
+    ),
+    typedFailures("tests/boundary/filesystem/debPackage.test.ts"),
+  ),
   "rea-devicetree": inProcess(
     covered(
       test(
@@ -1527,6 +1540,15 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
     typedFailures("tests/boundary/filesystem/peLoadConfig.test.ts"),
   ),
+  "rea-pe-overlay": inProcess(
+    covered(
+      test(
+        "tests/boundary/filesystem/peOverlay.test.ts",
+        "retains completed PE acquisition through %s",
+      ),
+    ),
+    typedFailures("tests/boundary/filesystem/peOverlay.test.ts"),
+  ),
   "rea-pe-resources": inProcess(
     covered(
       test(
@@ -1641,6 +1663,34 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "src/application/nuget/NugetNupkgService.test.ts",
+        "retains completed Evidence and caller selections on late cancellation",
+      ),
+    ),
+  ),
+  "rea-vsix-package": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/vsixPackageMcp.test.ts",
+        "advertises inspect_vsix_package and reads package identity",
+      ),
+    ),
+    covered(
+      test(
+        "src/application/vsix/VsixPackageService.test.ts",
+        "retains completed Evidence and caller selections on late cancellation",
+      ),
+    ),
+  ),
+  "rea-oci-image-layout": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/ociImageLayoutMcp.test.ts",
+        "advertises inspect_oci_image_layout and reads layout version",
+      ),
+    ),
+    covered(
+      test(
+        "src/application/oci/OciImageLayoutService.test.ts",
         "retains completed Evidence and caller selections on late cancellation",
       ),
     ),
