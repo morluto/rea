@@ -23,7 +23,7 @@ import {
 import { err, ok } from "../../domain/result.js";
 import { ELF_UNWIND_RANGES_PROVIDER } from "../../domain/investigationProviders.js";
 import { isNativeStructureFailure } from "../../domain/binaryContainer.js";
-import { nativeStructureConstraint } from "../nativeStructureConstraint.js";
+import { nativeStructureConstraint } from "../../domain/native/nativeStructureBudget.js";
 import {
   ELF_UNWIND_FORMAT,
   ELF_UNWIND_RECORD_LIMIT,

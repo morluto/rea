@@ -41,7 +41,7 @@ import {
   RUST_AUDITABLE_GRAPH_LIMIT,
 } from "./RustAuditableReader.js";
 import { isNativeStructureFailure } from "../domain/binaryContainer.js";
-import { nativeStructureConstraint } from "../native/nativeStructureConstraint.js";
+import { nativeStructureConstraint } from "../domain/native/nativeStructureBudget.js";
 import { WASM_FORMAT } from "./RustWasmImage.js";
 import {
   isParseLimit,

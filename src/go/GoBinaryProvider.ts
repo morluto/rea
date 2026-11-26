@@ -42,7 +42,7 @@ import {
   BinaryResourceFailure,
   isNativeStructureFailure,
 } from "../domain/binaryContainer.js";
-import { nativeStructureConstraint } from "../native/nativeStructureConstraint.js";
+import { nativeStructureConstraint } from "../domain/native/nativeStructureBudget.js";
 
 const OPERATION = "inspect_go_binary";
 const HEADER_PREFIX_BYTES = 4096;
