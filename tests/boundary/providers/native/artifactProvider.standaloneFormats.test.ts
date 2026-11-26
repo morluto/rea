@@ -174,4 +174,8 @@ it("routes a bFLT executable's text segment to open_binary", async () => {
       ),
     }),
   ]);
+  expect(inspection.next_probes[0]?.rationale).toContain("base_address");
+  expect(inspection.next_probes[0]?.rationale).toMatch(
+    /bFLT header, not code/u,
+  );
 });

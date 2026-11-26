@@ -36,7 +36,11 @@ Each segment is one extractable entry (`kind: "bflt-segment"`):
 - `text.bin`: image bytes `[0, data_start)`, header included. `entry` is a
   file offset into this image. Revision 4 relocation offsets count from the
   first byte after the header, and the loader accepts them through the end
-  of bss.
+  of bss. For ARM M-profile targets, open it as `raw-binary` with
+  `architecture: "arm"`, an `architecture_variant`, `base_address` at the
+  load base and `entry_point` at that base plus `entry`; for other CPUs,
+  `raw-binary` maps offset 0 at `entry_point` and starts analysis in the
+  header rather than at `base + entry`.
 - `data.bin`: `[data_start, data_end)`.
 - `relocations.bin`: the complete relocation table, `reloc_count` big-endian
   32-bit values. Revision 4 values are offsets from the first byte after the
