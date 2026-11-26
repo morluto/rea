@@ -83,13 +83,18 @@ it("does not report an owner released during drain after that drain attempt fail
   scope.retain(owner2);
 
   const closing = scope.close();
-  await owner2Gate.reached(closing, "drain owner2");
-  expect(owner1Attempt).toBe(2);
-  expect(await scope.release(owner1)).toEqual({ kind: "released" });
-  expect(owner1Attempt).toBe(3);
-  owner2Gate.release();
-  await expect(closing).resolves.toBeUndefined();
-  expect(scope.cleanupResources).toEqual([]);
+  try {
+    await owner2Gate.reached(closing, "drain owner2");
+    expect(owner1Attempt).toBe(2);
+    expect(await scope.release(owner1)).toEqual({ kind: "released" });
+    expect(owner1Attempt).toBe(3);
+    owner2Gate.release();
+    await expect(closing).resolves.toBeUndefined();
+    expect(scope.cleanupResources).toEqual([]);
+  } finally {
+    owner2Gate.release();
+    await closing;
+  }
 });
 
 it("stops a close hook even when retained cleanup is still failing", async () => {
