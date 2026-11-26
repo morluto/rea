@@ -11,6 +11,7 @@ import { OwnerCancellation } from "../../domain/analysisErrorCore.js";
 import {
   createEvidence,
   withEvidenceCallerInputPath,
+  withEvidenceProviderSelection,
 } from "../../domain/evidence.js";
 import {
   createEvidenceBundle,
@@ -251,26 +252,55 @@ it("adopts the active session's selection when an imported record holds the sema
   }
 });
 
-it("attributes an imported bundle to the recording session's provider selection", async () => {
+it("preserves foreign selection and its absence when importing into an active session", async () => {
   const [target] = await createBinarySessionTargets();
   const session = createTestBinarySession(createCacheProvider([]));
+  const selection = {
+    selection_source: "request" as const,
+    candidates: [
+      {
+        provider: { id: "foreign", name: "Foreign provider", version: "1" },
+        selected: true,
+        availability: "available" as const,
+        target_support: "supported" as const,
+        rejection_codes: [],
+      },
+    ],
+  };
   try {
     expect((await session.open(target)).ok).toBe(true);
-    // A bundle built by the provider run itself, as `runDirectAnalysis`
-    // imports at `DirectAnalysis`: same record identity, no attribution.
-    const foreign = createEvidenceBundle([observation("provider_run")]);
-    expect(foreign.records[0]?.provider_selection).toBeUndefined();
-    const imported = session.importEvidenceBundle(foreign);
-    if (!imported.ok) throw imported.error;
-    const [record] = session.exportEvidenceBundle().records;
-    // Semantic identity is unchanged; only the session metadata is stamped.
-    expect(record?.evidence_id).toBe(foreign.records[0]?.evidence_id);
-    expect(record?.operation).toBe("provider_run");
-    expect(record?.provider_selection).toMatchObject({
-      selection_source: expect.stringMatching(
-        /^(request|environment|auto-single-candidate)$/u,
-      ),
-    });
+    const attributed = withEvidenceProviderSelection(
+      observation("foreign"),
+      selection,
+    );
+    const absent = observation("old_unattributed");
+    const history = new InvestigationRecords();
+    expect(
+      history.recordUnknown(
+        {
+          ...unknownRequirements,
+          question: "Historical question",
+          domain: "history",
+        },
+        undefined,
+        selection,
+      ).ok,
+    ).toBe(true);
+    const historicalUnknowns = history.exportEvidenceBundle();
+    const foreign = createEvidenceBundle(
+      [attributed, absent, ...historicalUnknowns.records],
+      historicalUnknowns.unknowns,
+    );
+    expect(session.importEvidenceBundle(foreign).ok).toBe(true);
+    expect(
+      session.evidenceForAnalysis(attributed.evidence_id)?.provider_selection,
+    ).toEqual(selection);
+    expect(
+      session.evidenceForAnalysis(absent.evidence_id)?.provider_selection,
+    ).toBeUndefined();
+    for (const record of foreign.records)
+      expect(session.evidenceForAnalysis(record.evidence_id)).toEqual(record);
+    expect(session.exportEvidenceBundle().unknowns).toEqual(foreign.unknowns);
   } finally {
     await session.dispose();
   }
@@ -895,6 +925,32 @@ it("stops prompt completion dispatch as soon as shutdown seals admission", async
       await session.executeIfProviderReady("address_name", {}),
     ).toBeUndefined();
     expect(calls).toHaveLength(before);
+  } finally {
+    await session.dispose();
+  }
+});
+
+it("rejects a caller accessor before parsing or copying Evidence", async () => {
+  const [target] = await createBinarySessionTargets();
+  const session = createTestBinarySession(
+    createCacheProvider([]),
+    {},
+    new InvestigationRecords({ availableAuthenticationBytes: () => 0 }),
+  );
+  try {
+    expect((await session.open(target)).ok).toBe(true);
+    const value = observation("accessor");
+    const read = vi.fn(() => {
+      throw new Error("Caller accessor was evaluated");
+    });
+    Object.defineProperty(value, "normalized_result", {
+      get: read,
+      enumerable: true,
+    });
+    const result = session.recordEvidence(value);
+    expect(result.ok).toBe(false);
+    expect(read).not.toHaveBeenCalled();
+    expect(session.exportEvidenceBundle().records).toHaveLength(0);
   } finally {
     await session.dispose();
   }

@@ -562,10 +562,15 @@ const runAnalysis = async (
       return executed;
     }
     const { cachePolicy } = executed.value;
-    const callerEvidence = withEvidenceCallerInputPath(
-      executed.value.evidence,
-      path,
-    );
+    const admitted = session.recordEvidence(executed.value.evidence);
+    if (!admitted.ok)
+      return err(
+        admitted.error.retainPartialObservation(executed.value.evidence),
+      );
+    const admittedEvidence =
+      session.evidenceForAnalysis(executed.value.evidence.evidence_id) ??
+      executed.value.evidence;
+    const callerEvidence = withEvidenceCallerInputPath(admittedEvidence, path);
     // Provider execution may have already recorded the same semantic Evidence
     // without this invocation's request path. Import replaces that metadata
     // while retaining the authenticated result and snapshot binding.
@@ -577,9 +582,8 @@ const runAnalysis = async (
     );
     if (!recorded.ok)
       return err(recorded.error.retainPartialObservation(callerEvidence));
-    // Recorded outcomes carry session provenance the caller cannot infer, and
-    // import is where it is stamped. Returning the caller's own copy would
-    // describe an observation with less than the Evidence retained for it.
+    // Rebinding a local request path preserves the already admitted selection;
+    // ordinary imports never attribute historical observations to this session.
     const evidence =
       session.evidenceForAnalysis(callerEvidence.evidence_id) ?? callerEvidence;
     if (isWorkflowEvidenceTool(tool)) {

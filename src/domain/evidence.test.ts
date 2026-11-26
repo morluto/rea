@@ -18,6 +18,7 @@ import {
   withEvidenceCallerInputPath,
   rebindEvidenceToTargetPath,
   withEvidenceProviderSelection,
+  withRetainedEvidencePayload,
   evidenceFileTarget,
   evidenceSubjectDisplay,
   evidenceSubject,
@@ -1298,4 +1299,68 @@ it("still validates profile provider agreement when reusing an immutable snapsho
       },
     ),
   ).toThrow(/profile provider/u);
+});
+
+it("rejects rejection codes on a selected provider while retaining unselected rejections", () => {
+  const original = createEvidence(TARGET, PROVIDER, {
+    operation: "inspect",
+    parameters: {},
+    result: true,
+  });
+  const selected = {
+    provider: PROVIDER,
+    selected: true,
+    availability: "available" as const,
+    target_support: "supported" as const,
+    rejection_codes: ["unavailable"],
+  };
+  expect(() =>
+    withEvidenceProviderSelection(original, {
+      selection_source: "request",
+      candidates: [selected],
+    }),
+  ).toThrow();
+  expect(
+    withEvidenceProviderSelection(original, {
+      selection_source: "request",
+      candidates: [
+        { ...selected, rejection_codes: [] },
+        {
+          ...selected,
+          provider: { ...PROVIDER, id: "other" },
+          selected: false,
+          availability: "unavailable",
+        },
+      ],
+    }).provider_selection?.candidates[1]?.rejection_codes,
+  ).toEqual(["unavailable"]);
+});
+
+it("projects caller display metadata using the admitted payload without reparsing it", () => {
+  const source = withEvidenceProviderSelection(
+    createEvidence(TARGET, PROVIDER, {
+      operation: "inspect",
+      parameters: {},
+      result: { rows: [1, 2, 3] },
+    }),
+    {
+      selection_source: "request",
+      candidates: [
+        {
+          provider: PROVIDER,
+          selected: true,
+          availability: "available",
+          target_support: "supported",
+          rejection_codes: [],
+        },
+      ],
+    },
+  );
+  const caller = structuredClone(source);
+  caller.caller_input_path = "./chosen-alias";
+  const result = withRetainedEvidencePayload(source, caller);
+  expect(result.normalized_result).toBe(source.normalized_result);
+  expect(result.provider_selection).toEqual(source.provider_selection);
+  expect(result.caller_input_path).toBe("./chosen-alias");
+  expect(result.evidence_id).toBe(source.evidence_id);
 });

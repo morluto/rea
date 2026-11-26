@@ -1,6 +1,6 @@
 import { fileIdentity } from "../../../tests/fixtures/evidenceSubject.js";
 import { unknownTarget } from "../../domain/targetIdentity.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   ANALYSIS_SNAPSHOT_TARGET as target,
@@ -12,6 +12,7 @@ import {
   recordUnknownInputSchema,
   updateUnknownInputSchema,
 } from "../../domain/residualUnknown.js";
+import * as unknownEvidence from "./UnknownEvidence.js";
 import { unknownMutationEvidence } from "./UnknownEvidence.js";
 import { InvestigationRecords } from "./InvestigationRecords.js";
 import { estimateJsonStorage } from "../JsonAuthenticationHeadroom.js";
@@ -278,4 +279,60 @@ it("admits an unknown mutation against its expanded Evidence, not only the input
     error: { _tag: "AnalysisResourceConstraintError" },
   });
   expect(records.exportEvidenceBundle().records).toHaveLength(0);
+});
+
+it("rejects Unknown accessors before constructing the mutation", () => {
+  const input = unknownInput("unread");
+  const read = vi.fn(() => {
+    throw new Error("Caller accessor was evaluated");
+  });
+  Object.defineProperty(input, "question", { get: read, enumerable: true });
+  const records = new InvestigationRecords({
+    availableAuthenticationBytes: () => 0,
+  });
+  expect(records.recordUnknown(input).ok).toBe(false);
+  expect(read).not.toHaveBeenCalled();
+  expect(records.exportEvidenceBundle().records).toHaveLength(0);
+});
+
+it("attributes both records in an atomic produced observation and Unknown", () => {
+  const records = new InvestigationRecords();
+  const selection = {
+    selection_source: "request" as const,
+    candidates: [
+      {
+        provider,
+        selected: true,
+        availability: "available" as const,
+        target_support: "supported" as const,
+        rejection_codes: [],
+      },
+    ],
+  };
+  const result = records.recordProducedEvidenceWithUnknown(
+    evidence,
+    unknownInput("Which observation is missing?"),
+    selection,
+  );
+  expect(result.ok).toBe(true);
+  const stored = records.exportEvidenceBundle().records;
+  expect(stored).toHaveLength(2);
+  for (const record of stored)
+    expect(record.provider_selection).toEqual(selection);
+});
+
+it("refuses zero-headroom Unknown input before creating its mutation Evidence", () => {
+  const materialize = vi.spyOn(unknownEvidence, "unknownMutationEvidence");
+  try {
+    const records = new InvestigationRecords({
+      availableAuthenticationBytes: () => 0,
+    });
+    expect(records.recordUnknown(unknownInput("must not materialize")).ok).toBe(
+      false,
+    );
+    expect(materialize).not.toHaveBeenCalled();
+    expect(records.statistics().evidenceRecords).toBe(0);
+  } finally {
+    materialize.mockRestore();
+  }
 });

@@ -1,9 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import * as evidenceValidation from "../../domain/evidenceValidation.js";
 
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import {
   createEvidence,
   withEvidenceCallerInputPath,
+  withEvidenceProviderSelection,
+  isImmutableEvidence,
 } from "../../domain/evidence.js";
 import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
 import { recordUnknownInputSchema } from "../../domain/residualUnknown.js";
@@ -366,4 +369,140 @@ describe("evidence bundle imports", () => {
     });
     expect(ledger.export().records).toEqual([first]);
   });
+});
+
+const selectedProvider = {
+  selection_source: "request" as const,
+  candidates: [
+    {
+      provider: PROVIDER,
+      selected: true,
+      availability: "available" as const,
+      target_support: "supported" as const,
+      rejection_codes: [],
+    },
+  ],
+};
+
+it("reconciles an already attributed duplicate using the actual retained metadata", () => {
+  const ledger = new EvidenceLedger();
+  const old = createEvidence(TARGET, PROVIDER, {
+    operation: "read",
+    parameters: {},
+    result: { value: 1 },
+  });
+  expect(ledger.record(old).ok).toBe(true);
+  const previous = ledger.forAnalysis(old.evidence_id)!;
+  const incoming = withEvidenceProviderSelection(
+    createEvidence({ ...TARGET, path: "/relocated/fixture" }, PROVIDER, {
+      operation: "read",
+      parameters: {},
+      result: { value: 1 },
+    }),
+    selectedProvider,
+  );
+  const result = ledger.recordProduced(incoming, selectedProvider);
+  if (!result.ok) throw result.error;
+  expect(result.value.disposition).toBe("duplicate");
+  expect(result.value.replacements).toHaveLength(1);
+  expect(result.value.replacements[0]?.previous).toBe(previous);
+  expect(result.value.replacements[0]?.current.subject?.local_path).toBe(
+    "/relocated/fixture",
+  );
+  expect(ledger.forAnalysis(old.evidence_id)?.provider_selection).toEqual(
+    selectedProvider,
+  );
+  const repeated = ledger.recordProduced(
+    structuredClone(incoming),
+    selectedProvider,
+  );
+  expect(repeated).toEqual({
+    ok: true,
+    value: { disposition: "duplicate", replacements: [] },
+  });
+});
+
+it("exposes the retained handle when duplicate provenance exceeds capacity", () => {
+  const original = createEvidence(TARGET, PROVIDER, {
+    operation: "capacity",
+    parameters: {},
+    result: 1,
+  });
+  const measured = new EvidenceLedger();
+  expect(measured.record(original).ok).toBe(true);
+  const ledger = new EvidenceLedger({
+    maximumRepresentationBytes:
+      measured.statistics().retainedRepresentationBytes,
+  });
+  expect(ledger.record(original).ok).toBe(true);
+  const result = ledger.recordProduced(original, selectedProvider);
+  if (result.ok) throw new Error("Expected metadata capacity refusal");
+  expect(result.error.partialObservation).toEqual({
+    kind: "retained-evidence",
+    evidence_id: original.evidence_id,
+  });
+  expect(
+    ledger.forAnalysis(original.evidence_id)?.provider_selection,
+  ).toBeUndefined();
+});
+
+it("preserves sealed foreign bundles without requiring full-payload authentication room", () => {
+  const record = withEvidenceProviderSelection(
+    createEvidence(TARGET, PROVIDER, {
+      operation: "historical",
+      parameters: {},
+      result: "x".repeat(10000),
+    }),
+    selectedProvider,
+  );
+  const source = new EvidenceLedger();
+  expect(source.record(record).ok).toBe(true);
+  const bundle = source.immutableBundle();
+  const ledger = new EvidenceLedger({
+    availableAuthenticationBytes: () => 4096,
+  });
+  expect(ledger.import(bundle).ok).toBe(true);
+  expect(ledger.forAnalysis(record.evidence_id)).toBe(record);
+  expect(isImmutableEvidence(ledger.forAnalysis(record.evidence_id)!)).toBe(
+    true,
+  );
+});
+
+it("keeps absent historical provenance on borrowed replay handles", () => {
+  const ledger = new EvidenceLedger();
+  const source = createEvidence(TARGET, PROVIDER, {
+    operation: "old",
+    parameters: {},
+    result: 1,
+  });
+  expect(ledger.import(createEvidenceBundle([source])).ok).toBe(true);
+  const borrowed = ledger.forAnalysis(source.evidence_id)!;
+  expect(ledger.recordProduced(borrowed, selectedProvider)).toEqual({
+    ok: true,
+    value: { disposition: "duplicate", replacements: [] },
+  });
+  expect(ledger.forAnalysis(source.evidence_id)).toBe(borrowed);
+  expect(borrowed.provider_selection).toBeUndefined();
+});
+
+it("refuses zero-headroom mutable Evidence before authentication materializes it", () => {
+  const value = createEvidence(TARGET, PROVIDER, {
+    operation: "unallocated",
+    parameters: {},
+    result: "large",
+  });
+  const authenticate = vi.spyOn(
+    evidenceValidation,
+    "safeParseImmutableEvidence",
+  );
+  try {
+    const ledger = new EvidenceLedger({
+      availableAuthenticationBytes: () => 0,
+    });
+    expect(ledger.recordProduced(value, selectedProvider).ok).toBe(false);
+    expect(authenticate).not.toHaveBeenCalled();
+    expect(ledger.statistics().evidenceRecords).toBe(0);
+  } finally {
+    authenticate.mockRestore();
+  }
 });

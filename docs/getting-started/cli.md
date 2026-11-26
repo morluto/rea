@@ -975,6 +975,19 @@ checks its binding to the target, provider and profile.
 
 ## Import, export and compare Evidence
 
+Evidence `provider` identifies the producer of the observation. Optional
+`provider_selection` records how its recording session selected a deep provider,
+including candidate availability, target support, and rejection codes. Auxiliary
+observations can therefore name a different producer from the selected deep
+provider. Records made without a bound deep provider can omit this field.
+
+Imports and snapshot replay preserve historical selection metadata, including
+its absence; opening another provider does not rewrite it. Selection metadata
+on an Evidence envelope does not change its `evidence_id`. A nested Evidence
+value remains the exact input captured by its parent: later admission metadata
+on the separately retained source does not rewrite that embedded value or the
+parent's commitment.
+
 Evidence records retain artifact identity, source locations, observations,
 inferences and unresolved findings. Validate an existing bundle, export its
 canonical form, or compare two supplied bundles:

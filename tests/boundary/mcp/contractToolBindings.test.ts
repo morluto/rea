@@ -6,6 +6,10 @@ import {
   registerContractTools,
   type ContractToolBindings,
 } from "../../../src/server/contractToolBindings.js";
+import { createEvidence, type Evidence } from "../../../src/domain/evidence.js";
+import { EvidenceLedger } from "../../../src/application/investigation/EvidenceLedger.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -322,3 +326,71 @@ mcpTest(
     ).toThrow("MCP tool xrefs binds provider operation extract_artifact");
   },
 );
+
+for (const detail of ["complete", "summary"] as const)
+  mcpTest(
+    `returns the admitted selection through retained-summary ${detail} delivery`,
+    async ({ mcp }) => {
+      const server = evidenceServer();
+      const ledger = new EvidenceLedger();
+      const provider = { id: "fixture", name: "Fixture", version: "1" };
+      const selection = {
+        selection_source: "request" as const,
+        candidates: [
+          {
+            provider,
+            selected: true,
+            availability: "available" as const,
+            target_support: "supported" as const,
+            rejection_codes: [],
+          },
+        ],
+      };
+      const parent = createEvidence(unknownTarget("not-observed"), provider, {
+        operation: "inspect_byte_entropy",
+        predicateType: "rea.byte-entropy",
+        parameters: {},
+        result: {
+          artifact: { path: "/fixture", bytes: 0, sha256: "a".repeat(64) },
+          block_size: 256,
+          window: { offset: 0, length: 0 },
+          file_entropy: 0,
+          thresholds: { high: 7.2, low: 1 },
+          blocks: [],
+          runs: [],
+          limitations: [],
+        },
+      });
+      const recordEvidence = (record: Evidence) => {
+        const saved = ledger.recordProduced(record, selection);
+        return saved.ok ? ok(saved.value.disposition) : saved;
+      };
+      registerContractTools(
+        server,
+        {
+          inspect_byte_entropy: {
+            admission: "sdk",
+            summary: async () => ok(parent),
+          },
+        },
+        {
+          logger: silentLogger,
+          recordEvidence,
+          evidenceById: (id) => ledger.forAnalysis(id),
+        },
+      );
+      const client = await mcp.connect(server);
+      const response = await client.callTool({
+        name: "inspect_byte_entropy",
+        arguments: { path: "/fixture", detail },
+      });
+      expect(response.isError).not.toBe(true);
+      const delivered = toolContract("inspect_byte_entropy").outputSchema.parse(
+        response.structuredContent,
+      ) as Evidence;
+      expect(delivered.provider_selection).toEqual(selection);
+      expect(
+        ledger.forAnalysis(delivered.evidence_id)?.provider_selection,
+      ).toEqual(selection);
+    },
+  );

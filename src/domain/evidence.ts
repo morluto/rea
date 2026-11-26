@@ -198,7 +198,8 @@ const providerSelectionProvenanceSchema = z
           return (
             candidate !== undefined &&
             candidate.availability === "available" &&
-            candidate.target_support === "supported"
+            candidate.target_support === "supported" &&
+            candidate.rejection_codes.length === 0
           );
         },
         {
@@ -602,10 +603,10 @@ export const adoptEvidenceDisplayMetadata = (
     subject === retained.subject &&
     callerInputPath === retained.caller_input_path &&
     callerInputPaths === retained.caller_input_paths &&
-    providerSelection === retained.provider_selection
+    isDeepStrictEqual(providerSelection, retained.provider_selection)
   )
     return retained;
-  const display: Record<string, unknown> = { ...incoming };
+  const display: Record<string, unknown> = { ...retained };
   delete display.subject;
   delete display.caller_input_path;
   delete display.caller_input_paths;
@@ -618,6 +619,27 @@ export const adoptEvidenceDisplayMetadata = (
   if (providerSelection !== undefined)
     display.provider_selection = providerSelection;
   return rememberReboundEvidence(retained, display as unknown as Evidence);
+};
+
+/** Use an admitted payload while preserving this call's display paths and stored provenance. */
+export const withRetainedEvidencePayload = (
+  retained: Evidence,
+  presentation: Evidence,
+): Evidence => {
+  if (retained.evidence_id !== presentation.evidence_id)
+    throw new TypeError(
+      "Evidence presentation must name the admitted semantic record",
+    );
+  const metadata = { ...presentation };
+  if (retained.provider_selection === undefined)
+    delete metadata.provider_selection;
+  else metadata.provider_selection = retained.provider_selection;
+  const displayed = adoptEvidenceDisplayMetadata(retained, metadata);
+  return withEvidenceCallerInputPath(
+    displayed,
+    presentation.caller_input_path,
+    presentation.caller_input_paths,
+  );
 };
 
 /**
@@ -641,7 +663,8 @@ const mergedSubjectDisplay = (
   )
     return retained;
   return {
-    ...incoming,
+    ...retained,
+    name: incoming.name,
     local_path: incoming.local_path || retained.local_path,
   };
 };

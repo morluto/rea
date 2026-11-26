@@ -177,6 +177,22 @@ export async function verifyProjectCoverage(run) {
       projects: await manifest(projects),
     };
     const report = [];
+    const selectionFromStatus = (status) => ({
+      selection_source: status.analysis_provider_binding.selection_source,
+      candidates: status.analysis_provider_candidates.map((candidate) => ({
+        provider: candidate.provider,
+        selected: candidate.selected,
+        availability: candidate.availability.status,
+        target_support: candidate.target_support.status,
+        rejection_codes: [
+          ...new Set(candidate.rejections.map(({ code }) => code)),
+        ],
+      })),
+    });
+    const assertSelection = (evidence, selection) => {
+      assert.deepEqual(evidence.provider_selection, selection);
+      assert.match(evidence.evidence_id, /^ev_[a-f0-9]{64}$/u);
+    };
     for (const mode of ["fresh", "partial", "analyzed"]) {
       const selected = mode !== "fresh";
       const connection = await connect({
@@ -195,11 +211,16 @@ export async function verifyProjectCoverage(run) {
           path: target,
           provider_id: "ghidra",
         });
-        const inventory = (
-          await call(connection, "list_procedures", {
-            detail: "complete",
-          })
-        ).normalized_result;
+        const status = (
+          await call(connection, "binary_session", { detail: "complete" })
+        ).result;
+        const selection = selectionFromStatus(status);
+        assert.equal(selection.selection_source, "request");
+        const inventoryEvidence = await call(connection, "list_procedures", {
+          detail: "complete",
+        });
+        assertSelection(inventoryEvidence, selection);
+        const inventory = inventoryEvidence.normalized_result;
         const entry = (name) => {
           const matches = inventory.filter(
             (item) => item.value === name || item.value === `_${name}`,
@@ -213,6 +234,7 @@ export async function verifyProjectCoverage(run) {
         const direct = await call(connection, "procedure_callees", {
           procedure: caller,
         });
+        assertSelection(direct, selection);
         assert.equal(
           direct.relationship_coverage.status,
           selected ? "unknown" : "complete",
@@ -236,6 +258,7 @@ export async function verifyProjectCoverage(run) {
             goal,
             direction,
           });
+          assertSelection(evidence, selection);
           paths.push(evidence);
         }
         assert.equal(
@@ -275,6 +298,7 @@ export async function verifyProjectCoverage(run) {
             procedure: entry("rea_project_callback"),
             detail: "complete",
           });
+          assertSelection(dossier, selection);
           assert.equal(dossier.relationship_coverage.status, "unknown");
           assert.match(
             dossier.relationship_coverage.reason,
@@ -289,6 +313,7 @@ export async function verifyProjectCoverage(run) {
             goal: leaf,
             direction: "forward",
           });
+          assertSelection(callbackPath, selection);
           const coverages = Object.values(
             callbackPath.normalized_result.relationship_coverage,
           );
@@ -306,6 +331,18 @@ export async function verifyProjectCoverage(run) {
           );
         }
         await call(connection, "export_evidence_bundle", { path: bundlePath });
+        const exported = JSON.parse(await readFile(bundlePath, "utf8"));
+        for (const evidence of [inventoryEvidence, direct, ...paths]) {
+          const saved = exported.records.find(
+            (record) => record.evidence_id === evidence.evidence_id,
+          );
+          assert.ok(saved);
+          assertSelection(saved, selection);
+          assert.deepEqual(
+            saved.provider_selection,
+            evidence.provider_selection,
+          );
+        }
         if (mode === "partial") {
           const snapshotPath = join(workspace, "partial-snapshot.json");
           await call(connection, "close_binary", {
@@ -364,6 +401,8 @@ export async function verifyProjectCoverage(run) {
             goal: leaf,
             direction: "forward",
           });
+          assertSelection(replay, selection);
+          assert.equal(replay.evidence_id, paths[0].evidence_id);
           assert.deepEqual(
             replay.normalized_result,
             paths[0].normalized_result,
@@ -384,8 +423,57 @@ export async function verifyProjectCoverage(run) {
           assert.ok(saved);
           assert.deepEqual(saved.normalized_result, evidence.normalized_result);
           assert.deepEqual(saved.limitations, evidence.limitations);
+          assert.deepEqual(
+            saved.provider_selection,
+            evidence.provider_selection,
+          );
         }
       }, [() => connections.closeConnection(offline)]);
+      if (mode === "fresh") {
+        const activeImport = await connect({
+          ...env,
+          REA_ANALYSIS_PROVIDER: "ghidra",
+        });
+        await withVerifierCleanup(async () => {
+          await call(activeImport, "open_binary", { path: target });
+          const status = (
+            await call(activeImport, "binary_session", { detail: "complete" })
+          ).result;
+          const selection = selectionFromStatus(status);
+          assert.equal(selection.selection_source, "environment");
+          assert.notEqual(
+            selection.selection_source,
+            paths[0].provider_selection.selection_source,
+          );
+          await call(activeImport, "import_evidence_bundle", {
+            path: bundlePath,
+          });
+          const own = await call(activeImport, "list_strings", {
+            detail: "complete",
+          });
+          assertSelection(own, selection);
+          const records = (
+            await call(activeImport, "get_evidence_bundle", {
+              detail: "complete",
+            })
+          ).result.records;
+          for (const source of paths) {
+            const imported = records.find(
+              (record) => record.evidence_id === source.evidence_id,
+            );
+            assert.ok(imported);
+            assert.deepEqual(
+              imported.provider_selection,
+              source.provider_selection,
+            );
+            assert.deepEqual(
+              imported.normalized_result,
+              source.normalized_result,
+            );
+          }
+          await call(activeImport, "close_binary");
+        }, [() => connections.closeConnection(activeImport)]);
+      }
       report.push({
         mode,
         statuses: paths.map(

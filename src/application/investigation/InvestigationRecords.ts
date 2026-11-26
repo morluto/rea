@@ -12,9 +12,17 @@ import type {
   UnknownStatus,
   UpdateUnknownInput,
 } from "../../domain/residualUnknown.js";
-import { ok, type Result } from "../../domain/result.js";
-import { EvidenceLedger, type EvidenceImportDelta } from "./EvidenceLedger.js";
-import { unknownMutationEvidence } from "./UnknownEvidence.js";
+import type { Result } from "../../domain/result.js";
+import {
+  EvidenceLedger,
+  type EvidenceImportDelta,
+  type ProducedEvidenceRecord,
+  type ProducedUnknownRecord,
+} from "./EvidenceLedger.js";
+import {
+  unknownMutationEvidence,
+  unknownMutationEnvelope,
+} from "./UnknownEvidence.js";
 import type {
   EvidenceReader,
   EvidenceWriter,
@@ -69,44 +77,19 @@ export class InvestigationRecords
     );
   }
 
-  /**
-   * Hold caller input to the same ordinary-JSON and heap-headroom rules the
-   * ledger applies, before the caller seals it for attribution.
-   *
-   * A sealed value skips those checks inside the ledger, so a workflow that
-   * re-attributes a record must admit the raw input it received here first.
-   * A record the ledger already holds is that sealed value: it was admitted
-   * when it was recorded, so re-reading it here would only repeat the work.
-   */
-  admitSealedEvidenceInput(
-    input: unknown,
-    operation: string,
-  ): Result<void, AnalysisError> {
-    if (this.#evidence.holdsSealedEvidence(input)) return ok(undefined);
-    return admitInvestigationAuthentication(
-      input,
-      operation,
-      this.retentionPolicy,
-    );
-  }
-
-  /** Record immutable Evidence idempotently; reject conflicting content. */
+  /** Record historical/source Evidence without changing its provenance. */
   recordEvidence(
     evidence: Evidence,
   ): Result<"added" | "duplicate", AnalysisError> {
     return this.#evidence.record(evidence);
   }
 
-  /**
-   * Adopt a later recording session's display provenance for an Evidence value
-   * this ledger already holds under the same semantic ID, without adding a
-   * record. Returns the stored replacement, or null when nothing changed.
-   */
-  replaceEvidenceMetadata(
-    current: Evidence,
-    previous: Evidence,
-  ): Result<Evidence | null, AnalysisError> {
-    return this.#evidence.replaceMetadata(current, previous);
+  /** Admit and reconcile one newly produced observation atomically. */
+  recordProducedEvidence(
+    evidence: Evidence,
+    selection: ProviderSelectionProvenance | undefined,
+  ): Result<ProducedEvidenceRecord, AnalysisError> {
+    return this.#evidence.recordProduced(evidence, selection);
   }
 
   /** Check one semantic Evidence ID without exposing stored values. */
@@ -152,40 +135,63 @@ export class InvestigationRecords
     target?: BinaryTarget,
     providerSelection?: ProviderSelectionProvenance,
   ): Result<ResidualUnknown, AnalysisError> {
+    const admitted = admitUnknownMutationAuthentication(
+      input,
+      () =>
+        unknownMutationEnvelope(
+          target,
+          { operation: "record_unknown", input },
+          providerSelection,
+        ),
+      "record_unknown",
+      this.retentionPolicy,
+    );
+    if (!admitted.ok) return admitted;
     const mutation = unknownMutationEvidence(
       target,
       { operation: "record_unknown", input },
       providerSelection,
     );
+    return this.#evidence.recordUnknown(input, mutation);
+  }
+
+  recordEvidenceWithUnknown(
+    evidence: Evidence,
+    input: RecordUnknownInput,
+  ): Result<ResidualUnknown | null, AnalysisError> {
+    const recorded = this.recordProducedEvidenceWithUnknown(evidence, input);
+    return recorded.ok ? { ok: true, value: recorded.value.unknown } : recorded;
+  }
+
+  /** Commit derived Evidence and its Unknown atomically without an implicit subject. */
+  recordProducedEvidenceWithUnknown(
+    evidence: Evidence,
+    input: RecordUnknownInput,
+    providerSelection?: ProviderSelectionProvenance,
+  ): Result<ProducedUnknownRecord, AnalysisError> {
     const admitted = admitUnknownMutationAuthentication(
       input,
-      mutation,
+      () =>
+        unknownMutationEnvelope(
+          undefined,
+          { operation: "record_unknown", input },
+          providerSelection,
+        ),
       "record_unknown",
       this.retentionPolicy,
     );
     if (!admitted.ok) return admitted;
-    return this.#evidence.recordUnknown(input, mutation);
-  }
-
-  /** Commit derived Evidence and its Unknown atomically without an implicit subject. */
-  recordEvidenceWithUnknown(
-    evidence: Evidence,
-    input: RecordUnknownInput,
-    providerSelection?: ProviderSelectionProvenance,
-  ): Result<ResidualUnknown | null, AnalysisError> {
     const mutation = unknownMutationEvidence(
       undefined,
       { operation: "record_unknown", input },
       providerSelection,
     );
-    const admitted = admitUnknownMutationAuthentication(
+    return this.#evidence.recordProducedWithUnknown(
+      evidence,
       input,
       mutation,
-      "record_unknown",
-      this.retentionPolicy,
+      providerSelection,
     );
-    if (!admitted.ok) return admitted;
-    return this.#evidence.recordWithUnknown(evidence, input, mutation);
   }
 
   /** Update an optimistic revision with an explicitly supplied Evidence subject. */
@@ -194,18 +200,23 @@ export class InvestigationRecords
     target?: BinaryTarget,
     providerSelection?: ProviderSelectionProvenance,
   ): Result<ResidualUnknown, AnalysisError> {
+    const admitted = admitUnknownMutationAuthentication(
+      input,
+      () =>
+        unknownMutationEnvelope(
+          target,
+          { operation: "update_unknown", input },
+          providerSelection,
+        ),
+      "update_unknown",
+      this.retentionPolicy,
+    );
+    if (!admitted.ok) return admitted;
     const evidence = unknownMutationEvidence(
       target,
       { operation: "update_unknown", input },
       providerSelection,
     );
-    const admitted = admitUnknownMutationAuthentication(
-      input,
-      evidence,
-      "update_unknown",
-      this.retentionPolicy,
-    );
-    if (!admitted.ok) return admitted;
     return this.#evidence.updateUnknown(input, evidence);
   }
 

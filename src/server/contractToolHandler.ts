@@ -23,7 +23,7 @@ import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewReq
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { withEvidenceProviderSelection } from "../domain/evidence.js";
+import { withRetainedEvidencePayload } from "../domain/evidence.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { isRecord } from "../kernel/isRecord.js";
@@ -67,9 +67,9 @@ const stampSessionSelection = (
   evidence: Evidence,
 ): Evidence => {
   const retained = evidenceById?.(evidence.evidence_id);
-  return retained?.provider_selection === undefined
+  return retained === undefined
     ? evidence
-    : withEvidenceProviderSelection(evidence, retained.provider_selection);
+    : withRetainedEvidencePayload(retained, evidence);
 };
 
 /** Record and deliver one Evidence result using the tool's exact contract. */
@@ -92,7 +92,9 @@ export const deliverEvidenceResult = (
   // record, so a producer that built its own Evidence value would otherwise
   // deliver an unattributed copy of the same evidence_id.
   return server.delivery.toEvidenceToolResult(
-    stampSessionSelection(evidenceById, result.value),
+    recorded?.ok === true
+      ? stampSessionSelection(evidenceById, result.value)
+      : result.value,
     contract,
     recorded,
     viewSource,
@@ -189,6 +191,8 @@ export const createRetainedSummaryToolHandler = <
     logger,
     retention.recordEvidence,
     withAdmittedAnalysis,
+    undefined,
+    retention.evidenceById,
   )(contract);
 };
 
@@ -605,20 +609,19 @@ export const createAnalysisToolHandler =
             : analyzed.value.recorded === undefined
               ? deliverEvidenceResult(
                   server,
-                  ok(
-                    stampSessionSelection(
-                      retention.evidenceById,
-                      analyzed.value.evidence,
-                    ),
-                  ),
+                  ok(analyzed.value.evidence),
                   contract,
                   retention.recordEvidence,
+                  undefined,
+                  retention.evidenceById,
                 )
               : server.delivery.toEvidenceToolResult(
-                  stampSessionSelection(
-                    retention.evidenceById,
-                    analyzed.value.evidence,
-                  ),
+                  analyzed.value.recorded.ok
+                    ? stampSessionSelection(
+                        retention.evidenceById,
+                        analyzed.value.evidence,
+                      )
+                    : analyzed.value.evidence,
                   contract,
                   analyzed.value.recorded,
                   undefined,

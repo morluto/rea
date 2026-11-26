@@ -27,7 +27,7 @@ import { logToolExecution } from "./toolLogging.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import { recordEvidenceSources } from "../application/investigation/recordEvidenceSources.js";
 import { createOperationProgress } from "./operationProgress.js";
-import { withEvidenceProviderSelection } from "../domain/evidence.js";
+import { withRetainedEvidencePayload } from "../domain/evidence.js";
 
 import { currentMcpToolRequest } from "./McpToolRequest.js";
 
@@ -180,12 +180,9 @@ export const createProviderOperationToolHandler =
             projected.value.evidence_id,
           );
           const delivered =
-            retained?.provider_selection === undefined
-              ? projected.value
-              : withEvidenceProviderSelection(
-                  projected.value,
-                  retained.provider_selection,
-                );
+            recorded?.ok === true && retained !== undefined
+              ? withRetainedEvidencePayload(retained, projected.value)
+              : projected.value;
           return progress.complete(
             server.delivery.toEvidenceToolResult(
               delivered,
