@@ -179,15 +179,29 @@ it.each([
 it("aborts an ongoing registry request at the visibility deadline", async () => {
   const controller = new AbortController();
   const deadline = new Error("visibility deadline");
+  let markStarted: () => void = () => {};
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
   const waiting = verifyRegistryVisibility(
     "6.5.0",
     controller.signal,
-    async (_url, init) => {
-      controller.abort(deadline);
-      init.signal?.throwIfAborted();
-      throw new Error("request did not receive the deadline");
-    },
+    (_url, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init.signal;
+        if (signal === undefined || signal === null) {
+          markStarted();
+          reject(new Error("request did not receive an abort signal"));
+          return;
+        }
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+        markStarted();
+      }),
   );
+  await started;
+  controller.abort(deadline);
   await expect(waiting).rejects.toMatchObject({
     message: "npm registry visibility deadline reached for rea-agents@6.5.0",
     cause: deadline,
