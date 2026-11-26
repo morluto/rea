@@ -43,6 +43,20 @@ export const gdbCommandSummarySchema = gdbCommandResultSchema
     }),
   });
 
+/**
+ * Keep every completion fact and replace the opaque output text with its
+ * size: a whole-binary disassembly can be megabytes. The complete text stays
+ * in the retained parent.
+ */
+export const objdumpCommandSummarySchema = commandObservationSchema
+  .omit({ stdout: true, stderr: true })
+  .extend({
+    available_counts: z.strictObject({
+      stdout_utf16_units: z.number().int().nonnegative(),
+      stderr_utf16_units: z.number().int().nonnegative(),
+    }),
+  });
+
 const readGdbCommandResult = createAnalysisViewResultReader(
   gdbCommandResultSchema,
 );
@@ -171,9 +185,16 @@ export const projectCommandObservationView = (
         },
       ]),
     );
+  const { stdout, stderr, ...facts } = report;
   return ok({
     ...shared,
     parent_operation: "inspect_with_objdump" as const,
-    summary: report,
+    summary: {
+      ...facts,
+      available_counts: {
+        stdout_utf16_units: stdout.length,
+        stderr_utf16_units: stderr.length,
+      },
+    },
   });
 };
