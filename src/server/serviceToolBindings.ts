@@ -421,7 +421,7 @@ const SERVICE_TOOL_BINDINGS = {
   webRuntime: ((service) => ({
     observe_web_execution: {
       admission: "sdk",
-      run: (input, options) => service.observe(input, options),
+      summary: (input, options) => service.observe(input, options),
     },
     inspect_web_event_listeners: {
       admission: "sdk",
