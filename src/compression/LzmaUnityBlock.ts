@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import { assertArtifactReadActive } from "../resources/index.js";
 import {
   BinaryFormatFailure,
+  BinaryReader,
   BinaryResourceFailure,
 } from "../domain/binaryContainer.js";
 
@@ -100,7 +101,11 @@ export const decodeUnityLzmaBlock = async (
   const pb = (remainder / 5) | 0;
   if (pb > 4 || lc + lp > 4)
     return rejectLzma("Unity LZMA properties are out of range");
-  const dictionaryBytes = input.readUInt32LE(LZMA_DICTIONARY_OFFSET);
+  const dictionaryBytes = new BinaryReader(
+    input,
+    true,
+    "Unity LZMA",
+  ).u32(LZMA_DICTIONARY_OFFSET);
   if (dictionaryBytes > maximumBytes)
     throw new BinaryResourceFailure(
       "structure",
