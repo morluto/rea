@@ -13,6 +13,10 @@ import { describe, expect, test, vi } from "vitest";
 
 import { createYaraMatchesService } from "../../../src/composition/yara.js";
 import { YaraMatchesService } from "../../../src/application/yara/YaraMatchesService.js";
+import {
+  primaryAnalysisError,
+  resolvedAnalysisError,
+} from "../../../src/domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { ok } from "../../../src/domain/result.js";
 import {
@@ -254,6 +258,86 @@ describe("inspect_yara_matches with a yara stand-in", () => {
     const { sample, rule, service } = await fixture("garbage");
     const result = await service.inspect({ path: sample, rule_paths: [rule] });
     expect(!result.ok && result.error._tag).toBe("AnalysisOutputError");
+  });
+
+  it("preserves malformed yara output as primary error when process cleanup fails", async () => {
+    const { command, sample, rule } = await fixture("garbage");
+    let cleanupAttempts = 0;
+    const launcher: YaraLauncher = async (spawn) => {
+      const launched = await interpreterLauncher(spawn);
+      return {
+        ...launched,
+        cleanup: async () => {
+          cleanupAttempts += 1;
+          if (cleanupAttempts === 1) {
+            return {
+              cleaned: false,
+              reason: "injected yara process cleanup failure",
+            };
+          }
+          return cleanupOwnedProcessGroup(launched.ownership);
+        },
+      };
+    };
+    const service = stubService(
+      command,
+      { ...process.env, YARA_STUB_MODE: "garbage" },
+      launcher,
+    );
+    const result = await service.inspect({ path: sample, rule_paths: [rule] });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.cleanupIncomplete).toBe(true);
+    const primary = primaryAnalysisError(result.error);
+    expect(primary._tag).toBe("AnalysisOutputError");
+    expect(primary.message).toContain("not a documented match line");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "cleanup_incomplete",
+      details: {
+        cleanup: "incomplete",
+      },
+    });
+    await expect(service.close()).resolves.toBeUndefined();
+    expect(cleanupAttempts).toBe(2);
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(resolvedAnalysisError(result.error)).toBe(primary);
+  });
+
+  it("preserves malformed yara output as primary error when cancelled during process cleanup", async () => {
+    const { command, sample, rule } = await fixture("garbage");
+    const controller = new AbortController();
+    const launcher: YaraLauncher = async (spawn) => {
+      const launched = await interpreterLauncher(spawn);
+      return {
+        ...launched,
+        cleanup: async () => {
+          controller.abort("cancelled during process cleanup");
+          return cleanupOwnedProcessGroup(launched.ownership);
+        },
+      };
+    };
+    const service = stubService(
+      command,
+      { ...process.env, YARA_STUB_MODE: "garbage" },
+      launcher,
+    );
+    const result = await service.inspect(
+      { path: sample, rule_paths: [rule] },
+      { signal: controller.signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisOutputError");
+    expect(result.error.message).toContain("not a documented match line");
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.secondaryFailures).toEqual([
+      expect.objectContaining({ _tag: "AnalysisCancelledError" }),
+    ]);
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      details: {
+        secondary_failures: [expect.objectContaining({ code: "cancelled" })],
+      },
+    });
   });
 
   it("stops output beyond max_output_bytes with the setting as its limit", async () => {
@@ -911,6 +995,86 @@ describe("inspect_yara_matches with a yara stand-in", () => {
     });
     expect(result.ok).toBe(false);
     await expect(readFile(args)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("retains completed rule identities when a later rule file fails admission", async () => {
+    const { root, sample, rule, args, service } = await fixture("match");
+    const missing = join(root, "missing.yar");
+    const result = await service.inspect({
+      path: sample,
+      rule_paths: [rule, missing],
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    await expect(readFile(args)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [expect.objectContaining({ path: ["rule_paths", 1] })],
+    });
+    expect(result.error.partialObservation).toBeUndefined();
+    const expectedRuleObservation = {
+      argument: "rule_paths[0]",
+      observation: {
+        kind: "file-snapshot-hash",
+        path: rule,
+        sha256: createHash("sha256").update(RULE).digest("hex"),
+        bytes: Buffer.byteLength(RULE),
+      },
+    };
+    expect(result.error.argumentObservations).toEqual([
+      expectedRuleObservation,
+    ]);
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      details: {
+        argument_observations: [expectedRuleObservation],
+      },
+    });
+  });
+
+  it("retains completed rule identities when target admission fails", async () => {
+    const { root, rule, args, service } = await fixture("match");
+    const secondText = "rule Second { condition: true }\n";
+    const second = join(root, "second.yar");
+    await writeFile(second, secondText);
+    const missingTarget = join(root, "missing-target.bin");
+    const result = await service.inspect({
+      path: missingTarget,
+      rule_paths: [rule, second],
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    await expect(readFile(args)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [expect.objectContaining({ path: ["path"] })],
+    });
+    expect(result.error.partialObservation).toBeUndefined();
+    const expectedRuleObservations = [
+      {
+        argument: "rule_paths[0]",
+        observation: {
+          kind: "file-snapshot-hash",
+          path: rule,
+          sha256: createHash("sha256").update(RULE).digest("hex"),
+          bytes: Buffer.byteLength(RULE),
+        },
+      },
+      {
+        argument: "rule_paths[1]",
+        observation: {
+          kind: "file-snapshot-hash",
+          path: second,
+          sha256: createHash("sha256").update(secondText).digest("hex"),
+          bytes: Buffer.byteLength(secondText),
+        },
+      },
+    ];
+    expect(result.error.argumentObservations).toEqual(expectedRuleObservations);
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      details: {
+        argument_observations: expectedRuleObservations,
+      },
+    });
   });
 
   it("refuses a scanned file larger than max_file_bytes with required_value", async () => {

@@ -28,12 +28,14 @@ import {
   assertArtifactReadActive,
   assertStableArtifactState,
   closeArtifactResources,
+  completedStableArtifactObservation,
   projectStableArtifactFailure,
   streamStableArtifact,
   withArtifactFileHandle,
   type RequestField,
 } from "../resources/index.js";
 import {
+  OwnedCommandFailure,
   prepareOwnedCommand,
   runOwnedCommand,
 } from "../process/OwnedCommand.js";
@@ -59,13 +61,18 @@ import {
 } from "../providers/OwnedCommandCleanup.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { offlineArtifactFailureDialect } from "../providers/offlineArtifactFailure.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  primaryAnalysisError,
+} from "../domain/analysisErrorBase.js";
 import type { AnalysisErrorOptions } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
   cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { decodeLimit } from "../domain/parseFailure.js";
 import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
@@ -128,6 +135,19 @@ interface ReadPhase {
   readonly path: string;
   readonly field: RequestField;
   readonly description: string;
+}
+
+/** One selected file's completed digest and byte count before later failures. */
+interface CompletedFileIdentity {
+  readonly path: string;
+  readonly sha256: string;
+  readonly bytes: number;
+}
+
+/** Completed admitted file identities accumulated during one scan call. */
+interface CompletedAdmittedFiles {
+  readonly rules: Map<number, CompletedFileIdentity>;
+  target: CompletedFileIdentity | undefined;
 }
 
 /** One selected file staged into the private snapshot with its hashed identity. */
@@ -537,13 +557,10 @@ export class YaraMatchesProvider implements YaraMatchesPort {
     const command = this.options.selectCommand();
     if (!command.ok) return err(command.error);
     let phase: ReadPhase | undefined;
-    let completedFileIdentity:
-      | {
-          readonly path: string;
-          readonly sha256: string;
-          readonly bytes: number;
-        }
-      | undefined;
+    const completedFiles: CompletedAdmittedFiles = {
+      rules: new Map(),
+      target: undefined,
+    };
     try {
       return await this.#resources.run(async () => {
         const snapshot = new YaraScanSnapshot(
@@ -566,9 +583,7 @@ export class YaraMatchesProvider implements YaraMatchesPort {
               (next) => {
                 phase = next;
               },
-              (verified) => {
-                completedFileIdentity = verified;
-              },
+              completedFiles,
             ),
           };
         } catch (cause: unknown) {
@@ -658,7 +673,7 @@ export class YaraMatchesProvider implements YaraMatchesPort {
       });
     } catch (cause: unknown) {
       return err(
-        this.#failure(cause, input, phase, maxFileBytes, completedFileIdentity),
+        this.#failure(cause, input, phase, maxFileBytes, completedFiles),
       );
     }
   }
@@ -764,15 +779,7 @@ export class YaraMatchesProvider implements YaraMatchesPort {
     platform: NodeJS.Platform,
     signal: AbortSignal | undefined,
     setPhase: (phase: ReadPhase) => void,
-    setIdentity: (
-      identity:
-        | {
-            readonly path: string;
-            readonly sha256: string;
-            readonly bytes: number;
-          }
-        | undefined,
-    ) => void,
+    completedFiles: CompletedAdmittedFiles,
   ): Promise<YaraMatches> {
     const rulePhase = (index: number, path: string): ReadPhase => ({
       path,
@@ -787,7 +794,6 @@ export class YaraMatchesProvider implements YaraMatchesPort {
     const stagedRules: StagedSnapshotFile[] = [];
     for (const [index, path] of input.rule_paths.entries()) {
       setPhase(rulePhase(index, path));
-      setIdentity(undefined);
       stagedRules.push(
         await this.#stageFile(
           path,
@@ -797,20 +803,25 @@ export class YaraMatchesProvider implements YaraMatchesPort {
           snapshot,
           {
             transform: createYaraIncludeRewriter(path, platform),
-            onIdentity: setIdentity,
+            onIdentity: (identity) => {
+              completedFiles.rules.set(index, identity);
+            },
           },
         ),
       );
     }
     setPhase(targetPhase);
-    setIdentity(undefined);
     const stagedTarget = await this.#stageFile(
       input.path,
       join(snapshot.path, "target.bin"),
       maxFileBytes,
       signal,
       snapshot,
-      { onIdentity: setIdentity },
+      {
+        onIdentity: (identity) => {
+          completedFiles.target = identity;
+        },
+      },
     );
     const staged: StagedScanInputs = {
       target: stagedTarget,
@@ -952,6 +963,34 @@ export class YaraMatchesProvider implements YaraMatchesPort {
         },
       );
     } catch (cause: unknown) {
+      if (completed !== undefined && !completed.ok) {
+        let failure = retainProcessInspectionCleanup(
+          cause,
+          completed.error,
+          scanResources,
+          OPERATION,
+        );
+        const cancellation =
+          cause instanceof OwnedCommandFailure &&
+          cause.cancellation !== undefined
+            ? cancelledBy(OPERATION, carriedReason(cause.cancellation.reason))
+            : signal?.aborted
+              ? cancelledBy(OPERATION, signal)
+              : undefined;
+        if (cancellation !== undefined)
+          failure = analysisErrorWithCancellation(failure, cancellation);
+        if (
+          cause instanceof OwnedCommandFailure &&
+          cause.reason === "timeout"
+        ) {
+          const outcome = providerOutcomeOf(cause);
+          if (outcome !== undefined)
+            primaryAnalysisError(failure).retainSecondaryFailure(
+              classifyProviderOutcome(outcome, context),
+            );
+        }
+        throw failure;
+      }
       throw yaraCommandFailure(cause, context, scanResources);
     }
     const result = completed ?? finalize(snapshot);
@@ -964,13 +1003,7 @@ export class YaraMatchesProvider implements YaraMatchesPort {
     input: InspectYaraMatchesInput,
     phase: ReadPhase | undefined,
     maxFileBytes: number,
-    completedFileIdentity:
-      | {
-          readonly path: string;
-          readonly sha256: string;
-          readonly bytes: number;
-        }
-      | undefined,
+    completedFiles: CompletedAdmittedFiles,
   ) {
     const read = phase ?? {
       path: input.path,
@@ -1015,18 +1048,50 @@ export class YaraMatchesProvider implements YaraMatchesPort {
       cause.partialObservation !== undefined
     )
       primary.retainPartialObservation(cause.partialObservation);
-    // `primary` already names the failing `read.path`; once a staged file's
-    // identity is recorded (and thereafter for the scanned target file),
-    // attribute the retained snapshot observation to its recorded path.
-    return projectStableArtifactFailure(
+    // `primary` already names the failing `read.path`. Once the scanned target
+    // file is hashed, attribute `partialObservation` to it; if failure happened
+    // after hashing a rule file before target staging, attribute it only to
+    // that failing rule file. Keep all other completed admitted rule identities
+    // separately as `argumentObservations` so earlier rules survive later failures.
+    const failingRuleIndex =
+      Array.isArray(read.field) &&
+      read.field[0] === "rule_paths" &&
+      typeof read.field[1] === "number"
+        ? read.field[1]
+        : undefined;
+    const primaryFileIdentity =
+      completedFiles.target ??
+      (failingRuleIndex === undefined
+        ? undefined
+        : completedFiles.rules.get(failingRuleIndex));
+    const projected = projectStableArtifactFailure(
       cause,
       primary,
-      completedFileIdentity === undefined
-        ? read.path
-        : completedFileIdentity.path,
+      primaryFileIdentity === undefined ? read.path : primaryFileIdentity.path,
       PROVIDER_ID,
       OPERATION,
-      completedFileIdentity,
+      primaryFileIdentity,
     );
+    const hasCompleteReport =
+      projected.partialObservation !== undefined &&
+      "matches" in projected.partialObservation;
+    if (!hasCompleteReport && completedFiles.rules.size > 0) {
+      const rootPrimary = primaryAnalysisError(projected);
+      for (const [index, identity] of completedFiles.rules.entries()) {
+        if (completedFiles.target === undefined && failingRuleIndex === index)
+          continue;
+        const observation = completedStableArtifactObservation(
+          undefined,
+          identity.path,
+          identity,
+        );
+        if (observation === undefined) continue;
+        const argument = `rule_paths[${String(index)}]`;
+        projected.retainArgumentObservation(argument, observation);
+        if (rootPrimary !== projected)
+          rootPrimary.retainArgumentObservation(argument, observation);
+      }
+    }
+    return projected;
   }
 }
