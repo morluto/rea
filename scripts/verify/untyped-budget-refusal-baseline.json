@@ -1,7 +1,6 @@
 {
   "src/android/AndroidMappingFile.ts": 2,
   "src/android/JadxAnalysis.ts": 1,
-  "src/android/JadxSession.ts": 1,
   "src/application/JsonAuthenticationHeadroom.ts": 1,
   "src/application/JsonInputFile.ts": 3,
   "src/application/apiContract/ApiContractRead.ts": 1,
@@ -41,7 +40,6 @@
   "src/kuna/KunaSessionClient.ts": 1,
   "src/main/StdioStartupInput.ts": 1,
   "src/model/ModelFormat.ts": 1,
-  "src/process/capture/ProcessNormalization.ts": 1,
   "src/server/ErrorEvidenceTransport.ts": 2,
   "src/server/ProgressiveToolCatalog.ts": 1,
   "src/server/ToolResultDelivery.ts": 2,

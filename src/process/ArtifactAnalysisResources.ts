@@ -243,9 +243,12 @@ export class ArtifactAnalysisResources {
         {
           ...details,
           cause,
-          limit: budget,
+          limit:
+            cause.observedBytes === undefined ||
+            cause.observedBytes > BigInt(Number.MAX_SAFE_INTEGER)
+              ? budget
+              : { ...budget, required_value: Number(cause.observedBytes) },
           retryable: false,
-          remediationAction: `Increase ${budget.parameter} above ${String(budget.effective_value)} bytes on the next call to admit the same complete selected artifact; no REA restart is required. Do not truncate required input bytes. Output, parser, transport and inherited OS limits remain independent.`,
         },
       );
   }
