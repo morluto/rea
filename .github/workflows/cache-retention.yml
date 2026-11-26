@@ -46,6 +46,7 @@ jobs:
           sparse-checkout: |
             /.nvmrc
             /scripts/ci/cache-retention.mjs
+            /scripts/ci/github-api.mjs
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
