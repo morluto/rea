@@ -450,22 +450,6 @@ describe("inspect_yara_matches with a yara stand-in", () => {
     );
   });
 
-  it("refuses matches when a rule file is edited in place during the scan", async () => {
-    const { root, sample, rule, service } = await fixture("mutate-rule");
-    const second = join(root, "second.yar");
-    await writeFile(second, "rule Second { condition: true }\n");
-    const result = await service.inspect({
-      path: sample,
-      rule_paths: [rule, second],
-    });
-    expect(result.ok, JSON.stringify(result)).toBe(false);
-    if (result.ok) return;
-    expect(result.error).toMatchObject({
-      _tag: "AnalysisArtifactChangedError",
-      path: second,
-    });
-  });
-
   it("retains the scanned file's partial_observation when a rule file fails its final check after the scan", async () => {
     const { root, sample, rule, service } = await fixture("mutate-rule");
     const second = join(root, "second.yar");

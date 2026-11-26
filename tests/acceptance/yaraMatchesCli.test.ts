@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { expect } from "vitest";
@@ -81,6 +82,40 @@ posixCliTest(
     const error = analysisErrorProjectionSchema.parse(output.json);
     expect(error.code).toBe("invalid_request");
     expect(JSON.stringify(error)).toContain("packers.yar(3)");
+  },
+);
+
+posixCliTest(
+  "reports the scanned snapshot when a rule fails its final identity check",
+  async ({ cli }) => {
+    const { root, command } = await workspace();
+    const sample = join(root, "sample.bin");
+    const rule = join(root, "packers.yar");
+    const output = await cli.run({
+      arguments: [
+        "inspect-yara-matches",
+        sample,
+        "--rule_paths",
+        rule,
+        "--format",
+        "json",
+      ],
+      cwd: root,
+      environment: { REA_YARA_COMMAND: command, YARA_STUB_MODE: "mutate-rule" },
+    });
+    expect(output.exitCode, output.stderr).toBe(1);
+    expect(analysisErrorProjectionSchema.parse(output.json)).toMatchObject({
+      code: "artifact_changed",
+      details: {
+        path: rule,
+        partial_observation: {
+          kind: "file-snapshot-hash",
+          path: sample,
+          sha256: createHash("sha256").update(YARA_STUB_SAMPLE).digest("hex"),
+          bytes: YARA_STUB_SAMPLE.length,
+        },
+      },
+    });
   },
 );
 
