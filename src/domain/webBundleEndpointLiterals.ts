@@ -1,5 +1,5 @@
 import type * as t from "@babel/types";
-import { stringValue } from "./javascript/javascriptStaticAnalysisHelpers.js";
+import { stringValue } from "./javascript/javascriptAstValues.js";
 
 export interface WebBundleEndpointLiteral {
   readonly value: string;
