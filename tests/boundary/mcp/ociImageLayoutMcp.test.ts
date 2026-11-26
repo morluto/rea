@@ -197,7 +197,6 @@ mcpTest(
             minimum: OCI_IMAGE_LAYOUT_BUDGETS.max_entries.minimum,
             maximum: OCI_IMAGE_LAYOUT_BUDGETS.max_entries.maximum,
             default_value: OCI_IMAGE_LAYOUT_BUDGETS.max_entries.default_value,
-            required_value: 2,
             applies_at: "next_call",
           },
           refusal: {
@@ -206,10 +205,12 @@ mcpTest(
             control: "max_entries",
             effective_value: 1,
             unit: "count",
-            required_value: 2,
           },
+          reported_limits: { boundary: "max_entries", maximum: 1, required: 2 },
         },
       });
+      expect(error.details?.limit).not.toHaveProperty("required_value");
+      expect(error.details?.refusal).not.toHaveProperty("required_value");
     } finally {
       await session.close();
     }

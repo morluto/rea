@@ -126,12 +126,11 @@ const layoutFailureDialect = (
           ...(parameter === undefined
             ? {}
             : {
-                limit: {
-                  ...ociImageLayoutBudgetLimit(parameter, limit.maximum),
-                  ...(typeof limit.required === "number"
-                    ? { required_value: limit.required }
-                    : {}),
-                },
+                // The stopped walk has not measured the whole layout. Even
+                // a JSON file's known size may precede a larger document.
+                // Keep the observed bound in reported_limits, not as an
+                // exact value that promises to admit the next request.
+                limit: ociImageLayoutBudgetLimit(parameter, limit.maximum),
               }),
         },
       );

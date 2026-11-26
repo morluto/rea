@@ -2,6 +2,9 @@ import { ociImageLayoutSchema } from "../../src/domain/oci/imageLayout.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
+import { z } from "zod";
+import { analysisResourceErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
+import { jsonValueSchema } from "../../src/domain/jsonValue.js";
 import { OCI_IMAGE_LAYOUT_TOOL_CONTRACTS } from "../../src/contracts/oci/ociImageLayoutToolContracts.js";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import { parseEvidenceBundle } from "../../src/domain/evidenceBundle.js";
@@ -19,6 +22,76 @@ const layoutContract = contractNamed(
 const completeLayoutEvidenceSchema = layoutContract.outputSchema.safeExtend({
   normalized_result: ociImageLayoutSchema,
 });
+
+const budgetRefusalSchema = analysisResourceErrorProjectionSchema.safeExtend({
+  details: z
+    .object({
+      reported_limits: z.object({
+        boundary: z.string(),
+        maximum: z.number(),
+        required: z.number(),
+      }),
+      limit: z.record(z.string(), jsonValueSchema),
+      refusal: z.record(z.string(), jsonValueSchema),
+    })
+    .catchall(jsonValueSchema),
+});
+
+cliTest(
+  "keeps unfinished OCI budget counts out of exact retry requirements",
+  async ({ cli }) => {
+    const path = await createTestTempDirectory("rea-oci-cli-recovery-");
+    await writeOciImageLayoutFixture(path);
+    const successful = await cli.run({
+      arguments: ["inspect-oci-image-layout", path, "--json"],
+    });
+    expect(successful.exitCode, successful.stderr).toBe(0);
+    for (const [parameter, value] of [
+      ["max_entries", 1],
+      ["max_descriptors", 1],
+      ["max_config_bytes", 16],
+      ["max_descriptor_bytes", 16],
+      ["max_json_bytes", 16],
+    ] as const) {
+      const flag = `--${parameter.replaceAll("_", "-")}`;
+      const result = await cli.run({
+        arguments: [
+          "inspect-oci-image-layout",
+          path,
+          "--json",
+          flag,
+          String(value),
+        ],
+      });
+      expect(result.exitCode).toBe(1);
+      const error = budgetRefusalSchema.parse(result.json);
+      expect(error.details.reported_limits).toMatchObject({
+        boundary: parameter,
+        maximum: value,
+      });
+      const observed = error.details.reported_limits.required;
+      expect(observed).toBeGreaterThan(value);
+      // Even a fully measured JSON document is only one of this layout's
+      // documents. The stopped walk has not established the request's total.
+      const retry = await cli.run({
+        arguments: [
+          "inspect-oci-image-layout",
+          path,
+          "--json",
+          flag,
+          String(observed),
+        ],
+      });
+      expect(retry.exitCode).toBe(1);
+      expect
+        .soft(error.details.limit, parameter)
+        .not.toHaveProperty("required_value");
+      expect
+        .soft(error.details.refusal, parameter)
+        .not.toHaveProperty("required_value");
+    }
+  },
+);
 
 cliTest(
   "reports OCI image-layout identity and config through the public CLI",

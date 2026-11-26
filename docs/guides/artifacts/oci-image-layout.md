@@ -90,6 +90,13 @@ Exceeding any of these
 budgets refuses the inspect and names the allowance. Nested indexes beyond
 `max_index_depth` become findings and are not walked further.
 
+A budget refusal stops before the whole layout has been examined. Its
+`details.reported_limits.required` is the observed lower bound, not a value
+guaranteed to finish a retry, so `details.limit` and `details.refusal` omit
+`required_value`. This includes `max_json_bytes`: a later document can be
+larger than the one that stopped the current inspection. Raise the named
+budget and retry; another refusal can reveal further work.
+
 A missing, malformed, or oversize `oci-layout` refuses the inspect. A missing,
 malformed, or oversize `index.json` refuses with the `oci-layout` file-snapshot
 hash preserved as a partial observation.
