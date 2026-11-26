@@ -6,6 +6,7 @@ import {
 } from "../../../src/domain/analysisErrorCore.js";
 import { signalDecodersSchema } from "../../../src/domain/signals/signalDecoders.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import { it, expect, onTestFinished } from "vitest";
 import { writeFile, readFile, readdir, chmod, symlink } from "node:fs/promises";
@@ -1384,18 +1385,21 @@ it.each(["bad-version", "nonzero", "overflow", "wait", "oversized-tool"])(
         reportedLimits: { output_bytes: 4194304 },
         retryable: false,
       });
-      expect(projectAnalysisError(result.error).details?.limit).toEqual({
-        control_kind: "parameter",
+      // The per-call field is backed by the session setting.
+      expect(projectAnalysisError(result.error).details?.limit).toMatchObject({
+        setting: "producer.output_bytes",
         parameter: "producer_limits.output_bytes",
         effective_value: 4194304,
-        unit: "bytes",
+        source: "default",
+        update_mode: "runtime",
         minimum: 1,
         maximum: Number.MAX_SAFE_INTEGER,
-        default_value: 4194304,
-        applies_at: "next_call",
       });
       expect(analysisErrorRemediationAction(result.error)).toContain(
         "producer_limits.output_bytes",
+      );
+      expect(analysisErrorRemediationAction(result.error)).toContain(
+        "producer.output_bytes",
       );
       expect(analysisErrorRemediationAction(result.error)).not.toMatch(
         /Review the reported worker memory limits/u,
@@ -1403,6 +1407,45 @@ it.each(["bad-version", "nonzero", "overflow", "wait", "oversized-tool"])(
     }
   },
 );
+
+it("applies a runtime producer.output_bytes override below the per-call field", async () => {
+  const f = await fixture("overflow");
+  const snapshot = (value: number) => ({
+    revision: 1,
+    overrides: { "producer.output_bytes": value },
+  });
+  // A lower session value refuses the 5 MiB output and reports its source.
+  const lowered = await runWithAnalysisOperationSnapshot(snapshot(1024), () =>
+    f.service.inspectDecoders({}),
+  );
+  if (lowered.ok) throw new Error("Expected the lowered output refusal");
+  expect(projectAnalysisError(lowered.error).details?.limit).toMatchObject({
+    setting: "producer.output_bytes",
+    effective_value: 1024,
+    source: "runtime",
+  });
+  // A higher session value admits the output; it then fails only on grammar.
+  const raised = await runWithAnalysisOperationSnapshot(
+    snapshot(8 * 1024 * 1024),
+    () => f.service.inspectDecoders({}),
+  );
+  if (raised.ok) throw new Error("Expected the malformed catalog");
+  expect(raised.error).not.toBeInstanceOf(AnalysisResourceConstraintError);
+  // An explicit per-call field still wins over the session value.
+  const request = await runWithAnalysisOperationSnapshot(
+    snapshot(8 * 1024 * 1024),
+    () =>
+      f.service.inspectDecoders({ producer_limits: { output_bytes: 2048 } }),
+  );
+  if (request.ok) throw new Error("Expected the per-call output refusal");
+  expect(projectAnalysisError(request.error).details?.limit).toMatchObject({
+    setting: "producer.output_bytes",
+    effective_value: 2048,
+    source: "request",
+    update_mode: "parameter",
+  });
+  await f.service.close();
+});
 
 it("pages help output longer than one page record budget instead of refusing it", async () => {
   const f = await fixture("long-help");

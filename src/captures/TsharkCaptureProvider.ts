@@ -16,6 +16,10 @@ import {
 } from "../domain/producerResourceLimits.js";
 import { TSHARK_PROVIDER_IDENTITY } from "./TsharkProviderIdentity.js";
 import {
+  producerOutputBytesLimit,
+  resolveProducerOutputBytes,
+} from "../config/producerOutputBytes.js";
+import {
   type InspectPacketFieldsInput,
   PACKET_FIELD_PRODUCER_LIMITS,
   packetFieldsCatalogSchema,
@@ -142,7 +146,28 @@ export class TsharkCaptureProvider implements PacketCapturePort {
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const operation = "path" in input ? OPERATION : "inspect_packet_fields";
     const defaults = "path" in input ? LIMITS : PACKET_FIELD_PRODUCER_LIMITS;
-    const limits = resolveProducerLimits(defaults, input.producer_limits);
+    // Capture shares the session-adjustable bounded-producer output budget;
+    // the larger glossary default of field discovery stays per call.
+    const output =
+      "path" in input
+        ? resolveProducerOutputBytes(
+            input.producer_limits?.output_bytes,
+            this.environment,
+          )
+        : undefined;
+    if (output !== undefined && !output.ok) return err(output.error);
+    const limits = resolveProducerLimits(defaults, {
+      ...input.producer_limits,
+      ...(output === undefined ? {} : { output_bytes: output.value.value }),
+    });
+    const outputControl =
+      output === undefined
+        ? producerLimitControl(
+            "output_bytes",
+            limits.output_bytes,
+            defaults.output_bytes,
+          )
+        : producerOutputBytesLimit(output.value);
     let phase: RecordingProducerPhase = "configuration";
     let capturedOutput: AnalysisCapturedOutput | undefined;
     let resourcePath = "path" in input ? input.path : "TShark field glossary";
@@ -463,7 +488,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         phase,
         path: resourcePath,
         workspacePath: root?.path ?? null,
-        limits: { selected: limits, defaults },
+        limits: { selected: limits, defaults, output: outputControl },
         effectiveLimits,
         observedOutput: capturedOutput,
         configurationHelp:

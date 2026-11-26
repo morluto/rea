@@ -28,6 +28,7 @@ export interface AnalysisSettingValues {
   readonly "kuna.project_timeout_ms": number;
   readonly "kuna.function_timeout_ms": number;
   readonly "pwntools.max_input_bytes": number;
+  readonly "producer.output_bytes": number;
   readonly "windows.change_time_drift_ms": number;
   readonly "windows.change_time_settle_poll_ms": number;
   readonly "windows.change_time_settle_max_polls": number;

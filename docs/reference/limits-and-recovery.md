@@ -172,6 +172,22 @@ rejected.
 | `inspect_rust_binary`                                        | `input_bytes` 256 MiB, `output_bytes` 8 MiB                                                                                                                                                   |
 | `inspect_pcap_capture`                                       | `input_bytes` 2 GiB (the streamed capture snapshot), `output_bytes` 8 MiB of combined stdout and stderr per TShark JSON pass, at most 128 MiB (the fixed decoded-JSON allowance)              |
 
+#### Session default for producer output
+
+`inspect_packet_capture`, `decode_signal_recording` and
+`inspect_signal_decoders` share one session-adjustable default for
+`producer_limits.output_bytes`: the registered setting `producer.output_bytes`
+(launch seed `REA_PRODUCER_OUTPUT_BYTES`, default 4 MiB, range
+1..9007199254740991 bytes). Change it with `update_analysis_settings`, for
+example `{"changes":[{"setting":"producer.output_bytes","action":"set","value":16777216}]}`;
+it applies to the next operation without restart. An explicit
+`producer_limits.output_bytes` on a call wins over the setting, then the runtime
+override, then the launch seed, then the default. An output refusal reports the
+setting's limit with `parameter: "producer_limits.output_bytes"` and the
+`source` of the value in force, so its recovery names both the per-call field
+and the setting. `inspect_packet_fields` keeps its own 32 MiB glossary default
+and is not covered by the setting.
+
 The pwntools and EVM operations take their wall-clock deadline from a separate
 argument (`pwntools_timeout_ms`, `timeout_ms`) instead of `command_timeout_ms`.
 Packet and signal results report the effective values as `limits`, where an
