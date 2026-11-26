@@ -398,6 +398,10 @@ export const registerBinaryDiagnosticsCommands = (
           description: "Maximum number of device-tree properties",
         },
         max_depth: { description: "Maximum device-tree nesting depth" },
+        max_decoded_bytes: {
+          description:
+            "Maximum estimated bytes of the decoded report, charged before allocation",
+        },
       },
     },
     deliverWithService(
