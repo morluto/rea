@@ -99,7 +99,10 @@ it("refuses an oversized acquisition at max_file_bytes, not host memory", async 
         },
       },
     });
-    expect(projected.details).not.toHaveProperty("refusal");
+    expect(projected.details?.refusal).toMatchObject({
+      kind: "adjustable_budget",
+      control: "max_file_bytes",
+    });
     // Recovery names the per-call control, not host-memory advice.
     expect(projected.remediation.action).toContain("max_file_bytes");
   } finally {

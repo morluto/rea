@@ -938,7 +938,10 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
     const projected = projectAnalysisError(result.error);
     expect(projected.code).toBe("resource_constraint");
     expect(projected.retryable).toBe(false);
-    expect(projected.details?.refusal).toBeUndefined();
+    expect(projected.details?.refusal).toMatchObject({
+      kind: "adjustable_budget",
+      control: "apk_limits.apk_bytes",
+    });
     expect(projected.details?.limit).toEqual({
       control_kind: "parameter",
       parameter: "apk_limits.apk_bytes",
