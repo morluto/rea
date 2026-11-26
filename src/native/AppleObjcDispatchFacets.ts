@@ -245,6 +245,7 @@ export const decodeObjcDispatchFacets = (input: {
     readers: {
       u32: read.u32,
       pointer: read.pointer,
+      resolvePointer: read.resolvePointer,
       string: read.string,
       location: read.location,
       evidence: read.evidence,

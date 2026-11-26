@@ -237,7 +237,7 @@ const visitReader = async (
         continue;
       }
       const entry = next.value;
-      abortIfNeeded(context.signal);
+      assertReconstructionActive(context.signal);
       const path = normalizeArtifactPath(
         frame.prefix === "" ? entry.path : `${frame.prefix}/${entry.path}`,
       );
@@ -408,7 +408,7 @@ const verifyUnselectedOrBinaryEntry = async (
   context: ReadContext,
   input: ReadTextInput,
 ): Promise<void> => {
-  abortIfNeeded(context.signal);
+  assertReconstructionActive(context.signal);
   if (
     input.reader instanceof AsarArtifactReader &&
     context.verifiedAsarReaders.has(input.reader) &&
@@ -441,7 +441,7 @@ const verifyEntryBytes = async (
       `Artifact entry changed after inventory: ${expected.path}`,
       { integrityCheck: "member-identity" },
     );
-  abortIfNeeded(signal);
+  assertReconstructionActive(signal);
 };
 
 const expectedInventory = (
@@ -685,7 +685,7 @@ const readAll = async (
   const chunks: Buffer[] = [];
   let bytes = 0;
   for await (const raw of stream) {
-    abortIfNeeded(signal);
+    assertReconstructionActive(signal);
     const chunk = streamChunkToBuffer(raw);
     bytes += chunk.length;
     chunks.push(chunk);
@@ -727,7 +727,8 @@ const isFilesystemAsar = (entry: ArtifactEntry, path: string): boolean =>
   path.toLowerCase().endsWith(".asar") &&
   isAbsolute(entry.adapterKey);
 
-const abortIfNeeded = (signal?: AbortSignal): void => {
+/** Stop reconstruction at the current stage with the original caller reason. */
+export const assertReconstructionActive = (signal?: AbortSignal): void => {
   if (signal?.aborted === true)
     throw new ArtifactReaderFailure(
       "cancelled",
