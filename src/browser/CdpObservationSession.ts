@@ -10,6 +10,12 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
+import { DEFAULT_BROWSER_TIMELINE_RETAINED_BYTES } from "../domain/analysisResourceLimits.js";
+import {
+  analysisSettingLimit,
+  selectedAnalysisSetting,
+} from "../domain/analysisSettingDefinitions.js";
+import { currentAnalysisSettingOverride } from "../domain/analysisOperationSnapshot.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import { CdpConnection, type CdpTransportEvent } from "./CdpConnection.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
@@ -81,7 +87,16 @@ export const observeCdpSession = async (
     throw new BrowserObservationError("observe_web_session", "protocol_error");
   const initialUrl = selected.url ?? "";
   const document = CdpTargetDocument.watch(context, selected);
-  const capture = new TimelineCapture(allowedOrigins, document, initialUrl);
+  const capture = new TimelineCapture(
+    allowedOrigins,
+    document,
+    initialUrl,
+    selectedAnalysisSetting(
+      context.input.timeline_retained_bytes,
+      currentAnalysisSettingOverride("browser.timeline_retained_bytes"),
+      DEFAULT_BROWSER_TIMELINE_RETAINED_BYTES,
+    ),
+  );
   let removeListener = (): void => {};
   const removeDisconnectListener = context.connection.onDisconnect(() =>
     capture.recordTermination("transport_disconnected"),
@@ -234,6 +249,9 @@ class TimelineCapture {
     /** The target session's page generation; its root frame scopes main-frame rows. */
     private readonly document: CdpTargetDocument,
     initialUrl: string,
+    private readonly timelineAllowance: ReturnType<
+      typeof selectedAnalysisSetting
+    >,
   ) {
     this.#mainFrameId = document.current.frameId;
     this.finalUrl =
@@ -707,12 +725,21 @@ class TimelineCapture {
     // Numbers stay inside the fixed overhead. The strings are the part that
     // can grow with the page, so admission measures those before the row is kept.
     const bytes = timelineRowBytes(entry);
-    if (bytes > WEB_RUNTIME_LIMITS.retainedEventBytes - this.#timelineBytes) {
+    const allowance = this.timelineAllowance.value;
+    if (bytes > allowance - this.#timelineBytes) {
       this.#timelineBudgetFailure = new BrowserObservationError(
         "observe_web_session",
         "payload_limit",
         {
-          detail: `Armed timeline rows exceeded the ${WEB_RUNTIME_LIMITS.retainedEventBytes}-byte retained event allowance.`,
+          detail: `Armed timeline rows exceeded the ${String(allowance)}-byte timeline allowance. Request identities keep a separate counter.`,
+          limit: {
+            ...analysisSettingLimit(
+              "browser.timeline_retained_bytes",
+              allowance,
+              this.timelineAllowance.source,
+            ),
+            required_value: this.#timelineBytes + bytes,
+          },
         },
       );
       this.end("window_elapsed");

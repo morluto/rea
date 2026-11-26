@@ -84,6 +84,7 @@ export class BrowserObservationError extends AnalysisError {
       ...(this.remediationAction === undefined
         ? {}
         : { remediationAction: this.remediationAction }),
+      ...(this.limit === undefined ? {} : { limit: this.limit }),
       cleanupPrimary: this.cleanupPrimary,
       diagnostics: this.diagnostics,
       capturedOutput: this.capturedOutput,
