@@ -13,7 +13,7 @@ import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { AnalysisPartialObservation } from "../domain/analysisErrorBase.js";
 import { captureSqliteDatabaseSnapshot } from "./SqliteDatabaseSnapshot.js";
-import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
+import { DEFAULT_SQLITE_INPUT_BYTES } from "../domain/sqlite/sqliteDatabase.js";
 import { sqliteDatabaseDialect } from "./SqliteDatabaseFailures.js";
 
 it("tags an exact caller reason at snapshot admission", async () => {
@@ -162,7 +162,7 @@ it("reports filesystem sizes above the safe-integer range exactly before opening
       operation: "inspect_sqlite_database",
       resource: "file-size",
       reportedLimits: {
-        sqlite_snapshot_input_bytes: SQLITE_DATABASE_LIMITS.inputBytes,
+        sqlite_snapshot_input_bytes: DEFAULT_SQLITE_INPUT_BYTES,
         observed_sqlite_snapshot_input_bytes: (
           databaseBytes + walBytes
         ).toString(),
@@ -177,10 +177,20 @@ it("reports filesystem sizes above the safe-integer range exactly before opening
       retryable: false,
       details: {
         reported_limits: {
-          sqlite_snapshot_input_bytes: SQLITE_DATABASE_LIMITS.inputBytes,
+          sqlite_snapshot_input_bytes: DEFAULT_SQLITE_INPUT_BYTES,
           observed_sqlite_snapshot_input_bytes: (
             databaseBytes + walBytes
           ).toString(),
+        },
+        limit: {
+          control_kind: "parameter",
+          parameter: "producer_limits.input_bytes",
+          effective_value: DEFAULT_SQLITE_INPUT_BYTES,
+          unit: "bytes",
+          minimum: 1,
+          maximum: Number.MAX_SAFE_INTEGER,
+          default_value: DEFAULT_SQLITE_INPUT_BYTES,
+          applies_at: "next_call",
         },
       },
       remediation: {

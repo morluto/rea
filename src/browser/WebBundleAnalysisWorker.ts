@@ -650,7 +650,11 @@ export class WebBundleAnalysisWorker {
         failure.reason,
         failure.reportedLimits,
         failure.kind === "host-capacity"
-          ? { remediationAction: failure.remediationAction }
+          ? // Live host headroom was measured; the fixed budget still had room.
+            {
+              measuredExhaustion: true,
+              remediationAction: failure.remediationAction,
+            }
           : undefined,
       ),
     };

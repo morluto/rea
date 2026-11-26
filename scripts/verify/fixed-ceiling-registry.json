@@ -606,9 +606,19 @@
   },
   "src/sqlite/SqliteDatabaseFailures.ts": {
     "`The SQLite worker diagnostic capture allowance of ${String(SQLITE_DATABASE_LIMITS.diagnosticBytes)} bytes (this release has no runtime override; worker_timeout_ms does not raise it)`": {
+      "class": "protocol",
+      "reason": "Bounds stdout and stderr of REA's own SQLite worker, which answers through its reply file; only startup failures and runtime warnings reach these streams, and no database content or analysis result passes through them."
+    }
+  },
+  "src/sqlite/SqliteDatabaseWorkerExecution.ts": {
+    "\"The SQLite value/record, SQL statement and worker reply allowance\"": {
       "class": "pending",
       "issue": 14237,
-      "reason": "SQLite worker diagnostic capture is a producer budget."
+      "reason": "The 16 MiB value/record, statement and worker reply allowance bounds what the parent decodes from REA's SQLite worker; it is a resource policy that should become a per-call control together with the worker heap."
+    },
+    "\"SQLite's result-column limit for this connection\"": {
+      "class": "format",
+      "reason": "SQLite's own result-column limit (SQLITE_LIMIT_COLUMN) for the private connection, reported by the engine with the reply; REA does not set it."
     }
   }
 }
