@@ -31,6 +31,7 @@ export const AGENT_BUDGET_OPERATIONS = [
   "inspect_native_exports",
   "inspect_native_load_image",
   "inspect_nuget_nupkg",
+  "inspect_oci_image_layout",
   "inspect_pcap_capture",
   "inspect_python_pyc",
   "inspect_rust_binary",
