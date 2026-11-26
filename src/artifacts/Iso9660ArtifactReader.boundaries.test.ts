@@ -245,6 +245,27 @@ it.each([
   },
 );
 
+it.each([false, true])(
+  "lists the tree when the descriptor root record declares more than 34 bytes (Joliet: %s)",
+  async (joliet) => {
+    const { bytes, layout } = buildIso9660Image({
+      joliet,
+      files: [{ path: "a.txt", bytes: Buffer.from("a") }],
+    });
+    const root = layout.primaryDescriptor + (joliet ? SECTOR : 0) + 156;
+    bytes[root] = 36;
+    if (joliet) bytes[root + 32] = 2;
+    const snapshot = await scanCanonicalArtifactInventory(await fixture(bytes));
+    const rows = new Map(
+      snapshot.occurrences.map((row) => [row.logical_path, row]),
+    );
+    expect(rows.get("a.txt")).toMatchObject({
+      declared_size: 1,
+      hash_status: "verified",
+    });
+  },
+);
+
 it.each([
   ["associated", 0x04],
   ["hidden", 0x01],

@@ -299,6 +299,58 @@ it("rejects a terminator whose descriptor version is not 1", () => {
   });
 });
 
+it.each([36, 48, 68, 255])(
+  "reads a descriptor root record whose length byte is %i from its 34-byte field",
+  (length) => {
+    const { bytes, layout } = buildIso9660Image();
+    const root = layout.primaryDescriptor + 156;
+    bytes[root] = length;
+    expect(descriptors(bytes)).toMatchObject({
+      ok: true,
+      value: {
+        primaryRoot: {
+          offset: root,
+          extentLocation: bytes.readUInt32LE(root + 2),
+          dataLength: bytes.readUInt32LE(root + 10),
+        },
+      },
+    });
+  },
+);
+
+it("reads a Joliet root identifier stored as a 2-byte UCS-2 NUL", () => {
+  const { bytes, layout } = buildIso9660Image({ joliet: true });
+  const root = layout.primaryDescriptor + ISO9660_SECTOR_BYTES + 156;
+  bytes[root] = 36;
+  bytes[root + 32] = 2;
+  expect(descriptors(bytes)).toMatchObject({
+    ok: true,
+    value: {
+      nameSource: "joliet",
+      jolietRoot: {
+        offset: root,
+        extentLocation: bytes.readUInt32LE(root + 2),
+      },
+    },
+  });
+});
+
+it.each([
+  ["a length byte below 34", 0, 33, "root_directory_record"],
+  ["a 2-byte primary root identifier", 32, 2, "identifier_length"],
+] as const)(
+  "keeps a descriptor root record with %s malformed",
+  (_case, at, value, field) => {
+    const { bytes, layout } = buildIso9660Image();
+    const offset = layout.primaryDescriptor + 156 + at;
+    bytes[offset] = value;
+    expect(descriptors(bytes)).toMatchObject({
+      ok: false,
+      error: { failure: { kind: "malformed", offset, field } },
+    });
+  },
+);
+
 it("decodes both date forms and leaves unrecorded dates null", () => {
   expect(
     decodeIso9660RecordDate(Uint8Array.from([124, 1, 2, 3, 4, 5, 0xfc]), 0),
