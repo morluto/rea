@@ -241,16 +241,20 @@ class TraceStreamRead {
     }
     let event: TraceEvent | undefined;
     try {
-      event = projectTraceEvent(raw, {
-        event_id: traceIdentity("trace_event", [member.member_id, line.line]),
-        stream_id: this.stream.stream_id,
-        ordinal: line.line - 1,
-        source: {
-          member_id: member.member_id,
-          line: line.line,
-          record_pointer: raw.type === "resource-snapshot" ? "/snapshot" : "",
+      event = projectTraceEvent(
+        raw,
+        {
+          event_id: traceIdentity("trace_event", [member.member_id, line.line]),
+          stream_id: this.stream.stream_id,
+          ordinal: line.line - 1,
+          source: {
+            member_id: member.member_id,
+            line: line.line,
+            record_pointer: raw.type === "resource-snapshot" ? "/snapshot" : "",
+          },
         },
-      });
+        inventory.limits.nesting_depth,
+      );
     } catch (cause) {
       if (!(cause instanceof CaptureFormatError)) throw cause;
       this.diagnostic(line.line, "malformed-record", cause.message);

@@ -565,6 +565,9 @@ it("validates malformed syntax, duplicate keys, and nesting limits inside skippe
       playwrightTraceLimits({ nesting_depth: 66 }),
     );
     if (!raisedDepth.ok) throw raisedDepth.error;
+    expect(raisedDepth.value.diagnostics).not.toContainEqual(
+      expect.objectContaining({ code: "malformed-record" }),
+    );
 
     const firstLineResult = await new PlaywrightTraceDecoder(resources).inspect(
       skippedFirstLine.path,
@@ -578,6 +581,45 @@ it("validates malformed syntax, duplicate keys, and nesting limits inside skippe
         expect.objectContaining({ code: "unknown-stream-version" }),
       ]),
     );
+  } finally {
+    await resources.close();
+  }
+});
+
+it("projects a deep network record under the raised trace_limits.nesting_depth", async () => {
+  const base = await playwrightTraceFixture();
+  const [first] = base.network.split("\n").filter(Boolean);
+  const record = JSON.parse(first!) as { snapshot: Record<string, unknown> };
+  // An extension nested past the 64-level default, inside an otherwise
+  // ordinary resource snapshot.
+  let deep: unknown = 0;
+  for (let level = 0; level < 66; level++) deep = [deep];
+  record.snapshot._deep = deep;
+  const fixture = await playwrightTraceFixture({
+    trace: base.trace,
+    network: `${JSON.stringify(record)}\n`,
+  });
+  const resources = new ArtifactResourceScope();
+  try {
+    const refused = await new PlaywrightTraceDecoder(resources).inspect(
+      fixture.path,
+      playwrightTraceLimits(),
+    );
+    if (refused.ok) throw new Error("Expected nesting-depth refusal");
+    expect(refused.error.limit).toMatchObject({
+      parameter: "trace_limits.nesting_depth",
+    });
+    const raised = await new PlaywrightTraceDecoder(resources).inspect(
+      fixture.path,
+      playwrightTraceLimits({ nesting_depth: 80 }),
+    );
+    if (!raised.ok) throw raised.error;
+    expect(raised.value.diagnostics).not.toContainEqual(
+      expect.objectContaining({ code: "malformed-record" }),
+    );
+    expect(
+      raised.value.events.filter((event) => event.kind === "network"),
+    ).toHaveLength(1);
   } finally {
     await resources.close();
   }

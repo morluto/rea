@@ -73,9 +73,13 @@ export const playwrightTraceLimitsSchema = z.strictObject({
   nesting_depth: traceLimitField("nesting_depth"),
 });
 
+export type PlaywrightTraceLimitsInput = z.infer<
+  typeof playwrightTraceLimitsSchema
+>;
+
 /** Omitted fields resolve to their defaults; explicit values are kept. */
 export const playwrightTraceLimits = (
-  selected?: z.infer<typeof playwrightTraceLimitsSchema>,
+  selected?: PlaywrightTraceLimitsInput,
 ): PlaywrightTraceLimits => {
   const resolved: Record<string, number> = {};
   for (const field of Object.keys(

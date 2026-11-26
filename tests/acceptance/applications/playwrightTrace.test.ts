@@ -75,9 +75,16 @@ cliTest(
     expect(parseMcpToolError(response).error).toMatchObject(expected);
     const raised = await call("inspect_playwright_trace", {
       path: fixture.path,
+      detail: "complete",
       trace_limits: { nesting_depth: 66 },
     });
     expect(raised.isError, JSON.stringify(raised)).not.toBe(true);
+    // The caller's selection is recorded as given, without filled defaults.
+    expect(parseEvidence(raised.structuredContent).parameters).toEqual({
+      path: fixture.path,
+      decoder_profile: "playwright-trace-v10",
+      trace_limits: { nesting_depth: 66 },
+    });
   },
 );
 
