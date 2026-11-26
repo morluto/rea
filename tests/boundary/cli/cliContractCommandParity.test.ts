@@ -1782,9 +1782,21 @@ describe("Positional selectors with a named option", () => {
           !admits(description.fields[parameter.field]!, undefined),
       );
       const { required } = option;
+      const otherRequired = Object.fromEntries(
+        description.parameters
+          .filter(
+            (other) =>
+              other !== parameter &&
+              (other.selectorOption === undefined
+                ? !admits(registeredField(description, other), undefined)
+                : other.selectorOption.required),
+          )
+          .map((other) => [other.key, requiredValue(description, other)]),
+      );
       const admit = (values: Record<string, unknown>) =>
         admitOptions(description, {
           [description.sessionTarget?.key ?? "path"]: "rel/app",
+          ...otherRequired,
           ...values,
         });
       const selected = (values: Record<string, unknown>) => {
@@ -1831,9 +1843,21 @@ describe("Positional selectors with a named option", () => {
     "%s maps its alternative selector option onto the same field",
     (_command, description, parameter, alternative) => {
       const option = parameter.selectorOption!;
+      const otherRequired = Object.fromEntries(
+        description.parameters
+          .filter(
+            (other) =>
+              other !== parameter &&
+              (other.selectorOption === undefined
+                ? !admits(registeredField(description, other), undefined)
+                : other.selectorOption.required),
+          )
+          .map((other) => [other.key, requiredValue(description, other)]),
+      );
       const admit = (values: Record<string, unknown>) =>
         admitOptions(description, {
           [description.sessionTarget?.key ?? "path"]: "rel/app",
+          ...otherRequired,
           ...values,
         });
       const alone = admit({ [alternative.valueKey]: "0x10" });

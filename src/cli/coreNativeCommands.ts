@@ -327,4 +327,62 @@ const registerProcedureSelectorCommands = (
     },
     run,
   );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(
+      ENHANCED_TOOL_CONTRACTS,
+      "reconstruct_procedure_hardware_interactions",
+    ),
+    {
+      description: `Reconstruct MMIO and peripheral register interactions for one native firmware procedure. ${addressOrProcedureGuidance} ${equalSelectorGuidance}`,
+      sessionTarget: nativeTarget("Local firmware or executable path", true),
+      positionals: ["procedure"],
+      selectorOptions: {
+        procedure: {
+          name: "procedure",
+          description: `Procedure selector; use this option for symbols beginning with a dash. ${addressOrProcedureGuidance}`,
+          kind: "native",
+        },
+      },
+      jsonInputs: {
+        devicetree:
+          "Expected inline JSON or a readable JSON file path for --devicetree",
+      },
+      fields: {
+        procedure: {
+          description: `Procedure name or canonical address. ${addressOrProcedureGuidance}`,
+        },
+        hardware_architecture: {
+          name: "hardware-architecture",
+          description:
+            "Target CPU architecture (arm, cortex-m, xtensa, riscv, arm64, x86, mips)",
+        },
+        platform: {
+          description: "Optional explicit SoC catalog family",
+        },
+        board: {
+          description: "Optional known development board profile",
+        },
+        svd_xml: {
+          name: "svd-xml",
+          description: "Optional inline CMSIS-SVD XML description",
+        },
+        devicetree: {
+          description:
+            "Optional parsed Flattened Devicetree JSON or JSON file path",
+        },
+        esp_chip_id: {
+          name: "esp-chip-id",
+          description:
+            "Optional ESP image header chip_id from inspect-artifact",
+        },
+        uf2_family_id: {
+          name: "uf2-family-id",
+          description: "Optional UF2 region family_id from inspect-artifact",
+        },
+      },
+    },
+    run,
+  );
 };

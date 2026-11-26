@@ -8,13 +8,17 @@ import type { EffectAudit } from "./toolEffects.js";
 import {
   toolContractMetadata,
   providerEffects,
+  providerNetworkEvidenceEffects,
   providerRemoteEffects,
   providerUiNetworkEvidenceEffects,
   toolEffects,
 } from "./toolEffects.js";
 import { enhancedOutputSchemas } from "./toolOutputSchemaGroups.js";
 
-type FunctionWorkflowName = "analyze_function" | "inspect_native_api";
+type FunctionWorkflowName =
+  | "analyze_function"
+  | "inspect_native_api"
+  | "reconstruct_procedure_hardware_interactions";
 
 /**
  * MCP inputs: the provider input plus analyze_function's delivery detail, which
@@ -26,11 +30,14 @@ export const functionWorkflowInputSchemas = {
     detail: analysisDetailSummaryDefaultSchema,
   }),
   inspect_native_api: enhancedInputSchemas.inspect_native_api,
+  reconstruct_procedure_hardware_interactions:
+    enhancedInputSchemas.reconstruct_procedure_hardware_interactions,
 } as const;
 
 /** The contracts below that the CLI exposes as commands. */
 const FUNCTION_WORKFLOW_CLI_CONTRACTS: ReadonlySet<string> = new Set([
   "inspect_native_api",
+  "reconstruct_procedure_hardware_interactions",
 ]);
 
 const functionWorkflow = <Name extends FunctionWorkflowName>(
@@ -76,5 +83,10 @@ export const FUNCTION_WORKFLOW_TOOL_CONTRACTS = [
       changesUiState: true,
     }),
     "Inspect recovered parameter/return boundary types and jump-table dispatch for one native function selected by symbol or address. Returns confidence, supporting Evidence, case/data/target mappings, unsupported facets and residual unknowns. Null case values are unresolved, never known defaults. Use analyze_function for the broader function dossier.",
+  ),
+  functionWorkflow(
+    "reconstruct_procedure_hardware_interactions",
+    providerNetworkEvidenceEffects,
+    "Reconstruct MMIO and peripheral register interactions from outgoing procedure_references for one native firmware procedure. Resolves architectural memory regions, optional SoC/board catalogs (or esp_chip_id / uf2_family_id container hints), and optional caller-supplied CMSIS-SVD XML or parsed Devicetree maps while preserving Evidence provenance, register aliases, ambiguous controller windows, unsettled board facts, and limitations.",
   ),
 ] as const satisfies readonly ToolContract[];

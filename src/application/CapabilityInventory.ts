@@ -271,6 +271,7 @@ const ENHANCED_REQUIREMENTS: ReadonlyMap<string, ProviderComposition> = new Map(
     ],
     analyze_function: ["analyze_function"],
     inspect_native_api: ["analyze_function"],
+    reconstruct_procedure_hardware_interactions: ["procedure_references"],
     trace_feature: [
       "search_strings",
       "search_procedures",

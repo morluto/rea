@@ -621,3 +621,53 @@ headers declare a Qualcomm hash segment is inventoried as `qualcomm-mbn` with it
 table and per program header hash offsets, while binary target resolution
 still reads it as ELF. Signatures and certificates are located, not verified,
 and hashes are not recomputed. See [Qualcomm MBN images](qualcomm-mbn-images.md).
+
+## Reconstruct MCU peripheral and MMIO interactions
+
+After opening an ELF or [headerless raw-binary](../../providers/raw-binary.md)
+firmware target in a native analysis provider, use
+`reconstruct_procedure_hardware_interactions` /
+`rea reconstruct-procedure-hardware-interactions` to map outgoing
+`procedure_references` from one procedure onto architectural memory regions,
+built-in SoC/board catalogs, or a caller-supplied CMSIS-SVD or Flattened
+Devicetree map:
+
+```sh
+rea reconstruct-procedure-hardware-interactions /path/to/dump.bin 0x80001c4 \
+  --target-format raw-binary --architecture arm --architecture-variant armv7-m \
+  --base-address 0x08000000 --hardware-architecture cortex-m \
+  --platform stm32f4 --provider ghidra --json
+```
+
+For MCP, open the binary first, then pass `procedure`, `hardware_architecture`
+(`arm`, `cortex-m`, `xtensa`, `riscv`, `arm64`, `x86`, or `mips`), and optional
+target maps (`platform`, `board`, `esp_chip_id` or `uf2_family_id` from
+`inspect_artifact`, or either `svd_xml` or `devicetree` from
+[`inspect_devicetree`](../../devicetree.md)). Cortex-M bit-band aliases
+(`0x42000000..0x43ffffff`) and RP2040 atomic register aliases (`XOR`, `SET`,
+`CLR`) unwrap to their canonical peripheral offset while preserving the alias
+kind and bit index in `registerAlias`.
+
+### Hardware claims and budgets
+
+Every hardware statement carries its rule and basis in `hardwareClaims`:
+
+| Rule                    | Settled basis         | Stays unsettled when                                                             |
+| ----------------------- | --------------------- | -------------------------------------------------------------------------------- |
+| `observed-address`      | `observed_address`    | the address comes from rounding a page the instruction did not access            |
+| `chip-manual-name`      | `chip_manual`         | no observed address falls inside a controller window of the active chip map      |
+| `architecture-register` | `architecture_manual` | the register placement is chosen by the board, such as a GIC, CLINT or PLIC map  |
+| `explicit-profile`      | `explicit_profile`    | no caller-selected memory map or register placement covers the window            |
+| `instruction-decode`    | `instruction`         | the image's own bit operations do not compute the field split                    |
+| `installed-part`        | `observed_address`    | a probe table lists multiple parts, `answered` is false, or only a name is given |
+| `driver-linkage`        | `observed_address`    | a string's presence is treated as proof that the driver runs during boot         |
+| `board-record`          | — (`unsettled` only)  | always unsettled; records unbound board devices or open board-level uncertainty  |
+
+Tied SoC catalog candidates and equal-sized overlapping custom windows preserve
+observed MMIO coverage while leaving `controllerName` `null` and recording the
+ambiguity in `limitations`. Inline `svd_xml` inputs are bounded to 16 MiB,
+500,000 XML nodes, 1,024 `<dim>` elements per array, 32,768 expanded registers,
+65,536 expansion steps, 16 MiB of expanded text characters, depth 64 for cluster
+nesting and register/cluster `derivedFrom` chains, and acyclic iterative
+peripheral `derivedFrom` resolution; `devicetree` bus translations enforce FDT
+0..4 cell widths, 4,096 `ranges` cells per bus, and depth 256.

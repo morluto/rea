@@ -19,6 +19,7 @@ const PROCEDURE_OPERATIONS: ReadonlySet<string> = new Set([
   "procedure_pseudo_code",
   "procedure_references",
   "read_function_instructions",
+  "reconstruct_procedure_hardware_interactions",
   "trace_native_values",
 ]);
 

@@ -86,6 +86,8 @@ import {
 import { traceLiteralFeature } from "./EnhancedLiteralTracing.js";
 import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import { projectNativeApiInspection } from "./native/NativeApiInspection.js";
+import { projectHardwarePeripheralReconstruction } from "../domain/firmware/hardwarePeripheralReconstructionSchema.js";
+import { reconstructProcedureHardwareInteractions } from "./firmware/HardwarePeripheralReconstructionService.js";
 
 type BatchResolution = {
   readonly address: string;
@@ -142,6 +144,15 @@ export class EnhancedTools {
       }
       case "inspect_native_api": {
         const parsed = enhancedInputSchemas.inspect_native_api.safeParse(input);
+        return parsed.success
+          ? this.executeValidated({ name, input: parsed.data }, signal)
+          : invalidEnhancedInput(name, parsed.error, input);
+      }
+      case "reconstruct_procedure_hardware_interactions": {
+        const parsed =
+          enhancedInputSchemas.reconstruct_procedure_hardware_interactions.safeParse(
+            input,
+          );
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
           : invalidEnhancedInput(name, parsed.error, input);
@@ -223,6 +234,8 @@ export class EnhancedTools {
         return this.#analyzeFunction(call.input, signal);
       case "inspect_native_api":
         return this.#inspectNativeApi(call.input, signal);
+      case "reconstruct_procedure_hardware_interactions":
+        return this.#reconstructHardware(call.input, signal);
       case "trace_feature":
         return traceLiteralFeature(this.#observed, call.input, signal);
       case "trace_call_path":
@@ -260,6 +273,26 @@ export class EnhancedTools {
     if (!parsed.ok) return parsed;
     return ok(
       ownedJsonValueSchema.parse(projectNativeApiInspection(parsed.value)),
+    );
+  }
+
+  async #reconstructHardware(
+    input: z.output<
+      typeof enhancedInputSchemas.reconstruct_procedure_hardware_interactions
+    >,
+    signal?: AbortSignal,
+  ): EnhancedResult {
+    const { hardware_architecture, ...rest } = input;
+    const reconstructed = await reconstructProcedureHardwareInteractions(
+      this.analysis,
+      { ...rest, architecture: hardware_architecture },
+      signal === undefined ? undefined : { signal },
+    );
+    if (!reconstructed.ok) return reconstructed;
+    return ok(
+      ownedJsonValueSchema.parse(
+        projectHardwarePeripheralReconstruction(reconstructed.value),
+      ),
     );
   }
 

@@ -310,7 +310,10 @@ not been exercised.
   the loop start, and `le` had no fall-through. Code after such a loop may be
   left undisassembled; `armv8.1-m.main` results say so.
 - Reset vectors, memory-mapped I/O, and firmware boot sequences are not
-  emulated.
+  emulated. After opening an image, use
+  [`reconstruct_procedure_hardware_interactions`](../guides/firmware/firmware-analysis.md#reconstruct-mcu-peripheral-and-mmio-interactions)
+  to attribute outgoing procedure references to architectural, SoC, CMSIS-SVD,
+  or Devicetree peripheral windows.
 - Independent load-image verification covers source identity, mapped file
   bytes, the bound language, and the caller-supplied entry. Original bytes
   stay unchanged.

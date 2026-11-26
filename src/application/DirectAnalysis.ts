@@ -991,6 +991,7 @@ const isWorkflowEvidenceTool = (
 ): tool is DirectEnhancedToolName =>
   tool === "binary_overview" ||
   tool === "inspect_native_api" ||
+  tool === "reconstruct_procedure_hardware_interactions" ||
   tool === "inspect_native_dispatch_metadata" ||
   tool === "trace_feature" ||
   tool === "trace_native_values" ||

@@ -944,6 +944,17 @@ extracted region as `raw-binary` with its start address as `entry_point`. UF2
 numbering gaps leave coverage unknown; a DfuSe suffix CRC mismatch follows
 `integrity_policy`. See [UF2 and DfuSe](https://github.com/morluto/rea/blob/main/docs/uf2-dfuse.md).
 
+After opening an MCU ELF or `raw-binary` target, use
+`reconstruct_procedure_hardware_interactions` (`rea reconstruct-procedure-hardware-interactions`)
+with `procedure` and `hardware_architecture` to map outgoing `procedure_references`
+to MMIO blocks and registers. Pass `esp_chip_id` or `uf2_family_id` from
+`inspect_artifact`, `platform`/`board`, or either `svd_xml` or `devicetree`
+from `inspect_devicetree` (never both). Tied SoC candidates, overlapping custom
+windows, multi-part probe tables, and driver strings stay unresolved or
+unsettled; do not report a support table or driver string as an installed part
+or executed boot step. See
+[firmware peripheral reconstruction](https://github.com/morluto/rea/blob/main/docs/guides/firmware/firmware-analysis.md#reconstruct-mcu-peripheral-and-mmio-interactions).
+
 ### Function annotations in Ghidra
 
 Fresh-import sessions admit annotations; existing-project reuse is read-only.

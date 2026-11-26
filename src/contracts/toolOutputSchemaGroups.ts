@@ -1,5 +1,6 @@
 import { coverageStatusSchema } from "../domain/coverage.js";
 import { discardedCheckpointEditsSchema } from "../domain/engineCloseReport.js";
+import { hardwarePeripheralReconstructionResultSchema } from "../domain/firmware/hardwarePeripheralReconstructionSchema.js";
 import { procedureReferencesSchema } from "../domain/native/procedureReferences.js";
 import {
   nativeAddressListSchema,
@@ -426,6 +427,9 @@ export const enhancedOutputSchemas = {
     nativeFunctionSummaryViewResultSchema,
   ),
   inspect_native_api: evidenceResultOf(nativeApiInspectionResultSchema),
+  reconstruct_procedure_hardware_interactions: evidenceResultOf(
+    hardwarePeripheralReconstructionResultSchema,
+  ),
   trace_feature: literalTraceOutput,
   trace_call_path: callPathTraceOutput,
 } as const satisfies Readonly<Record<string, z.ZodObject>>;
