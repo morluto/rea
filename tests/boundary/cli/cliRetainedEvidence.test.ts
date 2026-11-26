@@ -912,6 +912,6 @@ it.each([false, true])(
     const reordered = await publish([extra, reorderedSource]);
     expect(reordered).toEqual(expanded);
     expect((await stat(reordered.path)).ino).toBe(before.ino);
-    expect(await readFile(reordered.path)).toEqual(publishedBytes);
+    expect((await readFile(reordered.path)).equals(publishedBytes)).toBe(true);
   },
 );
