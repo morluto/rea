@@ -284,6 +284,7 @@ it("seeds each local partition and each top-level session before resuming its sc
   }
   const local = '"local":[["local-seed","local-value"]]';
   const session = '"session":[["session-seed","session-value"]]';
+  const emptySession = '"session":[]';
   expect(rootWrites().map(({ params }) => params)).toMatchObject([
     {
       callFrameId: "seed-frame",
@@ -291,7 +292,7 @@ it("seeds each local partition and each top-level session before resuming its sc
     },
     {
       callFrameId: "seed-frame",
-      expression: expect.stringContaining(`${local},${session}`),
+      expression: expect.stringContaining(`${local},${emptySession}`),
     },
     {
       callFrameId: "seed-frame",
@@ -708,7 +709,46 @@ it("shares once-per-origin ownership between the init bridge and CDP seeder", as
   await owner?.close();
 });
 
-it("seeds session storage once per namespace and StorageKey", async () => {
+it("treats Chrome's trailing-slash StorageKey as the init-script origin", async () => {
+  const cdp = new FakeCdp();
+  const { page, contextApi } = fixture(cdp);
+  let bridge:
+    | ((
+        source: { readonly page: unknown },
+        command: DeclaredBrowserStorageSeedCommand,
+        area?: "local" | "session",
+        origin?: string,
+      ) => boolean | void)
+    | undefined;
+  Object.assign(contextApi, {
+    exposeBinding: async (
+      _name: string,
+      callback: NonNullable<typeof bridge>,
+    ) => {
+      bridge = callback;
+    },
+    addInitScript: async () => undefined,
+  });
+  const owner = await createInitializedStorage(contextApi, page);
+  const origin = "https://storage.example.test";
+  cdp.storageKey = `${origin}/`;
+  emitSeedPause(cdp);
+  await owner?.settle();
+  expect(
+    cdp.calls.filter(({ method }) => method === "Debugger.evaluateOnCallFrame"),
+  ).toHaveLength(1);
+  expect(bridge?.({ page }, "was", "local", origin)).toBe(true);
+  expect(bridge?.({ page }, "was", "session", origin)).toBe(true);
+
+  emitSeedPause(cdp);
+  await owner?.settle();
+  expect(
+    cdp.calls.filter(({ method }) => method === "Debugger.evaluateOnCallFrame"),
+  ).toHaveLength(1);
+  await owner?.close();
+});
+
+it("seeds session storage once per top-level origin", async () => {
   const cdp = new FakeCdp();
   const { page, contextApi } = fixture(cdp);
   const base = scenario();
@@ -731,7 +771,7 @@ it("seeds session storage once per namespace and StorageKey", async () => {
 
   expect(
     cdp.calls.filter(({ method }) => method === "Debugger.evaluateOnCallFrame"),
-  ).toHaveLength(2);
+  ).toHaveLength(1);
   await owner?.close();
 });
 
