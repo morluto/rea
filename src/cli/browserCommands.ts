@@ -1,6 +1,6 @@
 import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
 
-import { Cli } from "incur";
+import type { CliInstance } from "./types.js";
 
 import { browserCliError } from "./browserCliError.js";
 import { createBrowserObservationProvider } from "../composition/browserObservation.js";
@@ -12,6 +12,7 @@ import {
 } from "../application/BrowserObservationService.js";
 
 import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
+import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
 
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { Logger } from "pino";
@@ -28,7 +29,7 @@ import { cliProgressReporter } from "./cliProgress.js";
 
 /** Register CLI equivalents of the passive browser MCP tools. */
 export const registerBrowserCommands = (
-  cli: ReturnType<typeof Cli.create>,
+  cli: CliInstance,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
 ): void => {
@@ -85,8 +86,33 @@ export const registerBrowserCommands = (
           description: "Include content-derived storage fingerprints",
         },
       },
+      evidenceDelivery: true,
     },
-    observeThroughBrowser(inspectPage, inspectWebPage),
+    async (input, { signal, delivery }) => {
+      // Delivery fields select the reply; the capture takes the rest.
+      const parsed = inspectWebPageInputSchema.safeParse(input);
+      if (!parsed.success)
+        return browserCliError(
+          analysisInputErrorFromIssues(
+            inspectPage.name,
+            parsed.error.issues,
+            input,
+          ),
+        );
+      const provider = createBrowserObservationProvider();
+      return deliverCliAnalysisEvidence({
+        ...delivery!,
+        run: () => inspectWebPage(provider, parsed.data, { signal }),
+        service: {
+          close: async () => {
+            await provider.close?.();
+          },
+        },
+        providerId: provider.identity().id,
+        operation: inspectPage.name,
+        signal,
+      });
+    },
   );
   registerBundleAnalysis(cli, logger, environment);
   const observeSession = contractNamed(
@@ -118,7 +144,7 @@ export const registerBrowserCommands = (
 };
 
 const registerBundleAnalysis = (
-  cli: ReturnType<typeof Cli.create>,
+  cli: CliInstance,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
 ): void => {

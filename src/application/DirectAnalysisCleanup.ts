@@ -14,10 +14,11 @@ import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, type Result } from "../domain/result.js";
 import type { AnalysisExecution } from "../ports/AnalysisProvider.js";
-import type { BinarySession } from "./binary/BinarySession.js";
+import type { BinarySessionPort } from "./binary/BinarySessionPort.js";
 import {
   analysisErrorWithCleanupFailure,
   analysisErrorWithCloseRejection,
+  withInheritedCleanupOwnership,
 } from "../domain/analysisErrorCleanup.js";
 import { withEvidenceCallerInputPath } from "../domain/evidence.js";
 import { recognizeEvidence } from "../domain/evidenceValidation.js";
@@ -89,7 +90,7 @@ export const projectDirectAnalysisFailure = (
 
 /** Await one-shot cleanup and retain either the outcome or both failures. */
 export const withSessionCleanup = async <Value>(
-  session: BinarySession,
+  session: Pick<BinarySessionPort, "close">,
   operation: () => Promise<Value>,
   onCleanupFailure: (value: Value, error: AnalysisError) => Value,
 ): Promise<Value> => {
@@ -177,9 +178,5 @@ export const managedAnalysisCleanupFailure = (
       ),
     },
   );
-  return err(
-    error.cleanupIncomplete
-      ? failure.bindCleanupDependencies([error])
-      : failure,
-  );
+  return err(withInheritedCleanupOwnership(failure, error));
 };

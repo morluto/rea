@@ -15,15 +15,17 @@ import {
   carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { ownershipPreparationError } from "../providers/ownedProcessAvailability.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
   InternalInvariantError,
   invariantViolation,
 } from "../domain/internalInvariant.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   prepareOwnedCommand,
+  preparationHostCapacityFailure,
   runOwnedCommand,
   OwnedCommandFailure,
 } from "../process/OwnedCommand.js";
@@ -221,23 +223,12 @@ export const inspectJadxJava = async (
               },
             },
           });
-        } else if (preparation !== undefined && command?.reason !== "timeout") {
-          primary = new ProviderAdapterError("jadx", operation, {
-            cause,
-            ...(output === undefined ? {} : { capturedOutput: output }),
-            diagnostics: {
-              stage: "ownership_preparation",
-              ...(!(
-                preparation instanceof DarwinProcessOwnershipInspectionError
-              ) || preparation.compilerOutcome === undefined
-                ? {}
-                : {
-                    compiler_outcome: jsonValueSchema.parse(
-                      preparation.compilerOutcome,
-                    ),
-                  }),
-            },
-          });
+        } else if (
+          preparation !== undefined &&
+          command?.reason !== "timeout" &&
+          hostConstraint === undefined
+        ) {
+          primary = ownershipPreparationError("jadx", operation, cause, output);
         } else if (cause instanceof AnalysisError) {
           primary = cause;
         } else if (cause instanceof InternalInvariantError) {
@@ -295,7 +286,9 @@ const hostLaunchConstraint = (
   command: Pick<OwnedCommandFailure, "processError"> | undefined,
   cause: unknown,
 ) => {
-  const launch = launcherFailureOf(command?.processError ?? cause);
+  const launch =
+    preparationHostCapacityFailure(cause) ??
+    launcherFailureOf(command?.processError ?? cause);
   return launch?.kind === "host-exhausted" || launch?.kind === "argument-list"
     ? launch
     : undefined;

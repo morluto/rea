@@ -7,14 +7,17 @@ import {
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
+  BinaryReader,
   BinaryResourceFailure,
   createFileMappingIndex,
-  mappedFileOffset,
   isZeroFilledSpan,
   type BinaryContainer,
   type FileMappingIndex,
 } from "../domain/binaryContainer.js";
-import { readBinaryContainer } from "../domain/native/readBinaryContainer.js";
+import {
+  readBinaryContainer,
+  readBinaryContainerCooperative,
+} from "../domain/native/readBinaryContainer.js";
 import {
   requireSelectedNativeImage,
   type SelectedNativeImage,
@@ -31,14 +34,11 @@ import {
   ElfPointerRelocationFailure,
   type ElfVirtualPointerWrites,
 } from "../domain/native/elfPointerRelocations.js";
-import {
-  Il2cppBinaryFormatFailure,
-  IL2CPP_BINARY_BYTES,
-} from "./Il2cppBinaryFormat.js";
+import { DEFAULT_IL2CPP_NATIVE_INDEX_BYTES } from "../domain/il2cpp/il2cppMetadata.js";
+import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
 
-/** Selection failures name the binary's inputs and IL2CPP's public spellings. */
+/** Selection failures name the binary's architecture input and IL2CPP's public spellings. */
 const IL2CPP_SLICE_SELECTION_INPUT: SliceSelectionInput = {
-  pathField: "binary_path",
   architectureField: "binary_architecture",
   spelling: Object.fromEntries(
     Object.entries(IL2CPP_SLICE_SELECTORS).map(([publicName, selector]) => [
@@ -50,8 +50,9 @@ const IL2CPP_SLICE_SELECTION_INPUT: SliceSelectionInput = {
 
 /**
  * Select the thin image of the caller's binary: IL2CPP's `binary_architecture`
- * maps onto the shared slice selector here, once, and a selection failure
- * names `binary_architecture` or `binary_path`.
+ * maps onto the shared slice selector here, once. A refused selection names
+ * `binary_architecture`; a universal container format failure is a target
+ * refusal at the binary's own path.
  */
 export const requireIl2cppBinaryImage = (
   operation: string,
@@ -70,10 +71,13 @@ export const requireIl2cppBinaryImage = (
   );
 
 export interface NativeImage {
-  readonly bytes: Buffer;
+  /** Stored file coordinates only; virtual translation and fixups stay separate. */
+  readonly stored: BinaryReader;
   readonly container: BinaryContainer;
   /** One image's immutable load mappings, shared by stored and loader-aware reads. */
   readonly fileMappings: FileMappingIndex;
+  /** Indexed executable load mappings for constant/log-time code ownership checks. */
+  readonly executableMappings: FileMappingIndex;
   readonly imageBase: bigint;
   /** ELF loader writes retain virtual identity; source bytes stay unchanged. */
   readonly elfPointerOverlay?: ElfVirtualPointerWrites;
@@ -81,28 +85,55 @@ export interface NativeImage {
   readonly machoPointerFixups?: PointerFixups;
 }
 
-/** Open one thin image; a universal Mach-O slice is selected before this. */
-export function* openImageSteps(image: Buffer): Generator<void, NativeImage> {
-  let container: BinaryContainer;
+const OPERATION = "inspect_il2cpp_metadata";
+
+const rejectContainer = (cause: unknown): never => {
+  if (cause instanceof BinaryResourceFailure)
+    throw new Il2cppBinaryFormatFailure(
+      "native-index-capacity",
+      cause.message,
+      cause.failure.limit.maximum,
+      "bytes",
+    );
+  if (cause instanceof BinaryFormatFailure)
+    throw new Il2cppBinaryFormatFailure(
+      cause.kind === "unsupported"
+        ? "unsupported-container"
+        : "malformed-container",
+      cause.message,
+    );
+  throw cause;
+};
+
+const readContainer = (image: Buffer): BinaryContainer => {
   try {
-    container = readBinaryContainer(image);
+    return readBinaryContainer(image, OPERATION);
   } catch (cause) {
-    if (cause instanceof BinaryResourceFailure)
-      throw new Il2cppBinaryFormatFailure(
-        "native-index-capacity",
-        cause.message,
-        cause.failure.limit.maximum,
-        "bytes",
-      );
-    if (cause instanceof BinaryFormatFailure)
-      throw new Il2cppBinaryFormatFailure(
-        cause.kind === "unsupported"
-          ? "unsupported-container"
-          : "malformed-container",
-        cause.message,
-      );
-    throw cause;
+    return rejectContainer(cause);
   }
+};
+
+export const readIl2cppBinaryContainerCooperative = async (
+  image: Buffer,
+  pause: () => Promise<void>,
+): Promise<BinaryContainer> => {
+  try {
+    return await readBinaryContainerCooperative(image, OPERATION, pause);
+  } catch (cause) {
+    return rejectContainer(cause);
+  }
+};
+
+/**
+ * Open one thin image; a universal Mach-O slice is selected before this.
+ * `maximumIndexBytes` is the caller's ELF pointer index allowance.
+ */
+export function* openImageSteps(
+  image: Buffer,
+  preparedContainer?: BinaryContainer,
+  maximumIndexBytes: number = DEFAULT_IL2CPP_NATIVE_INDEX_BYTES,
+): Generator<void, NativeImage> {
+  const container = preparedContainer ?? readContainer(image);
   if (container.bits !== 64 || container.byte_order !== "little")
     throw new Il2cppBinaryFormatFailure(
       "unsupported-container",
@@ -121,7 +152,7 @@ export function* openImageSteps(image: Buffer): Generator<void, NativeImage> {
           mappings: container.mappings,
           zeroFills: container.zero_fills,
         },
-        IL2CPP_BINARY_BYTES,
+        maximumIndexBytes,
         { symbolResolution: "image-definitions" },
       );
   } catch (cause) {
@@ -132,6 +163,7 @@ export function* openImageSteps(image: Buffer): Generator<void, NativeImage> {
           cause.message,
           cause.failure.limit.maximum,
           cause.unit,
+          cause.failure.limit.name,
         );
       if (cause.reason !== "native-index-capacity")
         throw new Il2cppBinaryFormatFailure(cause.reason, cause.message);
@@ -158,7 +190,8 @@ export function* openImageSteps(image: Buffer): Generator<void, NativeImage> {
     // container's architecture names no CPU family this reader decodes.
     if (!selected.ok)
       throw new Il2cppBinaryFormatFailure(
-        selected.error.kind === "malformed"
+        selected.error.kind === "target" &&
+          selected.error.failure.kind !== "unsupported"
           ? "malformed-container"
           : "unsupported-container",
         selected.error.message,
@@ -200,11 +233,15 @@ export function* openImageSteps(image: Buffer): Generator<void, NativeImage> {
     ) ??
     0n;
   return {
-    bytes: image,
+    stored: new BinaryReader(image, true, container.format),
     container,
     fileMappings: createFileMappingIndex(
       container.mappings,
       container.zero_fills,
+    ),
+    executableMappings: createFileMappingIndex(
+      container.executable_mappings ?? [],
+      [],
     ),
     imageBase,
     ...(elfPointerOverlay === undefined ? {} : { elfPointerOverlay }),
@@ -216,7 +253,7 @@ export function* openImageSteps(image: Buffer): Generator<void, NativeImage> {
 const readStoredWord = (image: NativeImage, address: bigint): bigint | null => {
   try {
     const offset = image.fileMappings.offset(address, 8);
-    return image.bytes.readBigUInt64LE(offset);
+    return image.stored.word(offset, 64);
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure) return null;
     throw cause;
@@ -235,7 +272,7 @@ export const readUInt32 = (
       const value = image.elfPointerOverlay.unsignedAt(address, 4);
       return value === undefined ? "unknown" : Number(value);
     }
-    return image.bytes.readUInt32LE(image.fileMappings.offset(address, 4));
+    return image.stored.u32(image.fileMappings.offset(address, 4));
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure) return null;
     throw cause;
@@ -314,10 +351,7 @@ export const hasPointerArrayCoverage = (
 export const isExecutable = (image: NativeImage, address: bigint): boolean => {
   try {
     const offset = image.fileMappings.offset(address, 1);
-    return (
-      offset ===
-      mappedFileOffset(image.container.executable_mappings ?? [], address, 1)
-    );
+    return offset === image.executableMappings.offset(address, 1);
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure) return false;
     throw cause;

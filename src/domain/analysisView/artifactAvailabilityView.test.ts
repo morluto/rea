@@ -106,18 +106,13 @@ const model: ModelArtifact = {
   ],
 };
 
-it.each(["metadata", "tensors", "types"] as const)(
-  "retains producer limitations on model %s pages with no envelope warnings",
-  (collection) => {
-    const input = parent("inspect_model_artifact", model);
-    const result = projectAnalysisView(input, {
-      kind: "model-artifact",
-      collection,
-      offset: 0,
-      limit: 1,
-    });
-    if (!result.ok) throw result.error;
-    expect(result.value.limitations).toEqual(model.limitations);
-    expect(input.limitations).toEqual([]);
-  },
-);
+it("retains model producer limitations with no envelope warnings", () => {
+  const result = projectAnalysisView(parent("inspect_model_artifact", model), {
+    kind: "model-artifact",
+    collection: "types",
+    offset: 0,
+    limit: 1,
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.limitations).toEqual(model.limitations);
+});

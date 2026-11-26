@@ -22,15 +22,15 @@ const target: BinaryTarget = {
   path: "/fixture",
   kind: "database",
   format: "analysis-database",
+  databaseEngine: null,
   sha256: "0".repeat(64),
 };
 
 describe("composite analysis provider", () => {
   it("routes disjoint operations and does not start children during health", async () => {
-    const hopperCalls: string[] = [];
-    const nativeCalls: string[] = [];
-    const hopper = provider("hopper", "address_name", hopperCalls);
-    const native = provider("native", "analyze_function", nativeCalls);
+    const starts: string[] = [];
+    const hopper = provider("hopper", "address_name", starts);
+    const native = provider("native", "analyze_function", starts);
     const composite = new CompositeProvider([hopper, native]);
     const client = composite.createClient(target);
 
@@ -38,12 +38,12 @@ describe("composite analysis provider", () => {
       ok: true,
       value: { result: null, provider: { id: "composite:hopper+native" } },
     });
-    expect(hopperCalls).toEqual([]);
-    expect(nativeCalls).toEqual([]);
+    expect(starts).toEqual([]);
     expect(await client.execute("address_name", {})).toEqual({
       ok: true,
       value: createAnalysisExecution("hopper:address_name", hopper.identity()),
     });
+    expect(starts).toEqual(["hopper"]);
     expect(await client.execute("analyze_function", {})).toEqual({
       ok: true,
       value: createAnalysisExecution(
@@ -55,6 +55,7 @@ describe("composite analysis provider", () => {
       ok: false,
       error: { _tag: "AnalysisCapabilityUnavailableError" },
     });
+    expect(starts).toEqual(["hopper", "native"]);
   });
 
   it("rejects ambiguous provider routes", () => {
@@ -255,21 +256,20 @@ const dynamicProvider = (
 const provider = (
   id: string,
   operation: Exclude<AnalysisOperation, "health">,
-  calls: string[],
+  starts: string[],
 ): AnalysisProvider => {
   const identity: ProviderIdentity = { id, name: id, version: "1" };
   return {
     identity: () => identity,
     capabilities: () => [capability(identity, operation)],
-    createClient: () => ({
-      execute: (called) => {
-        calls.push(called);
-        return Promise.resolve(
+    createClient: () => {
+      starts.push(id);
+      return {
+        execute: async (called) =>
           ok(createAnalysisExecution(`${id}:${called}`, identity)),
-        );
-      },
-      close: () => Promise.resolve(ok(null)),
-    }),
+        close: async () => ok(null),
+      };
+    },
   };
 };
 

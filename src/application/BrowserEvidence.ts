@@ -53,6 +53,8 @@ import type { JsonValue } from "../domain/jsonValue.js";
 export interface BrowserEvidenceReport {
   readonly source: JsonValue;
   readonly facts: BrowserEvidenceResult;
+  /** Retained Evidence a comparison read its captures from. */
+  readonly evidenceLinks?: readonly string[];
 }
 
 type BrowserEvidenceInput =
@@ -105,6 +107,7 @@ export const createBrowserEvidence = (
   return createEvidence(browserSubject(operation, observed), provider, {
     predicateType: browserPredicate(operation),
     operation,
+    evidenceLinks: report.evidenceLinks ?? [],
     parameters: {
       ...browserParameters(input, result),
       ...(comparison

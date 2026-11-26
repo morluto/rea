@@ -2,9 +2,19 @@ import { Ajv } from "ajv";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 
-import { advertisedInputDialectViolations } from "./advertisedDialect.js";
+import {
+  ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+  advertisedInputDialectViolations,
+  hasAdvertisedInputDialectViolation,
+} from "./advertisedDialect.js";
 import { compactAdvertisedInputSchema } from "./compactInputSchema.js";
-import { stripAnnotations } from "./compactJsonSchema.js";
+import {
+  pruneSchemaBeyondDepth,
+  schemaDepth,
+  inlineWithinBudget,
+  jsonValueSchema,
+} from "./compactJsonSchema.js";
+import { JsonSchemaReferences } from "./jsonSchemaReferences.js";
 
 const serializedBytes = (value: unknown): number =>
   Buffer.byteLength(JSON.stringify(value), "utf8");
@@ -88,7 +98,7 @@ describe("compact advertised input schema", () => {
   it("drops nested annotation prose while keeping validation keywords", () => {
     const { schema, presentation, guidance } = compactAdvertisedInputSchema(
       structuredClone(annotatedSchema),
-      13 * 1024,
+      ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
     );
     expect(presentation).toBe("inline");
     // Root guidance and dependency prose move to the tool description.
@@ -113,19 +123,23 @@ describe("compact advertised input schema", () => {
       description: "saved data",
       default: { keep: "me" },
     };
-    const schema = stripAnnotations({
+    const schema = inlineWithinBudget(
+      {
+        type: "object",
+        properties: {
+          mode: { enum: [literalMode] },
+          pinned: { const: { description: "literal" } },
+        },
+      },
+      16_384,
+      { stripAnnotations: true },
+    );
+    expect(schema).toEqual({
       type: "object",
       properties: {
         mode: { enum: [literalMode] },
         pinned: { const: { description: "literal" } },
       },
-    });
-    const properties = schema.properties as Record<string, unknown>;
-    expect((properties.mode as Record<string, unknown>).enum).toEqual([
-      literalMode,
-    ]);
-    expect((properties.pinned as Record<string, unknown>).const).toEqual({
-      description: "literal",
     });
   });
 
@@ -143,7 +157,7 @@ describe("compact advertised input schema", () => {
     };
     const { schema, presentation } = compactAdvertisedInputSchema(
       original,
-      13312,
+      ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
     );
     expect(presentation).toBe("inline");
     expect(schema.$defs).toBeUndefined();
@@ -166,7 +180,7 @@ describe("compact advertised input schema", () => {
       expect(compact(input)).toBe(canonical(input));
   });
 
-  it("does not reintroduce unsupported dialect keywords in reduced schemas", () => {
+  it("does not reintroduce unsupported dialect keywords in deep schemas", () => {
     let nested: Record<string, unknown> = { type: "string" };
     for (let level = 0; level < 12; level += 1)
       nested = { type: "object", properties: { child: nested } };
@@ -179,7 +193,10 @@ describe("compact advertised input schema", () => {
       },
       1_500,
     );
-    expect(presentation).toBe("reduced");
+    // Depth alone no longer forces a whole-schema reduction; only the
+    // branches past the limit are elided.
+    expect(presentation).toBe("inline");
+    expect(schemaDepth(schema)).toBeLessThanOrEqual(10);
     expect(schema).not.toHaveProperty("$schema");
     expect(schema).not.toHaveProperty("dependentRequired");
     expect(guidance).toContain("When detail is provided, also provide target.");
@@ -191,12 +208,20 @@ describe("compact advertised input schema", () => {
     const { schema, presentation } = compactAdvertisedInputSchema(
       {
         type: "object",
-        properties: { normalized_result: {}, literal: { const: {} } },
+        properties: {
+          normalized_result: {},
+          json_value: jsonValueSchema(),
+          literal: { const: {} },
+        },
       },
-      13312,
+      ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
     );
     expect(presentation).toBe("reduced");
-    expect(schema.properties).toEqual({ normalized_result: {}, literal: {} });
+    expect(schema.properties).toEqual({
+      normalized_result: {},
+      json_value: expect.anything(),
+      literal: {},
+    });
     const validate = new Ajv2020({ strict: false }).compile(schema);
     for (const normalized_result of [
       null,
@@ -207,7 +232,9 @@ describe("compact advertised input schema", () => {
       "result",
       [[null, true, 42, "nested"], { values: [[], [false]] }],
     ])
-      expect(validate({ normalized_result })).toBe(true);
+      expect(
+        validate({ normalized_result, json_value: normalized_result }),
+      ).toBe(true);
   });
 
   it("preserves independent validation constraints on reference siblings", () => {
@@ -218,7 +245,10 @@ describe("compact advertised input schema", () => {
         query: { $ref: "#/$defs/text", minLength: 1, maxLength: 5 },
       },
     };
-    const { schema } = compactAdvertisedInputSchema(original, 13312);
+    const { schema } = compactAdvertisedInputSchema(
+      original,
+      ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+    );
     const validate = new Ajv2020({ strict: false }).compile(schema);
     expect(validate({ query: "a" })).toBe(false);
     expect(validate({ query: "abc" })).toBe(true);
@@ -226,8 +256,59 @@ describe("compact advertised input schema", () => {
   });
 });
 
-it("keeps pattern-admitted property names open in reduced schemas", () => {
-  // Nesting past the dialect's depth limit forces the reduced form.
+it("prunes deep branches without breaking closed objects, not, oneOf, or fitting enums", () => {
+  const nest = (
+    leaf: Record<string, unknown>,
+    levels: number,
+  ): Record<string, unknown> =>
+    levels === 0
+      ? leaf
+      : {
+          type: "object",
+          properties: { child: nest(leaf, levels - 1) },
+          required: ["child"],
+          additionalProperties: false,
+        };
+  // Closed chain: a pruned node must not require a property it now forbids.
+  const closed = {
+    type: "object",
+    properties: { a: nest({ type: "string" }, 6) },
+    required: ["a"],
+    additionalProperties: false,
+  };
+  const prunedClosed = pruneSchemaBeyondDepth(closed);
+  expect(prunedClosed).not.toBeUndefined();
+  const validateClosed = new Ajv2020({ strict: false }).compile(prunedClosed!);
+  expect(
+    validateClosed({ a: { child: { child: { child: { child: "x" } } } } }),
+  ).toBe(true);
+  // Widening under `not` or `oneOf` can reject valid values: no pruning there.
+  expect(
+    pruneSchemaBeyondDepth({
+      type: "object",
+      properties: { deep: { not: nest({ type: "string" }, 8) } },
+    }),
+  ).toBeUndefined();
+  expect(
+    pruneSchemaBeyondDepth({
+      type: "object",
+      properties: { deep: { oneOf: [nest({ type: "string" }, 8)] } },
+    }),
+  ).toBeUndefined();
+  // A branch that already fits keeps its rules when a sibling is pruned.
+  const withEnum = {
+    type: "object",
+    properties: {
+      mode: nest({ type: "string", enum: ["a", "b"] }, 3),
+      deep: nest({ type: "string" }, 9),
+    },
+  };
+  const prunedEnum = pruneSchemaBeyondDepth(withEnum);
+  expect(JSON.stringify(prunedEnum)).toContain('"enum":["a","b"]');
+});
+
+it("keeps pattern-admitted property names open in deep schemas", () => {
+  // Nesting past the dialect's depth limit prunes only the deep branches.
   let deep: Record<string, unknown> = { type: "string" };
   for (let level = 0; level < 12; level++)
     deep = { type: "object", properties: { next: deep } };
@@ -241,7 +322,7 @@ it("keeps pattern-admitted property names open in reduced schemas", () => {
     canonical,
     10_000,
   );
-  expect(presentation).toBe("reduced");
+  expect(presentation).toBe("inline");
   const compact = new Ajv2020({ strict: false }).compile(schema);
   expect(new Ajv2020({ strict: false }).compile(canonical)({ b: "ok" })).toBe(
     true,
@@ -279,9 +360,7 @@ it("inlines the Kimi/Moonshot-rejected reference pattern from #9581", () => {
   };
   const { schema, presentation } = compactAdvertisedInputSchema(
     trigger,
-    // COMPACT_INPUT_SCHEMA_BUDGET_BYTES (13 KiB); the contracts layer
-    // cannot import the config layer, so the budget stays literal here.
-    13 * 1024,
+    ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
   );
   expect(presentation).toBe("inline");
   expect(schema.$defs).toBeUndefined();
@@ -302,6 +381,39 @@ it("inlines the Kimi/Moonshot-rejected reference pattern from #9581", () => {
   }
 });
 
+it.each([
+  {
+    label: "non-null types",
+    property: { type: ["string", "number"], minLength: 2, minimum: 5 },
+    valid: ["ok", 5],
+    invalid: ["x", 4, true],
+  },
+  {
+    label: "JSON value types with typed array elements",
+    property: {
+      type: ["null", "boolean", "object", "array", "number", "string"],
+      items: { type: "string", minLength: 2 },
+    },
+    valid: [null, true, {}, ["ok"], 5, "ok"],
+    invalid: [[4], ["x"]],
+  },
+])(
+  "keeps $label inline with their constraints",
+  ({ property, valid, invalid }) => {
+    const { schema, presentation } = compactAdvertisedInputSchema(
+      { type: "object", properties: { value: property } },
+      ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+    );
+    expect(presentation).toBe("inline");
+    expect(
+      advertisedInputDialectViolations({ name: "probe", inputSchema: schema }),
+    ).toEqual([]);
+    const validate = new Ajv2020({ strict: false }).compile(schema);
+    for (const value of valid) expect(validate({ value })).toBe(true);
+    for (const value of invalid) expect(validate({ value })).toBe(false);
+  },
+);
+
 describe("portable dialect unions", () => {
   it("types homogeneous union items and widens oneOf to anyOf", () => {
     const original = {
@@ -318,8 +430,11 @@ describe("portable dialect unions", () => {
               },
               {
                 type: "object",
-                properties: { kind: { const: "type" } },
-                required: ["kind"],
+                properties: {
+                  kind: { const: "type" },
+                  text: { type: "string" },
+                },
+                required: ["kind", "text"],
               },
             ],
           },
@@ -328,7 +443,7 @@ describe("portable dialect unions", () => {
     };
     const { schema, presentation } = compactAdvertisedInputSchema(
       original,
-      13 * 1024,
+      ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
     );
     expect(presentation).toBe("inline");
     const actions = (
@@ -345,8 +460,11 @@ describe("portable dialect unions", () => {
         },
         {
           type: "object",
-          properties: { kind: { type: "string", enum: ["type"] } },
-          required: ["kind"],
+          properties: {
+            kind: { type: "string", enum: ["type"] },
+            text: { type: "string" },
+          },
+          required: ["kind", "text"],
         },
       ],
     });
@@ -355,7 +473,7 @@ describe("portable dialect unions", () => {
     for (const value of [
       [],
       [{ kind: "click" }],
-      [{ kind: "type" }],
+      [{ kind: "type", text: "ok" }],
       [{ kind: "other" }],
     ])
       expect(advertised({ actions: value })).toBe(
@@ -363,7 +481,7 @@ describe("portable dialect unions", () => {
       );
   });
 
-  it("reduces mixed-type union items to typed branches instead of selecting one branch type", () => {
+  it("keeps mixed-type union items inline with typed branches", () => {
     const { schema, presentation } = compactAdvertisedInputSchema(
       {
         type: "object",
@@ -374,13 +492,13 @@ describe("portable dialect unions", () => {
           },
         },
       },
-      13 * 1024,
+      ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
     );
     const values = (
       schema.properties as Record<string, Record<string, unknown>>
     ).values;
     if (values === undefined) throw new Error("Missing values property");
-    expect(presentation).toBe("reduced");
+    expect(presentation).toBe("inline");
     expect(values).toEqual({
       type: "array",
       items: { anyOf: [{ type: "string" }, { type: "object" }] },
@@ -398,7 +516,10 @@ describe("portable dialect unions", () => {
       required: ["value"],
       additionalProperties: false,
     };
-    const { schema } = compactAdvertisedInputSchema(canonical, 13 * 1024);
+    const { schema } = compactAdvertisedInputSchema(
+      canonical,
+      ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+    );
     expect(schema.properties).toEqual({
       value: { anyOf: [{ type: "string" }, { type: "number" }] },
     });
@@ -450,7 +571,7 @@ describe("portable dialect literals and combinators", () => {
         properties: { mode: { enum: ["fast", "safe"] } },
         required: ["mode"],
       },
-      13 * 1024,
+      ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
     );
     expect(presentation).toBe("inline");
     expect(schema.properties).toEqual({
@@ -477,7 +598,7 @@ describe("portable dialect literals and combinators", () => {
         },
         required: ["query"],
       },
-      13 * 1024,
+      ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
     );
     expect(presentation).toBe("inline");
     expect(JSON.stringify(schema)).not.toContain("oneOf");
@@ -503,7 +624,7 @@ describe("portable dialect literals and combinators", () => {
         },
         required: ["enum", "oneOf"],
       },
-      13 * 1024,
+      ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
     );
     expect(presentation).toBe("inline");
     expect(schema.properties).toMatchObject({
@@ -621,8 +742,13 @@ describe("compact input schema budget and reduction", () => {
         after: structuredClone(repeatedObservation),
       },
     };
-    expect(compactAdvertisedInputSchema(schema, 13 * 1024)).toEqual(
-      compactAdvertisedInputSchema(structuredClone(schema), 13 * 1024),
+    expect(
+      compactAdvertisedInputSchema(schema, ADVERTISED_INPUT_SCHEMA_MAX_BYTES),
+    ).toEqual(
+      compactAdvertisedInputSchema(
+        structuredClone(schema),
+        ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+      ),
     );
   });
 
@@ -641,10 +767,12 @@ describe("compact input schema budget and reduction", () => {
           },
         },
       },
-      13312,
+      ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
     );
     expect(presentation).toBe("inline");
-    expect(serializedBytes(schema)).toBeLessThanOrEqual(13312);
+    expect(serializedBytes(schema)).toBeLessThanOrEqual(
+      ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+    );
   });
 });
 
@@ -679,7 +807,10 @@ it.each([
       },
       required: ["before", "after"],
     };
-    const compact = compactAdvertisedInputSchema(source, 13312);
+    const compact = compactAdvertisedInputSchema(
+      source,
+      ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+    );
     expect(compact.presentation).toBe("inline");
     expect(JSON.stringify(compact.schema)).not.toContain('"$ref":');
     const createAjv = () =>
@@ -701,7 +832,10 @@ it("decodes URI fragments and JSON Pointer escapes through schema arrays", () =>
     definitions: { "a/b~": { prefixItems: [{ type: "number" }] } },
     properties: { value: { $ref: "#/definitions/a%7E1b%7E0/prefixItems/0" } },
   };
-  const result = compactAdvertisedInputSchema(source, 13312);
+  const result = compactAdvertisedInputSchema(
+    source,
+    ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+  );
   expect(result.presentation).toBe("inline");
   const canonical = new Ajv2020({ strict: false }).compile(source);
   const advertised = new Ajv2020({ strict: false }).compile(result.schema);
@@ -724,7 +858,7 @@ it.each(["$dynamicRef", "$recursiveRef"])(
         },
         properties: { child: { $ref: "#/definitions/nested" } },
       },
-      13312,
+      ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
     );
     expect(result.presentation).toBe("reduced");
     expect(JSON.stringify(result.schema)).not.toContain('"$ref":');
@@ -750,7 +884,7 @@ it.each(["", "#legacy", "https://example.test/root.json"])(
         },
         properties: { child: { $ref: "#/definitions/nested" } },
       },
-      13312,
+      ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
     );
     expect(result.presentation).toBe("reduced");
     expect(result.schema.properties).toEqual({ child: {} });
@@ -765,7 +899,7 @@ it("uses explicit reduction for Draft 7 reference siblings with conflicting clie
       definitions: { value: { type: "number" } },
       properties: { value: { $ref: "#/definitions/value", maximum: 5 } },
     },
-    13312,
+    ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
   );
   expect(result.presentation).toBe("reduced");
   expect(result.schema.properties).toEqual({ value: { type: "number" } });
@@ -798,7 +932,10 @@ it.each(["draft-2020-12", "draft-07"] as const)(
       ),
       required: ["string", "number"],
     };
-    const result = compactAdvertisedInputSchema(source, 13312);
+    const result = compactAdvertisedInputSchema(
+      source,
+      ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+    );
     expect(result.presentation).toBe("inline");
     // Dialect declarations are not part of the portable dialect.
     expect(JSON.stringify(result.schema)).not.toContain('"$schema"');
@@ -834,7 +971,7 @@ it.each(["child.json", "https://example.test/child.json"])(
           ]),
         ),
       },
-      13312,
+      ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
     );
     expect(result.presentation).toBe("reduced");
     expect(result.schema.properties).toEqual({ string: {}, number: {} });
@@ -856,7 +993,7 @@ it("includes restored root identity in the compact byte budget", () => {
 });
 
 it("bounds an oversized root description while retaining an object input", () => {
-  const budget = 13 * 1024;
+  const budget = ADVERTISED_INPUT_SCHEMA_MAX_BYTES;
   const result = compactAdvertisedInputSchema(
     { type: "object", description: "x".repeat(budget + 1), properties: {} },
     budget,
@@ -879,7 +1016,10 @@ const reducedPresentation = (
     $defs,
     properties: { mode: {}, ...properties },
   };
-  const result = compactAdvertisedInputSchema(canonical, 13 * 1024);
+  const result = compactAdvertisedInputSchema(
+    canonical,
+    ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+  );
   expect(result.presentation).toBe("reduced");
   const { mode: _mode, ...advertised } = result.schema.properties as Record<
     string,
@@ -1031,7 +1171,7 @@ describe("reduced array item presentation", () => {
     };
     const { schema, presentation } = compactAdvertisedInputSchema(
       canonical,
-      13 * 1024,
+      ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
     );
     expect(presentation).toBe("inline");
     expect(schema).toEqual({
@@ -1043,5 +1183,124 @@ describe("reduced array item presentation", () => {
     for (const input of [{}, { view: "x" }, { view: "y" }])
       if (canonicalValidate(input))
         expect(advertisedValidate(input)).toBe(true);
+  });
+});
+
+describe("budgeted annotation stripping", () => {
+  it("preserves validation and refuses references to removed annotations", () => {
+    const cases: readonly [Record<string, unknown>, unknown][] = [
+      [
+        {
+          type: "object",
+          description: "Root doc stays.",
+          default: { x: 1 },
+          properties: {
+            default: { type: "boolean", default: true, title: "Default flag" },
+            any: { description: "Becomes json value schema." },
+            forbid: { not: { description: "Empty negation." } },
+            aliased: {
+              $ref: "#/$defs/leaf",
+              description: "Sibling doc drops.",
+            },
+          },
+          $defs: {
+            leaf: { type: "string", description: "Def doc drops.", title: "L" },
+          },
+        },
+        {
+          type: "object",
+          description: "Root doc stays.",
+          properties: {
+            default: { type: "boolean" },
+            any: jsonValueSchema(),
+            forbid: { not: {} },
+            aliased: { type: "string" },
+          },
+        },
+      ],
+      [
+        {
+          $schema: "http://json-schema.org/draft-07/schema#",
+          type: "object",
+          definitions: { leaf: { type: "number", examples: [1] } },
+          properties: {
+            count: { $ref: "#/definitions/leaf", description: "Doc drops." },
+          },
+        },
+        {
+          $schema: "http://json-schema.org/draft-07/schema#",
+          type: "object",
+          properties: { count: { type: "number" } },
+        },
+      ],
+      [
+        {
+          type: "object",
+          $defs: {
+            node: { type: "string", default: "fallback" },
+          },
+          properties: {
+            bad: { $ref: "#/$defs/node/default" },
+          },
+        },
+        undefined,
+      ],
+      [
+        {
+          type: "object",
+          properties: {
+            bad: { $ref: "#/properties/x/description" },
+            x: { type: "string", description: "Stripped doc" },
+          },
+        },
+        undefined,
+      ],
+    ];
+    for (const [schema, expected] of cases) {
+      const actual = inlineWithinBudget(schema, 16_384, {
+        stripAnnotations: true,
+        references: new JsonSchemaReferences(schema),
+      });
+      expect(actual).toEqual(expected);
+    }
+  });
+});
+
+describe("hasAdvertisedInputDialectViolation", () => {
+  it("agrees with advertisedInputDialectViolations across synthetic and failing cases", () => {
+    const cases: Record<string, unknown>[] = [
+      { type: "object", properties: { name: { type: "string" } } },
+      { type: "string" },
+      { type: "object", oneOf: [{ type: "object" }] },
+      {
+        type: "object",
+        properties: { bad: { type: "string", pattern: "[a-" } },
+      },
+      { type: "object", properties: { bad: { type: "array" } } },
+      {
+        type: "object",
+        properties: { bad: { type: "string", enum: [] } },
+      },
+      {
+        type: "object",
+        properties: { "1bad": { type: "string" } },
+      },
+      {
+        type: "object",
+        properties: {
+          ok: {
+            anyOf: [{ type: "string" }, { type: "null" }],
+          },
+        },
+      },
+    ];
+    for (const schema of cases) {
+      const expected =
+        advertisedInputDialectViolations({
+          name: "tool_name",
+          inputSchema: schema,
+        }).length > 0;
+      expect(hasAdvertisedInputDialectViolation(schema)).toBe(expected);
+    }
   });
 });

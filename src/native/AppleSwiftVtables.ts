@@ -87,16 +87,16 @@ export const createSwiftClassVtableDecoder = (input: {
       const tableOffset = read.u32(header);
       const count = read.u32(header + 4n);
       const positiveWords = read.u32(descriptor + 28n);
-      if (count > 20_000)
-        throw decodeLimit("macho", "Swift vtable count exceeds 20000", {
-          name: "swift_vtable_entries",
-          maximum: 20_000,
-        });
       if (tableOffset + count > positiveWords)
         throw malformedInput(
           "macho",
           "Swift vtable count or offset exceeds declared metadata bounds",
         );
+      if (count > 20_000)
+        throw decodeLimit("macho", "Swift vtable count exceeds 20000", {
+          name: "swift_vtable_entries",
+          maximum: 20_000,
+        });
       for (let index = 0; index < count; index++) {
         const entry = header + 8n + BigInt(index * 8);
         if (!read.admit()) {

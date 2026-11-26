@@ -42,14 +42,13 @@
         "scripts/run-typescript.mjs",
         "src/**/*.{cts,mts,ts,tsx}",
         "src/**/package.json",
-        "tests/**/*.{cts,mts,ts,tsx}",
+        "tests/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "tests/**/package.json",
         "tsconfig.json",
         "tsconfig.build.json",
         "tsconfig.scripts.json",
-        "vitest.config.ts",
-        "scripts/**/*.d.{cts,mts,ts}",
-        "scripts/**/*.mjs",
+        "vitest*.config.ts",
+        "scripts/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "scripts/**/package.json",
         ".github/actions/**/*.{cts,mts,ts,tsx}",
         ".github/**/package.json",
@@ -75,6 +74,7 @@
       ]
     },
     "lint": {
+      "passThroughEnv": ["REA_OXLINT_THREADS", "GITHUB_ACTIONS"],
       "outputs": [".cache/static-checks/oxlint.json"],
       "inputs": [
         ".gitignore",
@@ -86,6 +86,7 @@
         "src/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "tests/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "docs/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
+        "docs/reference/rea-limit-inventory.md",
         ".github/actions/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "website/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "src/**/*.{json,md,py,yaml,yml}",
@@ -107,15 +108,19 @@
         "package.json",
         "package-lock.json",
         "scripts/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
-        "src/**/*.ts",
-        "tests/**/*.ts",
+        "src/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
+        "tests/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
+        "{src,tests,scripts}/**/package.json",
         ".github/actions/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         ".github/**/package.json",
         ".github/workflows/*.{yml,yaml}",
         ".github/**/action.{yml,yaml}",
         "tsconfig.json",
         "tsconfig.build.json",
-        "docs/.vitepress/config.ts",
+        "docs/.vitepress/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
+        "docs/.vitepress/**/package.json",
+        "!docs/.vitepress/cache/**",
+        "!docs/.vitepress/dist/**",
         "*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}"
       ]
     },
@@ -132,6 +137,7 @@
       "outputs": [".cache/static-checks/jscpd/jscpd-report.json"]
     },
     "scan:todos": {
+      "cache": false,
       "inputs": [
         "bridge/**/*.{java,py}",
         "scripts/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
@@ -142,7 +148,6 @@
     "test:run": {
       "cache": false,
       "dependsOn": [
-        "artifacts:mcp-catalog",
         "artifacts:product-catalog",
         "artifacts:managed-evidence",
         "artifacts:skills"
@@ -160,6 +165,7 @@
         "scripts/generate-*.mjs",
         "scripts/check-doc-facts.mjs",
         "scripts/lib/*.mjs",
+        "scripts/lib/completion-ledger-generation.mts",
         "scripts/verify/managed/*.mjs",
         "scripts/fixtures/managed/*.mjs",
         "scripts/verify/apple/*.mjs",
@@ -171,9 +177,12 @@
         "!docs/public/product-catalog.json",
         "!docs/verification/managed-conformance-*.json",
         ".agents/skills/**",
+        ".cursor-plugin/skills/**",
+        ".github/pull_request_template.md",
         "README*.md",
         "AGENTS.md",
         "CONTRIBUTING.md",
+        "website/locales/languages.json",
         "website/public/**/*.{md,html}",
         {
           "mode": "dependencyOutputs",
@@ -185,16 +194,6 @@
           ]
         }
       ]
-    },
-    "artifacts:mcp-catalog": {
-      "dependsOn": ["compile"],
-      "inputs": [
-        "package.json",
-        "package-lock.json",
-        "scripts/generate-mcp-tool-catalog.mjs",
-        "scripts/lib/generated-file.mjs"
-      ],
-      "outputs": [".cache/mcp-tool-catalog.json"]
     },
     "artifacts:skills": {
       "dependsOn": ["compile"],
@@ -225,7 +224,14 @@
         "package.json",
         "package-lock.json",
         "scripts/generate-completion-ledger.mjs",
+        "scripts/lib/canonical-temporary-directory.mjs",
+        "scripts/lib/completion-ledger-generation.mts",
         "scripts/lib/generated-file.mjs",
+        "scripts/lib/verifier-artifact-scope.mjs",
+        "scripts/lib/verifier-cleanup.mjs",
+        "scripts/lib/verifier-fixture.mjs",
+        "scripts/lib/verifier-run.mjs",
+        "scripts/lib/verifier-source-loader.mjs",
         "scripts/verify/managed/**",
         "scripts/fixtures/managed/**"
       ],
@@ -249,26 +255,20 @@
         "docs/user-visible-errors.csv"
       ]
     },
-    "mcp-catalog:check:built": {
-      "dependsOn": ["artifacts:mcp-catalog"],
-      "inputs": [
-        "package.json",
-        "package-lock.json",
-        "scripts/generate-mcp-tool-catalog.mjs",
-        "scripts/lib/generated-file.mjs",
-        {
-          "mode": "dependencyOutputs",
-          "globs": [".cache/mcp-tool-catalog.json"]
-        }
-      ]
-    },
     "evidence:check:built": {
       "dependsOn": ["artifacts:managed-evidence"],
       "inputs": [
         "package.json",
         "package-lock.json",
         "scripts/generate-completion-ledger.mjs",
+        "scripts/lib/canonical-temporary-directory.mjs",
+        "scripts/lib/completion-ledger-generation.mts",
         "scripts/lib/generated-file.mjs",
+        "scripts/lib/verifier-artifact-scope.mjs",
+        "scripts/lib/verifier-cleanup.mjs",
+        "scripts/lib/verifier-fixture.mjs",
+        "scripts/lib/verifier-run.mjs",
+        "scripts/lib/verifier-source-loader.mjs",
         "scripts/verify/managed/**",
         "scripts/fixtures/managed/**",
         {

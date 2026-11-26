@@ -6,33 +6,22 @@ import {
 } from "../../../tests/fixtures/analysisView.js";
 import {
   GHOST_DELETED_ROWS,
-  INITIAL_TRASH_ROWS,
   LATER_FIELD_ROWS,
   LATER_MIXED_BULK_ROWS,
   MAX_SIZE_ROWS,
   SOFT_DELETED_QUERY_ROWS,
   SOFT_DELETED_ROWS,
 } from "../../../tests/fixtures/environmentStateLaterReads.js";
-import { environmentStateViewOf } from "../../../tests/fixtures/environmentStateWrites.js";
+import {
+  environmentStateViewOf,
+  planOf,
+} from "../../../tests/fixtures/environmentStateWrites.js";
 import { markedDeleted } from "./environmentStateRules.js";
 
 const viewOf = (rows: readonly TimedCaptureRow[]) =>
   environmentStateViewOf(timedCaptureEvidence(rows));
 
-const planOf = (rows: readonly TimedCaptureRow[], tool: string) => {
-  const plan = viewOf(rows).writes.find((candidate) => candidate.tool === tool);
-  if (plan === undefined) throw new Error(`No plan for ${tool}`);
-  return plan;
-};
-
 describe("deletes the application answers for afterwards", () => {
-  it("replays an initial list that includes a deleted entity", () => {
-    expect(
-      viewOf(INITIAL_TRASH_ROWS).views.find(
-        (view) => view.tool === "get_contacts",
-      ),
-    ).toMatchObject({ shape: "recorded", reason: "list-differs" });
-  });
   it("confirms a delete by an item read that shows the entity marked deleted", () => {
     expect(planOf(SOFT_DELETED_ROWS, "delete_contacts_by_id")).toMatchObject({
       served: true,

@@ -1,13 +1,16 @@
-import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { dirname, join, relative } from "node:path";
+import { join, relative } from "node:path";
 
 import { expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplication.js";
+import {
+  analyzeJavaScriptDirectory,
+  sourceEvidence,
+} from "../../support/cli/javascriptApplication.js";
+
+import { writeFixtureFiles } from "../../support/workspace/writeFixtureFiles.js";
 
 const literalAliases = ["#/x", "#x%2Fy", "#x%2Ey", "#x\\y", "#x\0y"];
 const fallbackAliases = {
@@ -31,8 +34,22 @@ const fallbackAliases = {
     require: ["file:///outside.cjs", "./config.cjs"],
   },
 };
-const resolvedAliases = [...literalAliases, ...Object.keys(fallbackAliases)];
+const resolvedAliases = [
+  "#config",
+  ...literalAliases,
+  ...Object.keys(fallbackAliases),
+];
 const refusedAliases = {
+  "#blocked": {
+    target: null,
+    status: "external",
+    limitation: "an explicit null imports target",
+  },
+  "#exact-file": {
+    target: "./extensionless",
+    status: "not-found",
+    limitation: "import targets are exact files",
+  },
   "#empty": {
     target: [],
     status: "external",
@@ -86,7 +103,6 @@ const allAliases = [...resolvedAliases, ...Object.keys(refusedAliases)];
 const createPackageImportAliasFixture = async () => {
   const root = await createTestTempDirectory("rea-package-import-aliases-");
   const mainSource = [
-    'const config = require("#config");',
     'const nested = require("./node_modules/fixture/index.cjs");',
     'const missing = require("#missing");',
     ...allAliases.map((specifier) => `require(${JSON.stringify(specifier)});`),
@@ -118,6 +134,8 @@ const createPackageImportAliasFixture = async () => {
     "main.cjs": mainSource,
     "main.mjs": moduleSource,
     "config.cjs": "module.exports = 'app-config';",
+    "extensionless.js": "module.exports = 'extension decoy';",
+    "extensionless/index.js": "module.exports = 'index decoy';",
     "node_modules/fixture/package.json": JSON.stringify({
       name: "fixture",
       imports: { "#config": "./local.cjs" },
@@ -125,13 +143,7 @@ const createPackageImportAliasFixture = async () => {
     "node_modules/fixture/index.cjs": nestedSource,
     "node_modules/fixture/local.cjs": "module.exports = 'fixture-config';",
   };
-  await Promise.all(
-    Object.entries(files).map(async ([path, content]) => {
-      const absolute = join(root, path);
-      await mkdir(dirname(absolute), { recursive: true });
-      await writeFile(absolute, content);
-    }),
-  );
+  await writeFixtureFiles(root, files);
   return { root, mainSource, moduleSource, nestedSource };
 };
 
@@ -204,16 +216,6 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       expect.objectContaining({
         properties: expect.objectContaining({
           specifier: "#config",
-          resolved_path: "config.cjs",
-          resolution_status: "resolved",
-        }),
-        evidence: sourceEvidence("main.cjs", mainSource),
-      }),
-    );
-    expect(imports).toContainEqual(
-      expect.objectContaining({
-        properties: expect.objectContaining({
-          specifier: "#config",
           resolved_path: "node_modules/fixture/local.cjs",
           resolution_status: "resolved",
         }),
@@ -232,36 +234,13 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         }),
         evidence: expect.objectContaining({
           limitations: expect.arrayContaining([
-            expect.stringContaining("does not define package import alias"),
+            expect.stringContaining(
+              "does not define package import alias #missing",
+            ),
+            expect.stringContaining("#config"),
           ]),
         }),
       }),
     );
   },
 );
-
-const sourceEvidence = (
-  sourcePath: string,
-  source: string,
-  limitation?: string,
-): unknown =>
-  expect.objectContaining({
-    artifact: expect.objectContaining({
-      available: true,
-      sha256: createHash("sha256").update(source).digest("hex"),
-    }),
-    location: expect.objectContaining({
-      available: true,
-      value: expect.objectContaining({
-        kind: "source-range",
-        source: sourcePath,
-      }),
-    }),
-    ...(limitation === undefined
-      ? {}
-      : {
-          limitations: expect.arrayContaining([
-            expect.stringContaining(limitation),
-          ]),
-        }),
-  });

@@ -1,3 +1,7 @@
+import type {
+  BinaryArchitecture,
+  BinaryTarget,
+} from "../domain/binaryTargetTypes.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { KUNA_STRING_MIN_LENGTH } from "./KunaLimits.js";
 
@@ -13,7 +17,6 @@ import {
   createAnalysisProfile,
   type AnalysisProfileCommitment,
 } from "../domain/analysisProfile.js";
-import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { err, ok } from "../domain/result.js";
 import {
@@ -50,12 +53,24 @@ import { KunaRunSlots } from "./KunaRunSlots.js";
 import { KunaSessionClient } from "./KunaSessionClient.js";
 import { kunaUnavailable } from "./KunaUnavailable.js";
 
-/** Architectures REA verified Kuna on: x86-64 and AArch64 ELF and Mach-O, plus ARM Thumb. */
-const VERIFIED_ARCHITECTURES: ReadonlySet<string> = new Set([
-  "x86_64",
-  "arm64",
-  "arm",
-]);
+const KUNA_ARCHITECTURE_LABELS = {
+  x86: null,
+  x86_64: "x86-64",
+  arm64: "AArch64",
+  arm: "ARM",
+  arm64_32: null,
+  mips: null,
+  "6502": null,
+  riscv: null,
+  powerpc: null,
+  m68k: null,
+  hexagon: null,
+  xtensa: null,
+} as const satisfies Record<BinaryArchitecture, string | null>;
+
+const kunaArchitectureLabels = new Intl.ListFormat("en-GB").format(
+  Object.values(KUNA_ARCHITECTURE_LABELS).filter((label) => label !== null),
+);
 
 /**
  * Bring-your-own Kuna candidate. Discovery reads configuration and the
@@ -160,11 +175,11 @@ export class KunaProvider implements AnalysisProviderCandidate {
             : `REA verified the Kuna provider on ELF and thin Mach-O images; ${target.format} is not admitted yet.`,
         diagnostics,
       };
-    if (!VERIFIED_ARCHITECTURES.has(target.architecture))
+    if (KUNA_ARCHITECTURE_LABELS[target.architecture] === null)
       return {
         status: "unsupported",
         code: "architecture_unsupported",
-        reason: `REA verified the Kuna provider on x86-64, AArch64 and ARM; ${target.architecture} is not admitted yet.`,
+        reason: `REA verified the Kuna provider on ${kunaArchitectureLabels}; ${target.architecture} is not admitted yet.`,
         diagnostics: { ...diagnostics, architecture: target.architecture },
       };
     return { status: "supported", code: null, reason: null, diagnostics };
@@ -296,7 +311,11 @@ export class KunaProvider implements AnalysisProviderCandidate {
     if (!configuration.ok)
       return {
         execute: async (operation) =>
-          err(kunaUnavailable(operation, configuration.error.reason)),
+          err(
+            kunaUnavailable(operation, configuration.error.reason, {
+              remediationAction: configuration.error.remediation,
+            }),
+          ),
         close: async () => ok(null),
       };
     return new KunaSessionClient(target, profile, {

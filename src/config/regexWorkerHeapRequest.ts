@@ -1,3 +1,4 @@
+import { defaultedNumberSettingParser } from "./optionalSetting.js";
 import {
   DEFAULT_REGEX_WORKER_HEAP_REQUEST_MIB,
   MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
@@ -5,9 +6,7 @@ import {
 } from "../domain/analysisResourceLimits.js";
 import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
-import { ConfigurationError } from "../domain/configurationErrors.js";
 import { currentAnalysisSettingOverride } from "../domain/analysisOperationSnapshot.js";
-import { err, ok, type Result } from "../domain/result.js";
 
 export const REGEX_WORKER_HEAP_REQUEST_SETTING =
   "REA_REGEX_WORKER_HEAP_REQUEST_MIB";
@@ -33,24 +32,14 @@ export const regexWorkerHeapRequestMiBSchema = positiveDecimalIntegerSchema(
 );
 
 /** Resolve the effective request from one environment value. */
-export const parseRegexWorkerHeapRequest = (
-  value: string | undefined,
-): Result<RegexWorkerHeapRequest, ConfigurationError> => {
-  if (value === undefined) return ok(DEFAULT_REGEX_WORKER_HEAP_REQUEST);
-  const parsed = regexWorkerHeapRequestMiBSchema.safeParse(value);
-  return parsed.success
-    ? ok({ heapMiB: parsed.data, source: "setting" })
-    : err(
-        new ConfigurationError(regexWorkerHeapRequestConstraint, {
-          settings: [
-            {
-              setting: REGEX_WORKER_HEAP_REQUEST_SETTING,
-              constraint: regexWorkerHeapRequestConstraint,
-            },
-          ],
-        }),
-      );
-};
+export const parseRegexWorkerHeapRequest =
+  defaultedNumberSettingParser<RegexWorkerHeapRequest>(
+    REGEX_WORKER_HEAP_REQUEST_SETTING,
+    regexWorkerHeapRequestMiBSchema,
+    regexWorkerHeapRequestConstraint,
+    DEFAULT_REGEX_WORKER_HEAP_REQUEST,
+    (heapMiB) => ({ heapMiB, source: "setting" }),
+  );
 
 /**
  * Resolve the request from a composition root's selected environment. An

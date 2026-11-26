@@ -155,21 +155,16 @@ it("refuses a missing Mach-O source before running lipo", async () => {
   }
 });
 
-it("declares the signature snapshot write in provider capabilities", () => {
-  expect(
-    nativeMacOSCapabilities("darwin").find(
-      ({ operation }) => operation === "inspect_signature",
-    )?.effects,
-  ).toMatchObject({ mayWriteFilesystem: true, mutatesArtifact: false });
-});
-
-it("declares the temporary private operand write in inspect_macho provider capabilities", () => {
-  expect(
-    nativeMacOSCapabilities("darwin").find(
-      ({ operation }) => operation === "inspect_macho",
-    )?.effects,
-  ).toMatchObject({ mayWriteFilesystem: true, mutatesArtifact: false });
-});
+it.each(["inspect_signature", "inspect_macho", "inspect_plist"])(
+  "declares temporary writes and preserves the artifact for %s",
+  (name) => {
+    expect(
+      nativeMacOSCapabilities("darwin").find(
+        ({ operation }) => operation === name,
+      )?.effects,
+    ).toMatchObject({ mayWriteFilesystem: true, mutatesArtifact: false });
+  },
+);
 
 it.each(["before command", "during command"] as const)(
   "rejects architecture facts when the admitted target changes %s",
@@ -204,10 +199,22 @@ it.each(["before command", "during command"] as const)(
         );
       const result = await client.execute("list_architectures", {});
       if (result.ok) throw new Error("Expected target identity refusal");
-      expect(result.error).toMatchObject({
-        _tag: "AnalysisArtifactChangedError",
-        operation: "list_architectures",
-      });
+      // A target replaced before the command no longer matches the admitted
+      // digest, which only reopening clears; one replaced during the command
+      // changed under the read.
+      expect(result.error).toMatchObject(
+        phase === "before command"
+          ? {
+              _tag: "ArtifactOperationError",
+              operation: "list_architectures",
+              reason: "integrity",
+              integrityCheck: "admitted-identity",
+            }
+          : {
+              _tag: "AnalysisArtifactChangedError",
+              operation: "list_architectures",
+            },
+      );
       expect(capture).toHaveBeenCalledTimes(phase === "before command" ? 0 : 1);
     } finally {
       await client.close();

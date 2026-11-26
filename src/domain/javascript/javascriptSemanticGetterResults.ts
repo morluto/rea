@@ -43,7 +43,7 @@ export const semanticGetterReceiverReferences = (
           containerReferences: (node, path) =>
             t.isObjectExpression(node)
               ? semanticObjectPropertyReferences(node, path, state)
-              : semanticArrayPropertyReferences(node, path),
+              : semanticArrayPropertyReferences(node, path, state),
         },
         [{ node: operand }],
       ).run(),

@@ -14,7 +14,10 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupFailure,
+  withInheritedCleanupOwnership,
+} from "../domain/analysisErrorCleanup.js";
 import { CdpConnection } from "./CdpConnection.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import { errorMessage } from "../kernel/errorMessage.js";
@@ -666,9 +669,7 @@ const rebindPendingConnectFailure = (
 ): unknown => {
   if (cause instanceof BrowserObservationError) {
     const rebound = cause.forOperation(waiter.operation);
-    return cause.cleanupIncomplete
-      ? rebound.bindCleanupDependencies([cause])
-      : rebound;
+    return withInheritedCleanupOwnership(rebound, cause);
   }
   if (cause instanceof AnalysisCancelledError) {
     const rebound = cancelledBy(
@@ -676,9 +677,7 @@ const rebindPendingConnectFailure = (
       carriedReason(waiter.signal?.reason ?? cause.cause),
       { cleanup: cause.cleanup },
     );
-    return cause.cleanupIncomplete
-      ? rebound.bindCleanupDependencies([cause])
-      : rebound;
+    return withInheritedCleanupOwnership(rebound, cause);
   }
   if (cause instanceof AnalysisError) {
     const composed = composedConnectCleanupFailures.get(cause);

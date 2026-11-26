@@ -1,3 +1,5 @@
+import { countValues } from "../valueCounts.js";
+import { boundedList } from "../boundedList.js";
 import { ellipsisExcerpt } from "../excerpt.js";
 import { escapeJsonPointerToken } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
@@ -65,14 +67,15 @@ const bounded = (
       return ellipsisExcerpt(node, MAX_CHARS);
     }
     if (Array.isArray(node)) {
-      cut ||= node.length > MAX_ITEMS;
-      return node.slice(0, MAX_ITEMS).map(visit);
+      const kept = boundedList(node, MAX_ITEMS);
+      cut ||= kept.omitted > 0;
+      return kept.items.map(visit);
     }
     if (!isRecord(node)) return node;
-    const entries = Object.entries(node);
-    cut ||= entries.length > MAX_ITEMS;
+    const kept = boundedList(Object.entries(node), MAX_ITEMS);
+    cut ||= kept.omitted > 0;
     return Object.fromEntries(
-      entries.slice(0, MAX_ITEMS).map(([key, item]) => [key, visit(item)]),
+      kept.items.map(([key, item]) => [key, visit(item)]),
     );
   };
   return { value: value === null ? null : visit(value), cut };
@@ -95,16 +98,10 @@ const linesOf = (version: Version): readonly string[] =>
     ? version.view.lines.filter((line) => typeof line === "string")
     : [];
 
-const counts = (lines: readonly string[]) => {
-  const result = new Map<string, number>();
-  for (const line of lines) result.set(line, (result.get(line) ?? 0) + 1);
-  return result;
-};
-
 /** Lines found at both ends whose number of occurrences changed. */
 const lineCounts = (baseline: Version, final: Version) => {
-  const before = counts(linesOf(baseline));
-  return [...counts(linesOf(final))]
+  const before = countValues(linesOf(baseline));
+  return [...countValues(linesOf(final))]
     .filter(([line, n]) => (before.get(line) ?? n) !== n)
     .map(([line, n]) => ({ line, baseline: before.get(line) ?? 0, final: n }));
 };
@@ -526,9 +523,11 @@ export const draftTaskFiles = (
   return withinDraftBudget(
     changed.map(({ home, path, baseline, final, change }) => {
       const drafted = path.role === role && !isLeftOut(home);
-      const draft: FileDraft = drafted
-        ? suggestedChecks(home, baseline, final, role === "document")
-        : { suggested: [], ...NO_VALUES };
+      const shape = changeShape(change, final);
+      const draft: FileDraft =
+        drafted && shape.kind !== "unreadable" && shape.kind !== "format"
+          ? suggestedChecks(home, baseline, final, role === "document")
+          : { suggested: [], ...NO_VALUES };
       return {
         file: home,
         role: path.role,
@@ -540,10 +539,7 @@ export const draftTaskFiles = (
         values_cut: draft.valuesCut,
         guards: draft.guards,
         notes: drafted
-          ? [
-              ...fileNotes(home, changeShape(change, final), draft.facts),
-              ...(draft.notes ?? []),
-            ]
+          ? [...fileNotes(home, shape, draft.facts), ...(draft.notes ?? [])]
           : [],
       };
     }),

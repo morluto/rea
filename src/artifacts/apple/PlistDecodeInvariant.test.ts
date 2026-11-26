@@ -10,6 +10,7 @@ import {
 } from "../../domain/internalInvariant.js";
 import { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
 import { inspectBundleKeyedArchive } from "./KeyedArchiveReader.js";
+import { parsePlistBinary } from "../../native/parsers/plist.js";
 import { ArtifactProvider } from "../ArtifactProvider.js";
 import { DeferredAnalysisClient } from "../../providers/DeferredAnalysisClient.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -53,6 +54,14 @@ const archive = Buffer.from(
     $top: { root: { CF$UID: 1 } },
   }),
 );
+
+it("rethrows an invariant violation instead of reporting plist output", () => {
+  const bytes = Buffer.from(buildBinary({ CFBundleIdentifier: "example" }));
+  expect(parsePlistBinary(bytes).ok).toBe(true);
+
+  decoder.broken = true;
+  expect(() => parsePlistBinary(bytes)).toThrow(InternalInvariantError);
+});
 
 it("rethrows an invariant violation instead of reporting a damaged keyed archive", async () => {
   const root = await createTestTempDirectory("rea-keyed-invariant-");

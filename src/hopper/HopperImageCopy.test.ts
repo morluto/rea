@@ -1,13 +1,10 @@
-import { createHash } from "node:crypto";
+import { sha256 as digest } from "../../tests/support/sha256.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { prepareHopperExecutableImage } from "./HopperImageCopy.js";
-
-const digest = (bytes: Buffer) =>
-  createHash("sha256").update(bytes).digest("hex");
 
 it("whole executable copying rejects pre-copy replacement and retains captured bytes after source replacement", async () => {
   const root = await createTestTempDirectory("rea-hopper-executable-");

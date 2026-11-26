@@ -1,4 +1,4 @@
-import type { Cli } from "incur";
+import type { CliInstance } from "./types.js";
 import type { Logger } from "pino";
 
 import { browserCliError } from "./browserCliError.js";
@@ -9,16 +9,17 @@ import {
 import { contractNamed } from "./contractCliDescription.js";
 import {
   admittedContractInput,
-  commandRoute,
-  contractInputBranch,
   registerContractCommand,
-  registerRoutedCommand,
   type ContractCommandContext,
 } from "./contractCommand.js";
-import type { CliInstance } from "./types.js";
+import {
+  commandRoute,
+  contractInputBranch,
+  registerRoutedCommand,
+} from "./routedContractCommand.js";
 import {
   captureWebScreenshot,
-  compareWebCaptureEvidence,
+  compareParsedWebCaptureEvidence,
   compareWebScreenshotEvidence,
   discoverWebMcpTools,
 } from "../application/BrowserObservationService.js";
@@ -26,12 +27,12 @@ import { CdpBrowserProvider } from "../browser/CdpBrowserProvider.js";
 import { BROWSER_TOOL_CONTRACTS } from "../contracts/browserToolContracts.js";
 import {
   isScenarioCaptureDocument,
-  type BrowserCaptureComparisonInput,
+  type BrowserCaptureComparisonRequest,
 } from "../domain/browserCaptureComparison.js";
 
 /** Register WebMCP, capture-diff, and screenshot CLI equivalents. */
 export const registerAdvancedBrowserCommands = (
-  cli: ReturnType<typeof Cli.create>,
+  cli: CliInstance,
   logger: Logger,
 ): void => {
   const discoverWebMcp = contractNamed(
@@ -73,10 +74,7 @@ export const registerAdvancedBrowserCommands = (
   registerScreenshotDiff(cli, logger);
 };
 
-const registerCaptureDiff = (
-  cli: ReturnType<typeof Cli.create>,
-  logger: Logger,
-): void => {
+const registerCaptureDiff = (cli: CliInstance, logger: Logger): void => {
   const contract = contractNamed(
     BROWSER_TOOL_CONTRACTS,
     "compare_web_captures",
@@ -154,22 +152,19 @@ const compareCaptures = async (
     parsed,
   }: ContractCommandContext<
     Readonly<Record<string, unknown>>,
-    BrowserCaptureComparisonInput
+    BrowserCaptureComparisonRequest
   >,
 ): Promise<unknown> => {
   if (parsed === undefined)
     throw new Error(`${operation} admits its decoded captures`);
-  const result = await compareWebCaptureEvidence(
+  const result = await compareParsedWebCaptureEvidence(
     new CdpBrowserProvider(),
     parsed,
   );
   return result.ok ? result.value : browserCliError(result.error);
 };
 
-const registerScreenshotDiff = (
-  cli: ReturnType<typeof Cli.create>,
-  logger: Logger,
-): void => {
+const registerScreenshotDiff = (cli: CliInstance, logger: Logger): void => {
   const contract = contractNamed(
     BROWSER_TOOL_CONTRACTS,
     "compare_web_screenshots",

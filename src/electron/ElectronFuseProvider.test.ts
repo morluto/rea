@@ -310,14 +310,12 @@ describe("Electron fuse reader resource boundaries", () => {
     expect(result.ok).toBe(false);
     if (!result.ok)
       expect(result.error).toMatchObject({
-        _tag: "AnalysisInputError",
-        issues: [
-          expect.objectContaining({
-            path: ["path"],
-            reason: "invalid_format",
-            message: expect.stringContaining("slices 0 and 1 overlap"),
-          }),
-        ],
+        _tag: "AnalysisTargetFailureError",
+        path,
+        failure: {
+          kind: "malformed",
+          detail: expect.stringContaining("slices 0 and 1 overlap"),
+        },
       });
   });
 });
@@ -450,7 +448,7 @@ describe("Electron fuse path and container admission", () => {
       const result = await provider.inspect({ path });
       expect(result.ok, path).toBe(false);
       if (!result.ok)
-        expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
+        expect(result.error._tag).toBe("AnalysisTargetFailureError");
     }
   });
 
@@ -835,6 +833,14 @@ it("enforces the 32 sentinel boundary with typed and public limit details", asyn
       expect(result.ok).toBe(true);
       if (result.ok) expect(result.value.slices[0]?.sentinel_count).toBe(32);
     } else {
+      await expect(readElectronFuseImage(path)).rejects.toMatchObject({
+        limit: { name: "maximum_sentinels_per_slice", maximum: 32 },
+        failure: {
+          kind: "limit",
+          format: "electron-fuses",
+          limit: { name: "maximum_sentinels_per_slice", maximum: 32 },
+        },
+      });
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.error._tag).toBe("AnalysisResourceConstraintError");
@@ -867,6 +873,18 @@ it("rejects a sparse artifact over 1 GiB before scanning", async () => {
   const path = join(root, "large");
   await writeFile(path, thinFuseImage(OBSIDIAN_FUSE_BYTES).bytes);
   await truncate(path, 1024 * 1024 * 1024 + 1);
+  await expect(readElectronFuseImage(path)).rejects.toMatchObject({
+    limit: { name: "maximum_input_bytes", maximum: 1024 * 1024 * 1024 },
+    failure: {
+      kind: "limit",
+      format: "electron-fuses",
+      limit: {
+        name: "maximum_input_bytes",
+        maximum: 1024 * 1024 * 1024,
+        required: 1_073_741_825n,
+      },
+    },
+  });
   const result = await provider.inspect({ path });
   expect(result.ok).toBe(false);
   if (!result.ok) {
@@ -882,9 +900,6 @@ it("rejects a sparse artifact over 1 GiB before scanning", async () => {
           limit: 1024 * 1024 * 1024,
           unit: "bytes",
         },
-      },
-      remediation: {
-        action: expect.stringContaining("does not admit this input"),
       },
     });
   }

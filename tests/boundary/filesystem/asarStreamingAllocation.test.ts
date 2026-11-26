@@ -18,8 +18,8 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import { scanArtifactInventory } from "../../fixtures/artifactInventory.js";
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
 import {
-  closeAsarHandle,
   readValidatedAsarEntry,
+  readValidatedAsarRange,
 } from "../../../src/artifacts/AsarEntryStream.js";
 import { hashReadable } from "../../../src/artifacts/ArtifactHash.js";
 import { ARTIFACT_CLASSIFICATION_PREFIX_BYTES } from "../../../src/artifacts/ArtifactClassificationProbe.js";
@@ -54,11 +54,7 @@ const matchingDescriptorCount = async (identity: Stats): Promise<number> => {
 };
 
 const waitForNoMatchingDescriptor = async (identity: Stats): Promise<void> => {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if ((await matchingDescriptorCount(identity)) === 0) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  expect(await matchingDescriptorCount(identity)).toBe(0);
+  await expect.poll(() => matchingDescriptorCount(identity)).toBe(0);
 };
 
 const createUnpackedFixture = async () => {
@@ -96,23 +92,37 @@ const expectRetainedHandleRecovery = async (
   await waitForNoMatchingDescriptor(identity);
 };
 
+const packedContents = "module.exports = 1;\n";
+
+const createPackedFixture = async () => {
+  const root = await createTestTempDirectory("rea-asar-packed-");
+  const archive = join(root, "fixture.asar");
+  const payload = Buffer.from(packedContents);
+  const header = asarHeaderBytes(
+    JSON.stringify({
+      files: {
+        "empty.js": { size: 0, offset: "0" },
+        "small.js": { size: payload.length, offset: "0" },
+      },
+    }),
+  );
+  await writeFile(archive, Buffer.concat([header, payload]));
+  return archive;
+};
+
 describe("ASAR entry streaming", () => {
   it.skipIf(process.platform === "win32")(
-    "closes a packed member handle when its unopened output stream is destroyed",
+    "reuses one snapshot descriptor across container and packed member streams until reader close",
     async () => {
-      const root = await createTestTempDirectory(
-        "rea-asar-destroy-before-read-",
-      );
-      const source = join(root, "source");
-      const archive = join(root, "fixture.asar");
-      await mkdir(source);
-      await writeFile(join(source, "small.js"), "module.exports = 1;\n");
-      await createPackageWithOptions(source, archive, {});
-
+      const archive = await createPackedFixture();
       let snapshotPath: string | undefined;
+      let snapshotOpens = 0;
       const reader = new AsarArtifactReader(archive, {
         openFile: async (path, flags) => {
-          if (path !== archive) snapshotPath = path;
+          if (path !== archive) {
+            snapshotPath = path;
+            snapshotOpens += 1;
+          }
           return openFile(path, flags);
         },
       });
@@ -124,22 +134,34 @@ describe("ASAR entry streaming", () => {
         }
         const entry = entries.find(({ path }) => path === "small.js");
         if (entry === undefined) throw new Error("Expected packed ASAR member");
-        const snapshot = await reader.openContainer();
         if (snapshotPath === undefined)
           throw new Error("Expected snapshot acquisition");
         const identity = await lstat(snapshotPath);
+        expect(snapshotOpens).toBe(1);
+        expect(await matchingDescriptorCount(identity)).toBe(1);
+
+        const snapshot = await reader.openContainer();
         await buffer(snapshot);
-        const probe = await openFile(snapshotPath, "r");
-        expect(await matchingDescriptorCount(identity)).toBeGreaterThan(0);
-        await probe.close();
-        expect(await matchingDescriptorCount(identity)).toBe(0);
+        expect(snapshotOpens).toBe(1);
+        expect(await matchingDescriptorCount(identity)).toBe(1);
+
         const output = await reader.open(entry);
-        expect(await matchingDescriptorCount(identity)).toBeGreaterThan(0);
+        expect(snapshotOpens).toBe(1);
+        expect(await matchingDescriptorCount(identity)).toBe(1);
         const closed = new Promise<void>((resolve) =>
           output.once("close", resolve),
         );
         output.destroy();
         await closed;
+        expect(output.destroyed).toBe(true);
+        expect(await matchingDescriptorCount(identity)).toBe(1);
+
+        const second = await reader.open(entry);
+        expect((await buffer(second)).toString("utf8")).toBe(packedContents);
+        expect(snapshotOpens).toBe(1);
+        expect(await matchingDescriptorCount(identity)).toBe(1);
+
+        await reader.close();
         await waitForNoMatchingDescriptor(identity);
       } finally {
         await reader.close();
@@ -147,66 +169,112 @@ describe("ASAR entry streaming", () => {
     },
   );
 
-  it.skipIf(process.platform === "win32")(
-    "closes a packed member handle when cancellation arrives during open",
-    async () => {
-      const root = await createTestTempDirectory("rea-asar-abort-during-stat-");
-      const source = join(root, "source");
-      const archive = join(root, "fixture.asar");
-      await mkdir(source);
-      await writeFile(join(source, "small.js"), "module.exports = 1;\n");
-      await createPackageWithOptions(source, archive, {});
-
-      let snapshotPath: string | undefined;
-      const reader = new AsarArtifactReader(archive, {
-        openFile: async (path, flags) => {
-          if (path !== archive) snapshotPath = path;
-          return openFile(path, flags);
-        },
-      });
-
-      try {
-        const entries = [];
-        for await (const entry of reader.entries()) entries.push(entry);
-        const entry = entries.find(({ path }) => path === "small.js");
-        if (entry === undefined) throw new Error("Expected packed ASAR member");
-        const snapshot = await reader.openContainer();
-        if (snapshotPath === undefined)
-          throw new Error("Expected snapshot acquisition");
-        const identity = await lstat(snapshotPath);
-        await buffer(snapshot);
-        const controller = new AbortController();
-        const opening = reader.open(entry, controller.signal);
-        controller.abort();
-        await expect(opening).rejects.toMatchObject({ reason: "cancelled" });
-        await waitForNoMatchingDescriptor(identity);
-      } finally {
-        await reader.close();
-      }
-    },
-  );
-
-  it("keeps captured packed bytes readable after the original container disappears", async () => {
-    const root = await createTestTempDirectory("rea-asar-missing-member-");
-    const source = join(root, "source");
-    const archive = join(root, "fixture.asar");
-    await mkdir(source);
-    await writeFile(join(source, "small.js"), "module.exports = 1;\n");
-    await createPackageWithOptions(source, archive, {});
-
-    const reader = new AsarArtifactReader(archive);
+  it("closes an acquired snapshot handle before returning cancellation", async () => {
+    const archive = await createPackedFixture();
+    const cancellation = new Error("cancel at snapshot handle acquisition");
+    let controller: AbortController | undefined;
+    let snapshotHandle: FileHandle | undefined;
+    const reader = new AsarArtifactReader(archive, {
+      openFile: async (path, flags) => {
+        const handle = await openFile(path, flags);
+        if (path !== archive && controller !== undefined) {
+          snapshotHandle = handle;
+          controller.abort(cancellation);
+        }
+        return handle;
+      },
+    });
     try {
-      const entries = [];
-      for await (const entry of reader.entries()) entries.push(entry);
-      const entry = entries.find(({ path }) => path === "small.js");
-      if (entry === undefined) throw new Error("Expected packed ASAR member");
-      await rm(archive);
-      expect((await buffer(await reader.open(entry))).toString()).toBe(
-        "module.exports = 1;\n",
-      );
+      await reader.prepareContainer();
+      controller = new AbortController();
+      await expect(
+        reader.openContainer(controller.signal),
+      ).rejects.toMatchObject({
+        reason: "cancelled",
+        cause: cancellation,
+      });
+      expect(snapshotHandle?.fd).toBe(-1);
     } finally {
       await reader.close();
     }
+  });
+
+  it.each(["missing", "replaced"] as const)(
+    "reads captured empty and nonempty members when the original container is %s",
+    async (change) => {
+      const archive = await createPackedFixture();
+      const reader = new AsarArtifactReader(archive);
+      try {
+        const entries = [];
+        for await (const entry of reader.entries()) entries.push(entry);
+        if (change === "missing") await rm(archive);
+        else await writeFile(archive, "replacement container");
+
+        const observed = [];
+        for (const entry of entries)
+          observed.push([
+            entry.path,
+            (await buffer(await reader.open(entry))).toString("utf8"),
+          ]);
+        expect(observed).toEqual([
+          ["empty.js", ""],
+          ["small.js", packedContents],
+        ]);
+      } finally {
+        await reader.close();
+      }
+    },
+  );
+});
+
+describe("ASAR range streaming", () => {
+  it("propagates cancellation during an in-flight range read even under stream backpressure", async () => {
+    const controller = new AbortController();
+    const cancellation = new Error("abort during paused chunk");
+    const chunkBytes = 256 * 1024;
+    let readCalls = 0;
+    const read = (async (target: Buffer, offset: number, length: number) => {
+      readCalls += 1;
+      controller.abort(cancellation);
+      target.fill(0x61, offset, offset + length);
+      return { bytesRead: length, buffer: target };
+    }) as FileHandle["read"];
+    const output = readValidatedAsarRange(
+      { read },
+      0,
+      chunkBytes * 2,
+      "large.bin",
+      "/fixture/archive.asar",
+      controller.signal,
+    );
+    const failed = new Promise<Error>((resolve) =>
+      output.once("error", resolve),
+    );
+    output.pause();
+    output.read(0);
+    await expect(failed).resolves.toMatchObject({
+      reason: "cancelled",
+      cause: cancellation,
+    });
+    expect(readCalls).toBe(1);
+  });
+
+  it("rejects out-of-bounds range reads with declared-size integrity failure", async () => {
+    const read = (async (target: Buffer, _offset: number, length: number) => ({
+      bytesRead: length + 1,
+      buffer: target,
+    })) as FileHandle["read"];
+    const output = readValidatedAsarRange(
+      { read },
+      0,
+      16,
+      "overread.bin",
+      "/fixture/archive.asar",
+    );
+    await expect(buffer(output)).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "declared-size",
+    });
   });
 });
 
@@ -317,31 +385,6 @@ describe("ASAR entry producer identity", () => {
 });
 
 describe("ASAR read failures", () => {
-  it.skipIf(process.platform === "win32")(
-    "checks cancellation after closing an empty member handle",
-    async () => {
-      const root = await createTestTempDirectory("rea-asar-empty-close-");
-      const archive = join(root, "container.asar");
-      await writeFile(archive, "container bytes");
-      const identity = await lstat(archive);
-      const handle = await openFile(archive, "r");
-      try {
-        expect(await matchingDescriptorCount(identity)).toBeGreaterThan(0);
-        const controller = new AbortController();
-
-        await expect(
-          closeAsarHandle(async () => {
-            await handle.close();
-            controller.abort();
-          }, controller.signal),
-        ).rejects.toMatchObject({ reason: "cancelled" });
-        await waitForNoMatchingDescriptor(identity);
-      } finally {
-        await handle.close().catch(() => undefined);
-      }
-    },
-  );
-
   it.skipIf(process.platform === "win32")(
     "closes the opened unpacked file and retains ASAR context when handle stat fails",
     async () => {
@@ -651,20 +694,11 @@ it.skipIf(process.platform === "win32")(
 it.skipIf(process.platform === "win32")(
   "releases unpacked handles after stream completion and cancellation",
   async () => {
-    const root = await createTestTempDirectory("rea-asar-unpacked-stream-");
-    const source = join(root, "source");
-    const archive = join(root, "fixture.asar");
-    await mkdir(source);
-    await writeFile(join(source, "small.js"), "module.exports = 1;\n");
-    await createPackageWithOptions(source, archive, { unpack: "small.js" });
-    const identity = await lstat(join(`${archive}.unpacked`, "small.js"));
+    const { archive, identity } = await createUnpackedFixture();
     const reader = new AsarArtifactReader(archive);
 
     try {
-      const entries = [];
-      for await (const entry of reader.entries()) entries.push(entry);
-      const entry = entries.find(({ path }) => path === "small.js");
-      if (entry === undefined) throw new Error("Expected unpacked ASAR member");
+      const entry = await unpackedMember(reader);
       expect((await buffer(await reader.open(entry))).toString()).toBe(
         "module.exports = 1;\n",
       );
@@ -676,32 +710,6 @@ it.skipIf(process.platform === "win32")(
       controller.abort();
       await expect(reading).rejects.toMatchObject({ reason: "cancelled" });
       await waitForNoMatchingDescriptor(identity);
-    } finally {
-      await reader.close();
-    }
-  },
-);
-
-it.each(["missing", "replaced"] as const)(
-  "reads a captured zero-length member when the original container is %s",
-  async (change) => {
-    const root = await createTestTempDirectory("rea-asar-empty-member-");
-    const source = join(root, "source");
-    const archive = join(root, "fixture.asar");
-    await mkdir(source);
-    await writeFile(join(source, "empty.js"), "");
-    await createPackageWithOptions(source, archive, {});
-    const reader = new AsarArtifactReader(archive);
-
-    try {
-      const entries = [];
-      for await (const entry of reader.entries()) entries.push(entry);
-      const entry = entries.find(({ path }) => path === "empty.js");
-      if (entry === undefined) throw new Error("Expected empty ASAR member");
-      if (change === "missing") await rm(archive);
-      else await writeFile(archive, "replacement container");
-
-      expect(await buffer(await reader.open(entry))).toHaveLength(0);
     } finally {
       await reader.close();
     }
@@ -769,17 +777,9 @@ describe("ASAR entry streaming", () => {
   });
 
   it("reports the observed digest when an unpacked member changes size", async () => {
-    const root = await createTestTempDirectory(
-      "rea-asar-unpacked-size-change-",
-    );
-    const source = join(root, "source");
-    const archive = join(root, "fixture.asar");
-    const original = join(source, "small.js");
+    const { archive, unpackedPath } = await createUnpackedFixture();
     const changed = "changed();\n";
-    await mkdir(source);
-    await writeFile(original, "module.exports = 1;\n");
-    await createPackageWithOptions(source, archive, { unpack: "small.js" });
-    await writeFile(join(`${archive}.unpacked`, "small.js"), changed);
+    await writeFile(unpackedPath, changed);
 
     await expect(scanArtifactInventory(archive)).rejects.toMatchObject({
       reason: "integrity",
@@ -791,20 +791,27 @@ describe("ASAR entry streaming", () => {
     });
   });
 
-  it.each([
-    ["packed", {}],
-    ["unpacked", { unpack: "large.bin" }],
-  ] as const)(
+  it.each(["packed", "unpacked"] as const)(
     "streams a %s member in bounded chunks with its complete digest",
-    async (_kind, options) => {
+    async (kind) => {
       const root = await createTestTempDirectory("rea-asar-streaming-");
-      const source = join(root, "source");
       const archive = join(root, "fixture.asar");
-      const member = join(source, "large.bin");
-      await mkdir(source);
-      await writeFile(member, Buffer.alloc(0));
-      await truncate(member, memberBytes);
-      await createPackageWithOptions(source, archive, options);
+      const unpacked = kind === "unpacked";
+      const header = asarHeaderBytes(
+        JSON.stringify({
+          files: { "large.bin": { size: memberBytes, offset: "0", unpacked } },
+        }),
+      );
+      await writeFile(archive, header);
+      if (unpacked) {
+        const companion = `${archive}.unpacked`;
+        await mkdir(companion);
+        const member = join(companion, "large.bin");
+        await writeFile(member, "");
+        await truncate(member, memberBytes);
+      } else {
+        await truncate(archive, header.length + memberBytes);
+      }
 
       const reader = new AsarArtifactReader(archive);
       try {
@@ -812,6 +819,7 @@ describe("ASAR entry streaming", () => {
         for await (const entry of reader.entries()) entries.push(entry);
         const entry = entries.find(({ path }) => path === "large.bin");
         if (entry === undefined) throw new Error("Expected large ASAR member");
+        expect(entry.unpacked).toBe(unpacked);
 
         const stream = await reader.open(entry);
         let largestChunkBytes = 0;

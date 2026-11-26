@@ -20,6 +20,8 @@ const responseSchema = z.discriminatedUnion("ok", [
       .object({
         code: z.string().min(1),
         message: z.string().min(1),
+        /** Every matching candidate address, sent for an ambiguous selector only. */
+        candidates: z.array(z.string().min(1)).min(2).exactOptional(),
       })
       .strict(),
   }),
@@ -33,6 +35,8 @@ export class GhidraRemoteError extends Error {
   constructor(
     readonly code: string,
     message: string,
+    /** Every matching candidate address of an ambiguous selector. */
+    readonly candidates?: readonly string[],
   ) {
     super(message);
     this.name = "GhidraRemoteError";
@@ -42,7 +46,8 @@ export class GhidraRemoteError extends Error {
 /** The remote failure one rejected request carries. */
 export const ghidraRemoteError = (
   error: Extract<GhidraBridgeResponse, { ok: false }>["error"],
-): GhidraRemoteError => new GhidraRemoteError(error.code, error.message);
+): GhidraRemoteError =>
+  new GhidraRemoteError(error.code, error.message, error.candidates);
 
 /** Parse one complete Java-bridge response without accepting extra fields. */
 const parseGhidraResponseLine = (

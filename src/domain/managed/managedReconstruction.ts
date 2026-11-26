@@ -1,3 +1,4 @@
+import { managedModuleRow } from "./managedModuleIdentity.js";
 import { z } from "zod";
 
 import { evidenceSchema, type Evidence } from "../evidence.js";
@@ -209,15 +210,18 @@ const buildReconstructionSummary = (
 const buildStaticObservation = (
   staticEvidence: Evidence,
   members: ManagedMemberInspection,
-): StaticObservation => ({
-  evidence_id: staticEvidence.evidence_id,
-  artifact_sha256: members.artifact.sha256,
-  artifact_path: members.artifact.path,
-  byte_length: members.artifact.byte_length,
-  module_name: members.module?.name ?? null,
-  mvid: members.module?.mvid ?? null,
-  metadata_status: members.metadata.status,
-});
+): StaticObservation => {
+  const module = managedModuleRow(members);
+  return {
+    evidence_id: staticEvidence.evidence_id,
+    artifact_sha256: members.artifact.sha256,
+    artifact_path: members.artifact.path,
+    byte_length: members.artifact.byte_length,
+    module_name: module?.name ?? null,
+    mvid: module?.mvid ?? null,
+    metadata_status: members.metadata.status,
+  };
+};
 
 const buildDecompilerRecord = (
   decompiler: ManagedReconstructionImportInput["decompiler"],
