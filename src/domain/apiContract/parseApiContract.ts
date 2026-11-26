@@ -76,11 +76,14 @@ function* additionalOperations(
   context: {
     inventory: ContractInventory;
     path: string;
+    /** Effective pointer base under the referencing path. */
     pointer: string;
+    /** Pointer base where the operations are declared. */
+    sourcePointer: string;
     hasReference: boolean;
   },
 ): Generator<void, Result<void, AnalysisError>> {
-  const { inventory, path, pointer, hasReference } = context;
+  const { inventory, path, pointer, sourcePointer, hasReference } = context;
   const operations = record(value);
   if (operations === undefined)
     return inventory.diagnostic(
@@ -107,6 +110,7 @@ function* additionalOperations(
             path,
             method,
             pointer: source,
+            sourcePointer: `${sourcePointer}/${escapeJsonPointerToken(method)}`,
             hasReference,
           });
     if (!added.ok) return added;
@@ -116,7 +120,14 @@ function* additionalOperations(
 
 type PathItemReference =
   | { readonly kind: "none" }
-  | { readonly kind: "resolved"; readonly target: Record<string, unknown> }
+  | {
+      readonly kind: "resolved";
+      /** Visited targets, nearest first; the terminal target is last. */
+      readonly chain: readonly {
+        readonly pointer: string;
+        readonly target: Record<string, unknown>;
+      }[];
+    }
   | { readonly kind: "unresolved" };
 
 /** Record a Path Item $ref and, for a local fragment, resolve it. */
@@ -147,11 +158,20 @@ function pathItemReference(
       "resolved",
     );
     if (!recorded.ok) return recorded;
-    return ok({ kind: "resolved", target: outcome.target });
+    return ok({ kind: "resolved", chain: outcome.chain });
   }
   const recorded = inventory.reference(path, `${pointer}/$ref`, refValue);
   if (!recorded.ok) return recorded;
-  if (outcome.kind !== "external") {
+  if (outcome.kind === "invalid-reference") {
+    // The chain reached a target whose own $ref is malformed; the failure
+    // is reported where that $ref lives, not at the referencing item.
+    const diagnosed = inventory.diagnostic(
+      "invalid-path-reference",
+      `${outcome.pointer}/$ref`,
+      outcome.detail,
+    );
+    if (!diagnosed.ok) return diagnosed;
+  } else if (outcome.kind !== "external") {
     const diagnosed = inventory.diagnostic(
       "unresolved-path-reference",
       `${pointer}/$ref`,
@@ -162,6 +182,64 @@ function pathItemReference(
   return ok({ kind: "unresolved" });
 }
 
+/**
+ * Enumerate one Path Item object's operations and field diagnostics.
+ * Operations are emitted eagerly, in key order, so a cancellation that
+ * interrupts the item still retains the operations read so far. The
+ * effective pointer stays scoped to the referencing path while
+ * `definingPointer` names where each operation is actually declared; for
+ * the referencing item itself the two are the same.
+ */
+function* enumerateItem(
+  item: Record<string, unknown>,
+  context: {
+    inventory: ContractInventory;
+    path: string;
+    pointer: string;
+    definingPointer: string;
+    modern: boolean;
+    hasReference: boolean;
+  },
+): Generator<void, Result<void, AnalysisError>> {
+  const { inventory, path, pointer, definingPointer, modern, hasReference } =
+    context;
+  const fixedMethods: readonly string[] = modern ? modernMethods : methods;
+  let examined = 0;
+  for (const key in item) {
+    if (!Object.hasOwn(item, key)) continue;
+    if (examined++ % 128 === 0) yield;
+    if (fixedMethods.includes(key)) {
+      const added = inventory.operation(item[key], {
+        path,
+        method: key.toUpperCase(),
+        pointer: `${pointer}/${key}`,
+        sourcePointer: `${definingPointer}/${key}`,
+        hasReference,
+      });
+      if (!added.ok) return added;
+    } else if (key === "additionalOperations" && modern) {
+      const added = yield* additionalOperations(item[key], {
+        inventory,
+        path,
+        pointer: `${pointer}/${key}`,
+        sourcePointer: `${definingPointer}/${key}`,
+        hasReference,
+      });
+      if (!added.ok) return added;
+    } else if (!pathMetadata.has(key) && !key.startsWith("x-")) {
+      const admitted = inventory.reserve(512 + key.length * 24);
+      if (!admitted.ok) return admitted;
+      const diagnosed = inventory.diagnostic(
+        "unknown-path-item-field",
+        `${definingPointer}/${escapeJsonPointerToken(key)}`,
+        "This field is not an operation or a recognized Path Item field in the selected OpenAPI minor version.",
+      );
+      if (!diagnosed.ok) return diagnosed;
+    }
+  }
+  return ok(undefined);
+}
+
 function* pathItem(
   value: unknown,
   context: {
@@ -170,8 +248,6 @@ function* pathItem(
     pointer: string;
     modern: boolean;
     resolver: LocalRefResolver;
-    /** True when this item is already a resolved $ref target; its own $ref is not re-recorded. */
-    resolved?: boolean;
   },
 ): Generator<void, Result<void, AnalysisError>> {
   const { inventory, path, pointer, modern, resolver } = context;
@@ -183,63 +259,44 @@ function* pathItem(
       "Path Item must be an object; its operations are unknown.",
     );
   let hasReference = false;
-  if (!context.resolved) {
-    const reference = pathItemReference(item, {
+  let chain: readonly {
+    readonly pointer: string;
+    readonly target: Record<string, unknown>;
+  }[] = [];
+  const reference = pathItemReference(item, {
+    inventory,
+    path,
+    pointer,
+    resolver,
+  });
+  if (!reference.ok) return reference;
+  if (reference.value.kind === "resolved") {
+    chain = reference.value.chain;
+  } else if (reference.value.kind !== "none") {
+    hasReference = true;
+  }
+  // Operations declared on intermediate chain items stay visible: each
+  // visited target contributes its own non-conflicting operations, nearest
+  // first, before the referencing item's inline siblings.
+  for (const link of chain) {
+    const read = yield* enumerateItem(link.target, {
       inventory,
       path,
       pointer,
-      resolver,
+      definingPointer: link.pointer,
+      modern,
+      hasReference: false,
     });
-    if (!reference.ok) return reference;
-    if (reference.value.kind === "resolved") {
-      // Enumerate the target's operations under the referencing path;
-      // source pointers stay scoped to this path so identities stay unique.
-      const read = yield* pathItem(reference.value.target, {
-        inventory,
-        path,
-        pointer,
-        modern,
-        resolver,
-        resolved: true,
-      });
-      if (!read.ok) return read;
-    } else if (reference.value.kind !== "none") {
-      hasReference = true;
-    }
+    if (!read.ok) return read;
   }
-  const fixedMethods: readonly string[] = modern ? modernMethods : methods;
-  let examined = 0;
-  for (const key in item) {
-    if (!Object.hasOwn(item, key)) continue;
-    if (examined++ % 128 === 0) yield;
-    if (fixedMethods.includes(key)) {
-      const added = inventory.operation(item[key], {
-        path,
-        method: key.toUpperCase(),
-        pointer: `${pointer}/${key}`,
-        hasReference,
-      });
-      if (!added.ok) return added;
-    } else if (key === "additionalOperations" && modern) {
-      const added = yield* additionalOperations(item[key], {
-        inventory,
-        path,
-        pointer: `${pointer}/${key}`,
-        hasReference,
-      });
-      if (!added.ok) return added;
-    } else if (!pathMetadata.has(key) && !key.startsWith("x-")) {
-      const admitted = inventory.reserve(512 + key.length * 24);
-      if (!admitted.ok) return admitted;
-      const diagnosed = inventory.diagnostic(
-        "unknown-path-item-field",
-        `${pointer}/${escapeJsonPointerToken(key)}`,
-        "This field is not an operation or a recognized Path Item field in the selected OpenAPI minor version.",
-      );
-      if (!diagnosed.ok) return diagnosed;
-    }
-  }
-  return ok(undefined);
+  return yield* enumerateItem(item, {
+    inventory,
+    path,
+    pointer,
+    definingPointer: pointer,
+    modern,
+    hasReference,
+  });
 }
 
 interface ContractReportContext {
@@ -260,9 +317,9 @@ const contractReport = (
   let declared = 0;
   for (const operation of inventory.operations)
     if (operation.state === "declared") declared++;
-  const unresolvedPathItems = inventory.references.filter(
-    (row) => row.state !== "resolved",
-  ).length;
+  let unresolvedPathItems = 0;
+  for (const row of inventory.references)
+    if (row.state !== "resolved") unresolvedPathItems++;
   const referenceResolution: ApiContract["source_coverage"]["reference_resolution"] =
     inventory.localResolutionAttempted ? "local-only" : "not-attempted";
   return {

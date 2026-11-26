@@ -28,7 +28,11 @@ export const apiContractOperationSchema = z.strictObject({
   source_pointer: z.string(),
   state: z.enum(["declared", "unknown"]),
   reason: z
-    .enum(["unresolved-path-item-reference", "malformed-operation"])
+    .enum([
+      "unresolved-path-item-reference",
+      "malformed-operation",
+      "conflicting-operation",
+    ])
     .nullable(),
 });
 export const apiContractPathReferenceSchema = z.strictObject({
@@ -51,6 +55,7 @@ export const apiContractDiagnosticSchema = z.strictObject({
     "unresolved-path-reference",
     "invalid-operation",
     "invalid-operation-id",
+    "conflicting-operation",
     "unknown-path-item-field",
     "invalid-additional-operations",
     "invalid-additional-method",

@@ -1,7 +1,9 @@
 import { Budget } from "../budget.js";
-import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
+import { decodeLimit } from "../parseFailure.js";
+import { parseLimitConstraint } from "../parseFailureAnalysisError.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
+import { ellipsisExcerpt } from "../excerpt.js";
 import { err, ok, type Result } from "../result.js";
 import { parseRecordedTransportUrl } from "../recordedTransportUrl.js";
 import {
@@ -22,9 +24,19 @@ const identity = (prefix: string, facts: unknown) =>
 interface OperationSlot {
   readonly path: string;
   readonly method: string;
+  /** Effective pointer for the operation slot under the referencing path. */
   readonly pointer: string;
+  /**
+   * Pointer where the operation is actually declared; it exists in the
+   * artifact. For an inline operation it equals `pointer`; for an operation
+   * reached through a resolved local $ref it names the target declaration.
+   */
+  readonly sourcePointer: string;
   readonly hasReference: boolean;
 }
+
+/** Defining pointers kept in a conflict diagnostic; never copied whole. */
+const CONFLICT_POINTER_CHARS = 512;
 
 /** Own compact declarations and account for repeated path/pointer serialization before allocation. */
 export class ContractInventory {
@@ -34,20 +46,33 @@ export class ContractInventory {
   /** A local "#/..." Path Item $ref was seen, so resolution was attempted. */
   localResolutionAttempted = false;
   readonly #retainedBytes = new Budget(API_CONTRACT_FACT_BYTES);
+  /** Operation row index by operation_key; one row per path/method slot. */
+  readonly #operationRowByKey = new Map<string, number>();
+  /** Operation keys already diagnosed as conflicting declarations. */
+  readonly #conflictedKeys = new Set<string>();
 
   constructor(readonly artifact: ApiContractArtifact) {}
 
   reserve(bytes: number): Result<void, AnalysisError> {
     // Includes object/index overhead and repeated escaped Evidence delivery, not just source bytes.
+    // The refusal is built from the limit the parser stopped at, so its name
+    // and maximum travel with the failure instead of being spelled again here.
     return this.#retainedBytes.tryCharge(bytes)
       ? ok(undefined)
       : err(
-          new AnalysisResourceConstraintError(
+          parseLimitConstraint(
             API_CONTRACT_OPERATION,
             "memory",
-            "API contract declarations exceed the retained-facts representation allowance.",
-            { representation_bytes: API_CONTRACT_FACT_BYTES },
+            decodeLimit(
+              "openapi-json",
+              "API contract declarations exceed the retained-facts representation allowance.",
+              {
+                name: "api-contract-retained-facts",
+                maximum: API_CONTRACT_FACT_BYTES,
+              },
+            ),
             {
+              legacyMaximumKey: "representation_bytes",
               retryable: false,
               remediationAction:
                 "Select a smaller complete API document; paging the reply does not increase the parser's retained-facts allowance.",
@@ -122,10 +147,38 @@ export class ContractInventory {
     const object = record(value);
     const declaredId =
       typeof object?.operationId === "string" ? object.operationId : null;
+    const operationKey = identity("api_operation_key", [
+      slot.path,
+      slot.method,
+    ]);
+    const earlierIndex = this.#operationRowByKey.get(operationKey);
+    if (earlierIndex !== undefined) {
+      // A second declaration of the same path/method slot: neither is
+      // settled. Reclassify the earlier row when it claimed a declaration
+      // and diagnose the conflict once, naming both defining pointers.
+      const earlier = this.operations[earlierIndex];
+      if (earlier !== undefined && earlier.state === "declared")
+        this.operations[earlierIndex] = {
+          ...earlier,
+          state: "unknown",
+          reason: "conflicting-operation",
+          declared_id: null,
+        };
+      if (!this.#conflictedKeys.has(operationKey)) {
+        this.#conflictedKeys.add(operationKey);
+        return this.diagnostic(
+          "conflicting-operation",
+          slot.pointer,
+          `${slot.method} is declared more than once for ${slot.path}: ${ellipsisExcerpt(earlier?.source_pointer ?? slot.sourcePointer, CONFLICT_POINTER_CHARS)} and ${ellipsisExcerpt(slot.sourcePointer, CONFLICT_POINTER_CHARS)}. The effective operation is unknown.`,
+        );
+      }
+      return ok(undefined);
+    }
     const admitted = this.reserve(
       1536 +
         slot.path.length * 32 +
         slot.method.length * 24 +
+        slot.sourcePointer.length * 12 +
         (declaredId?.length ?? 0) * 12,
     );
     if (!admitted.ok) return admitted;
@@ -136,18 +189,22 @@ export class ContractInventory {
           ? "unresolved-path-item-reference"
           : null;
     this.operations.push({
+      // Identity carries both the effective slot and the defining pointer,
+      // so two declarations of one slot stay distinguishable by operation_id.
       operation_id: identity("api_operation", [
         this.artifact.sha256,
         slot.pointer,
+        slot.sourcePointer,
       ]),
-      operation_key: identity("api_operation_key", [slot.path, slot.method]),
+      operation_key: operationKey,
       method: slot.method,
       path: slot.path,
       declared_id: declaredId,
-      source_pointer: slot.pointer,
+      source_pointer: slot.sourcePointer,
       state: reason === null ? "declared" : "unknown",
       reason,
     });
+    this.#operationRowByKey.set(operationKey, this.operations.length - 1);
     if (object === undefined)
       return this.diagnostic(
         "invalid-operation",

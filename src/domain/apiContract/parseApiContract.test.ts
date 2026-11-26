@@ -184,13 +184,23 @@ it("resolves local same-document references, including components and chained re
     "resolved",
   ]);
   expect(value.operations).toHaveLength(6);
+  // Source pointers name where each operation is declared, not the alias
+  // that referenced it; the effective path stays in `path`.
   expect(value.operations.map((row) => row.source_pointer)).toEqual([
-    "/paths/~1a/get",
-    "/paths/~1a/post",
-    "/paths/~1b/get",
-    "/paths/~1b/post",
-    "/paths/~1c/get",
-    "/paths/~1c/post",
+    "/components/pathItems/Shared/get",
+    "/components/pathItems/Shared/post",
+    "/components/pathItems/Shared/get",
+    "/components/pathItems/Shared/post",
+    "/components/pathItems/Shared/get",
+    "/components/pathItems/Shared/post",
+  ]);
+  expect(value.operations.map((row) => row.path)).toEqual([
+    "/a",
+    "/a",
+    "/b",
+    "/b",
+    "/c",
+    "/c",
   ]);
   expect(
     value.operations.filter((row) => row.declared_id === "shared"),
@@ -220,9 +230,161 @@ it("unescapes RFC 6901 tokens when resolving local references", () => {
   expect(value.operations[0]).toMatchObject({
     path: "/plain",
     declared_id: "escaped",
-    source_pointer: "/paths/~1plain/get",
+    source_pointer: "/paths/~1a~1~0b/get",
     state: "declared",
   });
+});
+
+it("percent-decodes URI fragments before JSON Pointer parsing", () => {
+  const input = document({
+    "/plain": { $ref: "#/paths/~1users~1%7Bid%7D" },
+    "/users/{id}": { get: { operationId: "by-id" } },
+  });
+  const value = report(input);
+  expect(value.path_item_references[0]).toMatchObject({ state: "resolved" });
+  expect(value.operations).toHaveLength(2);
+  expect(value.operations[0]).toMatchObject({
+    path: "/plain",
+    declared_id: "by-id",
+    source_pointer: "/paths/~1users~1{id}/get",
+    state: "declared",
+  });
+  expect(value.operations[1]).toMatchObject({
+    path: "/users/{id}",
+    declared_id: "by-id",
+    source_pointer: "/paths/~1users~1{id}/get",
+    state: "declared",
+  });
+});
+
+it("keeps operations declared on intermediate chain items", () => {
+  const input = {
+    ...document({
+      "/alias": { $ref: "#/components/pathItems/Mid" },
+    }),
+    components: {
+      pathItems: {
+        Mid: {
+          $ref: "#/components/pathItems/End",
+          post: { operationId: "mid-post" },
+        },
+        End: { get: { operationId: "end-get" } },
+      },
+    },
+  };
+  const value = report(input);
+  expect(value.path_item_references[0]).toMatchObject({ state: "resolved" });
+  expect(value.operations).toHaveLength(2);
+  expect(value.operations.map((row) => row.method)).toEqual(["POST", "GET"]);
+  expect(value.operations.map((row) => row.declared_id)).toEqual([
+    "mid-post",
+    "end-get",
+  ]);
+  expect(value.operations.map((row) => row.source_pointer)).toEqual([
+    "/components/pathItems/Mid/post",
+    "/components/pathItems/End/get",
+  ]);
+  expect(value.operations.every((row) => row.state === "declared")).toBe(true);
+  expect(value.summary).toMatchObject({
+    declared: 2,
+    unresolved_path_items: 0,
+  });
+});
+
+it("does not resolve an inherited member such as __proto__", () => {
+  const value = report(document({ "/alias": { $ref: "#/__proto__" } }));
+  expect(value.path_item_references[0]).toMatchObject({ state: "unresolved" });
+  expect(value.operations).toHaveLength(0);
+  expect(value.diagnostics.map((row) => row.code)).toEqual([
+    "unresolved-path-reference",
+  ]);
+});
+
+it("does not accept a target whose $ref is malformed", () => {
+  const input = {
+    ...document({
+      "/alias": { $ref: "#/components/pathItems/Shared" },
+    }),
+    components: { pathItems: { Shared: { $ref: 123, get: {} } } },
+  };
+  const value = report(input);
+  expect(value.path_item_references[0]).toMatchObject({ state: "unresolved" });
+  expect(value.operations).toHaveLength(0);
+  expect(value.diagnostics).toEqual([
+    expect.objectContaining({
+      code: "invalid-path-reference",
+      source_pointer: "/components/pathItems/Shared/$ref",
+    }),
+  ]);
+  expect(value.summary).toMatchObject({ unresolved_path_items: 1 });
+});
+
+it("preserves a method declared both by reference and inline as unknown", () => {
+  const input = {
+    ...document(
+      {
+        "/alias": {
+          $ref: "#/components/pathItems/Shared",
+          get: { operationId: "inline-get" },
+        },
+      },
+      "3.1.2",
+    ),
+    components: {
+      pathItems: { Shared: { get: { operationId: "shared-get" } } },
+    },
+  };
+  const value = report(input);
+  expect(value.path_item_references[0]).toMatchObject({ state: "resolved" });
+  expect(value.operations).toHaveLength(1);
+  expect(value.operations[0]).toMatchObject({
+    method: "GET",
+    path: "/alias",
+    declared_id: null,
+    state: "unknown",
+    reason: "conflicting-operation",
+  });
+  expect(value.diagnostics).toEqual([
+    expect.objectContaining({
+      code: "conflicting-operation",
+      source_pointer: "/paths/~1alias/get",
+    }),
+  ]);
+  expect(value.diagnostics[0]?.message).toContain(
+    "/components/pathItems/Shared/get",
+  );
+  expect(value.summary).toMatchObject({
+    operation_slots: 1,
+    declared: 0,
+    unknown: 1,
+  });
+});
+
+it("preserves a method declared twice across a reference chain as unknown", () => {
+  const input = {
+    ...document({
+      "/alias": { $ref: "#/components/pathItems/Mid" },
+    }),
+    components: {
+      pathItems: {
+        Mid: {
+          $ref: "#/components/pathItems/End",
+          post: { operationId: "mid-post" },
+        },
+        End: { post: { operationId: "end-post" } },
+      },
+    },
+  };
+  const value = report(input);
+  expect(value.operations).toHaveLength(1);
+  expect(value.operations[0]).toMatchObject({
+    method: "POST",
+    state: "unknown",
+    reason: "conflicting-operation",
+  });
+  expect(value.diagnostics.map((row) => row.code)).toEqual([
+    "conflicting-operation",
+  ]);
 });
 
 it("keeps inline sibling operations declared once their reference resolves", () => {
@@ -349,6 +511,12 @@ it("stops resolving at the per-document expansion budget", () => {
     diagnostics: 1,
   });
   expect(value.diagnostics[0]?.message).toContain("expansion budget");
+  expect(value.diagnostics[0]?.message).toContain(
+    "api-contract-local-ref-expansions",
+  );
+  expect(value.diagnostics[0]?.message).toContain(
+    "reduce the number of local $ref resolutions",
+  );
 });
 
 it("keeps usable siblings, malformed slots and missing values distinct", () => {

@@ -11,8 +11,13 @@ The default profile reads one local OpenAPI
 authorized runtime behavior. YAML, AsyncAPI, callbacks/webhooks, schema graphs,
 contract diffs and traffic correlation are outside this version.
 
-The OpenAPI importer never resolves references, opens sibling documents, evaluates
-examples or contacts declared servers. OpenAPI 3.2 `query` and
+The OpenAPI importer resolves local same-document `$ref` fragments
+(`#/…`) within a depth budget of 10 hops and an expansion budget of 256
+resolved references per document, following chains and keeping operations
+declared on intermediate Path Items. It never opens sibling documents,
+evaluates examples or contacts declared servers. External, cyclic,
+missing-target, malformed and over-budget references remain unresolved, and
+their Path Item operations stay unknown. OpenAPI 3.2 `query` and
 `additionalOperations` follow the [Path Item contract](https://spec.openapis.org/oas/v3.2.1.html#path-item-object),
 including case-sensitive additional HTTP method spelling.
 
@@ -64,18 +69,26 @@ use absolute filesystem paths.
 ## Identity, provenance and coverage
 
 Each operation has an artifact-scoped `operation_id`, an exact method/path
-`operation_key`, an optional `declared_id` from `operationId`, and its original
-JSON Pointer. Keys can correlate exact declarations in a caller-selected pair
-of revisions; they do not establish equivalence across unrelated APIs, renamed
-path templates or runtime handlers. Declared IDs are not assumed unique.
+`operation_key`, an optional `declared_id` from `operationId`, and its
+defining JSON Pointer (`source_pointer`). For an operation reached through a
+resolved local `$ref`, `source_pointer` names the declaration (for example a
+`components.pathItems` entry) while `path` keeps the effective path; the
+effective pointer follows from `path` and the method. Keys can correlate
+exact declarations in a caller-selected pair of revisions; they do not
+establish equivalence across unrelated APIs, renamed path templates or
+runtime handlers. Declared IDs are not assumed unique.
 The artifact includes the verified byte length, SHA-256 and selected path.
 
 Malformed siblings retain useful declarations plus diagnostics. A Path Item
-`$ref`, including a local fragment, remains unresolved; adjacent inline slots
-are unknown because referenced fields may overlap. Missing or malformed paths
+`$ref` that stays unresolved keeps adjacent inline slots unknown because
+referenced fields may overlap; a method declared both by a resolved
+reference and inline (or twice across a reference chain) is preserved as
+unknown with reason `conflicting-operation`, since the OpenAPI contract
+leaves that overlap undefined. Missing or malformed paths
 are explicit, and missing required OpenAPI 3.0 paths does not become a complete
-empty inventory. `source_coverage` is limited to inline paths and records that
-reference resolution and full schema validation were not performed. Page
+empty inventory. `source_coverage` is limited to inline paths and records
+local-only reference resolution (`reference_resolution`) and that full schema
+validation was not performed. Page
 exhaustion describes the selected rows and never upgrades source coverage.
 
 Structured transport userinfo credentials are excluded from reference URIs;
