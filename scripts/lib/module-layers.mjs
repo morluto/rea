@@ -81,6 +81,7 @@ export const UNIT_LAYERS = Object.freeze(
       "native",
       "nuget",
       "objdump",
+      "oci",
       "pcap",
       "python",
       "reference",
@@ -377,6 +378,7 @@ export const ENTRY_FILES = Object.freeze(
       ],
       nuget: ["NugetNupkgProvider.ts", "NugetNupkgProviderIdentity.ts"],
       objdump: ["ObjdumpCommand.ts", "ObjdumpProviderIdentity.ts"],
+      oci: ["OciImageLayoutProvider.ts", "OciImageLayoutProviderIdentity.ts"],
       pcap: [
         "PcapConfiguration.ts",
         "PcapProvider.ts",

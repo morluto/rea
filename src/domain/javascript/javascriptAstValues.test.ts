@@ -2,6 +2,7 @@ import * as t from "@babel/types";
 import { expect, it } from "vitest";
 
 import {
+  isPureJavaScriptLiteralExpression,
   semanticMemberChain,
   semanticStaticPropertyKey,
   staticObjectOwnMethodReader,
@@ -9,6 +10,7 @@ import {
   staticObjectPropertyReader,
   staticObjectCopyPropertyReader,
   staticObjectPropertyNames,
+  unwrapPureJavaScriptSequenceExpression,
 } from "./javascriptAstValues.js";
 
 it("keeps string spread indices separate from named descriptor fields", () => {
@@ -654,6 +656,52 @@ it("ignores null and propertyless copy sources without erasing indexed strings",
   const read = staticObjectCopyPropertyReader(t.stringLiteral("abc"));
   expect(read("0").status).toBe("dynamic");
   expect(read("minVersion").status).toBe("missing");
+});
+
+it("classifies pure literal leading expressions and unwraps pure sequences conservatively", () => {
+  const target = t.identifier("localFn");
+  const unshadowed = (id: t.Identifier) => id.name === "undefined";
+  for (const pure of [
+    t.numericLiteral(0),
+    t.stringLiteral("ok"),
+    t.booleanLiteral(true),
+    t.nullLiteral(),
+    t.bigIntLiteral(1n),
+    t.templateLiteral(
+      [t.templateElement({ raw: "raw", cooked: "raw" }, true)],
+      [],
+    ),
+    t.unaryExpression("void", t.numericLiteral(0)),
+    t.unaryExpression("!", t.numericLiteral(0)),
+    t.unaryExpression("-", t.numericLiteral(1)),
+    t.unaryExpression("-", t.bigIntLiteral(1n)),
+    t.tsAsExpression(t.numericLiteral(0), t.tsAnyKeyword()),
+    t.sequenceExpression([t.numericLiteral(0), t.nullLiteral()]),
+    t.identifier("undefined"),
+  ]) {
+    expect(isPureJavaScriptLiteralExpression(pure, unshadowed)).toBe(true);
+    const wrapped = t.sequenceExpression([pure, target]);
+    expect(unwrapPureJavaScriptSequenceExpression(wrapped, unshadowed)).toBe(
+      target,
+    );
+  }
+  const impureCases: t.Expression[] = [
+    t.callExpression(t.identifier("sideEffect"), []),
+    t.unaryExpression("void", t.callExpression(t.identifier("sideEffect"), [])),
+    t.unaryExpression("+", t.identifier("obj")),
+    t.identifier("other"),
+    t.identifier("undefined"),
+  ];
+  for (const [index, impure] of impureCases.entries()) {
+    const checker = index === impureCases.length - 1 ? () => false : unshadowed;
+    expect(isPureJavaScriptLiteralExpression(impure, checker)).toBe(false);
+    const seq = t.sequenceExpression([impure, target]);
+    expect(unwrapPureJavaScriptSequenceExpression(seq, checker)).toBe(seq);
+  }
+  const singleElement = t.sequenceExpression([target]);
+  expect(unwrapPureJavaScriptSequenceExpression(singleElement)).toBe(
+    singleElement,
+  );
 });
 
 it("bounds conditional copy sources by the keys their branches may copy", () => {

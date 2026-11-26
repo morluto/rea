@@ -455,6 +455,17 @@ See [Android boot images](../android-boot-image.md) for header versions 0 throug
 4, vendor ramdisk table entries, stored compression, and the unverified AVB
 footer. `ANDROID!` does not record boot versus init_boot versus recovery.
 
+Inspect a standalone Android Verified Boot vbmeta image:
+
+```sh
+rea inspect-artifact ./vbmeta.img --json
+rea extract-artifact ./vbmeta.img --json
+```
+
+See [Android Verified Boot vbmeta images](../guides/firmware/android-vbmeta.md)
+for the header, descriptors, stored public key, and the fact that nothing is
+verified.
+
 Inventory and extract an ISO 9660 disc image without mounting it:
 
 ```sh
@@ -465,6 +476,16 @@ rea extract-artifact ./installer.iso --json
 See [ISO 9660 disc images](../guides/firmware/iso9660-images.md) for volume facts, Joliet
 names, multi-extent and interleaved files, and what is not decoded.
 
+Inventory and extract a Nintendo Switch NSO module or NRO executable:
+
+```sh
+rea inspect-artifact ./main.nso --json
+rea extract-artifact ./main.nso --json
+```
+
+See [Switch executables](../guides/firmware/switch-executables.md) for header facts, segment
+hashes, LZ4 decompression limits and NRO assets.
+
 Inventory and extract a uClinux bFLT flat executable:
 
 ```sh
@@ -474,6 +495,16 @@ rea extract-artifact ./busybox.bflt --json
 
 See [uClinux bFLT flat executables](../bflt-executables.md) for header facts,
 segments, gzip and gzdata bodies, and the limitations kept beside the facts.
+
+Inventory and extract a Nintendo DS ROM's CPU binaries, overlays, and files:
+
+```sh
+rea inspect-artifact ./game.nds --detail summary --json
+rea extract-artifact ./game.nds --json
+```
+
+See [Nintendo DS ROMs](../guides/firmware/nds-roms.md) for header detection, member paths,
+checksum and range limitations, and what is not decoded.
 
 Inspect local model declarations without loading weights:
 
@@ -726,6 +757,19 @@ The workflow reports package identity, license and repository fields as present,
 dependency groups with version ranges, and a ZIP contents inventory with
 path-derived folder roles. Missing or malformed `.nuspec` members still return
 the inventory with limitations. See [NuGet packages](../guides/managed/nuget-nupkg.md).
+
+Inspect an OCI image-layout directory without unpacking a tar, decompressing
+layers, or contacting a registry:
+
+```bash
+rea inspect-oci-image-layout /absolute/path/to/busybox.oci --json
+```
+
+The workflow reports layout version, index entries, image config facts, layers,
+and streamed digest verification of present referenced blobs. Missing blobs,
+digest mismatches, and similar defects are findings. Env values are kept
+unless `--no-include-env-values` is selected. Directory form only. See
+[OCI image layouts](../guides/artifacts/oci-image-layout.md).
 
 Complete `rea decompile --json` Evidence can be saved and inspected through
 `inspect-analysis-view` with an inline source and

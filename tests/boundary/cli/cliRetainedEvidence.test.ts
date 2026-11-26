@@ -39,6 +39,7 @@ import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
+import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 type Output = {
@@ -915,3 +916,35 @@ it.each([false, true])(
     expect((await readFile(reordered.path)).equals(publishedBytes)).toBe(true);
   },
 );
+
+it("delivers an unretained over-budget extraction complete, since a rerun cannot reproduce it", async () => {
+  const { serve } = await workspace();
+  const root = await createTestTempDirectory("rea-retain-extraction-");
+  const archive = join(root, "app.zip");
+  await writeOrderedZip(
+    archive,
+    Array.from({ length: 400 }, (_, index) => `res/item${String(index)}.txt`),
+  );
+  const extract = (output: string, ...flags: string[]) =>
+    serve([
+      "extract-artifact",
+      archive,
+      "--output-root",
+      join(root, output),
+      "--json",
+      ...flags,
+    ]);
+  // The extraction created its output root, so rerunning it fails; its
+  // complete record is the only recovery.
+  const unretained = parseEvidence(await extract("unretained", "--no-retain"));
+  expect(unretained.operation).toBe("extract_artifact");
+  expect(
+    (unretained.normalized_result as { artifacts: unknown[] }).artifacts,
+  ).toHaveLength(400);
+  // With the cache on, the summary stays and pages the retained record.
+  const retained = (await extract("retained")) as Output;
+  expect(parseEvidence(retained.summary).operation).toBe(
+    "inspect_analysis_view",
+  );
+  expect(retained.delivery).toMatchObject({ retained: "cache-file" });
+});

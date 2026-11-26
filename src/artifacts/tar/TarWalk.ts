@@ -20,6 +20,8 @@ import {
   artifactReaderLimitFailure,
   artifactParseFailure,
   assertArtifactReadActive,
+  currentDirectoryPrefixLimitation,
+  withoutCurrentDirectoryPrefix,
 } from "../../resources/index.js";
 import { TarStreamEnded, type TarByteStream } from "./TarByteStream.js";
 
@@ -247,6 +249,7 @@ export const walkTar = async (
   const members: TarMember[] = [];
   const omissions: { path: string; kind: ArtifactTraversalOmissionKind }[] = [];
   const limitations: string[] = [];
+  let prefixedMembers = 0;
   const dialects = new Set<TarHeaderDialect>();
   let paxHeaders = 0;
   const retained = new Budget(limits.metadata_bytes);
@@ -470,7 +473,7 @@ export const walkTar = async (
         break;
       }
       const sourcePath = name;
-      const path = name.replace(/^(?:\.\/)+/u, "");
+      const path = withoutCurrentDirectoryPrefix(name);
       const role = memberRole(typeflag, name, records);
       // Only an inventoried member keeps its pax warnings.
       if ("omit" in role || role.member === "root")
@@ -485,10 +488,7 @@ export const walkTar = async (
       if ("omit" in role)
         omissions.push({ path: path.replace(/\/+$/u, ""), kind: role.omit });
       else if (role.member !== "root") {
-        if (path !== sourcePath)
-          memberLimitations.push(
-            `tar member name ${JSON.stringify(sourcePath)} has a leading current-directory prefix omitted from its logical path.`,
-          );
+        if (path !== sourcePath) prefixedMembers += 1;
         members.push({
           kind: role.member,
           path,
@@ -542,6 +542,8 @@ export const walkTar = async (
     )
       members.pop();
   }
+  if (prefixedMembers > 0)
+    limitations.push(currentDirectoryPrefixLimitation("tar", prefixedMembers));
   return {
     members,
     omissions,

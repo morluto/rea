@@ -4,6 +4,8 @@
  * past the engine's argument limit; this loop has no such limit.
  */
 export const appendAll = <T>(target: T[], items: Iterable<T>): T[] => {
-  for (const item of items) target.push(item);
+  // Snapshot self-appends so newly added elements are not read again.
+  const source = target === items ? [...items] : items;
+  for (const item of source) target.push(item);
   return target;
 };

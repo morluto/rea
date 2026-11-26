@@ -15,6 +15,7 @@ import {
   fullAndroidOtaPayload,
   v1AndroidOtaPayload,
 } from "./firmware/androidOtaPayload.fixture.js";
+import { sampleAndroidVbmeta } from "./firmware/androidVbmeta.fixture.js";
 import {
   buildAndroidSparseImage,
   mixedAndroidSparseImage,
@@ -122,6 +123,18 @@ it("recognizes Android boot and vendor boot image prefixes", () => {
       state: "recognized",
       format: "android-boot-image",
     });
+});
+
+it("recognizes a standalone AVB0 vbmeta image and leaves an AVBf footer", () => {
+  expect(recognize(sampleAndroidVbmeta())).toMatchObject({
+    state: "recognized",
+    format: "android-vbmeta",
+  });
+  expect(recognize(Buffer.from("AVB0"))).toMatchObject({
+    state: "recognized",
+    format: "android-vbmeta",
+  });
+  expect(recognize(Buffer.from("AVBf"))).toBeUndefined();
 });
 
 it("recognizes a CrAU v2 payload after the uImage magic check", () => {

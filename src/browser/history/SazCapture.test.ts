@@ -63,19 +63,18 @@ it("preserves mixed source spellings and session ordering within one SAZ", async
       limitations: [],
     },
   ]);
-  const prefixNote = expect.stringContaining(
-    "leading current-directory prefix",
+  // Each member keeps its recorded name in path beside its logical path, so
+  // omitting the prefix is not a per-member limitation.
+  expect(capture.records[0]?.limitations ?? []).not.toContainEqual(
+    expect.stringContaining("leading current-directory prefix"),
   );
-  expect(capture.records[0]?.limitations).toContainEqual(prefixNote);
   expect(capture.container.reported).toHaveProperty(
     "members",
     entries.map(([path, logical_path, content]) => ({
       path,
       kind: "file",
       bytes: Buffer.byteLength(content),
-      ...(path === logical_path
-        ? {}
-        : { logical_path, limitations: [prefixNote] }),
+      ...(path === logical_path ? {} : { logical_path }),
     })),
   );
   expect((await readFile(path)).equals(bytes)).toBe(true);
