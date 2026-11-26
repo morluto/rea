@@ -1,12 +1,10 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { randomBytes } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it } from "vitest";
 
 import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
-import { BinaryLayoutService } from "../../../src/application/binaryDiagnostics/BinaryLayoutService.js";
 import { publishCliAnalysisEvidence } from "../../../src/cli/analysisEvidenceDelivery.js";
 import {
   cliDeliveredEvidence,
@@ -26,13 +24,9 @@ import {
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { err, ok } from "../../../src/domain/result.js";
-import { createServer } from "../../../src/server/createServer.js";
-import { analysisViewLayoutFixture } from "../../fixtures/analysisView.js";
-import { BINARY_LAYOUT_TEST_PROVIDER } from "../../fixtures/binaryDiagnostics/layout.js";
-import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { connectBudgetedLayout } from "./budgetedLayout.js";
 
 type Delivery = {
   readonly kind: string;
@@ -99,52 +93,14 @@ const pageText = (evidence: Evidence) => {
 };
 
 it("delivers an over-budget partial observation as its summary with a cursor on MCP, never budgeting the failure facts", async () => {
-  const fixture = analysisViewLayoutFixture();
-  // Enough symbol rows to exceed the smallest budget.
-  const layout = {
-    ...fixture,
-    symbols: [
-      ...fixture.symbols,
-      ...Array.from({ length: 16 }, (_, index) => ({
-        ...fixture.symbols[0]!,
-        entry_index: fixture.symbols.length + index,
-      })),
-    ],
-  };
   let partial: Evidence | undefined;
-  const session = createTestBinarySession(() => {
-    throw new Error("Layout inspection must not start a deep provider");
-  });
-  const server = createServer(
-    { kind: "session", session },
-    {
-      binaryLayout: new BinaryLayoutService({
-        inspectAndClose(input, options) {
-          return this.inspect(input, options);
-        },
-        identity: BINARY_LAYOUT_TEST_PROVIDER,
-        inspect: () =>
-          Promise.resolve(
-            partial === undefined
-              ? ok(layout)
-              : err(stoppedWith(partial, "inspect_binary_layout")),
-          ),
-      }),
-    },
+  const { client, target } = await connectBudgetedLayout(
+    "partial-observation-budget",
+    (layout) =>
+      partial === undefined
+        ? ok(layout)
+        : err(stoppedWith(partial, "inspect_binary_layout")),
   );
-  const client = new Client(
-    { name: "partial-observation-budget", version: "1" },
-    { jsonSchemaValidator: createMcpSchemaValidation() },
-  );
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
-  });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
   const setBudget = async (value: number) => {
     const updated = await client.callTool({
       name: "update_analysis_settings",
@@ -157,7 +113,6 @@ it("delivers an over-budget partial observation as its summary with a cursor on 
     expect(updated.isError).not.toBe(true);
   };
   await setBudget(MINIMUM_AGENT_RESULT_BUDGET_BYTES);
-  const target = { path: layout.artifact.path };
   const complete = await client.callTool({
     name: "inspect_binary_layout",
     arguments: { ...target, detail: "complete" },
