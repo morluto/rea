@@ -15,6 +15,8 @@ import { constants, zstdDecompressSync } from "node:zlib";
 import { gunzip, isGzip } from "../domain/desktop/gzipDocument.js";
 import { deb822Paragraphs } from "../domain/desktop/aptRepositories.js";
 import {
+  DEB_AR_HEADER_BYTES,
+  DEB_AR_MAGIC,
   DEB_CONTROL_RELATIONSHIP_NAMES,
   DEB_MAINTAINER_SCRIPTS,
   DEB_RELATIONSHIP_FIELDS,
@@ -42,8 +44,8 @@ type DebPackageReadFailure =
   | DebPackageCapacityFailure
   | DebPackageAllowanceFailure;
 
-const AR_MAGIC = Buffer.from("!<arch>\n", "ascii");
-const AR_HEADER = 60;
+const AR_MAGIC = DEB_AR_MAGIC;
+const AR_HEADER = DEB_AR_HEADER_BYTES;
 /**
  * Longest ar member name the reader resolves. GNU `/N` references can repeat
  * one string-table entry, and every resolved name is copied into the report,
@@ -184,10 +186,9 @@ const nonNegativeTarNumber = (bytes: Uint8Array): number | null => {
 };
 
 const tarType = (flag: number): DebTarEntry["type"] => {
+  if ((TAR_TYPEFLAGS.regular as readonly number[]).includes(flag))
+    return "file";
   switch (flag) {
-    case 0x00:
-    case 0x30:
-      return "file";
     case TAR_TYPEFLAGS.hardLink:
       return "hardlink";
     case TAR_TYPEFLAGS.symlink:

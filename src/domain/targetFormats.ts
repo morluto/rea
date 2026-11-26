@@ -48,6 +48,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   "windows-shortcut": "artifact",
   "python-pyc": "artifact",
   devicetree: "artifact",
+  deb: "artifact",
   "source-map": "artifact",
 } as const;
 

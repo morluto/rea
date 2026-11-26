@@ -80,7 +80,7 @@ them.
 
 ## Relationship to other tools
 
-- `inspect_artifact` inventories a file without decoding Debian control or
-  data.tar contents.
+- `inspect_artifact` recognizes a `.deb` and routes it to
+  `inspect_deb_package` without decoding Debian control or data.tar contents.
 - Desktop capture of an installed package through `dpkg-deb` is a different
   authority: this reader never launches `dpkg` and never installs the archive.

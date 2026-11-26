@@ -165,6 +165,59 @@ export const DEB_CONTROL_RELATIONSHIP_NAMES: Readonly<
   enhances: "Enhances",
 };
 
+/** Global magic that begins every Unix ar archive, including Debian `.deb`. */
+export const DEB_AR_MAGIC = Buffer.from("!<arch>\n", "ascii");
+/** Fixed 60-byte header preceding each Unix ar member. */
+export const DEB_AR_HEADER_BYTES = 60;
+
+const trimArField = (value: string): string => {
+  const nul = value.indexOf("\0");
+  return (nul === -1 ? value : value.slice(0, nul)).trim();
+};
+
+/**
+ * Whether leading bytes begin a Debian `.deb` package: Unix ar magic
+ * (`!<arch>\n`) followed by a valid first member header whose name is
+ * `debian-binary` (plain, SysV `debian-binary/`, or BSD `#1/N`).
+ */
+export const hasDebPackageHeader = (prefix: Uint8Array): boolean => {
+  const headerEnd = DEB_AR_MAGIC.length + DEB_AR_HEADER_BYTES;
+  if (prefix.length < headerEnd) return false;
+  for (let i = 0; i < DEB_AR_MAGIC.length; i++)
+    if (prefix[i] !== DEB_AR_MAGIC[i]) return false;
+  const header = prefix.subarray(DEB_AR_MAGIC.length, headerEnd);
+  if (header[58] !== 0x60 || header[59] !== 0x0a) return false;
+  const sizeText = trimArField(
+    Buffer.from(header.buffer, header.byteOffset + 48, 10).toString("ascii"),
+  );
+  if (!/^\d+$/u.test(sizeText)) return false;
+  const size = Number(sizeText);
+  if (!Number.isSafeInteger(size)) return false;
+  const rawName = trimArField(
+    Buffer.from(header.buffer, header.byteOffset, 16).toString("ascii"),
+  );
+  if (rawName.startsWith("#1/")) {
+    const lengthText = rawName.slice(3);
+    if (!/^\d+$/u.test(lengthText)) return false;
+    const nameLength = Number(lengthText);
+    if (
+      !Number.isSafeInteger(nameLength) ||
+      nameLength > size ||
+      headerEnd + nameLength > prefix.length
+    )
+      return false;
+    const extended = trimArField(
+      Buffer.from(
+        prefix.buffer,
+        prefix.byteOffset + headerEnd,
+        nameLength,
+      ).toString("ascii"),
+    );
+    return extended === "debian-binary";
+  }
+  return rawName.replace(/\/$/u, "") === "debian-binary";
+};
+
 /** ar member role from its stored name; unknown members stay flagged, not guessed. */
 export const debArMemberRole = (name: string): DebArMemberRole => {
   const base = name.replace(/\/$/u, "").toLowerCase();

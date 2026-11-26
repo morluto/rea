@@ -1345,9 +1345,7 @@ it("reads GNU base-256 uid magnitude and sign bits without dropping the first by
       { name: "data.tar.gz", data: gzipSync(dataTar) },
     ]),
   );
-  expect(
-    report.data_entries.map(({ path, uid }) => [path, uid]),
-  ).toEqual([
+  expect(report.data_entries.map(({ path, uid }) => [path, uid])).toEqual([
     ["usr/bin/unsafe-uid", null],
     ["usr/bin/negative-uid", null],
     ["usr/bin/safe-uid", 3_000_000],

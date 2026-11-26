@@ -6,6 +6,7 @@ import {
   espImage,
 } from "../../tests/fixtures/espImage.js";
 import { buildFv } from "../../tests/fixtures/uefiImage.js";
+import { DEB_AR_HEADER_BYTES, DEB_AR_MAGIC } from "./deb/debPackage.js";
 import {
   recognizeArtifactFormat,
   recognizesArtifactPrefix,
@@ -270,4 +271,63 @@ it("lets a prefix the table recognizes outrank whole-file firmware probes", () =
     false,
   );
   expect(recognizesArtifactPrefix(volume, volume.length)).toBe(false);
+});
+
+/** Minimal Unix ar archive with the given members (SysV trailing `/` or BSD `#1/N`). */
+const minimalAr = (
+  members: readonly {
+    readonly name: string;
+    readonly data: string;
+    readonly bsdName?: boolean;
+  }[],
+): Buffer => {
+  const parts: Buffer[] = [DEB_AR_MAGIC];
+  for (const member of members) {
+    const payload =
+      member.bsdName === true
+        ? Buffer.from(`${member.name}${member.data}`, "ascii")
+        : Buffer.from(member.data, "ascii");
+    const header = Buffer.alloc(DEB_AR_HEADER_BYTES, 0x20);
+    const label =
+      member.bsdName === true
+        ? `#1/${String(member.name.length)}`
+        : `${member.name}/`;
+    header.write(label.slice(0, 16), 0, "ascii");
+    header.write("0", 16, "ascii");
+    header.write("0", 28, "ascii");
+    header.write("0", 34, "ascii");
+    header.write("100644", 40, "ascii");
+    header.write(String(payload.length), 48, "ascii");
+    header[58] = 0x60;
+    header[59] = 0x0a;
+    parts.push(header, payload);
+    if (payload.length % 2 === 1) parts.push(Buffer.from("\n", "ascii"));
+  }
+  return Buffer.concat(parts);
+};
+
+it("recognizes a Debian package ar archive whose first member is debian-binary", () => {
+  const deb = minimalAr([{ name: "debian-binary", data: "2.0\n" }]);
+  expect(recognize(deb)).toMatchObject({
+    state: "recognized",
+    format: "deb",
+  });
+  const bsdDeb = minimalAr([
+    { name: "debian-binary", data: "2.0\n", bsdName: true },
+  ]);
+  expect(recognize(bsdDeb)).toMatchObject({
+    state: "recognized",
+    format: "deb",
+  });
+});
+
+it("does not recognize a plain ar archive that is not a Debian package", () => {
+  const plainAr = minimalAr([{ name: "hello.o", data: "object" }]);
+  expect(recognize(plainAr)).toBeUndefined();
+  const lateDebianBinary = minimalAr([
+    { name: "hello.o", data: "object" },
+    { name: "debian-binary", data: "2.0\n" },
+  ]);
+  expect(recognize(lateDebianBinary)).toBeUndefined();
+  expect(recognize(Buffer.from("!<arch>\n", "ascii"))).toBeUndefined();
 });
