@@ -104,6 +104,10 @@ export const CLI_COMMAND_REGISTRATIONS = {
     () => import("./nugetNupkgCommands.js"),
     "registerNugetNupkgCommands",
   ),
+  yara: cliRegistrarWithEnvironment(
+    () => import("./yaraCommands.js"),
+    "registerYaraCommands",
+  ),
   erlang: cliRegistrar(
     () => import("./erlangCommands.js"),
     "registerErlangCommands",
@@ -305,6 +309,7 @@ const CLI_FAMILY_REGISTRATIONS: {
     "rust",
     "pythonPyc",
     "nugetNupkg",
+    "yara",
     "erlang",
     "v8CodeCache",
     "mavenGradleMetadata",

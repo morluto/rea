@@ -17,6 +17,7 @@ const MIGRATED_PROVIDER_ROOTS = new Set([
   "nuget",
   "rust",
   "wasm",
+  "yara",
   "captures",
   "signals",
   "android",

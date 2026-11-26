@@ -36,6 +36,7 @@ import type { RustBinaryService } from "../application/rust/RustBinaryService.js
 import type { SqliteDatabaseService } from "../application/sqlite/SqliteDatabaseService.js";
 import type { V8CodeCacheService } from "../application/v8CodeCache/V8CodeCacheService.js";
 import type { WasmArtifactService } from "../application/wasm/WasmArtifactService.js";
+import type { YaraMatchesService } from "../application/yara/YaraMatchesService.js";
 import { compareWasmInterfaces } from "../application/wasm/WasmInterfaceComparisonService.js";
 import { ok } from "../domain/result.js";
 import type { ContractToolBindings } from "./contractToolBindings.js";
@@ -212,6 +213,12 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
       summary: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<NugetNupkgService>,
+  yaraMatches: ((service) => ({
+    inspect_yara_matches: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<YaraMatchesService>,
   pythonPyc: ((service) => ({
     inspect_python_pyc: {
       admission: "application",

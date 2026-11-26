@@ -90,6 +90,7 @@ export const UNIT_LAYERS = Object.freeze(
       "uefi",
       "v8",
       "wasm",
+      "yara",
     ]),
     ...units("application", ["application"]),
     ...units("composition", ["composition"]),
@@ -402,6 +403,7 @@ export const ENTRY_FILES = Object.freeze(
       sqlite: ["SqliteDatabaseProvider.ts"],
       v8: ["V8CodeCacheProvider.ts", "V8CodeCacheProviderIdentity.ts"],
       wasm: ["WabtArtifactProvider.ts", "WabtRelease.ts"],
+      yara: ["YaraMatchesProvider.ts", "YaraProviderIdentity.ts"],
     }).map(([unit, files]) => [unit, Object.freeze(files)]),
   ),
 );

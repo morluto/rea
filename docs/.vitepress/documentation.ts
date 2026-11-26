@@ -109,6 +109,11 @@ export const documentationSections = [
         route: "/binary-diagnostics",
       },
       {
+        text: "YARA rule matches",
+        source: "guides/native/yara-matches.md",
+        route: "/yara-matches",
+      },
+      {
         text: "ELF separate debug files",
         source: "guides/native/elf-debug-link.md",
         route: "/elf-debug-link",

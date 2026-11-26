@@ -694,6 +694,19 @@ dependency groups with version ranges, and a ZIP contents inventory with
 path-derived folder roles. Missing or malformed `.nuspec` members still return
 the inventory with limitations. See [NuGet packages](../guides/managed/nuget-nupkg.md).
 
+Scan a local file with YARA rule files you supply, using the installed `yara`
+command:
+
+```bash
+rea inspect-yara-matches /absolute/path/to/sample.bin \
+  --rule_paths /absolute/path/to/packers.yar --json
+```
+
+The workflow reports matching rules with tags, metadata and string match
+offsets, bound to the SHA-256 of the file and of each rule file. Set
+`REA_YARA_COMMAND` when `yara` is not on `PATH`. A rule that does not compile
+is an input error naming its file. See [YARA rule matches](../guides/native/yara-matches.md).
+
 Complete `rea decompile --json` Evidence can be saved and inspected through
 `inspect-analysis-view` with an inline source and
 `view: {kind: "native", facet: "pseudocode", offset: 0, limit: 20000}`.

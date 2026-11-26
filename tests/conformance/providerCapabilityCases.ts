@@ -170,4 +170,10 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
     cases: ["tests/acceptance/webSourceLocationCli.test.ts"],
   },
   windowsShortcut: { cases: ["tests/acceptance/windowsShortcutCli.test.ts"] },
+  yaraMatches: {
+    cases: [
+      "tests/acceptance/yaraMatchesCli.test.ts",
+      "tests/boundary/mcp/yaraMatchesMcp.test.ts",
+    ],
+  },
 };

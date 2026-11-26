@@ -101,6 +101,7 @@ import { PWNTOOLS_PROVIDER_IDENTITY } from "../native/pwntools/PwntoolsProviderI
 import { OBJDUMP_PROVIDER_IDENTITY } from "../objdump/ObjdumpProviderIdentity.js";
 import { PCAP_PROVIDER_IDENTITY } from "../pcap/PcapProviderIdentity.js";
 import { NUGET_NUPKG_PROVIDER_IDENTITY } from "../nuget/NugetNupkgProviderIdentity.js";
+import { YARA_PROVIDER_IDENTITY } from "../yara/YaraProviderIdentity.js";
 import { PYTHON_PYC_PROVIDER_IDENTITY } from "../python/PythonPycProviderIdentity.js";
 import { RIZIN_DEBUGGER_PROVIDER_IDENTITY } from "../rizin/RizinDebuggerProviderIdentity.js";
 import { RIZIN_PROVIDER_IDENTITY } from "../rizin/RizinProviderIdentity.js";
@@ -516,6 +517,13 @@ export const CAPABILITY_DECLARATIONS = {
     providers: [
       providerBinding(NUGET_NUPKG_PROVIDER_IDENTITY, {
         group: "NUGET_NUPKG_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  yaraMatches: {
+    providers: [
+      providerBinding(YARA_PROVIDER_IDENTITY, {
+        group: "YARA_TOOL_CONTRACTS",
       }),
     ],
   },

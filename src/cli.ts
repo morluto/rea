@@ -33,6 +33,7 @@ import * as gpuModule from "./cli/gpuCommands.js";
 import * as rustModule from "./cli/rustCommands.js";
 import * as pythonPycModule from "./cli/pythonPycCommands.js";
 import * as nugetNupkgModule from "./cli/nugetNupkgCommands.js";
+import * as yaraModule from "./cli/yaraCommands.js";
 import * as erlangModule from "./cli/erlangCommands.js";
 import * as v8CodeCacheModule from "./cli/v8CodeCacheCommands.js";
 import * as mavenGradleMetadataModule from "./cli/mavenGradleMetadataCommands.js";
@@ -95,6 +96,7 @@ const CLI_COMMAND_MODULES: CliCommandModules = {
   rust: rustModule,
   pythonPyc: pythonPycModule,
   nugetNupkg: nugetNupkgModule,
+  yara: yaraModule,
   erlang: erlangModule,
   v8CodeCache: v8CodeCacheModule,
   mavenGradleMetadata: mavenGradleMetadataModule,

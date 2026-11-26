@@ -35,6 +35,7 @@ import {
   windowsChangeTimeSettlePollMsSchema,
 } from "./windowsChangeTimeSettle.js";
 import { pwntoolsInputBytesSchema } from "./pwntoolsInputLimit.js";
+import { YARA_SETTING_SEEDS } from "./yaraSettingSeeds.js";
 import { zstandardMaxFramesSchema } from "../domain/compression/zstandardFrameAllowance.js";
 import {
   agentResultBudgetBytesSchema,
@@ -75,6 +76,7 @@ const environmentSchemas: Readonly<Record<string, z.ZodType<number, string>>> =
     REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS:
       windowsChangeTimeSettleMaxPollsSchema,
     REA_ZSTD_MAX_FRAMES: zstandardMaxFramesSchema,
+    ...YARA_SETTING_SEEDS,
     REA_AGENT_RESULT_BUDGET_BYTES: agentResultBudgetBytesSchema,
     REA_CLI_RETAINED_EVIDENCE_BYTES: cliRetainedEvidenceBytesSchema,
   };

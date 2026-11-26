@@ -411,6 +411,23 @@ inventory and limitations. Encrypted members are listed and not extracted.
 Roles are folder conventions, not restore-time asset selection. See
 [NuGet packages](https://github.com/morluto/rea/blob/main/docs/guides/managed/nuget-nupkg.md).
 
+## YARA rule matches
+
+Use `inspect_yara_matches` when the caller supplies YARA rule files and asks
+which rules match one explicit local file. It runs the installed `yara` command
+(`REA_YARA_COMMAND` or `yara` on `PATH`) with an argument list, never a shell,
+and needs no `open_binary`. REA ships no rules and downloads nothing; do not
+write or fetch rules unless asked. The CLI equivalent is
+`inspect-yara-matches PATH --rule_paths RULE`. Cite the file SHA-256 and each
+rule file SHA-256 with the matched rules, tags, meta, and string offsets.
+`data` is yara's display text; read `length` bytes at `file_offset` for exact
+bytes. `coverage.status: "partial"` means string matches beyond `max_matches`
+are counted but unlisted; raise `max_matches` to list them. A compile error is
+`invalid_request` naming the rule file; fix the rule rather than retrying. A
+missing command is `capability_unavailable`. Absent rules did not match; that
+says nothing about why. See
+[YARA rule matches](https://github.com/morluto/rea/blob/main/docs/guides/native/yara-matches.md).
+
 ## SQLite snapshots
 
 Use `inspect_sqlite_database` with an explicit local database snapshot for its
