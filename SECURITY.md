@@ -24,20 +24,28 @@ provider-dependent behavior to be reproduced safely.
 
 ## Security boundary
 
-REA authenticates each local provider bridge session with a random capability
-token and a current-user Unix socket. Tokens are transferred through private
-session descriptors rather than process arguments or environment variables.
+REA authenticates each **REA-owned** provider bridge session with a random capability
+token. On POSIX, bridges use a current-user Unix socket; on Windows, they use
+loopback TCP. Tokens are transferred through private session descriptors rather
+than process arguments or environment variables. External bridges (Ghidra, Hopper,
+IDA, JEB) run in their own processes with their own transport and bounds.
+
 This is not a sandbox and does not protect against malicious processes already
 running as the same operating-system user. Opening an untrusted binary
 delegates parsing and analysis to the selected local provider with that user's
 permissions.
 
-Ghidra sessions use a packaged Java `HeadlessScript`, an isolated temporary
+**Ghidra sessions** use a packaged Java `HeadlessScript`, an isolated temporary
 project, and private home, cache, and runtime directories. REA imports only the
-requested target, bounds startup and protocol messages, requests bounded CPU
+requested target, bounds bridge startup and protocol messages, requests bounded CPU
 and heap settings, and deletes the temporary project when the session closes.
-These controls limit accidental persistence and resource use; they do not make
-Ghidra a sandbox. REA does not open or modify user-owned Ghidra projects.
+**Hopper bridges** use a private Unix socket (Linux) or loopback TCP (macOS/Windows)
+with per-message framing bounds. **IDA and JEB bridges** use their respective
+native transports with REA-enforced message size limits. Bridge-level bounds
+are distinct from MCP delivery budgets (see `REA_MCP_MAX_RESPONSE_BYTES`,
+`delivery.agent_result_budget_bytes`). These controls limit accidental
+persistence and resource use; they do not make any provider a sandbox. REA does
+not open or modify user-owned Ghidra/IDA/JEB projects.
 
 `GHIDRA_INSTALL_DIR` and optional `JAVA_HOME` identify user-managed
 installations. Setup can add those values to detected client configuration only
