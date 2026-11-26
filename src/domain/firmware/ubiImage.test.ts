@@ -8,9 +8,11 @@ import {
   recognizeUbiImage,
   UBI_IMAGE_LIMITATIONS,
   UBI_LAYOUT_VOLUME_ID,
+  UBI_MAX_CACHED_EC_HEADERS,
   UBI_MAX_PEB_BYTES,
   UBI_MAX_PEBS,
   UBI_STATIC_PAYLOAD_CRC_LIMIT,
+  type UbiEcHeaderCacheStats,
   type UbiErasedBodyVerificationStats,
   type UbiImage,
   type UbiImageParseError,
@@ -2872,6 +2874,139 @@ it("reuses cached EC header locations across multi-trial oversized-VID retries",
     ...smallerProbes,
   ]);
   expect(bytesRead).toBeLessThanOrEqual(2 * probe.length);
+});
+
+it("bounds the EC header scan cache when payloads are stuffed with valid UBI# headers", async () => {
+  const wide = { pebSize: 128 * 1024, dataOffset: 4096 };
+  const lebBytes = wide.pebSize - wide.dataOffset;
+  const dynamicPebs = 300;
+  const pebCount = 2 + dynamicPebs;
+  const fileSize = pebCount * wide.pebSize;
+  const [layout0, layout1] = ubiLayoutPebs(
+    [{ id: 0, name: "rootfs", type: "dynamic", reservedPebs: dynamicPebs }],
+    wide,
+  );
+  const layoutPrefix = ubiImage([layout0!, layout1!], wide);
+  const validEcHeader = ubiImage([{ kind: "free" }], wide).subarray(0, 64);
+
+  // Stuff every 512-byte slot outside all smaller-block grids (multiples of
+  // 8 KiB) with a CRC-valid UBI# header: 233 payload headers + 1 PEB header
+  // per block => > 70,000 valid EC headers across 300 blocks, exceeding
+  // UBI_MAX_CACHED_EC_HEADERS.
+  const stuffedPayload = Buffer.alloc(lebBytes, 0x55);
+  for (let inPeb = wide.dataOffset; inPeb < wide.pebSize; inPeb += 512) {
+    if (inPeb % 8192 === 0) continue;
+    validEcHeader.copy(stuffedPayload, inPeb - wide.dataOffset);
+  }
+  const makeLebBlock = (lnum: number): Buffer =>
+    ubiImage(
+      [
+        {
+          kind: "leb",
+          volId: 0,
+          lnum,
+          data: stuffedPayload,
+          sqnum: BigInt(lnum + 2),
+        },
+      ],
+      wide,
+    );
+  const templateBlock = makeLebBlock(0);
+  // Precompute only the 128-byte EC+VID header per dynamic PEB to keep fixture
+  // memory tiny while serving distinct valid lnum/sqnum headers.
+  const dynamicHeaders = Array.from({ length: dynamicPebs }, (_, lnum) =>
+    makeLebBlock(lnum).subarray(0, wide.dataOffset),
+  );
+  const conflictOffset = (pebCount - 1) * wide.pebSize + 64 * 1024;
+  const readVirtual =
+    (injectTailConflict: boolean) =>
+    (offset: number, length: number): Buffer => {
+      const out = Buffer.alloc(length);
+      let written = 0;
+      while (written < length) {
+        const pos = offset + written;
+        const pebIndex = Math.floor(pos / wide.pebSize);
+        const inPeb = pos % wide.pebSize;
+        const take = Math.min(length - written, wide.pebSize - inPeb);
+        if (pebIndex < 2) {
+          layoutPrefix.copy(out, written, pos, pos + take);
+        } else if (inPeb < wide.dataOffset) {
+          const headerTake = Math.min(take, wide.dataOffset - inPeb);
+          dynamicHeaders[pebIndex - 2]!.copy(
+            out,
+            written,
+            inPeb,
+            inPeb + headerTake,
+          );
+          if (headerTake < take)
+            templateBlock.copy(
+              out,
+              written + headerTake,
+              wide.dataOffset,
+              wide.dataOffset + (take - headerTake),
+            );
+        } else {
+          templateBlock.copy(out, written, inPeb, inPeb + take);
+        }
+        written += take;
+      }
+      if (
+        injectTailConflict &&
+        offset < conflictOffset + 64 &&
+        offset + length > conflictOffset
+      ) {
+        const start = Math.max(0, conflictOffset - offset);
+        const srcStart = Math.max(0, offset - conflictOffset);
+        const copyLen = Math.min(length - start, 64 - srcStart);
+        validEcHeader.copy(out, start, srcStart, srcStart + copyLen);
+      }
+      return out;
+    };
+
+  let cleanStats: UbiEcHeaderCacheStats | undefined;
+  const clean = await parseUbiImage(fileSize, readVirtual(false), {
+    onEcHeaderCacheStats: (stats) => {
+      cleanStats = stats;
+    },
+  });
+  expect(clean).toMatchObject({
+    ok: true,
+    value: {
+      geometry: { pebSize: wide.pebSize, pebCount },
+      volumes: [
+        {
+          name: "rootfs",
+          dataBytes: dynamicPebs * lebBytes,
+          extractRefusal: null,
+        },
+      ],
+    },
+  });
+  expect(cleanStats).toBeDefined();
+  expect(cleanStats!.cachedHeaderCount).toBe(UBI_MAX_CACHED_EC_HEADERS);
+  expect(cleanStats!.cacheCapped).toBe(true);
+  expect(cleanStats!.ecHeaderScanEnd).toBeLessThan(fileSize);
+
+  // A spacing conflict placed beyond the cache cap must still be detected by
+  // the streaming tail scan without growing the cache.
+  let conflictStats: UbiEcHeaderCacheStats | undefined;
+  const conflicted = await parseUbiImage(fileSize, readVirtual(true), {
+    onEcHeaderCacheStats: (stats) => {
+      conflictStats = stats;
+    },
+  });
+  expect(conflicted).toMatchObject({
+    ok: false,
+    error: {
+      kind: "malformed",
+      message: expect.stringContaining(
+        `offset ${String(conflictOffset)} contradicts the ${String(wide.pebSize)}-byte eraseblock size`,
+      ),
+    },
+  });
+  expect(conflictStats).toBeDefined();
+  expect(conflictStats!.cachedHeaderCount).toBe(UBI_MAX_CACHED_EC_HEADERS);
+  expect(conflictStats!.cacheCapped).toBe(true);
 });
 
 describe("layout volume VID validation", () => {

@@ -36,6 +36,14 @@ const UBI_PEB_ALIGNMENT = 512;
 /** The largest eraseblock searched for; larger NAND eraseblocks are refused. */
 export const UBI_MAX_PEB_BYTES = 16 * 1024 * 1024;
 export const UBI_MAX_PEBS = 262_144;
+/**
+ * Maximum CRC-valid EC header offsets retained in the parse-wide scan cache.
+ * Exceeds `UBI_MAX_PEB_BYTES / UBI_PEB_ALIGNMENT` (32,768) so the candidate
+ * scan window is always cached, while preventing payload-stuffed `UBI#`
+ * headers in large images from exhausting memory. Once reached, further scans
+ * stream without retaining offsets.
+ */
+export const UBI_MAX_CACHED_EC_HEADERS = 65_536;
 /** Names of the parser limits that carry these ceilings into refusals. */
 export const UBI_PEB_SIZE_LIMIT = "UBI eraseblock size";
 export const UBI_PEB_COUNT_LIMIT = "UBI eraseblock count";
@@ -1493,6 +1501,12 @@ export interface UbiErasedBodyVerificationStats {
   readonly rangeWalkSteps: number;
 }
 
+export interface UbiEcHeaderCacheStats {
+  readonly cachedHeaderCount: number;
+  readonly ecHeaderScanEnd: number;
+  readonly cacheCapped: boolean;
+}
+
 export interface ParseUbiImageOptions {
   /**
    * Called before scan chunks and header-probe batches. When `yieldControl` is
@@ -1506,6 +1520,11 @@ export interface ParseUbiImageOptions {
   readonly onErasedBodyVerification?: (
     stats: UbiErasedBodyVerificationStats,
   ) => void;
+  /**
+   * Optional observer invoked when parsing finishes with EC header scan cache
+   * retention statistics.
+   */
+  readonly onEcHeaderCacheStats?: (stats: UbiEcHeaderCacheStats) => void;
 }
 
 interface UbiErasedRange {
@@ -1521,10 +1540,12 @@ interface UbiParseContext {
   erasedRanges: UbiErasedRange[];
   nonErasedOffsets: number[];
   /**
-   * Next 512-byte-aligned offset not yet scanned for CRC-valid EC headers, or
-   * `fileSize` once the whole image has been scanned.
+   * Next 512-byte-aligned offset not yet cached for CRC-valid EC headers, or
+   * `fileSize` once the whole image has been cached. Stops advancing once
+   * `validEcHeaderOffsets` reaches `UBI_MAX_CACHED_EC_HEADERS`.
    */
   ecHeaderScanEnd: number;
+  ecHeaderCacheCapped: boolean;
   /**
    * Sorted 512-byte-aligned offsets in `[ubiPebSearchStart(first), ecHeaderScanEnd)`
    * holding a CRC-valid EC header, whatever its layout.
@@ -1548,6 +1569,9 @@ interface UbiParseContext {
     | undefined;
   readonly onErasedBodyVerification:
     | ((stats: UbiErasedBodyVerificationStats) => void)
+    | undefined;
+  readonly onEcHeaderCacheStats:
+    | ((stats: UbiEcHeaderCacheStats) => void)
     | undefined;
 }
 
@@ -1593,7 +1617,11 @@ const scanNextEcHeaderChunk = async (
   const start = ctx.ecHeaderScanEnd;
   const boundedLimit = Math.min(ctx.fileSize, limit);
   const previousCount = ctx.validEcHeaderOffsets.length;
-  if (start >= boundedLimit) return previousCount;
+  if (
+    start >= boundedLimit ||
+    ctx.validEcHeaderOffsets.length >= UBI_MAX_CACHED_EC_HEADERS
+  )
+    return previousCount;
   await ctx.checkpoint?.(yieldControl);
   const readEnd = Math.min(
     ctx.fileSize,
@@ -1614,6 +1642,13 @@ const scanNextEcHeaderChunk = async (
     start,
     () => true,
   )) {
+    if (ctx.validEcHeaderOffsets.length >= UBI_MAX_CACHED_EC_HEADERS) {
+      // Stop caching at `offset` so `ecHeaderScanEnd` stays the exact
+      // high-water mark of the cached prefix; callers stream from here.
+      ctx.ecHeaderCacheCapped = true;
+      ctx.ecHeaderScanEnd = offset;
+      return previousCount;
+    }
     ctx.validEcHeaderOffsets.push(offset);
     ctx.validEcHeaderOffsetSet.add(offset);
     if (offset + UBI_HEADER_BYTES <= ctx.candidateScanEnd)
@@ -1627,10 +1662,47 @@ const scanNextEcHeaderChunk = async (
   return previousCount;
 };
 
+const streamEcHeader = async (
+  ctx: UbiParseContext,
+  start: number,
+  end: number,
+  admit: (offset: number) => boolean,
+  initialChunks: number,
+): Promise<number | null> => {
+  const boundedEnd = Math.min(ctx.fileSize, end);
+  let chunks = initialChunks;
+  let scan = Math.ceil(start / UBI_PEB_ALIGNMENT) * UBI_PEB_ALIGNMENT;
+  while (scan < boundedEnd) {
+    const readEnd = Math.min(
+      ctx.fileSize,
+      Math.min(
+        scan + SCAN_CHUNK_BYTES,
+        Math.max(boundedEnd, scan + UBI_HEADER_BYTES),
+      ),
+    );
+    const length = readEnd - scan;
+    if (length < UBI_HEADER_BYTES) return null;
+    await ctx.checkpoint?.(chunks % 16 === 0);
+    chunks += 1;
+    const chunk = await ctx.read(scan, length);
+    for (const { offset } of ubiEcHeaderOffsets(chunk, scan, scan, admit)) {
+      if (offset >= boundedEnd) return null;
+      return offset;
+    }
+    const lastChecked =
+      scan +
+      Math.floor((length - UBI_HEADER_BYTES) / UBI_PEB_ALIGNMENT) *
+        UBI_PEB_ALIGNMENT;
+    scan = lastChecked + UBI_PEB_ALIGNMENT;
+  }
+  return null;
+};
+
 /**
  * The first 512-byte-aligned offset in `[start, end)` holding a CRC-valid EC
  * header that satisfies `admit`, reusing and incrementally extending the
- * parse-wide EC header scan cache so retries never reread scanned ranges.
+ * parse-wide EC header scan cache up to `UBI_MAX_CACHED_EC_HEADERS` and
+ * streaming uncached tail ranges once the cache cap is reached.
  */
 const findCachedEcHeader = async (
   ctx: UbiParseContext,
@@ -1645,7 +1717,10 @@ const findCachedEcHeader = async (
     if (offset >= start && admit(offset)) return offset;
   }
   let chunks = 0;
-  while (ctx.ecHeaderScanEnd < boundedEnd) {
+  while (
+    ctx.ecHeaderScanEnd < boundedEnd &&
+    ctx.validEcHeaderOffsets.length < UBI_MAX_CACHED_EC_HEADERS
+  ) {
     const fromIndex = await scanNextEcHeaderChunk(
       ctx,
       boundedEnd,
@@ -1661,6 +1736,16 @@ const findCachedEcHeader = async (
       if (offset >= boundedEnd) return null;
       if (offset >= start && admit(offset)) return offset;
     }
+  }
+  if (ctx.ecHeaderScanEnd < boundedEnd) {
+    ctx.ecHeaderCacheCapped = true;
+    return streamEcHeader(
+      ctx,
+      Math.max(start, ctx.ecHeaderScanEnd),
+      boundedEnd,
+      admit,
+      chunks,
+    );
   }
   return null;
 };
@@ -2127,6 +2212,7 @@ export const parseUbiImage = async (
     erasedRanges: [],
     nonErasedOffsets: [],
     ecHeaderScanEnd: Math.min(fileSize, ubiPebSearchStart(first.value)),
+    ecHeaderCacheCapped: false,
     validEcHeaderOffsets: [],
     validEcHeaderOffsetSet: new Set(),
     pendingCandidateHeaders: new Map(),
@@ -2135,57 +2221,70 @@ export const parseUbiImage = async (
     read,
     checkpoint: options?.checkpoint,
     onErasedBodyVerification: options?.onErasedBodyVerification,
+    onEcHeaderCacheStats: options?.onEcHeaderCacheStats,
   };
   let fallback: UbiImage | null = null;
   let anyNext: number | null = null;
   let firstFailure: PendingCandidateFailure | null = null;
   const passedOver: number[] = [];
   let candidateIndex = 0;
-  for (;;) {
-    if (candidateIndex >= ctx.validEcHeaderOffsets.length) {
-      if (ctx.ecHeaderScanEnd >= ctx.candidateScanEnd) break;
-      await scanNextEcHeaderChunk(ctx, ctx.candidateScanEnd, false);
-      continue;
+  try {
+    for (;;) {
+      if (candidateIndex >= ctx.validEcHeaderOffsets.length) {
+        if (ctx.ecHeaderScanEnd >= ctx.candidateScanEnd) break;
+        await scanNextEcHeaderChunk(ctx, ctx.candidateScanEnd, false);
+        continue;
+      }
+      const candidate = ctx.validEcHeaderOffsets[candidateIndex]!;
+      candidateIndex += 1;
+      if (candidate + UBI_HEADER_BYTES > ctx.candidateScanEnd) break;
+      const header = ctx.pendingCandidateHeaders.get(candidate);
+      ctx.pendingCandidateHeaders.delete(candidate);
+      anyNext ??= candidate;
+      if (fileSize % candidate === 0) {
+        const verdict = await evaluateUbiPebCandidate(
+          ctx,
+          candidate,
+          passedOver,
+        );
+        if (verdict.state === "limit") return err(verdict.error);
+        if (verdict.state === "accept") return ok(verdict.image);
+        if (verdict.state === "reject")
+          return fallback !== null
+            ? ok(fallback)
+            : err(
+                firstFailure === null
+                  ? verdict.error
+                  : await resolvePendingFailure(ctx, firstFailure),
+              );
+        fallback ??= verdict.fallback ?? null;
+        firstFailure ??= { kind: "error", error: verdict.error };
+        passedOver.push(candidate);
+        continue;
+      }
+      const candidateVid = candidate + first.value.vidHeaderOffset;
+      if (
+        header !== undefined &&
+        candidateVid + UBI_HEADER_BYTES <= fileSize &&
+        ubiHasMappedSecondPeb(
+          await read(candidateVid, UBI_HEADER_BYTES),
+          first.value,
+          header,
+          candidate,
+        )
+      ) {
+        firstFailure ??= { kind: "non-dividing", candidate };
+        passedOver.push(candidate);
+      }
     }
-    const candidate = ctx.validEcHeaderOffsets[candidateIndex]!;
-    candidateIndex += 1;
-    if (candidate + UBI_HEADER_BYTES > ctx.candidateScanEnd) break;
-    const header = ctx.pendingCandidateHeaders.get(candidate);
-    ctx.pendingCandidateHeaders.delete(candidate);
-    anyNext ??= candidate;
-    if (fileSize % candidate === 0) {
-      const verdict = await evaluateUbiPebCandidate(ctx, candidate, passedOver);
-      if (verdict.state === "limit") return err(verdict.error);
-      if (verdict.state === "accept") return ok(verdict.image);
-      if (verdict.state === "reject")
-        return fallback !== null
-          ? ok(fallback)
-          : err(
-              firstFailure === null
-                ? verdict.error
-                : await resolvePendingFailure(ctx, firstFailure),
-            );
-      fallback ??= verdict.fallback ?? null;
-      firstFailure ??= { kind: "error", error: verdict.error };
-      passedOver.push(candidate);
-      continue;
-    }
-    const candidateVid = candidate + first.value.vidHeaderOffset;
-    if (
-      header !== undefined &&
-      candidateVid + UBI_HEADER_BYTES <= fileSize &&
-      ubiHasMappedSecondPeb(
-        await read(candidateVid, UBI_HEADER_BYTES),
-        first.value,
-        header,
-        candidate,
-      )
-    ) {
-      firstFailure ??= { kind: "non-dividing", candidate };
-      passedOver.push(candidate);
-    }
+    return fallback !== null
+      ? ok(fallback)
+      : await resolveUnacceptedUbiImage(ctx, firstFailure, anyNext);
+  } finally {
+    ctx.onEcHeaderCacheStats?.({
+      cachedHeaderCount: ctx.validEcHeaderOffsets.length,
+      ecHeaderScanEnd: ctx.ecHeaderScanEnd,
+      cacheCapped: ctx.ecHeaderCacheCapped,
+    });
   }
-  return fallback !== null
-    ? ok(fallback)
-    : resolveUnacceptedUbiImage(ctx, firstFailure, anyNext);
 };
