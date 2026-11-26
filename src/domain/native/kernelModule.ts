@@ -12,6 +12,7 @@ import {
   MINIMUM_ELF_READ_FILE_BYTES,
   type ElfReadBudgets,
 } from "./elfReadBudgets.js";
+import { maxStructureBytesSchema } from "./nativeStructureBudget.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const uint8 = z.number().int().min(0).max(255);
@@ -248,6 +249,7 @@ export const inspectKernelModuleInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to an ELF kernel module or a compressed .ko container",
   ),
+  max_structure_bytes: maxStructureBytesSchema,
   max_file_bytes: z
     .number()
     .int()

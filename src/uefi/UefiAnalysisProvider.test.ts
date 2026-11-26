@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256 } from "../../tests/support/sha256.js";
 import { existsSync } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -95,9 +95,6 @@ const writeTestImage = async (options?: {
   await writeFile(imagePath, buildTestImage(options));
   return { imagePath, directory };
 };
-
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 /** Schema-validated admission, identical to the shared provider execution. */
 const inspectRequest = (path: string) =>

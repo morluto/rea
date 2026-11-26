@@ -13,14 +13,8 @@ import {
 import { FieldReader } from "./AppleIpsFieldReader.js";
 import {
   type AppleIps,
-  MAX_INSPECT_APPLE_IPS_FILE_BYTES,
-  MAX_INSPECT_APPLE_IPS_JOIN_BYTES,
-  MAX_INSPECT_APPLE_IPS_FRAMES,
-  MAX_INSPECT_APPLE_IPS_IMAGES,
-  MAX_INSPECT_APPLE_IPS_REGISTERS,
-  MAX_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES,
-  DEFAULT_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES,
-  MAX_INSPECT_APPLE_IPS_THREADS,
+  appleIpsBudgetLimit,
+  type AppleIpsBudget,
   type InspectAppleIpsInput,
 } from "../../domain/native/appleIps.js";
 import type { AppleIpsPort } from "../../ports/binaryDiagnostics/AppleIpsPort.js";
@@ -35,7 +29,6 @@ import { classifyProviderFailure } from "../../providers/classifyProviderFailure
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import type { LimitRef } from "../../domain/parseFailure.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
-import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { APPLE_IPS_PROVIDER } from "../../domain/investigationProviders.js";
 import {
@@ -45,7 +38,6 @@ import {
 } from "./AppleIps.errors.js";
 import { parseAppleIps } from "./AppleIpsParser.js";
 import { resolveAppleIpsJoin } from "./AppleIpsMachOJoin.js";
-import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_apple_ips";
 
@@ -188,76 +180,19 @@ export class AppleIpsProvider implements AppleIpsPort {
   }
 }
 
-const fileSizeRemediation = (
-  input: InspectAppleIpsInput,
-  field: "path" | "join_path",
-): string => {
-  const argument = field === "path" ? "max_file_bytes" : "max_join_bytes";
-  const maximum =
-    field === "path"
-      ? MAX_INSPECT_APPLE_IPS_FILE_BYTES
-      : MAX_INSPECT_APPLE_IPS_JOIN_BYTES;
-  const effective = input.max_file_bytes;
-  return effective >= maximum
-    ? `The selected ${field} artifact exceeds this operation's ${String(maximum)}-byte ceiling; select a smaller artifact.`
-    : `Raise ${argument} above ${String(effective)} bytes or select a smaller artifact; this is the caller-selected read budget.`;
-};
-
+/** The schema field of each boundary the parser names. */
 const SELECTED_BUDGETS = {
-  threads: {
-    argument: "max_threads",
-    maximum: MAX_INSPECT_APPLE_IPS_THREADS,
-    unit: "entries",
-  },
-  frames: {
-    argument: "max_frames",
-    maximum: MAX_INSPECT_APPLE_IPS_FRAMES,
-    unit: "entries",
-  },
-  images: {
-    argument: "max_images",
-    maximum: MAX_INSPECT_APPLE_IPS_IMAGES,
-    unit: "entries",
-  },
-  registers: {
-    argument: "max_registers",
-    maximum: MAX_INSPECT_APPLE_IPS_REGISTERS,
-    unit: "entries",
-  },
-  integer_text: {
-    argument: "max_integer_text_bytes",
-    maximum: MAX_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES,
-    unit: "UTF-16 bytes",
-  },
-} as const satisfies Record<
-  AppleIpsSelectedBoundary,
-  {
-    readonly argument: keyof InspectAppleIpsInput;
-    readonly maximum: number;
-    readonly unit: string;
-  }
->;
+  threads: "max_threads",
+  frames: "max_frames",
+  images: "max_images",
+  registers: "max_registers",
+  integer_text: "max_integer_text_bytes",
+} as const satisfies Record<AppleIpsSelectedBoundary, AppleIpsBudget>;
 
 const isSelectedBoundary = (
   boundary: string,
 ): boundary is AppleIpsSelectedBoundary =>
   Object.hasOwn(SELECTED_BUDGETS, boundary);
-
-const budgetRemediation = (
-  boundary: AppleIpsSelectedBoundary,
-  selected: number,
-): string => {
-  const { argument, maximum, unit } = SELECTED_BUDGETS[boundary];
-  const recovery =
-    selected >= maximum
-      ? `This release has no override above the ${String(maximum)} ${unit} ceiling; select a smaller report.`
-      : `Raise ${argument} on the next call, up to ${String(maximum)} ${unit}, or select a smaller report; no restart is required.`;
-  const explanation =
-    boundary === "integer_text"
-      ? ` The default is ${String(DEFAULT_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES)} UTF-16 bytes. Conservative reservation precedes numeric conversion and address expansion; max_file_bytes and row budgets do not raise it.`
-      : "";
-  return `Effective ${argument} is ${String(selected)} ${unit}. ${recovery}${explanation}`;
-};
 
 /** The unit each fixed IPS format ceiling counts. */
 const FIXED_BOUNDARY_UNITS: Readonly<Record<AppleIpsFixedBoundary, string>> = {
@@ -273,7 +208,7 @@ const resourceRecovery = ({ name, maximum }: LimitRef) =>
   isSelectedBoundary(name)
     ? {
         retryable: false,
-        remediationAction: budgetRemediation(name, maximum),
+        limit: appleIpsBudgetLimit(SELECTED_BUDGETS[name], maximum),
       }
     : fixedAllowanceOptions(
         `The IPS ${name.replaceAll("_", " ")} allowance`,
@@ -319,16 +254,11 @@ const appleIpsFailurePrimary = (
           {
             cause: failure,
             retryable: false,
-            remediationAction: fileSizeRemediation(input, field),
+            limit: appleIpsBudgetLimit(
+              field === "path" ? "max_file_bytes" : "max_join_bytes",
+              input.max_file_bytes,
+            ),
           },
         ),
-      unclassified: (failure) =>
-        new ProviderAdapterError(APPLE_IPS_PROVIDER.id, OPERATION, {
-          cause: failure,
-          diagnostics: {
-            path: input.path,
-            reason: errorMessage(failure),
-          },
-        }),
     }),
   );

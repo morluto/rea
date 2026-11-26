@@ -7,14 +7,11 @@ import {
 } from "../process/ArtifactCommandPath.js";
 import {
   ArtifactReaderFailure,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
 } from "../resources/index.js";
 import { randomUUID } from "node:crypto";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
-import {
-  pcapProducerLimit,
-  pcapProducerLimitRecovery,
-} from "../domain/pcap/pcapAnalysis.js";
+import { pcapProducerLimit } from "../domain/pcap/pcapAnalysis.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
@@ -25,7 +22,6 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisProtocolError,
   cancelledBy,
-  carriedReason,
   unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
 import {
@@ -250,10 +246,7 @@ export const runPcapCommand = async (options: {
       throw cause;
     }
     if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      throw cancelledBy(
-        operation,
-        carriedReason(artifactFileCancellationCause(cause)),
-      );
+      throw artifactFileCancellationError(operation, cause);
     if (
       cause instanceof OwnedCommandFailure &&
       cause.cleanupOwner !== undefined
@@ -328,13 +321,7 @@ export const runPcapCommand = async (options: {
               ),
             }
           : {
-              recovery: {
-                retryable: false,
-                remediationAction: pcapProducerLimitRecovery(
-                  "output_bytes",
-                  limits.maxOutputBytes,
-                ),
-              },
+              recovery: { retryable: false },
               limit: pcapProducerLimit("output_bytes", limits.maxOutputBytes),
             }),
       },

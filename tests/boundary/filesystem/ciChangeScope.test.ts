@@ -7,6 +7,7 @@ import {
   readFile,
   readdir,
   rename,
+  rm,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join, matchesGlob } from "node:path";
@@ -434,6 +435,36 @@ it("keeps unknown CI scripts on the fast Linux baseline", async () => {
     true,
   );
   for (const flag of CI_FLAGS) expect(full[flag]).toBe(true);
+});
+
+// Linux lanes skip a test gated to macOS; changing one runs the macOS lane.
+it.for([
+  [`it.skipIf(process.platform !== "darwin")("runs", () => {});\n`, true],
+  [`it.skipIf(process.platform === "linux")("runs", () => {});\n`, true],
+  [`it("runs everywhere", () => {});\n`, false],
+] as const)(
+  "selects the macOS lane for a changed test that may be gated to it: %j",
+  async ([source, apple]) => {
+    const { directory, base } = await fixture();
+    const test = "tests/boundary/filesystem/gated.test.ts";
+    const head = await change(directory, [test], source);
+    expect(await classify(directory, base, head)).toMatchObject({ apple });
+  },
+);
+
+it("does not select the macOS lane for a deleted macOS-gated test", async () => {
+  const { directory } = await fixture();
+  const test = "tests/boundary/filesystem/gated.test.ts";
+  const base = await change(
+    directory,
+    [test],
+    `it.skipIf(process.platform !== "darwin")("runs", () => {});\n`,
+  );
+  await rm(join(directory, test));
+  const head = await commit(directory);
+  expect(await classify(directory, base, head)).toMatchObject({
+    apple: false,
+  });
 });
 
 it("does not credit a fixture test as coverage for an unrelated shared script", async () => {
@@ -1251,6 +1282,18 @@ it.each([
     { code: true, ghidra_bridge: true, runtime: false, package: false },
   ],
   [
+    "scripts/verify-real-ghidra-project-coverage.mjs",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/selected-project-coverage.c",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/ReaSelectedProjectSeeds.java",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
     "scripts/verify-ghidra-loader-relocation.mjs",
     { code: true, ghidra_bridge: true, runtime: false, package: false },
   ],
@@ -2060,36 +2103,6 @@ it.each([
     },
   ],
   [
-    "scripts/lib/cli-process-environment.mjs",
-    {
-      code: true,
-      package: true,
-      runtime: true,
-      javascript_recovery: true,
-      readiness: false,
-    },
-  ],
-  [
-    "scripts/lib/runtime-admission.mjs",
-    {
-      code: true,
-      package: true,
-      runtime: true,
-      javascript_recovery: true,
-      readiness: false,
-    },
-  ],
-  [
-    "scripts/lib/runtime-admission.d.mts",
-    {
-      code: true,
-      package: true,
-      runtime: true,
-      javascript_recovery: true,
-      readiness: false,
-    },
-  ],
-  [
     "tests/conformance/readiness/report/reconstructionReadiness.ts",
     {
       code: true,
@@ -2119,6 +2132,21 @@ it.each([
   ],
 ])("preserves scope boundaries for %s", async (path, expected) => {
   expect(await classifyPaths([path])).toMatchObject(expected);
+});
+
+it.each([
+  "scripts/lib/cli-compiled-runtime.mjs",
+  "scripts/lib/cli-process-environment.mjs",
+  "scripts/lib/runtime-admission.mjs",
+  "scripts/lib/runtime-admission.d.mts",
+])("selects packaged CLI runtime checks for %s", async (path) => {
+  expect(await classifyPaths([path])).toMatchObject({
+    code: true,
+    package: true,
+    runtime: true,
+    javascript_recovery: true,
+    readiness: false,
+  });
 });
 
 it("unions provider scopes across mixed changes and deletions", async () => {
@@ -2307,7 +2335,13 @@ const workflowFile = async (name: string): Promise<unknown> =>
 
 const scopesSchema = z.object({
   CI_FLAGS: z.array(z.string()),
-  CI_LANES: z.record(z.string(), z.object({ paths: z.array(z.string()) })),
+  CI_LANES: z.record(
+    z.string(),
+    z.object({
+      paths: z.array(z.string()),
+      earlyInputs: z.array(z.string()).optional(),
+    }),
+  ),
   MANUAL_VERIFIERS: z.array(z.string()),
 });
 
@@ -2360,7 +2394,10 @@ it("owns every explicit native-host test path with the lane that runs it", async
 });
 
 it("never runs a manual-only verifier from an automatic workflow", async () => {
-  const { MANUAL_VERIFIERS } = await loadScopes();
+  const { MANUAL_VERIFIERS, CI_LANES } = await loadScopes();
+  const ownedAutomaticInputs = Object.values(CI_LANES).flatMap(
+    (lane) => lane.earlyInputs ?? [],
+  );
   const scripts = z
     .object({ scripts: z.record(z.string(), z.string()) })
     .parse(
@@ -2400,8 +2437,10 @@ it("never runs a manual-only verifier from an automatic workflow", async () => {
   }
   expect(files.size).toBeGreaterThan(0);
   expect(
-    [...files].filter((file) =>
-      MANUAL_VERIFIERS.some((pattern) => matchesGlob(file, pattern)),
+    [...files].filter(
+      (file) =>
+        MANUAL_VERIFIERS.some((pattern) => matchesGlob(file, pattern)) &&
+        !ownedAutomaticInputs.some((pattern) => matchesGlob(file, pattern)),
     ),
   ).toEqual([]);
 });
@@ -2522,9 +2561,11 @@ it("keeps a non-UTF-8 Git name distinct from a literal replacement character", a
     "tree",
     "raw-tree",
   ]);
-  expect(() => gitRepository(directory).readFiles(tree, ["\uFFFD.ts"])).toThrow(
-    `Git could not read ${tree}:\uFFFD.ts`,
-  );
+  // Exercise both a small read and a full-tree index lookup.
+  for (const revision of [tree, `${tree}^{tree}`])
+    expect(() =>
+      gitRepository(directory).readFiles(revision, ["\uFFFD.ts"]),
+    ).toThrow(`Git could not read ${revision}:\uFFFD.ts`);
 });
 
 it("outputs only changed, tracked JS and TS paths for fast PR typed lint", async () => {

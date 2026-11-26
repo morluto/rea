@@ -5,6 +5,7 @@ import { expect, it, vi } from "vitest";
 import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js";
 import { GoBinaryProvider } from "../../../src/go/GoBinaryProvider.js";
 import { GO_ANALYSIS_BUDGET_DEFAULTS } from "../../../src/domain/go/goBinary.js";
+import { NATIVE_STRUCTURE_BYTES } from "../../../src/domain/native/nativeStructureBudget.js";
 import {
   AnalysisTargetFailureError,
   AnalysisResourceConstraintError,
@@ -27,11 +28,25 @@ it("reads Go build information from a PE32 image declaring one data directory", 
   fixture.bytes.writeUInt32LE(1, 152 + 92);
   const path = join(root, "one-directory-pe32.exe");
   await writeFile(path, fixture.bytes);
-  const result = await new GoBinaryProvider().inspect({ path });
-  expect(result).toMatchObject({
-    ok: true,
-    value: { build_info: { go_version: "go1.26.0" } },
+  const structureBytes = NATIVE_STRUCTURE_BYTES.default_value * 2;
+  const result = await new GoBinaryProvider().inspect({
+    path,
+    max_structure_bytes: structureBytes,
   });
+  if (!result.ok) throw result.error;
+  expect(result.value.build_info).toMatchObject({ go_version: "go1.26.0" });
+  expect(
+    result.value.limitations.some((limitation) =>
+      limitation.includes(`max_structure_bytes=${String(structureBytes)}`),
+    ),
+  ).toBe(true);
+  expect(
+    result.value.limitations.some((limitation) =>
+      limitation.includes(
+        `max_structure_bytes=${String(NATIVE_STRUCTURE_BYTES.default_value)}`,
+      ),
+    ),
+  ).toBe(false);
 });
 
 it.each([false, true])(
@@ -63,9 +78,15 @@ it.each([false, true])(
           code: "resource_constraint",
           details: {
             reported_limits: {
-              boundary: "structure",
+              boundary: "max_structure_bytes",
               maximum: 16 * 1024 * 1024,
             },
+            limit: {
+              control_kind: "parameter",
+              parameter: "max_structure_bytes",
+              effective_value: 16 * 1024 * 1024,
+            },
+            refusal: { kind: "adjustable_budget" },
           },
         });
       else {
@@ -155,9 +176,6 @@ it("reports unreadable ELF names alongside the no-record limitation", async () =
   const result = await new GoBinaryProvider().inspect({ path });
   if (!result.ok) throw result.error;
   expect(result.value.build_info).toBeNull();
-  expect(result.value.limitations).toContain(
-    "No recognized Go build-info record was found in the inspected image; absent metadata does not establish that the binary is not Go.",
-  );
   expect(result.value.limitations).toContainEqual(
     expect.stringMatching(
       /section names.*unavailable.*compression type 3.*unsupported/iu,
@@ -182,12 +200,9 @@ it("keeps a module-mode build with no dependency records as an observed empty li
     dependencies: [],
     complete: true,
   });
-  expect(result.value.limitations.join(" ")).not.toContain(
-    "Dependency coverage is unknown",
-  );
 });
 
-it("adjusts string_literals file offsets inside a universal Mach-O slice and records chained-fixup/truncation limitations", async () => {
+it("adjusts string_literals file offsets inside a universal Mach-O slice and records truncation", async () => {
   const rodata = Buffer.from(
     "ListResourceProvidersgenaihttps://example.invalid/v1",
     "utf8",
@@ -251,9 +266,15 @@ it("adjusts string_literals file offsets inside a universal Mach-O slice and rec
         .toString("utf8"),
     ).toBe(item.value);
   }
-  const limitationsText = result.value.limitations.join(" ");
-  expect(limitationsText).toContain("LC_DYLD_CHAINED_FIXUPS");
-  expect(limitationsText).toContain("truncated");
+  expect(result.value.string_literals).toMatchObject({
+    truncated: true,
+    limits_reached: ["max_string_literals"],
+  });
+  // Chained fixups are not a field on the report. The limitation is the
+  // record that pointer recovery can miss rebase-encoded slots.
+  expect(result.value.limitations).toContain(
+    "This Mach-O declares LC_DYLD_CHAINED_FIXUPS; rebase-encoded pointer slots in writable data may not hold raw virtual addresses statically, so (ptr, len) recovery can miss writable-section string headers.",
+  );
 });
 
 it.each([

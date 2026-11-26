@@ -20,25 +20,24 @@ export const MINIMUM_ELF_READ_FILE_BYTES = 64;
 export const DEFAULT_ELF_READ_FILE_BYTES = 64 * 1024 * 1024;
 
 /**
- * The per-call control that stopped an ELF or kernel reader, named by its
- * contract field; each adapter names the option that sets it. The schema owns
- * the same bounds, so the reported range is the one the next call accepts.
+ * The per-call control that stopped an ELF reader, named by its contract
+ * field; each adapter names the option that sets it. The schema owns the same
+ * bounds, so the reported range is the one the next call accepts. A
+ * measured need above the safe-integer range stays above every maximum.
  */
-export const elfReadBudgetLimit = <
-  T extends { readonly [K in keyof T]: ElfReadBudgetBounds },
-  K extends keyof T & string,
->(
-  budgets: T,
-  parameter: K,
+export const elfReadBudgetLimit = (
+  budgets: ElfReadBudgets,
+  parameter: keyof ElfReadBudgets,
   effectiveValue: number,
-  unit: AnalysisParameterLimit["unit"] = parameter.endsWith("_bytes")
-    ? "bytes"
-    : "count",
+  requiredValue?: bigint,
 ): AnalysisParameterLimit => ({
   control_kind: "parameter",
   parameter,
   effective_value: effectiveValue,
-  unit,
+  unit: parameter === "max_file_bytes" ? "bytes" : "count",
   ...budgets[parameter],
   applies_at: "next_call",
+  ...(requiredValue === undefined
+    ? {}
+    : { required_value: Number(requiredValue) }),
 });

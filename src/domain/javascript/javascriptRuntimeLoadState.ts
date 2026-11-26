@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { isJavaScriptModuleUnit } from "./javascriptModuleUnits.js";
 import type { ApplicationNode } from "./javascriptApplicationGraphSchemas.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
@@ -67,7 +68,7 @@ const classifyLayer = (
       match.static_layer_id === layer.layerId &&
       match.static_node_id !== null
     )
-      append(direct, match.static_node_id, match.runtime_node_id);
+      appendToMapList(direct, match.static_node_id, match.runtime_node_id);
     else if (match.status === "ambiguous" || match.status === "unknown") {
       const uncertain = match.status === "ambiguous" ? ambiguous : incomplete;
       for (const candidate of match.candidate_static_nodes)
@@ -139,7 +140,7 @@ const residentNodes = (
   const children = new Map<string, string[]>();
   for (const edge of layer.graph.edges)
     if (edge.relation === "contains")
-      append(children, edge.source_node_id, edge.target_node_id);
+      appendToMapList(children, edge.source_node_id, edge.target_node_id);
   const pending = [...directlyLoaded].filter(
     (nodeId) => nodeKinds.get(nodeId) === "javascript-asset",
   );
@@ -154,16 +155,6 @@ const residentNodes = (
     }
   }
   return resident;
-};
-
-const append = (
-  values: Map<string, string[]>,
-  key: string,
-  value: string,
-): void => {
-  const current = values.get(key);
-  if (current === undefined) values.set(key, [value]);
-  else current.push(value);
 };
 
 const isLoadStateNode = (

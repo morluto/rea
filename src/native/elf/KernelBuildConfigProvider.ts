@@ -1,6 +1,7 @@
 import {
   projectStableArtifactFailure,
   closeArtifactResources,
+  ArtifactReaderFailure,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
   ArtifactResourceScope,
@@ -11,15 +12,10 @@ import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import {
-  KERNEL_BUILD_CONFIG_READ_BUDGETS,
-  MAX_INSPECT_KERNEL_BUILD_CONFIG_CONFIG_BYTES,
-  MAX_INSPECT_KERNEL_BUILD_CONFIG_ENTRIES,
-  MAX_INSPECT_KERNEL_BUILD_CONFIG_FILE_BYTES,
-  MAX_INSPECT_KERNEL_BUILD_CONFIG_PAYLOAD_BYTES,
+  kernelBuildConfigBudgetLimit,
   type InspectKernelBuildConfigInput,
   type KernelBuildConfig,
 } from "../../domain/native/kernelBuildConfig.js";
-import { elfReadBudgetLimit } from "../../domain/native/elfReadBudgets.js";
 import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import { err, ok } from "../../domain/result.js";
 import { KERNEL_BUILD_CONFIG_PROVIDER } from "../../domain/investigationProviders.js";
@@ -70,11 +66,7 @@ export class KernelBuildConfigProvider implements KernelBuildConfigPort {
           },
           (handle) =>
             parseKernelBuildConfigFromHandle(
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               {
                 path: input.path,
                 sha256: handle.sha256,
@@ -91,79 +83,6 @@ export class KernelBuildConfigProvider implements KernelBuildConfigPort {
     }
   }
 }
-
-const ceiling = (
-  knob: string,
-  maximum: number,
-  selected: number,
-  description: string,
-): string =>
-  selected >= maximum
-    ? `The image exceeds the ${String(maximum)} ${knob} ceiling this operation accepts; select a smaller artifact.`
-    : `Raise ${knob} above ${String(selected)} or select a smaller artifact; the limit is the caller-selected ${description}.`;
-
-const fileSizeRemediation = (input: InspectKernelBuildConfigInput): string =>
-  input.max_file_bytes >= MAX_INSPECT_KERNEL_BUILD_CONFIG_FILE_BYTES
-    ? `The image exceeds the ${String(MAX_INSPECT_KERNEL_BUILD_CONFIG_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller artifact.`
-    : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
-
-const parserBudgetRemediation = ({
-  name,
-  maximum,
-}: KernelBuildConfigBudgetFailure["failure"]["limit"]): string => {
-  switch (name) {
-    case "max_entries":
-      return ceiling(
-        name,
-        MAX_INSPECT_KERNEL_BUILD_CONFIG_ENTRIES,
-        maximum,
-        "CONFIG_* entry budget",
-      );
-    case "max_config_bytes":
-      return ceiling(
-        name,
-        MAX_INSPECT_KERNEL_BUILD_CONFIG_CONFIG_BYTES,
-        maximum,
-        "inflated IKCFG gzip budget",
-      );
-    case "compressed_candidate_bytes":
-      return "Select an image with a smaller compressed IKCFG member. Increasing max_config_bytes can raise the compressed candidate allowance when the inflated-config budget is below its maximum.";
-    case "max_payload_bytes":
-      return ceiling(
-        name,
-        MAX_INSPECT_KERNEL_BUILD_CONFIG_PAYLOAD_BYTES,
-        maximum,
-        "inflated bzImage payload budget",
-      );
-  }
-};
-
-const parserBudgetLimit = (
-  name: KernelBuildConfigBudgetFailure["failure"]["limit"]["name"],
-  input: InspectKernelBuildConfigInput,
-) => {
-  switch (name) {
-    case "max_entries":
-      return elfReadBudgetLimit(
-        KERNEL_BUILD_CONFIG_READ_BUDGETS,
-        "max_entries",
-        input.max_entries,
-      );
-    case "max_config_bytes":
-    case "compressed_candidate_bytes":
-      return elfReadBudgetLimit(
-        KERNEL_BUILD_CONFIG_READ_BUDGETS,
-        "max_config_bytes",
-        input.max_config_bytes,
-      );
-    case "max_payload_bytes":
-      return elfReadBudgetLimit(
-        KERNEL_BUILD_CONFIG_READ_BUDGETS,
-        "max_payload_bytes",
-        input.max_payload_bytes,
-      );
-  }
-};
 
 const reportedBudgetContext = (input: InspectKernelBuildConfigInput) => ({
   max_file_bytes: input.max_file_bytes,
@@ -203,30 +122,44 @@ const kernelBuildConfigFailure = (
                 [limit.name]: limit.maximum,
               },
               retryable: false,
-              limit: parserBudgetLimit(limit.name, input),
-              remediationAction: parserBudgetRemediation(limit),
+              // The compressed candidate allowance is derived from max_config_bytes.
+              limit:
+                limit.name === "compressed_candidate_bytes"
+                  ? kernelBuildConfigBudgetLimit(
+                      "max_config_bytes",
+                      input.max_config_bytes,
+                    )
+                  : kernelBuildConfigBudgetLimit(limit.name, limit.maximum),
+            },
+          );
+        }
+        if (
+          origin === "owned-or-classified" &&
+          failure instanceof ArtifactReaderFailure &&
+          failure.reason === "limit"
+        ) {
+          return new AnalysisResourceConstraintError(
+            OPERATION,
+            failure.boundary ?? "memory",
+            failure.message,
+            reportedBudgetContext(input),
+            {
+              cause: failure,
+              ...(failure.boundary !== "capacity" &&
+              failure.boundary !== "file-size"
+                ? {}
+                : {
+                    retryable: false as const,
+                    limit: kernelBuildConfigBudgetLimit(
+                      "max_file_bytes",
+                      input.max_file_bytes,
+                    ),
+                  }),
             },
           );
         }
         return undefined;
       },
-      fileSize: (failure) =>
-        new AnalysisResourceConstraintError(
-          OPERATION,
-          "file-size",
-          failure.message,
-          reportedBudgetContext(input),
-          {
-            cause: failure,
-            retryable: false,
-            limit: elfReadBudgetLimit(
-              KERNEL_BUILD_CONFIG_READ_BUDGETS,
-              "max_file_bytes",
-              input.max_file_bytes,
-            ),
-            remediationAction: fileSizeRemediation(input),
-          },
-        ),
     }),
   );
   if (completed !== undefined) primary.retainPartialObservation(completed);

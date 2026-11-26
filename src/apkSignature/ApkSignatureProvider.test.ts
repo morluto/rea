@@ -1,3 +1,4 @@
+import { u16, u32, u64 } from "../../tests/fixtures/apkSignature/integers.js";
 import { createHash } from "node:crypto";
 import { deflateRawSync } from "node:zlib";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -36,14 +37,6 @@ const zipOf = async (names: readonly string[]): Promise<Uint8Array> => {
   return writer.close();
 };
 
-const u16 = (v: number): number[] => [v & 0xff, (v >> 8) & 0xff];
-const u32 = (v: number): number[] => [
-  v & 0xff,
-  (v >> 8) & 0xff,
-  (v >> 16) & 0xff,
-  (v >>> 24) & 0xff,
-];
-const u64 = (v: number): number[] => [...u32(v), ...u32(0)];
 const lp = (b: readonly number[]): number[] => [...u32(b.length), ...b];
 const seq = (els: readonly (readonly number[])[]): number[] =>
   lp(els.flatMap((e) => lp(e)));

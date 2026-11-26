@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { selectViewRows } from "./selectViewRows.js";
 import { z } from "zod";
 import { canonicalJson } from "../comparisonSemantics.js";
@@ -133,16 +134,6 @@ const factsIndexes = new WeakMap<
   { readonly nodes: readonly ApplicationNode[]; readonly index: FactsIndex }
 >();
 
-const pushIndex = (
-  map: Map<string, number[]>,
-  key: string,
-  ordinal: number,
-): void => {
-  const existing = map.get(key);
-  if (existing === undefined) map.set(key, [ordinal]);
-  else existing.push(ordinal);
-};
-
 const buildFactsIndex = (nodes: readonly ApplicationNode[]): FactsIndex => {
   const all: FactEntry[] = [];
   const byKind = new Map<string, number[]>();
@@ -153,15 +144,15 @@ const buildFactsIndex = (nodes: readonly ApplicationNode[]): FactsIndex => {
     for (const observation of node.observations) {
       const ordinal = all.length;
       all.push({ node, observation });
-      pushIndex(byKind, node.kind, ordinal);
+      appendToMapList(byKind, node.kind, ordinal);
       const path = observationPath(observation);
       if (path !== null) {
-        pushIndex(byPath, path, ordinal);
+        appendToMapList(byPath, path, ordinal);
         if (kindPaths === undefined) {
           kindPaths = new Map();
           byKindAndPath.set(node.kind, kindPaths);
         }
-        pushIndex(kindPaths, path, ordinal);
+        appendToMapList(kindPaths, path, ordinal);
       }
     }
   }

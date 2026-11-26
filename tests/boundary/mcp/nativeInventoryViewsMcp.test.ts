@@ -216,8 +216,10 @@ it("summarizes an inventory above the inline bound when detail is omitted, and r
       byte_length: 7001,
     },
   }));
-  const harness = await connectGhidraMcp("native-inventory-capacity", () =>
-    Promise.resolve(ok(items)),
+  const harness = await connectGhidraMcp(
+    "native-inventory-capacity",
+    () => Promise.resolve(ok(items)),
+    { testDelivery: "budgeted" },
   );
   onTestFinished(() => harness.close());
   const omitted = await harness.mcp.callTool({
@@ -279,8 +281,10 @@ it("inlines a small inventory, summarizes a large one, and keeps it complete whe
       procedure: { external: false, thunk: false, thunk_target: null },
     }));
   let result = rows(2);
-  const harness = await connectGhidraMcp("native-inventory-size-aware", () =>
-    Promise.resolve(ok(result)),
+  const harness = await connectGhidraMcp(
+    "native-inventory-size-aware",
+    () => Promise.resolve(ok(result)),
+    { testDelivery: "budgeted" },
   );
   onTestFinished(() => harness.close());
   const small = await harness.mcp.callTool({
@@ -317,7 +321,10 @@ it("inlines a small inventory, summarizes a large one, and keeps it complete whe
   const unpaged = await connectGhidraMcp(
     "native-inventory-size-aware-unpaged",
     () => Promise.resolve(ok(rows(600))),
-    { environment: { REA_MCP_TOOL_FAMILIES: "session,direct,enhanced" } },
+    {
+      environment: { REA_MCP_TOOL_FAMILIES: "session,direct,enhanced" },
+      testDelivery: "budgeted",
+    },
   );
   onTestFinished(() => unpaged.close());
   const unpagedReply = await unpaged.mcp.callTool({
@@ -366,6 +373,69 @@ it("inlines a small inventory, summarizes a large one, and keeps it complete whe
   });
 });
 
+it("inlines small xrefs, summarizes large ones and pages them through native-observation", async () => {
+  const addresses = (count: number) =>
+    Array.from(
+      { length: count },
+      (_, index) => `0x${(0x401000 + index * 4).toString(16)}`,
+    );
+  let result = addresses(2);
+  const harness = await connectGhidraMcp(
+    "xrefs-agent-budget",
+    () => Promise.resolve(ok(result)),
+    { testDelivery: "budgeted" },
+  );
+  onTestFinished(() => harness.close());
+  const small = await harness.mcp.callTool({
+    name: "xrefs",
+    arguments: { address: "0x400000" },
+  });
+  if (small.isError) throw new Error(JSON.stringify(small));
+  expect(parseEvidence(small.structuredContent)).toMatchObject({
+    operation: "xrefs",
+    normalized_result: result,
+  });
+  result = addresses(4000);
+  const large = await harness.mcp.callTool({
+    name: "xrefs",
+    arguments: { address: "0x400000" },
+  });
+  if (large.isError) throw new Error(JSON.stringify(large));
+  const summary = parseEvidence(large.structuredContent);
+  expect(summary).toMatchObject({
+    operation: "inspect_analysis_view",
+    normalized_result: { kind: "summary", parent_operation: "xrefs" },
+  });
+  const parentId = (
+    summary.normalized_result as { readonly parent_evidence_id: string }
+  ).parent_evidence_id;
+  const page = await harness.mcp.callTool({
+    name: "inspect_analysis_view",
+    arguments: {
+      source: { kind: "retained-evidence", evidence_id: parentId },
+      view: { kind: "native-observation", offset: 3998, limit: 10 },
+    },
+  });
+  if (page.isError) throw new Error(JSON.stringify(page));
+  expect(parseEvidence(page.structuredContent).normalized_result).toMatchObject(
+    {
+      kind: "native-observation",
+      parent_operation: "xrefs",
+      coverage: { examined: 2, total: 4000, next_offset: null },
+    },
+  );
+  const forced = await harness.mcp.callTool({
+    name: "xrefs",
+    arguments: { address: "0x400000", detail: "complete" },
+  });
+  if (forced.isError) throw new Error(JSON.stringify(forced));
+  expect(parseEvidence(forced.structuredContent)).toMatchObject({
+    operation: "xrefs",
+    evidence_id: parentId,
+    normalized_result: result,
+  });
+});
+
 it("refuses summary before provider work when no retaining session is configured", async () => {
   let calls = 0;
   const server = createServer({
@@ -406,6 +476,7 @@ it("refuses summary before provider work when no retaining session is configured
     ["procedure_callers", { procedure: "fixture_main" }],
     ["resolve_containing_procedure", { address: "0x401001" }],
     ["get_call_graph", { address: "fixture_main" }],
+    ["xrefs", { address: "0x401001" }],
   ] as const) {
     const reply = await client.callTool({
       name,

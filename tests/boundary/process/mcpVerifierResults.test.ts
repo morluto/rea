@@ -1,3 +1,4 @@
+import { createGhidraVerifierMcpOperations } from "../../../scripts/lib/ghidra-verifier-mcp.mjs";
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../../../src/contracts/artifactComparisonExample.js";
 import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph.js";
@@ -20,9 +21,10 @@ import {
   createEvidenceBundle,
   type EvidenceBundle,
 } from "../../../src/domain/evidenceBundle.js";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 interface VerifierResults {
+  readonly requireMcpAnalysisEvidenceOrSessionResult: VerifierResults["requireMcpOperationResult"];
   readonly requireMcpOperationResult: (
     result: unknown,
     operation: string,
@@ -328,32 +330,37 @@ it.each([false, true])(
   },
 );
 
-it("rejects malformed and disagreeing replies at the Ghidra address-context verifier call boundary", async () => {
-  const source = await readFile(
-    new URL(
-      "../../../scripts/verify-real-ghidra-address-context.mjs",
-      import.meta.url,
-    ),
-    "utf8",
-  );
-  const declaration = parse(source, { sourceType: "module" }).program.body.find(
-    (node) => node.type === "FunctionDeclaration" && node.id?.name === "call",
-  );
-  if (declaration?.start == null || declaration.end == null)
-    throw new Error("Ghidra verifier call boundary missing");
+it("decodes Ghidra verifier replies by operation and propagates call failures", async () => {
+  const {
+    requireMcpOperationResult,
+    requireMcpAnalysisEvidenceOrSessionResult,
+  } = await verifierResults();
   const evidence = ghidraEvidence();
   let response: unknown;
-  // Execute the script's actual call boundary without launching its compiler or provider.
-  const call = runInNewContext(
-    `(${source.slice(declaration.start, declaration.end)})`,
-    {
-      assert,
-      client: { callTool: async () => response },
-      ...(await verifierResults()),
-    },
-  ) as (name: string) => Promise<unknown>;
+  const callTool = vi.fn(async () => response);
+  const options = { timeout: 240_000 };
+  const operations = createGhidraVerifierMcpOperations(
+    { connect: vi.fn(), callTool },
+    options,
+  );
+  const decode = vi.fn(requireMcpAnalysisEvidenceOrSessionResult);
+  const call = operations.decodedCall(decode);
   response = { ...textReply(evidence), structuredContent: evidence };
   await expect(call("address_name")).resolves.toEqual(evidence);
+  expect(callTool).toHaveBeenCalledWith(
+    { name: "address_name", arguments: {} },
+    options,
+  );
+  expect(decode).toHaveBeenCalledWith(response, "address_name");
+  const args = { address: "0x401000" };
+  await expect(
+    operations.decodedCall(requireMcpOperationResult)("address_name", args),
+  ).resolves.toBe(evidence.normalized_result);
+  expect(callTool).toHaveBeenLastCalledWith(
+    { name: "address_name", arguments: args },
+    options,
+  );
+
   const malformed = { ...evidence, normalized_result: { name: "entry" } };
   response = { ...textReply(malformed), structuredContent: malformed };
   await expect(call("address_name")).rejects.toThrow();
@@ -364,6 +371,14 @@ it("rejects malformed and disagreeing replies at the Ghidra address-context veri
   await expect(call("address_name")).rejects.toThrow(
     "text and structured results disagree",
   );
+  response = textReply({ result: null });
+  await expect(call("close_binary")).resolves.toBeNull();
+
+  const failure = new Error("transport closed");
+  callTool.mockRejectedValueOnce(failure);
+  decode.mockClear();
+  await expect(call("address_name")).rejects.toBe(failure);
+  expect(decode).not.toHaveBeenCalled();
 });
 
 it("rejects disagreement in lifecycle envelope fields that the named schema would otherwise discard", async () => {

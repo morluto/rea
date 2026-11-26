@@ -21,15 +21,14 @@ import {
   intelHexRecord,
   srecRecord,
 } from "../domain/firmware/hexRecords.fixture.js";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import {
+  createTestTempDirectory,
+  createTestTempFile,
+} from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 
-const writeImage = async (name: string, text: string): Promise<string> => {
-  const directory = await createTestTempDirectory("rea-hex-records-");
-  const path = join(directory, name);
-  await writeFile(path, text);
-  return path;
-};
+const writeImage = (name: string, text: string): Promise<string> =>
+  createTestTempFile("rea-hex-records-", name, text);
 
 const firstRegion = async (reader: HexRecordArtifactReader) => {
   for await (const entry of reader.entries()) return entry;

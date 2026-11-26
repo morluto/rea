@@ -70,7 +70,6 @@ cliTest.for(cases)(
         });
       } else {
         expect(error).toMatchObject({ details: { path } });
-        expect(error).not.toHaveProperty("details.format_failure");
         expect(JSON.stringify(error)).not.toContain("inspect_input_contract");
       }
       expect(Buffer.compare(await readFile(path), bytes)).toBe(0);

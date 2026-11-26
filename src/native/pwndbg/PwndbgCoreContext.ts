@@ -5,7 +5,7 @@ import {
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import {
   bindArtifactFileCleanup,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   completedStableArtifact,
   readStableArtifact,
   ArtifactReaderFailure,
@@ -25,7 +25,6 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
   cancelledBy,
-  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import {
@@ -263,17 +262,13 @@ export const inspectPwndbgCore = async ({
         cause instanceof ArtifactReaderFailure &&
         cause.reason === "cancelled"
       ) {
-        const error = cancelledBy(
-          OPERATION,
-          carriedReason(artifactFileCancellationCause(cause)),
-          {
-            capturedOutput: recordedCrashStageOutput(diagnostics, output),
-            ...(cause instanceof ArtifactReaderFailure &&
-            cause.cleanup !== undefined
-              ? { cleanup: cause.cleanup }
-              : {}),
-          },
-        );
+        const error = artifactFileCancellationError(OPERATION, cause, {
+          capturedOutput: recordedCrashStageOutput(diagnostics, output),
+          ...(cause instanceof ArtifactReaderFailure &&
+          cause.cleanup !== undefined
+            ? { cleanup: cause.cleanup }
+            : {}),
+        });
         bindArtifactFileCleanup(cause, error);
         throw pwndbgContextFinalizationFailure(error, finalization);
       }
@@ -372,11 +367,7 @@ const completedReplyFailure = (
 ): AnalysisError => {
   const cancellation =
     cause.reason === "cancelled"
-      ? cancelledBy(
-          OPERATION,
-          carriedReason(artifactFileCancellationCause(cause)),
-          { capturedOutput },
-        )
+      ? artifactFileCancellationError(OPERATION, cause, { capturedOutput })
       : undefined;
   if (cause.cleanup === undefined) {
     if (cancellation !== undefined) return cancellation;

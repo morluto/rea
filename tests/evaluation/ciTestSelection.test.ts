@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
@@ -18,14 +18,14 @@ const group = fileURLToPath(
   new URL("../../scripts/ci/test-group.mjs", import.meta.url),
 );
 
-const selectedEnvironment = (...files: string[]) => ({
+const selectedEnvironment = (shards: number, ...files: string[]) => ({
   ...process.env,
   CI_TEST_SELECTION: JSON.stringify({
     version: 3,
     mode: "selected",
     reason: "Explicitly selected test files",
     files,
-    shards: 1,
+    shards,
   }),
 });
 
@@ -707,6 +707,7 @@ it("parses only well-formed plans and derives the selected shard count", () => {
 
 it("runs only a shard the plan defines", async () => {
   const environment = selectedEnvironment(
+    1,
     "tests/evaluation/reasonMarker.test.ts",
     "tests/evaluation/recordPredicateGuard.test.ts",
   );
@@ -751,7 +752,7 @@ it.each([
 ])("rejects a case filter in a selected shard: %j", async (...filter) => {
   await expect(
     execute(process.execPath, [group, "selected", "1/1", ...filter], {
-      env: selectedEnvironment("tests/evaluation/reasonMarker.test.ts"),
+      env: selectedEnvironment(1, "tests/evaluation/reasonMarker.test.ts"),
     }),
   ).rejects.toMatchObject({
     stderr: expect.stringContaining(
@@ -760,29 +761,41 @@ it.each([
   });
 });
 
-it("runs every selected case and still permits developer name and tag filters", async () => {
+it("runs each selected file on one shard and still permits developer case filters", async () => {
   const exact = fileURLToPath(
     new URL("../../scripts/run-exact-tests.mjs", import.meta.url),
   );
   const file = "tests/evaluation/reasonMarker.test.ts";
+  const files = [file, "tests/evaluation/recordPredicateGuard.test.ts"];
   const root = await createTestTempDirectory("rea-selected-cases-");
-  const selectedReport = join(root, "selected.json");
-  await execute(
-    process.execPath,
-    [
-      group,
-      "selected",
-      "1/1",
-      "--reporter=json",
-      `--outputFile.json=${selectedReport}`,
-    ],
-    { env: selectedEnvironment(file) },
+  const passedByFile = new Map<string, number>();
+  for (const index of [1, 2]) {
+    const report = join(root, `selected-${index}.json`);
+    await execute(
+      process.execPath,
+      [
+        group,
+        "selected",
+        `${index}/2`,
+        "--reporter=json",
+        `--outputFile.json=${report}`,
+      ],
+      { env: selectedEnvironment(2, ...files) },
+    );
+    const selected = JSON.parse(await readFile(report, "utf8")) as {
+      numPassedTests: number;
+      testResults: { name: string }[];
+    };
+    expect(selected).toMatchObject({ numPendingTests: 0, numFailedTests: 0 });
+    expect(selected.testResults).toHaveLength(1);
+    for (const { name } of selected.testResults)
+      passedByFile.set(resolve(name), selected.numPassedTests);
+  }
+  expect([...passedByFile.keys()].toSorted()).toEqual(
+    files.map((path) => resolve(path)).toSorted(),
   );
-  const selected = JSON.parse(await readFile(selectedReport, "utf8")) as {
-    numPassedTests: number;
-  };
-  expect(selected).toMatchObject({ numPendingTests: 0, numFailedTests: 0 });
-  expect(selected.numPassedTests).toBeGreaterThan(1);
+  const selectedCases = passedByFile.get(resolve(file))!;
+  expect(selectedCases).toBeGreaterThan(1);
 
   const devReport = join(root, "developer.json");
   await execute(process.execPath, [
@@ -798,6 +811,6 @@ it("runs every selected case and still permits developer name and tag filters", 
   const dev: unknown = JSON.parse(await readFile(devReport, "utf8"));
   expect(dev).toMatchObject({
     numPassedTests: 1,
-    numPendingTests: selected.numPassedTests - 1,
+    numPendingTests: selectedCases - 1,
   });
 });

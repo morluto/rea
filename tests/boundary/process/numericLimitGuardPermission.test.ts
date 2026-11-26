@@ -50,10 +50,12 @@ processTest.skipIf(
         'export const limit = { update_mode: "parameter" };',
       );
     }
-    await copyFile(
+    for (const script of [
       "scripts/verify/rea-numeric-limits.mjs",
-      join(root, "scripts/verify/rea-numeric-limits.mjs"),
-    );
+      "scripts/verify/bounded-file-reads.mjs",
+    ]) {
+      await copyFile(script, join(root, script));
+    }
     const run = () =>
       processes.run(
         process.execPath,

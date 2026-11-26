@@ -155,3 +155,74 @@ cliTest(
     expect(fileIdentity(evidence.subject).format).toBe("file");
   },
 );
+
+cliTest(
+  "reports structured details.limit and CLI flags for max-file-bytes and max-entries refusals",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-kernel-module-cli-limit-");
+    const path = join(root, "demo.ko");
+    await writeFile(path, kernelModuleFixture());
+
+    const fileBudget = await cli.run({
+      arguments: [
+        "inspect-kernel-module",
+        path,
+        "--max-file-bytes",
+        "64",
+        "--json",
+      ],
+    });
+    expect(fileBudget.exitCode).not.toBe(0);
+    expect(fileBudget.json).toMatchObject({
+      error: {
+        code: "resource_constraint",
+        details: {
+          limit: {
+            control_kind: "parameter",
+            parameter: "max_file_bytes",
+            effective_value: 64,
+            unit: "bytes",
+            minimum: 64,
+            maximum: 536870912,
+            default_value: 67108864,
+            applies_at: "next_call",
+          },
+        },
+        remediation: {
+          action: expect.stringContaining("--max-file-bytes"),
+        },
+      },
+    });
+
+    const entryBudget = await cli.run({
+      arguments: [
+        "inspect-kernel-module",
+        path,
+        "--max-entries",
+        "1",
+        "--json",
+      ],
+    });
+    expect(entryBudget.exitCode).not.toBe(0);
+    expect(entryBudget.json).toMatchObject({
+      error: {
+        code: "resource_constraint",
+        details: {
+          limit: {
+            control_kind: "parameter",
+            parameter: "max_entries",
+            effective_value: 1,
+            unit: "count",
+            minimum: 1,
+            maximum: 65536,
+            default_value: 8192,
+            applies_at: "next_call",
+          },
+        },
+        remediation: {
+          action: expect.stringContaining("--max-entries"),
+        },
+      },
+    });
+  },
+);

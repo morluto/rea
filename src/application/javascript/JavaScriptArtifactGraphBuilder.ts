@@ -435,9 +435,11 @@ const graphLimitations = (
         ]),
     ...context.snapshot.limitations,
     ...emptyInputLimitations(context),
-    ...context.snapshot.integrity_contradictions.map(
-      ({ logical_path: path }) =>
-        `Artifact integrity metadata contradicts observed bytes at ${path}; the observed bytes are untrusted.`,
+    ...context.snapshot.integrity_contradictions.map((contradiction) =>
+      "signing_explanation" in contradiction &&
+      contradiction.signing_explanation !== undefined
+        ? `Artifact integrity metadata contradicts observed bytes at ${contradiction.logical_path}; removing the Authenticode certificate table restores the declared SHA-256 (signed after packing), but the observed bytes remain untrusted.`
+        : `Artifact integrity metadata contradicts observed bytes at ${contradiction.logical_path}; the observed bytes are untrusted.`,
     ),
     ...selfReferenceOmissions(
       relationshipOmissions.selfImports,

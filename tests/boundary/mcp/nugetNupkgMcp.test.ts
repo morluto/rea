@@ -12,6 +12,7 @@ import { nugetNupkgFixture } from "../../../src/nuget/NugetNupkg.fixture.js";
 import { ZIP_ZSTANDARD_WINDOW_CEILING } from "../../../src/resources/ZipArtifactReader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
+import { testDeliveryEnvironment } from "../../support/completeEvidenceByDefault.js";
 
 const nupkgContract = contractNamed(
   NUGET_NUPKG_TOOL_CONTRACTS,
@@ -141,6 +142,83 @@ mcpTest(
       expect(error.message).toMatch(/Zstandard dictionary/u);
     } finally {
       enumeration.mockRestore();
+      await session.close();
+    }
+  },
+);
+
+mcpTest(
+  "summarizes a package over the agent result budget and keeps complete Evidence retained",
+  async ({ mcp }) => {
+    const session = createTestBinarySession(() => {
+      throw new Error("NuGet inspection must not start a deep provider");
+    });
+    const environment = testDeliveryEnvironment(process.env, "budgeted");
+    const client = await mcp.connect(
+      createServer({ kind: "session", session }, { environment }),
+      undefined,
+      undefined,
+      "budgeted",
+    );
+    try {
+      const root = await createTestTempDirectory("rea-nupkg-mcp-");
+      const small = join(root, "Small.nupkg");
+      await writeFile(small, await nugetNupkgFixture());
+      const inline = await client.callTool({
+        name: "inspect_nuget_nupkg",
+        arguments: { path: small },
+      });
+      expect(inline.isError, JSON.stringify(inline.content)).not.toBe(true);
+      expect(
+        completeNupkgEvidenceSchema.parse(inline.structuredContent).operation,
+      ).toBe("inspect_nuget_nupkg");
+
+      const large = join(root, "Large.nupkg");
+      const members = Object.fromEntries(
+        Array.from({ length: 400 }, (_, index) => [
+          `lib/net8.0/Generated.Member.${String(index).padStart(4, "0")}.dll`,
+          "x",
+        ]),
+      );
+      await writeFile(
+        large,
+        await nugetNupkgFixture({ extraMembers: members }),
+      );
+      const summarized = await client.callTool({
+        name: "inspect_nuget_nupkg",
+        arguments: { path: large },
+      });
+      expect(summarized.isError, JSON.stringify(summarized.content)).not.toBe(
+        true,
+      );
+      const summary = nupkgContract.outputSchema.parse(
+        summarized.structuredContent,
+      );
+      expect(summary).toMatchObject({
+        operation: "inspect_analysis_view",
+        normalized_result: {
+          kind: "summary",
+          parent_operation: "inspect_nuget_nupkg",
+          summary: { identity: { id: "Demo.Package" } },
+        },
+      });
+      const { parent_evidence_id: parentId, summary: facts } =
+        summary.normalized_result as {
+          readonly parent_evidence_id: string;
+          readonly summary: { readonly content_count: number };
+        };
+      const complete = await client.callTool({
+        name: "inspect_nuget_nupkg",
+        arguments: { path: large, detail: "complete" },
+      });
+      const evidence = completeNupkgEvidenceSchema.parse(
+        complete.structuredContent,
+      );
+      expect(evidence.evidence_id).toBe(parentId);
+      expect(facts.content_count).toBe(
+        evidence.normalized_result.contents.length,
+      );
+    } finally {
       await session.close();
     }
   },

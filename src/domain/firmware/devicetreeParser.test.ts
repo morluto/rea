@@ -1,14 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import {
+  DEVICETREE_READ_BUDGETS,
   devicetreeSchema,
   inspectDevicetreeInputSchema,
 } from "./devicetree.js";
-import {
-  DEVICETREE_DECODED_BYTES,
-  devicetreeLimitFailure,
-  parseDevicetree,
-} from "./devicetreeParser.js";
+import { devicetreeLimitFailure, parseDevicetree } from "./devicetreeParser.js";
 import {
   cells,
   devicetreeFixture,
@@ -401,7 +398,7 @@ it("bounds expansion of repeated paths before allocation", () => {
     parse(devicetreeFixture({ name: "", children: [node] }), {
       max_depth: 256,
     }),
-  ).toThrow("decoded representation");
+  ).toThrow("max_decoded_bytes");
 });
 it.each(["compatible", "status"])(
   "bounds NUL-heavy %s string-list expansion",
@@ -411,7 +408,10 @@ it.each(["compatible", "status"])(
       properties: { [name]: Buffer.alloc(6 * 1024 * 1024) },
     });
     expect(() => parse(bytes, { max_file_bytes: 16777216 })).toThrow(
-      devicetreeLimitFailure("decoded_bytes", DEVICETREE_DECODED_BYTES),
+      devicetreeLimitFailure(
+        "max_decoded_bytes",
+        DEVICETREE_READ_BUDGETS.max_decoded_bytes.default_value,
+      ),
     );
   },
 );
@@ -429,7 +429,18 @@ it("accounts for string values serialized again in the summary", () => {
     parse(devicetreeFixture({ ...child, name: "" }), {
       max_file_bytes: 16777216,
     }),
-  ).toThrow(devicetreeLimitFailure("decoded_bytes", DEVICETREE_DECODED_BYTES));
+  ).toThrow(
+    devicetreeLimitFailure(
+      "max_decoded_bytes",
+      DEVICETREE_READ_BUDGETS.max_decoded_bytes.default_value,
+    ),
+  );
+  expect(() =>
+    parse(devicetreeFixture({ ...child, name: "" }), {
+      max_file_bytes: 16777216,
+      max_decoded_bytes: 64 * 1024 * 1024,
+    }),
+  ).not.toThrow();
 });
 it("retains undecodable alias identities and labels the summary derived", () => {
   const report = parse(
@@ -460,5 +471,5 @@ it("bounds repeated reference paths before Evidence serialization", () => {
     ],
   });
   expect(bytes.length).toBeLessThan(100_000);
-  expect(() => parse(bytes)).toThrow("decoded representation");
+  expect(() => parse(bytes)).toThrow("max_decoded_bytes");
 });

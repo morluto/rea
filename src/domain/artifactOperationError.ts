@@ -110,36 +110,8 @@ export class ArtifactOperationError extends AnalysisError {
   readonly integrityCheck: ArtifactIntegrityCheck | undefined;
 
   constructor(
-    readonly operation:
-      | "inventory_artifact"
-      | "inspect_artifact"
-      | "inspect_desktop_application"
-      | "inspect_pe_resources"
-      | "inspect_pe_certificates"
-      | "inspect_elf_notes"
-      | "inspect_dwarf_units"
-      | "inspect_elf_debug_link"
-      | "inspect_elf_unwind_ranges"
-      | "inspect_devicetree"
-      | "inspect_ntfs_journal"
-      | "inspect_api_contract"
-      | "inspect_playwright_trace"
-      | "inspect_kernel_module"
-      | "inspect_elf_dependencies"
-      | "inspect_kernel_build_config"
-      | "inspect_erlang_beam"
-      | "inspect_nuget_nupkg"
-      | "inspect_v8_code_cache"
-      | "inspect_maven_gradle_metadata"
-      | "extract_artifact"
-      | "decode_interface_builder"
-      | "inspect_asset_catalog"
-      | "inspect_keyed_archive"
-      | "trace_dylib_resolution"
-      | "export_web_scripts"
-      | "trace_web_module_imports"
-      | "trace_web_source_location"
-      | "analyze_javascript_application",
+    /** The public operation whose artifact read or write failed. */
+    readonly operation: string,
     readonly reason:
       | "limit"
       | "cancelled"
