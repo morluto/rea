@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ArtifactReaderFailure } from "./ArtifactReader.js";
 
 import {
   ArtifactPathRegistry,
@@ -191,6 +192,32 @@ it.each([["app.js", "App.js"], ["other.js"]])(
   },
 );
 
+/** The reader failure a registry call throws. */
+const pathFailure = (run: () => void): ArtifactReaderFailure => {
+  try {
+    run();
+  } catch (cause) {
+    if (cause instanceof ArtifactReaderFailure) return cause;
+    throw cause;
+  }
+  throw new Error("Expected a path budget refusal");
+};
+
+it("refuses a deeper path at path_parts without claiming a required value", () => {
+  const registry = new ArtifactPathRegistry({
+    group: "deno",
+    maxParts: 2,
+    maxNodes: 100,
+  });
+  // A later path may be deeper still, so this one's depth is a lower bound.
+  const failure = pathFailure(() => registry.reservePath("a/b/c"));
+  expect(failure.readerLimit).toMatchObject({
+    parameter: "artifact_limits.deno.path_parts",
+    effective_value: 2,
+  });
+  expect(failure.readerLimit).not.toHaveProperty("required_value");
+});
+
 it("reserves prefix capacity atomically without declaring destination kinds", () => {
   const registry = new ArtifactPathRegistry({
     group: "deno",
@@ -198,15 +225,13 @@ it("reserves prefix capacity atomically without declaring destination kinds", ()
     maxNodes: 3,
   });
   registry.reservePath("a/b");
-  expect(() => registry.reservePath("a/c/d")).toThrow(
-    expect.objectContaining({
-      readerLimit: expect.objectContaining({
-        parameter: "artifact_limits.deno.path_nodes",
-        effective_value: 3,
-        required_value: 4,
-      }),
-    }),
-  );
+  // Unvisited paths may add nodes, so no required value is claimed.
+  const failure = pathFailure(() => registry.reservePath("a/c/d"));
+  expect(failure.readerLimit).toMatchObject({
+    parameter: "artifact_limits.deno.path_nodes",
+    effective_value: 3,
+  });
+  expect(failure.readerLimit).not.toHaveProperty("required_value");
   expect(() => registry.reservePath("z")).not.toThrow();
   expect(() => registry.reservePath("a/b")).not.toThrow();
   registry.add("a/b", "file");

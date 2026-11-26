@@ -205,7 +205,8 @@ export class WxapkgArtifactReader implements ArtifactReader {
           "artifact_limits.expanded_bytes",
           budget,
           "bytes",
-          declaredBytes,
+          // Later members are not counted, so the total is a lower bound.
+          undefined,
           "memory",
         );
       const adapterKey = `wxapkg-entry:${String(index)}`;
