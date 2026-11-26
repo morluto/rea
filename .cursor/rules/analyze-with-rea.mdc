@@ -15,7 +15,7 @@ Call the connected MCP server `rea`, tool `analyze_javascript_application`, with
 If the `rea` tools are not in this session, run this command and read the JSON on stdout. The positional path is that same absolute directory or `.asar`, never a single file:
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application <absolute-directory-or-asar> --json
+npx -y rea-agents@6.10.1 analyze-javascript-application <absolute-directory-or-asar> --json
 ```
 
 Answer from that result's findings, evidence, limitations, and unknowns, and focus on the file or folder the user indicated.
