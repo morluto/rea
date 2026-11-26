@@ -1,9 +1,11 @@
+import { isRecord } from "../../kernel/isRecord.js";
 import {
   projectProtobufCapturePage,
   protobufViewRequestSchema,
 } from "./protobufCaptureView.js";
 import {
   analysisViewInputError,
+  invalidAnalysisViewSubject,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import { z } from "zod";
@@ -90,12 +92,8 @@ export const captureSummarySchema = z.strictObject({
   qlog: qlogSummarySchema.optional(),
 });
 
-const object = (
-  value: JsonValue,
-): Readonly<Record<string, JsonValue>> | null =>
-  value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value
-    : null;
+const object = (value: JsonValue): Readonly<Record<string, JsonValue>> | null =>
+  isRecord(value) ? value : null;
 
 // Field names have different meanings across producers. In particular, HAR
 // entry extensions named `name` or `type` are not qlog or mitmproxy headlines.
@@ -478,14 +476,8 @@ const parseCaptureParent = (
     report.artifact.sha256 !== null &&
     (subject == null || subject.sha256 !== report.artifact.sha256)
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message: "Capture parent subject must identify the report's SHA-256.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "Capture parent subject must identify the report's SHA-256.",
     );
   return ok(report);
 };

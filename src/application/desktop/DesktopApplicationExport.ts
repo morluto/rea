@@ -35,7 +35,6 @@ import type { HostIdentity } from "../../domain/desktop/hostIdentity.js";
 import { scrubDconf } from "../../domain/desktop/seedScrub.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import type { DesktopTaskReaderRunner } from "../../ports/DesktopTaskReader.js";
-import type { JsonValue } from "../../domain/jsonValue.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";

@@ -486,9 +486,13 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
       preencoded.ok &&
       preencoded.budgetBytes === budget &&
       preencoded.targetContent === targetContent &&
-      message.result.content.length === 1 &&
       content?.type === "text" &&
-      content.text === preencoded.text
+      content.text === preencoded.text &&
+      // A budgeted partial observation's link follows the error text, and
+      // the delivery reserved its bytes.
+      message.result.content
+        .slice(1)
+        .every((block) => block.type === "resource_link")
     )
       return message;
     const preencodedOverflow =

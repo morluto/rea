@@ -4,7 +4,10 @@ import assert from "node:assert/strict";
 export async function verifyHopperWorkflows(call, invalid, procedure) {
   const address = procedure.address;
   const originalName = await call("address_name", { address });
-  const callees = await call("procedure_callees", { procedure: address });
+  const callees = await call("procedure_callees", {
+    detail: "complete",
+    procedure: address,
+  });
   assert.ok(callees.length > 0, "fixture omitted a reachable call target");
   const goal = callees[0];
   const goalName = await call("address_name", { address: goal });
@@ -22,13 +25,16 @@ export async function verifyHopperWorkflows(call, invalid, procedure) {
     }),
     canonicalPath,
   );
-  const graph = await call("get_call_graph", { address });
+  const graph = await call("get_call_graph", { detail: "complete", address });
   assert.deepEqual(
-    await call("get_call_graph", { address: originalName }),
+    await call("get_call_graph", { detail: "complete", address: originalName }),
     graph,
   );
   assert.deepEqual(
-    await call("get_call_graph", { address: address.toUpperCase() }),
+    await call("get_call_graph", {
+      detail: "complete",
+      address: address.toUpperCase(),
+    }),
     graph,
   );
   const procedures = await call("list_procedures");
@@ -36,7 +42,10 @@ export async function verifyHopperWorkflows(call, invalid, procedure) {
     /rea_cycle_[ab]$/u.test(item.value),
   );
   assert.equal(cycle.length, 2, "fixture omitted its source-owned call cycle");
-  const cycleGraph = await call("get_call_graph", { address: cycle[0].value });
+  const cycleGraph = await call("get_call_graph", {
+    detail: "complete",
+    address: cycle[0].value,
+  });
   const cycleNodes = Object.values(cycleGraph.graph).flat();
   assert.equal(cycleNodes.length, 2);
   assert.deepEqual(
@@ -59,6 +68,7 @@ export async function verifyHopperWorkflows(call, invalid, procedure) {
     "procedure_address",
   );
   const missingPhrase = await call("trace_feature", {
+    detail: "complete",
     query: "REA_C_LEAF __rea_missing_phrase__",
   });
   assert.deepEqual(missingPhrase.matches, []);
@@ -66,11 +76,17 @@ export async function verifyHopperWorkflows(call, invalid, procedure) {
   const phrase = "REA boundary phrase";
   try {
     await call("set_address_name", { address, name: phrase });
-    const traced = await call("trace_feature", { query: phrase });
+    const traced = await call("trace_feature", {
+      detail: "complete",
+      query: phrase,
+    });
     assert.deepEqual(traced.matches, [
       { type: "procedure", address, value: phrase },
     ]);
-    const spaced = await call("trace_feature", { query: ` ${phrase} ` });
+    const spaced = await call("trace_feature", {
+      detail: "complete",
+      query: ` ${phrase} `,
+    });
     assert.deepEqual(spaced.matches, []);
     assert.deepEqual(spaced.references, []);
   } finally {

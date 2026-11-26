@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import type { JsonValue } from "../jsonValue.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
 import { literalSubstringPredicate } from "../analysisSearch.js";
@@ -497,9 +498,7 @@ const mergeRoles = (
   const roles = new Map<string, QueryParameter[]>();
   for (const parameters of explained)
     for (const [name, role] of Object.entries(parameters)) {
-      const seen = roles.get(name);
-      if (seen === undefined) roles.set(name, [role]);
-      else seen.push(role);
+      appendToMapList(roles, name, role);
     }
   // Entries become own members even for names such as `__proto__`, which assignment would treat as the prototype.
   const merged: [string, QueryParameter][] = [];

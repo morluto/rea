@@ -160,8 +160,11 @@ cliTest(
       });
       expect(output.exitCode).toBe(1);
       expect(output.json).toMatchObject({
-        code: "artifact_operation_failed",
-        details: { reason: "format", detail: expect.stringContaining(reason) },
+        code: "unsupported_target",
+        details: {
+          failure_kind: "malformed",
+          reason: expect.stringContaining(reason),
+        },
       });
       expect((await call("open_binary", { path })).isError).not.toBe(true);
       const reply = await call("inspect_keyed_archive", {});
@@ -170,10 +173,10 @@ cliTest(
       if (block?.type !== "text") throw new Error("Missing MCP error text");
       expect(JSON.parse(block.text)).toMatchObject({
         error: {
-          code: "artifact_operation_failed",
+          code: "unsupported_target",
           details: {
-            reason: "format",
-            detail: expect.stringContaining(reason),
+            failure_kind: "malformed",
+            reason: expect.stringContaining(reason),
           },
         },
       });

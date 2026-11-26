@@ -9,6 +9,7 @@ import {
   SafeOutputTree,
   outputDirectoryAdmissionRefusal,
   SafeOutputTreeCreationFailure,
+  artifactOperationReason,
 } from "../resources/index.js";
 import { PLAYWRIGHT_RESPONSE_BODY_PROVENANCE_LIMITATION } from "../domain/browserNetworkEvidence.js";
 import {
@@ -169,7 +170,12 @@ export const publishWebScripts = async (
             throw cancelled;
           }
           const error = new WebScriptExportError(
-            cause instanceof ArtifactReaderFailure ? cause.reason : "io",
+            // The output tree raises no format refusals; any other reader
+            // fault is reported as the publication's I/O, with its cause.
+            cause instanceof ArtifactReaderFailure &&
+              cause.parseFailure === undefined
+              ? artifactOperationReason(cause)
+              : "io",
             tree.outputRoot,
             diagnostic,
             { cause, residualPaths: [tree.outputRoot] },

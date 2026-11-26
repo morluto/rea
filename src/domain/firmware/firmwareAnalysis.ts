@@ -1,5 +1,11 @@
 import { timerDurationMsSchema } from "../analysisResourceLimits.js";
 import { z } from "zod";
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
+import {
+  parameterBudgetLimit,
+  parameterBudgetSchema,
+  type ParameterBudget,
+} from "../parameterBudget.js";
 import { knownCoverageStatusSchema } from "../coverage.js";
 import { digestSchema } from "../digests.js";
 import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
@@ -13,6 +19,32 @@ export const DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS = 120_000;
 export const MAX_FIRMWARE_STAGING_BYTES = 512 * 1024 * 1024;
 /** Largest staging entry budget the schema accepts. */
 export const MAX_FIRMWARE_STAGING_ENTRIES = 100_000;
+/** The per-call staging budgets of `extract_firmware`. */
+export const FIRMWARE_STAGING_BUDGETS = {
+  max_output_bytes: {
+    minimum: 1,
+    maximum: MAX_FIRMWARE_STAGING_BYTES,
+    default_value: 256 * 1024 * 1024,
+    unit: "bytes",
+  },
+  max_output_files: {
+    minimum: 1,
+    maximum: MAX_FIRMWARE_STAGING_ENTRIES,
+    default_value: 10_000,
+    unit: "count",
+  },
+} as const satisfies Record<string, ParameterBudget>;
+
+/** The staging budget that stopped an extraction. */
+export const firmwareStagingBudgetLimit = (
+  parameter: keyof typeof FIRMWARE_STAGING_BUDGETS,
+  effectiveValue: number,
+): AnalysisParameterLimit =>
+  parameterBudgetLimit(
+    parameter,
+    FIRMWARE_STAGING_BUDGETS[parameter],
+    effectiveValue,
+  );
 /** Largest extraction depth the input contract accepts. */
 export const MAX_FIRMWARE_EXTRACTION_DEPTH = 10;
 const target = {
@@ -44,22 +76,14 @@ export const firmwareInputSchemas = {
       .max(MAX_FIRMWARE_EXTRACTION_DEPTH)
       .default(3)
       .describe("Extraction depth; reaching it yields partial analysis"),
-    max_output_bytes: z
-      .number()
-      .int()
-      .min(1)
-      .max(MAX_FIRMWARE_STAGING_BYTES)
-      .default(256 * 1024 * 1024)
-      .describe(
-        "Staging file-byte budget, checked during extraction; transient overshoot is possible",
-      ),
-    max_output_files: z
-      .number()
-      .int()
-      .min(1)
-      .max(MAX_FIRMWARE_STAGING_ENTRIES)
-      .default(10_000)
-      .describe("Staging entry budget, including directories and links"),
+    max_output_bytes: parameterBudgetSchema(
+      FIRMWARE_STAGING_BUDGETS.max_output_bytes,
+    ).describe(
+      "Staging file-byte budget, checked during extraction; transient overshoot is possible",
+    ),
+    max_output_files: parameterBudgetSchema(
+      FIRMWARE_STAGING_BUDGETS.max_output_files,
+    ).describe("Staging entry budget, including directories and links"),
     publication_timeout_ms: timerDurationMsSchema
       .default(120_000)
       .describe(

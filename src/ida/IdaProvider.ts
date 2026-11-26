@@ -1,7 +1,6 @@
 import {
   bindArtifactFileCleanup,
   ArtifactResourceScope,
-  AnalysisCleanupLease,
 } from "../resources/index.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { launchRegexMatchingLimitation } from "../process/RegexMatcher.js";
@@ -28,7 +27,6 @@ import type {
   AnalysisProviderCandidate,
   ProviderAvailability,
   ProviderTargetSupport,
-  RetainedResourceScope,
 } from "../ports/AnalysisProvider.js";
 import type { AppConfig } from "../config/types.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
@@ -79,15 +77,7 @@ const IDA_ARCHITECTURES = {
 /** Bring-your-own IDA MCP candidate; discovery performs no provider startup. */
 export class IdaProvider implements AnalysisProviderCandidate {
   readonly #ownedResources = new ArtifactResourceScope();
-  readonly #inspectionOwner: RetainedResourceScope = {
-    retain: (owner, resource) =>
-      this.#ownedResources.retain({
-        kind: "lease",
-        resource,
-        lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
-      }),
-    run: (operation) => this.#ownedResources.run(operation),
-  };
+  readonly #inspectionOwner = this.#ownedResources.forCloseOwners();
   readonly #registrationByScope = new WeakMap<
     ProviderInspectionScope,
     Promise<Result<IdaConfiguration, ConfigurationError>>

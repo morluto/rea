@@ -47,7 +47,7 @@ cliTest(
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
-        code: moduleCount < 13 ? "truncated" : "artifact_operation_failed",
+        code: moduleCount < 13 ? "partial" : "artifact_operation_failed",
         retryable: moduleCount < 13,
         details:
           moduleCount < 13
@@ -102,10 +102,13 @@ cliTest(
     });
     section.writeBigUInt64LE(BigInt(payload.length + 1));
     expect(await inspect()).toMatchObject({
+      code: "unsupported_target",
       retryable: false,
+      retry: "none",
       details: {
-        reason: "format",
-        detail: expect.stringContaining("truncated"),
+        path: source,
+        failure_kind: "truncated",
+        format: "bun-standalone",
       },
     });
   },

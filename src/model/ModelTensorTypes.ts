@@ -71,6 +71,10 @@ const GGML_TYPES: Readonly<Record<number, GgmlType>> = {
   28: ["F64", 1, 8],
   29: ["IQ1_M", 256, 56],
   30: ["BF16", 1, 2],
+  // Interleaved Q4_0 types later removed from ggml; see llama.cpp b4000 (c02e5ab2).
+  31: ["Q4_0_4_4", 32, 18],
+  32: ["Q4_0_4_8", 32, 18],
+  33: ["Q4_0_8_8", 32, 18],
   34: ["TQ1_0", 256, 54],
   35: ["TQ2_0", 256, 66],
   39: ["MXFP4", 32, 17],

@@ -1,3 +1,4 @@
+import { namedCounts } from "./analysisViewCounts.js";
 import { z } from "zod";
 import { boundedList } from "../boundedList.js";
 import { evidenceSubjectTarget } from "../evidence.js";
@@ -136,12 +137,6 @@ type ExtractedFile = UefiExtractResult["files"][number];
 
 const readReport = createAnalysisViewResultReader(extraction);
 
-const tallied = <Name>(names: Iterable<Name>) => {
-  const counts = new Map<Name, number>();
-  for (const name of names) counts.set(name, (counts.get(name) ?? 0) + 1);
-  return [...counts].map(([name, n]) => ({ name, count: n }));
-};
-
 /** Counts and the size order derived once per retained report. */
 interface ExtractionIndex {
   readonly context: PageContext;
@@ -183,9 +178,9 @@ const extractionSummary = (
   const preview = boundedList(r.files, UEFI_EXTRACTION_PREVIEW_FILES);
   index.summary = {
     ...index.context,
-    sources: tallied(r.files.map((file) => file.source)),
-    media_types: tallied(r.files.map((file) => file.media_type)),
-    gap_kinds: tallied(r.extraction_gaps.map((gap) => gap.kind)),
+    sources: namedCounts(r.files.map((file) => file.source)),
+    media_types: namedCounts(r.files.map((file) => file.media_type)),
+    gap_kinds: namedCounts(r.extraction_gaps.map((gap) => gap.kind)),
     files_preview: {
       items: preview.items.map(indexedRow),
       omitted: preview.omitted,

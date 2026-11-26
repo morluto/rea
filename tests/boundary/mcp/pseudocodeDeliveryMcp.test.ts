@@ -112,13 +112,11 @@ it("retains a complete pseudocode observation once and pages its exact text thro
   }
   expect(restored).toBe(text);
   expect(calls).toEqual(executions);
-  for (const detail of [undefined, "complete"] as const) {
+  // Omitted detail is budgeted; complete delivery is requested explicitly.
+  for (const detail of ["complete"] as const) {
     const complete = await mcp.callTool({
       name: "procedure_pseudo_code",
-      arguments: {
-        procedure: "fixture_main",
-        ...(detail === undefined ? {} : { detail }),
-      },
+      arguments: { procedure: "fixture_main", detail },
     });
     expect(complete.isError).not.toBe(true);
     expect(
@@ -295,7 +293,7 @@ it("keeps transport-overflow recovery usable for the original pseudocode observa
   const { mcp, session, calls } = await connectPseudocode(text);
   const response = await mcp.callTool({
     name: "procedure_pseudo_code",
-    arguments: { procedure: "fixture_main" },
+    arguments: { procedure: "fixture_main", detail: "complete" },
   });
   const failure = parseMcpToolError(response).error;
   expect(failure.code).toBe("resource_constraint");

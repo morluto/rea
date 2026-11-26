@@ -322,3 +322,39 @@ cliTest(
     expectCliMcpEvidenceParity(evidence, response.structuredContent, image);
   },
 );
+
+cliTest(
+  "names max_file_bytes and its range when a selected file exceeds it",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-release-exposure-budget-");
+    const path = join(root, "blob.bin");
+    await writeFile(path, Buffer.alloc(128, 1));
+    const command = ["audit-release-exposure", path, "--json"];
+    const refused = await cli.run({
+      arguments: [...command, "--max-file-bytes", "64"],
+    });
+    expect(refused.exitCode).toBe(1);
+    expect(refused.json).toMatchObject({
+      retryable: false,
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 64,
+          unit: "bytes",
+          minimum: 1,
+          maximum: Number.MAX_SAFE_INTEGER,
+          default_value: 256 * 1024 * 1024,
+          applies_at: "next_call",
+        },
+      },
+    });
+    const admitted = await cli.run({
+      arguments: [...command, "--max-file-bytes", "128"],
+    });
+    expect(admitted.exitCode, admitted.stderr).toBe(0);
+    expect(outputSchema.parse(admitted.json).parameters).toMatchObject({
+      max_file_bytes: 128,
+    });
+  },
+);

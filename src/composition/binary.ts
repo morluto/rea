@@ -1,9 +1,11 @@
+import type { SessionLimitationDelivery } from "../application/binary/SessionLimitationContext.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { runtimeAnalysisConfig } from "../config/runtimeAnalysisSettings.js";
 import { isAppleDispatchMetadataTarget } from "../domain/native/objcSwiftMetadata.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type { AppConfig } from "../config/types.js";
 import type { BinarySession } from "../application/binary/BinarySession.js";
+import type { ArtifactPathInspectionDependencies } from "../application/artifacts/ArtifactPathInspection.js";
 import { HopperProvider } from "../hopper/HopperProvider.js";
 import { GhidraProvider } from "../ghidra/GhidraProvider.js";
 import { createIdaMcpConnection } from "../ida/IdaMcpConnection.js";
@@ -28,13 +30,17 @@ import {
 /**
  * Compose the target-switching runtime shared directly by CLI and MCP adapters.
  * This is the sole production wiring point, so both adapters share identical
- * provider selection, profile, lifecycle, and Evidence semantics.
+ * provider selection, profile, lifecycle, and Evidence semantics. Only the
+ * session's lifetime differs: a persistent session states shared provider
+ * limitations once and references them (`sessionLimitations: "reference"`),
+ * while a one-call session keeps them inline.
  */
 export const createBinarySession = (
   config: AppConfig,
   logger: Logger,
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
   settings?: AnalysisSettingsReader,
+  sessionLimitations?: SessionLimitationDelivery,
 ): BinarySession =>
   composeDeepBinarySession(
     runtimeAnalysisConfig(config, settings),
@@ -42,6 +48,7 @@ export const createBinarySession = (
     selectedEnvironment,
     undefined,
     settings,
+    sessionLimitations,
   );
 
 /** Prefer byte-backed dispatch inspection while retaining deep symbol fallback. */
@@ -63,6 +70,7 @@ const composeDeepBinarySession = (
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
   inspection?: "inspect_native_dispatch_metadata",
   settings?: AnalysisSettingsReader,
+  sessionLimitations?: SessionLimitationDelivery,
 ): BinarySession => {
   const platform = HOST_PLATFORM.platform;
   const environment = snapshotEnvironment(selectedEnvironment, platform);
@@ -103,6 +111,7 @@ const composeDeepBinarySession = (
       (declaration) => new LazyAnalysisProvider(declaration),
     ),
     createBundleResourceFactory(environment, platform, settings),
+    sessionLimitations,
   );
 };
 
@@ -156,6 +165,7 @@ export const createManagedBinarySession = (): BinarySession =>
 export const createArtifactBinarySession = (
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform = HOST_PLATFORM.platform,
+  settings?: AnalysisSettingsReader,
 ): Promise<BinarySession> =>
   import("../artifacts/ArtifactProvider.js").then(({ ArtifactProvider }) =>
     composeBinarySession(
@@ -164,6 +174,7 @@ export const createArtifactBinarySession = (
         new ArtifactProvider(
           snapshotEnvironment(selectedEnvironment, platform),
           platform,
+          settings,
         ),
       ],
       createBundleResourceFactory(
@@ -172,6 +183,29 @@ export const createArtifactBinarySession = (
       ),
     ),
   );
+
+/**
+ * Compose path-selected `inspect_artifact`: a directory is inventoried by the
+ * artifact provider directly, and any other path in its own artifact-only
+ * session. Neither uses a caller's open session target.
+ */
+export const createArtifactPathInspection = (
+  selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
+  settings?: AnalysisSettingsReader,
+): ArtifactPathInspectionDependencies => ({
+  inspectArtifactDirectory: async (path, parameters, options, retained) => {
+    const { ArtifactProvider } =
+      await import("../artifacts/ArtifactProvider.js");
+    return new ArtifactProvider(
+      snapshotEnvironment(selectedEnvironment, platform),
+      platform,
+      settings,
+    ).inspectDirectory(path, parameters, options, retained);
+  },
+  createArtifactBinarySession: () =>
+    createArtifactBinarySession(selectedEnvironment, platform, settings),
+});
 
 /** Compose native inspection utilities without candidates for deep analysis. */
 export const createNativeBinarySession = (

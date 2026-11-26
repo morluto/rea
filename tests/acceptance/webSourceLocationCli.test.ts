@@ -716,9 +716,9 @@ cliTest(
       environment: silentCliEnv,
     });
     expect(refused.exitCode).toBe(1);
-    expect((refused.json as { code?: unknown }).code).toBe("truncated");
+    expect((refused.json as { code?: unknown }).code).toBe("partial");
     expect(refused.json).toMatchObject({
-      code: "truncated",
+      code: "partial",
       details: {
         detail: expect.stringContaining("source_map_limits.map_bytes"),
       },

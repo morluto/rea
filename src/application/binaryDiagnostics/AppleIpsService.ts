@@ -1,7 +1,7 @@
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { AppleIpsPort } from "../../ports/binaryDiagnostics/AppleIpsPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import type { Evidence } from "../../domain/evidence.js";
 import {
   appleIpsSchema,
   appleIpsReportIntegerTextBytes,
@@ -9,6 +9,7 @@ import {
   type AppleIps,
 } from "../../domain/native/appleIps.js";
 import type { Result } from "../../domain/result.js";
+import { observedFileEvidence } from "../observedFileEvidence.js";
 import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_apple_ips";
@@ -38,29 +39,14 @@ export class AppleIpsService {
           report.artifact.path === parameters.path &&
           validReport(report, parameters),
         buildEvidence: (value, identity, parameters) =>
-          createEvidence(
-            {
-              path: value.artifact.path,
-              format: "file",
-              sha256: value.artifact.sha256,
-            },
+          observedFileEvidence(
+            value,
             identity,
-            {
-              operation: OPERATION,
-              parameters,
-              result: value,
-              confidence: "observed",
-              limitations: value.limitations,
-              locations: [
-                { kind: "artifact-path", path: value.artifact.path },
-                ...(value.join === null ||
-                value.join.path === value.artifact.path
-                  ? []
-                  : [
-                      { kind: "artifact-path" as const, path: value.join.path },
-                    ]),
-              ],
-            },
+            OPERATION,
+            parameters,
+            value.join === null || value.join.path === value.artifact.path
+              ? []
+              : [{ kind: "artifact-path", path: value.join.path }],
           ),
       },
       rawInput,

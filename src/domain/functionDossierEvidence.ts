@@ -4,7 +4,7 @@ import {
   type Evidence,
 } from "./evidence.js";
 import {
-  sameTargetIdentity,
+  sameTargetCoordinates,
   type FileTargetIdentity,
 } from "./targetIdentity.js";
 import { AnalysisInputError } from "./analysisErrorCore.js";
@@ -49,10 +49,11 @@ export const functionSnapshotCoordinateContext = (
   right: FunctionSnapshot,
 ): FunctionSnapshotCoordinateContext => {
   if (left.target.sha256 !== right.target.sha256) return "cross-artifact";
-  // The same bytes share coordinates only when opened as the same target:
-  // format, architecture and selection (a raw entry point or flash offset).
+  // The same bytes share coordinates only when opened at the same addresses:
+  // format, architecture and the selection that places them (a raw entry
+  // point or base, or a flash offset), however a raw load chose its entry.
   return left.target.architecture !== null &&
-    sameTargetIdentity(left.target, right.target) &&
+    sameTargetCoordinates(left.target, right.target) &&
     functionCoordinateContextsEqual(
       left.evidence.analysis_profile,
       right.evidence.analysis_profile,

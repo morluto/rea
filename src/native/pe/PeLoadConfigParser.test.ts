@@ -6,11 +6,11 @@ import {
   type PeLoadConfigField,
 } from "../../domain/native/peLoadConfig.js";
 import {
-  parsePeLoadConfig,
   parsePeLoadConfigFromHandle,
-  parsePeLoadConfigFromImage,
+  parsePeLoadConfigFromReader,
 } from "./PeLoadConfigParser.js";
 import { readPeHardening } from "../hardening/PeHardening.js";
+import { bufferByteSource } from "../../domain/byteSource.js";
 import { readPeImage } from "../../domain/native/peImage.js";
 import {
   PE_LOAD_CONFIG_FIXTURE,
@@ -41,17 +41,21 @@ vi.mock("../../domain/native/peImage.js", async (importOriginal) => {
         return Reflect.get(target, key, receiver) as unknown;
       },
     });
+  const countImage = (image: ReturnType<typeof actual.readPeImage>) => {
+    tableReads.imageReads++;
+    return {
+      ...image,
+      sections: counted(image.sections),
+      mappings: counted(image.mappings),
+    };
+  };
   return {
     ...actual,
-    readPeImage: (bytes: Buffer) => {
-      tableReads.imageReads++;
-      const image = actual.readPeImage(bytes);
-      return {
-        ...image,
-        sections: counted(image.sections),
-        mappings: counted(image.mappings),
-      };
-    },
+    readPeImage: (...args: Parameters<typeof actual.readPeImage>) =>
+      countImage(actual.readPeImage(...args)),
+    readPeImageFromReader: async (
+      ...args: Parameters<typeof actual.readPeImageFromReader>
+    ) => countImage(await actual.readPeImageFromReader(...args)),
   };
 });
 
@@ -61,13 +65,19 @@ const parseBytes = (
   bytes: Buffer,
   max_callbacks = input.max_callbacks,
   signal?: AbortSignal,
-) =>
-  parsePeLoadConfig(
-    bytes,
-    { path: input.path, sha256: "a".repeat(64), bytes: bytes.length },
+) => {
+  const artifact = {
+    path: input.path,
+    sha256: "a".repeat(64),
+    bytes: bytes.length,
+  };
+  return parsePeLoadConfigFromHandle(
+    { ...bufferByteSource(bytes, 64), sha256: artifact.sha256 },
+    artifact,
     { ...input, max_callbacks },
     signal,
   );
+};
 
 const parse = (
   options: PeLoadConfigFixtureOptions = {},
@@ -271,13 +281,9 @@ it("requires the full physical section extent even when its virtual bytes fit", 
     0,
     0x1620,
   );
-  await expect(
-    parsePeLoadConfig(
-      bytes,
-      { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
-      inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" }),
-    ),
-  ).rejects.toMatchObject({ failure: { kind: "truncated" } });
+  await expect(parseBytes(bytes)).rejects.toMatchObject({
+    failure: { kind: "truncated" },
+  });
 });
 
 it("resolves callback sections without rescanning the largest section table", async () => {
@@ -290,6 +296,7 @@ it("resolves callback sections without rescanning the largest section table", as
     tableReads.budget = Infinity;
   });
   const report = await parseBytes(bytes, 4096);
+  expect(tableReads.count).toBeGreaterThan(0);
   expect(tableReads.count).toBeLessThanOrEqual(tableReads.budget);
   expect(report.tls?.callbacks).toHaveLength(4096);
   expect(report.tls?.callbacks.every(({ section }) => section === ".v")).toBe(
@@ -462,11 +469,7 @@ it.each([32, 64] as const)(
       layout.dataFile + layout.tlsRva - layout.dataRva + 4 * (bits / 8);
     bytes.writeUInt32LE(0xfedcba98, offset);
     bytes.writeUInt32LE(0x80100000, offset + 4);
-    const report = await parsePeLoadConfig(
-      bytes,
-      { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
-      inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" }),
-    );
+    const report = await parseBytes(bytes);
     expect(report.tls).toMatchObject({
       size_of_zero_fill: 0xfedcba98,
       characteristics: 0x80100000,
@@ -484,20 +487,19 @@ describe("PE load-config reuse and lazy section indexing", () => {
     }
   });
 
-  it("reuses a pre-parsed PeImage via parsePeLoadConfigFromImage and in readPeHardening", async () => {
+  it("reuses a pre-parsed PE image for load configuration and hardening", async () => {
     const bytes = peLoadConfigImage({ bits: 64 });
     const artifact = {
       path: "/sample.exe",
       sha256: "a".repeat(64),
       bytes: bytes.length,
     };
-    const input = inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" });
-    const expected = await parsePeLoadConfig(bytes, artifact, input);
+    const expected = await parseBytes(bytes);
 
     tableReads.imageReads = 0;
     const image = readPeImage(bytes);
-    const fromImage = await parsePeLoadConfigFromImage(
-      bytes,
+    const fromImage = await parsePeLoadConfigFromReader(
+      bufferByteSource(bytes).readRange,
       image,
       artifact,
       input,
