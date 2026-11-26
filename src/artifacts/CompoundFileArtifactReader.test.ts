@@ -15,7 +15,8 @@ const FREE = 0xffff_ffff;
 
 interface FixtureEntry {
   readonly name: string;
-  readonly type: 0 | 1 | 2 | 5;
+  /** A declared type byte; values past the defined ones are modeled records. */
+  readonly type: number;
   readonly start: number;
   readonly size: number;
   readonly left?: number;
@@ -218,6 +219,25 @@ it("keeps an entry that declares no usable name", async () => {
   expect(listed).toMatchObject({ logical_path: "entry-1" });
   expect(listed?.limitations).toContainEqual(
     expect.stringMatching(/declares no valid name/u),
+  );
+});
+
+it("lists an entry whose declared type is not defined as metadata", async () => {
+  const inventory = await scanCanonicalArtifactInventory(
+    await write(
+      "odd-type.automaticDestinations-ms",
+      compoundFile({
+        entries: rootWith(1, [{ name: "Odd", type: 3, start: 2, size: 512 }]),
+      }),
+    ),
+  );
+  // The parser counts this record as one the format does not define, so it must
+  // be listed rather than silently dropped at the inventory boundary.
+  const listed = inventory.occurrences.find(
+    (row) => row.logical_path === "Odd",
+  );
+  expect(listed?.limitations).toContainEqual(
+    expect.stringMatching(/object type the format does not define/u),
   );
 });
 

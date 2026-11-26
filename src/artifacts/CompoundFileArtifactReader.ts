@@ -371,6 +371,30 @@ const toArtifactEntry = (
   // outside the root's tree keeps its declared facts under its source ordinal;
   // the parse counts orphans.
   if (entry.type === "root-storage") return null;
+  // A record whose declared type the format does not define keeps its readable
+  // name and declaration facts as metadata: the parser's count says these are
+  // listed without a role, and dropping them here would leave that count
+  // describing entries the inventory never shows. A zero byte is an
+  // unallocated slot, not a declaration, and is still dropped.
+  if (entry.type === "unknown" && entry.declaredType !== 0)
+    return {
+      path: path ?? "",
+      kind: "metadata",
+      declaredSize: entry.streamSizeRepresentable ? entry.streamSize : null,
+      compressedSize: null,
+      executable: false,
+      encrypted: false,
+      byteOffset: null,
+      declaredIntegrity: null,
+      unpacked: false,
+      limitations: [
+        "This entry declares an object type the format does not define, so it is listed as a declaration without a role; its name, declared size and allocation facts are kept.",
+      ],
+      ...(entry.name === null || entry.name === path
+        ? {}
+        : { sourcePath: entry.name }),
+      adapterKey: `compound-file/${String(entry.index)}`,
+    };
   if (entry.type !== "storage" && entry.type !== "stream") return null;
   const unnamed = path === null && entry.name === null;
   const limitation = (): string[] => {

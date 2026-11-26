@@ -113,6 +113,12 @@ export interface CompoundFileDirectoryEntry {
   /** The declared name, or `null` when its length or encoding is invalid. */
   readonly name: string | null;
   readonly type: CompoundFileEntryType;
+  /**
+   * The type byte exactly as declared, before it is mapped. `0` is an
+   * unallocated slot; a value past it that maps to `unknown` is a record whose
+   * declared type the format does not define.
+   */
+  readonly declaredType: number;
   /** The entry this one is listed under, or `null` for the root and orphans. */
   readonly parentIndex: number | null;
   /** Declared tree links, kept as facts even when they point outside the table. */
@@ -992,6 +998,7 @@ export const parseCompoundFile = (
         path,
         name: entry.name,
         type: entry.type,
+        declaredType: entry.declaredType,
         parentIndex: parent,
         leftSibling: entry.leftSibling,
         rightSibling: entry.rightSibling,
@@ -1040,6 +1047,7 @@ export const parseCompoundFile = (
       path,
       name: entry.name,
       type: entry.type,
+      declaredType: entry.declaredType,
       parentIndex: parent,
       leftSibling: entry.leftSibling,
       rightSibling: entry.rightSibling,
