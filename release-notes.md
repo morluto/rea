@@ -111,6 +111,7 @@
 * **artifacts:** inventory and expand Android sparse images offline ([#13244](https://github.com/morluto/rea/issues/13244)) ([192177f](https://github.com/morluto/rea/commit/192177f0c91ed94cf9b8698f7ccdb3f2e44330fe))
 * **artifacts:** inventory and extract ISO 9660 disc images offline ([#13290](https://github.com/morluto/rea/issues/13290)) ([e896f60](https://github.com/morluto/rea/commit/e896f60540f03e2c1fe0f916412bddd656c1f296))
 * **artifacts:** inventory and extract stored and gzip-compressed tar archives ([#14245](https://github.com/morluto/rea/issues/14245)) ([225a19a](https://github.com/morluto/rea/commit/225a19ae7a39d06d03a8d5df4d9bf44e645a6c54))
+* **artifacts:** inventory macOS flat installer packages offline ([#11377](https://github.com/morluto/rea/issues/11377)) ([dbbe334](https://github.com/morluto/rea/commit/dbbe334ec1995f42506dc8d0b651914a55399941))
 * **artifacts:** inventory Nintendo DS ROM binaries, overlays and file tables offline ([#14664](https://github.com/morluto/rea/issues/14664)) ([51b3671](https://github.com/morluto/rea/commit/51b3671b08714435cc6cc2188ab495db0b70d515))
 * **artifacts:** inventory Nintendo Switch NSO and NRO executables offline ([#14655](https://github.com/morluto/rea/issues/14655)) ([3970afe](https://github.com/morluto/rea/commit/3970afecc6fc3a952e10ec0db4cc21fa6cb7a71d))
 * **artifacts:** inventory OCI image layouts offline ([#12470](https://github.com/morluto/rea/issues/12470)) ([6a6e7b0](https://github.com/morluto/rea/commit/6a6e7b0bbf9d233c8e99e9a2314f28ba07f88199))
