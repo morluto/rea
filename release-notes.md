@@ -148,6 +148,7 @@
 * **analysis-view:** match inventory path globs without backtracking ([17877d9](https://github.com/morluto/rea/commit/17877d9df51ac258b447a97656f6b4e91b4c3b75))
 * **analysis-view:** read older UEFI extraction Evidence and drop filter-count ceilings ([ca26f2a](https://github.com/morluto/rea/commit/ca26f2ac8499fa06af59f2590ec071af8a020094))
 * **android-ota:** report unknown coverage when OTA payload blob is truncated ([#14513](https://github.com/morluto/rea/issues/14513)) ([52e3117](https://github.com/morluto/rea/commit/52e3117256947183cc66516a654538f2ad0ed17d))
+* **android:** admit DEX-bearing ZIP packages by directory content ([#14399](https://github.com/morluto/rea/issues/14399)) ([803b92f](https://github.com/morluto/rea/commit/803b92f794bbb3f29d32895ae3798aa3db79151a))
 * **android:** advertise the external-reference inputs the bridge accepts ([85154de](https://github.com/morluto/rea/commit/85154de8ab9107c0f403079a9bec81ab63077ea1))
 * **android:** let the bridge advertise its own tool schemas ([2b6ede2](https://github.com/morluto/rea/commit/2b6ede2d0c0c82ea466c61a6694df3353c998637))
 * **apk:** disclose v1 scan scope without duplicate names ([#13572](https://github.com/morluto/rea/issues/13572)) ([110b990](https://github.com/morluto/rea/commit/110b990c687bdb498de0134dce8b49547983273a))
