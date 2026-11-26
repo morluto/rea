@@ -19,9 +19,13 @@ export const androidReferenceFieldSchema = z.enum([
 
 const filters = {
   kinds: names("Exact using-node kinds, such as class or method"),
-  packages: names(
-    "Exact packages of the using node's top_class (its name before the last dot)",
-  ),
+  packages: z
+    .array(z.string())
+    .min(1)
+    .optional()
+    .describe(
+      "Exact packages of the using node's top_class; use an empty string for the unnamed package",
+    ),
   top_classes: names("Exact top_class names"),
 };
 

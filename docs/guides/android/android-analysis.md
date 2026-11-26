@@ -308,8 +308,9 @@ that class the summary was 5,987 bytes. Page the using nodes with
 - `references`: using nodes with their `index`, and only the `fields` you name.
 
 Both filter by exact `kinds`, `packages` (the top class's name before its last
-dot) and `top_classes`. A top class can itself be a nested synthetic class, so
-group by the name before the first `$` when you need outer classes.
+dot) and `top_classes`. Use `packages: [""]` for classes in the unnamed
+package. A top class can itself be a nested synthetic class, so group by the
+name before the first `$` when you need outer classes.
 
 External prototype and caller metadata use a bridge-frame-derived representation
 allowance that reserves space for retained raw calls and CLI/MCP copies. Exhausting
