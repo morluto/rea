@@ -483,6 +483,7 @@
 * **process:** retain proven file differences with partial coverage ([#13364](https://github.com/morluto/rea/issues/13364)) ([ec29a6d](https://github.com/morluto/rea/commit/ec29a6deae22ba82c5a88db092fbe65bd03b8bd4))
 * **process:** retain stdout collection failures through cleanup ([#13725](https://github.com/morluto/rea/issues/13725)) ([835ed06](https://github.com/morluto/rea/commit/835ed060dd9783d42eb815f33a83f6b3654b60ea))
 * **process:** retain synchronous command launch failures ([#13350](https://github.com/morluto/rea/issues/13350)) ([3a36311](https://github.com/morluto/rea/commit/3a3631100480109a7d2ef8b9ac8ff1f58df5904e))
+* **process:** settle worker, scope, and capture retries against close ([#14779](https://github.com/morluto/rea/issues/14779)) ([548fc2c](https://github.com/morluto/rea/commit/548fc2c811ee9f91310f2903ecba1eaf82b81b5f))
 * **process:** verify nested worker exit after parent cleanup ([#13242](https://github.com/morluto/rea/issues/13242)) ([75a75a1](https://github.com/morluto/rea/commit/75a75a1bd14eeec233650623e8b839bdf26b793d))
 * **providers:** bind client cleanup state to the exact client ([#14777](https://github.com/morluto/rea/issues/14777)) ([d77d6b1](https://github.com/morluto/rea/commit/d77d6b158b266eb671b0a5ad44439951efd3fead))
 * **providers:** resolve a PATH-only JDK for Windows Ghidra ([#14654](https://github.com/morluto/rea/issues/14654)) ([d27e728](https://github.com/morluto/rea/commit/d27e7284c715b6dfaa65fbefda4297bab0f26154))
