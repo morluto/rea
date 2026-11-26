@@ -21,6 +21,8 @@ import {
   MAX_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES,
   DEFAULT_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES,
   MAX_INSPECT_APPLE_IPS_THREADS,
+  appleIpsBudgetLimit,
+  type AppleIpsBudget,
   type InspectAppleIpsInput,
 } from "../../domain/native/appleIps.js";
 import type { AppleIpsPort } from "../../ports/binaryDiagnostics/AppleIpsPort.js";
@@ -230,7 +232,7 @@ const SELECTED_BUDGETS = {
 } as const satisfies Record<
   AppleIpsSelectedBoundary,
   {
-    readonly argument: keyof InspectAppleIpsInput;
+    readonly argument: AppleIpsBudget;
     readonly maximum: number;
     readonly unit: string;
   }
@@ -271,6 +273,7 @@ const resourceRecovery = ({ name, maximum }: LimitRef) =>
   isSelectedBoundary(name)
     ? {
         retryable: false,
+        limit: appleIpsBudgetLimit(SELECTED_BUDGETS[name].argument, maximum),
         remediationAction: budgetRemediation(name, maximum),
       }
     : fixedAllowanceOptions(
@@ -317,6 +320,10 @@ const appleIpsFailurePrimary = (
           {
             cause: failure,
             retryable: false,
+            limit: appleIpsBudgetLimit(
+              field === "path" ? "max_file_bytes" : "max_join_bytes",
+              input.max_file_bytes,
+            ),
             remediationAction: fileSizeRemediation(input, field),
           },
         ),

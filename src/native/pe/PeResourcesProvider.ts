@@ -21,6 +21,7 @@ import { classifyProviderFailure } from "../../providers/classifyProviderFailure
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import {
   MAX_INSPECT_PE_DIRECTORY_ENTRIES,
+  peResourceEntryLimit,
   MAX_INSPECT_PE_FILE_BYTES,
   type InspectPeResourcesInput,
 } from "../../domain/native/peResources.js";
@@ -176,6 +177,7 @@ const peResourcesFailure = (
                 max_entries: limit.maximum,
               },
               retryable: false,
+              limit: peResourceEntryLimit(limit.maximum),
               remediationAction: entryBudgetRemediation(limit.maximum),
             });
         }

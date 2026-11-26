@@ -17,6 +17,7 @@ import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFa
 import {
   MAX_INSPECT_ELF_UNWIND_FILE_BYTES,
   MAX_INSPECT_ELF_UNWIND_RANGES,
+  elfUnwindBudgetLimit,
   type ElfUnwindRanges,
   type InspectElfUnwindRangesInput,
 } from "../../domain/native/elfUnwindRanges.js";
@@ -122,6 +123,10 @@ const elfUnwindFailure = (
               ? { max_file_bytes: input.max_file_bytes }
               : { limit: input.limit },
             retryable: false,
+            // The symbol-name text allowance is per page: `limit` is its control.
+            limit: records
+              ? elfUnwindBudgetLimit("max_ranges", limit.maximum)
+              : elfUnwindBudgetLimit("limit", input.limit),
             remediationAction: records
               ? recordBudgetRemediation(limit.maximum)
               : `Request a smaller limit than ${String(input.limit)}, or page with offset; the ${String(limit.maximum)}-byte symbol-name text allowance is fixed, and max_ranges and max_file_bytes do not raise it.`,
@@ -143,6 +148,7 @@ const elfUnwindFailure = (
           {
             cause: failure,
             retryable: false,
+            limit: elfUnwindBudgetLimit("max_file_bytes", input.max_file_bytes),
             remediationAction: fileBudgetRemediation(input.max_file_bytes),
           },
         ),

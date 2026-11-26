@@ -17,10 +17,8 @@ import { classifyProviderFailure } from "../../providers/classifyProviderFailure
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
+  elfDependencyBudgetLimit,
   MAX_INSPECT_ELF_DEPENDENCY_FILE_BYTES,
-  MAX_INSPECT_ELF_DEPENDENCY_IMPORTS,
-  MAX_INSPECT_ELF_DEPENDENCY_NEEDED,
-  MAX_INSPECT_ELF_DEPENDENCY_VERSIONS,
   type ElfDependencies,
   type InspectElfDependenciesInput,
 } from "../../domain/native/elfDependencies.js";
@@ -99,11 +97,8 @@ export class ElfDependenciesProvider {
   }
 }
 
-const COUNT_CEILINGS = {
-  max_needed: MAX_INSPECT_ELF_DEPENDENCY_NEEDED,
-  max_versions: MAX_INSPECT_ELF_DEPENDENCY_VERSIONS,
-  max_imports: MAX_INSPECT_ELF_DEPENDENCY_IMPORTS,
-} as const;
+/** The count budgets the parser names in its limit. */
+const COUNT_BUDGETS = ["max_needed", "max_versions", "max_imports"] as const;
 
 const elfDependenciesFailure = (
   cause: unknown,
@@ -123,14 +118,12 @@ const elfDependenciesFailure = (
       recognise: (failure) => {
         if (isParseLimit(failure, "elf-dependencies")) {
           const limit = failure.failure.limit;
-          const parameter = (
-            Object.keys(COUNT_CEILINGS) as (keyof typeof COUNT_CEILINGS)[]
-          ).find((name) => name === limit.name);
+          const parameter = COUNT_BUDGETS.find((name) => name === limit.name);
           if (parameter !== undefined)
             return parseLimitConstraint(OPERATION, "capacity", failure, {
               path: input.path,
               retryable: false,
-              remediationAction: `Raise ${parameter} above ${String(limit.maximum)}, up to ${String(COUNT_CEILINGS[parameter])}, or select a smaller artifact.`,
+              limit: elfDependencyBudgetLimit(parameter, limit.maximum),
             });
           const text =
             limit.name === "scanned_text_bytes" ||
@@ -167,6 +160,10 @@ const elfDependenciesFailure = (
           {
             path: input.path,
             retryable: false,
+            limit: elfDependencyBudgetLimit(
+              "max_file_bytes",
+              input.max_file_bytes,
+            ),
             remediationAction: imageFileSizeRemediation(
               input.max_file_bytes,
               MAX_INSPECT_ELF_DEPENDENCY_FILE_BYTES,

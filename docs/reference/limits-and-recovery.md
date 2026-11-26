@@ -107,6 +107,12 @@ their per-call budgets (`max_file_bytes`, entry, depth and decoded-byte budgets,
 `max_output_bytes`/`max_output_files`, and `block_size` or `length`).
 `inspect_devicetree` bounds its estimated decoded representation with
 `max_decoded_bytes` (default 32 MiB, at most 256 MiB).
+`inspect_elf_dependencies`, `inspect_elf_unwind_ranges`, `inspect_apple_ips`,
+`inspect_dwarf_units`, `inspect_native_initializers`, `inspect_pe_resources`
+(`max_entries`) and `inspect_erlang_beam` report it too. For the per-page
+symbol-name text allowance of `inspect_elf_unwind_ranges`, the limit names the
+page size `limit`. `inspect_erlang_beam` accepts `max_table_rows` (export,
+import and lambda rows combined; default 65,536, at most 1,048,576).
 
 ### Native table structure budget
 

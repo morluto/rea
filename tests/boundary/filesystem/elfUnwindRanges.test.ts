@@ -127,6 +127,15 @@ describe("ELF unwind range budgets", () => {
           limit: 300,
           maximum_bytes: MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES,
         },
+        limit: {
+          control_kind: "parameter",
+          parameter: "limit",
+          effective_value: 300,
+          minimum: 1,
+          maximum: 4096,
+          default_value: 256,
+          applies_at: "next_call",
+        },
         cause: {
           failure: {
             kind: "limit",
@@ -170,6 +179,7 @@ describe("ELF unwind range budgets", () => {
         _tag: "AnalysisResourceConstraintError",
         resource: "capacity",
         reportedLimits: { max_ranges: 1 },
+        limit: { parameter: "max_ranges", effective_value: 1, maximum: 65536 },
         cause: {
           failure: {
             kind: "limit",

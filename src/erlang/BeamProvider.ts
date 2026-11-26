@@ -9,19 +9,16 @@ import {
 } from "../resources/index.js";
 import type { BeamPort } from "../ports/erlang/BeamPort.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
-import {
-  AnalysisResourceConstraintError,
-  type ResourceConstraintRecovery,
-} from "../domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
   MAX_INSPECT_ERLANG_BEAM_ATOMS,
   MAX_INSPECT_ERLANG_BEAM_CHUNKS,
   MAX_INSPECT_ERLANG_BEAM_FILE_BYTES,
+  erlangBeamBudgetLimit,
   type ErlangBeam,
   type InspectErlangBeamInput,
 } from "../domain/erlang/beam.js";
 import { err, ok } from "../domain/result.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import type { LimitRef } from "../domain/parseFailure.js";
 import {
   isParseLimit,
@@ -101,6 +98,13 @@ const parserBudgetRemediation = ({ name, maximum }: LimitRef) => {
   return undefined;
 };
 
+/** The per-call count budgets the parser names in its limit. */
+const BEAM_COUNT_BUDGETS = [
+  "max_chunks",
+  "max_atoms",
+  "max_table_rows",
+] as const;
+
 const beamFailure = (
   cause: unknown,
   input: InspectErlangBeamInput,
@@ -112,6 +116,7 @@ const beamFailure = (
     max_file_bytes: input.max_file_bytes,
     max_chunks: input.max_chunks,
     max_atoms: input.max_atoms,
+    max_table_rows: input.max_table_rows,
   };
   const primary = classifyProviderFailure(
     facts.cause,
@@ -124,21 +129,18 @@ const beamFailure = (
       recognise: (failure, origin) => {
         if (origin === "owned-or-classified" && isParseLimit(failure, "beam")) {
           const { limit } = failure.failure;
+          const parameter = BEAM_COUNT_BUDGETS.find(
+            (name) => name === limit.name,
+          );
           const remediationAction = parserBudgetRemediation(limit);
-          const recovery: ResourceConstraintRecovery =
-            limit.name === "max_table_rows"
-              ? fixedAllowanceOptions("BEAM table row ceiling", "parser", {
-                  limit: limit.maximum,
-                  unit: "rows",
-                })
-              : remediationAction === undefined
-                ? {}
-                : { remediationAction };
           return parseLimitConstraint(OPERATION, "capacity", failure, {
             reportedLimitContext: reportedLimits,
             legacyMaximumKey: limit.name,
             retryable: false,
-            ...recovery,
+            ...(parameter === undefined
+              ? {}
+              : { limit: erlangBeamBudgetLimit(parameter, limit.maximum) }),
+            ...(remediationAction === undefined ? {} : { remediationAction }),
           });
         }
         if (
@@ -156,6 +158,10 @@ const beamFailure = (
               ...(failure.boundary === "file-size"
                 ? {
                     retryable: false,
+                    limit: erlangBeamBudgetLimit(
+                      "max_file_bytes",
+                      input.max_file_bytes,
+                    ),
                     remediationAction: fileBudgetRemediation(
                       input.max_file_bytes,
                     ),
