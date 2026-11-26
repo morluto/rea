@@ -293,23 +293,6 @@
       "reason": "The 16 MiB symbol-name text decoded for one returned page is a resource policy; a smaller page (limit) stays within it."
     }
   },
-  "src/native/exports/NativeExportsProvider.ts": {
-    "\"The native export inventory allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
-    },
-    "\"The native export retained-text allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
-    },
-    "\"The native export structural decoding allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
-    }
-  },
   "src/native/hardening/BinaryHardeningProvider.ts": {
     "\"The binary hardening table-entry allowance\"": {
       "class": "pending",
@@ -352,39 +335,6 @@
       "class": "pending",
       "issue": 14235,
       "reason": "PE structural and retained-text allowances are resource policies (the PE file-size admission is #14167)."
-    }
-  },
-  "src/native/pe/PeImportsProvider.ts": {
-    "\"The PE import retained-text allowance (max_file_bytes, max_dlls and max_functions do not raise it)\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "PE structural and retained-text allowances are resource policies (the PE file-size admission is #14167)."
-    },
-    "\"The PE structural decoding allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "PE structural and retained-text allowances are resource policies (the PE file-size admission is #14167)."
-    }
-  },
-  "src/native/pe/PeLoadConfigProvider.ts": {
-    "\"The PE structural decoding allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "PE structural and retained-text allowances are resource policies (the PE file-size admission is #14167)."
-    }
-  },
-  "src/native/pe/PeResourcesProvider.ts": {
-    "\"The PE resource metadata allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "PE resource metadata retention is a resource policy (the PE file-size admission is #14167)."
-    }
-  },
-  "src/native/pe/PeUnwindRangesProvider.ts": {
-    "\"The PE exception-directory entry allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "The 2,097,152-entry typed-array allowance bounds decoder memory like the other PE structural allowances; it is a resource policy pending #14235."
     }
   },
   "src/pcap/PcapCommand.ts": {
