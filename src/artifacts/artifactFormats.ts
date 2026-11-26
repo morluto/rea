@@ -52,6 +52,7 @@ import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
 import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
 import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
+import { SwitchExecutableArtifactReader } from "./SwitchExecutableArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
 import { TarArtifactReader } from "./tar/TarArtifactReader.js";
@@ -260,6 +261,25 @@ const gpuAsset = <Id extends GpuAssetFormat>(id: Id) =>
       new GpuAssetArtifactReader(path, id, sourceOf(options)),
   });
 
+const switchExecutable = <Id extends "nso" | "nro">(id: Id) =>
+  container(id, {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      id === "nso"
+        ? "NSO inventory reports header facts and text, rodata and data segments. LZ4-compressed segments are decompressed within artifact_limits.expanded_bytes and hashed against the header; code is not disassembled or executed."
+        : "NRO inventory reports header facts, text, rodata and data segments and the ASET icon, NACP and RomFS ranges. Asset contents are not interpreted, and code is not disassembled or executed.",
+    createReader: (path, options) =>
+      new SwitchExecutableArtifactReader(
+        path,
+        id,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+      ),
+  });
+
 const NON_ZIP_FORMATS = {
   "dotnet-bundle": container("dotnet-bundle", {
     retainClassifiedSource: true,
@@ -416,6 +436,8 @@ const NON_ZIP_FORMATS = {
     createReader: (path, options) =>
       new UImageArtifactReader(path, sourceOf(options), options.integrity),
   }),
+  nso: switchExecutable("nso"),
+  nro: switchExecutable("nro"),
   "android-boot-image": container("android-boot-image", {
     roleContainer: true,
     retainClassifiedSource: true,

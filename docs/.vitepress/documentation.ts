@@ -529,6 +529,11 @@ export const documentationSections = [
         route: "/tar-archives",
       },
       {
+        text: "Nintendo Switch NSO and NRO executables",
+        source: "switch-executables.md",
+        route: "/switch-executables",
+      },
+      {
         text: "GPU asset headers: DDS, GLB, KTX and KTX2",
         source: "gpu-asset-headers.md",
         route: "/gpu-asset-headers",

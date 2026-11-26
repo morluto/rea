@@ -260,6 +260,8 @@ export interface ArtifactReader {
     | "ktx"
     | "ktx2"
     | "uimage"
+    | "nso"
+    | "nro"
     | "android-boot-image"
     | "android-ota-payload"
     | "iso9660"

@@ -267,7 +267,10 @@ it("concatenates contiguous extents and refuses separated or interleaved ones", 
   const snapshot = await scanCanonicalArtifactInventory(path);
   expect(
     snapshot.occurrences.find((row) => row.logical_path === "units.bin"),
-  ).toMatchObject({ hash_status: "unavailable" });
+  ).toMatchObject({
+    hash_status: "unavailable",
+    limitations: [expect.stringContaining("interleaved")],
+  });
   expect(
     snapshot.occurrences.find((row) => row.logical_path === "big.bin"),
   ).toMatchObject({ hash_status: "verified" });

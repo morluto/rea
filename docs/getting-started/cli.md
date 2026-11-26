@@ -454,6 +454,16 @@ rea extract-artifact ./installer.iso --json
 See [ISO 9660 disc images](../guides/firmware/iso9660-images.md) for volume facts, Joliet
 names, multi-extent and interleaved files, and what is not decoded.
 
+Inventory and extract a Nintendo Switch NSO module or NRO executable:
+
+```sh
+rea inspect-artifact ./main.nso --json
+rea extract-artifact ./main.nso --json
+```
+
+See [Switch executables](../switch-executables.md) for header facts, segment
+hashes, LZ4 decompression limits and NRO assets.
+
 Inspect local model declarations without loading weights:
 
 ```bash

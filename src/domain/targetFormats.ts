@@ -28,6 +28,8 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   ktx: "archive",
   ktx2: "archive",
   uimage: "archive",
+  nso: "archive",
+  nro: "archive",
   "android-boot-image": "archive",
   "android-ota-payload": "archive",
   iso9660: "archive",

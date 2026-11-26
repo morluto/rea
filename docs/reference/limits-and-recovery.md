@@ -744,7 +744,7 @@ Each group follows one domain-owned default policy. See [.NET bundles](../dotnet
 [wxapkg](../wxapkg.md) and [tar](../tar-archives.md) for format semantics.
 
 `artifact_limits.expanded_bytes` selects aggregate plaintext work for ZIP, Bun,
-SEA, PCK, ISO 9660, Deno, wxapkg and tar readers, including repeated readable logical occurrences. Omission
+SEA, PCK, ISO 9660, Deno, wxapkg and tar readers and NSO segment decompression, including repeated readable logical occurrences. Omission
 retains each archive's encoded-size-derived default. The .NET bundle group's
 own `expanded_bytes` controls its independently enforced bundle expansion.
 
