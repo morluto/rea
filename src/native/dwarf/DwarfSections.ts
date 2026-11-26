@@ -46,9 +46,6 @@ const SHT_NOBITS = 8;
 const MACHO_DWARF_SEGMENT = "__DWARF,";
 const MACHO_ZERO_FILL_TYPES = new Set([0x1, 0xc, 0x12]);
 const SPLIT_DEBUG_INFO = ".debug_info.dwo";
-export const MAX_PE_SECTION_NAME_BYTES = 65536;
-/** Limit name of the per-name COFF string-table decode allowance. */
-export const PE_SECTION_NAME_LIMIT = "pe-section-name-bytes";
 /** Limit name of the retained-section bound: at most the admitted image size. */
 export const DWARF_RETAINED_SECTIONS_LIMIT = "retained-dwarf-section-bytes";
 const DUPLICATE_SECTION =
@@ -773,26 +770,14 @@ const peSectionNames = async (
     const remainingCharacters = Math.floor(
       (structureBytes - decodedNameBytes) / 2,
     );
-    const maximumCharacters = Math.min(
-      MAX_PE_SECTION_NAME_BYTES,
-      remainingCharacters,
-    );
-    const end = Math.min(strings.length, at + maximumCharacters + 1);
+    const end = Math.min(strings.length, at + remainingCharacters + 1);
     const relativeNul = strings.subarray(at, end).indexOf(0);
-    if (relativeNul < 0 && end - at > maximumCharacters)
-      throw remainingCharacters < MAX_PE_SECTION_NAME_BYTES
-        ? nativeStructureFailure(
-            "Decoded PE section names",
-            decodedNameBytes + (end - at) * 2,
-            structureBytes,
-          )
-        : new BinaryResourceFailure(
-            "structure",
-            MAX_PE_SECTION_NAME_BYTES,
-            "PE section name exceeds the 65536-byte decoding allowance",
-            PE_SECTION_NAME_LIMIT,
-            "bytes",
-          );
+    if (relativeNul < 0 && end - at > remainingCharacters)
+      throw nativeStructureFailure(
+        "Decoded PE section names",
+        decodedNameBytes + (end - at) * 2,
+        structureBytes,
+      );
     const nul = relativeNul < 0 ? -1 : at + relativeNul;
     if (nul < 0)
       throw new BinaryFormatFailure(

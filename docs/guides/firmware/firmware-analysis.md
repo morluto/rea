@@ -521,6 +521,14 @@ file for its address regions, declared start address and record facts, then
 portable and requires no external tool. See
 [Intel HEX and S-record images](../../hex-records.md).
 
+## Inspect uClinux bFLT flat executables
+
+`inspect-artifact` / `extract-artifact` recognize a uClinux flat executable by
+its `bFLT` magic and report the 64-byte header without running it or applying
+its relocations. Text, data and the relocation table are extractable; gzip and
+gzdata bodies are inflated under `artifact_limits.expanded_bytes`. The header
+does not name a CPU. See [uClinux bFLT flat executables](../../bflt-executables.md).
+
 ## Inspect U-Boot legacy uImages
 
 `inspect-artifact` / `extract-artifact` recognize a legacy uImage by its
