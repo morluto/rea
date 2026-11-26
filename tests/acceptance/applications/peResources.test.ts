@@ -170,7 +170,25 @@ const expectPeResourceNameExtentsAcrossAdapters = async (
     });
     const response = await call({ path });
     expect(response.isError).toBe(true);
-    expect(parseMcpToolError(response)).toEqual({ error: result.json });
+    // Each adapter names the control in its own spelling: the CLI adds the
+    // flag to details.limit and to the generated recovery.
+    const { error } = parseMcpToolError(response);
+    const cli = result.json as {
+      readonly remediation: { readonly action: string };
+      readonly details: { readonly limit: { readonly cli_flag?: string } };
+    };
+    expect(cli.details.limit.cli_flag).toBe("--max-metadata-bytes");
+    expect(cli.remediation.action).toContain("--max-metadata-bytes");
+    expect(error.remediation.action).toContain(
+      "Pass a larger max_metadata_bytes on the next inspect_pe_resources call",
+    );
+    const { cli_flag: _flag, ...cliLimit } = cli.details.limit;
+    const { remediation: _mcpRemediation, ...mcpFacts } = error;
+    const { remediation: _cliRemediation, ...cliFacts } = cli;
+    expect(mcpFacts).toEqual({
+      ...cliFacts,
+      details: { ...cli.details, limit: cliLimit },
+    });
   }
 };
 
