@@ -174,23 +174,22 @@ cliTest(
     });
     expect(fileBudget.exitCode).not.toBe(0);
     expect(fileBudget.json).toMatchObject({
-      error: {
-        code: "resource_constraint",
-        details: {
-          limit: {
-            control_kind: "parameter",
-            parameter: "max_file_bytes",
-            effective_value: 64,
-            unit: "bytes",
-            minimum: 64,
-            maximum: 536870912,
-            default_value: 67108864,
-            applies_at: "next_call",
-          },
+      code: "resource_constraint",
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 64,
+          unit: "bytes",
+          minimum: 64,
+          maximum: 536870912,
+          default_value: 67108864,
+          applies_at: "next_call",
+          cli_flag: "--max-file-bytes",
         },
-        remediation: {
-          action: expect.stringContaining("--max-file-bytes"),
-        },
+      },
+      remediation: {
+        action: expect.stringContaining("--max-file-bytes"),
       },
     });
 
@@ -205,23 +204,22 @@ cliTest(
     });
     expect(entryBudget.exitCode).not.toBe(0);
     expect(entryBudget.json).toMatchObject({
-      error: {
-        code: "resource_constraint",
-        details: {
-          limit: {
-            control_kind: "parameter",
-            parameter: "max_entries",
-            effective_value: 1,
-            unit: "count",
-            minimum: 1,
-            maximum: 65536,
-            default_value: 8192,
-            applies_at: "next_call",
-          },
+      code: "resource_constraint",
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_entries",
+          effective_value: 1,
+          unit: "count",
+          minimum: 1,
+          maximum: 65536,
+          default_value: 8192,
+          applies_at: "next_call",
+          cli_flag: "--max-entries",
         },
-        remediation: {
-          action: expect.stringContaining("--max-entries"),
-        },
+      },
+      remediation: {
+        action: expect.stringContaining("--max-entries"),
       },
     });
   },
