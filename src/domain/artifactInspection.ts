@@ -712,6 +712,11 @@ const STANDALONE_FORMAT_READERS = {
     rationale:
       "Decode the flattened devicetree header, reservations and node tree.",
   },
+  deb: {
+    operation: "inspect_deb_package",
+    rationale:
+      "Read the ar container, control metadata, maintainer scripts and data.tar inventory without installing or executing the package.",
+  },
 } as const satisfies Record<
   "uefi" | StandaloneArtifactFormat,
   { readonly operation: string; readonly rationale: string }

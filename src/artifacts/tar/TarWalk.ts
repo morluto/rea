@@ -4,11 +4,13 @@ import { Budget } from "../../domain/budget.js";
 import { malformedInput } from "../../domain/parseFailure.js";
 import { isStrictUtf8 } from "../../domain/strictUtf8.js";
 import {
+  isTarDirectoryHeader,
   parsePaxRecords,
   parseTarHeaderBlock,
   TAR_BLOCK_BYTES,
   TAR_TYPEFLAGS,
   tarPaddedSize,
+  tarStoredDataBytes,
   type TarHeaderDialect,
   type TarPaxRecords,
 } from "../../domain/tarFormat.js";
@@ -460,7 +462,7 @@ export const walkTar = async (
           break;
         }
       }
-      const stored = storedDataBytes(typeflag, name, size);
+      const stored = tarStoredDataBytes(typeflag, name, size);
       const skipped = await stream.skip(stored, signal);
       if (skipped < stored) {
         stop(
@@ -555,27 +557,6 @@ export const walkTar = async (
   };
 };
 
-/** A directory header, including an old regular header whose name ends in `/`. */
-const isDirectoryHeader = (flag: number, name: string): boolean =>
-  flag === TAR_TYPEFLAGS.directory || (flag === 0 && name.endsWith("/"));
-
-/** Typeflags POSIX ustar records without data blocks, besides directories. */
-const HEADER_ONLY_TYPEFLAGS: ReadonlySet<number> = new Set([
-  TAR_TYPEFLAGS.symlink,
-  TAR_TYPEFLAGS.characterDevice,
-  TAR_TYPEFLAGS.blockDevice,
-  TAR_TYPEFLAGS.fifo,
-]);
-
-/**
- * Data bytes stored after a member header. POSIX ustar stores none for
- * symbolic links, devices, directories and FIFOs, whose size field may still
- * be nonzero, so the next header follows at once. Hard links keep their size:
- * pax interchange archives may store a body for them.
- */
-const storedDataBytes = (flag: number, name: string, size: number): number =>
-  isDirectoryHeader(flag, name) || HEADER_ONLY_TYPEFLAGS.has(flag) ? 0 : size;
-
 /**
  * What a header contributes: an inventory member, an omission, or nothing
  * for the archive's own `./` root and a GNU volume label.
@@ -587,7 +568,7 @@ const memberRole = (
 ):
   | { readonly member: TarMember["kind"] | "root" }
   | { readonly omit: ArtifactTraversalOmissionKind } => {
-  const directory = isDirectoryHeader(flag, name);
+  const directory = isTarDirectoryHeader(flag, name);
   if (flag === TAR_TYPEFLAGS.gnuVolumeLabel) return { member: "root" };
   if (directory && /^(?:\.\/?)?$/u.test(name)) return { member: "root" };
   if ([...records.keys()].some((key) => key.startsWith("GNU.sparse.")))

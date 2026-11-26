@@ -165,6 +165,7 @@ const TARGETS: TargetFixtures = {
   "windows-shortcut": { ...artifact, format: "windows-shortcut" },
   "python-pyc": { ...artifact, format: "python-pyc" },
   devicetree: { ...artifact, format: "devicetree" },
+  deb: { ...artifact, format: "deb" },
 };
 
 const provider = { id: "fixture", name: "Fixture", version: "1" } as const;

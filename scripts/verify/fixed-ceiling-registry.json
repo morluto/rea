@@ -137,6 +137,12 @@
       "reason": "The ZIP reader's plaintext-work budget is derived from the admitted trace archive's own size, which trace_limits.archive_bytes bounds."
     }
   },
+  "src/deb/DebPackageProvider.ts": {
+    "DEB_PACKAGE_FIXED_ALLOWANCES[cause.allowance]": {
+      "class": "forwarding",
+      "reason": "Reports the Debian parser's named ar name, tar extension, relationship alternative, Zstandard window, or XZ dictionary allowance using the parser's maximum."
+    }
+  },
   "src/domain/analysisErrorCore.ts": {
     "text(recovery.fixedAllowance.name)": {
       "class": "forwarding",
