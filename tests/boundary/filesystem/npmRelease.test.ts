@@ -8,6 +8,7 @@ import {
   waitForNpmRelease,
 } from "../../../scripts/ci/npm-release.mjs";
 import { requireMatchingNpmRelease } from "../../../scripts/ci/npm-release-state.mjs";
+import { createDeferred } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const metadata = (
@@ -196,8 +197,7 @@ it("keeps the 75-minute visibility budget and the per-request cap", async () => 
 it("interrupts an in-flight registry request at the shared deadline", async () => {
   const deadline = new AbortController();
   const reason = new Error("test deadline");
-  const { promise: started, resolve: markStarted } =
-    Promise.withResolvers<void>();
+  const { promise: started, resolve: markStarted } = createDeferred<void>();
   const waiting = waitForNpmRelease(
     "6.5.0",
     (version, signal) =>
