@@ -12,7 +12,6 @@ import { closeAnalysisClient } from "./AnalysisClientCleanup.js";
 import { AnalysisClientCreation } from "./AnalysisClientCreation.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
-import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 
 const clientClosingWith = (cause: unknown): AnalysisClient => ({
