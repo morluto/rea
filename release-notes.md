@@ -8,6 +8,7 @@
 ### ⚠ BREAKING CHANGES
 
 * **native:** inspect_devicetree's decoded-representation refusal reports reported_limits.boundary "max_decoded_bytes" with details.limit, instead of "decoded_bytes".
+* **native:** inspect_devicetree's decoded-representation refusal reports reported_limits.boundary "max_decoded_bytes" with details.limit, instead of "decoded_bytes".
 * **limits:** the SQLite snapshot refusal reports details.limit for producer_limits.input_bytes, and the SQLite column and reply refusals carry a fixed_ceiling refusal in place of their authored remediation.
 * **limits:** per-call parameter refusals gain `details.refusal`, and their `remediation.action` wording changes to the generated form.
 * **trace:** PlaywrightTracePort.inspect takes the resolved limits, and trace archive and nesting refusals report details.limit instead of a fixed_ceiling refusal.
@@ -385,6 +386,7 @@
 * **native:** preserve bundle provenance in partial reports ([9ffaca5](https://github.com/morluto/rea/commit/9ffaca54477d33c0f41f7042688b8e11f08d25b0))
 * **native:** refresh bundle provenance on reopen ([e35780d](https://github.com/morluto/rea/commit/e35780d042a9428c0a619ec42cf11794f5d7525c))
 * **native:** report details.limit for native reader per-call budgets ([#14622](https://github.com/morluto/rea/issues/14622)) ([50d13f9](https://github.com/morluto/rea/commit/50d13f9f08dd4f026f190b2ee27c885f95b6e0b5))
+* **native:** report details.limit for remaining native reader budgets and make BEAM table rows adjustable ([#14631](https://github.com/morluto/rea/issues/14631)) ([1badb6a](https://github.com/morluto/rea/commit/1badb6a8ae9d5a9696bc13091fa32485a0392183))
 * **native:** require dyld's __restrict section before reporting a restricted Mach-O ([#13024](https://github.com/morluto/rea/issues/13024)) ([7a11884](https://github.com/morluto/rea/commit/7a11884c0897062867e62c0c6d1079342ef8d861))
 * **native:** resolve name and import selectors through one owner ([#14250](https://github.com/morluto/rea/issues/14250)) ([cab39c6](https://github.com/morluto/rea/commit/cab39c640a50726d7766f202046a403ba8e72fff))
 * **native:** validate SHT_GNU_HASH bounds and fall back to DT_GNU_HASH ([#13713](https://github.com/morluto/rea/issues/13713)) ([e6b30f9](https://github.com/morluto/rea/commit/e6b30f945ec214e05ca13c36874e155737a6d4cb))
@@ -530,7 +532,9 @@
 * **ci:** narrow cache retention checkouts ([#14402](https://github.com/morluto/rea/issues/14402)) ([8e4c1c5](https://github.com/morluto/rea/commit/8e4c1c5f8d7e38a68f180738d8335f1eacb10c18))
 * **ci:** narrow pull request classifier checkouts to traced inputs ([#14376](https://github.com/morluto/rea/issues/14376)) ([5ef6cd8](https://github.com/morluto/rea/commit/5ef6cd89b5b8cc192683c2e97762bb4c4422fb21))
 * **ci:** omit development tools from failure reporting ([#14332](https://github.com/morluto/rea/issues/14332)) ([30fe9d9](https://github.com/morluto/rea/commit/30fe9d9f424447926ca0b8fb3006ddd6f95f279b))
+* **ci:** omit unused PR associations from timing queries ([#14636](https://github.com/morluto/rea/issues/14636)) ([43117a8](https://github.com/morluto/rea/commit/43117a8ae074be6aaddf0f06ea16f562caad4d25))
 * **ci:** query static diagnostics by artifact name ([#14476](https://github.com/morluto/rea/issues/14476)) ([02c4209](https://github.com/morluto/rea/commit/02c420939d63a5c983e98815c518dc5d59a379bb))
+* **ci:** resolve small pinned test batches directly ([#14638](https://github.com/morluto/rea/issues/14638)) ([fb1b4c0](https://github.com/morluto/rea/commit/fb1b4c0fbb4a7bfcc0112fe68d59782c610b9f61))
 * **ci:** resolve test snapshot blobs in one tree walk ([#14334](https://github.com/morluto/rea/issues/14334)) ([73c1689](https://github.com/morluto/rea/commit/73c1689aefeabd29d235f8d4341d71f1d3316544))
 * **ci:** reuse collected job lists for failure reports ([#14537](https://github.com/morluto/rea/issues/14537)) ([f148353](https://github.com/morluto/rea/commit/f148353ff1737619b8bfa4f4a72430339ecb7d6f))
 * **ci:** reuse installed website rendering packages ([#14337](https://github.com/morluto/rea/issues/14337)) ([1e1db9e](https://github.com/morluto/rea/commit/1e1db9e342ad13d26c27f34af8a2d7a5648387c9))
