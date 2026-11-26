@@ -171,6 +171,7 @@ const PATH_SCOPES = {
     "scripts/verify/apple/**",
     "scripts/ci/darwin-gated-tests.mjs",
     "scripts/ci/darwin-gate-candidates.mjs",
+    "scripts/ci/darwin-gate-facts.mjs",
     "tests/boundary/filesystem/ciDarwinGatedTests.test.ts",
     "tests/acceptance/artifactDmgAttachmentRecoveryCli.test.ts",
     "tests/boundary/providers/native/nativeDmgArtifactReader.test.ts",

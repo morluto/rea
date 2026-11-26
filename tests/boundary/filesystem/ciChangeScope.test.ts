@@ -520,6 +520,19 @@ it("keeps a mixed selection portable", async () => {
   });
 });
 
+it("keeps a template-literal platform gate in the selected portable tests", async () => {
+  const { directory, base } = await fixture();
+  const test = "tests/boundary/filesystem/gated.test.ts";
+  const head = await change(
+    directory,
+    [test],
+    `it.skipIf(process.platform !== \`darwin\`)("runs", () => {});\n`,
+  );
+  expect(await classify(directory, base, head)).toMatchObject({
+    testSelection: { mode: "selected", files: [test] },
+  });
+});
+
 it("keeps a test file with portable tests in the portable selection", async () => {
   const { directory, base } = await fixture();
   const test = "tests/boundary/filesystem/mixed.test.ts";

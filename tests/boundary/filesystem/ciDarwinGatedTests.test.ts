@@ -12,6 +12,8 @@ import {
   workflowFixtureEnvironment,
   workflowGit,
 } from "../../support/workflowGit.js";
+import { isMacOsOnlyTestSource } from "../../../scripts/ci/darwin-gate-facts.mjs";
+import { isDarwinGatedTestSource } from "../../../scripts/ci/darwin-gated-tests.mjs";
 
 const script = fileURLToPath(
   new URL("../../../scripts/ci/darwin-gated-tests.mjs", import.meta.url),
@@ -62,6 +64,49 @@ const discover = (directory: string) =>
     cwd: directory,
     env: workflowFixtureEnvironment(),
   });
+
+// Planning may promote a module to the Apple lane only when Apple discovery
+// understands its gate. A template platform literal is unknown to both
+// decisions, while a module with portable tests is gated for discovery but
+// is not macOS-only for planning.
+it.for([
+  [
+    `it.skipIf(process.platform !== \`darwin\`)("runs", () => {});`,
+    { macOsOnly: false, darwinGated: false },
+  ],
+  [
+    `it.skipIf(process.platform !== "darwin")("runs", () => {});`,
+    { macOsOnly: true, darwinGated: true },
+  ],
+  [
+    `const onDarwin = process.platform === "darwin";\nit.skipIf(!onDarwin)("runs", () => {});`,
+    { macOsOnly: true, darwinGated: true },
+  ],
+  [
+    `describe.skipIf(\n  process.platform !== "darwin",\n)("runs", () => {\n  it("x", () => {});\n});`,
+    { macOsOnly: true, darwinGated: true },
+  ],
+  [
+    `it.for([...(process.platform === "darwin" ? ["plist"] : [])])("%s", () => {});`,
+    { macOsOnly: true, darwinGated: true },
+  ],
+  [
+    `it.skipIf(process.platform !== "darwin")("mac", () => {});\nit("portable", () => {});`,
+    { macOsOnly: false, darwinGated: true },
+  ],
+  [
+    `// it.skipIf(process.platform !== "darwin")("runs", () => {});\nit("portable", () => {});`,
+    { macOsOnly: false, darwinGated: false },
+  ],
+] as const)(
+  "classifies a platform gate for planning and Apple discovery: %j",
+  ([source, expected]) => {
+    expect({
+      macOsOnly: isMacOsOnlyTestSource(source),
+      darwinGated: isDarwinGatedTestSource(source),
+    }).toEqual(expected);
+  },
+);
 
 it("lists exactly the tracked tests that run on macOS but never on Linux", async () => {
   const directory = await fixtureRepository(

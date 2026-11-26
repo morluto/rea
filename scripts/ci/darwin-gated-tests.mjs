@@ -8,6 +8,7 @@ import { traverseFast } from "@babel/types";
 
 import { projectForTest } from "../lib/test-projects.mjs";
 import { mayGateTestToDarwin } from "./darwin-gate-candidates.mjs";
+import { evaluateGateExpression, gateSkipsOn } from "./darwin-gate-facts.mjs";
 
 // Tests gated to macOS never run on the Linux lanes, so the macOS lane runs
 // every one of them. A gate is a Vitest `skipIf`/`runIf` condition, or a
@@ -17,9 +18,73 @@ import { mayGateTestToDarwin } from "./darwin-gate-candidates.mjs";
 // cannot be decided from literals, `process.platform` and module constants
 // built from them, such as `process.arch`, stays unknown.
 
-const UNKNOWN = Symbol("unknown");
+const isProcessPlatform = (node) =>
+  node.type === "MemberExpression" &&
+  !node.computed &&
+  node.object.type === "Identifier" &&
+  node.object.name === "process" &&
+  node.property.type === "Identifier" &&
+  node.property.name === "platform";
 
-const known = (value) => value !== UNKNOWN;
+/** The shared gate fact for one Babel expression node. */
+const gateExpression = (node) => {
+  switch (node.type) {
+    case "StringLiteral":
+    case "BooleanLiteral":
+      return { type: "literal", value: node.value };
+    case "TSAsExpression":
+    case "TSSatisfiesExpression":
+    case "TSNonNullExpression":
+    case "ParenthesizedExpression":
+      return gateExpression(node.expression);
+    case "Identifier":
+      return { type: "identifier", name: node.name };
+    case "MemberExpression":
+      return isProcessPlatform(node)
+        ? { type: "platform" }
+        : { type: "unknown" };
+    case "UnaryExpression":
+      return node.operator === "!"
+        ? { type: "unary", argument: gateExpression(node.argument) }
+        : { type: "unknown" };
+    case "BinaryExpression":
+      return {
+        type: "binary",
+        operator: node.operator,
+        left: gateExpression(node.left),
+        right: gateExpression(node.right),
+      };
+    case "LogicalExpression":
+      return {
+        type: "logical",
+        operator: node.operator,
+        left: gateExpression(node.left),
+        right: gateExpression(node.right),
+      };
+    case "CallExpression": {
+      // `["darwin", "linux"].includes(process.platform)`
+      const { callee } = node;
+      if (
+        callee.type !== "MemberExpression" ||
+        callee.computed ||
+        callee.property.type !== "Identifier" ||
+        callee.property.name !== "includes" ||
+        callee.object.type !== "ArrayExpression" ||
+        node.arguments.length !== 1
+      )
+        return { type: "unknown" };
+      return {
+        type: "includes",
+        items: callee.object.elements.map((item) =>
+          item === null ? { type: "unknown" } : gateExpression(item),
+        ),
+        needle: gateExpression(node.arguments[0]),
+      };
+    }
+    default:
+      return { type: "unknown" };
+  }
+};
 
 /** Top-level `const name = expression` bindings, the only names a gate may use. */
 const moduleConstants = (program) => {
@@ -32,97 +97,19 @@ const moduleConstants = (program) => {
     if (declaration?.type !== "VariableDeclaration") continue;
     if (declaration.kind !== "const") continue;
     for (const { id, init } of declaration.declarations)
-      if (id.type === "Identifier" && init) constants.set(id.name, init);
+      if (id.type === "Identifier" && init)
+        constants.set(id.name, gateExpression(init));
   }
   return constants;
 };
 
-const isProcessPlatform = (node) =>
-  node.type === "MemberExpression" &&
-  !node.computed &&
-  node.object.type === "Identifier" &&
-  node.object.name === "process" &&
-  node.property.type === "Identifier" &&
-  node.property.name === "platform";
-
-/** Evaluate `node` on `platform`, returning UNKNOWN where syntax cannot decide. */
-const evaluate = (node, platform, constants, resolving = new Set()) => {
-  const visit = (child) => evaluate(child, platform, constants, resolving);
-  switch (node.type) {
-    case "StringLiteral":
-    case "BooleanLiteral":
-      return node.value;
-    case "TSAsExpression":
-    case "TSSatisfiesExpression":
-    case "TSNonNullExpression":
-    case "ParenthesizedExpression":
-      return visit(node.expression);
-    case "Identifier": {
-      const init = constants.get(node.name);
-      if (init === undefined || resolving.has(node.name)) return UNKNOWN;
-      resolving.add(node.name);
-      const value = visit(init);
-      resolving.delete(node.name);
-      return value;
-    }
-    case "MemberExpression":
-      return isProcessPlatform(node) ? platform : UNKNOWN;
-    case "UnaryExpression": {
-      if (node.operator !== "!") return UNKNOWN;
-      const value = visit(node.argument);
-      return typeof value === "boolean" ? !value : UNKNOWN;
-    }
-    case "BinaryExpression": {
-      const negated = node.operator === "!==" || node.operator === "!=";
-      if (!negated && node.operator !== "===" && node.operator !== "==")
-        return UNKNOWN;
-      const left = visit(node.left);
-      const right = visit(node.right);
-      if (!known(left) || !known(right)) return UNKNOWN;
-      return negated ? left !== right : left === right;
-    }
-    case "LogicalExpression": {
-      const left = visit(node.left);
-      const right = visit(node.right);
-      if (node.operator === "&&") {
-        if (left === false || right === false) return false;
-        return left === true && right === true ? true : UNKNOWN;
-      }
-      if (node.operator === "||") {
-        if (left === true || right === true) return true;
-        return left === false && right === false ? false : UNKNOWN;
-      }
-      return UNKNOWN;
-    }
-    case "CallExpression": {
-      // `["darwin", "linux"].includes(process.platform)`
-      const { callee } = node;
-      if (
-        callee.type !== "MemberExpression" ||
-        callee.computed ||
-        callee.property.type !== "Identifier" ||
-        callee.property.name !== "includes" ||
-        callee.object.type !== "ArrayExpression" ||
-        node.arguments.length !== 1
-      )
-        return UNKNOWN;
-      const items = callee.object.elements.map((item) =>
-        item === null ? UNKNOWN : visit(item),
-      );
-      const needle = visit(node.arguments[0]);
-      if (!known(needle) || !items.every(known)) return UNKNOWN;
-      return items.includes(needle);
-    }
-    default:
-      return UNKNOWN;
-  }
-};
+/** Evaluate `node` on `platform` through the shared gate facts. */
+const evaluate = (node, platform, constants) =>
+  evaluateGateExpression(gateExpression(node), platform, constants);
 
 /** Whether a gate certainly skips on `platform`. */
-const skipsOn = (gate, platform, constants) => {
-  const value = evaluate(gate.condition, platform, constants);
-  return gate.kind === "skipIf" ? value === true : value === false;
-};
+const skipsOn = (gate, platform, constants) =>
+  gateSkipsOn(gate.kind, gateExpression(gate.condition), platform, constants);
 
 const isEmptyArray = (node) =>
   node.type === "ArrayExpression" && node.elements.length === 0;
