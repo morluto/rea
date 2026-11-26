@@ -98,18 +98,13 @@ export const machoSliceSchema = z.strictObject({
   file_type: z.enum(["execute", "dylib", "bundle", "other"]),
   file_type_code: z.int().nonnegative(),
   /**
-   * Raw LC_BUILD_VERSION platform number. Null means no such command was
-   * observed, or that several distinct platforms were declared; read
-   * `platform_conflict` to tell those apart.
+   * The one build platform the image declares. Null when no
+   * LC_BUILD_VERSION/version-min command was observed, or when the
+   * declarations name more than one platform (for example a zippered macOS
+   * and macCatalyst image); `platforms` distinguishes the two.
    */
   platform: z.int().nonnegative().nullable(),
-  /**
-   * True when the image declared more than one distinct build platform, so
-   * `platform` is null because the declarations disagree rather than because
-   * none was seen.
-   */
-  platform_conflict: z.boolean().optional(),
-  /** Every distinct build platform declared by LC_BUILD_VERSION/version-min commands. */
+  /** Each LC_BUILD_VERSION/version-min platform declaration, in load-command order. */
   platforms: z.array(z.int().nonnegative()),
   install_name: z.string().nullable(),
   dependencies: z.array(dependencySchema),
@@ -905,9 +900,6 @@ const withoutDependencies = (
   file_type_code: slice.file_type_code,
   platform: slice.platform,
   platforms: slice.platforms,
-  ...(slice.platform_conflict === undefined
-    ? {}
-    : { platform_conflict: slice.platform_conflict }),
   install_name: slice.install_name,
   rpaths: slice.rpaths,
   dyld_environment: slice.dyld_environment,
