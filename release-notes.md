@@ -337,6 +337,7 @@
 * **ghidra:** load ESP-IDF flash code in Ghidra's default address space ([#8464](https://github.com/morluto/rea/issues/8464)) ([5e56bd0](https://github.com/morluto/rea/commit/5e56bd0a2311d92afe7ab8be1cb143f5b467c369))
 * **ghidra:** name invalid installed language definition files ([#13401](https://github.com/morluto/rea/issues/13401)) ([1d85f68](https://github.com/morluto/rea/commit/1d85f680f9aeee634ff3da8cd20c9209c6275b9e))
 * **ghidra:** name the code seed recovery for addresses outside the listing ([#10682](https://github.com/morluto/rea/issues/10682)) ([33ecda0](https://github.com/morluto/rea/commit/33ecda025f0f21ebe7abd73e6ebd5c43a21a5822))
+* **ghidra:** pass inspected JDK to the Windows verifier ([#10752](https://github.com/morluto/rea/issues/10752)) ([0053ad5](https://github.com/morluto/rea/commit/0053ad589cb282d9a027d0a22211a6bc1a2652cb))
 * **ghidra:** point to the LC_MAIN entry when a stripped Mach-O has no main symbol ([#12966](https://github.com/morluto/rea/issues/12966)) ([3db9120](https://github.com/morluto/rea/commit/3db9120c5e8af1e60e6d0e8ea7a0da35c181e085))
 * **ghidra:** preserve cancellation and failure order in language discovery ([#13399](https://github.com/morluto/rea/issues/13399)) ([8ee0ffe](https://github.com/morluto/rea/commit/8ee0ffe0862721e928feb6cb18f7684403b58d77))
 * **ghidra:** report incomplete language catalogs at the file size limit ([#13407](https://github.com/morluto/rea/issues/13407)) ([3d3e7db](https://github.com/morluto/rea/commit/3d3e7db5b53329fa0a43c35cb26b9bfade0ee045))
