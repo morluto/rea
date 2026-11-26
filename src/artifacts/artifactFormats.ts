@@ -291,6 +291,8 @@ const NON_ZIP_FORMATS = {
       new DenoStandaloneArtifactReader(
         path,
         admittedAs("deno-standalone", options),
+        options.readerLimits?.deno,
+        options.readerLimits?.expanded_bytes,
       ),
   }),
   dmg: container("dmg", {
@@ -378,7 +380,12 @@ const NON_ZIP_FORMATS = {
     readerLimitation:
       "wxapkg inventory establishes packaged member names and stored bytes; wxml/wxss sources, compiled bundles and runtime behavior are not reconstructed. V1MMWX-encrypted packages are unsupported.",
     createReader: (path, options) =>
-      new WxapkgArtifactReader(path, sourceOf(options)),
+      new WxapkgArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.wxapkg,
+        options.readerLimits?.expanded_bytes,
+      ),
   }),
   tar: container("tar", {
     roleContainer: true,
@@ -392,6 +399,7 @@ const NON_ZIP_FORMATS = {
         path,
         sourceOf(options),
         options.readerLimits?.expanded_bytes,
+        options.readerLimits?.tar,
       ),
   }),
   dds: gpuAsset("dds"),
