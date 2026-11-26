@@ -72,6 +72,8 @@ interface ElectronInspectionState {
   readonly excludedFrameGenerations: Set<string>;
   readonly scriptGenerations: WeakMap<ElectronScriptDraft, number>;
   readonly limitations: string[];
+  /** Scripts parsed when script capture took its snapshot. */
+  capturedScriptCount: number | undefined;
   mainFrameId: string | undefined;
   lastProvenMainDocument: ElectronFrameDocument | undefined;
   navigationDuringCapture: boolean;
@@ -102,6 +104,7 @@ export const inspectCdpElectronPage = async (
   const state: ElectronInspectionState = {
     completeness: new CdpCaptureCompleteness(),
     scripts: [],
+    capturedScriptCount: undefined,
     scriptMetadataRetention: { bytes: 2 },
     executionContextFrames: new Map(),
     frameGenerations: new Map(),
@@ -216,6 +219,16 @@ const runElectronInspection = async (
       "inspect_electron_page",
       "target_changed",
     );
+  // Scripts parsed after the snapshot were observed but not captured. Count
+  // them after the last read, as web capture does, so the inventory reports
+  // the omission instead of looking complete.
+  const lateScripts =
+    state.scripts.length - (state.capturedScriptCount ?? state.scripts.length);
+  if (lateScripts > 0) state.completeness.drop("scripts", lateScripts);
+  const scripts =
+    lateScripts > 0
+      ? { ...captured.scripts, total: captured.scripts.total + lateScripts }
+      : captured.scripts;
   return {
     browser: context.discovery.version,
     target: {
@@ -233,6 +246,7 @@ const runElectronInspection = async (
     completeness: state.completeness.snapshot(),
     frames,
     ...captured,
+    scripts,
     limitations: state.limitations,
   };
 };
@@ -577,6 +591,8 @@ const captureElectronContent = async (
   const frameIds = new Set(frames.map((frame) => frame.frame_id));
   const resources = await captureResources(context, state.completeness);
   const dom = await captureDom(context, state.completeness);
+  // Script capture snapshots this list before its first await.
+  state.capturedScriptCount = state.scripts.length;
   const scripts = await captureElectronScripts({
     connection: context.connection,
     sessionId: context.sessionId,
