@@ -133,8 +133,10 @@ const initializeRuntime = async (
     },
     config,
   );
-  // Startup cancelled by close already ran the eager shutdown; it is not a failure.
-  if (signal.aborted && shutdown !== undefined) return;
+  // The eager result classifies cancellation before its cleanup await. A close
+  // during that await aborts this signal even when startup already failed.
+  // Only a zero result is a cancelled startup whose shutdown already ran.
+  if (result === 0 && signal.aborted && shutdown !== undefined) return;
   if (result !== 0 || shutdown === undefined)
     throw new Error(SERVER_START_FAILED);
 };
