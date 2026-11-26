@@ -55,6 +55,9 @@ was read in full and every range fits in the file. Otherwise coverage is
 - A table that starts past the file is not read. A table that runs past the
   file is read up to the file end. An empty table is not read, wherever it is
   declared, and is not a limitation.
+- A truncated FNT main table reports the number of missing directory rows
+  and leaves coverage unknown. The walk uses only complete rows. A root
+  subtable that starts inside the declared main table is also reported.
 - An FNT directory reached twice (a loop or shared subdirectory) is walked
   once. If directories share or overlap subtables, so that the walk would read
   more bytes than the FNT holds, the walk stops there.

@@ -204,6 +204,25 @@ describe("DS ROM layout", () => {
     expect(layout.limitations).toHaveLength(1);
   });
 
+  it("reports unknown coverage when the FNT main table is truncated", () => {
+    const rom = ndsRomFixture();
+    const fnt = Buffer.alloc(9);
+    fnt.writeUInt32LE(8, 0);
+    fnt.writeUInt16LE(2, 6);
+    const layout = parseNdsLayout(
+      parseNdsHeader(rom),
+      { ...tablesOf(rom), fnt },
+      rom.length,
+    );
+    expect(layout.complete).toBe(false);
+    expect(layout.limitations).toContain(
+      "DS FNT main table is missing 1 of its 2 declared directory rows.",
+    );
+    expect(layout.limitations).toContain(
+      "DS FNT root subtable starts inside the declared main table.",
+    );
+  });
+
   it("stops at a directory loop instead of walking it again", () => {
     const rom = ndsRomFixture();
     // Point data/'s subdirectory entry back at the root directory.

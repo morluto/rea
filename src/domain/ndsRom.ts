@@ -539,8 +539,23 @@ export const parseNdsLayout = (
         "DS FNT is shorter than its root directory entry; no names were read.",
       );
     else {
-      const declaredDirectories = Math.min(
-        readUint16At(fnt, 6, true),
+      const declaredDirectories = readUint16At(fnt, 6, true);
+      const mainTableBytes = declaredDirectories * FNT_MAIN_ENTRY_BYTES;
+      const presentDirectories = Math.floor(fnt.length / FNT_MAIN_ENTRY_BYTES);
+      if (mainTableBytes > fnt.length) {
+        const missingDirectories = declaredDirectories - presentDirectories;
+        incomplete(
+          `DS FNT main table is missing ${String(missingDirectories)} of its ${String(declaredDirectories)} declared directory rows.`,
+        );
+      }
+      if (readUint32At(fnt, 0, true) < mainTableBytes)
+        note(
+          "FNT subtable",
+          "DS FNT root subtable starts inside the declared main table.",
+        );
+      const walkableDirectories = Math.min(
+        declaredDirectories,
+        presentDirectories,
         NDS_MAX_DIRECTORIES,
       );
       const visited = new Set<number>();
@@ -559,17 +574,14 @@ export const parseNdsLayout = (
           continue;
         }
         visited.add(id);
-        const main = index * FNT_MAIN_ENTRY_BYTES;
-        if (
-          index >= declaredDirectories ||
-          main + FNT_MAIN_ENTRY_BYTES > fnt.length
-        ) {
+        if (index >= walkableDirectories) {
           note(
             "FNT directory",
-            `DS FNT directory ${String(id)} at /${path} is outside the ${String(declaredDirectories)}-directory main table; its contents are not listed.`,
+            `DS FNT directory ${String(id)} at /${path} has no usable main-table row; its contents are not listed.`,
           );
           continue;
         }
+        const main = index * FNT_MAIN_ENTRY_BYTES;
         directoryCount += 1;
         let at = readUint32At(fnt, main, true);
         let fileId = readUint16At(fnt, main + 4, true);
