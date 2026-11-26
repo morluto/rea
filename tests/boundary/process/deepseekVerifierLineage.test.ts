@@ -17,6 +17,7 @@ const moduleUrl = (source: string) =>
   `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
 
 const model = moduleUrl(`
+export { toolCallMessage } from ${JSON.stringify(new URL("./verify/clients/model-fixture.mjs", script).href)};
 import { TOOL_CONTRACTS } from ${JSON.stringify(contracts)};
 export async function createOpenAiModelFixture({ onRequest }) {
   await onRequest({

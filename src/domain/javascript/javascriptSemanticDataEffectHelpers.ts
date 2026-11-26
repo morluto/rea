@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { knownCoverage } from "../coverageAccumulator.js";
 
 import { BUILTIN_RESOURCE_METHODS } from "./javascriptBuiltinResourceMethods.js";
 import { semanticBuiltinNamespacePath } from "./javascriptSemanticProvenance.js";
@@ -38,11 +39,12 @@ import {
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import {
-  readExactJavaScriptLiteral,
+  stringValue,
   semanticMemberChain,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
+import { semanticConsumerMemo } from "./javascriptSemanticConsumer.js";
 
 export interface SemanticProjectedBinding extends JavaScriptSemanticProjectedResultBinding {
   readonly identifier: t.Identifier;
@@ -107,7 +109,7 @@ const projectedPatternBindings = (
           bindingId: binding.bindingId,
           identifier: current,
           projectionPath: path,
-          resolution: partial ? "partial" : "complete",
+          resolution: knownCoverage(!partial, "data-effect projection partial"),
         });
       return;
     }
@@ -790,10 +792,7 @@ interface BuiltinEffectIndex {
 
 // Derived passes run after mutation collection. These indexes share that state's
 // lifetime and never cache facts while its mutation owner is still producing them.
-const builtinEffectIndexes = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  BuiltinEffectIndex
->();
+const builtinEffectIndexes = semanticConsumerMemo<BuiltinEffectIndex>();
 
 const builtinEffectIndex = (
   state: JavaScriptSemanticAnalysisState,
@@ -1168,11 +1167,16 @@ export const outerDataEffectBinding = (
   );
 };
 
-/** Traverse with exact callable and ancestor stacks. */
+/**
+ * Traverse once with exact callable and ancestor stacks. Every visitor sees
+ * each node in source order, in the order given, with the same stacks a
+ * traversal of its own would have built; visitors must not read each other's
+ * findings.
+ */
 export const traverseDataEffects = (
   program: t.Program,
   context: DataEffectTraversalContext,
-  visit: (node: t.Node, parent: t.Node | null) => void,
+  ...visitors: readonly ((node: t.Node, parent: t.Node | null) => void)[]
 ): void => {
   const callableStack = createSemanticCallableIdStack(
     context.callableIds,
@@ -1182,7 +1186,7 @@ export const traverseDataEffects = (
   traverseJavaScriptValueAst(program, context.state.erasedSyntaxNodes, {
     enter: (node, parent) => {
       callableStack.enter(node, parent);
-      visit(node, parent);
+      for (const visit of visitors) visit(node, parent);
       context.ancestors.push(node);
     },
     exit: (node) => {
@@ -1218,13 +1222,7 @@ export const dataEffectLiteralString = (
     | t.JSXNamespacedName
     | t.ArgumentPlaceholder
     | undefined,
-): string | null => {
-  if (node === undefined) return null;
-  const literal = readExactJavaScriptLiteral(node);
-  return literal.found && typeof literal.value === "string"
-    ? literal.value
-    : null;
-};
+): string | null => stringValue(node) ?? null;
 
 /** Read a member callee from call or construction syntax. */
 export const dataEffectMemberCallee = (

@@ -1,10 +1,7 @@
-import {
-  isParseLimit,
-  parseLimitConstraint,
-} from "../../domain/parseFailureAnalysisError.js";
+import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import { decodeLimit } from "../../domain/parseFailure.js";
 import {
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   projectStableArtifactFailure,
   ArtifactReaderFailure,
   completedStableArtifactStream,
@@ -23,19 +20,16 @@ import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js
 import {
   ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
   ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION,
+  ELF_DEBUG_LINK_READ_BUDGETS,
   MAX_ELF_DEBUG_CANDIDATE_BYTES,
-  MAX_INSPECT_ELF_DEBUG_LINK_ENTRIES,
-  MAX_INSPECT_ELF_DEBUG_LINK_FILE_BYTES,
   type ElfDebugLink,
   type InspectElfDebugLinkInput,
 } from "../../domain/native/elfDebugLink.js";
 import { err, ok } from "../../domain/result.js";
 import type { AnalysisPartialObservation } from "../../domain/analysisErrorBase.js";
 import { ELF_DEBUG_LINK_PROVIDER } from "../../domain/investigationProviders.js";
-import {
-  binaryResourceCeiling,
-  BinaryResourceFailure,
-} from "../../domain/binaryContainer.js";
+import { isNativeStructureFailure } from "../../domain/binaryContainer.js";
+import { nativeStructureConstraint } from "../../domain/native/nativeStructureBudget.js";
 import {
   continueGnuDebuglinkCrc32,
   parseElfDebugLinkFromHandle,
@@ -44,8 +38,8 @@ import {
   verifyElfDebugCandidateCooperative,
   type ElfDebugCandidateFile,
 } from "./ElfDebugLink.js";
-import { ELF_NOTE_TEXT_ALLOWANCE } from "./ElfNoteParser.js";
-import { elfSectionNameBudget } from "../../domain/native/elfSectionNameTable.js";
+import { elfNoteLimitConstraint } from "./elfNoteLimitConstraint.js";
+import { elfReadBudgetLimit } from "../../domain/native/elfReadBudgets.js";
 
 const OPERATION = "inspect_elf_debug_link";
 const HEADER_PREFIX_BYTES = 4096;
@@ -57,16 +51,12 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
   readonly identity = ELF_DEBUG_LINK_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        ELF_DEBUG_LINK_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      ELF_DEBUG_LINK_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectElfDebugLinkInput, options?: ExecutionOptions) {
@@ -97,11 +87,7 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
           },
           (handle) =>
             parseElfDebugLinkFromHandle(
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               {
                 path: input.path,
                 sha256: handle.sha256,
@@ -204,6 +190,7 @@ const incompleteCandidateObservation = (
   report: ElfDebugLink,
 ): ElfDebugLink => ({
   ...report,
+  limitation_codes: [...report.limitation_codes, "candidate_read_incomplete"],
   limitations: [
     ...report.limitations,
     ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
@@ -224,6 +211,10 @@ const unverifiedCandidateObservation = (
     debug_info: "unknown",
     symtab: "unknown",
   },
+  limitation_codes: [
+    ...report.limitation_codes,
+    "candidate_comparison_incomplete",
+  ],
   limitations: [
     ...report.limitations,
     ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION,
@@ -284,34 +275,6 @@ const candidateUnreadable = (cause: unknown): boolean => {
   );
 };
 
-const inputLabel = (field: SelectedField): string =>
-  field === "candidate_path" ? "candidate" : "image";
-
-const inputBudgetRemediation = (
-  boundary: "file-size" | "capacity",
-  input: InspectElfDebugLinkInput,
-  field: SelectedField,
-): string => {
-  const label = inputLabel(field);
-  return boundary === "file-size"
-    ? input.max_file_bytes >= MAX_INSPECT_ELF_DEBUG_LINK_FILE_BYTES
-      ? `The ${label} exceeds the ${String(MAX_INSPECT_ELF_DEBUG_LINK_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller ${label}.`
-      : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller ${label}; the limit is the caller-selected input read budget.`
-    : input.max_entries >= MAX_INSPECT_ELF_DEBUG_LINK_ENTRIES
-      ? `The ${label} exceeds the ${String(MAX_INSPECT_ELF_DEBUG_LINK_ENTRIES)}-entry note-table ceiling this operation accepts; select a smaller ${label}.`
-      : `Raise max_entries above ${String(input.max_entries)} or select a smaller ${label}; the limit is the caller-selected note entry budget.`;
-};
-
-const sectionNameBudgetRemediation = (
-  required: bigint,
-  field: SelectedField,
-): string => {
-  const label = inputLabel(field);
-  return required <= BigInt(MAX_INSPECT_ELF_DEBUG_LINK_FILE_BYTES)
-    ? `Raise max_file_bytes to at least ${String(required)} bytes to admit the ${label} and its decoded ELF section names.`
-    : `The ${label} and its decoded ELF section names require ${String(required)} bytes, above this operation's ${String(MAX_INSPECT_ELF_DEBUG_LINK_FILE_BYTES)}-byte maximum; select a ${label} with a smaller section-name table.`;
-};
-
 const selectedPath = (
   input: InspectElfDebugLinkInput,
   field: SelectedField,
@@ -348,50 +311,15 @@ const elfDebugLinkFailure = (
         field === "candidate_path" ? "debug file candidate" : "ELF image",
       field,
       fallbackMessage: "ELF debug-link inspection failed.",
-      recognise: (failure) => {
-        const sectionNameBudget = elfSectionNameBudget(failure);
-        if (isParseLimit(failure, "elf") && sectionNameBudget !== undefined)
-          return parseLimitConstraint(OPERATION, "memory", failure, {
-            retryable: false,
-            remediationAction: sectionNameBudgetRemediation(
-              sectionNameBudget.required,
-              field,
+      recognise: (failure) =>
+        isNativeStructureFailure(failure)
+          ? nativeStructureConstraint(OPERATION, failure)
+          : elfNoteLimitConstraint(
+              OPERATION,
+              failure,
+              input,
+              ELF_DEBUG_LINK_READ_BUDGETS,
             ),
-          });
-        if (failure instanceof BinaryResourceFailure)
-          return parseLimitConstraint(
-            OPERATION,
-            "memory",
-            failure,
-            fixedAllowanceOptions(
-              "The ELF structural decoding allowance",
-              "parser",
-              binaryResourceCeiling(failure),
-            ),
-          );
-        if (isParseLimit(failure, "elf-notes")) {
-          const entryBudget = failure.failure.limit.name === "max_entries";
-          return parseLimitConstraint(
-            OPERATION,
-            entryBudget ? "capacity" : "memory",
-            failure,
-            entryBudget
-              ? {
-                  retryable: false,
-                  remediationAction: inputBudgetRemediation(
-                    "capacity",
-                    input,
-                    field,
-                  ),
-                }
-              : fixedAllowanceOptions(ELF_NOTE_TEXT_ALLOWANCE, "parser", {
-                  limit: failure.failure.limit.maximum,
-                  unit: "bytes",
-                }),
-          );
-        }
-        return undefined;
-      },
       fileSize: (failure) => {
         const candidate = field === "candidate_path";
         return parseLimitConstraint(
@@ -419,10 +347,10 @@ const elfDebugLinkFailure = (
               )
             : {
                 retryable: false,
-                remediationAction: inputBudgetRemediation(
-                  "file-size",
-                  input,
-                  field,
+                limit: elfReadBudgetLimit(
+                  ELF_DEBUG_LINK_READ_BUDGETS,
+                  "max_file_bytes",
+                  input.max_file_bytes,
                 ),
               },
         );

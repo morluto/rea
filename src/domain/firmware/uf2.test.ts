@@ -184,7 +184,7 @@ it("counts identical rewrites and refuses a conflicting rewrite of one address",
   expect(decode(uf2File([first, different]))).toEqual({
     ok: false,
     error: {
-      kind: "format",
+      kind: "malformed",
       message: expect.stringMatching(
         /0xe48bff56\b.*RP2040.*0x20000003\b.*different values.*block 0\b.*0x04\b.*block 1\b.*0x09\b/iu,
       ),

@@ -1,3 +1,8 @@
+import {
+  fileStatStamp,
+  sameFileStatStamp,
+  type FileStatStamp,
+} from "../filesystem/FileStatStamp.js";
 import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
 import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
@@ -170,7 +175,7 @@ export class XcrunCommandRunner implements NativeCommandRunner {
     string,
     {
       readonly path: string;
-      readonly stamp: ExecutableStatStamp;
+      readonly stamp: FileStatStamp;
       readonly sha256: string;
     }
   >();
@@ -218,7 +223,7 @@ export class XcrunCommandRunner implements NativeCommandRunner {
       signal?.aborted !== true &&
       before !== undefined &&
       cached?.path === path &&
-      sameExecutableStamp(cached.stamp, before)
+      sameFileStatStamp(cached.stamp, before)
     )
       return cached.sha256;
 
@@ -229,7 +234,7 @@ export class XcrunCommandRunner implements NativeCommandRunner {
       if (
         signal?.aborted !== true &&
         after !== undefined &&
-        sameExecutableStamp(before, after)
+        sameFileStatStamp(before, after)
       )
         this.#digests.set(tool, { path, stamp: after, sha256 });
     }
@@ -411,41 +416,17 @@ const ALLOWED_TOOLS = new Set([
   "vtool",
 ]);
 
-interface ExecutableStatStamp {
-  readonly dev: bigint;
-  readonly ino: bigint;
-  readonly size: bigint;
-  readonly mtimeNs: bigint;
-  readonly ctimeNs: bigint;
-}
-
 const statExecutable = async (
   filePath: string,
-): Promise<ExecutableStatStamp | undefined> => {
+): Promise<FileStatStamp | undefined> => {
   try {
     const info = await stat(filePath, { bigint: true });
     if (!info.isFile()) return undefined;
-    return {
-      dev: info.dev,
-      ino: info.ino,
-      size: info.size,
-      mtimeNs: info.mtimeNs,
-      ctimeNs: info.ctimeNs,
-    };
+    return fileStatStamp(info);
   } catch {
     return undefined;
   }
 };
-
-const sameExecutableStamp = (
-  left: ExecutableStatStamp,
-  right: ExecutableStatStamp,
-): boolean =>
-  left.dev === right.dev &&
-  left.ino === right.ino &&
-  left.size === right.size &&
-  left.mtimeNs === right.mtimeNs &&
-  left.ctimeNs === right.ctimeNs;
 
 /** Locate an Xcode tool through `xcrun --find` and sample its executable digest. */
 export const resolveXcrunTool = async (

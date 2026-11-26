@@ -1,13 +1,14 @@
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { BeamPort } from "../../ports/erlang/BeamPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import type { Evidence } from "../../domain/evidence.js";
 import {
   inspectErlangBeamInputSchema,
   erlangBeamSchema,
   type ErlangBeam,
 } from "../../domain/erlang/beam.js";
 import type { Result } from "../../domain/result.js";
+import { observedFileEvidence } from "../observedFileEvidence.js";
 import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_erlang_beam";
@@ -43,29 +44,13 @@ export class BeamService {
             parameters.max_file_bytes,
           ),
         buildEvidence: (value, identity, parameters) =>
-          createEvidence(
+          observedFileEvidence(value, identity, OPERATION, parameters, [
             {
-              path: value.artifact.path,
-              format: "file",
-              sha256: value.artifact.sha256,
+              kind: "file-offset-range",
+              start: value.form.location.offset,
+              end: value.form.location.offset + value.form.location.bytes,
             },
-            identity,
-            {
-              operation: OPERATION,
-              parameters,
-              result: value,
-              confidence: "observed",
-              limitations: value.limitations,
-              locations: [
-                { kind: "artifact-path" as const, path: value.artifact.path },
-                {
-                  kind: "file-offset-range" as const,
-                  start: value.form.location.offset,
-                  end: value.form.location.offset + value.form.location.bytes,
-                },
-              ],
-            },
-          ),
+          ]),
       },
       rawInput,
       options,

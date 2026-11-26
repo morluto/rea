@@ -8,7 +8,6 @@ import {
   runOwnedCommand,
 } from "../../dist/process/OwnedCommand.js";
 import { ArtifactResourceScope } from "../../dist/resources/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../../dist/resources/AnalysisCleanupLease.js";
 import { retainOwnedCommandCleanup } from "../../dist/providers/OwnedCommandCleanup.js";
 
 /** Keep command ownership through failure and join cleanup before removing a run. */
@@ -21,16 +20,7 @@ export function createAgentEvaluationCommands({
   repositoryRoot,
 }) {
   const resources = new ArtifactResourceScope();
-  const resourceOwner = {
-    retain(owner, resource) {
-      resources.retain({
-        kind: "lease",
-        resource,
-        lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
-      });
-    },
-    run: (work) => resources.run(work),
-  };
+  const resourceOwner = resources.forCloseOwners();
   const diagnosticBytes = 32_768;
 
   async function execute(

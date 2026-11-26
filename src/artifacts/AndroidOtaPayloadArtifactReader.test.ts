@@ -130,9 +130,25 @@ it("keeps partition inventory when the blob is truncated", async () => {
   const metadataBytes =
     Number(full.readBigUInt64BE(12)) + full.readUInt32BE(20);
   const truncated = full.subarray(0, 24 + metadataBytes + 1);
-  const kept = await scanCanonicalArtifactInventory(
-    await writeCarrier("truncated.bin", truncated),
-  );
+  const path = await writeCarrier("truncated.bin", truncated);
+  const reader = new AndroidOtaPayloadArtifactReader(path);
+  let readerCoverage:
+    | { readonly status: string; readonly limitations: readonly string[] }
+    | undefined;
+  try {
+    for await (const _entry of reader.entries(undefined, {
+      onCoverage: (coverage) => {
+        readerCoverage = coverage;
+      },
+    })) {
+      // Inspect traversal coverage reported directly by entries().
+    }
+  } finally {
+    await reader.close();
+  }
+  expect(readerCoverage?.status).toBe("unknown");
+  expect(readerCoverage?.limitations.join(" ")).toContain("truncated");
+  const kept = await scanCanonicalArtifactInventory(path);
   expect(kept.manifest.root_format).toBe("android-ota-payload");
   expect(kept.coverage.status).toBe("unknown");
   expect(kept.limitations.join(" ")).toContain("truncated");
@@ -149,6 +165,70 @@ it("keeps partition inventory when the blob is truncated", async () => {
     { logical_path: "boot.img", hash_status: "unavailable" },
     { logical_path: "system.img", hash_status: "verified" },
   ]);
+});
+
+it("reports unknown coverage when optional trailing payloadSignature is truncated", async () => {
+  const signature = Buffer.from(
+    new BinaryWriter()
+      .tag(1, WireType.LengthDelimited)
+      .bytes(new Uint8Array([0xaa, 0xbb]))
+      .finish(),
+  );
+  const full = buildAndroidOtaPayload({
+    partitions: [
+      { name: "boot", operations: [{ type: 0, data: Buffer.from("BOOT") }] },
+    ],
+    payloadSignature: signature,
+  });
+  const completePath = await writeCarrier("complete-trailing-sig.bin", full);
+  const truncatedPath = await writeCarrier(
+    "truncated-trailing-sig.bin",
+    full.subarray(0, full.length - 1),
+  );
+
+  for (const [path, expectedStatus, expectedTruncated, expectedSigCount] of [
+    [completePath, "complete", false, 1],
+    [truncatedPath, "unknown", true, null],
+  ] as const) {
+    const reader = new AndroidOtaPayloadArtifactReader(path);
+    let readerCoverage:
+      | { readonly status: string; readonly limitations: readonly string[] }
+      | undefined;
+    try {
+      for await (const _entry of reader.entries(undefined, {
+        onCoverage: (coverage) => {
+          readerCoverage = coverage;
+        },
+      })) {
+        // Inspect traversal coverage before opening any partition member.
+      }
+    } finally {
+      await reader.close();
+    }
+    expect(readerCoverage?.status).toBe(expectedStatus);
+    expect(readerCoverage?.limitations.join(" ").includes("truncated")).toBe(
+      expectedTruncated,
+    );
+
+    const snapshot = await scanCanonicalArtifactInventory(path);
+    expect(snapshot.manifest.root_format).toBe("android-ota-payload");
+    expect(snapshot.coverage.status).toBe(expectedStatus);
+    expect(snapshot.limitations.join(" ").includes("truncated")).toBe(
+      expectedTruncated,
+    );
+    expect(
+      snapshot.occurrences.find((row) => row.logical_path === ".")
+        ?.format_metadata,
+    ).toMatchObject({
+      kind: "android-ota-payload",
+      blob_truncated: expectedTruncated,
+      payload_signature_count: expectedSigCount,
+      payload_signature_blob_size: signature.length,
+    });
+    expect(
+      snapshot.occurrences.find((row) => row.logical_path === "boot.img"),
+    ).toMatchObject({ hash_status: "verified" });
+  }
 });
 
 it("checks the stored OTA operation bytes when a partition hash is absent", async () => {
@@ -192,4 +272,66 @@ it("checks the stored OTA operation bytes when a partition hash is absent", asyn
       await reader.close();
     }
   }
+});
+
+it("retains payload header and partitions when optional trailing payloadSignature parsing fails", async () => {
+  const path = await writeCarrier(
+    "bad-trailing-sig.bin",
+    buildAndroidOtaPayload({
+      partitions: [
+        { name: "boot", operations: [{ type: 0, data: Buffer.from("BOOT") }] },
+      ],
+      // Invalid protobuf wire type 7 in optional trailing payload signature blob.
+      payloadSignature: Buffer.from([0x0f, 0xff, 0xff, 0xff]),
+    }),
+  );
+  const snapshot = await scanCanonicalArtifactInventory(path);
+  expect(snapshot.manifest.root_format).toBe("android-ota-payload");
+  expect(snapshot.coverage.status).toBe("unknown");
+  expect(snapshot.limitations.join(" ")).toContain(
+    "Optional trailing payload signature could not be parsed",
+  );
+  expect(
+    snapshot.occurrences.find((row) => row.logical_path === ".")
+      ?.format_metadata,
+  ).toMatchObject({
+    kind: "android-ota-payload",
+    payload_signature_count: null,
+    partitions: [{ name: "boot" }],
+  });
+  expect(
+    snapshot.occurrences.find((row) => row.logical_path === "boot.img"),
+  ).toMatchObject({ hash_status: "verified" });
+});
+
+it("refuses trailing payloadSignature blobs that exceed the fixed signature count limit", async () => {
+  const writer = new BinaryWriter();
+  for (let index = 0; index < 65; index += 1)
+    writer.tag(1, WireType.LengthDelimited).bytes(new Uint8Array([index]));
+  const path = await writeCarrier(
+    "too-many-trailing-sigs.bin",
+    buildAndroidOtaPayload({
+      partitions: [
+        { name: "boot", operations: [{ type: 0, data: Buffer.from("BOOT") }] },
+      ],
+      payloadSignature: Buffer.from(writer.finish()),
+    }),
+  );
+  const reader = new AndroidOtaPayloadArtifactReader(path);
+  try {
+    await expect(async () => {
+      for await (const _entry of reader.entries()) {
+        // Expect refusal during preparation before yielding entries.
+      }
+    }).rejects.toMatchObject({
+      reason: "limit",
+      boundary: "capacity",
+      message: expect.stringContaining("signature count"),
+    });
+  } finally {
+    await reader.close();
+  }
+  await expect(scanCanonicalArtifactInventory(path)).rejects.toThrow(
+    /signature count exceeds the fixed 64-signature ceiling/u,
+  );
 });

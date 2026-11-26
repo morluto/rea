@@ -183,7 +183,6 @@ const validReport = (
   input: InspectBinaryHardeningInput,
 ): boolean =>
   sameLimitations(report.limitations) &&
-  report.artifact.bytes <= input.max_file_bytes &&
   report.images.length >= 1 &&
   report.images.every((image) =>
     validImage(

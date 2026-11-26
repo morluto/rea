@@ -8,7 +8,13 @@ export type ElfHashWordReader = (offset: number) => Result<number, string>;
 
 export type ElfHashCountFailure =
   | { readonly kind: "malformed"; readonly message: string }
-  | { readonly kind: "budget"; readonly label: string; readonly count: number };
+  | {
+      readonly kind: "budget";
+      readonly label: string;
+      readonly count: number;
+      /** True when the walk stopped before reaching the end of the table. */
+      readonly lowerBound?: true;
+    };
 
 /** Yields between bounded steps so each driver owns scheduling and cancellation. */
 export type ElfGnuHashCountWalk = Generator<
@@ -24,7 +30,14 @@ const malformed = (message: string): Result<never, ElfHashCountFailure> =>
 const overBudget = (
   label: string,
   count: number,
-): Result<never, ElfHashCountFailure> => err({ kind: "budget", label, count });
+  lowerBound?: true,
+): Result<never, ElfHashCountFailure> =>
+  err({
+    kind: "budget",
+    label,
+    count,
+    ...(lowerBound === true ? { lowerBound: true } : {}),
+  });
 
 /** A byte offset requests one word. An empty step is a cancellation checkpoint. */
 export type ElfHashCountSteps<
@@ -97,7 +110,7 @@ export function* readElfGnuHashSymbolCountSteps(
   if (last === 0) return ok(null);
   for (let index = last; ; index += 1) {
     if (index + 1 > maximum)
-      return overBudget("DT_GNU_HASH symbol table", index + 1);
+      return overBudget("DT_GNU_HASH symbol table", index + 1, true);
     if ((index - last) % CHECKPOINT_STEPS === 0) yield;
     const chain = yield prefixBytes + (index - firstSymbol) * 4;
     if (!chain.ok) return malformed(`DT_GNU_HASH chain ${chain.error}`);

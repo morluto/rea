@@ -27,10 +27,16 @@ import {
 } from "../mcp/sharedMcpSession.js";
 import { REGISTRATION_GUARD_NODE_OPTIONS_ENV } from "./registrationEnvironment.js";
 import { terminalStdoutInvocation } from "./terminalStdout.js";
+import {
+  completeEvidenceCliArguments,
+  type TestDelivery,
+} from "../completeEvidenceByDefault.js";
 
 /** Caller-controlled values for one compiled REA CLI invocation. */
 export interface CliInvocation {
   readonly arguments: readonly string[];
+  /** The harness requests complete Evidence unless this is `"budgeted"`. */
+  readonly delivery?: TestDelivery;
   readonly cwd?: string;
   readonly environment?: NodeJS.ProcessEnv;
   readonly input?: string | Uint8Array;
@@ -199,7 +205,8 @@ export const createTestCli = (
   compileCache?: string,
 ): TestCli => ({
   run: async ({
-    arguments: arguments_,
+    arguments: written,
+    delivery,
     cwd,
     environment,
     input,
@@ -208,6 +215,10 @@ export const createTestCli = (
   }) => {
     if (terminal === true && input !== undefined)
       throw new Error("A terminal run has an empty stdin.");
+    const arguments_ =
+      delivery === "budgeted"
+        ? written
+        : await completeEvidenceCliArguments(written, cwd);
     const rea = [resolve("scripts/rea.mjs"), ...arguments_];
     const { command, arguments: commandArguments } =
       terminal === true
@@ -274,6 +285,9 @@ export const cliTest = processTest.extend<{
         sharedProcessCanServe(invocation)
           ? cliCommandSession.run({
               arguments: invocation.arguments,
+              ...(invocation.delivery === undefined
+                ? {}
+                : { delivery: invocation.delivery }),
               cwd: invocation.cwd ?? process.cwd(),
               environment: definedCliEnvironment(
                 cliProcessEnvironment(invocation.environment, cliCompileCache),

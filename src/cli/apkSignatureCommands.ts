@@ -21,7 +21,6 @@ export const registerApkSignatureCommands = (
     logger,
     apkSignatureModule.contract,
     {
-      command: apkSignatureModule.cliCommand,
       description:
         "Inspect declared APK signing schemes, signers and content digests",
       positionals: ["path"],

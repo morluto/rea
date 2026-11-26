@@ -6,7 +6,10 @@ import type {
   MachoEncryptionFacts,
   MachoSliceEncryption,
 } from "./machoEncryption.js";
-import { validateFatSliceIdentity } from "./machoContainer.js";
+import {
+  validateFatSliceIdentity,
+  type FatSliceRangeFailure,
+} from "./machoContainer.js";
 import {
   isMachoZeroFillSection,
   machoSectionHeaderSize,
@@ -23,7 +26,7 @@ import {
   readMachoContainer,
   readSliceCommandTable,
   type MachoLoadCommand,
-  type MachoReadIssue,
+  type MachoReadFailed,
   type MachoSliceHeader,
   type ReadAt,
 } from "./machoLoadCommandReader.js";
@@ -59,7 +62,7 @@ export const readMachoEncryption = async (
   const container = await readMachoContainer(readAt, size);
   if (container.kind === "not-mach-o") return { status: "not-mach-o" };
   if (container.kind === "issue")
-    return { status: container.status, reason: container.reason };
+    return { status: "failed", failure: container.failure };
   if (container.kind === "thin")
     return {
       status: "parsed",
@@ -70,7 +73,7 @@ export const readMachoEncryption = async (
   // unknown before any declared slice is read.
   const { hidden } = container;
   if (hidden !== null && hidden.status !== "declared")
-    return { status: hidden.status, reason: hidden.reason };
+    return { status: "failed", failure: hidden.failure };
   const slices: MachoSliceEncryption[] = [];
   for (const [index, declaration] of container.header.slices.entries()) {
     const rangeIssue = container.header.rangeIssues[index] ?? null;
@@ -85,11 +88,7 @@ export const readMachoEncryption = async (
             },
             budget,
           )
-        : unread(
-            declaration,
-            rangeIssue.category === "unsupported" ? "unknown" : "malformed",
-            rangeIssue.reason,
-          ),
+        : unread(declaration, rangeIssue),
     );
   }
   if (hidden !== null)
@@ -104,29 +103,32 @@ export const readMachoEncryption = async (
             },
             budget,
           )
-        : unread(hidden.declaration, "malformed", hidden.rangeIssue),
+        : unread(hidden.declaration, hidden.rangeIssue),
     );
   return { status: "parsed", slices };
 };
 
 type FatDeclaration = Parameters<typeof validateFatSliceIdentity>[0];
 
+/** A FAT row whose own range cannot be read: unsupported layouts stay unknown. */
 const unread = (
   declaration: FatDeclaration,
-  status: "malformed" | "unknown",
-  reason: string,
-): MachoSliceEncryption => ({
-  architecture: null,
-  cpu_type: declaration.cpuType,
-  cpu_subtype: declaration.cpuSubtype,
-  container_file_offset: declaration.offset,
-  size: declaration.size,
-  status,
-  malformed_kind: status === "malformed" ? "structure" : null,
-  reason,
-  commands: [],
-  range: null,
-});
+  failure: FatSliceRangeFailure,
+): MachoSliceEncryption => {
+  const status = failure.kind === "unsupported" ? "unknown" : "malformed";
+  return {
+    architecture: null,
+    cpu_type: declaration.cpuType,
+    cpu_subtype: declaration.cpuSubtype,
+    container_file_offset: declaration.offset,
+    size: declaration.size,
+    status,
+    malformed_kind: status === "malformed" ? "structure" : null,
+    reason: failure.detail,
+    commands: [],
+    range: null,
+  };
+};
 
 const readSlice = async (
   readAt: ReadAt,
@@ -159,14 +161,11 @@ const readSlice = async (
   let segmentRecords = 0;
   // Commands seen before a failure stay as partial facts; an incomplete walk
   // can never prove the command is absent.
-  const incomplete = ({
-    status,
-    reason,
-  }: MachoReadIssue): MachoSliceEncryption => ({
+  const incomplete = ({ failure }: MachoReadFailed): MachoSliceEncryption => ({
     ...base,
-    status: status === "unsupported" ? "unknown" : "malformed",
-    malformed_kind: status === "unsupported" ? null : "structure",
-    reason,
+    status: failure.kind === "unsupported" ? "unknown" : "malformed",
+    malformed_kind: failure.kind === "unsupported" ? null : "structure",
+    reason: failure.detail,
     commands,
     range: null,
   });

@@ -109,6 +109,7 @@ cliTest(
       parseEvidence(incomplete.json).normalized_result,
     );
     const graph = inspection.substeps[0]!.evidence.normalized_result;
+    expect(graph.coverage.status).toBe("unknown");
     expect(
       graph.occurrences.find((row) => row.logical_path === ".")
         ?.format_metadata,

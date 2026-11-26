@@ -12,7 +12,12 @@ rea inspect-nuget-nupkg /absolute/path/to/Demo.Package.1.2.3.nupkg --json
 With `--detail summary --evidence_output /absolute/path/nupkg.json`, the CLI
 saves the complete Evidence as a new bundle and prints a summary view with the
 package identity, license, repository, selected `.nuspec`, coverage, and counts
-of dependency groups, dependencies, contents and limitations.
+of dependency groups, dependencies, contents and limitations. MCP
+`detail: "summary"` returns the same summary and retains the complete Evidence
+in the session. With `detail` omitted, complete Evidence is returned when it
+fits the
+[agent result budget](../../reference/limits-and-recovery.md#agent-result-budget),
+and the summary otherwise; `detail: "complete"` always returns everything.
 
 The CLI resolves relative paths against the caller's working directory. MCP
 requires an absolute filesystem path and preserves that exact selection:
@@ -91,7 +96,7 @@ are not decoded.
 
 ## Limits and failures
 
-The selected file is limited to 64 MiB by default (512 MiB maximum). Inspection
+The selected file is limited to 256 MiB by default (512 MiB maximum). Inspection
 streams the file in fixed chunks for SHA-256 verification and reads only the
 ZIP central directory and selected metadata members over the same verified file
 handle without buffering the entire archive in memory. At most

@@ -18,6 +18,10 @@ import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjection
 import { transportClosedByOwner } from "./transportOwnerClose.js";
 import { ForwardingTransport } from "./ForwardingTransport.js";
 import {
+  formatUnknownMcpToolMessage,
+  type AdvertisedToolCatalog,
+} from "./toolCatalogSearch.js";
+import {
   advertiseToolOutput,
   type AdvertisedToolPresentation,
 } from "../contracts/advertisedTool.js";
@@ -45,6 +49,8 @@ import {
   TARGET_CONTENT_RESULT_META,
 } from "./toolResultEncoding.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
+import type { McpToolsListPageBudget } from "../config/mcpToolsListPageBudget.js";
+import { paginateToolsList } from "./toolListPagination.js";
 import {
   currentMcpToolRequest,
   McpToolRequest,
@@ -185,7 +191,11 @@ const presentOutputSchemasForToolsList = (
       tools: message.result.tools.map((tool: unknown) => {
         if (!isRecord(tool) || !isRecord(tool.outputSchema)) return tool;
         const { outputSchema: canonical, ...advertisedTool } = tool;
-        const outputSchema = advertiseToolOutput(canonical, presentation);
+        const outputSchema = advertiseToolOutput(
+          canonical,
+          presentation,
+          typeof tool.name === "string" ? tool.name : undefined,
+        );
         return outputSchema === undefined
           ? advertisedTool
           : { ...advertisedTool, outputSchema };
@@ -197,13 +207,13 @@ const presentOutputSchemasForToolsList = (
 /** Release every transport-owned reference for a cancelled/completed request. */
 export const forgetPendingMcpRequest = (
   pendingTools: Map<RequestId, string>,
-  pendingToolLists: Set<RequestId>,
+  pendingToolListCursors: Map<RequestId, string | undefined>,
   pendingCompletions: Map<RequestId, AbortController>,
   id: RequestId,
   reason: CallerAbort | OwnerCancellation,
 ): void => {
   pendingTools.delete(id);
-  pendingToolLists.delete(id);
+  pendingToolListCursors.delete(id);
   pendingCompletions.get(id)?.abort(reason);
   pendingCompletions.delete(id);
 };
@@ -211,7 +221,10 @@ export const forgetPendingMcpRequest = (
 export class ErrorEvidenceTransport extends ForwardingTransport {
   private readonly pendingTools = new Map<RequestId, string>();
   private readonly pendingValidation = new Map<RequestId, McpToolRequest>();
-  private readonly pendingToolLists = new Set<RequestId>();
+  private readonly pendingToolListCursors = new Map<
+    RequestId,
+    string | undefined
+  >();
   private readonly pendingCompletions = new Map<RequestId, AbortController>();
   private closing = false;
 
@@ -233,6 +246,8 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
     private readonly outputPresentation: AdvertisedToolPresentation["output"],
     private readonly maximumInputElements: number,
     private readonly evidenceReferenceAlternatives: ReadonlySet<string>,
+    private readonly toolsListPageBudget: McpToolsListPageBudget,
+    private readonly currentAdvertisedTools: () => AdvertisedToolCatalog,
   ) {
     super(transport);
   }
@@ -273,8 +288,15 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
       validation = new McpToolRequest(message.id, message.params["name"]);
       this.pendingValidation.set(message.id, validation);
     }
-    if (isJSONRPCRequest(message) && message.method === "tools/list")
-      this.pendingToolLists.add(message.id);
+    if (isJSONRPCRequest(message) && message.method === "tools/list") {
+      const params = message.params;
+      this.pendingToolListCursors.set(
+        message.id,
+        isRecord(params) && typeof params.cursor === "string"
+          ? params.cursor
+          : undefined,
+      );
+    }
     if (isJSONRPCRequest(message) && message.method === "completion/complete")
       this.pendingCompletions.set(message.id, new AbortController());
     // The SDK suppresses replies after cancellation, so send() cannot release
@@ -293,7 +315,7 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
         this.pendingValidation.delete(id);
         forgetPendingMcpRequest(
           this.pendingTools,
-          this.pendingToolLists,
+          this.pendingToolListCursors,
           this.pendingCompletions,
           id,
           cancellation,
@@ -322,7 +344,7 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
     for (const validation of this.pendingValidation.values())
       validation.cancel(disconnected);
     this.pendingValidation.clear();
-    this.pendingToolLists.clear();
+    this.pendingToolListCursors.clear();
     for (const completion of this.pendingCompletions.values())
       completion.abort(disconnected);
     this.pendingCompletions.clear();
@@ -338,7 +360,7 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
       for (const validation of this.pendingValidation.values())
         validation.cancel(OwnerCancellation.ownerClosed);
       this.pendingValidation.clear();
-      this.pendingToolLists.clear();
+      this.pendingToolListCursors.clear();
       for (const completion of this.pendingCompletions.values())
         completion.abort(OwnerCancellation.ownerClosed);
       this.pendingCompletions.clear();
@@ -363,7 +385,7 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
         : (this.pendingValidation.get(id) ??
           (scopedRequest?.id === id ? scopedRequest : undefined));
     const rewritesOutputSchemas =
-      id !== undefined && this.pendingToolLists.has(id);
+      id !== undefined && this.pendingToolListCursors.has(id);
     try {
       const publish = async (): Promise<void> => {
         const recovered = this.recoverProtocolError(message, tool, request);
@@ -416,7 +438,7 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
         // The reply settled the request, so REA ends any work it left behind.
         forgetPendingMcpRequest(
           this.pendingTools,
-          this.pendingToolLists,
+          this.pendingToolListCursors,
           this.pendingCompletions,
           id,
           OwnerCancellation.ownerClosed,
@@ -433,16 +455,28 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
     request: McpToolRequest | undefined,
   ): Promise<void> {
     request?.beginPublication();
+    // Measure the advertised schema presentation, not the canonical schemas
+    // retained by SDK registrations, before publishing a tools/list page.
+    const paged =
+      isJSONRPCResultResponse(message) &&
+      message.id !== undefined &&
+      this.pendingToolListCursors.has(message.id)
+        ? paginateToolsList(
+            message,
+            this.pendingToolListCursors.get(message.id),
+            this.toolsListPageBudget,
+          )
+        : message;
     if (
-      !isJSONRPCResultResponse(message) ||
-      !isCallToolResult(message.result) ||
-      message.result.isError !== true
+      !isJSONRPCResultResponse(paged) ||
+      !isCallToolResult(paged.result) ||
+      paged.result.isError !== true
     ) {
-      await this.transport.send(message, options);
+      await this.transport.send(paged, options);
       return;
     }
     // Oversized recovery has already consumed this private structured carrier.
-    const { structuredContent: _diagnostic, ...result } = message.result;
+    const { structuredContent: _diagnostic, ...result } = paged.result;
     // SDK-built errors bypass ToolResultDelivery's target-content marker.
     const marked =
       tool !== undefined &&
@@ -453,7 +487,7 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
             _meta: { ...result._meta, ...TARGET_CONTENT_RESULT_META },
           }
         : result;
-    await this.transport.send({ ...message, result: marked }, options);
+    await this.transport.send({ ...paged, result: marked }, options);
   }
 
   private recoverError(
@@ -482,9 +516,13 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
       preencoded.ok &&
       preencoded.budgetBytes === budget &&
       preencoded.targetContent === targetContent &&
-      message.result.content.length === 1 &&
       content?.type === "text" &&
-      content.text === preencoded.text
+      content.text === preencoded.text &&
+      // A budgeted partial observation's link follows the error text, and
+      // the delivery reserved its bytes.
+      message.result.content
+        .slice(1)
+        .every((block) => block.type === "resource_link")
     )
       return message;
     const preencodedOverflow =
@@ -799,8 +837,10 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
       ...recovered,
       error: {
         ...recovered.error,
-        message:
-          "The requested MCP tool is not advertised by this REA server. Call tools/list, select an advertised tool, and retry; do not repeat the unknown tool name.",
+        message: formatUnknownMcpToolMessage(
+          tool,
+          this.currentAdvertisedTools(),
+        ),
       },
     };
   }

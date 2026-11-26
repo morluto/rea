@@ -231,7 +231,7 @@ it("keeps native JSON source excerpts internal while preserving the failure caus
 });
 
 it.each([
-  [{ openapi: "2.0" }, "AnalysisUnsupportedTargetError"],
+  [{ openapi: "2.0" }, "AnalysisTargetFailureError"],
   [
     {
       openapi: "3.1.2",

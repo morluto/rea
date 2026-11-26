@@ -29,6 +29,7 @@ import {
   requireMcpEvidenceBundle,
   requireMcpOutput,
 } from "./lib/mcp-verifier-results.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 const root = process.argv[2];
 const inspectExisting = process.argv[3] === "--inspect-existing";
@@ -58,10 +59,12 @@ const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const environment = Object.fromEntries(
   Object.entries(process.env).filter(([, value]) => typeof value === "string"),
 );
-const client = new Client({
-  name: "real-http3-capture-verifier",
-  version: "1",
-});
+const client = completeEvidenceClient(
+  new Client({
+    name: "real-http3-capture-verifier",
+    version: "1",
+  }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -103,6 +106,8 @@ async function cli(input, name) {
       arguments: [
         entrypoint,
         "inspect-web-network-capture",
+        "--detail",
+        "complete",
         input.capture_path,
         input.format,
         "--json",
