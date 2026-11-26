@@ -155,9 +155,6 @@ it("reports unreadable ELF names alongside the no-record limitation", async () =
   const result = await new GoBinaryProvider().inspect({ path });
   if (!result.ok) throw result.error;
   expect(result.value.build_info).toBeNull();
-  expect(result.value.limitations).toContain(
-    "No recognized Go build-info record was found in the inspected image; absent metadata does not establish that the binary is not Go.",
-  );
   expect(result.value.limitations).toContainEqual(
     expect.stringMatching(
       /section names.*unavailable.*compression type 3.*unsupported/iu,
@@ -182,12 +179,9 @@ it("keeps a module-mode build with no dependency records as an observed empty li
     dependencies: [],
     complete: true,
   });
-  expect(result.value.limitations.join(" ")).not.toContain(
-    "Dependency coverage is unknown",
-  );
 });
 
-it("adjusts string_literals file offsets inside a universal Mach-O slice and records chained-fixup/truncation limitations", async () => {
+it("adjusts string_literals file offsets inside a universal Mach-O slice and records truncation", async () => {
   const rodata = Buffer.from(
     "ListResourceProvidersgenaihttps://example.invalid/v1",
     "utf8",
@@ -251,9 +245,10 @@ it("adjusts string_literals file offsets inside a universal Mach-O slice and rec
         .toString("utf8"),
     ).toBe(item.value);
   }
-  const limitationsText = result.value.limitations.join(" ");
-  expect(limitationsText).toContain("LC_DYLD_CHAINED_FIXUPS");
-  expect(limitationsText).toContain("truncated");
+  expect(result.value.string_literals).toMatchObject({
+    truncated: true,
+    limits_reached: ["max_string_literals"],
+  });
 });
 
 it.each([

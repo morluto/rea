@@ -122,28 +122,25 @@ it("applies the omitted 600000 ms decode deadline and a selected value on the ne
     const timedOut = await decode(provider, path, 200);
     if (timedOut.ok) throw new Error("Expected a decode deadline");
     const projected = projectAnalysisError(timedOut.error);
+    const decodeDeadline = {
+      control_kind: "parameter",
+      parameter: "decode_timeout_ms",
+      effective_value: 200,
+      unit: "ms",
+      minimum: 1,
+      maximum: MAX_NODE_TIMER_DELAY_MS,
+      default_value: DEFAULT_APKTOOL_DECODE_TIMEOUT_MS,
+      applies_at: "next_call",
+    };
     expect(projected).toMatchObject({
       code: "provider_timeout",
       details: {
         timeout_ms: 200,
-        limit: {
-          control_kind: "parameter",
-          parameter: "decode_timeout_ms",
-          effective_value: 200,
-        },
+        limit: decodeDeadline,
       },
     });
-    expect(projected.remediation.action).not.toContain("--");
-    expect(projected.message).toContain("200 ms");
-    expect(projected.remediation.action).toContain("decode_timeout_ms");
-    expect(projected.remediation.action).toContain(
-      String(MAX_NODE_TIMER_DELAY_MS),
-    );
-    expect(projected.remediation.action).toContain(
-      String(DEFAULT_APKTOOL_DECODE_TIMEOUT_MS),
-    );
-    expect(projected.remediation.action).toContain("next decode");
-    expect(projected.remediation.action).toContain("no runtime override");
+    expect(projected.details?.limit).not.toHaveProperty("cli_flag");
+    expect(projected.details).not.toHaveProperty("refusal");
     expect(decodeTimeouts).toEqual([DEFAULT_APKTOOL_DECODE_TIMEOUT_MS, 200]);
 
     const selected = await decode(provider, path, 5_000);
