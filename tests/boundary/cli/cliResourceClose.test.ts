@@ -54,11 +54,12 @@ it.each([
   },
 );
 
-it("asks the registration host to exit once for a refused client", async () => {
+it("asks the registration host to exit once when a refused client cannot be rendered", async () => {
   await closeCliResources();
   const home = await createTestTempDirectory("rea-cli-registration-exit-");
   const cli = createCli(await registrationEnvironment(home));
   const exits: number[] = [];
+  const output: string[] = [];
   const previousExitCode = process.exitCode;
   process.exitCode = undefined;
   try {
@@ -67,20 +68,27 @@ it("asks the registration host to exit once for a refused client", async () => {
         "mcp",
         "add",
         "--agent",
-        "fixture-not-a-client",
+        "fixture-\uD800-client",
         "--command",
         "fixture-mcp",
-        "--json",
+        "--format",
+        "md",
       ],
       {
         env: {},
         exit: (code) => {
           exits.push(code);
         },
-        stdout: () => {},
+        stdout: (text) => {
+          output.push(text);
+        },
       },
     );
     expect(exits).toEqual([1]);
+    expect(output.join("")).toContain(
+      "Markdown cannot preserve NUL or unpaired UTF-16 surrogates",
+    );
+    expect(output.join("")).toContain("Use --format json or --format yaml");
   } finally {
     process.exitCode = previousExitCode;
     await closeCliResources();
