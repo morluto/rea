@@ -7,7 +7,6 @@ import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import {
   createRizinCommandEvidence,
   createRizinCommandTimeoutEvidence,
-  MAX_COMMAND_FRAMES,
   MAX_FRAME_BYTES,
   MAX_QUEUED_FRAME_BYTES,
   MAX_QUEUED_FRAMES,
@@ -24,7 +23,6 @@ import {
   decodeRizinFrameBytes,
   hasUnclaimedRizinFrames,
   rizinCancellationReason,
-  RizinFrameTimeoutError,
   RizinProcessExitError,
   waitForCommandFrames,
   waitForFrame,
@@ -55,7 +53,6 @@ import {
   AnalysisTimeoutError,
   cancelledBy,
   carriedReason,
-  isAborted,
 } from "../domain/analysisErrorCore.js";
 import {
   RIZIN_DEBUG_SESSION_TOOLS,

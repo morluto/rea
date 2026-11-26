@@ -6,7 +6,11 @@ import { digestSchema } from "../domain/digests.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 import { UefiLzmaByteQueue } from "./UefiLzmaByteQueue.js";
 
-const decodeFailureReasonSchema = z.enum(["format", "decoder", "output-limit"]);
+const decodeFailureReasonSchema = z.enum([
+  "malformed",
+  "decoder",
+  "output-limit",
+]);
 export type UefiDecodeFailureReason = z.infer<typeof decodeFailureReasonSchema>;
 
 export const LZMA_FRAME_HEADER_BYTES = 8;

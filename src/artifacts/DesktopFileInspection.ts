@@ -1,5 +1,5 @@
 import { hasDosMzMagic, observeMzWindowsHeader } from "../domain/dosMz.js";
-import { BinaryReader } from "../domain/binaryContainer.js";
+import { hasElfMagic, BinaryReader } from "../domain/binaryContainer.js";
 import { readPeCoffHeader } from "../domain/peCoffHeader.js";
 import {
   hasGodotPckHeader,
@@ -21,15 +21,16 @@ import { readManagedMetadataLayout } from "../domain/managed/managedMetadataLayo
 import { readManagedCliHeaderPrefix } from "../domain/managed/managedCliHeaderPrefix.js";
 import { readAssemblyReferenceName } from "../domain/managed/managedMetadataInventoryRows.js";
 import {
-  isManagedCoverageGap,
   MANAGED_PE_CLI_FORMAT,
   ManagedReaderFailure,
+  managedIssueTargetFailure,
 } from "../domain/managed/managedReaderFailure.js";
 import {
   ArtifactReaderFailure,
   abortIfNeeded,
   malformedArtifact,
   truncatedArtifact,
+  artifactFormatFailure,
 } from "../resources/index.js";
 import { hasMachoMagic } from "../domain/apple/machoContainer.js";
 import {
@@ -108,9 +109,7 @@ export const inspectDesktopFile = async (
       throw truncatedArtifact(
         "file",
         "Declared byte range lies outside the file",
-        {
-          ...(Number.isSafeInteger(offset) && offset >= 0 ? { offset } : {}),
-        },
+        Number.isSafeInteger(offset) && offset >= 0 ? { offset } : {},
       );
     if (bytes > budget.maximum - budget.bytes) throw new DesktopProbeLimit();
     // Reserve the retained range before reading its bytes.
@@ -243,16 +242,14 @@ export const inspectDesktopFile = async (
       offset: 0,
       value: { format: "IoStore TOC" },
     });
-  const native =
-    prefix.length >= 4 &&
-    (prefix.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])) ||
-      hasMachoMagic(prefix));
+  const elf = hasElfMagic(prefix);
+  const native = elf || (prefix.length >= 4 && hasMachoMagic(prefix));
   if (native)
     fact({
       kind: "native-image-header",
       offset: 0,
       value: {
-        format: prefix[0] === 0x7f ? "elf" : "mach-o",
+        format: elf ? "elf" : "mach-o",
         signature: prefix.subarray(0, 4).toString("hex"),
       },
     });
@@ -262,9 +259,7 @@ export const inspectDesktopFile = async (
     } catch (cause: unknown) {
       if (
         !(cause instanceof ArtifactReaderFailure) ||
-        (cause.parseFailure === undefined &&
-          cause.reason !== "limit" &&
-          cause.reason !== "unsupported")
+        (cause.parseFailure === undefined && cause.reason !== "limit")
       )
         throw cause;
       if (!row.issues.includes(cause.message)) row.issues.push(cause.message);
@@ -412,19 +407,13 @@ const inspectPeFile = async (
     }
   } catch (cause: unknown) {
     if (!(cause instanceof ManagedReaderFailure)) throw cause;
-    const { code, scope, offset } = cause.issue;
-    if (code === "resource-limit")
+    const failure = managedIssueTargetFailure(cause.issue);
+    if (failure === undefined)
       throw new ArtifactReaderFailure("limit", cause.message, {
         cause,
         boundary: "memory",
       });
-    if (isManagedCoverageGap(code))
-      throw new ArtifactReaderFailure("unsupported", cause.message, { cause });
-    throw malformedArtifact(MANAGED_PE_CLI_FORMAT, cause.message, {
-      cause,
-      field: scope,
-      ...(offset === undefined || offset === null ? {} : { offset }),
-    });
+    throw artifactFormatFailure(failure, { cause });
   }
 };
 

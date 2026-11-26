@@ -16,6 +16,7 @@ import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { createOwnedMcpStdioTransport } from "./lib/owned-mcp-stdio.mjs";
 import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 const commands = await createVerifierCommands();
 const compiler = process.env.REA_VERIFY_GO_COMMAND ?? "go";
@@ -77,7 +78,9 @@ const verified = [];
 const omittedCoverage = [];
 const failures = [];
 try {
-  client = new Client({ name: "go-binary-verifier", version: "1" });
+  client = completeEvidenceClient(
+    new Client({ name: "go-binary-verifier", version: "1" }),
+  );
   transport = await createOwnedMcpStdioTransport({
     command: process.execPath,
     arguments: [entrypoint, "mcp"],
@@ -368,6 +371,8 @@ async function inspect(mode, path, includeStringLiterals = false) {
       "inspect-go-binary",
       path,
       ...(includeStringLiterals ? ["--include-string-literals"] : []),
+      "--detail",
+      "complete",
       "--json",
     ];
     const { stdout } = await commands.exec(process.execPath, args, {
@@ -378,11 +383,14 @@ async function inspect(mode, path, includeStringLiterals = false) {
     envelope = JSON.parse(stdout);
   } else {
     const argumentsPayload = includeStringLiterals
-      ? { path, include_string_literals: true }
-      : { path };
+      ? { path, include_string_literals: true, detail: "complete" }
+      : { path, detail: "complete" };
     const response = await artifactMcpCall(
       client,
-      { name: "inspect_go_binary", arguments: argumentsPayload },
+      {
+        name: "inspect_go_binary",
+        arguments: { ...argumentsPayload, detail: "complete" },
+      },
       { timeout: 30_000 },
     );
     envelope = requireMcpOutput(response, "inspect_go_binary");

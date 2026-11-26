@@ -6,6 +6,10 @@ import {
   ArtifactInventoryCarrierError,
   type ParsedInventorySet,
 } from "./artifactInventoryEvidence.js";
+import {
+  projectCartesianCandidates,
+  type bridgeCandidateCoverageSchema,
+} from "./bridgeCandidateProjection.js";
 import { evidenceInputSchema } from "./evidenceReference.js";
 import { getEvidenceInputContract } from "./evidenceInputContract.js";
 import { AnalysisInputError } from "./analysisErrorCore.js";
@@ -91,22 +95,57 @@ export const projectedBridgeCandidateSchema = <
     basis: z.enum(basis),
   });
 
-/** Coverage status combining inventory completeness with a projection budget. */
+/** Pair managed components with native libraries in inventory order. */
+export const projectManagedNativeCandidates = <Basis extends string>(
+  managed: readonly ProjectedComponent[],
+  native: readonly ProjectedComponent[],
+  basis: (path: string) => Basis,
+) =>
+  projectCartesianCandidates({
+    groups: [{ left: managed, right: native }],
+    createCandidate: (managed_path, target) => ({
+      managed_path,
+      native_path: target.path,
+      basis: basis(target.path),
+    }),
+  });
+
+export const projectionCoverageSchema = z.strictObject({
+  status: z.enum(["complete-within-inventory", "partial"]),
+  // Count completeness is separate from the declared coverage status.
+  inventory_complete: z.boolean(),
+});
+
+/** Derive coverage and its limitations from the same inventory and bridge facts. */
 export const projectionCoverage = (
   inventory: ParsedInventorySet["inventory"],
-  budgetComplete: boolean,
-): {
-  status: "complete-within-inventory" | "partial";
-  /** True when all manifest graph-member counts are present, independent of source coverage. */
-  inventory_complete: boolean;
-} => ({
-  status:
-    hasCompleteInventoryCoverage(inventory, "container-entries") &&
-    budgetComplete
-      ? ("complete-within-inventory" as const)
-      : ("partial" as const),
-  inventory_complete: inventory.complete,
-});
+  bridges: z.infer<typeof bridgeCandidateCoverageSchema>,
+  unavailableCount: number,
+) => {
+  const sourceComplete = hasCompleteInventoryCoverage(
+    inventory,
+    "container-entries",
+  );
+  const coverage: z.infer<typeof projectionCoverageSchema> = {
+    status:
+      sourceComplete && bridges.status === "complete" && unavailableCount === 0
+        ? "complete-within-inventory"
+        : "partial",
+    inventory_complete: inventory.complete,
+  };
+  return {
+    coverage,
+    sourceLimitations: sourceComplete
+      ? []
+      : ["Source inventory coverage is partial; absence is unknown."],
+    bridgeLimitations:
+      bridges.status === "partial"
+        ? [
+            `Bridge candidate pairs exceeded the projection safety budget; ${bridges.omitted_candidates} hypotheses are omitted. Component arrays still include every component from the supplied inventory pages.`,
+          ]
+        : [],
+  };
+};
 
 /** One occurrence with resolved content, unavailable identity, or an unresolved node reference. */
 export type ProjectedInventoryEntry = {

@@ -50,7 +50,7 @@ it("refuses an unsupported source without hashing its bytes", async () => {
           await client.execute("extract_artifact", { output_root: output }),
         ).toMatchObject({
           ok: false,
-          error: { _tag: "AnalysisUnsupportedTargetError", path: source },
+          error: { _tag: "AnalysisTargetFailureError", path: source },
         });
         expect(hash).not.toHaveBeenCalled();
         await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
@@ -420,7 +420,7 @@ it("keeps incidental rejected cookie signatures unsupported during native extrac
           await client.execute("extract_artifact", { output_root: output }),
         ).toMatchObject({
           ok: false,
-          error: { _tag: "AnalysisUnsupportedTargetError", path: source },
+          error: { _tag: "AnalysisTargetFailureError", path: source },
         });
         expect(hash).not.toHaveBeenCalled();
         await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });

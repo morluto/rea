@@ -134,7 +134,7 @@ export const readUnityFsHeader = async (
       `UnityFS format ${String(facts.formatVersion)} is unsupported; ${String(UNITYFS_FORMAT_VERSION_MIN)}-${String(UNITYFS_FORMAT_VERSION_MAX)} are supported`,
     );
   if (facts.declaredSize > BigInt(size))
-    throw unityFsFormatFailure("declared size exceeds the file");
+    throw unityFsTruncatedFailure("declared size exceeds the file");
   if (facts.declaredSize < BigInt(facts.afterFixed))
     throw unityFsFormatFailure("declared size excludes the header");
   const declaredSize = Number(facts.declaredSize);

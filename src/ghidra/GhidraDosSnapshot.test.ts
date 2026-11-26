@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256 as hash } from "../../tests/support/sha256.js";
 import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
@@ -8,9 +8,6 @@ import {
   fixtureDosOverlapLoadImage,
 } from "./GhidraLoadImage.fixture.js";
 import { attestGhidraDosSnapshot } from "./GhidraDosSnapshot.js";
-
-const hash = (bytes: Buffer) =>
-  createHash("sha256").update(bytes).digest("hex");
 
 it.each([
   { reverseTable: false, observedWindow: "001410" },

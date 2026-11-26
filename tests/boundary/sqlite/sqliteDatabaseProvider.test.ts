@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { sha256 as digestForTest } from "../../support/sha256.js";
 import { execFile } from "node:child_process";
 import { access, lstat, readFile, symlink, writeFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
@@ -584,9 +585,6 @@ it.each(["late-cancellation", "cleanup-failure", "cancelled cleanup-failure"])(
     expect(Buffer.compare(await readFile(database.path), original)).toBe(0);
   },
 );
-
-const digestForTest = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 it("inspects committed WAL schema and rows while preserving every source artifact", async () => {
   const { database } = await createFixture(true);

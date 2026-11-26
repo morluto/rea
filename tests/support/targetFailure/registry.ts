@@ -27,6 +27,11 @@ export interface TargetFailureCase {
 export interface TargetFailureReader {
   /** The MCP tool name; the CLI command is its kebab-case spelling. */
   readonly operation: string;
+  /**
+   * The MCP tool reads the session's open target, so the suite opens the
+   * selected file with `open_binary` first. The CLI command takes the path.
+   */
+  readonly session?: true;
   readonly cases: readonly TargetFailureCase[];
 }
 

@@ -9,7 +9,7 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
+  AnalysisTargetFailureError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { Il2cppMetadataProvider } from "../../../src/il2cpp/Il2cppMetadataProvider.js";
@@ -195,7 +195,7 @@ it.each([
     const result = await inspectMetadata(path);
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error).toBeInstanceOf(AnalysisUnsupportedTargetError);
+    expect(result.error).toBeInstanceOf(AnalysisTargetFailureError);
     expect(result.error.partialObservation).toMatchObject({
       normalized_result: { artifact: { path, bytes: bytes.length } },
     });
@@ -873,10 +873,12 @@ it.each([false, true])(
       expect(result).toMatchObject({
         ok: false,
         error: {
-          _tag: "AnalysisUnsupportedTargetError",
-          reason: expect.stringContaining(
-            "generic method instances are not decoded for metadata version 39",
-          ),
+          _tag: "AnalysisTargetFailureError",
+          failure: {
+            detail: expect.stringContaining(
+              "generic method instances are not decoded for metadata version 39",
+            ),
+          },
         },
       });
       const ordinary = await provider.inspect({ path, binary_path }, options);

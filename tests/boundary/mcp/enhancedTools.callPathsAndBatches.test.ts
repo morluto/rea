@@ -25,7 +25,10 @@ import {
   connect,
   jsonResult,
 } from "./enhancedToolsHarness.js";
-import { observed as ok } from "../../fixtures/analysisExecution.js";
+import {
+  createFixtureProviderIdentity,
+  observed as ok,
+} from "../../fixtures/analysisExecution.js";
 
 afterEach(closeEnhancedToolResources);
 
@@ -35,14 +38,10 @@ const relationshipExecution = (
   relationshipCoverage?: RelationshipCoverage,
 ) =>
   resultOk(
-    createAnalysisExecution(
-      result,
-      { id: "fixture", name: "Fixture analysis provider", version: "1" },
-      {
-        limitations,
-        ...(relationshipCoverage === undefined ? {} : { relationshipCoverage }),
-      },
-    ),
+    createAnalysisExecution(result, createFixtureProviderIdentity(), {
+      limitations,
+      ...(relationshipCoverage === undefined ? {} : { relationshipCoverage }),
+    }),
   );
 
 describe("enhanced MCP relationship limitations", () => {
@@ -696,7 +695,7 @@ describe("enhanced MCP batch answers without pseudocode", () => {
         return resultOk(
           createAnalysisExecution(
             answer.result,
-            { id: "fixture", name: "Fixture analysis provider", version: "1" },
+            createFixtureProviderIdentity(),
             { limitations: answer.limitations },
           ),
         );

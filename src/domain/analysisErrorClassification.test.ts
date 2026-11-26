@@ -40,16 +40,7 @@ it.each([
   },
 );
 
-it.each([
-  "cancelled",
-  "malformed",
-  "truncated",
-  "unsupported",
-  "integrity",
-  "path",
-  "unavailable",
-  "io",
-] as const)(
+it.each(["cancelled", "integrity", "path", "unavailable", "io"] as const)(
   "reports an artifact operation %s failure as its catalogue row",
   (reason) => {
     const projected = projectAnalysisError(

@@ -33,7 +33,7 @@ import {
   readStableArtifact,
   ArtifactResourceScope,
   ArtifactReaderFailure,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   bindArtifactFileCleanup,
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
@@ -51,13 +51,11 @@ import {
 import {
   type AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
-  AnalysisUnsupportedTargetError,
-  AnalysisInputError,
   AnalysisTargetFailureError,
   AnalysisOutputError,
   cancelledBy,
-  carriedReason,
   type AbortedSignal,
+  unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
 import { isAbortOf } from "../process/SignalAbort.js";
 import {
@@ -265,7 +263,7 @@ const replySchema = z.discriminatedUnion("ok", [
   }),
   z.strictObject({
     ok: z.literal(false),
-    reason: z.enum(["format", "decoder", "output-limit", "unsupported"]),
+    reason: z.enum(["malformed", "decoder", "output-limit", "unsupported"]),
     message: z.string(),
   }),
 ]);
@@ -407,11 +405,7 @@ const evmReplyCompletionFailure = (
 ): AnalysisError => {
   const cancellation =
     cause.reason === "cancelled"
-      ? cancelledBy(
-          OPERATION,
-          carriedReason(artifactFileCancellationCause(cause)),
-          { capturedOutput },
-        )
+      ? artifactFileCancellationError(OPERATION, cause, { capturedOutput })
       : undefined;
   if (cause.cleanup === undefined) {
     if (cancellation !== undefined) return cancellation;
@@ -722,11 +716,10 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           cause instanceof ArtifactReaderFailure &&
           cause.reason === "cancelled"
         ) {
-          const failure = cancelledBy(
-            OPERATION,
-            carriedReason(artifactFileCancellationCause(cause)),
-            { capturedOutput, ...(cleanup === undefined ? {} : { cleanup }) },
-          );
+          const failure = artifactFileCancellationError(OPERATION, cause, {
+            capturedOutput,
+            ...(cleanup === undefined ? {} : { cleanup }),
+          });
           if (cause instanceof ArtifactReaderFailure)
             bindArtifactFileCleanup(cause, failure);
           throw failure;
@@ -759,14 +752,15 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
       }
       if (!reply.ok) {
         if (reply.reason === "unsupported")
-          throw new AnalysisUnsupportedTargetError(
+          throw unsupportedTarget(
             OPERATION,
             input.path,
+            "evm-bytecode",
             reply.message,
             { capturedOutput },
           );
         // The worker rejected the selected bytecode, not the request.
-        if (reply.reason === "format")
+        if (reply.reason === "malformed")
           throw new AnalysisTargetFailureError(
             OPERATION,
             input.path,

@@ -296,6 +296,121 @@ same effective setting so readiness changes along with repair and reset.
 `REA_NATIVE_MATCHING_REPRESENTATION_BYTES` is validated the same way, by
 `match_native_functions` alone.
 
+## Agent result budget
+
+`delivery.agent_result_budget_bytes` is a delivery budget, not an admission
+limit. It defaults to 32,768 compact JSON bytes. Claude Code moves MCP
+results above 25,000 tokens out of context, and dense JSON (addresses,
+digests, identifiers) measured about 2.9 bytes per token there, so the
+default is about 11,000 tokens: under half the cap, with room for the
+delivery facts. Token figures in delivery facts use an estimate of 3 bytes
+per token, not a tokenizer measurement. The budget applies to tools with a
+`detail` selector when the caller omits `detail`, on MCP and the CLI; it is
+the only size that chooses between complete and summary delivery. An MCP
+session summarizes only when it retains Evidence and advertises
+`inspect_analysis_view`, which pages the summary; otherwise it delivers the
+complete Evidence. Its launch seed, `REA_AGENT_RESULT_BUDGET_BYTES`, also
+sets it for one-shot CLI invocations; an invalid seed leaves delivery
+unbudgeted (complete, as before) rather than falling back to the default,
+and settings inspection reports it. The stdio frame limit,
+`REA_MCP_MAX_RESPONSE_BYTES`, stays a separate transport safety net.
+
+When complete Evidence fits, it is delivered inline as before. When it does
+not, the work is never refused or truncated:
+
+- MCP retains the complete Evidence in the session and returns the
+  operation's summary view, the same record `detail: "summary"` returns, so
+  its identity holds wherever a summary is accepted. The delivery facts
+  travel beside it, in a second text block `{"delivery": …}` and in
+  `_meta["rea/agent-budget-delivery"]`: `budget_bytes`, `budget_source`, the
+  range, `complete_bytes`, `estimated_complete_tokens`, `evidence_id`,
+  `retained`, `next` (the exact `inspect_analysis_view` call that pages the
+  complete record) and a `note` with the recovery.
+- `inspect_analysis_view` with view
+  `{kind: "evidence-json", offset, limit}` pages the exact JSON text of the
+  retained record in UTF-16 code units. It is the recovery every client can
+  follow. Joining every page in offset order
+  reproduces it exactly, and no page splits a surrogate pair. With `limit`
+  omitted a page holds at most 24,576 bytes of escaped UTF-8 text, so with
+  its view Evidence it fits the default budget for any characters; an explicit `limit` counts code units,
+  up to 1,048,576. The producer's own views (`managed-members`, `inventory`
+  and so on) select facts more cheaply.
+- For clients that read MCP resources, the summary also carries a
+  `resource_link` to `rea://evidence/<evidence_id>`, named
+  `complete-evidence`, whose `size` is the complete record's UTF-8 JSON
+  bytes. `resources/read` returns the record's exact JSON in one read, the
+  same text the cursor pages. The `rea://evidence/{evidence_id}` template
+  appears in `resources/templates/list`, not `resources/list`, and reads any
+  record the session retains. An ID the session does not retain (unknown,
+  from another session, or cleared by `reset_investigation`) is refused with
+  `-32602`. A record whose escaped read is too large for one response on
+  the connection (`REA_MCP_MAX_RESPONSE_BYTES`, or REA's single-string
+  limit) gets no link, and a read of it is refused with `-32600` and
+  `data.next`, the cursor. The link and the read use the same check. Claude Code 2.1 shows the link
+  to the model as one line, about 70 tokens, and never reads it by itself;
+  when the model reads it, Claude Code saves a large read to a file and
+  shows a preview.
+- The CLI with `--evidence_output` prints
+  `{"summary", "evidence_bundle", "delivery"}`, whose `delivery.next` names
+  the bundle as an `evidence-file` source.
+- Without `--evidence_output`, the one-shot CLI keeps the complete Evidence
+  in its private retained-Evidence cache and prints the same three fields,
+  with `retained: "cache-file"`. `evidence_bundle` gives the bundle file's path
+  and size, and `record_sha256`, the digest of the complete record it holds
+  (the file is the bundle around that record, so its own digest differs). `delivery.next` pages it with
+  `rea inspect-analysis-view`, so the analysis never has to run again.
+  Composed commands keep the source records the bundle needs, as they do
+  for `--evidence_output`.
+  - **Location:** `rea/evidence` under the user cache directory
+    (`~/Library/Caches` on macOS, `XDG_CACHE_HOME` or `~/.cache` elsewhere).
+    The directory is created `0700` and must be a real directory the user
+    owns, never a symbolic link; files are created exclusively as `0600` by
+    the Evidence bundle writer.
+  - **Key and lifetime:** each file is named by the SHA-256 of the complete
+    record's exact JSON, so it covers every input and caller choice the
+    record holds, including caller paths the Evidence ID leaves out. A
+    repeat run reuses the file and never rewrites it. A repeat run, or a
+    `rea inspect-analysis-view` read of the file, renews its age. Each
+    retention removes records unused for 7 days, then the least recently
+    used until the cache fits `delivery.cli_retained_evidence_bytes`
+    (default 268,435,456 bytes, launch seed
+    `REA_CLI_RETAINED_EVIDENCE_BYTES`), skipping any record used since it
+    was listed. A record or bundle larger than the cache is not kept.
+  - **Opt out:** `--no-retain` for one run, or
+    `REA_CLI_RETAINED_EVIDENCE_BYTES=0` for every run that environment
+    reaches. An invalid seed also retains nothing, and settings inspection
+    reports it. The MCP server ignores this setting: its session retains
+    over-budget Evidence instead.
+  - **Fallback:** when nothing is kept (opted out, too large, a cache path
+    that holds a value marked sensitive, or the save failed), the CLI writes
+    nothing and prints `{"summary", "delivery"}`
+    with `retained: "not-retained"`. `delivery.retention_failure` says why a
+    save failed, and `delivery.rerun` gives the arguments to add to the
+    original command as argv arrays: `complete` (`["--detail", "complete"]`)
+    and `retained` (`["--evidence_output", "<new-bundle-path>"]`). The
+    analysis never fails because of retention. A save that published the
+    file but then failed (staging cleanup or cancellation) reports that
+    failure and its cleanup state, as `--evidence_output` does. Caller inputs are never
+    echoed, since they can carry access credentials; the note names both.
+
+A failure's own facts (code, `failure_kind`, retry, recovery and limits)
+are never budgeted. Its `details.partial_observation`, the complete Evidence
+of work that finished before the failure, gets the same decision with the
+budget the rest of the failure leaves. When it fits, it is delivered as
+before: inline, or on MCP as a `retained-evidence` reference when the
+session retained it. When it does not fit, it is replaced by its summary
+view, and `details.partial_observation_delivery` carries the same delivery
+facts as a successful result. On MCP the session retains the complete
+partial Evidence, `next` pages it, and a `resource_link` to it follows
+the error text when one read can deliver it. On the CLI, `--evidence_output`
+publishes it and `next` names the bundle. Without `--evidence_output`,
+nothing is written and `rerun` names the arguments to add.
+
+Recovery: pass `detail: "complete"` (CLI `--detail complete`) for everything
+inline on one call, or raise the setting for the runtime with
+`update_analysis_settings`. An operation without a summary view, or with no
+retained session, keeps complete delivery.
+
 ## Keep a fixed ceiling honest
 
 A fixed ceiling is the exception. Keep one only for a stated format, protocol,

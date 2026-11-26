@@ -1,13 +1,12 @@
 import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
 import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
 import { createHash } from "node:crypto";
-import { truncate, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { truncate } from "node:fs/promises";
 import { buffer } from "node:stream/consumers";
 import { scheduler } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
 
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactReader.js";
 import {
@@ -22,14 +21,8 @@ import {
   ANDROID_OTA_MAX_SIGNATURE_BYTES,
 } from "../domain/firmware/androidOtaPayload.js";
 
-const fixture = async (bytes: Buffer): Promise<string> => {
-  const path = join(
-    await createTestTempDirectory("rea-android-ota-boundary-"),
-    "payload.bin",
-  );
-  await writeFile(path, bytes);
-  return path;
-};
+const fixture = (bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-android-ota-boundary-", "payload.bin", bytes);
 
 it("reports the unsupported version at explicit OTA reader admission", async () => {
   const reader = new AndroidOtaPayloadArtifactReader(

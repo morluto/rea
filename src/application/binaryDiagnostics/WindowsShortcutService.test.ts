@@ -1,3 +1,4 @@
+import { expectInvalidInspectionInputs } from "../../../tests/support/expectInvalidInspectionInputs.js";
 import { lateCancellationEvidence } from "../../../tests/support/lateCancellationEvidence.js";
 import { expect, it } from "vitest";
 import { WindowsShortcutService } from "./WindowsShortcutService.js";
@@ -6,10 +7,7 @@ import { createHash } from "node:crypto";
 import { inspectWindowsShortcutInputSchema } from "../../domain/native/windowsShortcut.js";
 import { parseWindowsShortcut } from "../../native/windows/WindowsShortcutParser.js";
 import { ok } from "../../domain/result.js";
-import {
-  AnalysisInputError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 
 const identity = WINDOWS_SHORTCUT_PROVIDER;
 
@@ -28,26 +26,12 @@ const report = await parseWindowsShortcut(
   inspectWindowsShortcutInputSchema.parse({ path }),
 );
 
-it("rejects a relative path and extra arguments before reading", async () => {
-  let calls = 0;
-  const service = new WindowsShortcutService({
-    identity,
-    inspect: () => {
-      calls += 1;
-      return Promise.resolve(ok(report));
-    },
-  });
-  const relative = await service.inspect({ path: "shortcut.lnk" });
-  const extra = await service.inspect({
-    path: report.artifact.path,
-    extra: true,
-  });
-  expect(relative.ok).toBe(false);
-  expect(extra.ok).toBe(false);
-  if (!relative.ok) expect(relative.error).toBeInstanceOf(AnalysisInputError);
-  if (!extra.ok) expect(extra.error).toBeInstanceOf(AnalysisInputError);
-  expect(calls).toBe(0);
-});
+it("rejects a relative path and extra arguments before reading", () =>
+  expectInvalidInspectionInputs(
+    report,
+    "shortcut.lnk",
+    (inspect) => new WindowsShortcutService({ identity, inspect }),
+  ));
 
 it("records the selected shortcut as a file subject", async () => {
   const result = await new WindowsShortcutService({

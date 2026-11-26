@@ -1,11 +1,4 @@
-import {
-  mkdtemp,
-  open,
-  rm,
-  writeFile,
-  type FileHandle,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { open, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -13,7 +14,7 @@ import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
-import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { inspectVerifierGhidraFromEnvironment } from "./lib/ghidra-installation-inspection.mjs";
 import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraReleasePolicy.js";
 import {
   buildRiscvFixture,
@@ -42,6 +43,10 @@ import {
 } from "./lib/verifier-run.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 if (process.argv.length !== 2)
   throw new Error("Usage: node scripts/verify-real-ghidra-riscv.mjs");
@@ -54,13 +59,7 @@ for (const key of ["REA_GHIDRA_LANGUAGE_ID", "REA_GHIDRA_COMPILER_SPEC_ID"])
     throw new Error(
       `Unset ${key}: this lane verifies provider-pinned selection.`,
     );
-const installation = await inspectVerifierGhidraInstallation({
-  environment: process.env,
-  installDir: process.env.GHIDRA_INSTALL_DIR,
-  ...(process.env.JAVA_HOME === undefined
-    ? {}
-    : { javaHome: process.env.JAVA_HOME }),
-});
+const installation = await inspectVerifierGhidraFromEnvironment(process.env);
 assert.equal(installation.status, "available", JSON.stringify(installation));
 assert.equal(installation.providerVersion, SUPPORTED_GHIDRA_VERSION);
 
@@ -99,7 +98,9 @@ const transport = new StdioClientTransport({
   env: env,
   stderr: "pipe",
 });
-const client = new Client({ name: "rea-real-riscv-proof", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "rea-real-riscv-proof", version: "1" }),
+);
 let stderr = "";
 transport.stderr?.on("data", (chunk) => {
   stderr = (stderr + chunk.toString()).slice(-65536);
@@ -308,12 +309,7 @@ const verifyUnmodelledRefusal = async () => {
       );
     },
   );
-  assert.equal(
-    createHash("sha256")
-      .update(await readFile(fixture.path))
-      .digest("hex"),
-    fixture.sha256,
-  );
+  assert.equal(await sha256File(fixture.path), fixture.sha256);
   return {
     path: fixture.path,
     sha256: fixture.sha256,
@@ -551,6 +547,7 @@ try {
     });
     assert.equal(global.bytes_hex, "07000000");
     const callees = await call("procedure_callees", {
+      detail: "complete",
       procedure: addressFor("rea_riscv_entry"),
     });
     for (const name of abi
@@ -657,12 +654,14 @@ try {
         process.execPath,
         [
           entrypoint,
-          command,
-          fixture.path,
-          ...arguments_,
-          "--provider",
-          "ghidra",
-          "--json",
+          ...(await completeEvidenceCliArguments([
+            command,
+            fixture.path,
+            ...arguments_,
+            "--provider",
+            "ghidra",
+            "--json",
+          ])),
         ],
         { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
       );
@@ -759,12 +758,14 @@ try {
         );
         const cliArguments = [
           entrypoint,
-          "function",
-          mutatedPath,
-          "rea_riscv_entry",
-          "--provider",
-          "ghidra",
-          "--json",
+          ...(await completeEvidenceCliArguments([
+            "function",
+            mutatedPath,
+            "rea_riscv_entry",
+            "--provider",
+            "ghidra",
+            "--json",
+          ])),
         ];
         const cliOptions = {
           env,
@@ -817,12 +818,7 @@ try {
         headers.push({ flags, outcome: "refused", reason: outcome });
       }
     }
-    assert.equal(
-      createHash("sha256")
-        .update(await readFile(fixture.path))
-        .digest("hex"),
-      fixture.sha256,
-    );
+    assert.equal(await sha256File(fixture.path), fixture.sha256);
     reports.push({
       path: fixture.path,
       sha256: fixture.sha256,
@@ -1187,12 +1183,7 @@ try {
     !`${headless.stdout}\n${headless.stderr}`.includes("ANALYZING"),
     headless.stdout,
   );
-  assert.equal(
-    createHash("sha256")
-      .update(await readFile(esp.path))
-      .digest("hex"),
-    esp.sha256,
-  );
+  assert.equal(await sha256File(esp.path), esp.sha256);
 
   // A reservation named like the default space still moves into an overlay
   // space, named as Ghidra's memory map names overlay blocks.

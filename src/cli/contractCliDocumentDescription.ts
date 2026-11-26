@@ -24,8 +24,10 @@ import type {
 import {
   admitsOmission,
   core,
+  describeCliOnlyOption,
   describeSessionTarget,
   projectedCommand,
+  selectCliOptionValues,
   viewOptionHelp,
 } from "./contractCliSchemaProjection.js";
 
@@ -228,7 +230,7 @@ const admitDocumentDelivery = (
   }
   const detail =
     (values.detail as "complete" | "summary" | undefined) ??
-    (view === undefined ? "complete" : "summary");
+    (view === undefined ? undefined : "summary");
   const delivery: CliEvidenceDeliveryChoice = {
     detail,
     evidenceOutput: values.evidence_output as string | undefined,
@@ -308,11 +310,7 @@ export const describeContractDocumentCommand = <
       : {
           view: z.string().optional().describe(viewOptionHelp(viewDelivery)),
         }),
-  }).map(([key, schema]: [string, z.ZodType]) => ({
-    key,
-    description: schema.description,
-    schema,
-  }));
+  }).map(describeCliOnlyOption);
   const sessionTarget = describeSessionTarget(projection.sessionTarget);
   const keys = [
     DOCUMENT_KEY,
@@ -361,16 +359,7 @@ export const describeContractDocumentCommand = <
           )
         : ok(undefined),
     sessionTarget,
-    cliOnlyOptions: Object.entries(cliOptions).map(([key, schema]) => ({
-      key,
-      description: schema.description,
-      schema,
-    })),
-    cliOptionValues: (values) =>
-      Object.fromEntries(
-        Object.keys(cliOptions).flatMap((key) =>
-          values[key] === undefined ? [] : [[key, values[key]]],
-        ),
-      ),
+    cliOnlyOptions: Object.entries(cliOptions).map(describeCliOnlyOption),
+    cliOptionValues: (values) => selectCliOptionValues(cliOptions, values),
   };
 };

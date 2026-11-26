@@ -1,14 +1,8 @@
-import {
-  bridgeCandidateCoverageSchema,
-  projectCartesianCandidates,
-} from "../bridgeCandidateProjection.js";
+import { bridgeCandidateCoverageSchema } from "../bridgeCandidateProjection.js";
 import { z } from "zod";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 
-import {
-  hasCompleteInventoryCoverage,
-  type ParsedInventorySet,
-} from "../artifactInventoryEvidence.js";
+import type { ParsedInventorySet } from "../artifactInventoryEvidence.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { nativeRuntimeConvention } from "../nativeConvention.js";
@@ -17,7 +11,9 @@ import {
   projectedComponentSchema,
   projectedInventoryEntries,
   projectedFileComponents,
+  projectManagedNativeCandidates,
   projectionCoverage,
+  projectionCoverageSchema,
   projectionEvidenceIdSchema,
   unavailableComponentSchema,
 } from "../mobileApplicationGraphProjection.js";
@@ -62,11 +58,7 @@ export const androidApplicationProjectionResultSchema = z.strictObject({
     ] as const),
   ),
   bridge_candidate_coverage: bridgeCandidateCoverageSchema,
-  coverage: z.strictObject({
-    status: z.enum(["complete-within-inventory", "partial"]),
-    // Count completeness is separate from the declared coverage status.
-    inventory_complete: z.boolean(),
-  }),
+  coverage: projectionCoverageSchema,
   limitations: z.array(z.string()),
 });
 
@@ -102,18 +94,21 @@ export const projectAndroidInventory = (
   const unavailable = entries.flatMap(({ unavailable }) =>
     unavailable === undefined ? [] : [unavailable],
   );
-  const classified = classify(all);
-  const bridgeProjection = bridgeCandidates(
-    [...classified.dex, ...classified.jvm_classes],
-    classified.native_libraries,
+  const components = classify(all);
+  const bridgeProjection = projectManagedNativeCandidates(
+    [...components.dex, ...components.jvm_classes],
+    components.native_libraries,
+    bridgeBasis,
   );
-  const components = classified;
+  const { coverage, sourceLimitations, bridgeLimitations } = projectionCoverage(
+    inventory,
+    bridgeProjection.coverage,
+    unavailable.length,
+  );
   const limitations = [
     ...unresolved,
     ...inventory.limitations,
-    ...(!hasCompleteInventoryCoverage(inventory, "container-entries")
-      ? ["Source inventory coverage is partial; absence is unknown."]
-      : []),
+    ...sourceLimitations,
     "Manifest, resource, signing, and bytecode semantics require a dedicated Android provider; this projection reports exact inventory paths and hashes only.",
     "Runtime families are inferred from inventory formats and paths; filename suffixes do not establish valid DEX or JVM class bytes.",
     "Bridge candidates are path-based hypotheses, not decoded JNI declarations or observed runtime calls.",
@@ -127,11 +122,7 @@ export const projectAndroidInventory = (
       : [
           "No root AndroidManifest.xml occurrence was observed. The APK family comes from the .apk suffix of a ZIP archive, so these bytes may not be an APK.",
         ]),
-    ...(bridgeProjection.coverage.status === "partial"
-      ? [
-          `Bridge candidate pairs exceeded the projection safety budget; ${bridgeProjection.coverage.omitted_candidates} hypotheses are omitted. Component arrays still include every component from the supplied inventory pages.`,
-        ]
-      : []),
+    ...bridgeLimitations,
     ...(unavailable.length > 0
       ? [
           "Some inventoried occurrences have no authenticated content identity. Their paths and limitations are retained in unavailable_components; component absence is unknown.",
@@ -146,14 +137,10 @@ export const projectAndroidInventory = (
       .sort(compareUnicodeCodePoints),
     components,
     unavailable_components: unavailable,
-    runtime_families: runtimeFamilies(classified),
+    runtime_families: runtimeFamilies(components),
     bridge_candidates: bridgeProjection.candidates,
     bridge_candidate_coverage: bridgeProjection.coverage,
-    coverage: projectionCoverage(
-      inventory,
-      bridgeProjection.coverage.status === "complete" &&
-        unavailable.length === 0,
-    ),
+    coverage,
     limitations,
   };
   return ok(
@@ -215,20 +202,6 @@ const runtimeFamilies = (
     if (convention !== null) families.add(convention);
   }
   return [...families].sort(compareUnicodeCodePoints);
-};
-
-const bridgeCandidates = (
-  managed: readonly Component[],
-  native: readonly Component[],
-) => {
-  return projectCartesianCandidates({
-    groups: [{ left: managed, right: native }],
-    createCandidate: (managed_path, target) => ({
-      managed_path,
-      native_path: target.path,
-      basis: bridgeBasis(target.path),
-    }),
-  });
 };
 
 const bridgeBasis = (

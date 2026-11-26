@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import * as t from "@babel/types";
 import { semanticKnownSymbolKey } from "./javascriptSemanticPropertyKeys.js";
 import {
@@ -572,9 +573,7 @@ const objectPropertyIndex = (node: t.ObjectExpression): ObjectPropertyIndex => {
       keyIndependent.push(index);
       return;
     }
-    const positions = byName.get(name);
-    if (positions === undefined) byName.set(name, [index]);
-    else positions.push(index);
+    appendToMapList(byName, name, index);
   });
   const index = { keyIndependent, byName };
   propertyIndexes.set(node, index);

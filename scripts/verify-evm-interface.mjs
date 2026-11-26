@@ -20,6 +20,10 @@ import {
   completeVerifierRun,
 } from "./lib/verifier-run.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 const manifest = JSON.parse(
   await readFile(new URL("../package.json", import.meta.url), "utf8"),
@@ -63,7 +67,9 @@ const environment = Object.fromEntries(
   Object.entries(process.env).filter(([, value]) => typeof value === "string"),
 );
 const root = await VerifierFixture.open({ prefix: "rea-evm-verifier-" });
-const client = new Client({ name: "evm-interface-verifier", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "evm-interface-verifier", version: "1" }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -94,10 +100,12 @@ try {
           [
             ...scope.prefix,
             entrypoint,
-            "inspect-evm-interface",
-            path,
-            encoding,
-            "--json",
+            ...(await completeEvidenceCliArguments([
+              "inspect-evm-interface",
+              path,
+              encoding,
+              "--json",
+            ])),
           ],
           {
             env: scope.environment ?? environment,
@@ -113,7 +121,7 @@ try {
     } else {
       const reply = await scope.client.callTool({
         name: "inspect_evm_interface",
-        arguments: { path, encoding },
+        arguments: { detail: "complete", path, encoding },
       });
       value =
         expectedCategory !== undefined
@@ -313,7 +321,8 @@ try {
       assert.equal(failure.code, "unsupported_target");
       assert.equal(failure.details.path, path);
       assert.match(failure.details.reason, /EF00/);
-      assert.match(failure.remediation.action, /target format/);
+      assert.equal(failure.details.failure_kind, "unsupported");
+      assert.equal(failure.details.format, "evm-bytecode");
       cases++;
     }
   }
@@ -350,10 +359,12 @@ try {
       process.execPath,
       "--disable-wasm-trap-handler",
     ];
-    const limitedClient = new Client({
-      name: "limited-evm-verifier",
-      version: "1",
-    });
+    const limitedClient = completeEvidenceClient(
+      new Client({
+        name: "limited-evm-verifier",
+        version: "1",
+      }),
+    );
     const limitedTransport = new StdioClientTransport({
       command: limiter,
       args: [...prefix, entrypoint, "mcp"],
@@ -415,10 +426,12 @@ try {
       ...environment,
       REA_EVM_PRLIMIT_COMMAND: limiter,
     };
-    const selectedClient = new Client({
-      name: "unavailable-evm-limiter-verifier",
-      version: "1",
-    });
+    const selectedClient = completeEvidenceClient(
+      new Client({
+        name: "unavailable-evm-limiter-verifier",
+        version: "1",
+      }),
+    );
     const selectedTransport = new StdioClientTransport({
       command: process.execPath,
       args: [entrypoint, "mcp"],
@@ -492,10 +505,12 @@ try {
         join(root.path, `offline.trace.${name}`),
         process.execPath,
         entrypoint,
-        "inspect-evm-interface",
-        join(root.path, name),
-        encoding,
-        "--json",
+        ...(await completeEvidenceCliArguments([
+          "inspect-evm-interface",
+          join(root.path, name),
+          encoding,
+          "--json",
+        ])),
       ],
       {
         env: { ...environment, PATH: "/usr/bin:/bin" },

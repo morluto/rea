@@ -4,10 +4,8 @@ import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { RegularFileCleanupFailure } from "../../../src/filesystem/OwnedRegularFile.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
-import {
-  createJadxProtocolFixture,
-  verifyJadxFixtureCleanup,
-} from "../../fixtures/android/jadx.js";
+import { expectProviderLaunchCleanup } from "../../support/process/expectProviderLaunchCleanup.js";
+import { createJadxProtocolFixture } from "../../fixtures/android/jadx.js";
 
 it("resolves descriptor uncertainty after an immediate owned hash close retry", async () => {
   const { apk, provider, launches } = await createJadxProtocolFixture();
@@ -44,7 +42,7 @@ it("resolves descriptor uncertainty after an immediate owned hash close retry", 
   } finally {
     close.mockRestore();
     await provider.close();
-    await verifyJadxFixtureCleanup(launches);
+    await expectProviderLaunchCleanup(launches);
   }
 });
 
@@ -92,6 +90,6 @@ it("keeps hash cleanup live until the exact retained descriptor closes", async (
     allowClose = true;
     await provider.close();
     close.mockRestore();
-    await verifyJadxFixtureCleanup(launches);
+    await expectProviderLaunchCleanup(launches);
   }
 });

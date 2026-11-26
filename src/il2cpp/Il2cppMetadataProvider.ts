@@ -19,6 +19,7 @@ import type { AnalysisPartialObservation } from "../domain/analysisErrorBase.js"
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { setImmediate } from "node:timers/promises";
 import {
+  closeArtifactResources,
   readStableArtifact,
   type StableArtifactSnapshot,
   ArtifactResourceScope,
@@ -29,10 +30,9 @@ import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   artifactFileCompletion,
-  bindArtifactFileCleanup,
+  withArtifactCleanupFailure,
   assertArtifactReadActive,
 } from "../resources/index.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { Il2cppMetadataPort } from "../ports/il2cpp/Il2cppMetadataPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -59,7 +59,6 @@ import {
 import { ELF_VIRTUAL_POINTER_INDEX_LIMIT } from "../domain/native/elfPointerRelocations.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   readIl2cppMetadataForLinkingSteps,
@@ -227,23 +226,18 @@ const failureFor = (
     maximum,
     metadataPath,
   );
+  if (!(cause instanceof ArtifactReaderFailure)) return primary;
   if (
-    cause instanceof ArtifactReaderFailure &&
     cause.partialObservation !== undefined &&
     primary.partialObservation === undefined
   )
     primary.retainPartialObservation(cause.partialObservation);
-  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
-    return primary;
-  const cleanup = new ProviderCleanupError(
+  return withArtifactCleanupFailure(
+    cause,
+    primary,
     IL2CPP_METADATA_PROVIDER_IDENTITY.id,
-    cause.cleanup.resources,
-    { reason: cause.cleanup.reason },
-    { operation: OPERATION, cause },
+    OPERATION,
   );
-  const error = analysisErrorWithCleanupFailure(primary, cleanup, OPERATION);
-  bindArtifactFileCleanup(cause, error);
-  return error;
 };
 
 /** Report fields for a linked binary, with addresses as exact hexadecimal strings. */
@@ -421,25 +415,15 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
     private readonly yieldControl: () => Promise<void> = setImmediate,
   ) {}
 
-  async close(): Promise<void> {
-    this.#admissionStopped = true;
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      if (
-        !(cause instanceof ArtifactReaderFailure) ||
-        cause.cleanup === undefined
-      )
-        throw cause;
-      const error = new ProviderCleanupError(
-        IL2CPP_METADATA_PROVIDER_IDENTITY.id,
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        { cause, operation: OPERATION },
-      );
-      bindArtifactFileCleanup(cause, error);
-      throw error;
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => {
+        this.#admissionStopped = true;
+        return this.#resources.close();
+      },
+      IL2CPP_METADATA_PROVIDER_IDENTITY,
+      OPERATION,
+    );
   }
 
   /** Read every image, type and method name from one stable file snapshot. */

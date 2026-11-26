@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256 as digest } from "../../support/sha256.js";
 import type { FileHandle } from "node:fs/promises";
 import { appendFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -33,8 +33,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const digest = (bytes: Buffer) =>
-  createHash("sha256").update(bytes).digest("hex");
 const prefixBytes = 65_536;
 const fixture = () => {
   const bytes = Buffer.alloc(prefixBytes * 2 + 257);

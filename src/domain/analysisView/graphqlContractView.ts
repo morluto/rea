@@ -10,7 +10,6 @@ import {
   type GraphqlContract,
 } from "../apiContract/graphqlContract.js";
 import { graphqlContractViewRequestSchema } from "../apiContract/graphqlContractQuery.js";
-import type { JsonValue } from "../jsonValue.js";
 import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {

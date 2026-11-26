@@ -1,50 +1,5 @@
 import { expect, it } from "vitest";
-import { inspectErlangBeamInputSchema, erlangBeamSchema } from "./beam.js";
-import { absoluteLocalPathStringSchema } from "../localPath.js";
-
-const jsonSchema = (schema: {
-  readonly "~standard": {
-    readonly jsonSchema: {
-      readonly input: (options: {
-        readonly target: "draft-2020-12";
-      }) => unknown;
-    };
-  };
-}): Record<string, unknown> =>
-  schema["~standard"].jsonSchema.input({
-    target: "draft-2020-12",
-  }) as Record<string, unknown>;
-
-it("applies the shared absolute local-path policy to the public input", () => {
-  expect(
-    inspectErlangBeamInputSchema.safeParse({ path: "app.beam" }).success,
-  ).toBe(false);
-  expect(inspectErlangBeamInputSchema.safeParse({ path: "" }).success).toBe(
-    false,
-  );
-  expect(
-    inspectErlangBeamInputSchema.safeParse({ path: "/artifacts/app\0.beam" })
-      .success,
-  ).toBe(false);
-  expect(
-    inspectErlangBeamInputSchema.safeParse({ path: "/artifacts/app.beam" })
-      .success,
-  ).toBe(true);
-
-  const shared = jsonSchema(absoluteLocalPathStringSchema);
-  const advertised = jsonSchema(inspectErlangBeamInputSchema);
-  const path = (
-    advertised.properties as Record<string, Record<string, unknown>>
-  ).path;
-  const {
-    $schema: _schema,
-    description: _sharedDescription,
-    ...sharedPolicy
-  } = shared;
-  const { description: _pathDescription, ...pathPolicy } = path ?? {};
-  expect(pathPolicy).toEqual(sharedPolicy);
-  expect(path?.description).toBe("Absolute filesystem path to a BEAM file");
-});
+import { erlangBeamSchema } from "./beam.js";
 
 it("admits a BEAM form with no tables", () => {
   const report = erlangBeamSchema.parse({

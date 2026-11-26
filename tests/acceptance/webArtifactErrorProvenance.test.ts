@@ -4,7 +4,10 @@ import { dirname, join } from "node:path";
 import { expect } from "vitest";
 
 import { lazyLocalToolsMcp } from "../fixtures/localToolsMcp.js";
-import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+import {
+  expectAdapterErrorParity,
+  parseMcpToolError,
+} from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { webModuleArtifactsFixture } from "../fixtures/webModuleTrace.js";
 import { cliTest } from "../support/cli/cliFixture.js";
@@ -119,19 +122,25 @@ cliTest(
           await call(selection.operation, selection.input),
         );
         for (const error of [response.json, mcp.error])
-          expect(error).toMatchObject({
-            code:
-              reason === "malformed"
-                ? "unsupported_target"
-                : "artifact_operation_failed",
-            details: {
-              operation: selection.operation,
-              reason,
-              detail: expect.stringContaining(
-                reason === "malformed" ? fixture.sourcePath : "../outside.js",
-              ),
-            },
-          });
+          expect(error).toMatchObject(
+            reason === "malformed"
+              ? {
+                  code: "unsupported_target",
+                  details: {
+                    operation: selection.operation,
+                    path: fixture.sourcePath,
+                    failure_kind: "malformed",
+                  },
+                }
+              : {
+                  code: "artifact_operation_failed",
+                  details: {
+                    operation: selection.operation,
+                    reason,
+                    detail: expect.stringContaining("../outside.js"),
+                  },
+                },
+          );
       }
     }
 
@@ -160,7 +169,11 @@ cliTest(
     expect(missing.json).not.toHaveProperty("normalized_result");
     const missingMcp = await call(location.operation, location.input);
     expect(missingMcp.structuredContent).toBeUndefined();
-    expect(parseMcpToolError(missingMcp).error).toEqual(missing.json);
+    expectAdapterErrorParity(
+      parseMcpToolError(missingMcp).error,
+      missing.json,
+      location.operation,
+    );
 
     const invalidBytes = Buffer.from([255, 254]);
     await writeFile(mapPath, invalidBytes);

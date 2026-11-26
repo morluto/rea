@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { matchesGlob } from "node:path";
 import { isLivingProsePath } from "../lib/docs-facts.mjs";
+import { mayGateTestToDarwin } from "./darwin-gate-candidates.mjs";
 import {
   CI_FLAGS as flags,
   MANUAL_VERIFIERS,
@@ -40,8 +41,16 @@ const FIXTURE_SOURCES = [
 // These reporters affect CI output only; they do not select a host or provider
 // verification lane when changed on their own.
 const PORTABLE_CI_REPORTERS = new Set([
+  "scripts/ci/artifacts.d.mts",
+  "scripts/ci/artifacts.mjs",
+  "scripts/ci/failure-report.d.mts",
+  "scripts/ci/failure-report.mjs",
+  "scripts/ci/github-api.d.mts",
+  "scripts/ci/github-api.mjs",
   "scripts/ci/job-timings.mjs",
   "scripts/ci/job-timings-batch.mjs",
+  "scripts/ci/pr-ci-health.d.mts",
+  "scripts/ci/pr-ci-health.mjs",
   "scripts/ci/test-report.mjs",
   "scripts/ci/test-timing-reporter.mjs",
   "scripts/ci/test-history.mjs",
@@ -106,6 +115,25 @@ const selectTypedLintFiles = (files, listCheckedOutFiles) => {
     TYPED_LINT_OUTPUT_MAX_BYTES
     ? selected
     : null;
+};
+
+/**
+ * The first changed test at `head` that may gate a test to macOS. A deleted
+ * test has nothing to run.
+ */
+const changedTestMayGateDarwin = (repository, head, files) => {
+  const changedTests = files.filter((file) =>
+    /^(src|tests)\/.*\.test\.ts$/u.test(file),
+  );
+  if (changedTests.length === 0) return undefined;
+  const present = new Set(repository.listFiles(head, []));
+  const sources = repository.readFiles(
+    head,
+    changedTests.filter((file) => present.has(file)),
+  );
+  for (const [file, source] of sources)
+    if (mayGateTestToDarwin(source)) return file;
+  return undefined;
 };
 
 /**
@@ -436,6 +464,15 @@ export function planChanges(request, repository) {
       // Disable rename detection so both the removed and added paths participate.
       files = repository.changedFiles(base, head);
       for (const file of files) classifyFile(file, base, head);
+      // Linux lanes skip a test gated to macOS, so a change to one runs the
+      // macOS lane that does.
+      const gated = selected.apple
+        ? undefined
+        : changedTestMayGateDarwin(repository, head, files);
+      if (gated !== undefined) {
+        selected.apple = true;
+        reasons.push(`Changed test may be gated to macOS: ${gated}`);
+      }
     }
     // Scheduled fast sweeps always execute the complete portable suite and
     // refresh test-timings-fast, even when only prose changed since the ancestor.
