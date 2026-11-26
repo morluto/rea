@@ -920,6 +920,131 @@ it("keeps a cleanup owner confirmed when a concurrent retry observed it incomple
   }
 });
 
+it("stops an owner registered during cleanup retry before admitting another command", async () => {
+  const { directory, path } = await createArtifact();
+  let releaseFirst: () => void = () => undefined;
+  const firstHeld = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  let releaseSecond: () => void = () => undefined;
+  const secondHeld = new Promise<void>((resolve) => {
+    releaseSecond = resolve;
+  });
+  let releaseVerifiedStop: (
+    value: Awaited<ReturnType<ProviderProcessSupervisor["stop"]>>,
+  ) => void = () => undefined;
+  const verifiedStop = new Promise<
+    Awaited<ReturnType<ProviderProcessSupervisor["stop"]>>
+  >((resolve) => {
+    releaseVerifiedStop = resolve;
+  });
+  const ownerA = {
+    stop: vi.fn(() => verifiedStop),
+  } as unknown as ProviderProcessSupervisor;
+  const ownerB = {
+    stop: vi.fn(async () => ({
+      status: "incomplete" as const,
+      reason: "owner b remains",
+    })),
+  } as unknown as ProviderProcessSupervisor;
+  const retained = (
+    reason: string,
+    resources: readonly string[],
+    owner: ProviderProcessSupervisor,
+  ) =>
+    new OwnedCommandFailure(
+      "process",
+      reason,
+      providerSnapshot({ exitCode: null }),
+      reason,
+      undefined,
+      resources,
+      owner,
+    );
+  let entered = 0;
+  const runOwned = vi.fn<typeof runOwnedCommand>(async () => {
+    entered += 1;
+    if (entered === 1) {
+      await firstHeld;
+      throw retained("owner a remains", ["owner-a", "pid:41"], ownerA);
+    }
+    if (entered === 2) {
+      await secondHeld;
+      throw retained("owner b remains", ["owner-b", "pid:42"], ownerB);
+    }
+    return providerSnapshot();
+  });
+  const service = new ReverseEngineeringService({ runOwned });
+  const pending: Array<Promise<unknown>> = [];
+  try {
+    const first = service.inspectWithObjdump({ path, operation: "symbols" });
+    pending.push(first);
+    await waitFor(() => expect(entered).toBe(1));
+    const second = service.inspectWithObjdump({ path, operation: "symbols" });
+    pending.push(second);
+    await waitFor(() => expect(entered).toBe(2));
+    releaseFirst();
+    expect(await first).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisOutputError",
+        cleanupIncomplete: true,
+        cleanup: { resources: ["owner-a", "pid:41"] },
+      },
+    });
+    const third = service.inspectWithObjdump({ path, operation: "symbols" });
+    pending.push(third);
+    await waitFor(() => expect(ownerA.stop).toHaveBeenCalledTimes(1));
+    releaseSecond();
+    expect(await second).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisOutputError",
+        cleanupIncomplete: true,
+        cleanup: { resources: ["owner-b", "pid:42"] },
+      },
+    });
+    releaseVerifiedStop({ status: "verified-cleanup" });
+    expect(await third).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisOutputError",
+        operation: "inspect_with_objdump",
+        cleanupIncomplete: true,
+        cleanup: {
+          reason: "owner b remains",
+          resources: ["owner-b", "pid:42"],
+        },
+      },
+    });
+    expect(entered).toBe(2);
+    expect(ownerB.stop).toHaveBeenCalledTimes(1);
+    // The admission that observed the incomplete stop binds the cleanup error.
+    // A later retry keeps that owner and its resources.
+    expect(await service.retryCleanup()).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisOutputError",
+        operation: "inspect_with_objdump",
+        cleanupIncomplete: true,
+        cleanup: {
+          reason: "owner b remains",
+          resources: ["owner-b", "pid:42"],
+        },
+      },
+    });
+    expect(ownerB.stop).toHaveBeenCalledTimes(2);
+    expect(ownerA.stop).toHaveBeenCalledTimes(1);
+  } finally {
+    releaseFirst();
+    releaseSecond();
+    releaseVerifiedStop({ status: "verified-cleanup" });
+    await Promise.allSettled(pending);
+    await service.close().catch(() => undefined);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 it("retains an objdump command's unverified process owner until a later inspection stops it", async () => {
   const { directory, path } = await createArtifact();
   let stopped = false;
