@@ -7,6 +7,8 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **native:** the PE retained-text, exception-directory entry and resource metadata refusals report details.limit instead of a fixed_ceiling refusal.
+* **native:** export inventory and retained-text refusals report details.limit for max_entries or max_text_bytes instead of a fixed_ceiling refusal, and MAX_NATIVE_EXPORT_ROWS is renamed DEFAULT_NATIVE_EXPORT_ROWS.
 * **native:** a DWARF decompression refusal reports details.limit for max_decompressed_bytes instead of a fixed_ceiling refusal.
 * **limits:** omitted input budgets for inspect_sqlite_database, inspect_go_binary, inspect_rust_binary and inspect_nuget_nupkg now admit larger files. Callers relying on the old default refusal must pass the old value explicitly.
 * **native:** inspect_devicetree's decoded-representation refusal reports reported_limits.boundary "max_decoded_bytes" with details.limit, instead of "decoded_bytes".
@@ -110,7 +112,9 @@
 * **mcp:** link retained Evidence from over-budget summaries ([#14603](https://github.com/morluto/rea/issues/14603)) ([fa65e51](https://github.com/morluto/rea/commit/fa65e51a24dc4c2983840af8d2ec119c28687cf7))
 * **metadata:** give NTFS, Maven report and NuGet budgets typed per-call controls ([#14629](https://github.com/morluto/rea/issues/14629)) ([4f66985](https://github.com/morluto/rea/commit/4f6698597884d709be8a98ec43f9f5320ae598ce))
 * **native:** give inspect_dwarf_units a per-call max_decompressed_bytes ([#14660](https://github.com/morluto/rea/issues/14660)) ([1cc655b](https://github.com/morluto/rea/commit/1cc655bbc0c17c7138a6457d069578fe93505d3a))
+* **native:** give inspect_native_exports per-call inventory, text and structure budgets ([#14658](https://github.com/morluto/rea/issues/14658)) ([4d3fa5a](https://github.com/morluto/rea/commit/4d3fa5a0802ea31c4dc1b2ad559562e63b8dd7a2))
 * **native:** give the native structural decoding allowance a per-call max_structure_bytes ([#14626](https://github.com/morluto/rea/issues/14626)) ([e540cbd](https://github.com/morluto/rea/commit/e540cbdafd8170701b07b4735f8a5da40e47e10e))
+* **native:** give the PE readers per-call text, entry and metadata budgets ([#14659](https://github.com/morluto/rea/issues/14659)) ([0aca049](https://github.com/morluto/rea/commit/0aca049128687828bddc32e8c4c0a39d7544c1ff))
 * **native:** report the stored RVA of PE exports ([bf8448c](https://github.com/morluto/rea/commit/bf8448cdfc90c4c077f03b877cf09ea150509092))
 * **native:** retain Apple bundle executable provenance ([b8995f8](https://github.com/morluto/rea/commit/b8995f81489dda3e7f8be61317f366b7fabd97c7))
 * **pe:** inspect x64 exception-directory function ranges ([#14254](https://github.com/morluto/rea/issues/14254)) ([a85859e](https://github.com/morluto/rea/commit/a85859e14790795f6d13000b173cb32c82c49813))
