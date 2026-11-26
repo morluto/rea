@@ -1,9 +1,30 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
-import { expect, it } from "vitest";
+import { join } from "node:path";
+import { writeFile } from "node:fs/promises";
+import { expect, it, onTestFinished } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
+import {
+  uefiRequestSchema,
+  type UefiNvramInspectResult,
+} from "../domain/uefi/uefiFirmwareAnalysis.js";
 import { scanEdk2VariableStores } from "./UefiEdk2Nvram.js";
 import { scanAmiNvramStores } from "./UefiNvram.js";
+import { UefiAnalysisProvider } from "./UefiAnalysisProvider.js";
+
+const expectOk = <
+  T extends
+    | { readonly ok: true; readonly value: { readonly result: unknown } }
+    | { readonly ok: false; readonly error: unknown },
+>(
+  executed: T,
+): Extract<T, { readonly ok: true }> => {
+  if (!executed.ok) {
+    throw new Error(JSON.stringify(executed.error, null, 2));
+  }
+  return executed as Extract<T, { readonly ok: true }>;
+};
 
 const NVAR_MAGIC = Buffer.from("NVAR", "ascii");
 
@@ -182,6 +203,7 @@ it("maps nested and top-level siblings across inactive entries and erased paddin
     stores: report.stores.slice(0, 1),
     coverage: "partial",
     limitations: ["Stopped after 1 AMI NVRAM stores; additional stores exist."],
+    absent: false,
   });
 });
 
@@ -189,7 +211,8 @@ it("rejects NVAR byte runs that do not match the record framing", () => {
   const image = Buffer.concat([NVAR_MAGIC, Buffer.alloc(20, 0x00)]);
   const scan = scanAmiNvramStores(image, 16, 2);
   expect(scan.stores).toHaveLength(0);
-  expect(scan.limitations.join(" ")).toContain("No AMI NVRAM");
+  expect(scan.absent).toBe(true);
+  expect(scan.limitations).toEqual([]);
 });
 
 it("reports partial coverage when a nested chain exceeds max_depth", () => {
@@ -393,7 +416,6 @@ it("maps EDK2 authenticated BootOrder added and deleted entries from a synthetic
       .subarray(active.dataOffset, active.dataOffset + active.dataLength)
       .equals(Buffer.from([0x01, 0x00, 0x00, 0x00])),
   ).toBe(true);
-  expect(createHash("sha256").update(image).digest("hex")).toHaveLength(64);
 });
 
 it("maps a non-authenticated gEfiVariableGuid store and in-deleted-transition state", () => {
@@ -434,7 +456,7 @@ it("maps a non-authenticated gEfiVariableGuid store and in-deleted-transition st
   ]);
 });
 
-it("stops after max_stores EDK2 regions without disturbing AMI emptiness messages", () => {
+it("stops after max_stores EDK2 regions", () => {
   const one = buildSyntheticEdk2Vars();
   const two = buildSyntheticEdk2Vars();
   const image = Buffer.concat([one, two]);
@@ -442,4 +464,152 @@ it("stops after max_stores EDK2 regions without disturbing AMI emptiness message
   expect(limited.stores).toHaveLength(1);
   expect(limited.coverage).toBe("partial");
   expect(limited.limitations.join(" ")).toContain("Stopped after 1 EDK2");
+});
+
+it("keeps a truncated EDK2 store header with readable variables and partial coverage", () => {
+  const full = Buffer.alloc(0x80, 0xff);
+  uuidLe("ddcf3616-3275-4164-98b6-fe85707ffe7d").copy(full, 0);
+  full.writeUInt32LE(0x200, 16);
+  full.writeUInt8(0x5a, 20);
+  full.writeUInt8(0xfe, 21);
+  const nameBuf = Buffer.from("Trunc\0", "utf16le");
+  const data = Buffer.from([0xab]);
+  let off = 28;
+  full.writeUInt16LE(0x55aa, off);
+  full.writeUInt8(0x3f, off + 2);
+  full.writeUInt32LE(0x7, off + 4);
+  full.writeUInt32LE(nameBuf.length, off + 8);
+  full.writeUInt32LE(data.length, off + 12);
+  uuidLe("8be4df61-93ca-11d2-aa0d-00e098032b8c").copy(full, off + 16);
+  nameBuf.copy(full, off + 32);
+  data.copy(full, off + 32 + nameBuf.length);
+  const image = full.subarray(0, 0x60);
+
+  const scan = scanEdk2VariableStores(image, 8);
+  expect(scan.stores).toHaveLength(1);
+  expect(scan.coverage).toBe("partial");
+  expect(scan.limitations.join(" ")).toContain("declares size");
+  expect(scan.stores[0]).toMatchObject({
+    offset: 0,
+    size: 0x200,
+    variables: [{ name: "Trunc", state: "added", dataLength: 1 }],
+  });
+});
+
+it("reports a non-erased suffix after 0xffff and a one-byte leftover as gaps", () => {
+  const withSuffix = Buffer.alloc(0x40, 0xff);
+  uuidLe("ddcf3616-3275-4164-98b6-fe85707ffe7d").copy(withSuffix, 0);
+  withSuffix.writeUInt32LE(0x40, 16);
+  withSuffix.writeUInt8(0x5a, 20);
+  withSuffix.writeUInt8(0xfe, 21);
+  withSuffix.writeUInt8(0x00, 0x30);
+
+  const suffixScan = scanEdk2VariableStores(withSuffix, 4);
+  expect(suffixScan.coverage).toBe("partial");
+  expect(suffixScan.limitations.join(" ")).toContain("non-erased suffix");
+  expect(suffixScan.stores).toHaveLength(1);
+
+  const odd = Buffer.alloc(29, 0xff);
+  uuidLe("ddcf3616-3275-4164-98b6-fe85707ffe7d").copy(odd, 0);
+  odd.writeUInt32LE(29, 16);
+  odd.writeUInt8(0x5a, 20);
+  odd.writeUInt8(0xfe, 21);
+  odd.writeUInt8(0x42, 28);
+
+  const oddScan = scanEdk2VariableStores(odd, 4);
+  expect(oddScan.coverage).toBe("partial");
+  expect(oddScan.limitations.join(" ")).toContain("one-byte suffix");
+});
+
+it("keeps an EDK2 variable with a damaged name as name null", () => {
+  const buf = Buffer.alloc(0x60, 0xff);
+  uuidLe("ddcf3616-3275-4164-98b6-fe85707ffe7d").copy(buf, 0);
+  buf.writeUInt32LE(0x60, 16);
+  buf.writeUInt8(0x5a, 20);
+  buf.writeUInt8(0xfe, 21);
+  const nameBuf = Buffer.alloc(6, 0);
+  nameBuf.writeUInt16LE(0x41, 0);
+  nameBuf.writeUInt16LE(0x42, 2);
+  nameBuf.writeUInt16LE(0x43, 4);
+  const data = Buffer.from([0x01]);
+  let off = 28;
+  buf.writeUInt16LE(0x55aa, off);
+  buf.writeUInt8(0x3f, off + 2);
+  buf.writeUInt32LE(0x7, off + 4);
+  buf.writeUInt32LE(nameBuf.length, off + 8);
+  buf.writeUInt32LE(data.length, off + 12);
+  uuidLe("8be4df61-93ca-11d2-aa0d-00e098032b8c").copy(buf, off + 16);
+  nameBuf.copy(buf, off + 32);
+  data.copy(buf, off + 32 + nameBuf.length);
+
+  const scan = scanEdk2VariableStores(buf, 4);
+  expect(scan.coverage).toBe("partial");
+  expect(scan.limitations.join(" ")).toContain("malformed UTF-16LE name");
+  expect(scan.stores[0]?.variables).toEqual([
+    expect.objectContaining({
+      name: null,
+      state: "added",
+      attributes: 0x7,
+      vendorGuid: "8be4df61-93ca-11d2-aa0d-00e098032b8c",
+      dataLength: 1,
+    }),
+  ]);
+});
+
+it("skips overlapping EDK2 store candidates that share an already occupied range", () => {
+  const image = Buffer.alloc(0x100, 0xff);
+  const writeStore = (offset: number, size: number): void => {
+    uuidLe("aaf32c78-947b-439a-a180-2e144ec37792").copy(image, offset);
+    image.writeUInt32LE(size, offset + 16);
+    image.writeUInt8(0x5a, offset + 20);
+    image.writeUInt8(0xfe, offset + 21);
+  };
+  writeStore(0, 0x80);
+  writeStore(0x40, 0x80);
+
+  const scan = scanEdk2VariableStores(image, 8);
+  expect(scan.stores).toHaveLength(1);
+  expect(scan.stores[0]?.offset).toBe(0);
+});
+
+it("exposes edk2_stores digests and suppresses AMI-absent wording through the provider", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-edk2-nvram-");
+  const imagePath = join(directory, "vars.fd");
+  const image = buildSyntheticEdk2Vars();
+  await writeFile(imagePath, image);
+  const provider = new UefiAnalysisProvider();
+  onTestFinished(() => provider.close());
+
+  const executed = expectOk(
+    await provider.execute(
+      uefiRequestSchema.parse({
+        operation: "inspect_uefi_nvram",
+        input: { path: imagePath, max_stores: 64, max_depth: 2 },
+      }),
+    ),
+  );
+  const result = executed.value.result as UefiNvramInspectResult;
+  expect(result.stores).toEqual([]);
+  expect(result.coverage).toBe("complete");
+  expect(result.limitations.join(" ")).not.toContain("No AMI NVRAM");
+  expect(result.edk2_stores).toHaveLength(1);
+  const store = result.edk2_stores?.[0];
+  if (store === undefined) throw new Error("expected edk2 store");
+  expect(store.variables).toHaveLength(2);
+  const active = store.variables[1];
+  if (active === undefined) throw new Error("expected active BootOrder");
+  const expectedDigest = createHash("sha256")
+    .update(
+      image.subarray(
+        active.data_offset,
+        active.data_offset + active.data_length,
+      ),
+    )
+    .digest("hex");
+  expect(active).toMatchObject({
+    name: "BootOrder",
+    state: "added",
+    data_length: 4,
+    data_sha256: expectedDigest,
+  });
 });

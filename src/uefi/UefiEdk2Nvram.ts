@@ -110,34 +110,79 @@ export interface Edk2NvramScan {
   readonly limitations: readonly string[];
 }
 
+interface OccupiedRange {
+  readonly start: number;
+  readonly end: number;
+}
+
+const rangesOverlap = (left: OccupiedRange, right: OccupiedRange): boolean =>
+  left.start < right.end && right.start < left.end;
+
+const rangeOccupied = (
+  occupied: readonly OccupiedRange[],
+  range: OccupiedRange,
+): boolean => occupied.some((entry) => rangesOverlap(entry, range));
+
+const isErasedRange = (
+  image: Buffer,
+  start: number,
+  end: number,
+  checkpoint: () => void,
+): boolean => {
+  for (let cursor = start; cursor < end; cursor += 1) {
+    checkpoint();
+    if (image[cursor] !== 0xff) return false;
+  }
+  return true;
+};
+
+type NameDecode =
+  | { kind: "empty" }
+  | { kind: "ok"; name: string }
+  | { kind: "malformed" }
+  | { kind: "budget" };
+
 const readUtf16Name = (
   reader: BinaryReader,
   start: number,
   byteLength: number,
-): string | null => {
-  if (byteLength < 2 || byteLength % 2 !== 0) return null;
+  nameBytes: Budget,
+): NameDecode => {
+  if (byteLength === 0) return { kind: "empty" };
+  if (byteLength < 2 || byteLength % 2 !== 0) return { kind: "malformed" };
   const end = start + byteLength;
-  if (end > reader.bytes.length) return null;
-  if (reader.u16(end - 2) !== 0) return null;
+  if (end > reader.bytes.length) return { kind: "malformed" };
+  if (reader.u16(end - 2) !== 0) return { kind: "malformed" };
   for (let cursor = start; cursor < end - 2; cursor += 2) {
     const unit = reader.u16(cursor);
-    if (unit === 0) return null;
-    if (unit < 0x20 || (unit >= 0xd800 && unit <= 0xdfff)) return null;
+    if (unit === 0) return { kind: "malformed" };
+    if (unit < 0x20 || (unit >= 0xd800 && unit <= 0xdfff))
+      return { kind: "malformed" };
   }
-  return reader.bytes.toString("utf16le", start, end - 2);
+  const decodedBytes = byteLength - 2;
+  if (!nameBytes.tryCharge(decodedBytes)) return { kind: "budget" };
+  return {
+    kind: "ok",
+    name: reader.bytes.toString("utf16le", start, end - 2),
+  };
 };
 
 type ParsedEdk2Variable =
   | { kind: "end" }
   | { kind: "erased" }
   | { kind: "invalid"; endOffset: number; detail: string }
-  | { kind: "active"; variable: Edk2NvramVariable };
+  | {
+      kind: "active";
+      variable: Edk2NvramVariable;
+      limitation: string | null;
+    };
 
 const parseEdk2Variable = (
   reader: BinaryReader,
   offset: number,
   storeEnd: number,
   authenticated: boolean,
+  nameBytes: Budget,
 ): ParsedEdk2Variable => {
   const headerBytes = authenticated
     ? AUTHENTICATED_VARIABLE_HEADER_BYTES
@@ -190,13 +235,14 @@ const parseEdk2Variable = (
       detail: `EDK2 variable at 0x${offset.toString(16)} declares NameSize/DataSize beyond the store.`,
     };
 
-  const name = readUtf16Name(reader, nameStart, nameSize);
-  if (name === null && nameSize !== 0)
-    return {
-      kind: "invalid",
-      endOffset: alignUp(rawEnd, HEADER_ALIGNMENT),
-      detail: `EDK2 variable at 0x${offset.toString(16)} has a malformed UTF-16LE name.`,
-    };
+  const decoded = readUtf16Name(reader, nameStart, nameSize, nameBytes);
+  let name: string | null = null;
+  let limitation: string | null = null;
+  if (decoded.kind === "ok") name = decoded.name;
+  else if (decoded.kind === "malformed")
+    limitation = `EDK2 variable at 0x${offset.toString(16)} has a malformed UTF-16LE name.`;
+  else if (decoded.kind === "budget")
+    limitation = `EDK2 decoded variable-name budget ${UEFI_FIRMWARE_LIMITS.decodedBytes} bytes reached at 0x${offset.toString(16)}.`;
 
   return {
     kind: "active",
@@ -211,6 +257,7 @@ const parseEdk2Variable = (
       dataLength: dataSize,
       endOffset: alignUp(rawEnd, HEADER_ALIGNMENT),
     },
+    limitation,
   };
 };
 
@@ -219,7 +266,8 @@ interface Edk2StoreWalk {
   readonly maxStores: number;
   readonly checkpoint: () => void;
   readonly records: Budget;
-  readonly occupied: Set<number>;
+  readonly nameBytes: Budget;
+  readonly occupied: OccupiedRange[];
   readonly stores: Edk2NvramStore[];
   readonly noteOmission: (detail: string) => void;
   stop: boolean;
@@ -230,10 +278,18 @@ const collectStoreAt = (
   offset: number,
   authenticated: boolean,
 ): void => {
-  const { reader, checkpoint, records, occupied, stores, noteOmission } = walk;
+  const {
+    reader,
+    checkpoint,
+    records,
+    nameBytes,
+    occupied,
+    stores,
+    noteOmission,
+  } = walk;
   const image = reader.bytes;
   checkpoint();
-  if (walk.stop || occupied.has(offset)) return;
+  if (walk.stop) return;
   if (offset + VARIABLE_STORE_HEADER_BYTES > image.length) return;
   if (!records.tryCharge(1)) {
     noteOmission(
@@ -249,8 +305,11 @@ const collectStoreAt = (
     storeState !== VARIABLE_STORE_HEALTHY
   )
     return;
-  const size = reader.u32(offset + 16);
-  if (size < VARIABLE_STORE_HEADER_BYTES || offset + size > image.length)
+  const declaredSize = reader.u32(offset + 16);
+  if (declaredSize < VARIABLE_STORE_HEADER_BYTES) return;
+  const available = image.length - offset;
+  const readableSize = Math.min(declaredSize, available);
+  if (rangeOccupied(occupied, { start: offset, end: offset + readableSize }))
     return;
   const storeGuid = formatGuidLittleEndian(image, offset);
   if (storeGuid === null) return;
@@ -263,12 +322,24 @@ const collectStoreAt = (
     return;
   }
 
-  occupied.add(offset);
-  const storeEnd = offset + size;
+  occupied.push({ start: offset, end: offset + readableSize });
+  const storeEnd = offset + readableSize;
+  if (declaredSize > available)
+    noteOmission(
+      `EDK2 store at 0x${offset.toString(16)} declares size 0x${declaredSize.toString(16)} but only 0x${available.toString(16)} bytes remain; reporting readable extent.`,
+    );
+
   const variables: Edk2NvramVariable[] = [];
   let cursor = offset + VARIABLE_STORE_HEADER_BYTES;
-  while (cursor + 2 <= storeEnd) {
+  while (cursor < storeEnd) {
     checkpoint();
+    if (cursor + 2 > storeEnd) {
+      if (!isErasedRange(image, cursor, storeEnd, checkpoint))
+        noteOmission(
+          `EDK2 store at 0x${offset.toString(16)} has a non-erased one-byte suffix at 0x${cursor.toString(16)}.`,
+        );
+      break;
+    }
     if (!records.tryCharge(1)) {
       noteOmission(
         `Structural record limit ${UEFI_FIRMWARE_LIMITS.scanRecords} reached at EDK2 variable 0x${cursor.toString(16)}.`,
@@ -276,13 +347,27 @@ const collectStoreAt = (
       walk.stop = true;
       break;
     }
-    const parsed = parseEdk2Variable(reader, cursor, storeEnd, authenticated);
-    if (parsed.kind === "erased" || parsed.kind === "end") break;
+    const parsed = parseEdk2Variable(
+      reader,
+      cursor,
+      storeEnd,
+      authenticated,
+      nameBytes,
+    );
+    if (parsed.kind === "erased") {
+      if (!isErasedRange(image, cursor, storeEnd, checkpoint))
+        noteOmission(
+          `EDK2 store at 0x${offset.toString(16)} has a non-erased suffix after 0xffff at 0x${cursor.toString(16)}.`,
+        );
+      break;
+    }
+    if (parsed.kind === "end") break;
     if (parsed.kind === "invalid") {
       noteOmission(parsed.detail);
       cursor = parsed.endOffset;
       continue;
     }
+    if (parsed.limitation !== null) noteOmission(parsed.limitation);
     variables.push(parsed.variable);
     if (parsed.variable.endOffset <= cursor) {
       noteOmission(
@@ -296,7 +381,7 @@ const collectStoreAt = (
   stores.push({
     offset,
     storeGuid,
-    size,
+    size: declaredSize,
     storeFormat,
     storeState,
     authenticated,
@@ -319,7 +404,8 @@ export const scanEdk2VariableStores = (
     maxStores,
     checkpoint,
     records: new Budget(UEFI_FIRMWARE_LIMITS.scanRecords),
-    occupied: new Set(),
+    nameBytes: new Budget(UEFI_FIRMWARE_LIMITS.decodedBytes),
+    occupied: [],
     stores,
     noteOmission: (detail) => {
       partial = true;

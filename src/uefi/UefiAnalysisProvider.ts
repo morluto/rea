@@ -128,24 +128,19 @@ const mapEdk2NvramStores = (
     })),
   }));
 
+const AMI_NVRAM_ABSENT =
+  "No AMI NVRAM variable stores (NVAR chains) were found in the image.";
+const EDK2_NVRAM_ABSENT =
+  "No EDK2 variable stores (gEfiVariableGuid / gEfiAuthenticatedVariableGuid) were found in the image.";
+
 const nvramLimitations = (
   ami: ReturnType<typeof scanAmiNvramStores>,
   edk2: ReturnType<typeof scanEdk2VariableStores>,
 ): string[] => {
-  const amiLimitations =
-    ami.stores.length === 0 && edk2.stores.length > 0
-      ? ami.limitations.filter(
-          (detail) =>
-            !detail.includes(
-              "No AMI NVRAM variable stores (NVAR chains) were found",
-            ),
-        )
-      : ami.limitations;
-  const limitations = [...amiLimitations, ...edk2.limitations];
+  const limitations = [...ami.limitations, ...edk2.limitations];
   if (ami.stores.length === 0 && edk2.stores.length === 0) {
-    limitations.push(
-      "No EDK2 variable stores (gEfiVariableGuid / gEfiAuthenticatedVariableGuid) were found in the image.",
-    );
+    if (ami.absent) limitations.push(AMI_NVRAM_ABSENT);
+    limitations.push(EDK2_NVRAM_ABSENT);
   }
   return limitations;
 };
