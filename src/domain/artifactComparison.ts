@@ -1,9 +1,9 @@
+import { appendToMapList } from "./appendToMapList.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import { z } from "zod";
 
 import {
   artifactOccurrenceRelationshipCoverage,
-  type ArtifactInventoryResult,
   type ArtifactNode,
   type ArtifactOccurrence,
 } from "./artifactGraph.js";
@@ -441,10 +441,7 @@ const occurrencesByPath = (
 ): ReadonlyMap<string, ArtifactOccurrence[]> => {
   const output = new Map<string, ArtifactOccurrence[]>();
   for (const occurrence of occurrences) {
-    const matches = output.get(occurrence.logical_path);
-    if (matches === undefined)
-      output.set(occurrence.logical_path, [occurrence]);
-    else matches.push(occurrence);
+    appendToMapList(output, occurrence.logical_path, occurrence);
   }
   return output;
 };

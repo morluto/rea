@@ -5,6 +5,7 @@ import {
   artifactIntegrityClaimSchema,
   artifactSha256PairSchema,
   artifactMd5PairSchema,
+  signedAfterPackingExplanationSchema,
 } from "./artifactIntegrity.js";
 import { artifactFormatMetadataSchema } from "./artifactFormatMetadata.js";
 import { z } from "zod";
@@ -82,6 +83,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "uimage",
   "android-boot-image",
   "android-ota-payload",
+  "android-sparse-image",
   "iso9660",
   "uefi",
   "javascript-bundle",
@@ -137,6 +139,7 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "uimage",
   "android-boot-image",
   "android-ota-payload",
+  "android-sparse-image",
   "iso9660",
   "uefi",
   "intel-hex",
@@ -242,7 +245,11 @@ const integrityContradictionBaseSchema = z.object({
 });
 
 export const integrityContradictionSchema = z.union([
-  integrityContradictionBaseSchema.extend(artifactSha256PairSchema.shape),
+  integrityContradictionBaseSchema.extend({
+    ...artifactSha256PairSchema.shape,
+    /** Present when PE Authenticode stripping restores the declared SHA-256. */
+    signing_explanation: signedAfterPackingExplanationSchema.exactOptional(),
+  }),
   integrityContradictionBaseSchema.extend(artifactMd5PairSchema.shape),
   integrityContradictionBaseSchema.extend(artifactDfuCrc32PairSchema.shape),
   integrityContradictionBaseSchema.extend(artifactCrc32PairSchema.shape),

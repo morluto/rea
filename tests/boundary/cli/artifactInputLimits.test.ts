@@ -8,13 +8,13 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 for (const { command, limit, recovery, cliFlag } of [
   {
     command: "inspect-go-binary",
-    limit: 256 * 1024 * 1024,
+    limit: 2 * 1024 * 1024 * 1024,
     recovery: "max_input_bytes",
     cliFlag: "--max-input-bytes",
   },
   {
     command: "inspect-rust-binary",
-    limit: 256 * 1024 * 1024,
+    limit: 2 * 1024 * 1024 * 1024,
     recovery: "producer_limits.input_bytes",
     // The provider binds producer_limits.input_bytes; the CLI names the
     // option that sets the whole field.
@@ -85,7 +85,12 @@ exit 1
         expect(output.json).toMatchObject({
           details: { limit: { parameter: recovery, cli_flag: cliFlag } },
         });
-        expect(refusal.remediation.action).not.toContain("--");
+        if (command === "inspect-go-binary") {
+          expect(refusal.remediation.action).toContain(cliFlag);
+          expect(refusal.remediation.action).toContain(`rea ${command}`);
+        } else {
+          expect(refusal.remediation.action).not.toContain("--");
+        }
       }
       expect(refusal.remediation.action).not.toMatch(
         /allowance for the evidence reply/u,

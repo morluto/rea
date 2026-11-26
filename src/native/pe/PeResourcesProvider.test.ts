@@ -17,6 +17,7 @@ const inspect = async (
   input: {
     readonly max_file_bytes?: number;
     readonly max_entries?: number;
+    readonly max_metadata_bytes?: number;
   } = {},
 ) => {
   const provider = new PeResourcesProvider();
@@ -74,10 +75,13 @@ describe("PE resource provider budget reporting", () => {
     const error = result.error as AnalysisResourceConstraintError;
     expect(error.resource).toBe("capacity");
     expect(error.reportedLimits).toMatchObject({ max_entries: 1 });
-    expect(error.remediationAction).toContain("max_entries");
     expect(projectAnalysisError(error)).toMatchObject({
       retryable: false,
-      remediation: { action: error.remediationAction },
+      remediation: {
+        action: expect.stringContaining(
+          "Pass a larger max_entries on the next inspect_pe_resources call",
+        ),
+      },
       details: {
         reported_limits: {
           boundary: "max_entries",
@@ -138,9 +142,12 @@ describe("PE resource provider budget reporting", () => {
       reportedLimits: { max_entries: MAX_INSPECT_PE_DIRECTORY_ENTRIES },
       retryable: false,
     });
-    expect(typeof entryError.remediationAction).toBe("string");
     expect(projectAnalysisError(entryError)).toMatchObject({
-      remediation: { action: entryError.remediationAction },
+      remediation: {
+        action: expect.stringContaining(
+          "max_entries is already at its maximum",
+        ),
+      },
     });
     expect(
       inspectPeResourcesInputSchema.safeParse({
@@ -170,7 +177,7 @@ describe("PE resource provider budget reporting", () => {
   });
 });
 
-it("names the fixed PE metadata allowance instead of host memory", async () => {
+it("names max_metadata_bytes instead of host memory", async () => {
   const root = await createTestTempDirectory("rea-pe-metadata-budget-");
   const path = join(root, "resource.exe");
   const name = "n".repeat(200);
@@ -199,11 +206,18 @@ it("names the fixed PE metadata allowance instead of host memory", async () => {
       maximum: 8 * 1024 * 1024,
       maximum_metadata_bytes: 8 * 1024 * 1024,
     },
-    refusal: {
-      kind: "fixed_ceiling",
-      allowance_kind: "parser",
-      limit: 8 * 1024 * 1024,
-      unit: "bytes",
+    limit: {
+      control_kind: "parameter",
+      parameter: "max_metadata_bytes",
+      effective_value: 8 * 1024 * 1024,
+      default_value: 8 * 1024 * 1024,
     },
+    refusal: { kind: "adjustable_budget", control: "max_metadata_bytes" },
   });
+  expect(projected.details?.limit).not.toHaveProperty("required_value");
+  const raised = await inspect(path, {
+    max_metadata_bytes: 32 * 1024 * 1024,
+    max_entries: 65536,
+  });
+  if (!raised.ok) throw raised.error;
 });

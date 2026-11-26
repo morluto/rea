@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { matchesGlob } from "node:path";
 import { isLivingProsePath } from "../lib/docs-facts.mjs";
+import { mayGateTestToDarwin } from "./darwin-gate-candidates.mjs";
 import {
   CI_FLAGS as flags,
   MANUAL_VERIFIERS,
@@ -114,6 +115,25 @@ const selectTypedLintFiles = (files, listCheckedOutFiles) => {
     TYPED_LINT_OUTPUT_MAX_BYTES
     ? selected
     : null;
+};
+
+/**
+ * The first changed test at `head` that may gate a test to macOS. A deleted
+ * test has nothing to run.
+ */
+const changedTestMayGateDarwin = (repository, head, files) => {
+  const changedTests = files.filter((file) =>
+    /^(src|tests)\/.*\.test\.ts$/u.test(file),
+  );
+  if (changedTests.length === 0) return undefined;
+  const present = new Set(repository.listFiles(head, []));
+  const sources = repository.readFiles(
+    head,
+    changedTests.filter((file) => present.has(file)),
+  );
+  for (const [file, source] of sources)
+    if (mayGateTestToDarwin(source)) return file;
+  return undefined;
 };
 
 /**
@@ -444,6 +464,15 @@ export function planChanges(request, repository) {
       // Disable rename detection so both the removed and added paths participate.
       files = repository.changedFiles(base, head);
       for (const file of files) classifyFile(file, base, head);
+      // Linux lanes skip a test gated to macOS, so a change to one runs the
+      // macOS lane that does.
+      const gated = selected.apple
+        ? undefined
+        : changedTestMayGateDarwin(repository, head, files);
+      if (gated !== undefined) {
+        selected.apple = true;
+        reasons.push(`Changed test may be gated to macOS: ${gated}`);
+      }
     }
     // Scheduled fast sweeps always execute the complete portable suite and
     // refresh test-timings-fast, even when only prose changed since the ancestor.
@@ -526,22 +555,27 @@ export const gitRepository = (cwd = process.cwd()) => {
         .filter(Boolean),
     readFiles: (revision, paths) => {
       if (!paths.length) return new Map();
-      // Resolve the tree once instead of walking revision:path for every test.
       const maxBuffer = 512 * 1024 * 1024;
-      const tree = execFileSync("git", ["ls-tree", "-rz", revision], {
-        cwd,
-        encoding: "utf8",
-        maxBuffer,
-      });
       const objects = new Map();
-      for (const entry of tree.split("\0")) {
-        // Let Git resolve replacement characters so invalid UTF-8 bytes
-        // cannot alias a requested path when the listing is decoded.
-        if (!entry || entry.includes("\uFFFD")) continue;
-        // Git separates the header from the raw path at the first tab.
-        const tab = entry.indexOf("\t");
-        const [, , oid] = entry.slice(0, tab).split(" ");
-        objects.set(entry.slice(tab + 1), oid);
+      // Resolve small changed-test batches directly at their pinned revision.
+      // Read symbolic refs once and index the tree for large test graph reads.
+      const smallSnapshot =
+        paths.length <= 32 && /^[0-9a-f]{40}$/iu.test(revision);
+      if (!smallSnapshot) {
+        const tree = execFileSync("git", ["ls-tree", "-rz", revision], {
+          cwd,
+          encoding: "utf8",
+          maxBuffer,
+        });
+        for (const entry of tree.split("\0")) {
+          // Let Git resolve replacement characters so invalid UTF-8 bytes
+          // cannot alias a requested path when the listing is decoded.
+          if (!entry || entry.includes("\uFFFD")) continue;
+          // Git separates the header from the raw path at the first tab.
+          const tab = entry.indexOf("\t");
+          const [, , oid] = entry.slice(0, tab).split(" ");
+          objects.set(entry.slice(tab + 1), oid);
+        }
       }
       const requests = paths.map(
         (path) => objects.get(path) ?? `${revision}:${path}`,

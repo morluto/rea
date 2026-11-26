@@ -25,6 +25,7 @@ import {
 import {
   inspectionFatBytesContext,
   inspectionFatContext,
+  inspectionInvocation,
   inspectionImage,
   inspectionReader,
   unreadEncryption,
@@ -212,16 +213,7 @@ describe("Mach-O tool architecture selection", () => {
         readOffsets.push(offset);
         return context.readCommandNames(offset, size, selected);
       },
-      invocation: (capture) => ({
-        tool: capture.tool,
-        command: [capture.executable, ...capture.arguments],
-        tool_version: capture.toolVersion,
-        version_reason: capture.versionReason,
-        executable_sha256: capture.executableSha256,
-        exit: { code: capture.exitCode, signal: capture.signal },
-        stdout_bytes: capture.stdoutBytes,
-        stderr_bytes: capture.stderrBytes,
-      }),
+      invocation: inspectionInvocation,
     });
     if (!result.ok) throw result.error;
     expect(readOffsets).toEqual([8192]);
@@ -321,16 +313,7 @@ describe("Mach-O inspection container format", () => {
         : context.readCommandNames,
       target: nativeMachoTarget("/fixture/app"),
       run: (tool, args) => runner.run(tool, args),
-      invocation: (capture) => ({
-        tool: capture.tool,
-        command: [capture.executable, ...capture.arguments],
-        tool_version: capture.toolVersion,
-        version_reason: capture.versionReason,
-        executable_sha256: capture.executableSha256,
-        exit: { code: capture.exitCode, signal: capture.signal },
-        stdout_bytes: capture.stdoutBytes,
-        stderr_bytes: capture.stderrBytes,
-      }),
+      invocation: inspectionInvocation,
       readEncryption: unreadEncryption,
     });
   };
@@ -419,16 +402,7 @@ describe("Mach-O inspection container format", () => {
       target: nativeMachoTarget("/fixture/app"),
       run: (tool, args) => runner.run(tool, args),
       readEncryption: unreadEncryption,
-      invocation: (captured) => ({
-        tool: captured.tool,
-        command: [captured.executable, ...captured.arguments],
-        tool_version: captured.toolVersion,
-        version_reason: captured.versionReason,
-        executable_sha256: captured.executableSha256,
-        exit: { code: captured.exitCode, signal: captured.signal },
-        stdout_bytes: captured.stdoutBytes,
-        stderr_bytes: captured.stderrBytes,
-      }),
+      invocation: inspectionInvocation,
     });
     if (!result.ok) throw result.error;
     expect(result.value.result).toMatchObject({
@@ -476,16 +450,7 @@ describe("Mach-O chained-fixup import names", () => {
       target: nativeMachoTarget("/fixture/app"),
       run: (tool, args) => runner.run(tool, args),
       readEncryption: unreadEncryption,
-      invocation: (captured) => ({
-        tool: captured.tool,
-        command: [captured.executable, ...captured.arguments],
-        tool_version: captured.toolVersion,
-        version_reason: captured.versionReason,
-        executable_sha256: captured.executableSha256,
-        exit: { code: captured.exitCode, signal: captured.signal },
-        stdout_bytes: captured.stdoutBytes,
-        stderr_bytes: captured.stderrBytes,
-      }),
+      invocation: inspectionInvocation,
     });
     if (!result.ok) throw result.error;
     return { result: result.value, sliceReads };
@@ -527,16 +492,7 @@ describe("Mach-O UUID reconciliation", () => {
       target: nativeMachoTarget(targetPath),
       run: (tool, args) => runner.run(tool, args),
       readEncryption: unreadEncryption,
-      invocation: (capture) => ({
-        tool: capture.tool,
-        command: [capture.executable, ...capture.arguments],
-        tool_version: capture.toolVersion,
-        version_reason: capture.versionReason,
-        executable_sha256: capture.executableSha256,
-        exit: { code: capture.exitCode, signal: capture.signal },
-        stdout_bytes: capture.stdoutBytes,
-        stderr_bytes: capture.stderrBytes,
-      }),
+      invocation: inspectionInvocation,
     });
     return result;
   };
@@ -652,16 +608,7 @@ describe("Mach-O slice command scheduling", () => {
       target: nativeMachoTarget("/fixture/app"),
       run,
       readEncryption: unreadEncryption,
-      invocation: (capture) => ({
-        tool: capture.tool,
-        command: [capture.executable, ...capture.arguments],
-        tool_version: capture.toolVersion,
-        version_reason: capture.versionReason,
-        executable_sha256: capture.executableSha256,
-        exit: { code: capture.exitCode, signal: capture.signal },
-        stdout_bytes: capture.stdoutBytes,
-        stderr_bytes: capture.stderrBytes,
-      }),
+      invocation: inspectionInvocation,
     });
 
   it("runs independent slice commands together and keeps provenance in declared order", async () => {
@@ -731,16 +678,7 @@ describe("Mach-O encryption reporting", () => {
       target: nativeMachoTarget("/fixture/app"),
       run: (tool, args) => runner.run(tool, args),
       readEncryption: () => Promise.resolve(encryption),
-      invocation: (capture) => ({
-        tool: capture.tool,
-        command: [capture.executable, ...capture.arguments],
-        tool_version: capture.toolVersion,
-        version_reason: capture.versionReason,
-        executable_sha256: capture.executableSha256,
-        exit: { code: capture.exitCode, signal: capture.signal },
-        stdout_bytes: capture.stdoutBytes,
-        stderr_bytes: capture.stderrBytes,
-      }),
+      invocation: inspectionInvocation,
     });
     if (!result.ok) throw result.error;
     return {

@@ -24,6 +24,7 @@ import {
   elfBunSection,
   elfAppendedBunPayload,
   elfPrefix,
+  observeBunFixtureReads,
 } from "./BunStandalone.fixture.js";
 
 async function locate(bytes: Buffer) {
@@ -63,16 +64,8 @@ async function probe(bytes: Buffer, limits?: BunReaderLimits) {
   await writeFile(path, bytes);
   const handle = await open(path, "r");
   let bytesRead = 0;
-  const read = handle.read.bind(handle);
-  const counted = new Proxy(handle, {
-    get: (target, key) =>
-      key === "read"
-        ? async (...args: Parameters<typeof read>) => {
-            const result = await read(...args);
-            bytesRead += result.bytesRead;
-            return result;
-          }
-        : Reflect.get(target, key),
+  const counted = observeBunFixtureReads(handle, (count) => {
+    bytesRead += count;
   });
   try {
     return {

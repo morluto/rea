@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { chmod } from "node:fs/promises";
 
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 
 import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";

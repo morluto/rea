@@ -39,14 +39,6 @@ cliTest.for([
       environment: definedCliEnvironment(cliProcessEnvironment(environment)),
     });
     expect(fresh.stdout + fresh.stderr).not.toBe("");
-    expect({
-      exitCode: shared.exitCode,
-      stdout: shared.stdout,
-      stderr: shared.stderr,
-    }).toEqual({
-      exitCode: fresh.exitCode,
-      stdout: fresh.stdout,
-      stderr: fresh.stderr,
-    });
+    expect(shared).toStrictEqual(fresh);
   },
 );

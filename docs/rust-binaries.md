@@ -166,14 +166,14 @@ selects a universal Mach-O slice.
 
 ## Limits and failures
 
-| Limit                     | Value                                         | Override                       |
-| ------------------------- | --------------------------------------------- | ------------------------------ |
-| Selected file             | 256 MiB                                       | `producer_limits.input_bytes`  |
-| Complete report           | 8 MiB                                         | `producer_limits.output_bytes` |
-| Compressed `.dep-v0` zlib | 1 MiB                                         | Fixed                          |
-| Inflated JSON             | Smaller of 8 MiB and 64 × the consumed stream | Fixed                          |
-| Distinct rustc hashes     | 64                                            | `max_rustc_hashes`             |
-| WebAssembly sections      | 65,536                                        | Fixed (`max_wasm_sections`)    |
+| Limit                     | Value                                         | Override                                                        |
+| ------------------------- | --------------------------------------------- | --------------------------------------------------------------- |
+| Selected file             | 2 GiB                                         | `producer_limits.input_bytes`                                   |
+| Complete report           | 8 MiB                                         | `producer_limits.output_bytes`                                  |
+| Compressed `.dep-v0` zlib | 1 MiB (at most the largest Buffer)            | `max_compressed_dependency_bytes`                               |
+| Inflated JSON             | Smaller of 8 MiB and 64 × the consumed stream | `max_inflated_dependency_bytes`, `max_dependency_inflate_ratio` |
+| Distinct rustc hashes     | 64                                            | `max_rustc_hashes`                                              |
+| WebAssembly sections      | 65,536 (at most 16,777,216)                   | `max_wasm_sections`                                             |
 
 Empty sections,
 truncated streams, nonpadding bytes after a zlib stream, invalid JSON, duplicate
@@ -236,11 +236,15 @@ to retain a larger prefix; no restart is required. The complete-report byte
 allowance still applies. Optional compiler paths are shortened before they can
 displace independently observed dependency facts.
 
-The synchronous WebAssembly section walk admits at most 65,536 section
-payloads. A further section with a valid length and file extent triggers a
-`cpu` resource constraint whose `reported_limits` name `max_wasm_sections`.
-Invalid lengths and truncated extents retain their format diagnosis at the
-limit. This allowance is fixed, so `producer_limits` does not raise it.
+The synchronous WebAssembly section walk admits at most `max_wasm_sections`
+section payloads (default 65,536, at most 16,777,216; see
+[limits and recovery](reference/limits-and-recovery.md#native-table-structure-budget)).
+A further section with a valid length and file extent triggers a `cpu` resource
+constraint whose `details.limit` names `max_wasm_sections`. Raise
+`max_wasm_sections` (CLI `--max-wasm-sections`) on the next call. The walk
+stops at the first excess, so no `required_value` is reported. Invalid lengths
+and truncated extents retain their format diagnosis at the limit.
+`producer_limits` does not raise it.
 
 Reader architecture names remain verbatim in the report. Evidence subjects use
 the recognized canonical family: `386` maps to `x86`, `amd64` to `x86_64`, and
@@ -251,8 +255,16 @@ being inferred from a related spelling.
 and apply to the next call without restarting REA, for example
 `--producer-limits '{"input_bytes":536870912,"output_bytes":16777216}'`. Graph
 expansion and compiler-path retention share the report allowance. Raising it
-does not raise the fixed limits, parser nesting or transport budgets. When PE file alignment adds padding, the reader learns the exact consumed
-stream length only after inflation completes. If inflation stops first,
-`reported_limits.maximum_bytes` gives the allocation ceiling in force, the
-smaller of 8 MiB and 64 times the stored extent. If inflation completes, the
-ratio check uses the consumed stream length.
+does not raise the dependency-parser budgets, parser nesting or transport
+budgets. Those budgets are `max_compressed_dependency_bytes`,
+`max_inflated_dependency_bytes` and `max_dependency_inflate_ratio` (CLI
+`--max-compressed-dependency-bytes`, `--max-inflated-dependency-bytes`,
+`--max-dependency-inflate-ratio`). See
+[limits and recovery](reference/limits-and-recovery.md#producer-limits).
+When PE file alignment adds padding, the reader learns the exact consumed
+stream length only after inflation completes. If inflation stops first, the
+refusal names the parameter that bounded allocation: the ratio when the stored
+extent is below the absolute cap, otherwise `max_inflated_dependency_bytes`.
+`required_value` is omitted because the consumed length is still unknown. If
+inflation completes, the ratio check uses the consumed stream length and
+reports that ratio as `required_value` when it is the binding cap.

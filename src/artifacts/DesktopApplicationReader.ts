@@ -90,6 +90,8 @@ export class DesktopApplicationReader implements DesktopApplicationPort {
           { max_concurrent_inspections: 1 },
           {
             retryable: true,
+            // An occupied admission: the slot frees when the inspection ends.
+            measuredExhaustion: true,
             remediationAction:
               "Wait for this directory inspection to finish before submitting another.",
           },

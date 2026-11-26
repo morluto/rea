@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { verifyClientSetup } from "./verify/clients/setup.mjs";
+import { verifyClientSetupAndReadSkillBody } from "./verify/clients/setup.mjs";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
@@ -13,7 +13,8 @@ import {
 } from "../dist/contracts/toolContracts.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
-import { publishClientReceipt } from "./verify/clients/receipt.mjs";
+import { readClientVersion } from "./verify/clients/version.mjs";
+import { receiptContext, publishReceipt } from "./verify/clients/receipt.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import {
   CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
@@ -79,13 +80,7 @@ await withVerifierCleanup(async () => {
       REA_PROCESS_RUN_ID: verifier.run_id,
     };
     try {
-      clientVersion = (
-        await commands.exec(command, ["--version"], {
-          env: environment,
-          timeout: 30_000,
-          stdin: "pipe",
-        })
-      ).stdout.trim();
+      clientVersion = await readClientVersion(commands, command, environment);
     } catch (cause) {
       // npm installs put only a claude.cmd shim on PATH, which Node does not spawn without a shell.
       const windowsHint =
@@ -262,7 +257,7 @@ await withVerifierCleanup(async () => {
       2,
     );
     await writeFile(configPath, original);
-    await verifyClientSetup({
+    expectedSkillBody = await verifyClientSetupAndReadSkillBody({
       client: "claude_code",
       commands,
       runtimeRoot,
@@ -276,22 +271,6 @@ await withVerifierCleanup(async () => {
         assert.equal(JSON.parse(configured).theme, "light");
       },
     });
-    const installedSkill = await readFile(
-      join(skillDirectory, "SKILL.md"),
-      "utf8",
-    );
-    assert(installedSkill.includes("name: reverse-engineer-anything"));
-    const lines = installedSkill.split("\n");
-    const headerEnd = lines.indexOf("---", 1);
-    assert(
-      lines[0] === "---" && headerEnd > 0,
-      "Installed skill must have its authored frontmatter",
-    );
-    expectedSkillBody = lines
-      .slice(headerEnd + 1)
-      .join("\n")
-      .trim();
-    assert(expectedSkillBody.length > 0);
     const response = await saveVerifierCommandOutput(
       () =>
         commands.exec(
@@ -360,18 +339,12 @@ await withVerifierCleanup(async () => {
   passed = true;
 }, [
   async () => {
-    const receipt = {
+    await publishReceipt({
       client: "Claude Code",
       clientVersion,
       mode,
       passed,
-      artifacts: lab,
-      runtimeRoot,
-      host: {
-        platform: process.platform,
-        architecture: process.arch,
-        node: process.versions.node,
-      },
+      ...receiptContext(lab, runtimeRoot),
       modelFixture:
         "loopback Anthropic Messages/SSE; synthetic usage and native resource hints; no live API claim",
       discovery:
@@ -390,7 +363,6 @@ await withVerifierCleanup(async () => {
       probes: fixture?.probes,
       fixtureFailure: fixture?.failure,
       verifier: await completeVerifierRun(verifier),
-    };
-    await publishClientReceipt(lab, receipt);
+    });
   },
 ]);

@@ -1,4 +1,6 @@
+import { constants as bufferConstants } from "node:buffer";
 import { timerDurationMsSchema } from "../analysisResourceLimits.js";
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
 import { z } from "zod";
 import { knownCoverageStatusSchema } from "../coverage.js";
 import { localPathStringSchema } from "../localPath.js";
@@ -11,6 +13,28 @@ export const DEFAULT_APKTOOL_STRING_TABLE_BYTES = 8 * 1024 * 1024;
 export const DEFAULT_APKTOOL_TOTAL_STRING_TABLE_BYTES = 32 * 1024 * 1024;
 /** Decode wall clock used when decode_timeout_ms is omitted. */
 export const DEFAULT_APKTOOL_DECODE_TIMEOUT_MS = 600_000;
+/** Retained `apktool d` stdout and stderr when producer_limits.output_bytes is omitted. */
+export const DEFAULT_APKTOOL_DECODE_OUTPUT_BYTES = 4 * 1024 * 1024;
+/**
+ * The largest accepted producer_limits.output_bytes: retained output is
+ * decoded into one JavaScript string, which V8 caps at this many code units.
+ */
+export const MAX_APKTOOL_DECODE_OUTPUT_BYTES =
+  bufferConstants.MAX_STRING_LENGTH;
+
+/** The decode output capture control, as the per-call parameter that raises it. */
+export const apktoolDecodeOutputLimit = (
+  effectiveValue: number,
+): AnalysisParameterLimit => ({
+  control_kind: "parameter",
+  parameter: "producer_limits.output_bytes",
+  effective_value: effectiveValue,
+  unit: "bytes",
+  minimum: 1,
+  maximum: MAX_APKTOOL_DECODE_OUTPUT_BYTES,
+  default_value: DEFAULT_APKTOOL_DECODE_OUTPUT_BYTES,
+  applies_at: "next_call",
+});
 const ANDROID_NON_LOCALE_QUALIFIERS = new Set([
   "car",
   "desk",
@@ -132,7 +156,19 @@ export const apktoolInputSchemas = {
     decode_timeout_ms: timerDurationMsSchema
       .exactOptional()
       .describe(
-        `Decode wall-clock budget in milliseconds (default ${String(DEFAULT_APKTOOL_DECODE_TIMEOUT_MS)}), from apktool d start through process exit. Omitted means ${String(DEFAULT_APKTOOL_DECODE_TIMEOUT_MS)}. Applies on the next decode. Does not raise the fixed output capture allowance or the version probe.`,
+        `Decode wall-clock budget in milliseconds (default ${String(DEFAULT_APKTOOL_DECODE_TIMEOUT_MS)}), from apktool d start through process exit. Omitted means ${String(DEFAULT_APKTOOL_DECODE_TIMEOUT_MS)}. Applies on the next decode. Does not raise producer_limits.output_bytes or the version probe.`,
+      ),
+    producer_limits: z
+      .strictObject({
+        output_bytes: z
+          .int()
+          .positive()
+          .max(MAX_APKTOOL_DECODE_OUTPUT_BYTES)
+          .optional(),
+      })
+      .optional()
+      .describe(
+        `Per-call producer limits in bytes. output_bytes bounds the stdout and stderr retained from apktool d (default ${String(DEFAULT_APKTOOL_DECODE_OUTPUT_BYTES)}, at most ${String(MAX_APKTOOL_DECODE_OUTPUT_BYTES)}); decoded files are read under their own budgets. Applies on the next decode; no restart. Does not raise decode_timeout_ms or the version probe.`,
       ),
   }),
 } as const;
@@ -271,7 +307,11 @@ export const apktoolResultSchemas = {
         "Primary string entries; empty when include_strings is false or string_tables_only is true. An unrequested field does not establish an empty table.",
       ),
     locale: z.string().nullable(),
-    locales: z.array(z.string().min(1)),
+    locales: z
+      .array(z.string().min(1))
+      .describe(
+        "Every locale with a res/values-<locale>/strings.xml in the decoded workspace, sorted; the default table is not listed. A listed table can still hold no valid strings; select it with locale or locales to read it.",
+      ),
     string_tables: z
       .array(stringTableSchema)
       .optional()

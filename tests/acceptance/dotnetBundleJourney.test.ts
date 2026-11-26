@@ -192,7 +192,7 @@ for (const format of ["dotnet-bundle", "pyinstaller"] as const) {
       expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
       const observed = await client.callTool({
         name: "inspect_artifact",
-        arguments: {},
+        arguments: { detail: "complete" },
       });
       expect(observed.isError, JSON.stringify(observed)).not.toBe(true);
       expect(
@@ -256,10 +256,13 @@ test("reports excessive bundle path depth as a public CLI limit", async ({
       reader_limit: {
         parameter: "artifact_limits.dotnet_bundle.path_parts",
         effective_value: 256,
-        required_value: 257,
         unit: "count",
         can_increase: true,
       },
     },
+  });
+  // The path-depth count stops at the limit, so it knows only a lower bound.
+  expect(result.json).not.toMatchObject({
+    details: { reader_limit: { required_value: expect.anything() } },
   });
 });

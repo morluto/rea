@@ -12,7 +12,7 @@ import {
   type DesktopApplication,
 } from "../desktopApplication.js";
 import {
-  analysisViewInputError,
+  invalidAnalysisViewSubject,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
@@ -27,7 +27,7 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import { pickFields, selectViewRows } from "./selectViewRows.js";
-import { ok, err } from "../result.js";
+import { ok } from "../result.js";
 import { evidenceFileTarget } from "../evidence.js";
 
 // Bound diagnostic context independently of the retained report size. Previews
@@ -174,14 +174,8 @@ export const projectDesktopApplicationView = (
     subject.format !== "directory" ||
     subject.sha256 !== report.root.snapshot_sha256
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message: "Parent must identify the same examined directory snapshot.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "Parent must identify the same examined directory snapshot.",
     );
   const shared = {
     parent_evidence_id: parent.evidenceId,

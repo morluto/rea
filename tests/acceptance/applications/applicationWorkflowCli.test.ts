@@ -214,6 +214,7 @@ const analyzeEvidenceThroughStdioMcp = async (
   const response = await client.callTool({
     name: "analyze_javascript_application",
     arguments: {
+      detail: "complete",
       input_path: inputPath,
       ...(sourcePaths === undefined ? {} : { source_paths: [...sourcePaths] }),
     },
@@ -1110,7 +1111,7 @@ describe("Webpack factory CommonJS export keys", () => {
     const client = await connectedMcpClient();
     const response = await client.callTool({
       name: "analyze_javascript_application",
-      arguments: { input_path: root, format: "directory" },
+      arguments: { detail: "complete", input_path: root, format: "directory" },
     });
     expect(response.isError).not.toBe(true);
     const mcpEvidence = applicationEvidenceSchema.parse(
@@ -1723,7 +1724,7 @@ const analyzeComparisonSources = async (
       async (applicationRoot) => {
         const response = await client.callTool({
           name: "analyze_javascript_application",
-          arguments: { input_path: applicationRoot },
+          arguments: { detail: "complete", input_path: applicationRoot },
         });
         expect(response.isError).not.toBe(true);
         return response.structuredContent;
