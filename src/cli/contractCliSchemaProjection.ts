@@ -11,6 +11,8 @@ import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import type {
   CliEvidenceTargets,
   CliInputBranches,
+  CliOnlyOption,
+  CliOptionShape,
   CliSessionTarget,
   CliTargetOpening,
   CliViewDelivery,
@@ -25,6 +27,23 @@ import { cliDecimalField, cliDecimalShape } from "./options.js";
 
 /** The CLI key of a session target, which no contract field supplies. */
 export const SESSION_TARGET_KEY = "path";
+
+/** Describe a CLI-only positional or option from its declared schema entry. */
+export const describeCliOnlyOption = ([key, schema]: readonly [
+  string,
+  z.ZodType,
+]): CliOnlyOption => ({ key, description: schema.description, schema });
+
+/** Select the projection's declared options, keeping every supplied value. */
+export const selectCliOptionValues = (
+  shape: CliOptionShape,
+  values: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> =>
+  Object.fromEntries(
+    Object.keys(shape).flatMap((key) =>
+      values[key] === undefined ? [] : [[key, values[key]]],
+    ),
+  );
 
 /** Help for `--view`, which names the delivery it needs. */
 export const viewOptionHelp = (viewDelivery: CliViewDelivery): string =>

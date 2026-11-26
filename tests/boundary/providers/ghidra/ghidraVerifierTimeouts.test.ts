@@ -4,10 +4,8 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  createGhidraVerifierMcpOperations,
-  resolveGhidraVerifierTimeouts,
-} from "../../../../scripts/lib/ghidra-verifier-timeouts.mjs";
+import { createGhidraVerifierMcpOperations } from "../../../../scripts/lib/ghidra-verifier-mcp.mjs";
+import { resolveGhidraVerifierTimeouts } from "../../../../scripts/lib/ghidra-verifier-timeouts.mjs";
 import { verifyGhidraFileOffsets } from "../../../../scripts/lib/real-ghidra-file-offsets.mjs";
 
 const MAX_TIMER_DELAY_MS = 2_147_483_647;

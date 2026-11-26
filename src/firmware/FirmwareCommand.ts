@@ -27,10 +27,7 @@ import {
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import type {
-  AnalysisError,
-  AnalysisCapturedOutput,
-} from "../domain/analysisErrorBase.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { projectAnalysisErrorWithoutCapturedOutput } from "../domain/analysisErrorProjection.js";
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
 import {

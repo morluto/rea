@@ -22,6 +22,7 @@ import {
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
+import type { ArtifactContainerIntegrityPair } from "../domain/artifactIntegrity.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
 
 /** An entry whose bytes are one range of the carrier. */
@@ -39,13 +40,14 @@ export interface PositionalArtifactEntries<
   /** The coverage the preparation established, including complete coverage. */
   readonly coverage: ArtifactReaderTraversal;
   readonly formatMetadata?: Metadata;
+  readonly containerIntegrity?: ArtifactContainerIntegrityPair;
 }
 
 /**
  * Serve entries that are byte ranges of one carrier file. Preparation runs
  * once; every traversal, open and completed entry stream rechecks the
  * carrier's identity, and close retires open streams before the carrier.
- * Encrypted entries are listed but never opened.
+ * Encrypted entries, and any a subclass refuses, are listed but never opened.
  */
 export abstract class PositionalArtifactReader<
   Metadata extends ArtifactFormatMetadata = never,
@@ -63,6 +65,7 @@ export abstract class PositionalArtifactReader<
         readonly entries: ReadonlyMap<string, Entry>;
         readonly coverage: ArtifactReaderTraversal;
         readonly formatMetadata: Metadata | undefined;
+        readonly containerIntegrity: ArtifactContainerIntegrityPair | undefined;
       }
     | undefined;
 
@@ -98,6 +101,11 @@ export abstract class PositionalArtifactReader<
   /** Metadata from the same validated preparation that established entries and coverage. */
   protected get preparedFormatMetadata(): Metadata | undefined {
     return this.#prepared?.formatMetadata;
+  }
+
+  containerIntegrity(): ArtifactContainerIntegrityPair | undefined {
+    const integrity = this.#prepared?.containerIntegrity;
+    return integrity === undefined ? undefined : { ...integrity };
   }
 
   async prepareContainer(
@@ -156,26 +164,26 @@ export abstract class PositionalArtifactReader<
         stored,
         `${this.#label} entry does not match its owning inventory`,
       );
-      if (stored.encrypted)
-        throw new ArtifactReaderFailure(
-          "unavailable",
-          `Encrypted ${this.#label} member is unsupported: ${stored.path}`,
-        );
-      const { handle } = await this.verifyCarrier(signal);
+      // A changed carrier is reported as changed before cached facts refuse
+      // the entry's content.
+      const carrier = await this.verifyCarrier(signal);
       this.assertOpen(signal);
+      const refusal = this.contentRefusal(stored);
+      if (refusal !== undefined) throw refusal;
       if (stored.byteOffset === null || stored.declaredSize === null)
         throw this.noPhysicalRange(stored);
       const lifecycle = this.#lifecycle.member(signal);
       const { signal: streamSignal, cancellationFailure } = lifecycle;
       const source =
-        stored.declaredSize === 0
+        this.entrySource(stored, carrier, lifecycle) ??
+        (stored.declaredSize === 0
           ? Readable.from([])
-          : readFileHandleChunks(handle, {
+          : readFileHandleChunks(carrier.handle, {
               start: stored.byteOffset,
               end: stored.byteOffset + stored.declaredSize - 1,
               signal: streamSignal,
               cancellationFailure,
-            });
+            }));
       const output = this.#entryStream(stored, lifecycle);
       ownArtifactStream(source, output, {
         scope: this.#scope,
@@ -197,6 +205,35 @@ export abstract class PositionalArtifactReader<
 
   provenance(): readonly [] {
     return [];
+  }
+
+  /**
+   * Why a listed entry's bytes cannot be served as one carrier range, decided
+   * from its prepared facts after the carrier's identity is rechecked.
+   */
+  protected contentRefusal(entry: Entry): ArtifactReaderFailure | undefined {
+    return entry.encrypted
+      ? new ArtifactReaderFailure(
+          "unavailable",
+          `Encrypted ${this.#label} member is unsupported: ${entry.path}`,
+        )
+      : undefined;
+  }
+
+  /**
+   * The bytes to serve for an entry that is not one stored carrier range,
+   * such as a decoded segment; undefined serves the stored range. The source
+   * must honor the member's signal and report cancellation through its
+   * `cancellationFailure`. The base reader owns the returned stream like any
+   * other member: close waits for it, and its length is checked against the
+   * entry's `declaredSize` after the carrier is rechecked.
+   */
+  protected entrySource(
+    _entry: Entry,
+    _carrier: StableRegularFileDescriptor,
+    _member: ArtifactMemberLifecycle,
+  ): Readable | undefined {
+    return undefined;
   }
 
   /** Recheck the carrier's identity and borrow its descriptor. */
@@ -229,13 +266,14 @@ export abstract class PositionalArtifactReader<
       entries,
       coverage: prepared.coverage,
       formatMetadata: prepared.formatMetadata,
+      containerIntegrity: prepared.containerIntegrity,
     };
   }
 
   /** Format-specific failure when an entry without a physical byte range is opened. */
   protected noPhysicalRange(entry: Entry): ArtifactReaderFailure {
     return new ArtifactReaderFailure(
-      "format",
+      "path",
       `${this.#label} member has no physical byte range: ${entry.path}`,
     );
   }
@@ -253,8 +291,10 @@ export abstract class PositionalArtifactReader<
     const label = this.#label;
     let bytes = 0;
     const check = async (): Promise<void> => {
-      if (bytes !== entry.declaredSize) throw this.entryEndedEarly(entry);
+      // A carrier that changed during the read reports that change; only a
+      // stable carrier's short member is the format's fault.
       await lifecycle.verify((signal) => this.verifyCarrier(signal));
+      if (bytes !== entry.declaredSize) throw this.entryEndedEarly(entry);
     };
     return new Transform({
       transform(chunk: Buffer, _encoding, callback) {

@@ -1,3 +1,4 @@
+import { writeWorkerControlFrame } from "../../process/writeWorkerControlFrame.js";
 import {
   javaScriptMemberMutationAllowanceFromField,
   type JavaScriptMemberMutationAllowance,
@@ -50,9 +51,20 @@ export interface JavaScriptSourceWorkerAnalyzer {
         phase: "parse" | "static" | "semantic" | "projection",
       ) => Promise<void>;
       readonly checkpoint: (facts: JavaScriptStaticAnalysis) => Promise<number>;
+      /**
+       * Preload discovery computed these complete facts; keep their checkpoint
+       * so the normal pass of the same source can skip static analysis.
+       */
+      readonly retainStatic: (facts: JavaScriptStaticAnalysis) => void;
+      /** Static facts that preload discovery retained for this exact request. */
+      readonly reusedStatic: () => ReusedJavaScriptStatic | undefined;
+      /** Checkpoint retained facts exactly as the static phase would have. */
+      readonly checkpointReused: (
+        reused: ReusedJavaScriptStatic,
+      ) => Promise<number>;
     },
     packageType: JavaScriptPackageType,
-    purpose: "analysis" | "preload-discovery",
+    purpose: "analysis" | "preload-discovery" | "structure-only",
     precision: JavaScriptSemanticPrecisionInput | undefined,
     memberMutationAllowance: JavaScriptMemberMutationAllowance,
   ): Promise<{
@@ -61,18 +73,157 @@ export interface JavaScriptSourceWorkerAnalyzer {
   } | null>;
 }
 
-const send = async (input: JavaScriptWorkerMessage): Promise<void> => {
-  const value = javaScriptWorkerMessageSchema.parse(input);
-  const frame = `${JSON.stringify(value)}\n`;
-  if (Buffer.byteLength(frame) > DEFAULTS.protocolBytes)
-    throw new RangeError(
-      "JavaScript worker control frame exceeds its byte budget",
-    );
-  await new Promise<void>((resolve, reject) => {
-    process.stdout.write(frame, (error) =>
-      error === null || error === undefined ? resolve() : reject(error),
-    );
+/** The facts the normal pass reads after a reused static checkpoint. */
+export interface ReusedJavaScriptStatic {
+  readonly parse_status: JavaScriptStaticAnalysis["parse_status"];
+  readonly call_paths: JavaScriptStaticAnalysis["electron"]["call_paths"];
+}
+
+export interface RetainedStaticCheckpoint extends ReusedJavaScriptStatic {
+  readonly text: string;
+  readonly retainedBytes: number;
+}
+
+/**
+ * Static checkpoints from preload discovery, consumed by the normal pass of
+ * the same worker. Static analysis is deterministic for the request fields in
+ * the key, so a reused checkpoint is byte-identical to a recomputed one. The
+ * store keeps at most one eighth of the V8 heap limit and stays empty where
+ * the runtime does not report one; a miss recomputes.
+ *
+ * Entries are keyed by source identity. The normal pass analyzes each source
+ * once and always removes its entry; it reuses the checkpoint only when the
+ * package type also matches. A discovered preload script is read as CommonJS
+ * after discovery read its package as ESM, and that entry must not outlive
+ * the pass that can no longer use it.
+ */
+interface RetainedStaticEntry {
+  readonly packageType: string;
+  readonly checkpoint: RetainedStaticCheckpoint;
+}
+const retainedStatics = new Map<string, RetainedStaticEntry>();
+let retainedStaticBytes = 0;
+
+/** Which source a checkpoint describes, and the package type it was read as. */
+export interface JavaScriptStaticReuseKey {
+  readonly source: string;
+  readonly packageType: string;
+}
+
+export const javaScriptStaticReuseKey = (
+  request: ReturnType<typeof javaScriptWorkerRequestSchema.parse>,
+): JavaScriptStaticReuseKey => ({
+  source: JSON.stringify([
+    request.file.container_sha256,
+    request.file.path,
+    request.text_sha256,
+    request.semantic_precision ?? null,
+    request.member_mutation_allowance,
+  ]),
+  packageType: request.package_type,
+});
+
+const staticReuseCapacityBytes = (): number =>
+  javaScriptRuntime(process.versions).id === "node"
+    ? Math.floor(getHeapStatistics().heap_size_limit / 8)
+    : 0;
+
+const releaseRetainedStatic = (
+  source: string,
+): RetainedStaticEntry | undefined => {
+  const previous = retainedStatics.get(source);
+  if (previous === undefined) return undefined;
+  retainedStatics.delete(source);
+  retainedStaticBytes -= previous.checkpoint.retainedBytes;
+  return previous;
+};
+
+export const retainJavaScriptStaticCheckpoint = (
+  key: JavaScriptStaticReuseKey,
+  facts: JavaScriptStaticAnalysis,
+): void => {
+  releaseRetainedStatic(key.source);
+  // Skip encoding where reuse is disabled or no capacity remains.
+  const capacity = staticReuseCapacityBytes();
+  if (retainedStaticBytes >= capacity) return;
+  let text: string;
+  let retainedBytes: number;
+  try {
+    text = encodeJavaScriptStaticCheckpoint(facts);
+    // UTF-16 strings and the retained call-path objects, conservatively.
+    retainedBytes =
+      2 * text.length +
+      2 * (JSON.stringify(facts.electron.call_paths) ?? "").length;
+  } catch {
+    // Reuse is only an optimization: the normal pass recomputes and reports
+    // the same refusal, so retention never fails preload discovery.
+    return;
+  }
+  if (retainedStaticBytes + retainedBytes > capacity) return;
+  retainedStatics.set(key.source, {
+    packageType: key.packageType,
+    checkpoint: {
+      text,
+      retainedBytes,
+      parse_status: facts.parse_status,
+      call_paths: facts.electron.call_paths,
+    },
   });
+  retainedStaticBytes += retainedBytes;
+};
+
+export const takeJavaScriptStaticCheckpoint = (
+  key: JavaScriptStaticReuseKey,
+): RetainedStaticCheckpoint | undefined => {
+  const retained = releaseRetainedStatic(key.source);
+  return retained?.packageType === key.packageType
+    ? retained.checkpoint
+    : undefined;
+};
+
+/** Validate, fit and bound static facts as the checkpoint the parent reads. */
+export const encodeJavaScriptStaticCheckpoint = (
+  facts: JavaScriptStaticAnalysis,
+): string => {
+  let value = javaScriptWorkerStaticAnalysisSchema.parse(facts);
+  if (value.routes !== undefined) {
+    const { routes, ...existing } = value;
+    // This is schema-checked, producer-owned JSON. Interface optional
+    // members can only make the size estimate conservative.
+    const available =
+      DEFAULTS.checkpointBytes -
+      jsonValueByteLength(existing as JsonValue, DEFAULTS.checkpointBytes) -
+      Buffer.byteLength(',"routes":');
+    const admitted = fitJavaScriptRouteSourceFacts(routes, available);
+    value =
+      admitted === undefined ? existing : { ...existing, routes: admitted };
+  }
+  const text = JSON.stringify(value);
+  const bytes = Buffer.byteLength(text);
+  if (bytes > DEFAULTS.checkpointBytes)
+    throw new AnalysisResourceConstraintError(
+      "analyze_javascript_application",
+      "transport",
+      `JavaScript static checkpoint exceeds its ${String(DEFAULTS.checkpointBytes)}-byte complete-fact ceiling. This release has no runtime override.`,
+      {
+        checkpoint_bytes: bytes,
+        checkpoint_limit_bytes: DEFAULTS.checkpointBytes,
+      },
+      {
+        remediationAction: javaScriptCheckpointCeilingRemediation(
+          DEFAULTS.checkpointBytes,
+        ),
+      },
+    );
+  return text;
+};
+
+const send = async (input: JavaScriptWorkerMessage): Promise<void> => {
+  await writeWorkerControlFrame(
+    javaScriptWorkerMessageSchema.parse(input),
+    DEFAULTS.protocolBytes,
+    "JavaScript worker control frame exceeds its byte budget",
+  );
 };
 
 /** Serve sequential inert-source requests from a parent-owned private runtime root. */
@@ -130,6 +281,41 @@ const analyzeJob = async (
       throw new TypeError(
         "JavaScript worker source text digest does not match its request",
       );
+    const reuseKey = javaScriptStaticReuseKey(request);
+    // Write one checkpoint and wait for the parent's semantic admission.
+    const writeStaticCheckpoint = async (text: string): Promise<number> => {
+      const bytes = Buffer.byteLength(text);
+      await writeFile(join(root, `${request.id}.static.json`), text, {
+        flag: "wx",
+        mode: 0o600,
+      });
+      await send({
+        kind: "static",
+        id: request.id,
+        bytes,
+        sha256: sha256Hex(text),
+      });
+      const next = await requests.next();
+      if (
+        !next.done &&
+        !next.value.ok &&
+        next.value.error._tag === "ControlLineMalformedUtf8"
+      )
+        throw new TypeError(
+          "JavaScript worker admission frame is not valid UTF-8",
+        );
+      if (next.done || !next.value.ok)
+        throw new TypeError(
+          "JavaScript worker admission frame is missing or oversized",
+        );
+      const raw: unknown = JSON.parse(next.value.value);
+      const admission = javaScriptWorkerAdmissionSchema.parse(raw);
+      if (admission.id !== request.id)
+        throw new TypeError(
+          "JavaScript worker admission names a different source job",
+        );
+      return admission.semantic_result_budget_bytes;
+    };
     const result = await analyze(
       {
         ...request.file,
@@ -138,74 +324,18 @@ const analyzeJob = async (
       { nodes: request.node_budget, unknowns: request.unknown_budget },
       {
         phase: async (phase) => send({ kind: "phase", id: request.id, phase }),
-        checkpoint: async (facts) => {
-          let value = javaScriptWorkerStaticAnalysisSchema.parse(facts);
-          if (value.routes !== undefined) {
-            const { routes, ...existing } = value;
-            // This is schema-checked, producer-owned JSON. Interface optional
-            // members can only make the size estimate conservative.
-            const available =
-              DEFAULTS.checkpointBytes -
-              jsonValueByteLength(
-                existing as JsonValue,
-                DEFAULTS.checkpointBytes,
-              ) -
-              Buffer.byteLength(',"routes":');
-            const admitted = fitJavaScriptRouteSourceFacts(routes, available);
-            value =
-              admitted === undefined
-                ? existing
-                : { ...existing, routes: admitted };
-          }
-          const text = JSON.stringify(value);
-          const bytes = Buffer.byteLength(text);
-          if (bytes > DEFAULTS.checkpointBytes)
-            throw new AnalysisResourceConstraintError(
-              "analyze_javascript_application",
-              "transport",
-              `JavaScript static checkpoint exceeds its ${String(DEFAULTS.checkpointBytes)}-byte complete-fact ceiling. This release has no runtime override.`,
-              {
-                checkpoint_bytes: bytes,
-                checkpoint_limit_bytes: DEFAULTS.checkpointBytes,
-              },
-              {
-                remediationAction: javaScriptCheckpointCeilingRemediation(
-                  DEFAULTS.checkpointBytes,
-                ),
-              },
-            );
-          await writeFile(join(root, `${request.id}.static.json`), text, {
-            flag: "wx",
-            mode: 0o600,
-          });
-          await send({
-            kind: "static",
-            id: request.id,
-            bytes,
-            sha256: sha256Hex(text),
-          });
-          const next = await requests.next();
-          if (
-            !next.done &&
-            !next.value.ok &&
-            next.value.error._tag === "ControlLineMalformedUtf8"
-          )
-            throw new TypeError(
-              "JavaScript worker admission frame is not valid UTF-8",
-            );
-          if (next.done || !next.value.ok)
-            throw new TypeError(
-              "JavaScript worker admission frame is missing or oversized",
-            );
-          const raw: unknown = JSON.parse(next.value.value);
-          const admission = javaScriptWorkerAdmissionSchema.parse(raw);
-          if (admission.id !== request.id)
-            throw new TypeError(
-              "JavaScript worker admission names a different source job",
-            );
-          resultBudgetBytes = admission.semantic_result_budget_bytes;
-          return resultBudgetBytes;
+        checkpoint: async (facts) =>
+          (resultBudgetBytes = await writeStaticCheckpoint(
+            encodeJavaScriptStaticCheckpoint(facts),
+          )),
+        retainStatic: (facts) => {
+          retainJavaScriptStaticCheckpoint(reuseKey, facts);
         },
+        reusedStatic: () => takeJavaScriptStaticCheckpoint(reuseKey),
+        checkpointReused: async (reused) =>
+          (resultBudgetBytes = await writeStaticCheckpoint(
+            (reused as RetainedStaticCheckpoint).text,
+          )),
       },
       request.package_type,
       request.purpose,

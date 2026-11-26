@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { knownCoverage } from "../coverageAccumulator.js";
 
 import type {
   JavaScriptSemanticCallable,
@@ -179,7 +180,10 @@ const immutableSpawn = (
     argvCount: args.argvCount,
     environmentSupplied: environmentSupplied(args.readOption, context, state),
     stdioMode: stdioMode(args, candidate.method, context),
-    resolution: command === null ? "partial" : "complete",
+    resolution: knownCoverage(
+      command !== null,
+      "dynamic child-process command",
+    ),
   };
 };
 
@@ -271,11 +275,11 @@ const childInteraction = (
       kind === "signal" ? killSignalName(node.arguments, state) : null,
     listenerLocation:
       kind === "listener" && t.isNode(listener) ? range(listener) : null,
-    resolution:
+    resolution: knownCoverage(
       complete &&
-      linked.every((candidate) => candidate.builtinAuthority !== "candidate")
-        ? "complete"
-        : "partial",
+        linked.every((candidate) => candidate.builtinAuthority !== "candidate"),
+      "incomplete or candidate child-process link",
+    ),
   };
 };
 

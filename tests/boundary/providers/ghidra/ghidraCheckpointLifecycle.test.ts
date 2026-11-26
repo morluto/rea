@@ -1,4 +1,6 @@
+import { once } from "node:events";
 import { afterEach, expect, it, vi } from "vitest";
+import { waitFor } from "../../../support/testWait.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { createHash } from "node:crypto";
 import { access, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -315,5 +317,37 @@ it.skipIf(process.platform === "win32")(
     for (const root of f.launcher.runtimeRoots)
       await expect(access(root)).rejects.toThrow();
     expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "stops the process when a caller cancels during a graceful close stalled on its checkpoint",
+  async () => {
+    const f = await fixture("checkpoint_hold_close_hang_tool");
+    expect((await f.client.start()).ok).toBe(true);
+    await f.client.callTool("set_address_name", {
+      address: "0x1000",
+      name: "changed",
+    });
+    const controller = new AbortController();
+    const active = f.client.callTool(
+      "list_documents",
+      {},
+      { signal: controller.signal },
+    );
+    // The tool request has crossed the socket and will never be answered.
+    await waitFor(() =>
+      expect(f.launcher.requests).toContain("list_documents"),
+    );
+    const closing = f.client.close();
+    await f.launcher.checkpointHold.reached(closing, "final checkpoint");
+    // The final checkpoint never answers either. The caller's cancellation
+    // must escalate to a forced stop instead of queueing behind it.
+    controller.abort(new Error("caller stopped waiting"));
+    const [cancelled] = await Promise.all([active, closing]);
+    expect(cancelled).toMatchObject({ ok: false });
+    const child = f.launcher.processes[0]!;
+    if (child.exitCode === null && child.signalCode === null)
+      await once(child, "exit");
   },
 );

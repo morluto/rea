@@ -1,4 +1,3 @@
-import { malformedInput } from "../domain/parseFailure.js";
 import {
   parseMachoLayout,
   type MachoLayout,
@@ -8,6 +7,7 @@ import {
   type AdmittedMachoSlice,
   type MachoSliceSelectionRefusal,
 } from "../domain/apple/machoSliceSelection.js";
+import { readFailureError } from "../resources/index.js";
 
 /** A refused admitted selection, thrown so a test can assert its kind. */
 export class MachoSliceRefused extends Error {
@@ -28,7 +28,7 @@ export const layoutFor = (
     slice,
   });
   if (selected.ok) return parseMachoLayout(bytes, selected.value);
-  if (selected.error.kind === "malformed")
-    throw malformedInput("macho", selected.error.message);
+  if (selected.error.kind === "target")
+    throw readFailureError(selected.error.failure);
   throw new MachoSliceRefused(selected.error);
 };

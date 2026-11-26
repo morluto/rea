@@ -1,7 +1,10 @@
 import { afterEach, describe, expect } from "vitest";
 import { z } from "zod";
 
+import { join } from "node:path";
+
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS } from "../../../src/domain/browserScenarioCaptureLimits.js";
 import { BROWSER_STORAGE_FINGERPRINT_VERSION } from "../../../src/domain/browserScenarioCaptureValues.js";
 import { browserScenarioDiffSchema } from "../../../src/domain/browserScenarioDiffValues.js";
@@ -10,6 +13,7 @@ import {
   type FakeCdpBrowser,
   type FakeOptions,
 } from "../../fixtures/fakeCdpBrowser.js";
+import { startRuntimeBrowser } from "../../fixtures/webRuntime.js";
 
 const browsers: FakeCdpBrowser[] = [];
 
@@ -34,6 +38,116 @@ const partialScriptEvents: FakeOptions["commandEvents"] = (
 afterEach(async () => {
   await Promise.all(browsers.splice(0).map(async (browser) => browser.close()));
 });
+
+cliTest(
+  "delivers an inspect-web-page summary only with its Evidence bundle",
+  async ({ cli }) => {
+    const browser = await startFakeCdpBrowser({});
+    browsers.push(browser);
+    const run = (extra: readonly string[]) =>
+      cli.run({
+        arguments: [
+          "inspect-web-page",
+          browser.endpoint,
+          "allowed-page",
+          "--observation-ms",
+          "0",
+          "--allowed-origins",
+          browser.allowedOrigin,
+          ...extra,
+          "--json",
+        ],
+        environment: process.env,
+      });
+    const complete = await run([]);
+    expect(complete.exitCode, complete.stderr).toBe(0);
+    expect(complete.json).toMatchObject({ operation: "inspect_web_page" });
+
+    const unbundled = await run(["--detail", "summary"]);
+    expect(unbundled.exitCode).not.toBe(0);
+
+    const directory = await createTestTempDirectory("rea-web-page-summary-");
+    const bundle = join(directory, "bundle.json");
+    const summary = await run([
+      "--detail",
+      "summary",
+      "--evidence_output",
+      bundle,
+    ]);
+    expect(summary.exitCode, summary.stderr).toBe(0);
+    expect(summary.json).toMatchObject({
+      summary: {
+        operation: "inspect_analysis_view",
+        normalized_result: {
+          kind: "summary",
+          parent_operation: "inspect_web_page",
+        },
+      },
+    });
+  },
+);
+
+cliTest(
+  "delivers an observe-web-execution summary only with its Evidence bundle",
+  async ({ cli }) => {
+    const browser = await startRuntimeBrowser();
+    browsers.push(browser);
+    const run = (extra: readonly string[]) =>
+      cli.run({
+        arguments: [
+          "observe-web-execution",
+          browser.endpoint,
+          "allowed-page",
+          "--observation-ms",
+          "5",
+          ...extra,
+          "--json",
+        ],
+        environment: process.env,
+      });
+    const complete = await run([]);
+    expect(complete.exitCode, complete.stderr).toBe(0);
+    expect(complete.json).toMatchObject({ operation: "observe_web_execution" });
+
+    const unbundled = await run(["--detail", "summary"]);
+    expect(unbundled.exitCode).not.toBe(0);
+
+    const directory = await createTestTempDirectory("rea-web-execution-");
+    const summary = await run([
+      "--detail",
+      "summary",
+      "--evidence_output",
+      join(directory, "bundle.json"),
+    ]);
+    expect(summary.exitCode, summary.stderr).toBe(0);
+    expect(summary.json).toMatchObject({
+      summary: {
+        operation: "inspect_analysis_view",
+        normalized_result: {
+          kind: "summary",
+          parent_operation: "observe_web_execution",
+          summary: { counts: { functions: 2, executed_functions: 1 } },
+        },
+      },
+    });
+  },
+);
+
+cliTest(
+  "refuses a retained capture reference the one-shot CLI cannot resolve",
+  async ({ cli }) => {
+    const id = `ev_${"0".repeat(64)}`;
+    const side = JSON.stringify({
+      inspection: { kind: "retained-evidence", evidence_id: id },
+    });
+    const refused = await cli.run({
+      arguments: ["compare-web-captures", side, side, "--json"],
+      environment: process.env,
+    });
+    expect(refused.exitCode).not.toBe(0);
+    expect(refused.stdout + refused.stderr).toContain(id);
+  },
+);
 
 cliTest(
   "compares source-map declaration omissions through the public CLI",

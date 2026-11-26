@@ -12,6 +12,7 @@ import {
   bunModuleGraphPayload,
   bunPrefixedPayload,
   peBunSection,
+  observeBunFixtureReads,
 } from "../../../src/artifacts/bun/BunStandalone.fixture.js";
 import { extractArtifact } from "../../../src/artifacts/extraction/ArtifactExtraction.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -31,17 +32,9 @@ it("reads bounded metadata instead of the stored Bun asset body", async () => {
   const bytes = host(Buffer.alloc(8 * 1024 * 1024, 97));
   await writeFile(path, bytes);
   const handle = await open(path, "r");
-  const read = handle.read.bind(handle);
   let bytesRead = 0;
-  const counted = new Proxy(handle, {
-    get: (target, key) =>
-      key === "read"
-        ? async (...args: Parameters<typeof read>) => {
-            const result = await read(...args);
-            bytesRead += result.bytesRead;
-            return result;
-          }
-        : Reflect.get(target, key),
+  const counted = observeBunFixtureReads(handle, (count) => {
+    bytesRead += count;
   });
   try {
     const located = await locateBunGraphFixture(counted, bytes.length);

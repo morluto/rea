@@ -179,6 +179,11 @@ export const documentationSections = [
         route: "/pe-load-config",
       },
       {
+        text: "PE x64 exception-directory function ranges",
+        source: "guides/native/pe-unwind-ranges.md",
+        route: "/pe-unwind-ranges",
+      },
+      {
         text: "Match native functions across builds",
         source: "native-function-matching.md",
         route: "/native-function-matching",
@@ -404,6 +409,16 @@ export const documentationSections = [
         route: "/android-ota-payload",
       },
       {
+        text: "Android Verified Boot vbmeta images",
+        source: "guides/firmware/android-vbmeta.md",
+        route: "/android-vbmeta",
+      },
+      {
+        text: "Android sparse images",
+        source: "guides/firmware/android-sparse-image.md",
+        route: "/android-sparse-image",
+      },
+      {
         text: "Flattened devicetree inspection",
         source: "devicetree.md",
         route: "/devicetree",
@@ -437,6 +452,21 @@ export const documentationSections = [
         text: "U-Boot legacy uImage containers",
         source: "uimage.md",
         route: "/uimage",
+      },
+      {
+        text: "uClinux bFLT flat executables",
+        source: "bflt-executables.md",
+        route: "/bflt-executables",
+      },
+    ],
+  },
+  {
+    text: "Container images",
+    items: [
+      {
+        text: "OCI image layouts",
+        source: "guides/artifacts/oci-image-layout.md",
+        route: "/oci-image-layout",
       },
     ],
   },
@@ -509,9 +539,34 @@ export const documentationSections = [
         route: "/ines-containers",
       },
       {
+        text: "Nintendo DS ROMs",
+        source: "guides/firmware/nds-roms.md",
+        route: "/nds-roms",
+      },
+      {
         text: "WeChat mini-program wxapkg archives",
         source: "wxapkg.md",
         route: "/wxapkg",
+      },
+      {
+        text: "ISO 9660 disc images",
+        source: "guides/firmware/iso9660-images.md",
+        route: "/iso9660-images",
+      },
+      {
+        text: "tar and gzip-compressed tar archives",
+        source: "tar-archives.md",
+        route: "/tar-archives",
+      },
+      {
+        text: "Nintendo Switch NSO and NRO executables",
+        source: "guides/firmware/switch-executables.md",
+        route: "/switch-executables",
+      },
+      {
+        text: "GPU asset headers: DDS, GLB, KTX and KTX2",
+        source: "gpu-asset-headers.md",
+        route: "/gpu-asset-headers",
       },
     ],
   },
@@ -652,6 +707,16 @@ export const documentationSections = [
         text: "MCP runtime contracts",
         source: "reference/mcp-contracts.md",
         route: "/mcp-contracts",
+      },
+      {
+        text: "Target failures",
+        source: "reference/target-failures.md",
+        route: "/target-failures",
+      },
+      {
+        text: "Directory identity",
+        source: "reference/directory-identity.md",
+        route: "/directory-identity",
       },
       {
         text: "Reconstruction obligation ledgers",

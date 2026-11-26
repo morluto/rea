@@ -9,7 +9,10 @@ import type {
   ProviderIdentity,
 } from "../ports/AnalysisProvider.js";
 import { parseAnalysisInput } from "./AnalysisInput.js";
-import type { AnalysisViewRetention } from "./analysisView/AnalysisViewService.js";
+import {
+  requireAnalysisViewRetention,
+  type AnalysisViewRetention,
+} from "./analysisView/AnalysisViewRetention.js";
 import {
   completeProviderEvidence,
   retainCompletedArtifactEvidence,
@@ -72,18 +75,8 @@ export const executeArtifactInspection = async <TInput, TParameters, TReport>(
   );
   if (!input.ok) return input;
   const retainedView = spec.selectRetainedView?.(input.value);
-  const view =
-    retainedView === undefined
-      ? undefined
-      : {
-          request: retainedView,
-          service: await import("./analysisView/AnalysisViewService.js"),
-        };
-  if (view !== undefined) {
-    const ready = view.service.requireAnalysisViewRetention(
-      spec.operation,
-      retention,
-    );
+  if (retainedView !== undefined) {
+    const ready = requireAnalysisViewRetention(spec.operation, retention);
     if (!ready.ok) return ready;
   }
   const parameters = spec.toParameters(input.value);
@@ -109,10 +102,11 @@ export const executeArtifactInspection = async <TInput, TParameters, TReport>(
     return inspected;
   }
   const completed = completeProviderEvidence(evidence, options?.signal);
-  if (!completed.ok || view === undefined) return completed;
-  return view.service.projectRetainedAnalysis(
-    completed.value,
-    retention,
-    view.request,
-  );
+  if (!completed.ok || retainedView === undefined) return completed;
+  const service = await import("./analysisView/AnalysisViewService.js");
+  // The awaited import is the last finalization step; a late abort must not
+  // record or project the summary as success.
+  const ready = completeProviderEvidence(completed.value, options?.signal);
+  if (!ready.ok) return ready;
+  return service.projectRetainedAnalysis(ready.value, retention, retainedView);
 };

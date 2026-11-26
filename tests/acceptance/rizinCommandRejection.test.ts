@@ -110,7 +110,7 @@ const expectClassified = (raw: unknown, outcome: Outcome): void => {
     exit_code: 0,
     completion_status: outcome.refused === undefined ? "complete" : "rejected",
   });
-  expect(evidence.raw_result).toEqual(evidence.normalized_result);
+  expect(evidence.raw_result).toBeNull();
   if (outcome.refusal === undefined)
     expect(evidence.normalized_result).not.toHaveProperty("refusal");
   else

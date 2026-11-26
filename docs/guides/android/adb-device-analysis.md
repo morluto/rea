@@ -301,18 +301,11 @@ beyond already-connected devices (`adb connect`) are not exposed yet.
 
 ## Real verification
 
-`npm run verify:adb` exercises observation and transfer operations against a live device. It
-requires `adb` (or `REA_ADB_PATH`) and any attached emulator or phone;
-`--serial` selects one when several are attached, `--pull PACKAGE` pulls a
-real package and verifies the returned digests against the files on disk.
-The optional `--install-apk` lifecycle is unavailable until the selected APK
-identity and device cleanup ownership can be established safely.
-
-Record: verified against adb 34.0.5 on Linux against an Android 14
-(API 34) x86_64 emulator — all operations above, a 224-package inventory,
-287 services, 92 features, a real two-APK split set pulled with byte-exact
-digests, a verified push/pull roundtrip, a 1.3 MB screen capture, and the
-complete package lifecycle; see `docs/development/testing.md` for the lane summary.
+`npm run verify:adb` exercises observation and transfer operations against a
+live device or emulator through `adb` (or `REA_ADB_PATH`). The
+[ADB device acquisition lane](../../testing-lanes.md#adb-device-acquisition)
+owns its options and the verified adb 34.0.5 / Android 14 (API 34) x86_64
+emulator record.
 
 Intent integer extras use signed decimal text. The ADB argument encoder removes
 redundant leading zeros for Android's radix-sensitive `--ei` parser while retained

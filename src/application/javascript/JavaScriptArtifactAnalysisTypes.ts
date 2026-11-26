@@ -225,4 +225,11 @@ export interface JavaScriptArtifactAnalysis {
   readonly modules: number;
   readonly parse_failures: number;
   readonly limitations: readonly string[];
+  /**
+   * Set when the caller skipped semantic analysis. Omitted for a complete
+   * pass. Application-graph coverage reads this rather than guessing from
+   * absent module IR: source-module and export-binding nodes are not built,
+   * so the graph cannot claim those facts were examined.
+   */
+  readonly semantic_analysis?: "structure-only";
 }

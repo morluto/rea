@@ -84,7 +84,7 @@ export const observeCdpSession = async (
   const capture = new TimelineCapture(allowedOrigins, document, initialUrl);
   let removeListener = (): void => {};
   const removeDisconnectListener = context.connection.onDisconnect(() =>
-    capture.transportDisconnected(),
+    capture.recordTermination("transport_disconnected"),
   );
   try {
     await context.connection.send(
@@ -127,12 +127,15 @@ export const observeCdpSession = async (
     capture.assertPreArmBufferWithinLimit();
     capture.arm(armTimestamp);
     capture.assertRequestOwnershipWithinLimit();
-    await context.connection.send(
-      "Page.setLifecycleEventsEnabled",
-      { enabled: true },
-      context.sessionId,
-      context.signal,
-    );
+    // A capture that ended before arming observes nothing more; do not turn
+    // lifecycle reporting on for a target it no longer follows.
+    if (!capture.stopped)
+      await context.connection.send(
+        "Page.setLifecycleEventsEnabled",
+        { enabled: true },
+        context.sessionId,
+        context.signal,
+      );
     if (!capture.stopped)
       await context.progress?.report({
         phase: "browser_observation",
@@ -161,6 +164,10 @@ export const observeCdpSession = async (
     // Terminal progress is awaited and may admit more protocol events.
     capture.assertRequestOwnershipWithinLimit();
     if (capture.scopeExcluded) endReason = "target_left_scope";
+    // A termination observed after the window, while the final state was
+    // read, means that state belongs to a target that no longer exists.
+    else if (endReason === "window_elapsed" && capture.endReason !== undefined)
+      endReason = capture.endReason;
     return {
       browser: context.discovery.version,
       target: {
@@ -274,10 +281,10 @@ class TimelineCapture {
         this.#lifecycle(registered.payload);
         return;
       case "Target.detachedFromTarget":
-        this.sessionDetached();
+        this.recordTermination("session_detached");
         return;
       case "Inspector.targetCrashed":
-        this.targetTerminated();
+        this.recordTermination("target_terminated");
         return;
       default:
         return;
@@ -327,6 +334,11 @@ class TimelineCapture {
     return this.#endReason !== undefined || this.#scopeExcluded;
   }
 
+  /** The first end the capture itself recorded, if any. */
+  get endReason(): EndReason | undefined {
+    return this.#endReason;
+  }
+
   onEnd(listener: (reason: EndReason) => void): () => void {
     if (this.#endReason !== undefined) listener(this.#endReason);
     else this.#listeners.add(listener);
@@ -340,40 +352,18 @@ class TimelineCapture {
     this.#listeners.clear();
   }
 
-  targetTerminated(): void {
+  recordTermination(
+    reason: "target_terminated" | "session_detached" | "transport_disconnected",
+  ): void {
     if (this.#endReason !== undefined) return;
     this.#add({
-      type: "target_terminated",
+      type: reason,
       timestamp: null,
       rawUrl: null,
       requestId: null,
-      detail: "target_terminated",
+      detail: reason,
     });
-    this.end("target_terminated");
-  }
-
-  sessionDetached(): void {
-    if (this.#endReason !== undefined) return;
-    this.#add({
-      type: "session_detached",
-      timestamp: null,
-      rawUrl: null,
-      requestId: null,
-      detail: "session_detached",
-    });
-    this.end("session_detached");
-  }
-
-  transportDisconnected(): void {
-    if (this.#endReason !== undefined) return;
-    this.#add({
-      type: "transport_disconnected",
-      timestamp: null,
-      rawUrl: null,
-      requestId: null,
-      detail: "transport_disconnected",
-    });
-    this.end("transport_disconnected");
+    this.end(reason);
   }
 
   setFinalUrl(rawUrl: string): void {

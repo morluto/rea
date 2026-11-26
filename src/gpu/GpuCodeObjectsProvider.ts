@@ -5,7 +5,7 @@ import {
   withArtifactRegularFile,
   bindArtifactFileCleanup,
   artifactFilePrimaryFacts,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   artifactFileCompletion,
   selectedFileTargetError,
 } from "../resources/index.js";
@@ -30,8 +30,6 @@ import {
   AnalysisArtifactChangedError,
   AnalysisAccessDeniedError,
   AnalysisResourceConstraintError,
-  cancelledBy,
-  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   parseFailureAnalysisError,
@@ -44,7 +42,14 @@ import {
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { BinaryResourceFailure } from "../domain/binaryContainer.js";
+import {
+  BinaryResourceFailure,
+  binaryResourceCeiling,
+} from "../domain/binaryContainer.js";
+import {
+  fixedAllowanceOptions,
+  fixedProducerInputAllowance,
+} from "../domain/fixedAllowanceRemediation.js";
 import {
   GpuFileSource,
   gpuCount,
@@ -114,7 +119,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
       );
     } catch (cause) {
       const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
-      // Malformed and truncated bytes are an invalid `path`; unsupported
+      // Malformed and truncated bytes are a malformed target; unsupported
       // bytes are an unsupported target, as for every other format parser.
       const formatFailure = parseFailureAnalysisError(
         OPERATION,
@@ -141,8 +146,11 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
             maximum_object_bytes: GPU_OBJECT_BYTES,
             maximum_report_bytes: GPU_REPORT_BYTES,
           },
-          retryable: false,
-          remediationAction: `${primary.message} This release has no runtime override for that GPU parser allowance. Additional host memory does not raise it. Repeating the unchanged request fails the same way.`,
+          ...fixedAllowanceOptions(
+            "The GPU parser allowance",
+            "parser",
+            binaryResourceCeiling(primary),
+          ),
         });
       else if (formatFailure !== undefined) error = formatFailure;
       else if (
@@ -150,10 +158,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "cancelled"
       )
-        error = cancelledBy(
-          OPERATION,
-          carriedReason(artifactFileCancellationCause(primary)),
-        );
+        error = artifactFileCancellationError(OPERATION, primary);
       else if (
         origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
@@ -187,8 +192,10 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
           { maximum_object_bytes: GPU_OBJECT_BYTES },
           {
             cause: primary,
-            retryable: false,
-            remediationAction: `${primary.message} The GPU object allowance is ${String(GPU_OBJECT_BYTES)} bytes. This release has no runtime override. Additional host memory does not raise it. Repeating the unchanged request fails the same way.`,
+            ...fixedProducerInputAllowance(
+              GPU_OBJECT_BYTES,
+              "The GPU object allowance",
+            ),
           },
         );
       // Other coded I/O failures remain host failures (for example, EMFILE).

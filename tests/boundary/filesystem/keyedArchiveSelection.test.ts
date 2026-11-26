@@ -21,7 +21,7 @@ import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
-  AnalysisUnsupportedTargetError,
+  AnalysisTargetFailureError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -255,7 +255,7 @@ it.each([
     const rejected = await inspect(root, {
       path: "Contents/Resources/Other.nib",
     }).catch((cause: unknown) => cause);
-    expect(rejected).toBeInstanceOf(AnalysisUnsupportedTargetError);
+    expect(rejected).toBeInstanceOf(AnalysisTargetFailureError);
     expect(projectAnalysisError(asAnalysisError(rejected))).toMatchObject({
       code: "unsupported_target",
       message: expect.stringContaining(reason),
@@ -269,14 +269,11 @@ it.each([
 );
 
 it.each([
-  ["darwin", "Inspect an ordinary property list with inspect_plist"],
-  [
-    "linux",
-    "inspect_plist, which reads ordinary property lists, requires a macOS host",
-  ],
+  ["darwin", "it has no $archiver key"],
+  ["linux", "the ordinary property list reader requires a macOS host"],
 ] as const)(
-  "names the property-list workflow available on a %s host",
-  async (platform, action) => {
+  "names the property-list workflow and its host on a %s host",
+  async (platform, reason) => {
     const root = await createTestTempDirectory("rea-keyed-kind-");
     const path = join(root, "Defaults.plist");
     const bytes = Buffer.from(build({ plain: true }));
@@ -292,8 +289,16 @@ it.each([
     if (result.ok) throw new Error("Expected an unsupported target");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "unsupported_target",
-      remediation: { action: expect.stringContaining(action) },
-      details: { path },
+      remediation: {
+        action: expect.stringContaining("Use inspect_plist for this target."),
+      },
+      details: {
+        path,
+        failure_kind: "unrecognized",
+        format: "keyed-archive",
+        reason: expect.stringContaining(reason),
+        related_operations: ["inspect_plist"],
+      },
     });
   },
 );
@@ -340,7 +345,7 @@ it("keeps a damaged NSKeyedArchiver archive a format failure", async () => {
   }).catch((cause: unknown) => cause);
   expect(rejected).toBeInstanceOf(ArtifactReaderFailure);
   expect(rejected).toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringContaining("$objects array"),
   });
 });

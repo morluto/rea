@@ -1,8 +1,5 @@
 import { probeUefiFlashImage } from "../uefi/UefiFormatProbe.js";
-import {
-  BINARY_TARGET_FORMAT_KINDS,
-  type TargetFormatHint,
-} from "../domain/targetFormats.js";
+import { BINARY_TARGET_FORMAT_KINDS } from "../domain/targetFormats.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   artifactNameForClassification,
@@ -34,7 +31,7 @@ import {
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { childFailureDiagnostics } from "../domain/analysisErrorProjection.js";
-import { constants, type Stats } from "node:fs";
+import { constants } from "node:fs";
 import { access, realpath, stat, type FileHandle } from "node:fs/promises";
 import { extname } from "node:path";
 
@@ -59,10 +56,7 @@ import {
   hasIdaDatabaseSignature,
   type AnalysisDatabaseEngine,
 } from "../domain/analysisDatabase.js";
-import type {
-  BinaryTarget,
-  BinaryArchitecture,
-} from "../domain/binaryTargetTypes.js";
+import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   resolveAppleBundleExecutable,
@@ -77,6 +71,9 @@ import { validateDosComLength } from "../domain/dosCom.js";
 import {
   admitRawBinary,
   rawBinarySelectionError,
+  type NativeLoadSelection,
+  type RawBinaryAdmission,
+  type RawBinaryAdmissionRejection,
 } from "../domain/rawBinary.js";
 import { admitGamecubeDol } from "../domain/gamecubeDolAdmission.js";
 import { DOL_HEADER_SIZE } from "../domain/gamecubeDol.js";
@@ -86,12 +83,17 @@ import {
 } from "../domain/apple/appleArchiveFormat.js";
 import { hasDiskImageSignature } from "../domain/apple/diskImageFormat.js";
 import { recognizeArtifactFormat } from "../domain/artifactFormatRecognition.js";
+import {
+  ISO9660_DESCRIPTOR_OFFSET,
+  ISO9660_SIGNATURE_BYTES,
+} from "../domain/iso9660/iso9660Structures.js";
 import { DFUSE_SUFFIX_BYTES } from "../domain/firmware/dfuse.js";
 import {
   locateEspFlashLayout,
   type EspFlashSelection,
 } from "../domain/firmware/espFlashLocation.js";
 import { espFlashSelectionError } from "../domain/firmware/espFlashSelection.js";
+import { zipDeclaresAndroidPackage } from "../domain/zip/androidPackageDirectory.js";
 import {
   hasTrailingZipArchive,
   zipRootPackageFormat,
@@ -100,7 +102,6 @@ import {
 import { claimsExecutableHeader } from "../domain/binaryTarget.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { localPathStringSchema } from "../domain/localPath.js";
-import type { JsonValue } from "../domain/jsonValue.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
 const XML_PLIST_PROBE_CHUNK_BYTES = 64 * 1024;
@@ -110,9 +111,7 @@ export interface BinaryTargetResolverOptions {
   readonly cwd?: string;
   readonly hostArchitecture?: NodeJS.Architecture;
   readonly targetKind?: BinaryTarget["kind"];
-  readonly formatHint?: TargetFormatHint;
-  readonly architecture?: BinaryArchitecture;
-  readonly entryPoint?: string;
+  readonly loadSelection?: NativeLoadSelection;
   /** Inputs for format=esp-flash-image; rejected with any other format. */
   readonly espFlash?: EspFlashSelection;
   readonly signal?: AbortSignal;
@@ -304,7 +303,8 @@ const readOpenedBinaryTarget = async (
   });
   const hostArchitecture =
     options.hostArchitecture ?? HOST_PLATFORM.architecture;
-  const { targetKind, formatHint, signal, architecture, entryPoint } = options;
+  const { targetKind, signal, loadSelection = {} } = options;
+  const formatHint = loadSelection.format;
   throwIfTargetResolutionCancelled(signal);
   // Flash inputs pair with one format; check before any hint branch.
   const flashPairing = espFlashSelectionError({
@@ -327,15 +327,37 @@ const readOpenedBinaryTarget = async (
           { constraint: "load_selection_rejected" },
         ),
       );
-    const admitted = admitRawBinary({
-      architecture,
-      entryPoint,
+    const selected = admitRawBinary({
+      architecture: loadSelection.architecture,
+      entryPoint: loadSelection.entryPoint,
+      baseAddress: loadSelection.baseAddress,
+      architectureVariant: loadSelection.architectureVariant,
+      vectorTableAddress: loadSelection.vectorTableAddress,
       fileBytes: metadata.size,
     });
+    let admitted: Result<RawBinaryAdmission, RawBinaryAdmissionRejection>;
+    if (!selected.ok) admitted = selected;
+    // An omitted M-profile entry is the Reset word of the selected vector table.
+    else if ("admit" in selected.value)
+      admitted = selected.value.admit(
+        await readHandleRange(
+          handle,
+          selected.value.fileOffset,
+          selected.value.byteLength,
+          signal,
+        ),
+      );
+    else admitted = ok(selected.value);
     if (!admitted.ok)
       return err(
         new BinaryTargetError(path, admitted.error.reason, {
           constraint: admitted.error.constraint,
+          ...(admitted.error.field === undefined
+            ? {}
+            : { field: admitted.error.field }),
+          ...(admitted.error.diagnostics === undefined
+            ? {}
+            : { diagnostics: admitted.error.diagnostics }),
         }),
       );
     return ok({
@@ -344,19 +366,15 @@ const readOpenedBinaryTarget = async (
       format: "raw-binary",
       architecture: admitted.value.architecture,
       availableArchitectures: [admitted.value.architecture],
-      entryPoint: admitted.value.entryPoint,
-      entryPointSource: admitted.value.entryPointSource,
+      rawLoad: admitted.value.load,
     });
   }
-  const pairing = rawBinarySelectionError({
-    ...(formatHint === undefined ? {} : { format: formatHint }),
-    architecture,
-    entryPoint,
-  });
+  const pairing = rawBinarySelectionError(loadSelection);
   if (pairing !== undefined)
     return err(
-      new BinaryTargetError(path, pairing, {
+      new BinaryTargetError(path, pairing.message, {
         constraint: "load_selection_rejected",
+        field: pairing.field,
       }),
     );
   if (formatHint === "gamecube-dol") {
@@ -378,7 +396,7 @@ const readOpenedBinaryTarget = async (
     const admitted = admitGamecubeDol({
       bytes: headerBytes,
       fileSize: metadata.size,
-      entryPoint,
+      entryPoint: loadSelection.entryPoint,
     });
     if (!admitted.ok)
       return err(
@@ -461,7 +479,9 @@ const readOpenedBinaryTarget = async (
     });
   }
   // Probe WASM content before suffix-only database routing; an explicit
-  // database selection keeps the caller's chosen interpretation.
+  // database selection keeps the caller's chosen interpretation. Formats
+  // recognized by a fixed content signature (iNES, UEFI, plist, ISO 9660)
+  // outrank a `.hop` suffix.
   const classificationPath = artifactNameForClassification(classifiedAs, path);
   const artifactFormat =
     targetKind === "database"
@@ -481,6 +501,7 @@ const readOpenedBinaryTarget = async (
       artifactFormat !== "ines" &&
       artifactFormat !== "uefi" &&
       artifactFormat !== "plist" &&
+      artifactFormat !== "iso9660" &&
       databaseEngine !== null)
   )
     return ok({
@@ -519,12 +540,18 @@ const readOpenedBinaryTarget = async (
       (await hasTrailingZipArchive(metadata.size, (position, length) =>
         readHandleRange(handle, position, length, signal),
       ))
-    )
+    ) {
+      const format = await zipRootFormatByContent(
+        classificationPath,
+        metadata.size,
+        (position, length) => readHandleRange(handle, position, length, signal),
+      );
       return ok({
         ...(await artifactIdentity()),
         kind: "archive",
-        format: zipRootPackageFormat(classificationPath),
+        format,
       });
+    }
     const reason =
       typeof detected.error === "string"
         ? detected.error
@@ -681,6 +708,21 @@ const detectDatabaseEngine = async (
   return path.toLowerCase().endsWith(".hop") ? "hopper" : null;
 };
 
+/**
+ * Named ZIP suffixes win. A generic ZIP root is an APK when its central
+ * directory lists a root Android package entry. An `.aab` stays a ZIP:
+ * an Android App Bundle is not a standalone APK.
+ */
+const zipRootFormatByContent = async (
+  path: string,
+  size: number,
+  read: (position: number, length: number) => Promise<Uint8Array>,
+) => {
+  const named = zipRootPackageFormat(path);
+  if (named !== "zip" || path.toLowerCase().endsWith(".aab")) return named;
+  return (await zipDeclaresAndroidPackage(size, read)) === true ? "apk" : named;
+};
+
 const detectArtifactFormat = async (
   path: string,
   source: StableRegularFileDescriptor,
@@ -743,18 +785,22 @@ const detectArtifactFormat = async (
   // refuses a file whose header names a format it cannot open.
   let suffix: Uint8Array | undefined;
   let espFlashLayout: boolean | undefined;
+  let iso9660Descriptor: Uint8Array | undefined;
   const recognitionInput = () => ({
     prefix: magic,
     fileSize: initial.size,
     suffix,
     espFlashLayout,
+    iso9660Descriptor,
   });
   let recognition = recognizeArtifactFormat(recognitionInput());
   while (recognition !== undefined) {
     throwIfTargetResolutionCancelled(signal);
     if (recognition.state === "recognized")
       return recognition.format === "zip"
-        ? zipRootPackageFormat(lower)
+        ? zipRootFormatByContent(lower, initial.size, (position, length) =>
+            readHandleRange(handle, position, length, signal),
+          )
         : recognition.format;
     if (recognition.state === "refused")
       throw new BinaryTargetError(path, recognition.reason, {
@@ -768,6 +814,13 @@ const detectArtifactFormat = async (
               initial.size - DFUSE_SUFFIX_BYTES,
               DFUSE_SUFFIX_BYTES,
             );
+    else if (recognition.format === "iso9660")
+      iso9660Descriptor = await readHandleRange(
+        handle,
+        ISO9660_DESCRIPTOR_OFFSET,
+        ISO9660_SIGNATURE_BYTES,
+        signal,
+      );
     else
       espFlashLayout = (
         await locateEspFlashLayout(

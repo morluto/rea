@@ -504,6 +504,7 @@ export class IdaOperationRunner {
           status: "unknown",
           reason:
             "Upstream xrefs do not establish direct caller relationships.",
+          limited_directions: ["callers"],
         },
       };
     }
@@ -524,6 +525,7 @@ export class IdaOperationRunner {
             status: "unknown" as const,
             reason:
               "Upstream callees omitted an explicit truncation marker; additional callees remain unknown.",
+            limited_directions: ["callees"] as const,
           }
         : page.more
           ? {

@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import {
   analysisTextPage,
   analysisTextPageItemSchema,
@@ -32,7 +33,10 @@ import {
 } from "./analysisViewCoverage.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { pickFields, selectViewRows } from "./selectViewRows.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 
 export const playwrightTraceViewContextSchema = playwrightTraceSchema
   .omit({
@@ -175,9 +179,7 @@ const candidateIndices = <Row extends object>(
     for (let i = 0; i < rows.length; i += 1) {
       const value = rows[i]?.[key];
       if (typeof value !== "string") continue;
-      const bucket = built.get(value);
-      if (bucket === undefined) built.set(value, [i]);
-      else bucket.push(i);
+      appendToMapList(built, value, i);
     }
     index = built;
     indexes.set(key, index);
@@ -422,15 +424,8 @@ export const projectPlaywrightTraceView = (
     "playwright-trace",
   );
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Playwright trace inventories support summary and playwright-trace pages.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Playwright trace inventories support summary and playwright-trace pages.",
     );
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;

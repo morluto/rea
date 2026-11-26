@@ -18,6 +18,11 @@ import { nativeExportsViewRequestSchema } from "./nativeExportsView.js";
 import { elfDependenciesViewRequestSchema } from "./elfDependenciesView.js";
 import { javaScriptRoutesViewRequestSchema } from "./javascriptRoutesView.js";
 import { webBundleViewRequestSchema } from "./webBundleView.js";
+import { webPageViewRequestSchema } from "./webPageView.js";
+import { webExecutionViewRequestSchema } from "./webExecutionView.js";
+import { apktoolResourcesViewRequestSchema } from "../apktool/apktoolResourcesQuery.js";
+import { androidReferencesViewSchema } from "../android/androidReferencesQuery.js";
+import { androidClassViewRequestSchema } from "../android/androidClassQuery.js";
 import { sourceToBundleViewRequestSchema } from "./sourceToBundleView.js";
 import { endpointComparisonViewRequestSchema } from "./endpointComparisonView.js";
 import { featureTraceViewRequestSchema } from "./featureTraceView.js";
@@ -31,6 +36,8 @@ import { cycloneDxViewRequestSchema } from "./cyclonedxView.js";
 import { nativeFunctionMatchingViewRequestSchema } from "./nativeFunctionMatchingView.js";
 import { protobufViewRequestSchema } from "./protobufCaptureView.js";
 import { nativeInventoryViewRequestSchema } from "./nativeInventoryView.js";
+import { evidenceJsonViewRequestSchema } from "./evidenceJsonView.js";
+import { byteEntropyViewRequestSchema } from "./byteEntropyView.js";
 
 import {
   evidenceFileReferenceSchema,
@@ -41,7 +48,10 @@ import { browserScenarioViewRequestSchema } from "./browserScenarioViewSchemas.j
 import { nativeLoadImageViewRequestSchema } from "./nativeLoadImageView.js";
 import { desktopViewRequestSchema } from "./desktopApplicationView.js";
 import { javascriptModuleReferencesRequestSchema } from "./javascriptModuleReferences.js";
-import { javascriptFactsViewRequestSchema } from "./javascriptFactsView.js";
+import {
+  javascriptFactGroupsViewRequestSchema,
+  javascriptFactsViewRequestSchema,
+} from "./javascriptFactsView.js";
 import { evidenceSchema } from "../evidence.js";
 import { declareEvidenceReferenceAlternative } from "../evidenceInputContract.js";
 import { apiSurfaceViewSchema } from "./apiSurfaceSchema.js";
@@ -86,6 +96,8 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   nativeObservationViewRequestSchema,
   nativeContextViewRequestSchema,
   recordedArrayViewSchema,
+  evidenceJsonViewRequestSchema,
+  byteEntropyViewRequestSchema,
   devicetreeViewRequestSchema,
   uefiFirmwareViewRequestSchema,
   uefiExtractionViewRequestSchema,
@@ -95,6 +107,11 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   elfDependenciesViewRequestSchema,
   javaScriptRoutesViewRequestSchema,
   webBundleViewRequestSchema,
+  webPageViewRequestSchema,
+  webExecutionViewRequestSchema,
+  apktoolResourcesViewRequestSchema,
+  androidReferencesViewSchema,
+  androidClassViewRequestSchema,
   nativeFunctionMatchingViewRequestSchema,
   sourceToBundleViewRequestSchema,
   endpointComparisonViewRequestSchema,
@@ -115,6 +132,7 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   pageViewSchema,
   javascriptModuleReferencesRequestSchema,
   javascriptFactsViewRequestSchema,
+  javascriptFactGroupsViewRequestSchema,
   nativeViewSchema,
   nativeInventoryViewRequestSchema,
   nativeProcedureReferencesViewRequestSchema,

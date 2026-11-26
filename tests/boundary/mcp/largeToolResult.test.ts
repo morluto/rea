@@ -112,7 +112,7 @@ const callPseudoCode = async (
       throw new Error("Missing named procedure_pseudo_code output schema");
     const result = await client.callTool({
       name: "procedure_pseudo_code",
-      arguments: { procedure: "main" },
+      arguments: { detail: "complete", procedure: "main" },
     });
     return {
       result,

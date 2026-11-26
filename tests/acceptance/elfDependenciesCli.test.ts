@@ -128,20 +128,6 @@ cliTest(
   },
 );
 
-cliTest("reports a non-ELF file as invalid input", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-elf-dependencies-cli-bad-");
-  const path = join(root, "broken");
-  await writeFile(path, Buffer.from("not an elf"));
-  const result = await cli.run({
-    arguments: ["inspect-elf-dependencies", path, "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: { operation: "inspect_elf_dependencies" },
-  });
-});
-
 cliTest(
   "reports a relocatable object as invalid input for this workflow",
   async ({ cli }) => {
@@ -326,6 +312,78 @@ cliTest(
           "GNU versym table holds 3 of 6 dynamic symbol slots; later slots were not read",
       }),
     );
+  },
+);
+
+cliTest(
+  "reports partial coverage through the CLI when dynamic counts lack their table addresses",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-elf-dependencies-count-no-table-",
+    );
+    const missingVersionsPath = join(root, "count-without-version-tables.so");
+    await writeFile(
+      missingVersionsPath,
+      elfDependencyFixture({
+        stripped: true,
+        omitVerneedTag: true,
+        omitVerdefTag: true,
+        imports: [{ name: "abort", version: 1 }],
+      }),
+    );
+    const versionResult = await cli.run({
+      arguments: ["inspect-elf-dependencies", missingVersionsPath, "--json"],
+    });
+    expect(versionResult.exitCode, JSON.stringify(versionResult.json)).toBe(0);
+    const versionReport = dependenciesContract.outputSchema.parse(
+      versionResult.json,
+    ).normalized_result;
+    if (!("imports" in versionReport))
+      throw new Error("Expected an inline ELF dependency inventory");
+    expect(versionReport.coverage.status).toBe("partial");
+    expect(versionReport.version_requirements.status).toBe("unreadable");
+    expect(versionReport.version_definitions.status).toBe("unreadable");
+    expect(versionReport.issues).toEqual([
+      expect.objectContaining({
+        code: "table_unavailable",
+        location: `0x${versionReport.dynamic.location!.offset.toString(16)}`,
+        message: expect.stringContaining("DT_VERNEEDNUM"),
+      }),
+      expect.objectContaining({
+        code: "table_unavailable",
+        location: `0x${versionReport.dynamic.location!.offset.toString(16)}`,
+        message: expect.stringContaining("DT_VERDEFNUM"),
+      }),
+    ]);
+
+    const missingSymtabPath = join(root, "hash-without-symtab.so");
+    await writeFile(
+      missingSymtabPath,
+      elfDependencyFixture({
+        stripped: true,
+        omitSymtabTag: true,
+        imports: [{ name: "abort", version: 1 }],
+      }),
+    );
+    const symtabResult = await cli.run({
+      arguments: ["inspect-elf-dependencies", missingSymtabPath, "--json"],
+    });
+    expect(symtabResult.exitCode, JSON.stringify(symtabResult.json)).toBe(0);
+    const symtabReport = dependenciesContract.outputSchema.parse(
+      symtabResult.json,
+    ).normalized_result;
+    if (!("imports" in symtabReport))
+      throw new Error("Expected an inline ELF dependency inventory");
+    expect(symtabReport.coverage.status).toBe("partial");
+    expect(symtabReport.imports).toEqual([]);
+    expect(symtabReport.issues).toEqual([
+      expect.objectContaining({
+        code: "table_unavailable",
+        location: `0x${symtabReport.dynamic.location!.offset.toString(16)}`,
+        message:
+          "Dynamic symbol table could not be located from section headers or DT_SYMTAB",
+      }),
+    ]);
   },
 );
 

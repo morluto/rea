@@ -210,15 +210,12 @@ it("names a selected carrier that is a directory as invalid input", () => {
   });
 });
 
-it.each([
-  {
-    reason: "path" as const,
-    message: "Expected a regular file without a symlink: /selected.bin",
-  },
-  { reason: "format" as const, message: "Unsupported carrier format." },
-])("keeps reader $reason refusals as invalid input", ({ reason, message }) => {
+// Only a path-kind reader refusal is the caller's selection; the shared
+// projection no longer treats a reader's byte-format reason as one.
+it("keeps a reader path refusal as invalid input", () => {
+  const message = "Expected a regular file without a symlink: /selected.bin";
   const projected = projectAnalysisError(
-    evmInterfaceFailure(new ArtifactReaderFailure(reason, message), {
+    evmInterfaceFailure(new ArtifactReaderFailure("path", message), {
       phase: "artifact-read",
       path: "/selected.bin",
     }),

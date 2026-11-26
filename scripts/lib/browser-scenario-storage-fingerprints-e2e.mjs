@@ -12,6 +12,10 @@ import {
   scenarioProfiles,
 } from "./browser-scenario-verifier.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
+import {
+  completeEvidenceClient,
+  completeEvidenceToolArguments,
+} from "./complete-evidence.mjs";
 
 const secretVariable = "REA_BROWSER_FINGERPRINT_VERIFIER_SECRET";
 const secret = "rea-storage-fingerprint-private";
@@ -140,10 +144,12 @@ export async function verifyScenarioStorageFingerprints(executable, origin) {
     env: process.env,
     stderr: "pipe",
   });
-  const client = new Client({
-    name: "browser-storage-fingerprints-e2e",
-    version: "1",
-  });
+  const client = completeEvidenceClient(
+    new Client({
+      name: "browser-storage-fingerprints-e2e",
+      version: "1",
+    }),
+  );
   return withVerifierCleanup(async () => {
     const cli = await verifyValues(
       (value) => runScenarioCli(scenarioFor(executable, origin, value)),
@@ -166,7 +172,10 @@ export async function verifyScenarioStorageFingerprints(executable, origin) {
         parseEvidence(
           await call(
             "capture_browser_scenario",
-            scenarioFor(executable, origin, value),
+            await completeEvidenceToolArguments(
+              "capture_browser_scenario",
+              scenarioFor(executable, origin, value),
+            ),
           ),
         ),
       async (before, after) =>

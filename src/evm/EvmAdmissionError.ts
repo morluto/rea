@@ -6,7 +6,6 @@ const EVM_ADMISSION_CODES = [
   "marker_mismatch",
   "request_path_missing",
   "tag_or_float",
-  "text_bytes_unavailable",
   "collection_exceeds_bound",
   "nesting_exceeds_profile",
   "value_outside_profile",
