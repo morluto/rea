@@ -1,7 +1,6 @@
 import { z } from "zod";
-import type { AnalysisParameterLimit } from "../analysisSettings.js";
 import {
-  parameterBudgetLimit,
+  parameterBudgetLimitFor,
   parameterBudgetSchema,
   type ParameterBudget,
 } from "../parameterBudget.js";
@@ -60,15 +59,9 @@ export const WINDOWS_SHORTCUT_BUDGETS = {
 export type WindowsShortcutBudget = keyof typeof WINDOWS_SHORTCUT_BUDGETS;
 
 /** The per-call budget that stopped a shortcut inspection. */
-export const windowsShortcutBudgetLimit = (
-  parameter: WindowsShortcutBudget,
-  effectiveValue: number,
-): AnalysisParameterLimit =>
-  parameterBudgetLimit(
-    parameter,
-    WINDOWS_SHORTCUT_BUDGETS[parameter],
-    effectiveValue,
-  );
+export const windowsShortcutBudgetLimit = parameterBudgetLimitFor(
+  WINDOWS_SHORTCUT_BUDGETS,
+);
 
 /** Complete bounded inspection of one Windows Shell Link (.lnk) file. */
 export const inspectWindowsShortcutInputSchema = z.strictObject({

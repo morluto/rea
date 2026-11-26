@@ -212,6 +212,15 @@ async function verifyPrefixedHashFiles(
   return targetHash!;
 }
 
+const retentionKeyFiles = [
+  ".npmrc",
+  ".nvmrc",
+  "knip.json",
+  "package-lock.json",
+  "package.json",
+  "tsconfig.json",
+];
+
 async function exerciseTrustedRetentionWithLegacyTarget(
   retentionRun: unknown,
   retentionEnv: Record<string, string>,
@@ -222,18 +231,10 @@ async function exerciseTrustedRetentionWithLegacyTarget(
   const legacyTarget = join(runnerWorkspace, "triggering-source");
   const legacyRoot = join(runnerWorkspace, "legacy-root");
   const trustedSource = join(runnerWorkspace, "trusted-retention");
-  const inputNames = [
-    ".nvmrc",
-    ".npmrc",
-    "package-lock.json",
-    "knip.json",
-    "tsconfig.json",
-    "package.json",
-  ];
   const targetSha = "0123456789abcdef0123456789abcdef01234567";
   await mkdir(legacyTarget, { recursive: true });
   await mkdir(legacyRoot, { recursive: true });
-  for (const name of inputNames) {
+  for (const name of retentionKeyFiles) {
     const contents = `target-source:${name}\n`;
     await writeFile(join(legacyTarget, name), contents);
     await writeFile(join(legacyRoot, name), contents);
@@ -243,10 +244,12 @@ async function exerciseTrustedRetentionWithLegacyTarget(
     "scripts/ci/cache-retention.mjs",
   );
   await mkdir(join(trustedSource, "scripts/ci"), { recursive: true });
-  await copyFile(
-    join(repository, "scripts/ci/cache-retention.mjs"),
-    trustedHelperPath,
-  );
+  for (const filename of ["cache-retention.mjs", "github-api.mjs"]) {
+    await copyFile(
+      join(repository, "scripts/ci", filename),
+      join(trustedSource, "scripts/ci", filename),
+    );
+  }
   await expect(
     access(join(legacyTarget, "scripts/ci/cache-retention.mjs")),
   ).rejects.toMatchObject({ code: "ENOENT" });
@@ -646,7 +649,7 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
     path: "trusted-retention",
     "persist-credentials": false,
     "sparse-checkout-cone-mode": false,
-    "sparse-checkout": "/.nvmrc\n/scripts/ci/\n",
+    "sparse-checkout": "/.nvmrc\n/scripts/ci/cache-retention.mjs\n",
   });
   const targetCheckout = checkouts[1];
   expect(targetCheckout?.with).toMatchObject({
@@ -654,7 +657,7 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
     path: "triggering-source",
     "persist-credentials": false,
     "sparse-checkout-cone-mode": false,
-    "sparse-checkout": "/*\n!/*/\n",
+    "sparse-checkout": retentionKeyFiles.map((name) => `/${name}\n`).join(""),
   });
   expect(checkouts).toHaveLength(2);
   const setupNode = steps.find(

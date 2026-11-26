@@ -16,6 +16,7 @@ import {
   rustcPartialCoverage,
   rustDependencySectionName,
 } from "../domain/rust/rustBinary.js";
+import type { RustDependencyBudgets } from "../domain/rust/rustDependencyBudget.js";
 import { RUST_PRODUCER_DEFAULTS } from "../domain/rust/rustResourceLimits.js";
 import {
   readAuditableSectionFromReader,
@@ -72,6 +73,7 @@ export const readRustBinaryImageFromHandle = async (
   maxRustcHashes: number | undefined,
   maxOutputBytes: number | undefined,
   pause: ZstandardFramePause,
+  dependencyBudgets?: RustDependencyBudgets,
   structureBytes?: number,
   maxWasmSections?: number,
 ): Promise<RustBinaryImage> => {
@@ -105,6 +107,13 @@ export const readRustBinaryImageFromHandle = async (
           {
             maxOutputBytes: effectiveMaxOutputBytes,
             peFileAlignment: dependency.peFileAlignment,
+            ...(dependencyBudgets === undefined
+              ? {}
+              : {
+                  compressedBytes: dependencyBudgets.compressedBytes,
+                  inflatedBytes: dependencyBudgets.inflatedBytes,
+                  inflateRatio: dependencyBudgets.inflateRatio,
+                }),
           },
         );
   const rustc_commit = await rustcCommitFromReader(

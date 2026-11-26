@@ -42,3 +42,9 @@ export const parameterBudgetLimit = (
   default_value: budget.default_value,
   applies_at: "next_call",
 });
+
+/** Bind a reader's parameter names to the bounds its input schema uses. */
+export const parameterBudgetLimitFor =
+  <Key extends string>(budgets: Readonly<Record<Key, ParameterBudget>>) =>
+  (parameter: Key, effectiveValue: number): AnalysisParameterLimit =>
+    parameterBudgetLimit(parameter, budgets[parameter], effectiveValue);

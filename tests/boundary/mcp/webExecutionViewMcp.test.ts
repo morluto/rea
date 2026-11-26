@@ -1,9 +1,8 @@
 import { expect, it, onTestFinished } from "vitest";
 import { WebRuntimeService } from "../../../src/application/WebRuntimeService.js";
 import { CdpWebRuntimeProvider } from "../../../src/browser/execution/CdpWebRuntimeProvider.js";
-import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
-import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import { listedEvidenceCaller } from "../../support/mcp/listedEvidenceCaller.js";
 import {
   runtimeSourceA,
   startRuntimeBrowser,
@@ -27,17 +26,7 @@ const connect = async (padding: number) => {
     // These cases cover the budget's choice for an omitted detail.
     testDelivery: "budgeted",
   });
-  const definitions = (await client.listTools()).tools;
-  const call = async (name: string, args: Record<string, unknown>) => {
-    const definition = definitions.find((tool) => tool.name === name);
-    if (definition === undefined) throw new Error(`Missing tool ${name}`);
-    const reply = await client.callTool(
-      { name, arguments: args },
-      { toolDefinition: withCanonicalOutputSchema(definition) },
-    );
-    expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
-    return parseEvidence(reply.structuredContent);
-  };
+  const call = listedEvidenceCaller(client, (await client.listTools()).tools);
   const observe = {
     cdp_endpoint: browser.endpoint,
     target_id: "allowed-page",

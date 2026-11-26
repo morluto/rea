@@ -36,12 +36,18 @@ import {
   type AnalysisExecution,
 } from "../ports/AnalysisProvider.js";
 import { providerConfigurationRefusal } from "../domain/providerConfigurationRefusal.js";
+import type { AnalysisLimit } from "../domain/analysisSettings.js";
+import {
+  producerOutputBytesLimit,
+  resolveProducerOutputBytes,
+} from "../config/producerOutputBytes.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
   apktoolDecodeOutputLimit,
   apktoolStringTablesRequested,
   DEFAULT_APKTOOL_DECODE_OUTPUT_BYTES,
   DEFAULT_APKTOOL_DECODE_TIMEOUT_MS,
+  MAX_APKTOOL_DECODE_OUTPUT_BYTES,
   type ApktoolRequest,
   type ApktoolDecodeResult,
 } from "../domain/apktool/apktoolResourceAnalysis.js";
@@ -123,6 +129,7 @@ const throwIfCancelled = (
 interface DecodeLimits {
   readonly timeoutMs: number;
   readonly maxOutputBytes: number;
+  readonly outputLimit: AnalysisLimit;
 }
 
 const runApktool = async (
@@ -231,7 +238,7 @@ const apktoolCommandFailure = (
     },
     outputLimit: {
       limits: { max_output_bytes: limits.maxOutputBytes },
-      limit: apktoolDecodeOutputLimit(limits.maxOutputBytes),
+      limit: limits.outputLimit,
       // Capture stops at the budget, so the output it needs is unmeasured.
       recovery: { retryable: false },
     },
@@ -578,6 +585,15 @@ export class ApktoolProvider {
       const sha256 = identity.sha256;
       await mkdir(workspace);
       await mkdir(framework);
+      const output = resolveProducerOutputBytes(
+        input.producer_limits?.output_bytes,
+        environment,
+        {
+          defaultValue: DEFAULT_APKTOOL_DECODE_OUTPUT_BYTES,
+          maximum: MAX_APKTOOL_DECODE_OUTPUT_BYTES,
+        },
+      );
+      if (!output.ok) throw output.error;
       const decoded = await runApktool(
         operation,
         input.path,
@@ -595,9 +611,15 @@ export class ApktoolProvider {
         {
           timeoutMs:
             input.decode_timeout_ms ?? DEFAULT_APKTOOL_DECODE_TIMEOUT_MS,
-          maxOutputBytes:
-            input.producer_limits?.output_bytes ??
-            DEFAULT_APKTOOL_DECODE_OUTPUT_BYTES,
+          maxOutputBytes: output.value.value,
+          outputLimit:
+            output.value.source === "runtime" ||
+            output.value.source === "setting"
+              ? producerOutputBytesLimit(
+                  output.value,
+                  MAX_APKTOOL_DECODE_OUTPUT_BYTES,
+                )
+              : apktoolDecodeOutputLimit(output.value.value),
         },
         signal,
         environment,

@@ -204,7 +204,7 @@ rejected.
 | `inspect_signal_decoders`                                    | No `input_bytes`; `output_bytes` 4 MiB, `command_timeout_ms` 30000, `address_space_bytes` 1 GiB, `file_bytes` 64 MiB, `cpu_seconds` 30                                                        |
 | `inspect_binary_layout`, `inspect_recorded_crash` (pwntools) | `input_bytes` 32 MiB (or `REA_PWNTOOLS_MAX_INPUT_BYTES`), `output_bytes` 64 MiB, `diagnostic_bytes` 1 MiB, `address_space_bytes` 3 GiB, `file_bytes` follows `output_bytes`, `cpu_seconds` 30 |
 | `inspect_evm_interface`                                      | `input_bytes` 4 MiB, `output_bytes` 16 MiB, `diagnostic_bytes` 1 MiB, `address_space_bytes` 3 GiB, `file_bytes` follows `output_bytes` (16 MiB), `cpu_seconds` 30                             |
-| `inspect_rust_binary`                                        | `input_bytes` 256 MiB, `output_bytes` 8 MiB                                                                                                                                                   |
+| `inspect_rust_binary`                                        | `input_bytes` 256 MiB, `output_bytes` 8 MiB. Dependency JSON uses `max_compressed_dependency_bytes` (1 MiB), `max_inflated_dependency_bytes` (8 MiB) and `max_dependency_inflate_ratio` (64)  |
 | `inspect_sqlite_database`                                    | `input_bytes` 256 MiB (the database and WAL copied to the private snapshot)                                                                                                                   |
 | `inspect_pcap_capture`                                       | `input_bytes` 2 GiB (the streamed capture snapshot), `output_bytes` 8 MiB of combined stdout and stderr per TShark JSON pass, at most 128 MiB (the fixed decoded-JSON allowance)              |
 | `decode_android_resources`                                   | `output_bytes` 4 MiB of retained `apktool d` stdout and stderr, at most the JavaScript string limit                                                                                           |
@@ -225,8 +225,23 @@ setting's limit with `parameter: "producer_limits.output_bytes"` and the
 `source` of the value in force, so its recovery names both the per-call field
 and the setting. `inspect_packet_fields` keeps its own 32 MiB glossary default
 and is not covered by the setting. `decode_android_resources` and
-`inspect_asset_catalog` keep their own defaults and maxima, so the setting does
-not supply their omitted `producer_limits.output_bytes`.
+`inspect_asset_catalog` use the same setting. While it is unset they keep
+their own defaults (4 MiB and 64 MiB). An explicit runtime value or
+`REA_PRODUCER_OUTPUT_BYTES` supplies the omitted field and is clamped to each
+producer's maximum (the JavaScript string limit, and 128 MiB). A per-call
+`producer_limits.output_bytes` still wins and is rejected above that maximum.
+
+`inspect_rust_binary` bounds cargo-auditable dependency JSON with three
+per-call parameters (CLI `--max-compressed-dependency-bytes`,
+`--max-inflated-dependency-bytes`, `--max-dependency-inflate-ratio`). The
+admitted inflated length is the smaller of `max_inflated_dependency_bytes` and
+`max_dependency_inflate_ratio` times the consumed compressed length. Allocation
+starts before that length is known, so it uses the stored extent, including PE
+file-alignment padding. A refusal is an `adjustable_budget` whose
+`details.limit` names the parameter that stopped the parse. `required_value` is
+the measured section length, inflated length, or ratio when that measurement
+finished; an allocation that stops first omits it. `producer_limits` does not
+raise these parameters. Omitted fields keep the defaults above.
 
 The pwntools and EVM operations take their wall-clock deadline from a separate
 argument (`pwntools_timeout_ms`, `timeout_ms`) instead of `command_timeout_ms`.

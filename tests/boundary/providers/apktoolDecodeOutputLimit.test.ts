@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import { ApktoolProvider } from "../../../src/apktool/ApktoolProvider.js";
+import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   DEFAULT_APKTOOL_DECODE_OUTPUT_BYTES,
@@ -100,6 +101,69 @@ it.skipIf(process.platform === "win32")(
       // Capture stops at the budget, so no required value is claimed.
       expect(projected.details?.refusal).not.toHaveProperty("required_value");
       const raised = await decode({ output_bytes: DECODE_OUTPUT_BYTES });
+      if (!raised.ok) throw raised.error;
+      expect(raised.value.result).toMatchObject({
+        metadata: { package_name: "com.rea.apktool.probe" },
+      });
+    } finally {
+      await provider.close();
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "uses an explicit producer.output_bytes as the omitted decode budget and clamps its reported maximum",
+  async () => {
+    const root = await createTestTempDirectory("rea-apktool-output-setting-");
+    const command = join(root, "apktool");
+    await writeFile(
+      command,
+      [
+        `#!${process.execPath}`,
+        `const { mkdirSync, writeFileSync } = require("node:fs");`,
+        `const { join } = require("node:path");`,
+        `if (process.argv[2] === "--version") process.stdout.write("2.9.3\\n");`,
+        `else {`,
+        `  const out = process.argv[process.argv.indexOf("-o") + 1];`,
+        `  mkdirSync(out, { recursive: true });`,
+        `  writeFileSync(join(out, "apktool.yml"), ${JSON.stringify(YML)});`,
+        `  writeFileSync(join(out, "AndroidManifest.xml"), ${JSON.stringify(MANIFEST)});`,
+        `  process.stdout.write("x".repeat(${String(DECODE_OUTPUT_BYTES)}));`,
+        `}`,
+        "",
+      ].join("\n"),
+      { mode: 0o700, flag: "wx" },
+    );
+    const apk = join(root, "probe.apk");
+    await writeFile(apk, "apk-bytes");
+    const provider = new ApktoolProvider({
+      environment: { REA_APKTOOL_COMMAND: command },
+    });
+    const decode = () =>
+      provider.execute({
+        operation: "decode_android_resources",
+        input: { path: apk, include_strings: false },
+      });
+    try {
+      const lowered = await runWithAnalysisOperationSnapshot(
+        { revision: 1, overrides: { "producer.output_bytes": 1024 } },
+        decode,
+      );
+      if (lowered.ok) throw new Error("Expected the session output refusal");
+      expect(projectAnalysisError(lowered.error).details?.limit).toMatchObject({
+        setting: "producer.output_bytes",
+        parameter: "producer_limits.output_bytes",
+        effective_value: 1024,
+        source: "runtime",
+        maximum: MAX_APKTOOL_DECODE_OUTPUT_BYTES,
+      });
+      const raised = await runWithAnalysisOperationSnapshot(
+        {
+          revision: 1,
+          overrides: { "producer.output_bytes": DECODE_OUTPUT_BYTES },
+        },
+        decode,
+      );
       if (!raised.ok) throw raised.error;
       expect(raised.value.result).toMatchObject({
         metadata: { package_name: "com.rea.apktool.probe" },

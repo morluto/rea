@@ -19,6 +19,7 @@ import {
 } from "../../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { runWithAnalysisOperationSnapshot } from "../../domain/analysisOperationSnapshot.js";
 import {
   DEFAULT_ASSETUTIL_OUTPUT_BYTES,
   MAX_ASSETUTIL_OUTPUT_BYTES,
@@ -35,6 +36,11 @@ import {
 } from "../../domain/internalInvariant.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+
+const noInterfaceBuilder = async () =>
+  ({
+    graph: { nodes: [], truncated: false, coverage: [] },
+  }) as unknown as Awaited<ReturnType<typeof analyzeInterfaceBuilderBundle>>;
 
 /**
  * Run a stand-in Node script as assetutil under the real owned-process
@@ -560,12 +566,7 @@ it.skipIf(process.platform === "win32")(
         environment: {},
         bundlePath: bundle,
         targetSha256: "a".repeat(64),
-        analyzeInterfaceBuilder: async () =>
-          ({
-            graph: { nodes: [], truncated: false, coverage: [] },
-          }) as unknown as Awaited<
-            ReturnType<typeof analyzeInterfaceBuilderBundle>
-          >,
+        analyzeInterfaceBuilder: noInterfaceBuilder,
         assetUtilLauncher: (options) => {
           launches++;
           return spawnOwnedProviderProcess({ ...options, command: missing });
@@ -599,12 +600,7 @@ it.each([
         environment: {},
         bundlePath: bundle,
         targetSha256: "a".repeat(64),
-        analyzeInterfaceBuilder: async () =>
-          ({
-            graph: { nodes: [], truncated: false, coverage: [] },
-          }) as unknown as Awaited<
-            ReturnType<typeof analyzeInterfaceBuilderBundle>
-          >,
+        analyzeInterfaceBuilder: noInterfaceBuilder,
         assetUtilLauncher: async () => {
           throw spawnFailure(code, "/usr/bin/assetutil");
         },
@@ -646,12 +642,7 @@ describe("assetutil process cleanup", () => {
         bundlePath: bundle,
         targetSha256: "a".repeat(64),
         resources,
-        analyzeInterfaceBuilder: async () =>
-          ({
-            graph: { nodes: [], truncated: false, coverage: [] },
-          }) as unknown as Awaited<
-            ReturnType<typeof analyzeInterfaceBuilderBundle>
-          >,
+        analyzeInterfaceBuilder: noInterfaceBuilder,
         assetUtilLauncher: async (options) => {
           launches++;
           const spawned = await standIn(options);
@@ -1095,10 +1086,6 @@ it.skipIf(process.platform === "win32")(
 );
 
 describe("assetutil producer_limits.output_bytes", () => {
-  const noInterfaceBuilder = async () =>
-    ({
-      graph: { nodes: [], truncated: false, coverage: [] },
-    }) as unknown as Awaited<ReturnType<typeof analyzeInterfaceBuilderBundle>>;
   const outputLimit = (effective: number) => ({
     control_kind: "parameter",
     parameter: "producer_limits.output_bytes",
@@ -1170,6 +1157,97 @@ describe("assetutil producer_limits.output_bytes", () => {
       );
       await expect(inspect(output.length * 2)).resolves.toMatchObject({
         total_records: 2,
+      });
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "keeps the 64 MiB assetutil default when producer.output_bytes is unset and clamps an explicit value",
+    async () => {
+      const bundle = await createTestTempDirectory("rea-assetutil-setting-");
+      const resources = join(bundle, "Contents", "Resources");
+      await mkdir(resources, { recursive: true });
+      await writeFile(join(resources, "Assets.car"), "catalog");
+      const large = standInAssetUtil(
+        `process.stdout.write(JSON.stringify([{ Name: "x".repeat(${String(5 * 1024 * 1024)}) }]));`,
+      );
+      const admitted = await analyzeAppleAssetCatalogs({
+        environment: {},
+        bundlePath: bundle,
+        targetSha256: "a".repeat(64),
+        analyzeInterfaceBuilder: noInterfaceBuilder,
+        assetUtilLauncher: large,
+        platform: "darwin",
+      });
+      expect(admitted.total_records).toBe(1);
+
+      const small = standInAssetUtil(
+        `process.stdout.write(JSON.stringify([{ Name: "x".repeat(256) }]));`,
+      );
+      const refused = await runWithAnalysisOperationSnapshot(
+        { revision: 1, overrides: { "producer.output_bytes": 64 } },
+        () =>
+          analyzeAppleAssetCatalogs({
+            environment: {},
+            bundlePath: bundle,
+            targetSha256: "a".repeat(64),
+            analyzeInterfaceBuilder: noInterfaceBuilder,
+            assetUtilLauncher: small,
+            platform: "darwin",
+          }),
+      ).catch((cause: unknown) => cause);
+      if (!(refused instanceof AnalysisError))
+        throw new Error("Expected the session output refusal");
+      expect(projectAnalysisError(refused).details?.limit).toMatchObject({
+        setting: "producer.output_bytes",
+        parameter: "producer_limits.output_bytes",
+        effective_value: 64,
+        source: "runtime",
+        maximum: MAX_ASSETUTIL_OUTPUT_BYTES,
+      });
+
+      const aboveCap = MAX_ASSETUTIL_OUTPUT_BYTES + 1;
+      const overflowing = standInAssetUtil(
+        `process.stdout.write("x".repeat(${String(aboveCap)}));`,
+      );
+      const clampedRuntime = await runWithAnalysisOperationSnapshot(
+        { revision: 1, overrides: { "producer.output_bytes": aboveCap } },
+        () =>
+          analyzeAppleAssetCatalogs({
+            environment: {},
+            bundlePath: bundle,
+            targetSha256: "a".repeat(64),
+            analyzeInterfaceBuilder: noInterfaceBuilder,
+            assetUtilLauncher: overflowing,
+            platform: "darwin",
+          }),
+      ).catch((cause: unknown) => cause);
+      if (!(clampedRuntime instanceof AnalysisError))
+        throw new Error("Expected the above-cap runtime value to be reduced");
+      expect(projectAnalysisError(clampedRuntime).details?.limit).toMatchObject(
+        {
+          setting: "producer.output_bytes",
+          effective_value: MAX_ASSETUTIL_OUTPUT_BYTES,
+          source: "runtime",
+          maximum: MAX_ASSETUTIL_OUTPUT_BYTES,
+        },
+      );
+
+      const clampedSeed = await analyzeAppleAssetCatalogs({
+        environment: { REA_PRODUCER_OUTPUT_BYTES: String(aboveCap) },
+        bundlePath: bundle,
+        targetSha256: "a".repeat(64),
+        analyzeInterfaceBuilder: noInterfaceBuilder,
+        assetUtilLauncher: overflowing,
+        platform: "darwin",
+      }).catch((cause: unknown) => cause);
+      if (!(clampedSeed instanceof AnalysisError))
+        throw new Error("Expected the above-cap launch seed to be reduced");
+      expect(projectAnalysisError(clampedSeed).details?.limit).toMatchObject({
+        setting: "producer.output_bytes",
+        effective_value: MAX_ASSETUTIL_OUTPUT_BYTES,
+        source: "setting",
+        maximum: MAX_ASSETUTIL_OUTPUT_BYTES,
       });
     },
   );

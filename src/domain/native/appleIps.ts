@@ -4,9 +4,8 @@ import { knownCoverageStatusSchema } from "../coverage.js";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
-import type { AnalysisParameterLimit } from "../analysisSettings.js";
 import {
-  parameterBudgetLimit,
+  parameterBudgetLimitFor,
   parameterBudgetSchema,
   type ParameterBudget,
 } from "../parameterBudget.js";
@@ -108,11 +107,7 @@ export const APPLE_IPS_BUDGETS = {
 export type AppleIpsBudget = keyof typeof APPLE_IPS_BUDGETS;
 
 /** The per-call budget that stopped an IPS inspection. */
-export const appleIpsBudgetLimit = (
-  parameter: AppleIpsBudget,
-  effectiveValue: number,
-): AnalysisParameterLimit =>
-  parameterBudgetLimit(parameter, APPLE_IPS_BUDGETS[parameter], effectiveValue);
+export const appleIpsBudgetLimit = parameterBudgetLimitFor(APPLE_IPS_BUDGETS);
 
 /** Complete bounded inspection of one Apple .ips crash report. */
 export const inspectAppleIpsInputSchema = z.strictObject({
