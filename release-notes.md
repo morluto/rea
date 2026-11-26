@@ -156,6 +156,7 @@
 
 ### Bug Fixes
 
+* **adb:** list a transport adb reports without a serial number ([#10187](https://github.com/morluto/rea/issues/10187)) ([df70b66](https://github.com/morluto/rea/commit/df70b6685edeffc1d96bc33dd47efdbc0f9388bd))
 * **adb:** report macOS ownership preparation failures as typed host prerequisites ([#14140](https://github.com/morluto/rea/issues/14140)) ([604e087](https://github.com/morluto/rea/commit/604e087c3173e0a98c12409ac824017e20559094)), refs [#13943](https://github.com/morluto/rea/issues/13943)
 * **analysis-view:** match inventory path globs without backtracking ([17877d9](https://github.com/morluto/rea/commit/17877d9df51ac258b447a97656f6b4e91b4c3b75))
 * **analysis-view:** read older UEFI extraction Evidence and drop filter-count ceilings ([ca26f2a](https://github.com/morluto/rea/commit/ca26f2ac8499fa06af59f2590ec071af8a020094))
@@ -388,6 +389,7 @@
 * **java:** refuse nested XML in Maven text declarations ([#13398](https://github.com/morluto/rea/issues/13398)) ([232bd11](https://github.com/morluto/rea/commit/232bd1181cf5b730ac83e406581927d76403d02c))
 * **javascript:** account for active nullish pattern defaults ([c1943f1](https://github.com/morluto/rea/commit/c1943f196cde8d232029e184648bf0a1356b685a))
 * **javascript:** answer an over-budget member-mutation query by escaping whole objects ([#14153](https://github.com/morluto/rea/issues/14153)) ([c4916a6](https://github.com/morluto/rea/commit/c4916a6ff779c1ef39f998bf49b0e11840bd8889))
+* **javascript:** drop a stream acquisition whose options Node refuses ([#9262](https://github.com/morluto/rea/issues/9262)) ([afa3482](https://github.com/morluto/rea/commit/afa34825a81496b6de427ca11ffb9b4781902855))
 * **javascript:** include the underscore in the http token class ([62c4c25](https://github.com/morluto/rea/commit/62c4c25d19b67363784b58961072cd12c509de52))
 * **javascript:** keep Electron options visible past conditional literal spreads ([#9510](https://github.com/morluto/rea/issues/9510)) ([abdf383](https://github.com/morluto/rea/commit/abdf383939bd4190c9a06dd6576f3d698718d842))
 * **javascript:** omit requests rejected by the default agent protocol ([f54cc2f](https://github.com/morluto/rea/commit/f54cc2f3acf5e73b1007aafe8db69bc4b0ca29c3))
@@ -414,6 +416,7 @@
 * **limits:** omit required_value when PE/native read budgets know only a lower bound ([#14645](https://github.com/morluto/rea/issues/14645)) ([49187f1](https://github.com/morluto/rea/commit/49187f1ab39288182447537558c41a90f1976c3b))
 * **limits:** report packet and signal producer budgets as details.limit and page discovery at its record budget ([#14621](https://github.com/morluto/rea/issues/14621)) ([33e4e07](https://github.com/morluto/rea/commit/33e4e07dd05f6968d106c6671ca9b38033b10f11))
 * **macho:** correct encryption range VM mapping ([#13918](https://github.com/morluto/rea/issues/13918)) ([0fb1d11](https://github.com/morluto/rea/commit/0fb1d112f699b5619607f564f95fe52f14b7b061))
+* **macho:** document what a null build platform means ([#14128](https://github.com/morluto/rea/issues/14128)) ([7fe260d](https://github.com/morluto/rea/commit/7fe260de1d145de5d9984dd4cc60485cbda723a9))
 * **macho:** keep header reads inside declared slices ([#13913](https://github.com/morluto/rea/issues/13913)) ([1172d7e](https://github.com/morluto/rea/commit/1172d7ed7d3fc76e664d6ad79abc8e7fa44b2c97))
 * **macho:** preserve legacy bind stream bounds and target scope ([#13874](https://github.com/morluto/rea/issues/13874)) ([a8ccf8b](https://github.com/morluto/rea/commit/a8ccf8b5b883f5df3394c7753d7edc0caaffa524))
 * **macho:** preserve retained magic from valid FAT ranges ([#13910](https://github.com/morluto/rea/issues/13910)) ([9dba673](https://github.com/morluto/rea/commit/9dba67368d01092f723bc074416eefcbe7546293))
@@ -495,6 +498,7 @@
 * **setup:** verify the effective OpenCode project launcher ([#13538](https://github.com/morluto/rea/issues/13538)) ([d185754](https://github.com/morluto/rea/commit/d1857543f3caecbc3db6734b7c54adb814898aa4))
 * **snapshot:** replay every one-shot Ghidra read and say when a live result cannot replay ([#14249](https://github.com/morluto/rea/issues/14249)) ([95190b1](https://github.com/morluto/rea/commit/95190b1ebcfe1007e81f431ede5f74ac97c16c6c))
 * **source-maps:** cancel requests waiting for decoder admission ([#13844](https://github.com/morluto/rea/issues/13844)) ([72eede7](https://github.com/morluto/rea/commit/72eede75d1211e5ffa78de861ce9c5dae29ec387))
+* **sqlite:** accept the documented sqlite_master spelling of the schema catalog ([#10277](https://github.com/morluto/rea/issues/10277)) ([3ab1db2](https://github.com/morluto/rea/commit/3ab1db27e3b52f225d037ad667373bf945d41bc5))
 * **sqlite:** state the runtime requirement in supported-runtime terms ([#14206](https://github.com/morluto/rea/issues/14206)) ([7b056d2](https://github.com/morluto/rea/commit/7b056d2ff86b742dd68ffab2bdad865cc359d943))
 * **state-view:** preserve partial list status when total count is invalid ([1d78e6a](https://github.com/morluto/rea/commit/1d78e6abe61ab9ed49669ee0a2ecf7c691acf81d))
 * **state-view:** reject unsafe integers in recorded item counts ([00b4082](https://github.com/morluto/rea/commit/00b4082d4c3040116a625cd492c8cc5b7a5bf96e))
@@ -1216,6 +1220,7 @@
 * **ci:** consolidate project discovery and isolation checks ([#12842](https://github.com/morluto/rea/issues/12842)) ([21795b1](https://github.com/morluto/rea/commit/21795b199d1bc94f3ee17688e45403e689cbc966))
 * **ci:** consolidate required lane gate coverage ([#13515](https://github.com/morluto/rea/issues/13515)) ([77c5e6b](https://github.com/morluto/rea/commit/77c5e6bf82bf4bceb4a4cffcd2e4b517d3ffb51a))
 * **ci:** make test selection and provider report refusals observable ([#12782](https://github.com/morluto/rea/issues/12782)) ([21051b9](https://github.com/morluto/rea/commit/21051b9d06f82d9da0a932d328cae8db87644f77))
+* **ci:** require a positive binary-layout download deadline ([#14755](https://github.com/morluto/rea/issues/14755)) ([72b77b2](https://github.com/morluto/rea/commit/72b77b2f8e429aa24c2b475a0d54f4de222b1337))
 * **ci:** require planner directories in classifier checkouts ([#14553](https://github.com/morluto/rea/issues/14553)) ([0acafde](https://github.com/morluto/rea/commit/0acafdeafa5880c8e8a385ef0e5b737887a4cecf))
 * **ci:** reuse workflow inventory and verify cache authority ([#13525](https://github.com/morluto/rea/issues/13525)) ([eb1d540](https://github.com/morluto/rea/commit/eb1d54007576e0443c7200f8da4143ed38025699))
 * **ci:** verify selected shard and provider report refusals ([21051b9](https://github.com/morluto/rea/commit/21051b9d06f82d9da0a932d328cae8db87644f77))
