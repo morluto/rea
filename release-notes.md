@@ -168,6 +168,7 @@
 * **android:** allow filtering references by the unnamed package ([#14752](https://github.com/morluto/rea/issues/14752)) ([752f576](https://github.com/morluto/rea/commit/752f5769e20998c427aa5dc4d28f8961259d5ff7))
 * **android:** let the bridge advertise its own tool schemas ([2b6ede2](https://github.com/morluto/rea/commit/2b6ede2d0c0c82ea466c61a6694df3353c998637))
 * **apk:** disclose v1 scan scope without duplicate names ([#13572](https://github.com/morluto/rea/issues/13572)) ([110b990](https://github.com/morluto/rea/commit/110b990c687bdb498de0134dce8b49547983273a))
+* **apktool:** restore package identity from decoded metadata ([#14767](https://github.com/morluto/rea/issues/14767)) ([5b2936c](https://github.com/morluto/rea/commit/5b2936c4e81b2835443b44235319b1de1f255997))
 * **apple-application:** trust declared coverage for empty disk images ([#13678](https://github.com/morluto/rea/issues/13678)) ([01c0e5a](https://github.com/morluto/rea/commit/01c0e5a870ce1bf684fc1ced8d1cfa74d404e48c))
 * **apple:** decode keyed archives that name another archiver ([11896a6](https://github.com/morluto/rea/commit/11896a6eb1864f4f45e4ab756bdfea93427b4eb9))
 * **apple:** decode the ivar WORD_ALIGN sentinel as 8-byte alignment ([3dcd6b6](https://github.com/morluto/rea/commit/3dcd6b62e813e1d7808ee4d0554130b5aa207538))
