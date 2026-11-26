@@ -97,9 +97,8 @@ one physical source map. The full URL is kept out of node identity, display
 label, and edge properties, so large inline data URLs are stored once per
 source-map reference.
 
-Consumers previously reading `edge.properties.declared_url` should follow
-`target_node_id` and select the observation by `declared_url_sha256` instead.
-Node labels serve display; the observation preserves the original URL.
+To read the URL, follow `target_node_id` and select the observation by
+`declared_url_sha256`. Node labels serve display; the observation preserves the original URL.
 
 For example, a source-owned synthetic fixture proves this path without using a
 third-party application:

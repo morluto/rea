@@ -1,5 +1,7 @@
 import { javaScriptSemanticQueryInputSchema } from "./javascriptSemanticQuerySchemas.js";
 import {
+  fixtureNode,
+  registryForGraph,
   resolveJavaScriptSemanticEvidence,
   semanticFixtureGraph,
   semanticFixtureInput,
@@ -10,14 +12,11 @@ import { expect, it } from "vitest";
 import { z } from "zod";
 
 import { digestCanonicalValue } from "../canonicalDigest.js";
-import type { JsonValue } from "../jsonValue.js";
 import {
   JAVASCRIPT_SEMANTIC_RELATION_FAMILIES,
   JAVASCRIPT_SEMANTIC_RELATION_FAMILY,
-  JAVASCRIPT_SEMANTIC_NODE_KINDS,
   JAVASCRIPT_SEMANTIC_RELATIONS,
   type JavaScriptSemanticGraphInput,
-  type JavaScriptSemanticGraphNode,
 } from "./javascriptSemanticGraphSchemas.js";
 import {
   createJavaScriptSemanticGraph,
@@ -92,43 +91,13 @@ it("accepts omitted unknown occurrences as the reason for semantic truncation", 
     ],
   });
 });
-const node = (
-  kind: (typeof JAVASCRIPT_SEMANTIC_NODE_KINDS)[number],
-  role: string,
-  properties: Record<string, JsonValue> = {},
-  evidenceContexts: JavaScriptSemanticEvidenceContextRegistry,
-  options: {
-    readonly functionNodeId?: string | null;
-    readonly modulePath?: string;
-  } = {},
-): JavaScriptSemanticGraphNode =>
-  createJavaScriptSemanticGraphNode(
-    {
-      kind,
-      identity: {
-        artifact_sha256: SHA,
-        module_path: options.modulePath ?? "bundle.js",
-        source_range: {
-          start: { line: 1, column: role.length },
-          end: { line: 1, column: role.length + 1 },
-        },
-        role_key: role,
-      },
-      function_node_id: options.functionNodeId ?? null,
-      application_node_ids: [],
-      label: role,
-      properties,
-      evidence: semanticGraphTestEvidence(),
-    },
-    evidenceContexts,
-  );
 
 it("accepts a semantic module path of more than 600 segments", () => {
   const modulePath = `${"segment/".repeat(600)}entry.js`;
   const evidenceContexts = new JavaScriptSemanticEvidenceContextRegistry();
   expect(
-    node("module", "long-path", {}, evidenceContexts, { modulePath }).identity
-      .module_path,
+    fixtureNode("module", "long-path", evidenceContexts, {}, modulePath)
+      .identity.module_path,
   ).toBe(modulePath);
 });
 
@@ -169,20 +138,6 @@ it("captures caller-owned node identity, properties, and provenance", () => {
     ),
   ).toEqual(expectedEvidence);
 });
-
-const registryForGraph = (
-  graph: JavaScriptSemanticGraph,
-): JavaScriptSemanticEvidenceContextRegistry => {
-  const registry = new JavaScriptSemanticEvidenceContextRegistry();
-  for (const { evidence: reference } of [
-    ...graph.nodes,
-    ...graph.relations,
-    ...graph.unknowns,
-    ...graph.fingerprints,
-  ])
-    registry.intern(resolveJavaScriptSemanticEvidence(graph, reference));
-  return registry;
-};
 
 const graphWithCandidateRelations = (): JavaScriptSemanticGraph => {
   const base = semanticFixtureGraph();
@@ -265,20 +220,17 @@ it("matches scalar literal seeds and skips non-scalar literal metadata", () => {
   const input = semanticFixtureInput();
   const metadataContexts = new JavaScriptSemanticEvidenceContextRegistry();
   const literals = [
-    node("literal", "string-seven", { value: "7" }, metadataContexts),
-    node("literal", "number-seven", { value: 7 }, metadataContexts),
-    node("literal", "boolean-true", { value: true }, metadataContexts),
-    node("literal", "null", { value: null }, metadataContexts),
-    node("literal", "empty-string", { value: "" }, metadataContexts),
-    node("literal", "zero", { value: 0 }, metadataContexts),
-    node("literal", "negative-zero", { value: -0 }, metadataContexts),
-    node("literal", "missing-value", {}, metadataContexts),
-    node(
-      "literal",
-      "structured-value",
-      { value: { nested: "metadata" } },
-      metadataContexts,
-    ),
+    fixtureNode("literal", "string-seven", metadataContexts, { value: "7" }),
+    fixtureNode("literal", "number-seven", metadataContexts, { value: 7 }),
+    fixtureNode("literal", "boolean-true", metadataContexts, { value: true }),
+    fixtureNode("literal", "null", metadataContexts, { value: null }),
+    fixtureNode("literal", "empty-string", metadataContexts, { value: "" }),
+    fixtureNode("literal", "zero", metadataContexts, { value: 0 }),
+    fixtureNode("literal", "negative-zero", metadataContexts, { value: -0 }),
+    fixtureNode("literal", "missing-value", metadataContexts),
+    fixtureNode("literal", "structured-value", metadataContexts, {
+      value: { nested: "metadata" },
+    }),
   ];
   input.nodes.push(...literals);
   const graph = createJavaScriptSemanticGraph(input);
@@ -311,21 +263,22 @@ it("matches exact endpoint properties on request and response carriers only", ()
   const input = semanticFixtureInput();
   const contexts = new JavaScriptSemanticEvidenceContextRegistry();
   const endpoint = "https://example.invalid/v1";
-  const response = node("response", "response", { endpoint }, contexts);
-  const other = node(
-    "response",
-    "other-endpoint",
-    { endpoint: `${endpoint}/other` },
-    contexts,
-  );
-  const displayOnly = node("response", endpoint, { endpoint: null }, contexts);
+  const response = fixtureNode("response", "response", contexts, { endpoint });
+  const other = fixtureNode("response", "other-endpoint", contexts, {
+    endpoint: `${endpoint}/other`,
+  });
+  const displayOnly = fixtureNode("response", endpoint, contexts, {
+    endpoint: null,
+  });
   input.nodes.push(
     response,
     displayOnly,
-    node("response", "missing-endpoint", {}, contexts),
+    fixtureNode("response", "missing-endpoint", contexts),
     other,
-    node("response", "array-endpoint", { endpoint: [endpoint] }, contexts),
-    node("boundary", "unrelated-carrier", { endpoint }, contexts),
+    fixtureNode("response", "array-endpoint", contexts, {
+      endpoint: [endpoint],
+    }),
+    fixtureNode("boundary", "unrelated-carrier", contexts, { endpoint }),
   );
   const graph = createJavaScriptSemanticGraph(input);
   const request = input.nodes.find(({ kind }) => kind === "request");
@@ -348,8 +301,8 @@ it("matches exact endpoint properties on request and response carriers only", ()
 
 it("scopes callers unknowns to call relations while preserving graph uncertainty", () => {
   const contexts = new JavaScriptSemanticEvidenceContextRegistry();
-  const caller = node("function", "caller", {}, contexts);
-  const seed = node("function", "seed", {}, contexts);
+  const caller = fixtureNode("function", "caller", contexts);
+  const seed = fixtureNode("function", "seed", contexts);
   const call = createJavaScriptSemanticGraphRelation(
     {
       source_node_id: caller.node_id,

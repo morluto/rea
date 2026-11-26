@@ -3,18 +3,23 @@ import {
   open,
   readFile,
   rename,
+  rm,
   symlink,
   unlink,
   utimes,
   writeFile,
 } from "node:fs/promises";
 import { classifyProviderFailure } from "../../../src/providers/classifyProviderFailure.js";
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
-import { expect, it, onTestFinished, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import type { StableArtifactFileSystem } from "../../../src/resources/readStableArtifact.js";
 import { captureSqliteDatabaseSnapshot } from "../../../src/sqlite/SqliteDatabaseSnapshot.js";
+import { DEFAULT_SQLITE_INPUT_BYTES } from "../../../src/domain/sqlite/sqliteDatabase.js";
+import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { inspectSqliteDatabaseSnapshot } from "../../../src/sqlite/SqliteDatabaseInspection.js";
 import { sqliteDatabaseDialect } from "../../../src/sqlite/SqliteDatabaseFailures.js";
 import {
@@ -37,15 +42,18 @@ const fixture = async (wal = false) => {
     await removeTestWorkspace(workspace.root);
   });
   const root = await workspace.mkdir("private");
-  const capture = (fileSystem?: StableArtifactFileSystem) =>
+  const capture = (
+    fileSystem?: StableArtifactFileSystem,
+    signal?: AbortSignal,
+  ) =>
     captureSqliteDatabaseSnapshot(
       database.path,
       root,
       resourceScope,
-      undefined,
+      signal,
       fileSystem,
     );
-  return { workspace, database, root, capture };
+  return { workspace, database, root, resourceScope, capture };
 };
 
 it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE).each(["PERSIST", "TRUNCATE"])(
@@ -62,6 +70,8 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE).each(["PERSIST", "TRUNCATE"])(
     }
     const journalPath = `${database.path}-journal`;
     const before = await readFile(journalPath);
+    if (mode === "TRUNCATE") expect(before).toHaveLength(0);
+    else expect(before.subarray(0, 28).equals(Buffer.alloc(28))).toBe(true);
     const beforeStat = await lstat(journalPath, { bigint: true });
     const snapshot = await capture();
     const result = inspectSqliteDatabaseSnapshot(snapshot.snapshotPath, {
@@ -183,7 +193,7 @@ it("refuses an active journal even before SQLite writes its magic header", async
     expect(journal.subarray(8, 28).some((byte) => byte !== 0)).toBe(true);
     const original = await readFile(database.path);
     await expect(capture()).rejects.toMatchObject({
-      reason: "format",
+      reason: "unsupported",
       message: expect.stringContaining("recovery"),
     });
     expect(Buffer.compare(await readFile(database.path), original)).toBe(0);
@@ -197,7 +207,7 @@ it("refuses an active journal even before SQLite writes its magic header", async
 it("refuses an incomplete zeroed journal header", async () => {
   const { database, capture } = await fixture();
   await writeFile(`${database.path}-journal`, Buffer.alloc(27));
-  await expect(capture()).rejects.toMatchObject({ reason: "format" });
+  await expect(capture()).rejects.toMatchObject({ reason: "unsupported" });
 });
 
 it.runIf(process.platform !== "win32")(
@@ -339,3 +349,247 @@ it.each(["-wal", "-journal"] as const)(
     expect(created).toBe(true);
   },
 );
+
+describe("SQLite snapshot streaming copy and destination isolation", () => {
+  it("streams multi-megabyte DB and WAL files byte-for-byte", async () => {
+    const workspace = await createTestWorkspace("rea-sqlite-large-stream-");
+    const resourceScope = new ArtifactResourceScope();
+    const dbPath = `${workspace.root}/large.db`;
+    const db = new DatabaseSync(dbPath);
+    onTestFinished(async () => {
+      db.close();
+      await resourceScope.close();
+      await removeTestWorkspace(workspace.root);
+    });
+    db.exec("PRAGMA journal_mode = WAL;");
+    db.exec("CREATE TABLE items (id INTEGER PRIMARY KEY, payload TEXT);");
+    const insert = db.prepare("INSERT INTO items (payload) VALUES (?);");
+    const bigRow = "x".repeat(4096);
+    db.exec("BEGIN;");
+    for (let i = 0; i < 650; i += 1) insert.run(bigRow);
+    db.exec("COMMIT;");
+    // Force a checkpoint so the DB file exceeds 1 MiB, then grow the WAL > 1.2 MiB too.
+    db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+    db.exec("BEGIN;");
+    for (let i = 0; i < 400; i += 1) insert.run(bigRow);
+    db.exec("COMMIT;");
+
+    const sourceDb = await readFile(dbPath);
+    const sourceWal = await readFile(`${dbPath}-wal`);
+    expect(sourceDb.length).toBeGreaterThan(1_048_576);
+    expect(sourceWal.length).toBeGreaterThan(1_048_576);
+
+    const snapshotDir = await workspace.mkdir("snap-large");
+    const snapshot = await captureSqliteDatabaseSnapshot(
+      dbPath,
+      snapshotDir,
+      resourceScope,
+    );
+    expect(snapshot.wal?.path).toBe(`${dbPath}-wal`);
+    expect(
+      Buffer.compare(await readFile(snapshot.snapshotPath), sourceDb),
+    ).toBe(0);
+    expect(
+      Buffer.compare(await readFile(`${snapshot.snapshotPath}-wal`), sourceWal),
+    ).toBe(0);
+  });
+
+  it("preserves a 0-byte WAL file via lazy destination open", async () => {
+    const { database, root, capture } = await fixture(true);
+    await writeFile(database.walPath, Buffer.alloc(0));
+    const result = await capture();
+    expect(result.wal?.path).toBe(database.walPath);
+    expect((await readFile(`${root}/database.snapshot-wal`)).length).toBe(0);
+  });
+
+  it("isolates destination ENOENT from source container-identity attribution", async () => {
+    const { database, root, capture } = await fixture();
+    const fileSystem: StableArtifactFileSystem = {
+      lstat: (path) => lstat(path, { bigint: true }),
+      open: async (path, flags) => {
+        const handle = await open(path, flags);
+        if (path === database.path) {
+          // Removing privateRoot after source admission triggers ENOENT on destination
+          // open; duringAcquisition must not blame the source path as container-identity.
+          await rm(root, { recursive: true, force: true });
+        }
+        return handle;
+      },
+    };
+    const error = await capture(fileSystem).catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toMatchObject({
+      code: "ENOENT",
+      path: `${root}/database.snapshot`,
+    });
+  });
+});
+
+describe("SQLite snapshot destination cleanup lifecycle", () => {
+  it("retains source and destination handles across write and close failures and retries cleanup", async () => {
+    const { database, root, resourceScope, capture } = await fixture();
+    const destinationPath = `${root}/database.snapshot`;
+    let denySourceClose = true;
+    let denyDestWrite = true;
+    let denyDestClose = true;
+    const fileSystem: StableArtifactFileSystem = {
+      lstat: (path) => lstat(path, { bigint: true }),
+      open: async (path, flags, mode) => {
+        const handle = await open(path, flags, mode);
+        const origClose = handle.close.bind(handle);
+        if (path === database.path) {
+          handle.close = async () => {
+            if (denySourceClose) throw new Error("source close denied");
+            await origClose();
+          };
+        } else if (path === destinationPath) {
+          const origWrite = handle.write.bind(handle);
+          handle.write = (async (...args: Parameters<typeof origWrite>) => {
+            if (denyDestWrite)
+              throw Object.assign(new Error("no space left on destination"), {
+                code: "ENOSPC",
+              });
+            return await origWrite(...args);
+          }) as typeof handle.write;
+          handle.close = async () => {
+            if (denyDestClose) throw new Error("destination close denied");
+            await origClose();
+          };
+        }
+        return handle;
+      },
+    };
+
+    try {
+      const error = await capture(fileSystem).catch((cause: unknown) => cause);
+      expect(error).toMatchObject({
+        reason: "io",
+        cleanup: {
+          resources: expect.arrayContaining([database.path, destinationPath]),
+        },
+      });
+      expect((error as Error).message).toContain(
+        "no space left on destination",
+      );
+      const providerError = classifyProviderFailure(
+        error,
+        sqliteDatabaseDialect(database.path, "snapshot-capture"),
+      );
+      expect(providerError.cleanupIncomplete).toBe(true);
+      expect(providerError.cleanupResources).toEqual(
+        expect.arrayContaining([database.path, destinationPath]),
+      );
+      await expect(resourceScope.retryCleanup()).rejects.toMatchObject({
+        cleanup: {
+          resources: expect.arrayContaining([database.path, destinationPath]),
+        },
+      });
+      denySourceClose = false;
+      denyDestClose = false;
+      await expect(resourceScope.retryCleanup()).resolves.toBeUndefined();
+    } finally {
+      denySourceClose = false;
+      denyDestClose = false;
+    }
+  });
+
+  it("handles cancellation during destination close and retains failed close until retry", async () => {
+    for (const failClose of [false, true]) {
+      const { database, root, resourceScope, capture } = await fixture();
+      const destinationPath = `${root}/database.snapshot`;
+      const controller = new AbortController();
+      let denyDestClose = failClose;
+      const fileSystem: StableArtifactFileSystem = {
+        lstat: (path) => lstat(path, { bigint: true }),
+        open: async (path, flags, mode) => {
+          const handle = await open(path, flags, mode);
+          if (path === destinationPath) {
+            const origClose = handle.close.bind(handle);
+            handle.close = async () => {
+              if (!controller.signal.aborted)
+                controller.abort(
+                  new Error("cancelled during destination close"),
+                );
+              if (denyDestClose) throw new Error("destination close failed");
+              await origClose();
+            };
+          }
+          return handle;
+        },
+      };
+
+      try {
+        const error = await capture(fileSystem, controller.signal).catch(
+          (cause: unknown) => cause,
+        );
+        expect(error).toMatchObject({
+          _tag: "SqliteSnapshotAcquisitionFailure",
+          operationCause: { reason: "cancelled" },
+        });
+        const providerError = classifyProviderFailure(
+          error,
+          sqliteDatabaseDialect(
+            database.path,
+            "snapshot-capture",
+            controller.signal,
+          ),
+        );
+        if (failClose) {
+          expect(providerError).toBeInstanceOf(ProviderCleanupError);
+          expect(providerError.cleanupPrimary?._tag).toBe(
+            "AnalysisCancelledError",
+          );
+          expect(error).toMatchObject({
+            operationCause: { cleanup: { resources: [destinationPath] } },
+          });
+          expect(providerError.cleanupIncomplete).toBe(true);
+          expect(providerError.cleanupResources).toEqual([destinationPath]);
+          denyDestClose = false;
+          await expect(resourceScope.retryCleanup()).resolves.toBeUndefined();
+        } else {
+          expect(providerError._tag).toBe("AnalysisCancelledError");
+          expect(providerError.cleanupIncomplete).toBe(false);
+          expect(providerError.cleanupResources).toEqual([]);
+        }
+      } finally {
+        denyDestClose = false;
+      }
+    }
+  });
+});
+
+it("refuses a snapshot above producer_limits.input_bytes with details.limit and admits it at its size", async () => {
+  const { database, root, resourceScope } = await fixture();
+  const bytes = (await lstat(database.path)).size;
+  const refused = await captureSqliteDatabaseSnapshot(
+    database.path,
+    root,
+    resourceScope,
+    undefined,
+    undefined,
+    bytes - 1,
+  ).catch((cause: unknown) => cause);
+  if (!(refused instanceof AnalysisError))
+    throw new Error("Expected the snapshot input refusal");
+  expect(projectAnalysisError(refused).details?.limit).toEqual({
+    control_kind: "parameter",
+    parameter: "producer_limits.input_bytes",
+    effective_value: bytes - 1,
+    unit: "bytes",
+    minimum: 1,
+    maximum: Number.MAX_SAFE_INTEGER,
+    default_value: DEFAULT_SQLITE_INPUT_BYTES,
+    applies_at: "next_call",
+    required_value: bytes,
+  });
+  await expect(
+    captureSqliteDatabaseSnapshot(
+      database.path,
+      root,
+      resourceScope,
+      undefined,
+      undefined,
+      bytes,
+    ),
+  ).resolves.toMatchObject({ artifact: { bytes } });
+});

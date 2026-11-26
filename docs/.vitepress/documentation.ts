@@ -9,6 +9,11 @@ export const documentationSections = [
         route: "/installation",
       },
       {
+        text: "Supported targets and requirements",
+        source: "reference/supported-targets.md",
+        route: "/supported-targets",
+      },
+      {
         text: "Client configuration and troubleshooting",
         source: "getting-started/client-configuration.md",
         route: "/client-configuration",
@@ -172,6 +177,11 @@ export const documentationSections = [
         text: "PE TLS callbacks and load configuration",
         source: "pe-load-config.md",
         route: "/pe-load-config",
+      },
+      {
+        text: "PE x64 exception-directory function ranges",
+        source: "guides/native/pe-unwind-ranges.md",
+        route: "/pe-unwind-ranges",
       },
       {
         text: "Match native functions across builds",
@@ -508,6 +518,21 @@ export const documentationSections = [
         source: "wxapkg.md",
         route: "/wxapkg",
       },
+      {
+        text: "ISO 9660 disc images",
+        source: "guides/firmware/iso9660-images.md",
+        route: "/iso9660-images",
+      },
+      {
+        text: "tar and gzip-compressed tar archives",
+        source: "tar-archives.md",
+        route: "/tar-archives",
+      },
+      {
+        text: "GPU asset headers: DDS, GLB, KTX and KTX2",
+        source: "gpu-asset-headers.md",
+        route: "/gpu-asset-headers",
+      },
     ],
   },
   {
@@ -649,6 +674,16 @@ export const documentationSections = [
         route: "/mcp-contracts",
       },
       {
+        text: "Target failures",
+        source: "reference/target-failures.md",
+        route: "/target-failures",
+      },
+      {
+        text: "Directory identity",
+        source: "reference/directory-identity.md",
+        route: "/directory-identity",
+      },
+      {
         text: "Reconstruction obligation ledgers",
         source: "reference/reconstruction-obligation-ledgers.md",
         route: "/reconstruction-obligation-ledgers",
@@ -670,12 +705,12 @@ export const documentationSections = [
       },
       {
         text: "Settings and recovery",
-        source: "design/limits-and-recovery.md",
+        source: "reference/limits-and-recovery.md",
         route: "/design/limits-and-recovery",
       },
       {
         text: "REA limit inventory",
-        source: "design/rea-limit-inventory.md",
+        source: "reference/rea-limit-inventory.md",
         route: "/design/rea-limit-inventory",
       },
       {
@@ -702,16 +737,6 @@ export const documentationSections = [
         text: "Releasing REA",
         source: "development/releasing.md",
         route: "/releasing",
-      },
-      {
-        text: "REA roadmap",
-        source: "development/roadmap.md",
-        route: "/roadmap",
-      },
-      {
-        text: "Capability composition and ownership",
-        source: "capability-composition.md",
-        route: "/capability-composition",
       },
       {
         text: "Testing lanes and provider verification",

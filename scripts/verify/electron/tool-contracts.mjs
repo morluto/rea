@@ -9,7 +9,7 @@ import { requireMcpToolError } from "../../lib/mcp-verifier-results.mjs";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { access, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
@@ -20,6 +20,7 @@ import {
   cleanupOwnedProcessGroup,
   readProcessRunId,
 } from "../../../dist/process/ProcessOwnership.js";
+import { completeEvidenceClient } from "../../lib/complete-evidence.mjs";
 
 const execute = promisify(execFile);
 
@@ -34,16 +35,32 @@ export async function verifyElectronToolContracts({
     private: false,
   });
   const root = rootFixture.path;
-  const main = join(root, "main.cjs");
-  const preload = join(root, "preload.cjs");
+  const applicationRoot = join(root, "app");
+  const profileOption = "--rea-verifier-profile=";
+  const profiles = {
+    inspection: join(root, "inspection-profile"),
+    capture: join(root, "capture-profile"),
+    cancellation: join(root, "cancellation-profile"),
+  };
+  const main = join(applicationRoot, "main.cjs");
+  const preload = join(applicationRoot, "preload.cjs");
   const ready = join(root, "ready");
   const entrypoint = join(repositoryRoot, "scripts", "rea.mjs");
   const runId = randomUUID();
-  await writeFile(
-    main,
-    `const electron = require("electron");
+  const prepare = async () => {
+    await Promise.all(
+      [applicationRoot, ...Object.values(profiles)].map((path) => mkdir(path)),
+    );
+    await writeFile(
+      main,
+      `const electron = require("electron");
 const path = require("node:path");
 const { app, BrowserWindow, ipcMain } = electron;
+const fs = require("node:fs");
+const profileOption = ${JSON.stringify(profileOption)};
+const profile = process.argv.find((argument) => argument.startsWith(profileOption));
+if (profile === undefined) throw new Error("Missing Electron verifier profile");
+app.setPath("userData", profile.slice(profileOption.length));
 const Window = BrowserWindow;
 const mainIpc = ipcMain;
 app.whenReady().then(() => {
@@ -51,34 +68,35 @@ app.whenReady().then(() => {
     webPreferences: { preload: path.join(__dirname, "preload.cjs") },
   });
   window.loadFile("renderer.html");
-  require("node:fs").writeFileSync(${JSON.stringify(ready)}, "ready");
+  fs.writeFileSync(${JSON.stringify(ready)}, app.getPath("userData"));
 });
 mainIpc.handle("fixture:echo", (_event, value) => ({ value }));`,
-  );
-  await writeFile(
-    join(root, "renderer.html"),
-    `<!doctype html>
+    );
+    await writeFile(
+      join(applicationRoot, "renderer.html"),
+      `<!doctype html>
 <button id="run">Run</button>
 <output id="result"></output>
 <script src="renderer.js"></script>`,
-  );
-  await writeFile(
-    preload,
-    `const electron = require("electron");
+    );
+    await writeFile(
+      preload,
+      `const electron = require("electron");
 const { contextBridge, ipcRenderer } = electron;
 const bridge = contextBridge;
 const rendererIpc = ipcRenderer;
 bridge.exposeInMainWorld("fixture", {
   echo: (value) => rendererIpc.invoke("fixture:echo", value),
 });`,
-  );
-  await writeFile(
-    join(root, "renderer.js"),
-    `document.querySelector("#run").addEventListener("click", async () => {
+    );
+    await writeFile(
+      join(applicationRoot, "renderer.js"),
+      `document.querySelector("#run").addEventListener("click", async () => {
   const result = await window.fixture.echo("renderer");
   document.querySelector("#result").textContent = result.value;
 });`,
-  );
+    );
+  };
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],
@@ -95,7 +113,9 @@ bridge.exposeInMainWorld("fixture", {
     },
     stderr: "pipe",
   });
-  const client = new Client({ name: "electron-real-e2e", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "electron-real-e2e", version: "1" }),
+  );
   let serverStderr = "";
   transport.stderr?.on("data", (chunk) => {
     serverStderr += chunk.toString();
@@ -119,14 +139,16 @@ bridge.exposeInMainWorld("fixture", {
   });
   await withVerifierFixture(rootFixture, async () => {
     try {
+      await prepare();
       await readProcessRunId(process.pid);
       application = spawn(
         executable,
         [
           "--remote-debugging-address=127.0.0.1",
           "--remote-debugging-port=0",
-          `--user-data-dir=${join(root, "profile")}`,
+          `--user-data-dir=${profiles.inspection}`,
           main,
+          profileOption + profiles.inspection,
         ],
         {
           cwd: root,
@@ -177,7 +199,7 @@ bridge.exposeInMainWorld("fixture", {
         await pause(100);
       }
       const target = targets.normalized_result.targets.find(
-        (item) => item.file_path === join(root, "renderer.html"),
+        (item) => item.file_path === join(applicationRoot, "renderer.html"),
       );
       assert.ok(target, JSON.stringify(targets));
       const page = await call("inspect_electron_page", {
@@ -189,12 +211,13 @@ bridge.exposeInMainWorld("fixture", {
       assert.ok(
         page.normalized_result.scripts.items.some(
           (script) =>
-            script.file_path === join(root, "renderer.js") &&
+            script.file_path === join(applicationRoot, "renderer.js") &&
             script.source.included,
         ),
       );
       const staticAnalysis = await call("analyze_javascript_application", {
-        input_path: root,
+        detail: "complete",
+        input_path: applicationRoot,
       });
       assert.equal(staticAnalysis.normalized_result.summary.browser_windows, 1);
       assert.equal(
@@ -221,13 +244,24 @@ bridge.exposeInMainWorld("fixture", {
       const reconciled = await call("reconcile_javascript_runtime", {
         static_layers: [
           {
-            analysis: staticAnalysis,
-            runtime_mappings: [{ kind: "file-root", root }],
+            analysis: {
+              kind: "retained-evidence",
+              evidence_id: staticAnalysis.evidence_id,
+            },
+            runtime_mappings: [{ kind: "file-root", root: applicationRoot }],
           },
         ],
-        runtime_observations: [page],
+        runtime_observations: [
+          { kind: "retained-evidence", evidence_id: page.evidence_id },
+        ],
       });
-      assert.ok(reconciled.normalized_result.runtime_captures.length > 0);
+      assert.deepEqual(
+        [
+          ...reconciled.normalized_result.static_layers,
+          ...reconciled.normalized_result.runtime_captures,
+        ].map(({ evidence_id }) => evidence_id),
+        [staticAnalysis.evidence_id, page.evidence_id],
+      );
       const cli = await execute(
         process.execPath,
         [
@@ -248,10 +282,12 @@ bridge.exposeInMainWorld("fixture", {
         JSON.parse(cli.stdout).normalized_result.target.file_path,
         target.file_path,
       );
+      assert.equal(await readFile(ready, "utf8"), profiles.inspection);
       const input = {
         executable_path: executable,
         application_path: main,
-        application_root: root,
+        application_root: applicationRoot,
+        args: [profileOption + profiles.capture],
         actions: [{ step_id: "ipc", kind: "click", selector: "#run" }],
       };
       const active = await client.callTool(
@@ -281,6 +317,7 @@ bridge.exposeInMainWorld("fixture", {
         assert.equal(capture.application.cleanup, "terminated-owned-process");
       }
       assert.equal(capture.actions[0].status, "completed");
+      assert.equal(await readFile(ready, "utf8"), profiles.capture);
       assert.ok(
         capture.ipc.events.some(
           ({ kind, channel }) =>
@@ -305,7 +342,8 @@ bridge.exposeInMainWorld("fixture", {
       );
       if (process.platform !== "win32")
         await verifyCancellation({
-          input,
+          input: { ...input, args: [profileOption + profiles.cancellation] },
+          profilePath: profiles.cancellation,
           ready,
           entrypoint,
           root,
@@ -338,7 +376,14 @@ async function waitForEndpoint(application, diagnostics) {
   );
 }
 
-async function verifyCancellation({ input, ready, entrypoint, root, fixture }) {
+async function verifyCancellation({
+  input,
+  profilePath,
+  ready,
+  entrypoint,
+  root,
+  fixture,
+}) {
   await rm(ready, { force: true });
   const child = spawn(
     process.execPath,
@@ -442,7 +487,7 @@ async function verifyCancellation({ input, ready, entrypoint, root, fixture }) {
       await pause(100);
     }
     assert.ok(ownership, "CLI did not acquire an owned Electron application");
-    await access(ready);
+    assert.equal(await readFile(ready, "utf8"), profilePath);
     // The fixture's readiness precedes Playwright's Inspector acquisition;
     // interrupt the long action rather than its separate startup boundary.
     await pause(1_000);

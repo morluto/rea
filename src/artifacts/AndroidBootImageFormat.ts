@@ -13,7 +13,7 @@ import {
   unsupportedInput,
   type LimitRef,
 } from "../domain/parseFailure.js";
-import { BinaryReader } from "../domain/binaryContainer.js";
+import { createBinaryReaderCache } from "../domain/binaryContainer.js";
 
 /**
  * Android boot (`ANDROID!`, versions 0-4) and vendor boot (`VNDRBOOT`,
@@ -140,7 +140,7 @@ export interface AvbFooterFacts {
 }
 
 /** The ParseFailure format of an Android boot or vendor boot image. */
-const ANDROID_BOOT_FORMAT = "android-boot-image";
+export const ANDROID_BOOT_FORMAT = "android-boot-image";
 
 const formatError = (message: string): never => {
   throw malformedInput(ANDROID_BOOT_FORMAT, message);
@@ -193,14 +193,20 @@ const requireBytes = (buffer: Buffer, length: number, what: string): void => {
     );
 };
 
+const littleEndianBootReader = createBinaryReaderCache(
+  true,
+  ANDROID_BOOT_FORMAT,
+);
+const bigEndianBootReader = createBinaryReaderCache(false, ANDROID_BOOT_FORMAT);
+
 const u32 = (buffer: Buffer, offset: number): number => {
   requireBytes(buffer, offset + 4, "header");
-  return new BinaryReader(buffer, true, ANDROID_BOOT_FORMAT).u32(offset);
+  return littleEndianBootReader(buffer).u32(offset);
 };
 
 const u64 = (buffer: Buffer, offset: number, what: string): number => {
   requireBytes(buffer, offset + 8, what);
-  const reader = new BinaryReader(buffer, true, ANDROID_BOOT_FORMAT);
+  const reader = littleEndianBootReader(buffer);
   const low = reader.u32(offset);
   const high = reader.u32(offset + 4);
   if (high > 0x1f_ffff) formatError(`${what} exceeds a safe integer`);
@@ -209,7 +215,7 @@ const u64 = (buffer: Buffer, offset: number, what: string): number => {
 
 const u64be = (buffer: Buffer, offset: number, what: string): number => {
   requireBytes(buffer, offset + 8, what);
-  const reader = new BinaryReader(buffer, false, ANDROID_BOOT_FORMAT);
+  const reader = bigEndianBootReader(buffer);
   const high = reader.u32(offset);
   const low = reader.u32(offset + 4);
   if (high > 0x1f_ffff) formatError(`${what} exceeds a safe integer`);
@@ -1028,15 +1034,15 @@ const readVendorRamdiskTable = (
   const used = new Set<string>();
   const empty: number[] = [];
   let longer = false;
+  let firstOverrunIndex: number | null = null;
   for (let index = 0; index < input.entryCount; index += 1) {
     const base = index * input.entrySize;
     const size = u32(table, base);
     const offset = u32(table, base + 4);
     const ramdiskType = u32(table, base + 8);
-    if (offset > input.sectionSize || size > input.sectionSize - offset)
-      formatError(
-        `vendor ramdisk table entry ${index} overruns the vendor ramdisk section`,
-      );
+    if (offset > input.sectionSize || size > input.sectionSize - offset) {
+      if (firstOverrunIndex === null) firstOverrunIndex = index;
+    }
     // An empty fragment carries no bytes to expose, like other zero-sized
     // components; omit it rather than rejecting the image.
     if (size === 0) {
@@ -1084,10 +1090,16 @@ const readVendorRamdiskTable = (
       current !== undefined &&
       previous.offset + previous.size > current.offset
     )
-      formatError(
+      throw malformedInput(
+        ANDROID_BOOT_FORMAT,
         `vendor ramdisk table entry ${current.index} overlaps entry ${previous.index}`,
+        { field: "vendor_ramdisk_table_overlap" },
       );
   }
+  if (firstOverrunIndex !== null)
+    formatError(
+      `vendor ramdisk table entry ${firstOverrunIndex} overruns the vendor ramdisk section`,
+    );
   const limitations: string[] = [];
   if (longer)
     limitations.push(
@@ -1116,7 +1128,9 @@ export const parseVendorRamdiskTable = (
 ): Result<VendorRamdiskTableParse, ParseFailureError> =>
   parsed(() => readVendorRamdiskTable(table, input));
 
-const absentFooter = (limitations: readonly string[] = []): AvbFooterFacts => ({
+export const absentAvbFooter = (
+  limitations: readonly string[] = [],
+): AvbFooterFacts => ({
   present: false,
   footerSize: null,
   versionMajor: null,
@@ -1127,6 +1141,10 @@ const absentFooter = (limitations: readonly string[] = []): AvbFooterFacts => ({
   limitations,
 });
 
+const avbOverlapError = (message: string): never => {
+  throw malformedInput(ANDROID_BOOT_FORMAT, message, { field: "avb_overlap" });
+};
+
 const rejectVbmetaOverlap = (
   vbmeta: { readonly offset: number; readonly size: number },
   fileSize: number,
@@ -1135,7 +1153,7 @@ const rejectVbmetaOverlap = (
 ): void => {
   if (vbmeta.size === 0) return;
   if (endOf(vbmeta.offset, vbmeta.size) > fileSize - AVB_FOOTER_SIZE)
-    formatError("AVB vbmeta overlaps the footer");
+    avbOverlapError("AVB vbmeta overlaps the footer");
   const occupied = [{ offset: 0, size: headerOccupied }, ...components];
   for (const componentRange of occupied)
     if (
@@ -1143,7 +1161,7 @@ const rejectVbmetaOverlap = (
       vbmeta.offset < componentRange.offset + componentRange.size &&
       componentRange.offset < vbmeta.offset + vbmeta.size
     )
-      formatError(
+      avbOverlapError(
         componentRange.offset === 0
           ? "AVB vbmeta overlaps the boot image header"
           : `AVB vbmeta overlaps a component at offset ${componentRange.offset}`,
@@ -1182,39 +1200,40 @@ const readAvbFooter = (input: {
     return formatError("AVB footer bytes were not supplied");
   if (offset === null || !tail?.subarray(0, 4).equals(AVB_FOOTER_MAGIC_BYTES)) {
     const trailing = input.fileSize - input.imageEnd;
-    if (trailing <= 0) return absentFooter();
-    return absentFooter([
+    if (trailing <= 0) return absentAvbFooter();
+    return absentAvbFooter([
       trailing < AVB_FOOTER_SIZE
         ? `${trailing} trailing bytes follow the boot image and are shorter than a 64-byte AVB footer.`
         : `${trailing} trailing bytes follow the boot image and were not decoded as an AVB footer.`,
     ]);
   }
-  const originalImageSize = u64be(tail, 12, "AVB original image size");
   const vbmetaOffset = u64be(tail, 20, "AVB vbmeta offset");
   const vbmetaSize = u64be(tail, 28, "AVB vbmeta size");
-  if (originalImageSize < input.dataEnd)
-    formatError(
-      `AVB original image size ${originalImageSize} ends before boot image components at ${input.dataEnd}`,
-    );
-  if (originalImageSize > input.fileSize - AVB_FOOTER_SIZE)
-    formatError(
-      `AVB original image size ${originalImageSize} overlaps the footer`,
-    );
   rejectVbmetaOverlap(
     { offset: vbmetaOffset, size: vbmetaSize },
     input.fileSize,
     input.headerOccupied,
     input.components,
   );
+  const originalImageSize = u64be(tail, 12, "AVB original image size");
+  if (originalImageSize > input.fileSize - AVB_FOOTER_SIZE)
+    avbOverlapError(
+      `AVB original image size ${originalImageSize} overlaps the footer`,
+    );
   // vbmeta is appended after the original image, including any padding
   // within that image. Existing component checks name specific collisions.
   if (vbmetaSize > 0 && vbmetaOffset < originalImageSize)
-    formatError("AVB vbmeta overlaps the original boot image");
+    avbOverlapError("AVB vbmeta overlaps the original boot image");
+  if (originalImageSize < input.dataEnd)
+    formatError(
+      `AVB original image size ${originalImageSize} ends before boot image components at ${input.dataEnd}`,
+    );
+  const reader = bigEndianBootReader(tail);
   return {
     present: true,
     footerSize: AVB_FOOTER_SIZE,
-    versionMajor: new BinaryReader(tail, false, ANDROID_BOOT_FORMAT).u32(4),
-    versionMinor: new BinaryReader(tail, false, ANDROID_BOOT_FORMAT).u32(8),
+    versionMajor: reader.u32(4),
+    versionMinor: reader.u32(8),
     originalImageSize,
     vbmetaOffset,
     vbmetaSize,

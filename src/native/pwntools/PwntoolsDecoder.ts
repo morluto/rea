@@ -1,3 +1,4 @@
+import { finalizedResult, runOwned } from "../../providers/runOwned.js";
 import {
   capturedProviderOutput,
   providerResultDiagnostics,
@@ -15,7 +16,7 @@ import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
   bindArtifactFileCleanup,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   completedStableArtifact,
   readStableArtifact,
   ArtifactResourceScope,
@@ -44,12 +45,12 @@ import type {
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisUnsupportedTargetError,
-  AnalysisInputError,
+  AnalysisTargetFailureError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   cancelledBy,
   carriedReason,
+  unsupportedTarget,
 } from "../../domain/analysisErrorCore.js";
 import {
   projectAnalysisError,
@@ -125,6 +126,8 @@ export interface PwntoolsDecoderProfile<
   readonly identity: ProviderIdentity;
   readonly operation: string;
   readonly bridge: URL;
+  /** The format the worker reads, named in a malformed-target refusal. */
+  readonly targetFormat: string;
   readonly payloadSchema: z.ZodType<Payload>;
   readonly project: (context: {
     readonly input: Input;
@@ -291,6 +294,10 @@ export class PwntoolsDecoder<
       | "runtime"
       | "request"
       | undefined;
+    // The ceiling that applies when the caller omits producer_limits.input_bytes;
+    // a per-call failure reports it as the parameter's default. Undefined when
+    // omitting it would fail configuration instead.
+    let omittedInputBytes: number | undefined;
     const context = {
       operation: OPERATION,
       providerId: this.identity.id,
@@ -300,6 +307,9 @@ export class PwntoolsDecoder<
       },
       get inputBytesSource() {
         return inputBytesSource;
+      },
+      get omittedInputBytes() {
+        return omittedInputBytes;
       },
     };
     const replySchema = z.discriminatedUnion("ok", [
@@ -311,7 +321,8 @@ export class PwntoolsDecoder<
       z.strictObject({
         ok: z.literal(false),
         reason: z.enum([
-          "format",
+          "malformed",
+          "truncated",
           "unsupported",
           "unsupported-target",
           "unavailable",
@@ -394,6 +405,12 @@ export class PwntoolsDecoder<
           },
         );
       inputBytesSource = inputLimit.source;
+      if (inputLimit.source === "request") {
+        // An unusable launch value has no ceiling to fall back to; keep it
+        // unknown rather than reporting the built-in default.
+        const omitted = pwntoolsInputBytes(environment);
+        omittedInputBytes = omitted.configured ? omitted.bytes : undefined;
+      } else omittedInputBytes = inputLimit.bytes;
       phase = "artifact-read";
       producerLimits = {
         ...resolvePwntoolsLimits(selectedLimits.data, inputLimit.bytes),
@@ -501,11 +518,9 @@ export class PwntoolsDecoder<
           if (cleanup !== undefined) bindArtifactFileCleanup(cause, cleanup);
           const primary =
             cause.reason === "cancelled"
-              ? cancelledBy(
-                  OPERATION,
-                  carriedReason(artifactFileCancellationCause(cause)),
-                  { capturedOutput },
-                )
+              ? artifactFileCancellationError(OPERATION, cause, {
+                  capturedOutput,
+                })
               : (cleanup ??
                 new AnalysisOutputError(OPERATION, cause.message, {
                   cause,
@@ -528,17 +543,13 @@ export class PwntoolsDecoder<
           cause instanceof ArtifactReaderFailure &&
           cause.reason === "cancelled"
         ) {
-          const error = cancelledBy(
-            OPERATION,
-            carriedReason(artifactFileCancellationCause(cause)),
-            {
-              capturedOutput,
-              ...(cause instanceof ArtifactReaderFailure &&
-              cause.cleanup !== undefined
-                ? { cleanup: cause.cleanup }
-                : {}),
-            },
-          );
+          const error = artifactFileCancellationError(OPERATION, cause, {
+            capturedOutput,
+            ...(cause instanceof ArtifactReaderFailure &&
+            cause.cleanup !== undefined
+              ? { cleanup: cause.cleanup }
+              : {}),
+          });
           bindArtifactFileCleanup(cause, error);
           throw error;
         }
@@ -562,9 +573,10 @@ export class PwntoolsDecoder<
       }
       if (!reply.ok) {
         if (reply.reason === "unsupported-target")
-          throw new AnalysisUnsupportedTargetError(
+          throw unsupportedTarget(
             OPERATION,
             input.path,
+            this.profile.targetFormat,
             reply.message,
             { capturedOutput },
           );
@@ -576,17 +588,23 @@ export class PwntoolsDecoder<
             reply.reported_limits ?? null,
             {
               capturedOutput,
+              measuredExhaustion: true,
               remediationAction: `Review reported limits and available host memory; allocation failure alone does not prove exhaustion. ${pwntoolsBudgetRecovery(producerLimits)}`,
             },
           );
-        if (reply.reason === "format")
-          throw new AnalysisInputError(OPERATION, { capturedOutput }, [
+        // The worker's ELF owner raised the kind: bytes that break the
+        // format, or end inside a header it measured.
+        if (reply.reason === "malformed" || reply.reason === "truncated")
+          throw new AnalysisTargetFailureError(
+            OPERATION,
+            input.path,
             {
-              path: ["path"],
-              reason: "invalid_format",
-              message: reply.message,
+              kind: reply.reason,
+              format: this.profile.targetFormat,
+              detail: reply.message,
             },
-          ]);
+            { capturedOutput },
+          );
         if (reply.reason === "unavailable")
           throw pwntoolsUnavailable(
             reply.message,
@@ -705,27 +723,22 @@ export class PwntoolsDecoder<
         ? result.value.diagnostics
         : result.error.capturedOutput;
     }
-    const cleanup = await this.#completeCleanup(() => this.#retire());
-    if (result.ok && options?.signal?.aborted)
-      result = err(
-        cancelledBy(OPERATION, options.signal, {
-          partialObservation: result.value,
-          capturedOutput: result.value.diagnostics,
-        }),
-      );
-    if (cleanup !== undefined) {
-      const failure = result.ok
-        ? cleanup
-        : analysisErrorWithCleanupDependencies(
-            result.error,
-            cleanup,
-            OPERATION,
-          );
-      if (this.#pendingCleanup !== undefined)
-        this.#pendingCleanup.failure = failure;
-      return err(failure);
-    }
-    return result;
+    const finalized = await runOwned(async () => result, {
+      providerId: this.identity.id,
+      operation: OPERATION,
+      signal: options?.signal,
+      partial: (report) => report,
+      capturedOutput: (report, replacement) =>
+        replacement === "cancellation" ? report.diagnostics : undefined,
+      close: async () => {
+        const cleanup = await this.#completeCleanup(() => this.#retire());
+        if (cleanup !== undefined) throw cleanup;
+      },
+    });
+    const completed = finalizedResult(finalized);
+    if (!completed.ok && this.#pendingCleanup !== undefined)
+      this.#pendingCleanup.failure = completed.error;
+    return completed;
   }
 
   async #runCommand(

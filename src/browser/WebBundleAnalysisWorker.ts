@@ -268,24 +268,25 @@ export class WebBundleAnalysisWorker {
         runtime: "v8",
         onDiagnostic: (event) => {
           if (this.#activeDeadline?.interruption !== undefined) return;
-          if (
-            event.type === "exit" &&
-            (event.code !== 0 || event.signal !== null)
-          ) {
-            const memoryLimitReached =
-              event.snapshot.memoryLimitReached === true;
-            this.#latchFailure({
-              kind: "exit",
-              code: event.code,
-              signal: event.signal,
-              memoryLimitReached,
-              heapExhaustion:
-                memoryLimitReached ||
-                event.snapshot.runtimeExhaustion !== undefined,
-              ...(event.snapshot.runtimeExhaustion === undefined
-                ? {}
-                : { exhaustion: event.snapshot.runtimeExhaustion }),
-            });
+          if (event.type === "exit") {
+            if (event.code !== 0 || event.signal !== null) {
+              const memoryLimitReached =
+                event.snapshot.memoryLimitReached === true;
+              this.#latchFailure({
+                kind: "exit",
+                code: event.code,
+                signal: event.signal,
+                memoryLimitReached,
+                heapExhaustion:
+                  memoryLimitReached ||
+                  event.snapshot.runtimeExhaustion !== undefined,
+                ...(event.snapshot.runtimeExhaustion === undefined
+                  ? {}
+                  : { exhaustion: event.snapshot.runtimeExhaustion }),
+              });
+            }
+            // Recheck the buffer and wait for any final frames on the open pipes.
+            this.#frameSignal.wake("frame");
           } else if (event.type === "output-close") {
             if (
               this.#activeDeadline !== undefined &&
@@ -649,7 +650,11 @@ export class WebBundleAnalysisWorker {
         failure.reason,
         failure.reportedLimits,
         failure.kind === "host-capacity"
-          ? { remediationAction: failure.remediationAction }
+          ? {
+              // Measured host memory, not a selected REA budget.
+              measuredExhaustion: true,
+              remediationAction: failure.remediationAction,
+            }
           : undefined,
       ),
     };
@@ -817,7 +822,7 @@ export class WebBundleAnalysisWorker {
           { capturedOutput: this.#capturedOutput() },
         );
       }
-      await deadline.wait(10);
+      await this.#frameSignal.wait(deadline.signal);
     }
   }
 

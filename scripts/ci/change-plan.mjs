@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { matchesGlob } from "node:path";
 import { isLivingProsePath } from "../lib/docs-facts.mjs";
+import { mayGateTestToDarwin } from "./darwin-gate-candidates.mjs";
 import {
   CI_FLAGS as flags,
   MANUAL_VERIFIERS,
@@ -18,6 +19,7 @@ const GUARDED_WORKFLOWS = new Set([
   ".github/workflows/ci-full-pr.yml",
   ".github/workflows/release.yml",
   ".github/workflows/release-recovery.yml",
+  ".github/workflows/release-abandon.yml",
   ".github/workflows/real-ghidra-windows.yml",
   ".github/workflows/sqlite-runtime.yml",
   ".github/workflows/ci-timings.yml",
@@ -39,8 +41,16 @@ const FIXTURE_SOURCES = [
 // These reporters affect CI output only; they do not select a host or provider
 // verification lane when changed on their own.
 const PORTABLE_CI_REPORTERS = new Set([
+  "scripts/ci/artifacts.d.mts",
+  "scripts/ci/artifacts.mjs",
+  "scripts/ci/failure-report.d.mts",
+  "scripts/ci/failure-report.mjs",
+  "scripts/ci/github-api.d.mts",
+  "scripts/ci/github-api.mjs",
   "scripts/ci/job-timings.mjs",
   "scripts/ci/job-timings-batch.mjs",
+  "scripts/ci/pr-ci-health.d.mts",
+  "scripts/ci/pr-ci-health.mjs",
   "scripts/ci/test-report.mjs",
   "scripts/ci/test-timing-reporter.mjs",
   "scripts/ci/test-history.mjs",
@@ -76,6 +86,8 @@ const STATIC_CODE_ONLY_INPUTS = [
 // and portable tests without changing packaged host behavior.
 const DOCS_AND_CODE_INPUTS = [
   "scripts/check-doc-facts.mjs",
+  "scripts/generate-completion-ledger.mjs",
+  "scripts/lib/completion-ledger-generation.mts",
   "scripts/generate-error-schema.mjs",
   "scripts/generate-third-party-inventory.mjs",
   "scripts/lib/product-catalog.*",
@@ -84,6 +96,45 @@ const DOCS_AND_CODE_INPUTS = [
 ];
 const matchesAny = (file, patterns) =>
   patterns.some((pattern) => matchesGlob(file, pattern));
+
+const TYPED_LINT_FILE_EXTENSION = /\.(?:[cm]?[jt]s|[jt]sx)$/u;
+// Leave space in the Linux runner's environment for JSON-escaped job outputs
+// and the other lane outputs consumed by the required gate.
+const TYPED_LINT_OUTPUT_MAX_BYTES = 16 * 1024;
+
+const selectTypedLintFiles = (files, listCheckedOutFiles) => {
+  const candidates = files.filter((file) =>
+    TYPED_LINT_FILE_EXTENSION.test(file),
+  );
+  if (!candidates.length) return [];
+  // Deletions still affect lane and test selection. Oxlint only takes files
+  // tracked in the checkout it will check, and owns its own ignore patterns.
+  const checkedOutFiles = new Set(listCheckedOutFiles());
+  const selected = candidates.filter((file) => checkedOutFiles.has(file));
+  return Buffer.byteLength(JSON.stringify(selected)) <=
+    TYPED_LINT_OUTPUT_MAX_BYTES
+    ? selected
+    : null;
+};
+
+/**
+ * The first changed test at `head` that may gate a test to macOS. A deleted
+ * test has nothing to run.
+ */
+const changedTestMayGateDarwin = (repository, head, files) => {
+  const changedTests = files.filter((file) =>
+    /^(src|tests)\/.*\.test\.ts$/u.test(file),
+  );
+  if (changedTests.length === 0) return undefined;
+  const present = new Set(repository.listFiles(head, []));
+  const sources = repository.readFiles(
+    head,
+    changedTests.filter((file) => present.has(file)),
+  );
+  for (const [file, source] of sources)
+    if (mayGateTestToDarwin(source)) return file;
+  return undefined;
+};
 
 /**
  * Plan the CI lanes for one event. `repository` answers the Git questions the
@@ -209,13 +260,17 @@ export function planChanges(request, repository) {
   )
     throw new Error(`Unsupported CI event: ${event}`);
   const requestedFull =
-    event === "schedule" || event === "workflow_dispatch" || request.full;
+    (event === "schedule" && !request.scheduleFast) ||
+    event === "workflow_dispatch" ||
+    request.full;
   const tier =
     event === "schedule" && request.skipFull && !request.full
       ? "reused"
-      : requestedFull
-        ? "full"
-        : "fast";
+      : event === "push" && request.pushWarmOnly && !request.full
+        ? "warm"
+        : requestedFull
+          ? "full"
+          : "fast";
   /** Select the lanes one changed path owns. */
   const classifyFile = (file, base, head) => {
     selected.package ||= matchesAny(file, WINDOWS_EXECUTABLE_SELECTION_INPUTS);
@@ -225,7 +280,11 @@ export function planChanges(request, repository) {
       if (matchesAny(file, earlyAll ? paths : earlyInputs))
         selected[owner] = true;
     // The documentation check validates living prose and the lockfile inventory.
-    if (isLivingProsePath(file) || file === "package-lock.json")
+    if (
+      isLivingProsePath(file) ||
+      file === "package-lock.json" ||
+      file === "website/locales/languages.json"
+    )
       selected.docs = true;
     if (file === ".git-blame-ignore-revs") return;
     if (
@@ -354,11 +413,20 @@ export function planChanges(request, repository) {
   let files = [];
   if (tier === "reused") {
     reasons.push(
-      "Recent exact-SHA full qualification reused; no fresh provider observation",
+      "Recent exact-SHA qualification reused; no fresh provider observation",
+    );
+  } else if (tier === "warm") {
+    selected.code = true;
+    reasons.push(
+      "Main push warms shared static and build caches; scheduled fast sweeps verify full suites",
     );
   } else if (tier === "full") {
     full("Full baseline requested by event or ci:full label");
-  } else if (event === "pull_request" || event === "push") {
+  } else if (
+    event === "pull_request" ||
+    event === "push" ||
+    event === "schedule"
+  ) {
     const { head } = request;
     let base;
     if (event === "pull_request") {
@@ -369,23 +437,46 @@ export function planChanges(request, repository) {
       try {
         if (!candidate || !/^[0-9a-f]{40}$/i.test(candidate))
           throw new Error(
-            baselineReason || "No valid successful push baseline was found",
+            baselineReason || "No valid successful baseline was found",
           );
         if (!repository.isAncestor(candidate, head))
-          throw new Error("Push baseline is not an ancestor");
+          throw new Error("Baseline is not an ancestor");
         base = candidate;
       } catch {
-        full(
-          baselineReason ||
-            "No valid successful push baseline ancestor; selecting all lanes",
-        );
+        if (event === "schedule") {
+          // A scheduled fast sweep advances the verified schedule baseline.
+          // Without a proven ancestor, select every canonical lane rather than
+          // only code + runtime so changed providers cannot be skipped.
+          for (const flag of flags) selected[flag] = true;
+          reasons.push(
+            baselineReason ||
+              "No valid successful scheduled baseline ancestor; selecting all lanes",
+          );
+        } else {
+          full(
+            baselineReason ||
+              "No valid successful baseline ancestor; selecting all lanes",
+          );
+        }
       }
     }
     if (base) {
       // Disable rename detection so both the removed and added paths participate.
       files = repository.changedFiles(base, head);
       for (const file of files) classifyFile(file, base, head);
+      // Linux lanes skip a test gated to macOS, so a change to one runs the
+      // macOS lane that does.
+      const gated = selected.apple
+        ? undefined
+        : changedTestMayGateDarwin(repository, head, files);
+      if (gated !== undefined) {
+        selected.apple = true;
+        reasons.push(`Changed test may be gated to macOS: ${gated}`);
+      }
     }
+    // Scheduled fast sweeps always execute the complete portable suite and
+    // refresh test-timings-fast, even when only prose changed since the ancestor.
+    if (event === "schedule") selected.code = true;
   }
   selected.runtime ||= selected.package;
   const linux = { os: "ubuntu-latest", platform: "linux", architecture: "x64" };
@@ -404,6 +495,9 @@ export function planChanges(request, repository) {
         ]
       : [linux],
   };
+  let checkedOutFiles;
+  const listCheckedOutFiles = () =>
+    (checkedOutFiles ??= repository.listFiles("HEAD", []));
   const testSelection = planTestSelection({
     files,
     event,
@@ -412,10 +506,14 @@ export function planChanges(request, repository) {
     // The checked-out revision is the one whose tests run. Script and
     // configuration files are listed so shared script modules can be traced.
     snapshot: {
-      list: () => repository.listFiles("HEAD", []),
+      list: listCheckedOutFiles,
       read: (paths) => repository.readFiles("HEAD", paths),
     },
   });
+  const typedLintFiles =
+    event === "pull_request" && tier === "fast" && selected.code
+      ? selectTypedLintFiles(files, listCheckedOutFiles)
+      : [];
   return {
     ...selected,
     tier,
@@ -424,6 +522,7 @@ export function planChanges(request, repository) {
     reasons,
     testSelection,
     testShards: testShards(tier, testSelection),
+    typedLintFiles,
   };
 }
 
@@ -454,13 +553,42 @@ export const gitRepository = (cwd = process.cwd()) => {
       git("ls-tree", "-r", "-z", "--name-only", revision, "--", ...directories)
         .split("\0")
         .filter(Boolean),
-    // NUL-terminate requests so a line break in a path remains part of its name.
     readFiles: (revision, paths) => {
-      const output = execFileSync("git", ["cat-file", "--batch", "-z"], {
-        cwd,
-        input: paths.map((path) => `${revision}:${path}\0`).join(""),
-        maxBuffer: 512 * 1024 * 1024,
-      });
+      if (!paths.length) return new Map();
+      const maxBuffer = 512 * 1024 * 1024;
+      const objects = new Map();
+      // Resolve small changed-test batches directly at their pinned revision.
+      // Read symbolic refs once and index the tree for large test graph reads.
+      const smallSnapshot =
+        paths.length <= 32 && /^[0-9a-f]{40}$/iu.test(revision);
+      if (!smallSnapshot) {
+        const tree = execFileSync("git", ["ls-tree", "-rz", revision], {
+          cwd,
+          encoding: "utf8",
+          maxBuffer,
+        });
+        for (const entry of tree.split("\0")) {
+          // Let Git resolve replacement characters so invalid UTF-8 bytes
+          // cannot alias a requested path when the listing is decoded.
+          if (!entry || entry.includes("\uFFFD")) continue;
+          // Git separates the header from the raw path at the first tab.
+          const tab = entry.indexOf("\t");
+          const [, , oid] = entry.slice(0, tab).split(" ");
+          objects.set(entry.slice(tab + 1), oid);
+        }
+      }
+      const requests = paths.map(
+        (path) => objects.get(path) ?? `${revision}:${path}`,
+      );
+      const output = execFileSync(
+        "git",
+        ["cat-file", "--batch", "--buffer", "-z"],
+        {
+          cwd,
+          input: requests.join("\0") + "\0",
+          maxBuffer,
+        },
+      );
       const contents = new Map();
       let offset = 0;
       for (const path of paths) {

@@ -223,11 +223,17 @@ export const correlateStaticAndRuntimeEvidence = (
   );
   if (!selected.ok) return selected;
   try {
-    const result = correlateStaticAndRuntime(selected.value.input);
     const sources = [
       ...selected.value.input.static_comparisons,
       ...selected.value.input.runtime_comparisons,
     ];
+    const supplied = new Map(
+      sources.map((source) => [source.evidence_id, source]),
+    );
+    const result = correlateStaticAndRuntime(selected.value.input, {
+      sourceEvidence: (id) =>
+        supplied.get(id) ?? reader.evidenceForAnalysis(id),
+    });
     const closure = resolveInvestigationEvidenceClosure(
       reader,
       result.evidence_links,

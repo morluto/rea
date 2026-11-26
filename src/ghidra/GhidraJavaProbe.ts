@@ -1,3 +1,4 @@
+import { systemCodeFromError } from "../kernel/reportedSystemCode.js";
 import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { launcherFailureOf } from "../process/launchFailure.js";
@@ -14,6 +15,7 @@ import { randomUUID } from "node:crypto";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { ownershipPreparationError } from "../providers/ownedProcessAvailability.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
@@ -276,21 +278,12 @@ const observeGhidraJava = async (
       commandFailure?.reason !== "timeout" &&
       preparationHostCapacityFailure(cause) === undefined
     ) {
-      primary = new ProviderAdapterError("ghidra", "ghidra:java", {
+      primary = ownershipPreparationError(
+        "ghidra",
+        "ghidra:java",
         cause,
-        ...(output === undefined ? {} : { capturedOutput: output }),
-        diagnostics: {
-          stage: "ownership_preparation",
-          ...(!(preparation instanceof DarwinProcessOwnershipInspectionError) ||
-          preparation.compilerOutcome === undefined
-            ? {}
-            : {
-                compiler_outcome: jsonValueSchema.parse(
-                  preparation.compilerOutcome,
-                ),
-              }),
-        },
-      });
+        output,
+      );
     } else if (cause instanceof AnalysisError) {
       primary = cause;
     }
@@ -315,7 +308,7 @@ const observeGhidraJava = async (
           ? "ETIMEDOUT"
           : commandFailure?.reason === "output-limit"
             ? "ENOBUFS"
-            : systemCode(commandFailure?.processError ?? cause);
+            : systemCodeFromError(commandFailure?.processError ?? cause);
       const failed: GhidraJavaProbeFailure = {
         _tag: "GhidraJavaProbeFailure",
         code:
@@ -349,10 +342,6 @@ const observeGhidraJava = async (
   }
 };
 
-const systemCode = (cause: unknown): string | undefined =>
-  cause instanceof Error && "code" in cause && typeof cause.code === "string"
-    ? cause.code
-    : undefined;
 const probeFailureError = (
   failure: GhidraJavaProbeFailure,
   cause: unknown,

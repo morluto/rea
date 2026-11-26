@@ -18,6 +18,15 @@ const borrowedDeclarations = new WeakMap<object, z.ZodType>();
 export const isDeclaredEvidenceInput = (schema: z.ZodType): boolean =>
   declarations.get(schema) !== undefined;
 
+/** Distinguish one Evidence carrier from a borrowed container of carriers. */
+export const isDeclaredEvidenceRecord = (schema: z.core.$ZodType): boolean => {
+  const declaration = declarations.get(schema);
+  if (declaration?.kind === "evidence") return true;
+  if (declaration?.kind !== "borrowed") return false;
+  const owner = borrowedDeclarations.get(declaration.owner);
+  return owner !== undefined && declarations.get(owner)?.kind === "evidence";
+};
+
 /** Mark the canonical logical Evidence input, independently of its JSON shape. */
 export const declareEvidenceInput = <Schema extends z.ZodType>(
   schema: Schema,
@@ -25,6 +34,10 @@ export const declareEvidenceInput = <Schema extends z.ZodType>(
   declarations.add(schema, { kind: "evidence" });
   return schema;
 };
+
+/** Whether `schema` was declared as an inline-or-retained-reference source. */
+export const isEvidenceReferenceAlternative = (schema: z.ZodType): boolean =>
+  referenceAlternatives.get(schema) !== undefined;
 
 /** Mark a source union that accepts both inline Evidence and a retained reference. */
 export const declareEvidenceReferenceAlternative = <Schema extends z.ZodType>(
@@ -144,8 +157,7 @@ export const getEvidenceInputContract = <Schema extends z.ZodType>(
 };
 
 const compile = (schema: z.ZodType): EvidenceInputContract => {
-  if (referenceAlternatives.get(schema) !== undefined)
-    return identity(schema, true);
+  if (isEvidenceReferenceAlternative(schema)) return identity(schema, true);
   const declared = declarations.get(schema);
   if (declared?.kind === "evidence")
     return {

@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
+import { MCP_TRANSPORT_EVIDENCE_SUMMARY } from "../../../src/domain/analysisErrorPresentation.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import {
   createEvidence,
@@ -111,7 +112,7 @@ const callPseudoCode = async (
       throw new Error("Missing named procedure_pseudo_code output schema");
     const result = await client.callTool({
       name: "procedure_pseudo_code",
-      arguments: { procedure: "main" },
+      arguments: { detail: "complete", procedure: "main" },
     });
     return {
       result,
@@ -187,7 +188,7 @@ describe("MCP response budget recovery", () => {
     );
   });
 
-  it("keeps export advice when the evidence summary itself exceeds the budget", () => {
+  it("offers metadata pagination and export when the evidence summary exceeds the budget", () => {
     const tight = createToolResultDelivery(2048);
     const delivered = tight.toCallToolResult(
       ok({
@@ -202,9 +203,9 @@ describe("MCP response budget recovery", () => {
       .parse(delivered.structuredContent);
     const action = error.remediation.action;
     expect(error.details).toMatchObject({
-      reported_limits: { next_operation: "export_evidence_bundle" },
+      reported_limits: { next_operation: "get_evidence_bundle" },
     });
-    expect(action).not.toContain("get_evidence_bundle and detail: summary");
+    expect(action).toContain(MCP_TRANSPORT_EVIDENCE_SUMMARY);
     expect(action).toContain("export_evidence_bundle");
     expect(action).toContain("caller-selected path");
     expect(action).toContain("or use complete CLI JSON output");
@@ -212,11 +213,16 @@ describe("MCP response budget recovery", () => {
 });
 
 describe("large complete Evidence MCP delivery", () => {
-  it("delivers a two MiB provider result with raw observations and one normalized payload", async () => {
-    const payload = "x".repeat(2 * 1024 * 1024);
+  it("delivers two MiB of pseudocode and distinct raw observations with exact wire accounting", async () => {
+    const escaped = 'quote" slash\\ control\u0000 newline\n unicode☃';
+    const payload = "x".repeat(2 * 1024 * 1024) + escaped;
+    const raw = {
+      source: "y".repeat(2 * 1024 * 1024) + escaped,
+      decoder: "fixture-native-wire",
+    };
     const { result, responseWire, outputSchema } = await callPseudoCode(
       payload,
-      payload,
+      raw,
       false,
     );
     expect(result.isError).not.toBe(true);
@@ -224,7 +230,7 @@ describe("large complete Evidence MCP delivery", () => {
       result.structuredContent,
     );
     expect(evidence.normalized_result).toBe(payload);
-    expect(evidence.raw_result).toBe(payload);
+    expect(evidence.raw_result).toEqual(raw);
     expect(parseEvidence(evidence)).toEqual(evidence);
     expect(evidence).not.toHaveProperty("result");
     expect(evidence).not.toHaveProperty("evidence");
@@ -247,26 +253,6 @@ describe("large complete Evidence MCP delivery", () => {
         evidence,
       }),
     ).toBe(false);
-  });
-
-  it("accounts for JSON escaping and preserves distinct raw and normalized observations", async () => {
-    const payload = 'quote" slash\\ control\u0000 newline\n unicode☃'.repeat(
-      8192,
-    );
-    const raw = { source: payload, decoder: "fixture-native-wire" };
-    const { result, responseWire } = await callPseudoCode(payload, raw, true);
-    expect(result.isError).not.toBe(true);
-    const evidence = toolContract("procedure_pseudo_code").outputSchema.parse(
-      result.structuredContent,
-    );
-    expect(evidence.normalized_result).toBe(payload);
-    expect(evidence.raw_result).toEqual(raw);
-    expect(result.content).toEqual([
-      { type: "text", text: JSON.stringify(evidence) },
-    ]);
-    expect(Buffer.byteLength(responseWire)).toBeLessThan(
-      STDIO_DEFAULT_MAX_BUFFER_SIZE,
-    );
     // Pseudocode is target content, so the delivered result carries the
     // untrusted provenance marker that the encoder must account for.
     expect(result._meta).toEqual({
@@ -278,7 +264,6 @@ describe("large complete Evidence MCP delivery", () => {
       "structured-and-text",
       toolContract("procedure_pseudo_code").returnsTargetContent,
     );
-    expect(encoded.ok).toBe(true);
     if (!encoded.ok)
       throw new Error("Expected complete escaped result delivery");
     expect(encoded.bytes).toBe(Buffer.byteLength(JSON.stringify(result)));

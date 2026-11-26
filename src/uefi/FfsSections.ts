@@ -1,4 +1,7 @@
-import { BinaryReader } from "../domain/binaryContainer.js";
+import {
+  BinaryReader,
+  createBinaryReaderCache,
+} from "../domain/binaryContainer.js";
 import type { UefiSectionRecord } from "../domain/uefi/uefiFirmwareAnalysis.js";
 import { Buffer } from "node:buffer";
 import {
@@ -78,10 +81,15 @@ function readCommonHeader(reader: BinaryReader, start: number, end: number) {
   };
 }
 
+const sectionReaderFor = createBinaryReaderCache(true, "FFS sections");
+
 /** A bounded first frame establishes a section chain regardless of payload validity. */
 export function startsWithSectionFrame(region: ScanRegion): boolean {
-  const reader = new BinaryReader(region.buffer, true, "FFS sections");
-  return hasBoundedFrame(reader, region.start, region.end);
+  return hasBoundedFrame(
+    sectionReaderFor(region.buffer),
+    region.start,
+    region.end,
+  );
 }
 
 function hasBoundedFrame(
@@ -157,7 +165,7 @@ export function walkSections(
   nonzeroPadding: { start: number; end: number }[];
   remainder: { kind: "limited" | "unparsed"; start: number } | null;
 } {
-  const reader = new BinaryReader(region.buffer, true, "FFS sections");
+  const reader = sectionReaderFor(region.buffer);
   const sections: SectionDraft[] = [];
   const nonzeroPadding: { start: number; end: number }[] = [];
   const { start: localStart, end: localEnd } = region;

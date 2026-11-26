@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import * as t from "@babel/types";
 import { runtimeFunctionParameters } from "./javascriptAstValues.js";
 
@@ -157,9 +158,7 @@ const groupByOwner = <T, K extends string | null>(
   const grouped = new Map<K, T[]>();
   for (const value of values) {
     const owner = getOwner(value);
-    const ownedValues = grouped.get(owner);
-    if (ownedValues === undefined) grouped.set(owner, [value]);
-    else ownedValues.push(value);
+    appendToMapList(grouped, owner, value);
   }
   return grouped;
 };

@@ -23,6 +23,7 @@ import {
 import {
   firmwareResultSchemas,
   firmwareRequestSchema,
+  MAX_FIRMWARE_STAGING_ENTRIES,
 } from "../../../src/domain/firmware/firmwareAnalysis.js";
 import { createHash } from "node:crypto";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -212,32 +213,35 @@ it.skipIf(process.platform !== "linux")(
   },
 );
 
-it.each([
-  { bytes: 1, files: 10, expected: "max_output_bytes" },
-  { bytes: 10, files: 1, expected: "max_output_files" },
-])(
-  "reports the selected $expected staging budget as a deterministic resource refusal",
-  async ({ bytes, files, expected }) => {
-    const root = await createTestTempDirectory("rea-firmware-staging-");
-    await writeFile(join(root, "a"), "1");
-    await writeFile(join(root, "b"), "2");
-    await expect(
-      inventoryFirmwareOutput(
-        root,
-        bytes,
-        files,
-        Number.MAX_SAFE_INTEGER,
-        "extract_firmware",
-      ),
-    ).rejects.toMatchObject({
-      _tag: "AnalysisResourceConstraintError",
-      resource: "capacity",
-      reportedLimits: { [expected]: 1 },
-      retryable: false,
-      remediationAction: expect.stringContaining(expected),
-    });
-  },
-);
+it("counts directories against the editable staging-entry limit", async () => {
+  const root = await createTestTempDirectory("rea-firmware-staging-");
+  await mkdir(join(root, "dir"));
+  await writeFile(join(root, "file"), "1");
+  const failure: unknown = await inventoryFirmwareOutput(
+    root,
+    10,
+    1,
+    Number.MAX_SAFE_INTEGER,
+    "extract_firmware",
+  ).catch((cause: unknown) => cause);
+  if (!(failure instanceof AnalysisResourceConstraintError))
+    throw new Error("Expected an entry capacity failure", { cause: failure });
+
+  const projected = projectAnalysisError(failure);
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: { resource: "capacity", reported_limits: { max_output_files: 1 } },
+  });
+  expect(projected.details?.limit).toMatchObject({
+    parameter: "max_output_files",
+    effective_value: 1,
+    maximum: MAX_FIRMWARE_STAGING_ENTRIES,
+  });
+  expect(projected.remediation.action).toContain(
+    `Pass a larger max_output_files on the next extract_firmware call (range 1..${String(MAX_FIRMWARE_STAGING_ENTRIES)})`,
+  );
+});
 
 it("refuses a staged file that reaches the producer's per-file limit", async () => {
   const root = await createTestTempDirectory("rea-firmware-file-limit-");

@@ -4,6 +4,8 @@ import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
+import { validateRepository } from "./github-api.mjs";
+
 const execFileAsync = promisify(execFile);
 const MAX_BUFFER = 16 * 1024 * 1024;
 const TIMEOUT_MS = 30_000;
@@ -19,6 +21,7 @@ const STEP_COSTS = [
       "Upload complete static diagnostics",
       "Upload complete deep static diagnostics",
       "Retain available reverse tools diagnostics",
+      "Record affected-test prediction before the full suite",
       "Publish successful timing history",
       "Retain the exact qualified release package",
     ]),
@@ -27,6 +30,7 @@ const STEP_COSTS = [
     key: "artifactDownload",
     pattern: /download.*artifact/iu,
     names: new Set([
+      "Download the classifier's affected-test prediction",
       "Download previous timing report",
       "Download the original qualified package",
     ]),
@@ -46,24 +50,41 @@ export async function collectJobTimings({
 }) {
   const identity = validateIdentity({ repository, runId, runAttempt });
   const reportPath = join(outputDirectory, "report.json");
+  const rawPath = join(outputDirectory, "jobs.json");
   await rm(reportPath, { force: true });
+  await rm(rawPath, { force: true });
   const endpoint = `repos/${identity.repository}/actions/runs/${identity.runId}/attempts/${identity.runAttempt}/jobs?per_page=100`;
   const { stdout } = await execFileAsync(
     "gh",
     ["api", "--paginate", "--slurp", endpoint],
     { env, encoding: "utf8", maxBuffer: MAX_BUFFER, timeout: timeoutMs },
   );
-  const rawPath = join(outputDirectory, "jobs.json");
   await mkdir(outputDirectory, { recursive: true });
   await writeFile(rawPath, stdout, "utf8");
+  const jobs = parseAttemptJobs(stdout, identity);
+  const report = normalizeReport({ identity, jobs, observedAt });
+
+  await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+  if (summaryPath !== undefined)
+    await appendSummary(summaryPath, report, rawPath, reportPath);
+  return { rawPath, reportPath, report };
+}
+
+/** Validate the paginated jobs for one workflow attempt before using their contents. */
+export function parseAttemptJobs(
+  stdout,
+  identity,
+  { requireTotalCount = false } = {},
+) {
   const pages = parsePages(stdout);
   const jobs = pages.flatMap(({ jobs: pageJobs }, index) =>
-    validateJobs(pageJobs, index),
+    validateJobs(pageJobs, index, identity),
   );
   if (
     pages.some(
       ({ total_count }) =>
-        total_count !== undefined && total_count !== jobs.length,
+        (requireTotalCount || total_count !== undefined) &&
+        total_count !== jobs.length,
     )
   )
     throw new Error(
@@ -74,22 +95,11 @@ export async function collectJobTimings({
     .filter((id) => Number.isSafeInteger(id) && id > 0);
   if (new Set(ids).size !== ids.length)
     throw new Error("GitHub jobs API contains duplicate job IDs");
-  const report = normalizeReport({ identity, jobs, observedAt });
-
-  await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
-  if (summaryPath !== undefined)
-    await appendSummary(summaryPath, report, rawPath, reportPath);
-  return { rawPath, reportPath, report };
+  return jobs;
 }
 
 function validateIdentity({ repository, runId, runAttempt }) {
-  if (
-    typeof repository !== "string" ||
-    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)
-  )
-    throw new Error(
-      "CI_REPOSITORY must be an owner/name repository identifier",
-    );
+  validateRepository(repository);
   return {
     repository,
     runId: parsePositiveInteger(runId, "CI_TIMING_RUN_ID"),
@@ -125,7 +135,7 @@ function parsePages(stdout) {
   return pages;
 }
 
-function validateJobs(jobs, pageIndex) {
+function validateJobs(jobs, pageIndex, { runId, runAttempt }) {
   return jobs.map((job, jobIndex) => {
     if (
       typeof job !== "object" ||
@@ -137,6 +147,10 @@ function validateJobs(jobs, pageIndex) {
     )
       throw new Error(
         `GitHub jobs API page ${String(pageIndex + 1)} job ${String(jobIndex + 1)} is malformed`,
+      );
+    if (job.run_id !== runId || job.run_attempt !== runAttempt)
+      throw new Error(
+        `GitHub jobs API page ${String(pageIndex + 1)} job ${String(jobIndex + 1)} belongs to a different workflow run or attempt`,
       );
     return job;
   });
@@ -236,6 +250,7 @@ function normalizeJob(job) {
     url: stringOrNull(job.html_url),
     name: job.name,
     workflowName: stringOrNull(job.workflow_name),
+    runnerId: Number.isSafeInteger(job.runner_id) ? job.runner_id : null,
     status: job.status,
     conclusion: stringOrNull(job.conclusion),
     createdAt: stringOrNull(job.created_at),
@@ -258,6 +273,7 @@ function normalizeStep(step) {
   if (step.conclusion === "skipped")
     return {
       name: step.name,
+      conclusion: "skipped",
       costKey: null,
       duration: unknownDuration("step was skipped"),
     };
@@ -266,6 +282,7 @@ function normalizeStep(step) {
   );
   return {
     name: step.name,
+    conclusion: stringOrNull(step.conclusion),
     costKey: cost?.key ?? null,
     duration: duration(step.started_at, step.completed_at),
   };

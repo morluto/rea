@@ -5,7 +5,7 @@ import { setImmediate } from "node:timers/promises";
 import type {
   AndroidOtaPartitionMetadata,
   AndroidOtaPayloadMetadata,
-} from "../domain/artifactFormatMetadata.js";
+} from "../domain/formatMetadata/androidAndSystemMetadata.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import {
   assertArtifactReadActive,
@@ -13,6 +13,8 @@ import {
   ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
   copyArtifactEntry,
+  malformedArtifact,
+  truncatedArtifact,
   assertProducedEntry,
   type ArtifactEntry,
   type ArtifactReader,
@@ -55,6 +57,8 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
   readonly #source: ArtifactFileSource;
   readonly #preparation = new ArtifactPreparation();
   #payload: AndroidOtaPayload | undefined;
+  #coverageStatus: "complete" | "unknown" = "complete";
+  #limitations: string[] = [];
   #closing = false;
 
   constructor(path: string, admitted?: StableRegularFileDescriptor) {
@@ -90,8 +94,8 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
     });
     this.#assertOpen(signal);
     options?.onCoverage?.({
-      status: "complete",
-      limitations: this.#payload?.limitations ?? [],
+      status: this.#coverageStatus,
+      limitations: [...this.#limitations],
     });
     let index = 0;
     for (const entry of this.#entries.values()) {
@@ -135,6 +139,7 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
         blob.set(
           key,
           await readArtifactFileBytes(
+            "android-ota-payload",
             handle,
             payload.header.blobOffset + operation.dataOffset,
             operation.dataLength,
@@ -162,7 +167,7 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
         new ArtifactReaderFailure("cancelled", `${LABEL} read cancelled`, {
           cause: reason,
         });
-      const image = Buffer.from(reconstructed.value);
+      const image = reconstructed.value;
       const source =
         image.length === 0 ? Readable.from([]) : Readable.from([image]);
       const output = this.#memberStream(stored, image.length, signal);
@@ -187,6 +192,8 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
     await this.#source.close();
     this.#entries.clear();
     this.#payload = undefined;
+    this.#coverageStatus = "complete";
+    this.#limitations = [];
   }
 
   provenance(): readonly [] {
@@ -202,6 +209,7 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
   async #prepare(signal?: AbortSignal): Promise<void> {
     const { handle, initial } = await this.#source.read(signal);
     const headerBytes = await readArtifactFileBytes(
+      "android-ota-payload",
       handle,
       0,
       Math.min(initial.size, ANDROID_OTA_HEADER_V2_BYTES),
@@ -212,6 +220,7 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
     if (!header.ok) throw parseFailure(header.error);
     const { manifestOffset, metadataPrefixEnd } = header.value;
     const metadata = await readArtifactFileBytes(
+      "android-ota-payload",
       handle,
       manifestOffset,
       metadataPrefixEnd - manifestOffset,
@@ -229,6 +238,7 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
       signatureRange === null
         ? undefined
         : await readArtifactFileBytes(
+            "android-ota-payload",
             handle,
             signatureRange.offset,
             signatureRange.bytes,
@@ -241,10 +251,23 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
       payloadSignature === undefined
         ? payload
         : withAndroidOtaPayloadSignature(payload.value, payloadSignature);
-    if (!parsed.ok) throw parseFailure(parsed.error);
-    this.#payload = parsed.value;
+    if (parsed.ok) {
+      this.#payload = parsed.value;
+      this.#coverageStatus = parsed.value.blobTruncated
+        ? "unknown"
+        : "complete";
+      this.#limitations = [...parsed.value.limitations];
+    } else {
+      if (parsed.error.kind === "limit") throw parseFailure(parsed.error);
+      this.#payload = payload.value;
+      this.#coverageStatus = "unknown";
+      this.#limitations = [
+        ...payload.value.limitations,
+        `Optional trailing payload signature could not be parsed: ${parsed.error.message}`,
+      ];
+    }
     this.#entries.clear();
-    for (const partition of parsed.value.partitions) {
+    for (const partition of this.#payload.partitions) {
       const entry = entryFor(partition);
       this.#entries.set(entry.adapterKey, entry);
     }
@@ -281,15 +304,13 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
   }
 }
 
+const FORMAT = "android-ota-payload";
+
 const formatFailure = (
   detail: string,
   options?: ErrorOptions,
 ): ArtifactReaderFailure =>
-  new ArtifactReaderFailure(
-    "format",
-    `${LABEL} is malformed: ${detail}`,
-    options,
-  );
+  malformedArtifact(FORMAT, `${LABEL} is malformed: ${detail}`, options);
 
 const parseFailure = (
   failure: AndroidOtaPayloadParseError,
@@ -305,9 +326,7 @@ const parseFailure = (
         cause: failure,
       });
     case "truncated":
-      return new ArtifactReaderFailure("format", failure.message, {
-        cause: failure,
-      });
+      return truncatedArtifact(FORMAT, failure.message, { cause: failure });
     case "malformed":
       return formatFailure(failure.message, { cause: failure });
   }

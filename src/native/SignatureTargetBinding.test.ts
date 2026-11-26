@@ -12,7 +12,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it, vi, onTestFinished } from "vitest";
+import { afterEach, describe, expect, it, vi, onTestFinished } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
@@ -514,12 +514,13 @@ it("retains late cancellation when creating the signature root fails", async () 
     },
   );
   if (result.ok) throw new Error("Expected root creation failure");
+  expect(result.error).toBeInstanceOf(ProviderAdapterError);
   expect(result.error.cause).toBe(physical);
   expect(result.error.secondaryFailures).toHaveLength(1);
   expect(result.error.secondaryFailures[0]).toMatchObject({
     _tag: "AnalysisCancelledError",
-    cause: reason,
   });
+  expect(result.error.secondaryFailures[0]?.cause).toBe(reason);
   expect(result.error.cleanupIncomplete).toBe(false);
   await resources.close();
 });
@@ -548,13 +549,18 @@ it("does not adopt a typed caller abort reason as a root-creation failure", asyn
   await resources.close();
 });
 
-it.each([false, true])(
-  "retains late cancellation after a signature failure while root cleanup fails: %s",
-  async (cleanupFails) => {
+it.each([
+  { cleanupFails: false, reason: null },
+  {
+    cleanupFails: true,
+    reason: { caller: "cancelled during root cleanup" },
+  },
+])(
+  "retains the signature failure and late cancellation (root cleanup fails: $cleanupFails)",
+  async ({ cleanupFails, reason }) => {
     const target = await createTarget("same");
     const resources = new ArtifactResourceScope();
     const controller = new AbortController();
-    const reason = { caller: "cancelled during root cleanup" };
     const physical = new AnalysisOutputError(
       "inspect_signature",
       "inspection failed",
@@ -581,8 +587,8 @@ it.each([false, true])(
       expect(physical.secondaryFailures).toHaveLength(1);
       expect(physical.secondaryFailures[0]).toMatchObject({
         _tag: "AnalysisCancelledError",
-        cause: reason,
       });
+      expect(physical.secondaryFailures[0]?.cause).toBe(reason);
       expect(result.error.cleanupIncomplete).toBe(cleanupFails);
       await resources.close();
       expect(resolvedAnalysisError(result.error)).toBe(physical);
@@ -726,35 +732,6 @@ it("keeps a physical source read failure primary when the caller also aborts", a
   expect(inspect).not.toHaveBeenCalled();
 });
 
-for (const cleanupFails of [false, true])
-  it(`keeps a failed inspection primary when the caller aborts during root close (fails: ${cleanupFails})`, async () => {
-    const target = await createTarget("same");
-    const resources = new ArtifactResourceScope();
-    const controller = new AbortController();
-    const primary = new AnalysisOutputError(
-      "inspect_signature",
-      "controlled inspection failure",
-    );
-    const root = await createRoot(cleanupFails ? 1 : 0);
-    const result = await withSignatureTarget(
-      target,
-      resources,
-      async () => err(primary),
-      controller.signal,
-      async () => ({
-        path: root.path,
-        async close() {
-          controller.abort(null);
-          await root.close();
-        },
-      }),
-    );
-    if (result.ok) throw new Error("Expected failed inspection");
-    expect(result.error.cleanupIncomplete).toBe(cleanupFails);
-    await resources.close();
-    expect(resolvedAnalysisError(result.error)).toBe(primary);
-  });
-
 it.each(opaqueReasons)(
   "preserves pre-entry reason %s without allocating a root or adopting foreign ownership",
   async (reason) => {
@@ -779,30 +756,6 @@ it.each(opaqueReasons)(
     await resources.close();
   },
 );
-
-it("does not replace a failed root creation with a simultaneous abort", async () => {
-  const target = await createTarget("same");
-  const resources = new ArtifactResourceScope();
-  const controller = new AbortController();
-  const failure = new Error("controlled root creation failure");
-  const result = await withSignatureTarget(
-    target,
-    resources,
-    unusedInspection,
-    controller.signal,
-    async () => {
-      controller.abort(null);
-      throw failure;
-    },
-  );
-  if (result.ok) throw new Error("Expected root creation failure");
-  expect(result.error).toMatchObject({
-    _tag: "ProviderAdapterError",
-    cause: failure,
-    cleanupIncomplete: false,
-  });
-  await resources.close();
-});
 
 it("releases a late root when cancellation arrives during creation", async () => {
   const target = await createTarget("same");
@@ -1087,3 +1040,100 @@ it.each(["unchanged", "cancelled", "changed"] as const)(
     expect(result.error.cleanupResources).toEqual([]);
   },
 );
+
+describe("chunked signature copy", () => {
+  it("copies and verifies a multi-chunk target larger than 1 MiB and retries short writes", async () => {
+    const directory = await createTestTempDirectory("rea-signature-chunk-");
+    const path = join(directory, "large.bin");
+    const payload = Buffer.alloc(1024 * 1024 + 137, 0x3c);
+    for (let i = 0; i < payload.length; i += 4093) payload[i] = i & 0xff;
+    await writeFile(path, payload);
+    const target: BinaryTarget = {
+      path,
+      sha256: createHash("sha256").update(payload).digest("hex"),
+      kind: "executable",
+      format: "mach-o",
+      architecture: "arm64",
+      availableArchitectures: ["arm64"],
+    };
+    const probe = await open(path, "r");
+    const prototype = Object.getPrototypeOf(probe) as FileHandle;
+    await probe.close();
+    type WriteBuffer = (
+      buffer: Uint8Array,
+      offset?: number | null,
+      length?: number | null,
+      position?: number | null,
+    ) => Promise<{ bytesWritten: number; buffer: Uint8Array }>;
+    const originalWrite = prototype.write as unknown as WriteBuffer;
+    let shortWrites = 0;
+    const writeSpy = vi
+      .spyOn(prototype, "write")
+      .mockImplementation(async function (
+        this: FileHandle,
+        buffer: Uint8Array,
+        offset?: number | null,
+        length?: number | null,
+        position?: number | null,
+      ) {
+        if (
+          Buffer.isBuffer(buffer) &&
+          typeof length === "number" &&
+          length > 64 * 1024
+        ) {
+          shortWrites += 1;
+          return originalWrite.call(
+            this,
+            buffer,
+            offset ?? 0,
+            64 * 1024,
+            position ?? null,
+          );
+        }
+        return originalWrite.call(this, buffer, offset, length, position);
+      } as unknown as FileHandle["write"]);
+    const resources = new ArtifactResourceScope();
+    onTestFinished(async () => {
+      writeSpy.mockRestore();
+      await resources.close();
+    });
+    const result = await withSignatureTarget(
+      target,
+      resources,
+      async (binding) => {
+        const copied = await readFile(binding.snapshotPath);
+        expect(Buffer.compare(copied, payload)).toBe(0);
+        return ok(signatureInspectionFixture());
+      },
+      undefined,
+      createRoot,
+    );
+    expect(result.ok).toBe(true);
+    expect(shortWrites).toBeGreaterThan(1);
+  });
+
+  it("refuses a zero-byte snapshot write instead of looping forever", async () => {
+    const target = await createTarget("non-empty bytes");
+    const probe = await open(target.path, "r");
+    const prototype = Object.getPrototypeOf(probe) as FileHandle;
+    await probe.close();
+    const writeSpy = vi.spyOn(prototype, "write").mockResolvedValue({
+      bytesWritten: 0,
+      buffer: Buffer.alloc(0),
+    } as never);
+    const resources = new ArtifactResourceScope();
+    onTestFinished(async () => {
+      writeSpy.mockRestore();
+      await resources.close();
+    });
+    const result = await withSignatureTarget(
+      target,
+      resources,
+      unusedInspection,
+      undefined,
+      createRoot,
+    );
+    if (result.ok) throw new Error("Expected snapshot write failure");
+    expect(result.error._tag).toBe("ProviderAdapterError");
+  });
+});

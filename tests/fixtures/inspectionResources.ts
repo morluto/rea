@@ -1,18 +1,7 @@
 import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../../src/resources/AnalysisCleanupLease.js";
-import type { RetainedResourceScope } from "../../src/ports/AnalysisProvider.js";
 
 /** Test-scoped real inspection leases; every retained owner is closed by the fixture. */
 export const createInspectionResources = () => {
   const scope = new ArtifactResourceScope();
-  const owner: RetainedResourceScope = {
-    retain: (resourceOwner, resource) =>
-      scope.retain({
-        kind: "lease",
-        resource,
-        lease: AnalysisCleanupLease.forCloseOwner(resourceOwner, resource),
-      }),
-    run: (operation) => scope.run(operation),
-  };
-  return { owner, close: () => scope.close() };
+  return { owner: scope.forCloseOwners(), close: () => scope.close() };
 };

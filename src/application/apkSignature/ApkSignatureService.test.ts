@@ -46,6 +46,7 @@ it.each([false, true])(
       const relationshipCoverage = {
         status: "unknown",
         reason: "Relationships were not inspected",
+        limited_directions: ["callers", "callees"] as ["callers", "callees"],
       } as const;
       const source = createEvidence(completed.value.subject, identity, {
         operation: "read_apk_signing_block",

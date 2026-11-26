@@ -24,8 +24,8 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisUnsupportedTargetError,
   cancelledBy,
+  unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -41,7 +41,7 @@ import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import { inspectManagedNativeBoundariesBytes } from "./ManagedNativeBoundaryInspector.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
-import { managedInspectionInputFailure } from "../domain/managed/managedReaderFailure.js";
+import { managedInspectionTargetFailure } from "../domain/managed/managedReaderFailure.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { z } from "zod";
 import {
@@ -95,9 +95,10 @@ class ManagedStaticClient implements AnalysisClient {
     // provider capability; the unimplemented-operation refusal above is.
     if (this.target.format !== "pe")
       return err(
-        new AnalysisUnsupportedTargetError(
+        unsupportedTarget(
           operation,
           this.target.path,
+          this.target.format,
           `Managed static triage requires a PE target; observed ${this.target.format}.`,
         ),
       );
@@ -167,12 +168,12 @@ class ManagedStaticClient implements AnalysisClient {
       if (cause instanceof AnalysisError) return err(cause);
       if (options?.signal?.aborted === true)
         return err(cancelledBy(operation, options.signal));
-      const inputFailure = managedInspectionInputFailure(
+      const targetFailure = managedInspectionTargetFailure(
         operation,
         this.target.path,
         cause,
       );
-      if (inputFailure !== undefined) return err(inputFailure);
+      if (targetFailure !== undefined) return err(targetFailure);
       return err(
         new ProviderAdapterError(MANAGED_STATIC_PROVIDER.id, operation, {
           cause,

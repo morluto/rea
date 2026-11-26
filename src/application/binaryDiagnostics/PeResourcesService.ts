@@ -2,18 +2,18 @@ import { insideArtifact } from "./artifactRange.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { PeResourcesPort } from "../../ports/binaryDiagnostics/PeResourcesPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import type { Evidence } from "../../domain/evidence.js";
 import {
   inspectPeResourcesInputSchema,
   peResourcesSchema,
   type PeResources,
   type PeResourceIdentity,
 } from "../../domain/native/peResources.js";
-import { peSubjectArchitecture } from "../../domain/peMachine.js";
-import { err, type Result } from "../../domain/result.js";
-import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import { observedPeEvidence } from "./observedPeEvidence.js";
+import type { Result } from "../../domain/result.js";
+import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
+
+const OPERATION = "inspect_pe_resources";
 
 /** Shared caller validation, output parsing and Evidence provenance for CLI/MCP. */
 export class PeResourcesService {
@@ -23,72 +23,37 @@ export class PeResourcesService {
     return this.provider.close?.() ?? Promise.resolve();
   }
 
-  async inspect(
+  inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    const operation = "inspect_pe_resources";
-    const input = parseAnalysisInput(
-      operation,
-      rawInput,
-      inspectPeResourcesInputSchema,
-      options?.signal,
-    );
-    if (!input.ok) return input;
-    const result = await this.provider.inspect(input.value, options);
-    if (!result.ok) return result;
-    const report = peResourcesSchema.safeParse(result.value);
-    if (
-      !report.success ||
-      report.data.artifact.path !== input.value.path ||
-      !validReport(
-        report.data,
-        input.value.max_entries,
-        input.value.max_file_bytes,
-      )
-    )
-      return err(
-        new AnalysisOutputError(
-          operation,
+    return executeArtifactInspection(
+      {
+        operation: OPERATION,
+        inputSchema: inspectPeResourcesInputSchema,
+        outputSchema: peResourcesSchema,
+        provider: this.provider,
+        invalidOutputMessage:
           "PE resource provider returned malformed output or changed artifact identity.",
-        ),
-      );
-    const value = report.data;
-    const architecture = peSubjectArchitecture(value.machine, value.format);
-    return completeProviderEvidence(
-      createEvidence(
-        {
-          path: value.artifact.path,
-          format: "pe",
-          sha256: value.artifact.sha256,
-          ...(architecture === undefined ? {} : { architecture }),
-        },
-        this.provider.identity,
-        {
-          operation,
-          parameters: input.value,
-          result: value,
-          confidence: "observed",
-          limitations: value.limitations,
-          locations: [{ kind: "artifact-path", path: value.artifact.path }],
-        },
-      ),
-      options?.signal,
+        toParameters: (input) => input,
+        validateReport: (report, parameters) =>
+          report.artifact.path === parameters.path &&
+          validReport(report, parameters.max_entries),
+        buildEvidence: (value, identity, parameters) =>
+          observedPeEvidence(value, identity, OPERATION, parameters),
+      },
+      rawInput,
+      options,
     );
   }
 }
 
 /** Check cross-field invariants before provider output becomes public Evidence. */
-const validReport = (
-  report: PeResources,
-  maxEntries: number,
-  maxBytes: number,
-): boolean => {
+const validReport = (report: PeResources, maxEntries: number): boolean => {
   const inside = insideArtifact(report.artifact.bytes);
   const identityInside = (identity: PeResourceIdentity): boolean =>
     identity.kind === "id" || inside(identity.location);
   if (
-    report.artifact.bytes > maxBytes ||
     report.coverage.resources !== report.resources.length ||
     report.coverage.examined_entries > maxEntries ||
     report.coverage.examined_entries !==

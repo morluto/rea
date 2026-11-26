@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { writeFile } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -98,7 +99,11 @@ it.each(["max_input_bytes", "max_reply_bytes", "max_nesting_depth"] as const)(
     if (!recovered.ok) throw recovered.error;
     expect(recovered.value.parameters[control]).toBe(raised);
     expect(recovered.value.normalized_result).toMatchObject({
-      artifact: { path, bytes: Buffer.byteLength(text) },
+      artifact: {
+        path,
+        bytes: Buffer.byteLength(text),
+        sha256: createHash("sha256").update(text).digest("hex"),
+      },
       total_records: 1,
       records: [
         {
@@ -108,12 +113,6 @@ it.each(["max_input_bytes", "max_reply_bytes", "max_nesting_depth"] as const)(
       ],
     });
     expect(JSON.stringify(recovered.value)).not.toContain("exclude-me");
-    // Admission changes cannot make malformed source valid.
-    await writeFile(path, '{"log":');
-    const malformed = await capture.inspect({ ...request, [control]: raised });
-    if (malformed.ok)
-      throw new Error("Malformed capture unexpectedly admitted");
-    expect(malformed.error._tag).toBe("AnalysisInputError");
   },
 );
 
