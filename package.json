@@ -402,7 +402,7 @@
     "ignore": "7.0.16",
     "isomorphic-git": "1.44.17",
     "jsonc-parser": "3.3.1",
-    "lossless-json": "4.3.3",
+    "lossless-json": "4.3.4",
     "lzma-purejs": "0.9.3",
     "openpgp": "6.3.2",
     "parse5": "8.1.1",
