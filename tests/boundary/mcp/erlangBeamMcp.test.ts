@@ -97,7 +97,9 @@ mcpTest(
           erlangBeamRowsFixture([["ExpT", rowLimit + 1]]),
           {},
           { max_table_rows: rowLimit },
-          undefined,
+          expect.stringContaining(
+            `Raise max_table_rows above ${String(rowLimit)}`,
+          ),
         ],
         [
           "combined-table-rows",
@@ -108,7 +110,9 @@ mcpTest(
           ]),
           {},
           { max_table_rows: rowLimit },
-          undefined,
+          expect.stringContaining(
+            `Raise max_table_rows above ${String(rowLimit)}`,
+          ),
         ],
       ] as const) {
         const path = join(root, `${label}.beam`);
@@ -122,9 +126,7 @@ mcpTest(
         expect(error, label).toMatchObject({
           code: "resource_constraint",
           retryable: false,
-          ...(remediation === undefined
-            ? {}
-            : { remediation: { action: remediation } }),
+          remediation: { action: remediation },
           details: {
             resource: "capacity",
             reported_limits: budget,

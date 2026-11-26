@@ -14,6 +14,7 @@ import {
   MAX_INSPECT_ERLANG_BEAM_ATOMS,
   MAX_INSPECT_ERLANG_BEAM_CHUNKS,
   MAX_INSPECT_ERLANG_BEAM_FILE_BYTES,
+  MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS,
   erlangBeamBudgetLimit,
   type ErlangBeam,
   type InspectErlangBeamInput,
@@ -90,6 +91,10 @@ const parserBudgetRemediation = ({ name, maximum }: LimitRef) => {
       return maximum >= MAX_INSPECT_ERLANG_BEAM_ATOMS
         ? `The file exceeds the ${String(MAX_INSPECT_ERLANG_BEAM_ATOMS)}-atom ceiling this operation accepts; select a smaller artifact.`
         : `Raise max_atoms above ${String(maximum)} or select a smaller artifact; the limit is the caller-selected atom budget.`;
+    case "max_table_rows":
+      return maximum >= MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS
+        ? `The file exceeds the ${String(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS)}-row table ceiling this operation accepts; select a smaller artifact.`
+        : `Raise max_table_rows above ${String(maximum)} or select a smaller artifact; the limit is the caller-selected export, import and lambda row budget.`;
     case "max_chunks":
       return maximum >= MAX_INSPECT_ERLANG_BEAM_CHUNKS
         ? `The file exceeds the ${String(MAX_INSPECT_ERLANG_BEAM_CHUNKS)}-chunk ceiling this operation accepts; select a smaller artifact.`

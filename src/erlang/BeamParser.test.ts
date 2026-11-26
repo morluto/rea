@@ -419,9 +419,7 @@ it("checks aggregate table capacity after each table is framed", async () => {
       }),
     }),
   );
-  const complete = Buffer.alloc(
-    4 + (ERLANG_BEAM_TABLE_ROWS_DEFAULT + 1) * 12,
-  );
+  const complete = Buffer.alloc(4 + (ERLANG_BEAM_TABLE_ROWS_DEFAULT + 1) * 12);
   complete.writeUInt32BE(ERLANG_BEAM_TABLE_ROWS_DEFAULT + 1);
   await expect(
     parse(
