@@ -585,6 +585,71 @@ const recordObservation = (
   return commit(inventory);
 };
 
+it("compares NDS CPU entry addresses with identical member content", () => {
+  const arm9 = {
+    kind: "nds-entry",
+    role: "arm9",
+    file_id: null,
+    ram_address: 0x0200_0000,
+    entry_address: 0x0200_0000,
+    overlay: null,
+  } as const satisfies FormatMetadata;
+  const content = { content: "1" };
+
+  expect(
+    compareArtifacts(
+      recordObservation(arm9, content),
+      recordObservation({ ...arm9, entry_address: 0x0200_0004 }, content),
+    ),
+  ).toMatchObject({
+    status: "changed",
+    changes: [{ classification: "changed", dimensions: ["metadata"] }],
+  });
+});
+
+it("compares NDS overlay RAM addresses with identical member content and ignores FAT IDs", () => {
+  const overlay = {
+    kind: "nds-entry",
+    role: "arm9-overlay",
+    file_id: 2,
+    ram_address: null,
+    entry_address: null,
+    overlay: {
+      overlay_id: 0,
+      ram_address: 0x0220_0000,
+      ram_size: 0x100,
+      bss_size: 0,
+      static_init_start: 0,
+      static_init_end: 0,
+      flags: 0,
+    },
+  } as const satisfies FormatMetadata;
+  const content = { content: "1" };
+  const left = recordObservation(overlay, content);
+
+  expect(
+    compareArtifacts(
+      left,
+      recordObservation(
+        {
+          ...overlay,
+          overlay: { ...overlay.overlay, ram_address: 0x0220_0100 },
+        },
+        content,
+      ),
+    ),
+  ).toMatchObject({
+    status: "changed",
+    changes: [{ classification: "changed", dimensions: ["metadata"] }],
+  });
+  expect(
+    compareArtifacts(
+      left,
+      recordObservation({ ...overlay, file_id: 3 }, content),
+    ),
+  ).toMatchObject({ status: "unchanged", changes: [] });
+});
+
 const espImageSegment: FormatMetadata = {
   kind: "esp-image-segment",
   index: 1,

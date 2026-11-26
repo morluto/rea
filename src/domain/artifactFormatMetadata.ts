@@ -344,9 +344,26 @@ const declarationsByKind: {
     notCompared:
       "Its header and table facts come from the ROM's own bytes, which content comparison covers.",
   },
+  /**
+   * CPU load and entry addresses and overlay RAM and initialization facts.
+   * The role restates the path, and the file and overlay IDs describe layout.
+   */
   "nds-entry": {
-    notCompared:
-      "role, file ID, addresses and overlay facts come from the ROM's header and tables, which content comparison covers; its stored bytes are compared by content.",
+    declaration: ({ ram_address, entry_address, overlay }) => ({
+      ram_address,
+      entry_address,
+      overlay:
+        overlay === null
+          ? null
+          : {
+              ram_address: overlay.ram_address,
+              ram_size: overlay.ram_size,
+              bss_size: overlay.bss_size,
+              static_init_start: overlay.static_init_start,
+              static_init_end: overlay.static_init_end,
+              flags: overlay.flags,
+            },
+    }),
   },
   fit: {
     notCompared:

@@ -38,6 +38,16 @@ file ID, and for overlays the overlay ID, RAM address, RAM and BSS sizes,
 static initializer range and flags word. An ARM9 binary's trailing
 module-parameter footer, if any, is not part of `arm9.bin`.
 
+## Comparison
+
+`compare-artifacts` / `compare_artifacts` reports a metadata change for a
+matching member path when a CPU binary's `ram_address` or `entry_address`
+changes, even if its stored bytes are identical. For overlays it compares
+`overlay.ram_address`, `overlay.ram_size`, `overlay.bss_size`,
+`overlay.static_init_start`, `overlay.static_init_end` and `overlay.flags`.
+The role repeats the member path, and the FAT file ID and overlay ID are
+layout fields excluded from metadata comparison.
+
 ## Ranges that disagree with the file
 
 Coverage is `complete` only when both stored checksums agree, every table
