@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **limits:** omitted input budgets for inspect_sqlite_database, inspect_go_binary, inspect_rust_binary and inspect_nuget_nupkg now admit larger files. Callers relying on the old default refusal must pass the old value explicitly.
 * **native:** inspect_devicetree's decoded-representation refusal reports reported_limits.boundary "max_decoded_bytes" with details.limit, instead of "decoded_bytes".
 * **native:** inspect_devicetree's decoded-representation refusal reports reported_limits.boundary "max_decoded_bytes" with details.limit, instead of "decoded_bytes".
 * **limits:** the SQLite snapshot refusal reports details.limit for producer_limits.input_bytes, and the SQLite column and reply refusals carry a fixed_ceiling refusal in place of their authored remediation.
@@ -103,6 +104,7 @@
 * **ida:** support the official Hex-Rays IDA MCP headlessly ([#4813](https://github.com/morluto/rea/issues/4813)) ([6822ebe](https://github.com/morluto/rea/commit/6822ebe1f3a4caec007fcd046754d66317d3349f))
 * **javascript:** add semantic_analysis structure-only mode to analyze_javascript_application ([#14117](https://github.com/morluto/rea/issues/14117)) ([eccd18a](https://github.com/morluto/rea/commit/eccd18a2cc325bb97f66f23a4216dfcacd9e1bca))
 * **javascript:** inventory Expo Router require.context route keys ([#10624](https://github.com/morluto/rea/issues/10624)) ([7b6e816](https://github.com/morluto/rea/commit/7b6e816b0b61d24d1a3b79106481f29db676ea65))
+* **limits:** raise disk-backed admission defaults for large ordinary targets ([#14653](https://github.com/morluto/rea/issues/14653)) ([30be941](https://github.com/morluto/rea/commit/30be941a5adb36211cf0449fc980292b4cb8a470))
 * **limits:** report the value a per-call limit needs and derive its recovery ([#14625](https://github.com/morluto/rea/issues/14625)) ([78cb717](https://github.com/morluto/rea/commit/78cb7172a6d38f726fe00acd530a8a8b7c21a737))
 * **mcp:** link retained Evidence from over-budget summaries ([#14603](https://github.com/morluto/rea/issues/14603)) ([fa65e51](https://github.com/morluto/rea/commit/fa65e51a24dc4c2983840af8d2ec119c28687cf7))
 * **metadata:** give NTFS, Maven report and NuGet budgets typed per-call controls ([#14629](https://github.com/morluto/rea/issues/14629)) ([4f66985](https://github.com/morluto/rea/commit/4f6698597884d709be8a98ec43f9f5320ae598ce))
@@ -1198,6 +1200,7 @@
 * **dotnet:** consolidate managed ExtraData coverage ([#12788](https://github.com/morluto/rea/issues/12788)) ([e8105d6](https://github.com/morluto/rea/commit/e8105d6be9c5b96a0635f09e0eeef9672f112e8f))
 * **dotnet:** consolidate managed PE and field constant contracts ([#13365](https://github.com/morluto/rea/issues/13365)) ([da6f898](https://github.com/morluto/rea/commit/da6f89808dcc9c6f528660426a54cff721cfbf03))
 * **dotnet:** prove scoped member ownership within the caller budget ([#13369](https://github.com/morluto/rea/issues/13369)) ([2e8bdfd](https://github.com/morluto/rea/commit/2e8bdfd808b3de68cbd283b3f4f5510ee728a288))
+* **dotnet:** stop expecting required_value for the lower-bound path-depth refusal ([d21ba43](https://github.com/morluto/rea/commit/d21ba43581cd64531cd43a56b691141b02918e63))
 * **dotnet:** use smaller fixtures for managed byte budgets ([#12793](https://github.com/morluto/rea/issues/12793)) ([337fd43](https://github.com/morluto/rea/commit/337fd43a0f91aa63c9697fd5dc912f7807454ba3))
 * drop detail requests the budget seed made redundant ([#14615](https://github.com/morluto/rea/issues/14615)) ([88fd8a9](https://github.com/morluto/rea/commit/88fd8a9df083568a7cb4a65012f1b9813c5b82b1))
 * **electron:** consolidate action and projection coverage ([#12959](https://github.com/morluto/rea/issues/12959)) ([32e5f5b](https://github.com/morluto/rea/commit/32e5f5bc1c26281656d6d2a17e14308c8eba05ce))
