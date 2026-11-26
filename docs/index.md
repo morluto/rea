@@ -59,6 +59,8 @@ For runtime instrumentation, see the [Frida guide](guides/runtime/frida-instrume
   or [capture a Linux desktop application](desktop-application-capture.md).
 - [Use the CLI and retain Evidence](getting-started/cli.md) or
   [look up MCP result and session contracts](reference/mcp-contracts.md).
+- [Read the evidence model](rea-guide.md) and the
+  [related architecture patterns](architecture-patterns.md).
 
 Browse the [documentation directory](README.md) for formats, provider
 prerequisites, and contributor references.

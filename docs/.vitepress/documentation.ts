@@ -703,6 +703,16 @@ export const documentationSections = [
         source: "reconstruction-coverage.md",
         route: "/reconstruction-coverage",
       },
+      {
+        text: "REA guide",
+        source: "rea-guide.md",
+        route: "/rea-guide",
+      },
+      {
+        text: "Architecture patterns",
+        source: "architecture-patterns.md",
+        route: "/architecture-patterns",
+      },
     ],
   },
   {

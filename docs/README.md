@@ -181,6 +181,8 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [Directory identity](reference/directory-identity.md)
 - [Reconstruction obligation ledgers](reference/reconstruction-obligation-ledgers.md)
 - [Reconstruction coverage](reconstruction-coverage.md)
+- [REA guide](rea-guide.md)
+- [Architecture patterns](architecture-patterns.md)
 
 ## Development and verification
 
