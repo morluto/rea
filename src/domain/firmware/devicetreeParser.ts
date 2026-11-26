@@ -318,7 +318,8 @@ export const parseDevicetree = (
           existing !== null &&
           existing !== node.path
         ) {
-          admit(node.path.length * 2 + 256);
+          // Both paths appear in the sentence, so both are charged.
+          admit((existing.length + node.path.length) * 2 + 256);
           limitations.push(
             `phandle 0x${handle.toString(16)} is declared by both ${existing} and ${node.path}; references to it are unresolved.`,
           );
