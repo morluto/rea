@@ -61,6 +61,11 @@ const htmlFallback = async (original, request, probeChanged, env) => {
 
 export default {
   async fetch(request, env) {
+    // Markdown exists only as a GET/HEAD representation. A probe request takes
+    // ownership of a body, so any other method must reach the asset service
+    // on the caller's own request, validators included.
+    if (!["GET", "HEAD"].includes(request.method))
+      return env.ASSETS.fetch(request);
     const useMarkdown = prefersMarkdown(request.headers.get("Accept"));
     // HTML validators describe a different representation. Probe the route first,
     // then let the asset service evaluate validators/ranges against the Markdown.
@@ -85,7 +90,6 @@ export default {
     const url = new URL(request.url);
     if (
       ![200, 206, 304].includes(original.status) ||
-      !["GET", "HEAD"].includes(request.method) ||
       !original.headers.get("Content-Type")?.startsWith("text/html") ||
       (!url.pathname.endsWith("/") && !url.pathname.endsWith(".html"))
     )
