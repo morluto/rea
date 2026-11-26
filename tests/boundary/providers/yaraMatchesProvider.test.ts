@@ -795,6 +795,91 @@ describe("inspect_yara_matches with a yara stand-in", () => {
     });
   });
 
+  it("retains completed target file identity when target snapshot handle close fails", async () => {
+    const { command, sample, rule } = await fixture("match");
+    let failedCloseOnce = false;
+    let closeAttempts = 0;
+    const provider = new YaraMatchesProvider({
+      environment: { ...process.env, YARA_STUB_MODE: "match" },
+      selectCommand: () => ok(command),
+      launcher: interpreterLauncher,
+      openSnapshotFile: async (path) => {
+        const handle = await open(path, "wx", 0o600);
+        if (failedCloseOnce || !path.endsWith("target.bin")) return handle;
+        failedCloseOnce = true;
+        return new Proxy(handle, {
+          get(target, property, receiver) {
+            if (property === "close") {
+              return async () => {
+                closeAttempts += 1;
+                if (closeAttempts === 1)
+                  throw new Error("injected target handle close failure");
+                return target.close();
+              };
+            }
+            const value = Reflect.get(target, property, receiver);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+      },
+    });
+    const service = new YaraMatchesService(provider, process.env);
+    const result = await service.inspect({ path: sample, rule_paths: [rule] });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.partialObservation).toEqual({
+      kind: "file-snapshot-hash",
+      path: sample,
+      sha256: createHash("sha256").update(SAMPLE).digest("hex"),
+      bytes: SAMPLE.length,
+    });
+    await expect(service.close()).resolves.toBeUndefined();
+    expect(closeAttempts).toBe(2);
+    expect(result.error.cleanupIncomplete).toBe(false);
+  });
+
+  it("retains completed target file identity when cancelled during target snapshot handle close", async () => {
+    const { command, sample, rule } = await fixture("match");
+    const controller = new AbortController();
+    const provider = new YaraMatchesProvider({
+      environment: { ...process.env, YARA_STUB_MODE: "match" },
+      selectCommand: () => ok(command),
+      launcher: interpreterLauncher,
+      openSnapshotFile: async (path) => {
+        const handle = await open(path, "wx", 0o600);
+        if (!path.endsWith("target.bin")) return handle;
+        return new Proxy(handle, {
+          get(target, property, receiver) {
+            if (property === "close") {
+              return async () => {
+                controller.abort("cancelled during target handle close");
+                return target.close();
+              };
+            }
+            const value = Reflect.get(target, property, receiver);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+      },
+    });
+    const service = new YaraMatchesService(provider, process.env);
+    const result = await service.inspect(
+      { path: sample, rule_paths: [rule] },
+      { signal: controller.signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.partialObservation).toEqual({
+      kind: "file-snapshot-hash",
+      path: sample,
+      sha256: createHash("sha256").update(SAMPLE).digest("hex"),
+      bytes: SAMPLE.length,
+    });
+  });
+
   it("reports a missing yara command as unavailable with remediation", async () => {
     const { root, sample, rule } = await fixture("match");
     const service = createYaraMatchesService({

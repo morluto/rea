@@ -59,6 +59,20 @@ export interface YaraIncludeRewriter {
   finish(): Buffer;
 }
 
+const isAsciiLetter = (byte: number): boolean =>
+  (byte >= 0x41 && byte <= 0x5a) || (byte >= 0x61 && byte <= 0x7a);
+
+const isAbsoluteIncludeBytes = (
+  rawBytes: readonly number[],
+  platform: NodeJS.Platform,
+): boolean => {
+  const first = rawBytes[0];
+  if (first === undefined) return false;
+  if (platform !== "win32") return first === 0x2f;
+  if (first === 0x2f || first === 0x5c) return true;
+  return rawBytes.length >= 2 && isAsciiLetter(first) && rawBytes[1] === 0x3a;
+};
+
 /**
  * Resolve relative `include "..."` directives in a staged YARA rule file
  * against the caller-selected rule file's directory so YARA keeps the
@@ -73,6 +87,20 @@ export const createYaraIncludeRewriter = (
 ): YaraIncludeRewriter => {
   const pathApi = platform === "win32" ? win32 : posix;
   const baseDir = pathApi.dirname(sourcePath);
+  const baseDirPrefix =
+    platform === "win32"
+      ? /[\\/]$/u.test(baseDir)
+        ? baseDir
+        : `${baseDir}\\`
+      : baseDir.endsWith("/")
+        ? baseDir
+        : `${baseDir}/`;
+  // YARA's `<include>[^\"]+` lexer rule ends at the first quote and cannot
+  // represent line breaks; pass through verbatim if unrepresentable.
+  const baseDirPrefixBytes =
+    baseDirPrefix.includes('"') || /[\r\n]/u.test(baseDirPrefix)
+      ? null
+      : Buffer.from(baseDirPrefix, "utf8");
 
   let state: LexState = "code";
   let ident = "";
@@ -82,15 +110,23 @@ export const createYaraIncludeRewriter = (
   let includePathBytes: number[] = [];
 
   const rewritePath = (rawBytes: readonly number[]): Buffer => {
-    const raw = Buffer.from(rawBytes).toString("utf8");
-    if (raw.length === 0 || pathApi.isAbsolute(raw))
-      return Buffer.from(rawBytes);
-    const resolved = pathApi.resolve(baseDir, raw);
-    // YARA's `<include>[^\"]+` lexer rule ends at the first quote and cannot
-    // represent line breaks; pass through verbatim if unrepresentable.
-    if (resolved.includes('"') || /[\r\n]/u.test(resolved))
-      return Buffer.from(rawBytes);
-    return Buffer.from(resolved, "utf8");
+    const rawBuffer = Buffer.from(rawBytes);
+    if (rawBytes.length === 0 || isAbsoluteIncludeBytes(rawBytes, platform))
+      return rawBuffer;
+    if (platform !== "win32") {
+      // Preserve raw filename bytes and POSIX `link/..` components by prefixing
+      // the rule file's parent directory directly without lexical normalization.
+      if (baseDirPrefixBytes === null) return rawBuffer;
+      return Buffer.concat([baseDirPrefixBytes, rawBuffer]);
+    }
+    const raw = rawBuffer.toString("utf8");
+    if (Buffer.from(raw, "utf8").equals(rawBuffer)) {
+      const resolved = win32.resolve(baseDir, raw);
+      if (resolved.includes('"') || /[\r\n]/u.test(resolved)) return rawBuffer;
+      return Buffer.from(resolved, "utf8");
+    }
+    if (baseDirPrefixBytes === null) return rawBuffer;
+    return Buffer.concat([baseDirPrefixBytes, rawBuffer]);
   };
 
   return {

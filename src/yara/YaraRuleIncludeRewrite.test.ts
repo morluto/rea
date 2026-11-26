@@ -23,11 +23,12 @@ const rewrite = (
 };
 
 describe("createYaraIncludeRewriter", () => {
-  it("resolves relative POSIX includes against the rule file directory and keeps absolute ones", () => {
+  it("prefixes relative POSIX includes without collapsing parent components and keeps absolute ones", () => {
     const input = [
       'include "common.yar"',
       'include\t"sub/nested.yar"',
       'include "../shared/base.yar"',
+      'include "link/../common.yar"',
       'include "/abs/other.yar"',
       "rule Main { condition: true }",
     ].join("\n");
@@ -38,11 +39,15 @@ describe("createYaraIncludeRewriter", () => {
       [
         'include "/rules/packers/common.yar"',
         'include\t"/rules/packers/sub/nested.yar"',
-        'include "/rules/shared/base.yar"',
+        'include "/rules/packers/../shared/base.yar"',
+        'include "/rules/packers/link/../common.yar"',
         'include "/abs/other.yar"',
         "rule Main { condition: true }",
       ].join("\n"),
     );
+    expect(
+      rewrite('include "root.yar"\n', "/main.yar", "linux").toString("utf8"),
+    ).toBe('include "/root.yar"\n');
   });
 
   it("resolves relative Windows includes with win32 path semantics", () => {
@@ -153,5 +158,32 @@ describe("createYaraIncludeRewriter", () => {
     expect(streamed.toString("latin1")).toContain(
       'include "/rules/common.yar"',
     );
+  });
+
+  it("preserves non-UTF-8 bytes inside relative and absolute include filenames", () => {
+    const rawRel = Buffer.from([
+      0x66, 0x69, 0x6c, 0x65, 0xff, 0xfe, 0x2e, 0x79, 0x61, 0x72,
+    ]);
+    const rawAbs = Buffer.from([
+      0x2f, 0x61, 0x62, 0x73, 0x2f, 0x80, 0xff, 0x2e, 0x79, 0x61, 0x72,
+    ]);
+    const input = Buffer.concat([
+      Buffer.from('include "', "utf8"),
+      rawRel,
+      Buffer.from('"\ninclude "', "utf8"),
+      rawAbs,
+      Buffer.from('"\nrule R { condition: true }\n', "utf8"),
+    ]);
+    const expected = Buffer.concat([
+      Buffer.from('include "/rules/', "utf8"),
+      rawRel,
+      Buffer.from('"\ninclude "', "utf8"),
+      rawAbs,
+      Buffer.from('"\nrule R { condition: true }\n', "utf8"),
+    ]);
+    const whole = rewrite(input, "/rules/main.yar", "linux");
+    const streamed = rewrite(input, "/rules/main.yar", "linux", 1);
+    expect(whole.equals(expected)).toBe(true);
+    expect(streamed.equals(expected)).toBe(true);
   });
 });

@@ -537,8 +537,12 @@ export class YaraMatchesProvider implements YaraMatchesPort {
     const command = this.options.selectCommand();
     if (!command.ok) return err(command.error);
     let phase: ReadPhase | undefined;
-    let identity:
-      | { readonly sha256: string; readonly bytes: number }
+    let completedFileIdentity:
+      | {
+          readonly path: string;
+          readonly sha256: string;
+          readonly bytes: number;
+        }
       | undefined;
     try {
       return await this.#resources.run(async () => {
@@ -563,7 +567,7 @@ export class YaraMatchesProvider implements YaraMatchesPort {
                 phase = next;
               },
               (verified) => {
-                identity = verified;
+                completedFileIdentity = verified;
               },
             ),
           };
@@ -653,7 +657,9 @@ export class YaraMatchesProvider implements YaraMatchesPort {
         return ok(outcome.value);
       });
     } catch (cause: unknown) {
-      return err(this.#failure(cause, input, phase, maxFileBytes, identity));
+      return err(
+        this.#failure(cause, input, phase, maxFileBytes, completedFileIdentity),
+      );
     }
   }
 
@@ -677,8 +683,17 @@ export class YaraMatchesProvider implements YaraMatchesPort {
     maxFileBytes: number,
     signal: AbortSignal | undefined,
     snapshot: YaraScanSnapshot,
-    transform?: YaraIncludeRewriter,
+    options?: {
+      readonly transform?: YaraIncludeRewriter;
+      readonly onIdentity?: (identity: {
+        readonly path: string;
+        readonly sha256: string;
+        readonly bytes: number;
+      }) => void;
+    },
   ): Promise<StagedSnapshotFile> {
+    const transform = options?.transform;
+    const onIdentity = options?.onIdentity;
     let destHandle;
     try {
       destHandle =
@@ -722,6 +737,11 @@ export class YaraMatchesProvider implements YaraMatchesPort {
             );
           },
         });
+        onIdentity?.({
+          path: sourcePath,
+          sha256: streamed.sha256,
+          bytes: streamed.size,
+        });
         if (transform !== undefined) await writeChunk(transform.finish());
         const state = await dest.stat({ bigint: true });
         return {
@@ -744,10 +764,15 @@ export class YaraMatchesProvider implements YaraMatchesPort {
     platform: NodeJS.Platform,
     signal: AbortSignal | undefined,
     setPhase: (phase: ReadPhase) => void,
-    setIdentity: (identity: {
-      readonly sha256: string;
-      readonly bytes: number;
-    }) => void,
+    setIdentity: (
+      identity:
+        | {
+            readonly path: string;
+            readonly sha256: string;
+            readonly bytes: number;
+          }
+        | undefined,
+    ) => void,
   ): Promise<YaraMatches> {
     const rulePhase = (index: number, path: string): ReadPhase => ({
       path,
@@ -762,6 +787,7 @@ export class YaraMatchesProvider implements YaraMatchesPort {
     const stagedRules: StagedSnapshotFile[] = [];
     for (const [index, path] of input.rule_paths.entries()) {
       setPhase(rulePhase(index, path));
+      setIdentity(undefined);
       stagedRules.push(
         await this.#stageFile(
           path,
@@ -769,19 +795,23 @@ export class YaraMatchesProvider implements YaraMatchesPort {
           maxFileBytes,
           signal,
           snapshot,
-          createYaraIncludeRewriter(path, platform),
+          {
+            transform: createYaraIncludeRewriter(path, platform),
+            onIdentity: setIdentity,
+          },
         ),
       );
     }
     setPhase(targetPhase);
+    setIdentity(undefined);
     const stagedTarget = await this.#stageFile(
       input.path,
       join(snapshot.path, "target.bin"),
       maxFileBytes,
       signal,
       snapshot,
+      { onIdentity: setIdentity },
     );
-    setIdentity({ sha256: stagedTarget.sha256, bytes: stagedTarget.bytes });
     const staged: StagedScanInputs = {
       target: stagedTarget,
       rules: stagedRules,
@@ -934,7 +964,13 @@ export class YaraMatchesProvider implements YaraMatchesPort {
     input: InspectYaraMatchesInput,
     phase: ReadPhase | undefined,
     maxFileBytes: number,
-    identity: { readonly sha256: string; readonly bytes: number } | undefined,
+    completedFileIdentity:
+      | {
+          readonly path: string;
+          readonly sha256: string;
+          readonly bytes: number;
+        }
+      | undefined,
   ) {
     const read = phase ?? {
       path: input.path,
@@ -979,16 +1015,18 @@ export class YaraMatchesProvider implements YaraMatchesPort {
       cause.partialObservation !== undefined
     )
       primary.retainPartialObservation(cause.partialObservation);
-    // `primary` already names the failing `read.path`; once the scanned file's
-    // identity is recorded, attribute the retained snapshot observation to
-    // `input.path` even if a rule file's final check or close fails afterward.
+    // `primary` already names the failing `read.path`; once a staged file's
+    // identity is recorded (and thereafter for the scanned target file),
+    // attribute the retained snapshot observation to its recorded path.
     return projectStableArtifactFailure(
       cause,
       primary,
-      identity === undefined ? read.path : input.path,
+      completedFileIdentity === undefined
+        ? read.path
+        : completedFileIdentity.path,
       PROVIDER_ID,
       OPERATION,
-      identity,
+      completedFileIdentity,
     );
   }
 }
