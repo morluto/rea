@@ -13,6 +13,7 @@ import {
   createRustImage,
   createRustWasmModule,
   createRustImageWithGoSection,
+  createWasmSectionFlood,
   RUSTC_HASH,
   rustDependencyPayload,
 } from "../fixtures/rust/image.js";
@@ -620,5 +621,89 @@ cliTest(
     expect(selected.report.auditable_metadata).toEqual(
       initial.report.auditable_metadata,
     );
+  },
+);
+
+cliTest(
+  "refuses a WebAssembly section walk past max_wasm_sections on CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-cli-wasm-sections-");
+    const { client, call } = await connectLocalToolsMcp();
+    const path = join(root, "sections.wasm");
+    await writeFile(path, createWasmSectionFlood(8));
+    const result = await cli.run({
+      arguments: [
+        "inspect-rust-binary",
+        path,
+        "--max-wasm-sections",
+        "4",
+        "--json",
+      ],
+    });
+    expect(result.exitCode).toBe(1);
+    const response = await call("inspect_rust_binary", {
+      path,
+      max_wasm_sections: 4,
+    });
+    const mcpError = parseMcpToolError(response).error;
+    const limit = {
+      control_kind: "parameter",
+      parameter: "max_wasm_sections",
+      effective_value: 4,
+      unit: "count",
+      minimum: 1,
+      maximum: 16_777_216,
+      default_value: 65_536,
+      applies_at: "next_call",
+    };
+    const refusal = {
+      kind: "adjustable_budget",
+      operation: "inspect_rust_binary",
+      control: "max_wasm_sections",
+      effective_value: 4,
+      unit: "count",
+      range: { minimum: 1, maximum: 16_777_216 },
+      default_value: 65_536,
+    };
+    expect(mcpError).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        operation: "inspect_rust_binary",
+        resource: "cpu",
+        reported_limits: { boundary: "max_wasm_sections", maximum: 4 },
+        limit,
+        refusal,
+      },
+    });
+    expect(mcpError.details?.limit).not.toHaveProperty("required_value");
+    expect(mcpError.details?.limit).not.toHaveProperty("cli_flag");
+    expect(mcpError.remediation.action).toContain("max_wasm_sections");
+    expect(mcpError.remediation.action).not.toContain("--max-wasm-sections");
+    expect(result.json).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        operation: "inspect_rust_binary",
+        resource: "cpu",
+        limit: { ...limit, cli_flag: "--max-wasm-sections" },
+        refusal,
+      },
+    });
+    const cliRecovery = (result.json as { remediation?: { action?: string } })
+      .remediation?.action;
+    expect(cliRecovery).toContain("--max-wasm-sections");
+    expect(cliRecovery).toContain("rea inspect-rust-binary");
+    const admitted = await cli.run({
+      arguments: [
+        "inspect-rust-binary",
+        path,
+        "--max-wasm-sections",
+        "8",
+        "--json",
+      ],
+    });
+    expect(admitted.exitCode, admitted.stderr).toBe(0);
+    await client.ping();
   },
 );

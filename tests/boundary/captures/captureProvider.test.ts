@@ -5,7 +5,7 @@ import { projectAnalysisError } from "../../../src/domain/analysisErrorProjectio
 import { packetFieldsCatalogSchema } from "../../../src/domain/captures/packetFields.js";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import { it, expect, onTestFinished } from "vitest";
-import { writeFile, readdir, chmod, symlink } from "node:fs/promises";
+import { writeFile, readdir, chmod, stat, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { readStableArtifact } from "../../../src/resources/readStableArtifact.js";
 import { TsharkCaptureProvider } from "../../../src/captures/TsharkCaptureProvider.js";
@@ -243,6 +243,8 @@ it("recovers the same capture with CLI producer budgets and retains a tighter in
     maximum: Number.MAX_SAFE_INTEGER,
     default_value: 32 * 1024 * 1024,
     applies_at: "next_call",
+    // The selected read measured the file it refused.
+    required_value: (await stat(f.path)).size,
   });
   expect(analysisErrorRemediationAction(refused.error)).toContain(
     "producer_limits.input_bytes",

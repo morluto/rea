@@ -17,9 +17,8 @@
   },
   "src/android/JadxSession.ts": {
     "`The external DEX ${failure.stage} representation allowance`": {
-      "class": "pending",
-      "issue": 14237,
-      "reason": "External DEX representation retained from the JADX worker is a resource policy without a per-call control."
+      "class": "protocol",
+      "reason": "One eighth of the JADX bridge's 8 MiB local MCP frame less its envelope, so the prototype and reference replies and their retained, Evidence and MCP copies fit together; raising it needs a paged bridge reply, not a larger allowance."
     }
   },
   "src/apkSignature/apkSignatureFailures.ts": {
@@ -60,13 +59,6 @@
       "reason": "Bounds the reply to `apktool --version`, a short fixed-format banner; no analysis input passes through it."
     }
   },
-  "src/apktool/ApktoolProvider.ts": {
-    "\"The apktool output capture allowance (decode_timeout_ms does not raise it)\"": {
-      "class": "pending",
-      "issue": 14237,
-      "reason": "apktool output capture is a producer budget without a per-call control."
-    }
-  },
   "src/application/otlpTrace/OtlpTraceService.ts": {
     "\"The OTLP imprecise-numeric-field allowance\"": {
       "class": "representation",
@@ -87,13 +79,6 @@
     "\"The wxapkg directory-and-chunk I/O work allowance\"": {
       "class": "derived",
       "reason": "Four times the admitted member count plus 64 KiB chunks of declared member bytes, which artifact_limits.expanded_bytes bounds; it grows with that admission."
-    }
-  },
-  "src/artifacts/apple/AppleAssetCatalogAnalysis.ts": {
-    "\"The assetutil capture allowance\"": {
-      "class": "pending",
-      "issue": 14237,
-      "reason": "assetutil output capture is a producer budget without a per-call control."
     }
   },
   "src/artifacts/deno/DenoStandaloneLocation.ts": {
@@ -193,13 +178,6 @@
     "\"The Ghidra installation-properties read allowance\"": {
       "class": "protocol",
       "reason": "Bounds Ghidra's own Ghidra/application.properties, a short key=value installation descriptor of the bring-your-own provider (about 1 KiB); no analysis input passes through it, and a larger file is not a Ghidra installation REA can drive."
-    }
-  },
-  "src/go/GoBinaryProvider.ts": {
-    "\"The Go structural decoding allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "Projects the shared native structural decoding allowance (BinaryResourceFailure), a resource policy."
     }
   },
   "src/gpu/GpuCodeObjectsProvider.ts": {
@@ -326,9 +304,8 @@
   },
   "src/native/parsers/lipo.ts": {
     "\"The lipo field retention allowance\"": {
-      "class": "pending",
-      "issue": 14237,
-      "reason": "lipo field retention is a producer capture budget."
+      "class": "derived",
+      "reason": "lipo fields are sliced from its captured output, and their retention is bounded by the same native command output allowance; it changes only with that capture allowance."
     }
   },
   "src/native/parsers/plist.ts": {
@@ -386,17 +363,7 @@
     }
   },
   "src/rust/RustBinaryProvider.ts": {
-    "\"The WebAssembly section-walk allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "Rust container, dependency and WebAssembly section-walk allowances are resource policies."
-    },
     "\"This Rust dependency parser allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "Rust container, dependency and WebAssembly section-walk allowances are resource policies."
-    },
-    "\"This native container parser allowance\"": {
       "class": "pending",
       "issue": 14235,
       "reason": "Rust container, dependency and WebAssembly section-walk allowances are resource policies."
