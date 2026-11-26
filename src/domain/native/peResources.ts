@@ -1,6 +1,8 @@
 import { z } from "zod";
+import { peHeaderAnomaliesSchema } from "./peHeaderAnomalies.js";
+import { peImageBaseSchema } from "./peAddressSpace.js";
 
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const range = z.strictObject({ offset: uint, bytes: uint });
@@ -14,18 +16,25 @@ const identity = z.discriminatedUnion("kind", [
   }),
 ]);
 
+/** Hard ceiling on the caller-selected input read budget. */
+export const MAX_INSPECT_PE_FILE_BYTES = 536870912;
+/** Hard ceiling on the caller-selected resource-directory-entry budget. */
+export const MAX_INSPECT_PE_DIRECTORY_ENTRIES = 65536;
+
 /** Complete bounded inspection of a caller-selected PE image, without execution. */
 export const inspectPeResourcesInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to a PE image",
   ),
   max_file_bytes: z
     .number()
     .int()
     .min(64)
-    .max(536870912)
+    .max(MAX_INSPECT_PE_FILE_BYTES)
     .default(67108864)
-    .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
+    .describe(
+      "Maximum bytes this reader reads from the artifact: headers, directories and the ranges they reference (default 64 MiB). The file may be larger; its one hashing pass is not counted",
+    ),
   // Windows resource images carry thousands of entries: Windows 11 25H2
   // SystemResources measures imageres.dll.mun at 6476 examined entries,
   // shell32.dll.mun at 5903 and wmploc.DLL.mun at 5440. The default admits
@@ -35,7 +44,7 @@ export const inspectPeResourcesInputSchema = z.strictObject({
     .number()
     .int()
     .min(1)
-    .max(65536)
+    .max(MAX_INSPECT_PE_DIRECTORY_ENTRIES)
     .default(16384)
     .describe(
       "Maximum resource directory entries to examine; exceeding the budget fails without partial success",
@@ -51,6 +60,7 @@ export const peResourcesSchema = z.strictObject({
   }),
   format: z.enum(["pe32", "pe32-plus"]),
   machine: uint,
+  image_base: peImageBaseSchema,
   directory: z
     .strictObject({
       rva: uint,
@@ -60,6 +70,16 @@ export const peResourcesSchema = z.strictObject({
     .nullable(),
   directories: z.array(
     z.strictObject({
+      path: z
+        .array(identity)
+        .max(2)
+        .describe(
+          "Type/name identities leading to this directory; [] for the root",
+        ),
+      entry_locations: z
+        .array(range)
+        .max(2)
+        .describe("Incoming entry file ranges corresponding to path"),
       location: range,
       characteristics: uint,
       timestamp: uint,
@@ -112,6 +132,8 @@ export const peResourcesSchema = z.strictObject({
     examined_entries: uint,
     resources: uint,
   }),
+  /** Evidence saved before this field existed omits it. */
+  header_anomalies: peHeaderAnomaliesSchema.optional(),
   limitations: z.array(z.string()),
 });
 

@@ -1,4 +1,4 @@
-import { isSafeNumber, LosslessNumber } from "lossless-json";
+import { LosslessNumber } from "lossless-json";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { QlogCaptureFacts } from "../../domain/qlogCapture.js";
 import {
@@ -13,15 +13,10 @@ import {
   captureObject,
   capturePointer,
 } from "./CaptureRedaction.js";
-import { QLOG_CAPTURE_PROVIDER_IDENTITY } from "./CaptureRelease.js";
+import { isTransportCredentialHeader } from "../../domain/explicitSensitiveValues.js";
+import { QLOG_CAPTURE_PROVIDER_IDENTITY } from "./CaptureProviderIdentities.js";
 
 const MAX_VARINT = (1n << 62n) - 1n;
-const credentials = new Set([
-  "authorization",
-  "proxy-authorization",
-  "cookie",
-  "set-cookie",
-]);
 type Projection = Pick<
   WebNetworkCaptureRecord,
   "reported" | "numeric_literals" | "binary_fields" | "redactions"
@@ -84,7 +79,12 @@ export const decodeQlogCapture = (
           "Record ordinal is derived from trace/event source traversal, not global time order. Qlog lengths and FIN do not expose original HTTP body bytes or establish network completeness.",
         ],
       });
-      collectTransportFacts(projection, ordinal, { fact, streams, excluded });
+      collectTransportFacts(projection, ordinal, {
+        fact,
+        streams,
+        excluded,
+        name: object(event) && typeof event.name === "string" ? event.name : "",
+      });
     }
     for (const stream of streams.values()) {
       summarizeStream(stream);
@@ -223,14 +223,25 @@ const collectTransportFacts = (
     fact: Trace;
     streams: Map<string, Stream>;
     excluded: (value: string) => boolean;
+    /** Validated source event name, before declarations are applied. */
+    name: string;
   },
 ): void => {
-  const { fact, streams, excluded } = state;
+  const { fact, streams, excluded, name } = state;
+  // Unknown event payloads carry no facts under this interpretation profile.
+  // Their omission cannot make the transport-fact inventory incomplete.
+  if (name !== "recovery:packet_lost" && !packetEvent(name)) return;
   if (!object(projection.reported) || !object(projection.reported.data)) {
     fact.incomplete_fact_records.push(ordinal);
     return;
   }
   const visible = projection.reported;
+  // Facts are selected by event name, so a declaration that hides the name
+  // of a loss or packet event omits its facts like any other hidden field.
+  if (visible.name !== name) {
+    fact.incomplete_fact_records.push(ordinal);
+    return;
+  }
   const data = visible.data;
   if (!object(data)) return;
   const literals = new Map(
@@ -253,11 +264,7 @@ const collectTransportFacts = (
     return;
   }
   for (const [frameIndex, frame] of data.frames.entries()) {
-    if (
-      !object(frame) ||
-      frame.frame_type === undefined ||
-      frame.frame_type === null
-    ) {
+    if (!object(frame) || typeof frame.frame_type !== "string") {
       fact.incomplete_fact_records.push(ordinal);
       continue;
     }
@@ -296,6 +303,8 @@ const collectTransportFacts = (
       length: length.toString(),
       fin: typeof frame.fin === "boolean" ? frame.fin : null,
     });
+    if (typeof frame.fin !== "boolean")
+      fact.incomplete_fact_records.push(ordinal);
   }
 };
 
@@ -365,7 +374,7 @@ const packetEvent = (name: unknown): boolean =>
 const object = (value: unknown): value is Record<string, unknown> =>
   captureObject(value) && !(value instanceof LosslessNumber);
 const invalid = (message: string, pointer: string): never => {
-  throw new CaptureFormatError("format", message, pointer);
+  throw new CaptureFormatError("malformed", message, pointer);
 };
 
 /** Canonicalize JSON integer notation exactly, checking expansion before allocation. */
@@ -402,6 +411,9 @@ const unsigned = (value: unknown, pointer: string): bigint | null => {
   return result;
 };
 
+const QLOG_HTTP_HEADER_VALUE_RE = /^\/data\/frame\/headers\/\d+\/value$/u;
+const QLOG_TRANSPORT_URL_HEADERS = new Set(["location", "referer", "origin"]);
+
 /** Preserve JSON values/lexemes and structurally exclude only transport credentials and declared values. */
 const project = (
   value: unknown,
@@ -410,6 +422,7 @@ const project = (
   const redactor = new CaptureRedaction(sensitiveValues);
   const numeric_literals: Projection["numeric_literals"] = [];
   const eventName = object(value) ? value.name : null;
+  const hasSensitiveValues = sensitiveValues.length > 0;
   const visit = (
     item: unknown,
     pointer: string,
@@ -418,55 +431,63 @@ const project = (
     const header =
       (eventName === "http:frame_created" ||
         eventName === "http:frame_parsed") &&
-      /^\/data\/frame\/headers\/\d+\/value$/u.test(pointer) &&
+      QLOG_HTTP_HEADER_VALUE_RE.test(pointer) &&
       typeof parent?.name === "string";
     if (
-      (header && credentials.has(String(parent?.name).toLowerCase())) ||
+      (header && isTransportCredentialHeader(String(parent?.name))) ||
       qlogToken(eventName, pointer, parent)
     )
       return redactor.credential(pointer);
     if (item instanceof LosslessNumber) {
-      if (
-        redactor.text(item.value, pointer) === null ||
-        (isSafeNumber(item.value) &&
-          redactor.text(String(Number(item.value)), pointer) === null)
-      )
-        return null;
+      const number = redactor.number(item, pointer);
+      if (number === null) return null;
       numeric_literals.push({
         pointer,
         producer_type: "json-number",
-        literal: item.value,
+        literal: number.literal,
       });
-      return isSafeNumber(item.value) ? Number(item.value) : null;
+      return number.reported;
     }
     if (typeof item === "string")
       return redactor.text(
         item,
         pointer,
         header &&
-          ["location", "referer", "origin"].includes(
-            String(parent?.name).toLowerCase(),
-          ),
+          QLOG_TRANSPORT_URL_HEADERS.has(String(parent?.name).toLowerCase())
+          ? {}
+          : undefined,
       );
     if (item === null || typeof item === "boolean") return item;
     if (Array.isArray(item))
       return item.map((child, index) =>
         visit(child, capturePointer(pointer, String(index))),
       );
-    if (object(item))
-      return Object.fromEntries(
-        Object.entries(item).flatMap(([key, child]) => {
-          if (sensitiveValues.some((literal) => key.includes(literal))) {
-            redactor.redactions.push({
-              pointer,
-              reason: "explicit-sensitive-value",
-              scope: "property-name",
-            });
-            return [];
-          }
-          return [[key, visit(child, capturePointer(pointer, key), item)]];
-        }),
-      );
+    if (object(item)) {
+      const projected: Record<string, JsonValue> = {};
+      for (const [key, child] of Object.entries(item)) {
+        if (
+          hasSensitiveValues &&
+          sensitiveValues.some((literal) => key.includes(literal))
+        ) {
+          redactor.redactions.push({
+            pointer,
+            reason: "explicit-sensitive-value",
+            scope: "property-name",
+          });
+          continue;
+        }
+        const projectedValue = visit(child, capturePointer(pointer, key), item);
+        if (key === "__proto__")
+          Object.defineProperty(projected, key, {
+            value: projectedValue,
+            enumerable: true,
+            writable: true,
+            configurable: true,
+          });
+        else projected[key] = projectedValue;
+      }
+      return projected;
+    }
     return invalid("qlog parser returned a non-JSON value.", pointer);
   };
   return {

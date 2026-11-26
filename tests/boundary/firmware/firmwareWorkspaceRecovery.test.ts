@@ -7,11 +7,9 @@ import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { firmwareResultSchemas } from "../../../src/domain/firmware/firmwareAnalysis.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
-import {
-  assertFirmwareCleanup,
-  firmwareFixture,
-} from "../../fixtures/firmware/provider.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
+import { expectProviderLaunchCleanup } from "../../support/process/expectProviderLaunchCleanup.js";
+import { firmwareFixture } from "../../fixtures/firmware/provider.js";
 
 it.skipIf(process.platform !== "linux" || process.getuid?.() === 0)(
   "retains completed extractions and retries all workspaces without blocking stopped-worker operations",
@@ -73,7 +71,7 @@ it.skipIf(process.platform !== "linux" || process.getuid?.() === 0)(
         expect(await readFile(file.path, "utf8")).toBe("firmware=true\n");
         expect(extracted.error.cleanupResources).toContain(workspace);
         await access(workspace);
-        const delivered = new ToolResultDelivery(
+        const delivered = createToolResultDelivery(
           STDIO_DEFAULT_MAX_BUFFER_SIZE,
         ).toCallToolResult(extracted, toolContract("extract_firmware"));
         expect(delivered.isError).toBe(true);
@@ -112,8 +110,8 @@ it.skipIf(process.platform !== "linux" || process.getuid?.() === 0)(
         await chmod(join(workspace, "cleanup-blocked"), 0o700);
       await fixture.close();
     }
-    await assertFirmwareCleanup(fixture.launches);
-    expect(await readFile(fixture.path)).toEqual(sourceBytes);
+    await expectProviderLaunchCleanup(fixture.launches);
+    expect(Buffer.compare(await readFile(fixture.path), sourceBytes)).toBe(0);
     for (const output of [fixture.output, join(fixture.root, "second-output")])
       expect(await readFile(join(output, "rootfs/config"), "utf8")).toBe(
         "firmware=true\n",
@@ -159,6 +157,6 @@ it.skipIf(process.platform !== "linux" || process.getuid?.() === 0)(
         await chmod(join(workspace, "cleanup-blocked"), 0o700);
       await fixture.close();
     }
-    await assertFirmwareCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   },
 );

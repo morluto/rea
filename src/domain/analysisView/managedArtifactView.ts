@@ -1,18 +1,21 @@
+import { evidenceFileTarget } from "../evidence.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { z } from "zod";
-import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
-import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
 import {
   managedArtifactInspectionSchema,
   managedMemberInspectionSchema,
 } from "../managed/managedArtifact.js";
-import { err, ok, type Result } from "../result.js";
+import { managedModuleRow } from "../managed/managedModuleIdentity.js";
+import { validateManagedTokenScope } from "../managed/managedInspectionEvidence.js";
+import { ok } from "../result.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
-  analysisViewInputError,
-  type AnalysisViewParent,
-  type AnalysisViewRequest,
-  type UnsignedAnalysisView,
-} from "./analysisView.js";
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
@@ -22,8 +25,8 @@ import {
 export const managedViewRequestSchema = z.strictObject({
   kind: z.literal("managed"),
   collection: z.enum(["references", "resources", "attributes"]),
-  offset: z.number().int().nonnegative().default(0),
-  limit: z.number().int().positive().default(64),
+  offset: z.int().nonnegative().default(0),
+  limit: z.int().positive().default(64),
 });
 
 export const managedViewItemSchema = z.union([
@@ -37,9 +40,9 @@ export const managedSummarySchema = managedArtifactInspectionSchema
   .omit({ references: true, resources: true, attributes: true })
   .extend({
     reported_counts: z.strictObject({
-      references: z.number().int().nonnegative(),
-      resources: z.number().int().nonnegative(),
-      attributes: z.number().int().nonnegative(),
+      references: z.int().nonnegative(),
+      resources: z.int().nonnegative(),
+      attributes: z.int().nonnegative(),
     }),
     identity_scope: managedMemberInspectionSchema.shape.identity_scope,
   });
@@ -48,45 +51,58 @@ export const managedViewContextSchema = z.strictObject({
   identity_scope: managedMemberInspectionSchema.shape.identity_scope,
   source_metadata_status:
     managedArtifactInspectionSchema.shape.metadata.shape.status,
+  unresolved_module_name:
+    managedArtifactInspectionSchema.shape.metadata.shape.unresolved_module_name,
   source_coverage: managedArtifactInspectionSchema.shape.coverage,
 });
+
+/** Token scope and identity limits shared by every managed metadata view. */
+export const managedViewIdentityUnknowns = (
+  parent: AnalysisViewParent,
+  mvid: string | null,
+): string[] => [
+  "Metadata tokens are build-local coordinates bound to the recorded artifact SHA-256 and module MVID; this view does not load or execute the assembly.",
+  ...(evidenceFileTarget(parent) === undefined
+    ? [
+        "The parent has no recorded subject; its normalized artifact identity cannot be cross-checked against a subject digest.",
+      ]
+    : []),
+  ...(mvid === null
+    ? [
+        "The module MVID is unknown; tokens cannot establish a cross-observation module match.",
+      ]
+    : []),
+];
+
+const readManagedArtifact = createAnalysisViewResultReader(
+  managedArtifactInspectionSchema,
+);
 
 /** Project authenticated metadata without reading a path or invoking a provider. */
 export const projectManagedArtifactView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "managed")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Managed artifact inspection supports summary and managed views.",
-        },
-      ]),
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof managedViewRequestSchema>
+  >(admitted, "summary", "managed");
+  if (view === undefined)
+    return invalidAnalysisView(
+      "Managed artifact inspection supports summary and managed views.",
     );
-  const parsed = managedArtifactInspectionSchema.safeParse(
-    parent.normalizedResult,
+  const parsed = readManagedArtifact(parent);
+  if (!parsed.ok) return parsed;
+  const report = parsed.value;
+  const scope = validateManagedTokenScope(
+    report,
+    "inspect_managed_artifact",
+    parent.evidenceId,
   );
-  if (!parsed.success)
-    return err(
-      analysisInputErrorFromIssues(
-        "inspect_analysis_view",
-        parsed.error.issues.map((issue) => ({
-          ...issue,
-          path: ["source", "normalized_result", ...issue.path],
-        })),
-        { source: { normalized_result: parent.normalizedResult } },
-        { cause: parsed.error },
-      ),
-    );
-  const report = parsed.data;
+  if (!scope.ok) return scope;
   const identity_scope = {
     token_identity: "build-local" as const,
     requires_artifact_sha256: report.artifact.sha256,
-    requires_mvid: report.module?.mvid ?? null,
+    requires_mvid: managedModuleRow(report)?.mvid ?? null,
   };
   const shared = {
     parent_evidence_id: parent.evidenceId,
@@ -96,17 +112,7 @@ export const projectManagedArtifactView = (
     limitations: uniqueSorted([...parent.limitations, ...report.limitations]),
     unknowns: [
       "Collection counts and pages cover producer-returned rows; metadata completeness remains the original metadata status and coverage, not an absence claim about unreturned rows.",
-      "Metadata tokens are build-local coordinates bound to the recorded artifact SHA-256 and module MVID; this view does not load or execute the assembly.",
-      ...(parent.subject == null
-        ? [
-            "The parent has no recorded subject; its normalized artifact identity cannot be cross-checked against a subject digest.",
-          ]
-        : []),
-      ...(identity_scope.requires_mvid === null
-        ? [
-            "The module MVID is unknown; tokens cannot establish a cross-observation module match.",
-          ]
-        : []),
+      ...managedViewIdentityUnknowns(parent, identity_scope.requires_mvid),
     ],
   };
   if (view.kind === "summary") {
@@ -118,22 +124,27 @@ export const projectManagedArtifactView = (
     };
     const total = references.length + resources.length + attributes.length;
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: { ...summary, reported_counts, identity_scope },
-      coverage: completeWithinViewCoverage(total, total),
+      coverage: completeWithinViewCoverage(total),
     });
   }
   const collection = report[view.collection];
   const item = collection.slice(view.offset, view.offset + view.limit);
   return ok({
-    kind: "managed",
+    kind: "managed" as const,
     view,
     item,
     ...shared,
     identity_scope,
     source_metadata_status: report.metadata.status,
+    ...(report.metadata.unresolved_module_name === undefined
+      ? {}
+      : {
+          unresolved_module_name: report.metadata.unresolved_module_name,
+        }),
     source_coverage: report.coverage,
     coverage: pageViewCoverage(view.offset, item.length, collection.length),
   });

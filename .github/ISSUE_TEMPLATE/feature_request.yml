@@ -11,6 +11,8 @@ body:
         Describe one problem and the outcome you would like. Short answers are
         welcome. Choose "Not sure yet" wherever needed; you do not need code, a
         finished design, or a complete test plan to propose an idea.
+        Use concrete examples when available, distinguish current limitations
+        from proposed behavior, and leave unmeasured impact or unknowns explicit.
 
         Read the [contribution scope](https://github.com/morluto/rea/blob/main/CONTRIBUTING.md#contribution-scope).
         Maintainers can help resolve scope and technical questions. Unresolved
@@ -58,7 +60,7 @@ body:
     id: use-cases
     attributes:
       label: Use cases
-      description: Optional additional examples of applications, targets, or callers. Leave blank if covered above.
+      description: Optional examples of affected workflows, targets, or callers and their practical impact. Include observed frequency or measurements when available; do not invent them. Leave blank if covered above.
 
   - type: textarea
     id: desired-outcome
@@ -138,4 +140,4 @@ body:
     id: references
     attributes:
       label: References
-      description: Link relevant provider documentation, source, measurements, artifacts, issues, or discussions.
+      description: Optional supporting examples, provider documentation, source, measurements, artifacts, issues, or prior art. Distinguish observed results from expected benefits; an idea without evidence is welcome.

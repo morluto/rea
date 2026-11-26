@@ -1,3 +1,7 @@
+import {
+  artifactIntegrityPairOf,
+  type ArtifactIntegrityPair,
+} from "./artifactIntegrity.js";
 import { posix } from "node:path";
 
 import { digestCanonicalValue } from "./canonicalDigest.js";
@@ -19,9 +23,7 @@ export const logicalPathNfc = (value: string): string => value.normalize("NFC");
  */
 export const normalizeJoinedLogicalPath = (value: string): string => {
   if (value.includes("\0")) return value;
-  return logicalPathNfc(
-    posix.normalize(value.replaceAll("\\", "/")).replace(/^\.\//u, ""),
-  );
+  return logicalPathNfc(posix.normalize(value).replace(/^\.\//u, ""));
 };
 
 /** Whether a joined logical path leaves the archive root. */
@@ -35,11 +37,24 @@ export const logicalPathEscapesRoot = (path: string): boolean =>
 export const artifactIdForContent = (sha256: string): string =>
   `art_${digestCanonicalValue({ sha256 }, "Artifact")}`;
 
+/**
+ * Identify a node by its digest and representation. A virtual directory's
+ * digest covers REA's canonical listing JSON, and a regular file may contain
+ * exactly those bytes, so virtual nodes take a separate identity domain.
+ */
+export const artifactIdForNode = (
+  node: Pick<ArtifactNode, "sha256" | "content_state">,
+): string =>
+  node.content_state === "virtual"
+    ? `art_${digestCanonicalValue({ sha256: node.sha256, content_state: "virtual" }, "Artifact")}`
+    : artifactIdForContent(node.sha256);
+
 /** Identify an occurrence by its root and exact logical location. */
 export const occurrenceIdForLocation = (input: {
   readonly rootArtifactId: string;
   readonly logicalPath: string;
   readonly entryKind: ArtifactOccurrence["entry_kind"];
+  readonly duplicateOrdinal?: number;
 }): string =>
   input.logicalPath === "."
     ? `occ_${digestCanonicalValue({ root: input.rootArtifactId }, "Artifact")}`
@@ -48,6 +63,9 @@ export const occurrenceIdForLocation = (input: {
           root_artifact_id: input.rootArtifactId,
           logical_path: input.logicalPath,
           entry_kind: input.entryKind,
+          ...(input.duplicateOrdinal === undefined
+            ? {}
+            : { duplicate_ordinal: input.duplicateOrdinal }),
         },
         "Artifact",
       )}`;
@@ -83,15 +101,13 @@ export const artifactManifestId = (
 export const artifactContradictionId = (input: {
   readonly rootArtifactId: string;
   readonly logicalPath: string;
-  readonly declaredSha256: string;
-  readonly observedSha256: string;
+  readonly integrity: ArtifactIntegrityPair;
 }): string =>
   `ic_${digestCanonicalValue(
     {
       root_artifact_id: input.rootArtifactId,
       logical_path: input.logicalPath,
-      declared_sha256: input.declaredSha256,
-      observed_sha256: input.observedSha256,
+      ...artifactIntegrityPairOf(input.integrity),
     },
     "Artifact",
   )}`;

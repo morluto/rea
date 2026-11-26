@@ -1,17 +1,20 @@
+import { javaScriptSemanticQueryInputSchema } from "./javascriptSemanticQuerySchemas.js";
 import {
+  fixtureNode,
+  registryForGraph,
+  resolveJavaScriptSemanticEvidence,
   semanticFixtureGraph,
   semanticFixtureInput,
   semanticGraphTestEvidence,
+  unknownSemanticGraphTestEvidence,
 } from "../../../tests/support/javascriptSemanticGraphFixture.js";
 import { expect, it } from "vitest";
 import { z } from "zod";
 
 import { digestCanonicalValue } from "../canonicalDigest.js";
-import type { JsonValue } from "../jsonValue.js";
-import type { ApplicationGraphEvidence } from "./javascriptApplicationEvidenceSchemas.js";
 import {
+  JAVASCRIPT_SEMANTIC_RELATION_FAMILIES,
   JAVASCRIPT_SEMANTIC_RELATION_FAMILY,
-  JAVASCRIPT_SEMANTIC_NODE_KINDS,
   JAVASCRIPT_SEMANTIC_RELATIONS,
   type JavaScriptSemanticGraphInput,
 } from "./javascriptSemanticGraphSchemas.js";
@@ -20,58 +23,81 @@ import {
   createJavaScriptSemanticGraphNode,
   createJavaScriptSemanticGraphRelation,
   createJavaScriptSemanticGraphUnknown,
-  createImmutableJavaScriptSemanticGraphSteps,
+  createOwnedJavaScriptSemanticFingerprint,
+  createOwnedJavaScriptSemanticGraphNode,
+  withJavaScriptSemanticNodeApplicationIds,
+  sealTransferredJavaScriptSemanticGraphSteps,
   isValidatedImmutableJavaScriptSemanticGraph,
   JavaScriptSemanticEvidenceContextRegistry,
   javaScriptSemanticGraphSchema,
-  resolveJavaScriptSemanticEvidence,
   type JavaScriptSemanticGraph,
 } from "./javascriptSemanticGraph.js";
-import type { JavaScriptSemanticGraphNode } from "./javascriptSemanticGraphSchemas.js";
-import {
-  parseJavaScriptSemanticGraph,
-  serializeJavaScriptSemanticGraph,
-} from "./javascriptSemanticGraphSerialization.js";
 import { queryJavaScriptSemanticGraph } from "./javascriptSemanticQuery.js";
 
 const SHA = "a".repeat(64);
-const node = (
-  kind: (typeof JAVASCRIPT_SEMANTIC_NODE_KINDS)[number],
-  role: string,
-  properties: Record<string, JsonValue> = {},
-  evidenceContexts: JavaScriptSemanticEvidenceContextRegistry,
-  options: {
-    readonly functionNodeId?: string | null;
-    readonly modulePath?: string;
-  } = {},
-): JavaScriptSemanticGraphNode =>
-  createJavaScriptSemanticGraphNode(
-    {
-      kind,
-      identity: {
-        artifact_sha256: SHA,
-        module_path: options.modulePath ?? "bundle.js",
-        source_range: {
-          start: { line: 1, column: role.length },
-          end: { line: 1, column: role.length + 1 },
-        },
-        role_key: role,
-      },
-      function_node_id: options.functionNodeId ?? null,
-      application_node_ids: [],
-      label: role,
-      properties,
-      evidence: semanticGraphTestEvidence(),
-    },
-    evidenceContexts,
-  );
 
-it("accepts semantic module paths longer than the former schema ceiling", () => {
+it.each(["unknown", "partial"] as const)(
+  "rejects contradictory truncated %s graph coverage",
+  (status) => {
+    const input = semanticFixtureInput();
+    expect(() =>
+      createJavaScriptSemanticGraph({
+        ...input,
+        coverage: {
+          ...input.coverage,
+          status,
+          truncated: true,
+          limits: [{ name: "nodes", value: 1, unit: "items" }],
+        },
+        limitations: [
+          "Authored truncation tests status and omission coupling.",
+        ],
+      }),
+    ).toThrow(
+      status === "partial"
+        ? "Truncated semantic graph coverage must acknowledge omitted facts"
+        : "Truncated semantic graph coverage must be partial",
+    );
+  },
+);
+
+it("accepts omitted unknown occurrences as the reason for semantic truncation", () => {
+  const input = semanticFixtureInput();
+  const family = input.coverage.families[0]!.family;
+  const graph = createJavaScriptSemanticGraph({
+    ...input,
+    coverage: {
+      ...input.coverage,
+      status: "partial",
+      truncated: true,
+      omitted_unknown_occurrences: [
+        { family, reason: "resource-limit", occurrences: 1 },
+      ],
+      limits: [{ name: "unknowns", value: 1, unit: "items" }],
+      families: input.coverage.families.map((coverage) =>
+        coverage.family === family
+          ? { ...coverage, status: "partial" }
+          : coverage,
+      ),
+    },
+    limitations: ["Unknown ceiling omitted one resource-limit occurrence."],
+  });
+  expect(graph.coverage).toMatchObject({
+    truncated: true,
+    omitted_nodes: 0,
+    omitted_relations: 0,
+    omitted_unknown_occurrences: [
+      { family, reason: "resource-limit", occurrences: 1 },
+    ],
+  });
+});
+
+it("accepts a semantic module path of more than 600 segments", () => {
   const modulePath = `${"segment/".repeat(600)}entry.js`;
   const evidenceContexts = new JavaScriptSemanticEvidenceContextRegistry();
   expect(
-    node("module", "long-path", {}, evidenceContexts, { modulePath }).identity
-      .module_path,
+    fixtureNode("module", "long-path", evidenceContexts, {}, modulePath)
+      .identity.module_path,
   ).toBe(modulePath);
 });
 
@@ -112,20 +138,6 @@ it("captures caller-owned node identity, properties, and provenance", () => {
     ),
   ).toEqual(expectedEvidence);
 });
-
-const registryForGraph = (
-  graph: JavaScriptSemanticGraph,
-): JavaScriptSemanticEvidenceContextRegistry => {
-  const registry = new JavaScriptSemanticEvidenceContextRegistry();
-  for (const { evidence: reference } of [
-    ...graph.nodes,
-    ...graph.relations,
-    ...graph.unknowns,
-    ...graph.fingerprints,
-  ])
-    registry.intern(resolveJavaScriptSemanticEvidence(graph, reference));
-  return registry;
-};
 
 const graphWithCandidateRelations = (): JavaScriptSemanticGraph => {
   const base = semanticFixtureGraph();
@@ -189,11 +201,14 @@ it("counts candidate edges by query direction and relation filter", () => {
     direction: "forward-influence" | "backward-provenance",
     allowedRelations: (typeof JAVASCRIPT_SEMANTIC_RELATIONS)[number][],
   ) =>
-    queryJavaScriptSemanticGraph(graph, {
-      seed: { kind: "semantic-node", node_id: binding.node_id },
-      direction,
-      allowed_relations: allowedRelations,
-    });
+    queryJavaScriptSemanticGraph(
+      graph,
+      javaScriptSemanticQueryInputSchema.parse({
+        seed: { kind: "semantic-node", node_id: binding.node_id },
+        direction,
+        allowed_relations: allowedRelations,
+      }),
+    );
 
   expect(query("forward-influence", ["captures"]).status).toBe("ambiguous");
   expect(query("forward-influence", ["defines"]).status).toBe("found");
@@ -205,28 +220,28 @@ it("matches scalar literal seeds and skips non-scalar literal metadata", () => {
   const input = semanticFixtureInput();
   const metadataContexts = new JavaScriptSemanticEvidenceContextRegistry();
   const literals = [
-    node("literal", "string-seven", { value: "7" }, metadataContexts),
-    node("literal", "number-seven", { value: 7 }, metadataContexts),
-    node("literal", "boolean-true", { value: true }, metadataContexts),
-    node("literal", "null", { value: null }, metadataContexts),
-    node("literal", "empty-string", { value: "" }, metadataContexts),
-    node("literal", "zero", { value: 0 }, metadataContexts),
-    node("literal", "negative-zero", { value: -0 }, metadataContexts),
-    node("literal", "missing-value", {}, metadataContexts),
-    node(
-      "literal",
-      "structured-value",
-      { value: { nested: "metadata" } },
-      metadataContexts,
-    ),
+    fixtureNode("literal", "string-seven", metadataContexts, { value: "7" }),
+    fixtureNode("literal", "number-seven", metadataContexts, { value: 7 }),
+    fixtureNode("literal", "boolean-true", metadataContexts, { value: true }),
+    fixtureNode("literal", "null", metadataContexts, { value: null }),
+    fixtureNode("literal", "empty-string", metadataContexts, { value: "" }),
+    fixtureNode("literal", "zero", metadataContexts, { value: 0 }),
+    fixtureNode("literal", "negative-zero", metadataContexts, { value: -0 }),
+    fixtureNode("literal", "missing-value", metadataContexts),
+    fixtureNode("literal", "structured-value", metadataContexts, {
+      value: { nested: "metadata" },
+    }),
   ];
   input.nodes.push(...literals);
   const graph = createJavaScriptSemanticGraph(input);
   const query = (value: string | number | boolean | null) =>
-    queryJavaScriptSemanticGraph(graph, {
-      seed: { kind: "literal", value },
-      direction: "forward-influence",
-    }).seed_node_ids;
+    queryJavaScriptSemanticGraph(
+      graph,
+      javaScriptSemanticQueryInputSchema.parse({
+        seed: { kind: "literal", value },
+        direction: "forward-influence",
+      }),
+    ).seed_node_ids;
   const nodeId = (role: string) => {
     const literal = literals.find(({ identity }) => identity.role_key === role);
     if (literal === undefined) throw new Error(`Missing literal ${role}`);
@@ -244,65 +259,183 @@ it("matches scalar literal seeds and skips non-scalar literal metadata", () => {
   expect(query("unmatched")).toEqual([]);
 });
 
+it("matches exact endpoint properties on request and response carriers only", () => {
+  const input = semanticFixtureInput();
+  const contexts = new JavaScriptSemanticEvidenceContextRegistry();
+  const endpoint = "https://example.invalid/v1";
+  const response = fixtureNode("response", "response", contexts, { endpoint });
+  const other = fixtureNode("response", "other-endpoint", contexts, {
+    endpoint: `${endpoint}/other`,
+  });
+  const displayOnly = fixtureNode("response", endpoint, contexts, {
+    endpoint: null,
+  });
+  input.nodes.push(
+    response,
+    displayOnly,
+    fixtureNode("response", "missing-endpoint", contexts),
+    other,
+    fixtureNode("response", "array-endpoint", contexts, {
+      endpoint: [endpoint],
+    }),
+    fixtureNode("boundary", "unrelated-carrier", contexts, { endpoint }),
+  );
+  const graph = createJavaScriptSemanticGraph(input);
+  const request = input.nodes.find(({ kind }) => kind === "request");
+  if (request === undefined) throw new Error("Expected request carrier");
+  const query = (value: string) =>
+    queryJavaScriptSemanticGraph(
+      graph,
+      javaScriptSemanticQueryInputSchema.parse({
+        seed: { kind: "endpoint", value },
+        direction: "forward-influence",
+      }),
+    );
+  expect(query(endpoint).seed_node_ids).toEqual(
+    [request.node_id, response.node_id].toSorted(),
+  );
+  expect(query(`${endpoint}/other`).seed_node_ids).toEqual([other.node_id]);
+  expect(query("response").seed_node_ids).toEqual([]);
+  expect(query(`${endpoint}/missing`).seed_node_ids).toEqual([]);
+});
+
+it("scopes callers unknowns to call relations while preserving graph uncertainty", () => {
+  const contexts = new JavaScriptSemanticEvidenceContextRegistry();
+  const caller = fixtureNode("function", "caller", contexts);
+  const seed = fixtureNode("function", "seed", contexts);
+  const call = createJavaScriptSemanticGraphRelation(
+    {
+      source_node_id: caller.node_id,
+      target_node_id: seed.node_id,
+      relation: "calls",
+      resolution: "resolved",
+      properties: {},
+      evidence: semanticGraphTestEvidence("inferred"),
+    },
+    contexts,
+  );
+  const readUnknown = createJavaScriptSemanticGraphUnknown(
+    {
+      node_id: caller.node_id,
+      family: "data-flow",
+      relation_kinds: ["reads"],
+      reason: "dynamic-property",
+      detail: "Unresolved property read at the caller.",
+      candidate_node_ids: [],
+      evidence: unknownSemanticGraphTestEvidence(),
+    },
+    contexts,
+  );
+  const graph = createJavaScriptSemanticGraph({
+    schema: "JavaScriptSemanticRelationGraph",
+    root_artifact_sha256: SHA,
+    application_graph_id: `jag_${"b".repeat(64)}`,
+    root_node_ids: [seed.node_id],
+    evidence_contexts: contexts.contexts,
+    nodes: [caller, seed],
+    relations: [call],
+    fingerprints: [],
+    unknowns: [readUnknown],
+    coverage: {
+      status: "partial",
+      truncated: false,
+      omitted_nodes: null,
+      omitted_relations: null,
+      limits: [],
+      families: JAVASCRIPT_SEMANTIC_RELATION_FAMILIES.map((family) => ({
+        family,
+        status:
+          family === "data-flow" ? ("unknown" as const) : ("complete" as const),
+        retained_relations:
+          JAVASCRIPT_SEMANTIC_RELATION_FAMILY[call.relation] === family ? 1 : 0,
+        omitted_relations: family === "data-flow" ? null : 0,
+        unknown_ids: family === "data-flow" ? [readUnknown.unknown_id] : [],
+      })),
+    },
+    limitations: ["One property read remains unresolved."],
+  });
+  const query = (
+    direction: "callers" | "backward-provenance",
+    allowed_relations?: ["calls"],
+  ) =>
+    queryJavaScriptSemanticGraph(
+      graph,
+      javaScriptSemanticQueryInputSchema.parse({
+        seed: { kind: "semantic-node", node_id: seed.node_id },
+        direction,
+        ...(allowed_relations === undefined ? {} : { allowed_relations }),
+      }),
+    );
+  const callers = query("callers");
+  const filtered = query("callers", ["calls"]);
+  const backward = query("backward-provenance");
+  expect(callers.summary.traversed_nodes).toBe(2);
+  expect(callers.unknowns).toEqual([]);
+  expect(callers.summary.relevant_unknowns).toBe(0);
+  expect(callers.limitations).not.toContain(
+    "Relevant dynamic, unsupported, incomplete, or ambiguous semantics remain unknown.",
+  );
+  expect(filtered.unknowns).toEqual(callers.unknowns);
+  expect(backward.unknowns.map(({ unknown_id }) => unknown_id)).toEqual([
+    readUnknown.unknown_id,
+  ]);
+  expect(callers.coverage.status).toBe("partial");
+});
+
 it("counts candidate ownership cycles once and traverses them finitely", () => {
   const graph = graphWithCandidateRelations();
   const binding = graph.nodes.find(({ label }) => label === "binding");
   if (binding === undefined) throw new Error("Expected binding seed");
-  const result = queryJavaScriptSemanticGraph(graph, {
-    seed: { kind: "semantic-node", node_id: binding.node_id },
-    direction: "ownership",
-    allowed_relations: ["owns"],
-    include_ambiguous_dynamic_edges: true,
-  });
+  const result = queryJavaScriptSemanticGraph(
+    graph,
+    javaScriptSemanticQueryInputSchema.parse({
+      seed: { kind: "semantic-node", node_id: binding.node_id },
+      direction: "ownership",
+      allowed_relations: ["owns"],
+      include_ambiguous_dynamic_edges: true,
+    }),
+  );
 
   expect(result.status).toBe("ambiguous");
   expect(result.relations).toHaveLength(2);
   expect(result.summary.traversed_nodes).toBe(2);
   expect(result.summary.traversed_relations).toBe(2);
   expect(
-    queryJavaScriptSemanticGraph(graph, {
-      seed: { kind: "semantic-node", node_id: binding.node_id },
-      direction: "ownership",
-      allowed_relations: ["constructs-request"],
-    }).status,
+    queryJavaScriptSemanticGraph(
+      graph,
+      javaScriptSemanticQueryInputSchema.parse({
+        seed: { kind: "semantic-node", node_id: binding.node_id },
+        direction: "ownership",
+        allowed_relations: ["constructs-request"],
+      }),
+    ).status,
   ).toBe("found");
-});
-
-it("defines every required relation family and canonicalizes records", () => {
-  expect(JAVASCRIPT_SEMANTIC_RELATIONS).toContain("argument-to-parameter");
-  expect(JAVASCRIPT_SEMANTIC_RELATIONS).toContain("detaches-task");
-  expect(JAVASCRIPT_SEMANTIC_RELATIONS).toContain("forwards-signal");
-  expect(JAVASCRIPT_SEMANTIC_RELATIONS).toContain("validates");
-  const graph = semanticFixtureGraph();
-  expect(
-    parseJavaScriptSemanticGraph(
-      JSON.parse(serializeJavaScriptSemanticGraph(graph)),
-    ),
-  ).toEqual(graph);
-  expect(graph.nodes.map(({ node_id }) => node_id)).toEqual(
-    graph.nodes.map(({ node_id }) => node_id).toSorted(),
-  );
 });
 
 it("rejects stale identities, dangling endpoints, and incomplete coverage claims", () => {
   const graph = semanticFixtureGraph();
   expect(() =>
-    parseJavaScriptSemanticGraph({
+    javaScriptSemanticGraphSchema.parse({
       ...graph,
       graph_id: `jsrg_${"0".repeat(64)}`,
     }),
   ).toThrow();
+  const dangling = semanticFixtureInput();
+  const { relation_id: _relationId, ...relation } = dangling.relations[0]!;
+  const danglingRelation = createJavaScriptSemanticGraphRelation(
+    {
+      ...relation,
+      evidence: resolveJavaScriptSemanticEvidence(graph, relation.evidence),
+      target_node_id: `jsrg_node_${"f".repeat(64)}`,
+    },
+    registryForGraph(graph),
+  );
   expect(() =>
     createJavaScriptSemanticGraph({
-      ...semanticFixtureInput(),
-      relations: [
-        {
-          ...semanticFixtureInput().relations[0],
-          target_node_id: `jsrg_node_${"f".repeat(64)}`,
-        },
-      ],
+      ...dangling,
+      relations: [danglingRelation, ...dangling.relations.slice(1)],
     }),
-  ).toThrow();
+  ).toThrow(/Relation endpoints must name semantic nodes/u);
   expect(() =>
     createJavaScriptSemanticGraph({
       ...semanticFixtureInput(),
@@ -336,33 +469,55 @@ it("rejects stale identities, dangling endpoints, and incomplete coverage claims
   );
 });
 
-it("validates evidence context ownership and references", () => {
-  const graph = semanticFixtureGraph();
-  const alteredContext = {
-    ...graph,
-    evidence_contexts: graph.evidence_contexts.map((context, index) =>
-      index === 0
-        ? { ...context, context_id: `jsrg_evidence_${"f".repeat(64)}` }
-        : context,
+it("rejects complete family coverage with an unlisted retained frontier", () => {
+  const input = semanticFixtureInput(true);
+  const valid = createJavaScriptSemanticGraph(input);
+  const coverage = {
+    ...valid.coverage,
+    status: "complete" as const,
+    truncated: false,
+    omitted_nodes: 0,
+    omitted_relations: 0,
+    families: valid.coverage.families.map((family) =>
+      family.family === "call-flow"
+        ? {
+            ...family,
+            status: "complete" as const,
+            omitted_relations: 0,
+            unknown_ids: [],
+          }
+        : family,
     ),
   };
-  const alteredIssues = javaScriptSemanticGraphSchema.safeParse(alteredContext);
-  expect(alteredIssues.success).toBe(false);
-  if (alteredIssues.success) throw new Error("Expected invalid context digest");
-  expect(alteredIssues.error.issues.map(({ message }) => message)).toContain(
-    "Evidence context identifier is stale",
+  const { graph_id: _previousId, ...semantic } = valid;
+  const changed = { ...semantic, coverage, limitations: [] };
+  const invalid = {
+    ...changed,
+    graph_id: `jsrg_${digestCanonicalValue(
+      changed,
+      "JavaScript semantic graph",
+    )}`,
+  };
+  const diagnostic =
+    "Complete family coverage cannot omit or retain unknown facts";
+  expect(() => createJavaScriptSemanticGraph(changed)).toThrow(diagnostic);
+  const parsed = javaScriptSemanticGraphSchema.safeParse(
+    JSON.parse(JSON.stringify(invalid)),
   );
-  expect(alteredIssues.error.issues.map(({ message }) => message)).toContain(
-    "Evidence reference names an absent context",
+  if (parsed.success) throw new Error("Expected inconsistent graph rejection");
+  expect(parsed.error.issues.map(({ message }) => message)).toContain(
+    diagnostic,
   );
+});
 
+it("validates evidence context ownership and references", () => {
+  const graph = semanticFixtureGraph();
   const changedPayload = javaScriptSemanticGraphSchema.safeParse({
     ...graph,
     evidence_contexts: graph.evidence_contexts.map((context, index) =>
       index === 0 ? { ...context, authority: "user-assertion" } : context,
     ),
   });
-  expect(changedPayload.success).toBe(false);
   if (changedPayload.success)
     throw new Error("Expected changed context payload rejection");
   expect(changedPayload.error.issues.map(({ message }) => message)).toContain(
@@ -384,7 +539,6 @@ it("validates evidence context ownership and references", () => {
       (left, right) => left.context_id.localeCompare(right.context_id),
     ),
   });
-  expect(orphanIssues.success).toBe(false);
   if (orphanIssues.success)
     throw new Error("Expected orphan context rejection");
   expect(orphanIssues.error.issues.map(({ message }) => message)).toContain(
@@ -413,7 +567,6 @@ it("validates evidence context ownership and references", () => {
         ...facts.slice(1),
       ],
     });
-    expect(dangling.success, fact).toBe(false);
     if (dangling.success)
       throw new Error(`Expected dangling ${fact} reference`);
     expect(
@@ -441,7 +594,6 @@ it("validates evidence context ownership and references", () => {
       ...graph.nodes.slice(1),
     ],
   });
-  expect(impossibleEvidence.success).toBe(false);
   if (impossibleEvidence.success)
     throw new Error("Expected incompatible evidence context and location");
   expect(
@@ -469,10 +621,47 @@ it("shares provenance contexts while preserving fact-specific locations and unkn
     },
     evidenceContexts,
   );
-  expect(second.evidence.context_id).toBe(first.evidence.context_id);
-  expect(second.evidence.location).not.toEqual(first.evidence.location);
+  const { graph_id: _graphId, ...semantic } = graph;
+  const combined = createJavaScriptSemanticGraph({
+    ...semantic,
+    unknowns: [...graph.unknowns, second],
+    evidence_contexts: evidenceContexts.contexts,
+    coverage: {
+      ...graph.coverage,
+      families: graph.coverage.families.map((family) =>
+        family.unknown_ids.includes(first.unknown_id)
+          ? {
+              ...family,
+              unknown_ids: [...family.unknown_ids, second.unknown_id],
+            }
+          : family,
+      ),
+    },
+  });
+  const stored = javaScriptSemanticGraphSchema.parse(
+    JSON.parse(JSON.stringify(combined)),
+  );
+  expect(stored.evidence_contexts).toEqual(graph.evidence_contexts);
   expect(second.unknown_id).not.toBe(first.unknown_id);
-  expect(evidenceContexts.contexts).toEqual(graph.evidence_contexts);
+  expect(stored.unknowns).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        unknown_id: first.unknown_id,
+        evidence: first.evidence,
+      }),
+      expect.objectContaining({
+        unknown_id: second.unknown_id,
+        evidence: {
+          context_id: first.evidence.context_id,
+          location: {
+            available: false,
+            reason: "unresolved",
+            detail: "Another source location remains unresolved.",
+          },
+        },
+      }),
+    ]),
+  );
 });
 
 const complete = <Value>(steps: Iterator<void, Value>): Value => {
@@ -482,7 +671,7 @@ const complete = <Value>(steps: Iterator<void, Value>): Value => {
   }
 };
 
-it("captures nested input before yielding and preserves the synchronous graph commitment", () => {
+it("preserves a transferred graph independent of the caller retained copy", () => {
   const input = semanticFixtureInput(true);
   const node = input.nodes[0];
   if (node === undefined) throw new Error("Expected fixture node");
@@ -492,7 +681,9 @@ it("captures nested input before yielding and preserves the synchronous graph co
   input.relations.reverse();
   input.coverage.families.reverse();
   const expected = createJavaScriptSemanticGraph(input);
-  const steps = createImmutableJavaScriptSemanticGraphSteps(input);
+  const steps = sealTransferredJavaScriptSemanticGraphSteps(
+    structuredClone(input),
+  );
   expect(steps.next().done).toBe(false);
   nested.text = "Changed while the owned graph is being hashed.";
   nested.rows.push(4);
@@ -500,20 +691,19 @@ it("captures nested input before yielding and preserves the synchronous graph co
   input.coverage.families.length = 0;
   const graph = complete(steps);
   expect(graph).toEqual(expected);
+  const nodeIds = graph.nodes.map(({ node_id }) => node_id);
+  expect(nodeIds).toEqual(nodeIds.toSorted());
   expect(
-    parseJavaScriptSemanticGraph(
-      JSON.parse(serializeJavaScriptSemanticGraph(graph)),
-    ),
+    javaScriptSemanticGraphSchema.parse(JSON.parse(JSON.stringify(graph))),
   ).toEqual(expected);
   expect(isValidatedImmutableJavaScriptSemanticGraph(graph)).toBe(true);
   expect(isValidatedImmutableJavaScriptSemanticGraph(expected)).toBe(false);
-  expect(Object.isFrozen(nested)).toBe(false);
 });
 
 const invalidGraphCases: {
   readonly label: string;
   readonly change: (input: JavaScriptSemanticGraphInput) => void;
-  readonly message: string;
+  readonly issuePath: readonly string[];
 }[] = [
   {
     label: "node identity and ownership",
@@ -528,7 +718,7 @@ const invalidGraphCases: {
           : node,
       );
     },
-    message: "Node identifier is stale",
+    issuePath: ["nodes", "node_id"],
   },
   {
     label: "relation endpoints and authority",
@@ -536,11 +726,11 @@ const invalidGraphCases: {
       input.relations = input.relations.map((relation) => ({
         ...relation,
         source_node_id: `jsrg_node_${"f".repeat(64)}`,
-        target_node_id: `jsrg_node_${"f".repeat(64)}`,
+        target_node_id: `jsrg_node_${"e".repeat(64)}`,
         resolution: "candidate",
       }));
     },
-    message: "Relation endpoints must name semantic nodes",
+    issuePath: ["relations"],
   },
   {
     label: "unknown identity and candidates",
@@ -550,7 +740,7 @@ const invalidGraphCases: {
         candidate_node_ids: [`jsrg_node_${"f".repeat(64)}`],
       }));
     },
-    message: "Unknown frontier candidate node is absent",
+    issuePath: ["unknowns", "candidate_node_ids"],
   },
   {
     label: "fingerprint identity and components",
@@ -562,7 +752,7 @@ const invalidGraphCases: {
         components: { ...fingerprint.components, parameter_arity: 42 },
       }));
     },
-    message: "Fingerprint component commitment is stale",
+    issuePath: ["fingerprints", "fingerprint_sha256"],
   },
   {
     label: "coverage completeness and references",
@@ -574,13 +764,13 @@ const invalidGraphCases: {
         unknown_ids: [`jsrg_unknown_${"f".repeat(64)}`],
       }));
     },
-    message: "Family retained relation count does not match graph content",
+    issuePath: ["coverage", "families", "retained_relations"],
   },
 ];
 
 it.each(invalidGraphCases)(
   "retains full validation diagnostics for $label in owned steps",
-  ({ change, message }) => {
+  ({ change, issuePath }) => {
     const input = semanticFixtureInput(true);
     change(input);
     const issues = (action: () => unknown) => {
@@ -593,29 +783,34 @@ it.each(invalidGraphCases)(
       throw new Error("Expected invalid graph to fail validation");
     };
     const expected = issues(() => createJavaScriptSemanticGraph(input));
-    expect(expected.map(({ message }) => message)).toContain(message);
-    const steps = createImmutableJavaScriptSemanticGraphSteps(input);
+    expect(
+      expected.some(({ path }) => {
+        const keys = path.filter((part) => typeof part === "string");
+        return (
+          keys.length === issuePath.length &&
+          keys.every((key, index) => key === issuePath[index])
+        );
+      }),
+    ).toBe(true);
+    const steps = sealTransferredJavaScriptSemanticGraphSteps(
+      structuredClone(input),
+    );
     expect(steps.next().done).toBe(false);
     expect(issues(() => complete(steps))).toEqual(expected);
   },
 );
 
-it("interns each distinct evidence context once under its content digest", () => {
+it("interns valid normalized evidence after rejecting malformed provenance", () => {
   const registry = new JavaScriptSemanticEvidenceContextRegistry();
-  const elsewhere: ApplicationGraphEvidence = {
-    ...semanticGraphTestEvidence(),
-    location: {
-      available: true,
-      value: {
-        kind: "source-range",
-        source: "other.js",
-        start: { line: 7, column: 2 },
-        end: { line: 7, column: 9 },
-      },
-    },
-  };
-  const first = registry.intern(semanticGraphTestEvidence());
-  const repeated = registry.intern(elsewhere);
+  const observed = semanticGraphTestEvidence();
+  expect(() =>
+    registry.intern({
+      ...observed,
+      extractor: { ...observed.extractor, name: "" },
+    }),
+  ).toThrow(z.ZodError);
+
+  const first = registry.intern(observed);
   const reordered = registry.intern({
     ...semanticGraphTestEvidence("inferred"),
     limitations: [
@@ -624,10 +819,8 @@ it("interns each distinct evidence context once under its content digest", () =>
     ],
   });
   const inferred = registry.intern(semanticGraphTestEvidence("inferred"));
-  const { location: _location, ...context } = semanticGraphTestEvidence();
+  const { location: _location, ...context } = observed;
 
-  expect(repeated.context_id).toBe(first.context_id);
-  expect(repeated.location).toEqual(elsewhere.location);
   expect(reordered.context_id).toBe(inferred.context_id);
   expect(inferred.context_id).not.toBe(first.context_id);
   expect(first.context_id).toBe(
@@ -636,5 +829,152 @@ it("interns each distinct evidence context once under its content digest", () =>
   expect(registry.contexts.map(({ context_id }) => context_id)).toEqual(
     [first.context_id, inferred.context_id].toSorted(),
   );
-  expect(registry.resolve(repeated)).toEqual(elsewhere);
+  expect(registry.resolve(first)).toEqual(observed);
+});
+
+it("seals owned builder records while still rejecting tampered spread copies", () => {
+  const registry = new JavaScriptSemanticEvidenceContextRegistry();
+  const ownedModule = createOwnedJavaScriptSemanticGraphNode(
+    {
+      kind: "module",
+      identity: {
+        artifact_sha256: SHA,
+        module_path: "bundle.js",
+        source_range: {
+          start: { line: 1, column: 0 },
+          end: { line: 1, column: 20 },
+        },
+        role_key: "module",
+      },
+      function_node_id: null,
+      application_node_ids: [],
+      label: "bundle.js",
+      properties: {},
+      evidence: semanticGraphTestEvidence(),
+    },
+    registry,
+  );
+  const ownedCallable = withJavaScriptSemanticNodeApplicationIds(
+    createOwnedJavaScriptSemanticGraphNode(
+      {
+        kind: "function",
+        identity: {
+          artifact_sha256: SHA,
+          module_path: "bundle.js",
+          source_range: {
+            start: { line: 1, column: 2 },
+            end: { line: 1, column: 18 },
+          },
+          role_key: "fn",
+        },
+        function_node_id: null,
+        application_node_ids: [],
+        label: "fn",
+        properties: {},
+        evidence: semanticGraphTestEvidence(),
+      },
+      registry,
+    ),
+    [`jag_node_${"c".repeat(64)}`],
+  );
+  const ownedFingerprint = createOwnedJavaScriptSemanticFingerprint(
+    {
+      function_node_id: ownedCallable.node_id,
+      algorithm: "rea.javascript-semantic-function",
+      status: "complete",
+      components: {
+        parameter_arity: 0,
+        normalized_ast_sha256: "1".repeat(64),
+        control_flow_sha256: "2".repeat(64),
+        relation_shape_sha256: "3".repeat(64),
+        literal_set_sha256: "4".repeat(64),
+        effects: ["network"],
+      },
+      limitations: [],
+      evidence: semanticGraphTestEvidence("inferred"),
+    },
+    registry,
+  );
+  expect(Object.isFrozen(ownedModule)).toBe(true);
+  expect(Object.isFrozen(ownedCallable)).toBe(true);
+  expect(Object.isFrozen(ownedCallable.application_node_ids)).toBe(true);
+  expect(Object.isFrozen(ownedFingerprint)).toBe(true);
+  expect(Object.isFrozen(registry.ownedContexts[0])).toBe(true);
+
+  const ownedInput: JavaScriptSemanticGraphInput = {
+    schema: "JavaScriptSemanticRelationGraph",
+    root_artifact_sha256: SHA,
+    application_graph_id: `jag_${"b".repeat(64)}`,
+    root_node_ids: [ownedModule.node_id],
+    evidence_contexts: registry.ownedContexts,
+    nodes: [ownedModule, ownedCallable],
+    relations: [],
+    unknowns: [],
+    fingerprints: [ownedFingerprint],
+    coverage: {
+      status: "complete",
+      truncated: false,
+      omitted_nodes: 0,
+      omitted_relations: 0,
+      limits: [],
+      families: JAVASCRIPT_SEMANTIC_RELATION_FAMILIES.map((family) => ({
+        family,
+        status: "complete",
+        retained_relations: 0,
+        omitted_relations: 0,
+        unknown_ids: [],
+      })),
+    },
+    limitations: [],
+  };
+  const direct = createJavaScriptSemanticGraph(ownedInput);
+  const transferred = complete(
+    sealTransferredJavaScriptSemanticGraphSteps(ownedInput),
+  );
+  const unsealed = createJavaScriptSemanticGraph(
+    JSON.parse(JSON.stringify(ownedInput)) as JavaScriptSemanticGraphInput,
+  );
+  expect(direct.graph_id).toBe(unsealed.graph_id);
+  expect(transferred).toEqual(direct);
+
+  for (const tampered of [
+    {
+      ...ownedInput,
+      nodes: [
+        ownedModule,
+        { ...ownedCallable, node_id: `jsrg_node_${"f".repeat(64)}` },
+      ],
+    },
+    {
+      ...ownedInput,
+      fingerprints: [
+        {
+          ...ownedFingerprint,
+          fingerprint_id: `jsrg_fp_${"f".repeat(64)}`,
+        },
+      ],
+    },
+    {
+      ...ownedInput,
+      nodes: [
+        {
+          ...ownedModule,
+          evidence: {
+            context_id: ownedModule.evidence.context_id,
+            location: {
+              available: false as const,
+              reason: "unresolved" as const,
+              detail: "Contradicts observed context.",
+            },
+          },
+        },
+        ownedCallable,
+      ],
+    },
+  ] satisfies JavaScriptSemanticGraphInput[]) {
+    expect(() => createJavaScriptSemanticGraph(tampered)).toThrow(z.ZodError);
+    expect(() =>
+      complete(sealTransferredJavaScriptSemanticGraphSteps(tampered)),
+    ).toThrow(z.ZodError);
+  }
 });

@@ -1,6 +1,13 @@
+import { emptyCutterDiscovery } from "../../fixtures/cutterDiscovery.js";
 import { expect, it, vi } from "vitest";
 
 import { CutterBridgeService } from "../../../src/cutter/CutterBridgeService.js";
+import {
+  AnalysisInputError,
+  AnalysisCancelledError,
+} from "../../../src/domain/analysisErrorCore.js";
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 const cutterInput = {
   session_id: "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a",
@@ -8,14 +15,128 @@ const cutterInput = {
   command: "pd 4",
 };
 
+it.each(["descriptor-first", "command-first"] as const)(
+  "retains receipt-read cleanup alongside pending command ownership: %s",
+  async (order) => {
+    const descriptor = new ProviderCleanupError(
+      "cutter",
+      ["descriptor-fixture"],
+      { reason: "controlled receipt descriptor close failure" },
+      { operation: "cutter_command" },
+    );
+    let readFails = true;
+    let terminal = false;
+    const execute = vi.fn(async () => ({
+      requestId: "4b18ce4d-bf31-456e-ae31-e8c547b2f9db",
+      output: null,
+      currentFile: null,
+      documentGeneration: 7,
+      identityStatus: "partial" as const,
+      cutterVersion: null,
+      executionState: "unknown" as const,
+      error: "missing-reply",
+      message: "completion remains unknown",
+      outputTruncated: false,
+    }));
+    const service = new CutterBridgeService({
+      listSessions: async () => emptyCutterDiscovery("/fixture"),
+      confirmCommandCompletion: async () =>
+        readFails
+          ? { ok: false, error: descriptor }
+          : { ok: true, value: terminal },
+      execute,
+    });
+    const dispatched = await service.execute(cutterInput);
+    if (dispatched.ok) throw new Error("Expected pending completion");
+    const retried = await service.retryCleanup();
+    if (retried.ok) throw new Error("Expected receipt-read failure");
+    expect(retried.error.cleanupResources).toEqual(
+      expect.arrayContaining([
+        "descriptor-fixture",
+        `cutter-session:${cutterInput.session_id}`,
+      ]),
+    );
+    expect(retried.error.partialObservation).toBe(
+      dispatched.error.partialObservation,
+    );
+    expect(retried.error.diagnostics).toMatchObject({
+      cleanup_error: {
+        details: {
+          diagnostics: {
+            reason: "controlled receipt descriptor close failure",
+          },
+        },
+      },
+    });
+    if (order === "descriptor-first") {
+      releaseOwnedCleanup(descriptor);
+      expect(retried.error.cleanupResources).toEqual([
+        `cutter-session:${cutterInput.session_id}`,
+      ]);
+      readFails = false;
+      expect(await service.retryCleanup()).toEqual({
+        ok: false,
+        error: dispatched.error,
+      });
+      expect(retried.error.cleanupIncomplete).toBe(true);
+      terminal = true;
+      expect(await service.retryCleanup()).toEqual({ ok: true, value: null });
+    } else {
+      readFails = false;
+      terminal = true;
+      expect(await service.retryCleanup()).toEqual({ ok: true, value: null });
+      expect(dispatched.error.cleanupIncomplete).toBe(false);
+      expect(retried.error.cleanupIncomplete).toBe(true);
+      expect(retried.error.cleanupResources).toEqual(["descriptor-fixture"]);
+      releaseOwnedCleanup(descriptor);
+    }
+    expect(retried.error.cleanupIncomplete).toBe(false);
+    expect(retried.error.cleanupResources).toEqual([]);
+    expect(execute).toHaveBeenCalledTimes(1);
+    await service.close();
+  },
+);
+
+it("classifies confirmed command observations as external-service, not controlled-replay", async () => {
+  const service = new CutterBridgeService({
+    listSessions: async () => emptyCutterDiscovery(),
+    execute: async () => ({
+      requestId: "4b18ce4d-bf31-456e-ae31-e8c547b2f9db",
+      output: { sections: "4" },
+      currentFile: "/fixtures/sample.bin",
+      documentGeneration: 7,
+      identityStatus: "partial",
+      cutterVersion: "Cutter fixture version",
+      executionState: "complete",
+      error: null,
+      message: null,
+      outputTruncated: false,
+    }),
+  });
+
+  const result = await service.execute({
+    session_id: "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a",
+    expected_generation: 7,
+    command: "pd 4",
+  });
+  if (!result.ok) throw new Error("Expected confirmed dispatch to succeed");
+
+  expect(result.value).toMatchObject({
+    authority: "external-service",
+    normalized_result: {
+      command: "pd 4",
+      execution_state: "complete",
+    },
+    limitations: expect.arrayContaining([
+      "Document identity is partial: the bridge uses a plugin instance UUID and observed generation; a same-path tab switch or reload may not be distinguishable.",
+    ]),
+  });
+  expect(result.value).not.toHaveProperty("authority", "controlled-replay");
+});
+
 it("retains uncertain command completion as Evidence without encouraging a retry", async () => {
   const service = new CutterBridgeService({
-    listSessions: async () => ({
-      sessions: [],
-      bridge_directory: "/private/bridge",
-      discovery_status: "no_live_bridge_found",
-      bridge_directory_security: "private_verified",
-    }),
+    listSessions: async () => emptyCutterDiscovery(),
     execute: async () => ({
       requestId: "4b18ce4d-bf31-456e-ae31-e8c547b2f9db",
       output: null,
@@ -52,9 +173,18 @@ it("retains uncertain command completion as Evidence without encouraging a retry
           cutter_version: "Cutter fixture version",
         },
         limitations: expect.arrayContaining([
-          "Command completion or its output could not be confirmed; do not retry automatically because the command may have produced partial or persistent effects.",
+          expect.stringMatching(
+            /completion.*could not be confirmed.*not retry.*effects/iu,
+          ),
         ]),
         provider: { version: "Cutter fixture version" },
+        // Cutter reports the path it opened, but REA neither opened nor
+        // hashed that file, so the subject does not claim it (#11417).
+        subject: {
+          identity: { kind: "unknown", reason: "not-observed" },
+          name: null,
+          local_path: null,
+        },
       },
     },
   });
@@ -66,19 +196,13 @@ it("clears a poisoned command only after its exact UI-dispatcher receipt", async
   let receipt: string | undefined;
   let uiPending = true;
   let dispatches = 0;
-  const confirmCommandCompletion = vi.fn(
-    async (_session: string, id: string) =>
-      receipt === id && !uiPending
-        ? { ok: true as const, value: true }
-        : { ok: true as const, value: false },
+  const confirmCommandCompletion = vi.fn(async (_session: string, id: string) =>
+    receipt === id && !uiPending
+      ? { ok: true as const, value: true }
+      : { ok: true as const, value: false },
   );
   const service = new CutterBridgeService({
-    listSessions: async () => ({
-      sessions: [],
-      bridge_directory: "/private/bridge",
-      discovery_status: "no_live_bridge_found",
-      bridge_directory_security: "private_verified",
-    }),
+    listSessions: async () => emptyCutterDiscovery(),
     confirmCommandCompletion,
     execute: async () => {
       dispatches += 1;
@@ -142,11 +266,10 @@ it("recovers canceled command A after B and does not retain poisoned B", async (
   const requestB = "8ca93d11-107d-41ed-8b40-31dd53cd26a6";
   const receipts = new Set<string>();
   let dispatches = 0;
-  const confirmCommandCompletion = vi.fn(
-    async (_session: string, id: string) =>
-      receipts.delete(id)
-        ? { ok: true as const, value: true }
-        : { ok: true as const, value: false },
+  const confirmCommandCompletion = vi.fn(async (_session: string, id: string) =>
+    receipts.delete(id)
+      ? { ok: true as const, value: true }
+      : { ok: true as const, value: false },
   );
   const execute = async () => {
     dispatches += 1;
@@ -206,12 +329,7 @@ it("recovers canceled command A after B and does not retain poisoned B", async (
     };
   };
   const client = {
-    listSessions: async () => ({
-      sessions: [],
-      bridge_directory: "/private/bridge",
-      discovery_status: "no_live_bridge_found" as const,
-      bridge_directory_security: "private_verified" as const,
-    }),
+    listSessions: async () => emptyCutterDiscovery(),
     confirmCommandCompletion,
     execute,
   };
@@ -245,12 +363,7 @@ it("recovers canceled command A after B and does not retain poisoned B", async (
 
 it("rejects malformed Cutter commands and pre-aborted calls", async () => {
   const service = new CutterBridgeService({
-    listSessions: async () => ({
-      sessions: [],
-      bridge_directory: "/private/bridge",
-      discovery_status: "no_live_bridge_found",
-      bridge_directory_security: "private_verified",
-    }),
+    listSessions: async () => emptyCutterDiscovery(),
     execute: async () => {
       throw new Error("must not dispatch");
     },
@@ -273,17 +386,12 @@ it("rejects malformed Cutter commands and pre-aborted calls", async () => {
 });
 
 it.each([
-  [new Error("session generation changed"), "AnalysisInputError"],
+  [new AnalysisInputError("cutter_command"), "AnalysisInputError"],
   [new Error("bridge disconnected"), "AnalysisCapabilityUnavailableError"],
   ["plain failure", "AnalysisCapabilityUnavailableError"],
 ])("maps a Cutter bridge failure to %s", async (failure, tag) => {
   const service = new CutterBridgeService({
-    listSessions: async () => ({
-      sessions: [],
-      bridge_directory: "/private/bridge",
-      discovery_status: "no_live_bridge_found",
-      bridge_directory_security: "private_verified",
-    }),
+    listSessions: async () => emptyCutterDiscovery(),
     execute: async () => {
       throw failure;
     },
@@ -293,41 +401,27 @@ it.each([
   expect(result).toMatchObject({ ok: false, error: { _tag: tag } });
 });
 
-it("preserves cancellation unless the bridge reports an ambiguous completion", async () => {
-  const createService = (message: string, controller: AbortController) =>
-    new CutterBridgeService({
-      listSessions: async () => ({
-        sessions: [],
-        bridge_directory: "/private/bridge",
-        discovery_status: "no_live_bridge_found",
-        bridge_directory_security: "private_verified",
-      }),
+it.each(["transport cancelled", "command may have completed"])(
+  "preserves a port failure through a later unrelated cancellation: %s",
+  async (message) => {
+    const controller = new AbortController();
+    const primary = new Error(message);
+    const service = new CutterBridgeService({
+      listSessions: async () => emptyCutterDiscovery(),
       execute: async () => {
-        controller.abort();
-        throw new Error(message);
+        controller.abort(new Error("later cancellation"));
+        throw primary;
       },
     });
-  const cancelledController = new AbortController();
-
-  const cancelled = await createService(
-    "transport cancelled",
-    cancelledController,
-  ).execute(cutterInput, { signal: cancelledController.signal });
-  expect(cancelled).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisCancelledError" },
-  });
-
-  const uncertainController = new AbortController();
-  const uncertain = await createService(
-    "command may have completed",
-    uncertainController,
-  ).execute(cutterInput, { signal: uncertainController.signal });
-  expect(uncertain).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisCapabilityUnavailableError" },
-  });
-});
+    const result = await service.execute(cutterInput, {
+      signal: controller.signal,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCapabilityUnavailableError", cause: primary },
+    });
+  },
+);
 
 it("shares one cleanup attempt when commands retry the same receipt together", async () => {
   const requestId = "4b18ce4d-bf31-456e-ae31-e8c547b2f9db";
@@ -348,12 +442,7 @@ it("shares one cleanup attempt when commands retry the same receipt together", a
   });
   let dispatches = 0;
   const service = new CutterBridgeService({
-    listSessions: async () => ({
-      sessions: [],
-      bridge_directory: "/private/bridge",
-      discovery_status: "no_live_bridge_found",
-      bridge_directory_security: "private_verified",
-    }),
+    listSessions: async () => emptyCutterDiscovery(),
     confirmCommandCompletion,
     execute: async () => {
       dispatches += 1;
@@ -404,3 +493,175 @@ it("shares one cleanup attempt when commands retry the same receipt together", a
   expect(confirms).toBe(1);
   expect(dispatches).toBe(3);
 });
+
+it.each([
+  { phase: "before", reason: { code: "EACCES" } },
+  {
+    phase: "before",
+    reason: new ProviderCleanupError("caller-owned", ["opaque caller value"], {
+      reason: "caller metadata",
+    }),
+  },
+  {
+    phase: "during",
+    reason: new ProviderCleanupError("caller-owned", ["opaque caller value"], {
+      reason: "caller metadata",
+    }),
+  },
+  {
+    phase: "during",
+    reason: { cleanupIncomplete: true, resource: "caller resource" },
+  },
+])(
+  "models opaque discovery cancellation $phase the port call",
+  async ({ phase, reason }) => {
+    const controller = new AbortController();
+    let calls = 0;
+    const service = new CutterBridgeService({
+      listSessions: async () => {
+        calls += 1;
+        controller.abort(reason);
+        return emptyCutterDiscovery();
+      },
+      execute: async () => {
+        throw new Error("Unexpected command dispatch");
+      },
+    });
+    if (phase === "before") controller.abort(reason);
+    const result = await service.listSessions({ signal: controller.signal });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", cleanupIncomplete: false },
+    });
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error.cause).toBe(reason);
+    expect(calls).toBe(phase === "before" ? 0 : 1);
+  },
+);
+
+it.each(["descriptor-first", "command-first"])(
+  "resolves mixed cleanup only after both owners: %s",
+  async (order) => {
+    const { ProviderCleanupError } =
+      await import("../../../src/domain/providerCleanupError.js");
+    const { AnalysisError } =
+      await import("../../../src/domain/analysisErrorBase.js");
+    const descriptorFailure = new ProviderCleanupError(
+      "cutter",
+      ["descriptor-fixture"],
+      { reason: "controlled descriptor close failure" },
+    );
+    let terminal = false;
+    const releaseDescriptors = async () => {
+      if (descriptorFailure.cleanupIncomplete) throw descriptorFailure;
+    };
+    const close = vi.fn(releaseDescriptors);
+    const service = new CutterBridgeService({
+      listSessions: async () => emptyCutterDiscovery("/fixture"),
+      confirmCommandCompletion: async () => ({ ok: true, value: terminal }),
+      retryDescriptorCleanup: releaseDescriptors,
+      close,
+      execute: async () => ({
+        requestId: "4b18ce4d-bf31-456e-ae31-e8c547b2f9db",
+        output: null,
+        currentFile: null,
+        documentGeneration: 7,
+        identityStatus: "partial",
+        cutterVersion: null,
+        executionState: "unknown",
+        error: "missing-reply",
+        message: "completion remains unknown",
+        outputTruncated: false,
+      }),
+    });
+    const dispatched = await service.execute(cutterInput);
+    if (dispatched.ok) throw new Error("Expected uncertain command");
+    const mixed = await service.close().catch((cause: unknown) => cause);
+    if (!(mixed instanceof AnalysisError))
+      throw new Error("Expected typed mixed cleanup");
+    expect(mixed.cleanupIncomplete).toBe(true);
+    expect(close).not.toHaveBeenCalled();
+    if (order === "descriptor-first") releaseOwnedCleanup(descriptorFailure);
+    else terminal = true;
+    await expect(service.close()).rejects.toBeInstanceOf(AnalysisError);
+    expect(mixed.cleanupIncomplete).toBe(true);
+    releaseOwnedCleanup(descriptorFailure);
+    terminal = true;
+    await service.close();
+    expect(dispatched.error.cleanupIncomplete).toBe(false);
+    expect(mixed.cleanupIncomplete).toBe(false);
+  },
+);
+
+it.each([
+  new Error("generation changed while recording transport diagnostics"),
+  new Error("unavailable or stale is diagnostic text"),
+])(
+  "does not infer a session-selection failure from diagnostic prose: %s",
+  async (cause) => {
+    const service = new CutterBridgeService({
+      listSessions: async () => emptyCutterDiscovery(),
+      execute: async () => {
+        throw cause;
+      },
+    });
+    const result = await service.execute(cutterInput);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCapabilityUnavailableError", cause },
+    });
+  },
+);
+
+it.each([
+  new Error("command may have completed is an opaque abort reason"),
+  new AnalysisInputError("caller-owned"),
+  new ProviderCleanupError("caller-owned", ["caller resource"], {
+    reason: "opaque value",
+  }),
+])(
+  "retains typed cancellation without interpreting its opaque reason: %s",
+  async (reason) => {
+    const controller = new AbortController();
+    const service = new CutterBridgeService({
+      listSessions: async () => emptyCutterDiscovery(),
+      execute: async () => {
+        controller.abort(reason);
+        throw new AnalysisCancelledError("cutter_command", { cause: reason });
+      },
+    });
+    const result = await service.execute(cutterInput, {
+      signal: controller.signal,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", cleanupIncomplete: false },
+    });
+    if (result.ok) throw new Error("Missing cancellation");
+    expect(result.error.cause).toBe(reason);
+  },
+);
+
+it.each([
+  new AnalysisInputError("discovery producer failure"),
+  new ProviderCleanupError("cutter", ["owned descriptor"], {
+    reason: "physical descriptor close failure",
+  }),
+])(
+  "preserves a discovery failure also selected as abort reason: $_tag",
+  async (failure) => {
+    const controller = new AbortController();
+    const service = new CutterBridgeService({
+      listSessions: async () => {
+        controller.abort(failure);
+        throw failure;
+      },
+      execute: async () => {
+        throw new Error("Unexpected command dispatch");
+      },
+    });
+    const result = await service.listSessions({ signal: controller.signal });
+    if (result.ok) throw new Error("Expected discovery failure");
+    expect(result.error).toBe(failure);
+  },
+);

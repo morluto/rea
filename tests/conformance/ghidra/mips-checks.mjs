@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { FIXTURE_TOOLS, fixtureCommand } from "./fixture-toolchain.mjs";
 
 const execute = promisify(execFile);
 const language = (byteOrder) => {
@@ -23,9 +24,76 @@ const SOFT_FLOAT_SYMBOLS = [
   "rea_mips_soft_caller",
 ];
 
+/** Expected ELF header facts per fixture kind; PIC shared objects add pic|cpic. */
+const OBJECT_TYPES = {
+  exec: { type: 2, header: /^EXEC\b/u, flags: 0x70001001 },
+  rel: { type: 1, header: /^REL\b/u, flags: 0x70001001 },
+  dyn: { type: 3, header: /^DYN\b/u, flags: 0x70001007 },
+};
+
+/** Complete indexed ELF32 section types shared by the independent fixture readers. */
+export function parseMipsReadelfSectionTypes(text) {
+  const counts = [
+    ...text.matchAll(/^\s*Number of section headers:\s*(\d+)\s*$/gmu),
+  ];
+  assert.equal(counts.length, 1, "Missing or ambiguous readelf section count");
+  const sectionCount = Number(counts[0][1]);
+  assert.ok(sectionCount > 0, "Fixture must have a section header table");
+  const sections = [...text.matchAll(/^[ \t]*\[[ \t]*(\d+)\][ \t]+(.+)$/gmu)];
+  assert.equal(
+    sections.length,
+    sectionCount,
+    "Incomplete readelf section table",
+  );
+  return sections.map((section, index) => {
+    assert.equal(Number(section[1]), index, "Ambiguous readelf section index");
+    const columns =
+      /^(?:\S+[ \t]+)?(\S+)[ \t]+[\da-f]{8}[ \t]+[\da-f]+[ \t]+[\da-f]+[ \t]+[\da-f]{2}[ \t]+(?:[A-Za-z]+[ \t]+)?\d+[ \t]+\d+[ \t]+\d+[ \t]*$/u.exec(
+        section[2],
+      );
+    assert.ok(columns !== null, "Malformed readelf section header");
+    return columns[1];
+  });
+}
+
+/** Independent wire-format expectation shared by generic and PSP snapshots. */
+export function expectedMipsElfProfile(mips) {
+  const abi = mips.abiFlags;
+  assert.ok(abi != null, "Fixture ABI declarations must be inspected");
+  assert.notEqual(
+    mips.gnuAttributes,
+    undefined,
+    "Fixture GNU attributes must be inspected",
+  );
+  return {
+    elf_class: mips.elfClass,
+    byte_order: mips.byteOrder,
+    type: mips.type,
+    flags: mips.flags,
+    gnu_attributes:
+      mips.gnuAttributes === null
+        ? null
+        : { fp_abi: mips.gnuAttributes.fpAbi, msa: mips.gnuAttributes.msa },
+    abi_flags: {
+      version: abi.version,
+      isa_level: abi.isaLevel,
+      isa_revision: abi.isaRevision,
+      gpr_size: abi.gprSize,
+      cpr1_size: abi.cpr1Size,
+      cpr2_size: abi.cpr2Size,
+      fp_abi: abi.fpAbi,
+      isa_extension: abi.isaExtension,
+      ases: abi.ases,
+      flags1: abi.flags1,
+      flags2: abi.flags2,
+    },
+  };
+}
+
 /**
  * Parse only the documented GNU readelf fields needed by our tiny fixtures.
- * `rel` objects carry their own symbol checks in mips-relocatable-checks.mjs.
+ * `rel` and `dyn` objects carry their own symbol checks in
+ * mips-relocatable-checks.mjs and mips-shared-checks.mjs.
  */
 export function parseMipsReadelf(
   text,
@@ -34,7 +102,8 @@ export function parseMipsReadelf(
   objectType = "exec",
 ) {
   assert.ok(floatAbi === "hard" || floatAbi === "soft");
-  assert.ok(objectType === "exec" || objectType === "rel");
+  const kind = OBJECT_TYPES[objectType];
+  assert.ok(kind, `Unknown fixture object type ${objectType}`);
   language(byteOrder);
   const field = (expression, label) => {
     const matches = [...text.matchAll(expression)];
@@ -46,13 +115,14 @@ export function parseMipsReadelf(
     field(/^\s*Data:.*?,\s*(little|big) endian\s*$/gmu, "byte order"),
     byteOrder,
   );
-  assert.match(
-    field(/^\s*Type:\s*(.+)$/gmu, "type"),
-    objectType === "rel" ? /^REL\b/u : /^EXEC\b/u,
-  );
+  assert.match(field(/^\s*Type:\s*(.+)$/gmu, "type"), kind.header);
   assert.match(field(/^\s*Machine:\s*(.+)$/gmu, "machine"), /^MIPS\b/u);
+  assert.ok(
+    !parseMipsReadelfSectionTypes(text).includes("GNU_ATTRIBUTES"),
+    "Fixture unexpectedly declares GNU attributes",
+  );
   const flags = Number(field(/^\s*Flags:\s*(0x[\da-f]+),.*$/gmu, "flags"));
-  assert.equal(flags, 0x70001001, "Fixture ELF flags differ from build intent");
+  assert.equal(flags, kind.flags, "Fixture ELF flags differ from build intent");
   assert.equal(field(/^ISA:\s*(.+)$/gmu, "ISA"), "MIPS32r2");
   const registerSize = (name) => {
     const bits = Number(
@@ -97,7 +167,7 @@ export function parseMipsReadelf(
     ),
   };
   const symbols = {};
-  for (const name of objectType === "rel"
+  for (const name of objectType !== "exec"
     ? []
     : [
         "rea_mips_entry",
@@ -120,9 +190,10 @@ export function parseMipsReadelf(
     mips: {
       elfClass: 32,
       byteOrder,
-      type: objectType === "rel" ? 1 : 2,
+      type: kind.type,
       flags,
       abiFlags,
+      gnuAttributes: null,
     },
     symbols,
   };
@@ -130,7 +201,7 @@ export function parseMipsReadelf(
 
 /** Independent reader is a bounded test prerequisite, never an REA provider. */
 export async function inspectMipsReadelf(path, byteOrder, floatAbi = "hard") {
-  const command = process.env.REA_MIPS_READELF ?? "readelf";
+  const command = fixtureCommand(FIXTURE_TOOLS.mipsReadelf);
   const options = {
     env: { ...process.env, LC_ALL: "C" },
     timeout: 10000,
@@ -144,7 +215,7 @@ export async function inspectMipsReadelf(path, byteOrder, floatAbi = "hard") {
   );
   const result = await execute(
     command,
-    ["-h", "-A", "-s", "-W", path],
+    ["-h", "-A", "-S", "-s", "-W", path],
     options,
   );
   assert.equal(
@@ -162,7 +233,7 @@ export async function inspectMipsReadelf(path, byteOrder, floatAbi = "hard") {
 
 /** Independent GNU readelf interpretation for the recordless legacy fixture. */
 export async function inspectLegacyMipsReadelf(path, byteOrder) {
-  const command = process.env.REA_MIPS_READELF ?? "readelf";
+  const command = fixtureCommand(FIXTURE_TOOLS.mipsReadelf);
   const options = {
     env: { ...process.env, LC_ALL: "C" },
     timeout: 10000,
@@ -295,6 +366,53 @@ export function assertMipsProbe(move, branch, byteOrder, address) {
 /** Four bytes must encode the known source-owned global in the declared order. */
 export function assertMipsGlobal(bytes, byteOrder) {
   assert.equal(bytes, wordHex(7, byteOrder));
+}
+
+/**
+ * Cut a complete ELF32 MIPS image one byte before its section header table,
+ * keeping every program header and payload. The section table is then the
+ * only out-of-file declaration, so its declared range names the refusal.
+ */
+export function carveMipsElfBeforeSectionTable(bytes, byteOrder) {
+  language(byteOrder);
+  const little = byteOrder === "little";
+  const read16 = (offset) =>
+    little ? bytes.readUInt16LE(offset) : bytes.readUInt16BE(offset);
+  const read32 = (offset) =>
+    little ? bytes.readUInt32LE(offset) : bytes.readUInt32BE(offset);
+  const programOffset = read32(28);
+  const sectionOffset = read32(32);
+  const programCount = read16(44);
+  const sectionCount = read16(48);
+  assert.equal(read16(42), 32);
+  assert.equal(read16(46), 40);
+  // Extended numbering would move the counts into uncaptured section zero.
+  assert.ok(sectionCount !== 0 && programCount !== 0xffff);
+  assert.notEqual(read16(50), 0xffff);
+  const cut = sectionOffset - 1;
+  assert.ok(cut >= programOffset + programCount * 32);
+  for (let i = 0; i < programCount; i += 1) {
+    const offset = programOffset + i * 32;
+    assert.ok(read32(offset + 4) + read32(offset + 16) <= cut);
+  }
+  return {
+    bytes: bytes.subarray(0, cut),
+    sectionOffset,
+    reason: `truncated ELF section header table: declared file range ${sectionOffset}..${sectionOffset + sectionCount * 40} exceeds the ${cut}-byte file`,
+  };
+}
+
+/**
+ * Opening the carved copy fails before provider selection, naming the declared
+ * range and the captured size; it is not admitted as a smaller program.
+ */
+export function assertMipsCarvedTargetRefusal(error, path, reason) {
+  assert.equal(error.code, "target_unavailable");
+  assert.deepEqual(error.details, {
+    path,
+    reason,
+    constraint: "file_format_rejected",
+  });
 }
 
 /**

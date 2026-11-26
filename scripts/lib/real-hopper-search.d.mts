@@ -1,3 +1,7 @@
+import type { z } from "zod";
+
+import type { analysisStringSchema } from "../../src/domain/native/nativeString.js";
+
 type VerifierCall = (
   name: string,
   arguments_?: Record<string, unknown>,
@@ -44,6 +48,3 @@ export function verifyHopperStringObjects(
   }[];
   readonly displayEscapesExcludedFromMatching: true;
 }>;
-import type { z } from "zod";
-
-import type { analysisStringSchema } from "../../src/domain/hopperValues.js";

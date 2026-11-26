@@ -1,7 +1,29 @@
 import { describe, expect, it } from "vitest";
+import { selectGhidraComImport } from "./GhidraComImport.js";
 import { attestGhidraDosComLoadImage } from "./GhidraLoadImageValues.js";
-import { fixtureDosComLoadImage } from "./GhidraLoadImage.fixture.js";
-import type { NativeLoadImageObservation } from "../domain/native/nativeLoadImage.js";
+import {
+  compareDosFixture,
+  fixtureDosComLoadImage,
+  fixtureDosComLoaderLoadImage,
+  fixtureDosLoadImage,
+} from "./GhidraLoadImage.fixture.js";
+import {
+  nativeLoadImageObservationSchema,
+  nativeLoadImageSchema,
+  type NativeLoadImageObservation,
+} from "../domain/native/nativeLoadImage.js";
+
+const attestComFixture = ({
+  bytes,
+  sha256,
+  observation,
+}: ReturnType<typeof fixtureDosComLoadImage>) =>
+  attestGhidraDosComLoadImage(
+    bytes,
+    sha256,
+    observation,
+    selectGhidraComImport("fixture.com", bytes),
+  );
 
 const mutations: ReadonlyArray<
   readonly [string, (o: NativeLoadImageObservation) => void]
@@ -76,6 +98,7 @@ const mutations: ReadonlyArray<
         offset: 0x100,
         status: "APPLIED",
         type: 0,
+        symbol: null,
         values: [],
         original_bytes_hex: null,
         memory_bytes_hex: null,
@@ -86,11 +109,7 @@ const mutations: ReadonlyArray<
 describe("COM independent load-image checks", () => {
   it("verifies all bytes and the imposed entry context without a PSP claim", () => {
     const f = fixtureDosComLoadImage();
-    const result = attestGhidraDosComLoadImage(
-      f.bytes,
-      f.sha256,
-      f.observation,
-    );
+    const result = attestComFixture(f);
     expect(result).toMatchObject({
       ok: true,
       value: {
@@ -99,6 +118,9 @@ describe("COM independent load-image checks", () => {
         header_bytes: 0,
         module_bytes: 4,
         overlay_bytes: 0,
+        loader: "BinaryLoader",
+        load_address: "1000:0100",
+        loader_fallback: { loader: "ComLoader", reason: "recognition_score" },
         entry: {
           relative_segment: 0,
           offset: 0x100,
@@ -107,23 +129,173 @@ describe("COM independent load-image checks", () => {
       },
     });
   });
+  it("verifies a ComLoader image at 0000:0100 including the zero PSP placeholder", () => {
+    const f = fixtureDosComLoaderLoadImage();
+    const result = attestComFixture(f);
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        status: "verified",
+        format: "dos-com",
+        loader: "ComLoader",
+        load_address: "0000:0100",
+        load_segment: 0,
+        header_bytes: 0,
+        module_bytes: f.bytes.length,
+        entry: {
+          relative_segment: 0,
+          offset: 0x100,
+          linear_address: "0x100",
+        },
+      },
+    });
+    expect(result.ok && result.value).not.toHaveProperty("loader_fallback");
+  });
+  it("reports mismatch coordinates from the measured import", () => {
+    const f = fixtureDosComLoadImage();
+    f.observation.executable_format = "Old-style DOS Executable (COM)";
+    if (f.observation.mappings[0]) f.observation.mappings[0].start = "0x100";
+    const result = attestComFixture(f);
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        status: "mismatch",
+        loader: "ComLoader",
+        load_address: "0000:0100",
+        load_segment: 0,
+        entry: { linear_address: "0x100" },
+      },
+    });
+  });
+  it("omits load segment and entry when the measured import is not a known COM layout", () => {
+    const f = fixtureDosComLoadImage();
+    if (f.observation.mappings[0]) f.observation.mappings[0].start = "0x200";
+    const result = attestComFixture(f);
+    if (!result.ok || !("checks" in result.value))
+      throw new Error("Expected a retained mismatch");
+    expect(result.value.status).toBe("mismatch");
+    expect(result.value).toMatchObject({ loader: "BinaryLoader" });
+    expect(result.value).not.toHaveProperty("load_address");
+    expect(result.value).not.toHaveProperty("load_segment");
+    expect(result.value).not.toHaveProperty("entry");
+    expect(
+      result.value.checks.find((item) => item.name === "load_address"),
+    ).toMatchObject({
+      matched: false,
+      expected: "1000:0100",
+      observed: null,
+    });
+  });
   it.each(mutations)("retains mismatch evidence for %s", (_name, damage) => {
     const f = fixtureDosComLoadImage();
     damage(f.observation);
-    const result = attestGhidraDosComLoadImage(
-      f.bytes,
-      f.sha256,
-      f.observation,
-    );
+    const result = attestComFixture(f);
     expect(result).toMatchObject({
       ok: true,
       value: { status: "mismatch", observations: f.observation },
     });
   });
+  it("refuses an observation without measured permissions or relocation symbols", () => {
+    const f = fixtureDosComLoadImage();
+    const { readable: _r, ...unmeasured } = f.observation.mappings[0]!;
+    const withoutPermissions = nativeLoadImageObservationSchema.safeParse({
+      ...f.observation,
+      mappings: [unmeasured, ...f.observation.mappings.slice(1)],
+    });
+    expect(withoutPermissions.success).toBe(false);
+    expect(withoutPermissions.error?.issues[0]?.path).toEqual([
+      "mappings",
+      0,
+      "readable",
+    ]);
+    const withoutSymbol = nativeLoadImageObservationSchema.safeParse({
+      ...f.observation,
+      relocations: [
+        {
+          address: "0x10100",
+          segment: 0x1000,
+          offset: 0x100,
+          status: "APPLIED",
+          type: 0,
+          values: [],
+          original_bytes_hex: null,
+          memory_bytes_hex: null,
+        },
+      ],
+    });
+    expect(withoutSymbol.error?.issues[0]?.path).toEqual([
+      "relocations",
+      0,
+      "symbol",
+    ]);
+  });
+
   it("rejects stale snapshot identity", () => {
     const f = fixtureDosComLoadImage();
+    expect(attestComFixture({ ...f, sha256: "f".repeat(64) }).ok).toBe(false);
+  });
+});
+
+describe("COM load-image field contracts", () => {
+  it("keeps a measured load address when the executable format is unknown", () => {
+    const f = fixtureDosComLoadImage();
+    f.observation.executable_format = "not-a-loader";
+    const result = attestComFixture(f);
+    if (!result.ok || !("checks" in result.value))
+      throw new Error("Expected a retained mismatch");
+    expect(result.value).toMatchObject({
+      status: "mismatch",
+      load_address: "1000:0100",
+    });
+    expect(result.value).not.toHaveProperty("loader");
+    expect(result.value).not.toHaveProperty("load_segment");
+    expect(result.value).not.toHaveProperty("entry");
+  });
+  it("rejects a DOS MZ result that omits its load segment or entry", () => {
+    const f = fixtureDosLoadImage();
+    const attested = compareDosFixture(f.bytes, f.sha256, f.observation);
+    if (
+      !attested.ok ||
+      attested.value.status === "unsupported" ||
+      attested.value.format !== "dos-mz"
+    ) {
+      throw new Error(attested.ok ? "expected DOS MZ" : attested.error);
+    }
+    expect(nativeLoadImageSchema.safeParse(attested.value).success).toBe(true);
+    const { load_segment: _segment, ...withoutSegment } = attested.value;
+    expect(nativeLoadImageSchema.safeParse(withoutSegment).success).toBe(false);
+    const { entry: _entry, ...withoutEntry } = attested.value;
+    expect(nativeLoadImageSchema.safeParse(withoutEntry).success).toBe(false);
+  });
+  it("rejects a verified COM result that omits its loader or mixes layouts", () => {
+    const recognized = attestComFixture(fixtureDosComLoaderLoadImage());
+    if (
+      !recognized.ok ||
+      recognized.value.status !== "verified" ||
+      recognized.value.format !== "dos-com" ||
+      recognized.value.loader !== "ComLoader"
+    )
+      throw new Error("expected a verified ComLoader image");
+    expect(nativeLoadImageSchema.safeParse(recognized.value).success).toBe(
+      true,
+    );
+    const { loader: _loader, ...withoutLoader } = recognized.value;
+    expect(nativeLoadImageSchema.safeParse(withoutLoader).success).toBe(false);
     expect(
-      attestGhidraDosComLoadImage(f.bytes, "f".repeat(64), f.observation).ok,
+      nativeLoadImageSchema.safeParse({
+        ...recognized.value,
+        load_address: "1000:0100",
+      }).success,
     ).toBe(false);
+    const fallback = attestComFixture(fixtureDosComLoadImage());
+    if (
+      !fallback.ok ||
+      fallback.value.status !== "verified" ||
+      fallback.value.format !== "dos-com" ||
+      fallback.value.loader !== "BinaryLoader"
+    )
+      throw new Error("expected a verified fallback image");
+    const { loader_fallback: _fallback, ...withoutReason } = fallback.value;
+    expect(nativeLoadImageSchema.safeParse(withoutReason).success).toBe(false);
   });
 });

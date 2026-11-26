@@ -1,4 +1,3 @@
-import { createJavaScriptSemanticGraphUnknown } from "../../domain/javascript/javascriptSemanticGraph.js";
 import type { JavaScriptSemanticGraphNode } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 import type {
   JavaScriptSemanticBoundaryOperation,
@@ -10,8 +9,17 @@ import {
   addSemanticGraphRelation,
   addSemanticGraphUnknown,
 } from "./JavaScriptSemanticGraphConstruction.js";
-import { unknownSemanticEvidence } from "./JavaScriptSemanticGraphEvidence.js";
-import type { SemanticFlowProjectionContext } from "./JavaScriptSemanticGraphFlowProjection.js";
+import {
+  inferredSemanticEvidenceAt,
+  builtinSemanticNode,
+  builtinSemanticRelation,
+  unknownSemanticEvidence,
+} from "./JavaScriptSemanticGraphEvidence.js";
+import {
+  projectSemanticResultBindings,
+  type SemanticFlowProjectionContext,
+} from "./JavaScriptSemanticGraphFlowProjection.js";
+import { semanticResourceLimitReason } from "../../domain/javascript/javascriptSemanticResourceLimits.js";
 
 /** Project environment, argv, file, default, and precedence candidates. */
 export const projectSemanticConfiguration = (
@@ -35,16 +43,22 @@ export const projectSemanticConfiguration = (
       source: config,
       target,
       relation: configurationRelation(operation),
-      resolution:
+      ...builtinSemanticRelation(
+        context.file,
+        operation,
         operation.resolution === "complete" ? "resolved" : "candidate",
+      ),
     });
     if (operation.kind === "default" && operation.sourceConfigId !== null)
       addSemanticGraphRelation(context.state, {
         source: configNodes.get(operation.sourceConfigId),
         target: config,
         relation: "overrides",
-        resolution:
+        ...builtinSemanticRelation(
+          context.file,
+          operation,
           operation.resolution === "complete" ? "resolved" : "candidate",
+        ),
       });
     if (operation.resolution !== "complete")
       addDataUnknown({
@@ -56,7 +70,17 @@ export const projectSemanticConfiguration = (
           ...(operation.kind === "default" ? (["overrides"] as const) : []),
         ],
         location: operation.location,
-        detail: `Static ${operation.kind} configuration identity is partial.`,
+        ...(operation.valueResourceLimit === undefined
+          ? {
+              detail:
+                operation.kind === "default"
+                  ? "Static default configuration value is partial."
+                  : `Static ${operation.kind} configuration identity is partial.`,
+            }
+          : {
+              reason: "resource-limit",
+              detail: semanticResourceLimitReason(operation.valueResourceLimit),
+            }),
         candidateNodeIds: [],
       });
   }
@@ -76,11 +100,14 @@ const addConfigurationNode = (
         ? null
         : (context.callableNodes.get(operation.ownerCallableId)?.node_id ??
           null),
-    properties: {
+    ...builtinSemanticNode(context.file, operation, {
       key: operation.key,
       source_kind: operation.kind,
       value: operation.value,
-    },
+      ...(operation.valueResourceLimit === undefined
+        ? {}
+        : { value_resource_limit: operation.valueResourceLimit }),
+    }),
   });
 
 const configurationRelation = (
@@ -109,7 +136,7 @@ export const projectSemanticRequests = (
     if (request === undefined) continue;
     if (operation.kind === "request")
       projectRequestConstruction(context, operation, request);
-    else projectResponseConsumer(context, operation, request);
+    else projectResponseConsumer(context, operation, request, requestNodes);
     if (operation.resolution !== "complete")
       addDataUnknown({
         context,
@@ -147,11 +174,11 @@ const addRequestNode = (
         ? null
         : (context.callableNodes.get(operation.ownerCallableId)?.node_id ??
           null),
-    properties: {
+    ...builtinSemanticNode(context.file, operation, {
       endpoint: operation.endpoint,
       method: operation.method,
       operation_kind: operation.kind,
-    },
+    }),
   });
 
 const projectRequestConstruction = (
@@ -160,24 +187,23 @@ const projectRequestConstruction = (
   request: JavaScriptSemanticGraphNode,
 ): void => {
   const callSite = context.callSiteAt(operation.location);
+  const authority = builtinSemanticRelation(
+    context.file,
+    operation,
+    operation.resolution === "complete" ? "resolved" : "candidate",
+  );
   addSemanticGraphRelation(context.state, {
     source: callSite,
     target: request,
     relation: "constructs-request",
-    resolution: operation.resolution === "complete" ? "resolved" : "candidate",
+    ...authority,
   });
-  for (const projected of operation.projectedResultBindings)
-    addSemanticGraphRelation(context.state, {
-      source: request,
-      target: context.bindingNodes.get(projected.bindingId),
-      relation: "destructures",
-      resolution:
-        projected.resolution === "complete" ? "resolved" : "candidate",
-      properties: {
-        projection_path: [...projected.projectionPath],
-        projection_resolution: projected.resolution,
-      },
-    });
+  projectSemanticResultBindings(
+    context,
+    request,
+    operation.projectedResultBindings,
+    authority.evidence,
+  );
   for (const field of operation.fields)
     addSemanticGraphRelation(context.state, {
       source:
@@ -186,7 +212,11 @@ const projectRequestConstruction = (
           : context.bindingNodes.get(field.sourceBindingId),
       target: request,
       relation: "supplies-request-field",
-      resolution: field.sourceBindingId === null ? "candidate" : "resolved",
+      ...builtinSemanticRelation(
+        context.file,
+        operation,
+        field.sourceBindingId === null ? "candidate" : "resolved",
+      ),
       properties: { field: field.name },
     });
 };
@@ -195,12 +225,31 @@ const projectResponseConsumer = (
   context: SemanticFlowProjectionContext,
   operation: JavaScriptSemanticRequestOperation,
   response: JavaScriptSemanticGraphNode,
+  requestNodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>,
 ): void => {
+  const authority = builtinSemanticRelation(
+    context.file,
+    operation,
+    operation.resolution === "complete" ? "resolved" : "candidate",
+  );
+  const evidence =
+    authority.evidence ??
+    inferredSemanticEvidenceAt(context.file, operation.location);
+  for (const requestId of operation.linkedRequestIds)
+    addSemanticGraphRelation(context.state, {
+      source: requestNodes.get(requestId),
+      target: response,
+      relation: "consumed-by",
+      ...authority,
+      evidence,
+      properties: { method: operation.method },
+    });
   addSemanticGraphRelation(context.state, {
     source: response,
     target: context.callSiteAt(operation.location),
     relation: "consumed-by",
-    resolution: operation.resolution === "complete" ? "resolved" : "candidate",
+    ...authority,
+    evidence,
     properties: { method: operation.method },
   });
 };
@@ -228,6 +277,16 @@ export const projectSemanticBoundaries = (
       resolution:
         operation.resolution === "complete" ? "resolved" : "candidate",
     });
+    // The producer only supplies a scalar result binding when this call is
+    // the assigned value itself, rather than an operand of another expression.
+    if (operation.resultBindingId !== null)
+      addSemanticGraphRelation(context.state, {
+        source: boundary,
+        target: context.bindingNodes.get(operation.resultBindingId),
+        relation: "defines",
+        resolution:
+          operation.resolution === "complete" ? "resolved" : "candidate",
+      });
     if (operation.resolution !== "complete")
       addDataUnknown({
         context,
@@ -263,6 +322,7 @@ const addBoundaryNode = (
           null),
     properties: {
       boundary_kind: operation.kind,
+      field: operation.method,
       method: operation.method,
     },
   });
@@ -278,6 +338,7 @@ const bindingOrOwner = (
     : (context.callableNodes.get(callableId) ?? context.moduleNode));
 
 interface DataUnknownInput {
+  readonly reason?: "ambiguous-target" | "resource-limit";
   readonly context: SemanticFlowProjectionContext;
   readonly node: JavaScriptSemanticGraphNode;
   readonly family: "boundary" | "configuration" | "request";
@@ -309,19 +370,13 @@ const addDataUnknown = (input: DataUnknownInput): void => {
     detail,
     candidateNodeIds,
   } = input;
-  addSemanticGraphUnknown(
-    context.state,
-    createJavaScriptSemanticGraphUnknown(
-      {
-        node_id: node.node_id,
-        family,
-        relation_kinds: relationKinds,
-        reason: "ambiguous-target",
-        detail,
-        candidate_node_ids: candidateNodeIds,
-        evidence: unknownSemanticEvidence(context.file, location),
-      },
-      context.state.evidenceContexts,
-    ),
-  );
+  addSemanticGraphUnknown(context.state, {
+    node_id: node.node_id,
+    family,
+    relation_kinds: relationKinds,
+    reason: input.reason ?? "ambiguous-target",
+    detail,
+    candidate_node_ids: candidateNodeIds,
+    evidence: unknownSemanticEvidence(context.file, location),
+  });
 };

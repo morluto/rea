@@ -1,18 +1,25 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { fileURLToPath } from "node:url";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { CATALOG_IDENTITY } from "../../../src/catalogIdentity.js";
+import { DEFAULT_CATALOG_IDENTITY } from "../../../src/contracts/catalog/catalogIdentity.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import {
   evidenceResultOf,
   expandToolAvailability,
-  toolAvailabilityInventory,
+  toolAvailabilitySummaryInventory,
 } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+// Compile SDK output validators for the tools a test calls, not the whole catalog.
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const mainPath = fileURLToPath(
   new URL("../../../dist/main.js", import.meta.url),
@@ -32,13 +39,13 @@ const expectAvailableToolInventory = async (
     throw new Error("The compiled catalog omitted binary_session");
   const status = await client.callTool(
     { name: "binary_session", arguments: {} },
-    { toolDefinition: binarySession },
+    { toolDefinition: withCanonicalOutputSchema(binarySession) },
   );
   expect(status.isError).not.toBe(true);
   const inventory = z
     .object({
       result: z.object({
-        tool_availability: toolAvailabilityInventory,
+        tool_availability: toolAvailabilitySummaryInventory,
       }),
     })
     .parse(status.structuredContent).result.tool_availability;
@@ -50,7 +57,7 @@ const expectAvailableToolInventory = async (
   expect(
     availability.length,
     "compiled tool inventory is stale; run npm run build:cached",
-  ).toBe(CATALOG_IDENTITY.counts.mcp_tools);
+  ).toBe(DEFAULT_CATALOG_IDENTITY.counts.mcp_tools);
   expect(new Set(listed.tools.map(({ name }) => name))).toEqual(
     new Set(TOOL_CONTRACTS.map(({ name }) => name)),
   );
@@ -69,16 +76,21 @@ const completeStderrRecords = (stderr: string): unknown[] =>
     .filter((line) => line.length > 0)
     .map((line): unknown => JSON.parse(line));
 
-const callCurrentDocument = async (target?: {
-  readonly path: string;
-  readonly kind?: "database";
-}) => {
+const callCurrentDocument = async (
+  target?: {
+    readonly path: string;
+    readonly kind?: "database";
+  },
+  inspectSession?: (client: Client) => Promise<void>,
+) => {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [mainPath],
     cwd: process.cwd(),
     env: {
       PATH: process.env.PATH ?? "",
+      // The fixture exercises Hopper even when other providers are installed.
+      REA_ANALYSIS_PROVIDER: "hopper",
       HOPPER_LAUNCHER_PATH: process.execPath,
       ...(target === undefined
         ? {}
@@ -96,7 +108,10 @@ const callCurrentDocument = async (target?: {
   transport.stderr?.on("data", (chunk: Buffer | string) => {
     stderr += chunk.toString();
   });
-  const client = new Client({ name: "runtime-smoke", version: "1.0.0" });
+  const client = new Client(
+    { name: "runtime-smoke", version: "1.0.0" },
+    { jsonSchemaValidator: schemaValidation },
+  );
 
   let result: Awaited<ReturnType<Client["callTool"]>>;
   try {
@@ -105,6 +120,7 @@ const callCurrentDocument = async (target?: {
       name: "current_document",
       arguments: {},
     });
+    await inspectSession?.(client);
   } finally {
     await client.close();
     await transport.close();
@@ -138,7 +154,7 @@ describe("production stdio runtime", () => {
     );
     expect(stderr).not.toContain("HOPPER_LOADER_ARGS_JSON");
     expect(stderr).not.toContain(fixturePath);
-  }, 15_000);
+  });
 
   it.runIf(process.platform === "darwin")(
     "returns the selected document on macOS through MCP and structured logs",
@@ -168,7 +184,6 @@ describe("production stdio runtime", () => {
       expect(stderr).not.toContain("HOPPER_LOADER_ARGS_JSON");
       expect(stderr).not.toContain(fixturePath);
     },
-    15_000,
   );
 
   // Use the suite's bounded acceptance deadline, including its coverage allowance.
@@ -188,7 +203,10 @@ describe("production stdio runtime", () => {
     transport.stderr?.on("data", (chunk: Buffer | string) => {
       stderr += chunk.toString();
     });
-    const client = new Client({ name: "catalog-runtime", version: "1.0.0" });
+    const client = new Client(
+      { name: "catalog-runtime", version: "1.0.0" },
+      { jsonSchemaValidator: schemaValidation },
+    );
 
     try {
       await client.connect(transport);
@@ -211,7 +229,7 @@ describe("production stdio runtime", () => {
         throw new Error("The compiled catalog omitted close_binary");
       const closed = await client.callTool(
         { name: "close_binary", arguments: {} },
-        { toolDefinition: closeBinary },
+        { toolDefinition: withCanonicalOutputSchema(closeBinary) },
       );
       expect(closed.isError).not.toBe(true);
     } finally {
@@ -240,18 +258,62 @@ describe("production stdio runtime", () => {
     );
     expect(fatal).toEqual([]);
   });
+});
 
+describe("production stdio saved-database admission", () => {
   it.runIf(process.platform === "darwin")(
-    "serves a database-kind initial target without a fatal record on macOS",
+    "refuses database analysis on macOS while keeping the session usable without a fatal record",
     async () => {
-      const { result, records } = await callCurrentDocument({
-        path: fileURLToPath(import.meta.url),
-        kind: "database",
+      const path = fileURLToPath(import.meta.url);
+      const { result, records } = await callCurrentDocument(
+        { path, kind: "database" },
+        async (client) => {
+          const status = await expectAvailableToolInventory(
+            client,
+            await client.listTools(),
+          );
+          expect(status.structuredContent).toMatchObject({
+            result: {
+              open: true,
+              path,
+              kind: "database",
+              format: "analysis-database",
+              analysis_provider_binding: null,
+            },
+          });
+        },
+      );
+      expect(parseMcpToolError(result)).toMatchObject({
+        error: {
+          code: "capability_unavailable",
+          category: "unsupported_provider",
+          retryable: false,
+          details: {
+            operation: "current_document",
+            selection_reason: "target_unsupported",
+            rejections: expect.arrayContaining([
+              expect.objectContaining({
+                provider_id: "hopper",
+                code: "target_kind_unsupported",
+                reason: expect.stringContaining(
+                  "cannot start REA's analysis bridge",
+                ),
+                diagnostics: {
+                  target_kind: "database",
+                  target_format: "analysis-database",
+                  architecture: null,
+                },
+              }),
+            ]),
+          },
+        },
       });
-      expect(result.isError).not.toBe(true);
-      evidenceResultOf(z.literal("fixture")).parse(result.structuredContent);
       expect(records).toContainEqual(
-        expect.objectContaining({ tool: "current_document", status: "ok" }),
+        expect.objectContaining({
+          tool: "current_document",
+          status: "error",
+          level: 40,
+        }),
       );
       expect(
         records.some(
@@ -264,6 +326,5 @@ describe("production stdio runtime", () => {
         ),
       ).toBe(false);
     },
-    15_000,
   );
 });

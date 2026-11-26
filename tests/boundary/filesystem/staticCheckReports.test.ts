@@ -1,10 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join, sep } from "node:path";
+import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { delimiter, dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { z } from "zod";
 
+import { writeRepositoryOxlintConfiguration } from "../../fixtures/oxlintConfiguration.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const script = fileURLToPath(
@@ -26,12 +27,20 @@ const fixture = async () => {
   );
   return root;
 };
-const invoke = (root: string, mode: string, ...arguments_: string[]) =>
+const invokeWithEnvironment = (
+  root: string,
+  mode: string,
+  environment: NodeJS.ProcessEnv,
+  ...arguments_: string[]
+) =>
   spawnSync(process.execPath, [script, mode, ...arguments_], {
     cwd: root,
     encoding: "utf8",
     timeout: 15_000,
+    env: environment,
   });
+const invoke = (root: string, mode: string, ...arguments_: string[]) =>
+  invokeWithEnvironment(root, mode, process.env, ...arguments_);
 const lintDiagnostics = async (root: string) =>
   z
     .object({
@@ -52,7 +61,11 @@ const lintDiagnostics = async (root: string) =>
 it("covers the lint inventory and root tool configs in resolved cache inputs", () => {
   const scan = spawnSync(
     process.execPath,
-    [join(repository, "node_modules/oxlint/bin/oxlint"), "--debug=files"],
+    [
+      join(repository, "node_modules/oxlint/bin/oxlint"),
+      "--threads=1",
+      "--debug=files",
+    ],
     { cwd: repository, encoding: "utf8", timeout: 15_000 },
   );
   expect(scan.error).toBeUndefined();
@@ -68,7 +81,6 @@ it("covers the lint inventory and root tool configs in resolved cache inputs", (
       join(repository, "node_modules/turbo/bin/turbo"),
       "run",
       "lint",
-      "lint:built",
       "knip",
       "--dry=json",
     ],
@@ -91,10 +103,8 @@ it("covers the lint inventory and root tool configs in resolved cache inputs", (
       ),
     })
     .parse(JSON.parse(dry.stdout));
-  const lintTasks = tasks.filter(({ task }) =>
-    ["lint", "lint:built"].includes(task),
-  );
-  expect(lintTasks).toHaveLength(2);
+  const lintTasks = tasks.filter(({ task }) => task === "lint");
+  expect(lintTasks).toHaveLength(1);
   for (const task of lintTasks)
     expect(
       files.filter((file) => !Object.hasOwn(task.inputs, file)),
@@ -147,10 +157,131 @@ it("keeps lint errors failing and visible alongside the retained warnings", asyn
   );
 });
 
+it("preserves cross-file typed errors and explicit worker choices", async () => {
+  const root = await fixture();
+  await Promise.all([
+    writeFile(join(root, "package.json"), '{"type":"module"}'),
+    writeFile(
+      join(root, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          module: "NodeNext",
+          target: "ES2023",
+          lib: ["ES2023"],
+          strict: true,
+          types: [],
+        },
+        include: ["src/**/*.ts"],
+      }),
+    ),
+    writeFile(
+      join(root, ".oxlintrc.json"),
+      JSON.stringify({
+        plugins: ["typescript"],
+        rules: {
+          "no-unused-vars": "warn",
+          "typescript/no-floating-promises": "error",
+          "typescript/switch-exhaustiveness-check": "error",
+        },
+      }),
+    ),
+    writeFile(
+      join(root, "src/types.ts"),
+      'export type State = "ready" | "failed";\n' +
+        "export function pending(): Promise<void> { return Promise.resolve(); }\n",
+    ),
+  ]);
+  const caller = join(root, "src/caller.ts");
+  const source =
+    'import { pending, type State } from "./types.js";\n' +
+    "const forgotten = 1;\n";
+  await writeFile(
+    caller,
+    source +
+      "pending();\n" +
+      'export function inspect(state: State) { switch (state) { case "ready": return 1; } }\n',
+  );
+  const diagnostics: string[][] = [];
+  const typedEnvironment = {
+    ...process.env,
+    OXLINT_TSGOLINT_PATH: undefined,
+    PATH: [join(repository, "node_modules", ".bin"), process.env.PATH]
+      .filter((path) => path !== undefined)
+      .join(delimiter),
+  };
+  for (const workers of [undefined, "2"]) {
+    const result = invokeWithEnvironment(root, "typed-lint", {
+      ...typedEnvironment,
+      GOMAXPROCS: workers,
+      OXC_LOG: "debug",
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain(
+      `Starting linter with ${workers ?? "1"} workers`,
+    );
+    expect(result.stdout).toContain("2 errors, 1 warnings");
+    const report = z
+      .object({
+        number_of_files: z.number(),
+        diagnostics: z.array(
+          z.object({ code: z.string(), severity: z.string() }).passthrough(),
+        ),
+      })
+      .parse(
+        JSON.parse(
+          await readFile(
+            join(root, ".cache/static-checks/typed-oxlint.json"),
+            "utf8",
+          ),
+        ),
+      );
+    expect(report.number_of_files).toBe(2);
+    expect(
+      report.diagnostics
+        .filter(({ severity }) => severity === "error")
+        .map(({ code }) => code)
+        .sort(),
+    ).toEqual([
+      "typescript(no-floating-promises)",
+      "typescript(switch-exhaustiveness-check)",
+    ]);
+    diagnostics.push(
+      report.diagnostics.map((item) => JSON.stringify(item)).sort(),
+    );
+  }
+  expect(diagnostics[1]).toEqual(diagnostics[0]);
+  await writeFile(
+    caller,
+    source +
+      "await pending();\n" +
+      'export function inspect(state: State) { switch (state) { case "ready": return 1; case "failed": return 0; } }\n',
+  );
+  const corrected = invokeWithEnvironment(root, "typed-lint", {
+    ...typedEnvironment,
+    GOMAXPROCS: undefined,
+  });
+  expect(corrected.error).toBeUndefined();
+  expect(corrected.status, corrected.stderr).toBe(0);
+  expect(corrected.stdout).toContain("0 errors, 1 warnings");
+
+  const missingBackend = join(root, "missing-typed-lint-backend");
+  const overridden = invokeWithEnvironment(root, "typed-lint", {
+    ...typedEnvironment,
+    OXLINT_TSGOLINT_PATH: missingBackend,
+  });
+  expect(overridden.error).toBeUndefined();
+  expect(overridden.status).toBe(1);
+  expect(overridden.stderr).toContain(missingBackend);
+});
+
 it("excludes translation staging while retaining authored website errors", async () => {
   const root = await fixture();
-  for (const name of [".gitignore", ".oxlintrc.json"])
-    await writeFile(join(root, name), await readFile(join(repository, name)));
+  await writeFile(
+    join(root, ".gitignore"),
+    await readFile(join(repository, ".gitignore")),
+  );
+  await writeRepositoryOxlintConfiguration(root);
   const authored = "website/public/assets/authored.js";
   const staged =
     "website/.i18n-regression/site/examples/notes-electron/main.js";
@@ -188,6 +319,37 @@ it("keeps malformed source failing with its parser diagnostic", async () => {
     expect.objectContaining({ severity: "error" }),
   );
 });
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "retains location-free lint I/O errors without inventing a source location",
+  async () => {
+    const root = await fixture();
+    const source = join(root, "src/unreadable.js");
+    await writeFile(source, "debugger;\n");
+    await chmod(source, 0);
+    try {
+      const result = invoke(root, "lint", source);
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("1 files, 1 errors, 0 warnings");
+      expect(result.stdout).toContain("Full diagnostics:");
+      const report = JSON.parse(
+        await readFile(join(root, ".cache/static-checks/oxlint.json"), "utf8"),
+      );
+      expect(report.diagnostics).toEqual([
+        {
+          message: expect.stringContaining("Permission denied"),
+          severity: "error",
+          labels: [],
+        },
+      ]);
+      expect(report.diagnostics[0].message).toContain(source);
+      expect(result.stderr).toBe(`lint: ${report.diagnostics[0].message}\n`);
+    } finally {
+      await chmod(source, 0o600);
+    }
+  },
+);
 
 it("preserves the duplication threshold and complete clone locations", async () => {
   const root = await fixture();
@@ -251,3 +413,65 @@ it.each([
     await expect(access(reportPath)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
+
+it("limits typed diagnostics to selected files and runs full typed lint for oversized plans", async () => {
+  const root = await fixture();
+  const brokenSource =
+    'import type { State } from "./state.js";\n' +
+    'export function bad(s: State) { switch (s) { case "a": return 1; } return 0; }\n';
+  await Promise.all([
+    writeFile(
+      join(root, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          target: "ES2023",
+          module: "NodeNext",
+          types: [],
+        },
+        include: ["src/**/*.ts"],
+      }),
+    ),
+    writeFile(
+      join(root, ".oxlintrc.json"),
+      JSON.stringify({
+        rules: { "typescript/switch-exhaustiveness-check": "error" },
+        ignorePatterns: ["src/ignored.ts"],
+      }),
+    ),
+    writeFile(join(root, "src/state.ts"), 'export type State = "a" | "b";\n'),
+    writeFile(join(root, "src/with spaces.ts"), "export const ok = 1;\n"),
+    writeFile(join(root, "src/broken.ts"), brokenSource),
+    writeFile(join(root, "src/ignored.ts"), brokenSource),
+  ]);
+  const runChanged = (files: readonly string[] | null) =>
+    invokeWithEnvironment(root, "typed-lint-changed", {
+      ...process.env,
+      CI_TYPED_LINT_FILES: JSON.stringify(files),
+    });
+
+  const clean = runChanged(["src/with spaces.ts"]);
+  expect(clean.error).toBeUndefined();
+  expect(clean.status, clean.stderr).toBe(0);
+  expect(clean.stdout).toContain("Typed lint: 1 files, 0 errors");
+
+  const ignored = runChanged(["src/ignored.ts"]);
+  expect(ignored.error).toBeUndefined();
+  expect(ignored.status, ignored.stderr).toBe(0);
+  expect(ignored.stdout).toContain("Typed lint: 0 files, 0 errors");
+
+  for (const files of [["src/broken.ts"], null]) {
+    const broken = runChanged(files);
+    expect(broken.error).toBeUndefined();
+    expect(broken.status).toBe(1);
+    expect(broken.stderr).toContain("typescript(switch-exhaustiveness-check)");
+    expect(broken.stderr).toContain("src/broken.ts");
+  }
+
+  expect(runChanged([]).status).toBe(0);
+  const missing = runChanged(["src/absent.ts"]);
+  expect(missing.status).toBe(1);
+  expect(missing.stderr).toContain("missing from the typed lint checkout");
+  const traversal = runChanged(["../outside.ts"]);
+  expect(traversal.status).toBe(1);
+  expect(traversal.stderr).toContain("Invalid changed file path");
+});

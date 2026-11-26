@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import type { TerminalRetention } from "../../domain/process/processCaptureCoverage.js";
+import type { BoundedProcessTextNormalization } from "./ProcessNormalization.js";
 
 import type {
   RecordProcessCaptureEvent,
@@ -21,7 +22,10 @@ interface TerminalRendererOptions {
   readonly rows: number;
   readonly scrollback: number;
   readonly maxBytes: number;
-  readonly normalize: (value: string) => string;
+  readonly normalize: (
+    value: string,
+    maxBytes: number,
+  ) => BoundedProcessTextNormalization;
   readonly recordEvent?: RecordProcessCaptureEvent;
 }
 
@@ -38,10 +42,13 @@ export class TerminalRenderer {
   readonly #serializeAddon = new SerializePackage.SerializeAddon();
   readonly #frames: RenderedTerminalFrame[] = [];
   #pending: Promise<void> = Promise.resolve();
+  #operations: Array<() => void | Promise<void>> = [];
   #capturedBytes = 0;
   #observedBytes = 0;
   #observedFrames = 0;
   #truncated = false;
+  #unknownSizeFrames = 0;
+  #normalizationOverBudgetFrames = 0;
 
   constructor(private readonly options: TerminalRendererOptions) {
     this.#terminal = new HeadlessPackage.Terminal({
@@ -54,11 +61,11 @@ export class TerminalRenderer {
   }
 
   /** Queue one PTY chunk and capture state only after xterm has parsed it. */
-  write(data: string, atMs: number): void {
+  write(data: string | (() => string), atMs: number): void {
     this.#queue(
       () =>
         new Promise<void>((resolveWrite, rejectWrite) => {
-          this.#terminal.write(data, () => {
+          this.#terminal.write(typeof data === "string" ? data : data(), () => {
             try {
               this.#capture(atMs);
               resolveWrite();
@@ -80,7 +87,13 @@ export class TerminalRenderer {
 
   /** Await all queued parsing and return immutable rendered observations. */
   async frames(): Promise<readonly RenderedTerminalFrame[]> {
-    await this.#pending;
+    do {
+      const operations = this.#operations;
+      this.#operations = [];
+      for (const operation of operations)
+        this.#pending = this.#pending.then(operation);
+      await this.#pending;
+    } while (this.#operations.length > 0);
     return structuredClone(this.#frames);
   }
 
@@ -97,6 +110,15 @@ export class TerminalRenderer {
       retained_bytes: this.#capturedBytes,
       observed_frames: this.#observedFrames,
       retained_frames: this.#frames.length,
+      ...(this.#unknownSizeFrames === 0
+        ? {}
+        : { unknown_size_frames: this.#unknownSizeFrames }),
+      ...(this.#normalizationOverBudgetFrames === 0
+        ? {}
+        : {
+            normalization_over_budget_frames:
+              this.#normalizationOverBudgetFrames,
+          }),
     };
   }
 
@@ -104,46 +126,68 @@ export class TerminalRenderer {
   async dispose(): Promise<void> {
     // frames() owns observation failures; cleanup reports only disposal failures.
     await this.#pending.catch(() => undefined);
+    this.#operations = [];
     // xterm owns and disposes every addon loaded through loadAddon().
     this.#terminal.dispose();
   }
 
   #queue(operation: () => void | Promise<void>): void {
-    this.#pending = this.#pending.then(operation);
-    // PTY callbacks can fail before capture completion awaits frames(). Keep
-    // the original rejection observable there without an unhandled rejection.
-    void this.#pending.catch(() => undefined);
+    // Raw chunks are already retained by the capture byte owner. Keep their
+    // references and resize order; render once after sampled identities settle.
+    this.#operations.push(operation);
   }
 
   #capture(atMs: number): void {
     const buffer = this.#terminal.buffer.active;
     const lines: string[] = [];
+    this.#observedFrames += 1;
+    let remainingBytes = this.options.maxBytes - this.#capturedBytes;
+    let bytes = 0;
     for (let row = 0; row < this.#terminal.rows; row += 1) {
       const line = buffer.getLine(buffer.viewportY + row);
+      const renderedLine =
+        line?.translateToString(false, 0, this.#terminal.cols) ??
+        " ".repeat(this.#terminal.cols);
+      const trailingSpaceBytes = Buffer.byteLength(
+        renderedLine.match(TRAILING_SPACES)?.[0] ?? "",
+      );
+      const normalized = this.options.normalize(
+        renderedLine,
+        Math.min(Number.MAX_SAFE_INTEGER, remainingBytes + trailingSpaceBytes),
+      );
+      if (normalized.state === "over_budget") {
+        if (normalized.reason === "normalization")
+          this.#normalizationOverBudgetFrames += 1;
+        this.#unknownSizeFrames += 1;
+        this.#truncated = true;
+        return;
+      }
+      const normalizedLine = normalized.value.replace(TRAILING_SPACES, "");
+      const lineBytes = Buffer.byteLength(normalizedLine);
+      if (lineBytes > remainingBytes) {
+        this.#unknownSizeFrames += 1;
+        this.#truncated = true;
+        return;
+      }
+      remainingBytes -= lineBytes;
+      bytes += lineBytes;
       // Trailing blank cells carry no information beyond `columns`; dropping
       // them keeps sparse screens from costing a full row per blank line.
-      lines.push(
-        this.options
-          .normalize(
-            (
-              line?.translateToString(false, 0, this.#terminal.cols) ?? ""
-            ).padEnd(this.#terminal.cols, " "),
-          )
-          .replace(TRAILING_SPACES, ""),
-      );
+      lines.push(normalizedLine);
     }
-    const serializedState = this.options.normalize(
+    const normalizedState = this.options.normalize(
       this.#serializeAddon.serialize(),
+      remainingBytes,
     );
-    const bytes =
-      Buffer.byteLength(serializedState) +
-      lines.reduce((total, line) => total + Buffer.byteLength(line), 0);
-    this.#observedBytes += bytes;
-    this.#observedFrames += 1;
-    if (this.#capturedBytes + bytes > this.options.maxBytes) {
+    if (normalizedState.state === "over_budget") {
+      if (normalizedState.reason === "normalization")
+        this.#normalizationOverBudgetFrames += 1;
+      this.#unknownSizeFrames += 1;
       this.#truncated = true;
       return;
     }
+    bytes += normalizedState.utf8Bytes;
+    this.#observedBytes += bytes;
     this.#capturedBytes += bytes;
     const sequence = this.#frames.length;
     this.#frames.push({
@@ -155,7 +199,7 @@ export class TerminalRenderer {
       cursor_y: buffer.cursorY,
       active_buffer: buffer.type,
       lines,
-      serialized_state: serializedState,
+      serialized_state: normalizedState.value,
     });
     this.options.recordEvent?.("rendered_frames", sequence);
   }

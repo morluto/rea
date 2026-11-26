@@ -1,18 +1,15 @@
 import { execFile } from "node:child_process";
-import {
-  access,
-  appendFile,
-  chmod,
-  copyFile,
-  mkdtemp,
-  rm,
-} from "node:fs/promises";
+import { access, appendFile, chmod, copyFile } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 import { assertCleanLinuxHopperRuntime } from "./lib/clean-linux-hopper-runtime.mjs";
+import { isUnsupportedHopperLaunchFailure } from "./verify-package-platform.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 const execFileAsync = promisify(execFile);
 const verifierRun = createVerifierRun();
@@ -82,28 +79,37 @@ await execFileAsync(command, ["analyze", "/usr/bin/true"], {
 process.env.REA_VERIFY_SERVER_ARGS_JSON = '["mcp"]';
 await import("./verify-real-hopper-linux.mjs");
 
-const modifiedDirectory = await mkdtemp(join(tmpdir(), "rea-modified-hopper-"));
-try {
-  const modifiedHopper = join(modifiedDirectory, "Hopper");
+const modifiedDirectory = await VerifierFixture.open({
+  prefix: "rea-modified-hopper-",
+  private: false,
+});
+await withVerifierFixture(modifiedDirectory, async () => {
+  const modifiedHopper = join(modifiedDirectory.path, "Hopper");
   await copyFile("/opt/hopper/bin/Hopper", modifiedHopper);
   await appendFile(modifiedHopper, new Uint8Array([0]));
   await chmod(modifiedHopper, 0o700);
   try {
-    await execFileAsync(command, ["analyze", "/usr/bin/true"], {
-      env: { ...process.env, HOPPER_LAUNCHER_PATH: modifiedHopper },
-      timeout: 30_000,
-    });
+    await execFileAsync(
+      command,
+      ["analyze", "/usr/bin/true", "--provider", "hopper", "--json"],
+      {
+        env: { ...process.env, HOPPER_LAUNCHER_PATH: modifiedHopper },
+        timeout: 30_000,
+      },
+    );
     throw new Error("modified Hopper build was not rejected");
   } catch (error) {
-    const output = `${error?.stdout ?? ""}\n${error?.stderr ?? ""}`;
-    if (!output.includes("unsupported_hopper_build"))
+    if (
+      error?.code !== 1 ||
+      typeof error.stdout !== "string" ||
+      !isUnsupportedHopperLaunchFailure(JSON.parse(error.stdout))
+    )
       throw new Error(
         "modified Hopper build did not return its stable failure code",
+        { cause: error },
       );
   }
-} finally {
-  await rm(modifiedDirectory, { recursive: true, force: true });
-}
+});
 
 const repeated = await runJson(["setup", "--yes", "--json"]);
 if (

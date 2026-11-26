@@ -1,12 +1,66 @@
+import { parseMzHeaderEvidence } from "../domain/dosMz.js";
 import { createHash } from "node:crypto";
 import { dosMz } from "../domain/binaryTarget.fixture.js";
 import type { NativeLoadImageObservation } from "../domain/native/nativeLoadImage.js";
+import {
+  attestGhidraDosLoadImage,
+  prepareGhidraDosLoadImage,
+} from "./GhidraLoadImageValues.js";
+import { err } from "../domain/result.js";
+import { GhidraSessionError } from "./GhidraSessionError.js";
 
 const hash = (bytes: Buffer): string =>
   createHash("sha256").update(bytes).digest("hex");
 
+/** Buffered tiny-fixture input for comparison tests; production streams the descriptor. */
+export const compareDosFixture = (
+  bytes: Buffer,
+  sha256: string,
+  observations: NativeLoadImageObservation,
+) => {
+  if (hash(bytes) !== sha256)
+    return err(
+      "Ghidra load-image snapshot digest does not match the admitted target",
+    );
+  const image = prepareGhidraDosLoadImage(bytes, parseMzHeaderEvidence(bytes));
+  if (!image.ok) return image;
+  return attestGhidraDosLoadImage(
+    {
+      sha256,
+      fileBytes: bytes.length,
+      image:
+        image.value.kind === "exact"
+          ? {
+              ...image.value,
+              modifiedSha256: createHash("sha256")
+                .update(image.value.modified)
+                .update(bytes.subarray(image.value.header.imageBytes))
+                .digest("hex"),
+            }
+          : image.value,
+    },
+    sha256,
+    observations,
+  );
+};
+
+export const compareDosClientFixture = (
+  ...input: Parameters<typeof compareDosFixture>
+) => {
+  const compared = compareDosFixture(...input);
+  return compared.ok
+    ? compared
+    : err(
+        new GhidraSessionError("protocol", compared.error, {
+          reason: compared.error,
+        }),
+      );
+};
+
 /** Source-owned MZ with one relocated word, overlay and uninitialized allocation. */
-export const fixtureDosLoadImage = (): {
+export const fixtureDosLoadImage = (
+  overlay = Buffer.from("private-overlay-fixture"),
+): {
   bytes: Buffer;
   sha256: string;
   observation: NativeLoadImageObservation;
@@ -16,10 +70,7 @@ export const fixtureDosLoadImage = (): {
   original.writeUInt16LE(9, 28);
   original.writeUInt16LE(0, 30);
   original.writeUInt16LE(4, 41);
-  const bytes = Buffer.concat([
-    original,
-    Buffer.from("private-overlay-fixture"),
-  ]);
+  const bytes = Buffer.concat([original, overlay]);
   const modified = Buffer.from(bytes);
   modified.writeUInt16LE(0x1004, 41);
   return {
@@ -48,6 +99,9 @@ export const fixtureDosLoadImage = (): {
           initialized: true,
           loaded: false,
           overlay: true,
+          readable: true,
+          writable: false,
+          executable: false,
           length: 32,
           source_file_index: 0,
           file_offset: 0,
@@ -61,6 +115,9 @@ export const fixtureDosLoadImage = (): {
           initialized: true,
           loaded: true,
           overlay: false,
+          readable: true,
+          writable: false,
+          executable: true,
           length: 128,
           source_file_index: 0,
           file_offset: 32,
@@ -74,6 +131,9 @@ export const fixtureDosLoadImage = (): {
           initialized: false,
           loaded: true,
           overlay: false,
+          readable: true,
+          writable: true,
+          executable: false,
           length: 16,
           source_file_index: null,
           file_offset: null,
@@ -87,6 +147,7 @@ export const fixtureDosLoadImage = (): {
           offset: 9,
           status: "APPLIED",
           type: 0,
+          symbol: null,
           values: [0, 9, 0x1004],
           original_bytes_hex: "0400",
           memory_bytes_hex: "0410",
@@ -98,13 +159,87 @@ export const fixtureDosLoadImage = (): {
   };
 };
 
-/** Source-owned headerless COM image and measured real-mode import facts. */
-export const fixtureDosComLoadImage = (): {
+/** Authored overlapping-word control adapted from #4156; no engine is run here. */
+export const fixtureDosOverlapLoadImage = ({
+  reverseTable = false,
+  observedWindow = "001410",
+}: {
+  reverseTable?: boolean;
+  observedWindow?: "001410" | "000410";
+} = {}) => {
+  const fixture = fixtureDosLoadImage();
+  const bytes = Buffer.concat([
+    fixture.bytes.subarray(0, 32),
+    Buffer.alloc(16),
+    fixture.bytes.subarray(32),
+  ]);
+  bytes.writeUInt16LE(176, 2);
+  bytes.writeUInt16LE(2, 6);
+  bytes.writeUInt16LE(3, 8);
+  bytes.writeUInt32LE(reverseTable ? 8 : 9, 28);
+  bytes.writeUInt32LE(reverseTable ? 9 : 8, 32);
+  const modified = Buffer.from(bytes);
+  // The reported final bytes are independent of the table order.
+  modified.write(observedWindow, 56, "hex");
+  const observation = fixture.observation;
+  const source = observation.source_files[0];
+  const headerMapping = observation.mappings[0];
+  const moduleMapping = observation.mappings[1];
+  if (
+    source === undefined ||
+    headerMapping === undefined ||
+    moduleMapping === undefined
+  )
+    throw new Error("Missing base MZ fixture source mappings");
+  Object.assign(source, {
+    size: bytes.length,
+    original_sha256: hash(bytes),
+    modified_sha256: hash(modified),
+  });
+  Object.assign(headerMapping, {
+    end: "HEADER:0x2f",
+    length: 48,
+    sha256: hash(bytes.subarray(0, 48)),
+  });
+  Object.assign(moduleMapping, {
+    file_offset: 48,
+    sha256: hash(modified.subarray(48, 176)),
+  });
+  observation.relocations = [
+    {
+      address: "0x10009",
+      segment: 0x1000,
+      offset: 9,
+      status: "APPLIED",
+      type: 0,
+      symbol: null,
+      values: [0, 9, 0x1004],
+      original_bytes_hex: "0400",
+      memory_bytes_hex: observedWindow.slice(2),
+    },
+    {
+      address: "0x10008",
+      segment: 0x1000,
+      offset: 8,
+      status: "APPLIED",
+      type: 0,
+      symbol: null,
+      values: [0, 8, 0x1400],
+      original_bytes_hex: "0004",
+      memory_bytes_hex: observedWindow.slice(0, 4),
+    },
+  ];
+  return { bytes, sha256: hash(bytes), observation };
+};
+
+/** Source-owned COM image ComLoader rejects, imported by the raw fallback. */
+export const fixtureDosComLoadImage = (
+  bytes: Buffer = Buffer.from("b83412c3", "hex"),
+): {
   bytes: Buffer;
   sha256: string;
   observation: NativeLoadImageObservation;
 } => {
-  const bytes = Buffer.from("b83412c3", "hex");
   const digest = hash(bytes);
   return {
     bytes,
@@ -127,11 +262,14 @@ export const fixtureDosComLoadImage = (): {
         {
           block: "ram",
           start: "0x10100",
-          end: "0x10103",
+          end: `0x${(0x10100 + bytes.length - 1).toString(16)}`,
           address_space: "ram",
           initialized: true,
           loaded: true,
           overlay: false,
+          readable: true,
+          writable: false,
+          executable: true,
           length: bytes.length,
           source_file_index: 0,
           file_offset: 0,
@@ -146,6 +284,82 @@ export const fixtureDosComLoadImage = (): {
           registers: ["CS", "DS", "ES", "SS"].map((name) => ({
             name,
             value_hex: "0x1000",
+          })),
+        },
+      ],
+    },
+  };
+};
+
+/** Source-owned COM image Ghidra 12.2 ComLoader accepts, at 0000:0100. */
+export const fixtureDosComLoaderLoadImage = (): {
+  bytes: Buffer;
+  sha256: string;
+  observation: NativeLoadImageObservation;
+} => {
+  const bytes = Buffer.alloc(16, 0x90);
+  bytes.set(Buffer.from("b409cd21b409cd21", "hex"));
+  const digest = hash(bytes);
+  const psp = Buffer.alloc(0x100);
+  return {
+    bytes,
+    sha256: digest,
+    observation: {
+      executable_format: "Old-style DOS Executable (COM)",
+      language_id: "x86:LE:16:Real Mode",
+      compiler_spec_id: "default",
+      image_base: "0x0",
+      default_address_space: "ram",
+      source_files: [
+        {
+          name: "fixture.com",
+          size: bytes.length,
+          original_sha256: digest,
+          modified_sha256: digest,
+        },
+      ],
+      mappings: [
+        {
+          block: "PSP",
+          start: "0x0",
+          end: "0xff",
+          address_space: "ram",
+          initialized: true,
+          loaded: true,
+          overlay: false,
+          readable: true,
+          writable: true,
+          executable: false,
+          length: psp.length,
+          source_file_index: null,
+          file_offset: null,
+          sha256: hash(psp),
+        },
+        {
+          block: "CODE",
+          start: "0x100",
+          end: "0x10f",
+          address_space: "ram",
+          initialized: true,
+          loaded: true,
+          overlay: false,
+          readable: true,
+          writable: true,
+          executable: false,
+          length: bytes.length,
+          source_file_index: 0,
+          file_offset: 0,
+          sha256: digest,
+        },
+      ],
+      relocations: [],
+      entry_points: ["0x100"],
+      entry_context: [
+        {
+          address: "0x100",
+          registers: ["CS", "DS", "ES", "SS"].map((name) => ({
+            name,
+            value_hex: "0x0",
           })),
         },
       ],

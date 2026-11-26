@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { CdpConnection } from "../../dist/browser/CdpConnection.js";
-import { mcpTextValue } from "./mcp-verifier-results.mjs";
-import { closeRuntimeFixtureResources } from "./browser-runtime-fixture-lifecycle.mjs";
+import { mcpTextValue, requireMcpToolError } from "./mcp-verifier-results.mjs";
+import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 
 /** Close a separately owned fixture page after actual MCP arming and inspect native cleanup diagnostics. */
 export async function verifyRuntimeTargetTermination(client, input, origin) {
@@ -14,8 +14,7 @@ export async function verifyRuntimeTargetTermination(client, input, origin) {
   );
   let targetId;
   let closed = false;
-  let primaryError;
-  try {
+  return withVerifierCleanup(async () => {
     ({ targetId } = await root.send("Target.createTarget", { url: origin }));
     assert.equal(typeof targetId, "string");
     await waitForTarget(input.cdp_endpoint, targetId, origin);
@@ -60,33 +59,34 @@ export async function verifyRuntimeTargetTermination(client, input, origin) {
       "Detached instrumentation cannot claim confirmed cleanup",
     );
     const failure = mcpTextValue(response);
+    const projected = requireMcpToolError(response);
     assert.match(failure, /cleanup.*confirmed/u);
     assert.ok(
       failure.includes(targetId),
       "Failure must retain the selected target identity",
     );
     assert.match(failure, /Profiler\.stopPreciseCoverage/u);
+    assert.equal(projected.code, "cleanup_incomplete");
+    assert.equal(
+      projected.details?.diagnostics?.primary_error?.details?.diagnostics
+        ?.observed_window?.end_reason,
+      "session_detached",
+      "Target.closeTarget detaches this CDP session; it does not prove the target crashed",
+    );
     return {
       target_id: targetId,
       page_closed_after_arming: true,
       failure_inline: true,
       cleanup: "unconfirmed_reported",
+      observed_window_end_reason: "session_detached",
     };
-  } catch (cause) {
-    primaryError = cause;
-    throw cause;
-  } finally {
-    await closeRuntimeFixtureResources(
-      [
-        () =>
-          targetId === undefined || closed
-            ? undefined
-            : root.send("Target.closeTarget", { targetId }),
-        () => root.close(),
-      ],
-      primaryError,
-    );
-  }
+  }, [
+    () =>
+      targetId === undefined || closed
+        ? undefined
+        : root.send("Target.closeTarget", { targetId }),
+    () => root.close(),
+  ]);
 }
 
 async function waitForTarget(endpoint, targetId, origin) {

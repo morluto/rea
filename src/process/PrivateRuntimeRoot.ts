@@ -1,9 +1,10 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm, stat } from "node:fs/promises";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { WindowsPrivateRuntime } from "../windows/WindowsPrivateRuntime.js";
-import { PrivateRuntimeRootUnavailableError } from "./PrivateRuntimeRootUnavailableError.js";
+import { PrivateRuntimeRootUnavailableError } from "../domain/privateRuntimeRootUnavailableError.js";
 
 import {
   windowsNativeCapabilities,
@@ -29,7 +30,7 @@ export type PrivateRuntimeRootCapability =
 
 /** Report whether this process can establish a private runtime root. */
 export const privateRuntimeRootCapability = (
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): PrivateRuntimeRootCapability =>
   platform === "win32"
     ? windowsNativeCapabilities(platform).private_runtime_dacl
@@ -54,7 +55,7 @@ export class PrivateRuntimeRoot {
   static async create(
     options: PrivateRuntimeRootOptions = {},
   ): Promise<PrivateRuntimeRoot> {
-    const platform = options.platform ?? process.platform;
+    const platform = options.platform ?? HOST_PLATFORM.platform;
     const capability = privateRuntimeRootCapability(platform);
     if (!capability.available)
       throw new PrivateRuntimeRootUnavailableError(capability.reason, {
@@ -67,9 +68,14 @@ export class PrivateRuntimeRoot {
       );
       return new PrivateRuntimeRoot(runtime.observation.path, runtime);
     }
-    const path = await mkdtemp(
-      join(options.parent ?? tmpdir(), options.prefix ?? "rea-provider-"),
-    );
+    const selectedParent = options.parent ?? tmpdir();
+    // The final dot requires a native directory lookup, preserving the host's
+    // failure code and path. An explicitly empty selection remains invalid.
+    await stat(selectedParent === "" ? selectedParent : `${selectedParent}/.`);
+    // Canonicalize only after native admission so consumers share one physical
+    // spelling without collapsing an invalid file/.. traversal on Darwin.
+    const parent = await realpath(selectedParent);
+    const path = await mkdtemp(join(parent, options.prefix ?? "rea-provider-"));
     // POSIX mkdtemp establishes owner-only access atomically. Return its owner
     // without a fallible permission rewrite and rollback after allocation.
     return new PrivateRuntimeRoot(path);

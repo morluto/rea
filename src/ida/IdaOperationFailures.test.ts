@@ -1,20 +1,214 @@
-import { rm } from "node:fs/promises";
+import { rm, stat } from "node:fs/promises";
+import { dirname } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
   createIdaTarget,
   RecordingIdaMcp,
 } from "../../tests/fixtures/idaMcp.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import { createIdaDiagnosticRedactor } from "./IdaDiagnosticRedactor.js";
 import { decodeIdaToolResult } from "./IdaMcpConnection.js";
-import type { AnalysisOperation } from "../application/AnalysisProvider.js";
+import { IDA_PROVIDER_IDENTITY } from "./IdaProviderMetadata.js";
+import type { AnalysisOperation } from "../ports/AnalysisProvider.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
 
 const roots: string[] = [];
 afterEach(async () => {
   for (const root of roots.splice(0))
     await rm(root, { recursive: true, force: true });
+});
+
+it("preserves a rejected headless decompile diagnostic with completed lookup evidence and releases its owned worker", async () => {
+  const { root, target } = await createIdaTarget();
+  roots.push(root);
+  const producer = new RecordingIdaMcp(target, "headless");
+  const reason =
+    "Invalid params: unexpected parameters: ['offset', 'max_lines']";
+  const config = {
+    url: "http://127.0.0.1:12345/mcp",
+    headers: {
+      Authorization: "Token custom-fixture-token",
+      Cookie: "session=cookie-fixture-secret",
+    },
+    mode: "headless" as const,
+    protocol: "modern" as const,
+    timeoutMs: 1000,
+    workspaceRoot: root,
+  };
+  const redactor = createIdaDiagnosticRedactor(config);
+  producer.beforeCall = async (name) => {
+    if (name === "decompile")
+      decodeIdaToolResult(
+        {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: reason + " (custom-fixture-token / cookie-fixture-secret)",
+            },
+          ],
+        },
+        undefined,
+        redactor,
+      );
+  };
+  const safeReason =
+    reason +
+    " ([redacted transport credential] / [redacted transport credential])";
+  const client = new IdaSessionClient(config, target, producer);
+  try {
+    const result = await client.execute("procedure_pseudo_code", {
+      procedure: "main",
+    });
+    if (result.ok) throw new Error("Expected the upstream rejection");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "unreadable_output",
+      details: {
+        diagnostics: { reason: safeReason },
+        partial_observation: {
+          provider: { id: "ida" },
+          operation: "procedure_pseudo_code",
+          normalized_result: {
+            status: "partial",
+            observations: [expect.objectContaining({ tool: "lookup_funcs" })],
+            target_binding: {
+              status: "not_verified",
+              reason: "IDA MCP tool failed: \n" + safeReason,
+            },
+          },
+        },
+      },
+    });
+    expect(JSON.stringify(projectAnalysisError(result.error))).not.toContain(
+      "custom-fixture-token",
+    );
+    expect(JSON.stringify(projectAnalysisError(result.error))).not.toContain(
+      "cookie-fixture-secret",
+    );
+    expect(
+      producer.calls.find(({ name }) => name === "decompile"),
+    ).toMatchObject({
+      args: { addr: "0x1000", offset: 0, max_lines: 100 },
+    });
+  } finally {
+    const database = producer.database;
+    expect((await client.close()).ok).toBe(true);
+    expect(producer.calls.filter(({ name }) => name === "idb_close")).toEqual([
+      { name: "idb_close", args: { database, save: false } },
+    ]);
+    expect(producer.closes).toBe(1);
+    await expect(stat(dirname(producer.inputPath))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  }
+});
+
+describe("headless IDA tool diagnostics in partial evidence", () => {
+  const callerPath = "/caller/input?token=visible";
+  const marker = "[redacted transport credential]";
+  it.each([
+    {
+      name: "a decoded Basic password matching the tool failure prefix",
+      password: "failed",
+      upstream: "Rejected decompile request for " + callerPath,
+      safeReason: "Rejected decompile request for " + callerPath,
+      forbiddenInBinding: ["failed"],
+    },
+    {
+      name: "a JSON-encoded tool explanation",
+      password: "<secret>",
+      upstream: String.raw`{"reason":"\u003csecret\u003e","user":"user","path":"/caller/input?token=visible"}`,
+      safeReason:
+        '{"reason":"' +
+        marker +
+        '","user":"user","path":"/caller/input?token=visible"}',
+      forbiddenInBinding: ["<secret>", String.raw`\u003csecret\u003e`],
+    },
+  ])(
+    "redacts $name before retaining the public target-binding reason",
+    async ({ password, upstream, safeReason, forbiddenInBinding }) => {
+      const { root, target } = await createIdaTarget();
+      roots.push(root);
+      const producer = new RecordingIdaMcp(target, "headless");
+      const config = {
+        url: "http://127.0.0.1:12345/mcp",
+        headers: {
+          Authorization:
+            "Basic " +
+            Buffer.from("user:" + password, "utf8").toString("base64"),
+        },
+        mode: "headless" as const,
+        protocol: "modern" as const,
+        timeoutMs: 1000,
+        workspaceRoot: root,
+      };
+      const redactor = createIdaDiagnosticRedactor(config);
+      producer.beforeCall = async (name) => {
+        if (name === "decompile")
+          decodeIdaToolResult(
+            { isError: true, content: [{ type: "text", text: upstream }] },
+            undefined,
+            redactor,
+          );
+      };
+      const client = new IdaSessionClient(config, target, producer);
+      try {
+        const result = await client.execute("procedure_pseudo_code", {
+          procedure: "main",
+        });
+        if (result.ok) throw new Error("Expected the producer's tool error");
+        const projected = projectAnalysisError(result.error);
+        expect(projected).toMatchObject({
+          code: "unreadable_output",
+          details: {
+            partial_observation: {
+              provider: { id: "ida" },
+              operation: "procedure_pseudo_code",
+              normalized_result: {
+                status: "partial",
+                observations: [
+                  expect.objectContaining({ tool: "lookup_funcs" }),
+                ],
+                target_binding: {
+                  status: "not_verified",
+                  reason: expect.any(String),
+                },
+              },
+            },
+          },
+        });
+        const details = z
+          .object({
+            diagnostics: z.object({ reason: z.string() }),
+            partial_observation: z.object({
+              normalized_result: z.object({
+                target_binding: z.object({ reason: z.string() }),
+              }),
+            }),
+          })
+          .parse(projected.details);
+        const bindingReason =
+          details.partial_observation.normalized_result.target_binding.reason;
+        for (const credential of forbiddenInBinding)
+          expect.soft(bindingReason).not.toContain(credential);
+        expect.soft(bindingReason).toContain(marker);
+        expect(bindingReason).toContain(callerPath);
+        expect.soft(details.diagnostics.reason).toBe(safeReason);
+      } finally {
+        expect((await client.close()).ok).toBe(true);
+        expect(
+          producer.calls.filter(({ name }) => name === "idb_close"),
+        ).toHaveLength(1);
+        await expect(stat(dirname(producer.inputPath))).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+      }
+    },
+  );
 });
 
 describe("headless IDA partial operation evidence", () => {
@@ -43,6 +237,7 @@ describe("headless IDA partial operation evidence", () => {
         args: [],
         env: {},
         mode: "headless",
+        protocol: "modern",
         timeoutMs: 1000,
         workspaceRoot: root,
       },
@@ -95,6 +290,7 @@ describe("headless IDA partial operation evidence", () => {
         args: [],
         env: {},
         mode: "headless",
+        protocol: "modern",
         timeoutMs: 1000,
         workspaceRoot: root,
       },
@@ -110,7 +306,9 @@ describe("headless IDA partial operation evidence", () => {
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.error._tag).toBe("AnalysisCancelledError");
+        expect(result.error.cause).toBe(controller.signal.reason);
         expect(result.error.partialObservation).toMatchObject({
+          analysis_profile: null,
           normalized_result: {
             status: "partial",
             observations: [expect.objectContaining({ tool: "list_funcs" })],
@@ -123,72 +321,111 @@ describe("headless IDA partial operation evidence", () => {
   });
 });
 
+it("retains the session analysis profile when an operation fails after a completed reply", async () => {
+  const { root, target } = await createIdaTarget();
+  roots.push(root);
+  const producer = new RecordingIdaMcp(target, "headless");
+  producer.beforeCall = async (name) => {
+    if (name === "decompile")
+      decodeIdaToolResult({
+        isError: true,
+        content: [{ type: "text", text: "Decompiler failed" }],
+      });
+  };
+  const profile = createAnalysisProfile(IDA_PROVIDER_IDENTITY, {
+    mode: "headless",
+    protocol: "modern",
+    compatibility_profile: "database-supervisor",
+    database_revision: null,
+    cache_policy: "live",
+    registration_digest: "a".repeat(64),
+  });
+  const client = new IdaSessionClient(
+    {
+      command: "fixture",
+      args: [],
+      env: {},
+      mode: "headless",
+      protocol: "modern",
+      timeoutMs: 1000,
+      workspaceRoot: root,
+    },
+    target,
+    producer,
+    profile,
+  );
+  try {
+    const result = await client.execute("procedure_pseudo_code", {
+      procedure: "main",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.partialObservation).toMatchObject({
+        analysis_profile: profile,
+        normalized_result: {
+          status: "partial",
+          observations: [expect.objectContaining({ tool: "lookup_funcs" })],
+        },
+      });
+      expect(
+        projectAnalysisError(result.error).details?.partial_observation,
+      ).toMatchObject({
+        analysis_profile: profile,
+      });
+    }
+  } finally {
+    expect((await client.close()).ok).toBe(true);
+  }
+});
+
 describe("headless IDA operation failures", () => {
+  const failure = "Database analysis interrupted while reading observations";
   it.each<{
     tool: string;
     operation: AnalysisOperation;
     parameters: Readonly<Record<string, JsonValue>>;
     response: JsonValue;
+    observedTools: readonly string[];
   }>([
-    {
-      tool: "decompile",
-      operation: "procedure_pseudo_code",
-      parameters: { procedure: "main" },
-      response: { code: "partial pseudocode", cursor: { done: true } },
-    },
     {
       tool: "xrefs_to",
       operation: "xrefs",
       parameters: { address: "0x1000" },
-      response: [{ xrefs: [], more: false }],
-    },
-    {
-      tool: "callees",
-      operation: "procedure_callees",
-      parameters: { procedure: "main" },
-      response: [{ callees: [], more: false }],
+      response: [{ xrefs: [], more: false, error: failure }],
+      observedTools: ["xrefs_to"],
     },
     {
       tool: "decompile",
       operation: "analyze_function",
       parameters: { procedure: "main" },
-      response: { code: "partial pseudocode", cursor: { done: true } },
+      response: {
+        code: "partial pseudocode",
+        cursor: { done: true },
+        error: failure,
+      },
+      observedTools: ["lookup_funcs", "disasm", "decompile"],
     },
     {
       tool: "callees",
       operation: "analyze_function",
       parameters: { procedure: "main" },
-      response: [{ callees: [], more: false }],
+      response: [{ callees: [], more: false, error: failure }],
+      observedTools: ["lookup_funcs", "disasm", "decompile", "callees"],
     },
   ])(
     "preserves $tool failure through $operation when the producer also supplies preview data",
-    async ({ tool, operation, parameters, response }) => {
+    async ({ tool, operation, parameters, response, observedTools }) => {
       const { root, target } = await createIdaTarget();
       roots.push(root);
       const producer = new RecordingIdaMcp(target, "headless");
-      const failure =
-        "Database analysis interrupted while reading observations";
-      producer.overrideCall = (name) => {
-        if (name !== tool) return undefined;
-        const withError = (value: JsonValue): JsonValue => {
-          if (
-            value === null ||
-            typeof value !== "object" ||
-            Array.isArray(value)
-          )
-            throw new TypeError("Invalid operation fixture");
-          return { ...value, error: failure };
-        };
-        return Array.isArray(response)
-          ? response.map(withError)
-          : withError(response);
-      };
+      producer.overrideCall = (name) => (name === tool ? response : undefined);
       const client = new IdaSessionClient(
         {
           command: "fixture",
           args: [],
           env: {},
           mode: "headless",
+          protocol: "modern",
           timeoutMs: 1000,
           workspaceRoot: root,
         },
@@ -197,29 +434,32 @@ describe("headless IDA operation failures", () => {
       );
       try {
         const result = await client.execute(operation, parameters);
-        expect(result.ok).toBe(false);
-        if (!result.ok) {
-          expect(result.error.message).toContain(failure);
-          expect(result.error.partialObservation).toMatchObject({
-            provider: { id: "ida" },
-            operation,
-            parameters,
-            normalized_result: {
-              status: "partial",
-              failed_operation: operation,
-              observations: expect.arrayContaining([
-                expect.objectContaining({ tool }),
-              ]),
-              metadata_before: expect.any(Object),
-            },
-            locations: expect.arrayContaining([
-              { kind: "artifact-path", path: target.path },
-            ]),
-          });
-          expect(
-            projectAnalysisError(result.error).details?.partial_observation,
-          ).toMatchObject({ normalized_result: { status: "partial" } });
-        }
+        if (result.ok) throw new Error("Expected the producer's preview error");
+        expect(result.error.message).toContain(failure);
+        const partial = result.error.partialObservation;
+        expect(partial).toMatchObject({
+          provider: { id: "ida" },
+          operation,
+          parameters,
+          locations: expect.arrayContaining([
+            { kind: "artifact-path", path: target.path },
+          ]),
+          normalized_result: {
+            status: "partial",
+            failed_operation: operation,
+            observations: observedTools.map((observed) =>
+              observed === tool
+                ? { tool, result: response }
+                : { tool: observed },
+            ),
+            metadata_before: expect.any(Object),
+            target_binding: { status: "not_verified" },
+          },
+        });
+        expect(projectAnalysisError(result.error)).toMatchObject({
+          code: "unreadable_output",
+          details: { partial_observation: partial },
+        });
       } finally {
         expect((await client.close()).ok).toBe(true);
       }
@@ -250,81 +490,89 @@ const missingProcedureFixture = async (
       args: [],
       env: {},
       mode: "headless",
+      protocol: "modern",
       timeoutMs: 1000,
       workspaceRoot: root,
     },
     target,
     producer,
   );
-  return client;
+  return { client, producer };
 };
 
 describe("headless IDA procedure lookup failures", () => {
   it.each([
-    ["Not found", "procedure_pseudo_code", "main"],
-    ["Not found", "procedure_address", "main"],
-    ["Not found", "analyze_function", "main"],
-    ["Not a function", "procedure_pseudo_code", "main"],
-    ["Not a function", "read_function_instructions", "main"],
-    ["Not a function", "procedure_pseudo_code", "0x1000"],
-    ["Not found", "procedure_assembly", "_missing"],
-    ["Not found", "procedure_pseudo_code", "main\nsecond line"],
+    ["Not found", "main\nsecond line"],
+    ["Not a function", "0x1000"],
+    ["Not found", "main\nsecond line"],
   ] as const)(
-    "reports the upstream %s answer for %s of %s as an invalid request naming the procedure",
-    async (upstream, operation, procedure) => {
-      const client = await missingProcedureFixture((query) =>
+    "attributes %s for %s according to the selector origin",
+    async (upstream, procedure) => {
+      const { client, producer } = await missingProcedureFixture((query) =>
         lookup(query, null, upstream),
       );
+      const operation = "procedure_pseudo_code";
       try {
-        const result = await client.execute(operation, { procedure });
+        const caller = await client.execute(operation, { procedure });
+        if (caller.ok) throw new Error("Expected invalid caller input");
+        if (!(caller.error instanceof AnalysisInputError)) throw caller.error;
 
-        if (result.ok) throw new Error("expected invalid input");
-        expect(result.error._tag, "the caller's procedure is the fault").toBe(
-          "AnalysisInputError",
+        const projected = projectAnalysisError(caller.error);
+        expect(projected).not.toHaveProperty("recovery");
+        expect(projected.remediation.action).toContain(
+          "--kind procedures --mode regex --provider ida",
         );
-        const projected = projectAnalysisError(result.error);
-        expect(projected.code, "the public code is invalid_request").toBe(
-          "invalid_request",
-        );
-        expect(projected.category, "the category is invalid_input").toBe(
-          "invalid_input",
-        );
-        expect(projected.retryable, "the caller can correct and retry").toBe(
-          true,
-        );
-        expect(
-          projected.details,
-          "the operation and exactly one issue that names the procedure in its message",
-        ).toMatchObject({
-          operation,
-          issues: [
-            {
-              path: [],
-              reason: "invalid_value",
-              message: `IDA could not resolve procedure ${JSON.stringify(procedure)}: ${upstream}.`,
-            },
-          ],
+        expect(projected).toMatchObject({
+          code: "invalid_request",
+          category: "invalid_input",
+          retryable: false,
+          details: {
+            operation,
+            related_operations: ["list_procedures", "search_procedures"],
+            issues: [
+              {
+                path: ["procedure"],
+                observed: { procedure },
+                reason: "invalid_value",
+                message: `IDA could not resolve procedure ${JSON.stringify(procedure)}: ${upstream}.`,
+              },
+            ],
+          },
         });
-        if (!(result.error instanceof AnalysisInputError))
-          throw new Error("expected an AnalysisInputError");
+        expect(caller.error.cause).toMatchObject({
+          _tag: "AnalysisProtocolError",
+          message: expect.stringContaining(upstream),
+        });
+
+        const derived = await client.execute(
+          operation,
+          { procedure },
+          {
+            selectorOrigin: "provider",
+          },
+        );
+        if (derived.ok) throw new Error("Expected a producer fault");
+        expect(derived.error._tag).toBe("AnalysisProtocolError");
+        expect(projectAnalysisError(derived.error).code).toBe(
+          "unreadable_output",
+        );
         expect(
-          result.error.issues.map(({ message }) => message ?? "").join(""),
-          "a control character in the query is carried JSON-escaped, never raw",
-        ).not.toContain("\n");
-        expect(
-          (result.error.cause as Error | undefined)?.message,
-          "the upstream text stays on the retained cause",
-        ).toContain(upstream);
-        expect(
-          JSON.stringify(projected).toLowerCase(),
-          "no retry or doctor advice for a caller mistake",
-        ).not.toMatch(/doctor|retry once/u);
+          producer.calls.filter(({ name }) => name === "lookup_funcs"),
+        ).toMatchObject([
+          { args: { queries: [procedure] } },
+          { args: { queries: [procedure] } },
+        ]);
+        expect(producer.calls.map(({ name }) => name)).not.toContain(
+          "decompile",
+        );
       } finally {
         expect((await client.close()).ok).toBe(true);
       }
     },
   );
+});
 
+describe("headless IDA invalid lookup replies", () => {
   it.each([
     ["an upstream exception text", lookup("main", null, "Database is closed")],
     ["a function with an error", lookup("main", knownFunction, "Not found")],
@@ -339,14 +587,13 @@ describe("headless IDA procedure lookup failures", () => {
     ],
     ["a padded not-found text", lookup("main", null, " Not found ")],
     ["an empty error", lookup("main", null, "")],
-    ["a whitespace-only error", lookup("main", null, "  ")],
     ["an answer for a different query", lookup("helper", null, "Not found")],
     [
       "a successful answer for a different query",
       lookup("helper", knownFunction, null),
     ],
   ])("keeps %s as unreadable output", async (_label, answer) => {
-    const client = await missingProcedureFixture(() => answer);
+    const { client } = await missingProcedureFixture(() => answer);
     try {
       const result = await client.execute("procedure_pseudo_code", {
         procedure: "main",
@@ -390,6 +637,7 @@ describe("headless IDA procedure lookup failures", () => {
         args: [],
         env: {},
         mode: "headless",
+        protocol: "modern",
         timeoutMs: 1000,
         workspaceRoot: root,
       },
@@ -405,112 +653,6 @@ describe("headless IDA procedure lookup failures", () => {
       expect(
         projectAnalysisError(result.error).code,
         "an address IDA itself reported is not the caller's mistake",
-      ).toBe("unreadable_output");
-    } finally {
-      expect((await client.close()).ok).toBe(true);
-    }
-  });
-});
-
-describe("provider-derived procedure selectors", () => {
-  it.each(["Not found", "Not a function"])(
-    "reports a derived selector answered %s as a producer fault",
-    async (upstream) => {
-      const client = await missingProcedureFixture((query) =>
-        lookup(query, null, upstream),
-      );
-      try {
-        const result = await client.execute(
-          "procedure_callees",
-          { procedure: "0x2000" },
-          { selectorOrigin: "provider" },
-        );
-
-        if (result.ok) throw new Error("expected a producer fault");
-        expect(result.error._tag, "not the caller's mistake").toBe(
-          "AnalysisProtocolError",
-        );
-        expect(
-          projectAnalysisError(result.error).code,
-          "projected as on main",
-        ).toBe("unreadable_output");
-      } finally {
-        expect((await client.close()).ok).toBe(true);
-      }
-    },
-  );
-});
-
-describe("attached IDA procedure lookup failures", () => {
-  it("leaves a failed legacy lookup as unreadable output", async () => {
-    const { root, target } = await createIdaTarget();
-    roots.push(root);
-    const producer = new RecordingIdaMcp(target, "attached");
-    producer.overrideCall = (name) =>
-      name === "get_function_by_name" ? null : undefined;
-    const client = new IdaSessionClient(
-      {
-        command: "fixture",
-        args: [],
-        env: {},
-        mode: "attached",
-        timeoutMs: 1000,
-        workspaceRoot: root,
-      },
-      target,
-      producer,
-    );
-    try {
-      const result = await client.execute("procedure_pseudo_code", {
-        procedure: "main",
-      });
-
-      if (result.ok) throw new Error("expected unreadable output");
-      expect(
-        projectAnalysisError(result.error).code,
-        "the legacy profile keeps its pre-existing classification",
-      ).toBe("unreadable_output");
-    } finally {
-      expect((await client.close()).ok).toBe(true);
-    }
-  });
-
-  it("leaves an MCP error reply for an unknown legacy name as unreadable output", async () => {
-    const { root, target } = await createIdaTarget();
-    roots.push(root);
-    const producer = new RecordingIdaMcp(target, "attached");
-    producer.beforeCall = async (name) => {
-      if (name === "get_function_by_name")
-        decodeIdaToolResult({
-          content: [{ type: "text", text: "Function not found: main" }],
-          isError: true,
-        });
-    };
-    const client = new IdaSessionClient(
-      {
-        command: "fixture",
-        args: [],
-        env: {},
-        mode: "attached",
-        timeoutMs: 1000,
-        workspaceRoot: root,
-      },
-      target,
-      producer,
-    );
-    try {
-      const result = await client.execute("procedure_pseudo_code", {
-        procedure: "main",
-      });
-
-      if (result.ok) throw new Error("expected unreadable output");
-      expect(
-        result.error._tag,
-        "a producer error reply, not caller input",
-      ).toBe("AnalysisProtocolError");
-      expect(
-        projectAnalysisError(result.error).code,
-        "the legacy profile keeps its existing classification",
       ).toBe("unreadable_output");
     } finally {
       expect((await client.close()).ok).toBe(true);

@@ -1,20 +1,49 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
+import { ArtifactResourceScope } from "../dist/resources/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../dist/resources/AnalysisCleanupLease.js";
+import { newPlaywrightCdpSession } from "../dist/browser/PlaywrightCdpSession.js";
 import { startBrowserVerifierSite } from "./fixtures/browser-verifier-site.mjs";
 import { verifyBrowserDomDestinations } from "./lib/browser-dom-destinations-e2e.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { requireOrdinaryWindowsVerifierCaller } from "./lib/windows-ordinary-user-verifier.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const executable = process.env.REA_BROWSER_EXECUTABLE;
 if (!executable)
   throw new Error("verify:browser:dom requires REA_BROWSER_EXECUTABLE");
-const profile = await mkdtemp(join(tmpdir(), "rea-browser-dom-"));
-const site = await startBrowserVerifierSite();
+await requireOrdinaryWindowsVerifierCaller();
+let profileFixture;
+let profile;
+let site;
 let context;
 let report;
-try {
+const browserResources = new ArtifactResourceScope();
+await withVerifierCleanup(async () => {
+  profileFixture = await VerifierFixture.open({
+    prefix: "rea-browser-dom-",
+    private: false,
+  });
+  profile = profileFixture.path;
+  browserResources.retain({
+    kind: "lease",
+    resource: profile,
+    lease: AnalysisCleanupLease.forCloseOwner(
+      {
+        close: async () => {
+          // The browser owns files in this profile until shutdown is confirmed.
+          await context?.close();
+          context = undefined;
+          await profileFixture.release();
+        },
+      },
+      profile,
+    ),
+  });
+  site = await startBrowserVerifierSite();
   context = await chromium.launchPersistentContext(profile, {
     executablePath: executable,
     headless: true,
@@ -30,7 +59,11 @@ try {
     ),
   );
   assert.deepEqual(native, Array(4).fill(page.url()));
-  const session = await context.newCDPSession(page);
+  const session = await newPlaywrightCdpSession(
+    context,
+    page,
+    "inspect_web_page",
+  );
   const { targetInfo } = await session.send("Target.getTargetInfo");
   await session.detach();
   const [port] = (
@@ -50,9 +83,5 @@ try {
     native_oracle: true,
     verified: true,
   };
-} finally {
-  await context?.close();
-  await site.close();
-  await rm(profile, { recursive: true, force: true });
-}
+}, [() => browserResources.close(), () => site?.close()]);
 process.stdout.write(`${JSON.stringify(report)}\n`);

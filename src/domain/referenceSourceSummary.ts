@@ -15,6 +15,9 @@ const outlineEntry = (entry: Entry) => {
     content_state: entry.content_state,
     classifications: entry.classifications,
     limitations: entry.limitations,
+    ...(entry.local_diagnostics === undefined
+      ? {}
+      : { local_diagnostics: entry.local_diagnostics }),
   };
 };
 
@@ -29,6 +32,7 @@ export const createHistoricalSourceSummary = (
     files: 0,
     directories: 0,
     symlinks: 0,
+    unknown: 0,
     relationships: graph.relationships.length,
     parse_failures: graph.parse_failures.length,
     exclusions: graph.exclusions.length,
@@ -59,7 +63,8 @@ export const createHistoricalSourceSummary = (
     } else if (entry.kind === "directory") {
       counts.directories += 1;
       treeStates[entry.tree_state] += 1;
-    } else counts.symlinks += 1;
+    } else if (entry.kind === "symlink") counts.symlinks += 1;
+    else counts.unknown += 1;
     // Canonical entries already use Unicode code-point order; filtering preserves it.
     if (entry.path.split("/").length <= outlineDepth)
       outline.push(outlineEntry(entry));

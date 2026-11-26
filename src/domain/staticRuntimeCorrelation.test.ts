@@ -1,22 +1,58 @@
+import { unknownTarget } from "./targetIdentity.js";
 import { describe, expect, it } from "vitest";
-
-import { INVESTIGATION_EXAMPLES } from "../contracts/investigationExamples.js";
-import { createEvidence, type Evidence } from "./evidence.js";
-import type { JsonValue } from "./jsonValue.js";
+import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
+import { FUNCTION_COMPARISON_EVIDENCE } from "../contracts/investigationExamples.js";
+import {
+  artifactComparisonResultSchema,
+  compareArtifacts,
+} from "./artifactComparison.js";
+import { artifactInventoryResultSchema } from "./artifactGraph.js";
+import { findChangedBehavior } from "./changedBehavior.js";
+import { ARTIFACT_COMPARISON_PROVIDER } from "./comparisonEvidenceIdentity.js";
+import {
+  createEvidence,
+  type Evidence,
+  evidenceSubjectInput,
+} from "./evidence.js";
+import { functionComparisonResultSchema } from "./functionComparisonSchemas.js";
+import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
+import { FUNCTION_COMPARISON_EXAMPLE } from "../contracts/functionComparisonExample.js";
+import { functionDossierSchema } from "./native/functionDossier.js";
+import { compareFunctions } from "./functionComparison.js";
+import { functionSnapshotFixture } from "./functionDossierEvidence.fixture.js";
 import {
   correlateStaticAndRuntime,
-  staticRuntimeCorrelationInputSchema,
   staticRuntimeCorrelationResultSchema,
 } from "./staticRuntimeCorrelation.js";
 
-const staticComparison =
-  INVESTIGATION_EXAMPLES.find_changed_behavior.comparisons[0];
-if (staticComparison === undefined)
-  throw new Error("Missing static comparison fixture");
+const staticComparison = FUNCTION_COMPARISON_EVIDENCE;
+
+const artifactComparison = createEvidence(
+  unknownTarget("derived-from-linked-evidence"),
+  ARTIFACT_COMPARISON_PROVIDER,
+  {
+    predicateType: "rea.artifact-comparison",
+    operation: "compare_artifacts",
+    parameters: {
+      left_evidence_ids: [ARTIFACT_COMPARISON_EXAMPLE.left.evidence_id],
+      right_evidence_ids: [ARTIFACT_COMPARISON_EXAMPLE.right.evidence_id],
+    },
+    result: compareArtifacts(
+      ARTIFACT_COMPARISON_EXAMPLE.left,
+      ARTIFACT_COMPARISON_EXAMPLE.right,
+    ),
+    confidence: "derived",
+    authority: "analyst-inference",
+    evidenceLinks: [
+      ARTIFACT_COMPARISON_EXAMPLE.left.evidence_id,
+      ARTIFACT_COMPARISON_EXAMPLE.right.evidence_id,
+    ],
+  },
+);
 
 const capture = (digit: string): Evidence =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       predicateType: "rea.process-capture",
@@ -63,7 +99,7 @@ const processComparison = (
     limitations: terminal === "unknown" ? ["Terminal unavailable."] : [],
   } satisfies JsonValue;
   return createEvidence(
-    undefined,
+    unknownTarget("derived-from-linked-evidence"),
     {
       id: "rea-process",
       name: "REA deterministic process harness",
@@ -113,20 +149,145 @@ const mapping = (
   ],
 });
 
+it("keeps text, assembly and unavailable CFG caveats on their selected correlations", () => {
+  const source = FUNCTION_COMPARISON_EXAMPLE.left;
+  const left = createEvidence(
+    { path: "/tmp/unavailable-cfg", sha256: "a".repeat(64), format: "mach-o" },
+    source.provider,
+    {
+      operation: source.operation,
+      parameters: source.parameters,
+      result: {
+        ...functionDossierSchema.parse(source.normalized_result),
+        basic_blocks: [{ start: "0x1000", end: "0x1000", successors: [] }],
+      },
+      confidence: source.confidence,
+      authority: source.authority,
+    },
+  );
+
+  const right = FUNCTION_COMPARISON_EXAMPLE.right;
+  const computed = compareFunctions(
+    functionSnapshotFixture(left),
+    functionSnapshotFixture(right),
+  );
+  const comparison = createEvidence(
+    unknownTarget("derived-from-linked-evidence"),
+    staticComparison.provider,
+    {
+      predicateType: "rea.function-comparison",
+      operation: "compare_functions",
+      parameters: {
+        left_evidence_id: left.evidence_id,
+        right_evidence_id: right.evidence_id,
+      },
+      result: computed,
+      confidence: "derived",
+      authority: "analyst-inference",
+      limitations: computed.limitations,
+      evidenceLinks: [left.evidence_id, right.evidence_id],
+    },
+  );
+  const input = mapping(processComparison("unchanged"), "static_only");
+  const result = correlateStaticAndRuntime({
+    ...input,
+    static_comparisons: [comparison],
+    mappings: ["pseudocode", "assembly", "cfg"].map((dimension) => ({
+      ...input.mappings[0],
+      static: {
+        comparison_evidence_id: comparison.evidence_id,
+        selector: { kind: "function", dimension },
+      },
+    })),
+  });
+  expect(result.status).toBe("unknown");
+  const caveats = new Map(
+    result.correlations.items.map((item) => [
+      item.static.selector.kind === "function"
+        ? item.static.selector.dimension
+        : "artifact",
+      item.limitations.join(" "),
+    ]),
+  );
+  expect(caveats.get("pseudocode")).toMatch(/generated-name normalization/u);
+  expect(caveats.get("pseudocode")).not.toMatch(
+    /Assembly is opaque|CFG addresses/u,
+  );
+  expect(caveats.get("assembly")).toMatch(/Assembly is opaque/u);
+  expect(caveats.get("assembly")).not.toMatch(/CFG addresses/u);
+  expect(caveats.get("cfg")).toMatch(/CFG addresses/u);
+  expect(caveats.get("cfg")).not.toMatch(
+    /generated-name normalization|Assembly is opaque/u,
+  );
+});
+
 describe("static/runtime correlation", () => {
-  it("accepts real runtime dimensions and rejects removed protocol dimensions", () => {
-    const runtime = processComparison("unchanged");
+  it("uses the selected interaction status even when the terminal changed", () => {
+    const runtime = processComparison("changed");
     expect(
       correlateStaticAndRuntime(mapping(runtime, "static_only", "interaction")),
-    ).toMatchObject({ status: "correlated" });
-    for (const dimension of ["protocol", "shim"] as const)
-      expect(
-        staticRuntimeCorrelationInputSchema.safeParse(
-          mapping(runtime, "static_only", dimension),
-        ).success,
-      ).toBe(false);
+    ).toMatchObject({
+      status: "correlated",
+      correlations: {
+        items: [{ runtime: { dimension: "interaction", status: "unchanged" } }],
+      },
+    });
   });
 
+  it("rejects duplicate static comparison selection", () => {
+    const runtime = processComparison("changed");
+    const base = mapping(runtime, "cochanged");
+    expect(() =>
+      correlateStaticAndRuntime({
+        ...base,
+        static_comparisons: [staticComparison, staticComparison],
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        _tag: "AnalysisInputError",
+        issues: [expect.objectContaining({ path: ["static_comparisons", 1] })],
+      }),
+    );
+  });
+
+  it("rejects a static comparison with an unsupported operation", () => {
+    const runtime = processComparison("changed");
+    const base = mapping(runtime, "cochanged");
+    expect(() =>
+      correlateStaticAndRuntime({
+        ...base,
+        static_comparisons: [leftCapture],
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        _tag: "AnalysisInputError",
+        issues: [expect.objectContaining({ path: ["static_comparisons", 0] })],
+      }),
+    );
+  });
+
+  it("classifies malformed source Evidence as an integrity failure", () => {
+    const runtime = processComparison("changed");
+    const base = mapping(runtime, "cochanged");
+    const malformedEvidence = {
+      ...staticComparison,
+      evidence_id: "ev_invalid",
+    };
+    expect(() =>
+      correlateStaticAndRuntime({
+        ...base,
+        static_comparisons: [malformedEvidence],
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        _tag: "EvidenceIntegrityError",
+        cause: expect.any(Error),
+      }),
+    );
+  });
+});
+
+describe("static/runtime correlation outcomes", () => {
   it("keeps consistent cochange as a hypothesis with complete citations", () => {
     const runtime = processComparison("changed");
     const result = correlateStaticAndRuntime(mapping(runtime, "cochanged"));
@@ -153,6 +314,9 @@ describe("static/runtime correlation", () => {
     );
     expect(result.limitations.join(" ")).toMatch(
       /does not establish causality/u,
+    );
+    expect(result.correlations.items[0]?.limitations.join(" ")).toMatch(
+      /generated-name normalization/u,
     );
   });
 
@@ -187,7 +351,9 @@ describe("static/runtime correlation", () => {
       correlations: { items: [{ observed_pattern: "truncated" }] },
     });
   });
+});
 
+describe("static/runtime correlation selection", () => {
   it("returns all correlations order-stably and rejects duplicates and absent selectors", () => {
     const runtime = processComparison("changed");
     const base = mapping(runtime, "cochanged");
@@ -214,7 +380,14 @@ describe("static/runtime correlation", () => {
         ...base,
         mappings: [base.mappings[0], base.mappings[0]],
       }),
-    ).toThrow(/duplicate mappings/u);
+    ).toThrowError(
+      expect.objectContaining({
+        _tag: "AnalysisInputError",
+        operation: "correlate_static_and_runtime",
+        userMessage: expect.stringContaining("duplicate mappings"),
+        issues: [expect.objectContaining({ path: ["mappings", 1] })],
+      }),
+    );
     expect(() =>
       correlateStaticAndRuntime({
         ...base,
@@ -242,26 +415,467 @@ describe("static/runtime correlation", () => {
           },
         ],
       }),
-    ).toThrow(/absent static comparison/u);
+    ).toThrowError(
+      expect.objectContaining({
+        _tag: "AnalysisInputError",
+        userMessage: expect.stringContaining("absent static comparison"),
+        issues: [
+          expect.objectContaining({
+            path: ["mappings", 0, "static", "comparison_evidence_id"],
+          }),
+        ],
+      }),
+    );
+    expect(() =>
+      correlateStaticAndRuntime({
+        ...base,
+        mappings: [
+          {
+            ...base.mappings[0],
+            runtime: {
+              ...base.mappings[0]!.runtime,
+              comparison_evidence_id: staticComparison.evidence_id,
+            },
+          },
+        ],
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        _tag: "AnalysisInputError",
+        issues: [
+          expect.objectContaining({
+            path: ["mappings", 0, "runtime", "comparison_evidence_id"],
+          }),
+        ],
+      }),
+    );
   });
+});
 
+describe("static/runtime correlation Evidence validation", () => {
   it("rejects comparison citations that disagree with source parameters", () => {
     const runtime = processComparison("changed");
-    const forged = createEvidence(undefined, runtime.provider, {
-      predicateType: runtime.predicate_type,
-      operation: runtime.operation,
-      parameters: {
-        left_evidence_id: leftCapture.evidence_id,
-        right_evidence_id: staticComparison.evidence_id,
+    const forged = createEvidence(
+      evidenceSubjectInput(runtime.subject),
+      runtime.provider,
+      {
+        predicateType: runtime.predicate_type,
+        operation: runtime.operation,
+        parameters: {
+          left_evidence_id: leftCapture.evidence_id,
+          right_evidence_id: staticComparison.evidence_id,
+        },
+        result: runtime.normalized_result,
+        confidence: runtime.confidence,
+        authority: runtime.authority,
+        evidenceLinks: runtime.evidence_links,
       },
-      result: runtime.normalized_result,
-      confidence: runtime.confidence,
-      authority: runtime.authority,
-      evidenceLinks: runtime.evidence_links,
-    });
+    );
     const input = mapping(forged, "cochanged");
-    expect(() => correlateStaticAndRuntime(input)).toThrow(
-      /closure disagrees with its source parameters/u,
+    expect(() => correlateStaticAndRuntime(input)).toThrowError(
+      expect.toSatisfy(
+        (error: { _tag?: unknown; userMessage?: unknown; cause?: unknown }) =>
+          error._tag === "EvidenceIntegrityError" &&
+          typeof error.userMessage === "string" &&
+          error.userMessage.includes(
+            "closure disagrees with its source parameters",
+          ) &&
+          error.cause === undefined,
+      ),
+    );
+  });
+
+  it("retains invalid authenticated result payloads as Evidence failures", () => {
+    const valid = processComparison("changed");
+    const malformed = createEvidence(
+      evidenceSubjectInput(valid.subject),
+      valid.provider,
+      {
+        predicateType: valid.predicate_type,
+        operation: valid.operation,
+        parameters: valid.parameters,
+        result: { status: "changed" },
+        confidence: valid.confidence,
+        authority: valid.authority,
+        evidenceLinks: valid.evidence_links,
+      },
+    );
+    expect(() =>
+      correlateStaticAndRuntime(mapping(malformed, "cochanged")),
+    ).toThrowError(
+      expect.objectContaining({
+        _tag: "EvidenceIntegrityError",
+        cause: expect.any(Error),
+      }),
+    );
+  });
+});
+
+describe("static/runtime correlation citation closure", () => {
+  it("accepts extra parent citations for changed behavior but rejects them for correlation", () => {
+    const runtime = processComparison("changed");
+    const extra = staticComparison.evidence_id;
+    const extended = createEvidence(
+      evidenceSubjectInput(runtime.subject),
+      runtime.provider,
+      {
+        predicateType: runtime.predicate_type,
+        operation: runtime.operation,
+        parameters: runtime.parameters,
+        result: runtime.normalized_result,
+        confidence: runtime.confidence,
+        authority: runtime.authority,
+        evidenceLinks: [...runtime.evidence_links, extra],
+      },
+    );
+    const aggregated = findChangedBehavior({ comparisons: [extended] });
+    expect(aggregated.result.behavior_status).toBe("observed_changed");
+    expect(aggregated.result.evidence_links).toContain(extra);
+    expect(() =>
+      correlateStaticAndRuntime(mapping(extended, "cochanged")),
+    ).toThrowError(
+      expect.toSatisfy(
+        (error: { _tag?: unknown; userMessage?: unknown; cause?: unknown }) =>
+          error._tag === "EvidenceIntegrityError" &&
+          error.userMessage ===
+            "Comparison Evidence closure disagrees with its source parameters" &&
+          error.cause === undefined,
+      ),
+    );
+  });
+
+  it.each([
+    ["function", staticComparison],
+    ["artifact", artifactComparison],
+  ] as const)(
+    "rejects authenticated %s citations outside the top-level Evidence closure",
+    (_kind, base) => {
+      const outside = `ev_${"f".repeat(64)}`;
+      let result: JsonValue;
+      if (base.operation === "compare_functions") {
+        const parsed = functionComparisonResultSchema.parse(
+          base.normalized_result,
+        );
+        const dimensions = parsed.dimensions.map((dimension) => ({
+          ...dimension,
+          evidence_links: [...dimension.evidence_links, outside],
+        }));
+        result = jsonValueSchema.parse(
+          functionComparisonResultSchema.parse({
+            ...parsed,
+            dimensions,
+            changes: dimensions.filter(({ status }) => status !== "unchanged"),
+          }),
+        );
+      } else {
+        const parsed = artifactComparisonResultSchema.parse(
+          base.normalized_result,
+        );
+        expect(parsed.changes.length).toBeGreaterThan(0);
+        result = jsonValueSchema.parse({
+          ...parsed,
+          changes: parsed.changes.map((change) => ({
+            ...change,
+            evidence_links: [...change.evidence_links, outside],
+          })),
+        });
+      }
+      const danglingNested = createEvidence(
+        evidenceSubjectInput(base.subject),
+        base.provider,
+        {
+          predicateType: base.predicate_type,
+          operation: base.operation,
+          parameters: base.parameters,
+          result,
+          confidence: base.confidence,
+          authority: base.authority,
+          evidenceLinks: base.evidence_links,
+        },
+      );
+      const input = mapping(processComparison("changed"), "cochanged");
+      expect(() =>
+        correlateStaticAndRuntime({
+          ...input,
+          static_comparisons: [danglingNested],
+          mappings: input.mappings.map((item) => ({
+            ...item,
+            static: {
+              comparison_evidence_id: danglingNested.evidence_id,
+              selector:
+                base.operation === "compare_functions"
+                  ? { kind: "function", dimension: "pseudocode" }
+                  : { kind: "artifact", logical_path: "." },
+            },
+          })),
+        }),
+      ).toThrowError(
+        expect.toSatisfy(
+          (error: { _tag?: unknown; message?: unknown; cause?: unknown }) =>
+            error._tag === "EvidenceIntegrityError" &&
+            error.message ===
+              "Comparison finding cites Evidence outside its top-level closure" &&
+            error.cause === undefined,
+        ),
+      );
+    },
+  );
+});
+
+const { left: artifactLeft, right: artifactRight } =
+  ARTIFACT_COMPARISON_EXAMPLE;
+
+// The root is compared unchanged, so the comparison omits it from changes.
+const unchanged = createEvidence(
+  unknownTarget("derived-from-linked-evidence"),
+  ARTIFACT_COMPARISON_PROVIDER,
+  {
+    predicateType: "rea.artifact-comparison",
+    operation: "compare_artifacts",
+    parameters: {
+      left_evidence_ids: [artifactLeft.evidence_id],
+      right_evidence_ids: [artifactLeft.evidence_id],
+    },
+    result: compareArtifacts(artifactLeft, artifactLeft),
+    confidence: "derived",
+    authority: "analyst-inference",
+    evidenceLinks: [artifactLeft.evidence_id],
+  },
+);
+const select = (logicalPath: string) => {
+  const input = mapping(processComparison("unchanged"), "both_unchanged");
+  return {
+    ...input,
+    static_comparisons: [unchanged],
+    mappings: input.mappings.map((item) => ({
+      ...item,
+      static: {
+        comparison_evidence_id: unchanged.evidence_id,
+        selector: { kind: "artifact", logical_path: logicalPath },
+      },
+    })),
+  };
+};
+const sources = new Map([[artifactLeft.evidence_id, artifactLeft]]);
+
+describe("unreported artifact paths", () => {
+  it("keeps an unchanged path unresolved without its source inventories", () => {
+    expect(
+      artifactComparisonResultSchema.parse(unchanged.normalized_result),
+    ).toMatchObject({ status: "unchanged", changes: [] });
+    const result = correlateStaticAndRuntime(select("."));
+    expect(result).toMatchObject({
+      status: "unknown",
+      correlations: {
+        items: [
+          {
+            static: { status: "unknown", conclusion_kind: "unresolved_branch" },
+            classification: "unresolved_branch",
+          },
+        ],
+      },
+    });
+    expect(result.correlations.items[0]?.limitations.join(" ")).toMatch(
+      /source inventories were unavailable/u,
+    );
+    expect(
+      correlateStaticAndRuntime(select("."), {
+        sourceEvidence: (id) => sources.get(id),
+      }),
+    ).toMatchObject({
+      status: "correlated",
+      correlations: {
+        items: [
+          {
+            static: { status: "unchanged" },
+            observed_pattern: "both_unchanged",
+          },
+        ],
+      },
+    });
+  });
+});
+
+describe("prepared unreported artifact paths", () => {
+  it("prepares each comparison's source inventories once across mappings", () => {
+    const base = select(".");
+    const patterns = ["both_unchanged", "runtime_only", "static_only"] as const;
+    const lookups: string[] = [];
+    const result = correlateStaticAndRuntime(
+      {
+        ...base,
+        mappings: patterns.map((expected_pattern) => ({
+          ...base.mappings[0],
+          hypothesis: { statement: "Unchanged root.", expected_pattern },
+        })),
+      },
+      {
+        sourceEvidence: (id) => {
+          lookups.push(id);
+          return sources.get(id);
+        },
+      },
+    );
+    expect(result.summary).toEqual({
+      hypotheses: 1,
+      contradictions: 2,
+      unresolved: 0,
+    });
+    expect(
+      result.correlations.items.map(({ static: selected }) => selected.status),
+    ).toEqual(["unchanged", "unchanged", "unchanged"]);
+    // One resolution per comparison side, not per mapping: the inventories are
+    // parsed and indexed once and reused by the later mappings.
+    expect(lookups).toEqual([
+      artifactLeft.evidence_id,
+      artifactLeft.evidence_id,
+    ]);
+  });
+
+  it("keeps a matched path unresolved without complete inventory coverage", () => {
+    const partial = createEvidence(
+      evidenceSubjectInput(artifactLeft.subject),
+      artifactLeft.provider,
+      {
+        operation: artifactLeft.operation,
+        parameters: artifactLeft.parameters,
+        result: {
+          ...artifactInventoryResultSchema.parse(
+            artifactLeft.normalized_result,
+          ),
+          coverage: { scope: "root", status: "unknown" },
+        },
+        confidence: artifactLeft.confidence,
+        authority: artifactLeft.authority,
+      },
+    );
+    const comparison = createEvidence(
+      unknownTarget("derived-from-linked-evidence"),
+      ARTIFACT_COMPARISON_PROVIDER,
+      {
+        predicateType: "rea.artifact-comparison",
+        operation: "compare_artifacts",
+        parameters: {
+          left_evidence_ids: [partial.evidence_id],
+          right_evidence_ids: [partial.evidence_id],
+        },
+        result: compareArtifacts(partial, partial),
+        confidence: "derived",
+        authority: "analyst-inference",
+        evidenceLinks: [partial.evidence_id],
+      },
+    );
+    expect(
+      artifactComparisonResultSchema.parse(comparison.normalized_result),
+    ).toMatchObject({ status: "unknown", changes: [] });
+    const input = select(".");
+    const result = correlateStaticAndRuntime(
+      {
+        ...input,
+        static_comparisons: [comparison],
+        mappings: input.mappings.map((item) => ({
+          ...item,
+          static: {
+            ...item.static,
+            comparison_evidence_id: comparison.evidence_id,
+          },
+        })),
+      },
+      {
+        sourceEvidence: (id) =>
+          id === partial.evidence_id ? partial : undefined,
+      },
+    );
+    expect(result).toMatchObject({
+      status: "unknown",
+      correlations: {
+        items: [
+          {
+            static: { status: "unknown", conclusion_kind: "unresolved_branch" },
+            classification: "unresolved_branch",
+          },
+        ],
+      },
+    });
+    expect(result.correlations.items[0]?.limitations.join(" ")).toMatch(
+      /without complete comparison coverage/u,
+    );
+  });
+
+  it("rejects source inventories that disagree with the comparison", () => {
+    expect(() =>
+      correlateStaticAndRuntime(select("."), {
+        sourceEvidence: () => artifactRight,
+      }),
+    ).toThrowError(
+      expect.toSatisfy(
+        (error: { _tag?: unknown; message?: unknown }) =>
+          error._tag === "EvidenceIntegrityError" &&
+          error.message ===
+            "Artifact comparison source inventories disagree with its manifests",
+      ),
+    );
+  });
+});
+
+describe("unobserved artifact paths", () => {
+  it("keeps a path neither inventory observed unknown without complete coverage", () => {
+    const partial = createEvidence(
+      evidenceSubjectInput(artifactLeft.subject),
+      artifactLeft.provider,
+      {
+        operation: artifactLeft.operation,
+        parameters: artifactLeft.parameters,
+        result: {
+          ...artifactInventoryResultSchema.parse(
+            artifactLeft.normalized_result,
+          ),
+          coverage: { scope: "root", status: "unknown" },
+        },
+        confidence: artifactLeft.confidence,
+        authority: artifactLeft.authority,
+      },
+    );
+    const comparison = createEvidence(
+      unknownTarget("derived-from-linked-evidence"),
+      ARTIFACT_COMPARISON_PROVIDER,
+      {
+        predicateType: "rea.artifact-comparison",
+        operation: "compare_artifacts",
+        parameters: {
+          left_evidence_ids: [partial.evidence_id],
+          right_evidence_ids: [partial.evidence_id],
+        },
+        result: compareArtifacts(partial, partial),
+        confidence: "derived",
+        authority: "analyst-inference",
+        evidenceLinks: [partial.evidence_id],
+      },
+    );
+    const input = select("never/reached.js");
+    const result = correlateStaticAndRuntime(
+      {
+        ...input,
+        static_comparisons: [comparison],
+        mappings: input.mappings.map((item) => ({
+          ...item,
+          static: {
+            ...item.static,
+            comparison_evidence_id: comparison.evidence_id,
+          },
+        })),
+      },
+      {
+        sourceEvidence: (id) =>
+          id === partial.evidence_id ? partial : undefined,
+      },
+    );
+    expect(result.correlations.items[0]).toMatchObject({
+      static: { status: "unknown", conclusion_kind: "unresolved_branch" },
+      classification: "unresolved_branch",
+    });
+    expect(result.correlations.items[0]?.limitations.join(" ")).toMatch(
+      /not observed in either inventory/u,
     );
   });
 });

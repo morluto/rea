@@ -1,17 +1,26 @@
 #!/usr/bin/env node
 import { join } from "node:path";
 import { mkdir } from "node:fs/promises";
-import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
-import { exec } from "./lib/verify-package-core.mjs";
+import { fileURLToPath } from "node:url";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { createPackageVerifierCommands } from "./lib/verify-package-commands.mjs";
+import { WABT_WORKFLOW_TIMEOUT_MS } from "./lib/wabt-verifier-timeouts.mjs";
 import { verifyPackagePack } from "./verify-package-pack.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
-const root = await PrivateRuntimeRoot.create({
+const root = await VerifierFixture.open({
   prefix: "rea-wabt-package-verifier-",
 });
-try {
+let commands;
+const verifiedOutput = await withVerifierCleanup(async () => {
+  // The package command owner releases the fixture after its commands close.
+  commands = await createPackageVerifierCommands({
+    workspace: { path: root.path, close: () => root.release() },
+  });
   const { tarball } = await verifyPackagePack({
     root: process.cwd(),
     workspace: root.path,
+    commands,
   });
   const prefix = join(root.path, "prefix");
   const home = join(root.path, "home");
@@ -23,8 +32,7 @@ try {
     XDG_CONFIG_HOME: join(home, ".config"),
     XDG_CACHE_HOME: join(home, ".cache"),
   };
-  await exec(
-    "npm",
+  await commands.execNpm(
     [
       "install",
       "--global",
@@ -46,12 +54,20 @@ try {
     "scripts",
     "rea.mjs",
   );
-  const verified = await exec(
+  const verified = await commands.exec(
     process.execPath,
-    ["scripts/verify-wasm-artifact.mjs", entrypoint, "--require-tools"],
-    { env: environment, timeout: 180_000, maxBuffer: 4 * 1024 * 1024 },
+    [
+      fileURLToPath(new URL("./verify-wasm-artifact.mjs", import.meta.url)),
+      entrypoint,
+      "--require-tools",
+    ],
+    {
+      cwd: process.cwd(),
+      env: environment,
+      timeout: WABT_WORKFLOW_TIMEOUT_MS,
+      diagnosticBytes: 4 * 1024 * 1024,
+    },
   );
-  process.stdout.write(verified.stdout);
-} finally {
-  await root.close();
-}
+  return verified.stdout;
+}, [() => (commands === undefined ? root.release() : commands.close())]);
+process.stdout.write(verifiedOutput);

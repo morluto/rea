@@ -1,41 +1,66 @@
-import { Worker } from "node:worker_threads";
 import { z } from "zod";
 
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisOutputError,
-  AnalysisResourceConstraintError,
-} from "../domain/analysisErrorCore.js";
-import { analysisStringSchema } from "../domain/hopperValues.js";
-import { HopperRemoteError } from "../domain/hopperErrors.js";
+import { cancelledBy, OwnerCancellation } from "../domain/analysisErrorCore.js";
+import { HopperRemoteError } from "./HopperErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { analysisSearchInput } from "../contracts/analysisSearchContract.js";
+import { extractRequiredRegexLiteral } from "../domain/regexLiteralCandidate.js";
+import { nativeSearchInput } from "../domain/native/nativeSearch.js";
 import type { HopperClient } from "./HopperClient.js";
+import {
+  HopperReplyContractError,
+  type HopperReply,
+} from "./HopperReplyContracts.js";
+import {
+  DEFAULT_REGEX_MATCHING_DEADLINE,
+  type RegexMatchingDeadline,
+} from "../config/regexMatchingDeadline.js";
+import {
+  DEFAULT_REGEX_WORKER_HEAP_REQUEST,
+  type RegexWorkerHeapRequest,
+} from "../config/regexWorkerHeapRequest.js";
+import { matchRegexValues } from "../process/RegexMatcher.js";
+import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 
-const MATCHING_DEADLINE_MS = 5_000;
 const inputSchema = z.strictObject({
-  ...analysisSearchInput,
+  ...nativeSearchInput,
   mode: z.literal("regex"),
 });
-const replySchema = z.discriminatedUnion("status", [
-  z.strictObject({
-    status: z.literal("matched"),
-    indices: z.array(z.number().int().nonnegative()),
-  }),
-  z.strictObject({ status: z.literal("invalid_pattern"), reason: z.string() }),
-]);
-
 /** Match collected native facts off Hopper's API thread, with cancellable lifetime. */
+/** The client capability regex search needs: one validated inventory or literal candidate read. */
+export interface HopperInventoryReader {
+  callTool(
+    method:
+      | "list_strings"
+      | "list_procedures"
+      | "search_strings"
+      | "search_procedures",
+    arguments_: Readonly<Record<string, JsonValue>>,
+    options: Parameters<HopperClient["callTool"]>[2],
+  ): Promise<
+    Result<
+      | HopperReply<"list_strings">
+      | HopperReply<"list_procedures">
+      | HopperReply<"search_strings">
+      | HopperReply<"search_procedures">,
+      AnalysisError
+    >
+  >;
+}
+
 export class HopperRegexSearch {
   readonly #active = new Map<
     AbortController,
     Promise<Result<JsonValue, AnalysisError>>
   >();
 
-  constructor(private readonly client: HopperClient) {}
+  constructor(
+    private readonly client: HopperInventoryReader,
+    private readonly deadline: RegexMatchingDeadline = DEFAULT_REGEX_MATCHING_DEADLINE,
+    private readonly heapRequest: RegexWorkerHeapRequest = DEFAULT_REGEX_WORKER_HEAP_REQUEST,
+  ) {}
 
   execute(
     operation: "search_strings" | "search_procedures",
@@ -52,16 +77,17 @@ export class HopperRegexSearch {
       signal,
     });
     this.#active.set(controller, pending);
-    void pending.then(
-      () => this.#active.delete(controller),
-      () => this.#active.delete(controller),
-    );
+    const remove = (): void => {
+      this.#active.delete(controller);
+    };
+    void pending.then(remove, remove);
     return pending;
   }
 
   /** Abort matching workers before their provider session closes. */
   async close(): Promise<void> {
-    for (const controller of this.#active.keys()) controller.abort();
+    for (const controller of this.#active.keys())
+      controller.abort(OwnerCancellation.ownerClosed);
     await Promise.all(this.#active.values());
   }
 
@@ -97,24 +123,47 @@ export class HopperRegexSearch {
             },
           }),
     };
-    const inventory = await this.client.callTool(
-      operation === "search_strings" ? "list_strings" : "list_procedures",
+    const inventoryArguments =
       input.data.document === undefined
         ? {}
-        : { document: input.data.document },
-      inventoryOptions,
+        : { document: input.data.document };
+    const candidateLiteral = extractRequiredRegexLiteral(
+      input.data.pattern,
+      input.data.case_sensitive,
     );
-    if (!inventory.ok) return inventory;
-    const parsed = z.array(analysisStringSchema).safeParse(inventory.value);
-    if (!parsed.success)
+    const inventoryMethod =
+      candidateLiteral !== undefined
+        ? operation
+        : operation === "search_strings"
+          ? "list_strings"
+          : "list_procedures";
+    const inventoryArgs =
+      candidateLiteral !== undefined
+        ? {
+            ...inventoryArguments,
+            pattern: candidateLiteral,
+            mode: "literal",
+            case_sensitive: input.data.case_sensitive,
+          }
+        : inventoryArguments;
+    const inventory = await this.client.callTool(
+      inventoryMethod,
+      inventoryArgs,
+      { ...inventoryOptions, operation },
+    );
+    if (!inventory.ok)
       return err(
-        new AnalysisOutputError(
-          operation,
-          "Hopper search inventory is malformed",
-        ),
+        inventory.error instanceof HopperReplyContractError
+          ? inventory.error
+          : analysisClientFailureForOperation(
+              inventory.error,
+              "hopper",
+              operation,
+            ),
       );
+    const rows: readonly { readonly value: string }[] = inventory.value;
     if (options.signal?.aborted)
-      return err(new AnalysisCancelledError(operation));
+      return err(cancelledBy(operation, options.signal));
     await options.progress
       ?.report({
         phase: "hopper_regex",
@@ -124,118 +173,19 @@ export class HopperRegexSearch {
       })
       .catch(() => undefined);
     if (options.signal?.aborted)
-      return err(new AnalysisCancelledError(operation));
-    let worker: Worker;
-    try {
-      worker = new Worker(new URL("./HopperRegexWorker.js", import.meta.url), {
-        workerData: {
-          pattern: input.data.pattern,
-          caseSensitive: input.data.case_sensitive,
-          values: parsed.data.map((item) => item.value),
-        },
-      });
-    } catch (cause: unknown) {
-      return err(
-        new AnalysisOutputError(
-          operation,
-          `Cannot start regex worker: ${cause instanceof Error ? cause.message : String(cause)}`,
-          { cause },
-        ),
-      );
-    }
-    try {
-      return await new Promise<Result<JsonValue, AnalysisError>>((resolve) => {
-        const finish = (result: Result<JsonValue, AnalysisError>): void => {
-          clearTimeout(timer);
-          options.signal?.removeEventListener("abort", onAbort);
-          resolve(result);
-        };
-        const onAbort = (): void =>
-          finish(err(new AnalysisCancelledError(operation)));
-        const timer = setTimeout(
-          () =>
-            finish(
-              err(
-                new AnalysisResourceConstraintError(
-                  operation,
-                  "cpu",
-                  "Regex matching exceeded its supervised deadline; the Hopper API thread remains available.",
-                  { matching_deadline_ms: MATCHING_DEADLINE_MS },
-                  {
-                    remediationAction:
-                      "Simplify the ECMAScript Unicode regex or use literal mode, then retry in the same session.",
-                  },
-                ),
-              ),
-            ),
-          MATCHING_DEADLINE_MS,
-        );
-        options.signal?.addEventListener("abort", onAbort, { once: true });
-        if (options.signal?.aborted) onAbort();
-        worker.once("message", (message: unknown) => {
-          const reply = replySchema.safeParse(message);
-          if (!reply.success)
-            return finish(
-              err(
-                new AnalysisOutputError(
-                  operation,
-                  "Regex worker reply is malformed",
-                ),
-              ),
-            );
-          if (reply.data.status === "invalid_pattern")
-            return finish(
-              err(
-                new HopperRemoteError(
-                  -32000,
-                  `Invalid regex pattern: ${reply.data.reason}`,
-                  { diagnosticType: "invalid_request", operation },
-                ),
-              ),
-            );
-          const indices = reply.data.indices;
-          if (
-            indices.some(
-              (index, position) =>
-                index >= parsed.data.length ||
-                (position > 0 && index <= (indices[position - 1] ?? -1)),
-            )
-          )
-            return finish(
-              err(
-                new AnalysisOutputError(
-                  operation,
-                  "Regex worker returned invalid inventory indices",
-                ),
-              ),
-            );
-          const selected = new Set(indices);
-          finish(ok(parsed.data.filter((_, index) => selected.has(index))));
-        });
-        worker.once("error", (cause: Error) =>
-          finish(
-            err(
-              new AnalysisOutputError(
-                operation,
-                `Regex worker failed: ${cause.message}`,
-                { cause },
-              ),
-            ),
-          ),
-        );
-        worker.once("exit", (code) =>
-          finish(
-            err(
-              new AnalysisOutputError(
-                operation,
-                `Regex worker exited without a result (${code})`,
-              ),
-            ),
-          ),
-        );
-      });
-    } finally {
-      await worker.terminate();
-    }
+      return err(cancelledBy(operation, options.signal));
+    const matched = await matchRegexValues({
+      operation,
+      pattern: input.data.pattern,
+      caseSensitive: input.data.case_sensitive,
+      values: rows.map((item) => item.value),
+      signal: options.signal,
+      deadline: this.deadline,
+      heapRequest: this.heapRequest,
+    });
+    if (!matched.ok) return matched;
+    if (options.signal?.aborted)
+      return err(cancelledBy(operation, options.signal));
+    return ok(matched.value.map((index) => rows[index]!));
   }
 }

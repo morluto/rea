@@ -81,6 +81,26 @@ describe("committed historical-source summaries", () => {
     expect(graph).toEqual(original);
   });
 
+  it("counts entries of unknown kind separately from symlinks", () => {
+    const graph = createHistoricalSourceGraph(
+      input([
+        {
+          path: "deep",
+          kind: "unknown",
+          classifications: ["unknown"],
+          limitations: ["lstat: ENAMETOOLONG"],
+        },
+      ]),
+    );
+    expect(createHistoricalSourceSummary(graph, 1).counts).toMatchObject({
+      entries: 1,
+      files: 0,
+      directories: 0,
+      symlinks: 0,
+      unknown: 1,
+    });
+  });
+
   it("sums known bytes losslessly beyond the JSON safe integer range", () => {
     const graph = createHistoricalSourceGraph(
       input(

@@ -1,5 +1,15 @@
+import { createHash } from "node:crypto";
+import { createHistoricalSourceSummary } from "../../../src/domain/referenceSourceSummary.js";
 import fs from "node:fs";
-import { chmod, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  open,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { add, commit, init } from "isomorphic-git";
@@ -7,14 +17,17 @@ import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { normalizeHistoricalSourceParseFailures } from "../../../src/application/ReferenceSourceImport.js";
-import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
+import { prepareReferenceSourceImport } from "../../../src/application/ReferenceSourceImportPolicy.js";
 import {
-  parseReferenceSourceEntries,
-  projectReferenceSourceEntryFailure,
-} from "../../../src/application/ReferenceSourceImportEntries.js";
-import type { ReferenceSourceRead } from "../../../src/reference/ReferenceSourceReaderTypes.js";
+  readRegularFileText,
+  RegularFileReadFailure,
+} from "../../../src/process/RegularFileRead.js";
+import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
+import { parseReferenceSourceEntries } from "../../../src/application/ReferenceSourceImportEntries.js";
 import { createHistoricalSourceManifest } from "../../../src/domain/referenceSourceGraph.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
+import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
+import { RegularFileCleanupFailure } from "../../../src/filesystem/OwnedRegularFile.js";
 
 const fixture = async (parent: string, name: string): Promise<string> => {
   const root = join(parent, name);
@@ -44,26 +57,40 @@ const importTree = (
   });
 
 describe("reference source import projections", () => {
-  it("deduplicates exact parse failures without collapsing distinct reasons", () => {
-    const malformed = {
-      path: "src/main.ts",
-      parser: "babel",
-      reason: "Malformed input",
-    };
-    const unexpected = {
-      path: "src/main.ts",
-      parser: "babel",
-      reason: "Unexpected token",
-    };
-
-    expect(
-      normalizeHistoricalSourceParseFailures([
-        unexpected,
-        malformed,
-        unexpected,
-      ]),
-    ).toEqual([malformed, unexpected]);
-  });
+  it.skipIf(process.platform === "win32")(
+    "imports the physical source selected through a symlink and ..",
+    async () => {
+      const root = await createTestTempDirectory("rea-reference-parent-");
+      await mkdir(join(root, "physical", "inner"), { recursive: true });
+      await mkdir(join(root, "physical", "source"));
+      await mkdir(join(root, "source"));
+      await writeFile(
+        join(root, "physical", "source", "intended.js"),
+        "export const intended = 1;\n",
+      );
+      await writeFile(
+        join(root, "source", "other.js"),
+        "export const other = 1;\n",
+      );
+      await symlink(join(root, "physical", "inner"), join(root, "link"));
+      const selected = `${root}/link/../source`;
+      const result = await importTree(selected);
+      expect(result).toMatchObject({
+        ok: true,
+        value: {
+          entries: [
+            {
+              path: "intended.js",
+              content_state: "hashed",
+              sha256: createHash("sha256")
+                .update("export const intended = 1;\n")
+                .digest("hex"),
+            },
+          ],
+        },
+      });
+    },
+  );
 
   it("retains entry failure diagnostics alongside recovery guidance", () => {
     for (const [kind, code] of [
@@ -73,13 +100,24 @@ describe("reference source import projections", () => {
       ["file", "cancelled"],
       ["unknown", "unsupported"],
     ] as const) {
-      const message = projectReferenceSourceEntryFailure({
-        status: "failed",
-        path: "safe/path",
-        kind,
-        code,
-        message: "Observed entry failure at /owned/fixture/path",
-      });
+      const parsed = parseReferenceSourceEntries(
+        {
+          root: "/owned/fixture",
+          entries: [
+            {
+              status: "failed",
+              path: "safe/path",
+              kind,
+              code,
+              message: "Observed entry failure at /owned/fixture/path",
+            },
+          ],
+          bytesRead: 0,
+          limitations: [],
+        },
+        [],
+      );
+      const message = parsed.entries[0]?.limitations[0];
       expect(message).toContain(
         "Observed entry failure at /owned/fixture/path",
       );
@@ -88,32 +126,370 @@ describe("reference source import projections", () => {
   });
 });
 
-describe("reference source symlink import", () => {
-  it("preserves an unreadable target as unknown instead of a synthetic path", () => {
-    const read: ReferenceSourceRead = {
-      root: "/reference",
-      entries: [
-        {
-          status: "failed",
-          kind: "symlink",
-          path: "src/link.ts",
-          code: "io",
-          message: "Symbolic link target could not be read",
-        },
-      ],
-      bytesRead: 0,
-      limitations: [],
-    };
+describe("reference source ignore policy read failures", () => {
+  it("preserves a late-aborted physical admission failure identical to the reason", async () => {
+    const root = await createTestTempDirectory("rea-reference-admission-read-");
+    const path = join(root, "input.txt");
+    await writeFile(path, "source\n");
+    const controller = new AbortController();
+    const physical = Object.assign(new Error("controlled admission failure"), {
+      code: "EIO",
+    });
+    const result = readRegularFileText(path, {
+      signal: controller.signal,
+      cancellationFailure: (reason) =>
+        new Error("owned cancellation checkpoint", { cause: reason }),
+      admit: () => {
+        controller.abort(physical);
+        throw physical;
+      },
+    });
 
-    const parsed = parseReferenceSourceEntries(read, new Set());
-    expect(parsed.entries).toContainEqual(
-      expect.objectContaining({
-        kind: "symlink",
-        path: "src/link.ts",
-        target: null,
-        target_state: "unreadable",
-      }),
+    await expect(result).rejects.toMatchObject({
+      _tag: new RegularFileReadFailure(physical)._tag,
+      operationCause: physical,
+      cause: physical,
+    });
+  });
+
+  it.each([
+    {
+      name: "distinct physical I/O failure",
+      physical: "error" as const,
+      sameAsAbortReason: false,
+      expected: "io",
+    },
+    {
+      name: "physical failure identical to the abort reason",
+      physical: "error" as const,
+      sameAsAbortReason: true,
+      expected: "io",
+    },
+    {
+      name: "non-Error physical failure",
+      physical: "string" as const,
+      sameAsAbortReason: false,
+      expected: "io",
+    },
+    {
+      name: "cancellation after a successful physical read",
+      physical: "cancel-after-read" as const,
+      sameAsAbortReason: false,
+      expected: "cancelled",
+    },
+  ])(
+    "preserves $name when the signal is aborted",
+    async ({ physical, sameAsAbortReason, expected }) => {
+      const root = await createTestTempDirectory("rea-reference-ignore-read-");
+      const path = join(root, ".gitignore");
+      await writeFile(path, "ignored/\n");
+      const controller = new AbortController();
+      const abortReason = new Error("caller cancelled");
+      const readFailure: unknown =
+        physical === "string"
+          ? "controlled non-Error read failure"
+          : Object.assign(new Error("controlled read failure"), {
+              code: "EIO",
+            });
+      const probe = await open(path, "r");
+      const identity = await probe.stat();
+      const prototype = probe.constructor.prototype as {
+        read: (...arguments_: never[]) => Promise<unknown>;
+      };
+      await probe.close();
+      const originalRead = prototype.read;
+      let intercepted = false;
+      const read = async function (
+        this: typeof probe,
+        ...arguments_: never[]
+      ): Promise<unknown> {
+        if (!intercepted) {
+          const state = await this.stat();
+          if (state.dev === identity.dev && state.ino === identity.ino) {
+            intercepted = true;
+            if (physical === "cancel-after-read") {
+              const observed = await originalRead.apply(this, arguments_);
+              expect(observed).toMatchObject({
+                bytesRead: Buffer.byteLength("ignored/\n"),
+              });
+              controller.abort(abortReason);
+              return observed;
+            }
+            controller.abort(sameAsAbortReason ? readFailure : abortReason);
+            throw readFailure;
+          }
+        }
+        return originalRead.apply(this, arguments_);
+      };
+      prototype.read = read;
+      const resources = new ArtifactResourceScope();
+      try {
+        const result = await prepareReferenceSourceImport(
+          {
+            root,
+            caller: "reference-import-test",
+            policy: { secretPatterns: [] },
+            signal: controller.signal,
+          },
+          resources,
+        );
+        expect(intercepted).toBe(true);
+        if (result.ok) throw new Error("Expected ignore policy read failure");
+        expect(result.error.code).toBe(expected);
+        expect(result.error.cause).toBe(
+          physical === "cancel-after-read" ? abortReason : readFailure,
+        );
+        if (physical !== "cancel-after-read")
+          expect(result.error.secondaryCancellation?.cause).toBe(
+            sameAsAbortReason ? readFailure : abortReason,
+          );
+      } finally {
+        prototype.read = originalRead;
+        await resources.close();
+      }
+    },
+  );
+});
+
+describe("reference source ignore policy cleanup ownership", () => {
+  it("keeps a physical read primary when ignore-file cleanup remains pending", async () => {
+    const root = await createTestTempDirectory("rea-reference-ignore-cleanup-");
+    const path = join(root, ".gitignore");
+    await writeFile(path, "ignored/\n");
+    const controller = new AbortController();
+    const physical = Object.assign(new Error("controlled read failure"), {
+      code: "EIO",
+    });
+    const probe = await open(path, "r");
+    const identity = await probe.stat();
+    const prototype = probe.constructor.prototype as {
+      read: (...arguments_: never[]) => Promise<unknown>;
+    };
+    await probe.close();
+    const originalRead = prototype.read;
+    const ownerPrototype = OwnedFileHandle.prototype;
+    const originalClose = ownerPrototype.close;
+    let interceptedRead = false;
+    let closeFailures = 0;
+    let readHandle: typeof probe | undefined;
+    prototype.read = async function (
+      this: typeof probe,
+      ...arguments_: never[]
+    ): Promise<unknown> {
+      const state = await this.stat();
+      if (
+        !interceptedRead &&
+        state.dev === identity.dev &&
+        state.ino === identity.ino
+      ) {
+        interceptedRead = true;
+        readHandle = this;
+        controller.abort(physical);
+        throw physical;
+      }
+      return originalRead.apply(this, arguments_);
+    };
+    ownerPrototype.close = async function (
+      this: OwnedFileHandle,
+    ): Promise<void> {
+      if (this.handle === readHandle && closeFailures < 2) {
+        closeFailures += 1;
+        throw new Error(`controlled close failure ${closeFailures}`);
+      }
+      return originalClose.call(this);
+    };
+    const resources = new ArtifactResourceScope();
+    try {
+      const result = await prepareReferenceSourceImport(
+        {
+          root,
+          caller: "reference-import-test",
+          policy: { secretPatterns: [] },
+          signal: controller.signal,
+        },
+        resources,
+      );
+      expect(interceptedRead).toBe(true);
+      if (result.ok) throw new Error("Expected ignore policy read failure");
+      expect(result.error.code).toBe("io");
+      expect(result.error.cause).toBe(physical);
+      expect(result.error.secondaryCancellation?.cause).toBe(physical);
+      expect(closeFailures).toBe(2);
+      expect(result.error.cleanup?.resources).toContain(path);
+      expect(resources.hasPending).toBe(true);
+      expect(readHandle?.fd).toBeGreaterThanOrEqual(0);
+      await resources.retryCleanup();
+      expect(readHandle?.fd).toBe(-1);
+      expect(resources.hasPending).toBe(false);
+    } finally {
+      prototype.read = originalRead;
+      ownerPrototype.close = originalClose;
+      await resources.close();
+    }
+  });
+
+  it("does not transfer cleanup ownership for a physical read shaped like a foreign cleanup failure", async () => {
+    const root = await createTestTempDirectory("rea-reference-ignore-opaque-");
+    const path = join(root, ".gitignore");
+    const foreignPath = join(root, "foreign.txt");
+    await writeFile(path, "ignored/\n");
+    await writeFile(foreignPath, "foreign bytes");
+    const foreignOwner = new OwnedFileHandle(await open(foreignPath, "r"));
+    const reason = new RegularFileCleanupFailure({
+      path: foreignPath,
+      owner: foreignOwner,
+      outcome: { kind: "completed", value: "foreign value" },
+      cleanupCause: new Error("foreign cleanup failure"),
+    });
+    const controller = new AbortController();
+    const probe = await open(path, "r");
+    const identity = await probe.stat();
+    const prototype = probe.constructor.prototype as {
+      read: (...arguments_: never[]) => Promise<unknown>;
+    };
+    await probe.close();
+    const originalRead = prototype.read;
+    let intercepted = false;
+    prototype.read = async function (
+      this: typeof probe,
+      ...arguments_: never[]
+    ): Promise<unknown> {
+      const state = await this.stat();
+      if (
+        !intercepted &&
+        state.dev === identity.dev &&
+        state.ino === identity.ino
+      ) {
+        intercepted = true;
+        controller.abort(reason);
+        throw reason;
+      }
+      return originalRead.apply(this, arguments_);
+    };
+    const resources = new ArtifactResourceScope();
+    try {
+      const result = await prepareReferenceSourceImport(
+        {
+          root,
+          caller: "reference-import-test",
+          policy: { secretPatterns: [] },
+          signal: controller.signal,
+        },
+        resources,
+      );
+      expect(intercepted).toBe(true);
+      if (result.ok) throw new Error("Expected ignore policy read failure");
+      expect(result.error.code).toBe("io");
+      expect(result.error.cause).toBe(reason);
+      expect(result.error.cleanup).toBeUndefined();
+      expect(resources.hasPending).toBe(false);
+      await resources.close();
+      expect(await foreignOwner.handle.readFile("utf8")).toBe("foreign bytes");
+    } finally {
+      prototype.read = originalRead;
+      try {
+        await resources.close();
+      } finally {
+        await foreignOwner.close();
+      }
+    }
+  });
+});
+
+describe("reference source symlink import", () => {
+  it.each([
+    { target: "dist", reason: "default-ignored", pattern: "dist/" },
+    { target: "generated", reason: "project-ignored", pattern: "generated/" },
+    { target: "cache", reason: "caller-excluded", pattern: "cache/" },
+  ])(
+    "retains links into a $reason directory without importing it",
+    async ({ target, reason, pattern }) => {
+      const root = await createTestTempDirectory(
+        "rea-reference-excluded-links-",
+      );
+      await mkdir(join(root, target, "nested"), { recursive: true });
+      await writeFile(
+        join(root, target, "nested", "output.js"),
+        "export const generated = true;\n",
+      );
+      await writeFile(join(root, "source.ts"), "export const value = 1;\n");
+      if (reason === "project-ignored")
+        await writeFile(join(root, ".gitignore"), `${pattern}\n`);
+      await symlink(target, join(root, "alias"));
+      await symlink(`${target}/nested/output.js`, join(root, "output-link"));
+
+      const result = await importReferenceSource({
+        root,
+        caller: "reference-import-test",
+        policy: { secretPatterns: [] },
+        ...(reason === "caller-excluded" ? { excludePaths: [pattern] } : {}),
+      });
+      if (!result.ok) throw result.error;
+      expect(result.value.inventory_state).toBe("partial");
+      expect(result.value.exclusions).toContainEqual({
+        path: target,
+        entry_kind: "directory",
+        reason,
+        pattern,
+      });
+      expect(result.value.entries).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: "source.ts",
+            kind: "file",
+            content_state: "hashed",
+          }),
+          expect.objectContaining({
+            path: "alias",
+            kind: "symlink",
+            target,
+            target_state: "internal",
+          }),
+          expect.objectContaining({
+            path: "output-link",
+            kind: "symlink",
+            target: `${target}/nested/output.js`,
+            target_state: "internal",
+          }),
+        ]),
+      );
+      expect(
+        result.value.entries.some(
+          ({ path }) => path === target || path.startsWith(`${target}/`),
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it("does not treat an excluded file as an excluded directory for a child link", async () => {
+    const root = await createTestTempDirectory(
+      "rea-reference-excluded-file-link-",
     );
+    await writeFile(join(root, "secret.txt"), "secret\n");
+    await writeFile(join(root, "source.ts"), "export const value = 1;\n");
+    await symlink("secret.txt/child", join(root, "alias"));
+
+    const result = await importReferenceSource({
+      root,
+      caller: "reference-import-test",
+      policy: { secretPatterns: [] },
+      excludePaths: ["secret.txt"],
+    });
+    if (!result.ok) throw new Error(result.error.message);
+    expect(result.value.inventory_state).toBe("partial");
+    expect(
+      result.value.entries.find(({ path }) => path === "alias"),
+    ).toMatchObject({
+      kind: "symlink",
+      target: "secret.txt/child",
+      target_state: "missing",
+    });
+    expect(result.value.exclusions).toContainEqual({
+      path: "secret.txt",
+      entry_kind: "file",
+      reason: "caller-excluded",
+      pattern: "secret.txt",
+    });
   });
 
   it("retains external symlink targets as local graph diagnostics", async () => {
@@ -160,6 +536,24 @@ describe("reference source manifest inventory", () => {
       ["out/widget_spec.js", "JavaScript", ["generated", "source", "test"]],
       ["vendor/widget_test.go", "Go", ["source", "test", "vendor"]],
       ["settings_spec.json", "JSON", ["config", "test"]],
+      [
+        "docs/api/client.ts",
+        "TypeScript",
+        ["documentation", "generated", "source"],
+      ],
+      [
+        "packages/widget/Docs/API/client.ts",
+        "TypeScript",
+        ["documentation", "generated", "source"],
+      ],
+      ["docs/apis/client.ts", "TypeScript", ["documentation", "source"]],
+      ["mydocs/api/client.ts", "TypeScript", ["source"]],
+      ["docs/manual/api/client.ts", "TypeScript", ["documentation", "source"]],
+      ["docs/api.ts", "TypeScript", ["documentation", "source"]],
+      ["public/client.ts", "TypeScript", ["generated", "source"]],
+      [".github", null, ["config"]],
+      [".husky", null, ["config"]],
+      [".gitignore", null, ["config"]],
     ] as const;
     await Promise.all(
       files.map(async ([path]) => {
@@ -184,8 +578,112 @@ describe("reference source manifest inventory", () => {
         language,
         classifications,
       });
+    for (const path of ["docs/api", "packages/widget/Docs/API"])
+      expect(entries.get(path), path).toMatchObject({
+        kind: "directory",
+        classifications: ["documentation", "generated"],
+      });
   });
 });
+
+const registerReferenceRelocationTests = (): void => {
+  it("is relocation-stable, resolves imports, and excludes secrets before capture", async () => {
+    const parent = await createTestTempDirectory("rea-reference-import-");
+    const leftRoot = await fixture(parent, "left");
+    const rightRoot = await fixture(parent, "right");
+    const [left, right] = await Promise.all([
+      importTree(leftRoot),
+      importTree(rightRoot),
+    ]);
+    if (!left.ok || !right.ok) throw new Error("expected imports to pass");
+    expect(createHistoricalSourceManifest(left.value)).toEqual(
+      createHistoricalSourceManifest(right.value),
+    );
+    expect(left.value.relationships).toContainEqual(
+      expect.objectContaining({
+        from_path: "src/main.ts",
+        to: "src/dep.ts",
+        resolution: "internal",
+      }),
+    );
+    expect(left.value.parse_failures).toHaveLength(1);
+    expect(left.value.exclusions).toContainEqual({
+      path: ".env",
+      entry_kind: "file",
+      reason: "configured-secret",
+      pattern: ".env",
+    });
+    expect(JSON.stringify(left.value)).not.toContain("SECRET_SENTINEL");
+    expect(JSON.stringify(left.value)).not.toContain(leftRoot);
+    expect(left.value.entries.some(({ path }) => path === ".env")).toBe(false);
+    const unfiltered = await importTree(leftRoot, undefined, []);
+    if (!unfiltered.ok) throw unfiltered.error;
+    expect(
+      unfiltered.value.entries.find(({ path }) => path === ".env"),
+    ).toMatchObject({
+      kind: "file",
+      content_state: "hashed",
+      sha256: createHash("sha256")
+        .update("SECRET_SENTINEL=do-not-record\n")
+        .digest("hex"),
+    });
+    expect(unfiltered.value.exclusions).not.toContainEqual(
+      expect.objectContaining({ path: ".env" }),
+    );
+  });
+
+  it
+    .skipIf(process.platform === "win32" || process.getuid?.() === 0)
+    .each(["file", "directory"] as const)(
+    "commits equivalent unreadable %s inventories independently of relocation and retains exact local diagnostics",
+    async (kind) => {
+      const parent = await createTestTempDirectory(
+        "rea-reference-failure-relocation-",
+      );
+      const roots = [join(parent, "left"), join(parent, "right")];
+      const denied: string[] = [];
+      try {
+        for (const root of roots) {
+          await mkdir(root);
+          const path = join(root, kind === "file" ? "blocked.ts" : "blocked");
+          if (kind === "file")
+            await writeFile(path, "export const answer = 42;\n");
+          else await mkdir(path);
+          denied.push(path);
+          await chmod(path, 0);
+        }
+        const [left, right] = await Promise.all(
+          roots.map((root) => importTree(root)),
+        );
+        if (left === undefined || right === undefined || !left.ok || !right.ok)
+          throw new Error("Expected partial imports");
+        expect(left.value.inventory_state).toBe("partial");
+        expect(createHistoricalSourceManifest(left.value)).toEqual(
+          createHistoricalSourceManifest(right.value),
+        );
+        for (const [index, graph] of [left.value, right.value].entries()) {
+          const entry = graph.entries[0];
+          const root = roots[index];
+          if (entry === undefined || root === undefined)
+            throw new Error("Expected failed entry");
+          expect(entry.limitations.join(" ")).toContain("EACCES");
+          expect(entry.limitations.join(" ")).toMatch(/Check.*permissions/u);
+          expect(entry.limitations.join(" ")).not.toContain(root);
+          expect(entry.local_diagnostics).toEqual([
+            expect.stringContaining(await realpath(root)),
+          ]);
+          expect(
+            createHistoricalSourceSummary(graph, 2).outline.entries[0],
+          ).toMatchObject({ local_diagnostics: entry.local_diagnostics });
+        }
+      } finally {
+        for (const path of denied)
+          await chmod(path, kind === "file" ? 0o600 : 0o700);
+        await rm(parent, { recursive: true, force: true });
+      }
+    },
+  );
+};
 
 describe("reference source import behavior", () => {
   // The importer declares no byte ceiling and no entry-count ceiling. Scale
@@ -199,7 +697,7 @@ describe("reference source import behavior", () => {
   // product. Cycling the sizes over every entry would make a thousand 4 MiB
   // members, which is nearly 4 GiB of fixture and cannot fit a runner's disk.
   // Entry count is crossed by volume, byte size by a single large member.
-  it("returns every written entry with complete coverage at any scale", async () => {
+  it("hashes 5,000 inventory entries including a 4 MiB member", async () => {
     const root = await createTestTempDirectory("rea-reference-scale-");
     const sizes = [0, 1, 4_097, 65_536, 4_194_304];
     const written = Array.from(
@@ -208,7 +706,7 @@ describe("reference source import behavior", () => {
     );
     // Only the first entry of each size takes that size; the remaining 4,995
     // stay one byte each. The fixture is therefore about 4.2 MiB in total
-    // while still containing a member far larger than any byte ceiling.
+    // and includes a member above common legacy per-file cutoffs.
     const sizeFor = (index: number): number => sizes[index] ?? 1;
     await Promise.all(
       written.map((name, index) =>
@@ -243,6 +741,7 @@ describe("reference source import behavior", () => {
           kind: "file",
           size,
           content_state: "hashed",
+          sha256: createHash("sha256").update("a".repeat(size)).digest("hex"),
         }),
       );
     }
@@ -275,62 +774,24 @@ describe("reference source import behavior", () => {
       const result = await importTree(root);
       if (!result.ok) throw result.error;
       expect(result.value.entries.map(({ path }) => path)).toEqual(paths);
-      const repeated = await importTree(root);
-      expect(repeated).toEqual(result);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  it("is relocation-stable, resolves imports, and excludes secrets before capture", async () => {
-    const parent = await createTestTempDirectory("rea-reference-import-");
-    try {
-      const leftRoot = await fixture(parent, "left");
-      const rightRoot = await fixture(parent, "right");
-      const [left, right] = await Promise.all([
-        importTree(leftRoot),
-        importTree(rightRoot),
-      ]);
-      if (!left.ok || !right.ok) throw new Error("expected imports to pass");
-      expect(createHistoricalSourceManifest(left.value)).toEqual(
-        createHistoricalSourceManifest(right.value),
-      );
-      expect(left.value.relationships).toContainEqual(
-        expect.objectContaining({
-          from_path: "src/main.ts",
-          to: "src/dep.ts",
-          resolution: "internal",
-        }),
-      );
-      expect(left.value.parse_failures).toHaveLength(1);
-      expect(left.value.exclusions).toContainEqual({
-        path: ".env",
-        reason: "configured-secret",
-        pattern: ".env",
-      });
-      expect(JSON.stringify(left.value)).not.toContain("SECRET_SENTINEL");
-      expect(JSON.stringify(left.value)).not.toContain(leftRoot);
-    } finally {
-      await rm(parent, { recursive: true, force: true });
-    }
-  });
+  registerReferenceRelocationTests();
 
-  it("imports the caller-selected directory and honors cancellation", async () => {
-    const outside = await createTestTempDirectory("rea-reference-outside-");
-    try {
-      const root = await fixture(outside, "tree");
-      expect(await importTree(root)).toMatchObject({ ok: true });
+  it.each([null, "stop import", { requested: "stop import" }])(
+    "preserves the caller's pre-admission cancellation reason %j",
+    async (reason) => {
       const controller = new AbortController();
-      controller.abort();
-      const cancelled = await importTree(root, controller.signal);
-      expect(cancelled).toMatchObject({
-        ok: false,
-        error: { code: "cancelled" },
-      });
-    } finally {
-      await rm(outside, { recursive: true, force: true });
-    }
-  });
+      controller.abort(reason);
+      const result = await importTree("unopened-source", controller.signal);
+      if (result.ok) throw new Error("Expected cancellation");
+      expect(result.error.code).toBe("cancelled");
+      expect(result.error.cause).toBe(reason);
+    },
+  );
 
   it("records bounded local Git state without invoking Git", async () => {
     const parent = await createTestTempDirectory("rea-reference-git-");
@@ -355,36 +816,14 @@ describe("reference source import behavior", () => {
 });
 
 describe("reference source path selection", () => {
-  it("does not omit selected files by secret-like path or filename", async () => {
-    const parent = await createTestTempDirectory("rea-reference-selected-");
-    try {
-      const root = await fixture(parent, "tree");
-      const result = await importTree(root, undefined, []);
-      if (!result.ok) throw result.error;
-      expect(result.value.entries).toContainEqual(
-        expect.objectContaining({
-          path: ".env",
-          kind: "file",
-          content_state: "hashed",
-        }),
-      );
-      expect(result.value.exclusions).not.toContainEqual(
-        expect.objectContaining({ path: ".env" }),
-      );
-    } finally {
-      await rm(parent, { recursive: true, force: true });
-    }
-  });
-});
-
-describe("reference source rooted module specifiers", () => {
   it("keeps dot-prefixed bare specifiers external while resolving explicit relative paths", async () => {
     const root = await createTestTempDirectory("rea-reference-dot-prefix-");
     await Promise.all([
       writeFile(
         join(root, "main.js"),
-        'import ".hidden.js"; import "..pkg.js"; import "./.hidden.js"; require(".hidden.js");\n',
+        'import ".hidden.js"; import "..pkg.js"; import "./.hidden.js";\n',
       ),
+      writeFile(join(root, "common.cjs"), 'require(".hidden.js");\n'),
       writeFile(join(root, ".hidden.js"), "export {};\n"),
       writeFile(join(root, "..pkg.js"), "export {};\n"),
     ]);
@@ -470,12 +909,11 @@ describe.skipIf(process.platform === "win32")(
       await Promise.all([
         writeFile(
           join(root, ".gitignore"),
-          "project.tmp\n*.log\n!keep.log\nproject-parent/\n!project-parent/keep.ts\n!default.log\nempty-ignored/\nkeep-as-dir\n!keep-as-dir/\nlinkdir/\n",
+          "project.tmp\n*.log\n!keep.log\nproject-parent/\n!project-parent/keep.ts\nempty-ignored/\nkeep-as-dir\n!keep-as-dir/\nlinkdir/\n",
         ),
         writeFile(join(root, "project.tmp"), "project rule\n"),
         writeFile(join(root, "project.log"), "project rule\n"),
         writeFile(join(root, "keep.log"), "later default rule wins\n"),
-        writeFile(join(root, "default.log"), "default rule\n"),
         writeFile(join(root, "caller-keep.log"), "caller negation\n"),
         writeFile(join(root, "dist", "output.js"), "generated output\n"),
         writeFile(join(root, "project-parent", "keep.ts"), "parent ignored\n"),
@@ -497,7 +935,7 @@ describe.skipIf(process.platform === "win32")(
           root,
           caller: "reference-import-test",
           policy: { secretPatterns: ["project.log", "secret-dir/"] },
-          excludePaths: ["caller-parent/", "!selected.ts", "!caller-keep.log"],
+          excludePaths: ["caller-parent/", "!caller-keep.log"],
         });
         if (!imported.ok) throw imported.error;
 
@@ -505,46 +943,55 @@ describe.skipIf(process.platform === "win32")(
           expect.arrayContaining([
             {
               path: "project.tmp",
+              entry_kind: "file",
               reason: "project-ignored",
               pattern: "project.tmp",
             },
             {
               path: "project.log",
+              entry_kind: "file",
               reason: "configured-secret",
               pattern: "project.log",
             },
             {
               path: "keep.log",
+              entry_kind: "file",
               reason: "default-ignored",
               pattern: "*.log",
             },
             {
               path: "dist",
+              entry_kind: "directory",
               reason: "default-ignored",
               pattern: "dist/",
             },
             {
               path: "node_modules",
+              entry_kind: "directory",
               reason: "default-ignored",
               pattern: "node_modules/",
             },
             {
               path: "empty-ignored",
+              entry_kind: "directory",
               reason: "project-ignored",
               pattern: "empty-ignored/",
             },
             {
               path: "project-parent",
+              entry_kind: "directory",
               reason: "project-ignored",
               pattern: "project-parent/",
             },
             {
               path: "caller-parent",
+              entry_kind: "directory",
               reason: "caller-excluded",
               pattern: "caller-parent/",
             },
             {
               path: "secret-dir",
+              entry_kind: "directory",
               reason: "configured-secret",
               pattern: "secret-dir/",
             },

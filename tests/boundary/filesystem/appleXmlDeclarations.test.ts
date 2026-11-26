@@ -1,5 +1,7 @@
 import { writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
 import { join } from "node:path";
+import { promisify } from "node:util";
 
 import { build } from "plist";
 import { expect, it } from "vitest";
@@ -12,6 +14,32 @@ const archive = build({
   $archiver: "NSKeyedArchiver",
   $objects: ["$null", "Café"],
   $top: { root: { CF$UID: 1 } },
+});
+
+it("preflights repeated unterminated quoted declarations without suffix rescans", async () => {
+  const preflightUrl = new URL(
+    "../../../dist/domain/apple/propertyListDecodeBudget.js",
+    import.meta.url,
+  ).href;
+  const { stdout } = await promisify(execFile)(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+      import { preflightPropertyListDecode } from ${JSON.stringify(preflightUrl)};
+      const xml = '<!DOCTYPE "x>x" '.repeat(70000);
+      const observed = preflightPropertyListDecode(Buffer.from(xml), 16 * 1024 * 1024);
+      process.stdout.write(JSON.stringify({ observed, expected: xml.length * 4 }));
+    `,
+    ],
+    { timeout: 5000 },
+  );
+  const result = JSON.parse(stdout) as {
+    observed: { estimatedBytes: number };
+    expected: number;
+  };
+  expect(result.observed.estimatedBytes).toBe(result.expected);
 });
 
 const fixture = async (declaration: string) => {
@@ -52,7 +80,7 @@ it.each(["REA-UNSUPPORTED", "ISO-8859-1"])(
         parameters: { path: "Panel.nib" },
       }),
     ).rejects.toMatchObject({
-      reason: "format",
+      reason: "unsupported",
       message: expect.stringContaining(declaration),
     });
   },
@@ -76,3 +104,24 @@ it.each(["REA-UNSUPPORTED", "ISO-8859-1"])(
     expect(result.graph.truncated).toBe(true);
   },
 );
+
+it("reports a dictionary key an Interface Builder archive declares twice", async () => {
+  const bundlePath = await createTestTempDirectory("rea-ib-repeated-key-");
+  await writeFile(
+    join(bundlePath, "Panel.nib"),
+    archive.replace(
+      "<key>$objects</key>",
+      "<key>$archiver</key><string>NSKeyedArchiver</string><key>$objects</key>",
+    ),
+  );
+  const result = await analyzeInterfaceBuilderBundle({
+    bundlePath,
+    targetSha256: "a".repeat(64),
+  });
+  expect(result.documents).toHaveLength(1);
+  expect(result.limitations).toContainEqual(
+    expect.stringMatching(
+      /^Panel\.nib: 1 dictionary\(ies\) declare a key more than once \("\$archiver"\)\. REA kept the last value/u,
+    ),
+  );
+});

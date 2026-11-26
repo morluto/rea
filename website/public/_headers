@@ -1,0 +1,11 @@
+/*
+  Link: <https://rea.tools/.well-known/ard.json>; rel="ard", <https://rea.tools/.well-known/ai-catalog.json>; rel="ai-catalog", <https://rea.tools/.well-known/agent-skills/index.json>; rel="related"; type="application/json"; title="Agent skills index"
+
+/.well-known/*
+  Access-Control-Allow-Origin: *
+
+/.well-known/ai-catalog.json
+  Content-Type: application/ai-catalog+json
+
+/*.md
+  Content-Type: text/markdown; charset=utf-8

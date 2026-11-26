@@ -1,19 +1,14 @@
 import { digestCanonicalValue } from "./canonicalDigest.js";
+import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 
-import type {
-  BrowserScenarioArtifactKind,
-  BrowserScenarioDiff,
-  BrowserScenarioNormalization,
-  BrowserScenarioNormalizationRule,
+import {
+  BROWSER_SCENARIO_BUILT_IN_NORMALIZATION_RULES,
+  type BrowserScenarioArtifactKind,
+  type BrowserScenarioDiff,
+  type BrowserScenarioNormalization,
+  type BrowserScenarioNormalizationRule,
 } from "./browserScenarioDiffValues.js";
-
-const BUILT_IN_RULES = [
-  "ignore_step_elapsed_ms",
-  "ignore_event_sequence",
-  "ignore_event_step_index",
-  "compare_screenshot_content_digest",
-  "compare_normalized_text_content",
-] as const;
+import { isRecord } from "../kernel/isRecord.js";
 
 /** Canonically order and commit a parsed browser scenario normalization policy. */
 export const commitBrowserScenarioNormalization = (
@@ -27,7 +22,10 @@ export const commitBrowserScenarioNormalization = (
     .sort((left, right) =>
       left.rule_id < right.rule_id ? -1 : left.rule_id > right.rule_id ? 1 : 0,
     );
-  const commitment = { built_in_rules: [...BUILT_IN_RULES], rules };
+  const commitment = {
+    built_in_rules: [...BROWSER_SCENARIO_BUILT_IN_NORMALIZATION_RULES],
+    rules,
+  };
   return {
     ...commitment,
     sha256: digestCanonicalValue(commitment, "Browser scenario"),
@@ -40,9 +38,12 @@ export const digestNormalizedScenarioValue = (
   artifact: BrowserScenarioArtifactKind,
   rules: readonly BrowserScenarioNormalizationRule[],
 ): string =>
-  digestCanonicalValue(normalize(value, artifact, rules), "Browser scenario");
+  digestCanonicalValue(
+    normalizeScenarioValue(value, artifact, rules),
+    "Browser scenario",
+  );
 
-const normalize = (
+export const normalizeScenarioValue = (
   value: unknown,
   artifact: BrowserScenarioArtifactKind,
   rules: readonly BrowserScenarioNormalizationRule[],
@@ -56,13 +57,60 @@ const normalize = (
           normalized.split(rule.match).join(rule.replacement),
         value,
       );
-  if (Array.isArray(value))
-    return value.map((item) => normalize(item, artifact, rules));
+  if (Array.isArray(value)) {
+    const normalized = value.map((item) =>
+      normalizeScenarioValue(item, artifact, rules),
+    );
+    // Storage arrays are inventories, not ordered events. Sort complete entries
+    // after literal rules; names alone can collide after redaction/normalization.
+    // Keep multiplicity and every cookie attribute or value fingerprint.
+    return artifact === "storage"
+      ? normalized.sort(compareStorageEntries)
+      : normalized;
+  }
   if (typeof value !== "object" || value === null) return value;
   return Object.fromEntries(
     Object.entries(value).map(([key, item]) => [
       key,
-      normalize(item, artifact, rules),
+      normalizeScenarioValue(item, artifact, rules),
     ]),
   );
+};
+
+/** Compare parsed storage records by their fixed fields without serializing them. */
+const compareStorageEntries = (left: unknown, right: unknown): number => {
+  if (!isRecord(left) || !isRecord(right))
+    return compareUnicodeCodePoints(
+      digestCanonicalValue(left, "Browser scenario"),
+      digestCanonicalValue(right, "Browser scenario"),
+    );
+  const fields =
+    Object.hasOwn(left, "domain") || Object.hasOwn(right, "domain")
+      ? [
+          "domain",
+          "http_only",
+          "name",
+          "path",
+          "same_site",
+          "secure",
+          "value_sha256",
+          "value_state",
+        ]
+      : ["name", "value_sha256", "value_state"];
+  for (const field of fields) {
+    const compared = compareStorageField(left[field], right[field]);
+    if (compared !== 0) return compared;
+  }
+  return 0;
+};
+
+const compareStorageField = (left: unknown, right: unknown): number => {
+  if (left === right) return 0;
+  if (left === null) return -1;
+  if (right === null) return 1;
+  if (typeof left === "string" && typeof right === "string")
+    return compareUnicodeCodePoints(left, right);
+  if (typeof left === "boolean" && typeof right === "boolean")
+    return left ? 1 : -1;
+  return compareUnicodeCodePoints(String(left), String(right));
 };

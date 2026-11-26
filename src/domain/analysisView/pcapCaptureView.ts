@@ -1,25 +1,34 @@
-import { z } from "zod";
-import { pcapResultSchemas } from "../pcap/pcapAnalysis.js";
-import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
-import type { AnalysisError } from "../analysisErrorBase.js";
-import { err, ok, type Result } from "../result.js";
+import { appendToMapList } from "../appendToMapList.js";
 import {
   analysisViewInputError,
-  type AnalysisViewParent,
-  type AnalysisViewRequest,
-  type UnsignedAnalysisView,
-} from "./analysisView.js";
+  invalidAnalysisViewSubject,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
+import { z } from "zod";
+import { pcapResultSchemas } from "../pcap/pcapAnalysis.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
+import { isImmutableJsonSnapshot } from "../immutableJson.js";
+import type { AnalysisError } from "../analysisErrorBase.js";
+import { err, ok, type Result } from "../result.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
+import { analysisTextPage } from "./analysisViewText.js";
+import { evidenceFileTarget } from "../evidence.js";
 
 const captureSchema = pcapResultSchemas.inspect_pcap_capture;
 const fields = captureSchema.shape;
 const pageShape = {
   kind: z.literal("pcap"),
-  offset: z.number().int().nonnegative().default(0),
-  limit: z.number().int().positive().default(64),
+  offset: z.int().nonnegative().default(0),
+  limit: z.int().positive().default(64),
 };
 export const pcapViewRequestSchema = z.discriminatedUnion("facet", [
   z.strictObject({
@@ -37,6 +46,18 @@ export const pcapViewRequestSchema = z.discriminatedUnion("facet", [
     ...pageShape,
     facet: z.literal("dns-addresses"),
     query: z.string().min(1),
+    query_labels_hex: fields.dns_queries.element.shape.query_labels_hex
+      .optional()
+      .describe(
+        "Select the exact retained wire label bytes for this query display. Null selects unknown identity; omit this selector to match any identity.",
+      ),
+    query_index: z
+      .int()
+      .nonnegative()
+      .optional()
+      .describe(
+        "Zero-based index in the full retained dns_queries array, independent of page offset; use it to select one occurrence when display and wire identity remain ambiguous.",
+      ),
   }),
   z.strictObject({
     ...pageShape,
@@ -50,7 +71,7 @@ export const pcapViewPageSchema = z.discriminatedUnion("facet", [
     facet: z.literal("dns-queries"),
     items: z.array(
       fields.dns_queries.element.omit({ response_addresses: true }).extend({
-        retained_response_address_count: z.number().int().nonnegative(),
+        retained_response_address_count: z.int().nonnegative(),
       }),
     ),
   }),
@@ -89,52 +110,38 @@ export const pcapSummarySchema = captureSchema
   })
   .extend({
     retained_counts: z.strictObject({
-      endpoints: z.number().int().nonnegative(),
-      dns_queries: z.number().int().nonnegative(),
-      tls_sni_values: z.number().int().nonnegative(),
-      protocol_distribution: z.number().int().nonnegative(),
-      http_request_uris: z.number().int().nonnegative(),
-      unattributed_dns_addresses: z.number().int().nonnegative(),
+      endpoints: z.int().nonnegative(),
+      dns_queries: z.int().nonnegative(),
+      tls_sni_values: z.int().nonnegative(),
+      protocol_distribution: z.int().nonnegative(),
+      http_request_uris: z.int().nonnegative(),
+      unattributed_dns_addresses: z.int().nonnegative(),
     }),
     diagnostics_code_units: z
       .strictObject({
-        tshark: z.number().int().nonnegative(),
-        capinfos: z.number().int().nonnegative(),
+        tshark: z.int().nonnegative(),
+        capinfos: z.int().nonnegative(),
       })
       .nullable(),
   });
 type Capture = z.output<typeof captureSchema>;
+type DnsQuery = Capture["dns_queries"][number];
 type PcapView = z.output<typeof pcapViewRequestSchema>;
 type Page = z.output<typeof pcapViewPageSchema>;
+
+const readCaptureParent = createAnalysisViewResultReader(captureSchema);
 
 const parseParent = (
   parent: AnalysisViewParent,
 ): Result<Capture, AnalysisError> => {
-  const parsed = captureSchema.safeParse(parent.normalizedResult);
-  if (!parsed.success)
-    return err(
-      analysisInputErrorFromIssues(
-        "inspect_analysis_view",
-        parsed.error.issues,
-        parent.normalizedResult,
-        { cause: parsed.error },
-      ),
+  const parsed = readCaptureParent(parent);
+  if (!parsed.ok) return parsed;
+  const subject = evidenceFileTarget(parent);
+  if (subject == null || subject.sha256 !== parsed.value.target.sha256)
+    return invalidAnalysisViewSubject(
+      "Packet parent subject must identify the report's SHA-256.",
     );
-  if (
-    parent.subject?.local_path !== parsed.data.target.path ||
-    parent.subject.digest.sha256 !== parsed.data.target.sha256
-  )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message:
-            "Packet parent subject must identify the report's exact path and SHA-256.",
-        },
-      ]),
-    );
-  return ok(parsed.data);
+  return ok(parsed.value);
 };
 const summarize = ({
   endpoints,
@@ -163,6 +170,65 @@ const summarize = ({
           capinfos: diagnostics.capinfos_stderr.length,
         },
 });
+
+const equalLabelsHex = (
+  left: readonly string[] | null,
+  right: readonly string[] | null,
+): boolean =>
+  left === right ||
+  (left !== null &&
+    right !== null &&
+    left.length === right.length &&
+    left.every((label, index) => label === right[index]));
+
+const dnsQueriesByName = new WeakMap<
+  Capture,
+  ReadonlyMap<string, readonly DnsQuery[]>
+>();
+
+const indexedDnsQueries = (
+  capture: Capture,
+): ReadonlyMap<string, readonly DnsQuery[]> => {
+  let byName = dnsQueriesByName.get(capture);
+  if (byName !== undefined) return byName;
+  const grouped = new Map<string, DnsQuery[]>();
+  for (const entry of capture.dns_queries) {
+    appendToMapList(grouped, entry.query, entry);
+  }
+  byName = grouped;
+  dnsQueriesByName.set(capture, byName);
+  return byName;
+};
+
+const matchesDnsAddressQuery = (
+  candidate: DnsQuery,
+  view: Extract<PcapView, { facet: "dns-addresses" }>,
+): boolean =>
+  candidate.query === view.query &&
+  (view.query_labels_hex === undefined ||
+    equalLabelsHex(candidate.query_labels_hex, view.query_labels_hex));
+
+const selectDnsQuery = (
+  capture: Capture,
+  view: Extract<PcapView, { facet: "dns-addresses" }>,
+): DnsQuery | undefined => {
+  if (view.query_index !== undefined) {
+    const candidate = capture.dns_queries[view.query_index];
+    return candidate !== undefined && matchesDnsAddressQuery(candidate, view)
+      ? candidate
+      : undefined;
+  }
+  const candidates = isImmutableJsonSnapshot(capture)
+    ? (indexedDnsQueries(capture).get(view.query) ?? [])
+    : capture.dns_queries;
+  let matched: DnsQuery | undefined;
+  for (const candidate of candidates) {
+    if (!matchesDnsAddressQuery(candidate, view)) continue;
+    if (matched !== undefined) return undefined;
+    matched = candidate;
+  }
+  return matched;
+};
 
 const selectRows = (
   capture: Capture,
@@ -219,25 +285,24 @@ const selectRows = (
         total: capture.unattributed_dns_addresses.length,
       });
     case "dns-addresses": {
-      const matches = capture.dns_queries.filter(
-        (query) => query.query === view.query,
-      );
-      if (matches.length !== 1)
+      const matched = selectDnsQuery(capture, view);
+      if (matched === undefined)
         return err(
           analysisViewInputError([
             {
               path: ["view", "query"],
               reason: "invalid_value",
-              message: "Select one unambiguous exact retained DNS question.",
+              message:
+                "Select one exact retained DNS question using query_labels_hex or query_index when its display is ambiguous.",
             },
           ]),
         );
       return ok({
         page: {
           facet: view.facet,
-          items: slice(matches[0]!.response_addresses),
+          items: slice(matched.response_addresses),
         },
-        total: matches[0]!.response_addresses.length,
+        total: matched.response_addresses.length,
       });
     }
   }
@@ -246,18 +311,14 @@ const selectRows = (
 /** Historical packet facts are paged without reopening the source or rerunning Wireshark. */
 export const projectPcapCaptureView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "pcap")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Packet summary parents support summary and pcap fact pages.",
-        },
-      ]),
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof pcapViewRequestSchema>
+  >(admitted, "summary", "pcap");
+  if (view === undefined)
+    return invalidAnalysisView(
+      "Packet summary parents support summary and pcap fact pages.",
     );
   const parsed = parseParent(parent);
   if (!parsed.ok) return parsed;
@@ -277,29 +338,36 @@ export const projectPcapCaptureView = (
   };
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: summarize(capture),
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   if (view.facet === "diagnostics") {
     const value =
       view.stream === "tshark"
         ? capture.diagnostics?.tshark_stderr
         : capture.diagnostics?.capinfos_stderr;
-    const text = value?.slice(view.offset, view.offset + view.limit) ?? "";
+    const text = analysisTextPage(
+      value ?? "",
+      view.offset,
+      view.limit,
+      "Diagnostics",
+    );
+    if (!text.ok) return text;
     return ok({
-      kind: "pcap",
+      kind: "pcap" as const,
       view,
       ...shared,
       source_coverage: capture.coverage,
       page: {
-        facet: "diagnostics",
-        text,
-        status: value === undefined ? "unknown" : "retained",
+        facet: "diagnostics" as const,
+        text: text.value.item.text,
+        status:
+          value === undefined ? ("unknown" as const) : ("retained" as const),
       },
-      coverage: pageViewCoverage(view.offset, text.length, value?.length ?? 0),
+      coverage: text.value.coverage,
       unknowns:
         value === undefined
           ? [
@@ -312,7 +380,7 @@ export const projectPcapCaptureView = (
   const selected = selectRows(capture, view);
   return selected.ok
     ? ok({
-        kind: "pcap",
+        kind: "pcap" as const,
         view,
         ...shared,
         source_coverage: capture.coverage,

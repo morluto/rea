@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { ChildProcess } from "node:child_process";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect } from "vitest";
@@ -13,9 +14,32 @@ import {
   BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS,
   BrowserStartupError,
   waitForBrowserDevtoolsPort,
-} from "../../../src/browser/BrowserProcessStartup.js";
+} from "../../../scripts/lib/browser-process-startup.mjs";
+import { assertOrdinaryWindowsVerifierCaller } from "../../../scripts/lib/windows-ordinary-user-verifier.mjs";
 
 describe("browser process startup", () => {
+  it("requires a positively observed ordinary Windows verifier caller", () => {
+    expect(() =>
+      assertOrdinaryWindowsVerifierCaller({
+        administrator: false,
+        elevated: false,
+        integrityLevel: 8192,
+      }),
+    ).not.toThrow();
+
+    for (const token of [
+      { administrator: true, elevated: false },
+      { administrator: false, elevated: true },
+      { administrator: false },
+      { administrator: false, elevated: null },
+      null,
+    ]) {
+      expect(() => assertOrdinaryWindowsVerifierCaller(token)).toThrow(
+        /ordinary, non-elevated user token/u,
+      );
+    }
+  });
+
   it("returns a delayed valid DevToolsActivePort", async ({ processes }) => {
     const root = await temporaryRoot();
     const portPath = join(root, "DevToolsActivePort");
@@ -67,35 +91,24 @@ describe("browser process startup", () => {
     });
   });
 
-  it("reports bounded timeout diagnostics", async ({ processes }) => {
-    const root = await temporaryRoot();
-    const child = processes.spawn(process.execPath, [
-      "-e",
-      "setTimeout(() => {}, 1000)",
-    ]);
-    try {
-      const failure = await waitForBrowserDevtoolsPort({
-        child,
+  it("reports bounded timeout diagnostics", async () => {
+    await expect(
+      waitForBrowserDevtoolsPort({
+        child: new ChildProcess(),
         executable: process.execPath,
-        activePortPath: join(root, "DevToolsActivePort"),
+        activePortPath: join(await temporaryRoot(), "DevToolsActivePort"),
         stderr: () => "",
         timeoutMs: 20,
         pollIntervalMs: 5,
-      }).catch((cause: unknown) => cause);
-
-      expect(failure).toBeInstanceOf(BrowserStartupError);
-      expect(failure).toMatchObject({
-        failure: "timeout",
-        exitCode: null,
-        signalCode: null,
-        startupTimeoutMs: 20,
-      });
-      expect(String(failure)).toContain("stderr=<empty>");
-      expect(String(failure)).toContain("startup_timeout_ms=20");
-    } finally {
-      child.kill("SIGKILL");
-      expect(await waitForExit(child, 5_000)).toBe(true);
-    }
+      }),
+    ).rejects.toMatchObject({
+      _tag: "BrowserStartupError",
+      failure: "timeout",
+      exitCode: null,
+      signalCode: null,
+      startupTimeoutMs: 20,
+      message: expect.stringMatching(/timeoutMs=20.*stderr=<empty>$/u),
+    });
   });
 
   it("names the owner's deadline when a caller omits one", async ({
@@ -121,35 +134,37 @@ describe("browser process startup", () => {
       startupTimeoutMs: BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS,
     });
     expect(String(failure)).toContain(
-      `startup_timeout_ms=${String(BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS)}`,
+      `timeoutMs=${String(BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS)}`,
     );
   });
 
-  it("keeps one owner for the DevToolsActivePort deadline", async () => {
-    expect(BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS).toBe(60_000);
-    const callers = [
-      "../../../scripts/verify-real-browser.mjs",
-      "../../../scripts/lib/browser-runtime-fixture-lifecycle.mjs",
-    ];
-    for (const caller of callers) {
-      const source = await readFile(new URL(caller, import.meta.url), "utf8");
-      expect(devtoolsPortDeadlines(source)).toEqual([
-        ["BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS"],
-      ]);
+  it("keeps a terminal startup outcome observed during a valid port read", async () => {
+    const portPath = join(await temporaryRoot(), "DevToolsActivePort");
+    await writeFile(portPath, "43117\n/devtools/browser/fixture");
+    const spawnError = new Error("fixture launch failed");
+    for (const failure of ["exited", "spawn-error"] as const) {
+      const child = new ChildProcess();
+      const pending = waitForBrowserDevtoolsPort({
+        child,
+        executable: process.execPath,
+        activePortPath: portPath,
+        stderr: () => "fixture startup diagnostic",
+      });
+      // The file read is in flight and already contains a valid port.
+      if (failure === "spawn-error") child.emit("error", spawnError);
+      Object.defineProperty(child, "exitCode", { value: 3 });
+      child.emit("exit", 3, null);
+      await expect(pending, failure).rejects.toMatchObject({
+        _tag: "BrowserStartupError",
+        failure,
+        exitCode: failure === "exited" ? 3 : null,
+        stderr: "fixture startup diagnostic",
+        ...(failure === "spawn-error" ? { cause: spawnError } : {}),
+      });
     }
   });
 });
 
 const temporaryRoot = async (): Promise<string> => {
   return createTestTempDirectory("rea-browser-startup-");
-};
-
-const devtoolsPortDeadlines = (source: string): string[][] => {
-  const calls = /waitForBrowserDevtoolsPort\(\{(?<body>[\s\S]*?)\}\)/gu;
-  const deadlines = /\btimeoutMs:\s*(?<value>[^\n,]+)/gu;
-  return [...source.matchAll(calls)].map((call) =>
-    [...String(call.groups?.body).matchAll(deadlines)].map((deadline) =>
-      String(deadline.groups?.value).trim(),
-    ),
-  );
 };

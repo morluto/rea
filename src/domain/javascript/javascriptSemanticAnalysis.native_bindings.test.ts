@@ -170,3 +170,165 @@ describe("JavaScript semantic analysis: native bindings 2", () => {
     );
   });
 });
+
+describe("JavaScript semantic analysis: child-process signals", () => {
+  it("keeps unresolved kill signals distinct from default and literal signals", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      import { spawn } from "node:child_process";
+      function run(signal) {
+        const child = spawn("/bin/tool");
+        child.kill(signal);
+        child.kill();
+        child.kill("SIGINT");
+        child.kill(undefined);
+        child.kill(undefined as NodeJS.Signals | undefined);
+        child.kill(void 0);
+        child.kill(void signal);
+      }
+      function shadowed(undefined) {
+        const child = spawn("/bin/tool");
+        child.kill(undefined);
+      }
+    `);
+
+    expect(ir.childProcessSpawns).toHaveLength(2);
+    expect(
+      ir.childProcessInteractions.map(({ signalName }) => signalName),
+    ).toEqual([
+      null,
+      "SIGTERM",
+      "SIGINT",
+      "SIGTERM",
+      "SIGTERM",
+      "SIGTERM",
+      "SIGTERM",
+      null,
+    ]);
+  });
+  it("expands literal spreads and follows only immutable signal aliases", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      import { spawn } from "node:child_process";
+      function run(signals, pick) {
+        const child = spawn("/bin/tool");
+        child.kill(...[]);
+        child.kill(...["SIGINT"]);
+        child.kill(...[, "SIGINT"]);
+        child.kill(...[...["SIGINT"]]);
+        child.kill(...[], "SIGKILL");
+        child.kill(...signals);
+        const literals = ["SIGINT"];
+        child.kill(...literals);
+        const unset = undefined;
+        child.kill(unset);
+        const named = "SIGKILL";
+        const alias = named;
+        child.kill(alias);
+        let open = undefined;
+        child.kill(open);
+        let changed = undefined;
+        changed = pick();
+        child.kill(changed);
+      }
+      function shadowed(undefined) {
+        const child = spawn("/bin/tool");
+        const unset = undefined;
+        child.kill(unset);
+      }
+    `);
+
+    expect(
+      ir.childProcessInteractions.map(({ signalName }) => signalName),
+    ).toEqual([
+      "SIGTERM",
+      "SIGINT",
+      "SIGTERM",
+      "SIGINT",
+      "SIGKILL",
+      null,
+      null,
+      "SIGTERM",
+      "SIGKILL",
+      null,
+      null,
+      null,
+    ]);
+  });
+});
+
+describe("JavaScript semantic analysis: configuration value escapes", () => {
+  const configurationReads = (body: string) =>
+    analyzeJavaScriptSemantics(`function run() { ${body} }`)
+      .configurationOperations.filter(({ kind }) => kind !== "default")
+      .map(({ kind, key }) => [kind, key]);
+
+  it.each([
+    [
+      "an environment value",
+      "return Number(process.env.PORT);",
+      "environment",
+      "PORT",
+    ],
+    ["an argv entry", "return Number(process.argv[2]);", "argv", "2"],
+  ])("keeps a read after passing %s to a call", (_name, body, kind, key) => {
+    expect(configurationReads(body)).toEqual([[kind, key]]);
+  });
+
+  it.each([
+    "patch(process.argv[key]); return process.argv[3];",
+    "patch(process.argv.__proto__); return process.argv[3];",
+    "const args = process.argv; patch(args[key]); return args[3];",
+  ])(
+    "retains uncertainty after an object-valued argv selection escapes: %s",
+    (body) => {
+      expect(configurationReads(body)).not.toContainEqual(["argv", "3"]);
+    },
+  );
+
+  it("preserves an earlier top-level read and unrelated configuration after an argv escape", () => {
+    const captured = analyzeJavaScriptSemantics(
+      "const saved = process.argv[3]; patch(process.argv[key]); globalThis.saved = saved;",
+    );
+    expect(
+      captured.configurationOperations.map(({ kind, key }) => [kind, key]),
+    ).toContainEqual(["argv", "3"]);
+    expect(
+      configurationReads("patch(process.argv[key]); return process.env.PORT;"),
+    ).toContainEqual(["environment", "PORT"]);
+  });
+
+  it.each([
+    [
+      "a direct argv entry",
+      "process.argv[2] = {}; return Number(process.argv[2]);",
+    ],
+    [
+      "an aliased argv entry",
+      "const argv = process.argv; argv[2] = {}; return Number(process.argv[2]);",
+    ],
+    [
+      "the argv container",
+      "mutate(process.argv); return Number(process.argv[2]);",
+    ],
+    [
+      "the env container",
+      "mutate(process.env); return Number(process.env.PORT);",
+    ],
+  ])("leaves a read unknown after replacing %s", (_name, body) => {
+    expect(configurationReads(body)).toEqual([]);
+  });
+});
+
+it.each([
+  ["if (flag) child = spawn('tool');", "partial"],
+  ["child = spawn('tool');", "complete"],
+] as const)(
+  "keeps child-process incoming parameter uncertainty after %s",
+  (assignment, resolution) => {
+    const ir = analyzeJavaScriptSemantics(
+      `import { spawn } from 'node:child_process'; function stop(child, flag) { ${assignment} child.kill(); }`,
+    );
+    expect(ir.childProcessInteractions).toEqual([
+      expect.objectContaining({ kind: "signal", resolution }),
+    ]);
+  },
+);

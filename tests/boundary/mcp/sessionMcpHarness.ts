@@ -1,3 +1,8 @@
+import type { RequestAnalysisPort } from "../../../src/ports/AnalysisProvider.js";
+import type { ApktoolRequest } from "../../../src/domain/apktool/apktoolResourceAnalysis.js";
+import type { AdbRequest } from "../../../src/domain/adb/adbDeviceAnalysis.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { createFixtureProviderIdentity } from "../../fixtures/analysisExecution.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -10,6 +15,11 @@ import { z } from "zod";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
+import type {
+  ProviderAvailability,
+  AnalysisProvider,
+} from "../../../src/ports/AnalysisProvider.js";
+import type { AndroidAnalysisPort } from "../../../src/ports/android/AndroidAnalysisPort.js";
 import {
   createEvidenceBundle,
   evidenceBundleSchema,
@@ -17,12 +27,45 @@ import {
 import { ok } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
-import type { AnalysisProvider } from "../../../src/application/AnalysisProvider.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const SNAPSHOT_PROFILE = createAnalysisProfile(
-  { id: "fixture", name: "Fixture analysis provider", version: "1" },
+  createFixtureProviderIdentity(),
   { fixture: true },
 );
+
+const HOST_TOOLS_NOT_CONFIGURED: ProviderAvailability = {
+  status: "unavailable",
+  code: "not_configured",
+  reason: "The target-free MCP fixture does not probe host tools.",
+  remediation: "Repair the fixture provider.",
+  diagnostics: { source: "test_fixture" },
+};
+
+const unusedHostToolExecution = async (): Promise<never> => {
+  throw new Error("Host-tool execution is outside the target-free fixture");
+};
+
+// These fixed ports keep this fake-session harness independent of whichever
+// Android tools happen to be installed on the test host. The dedicated public
+// availability test below continues to exercise status projection separately.
+const androidAnalysis: AndroidAnalysisPort = {
+  inspectAvailability: async () => HOST_TOOLS_NOT_CONFIGURED,
+  close: async () => {},
+  execute: unusedHostToolExecution,
+};
+
+const adbDeviceAnalysis: RequestAnalysisPort<AdbRequest> = {
+  inspectAvailability: async () => HOST_TOOLS_NOT_CONFIGURED,
+  close: async () => {},
+  execute: unusedHostToolExecution,
+};
+
+const apktoolAnalysis: RequestAnalysisPort<ApktoolRequest> = {
+  inspectAvailability: async () => HOST_TOOLS_NOT_CONFIGURED,
+  close: async () => {},
+  execute: unusedHostToolExecution,
+};
 
 export interface SessionMcpHarness {
   readonly mcp: Client;
@@ -35,6 +78,8 @@ export const createSessionMcpHarness = async (
   root: string,
   provider: (closed: string[]) => AnalysisProvider,
   resources: Array<{ close(): Promise<unknown> }>,
+  maximumInputElements?: number,
+  outputSchemaProfile?: "off",
 ): Promise<SessionMcpHarness> => {
   const first = join(root, "first.hop");
   const second = join(root, "second.hop");
@@ -47,10 +92,30 @@ export const createSessionMcpHarness = async (
   const server = createServer(
     { kind: "session", session },
     {
+      androidAnalysis,
+      adbDeviceAnalysis,
+      apktoolAnalysis,
       logger: silentLogger,
+      ...(maximumInputElements === undefined &&
+      outputSchemaProfile === undefined
+        ? {}
+        : {
+            environment: {
+              ...process.env,
+              ...(maximumInputElements === undefined
+                ? {}
+                : { REA_MCP_MAX_INPUT_ELEMENTS: String(maximumInputElements) }),
+              ...(outputSchemaProfile === undefined
+                ? {}
+                : { REA_MCP_OUTPUT_SCHEMA_PROFILE: outputSchemaProfile }),
+            },
+          }),
     },
   );
-  const mcp = new Client({ name: "session-test", version: "1.0.0" });
+  const mcp = new Client(
+    { name: "session-test", version: "1.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server);
@@ -104,7 +169,7 @@ export const snapshotAndRecordUnknown = async (
     JSON.stringify(
       createEvidenceBundle([
         createEvidence(
-          undefined,
+          unknownTarget("not-observed"),
           { id: "fixture", name: "Fixture", version: "1" },
           { operation: "external_observation", parameters: {}, result: true },
         ),

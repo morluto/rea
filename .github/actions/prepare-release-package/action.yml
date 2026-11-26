@@ -1,0 +1,26 @@
+name: Prepare qualified release inputs
+description: Restore and validate the exact qualified tarball and its verifier runtime
+outputs:
+  version:
+    description: Package version validated against the source and qualified manifest
+    value: ${{ steps.package.outputs.version }}
+  tarball:
+    description: Absolute path to the validated qualified npm tarball
+    value: ${{ steps.package.outputs.tarball }}
+runs:
+  using: composite
+  steps:
+    - name: Download the exact qualified package
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: verified-release-package
+        path: .cache/verified-package/
+    - name: Verify qualified package provenance and digest
+      id: package
+      shell: bash
+      run: node scripts/ci/verified-package.mjs validate .cache/verified-package
+    - name: Restore qualified verifier runtime
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: rea-test-runtime
+        path: .

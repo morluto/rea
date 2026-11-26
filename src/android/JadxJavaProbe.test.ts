@@ -1,0 +1,265 @@
+import { validateJadxConfiguration } from "./JadxConfiguration.js";
+import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { expect, it, vi } from "vitest";
+import { inspectJadxJava, type JadxJavaProbeOptions } from "./JadxJavaProbe.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { ProcessOwnershipInspectionCancelled } from "../process/ProcessInspectionCancellation.js";
+import {
+  prepareProcessOwnershipInspection,
+  systemProcessOwnershipHost,
+} from "../process/ProcessOwnershipObservation.js";
+import type { OwnedProviderProcessSpawnOptions } from "../process/ProviderProcess.js";
+import { expectJavaProbePreparationCleanup } from "../../tests/support/process/javaProbePreparation.js";
+import { createInspectionResources } from "../../tests/fixtures/inspectionResources.js";
+import { spawnFailure } from "../../tests/support/process/spawnFailure.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+
+it.each([false, true])(
+  "retains physical preparation instead of reporting a Java refusal (batch: %s)",
+  (batch) =>
+    expectJavaProbePreparationCleanup(batch, async (options) => {
+      const result: unknown = await inspectJadxJava(
+        "/selected/java",
+        {},
+        options,
+      ).catch((cause: unknown) => cause);
+      expect(result).toBeInstanceOf(AnalysisError);
+      if (!(result instanceof AnalysisError)) throw result;
+      return result;
+    }),
+);
+
+it("preserves the actual inspection cancellation record and opaque caller reason", async () => {
+  const resources = createInspectionResources();
+  const reason = new ProviderCleanupError("foreign", ["/foreign/resource"], {});
+  const inspection = new ProcessOwnershipInspectionCancelled(reason);
+  const prepare = vi
+    .spyOn(systemProcessOwnershipHost, "prepare")
+    .mockRejectedValue(inspection);
+  const startJava = vi.fn(() => {
+    throw new Error("Java must not start");
+  });
+  const launcher = async (input: OwnedProviderProcessSpawnOptions) => {
+    await prepareProcessOwnershipInspection(input.signal);
+    return startJava();
+  };
+  try {
+    const result: unknown = await inspectJadxJava(
+      "/selected/java",
+      {},
+      { resourceOwner: resources.owner, launcher },
+    ).catch((cause: unknown) => cause);
+    expect(result).toMatchObject({ _tag: "AnalysisCancelledError" });
+    if (!(result instanceof AnalysisError)) throw result;
+    expect(result.cause).toBe(reason);
+    expect(Reflect.get(result, "inspectionFailure")).toBe(inspection);
+    expect(result.cleanupResources).toEqual([]);
+    expect(result.secondaryFailures).toEqual([]);
+    expect(reason.cleanupIncomplete).toBe(true);
+    expect(startJava).not.toHaveBeenCalled();
+  } finally {
+    prepare.mockRestore();
+    await resources.close();
+  }
+});
+
+it.each(["probe", "configuration"] as const)(
+  "keeps owned deadline policy and exact inspection facts through %s",
+  async (boundary) => {
+    const resources = createInspectionResources();
+    const prepare = vi
+      .spyOn(systemProcessOwnershipHost, "prepare")
+      .mockResolvedValue(undefined);
+    const caller = new AbortController();
+    let stopped: ProcessOwnershipInspectionCancelled | undefined;
+    const options: JadxJavaProbeOptions = {
+      resourceOwner: resources.owner,
+      signal: caller.signal,
+      timeoutMs: 20,
+      launcher: async (input) => {
+        const signal = input.signal;
+        if (signal === undefined)
+          throw new Error("Expected owned deadline signal");
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) resolve();
+          else
+            signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+        stopped = new ProcessOwnershipInspectionCancelled(signal.reason);
+        throw stopped;
+      },
+    };
+    try {
+      const result: unknown = await (
+        boundary === "probe"
+          ? inspectJadxJava("/selected/java", {}, options)
+          : validateJadxConfiguration(
+              {
+                jar: "/unused/engine.jar",
+                java: "/selected/java",
+                jvmArguments: [],
+              },
+              {},
+              "inspect_android_package",
+              options,
+            )
+      ).catch((cause: unknown) => cause);
+      expect(stopped).toBeInstanceOf(ProcessOwnershipInspectionCancelled);
+      if (boundary === "probe") {
+        expect(result).toMatchObject({
+          ok: false,
+          error: {
+            code: "version_unresolved",
+            kind: "java_probe",
+            diagnostics: { failure: "probe_terminated", deadline_ms: 20 },
+            inspectionFailure: stopped,
+          },
+        });
+        if (
+          typeof result !== "object" ||
+          result === null ||
+          !("error" in result)
+        )
+          throw new Error("Expected runtime refusal");
+        const refusal = result.error;
+        if (typeof refusal !== "object" || refusal === null)
+          throw new Error("Expected refusal facts");
+        expect(Reflect.get(refusal, "inspectionFailure")).toBe(stopped);
+        expect(Object.keys(refusal)).not.toContain("inspectionFailure");
+        expect(refusal).not.toHaveProperty("cancellation");
+      } else {
+        expect(result).toMatchObject({
+          _tag: "AnalysisCapabilityUnavailableError",
+          diagnostics: { failure_code: "version_unresolved" },
+        });
+        if (
+          !(result instanceof AnalysisError) ||
+          !(result.cause instanceof Error)
+        )
+          throw new Error("Expected projected configuration refusal");
+        expect(result.cause.cause).toBe(stopped);
+        expect(result.secondaryFailures).toEqual([]);
+      }
+      expect(caller.signal.aborted).toBe(false);
+    } finally {
+      prepare.mockRestore();
+      await resources.close();
+    }
+  },
+);
+
+it.each([
+  { code: "ENOENT", thrown: "launcher", expected: "runtime_missing" },
+  { code: "ENOENT", thrown: "reader", expected: "runtime_unavailable" },
+  { code: "EACCES", thrown: "launcher", expected: "runtime_unavailable" },
+] as const)(
+  "reads only a launcher's $code as a Java runtime refusal ($thrown)",
+  async ({ code, thrown, expected }) => {
+    const resources = createInspectionResources();
+    const prepare = vi
+      .spyOn(systemProcessOwnershipHost, "prepare")
+      .mockResolvedValue(undefined);
+    try {
+      const result = await inspectJadxJava(
+        "/selected/java",
+        {},
+        {
+          resourceOwner: resources.owner,
+          launcher: async () => {
+            throw thrown === "launcher"
+              ? spawnFailure(code, "/selected/java")
+              : Object.assign(new Error("read failed"), { code });
+          },
+        },
+      );
+      expect(result).toMatchObject({ ok: false, error: { code: expected } });
+    } finally {
+      prepare.mockRestore();
+      await resources.close();
+    }
+  },
+);
+
+it.each([
+  ["EAGAIN", true, {}],
+  // The probe's arguments are fixed, so only the environment can shrink.
+  ["E2BIG", false, { oversized_launch_input: "environment" }],
+] as const)(
+  "reports a host launch constraint %s as a resource constraint, not a Java refusal",
+  async (code, retryable, facts) => {
+    const resources = createInspectionResources();
+    const prepare = vi
+      .spyOn(systemProcessOwnershipHost, "prepare")
+      .mockResolvedValue(undefined);
+    try {
+      const result: unknown = await inspectJadxJava(
+        "/selected/java",
+        {},
+        {
+          resourceOwner: resources.owner,
+          launcher: async () => {
+            throw spawnFailure(code, "/selected/java");
+          },
+        },
+      ).catch((cause: unknown) => cause);
+      expect(result).toBeInstanceOf(AnalysisError);
+      if (!(result instanceof AnalysisError)) throw result;
+      expect(projectAnalysisError(result)).toMatchObject({
+        code: "resource_constraint",
+        retryable,
+        details: {
+          diagnostics: {
+            system_code: code,
+            command: "/selected/java",
+            java_executable: "/selected/java",
+            ...facts,
+          },
+        },
+      });
+    } finally {
+      prepare.mockRestore();
+      await resources.close();
+    }
+  },
+);
+
+it("reports EMFILE during macOS ownership helper preparation as a resource constraint", async () => {
+  const resources = createInspectionResources();
+  const emfile = spawnFailure("EMFILE", "/usr/bin/swiftc");
+  const prepare = vi
+    .spyOn(systemProcessOwnershipHost, "prepare")
+    .mockRejectedValue(
+      new DarwinProcessOwnershipInspectionError("helper capacity exhausted", {
+        cause: emfile,
+      }),
+    );
+  try {
+    const result: unknown = await inspectJadxJava(
+      "/selected/java",
+      {},
+      {
+        resourceOwner: resources.owner,
+        launcher: async (input) => {
+          await prepareProcessOwnershipInspection(input.signal);
+          throw new Error("Java must not start");
+        },
+      },
+    ).catch((cause: unknown) => cause);
+    expect(result).toBeInstanceOf(AnalysisError);
+    if (!(result instanceof AnalysisError)) throw result;
+    expect(projectAnalysisError(result)).toMatchObject({
+      code: "resource_constraint",
+      retryable: true,
+      details: {
+        diagnostics: {
+          system_code: "EMFILE",
+          java_executable: "/selected/java",
+        },
+      },
+    });
+  } finally {
+    prepare.mockRestore();
+    await resources.close();
+  }
+});

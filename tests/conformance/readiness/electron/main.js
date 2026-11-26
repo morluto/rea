@@ -7,6 +7,13 @@ const {
 } = require("electron");
 const { spawn } = require("node:child_process");
 
+const profileArgument = "--rea-verifier-profile=";
+const profile = process.argv.find((argument) =>
+  argument.startsWith(profileArgument),
+);
+if (profile !== undefined)
+  app.setPath("userData", profile.slice(profileArgument.length));
+
 const windows = new Set();
 const deliverDeepLink = (url) => {
   for (const window of windows) window.webContents.send("deep-link", url);
@@ -26,11 +33,12 @@ app.whenReady().then(() => {
     window.webContents.on("render-process-gone", () => window.reload());
   }
   utilityProcess.fork(require.resolve("./utility.js"));
-  spawn(
+  const child = spawn(
     process.env.REA_ELECTRON_NODE_EXECUTABLE ?? "node",
     ["-e", "setTimeout(() => {}, 100)"],
     { stdio: "ignore" },
   );
+  child.on("error", () => undefined);
   ipcMain.handle("readiness:echo", (_event, value) => ({ value }));
   shell.openExternal("https://blocked.invalid").catch(() => undefined);
 });

@@ -1,43 +1,66 @@
+import { BinaryReader } from "../domain/binaryContainer.js";
+import {
+  readFieldDefinitionName,
+  readFieldDefinitionRow,
+} from "./ManagedFieldDefinitionRows.js";
+import {
+  readMethodDefinitionName,
+  readMethodDefinitionRow,
+  type ManagedMethodImplementationFlags,
+} from "./ManagedMethodDefinitionRows.js";
 import {
   admitManagedProjection,
   managedDecodeBudget,
-} from "./ManagedDecodeBudget.js";
+} from "../domain/managed/managedDecodeBudget.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   managedNativeBoundaryInspectionSchema,
   type ManagedNativeBoundaryInspection,
   type ManagedParseIssue,
 } from "../domain/managed/managedArtifact.js";
-import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
+import {
+  MANAGED_CODED_INDEXES,
+  type ManagedMetadataLayout,
+} from "../domain/managed/managedMetadataLayout.js";
 import {
   metadataRowCursor,
-  metadataCodedToken,
-  metadataCodedTokenInvalidReason,
+  decodeMetadataCodedIndex,
   metadataToken,
   readMetadataString,
-} from "./ManagedMetadataHeaps.js";
-import { managedTableRowCounts } from "./ManagedMetadataInventory.js";
-import type { ManagedMetadataInventory } from "./ManagedMetadataInventory.js";
+} from "../domain/managed/managedMetadataHeaps.js";
+import { managedPeInspectionEnvelope } from "./ManagedPeInspectionEnvelope.js";
+import type { ManagedMetadataInventory } from "../domain/managed/managedMetadataInventory.js";
 import {
   managedCli32BitRequirement,
+  managedCliIsMixedClrNative,
+  type ManagedCliHeader,
   type ManagedPeLayout,
-} from "./ManagedPeReader.js";
-import { readManagedValue } from "./ManagedReaderFailure.js";
+} from "../domain/managed/managedPeReader.js";
+import { readManagedValue } from "../domain/managed/managedReaderFailure.js";
 
 type ModuleRef = ManagedNativeBoundaryInspection["module_refs"][number];
 type NativeImport = ManagedNativeBoundaryInspection["pinvoke_imports"][number];
 type NativeImplementation =
   ManagedNativeBoundaryInspection["native_implementations"][number];
 
-interface MemberCore {
+interface MethodCore {
   readonly token: string;
   readonly rowOffset: number;
-  readonly kind: NativeImport["member_kind"];
   readonly name: string;
   readonly flags: number;
-  readonly implFlags: number | null;
-  readonly rva: number | null;
+  readonly implFlags: number;
+  readonly rva: number;
+  readonly implementation: ManagedMethodImplementationFlags;
 }
+
+/**
+ * Fixed-width 4-byte mask at MethodDef +4 (ImplFlags u16 | Flags u16 << 16):
+ * - ImplFlags 0x0003: non-IL codeType (native/optil/runtime)
+ * - ImplFlags 0x0004: unmanaged code
+ * - ImplFlags 0x1000: InternalCall
+ * - Flags     0x2000 (<< 16 = 0x2000_0000): PinvokeImpl
+ */
+const NATIVE_METHOD_FLAGS_MASK = 0x2000_1007;
 
 const flagsHex = (value: number): string =>
   `0x${value.toString(16).padStart(4, "0")}`;
@@ -45,7 +68,6 @@ const flagsHex = (value: number): string =>
 export const parseModuleRefs = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
-  heapExtent: number,
   issues: ManagedParseIssue[],
 ): readonly ModuleRef[] => {
   const refs: ModuleRef[] = [];
@@ -60,7 +82,6 @@ export const parseModuleRefs = (
           bytes,
           layout,
           cursor.readIndex(layout.stringIndexSize),
-          heapExtent,
         ),
       });
     }, issues);
@@ -68,132 +89,126 @@ export const parseModuleRefs = (
   return refs;
 };
 
-export const parseFields = (
+/** Decode only Field rows referenced by ImplMap instead of scanning every Field row. */
+export const readReferencedFieldNames = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
-  heapExtent: number,
+  rows: ReadonlySet<number>,
   issues: ManagedParseIssue[],
-): ReadonlyMap<string, MemberCore> => {
-  const fields = new Map<string, MemberCore>();
-  const table = layout.table(4);
-  for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
+): ReadonlyMap<string, string> => {
+  const names = new Map<string, string>();
+  if (rows.size === 0) return names;
+  for (const row of [...rows].sort((left, right) => left - right)) {
     readManagedValue(() => {
-      const cursor = metadataRowCursor(bytes, layout, 4, row);
-      const flags = cursor.readUInt16();
-      const name = readMetadataString(
-        bytes,
-        layout,
-        cursor.readIndex(layout.stringIndexSize),
-        heapExtent,
+      const definition = readFieldDefinitionRow(bytes, layout, row);
+      names.set(
+        definition.token,
+        readFieldDefinitionName(bytes, layout, definition),
       );
-      cursor.readIndex(layout.blobIndexSize);
-      const token = metadataToken(4, row);
-      fields.set(token, {
-        token,
-        rowOffset: cursor.start,
-        kind: "field",
-        name,
-        flags,
-        implFlags: null,
-        rva: null,
-      });
     }, issues);
   }
-  return fields;
+  return names;
 };
 
-export const parseMethods = (
+/**
+ * Push the native-implementation predicate down to fixed-width MethodDef flags:
+ * read the 4-byte ImplFlags+Flags word first and only decode rows/names for
+ * matching native/runtime/unmanaged/PInvoke methods or ImplMap targets.
+ */
+export const scanNativeMethods = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
-  heapExtent: number,
+  referencedMethodRows: ReadonlySet<number>,
   issues: ManagedParseIssue[],
-): ReadonlyMap<string, MemberCore> => {
-  const methods = new Map<string, MemberCore>();
+): {
+  readonly methodNames: ReadonlyMap<string, string>;
+  readonly methods: readonly MethodCore[];
+} => {
+  const methodNames = new Map<string, string>();
+  const methods: MethodCore[] = [];
   const table = layout.table(6);
-  for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
+  if (table === undefined || table.rowCount === 0)
+    return { methodNames, methods };
+  const reader = new BinaryReader(bytes, true, "managed-metadata-methods");
+  for (let row = 1; row <= table.rowCount; row += 1) {
+    const rowOffset = table.offset + (row - 1) * table.rowSize;
+    const flagsWord = reader.u32(rowOffset + 4);
+    if (
+      (flagsWord & NATIVE_METHOD_FLAGS_MASK) === 0 &&
+      !referencedMethodRows.has(row)
+    )
+      continue;
     readManagedValue(() => {
-      const cursor = metadataRowCursor(bytes, layout, 6, row);
-      const rva = cursor.readUInt32();
-      const implFlags = cursor.readUInt16();
-      const flags = cursor.readUInt16();
-      const name = readMetadataString(
-        bytes,
-        layout,
-        cursor.readIndex(layout.stringIndexSize),
-        heapExtent,
-      );
-      cursor.readIndex(layout.blobIndexSize);
-      cursor.readIndex(layout.tableIndexSize(8));
-      const token = metadataToken(6, row);
-      methods.set(token, {
+      const definition = readMethodDefinitionRow(bytes, layout, row);
+      const { token, rva, implFlags, flags, implementation } = definition;
+      const name = readMethodDefinitionName(bytes, layout, definition);
+      methodNames.set(token, name);
+      methods.push({
         token,
-        rowOffset: cursor.start,
-        kind: "method",
+        rowOffset: definition.rowOffset,
         name,
         flags,
         implFlags,
         rva,
+        implementation,
       });
     }, issues);
   }
-  return methods;
+  return { methodNames, methods };
 };
 
-interface ParseImplMapsContext {
-  readonly bytes: Buffer;
-  readonly layout: ManagedMetadataLayout;
-  readonly heapExtent: number;
-  readonly modules: readonly ModuleRef[];
-  readonly members: ReadonlyMap<string, MemberCore>;
-  readonly issues: ManagedParseIssue[];
+interface ScannedImplMaps {
+  readonly imports: readonly NativeImport[];
+  readonly referencedFieldRows: ReadonlySet<number>;
+  readonly referencedMethodRows: ReadonlySet<number>;
+  readonly issues: readonly ManagedParseIssue[];
 }
 
-export const parseImplMaps = ({
-  bytes,
-  layout,
-  heapExtent,
-  modules,
-  members,
-  issues,
-}: ParseImplMapsContext): readonly NativeImport[] => {
+export const scanImplMaps = (
+  bytes: Buffer,
+  layout: ManagedMetadataLayout,
+  modules: readonly ModuleRef[],
+): ScannedImplMaps => {
   const moduleNames = new Map(modules.map((module) => [module.token, module]));
   const imports: NativeImport[] = [];
+  const referencedFieldRows = new Set<number>();
+  const referencedMethodRows = new Set<number>();
+  const issues: ManagedParseIssue[] = [];
   const table = layout.table(28);
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
     readManagedValue(() => {
       const cursor = metadataRowCursor(bytes, layout, 28, row);
-      const mappingFlags = cursor.readUInt16();
+      const mappingFlags = cursor.u16();
       const memberForwardedOffset = cursor.offset;
       const memberForwardedRaw = cursor.readIndex(
         layout.codedIndexSize("MemberForwarded"),
       );
-      const memberForwardedReason = metadataCodedTokenInvalidReason(
+      const memberForwarded = decodeMetadataCodedIndex(
         memberForwardedRaw,
-        1,
-        [4, 6],
+        MANAGED_CODED_INDEXES.MemberForwarded.bits,
+        MANAGED_CODED_INDEXES.MemberForwarded.tables,
         layout.rowCounts,
       );
-      if (memberForwardedReason !== null || memberForwardedRaw === 0)
+      if (memberForwarded.kind !== "valid")
         issues.push({
           code: "invalid-row",
           scope: `metadata.ImplMap:${metadataToken(28, row)}`,
           offset: memberForwardedOffset,
           detail:
-            memberForwardedReason === null
+            memberForwarded.kind === "null"
               ? "ImplMap MemberForwarded coded index 0x0 is null, but the column must reference a Field or MethodDef row"
-              : `ImplMap MemberForwarded coded index 0x${memberForwardedRaw.toString(16)} is invalid: ${memberForwardedReason}`,
+              : `ImplMap MemberForwarded coded index 0x${memberForwardedRaw.toString(16)} is invalid: ${memberForwarded.reason}`,
         });
-      const memberToken = metadataCodedToken(
-        memberForwardedRaw,
-        1,
-        [4, 6],
-        layout.rowCounts,
-      );
+      else if (memberForwarded.table === 4)
+        referencedFieldRows.add(memberForwarded.row);
+      else if (memberForwarded.table === 6)
+        referencedMethodRows.add(memberForwarded.row);
+      const memberToken =
+        memberForwarded.kind === "valid" ? memberForwarded.token : null;
       const importName = readMetadataString(
         bytes,
         layout,
         cursor.readIndex(layout.stringIndexSize),
-        heapExtent,
       );
       const importScopeOffset = cursor.offset;
       const importScopeRow = cursor.readIndex(layout.tableIndexSize(26));
@@ -210,16 +225,19 @@ export const parseImplMaps = ({
       const importScopeToken = validImportScope
         ? metadataToken(26, importScopeRow)
         : null;
-      const member =
-        memberToken === null ? undefined : members.get(memberToken);
       imports.push({
         token: metadataToken(28, row),
         row_offset: cursor.start,
         mapping_flags: mappingFlags,
         mapping_flags_hex: flagsHex(mappingFlags),
         member_token: memberToken,
-        member_kind: member?.kind ?? "unknown",
-        member_name: member?.name ?? null,
+        member_kind:
+          memberForwarded.kind !== "valid"
+            ? "unknown"
+            : memberForwarded.table === 4
+              ? "field"
+              : "method",
+        member_name: null,
         import_name: importName,
         import_scope_token: importScopeToken,
         import_scope_name:
@@ -236,8 +254,24 @@ export const parseImplMaps = ({
       });
     }, issues);
   }
-  return imports;
+  return { imports, referencedFieldRows, referencedMethodRows, issues };
 };
+
+export const resolveImplMapMemberNames = (
+  imports: readonly NativeImport[],
+  fieldNames: ReadonlyMap<string, string>,
+  methodNames: ReadonlyMap<string, string>,
+): readonly NativeImport[] =>
+  imports.map((entry) => {
+    if (entry.member_token === null) return entry;
+    const resolved =
+      entry.member_kind === "field"
+        ? fieldNames.get(entry.member_token)
+        : entry.member_kind === "method"
+          ? methodNames.get(entry.member_token)
+          : undefined;
+    return resolved === undefined ? entry : { ...entry, member_name: resolved };
+  });
 
 const charSet = (flags: number): NativeImport["char_set"] => {
   switch (flags & 0x0006) {
@@ -302,112 +336,89 @@ const throwOnUnmappable = (
 };
 
 export const nativeImplementations = (
-  methods: Iterable<MemberCore>,
+  methods: Iterable<MethodCore>,
   pinvokeTokens: ReadonlySet<string>,
 ): readonly NativeImplementation[] => {
   const implementations: NativeImplementation[] = [];
   for (const method of methods) {
-    if (method.kind !== "method") continue;
-    const implFlags = method.implFlags ?? 0;
-    const codeType = codeTypeFor(implFlags);
-    const managedKind = managedKindFor(implFlags);
-    const pinvokeDeclared =
-      pinvokeTokens.has(method.token) || (method.flags & 0x2000) !== 0;
-    if (!pinvokeDeclared && codeType === "il" && managedKind === "managed")
+    const { codeType, managedKind, pinvokeFlag, internalCall } =
+      method.implementation;
+    const pinvokeDeclared = pinvokeTokens.has(method.token) || pinvokeFlag;
+    if (
+      !pinvokeDeclared &&
+      !internalCall &&
+      codeType === "il" &&
+      managedKind === "managed"
+    )
       continue;
     implementations.push({
       token: method.token,
       row_offset: method.rowOffset,
       name: method.name,
-      rva: method.rva ?? 0,
+      rva: method.rva,
       flags: method.flags,
-      impl_flags: implFlags,
+      impl_flags: method.implFlags,
       code_type: codeType,
       managed_kind: managedKind,
       pinvoke_declared: pinvokeDeclared,
-      boundary_kind: boundaryKind(pinvokeDeclared, codeType, managedKind),
+      boundary_kind: boundaryKind(
+        pinvokeDeclared,
+        codeType,
+        managedKind,
+        internalCall,
+      ),
       body_interpretation:
-        codeType === "il" && managedKind === "managed" && !pinvokeDeclared
-          ? "managed-cil"
-          : method.rva === 0
-            ? "not-file-backed"
-            : "native-or-runtime",
+        method.rva === 0 ? "not-file-backed" : "native-or-runtime",
     });
   }
   return implementations;
 };
 
-const codeTypeFor = (implFlags: number): NativeImplementation["code_type"] => {
-  switch (implFlags & 0x0003) {
-    case 0x0000:
-      return "il";
-    case 0x0001:
-      return "native";
-    case 0x0002:
-      return "optil";
-    case 0x0003:
-      return "runtime";
-    default:
-      return "unknown";
-  }
-};
-
-const managedKindFor = (
-  implFlags: number,
-): NativeImplementation["managed_kind"] => {
-  switch (implFlags & 0x0004) {
-    case 0x0000:
-      return "managed";
-    case 0x0004:
-      return "unmanaged";
-    default:
-      return "unknown";
-  }
-};
-
 const boundaryKind = (
   pinvokeDeclared: boolean,
-  codeType: NativeImplementation["code_type"],
-  managedKind: NativeImplementation["managed_kind"],
+  codeType: ManagedMethodImplementationFlags["codeType"],
+  managedKind: ManagedMethodImplementationFlags["managedKind"],
+  internalCall: boolean,
 ): NativeImplementation["boundary_kind"] => {
   if (pinvokeDeclared) return "pinvoke";
   if (codeType === "native") return "native-body";
-  if (codeType === "runtime") return "runtime-provided";
+  if (codeType === "runtime" || internalCall) return "runtime-provided";
   if (managedKind === "unmanaged") return "unmanaged-method";
   return "mixed-or-unknown";
 };
 
 export const cliNative = (
-  pe: ManagedPeLayout,
+  cli: ManagedCliHeader | null,
 ): ManagedNativeBoundaryInspection["cli_native"] => {
-  if (pe.cli === null) return null;
+  if (cli === null) return null;
   return {
-    il_only: (pe.cli.flags & 0x0000_0001) !== 0,
-    requires_32bit: managedCli32BitRequirement(pe.cli.flags) === "required",
-    strong_name_signed: (pe.cli.flags & 0x0000_0008) !== 0,
-    native_entry_point: (pe.cli.flags & 0x0000_0010) !== 0,
-    ready_to_run_signature: pe.cli.readyToRunSignature,
-    managed_native_header_rva: pe.cli.managedNativeHeader.rva,
-    managed_native_header_size: pe.cli.managedNativeHeader.size,
+    il_only: (cli.flags & 0x0000_0001) !== 0,
+    requires_32bit: managedCli32BitRequirement(cli.flags) === "required",
+    strong_name_signed: (cli.flags & 0x0000_0008) !== 0,
+    native_entry_point: (cli.flags & 0x0000_0010) !== 0,
+    ready_to_run_signature: cli.readyToRunSignature,
+    managed_native_header_rva: cli.managedNativeHeader.rva,
+    managed_native_header_size: cli.managedNativeHeader.size,
   };
 };
 
 /** Summarize declaration counts with the native facets of the CLI header. */
 export const nativeBoundarySummary = (
-  native: ManagedNativeBoundaryInspection["cli_native"],
+  cli: ManagedCliHeader | null,
   counts: Pick<
     ManagedNativeBoundaryInspection["summary"],
     "module_ref_count" | "pinvoke_import_count" | "native_implementation_count"
   >,
 ): ManagedNativeBoundaryInspection["summary"] => ({
   ...counts,
-  ready_to_run: native?.ready_to_run_signature ?? null,
+  ready_to_run: cli?.readyToRunSignature ?? null,
   mixed_mode_or_native_header:
-    native === null
+    cli === null
       ? null
-      : native.managed_native_header_rva !== 0 ||
-        native.managed_native_header_size !== 0 ||
-        native.native_entry_point,
+      : managedCliIsMixedClrNative(cli) ||
+        cli.managedNativeHeader.rva !== 0 ||
+        cli.managedNativeHeader.size !== 0 ||
+        (cli.flags & 0x0000_0010) !== 0,
 });
 
 interface BoundaryInspectionContext {
@@ -419,46 +430,35 @@ interface BoundaryInspectionContext {
   readonly moduleRefs: readonly ModuleRef[];
   readonly imports: readonly NativeImport[];
   readonly implementations: readonly NativeImplementation[];
-  readonly native: ManagedNativeBoundaryInspection["cli_native"];
   readonly issues: readonly ManagedParseIssue[];
 }
 
 export const buildNativeBoundaryInspection = ({
   target,
   bytes,
+  pe,
   layout,
   inventory,
   moduleRefs,
   imports,
   implementations,
-  native,
   issues,
 }: BoundaryInspectionContext): ManagedNativeBoundaryInspection =>
   managedNativeBoundaryInspectionSchema.parse(
     admitManagedProjection(
       {
-        artifact: {
-          path: target.path,
-          sha256: target.sha256,
-          byte_length: bytes.length,
-          format: "pe",
-        },
-        module: inventory.module,
-        metadata: {
-          status: issues.length === 0 ? "complete" : "partial",
-          version: layout.version,
-          table_row_counts: managedTableRowCounts(layout),
-        },
-        identity_scope: {
-          token_identity: "build-local",
-          requires_artifact_sha256: target.sha256,
-          requires_mvid: inventory.module?.mvid ?? null,
-        },
-        cli_native: native,
+        ...managedPeInspectionEnvelope(
+          target,
+          bytes.length,
+          layout,
+          inventory,
+          issues,
+        ),
+        cli_native: cliNative(pe.cli),
         module_refs: moduleRefs,
         pinvoke_imports: imports,
         native_implementations: implementations,
-        summary: nativeBoundarySummary(native, {
+        summary: nativeBoundarySummary(pe.cli, {
           module_ref_count: moduleRefs.length,
           pinvoke_import_count: imports.length,
           native_implementation_count: implementations.length,

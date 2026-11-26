@@ -16,6 +16,7 @@ prerelease_identifier="(${numeric_identifier}|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]
 build_identifier='[0-9A-Za-z-]+'
 version_pattern="${numeric_identifier}\\.${numeric_identifier}\\.${numeric_identifier}(-${prerelease_identifier}(\\.${prerelease_identifier})*)?(\\+${build_identifier}(\\.${build_identifier})*)?"
 version="${REA_VERSION:-}"
+version_requested=false
 dry_run=false
 start_setup=true
 verbose=false
@@ -56,7 +57,7 @@ fail_node_version() {
   local observed="$1"
   node_host_labels
   printf 'REA installation failed: Node.js %s is unsupported.\n\n' "$observed" >&2
-  printf 'REA requires Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+. Install one via:\n' >&2
+  printf 'REA requires Node.js 22.x (>=22.23.4), 24.x (>=24.22.1), or 26.12.1+. Install one via:\n' >&2
   printf '  nvm:  nvm install 24 && nvm use 24      (https://github.com/nvm-sh/nvm)\n' >&2
   printf '  fnm:  fnm install 24 && fnm use 24      (https://github.com/Schniz/fnm)\n' >&2
   printf '  Direct download for %s/%s:\n' "$node_os_label" "$node_arch_label" >&2
@@ -81,6 +82,7 @@ main() {
       --version)
         (($# >= 2)) || fail "--version requires a value."
         version="$2"
+        version_requested=true
         shift 2
         ;;
       --dry-run)
@@ -110,18 +112,22 @@ main() {
   platform="$(uname -s)"
   [ "$platform" = "Darwin" ] || [ "$platform" = "Linux" ] || fail "REA supports macOS and selected 64-bit Linux distributions."
   command -v curl >/dev/null 2>&1 || fail "curl is required. Install curl, then rerun this installer."
-  command -v node >/dev/null 2>&1 || fail "Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+ is required; install it from https://nodejs.org and retry."
+  command -v node >/dev/null 2>&1 || fail "Node.js 22.x (>=22.23.4), 24.x (>=24.22.1), or 26.12.1+ is required; install it from https://nodejs.org and retry."
   command -v npm >/dev/null 2>&1 || fail "npm is required; install it with Node.js and retry."
 
   node_version="$(node -p 'process.versions.node' 2>/dev/null || true)"
   IFS=. read -r node_major node_minor _node_patch <<<"$node_version"
   matches "$node_major" '^[0-9]+$' && matches "$node_minor" '^[0-9]+$' || fail "the active Node.js version could not be read. Check that node works and is on PATH, then retry."
+  node_patch="${_node_patch%%+*}"
   if ! matches "$_node_patch" '^[0-9]+(\+[0-9A-Za-z.-]+)?$' ||
-    ! ((node_major == 22 && node_minor >= 19 || node_major == 24 && node_minor >= 11 || node_major >= 26)); then
+    ! ((node_major == 22 && (node_minor > 23 || node_minor == 23 && node_patch >= 4) ||
+      node_major == 24 && (node_minor > 22 || node_minor == 22 && node_patch >= 1) ||
+      node_major == 26 && (node_minor > 12 || node_minor == 12 && node_patch >= 1) ||
+      node_major > 26)); then
     fail_node_version "$node_version"
   fi
 
-  if [ -n "$version" ]; then
+  if [ "$version_requested" = true ] || [ -n "$version" ]; then
     matches "$version" "^${version_pattern}$" || fail "version must be an exact semantic version."
   else
     release_json="$(curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$REPOSITORY/releases/latest")" || fail "the latest REA release could not be resolved. Check network access or pass --version VERSION, then retry."
@@ -164,6 +170,7 @@ main() {
   npm "${install_args[@]}" || fail "npm could not install REA. Check registry access and npm permissions, then retry."
   [ -x "$install_bin" ] || fail "npm completed without installing the rea command. Check the npm global bin directory and PATH, then retry."
   installed_version="$("$install_bin" --version 2>/dev/null | tr -d '[:space:]')" || fail "the installed REA version could not be read. Reinstall the requested version, then retry."
+  [ -n "$installed_version" ] || fail "the installed REA version could not be read. Reinstall the requested version, then retry."
   [ "$installed_version" = "$version" ] || fail "installed version $installed_version does not match $version. Reinstall the requested version, then retry."
 
   printf 'REA %s is installed.\n' "$version"

@@ -1,3 +1,4 @@
+import { IDA_COMPATIBILITY_PROFILES } from "./IdaConfiguration.js";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -10,15 +11,23 @@ import {
   AnalysisInputError,
   AnalysisProtocolError,
 } from "../domain/analysisErrorCore.js";
-import { readIdaConfiguration } from "./IdaConfiguration.js";
-import {
-  decodeIdaToolResult,
-  type IdaMcpConnection,
-} from "./IdaMcpConnection.js";
+import type { IdaMcpConnection } from "./IdaMcpConnection.js";
 import { parseConfig } from "../config/parseConfig.js";
+import { UNCLASSIFIED_CALL_SITE_LIMITATION } from "./IdaCallGraph.js";
 import { IdaProvider } from "./IdaProvider.js";
 import { idaCapabilities } from "./IdaProviderCapabilities.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
+import type {
+  RetainedResourceScope,
+  AnalysisProfileResolution,
+} from "../ports/AnalysisProvider.js";
+import { ProviderInspectionScope } from "../ports/ProviderInspectionScope.js";
+import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
+
+const resourceScope: RetainedResourceScope = {
+  retain: () => undefined,
+  run: (operation) => operation(),
+};
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -77,16 +86,9 @@ const fixture = async () => {
       "xrefs_to",
     ],
     call: (name, args) => producer.call(name, args),
-    readResource: async (uri) => {
+    readResource: (uri, options) => {
       resources.push(uri);
-      const metadata = await producer.call("get_metadata", {});
-      if (
-        metadata === null ||
-        typeof metadata !== "object" ||
-        Array.isArray(metadata)
-      )
-        throw new Error("Invalid metadata fixture");
-      return { ...metadata, path: `${producer.inputPath}.i64` };
+      return producer.readResource(uri, options);
     },
     serverInfo: () => producer.serverInfo(),
     close: () => producer.close(),
@@ -107,29 +109,171 @@ const fixture = async () => {
 };
 
 describe("native IDA attached protocol", () => {
-  it("requires explicit opt-in and rejects native headless registrations", async () => {
-    const { root } = await fixture();
-    const path = join(root, "native.json");
-    await writeFile(
-      path,
-      JSON.stringify({ url: "http://127.0.0.1:13337/mcp", protocol: "native" }),
-    );
-    expect(readIdaConfiguration(path)).toMatchObject({
-      ok: true,
-      value: { mode: "attached", protocol: "native" },
-    });
+  it("keeps the exact registration fact selected at readiness if the path changes before profile resolution", async () => {
+    const { root, target, producer } = await fixture();
+    const path = join(root, "mutable-registration.json");
     await writeFile(
       path,
       JSON.stringify({
-        url: "http://127.0.0.1:13337/mcp",
+        command: "first-server",
+        mode: "attached",
         protocol: "native",
-        mode: "headless",
       }),
     );
-    expect(readIdaConfiguration(path).ok).toBe(false);
-    await writeFile(path, JSON.stringify({ command: "python" }));
-    const old = readIdaConfiguration(path);
-    expect(old.ok && old.value.protocol).toBeUndefined();
+    const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
+    if (!config.ok) throw config.error;
+    const factoryRegistrations: string[] = [];
+    const provider = new IdaProvider(config.value, {}, (registration) => {
+      factoryRegistrations.push(
+        "command" in registration ? registration.command : registration.url,
+      );
+      return producer;
+    });
+    const controller = new AbortController();
+    const scope = new ProviderInspectionScope();
+    const options = { signal: controller.signal, scope, resourceScope };
+    const readiness = await provider.inspectReadinessSnapshot(options);
+    expect(readiness.availability).toMatchObject({
+      status: "available",
+      diagnostics: { mode: "attached" },
+    });
+    await writeFile(
+      path,
+      JSON.stringify({ command: "replacement-server", mode: "headless" }),
+    );
+    const profile = await provider.resolveAnalysisProfile(target, options);
+    if (!profile.ok) throw profile.error;
+    expect(profile.value.profile.parameters).toMatchObject({
+      mode: "attached",
+    });
+    const createBoundClient = profile.value.createClient;
+    if (createBoundClient === undefined)
+      throw new Error("IDA profile did not retain its client factory");
+    const client = createBoundClient(target, profile.value.profile);
+    const restoredClient = createBoundClient(target, profile.value.profile);
+    expect(factoryRegistrations).toEqual(["first-server", "first-server"]);
+    await client.close();
+    await restoredClient.close();
+    scope.close();
+  });
+
+  it("does not reuse a registration across independent scopes sharing one signal", async () => {
+    const { root, target } = await fixture();
+    const path = join(root, "independent-registration.json");
+    await writeFile(
+      path,
+      JSON.stringify({ command: "first-server", protocol: "native" }),
+    );
+    const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
+    if (!config.ok) throw config.error;
+    const provider = new IdaProvider(config.value, {});
+    const controller = new AbortController();
+    const firstScope = new ProviderInspectionScope();
+    const first = await provider.inspectReadinessSnapshot({
+      signal: controller.signal,
+      scope: firstScope,
+      resourceScope,
+    });
+    expect(first.availability.status).toBe("available");
+    const firstProfile = await provider.resolveAnalysisProfile(target, {
+      signal: controller.signal,
+      scope: firstScope,
+      resourceScope,
+    });
+    if (!firstProfile.ok) throw firstProfile.error;
+    await writeFile(
+      path,
+      JSON.stringify({ command: "second-server", protocol: "native" }),
+    );
+    const secondScope = new ProviderInspectionScope();
+    const second = await provider.inspectReadinessSnapshot({
+      signal: controller.signal,
+      scope: secondScope,
+      resourceScope,
+    });
+    expect(second.availability.status).toBe("available");
+    const profile = await provider.resolveAnalysisProfile(target, {
+      signal: controller.signal,
+      scope: secondScope,
+      resourceScope,
+    });
+    if (!profile.ok) throw profile.error;
+    expect(profile.value.profile.parameters.mode).toBe("attached");
+    expect(profile.value.profile.digest).not.toBe(
+      firstProfile.value.profile?.digest,
+    );
+    firstScope.close();
+    secondScope.close();
+  });
+});
+
+describe("IDA selected registration factories", () => {
+  it("retains every concurrently resolved registration factory without eviction", async () => {
+    const { root, target } = await fixture();
+    const path = join(root, "many-registrations.json");
+    const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
+    if (!config.ok) throw config.error;
+    const observed: string[] = [];
+    const producer = new RecordingIdaMcp(target);
+    const provider = new IdaProvider(config.value, {}, (registration) => {
+      observed.push(
+        "command" in registration ? registration.command : registration.url,
+      );
+      return producer;
+    });
+    const bindings: {
+      readonly createClient: NonNullable<
+        AnalysisProfileResolution["createClient"]
+      >;
+      readonly profile: AnalysisProfileCommitment;
+    }[] = [];
+    const signal = new AbortController().signal;
+    for (let index = 0; index < 40; index += 1) {
+      await writeFile(
+        path,
+        JSON.stringify({ command: `server-${index}`, protocol: "native" }),
+      );
+      const scope = new ProviderInspectionScope();
+      const resolution = await provider.resolveAnalysisProfile(target, {
+        signal,
+        scope,
+        resourceScope,
+      });
+      if (!resolution.ok) throw resolution.error;
+      if (
+        resolution.value.profile === null ||
+        resolution.value.createClient === undefined
+      )
+        throw new Error(
+          "IDA profile resolution omitted its bound client factory",
+        );
+      bindings.push({
+        createClient: resolution.value.createClient,
+        profile: resolution.value.profile,
+      });
+      scope.close();
+    }
+    const clients = bindings.map(({ createClient, profile }) =>
+      createClient(target, profile),
+    );
+    expect(observed).toEqual(
+      Array.from({ length: 40 }, (_, index) => `server-${index}`),
+    );
+    const mismatchedTargetClient = bindings[0]!.createClient(
+      { ...target, path: `${target.path}.different` },
+      bindings[0]!.profile,
+    );
+    const mismatchedProfileClient = bindings[0]!.createClient(
+      target,
+      bindings[1]!.profile,
+    );
+    expect((await mismatchedTargetClient.execute("health", {})).ok).toBe(false);
+    expect((await mismatchedProfileClient.execute("health", {})).ok).toBe(
+      false,
+    );
+    await mismatchedTargetClient.close();
+    await mismatchedProfileClient.close();
+    for (const client of clients) await client.close();
   });
 
   it("commits native profile semantics and advertises GUI effects without starting a provider", async () => {
@@ -144,7 +288,7 @@ describe("native IDA attached protocol", () => {
     const provider = new IdaProvider(config.value, {}, () => {
       throw new Error("Unexpected discovery startup");
     });
-    expect(provider.inspectAvailability().status).toBe("available");
+    expect((await provider.inspectAvailability()).status).toBe("available");
     const profile = await provider.resolveAnalysisProfile(target);
     if (!profile.ok) throw profile.error;
     expect(profile.value.profile.provider.name).toBe("IDA MCP adapter");
@@ -154,45 +298,13 @@ describe("native IDA attached protocol", () => {
       cache_policy: "live",
       engine_version: null,
     });
+    const readiness = await provider.inspectReadinessSnapshot();
     expect(
-      provider
-        .capabilities()
-        .find(({ operation }) => operation === "procedure_pseudo_code")?.effects
-        .mayShowUi,
-    ).toBe(true);
-    expect(
-      provider
-        .capabilities()
-        .find(({ operation }) => operation === "procedure_assembly")?.effects
-        .mayShowUi,
+      readiness.capabilities.find(
+        ({ operation }) => operation === "procedure_assembly",
+      )?.effects.mayShowUi,
     ).toBe(false);
     expect(producer.connects).toBe(0);
-  });
-
-  it("uses complete native JSON text instead of a shortened structured preview", () => {
-    const complete = [
-      {
-        data: [{ addr: "0x1000", name: "main", size: "0x20" }],
-        next_offset: null,
-      },
-    ];
-    const response = {
-      content: [{ type: "text", text: JSON.stringify(complete) }],
-      structuredContent: { result: [], _output_truncated: true },
-    };
-    expect(decodeIdaToolResult(response, "native")).toEqual(complete);
-    expect(() =>
-      decodeIdaToolResult({ ...response, content: [] }, "native"),
-    ).toThrow("complete JSON");
-    expect(() =>
-      decodeIdaToolResult(
-        { ...response, content: [{ type: "text", text: "broken JSON" }] },
-        "native",
-      ),
-    ).toThrow();
-    expect(() =>
-      decodeIdaToolResult({ ...response, isError: true }, "native"),
-    ).toThrow("tool failed");
   });
 });
 
@@ -219,6 +331,12 @@ describe("native IDA provider observations", () => {
         if (!direct.ok) throw direct.error;
         expect(direct.value.relationshipCoverage).toMatchObject({
           status: more ? "partial" : "complete",
+          discovery: {
+            callees: {
+              status: "unknown",
+              reason: UNCLASSIFIED_CALL_SITE_LIMITATION,
+            },
+          },
         });
         const dossier = await client.execute("analyze_function", {
           procedure: "main",
@@ -226,20 +344,21 @@ describe("native IDA provider observations", () => {
         if (!dossier.ok) throw dossier.error;
         expect(dossier.value.relationshipCoverage).toMatchObject({
           status: "unknown",
-          reason: more
-            ? expect.stringContaining(
-                "Callees: Upstream callees capped results at 500; additional callees remain unknown.",
-              )
-            : expect.stringContaining(
-                "Callers: Upstream xrefs do not establish direct caller relationships.",
-              ),
+          reason: expect.stringMatching(/xrefs.*not establish.*caller/iu),
         });
-        if (more)
+        if (more) {
+          const coverage = direct.value.relationshipCoverage;
+          if (coverage?.status !== "partial")
+            throw new Error("Expected partial callee coverage");
+          const limitation = coverage.limitations[0];
+          if (limitation === undefined)
+            throw new Error("Expected callee limitation");
+          expect(limitation).toMatch(/callees.*500.*unknown/iu);
           expect(dossier.value.relationshipCoverage).toMatchObject({
-            reason: expect.stringContaining(
-              "Callers: Upstream xrefs do not establish direct caller relationships.",
-            ),
+            reason: expect.stringContaining(limitation),
           });
+          expect(dossier.value.limitations).toContain(limitation);
+        }
         expect(dossier.value.result).toMatchObject({
           callers: [],
           callees: [{ address: "0x2000", name: "puts" }],
@@ -248,10 +367,6 @@ describe("native IDA provider observations", () => {
             callees: { available: true },
           },
         });
-        if (more)
-          expect(dossier.value.limitations).toContain(
-            "Upstream callees capped results at 500; additional callees remain unknown.",
-          );
       } finally {
         await client.close();
       }
@@ -316,21 +431,15 @@ describe("native IDA provider observations", () => {
     expect(producer.calls.some(({ name }) => name.startsWith("idb_"))).toBe(
       false,
     );
-    const capabilities = idaCapabilities("attached", false, true);
+    const declared = idaCapabilities(IDA_COMPATIBILITY_PROFILES.native, false);
     expect(
-      capabilities.find(({ operation }) => operation === "procedure_callers")
+      declared.find(({ operation }) => operation === "procedure_callers")
         ?.available,
     ).toBe(false);
     expect(
-      capabilities.find(
-        ({ operation }) => operation === "procedure_pseudo_code",
-      )?.effects,
+      declared.find(({ operation }) => operation === "procedure_pseudo_code")
+        ?.effects,
     ).toMatchObject({ mayShowUi: true, mayAccessNetwork: true });
-    expect(
-      idaCapabilities("attached", false).find(
-        ({ operation }) => operation === "procedure_callers",
-      )?.available,
-    ).toBe(true);
   });
 
   it("rejects unavailable or mismatched recorded input hashes and database switches", async () => {
@@ -541,20 +650,28 @@ describe("native IDA callee lookup batches", () => {
   });
 });
 
+const nativeLiteralValues = [
+  "A.B",
+  "axb",
+  "Kelvin",
+  "İstanbul",
+  "σ",
+  "ς",
+  "literal[bracket",
+  "a\\b",
+  "🧪",
+  "Σ",
+  "ΟΣ",
+  "ος",
+  "S",
+  "s",
+  "ſ",
+];
+
 describe("native IDA literal matching", () => {
   it("retains literal, Unicode, case, and regex semantics while narrowing native candidates", async () => {
     const { client, producer } = await fixture();
-    const values = [
-      "A.B",
-      "axb",
-      "Kelvin",
-      "İstanbul",
-      "σ",
-      "ς",
-      "literal[bracket",
-      "a\\b",
-      "🧪",
-    ];
+    const values = nativeLiteralValues;
     producer.overrideCall = (name, args) => {
       if (name !== "find_regex") return undefined;
       if (typeof args.pattern !== "string")
@@ -576,6 +693,12 @@ describe("native IDA literal matching", () => {
     };
     const cases = [
       {
+        pattern: "ſ",
+        mode: "literal",
+        case_sensitive: false,
+        expected: ["İstanbul", "S", "s", "ſ"],
+      },
+      {
         pattern: "a.b",
         mode: "literal",
         case_sensitive: false,
@@ -594,12 +717,36 @@ describe("native IDA literal matching", () => {
         case_sensitive: false,
         expected: ["İstanbul"],
       },
-      { pattern: "σ", mode: "literal", case_sensitive: false, expected: ["σ"] },
+      // Match the shared Unicode contract after the byte-oriented producer has
+      // returned candidates, including final sigma inside a word.
+      ...["σ", "ς", "Σ"].map((pattern) => ({
+        pattern,
+        mode: "literal",
+        case_sensitive: false,
+        expected: ["σ", "ς", "Σ", "ΟΣ", "ος"],
+      })),
+      ...["ΟΣ", "ος"].map((pattern) => ({
+        pattern,
+        mode: "literal",
+        case_sensitive: false,
+        expected: ["ΟΣ", "ος"],
+      })),
+      ...[
+        { pattern: "σ", expected: ["σ"] },
+        { pattern: "ς", expected: ["ς", "ος"] },
+        { pattern: "Σ", expected: ["Σ", "ΟΣ"] },
+        { pattern: "ΟΣ", expected: ["ΟΣ"] },
+        { pattern: "ος", expected: ["ος"] },
+      ].map((query) => ({
+        ...query,
+        mode: "literal",
+        case_sensitive: true,
+      })),
       {
         pattern: "σ",
         mode: "regex",
         case_sensitive: false,
-        expected: ["σ", "ς"],
+        expected: ["σ", "ς", "Σ", "ΟΣ", "ος"],
       },
       {
         pattern: "[",
@@ -631,7 +778,7 @@ describe("native IDA literal matching", () => {
         const before = producer.calls.length;
         const result = await client.execute("search_strings", query);
         if (!result.ok) throw result.error;
-        expect(result.value.result).toEqual(
+        expect(result.value.result, JSON.stringify(query)).toEqual(
           expected.map((value) => ({
             address: `0x${(0x3000 + values.indexOf(value)).toString(16)}`,
             value,
@@ -641,7 +788,10 @@ describe("native IDA literal matching", () => {
           .slice(before)
           .filter(({ name }) => name === "find_regex");
         expect(reads).toHaveLength(1);
-        if (query.mode === "regex" || query.pattern === "\ud800")
+        const unfiltered = query.mode === "regex" || query.pattern === "\ud800";
+        const unicodeFold =
+          !query.case_sensitive && /[\u0080-\u{10ffff}]/u.test(query.pattern);
+        if (unfiltered || unicodeFold)
           expect(reads[0]?.args.pattern).toBe("[\\s\\S]*");
         else expect(reads[0]?.args.pattern).not.toBe("[\\s\\S]*");
       }
@@ -762,39 +912,108 @@ describe("native IDA malformed observations", () => {
       procedure: "main",
     });
     expect(result.ok && result.value.result).toBe("0x1000: nop\n0x1001: ret");
-    producer.overrideCall = (name) =>
-      name === "find_regex" ? { matches: [], cursor: { next: 0 } } : undefined;
-    expect((await client.execute("list_strings", {})).ok).toBe(false);
+    let pages = 0;
+    producer.overrideCall = (name) => {
+      if (name !== "disasm") return undefined;
+      if (++pages > 2)
+        throw new Error("Non-advancing assembly requested another page");
+      return {
+        asm: {
+          name: "main",
+          start_ea: "0x1000",
+          lines: "main (.text @ 0x1000):\n1000  nop",
+        },
+        cursor: { next: 0 },
+      };
+    };
+    const refused = await client.execute("procedure_assembly", {
+      procedure: "main",
+    });
+    expect(refused.ok).toBe(false);
+    if (!refused.ok)
+      expect(refused.error.message).toMatch(
+        /cursor.*advance|pagination.*advance/iu,
+      );
+    expect(pages).toBe(1);
     await client.close();
   });
 });
 
 describe("native IDA attached operation admission", () => {
-  it("forwards the native producer's explicit reference cap flag", async () => {
-    const { client } = await fixture();
-    const result = await client.execute("xrefs", { address: "0x1000" });
+  it("reports the bound document but not headless-only address resolution", async () => {
+    const { client, producer, target } = await fixture();
+    const containing = await client.execute("resolve_containing_procedure", {
+      address: "0x1000",
+    });
+    expect(containing.ok).toBe(false);
+    if (!containing.ok)
+      expect(containing.error._tag).toBe("AnalysisCapabilityUnavailableError");
 
-    if (!result.ok) throw result.error;
-    expect(result.value.referencesTruncated).toBe(false);
-    await client.close();
-  });
-
-  it("does not admit the headless-only containment and document operations", async () => {
-    const { client, producer } = await fixture();
-    for (const [operation, parameters] of [
-      ["resolve_containing_procedure", { address: "0x1000" }],
-      ["list_documents", {}],
-    ] as const) {
-      const result = await client.execute(operation, parameters);
-
-      expect(result.ok).toBe(false);
-      if (!result.ok)
-        expect(result.error._tag).toBe("AnalysisCapabilityUnavailableError");
-    }
+    const documents = await client.execute("list_documents", {});
+    if (!documents.ok) throw documents.error;
+    expect(documents.value.result).toEqual([target.path]);
     expect(
       producer.calls.some(({ name }) => name === "lookup_funcs"),
       "nothing is dispatched upstream",
     ).toBe(false);
     await client.close();
+  });
+});
+
+describe("native IDA literal candidate precision", () => {
+  it("excludes unrelated non-ASCII strings while preserving U+017F and U+212A simple folds", async () => {
+    const { client, producer } = await fixture();
+    const values = [
+      "中文菜单",
+      "Настройки",
+      "İstanbul",
+      "σ",
+      "🧪",
+      "Warfare/Storage/Read-Write",
+      "warfare/\u017ftoragE/read-write",
+      "\u212aelvin",
+    ];
+    producer.overrideCall = (name, args) => {
+      if (name !== "find_regex") return undefined;
+      const regex = new RegExp(
+        Buffer.from(String(args.pattern)).toString("latin1"),
+        "i",
+      );
+      return {
+        matches: values.flatMap((value, index) =>
+          regex.test(Buffer.from(value).toString("latin1"))
+            ? [{ addr: `0x${(0x4000 + index).toString(16)}`, string: value }]
+            : [],
+        ),
+        cursor: { done: true },
+      };
+    };
+    try {
+      const storage = await client.execute("search_strings", {
+        pattern: "warfare/storage/read-write",
+      });
+      if (!storage.ok) throw storage.error;
+      expect(storage.value.result).toEqual([
+        { address: "0x4005", value: "Warfare/Storage/Read-Write" },
+        { address: "0x4006", value: "warfare/\u017ftoragE/read-write" },
+      ]);
+      const storageCall = producer.calls.find(
+        ({ name }) => name === "find_regex",
+      );
+      expect(storageCall?.args.pattern).not.toContain("\\x80-\\xff");
+      const rawMatches = JSON.stringify(storage.value.rawResult);
+      expect(rawMatches).not.toContain("中文菜单");
+      expect(rawMatches).not.toContain("İstanbul");
+
+      const kelvin = await client.execute("search_strings", {
+        pattern: "kelvin",
+      });
+      if (!kelvin.ok) throw kelvin.error;
+      expect(kelvin.value.result).toEqual([
+        { address: "0x4007", value: "\u212aelvin" },
+      ]);
+    } finally {
+      await client.close();
+    }
   });
 });

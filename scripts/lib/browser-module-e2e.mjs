@@ -14,36 +14,50 @@ import { webModuleTraceResultSchema } from "../../dist/domain/webModuleTrace.js"
 import { NativeModuleResolver } from "../../dist/browser/modules/NativeModuleResolver.js";
 import { startBrowserModuleSite } from "../fixtures/browser-module-site.mjs";
 import { mcpTextValue } from "./mcp-verifier-results.mjs";
+import { withVerifierCleanup } from "./verifier-cleanup.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./complete-evidence.mjs";
 
 /** Check native URL resolution against an independently loaded module graph through CLI/MCP. */
 export async function verifyBrowserModules(
   executable,
   entrypoint = fileURLToPath(new URL("../rea.mjs", import.meta.url)),
 ) {
-  const site = await startBrowserModuleSite();
-  const root = await mkdtemp(join(tmpdir(), "rea-browser-modules-"));
-  const env = {
-    ...process.env,
-    REA_LOG_LEVEL: "silent",
-    REA_BROWSER_EXECUTABLE: executable,
-    HOPPER_LAUNCHER_PATH: "/rea-unconfigured-provider/hopper",
-  };
-  const cli = async (...args) => {
-    const { stdout } = await promisify(execFile)(
-      process.execPath,
-      [entrypoint, ...args, "--json"],
-      { env, timeout: 45000, maxBuffer: 16 * 1024 * 1024 },
+  let site;
+  let root;
+  let transport;
+  let client;
+  return withVerifierCleanup(async () => {
+    site = await startBrowserModuleSite();
+    root = await mkdtemp(join(tmpdir(), "rea-browser-modules-"));
+    const env = {
+      ...process.env,
+      REA_LOG_LEVEL: "silent",
+      REA_BROWSER_EXECUTABLE: executable,
+      HOPPER_LAUNCHER_PATH: "/rea-unconfigured-provider/hopper",
+    };
+    const cli = async (...args) => {
+      const { stdout } = await promisify(execFile)(
+        process.execPath,
+        [
+          entrypoint,
+          ...(await completeEvidenceCliArguments([...args, "--json"])),
+        ],
+        { env, timeout: 45000, maxBuffer: 16 * 1024 * 1024 },
+      );
+      return parseEvidence(JSON.parse(stdout));
+    };
+    transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [entrypoint, "mcp"],
+      env,
+      stderr: "pipe",
+    });
+    client = completeEvidenceClient(
+      new Client({ name: "module-real-e2e", version: "1" }),
     );
-    return parseEvidence(JSON.parse(stdout));
-  };
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [entrypoint, "mcp"],
-    env,
-    stderr: "pipe",
-  });
-  const client = new Client({ name: "module-real-e2e", version: "1" });
-  try {
     const oracle = await loadingOracle(executable, site);
     const scenario = {
       browser: { mode: "launch", executable_path: executable },
@@ -109,7 +123,7 @@ export async function verifyBrowserModules(
     const mcpResult = assertTrace(mcpEvidence, oracle, site, scriptIndex);
     assert.deepEqual(mcpResult, cliResult, "CLI and MCP module traces differ");
     assert.equal(
-      cliEvidence.subject.digest.sha256,
+      cliEvidence.subject.identity.sha256,
       createHash("sha256").update(site.main).digest("hex"),
     );
     const mapBytes = await readFile(mapPath);
@@ -298,12 +312,15 @@ export async function verifyBrowserModules(
       map_identity_verified: true,
       implicit_refetches: 0,
     };
-  } finally {
-    await client.close();
-    await transport.close();
-    await site.close();
-    await rm(root, { recursive: true, force: true });
-  }
+  }, [
+    () => client?.close(),
+    () => transport?.close(),
+    () => site?.close(),
+    () =>
+      root === undefined
+        ? undefined
+        : rm(root, { recursive: true, force: true }),
+  ]);
 }
 
 const assertTrace = (evidence, oracle, site, scriptIndex) => {
@@ -354,7 +371,7 @@ const loadingOracle = async (executable, site) => {
         : []),
     ],
   });
-  try {
+  return withVerifierCleanup(async () => {
     const page = await browser.newPage();
     await page.goto(site.origin);
     await page.waitForFunction(
@@ -382,7 +399,5 @@ const loadingOracle = async (executable, site) => {
       ),
     );
     return proof;
-  } finally {
-    await browser.close();
-  }
+  }, [() => browser.close()]);
 };

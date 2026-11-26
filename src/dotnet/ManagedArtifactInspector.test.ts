@@ -1,6 +1,42 @@
 import { createHash } from "node:crypto";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+/** MethodDef member-list lookups, each the start of a declaring-type index build. */
+const methodListLookups = vi.hoisted(() => ({ count: 0, budget: Infinity }));
+vi.mock(
+  "../domain/managed/managedMemberPointers.js",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("../domain/managed/managedMemberPointers.js")
+      >();
+    return {
+      ...actual,
+      memberListRowLookup: (
+        ...args: Parameters<typeof actual.memberListRowLookup>
+      ) => {
+        if (
+          args[2] === 6 &&
+          ++methodListLookups.count > methodListLookups.budget
+        )
+          throw new Error("Method owner index rebuilt");
+        return actual.memberListRowLookup(...args);
+      },
+    };
+  },
+);
+
+/** Run `inspect` while more than `budget` MethodDef list lookups fail at once. */
+const withMethodListLookupBudget = <T>(budget: number, inspect: () => T): T => {
+  methodListLookups.count = 0;
+  methodListLookups.budget = budget;
+  try {
+    return inspect();
+  } finally {
+    methodListLookups.budget = Infinity;
+  }
+};
 
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
@@ -9,8 +45,8 @@ import {
   buildManagedPeFixture,
   managedPeFixtureTarget,
 } from "./ManagedPe.fixture.js";
-import { readManagedMetadataLayout } from "./ManagedMetadataLayout.js";
-import { readManagedPeLayout } from "./ManagedPeReader.js";
+import { readManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
+import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
 
 const metadataLayoutFor = (bytes: Buffer) => {
   const pe = readManagedPeLayout(bytes);
@@ -93,6 +129,22 @@ describe("managed PE optional-header directory count", () => {
 });
 
 describe("managed CLI directory availability", () => {
+  it("keeps a readable CLI directory when later declared entries are truncated", () => {
+    const bytes = buildManagedPeFixture();
+    const optional = bytes.readUInt32LE(0x3c) + 24;
+    bytes.writeUInt32LE(0xffffffff, optional + 92);
+    expect(readManagedPeLayout(bytes)).toMatchObject({
+      cliDirectoryState: "present",
+      cliIssue: null,
+      cli: expect.objectContaining({ headerSize: 72 }),
+    });
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result.metadata.status).toBe("complete");
+  });
+
   it("keeps a declared but truncated CLI directory malformed", () => {
     const bytes = buildManagedPeFixture();
     const peOffset = bytes.readUInt32LE(0x3c);
@@ -179,6 +231,42 @@ describe("managed CLI directory availability", () => {
   });
 });
 
+it.each(["before the section table", "past the file"])(
+  "reports partial coverage when SizeOfHeaders ends %s",
+  (extent) => {
+    const bytes = buildManagedPeFixture();
+    const optional = bytes.readUInt32LE(0x3c) + 24;
+    bytes.writeUInt32LE(
+      extent === "before the section table" ? 0x100 : bytes.length + 1,
+      optional + 60,
+    );
+
+    expect(
+      inspectManagedArtifactBytes(bytes, managedPeFixtureTarget(bytes)),
+    ).toMatchObject({
+      pe: {
+        machine: 0x014c,
+        optional_header: "pe32",
+        section_count: 1,
+        cli: null,
+      },
+      classification: { status: "malformed" },
+      metadata: { status: "malformed" },
+      coverage: {
+        state: "partial",
+        issues: [
+          {
+            code: "invalid-directory",
+            scope: "pe.optional-header",
+            detail: expect.stringContaining("SizeOfHeaders"),
+            offset: optional + 60,
+          },
+        ],
+      },
+    });
+  },
+);
+
 describe("managed artifact inventory", () => {
   it.each([
     { moduleRowCount: 0, assemblyRowCount: 1, scope: "metadata.Module" },
@@ -237,6 +325,7 @@ describe("managed artifact inventory", () => {
     fixture.copy(bytes, 0, 0, 0x0200);
     fixture.copy(bytes, sectionDataOffset, 0x0200, 0x1000);
     bytes.writeUInt16LE(97, coffOffset + 2);
+    bytes.writeUInt32LE(sectionDataOffset, coffOffset + 20 + 60);
     bytes.writeUInt32LE(sectionDataOffset, sectionOffset + 20);
 
     const result = inspectManagedArtifactBytes(
@@ -318,6 +407,95 @@ describe("managed artifact inventory", () => {
   );
 });
 
+describe("managed attribute SerString encoding", () => {
+  it.each([
+    [0, [0x00]],
+    [0x7f, [0x7f]],
+    [0x80, [0x80, 0x80]],
+    [0x3fff, [0xbf, 0xff]],
+    [0x4000, [0xc0, 0x00, 0x40, 0x00]],
+  ] as const)(
+    "reads a target-framework SerString of %i UTF-8 bytes",
+    (length, prefix) => {
+      const targetFramework =
+        "é".repeat(Math.floor(length / 2)) + (length % 2 === 0 ? "" : "A");
+      const value = Buffer.concat([
+        Buffer.from([1, 0, ...prefix]),
+        Buffer.from(targetFramework),
+        Buffer.from([0, 0]),
+      ]);
+      const bytes = buildManagedPeFixture({ targetFramework });
+      const result = inspectManagedArtifactBytes(
+        bytes,
+        managedPeFixtureTarget(bytes),
+      );
+
+      expect(result.target_frameworks).toEqual([targetFramework]);
+      expect(result.attributes).toMatchObject([
+        {
+          decoded_fixed_string: targetFramework,
+          value_length: value.length,
+          value_sha256: createHash("sha256").update(value).digest("hex"),
+        },
+      ]);
+      expect(result.coverage).toEqual({ state: "complete", issues: [] });
+    },
+  );
+
+  it.each([
+    { name: "missing length", value: [1, 0], decoded: null },
+    { name: "null sentinel", value: [1, 0, 0xff], decoded: null },
+    { name: "truncated two-byte prefix", value: [1, 0, 0x80], decoded: null },
+    {
+      name: "truncated four-byte prefix",
+      value: [1, 0, 0xc0, 0, 0],
+      decoded: null,
+    },
+    { name: "reserved prefix", value: [1, 0, 0xe0], decoded: null },
+    { name: "content outside value", value: [1, 0, 5, 0x41], decoded: null },
+    {
+      name: "maximum length without content",
+      value: [1, 0, 0xdf, 0xff, 0xff, 0xff],
+      decoded: null,
+    },
+    { name: "invalid UTF-8", value: [1, 0, 1, 0xff, 0, 0], decoded: null },
+    { name: "invalid prolog", value: [0, 0, 1, 0x41, 0, 0], decoded: null },
+    {
+      name: "overlong two-byte length",
+      value: [1, 0, 0x80, 1, 0x41, 0, 0],
+      decoded: "A",
+    },
+    {
+      name: "overlong four-byte length",
+      value: [1, 0, 0xc0, 0, 0, 1, 0x41, 0, 0],
+      decoded: "A",
+    },
+  ])("preserves attribute evidence for $name", ({ value, decoded }) => {
+    const customAttributeValue = Buffer.from(value);
+    const bytes = buildManagedPeFixture({ customAttributeValue });
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.attributes).toMatchObject([
+      {
+        parent_token: "0x20000001",
+        constructor_token: "0x0a000001",
+        type_name: "System.Runtime.Versioning.TargetFrameworkAttribute",
+        decoded_fixed_string: decoded,
+        value_length: customAttributeValue.length,
+        value_sha256: createHash("sha256")
+          .update(customAttributeValue)
+          .digest("hex"),
+      },
+    ]);
+    expect(result.target_frameworks).toEqual(decoded === null ? [] : [decoded]);
+    expect(result.metadata.status).toBe("complete");
+    expect(result.coverage).toEqual({ state: "complete", issues: [] });
+  });
+});
+
 describe("managed artifact coded indexes", () => {
   it("reports an invalid ManifestResource implementation while retaining the resource", () => {
     const bytes = buildManagedPeFixture({ resourceImplementationRaw: 9 });
@@ -338,8 +516,8 @@ describe("managed artifact coded indexes", () => {
         expect.objectContaining({
           code: "invalid-row",
           scope: "metadata.ManifestResource:0x28000001",
-          detail: expect.stringContaining(
-            "coded index 0x9 is invalid: coded index selects row 2 in table 35, which has 1 rows",
+          detail: expect.stringMatching(
+            /0x9.*invalid.*row 2.*table 35.*1 rows/iu,
           ),
         }),
       ],
@@ -449,8 +627,9 @@ describe("managed artifact coded indexes", () => {
   });
 
   it("resolves local attribute constructors without rescanning TypeDef rows", () => {
-    // The owning type follows every empty type. A per-attribute TypeDef scan
-    // took about 38 s here; the owner index is built once per layout.
+    // The owning type follows every empty type. The method owner index is
+    // built once per layout; rebuilding it per attribute scans every TypeDef
+    // row 16,000 times.
     const bytes = buildManagedPeFixture({
       additionalEmptyTypes: 16_000,
       customAttributeRowCount: 16_000,
@@ -461,13 +640,10 @@ describe("managed artifact coded indexes", () => {
       methodFlags: 0x1886,
       methodSignature: Buffer.from([0x20, 0x01, 0x01, 0x0e]),
     });
-    const start = performance.now();
-    const artifact = inspectManagedArtifactBytes(
-      bytes,
-      managedPeFixtureTarget(bytes),
+    const artifact = withMethodListLookupBudget(2, () =>
+      inspectManagedArtifactBytes(bytes, managedPeFixtureTarget(bytes)),
     );
-
-    expect(performance.now() - start).toBeLessThan(2000);
+    expect(methodListLookups.count).toBe(1);
     expect(artifact.coverage).toEqual({ state: "complete", issues: [] });
     expect(artifact.attributes).toHaveLength(16_000);
     expect(
@@ -475,10 +651,116 @@ describe("managed artifact coded indexes", () => {
         (attribute) => attribute.type_name === "Fixture.LookupAttribute",
       ),
     ).toBe(true);
-  }, 30_000);
+  });
 });
 
+it.each([false, true])(
+  "resolves an attribute type without reading malformed constructor heaps (bad name %s)",
+  (badName) => {
+    const bytes = buildManagedPeFixture();
+    const layout = metadataLayoutFor(bytes);
+    const row = layout.table(10)!;
+    const nameColumn = row.offset + layout.codedIndexSize("MemberRefParent");
+    const signatureColumn = nameColumn + layout.stringIndexSize;
+    if (badName) {
+      if (layout.stringIndexSize === 2) bytes.writeUInt16LE(0xffff, nameColumn);
+      else bytes.writeUInt32LE(0xffffffff, nameColumn);
+    }
+    if (layout.blobIndexSize === 2)
+      bytes.writeUInt16LE(0xffff, signatureColumn);
+    else bytes.writeUInt32LE(0xffffffff, signatureColumn);
+
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result.attributes[0]).toMatchObject({
+      constructor_token: "0x0a000001",
+      type_name: "System.Runtime.Versioning.TargetFrameworkAttribute",
+      decoded_fixed_string: ".NETCoreApp,Version=v8.0",
+    });
+    expect(result.coverage).toEqual({ state: "complete", issues: [] });
+  },
+);
+
 describe("managed artifact reference inventory", () => {
+  it("qualifies referenced custom-attribute names from TypeRef scopes", () => {
+    const bytes = buildManagedPeFixture({
+      customAttributeTypeRaw: (1 << 3) | 3,
+      memberRefParentRaw: (3 << 3) | 1,
+      typeReferences: [
+        { namespace: "Fixture", name: "Outer" },
+        { namespace: "", name: "InnerAttribute", enclosingRow: 2 },
+      ],
+    });
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.attributes[0]?.type_name).toBe(
+      "Fixture.Outer+InnerAttribute",
+    );
+    expect(result.coverage).toEqual({ state: "complete", issues: [] });
+  });
+
+  it.each([
+    {
+      label: "duplicate NestedClass rows",
+      additionalEmptyTypes: 1,
+      nestedTypes: [
+        [2, 1],
+        [2, 1],
+      ] as const,
+      coverage: "partial",
+    },
+    {
+      label: "a cyclic NestedClass chain",
+      additionalEmptyTypes: 2,
+      nestedTypes: [
+        [2, 3],
+        [3, 2],
+      ] as const,
+      coverage: "complete",
+    },
+  ])("leaves a nested attribute name unknown for $label", (fixture) => {
+    const bytes = buildManagedPeFixture({
+      additionalEmptyTypes: fixture.additionalEmptyTypes,
+      customAttributeTypeRaw: (1 << 3) | 2,
+      nestedTypes: fixture.nestedTypes,
+      typeName: "InnerAttribute",
+      typeNamespace: "",
+    });
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.attributes[0]?.type_name).toBeNull();
+    expect(result.coverage.state).toBe(fixture.coverage);
+  });
+
+  it("leaves a custom-attribute name unknown when nesting exceeds its cap", () => {
+    const nestedTypes: (readonly [number, number])[] = Array.from(
+      { length: 64 },
+      (_, index) => [65 - index, 64 - index],
+    );
+    const bytes = buildManagedPeFixture({
+      additionalEmptyTypes: 64,
+      customAttributeTypeRaw: (1 << 3) | 2,
+      nestedTypes,
+      typeName: "InnerAttribute",
+      typeNamespace: "",
+    });
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.attributes[0]?.type_name).toBeNull();
+    expect(result.coverage).toEqual({ state: "complete", issues: [] });
+  });
+
   it("returns all references inline while classifying from the full inventory", () => {
     const bytes = buildManagedPeFixture({
       references: ["System.Runtime", "UnityEngine.CoreModule"],
@@ -548,6 +830,39 @@ describe("managed fixture data layout", () => {
 });
 
 describe("managed implementation classification", () => {
+  it.each([
+    {
+      hint: "Unity AssemblyRef",
+      options: { references: ["UnityEngine.CoreModule"] },
+      evidence: "unity-reference-observed",
+    },
+    {
+      hint: ".NET Framework target",
+      options: { targetFramework: ".NETFramework,Version=v4.8" },
+      evidence: "target-framework-observed",
+    },
+  ])(
+    "keeps ReadyToRun classification and evidence with a $hint",
+    ({ options, evidence }) => {
+      const bytes = buildManagedPeFixture({ readyToRun: true, ...options });
+      const result = inspectManagedArtifactBytes(
+        bytes,
+        managedPeFixtureTarget(bytes),
+      );
+
+      expect(result.classification).toMatchObject({
+        runtime_family: "modern-dotnet",
+        implementation: "cil-and-ready-to-run",
+      });
+      expect(result.classification.evidence).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: "ready-to-run-signature-observed" }),
+          expect.objectContaining({ code: evidence }),
+        ]),
+      );
+    },
+  );
+
   it("classifies crossgen2 ReadyToRun output without ILONLY as modern .NET", () => {
     // crossgen2 writes IL_LIBRARY | STRONGNAMESIGNED and clears ILONLY.
     const bytes = buildManagedPeFixture({ readyToRun: true, cliFlags: 0xc });

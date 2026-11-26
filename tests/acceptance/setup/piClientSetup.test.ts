@@ -1,19 +1,24 @@
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { expect } from "vitest";
 import { z } from "zod";
 
-import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
-
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/contracts/mcpSchemaPresentation.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
-for (const profile of ["", "bogus"])
+for (const [setting, profile] of [
+  ["REA_MCP_INPUT_SCHEMA_PROFILE", ""],
+  ["REA_MCP_INPUT_SCHEMA_PROFILE", "bogus"],
+  ["REA_MCP_OUTPUT_SCHEMA_PROFILE", ""],
+  ["REA_MCP_OUTPUT_SCHEMA_PROFILE", "bogus"],
+] as const)
   cliTest(
-    `setup and doctor refuse an invalid retained schema profile ${JSON.stringify(profile)}`,
+    `setup and doctor refuse an invalid retained ${setting} value ${JSON.stringify(profile)}`,
     async ({ cli }) => {
       const home = await createTestTempDirectory("rea-pi-invalid-profile-cli-");
       const agent = join(home, ".pi", "agent");
@@ -24,7 +29,7 @@ for (const profile of ["", "bogus"])
             type: "stdio",
             command: "rea",
             args: ["mcp"],
-            env: { REA_MCP_INPUT_SCHEMA_PROFILE: profile },
+            env: { [setting]: profile },
           },
         },
       });
@@ -52,7 +57,7 @@ for (const profile of ["", "bogus"])
         status: "needs_human",
         plannedActions: [],
         appliedActions: [],
-        remediation: expect.stringContaining("REA_MCP_INPUT_SCHEMA_PROFILE"),
+        remediation: expect.stringContaining(setting),
       });
       const doctor = await cli.run({
         arguments: ["doctor", "--client", "pi", "--json"],
@@ -83,6 +88,7 @@ cliTest(
     const config = join(agent, "mcp.json");
     const custom = {
       REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: "off",
       REA_LOG_LEVEL: "silent",
     };
     const original = JSON.stringify({
@@ -132,7 +138,6 @@ cliTest(
       arguments: arguments_,
       cwd: home,
       environment,
-      timeoutMs: 20_000,
     });
     expect(applied.exitCode).toBe(0);
     expect(applied.json).toMatchObject({
@@ -162,7 +167,10 @@ cliTest(
       },
       stderr: "pipe",
     });
-    const client = new Client({ name: "setup-environment", version: "1" });
+    const client = new Client(
+      { name: "setup-environment", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     try {
       await client.connect(transport);
       const { tools } = await client.listTools();
@@ -187,7 +195,6 @@ cliTest(
       arguments: arguments_,
       cwd: home,
       environment,
-      timeoutMs: 20_000,
     });
     expect(repeated.exitCode).toBe(0);
     expect(repeated.json).toMatchObject({
@@ -220,12 +227,17 @@ cliTest(
         environment: {
           HOME: home,
           USERPROFILE: home,
+          HOPPER_LAUNCHER_PATH: join(home, "unconfigured-hopper"),
           PI_CODING_AGENT_DIR: "custom-agent",
           OMP_PROFILE: "work",
           PI_PROFILE: "legacy",
           PI_CONFIG_DIR: ".omp-other",
+          // Pin this lifecycle's runtime selection; alias preservation has
+          // separate coverage and must not depend on the developer's PATH.
+          PATH: [dirname(process.execPath), process.env.PATH ?? ""].join(
+            delimiter,
+          ),
         },
-        timeoutMs: 20_000,
       });
 
     const planned = await run([
@@ -275,8 +287,8 @@ cliTest(
         other: { command: "other-server" },
         rea: {
           type: "stdio",
-          command: process.platform === "win32" ? process.execPath : cliPath,
-          args: process.platform === "win32" ? [cliPath, "mcp"] : ["mcp"],
+          command: process.execPath,
+          args: [cliPath, "mcp"],
         },
       },
       autoEnableCodemode: false,
@@ -335,9 +347,9 @@ cliTest(
         environment: {
           HOME: home,
           USERPROFILE: home,
+          HOPPER_LAUNCHER_PATH: join(home, "unconfigured-hopper"),
           PI_CODING_AGENT_DIR: "custom-agent",
         },
-        timeoutMs: 20_000,
       });
     const run = runIn(created);
     const setup = await run(["setup", "--client", "pi", "--yes", "--json"]);
@@ -436,6 +448,7 @@ cliTest(
   "malformed Pi overrides do not block selected Codex setup or doctor and never fall back for Pi",
   async ({ cli }) => {
     const home = await createTestTempDirectory("rea-pi-invalid-cli-");
+    const moduleCache = await createTestTempDirectory("rea-pi-swift-cache-");
     const run = (arguments_: readonly string[]) =>
       cli.run({
         arguments: arguments_,
@@ -443,9 +456,10 @@ cliTest(
         environment: {
           HOME: home,
           USERPROFILE: home,
+          HOPPER_LAUNCHER_PATH: join(home, "unconfigured-hopper"),
           PI_CODING_AGENT_DIR: "file:///agent%2fdir",
+          REA_DARWIN_MODULE_CACHE_PATH: moduleCache,
         },
-        timeoutMs: 20_000,
       });
     const plan = await run([
       "setup",
@@ -489,7 +503,9 @@ cliTest(
           { client: "codex", state: "aligned" },
           {
             client: "pi",
-            state: "invalid",
+            state: "unknown",
+            command: [],
+            command_identity: "unknown",
             remediation: expect.stringContaining("PI_CODING_AGENT_DIR"),
           },
         ],
@@ -497,7 +513,16 @@ cliTest(
     });
     const piDoctor = await run(["doctor", "--client", "pi", "--json"]);
     expect(piDoctor.exitCode).not.toBe(0);
-    expect(piDoctor.json).toMatchObject({ healthy: false });
+    expect(piDoctor.json).toMatchObject({
+      healthy: false,
+      scope_checks: expect.arrayContaining([
+        expect.objectContaining({
+          name: "registration:pi",
+          ok: false,
+          classification: "unknown",
+        }),
+      ]),
+    });
     expect((await readdir(home)).sort()).toEqual([".agents", ".codex"]);
   },
 );

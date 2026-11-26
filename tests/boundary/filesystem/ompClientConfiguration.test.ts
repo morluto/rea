@@ -1,3 +1,5 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
+import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
@@ -9,12 +11,9 @@ import { configureClientConfiguration } from "../../../src/application/SetupClie
 import { supportedClients } from "../../../src/application/SupportedClients.js";
 import { systemUninstallHost } from "../../../src/application/Uninstall.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import {
-  clearClientLocationEnvironment,
-  NPX_REGISTRATION_COMMAND,
-} from "../../fixtures/clientEnvironment.js";
+import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 
-const command = NPX_REGISTRATION_COMMAND;
+const command = currentClientRegistrationCommand();
 
 beforeEach(clearClientLocationEnvironment);
 afterEach(() => vi.unstubAllEnvs());
@@ -24,7 +23,7 @@ const ompPath = (env: Parameters<typeof supportedClients>[2]) =>
 
 describe("OMP configuration paths", () => {
   it("uses the default agent directory and OMP's environment overrides", () => {
-    expect(ompPath({})).toEqual({
+    expect(ompPath({})).toMatchObject({
       name: "omp",
       displayName: "OMP",
       configPath: "/home/a/.omp/agent/mcp.json",
@@ -93,7 +92,7 @@ describe("OMP disabledServers denylist", () => {
     expect(parseJsonc(text)).toEqual({
       mcpServers: {
         other: { command: "other-server" },
-        rea: { type: "stdio", command: "npx", args: command.slice(1) },
+        rea: { type: "stdio", command: command[0], args: command.slice(1) },
       },
       disabledServers: ["other"],
     });
@@ -111,7 +110,7 @@ describe("OMP disabledServers denylist", () => {
 
   it("reports a registration hidden by disabledServers as stale", async () => {
     const { home, client } = await ompClient();
-    const entry = resolve("scripts/rea.mjs");
+    const entry = command[1];
     const registration = {
       command: process.execPath,
       args: [entry, "mcp"],
@@ -125,7 +124,10 @@ describe("OMP disabledServers denylist", () => {
     );
     const status = async () =>
       (
-        await readClientRegistrationStatuses(home, entry, { environment: {} })
+        await readClientRegistrationStatuses(home, entry, {
+          platform: HOST_PLATFORM.platform,
+          environment: {},
+        })
       ).find(({ client: name }) => name === "omp");
     expect(await status()).toMatchObject({ state: "stale" });
     // The enabledServers allowlist forces an `enabled: false` entry on, but

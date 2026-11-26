@@ -15,6 +15,12 @@ import {
   assertExportedScriptAnalysis,
 } from "./browser-script-export-assertions.mjs";
 import { mcpTextValue } from "./mcp-verifier-results.mjs";
+import { withVerifierCleanup } from "./verifier-cleanup.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+  completeEvidenceToolArguments,
+} from "./complete-evidence.mjs";
 
 /** Verify capture → export → existing analysis through real CLI and stdio MCP. */
 export async function verifyBrowserScriptExport(
@@ -22,24 +28,30 @@ export async function verifyBrowserScriptExport(
   entrypoint = fileURLToPath(new URL("../rea.mjs", import.meta.url)),
   attachment,
 ) {
-  const site = await startBrowserScriptSite();
-  const root = await mkdtemp(join(tmpdir(), "rea-browser-script-export-"));
-  const env = {
-    ...process.env,
-    REA_LOG_LEVEL: "silent",
-    HOPPER_LAUNCHER_PATH: "/rea-unconfigured-provider/hopper",
-  };
-  const cli = exportCli(entrypoint, env);
-  const scenario = scriptCaptureScenario(executable, site.origin);
-  const save = (name, capture) => saveCapture(root, name, capture);
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [entrypoint, "mcp"],
-    env,
-    stderr: "pipe",
-  });
-  const client = new Client({ name: "web-script-real-e2e", version: "1" });
-  try {
+  let site;
+  let root;
+  let transport;
+  let client;
+  return withVerifierCleanup(async () => {
+    site = await startBrowserScriptSite();
+    root = await mkdtemp(join(tmpdir(), "rea-browser-script-export-"));
+    const env = {
+      ...process.env,
+      REA_LOG_LEVEL: "silent",
+      HOPPER_LAUNCHER_PATH: "/rea-unconfigured-provider/hopper",
+    };
+    const cli = exportCli(entrypoint, env);
+    const scenario = scriptCaptureScenario(executable, site.origin);
+    const save = (name, capture) => saveCapture(root, name, capture);
+    transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [entrypoint, "mcp"],
+      env,
+      stderr: "pipe",
+    });
+    client = completeEvidenceClient(
+      new Client({ name: "web-script-real-e2e", version: "1" }),
+    );
     const cliCapture = await cli(
       "capture-browser-scenario",
       JSON.stringify(scenario),
@@ -59,6 +71,8 @@ export async function verifyBrowserScriptExport(
     await cli(
       "analyze-javascript-application",
       cliResult.analysis_input.input_path,
+      "--detail",
+      "complete",
     ).then((value) => assertExportedScriptAnalysis(value, 4, true));
     assert.deepEqual(
       site.counts,
@@ -71,7 +85,10 @@ export async function verifyBrowserScriptExport(
       assert.notEqual(result.isError, true, mcpTextValue(result));
       return parseEvidence(JSON.parse(mcpTextValue(result)));
     };
-    const mcpCapture = await call("capture_browser_scenario", scenario);
+    const mcpCapture = await call(
+      "capture_browser_scenario",
+      await completeEvidenceToolArguments("capture_browser_scenario", scenario),
+    );
     const mcpInput = await save("mcp", mcpCapture);
     const mcpCounts = new Map(site.counts);
     const mcpResult = await assertWebScriptExport(
@@ -80,7 +97,10 @@ export async function verifyBrowserScriptExport(
       site.assets,
     );
     assertExportedScriptAnalysis(
-      await call("analyze_javascript_application", mcpResult.analysis_input),
+      await call("analyze_javascript_application", {
+        ...mcpResult.analysis_input,
+        detail: "complete",
+      }),
       4,
       true,
     );
@@ -103,12 +123,15 @@ export async function verifyBrowserScriptExport(
       query_variants_isolated: true,
       implicit_refetches: 0,
     };
-  } finally {
-    await client.close();
-    await transport.close();
-    await site.close();
-    await rm(root, { recursive: true, force: true });
-  }
+  }, [
+    () => client?.close(),
+    () => transport?.close(),
+    () => site?.close(),
+    () =>
+      root === undefined
+        ? undefined
+        : rm(root, { recursive: true, force: true }),
+  ]);
 }
 
 const verifyPassiveExport = async (attachment, { cli, call, save }) => {
@@ -124,7 +147,10 @@ const verifyPassiveExport = async (attachment, { cli, call, save }) => {
     page,
   );
   assertExportedScriptAnalysis(
-    await call("analyze_javascript_application", exported.analysis_input),
+    await call("analyze_javascript_application", {
+      ...exported.analysis_input,
+      detail: "complete",
+    }),
     exported.scripts.length,
     false,
   );
@@ -149,6 +175,8 @@ const verifyPassiveExport = async (attachment, { cli, call, save }) => {
     await cli(
       "analyze-javascript-application",
       pageCliResult.analysis_input.input_path,
+      "--detail",
+      "complete",
     ),
     pageCliResult.scripts.length,
     false,
@@ -161,7 +189,10 @@ const exportCli =
   async (...args) => {
     const { stdout } = await promisify(execFile)(
       process.execPath,
-      [entrypoint, ...args, "--json"],
+      [
+        entrypoint,
+        ...(await completeEvidenceCliArguments([...args, "--json"])),
+      ],
       { env, timeout: 60000, maxBuffer: 32 * 1024 * 1024 },
     );
     return parseEvidence(JSON.parse(stdout));

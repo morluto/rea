@@ -1,12 +1,13 @@
-import { z } from "incur";
+import type { Logger } from "pino";
+
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
 import { createJavaScriptRecoveryProvider } from "../composition/javascriptRecovery.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { logCliCommand } from "../cliLogging.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import type { Logger } from "pino";
+import { JAVASCRIPT_RECOVERY_TOOL_CONTRACTS } from "../contracts/javascript/javascriptRecoveryToolContracts.js";
+import { contractNamed } from "./contractCliDescription.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import type { CliInstance } from "./types.js";
-import { withCommandCancellation } from "./commandCancellation.js";
 
 /** Share source recovery with MCP while keeping CLI spelling at this boundary. */
 export const registerJavaScriptRecoveryCommands = (
@@ -17,66 +18,28 @@ export const registerJavaScriptRecoveryCommands = (
   const service = new JavaScriptRecoveryService(
     createJavaScriptRecoveryProvider(environment),
   );
-  cli.command(CLI_COMMANDS.recoverJavaScriptSources, {
-    description:
-      "Recover readable JavaScript modules with source provenance and verified files",
-    args: z.object({
-      path: z
-        .string()
-        .describe("Absolute UTF-8 JavaScript input; never executed"),
-      outputDirectory: z.string().describe("Absolute absent output directory"),
-    }),
-    options: z.object({
-      additionalPath: z
-        .array(z.string())
-        .optional()
-        .describe(
-          "Related absolute UTF-8 JavaScript file; repeat for multiple chunks",
-        ),
-      extractionMode: z
-        .enum(["structural", "heuristic", "inspection"])
-        .optional()
-        .describe(
-          "Structural boundaries, heuristic fallback, or inspection-only regions",
-        ),
-      rewriteLevel: z
-        .enum(["minimal", "standard", "aggressive"])
-        .optional()
-        .describe(
-          "Upstream syntax recovery level; runtime equivalence remains unknown",
-        ),
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation(async (signal) => {
-        try {
-          return await logCliCommand(
-            logger,
-            CLI_COMMANDS.recoverJavaScriptSources,
-            async () => {
-              const result = await service.recover(
-                {
-                  path: args.path,
-                  output_directory: args.outputDirectory,
-                  ...(options.additionalPath === undefined
-                    ? {}
-                    : { additional_paths: options.additionalPath }),
-                  ...(options.extractionMode === undefined
-                    ? {}
-                    : { extraction_mode: options.extractionMode }),
-                  ...(options.rewriteLevel === undefined
-                    ? {}
-                    : { rewrite_level: options.rewriteLevel }),
-                },
-                { signal },
-              );
-              return result.ok
-                ? result.value
-                : projectAnalysisError(result.error);
-            },
-          );
-        } finally {
-          await service.close();
-        }
-      }),
-  });
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(
+      JAVASCRIPT_RECOVERY_TOOL_CONTRACTS,
+      "recover_javascript_sources",
+    ),
+    {
+      description:
+        "Recover readable JavaScript modules with source provenance and verified files",
+      positionals: ["path", "output_directory"],
+      // The command has always refused relative paths before the engine
+      // check; it keeps the contract's absolute-path fields unchanged.
+      fields: { additional_paths: { name: "additionalPath" } },
+    },
+    (input, { operation, signal }) =>
+      finishAnalysisCommand(
+        () => service.recover(input, { signal }),
+        service,
+        "wakaru",
+        operation,
+        signal,
+      ).then(projectCliAnalysisResult),
+  );
 };

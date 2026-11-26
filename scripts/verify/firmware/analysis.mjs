@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
-import { tmpdir } from "node:os";
 import * as nodePath from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -9,7 +8,13 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { firmwareResultSchemas } from "../../../dist/domain/firmware/firmwareAnalysis.js";
 import { parseEvidence } from "../../../dist/domain/evidence.js";
-import { hashFirmwareFile } from "../../../dist/firmware/FirmwareFiles.js";
+import { ArtifactResourceScope } from "../../../dist/resources/ArtifactResourceScope.js";
+import { hashVerifierFile } from "../../lib/verifier-file-resources.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "../../lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "../../lib/complete-evidence.mjs";
 
 const execFileAsync = promisify(execFile);
 const { join, resolve, dirname } = nodePath;
@@ -44,7 +49,7 @@ async function checkPrerequisites() {
     const value = process.env[name];
     if (value === undefined) {
       throw new Error(
-        `verify:firmware requires ${name}; see docs/firmware-analysis.md`,
+        `verify:firmware requires ${name}; see docs/guides/firmware/firmware-analysis.md`,
       );
     }
     await fs.access(value);
@@ -79,16 +84,21 @@ const oracle = JSON.parse(
   await fs.readFile(join(FIXTURE_ROOT, "oracle.json"), "utf8"),
 );
 const firmwarePath = join(FIXTURE_ROOT, "firmware.bin");
-assert.equal(await hashFirmwareFile(firmwarePath), oracle.sha256);
+const fileResources = new ArtifactResourceScope();
 
-const workDir = await fs.mkdtemp(join(tmpdir(), "rea-real-firmware-"));
+const workFixture = await VerifierFixture.open({
+  prefix: "rea-real-firmware-",
+});
+const workDir = workFixture.path;
 const baseEnv = Object.fromEntries(
   Object.entries(process.env).filter(([, v]) => v !== undefined),
 );
-const mcpClient = new Client({
-  name: "rea-real-firmware-verifier",
-  version: "1",
-});
+const mcpClient = completeEvidenceClient(
+  new Client({
+    name: "rea-real-firmware-verifier",
+    version: "1",
+  }),
+);
 
 // ---------------------------------------------------------------------------
 // Invocation helpers
@@ -123,7 +133,7 @@ async function callTool(name, args) {
 // ---------------------------------------------------------------------------
 
 function verifyRegions(evidence) {
-  assert.equal(evidence.subject.digest.sha256, oracle.sha256);
+  assert.equal(evidence.subject.identity.sha256, oracle.sha256);
 
   const parsed = firmwareResultSchemas.inspect_firmware_regions.parse(
     evidence.normalized_result,
@@ -160,7 +170,10 @@ async function verifyFiles(evidence) {
     assert.ok(entry !== undefined, `Missing extracted ${suffix}`);
     assert.equal(entry.sha256, expected.sha256);
     assert.equal(entry.size, expected.size);
-    assert.equal(await hashFirmwareFile(entry.path), expected.sha256);
+    assert.equal(
+      (await hashVerifierFile(entry.path, fileResources)).sha256,
+      expected.sha256,
+    );
     assert.equal(entry.original_file_range, null);
     assert.equal(entry.runtime_address, null);
   }
@@ -201,6 +214,16 @@ async function stageCli() {
     ),
   );
 
+  assert.ok(
+    files.extraction_gaps.some(
+      (gap) =>
+        gap.kind === "unknown-chunk-handler" &&
+        gap.range !== null &&
+        gap.range.offset === 0 &&
+        gap.range.length === 64,
+    ),
+    "The unknown chunk must carry its explicit recovery row",
+  );
   return { regions, files };
 }
 
@@ -247,6 +270,20 @@ async function stageMcp(cli) {
   );
   assert.equal(depthParsed.coverage, "partial");
   assert.ok(depthParsed.depth_limited_paths.length > 0);
+  assert.ok(
+    depthParsed.extraction_gaps.some(
+      (gap) =>
+        gap.kind === "depth-limited" &&
+        gap.dependencies.length === 0 &&
+        depthParsed.extraction_continuations.some(
+          ({ id, instruction }) =>
+            id === gap.continuation_id &&
+            instruction.includes("max_depth") &&
+            instruction.includes("fresh output_directory"),
+        ),
+    ),
+    "Depth-limited paths must carry the explicit depth continuation",
+  );
 
   console.log(
     "PASS real Binwalk/Unblob: CLI, MCP, independent offsets/digests, range extraction, unknown chunks and depth limits",
@@ -292,15 +329,24 @@ async function stageExt4() {
   );
   assert.equal(degradedParsed.coverage, "partial");
   assert.ok(JSON.stringify(degradedParsed.diagnostics).includes("debugfs"));
+  assert.ok(
+    degradedParsed.extraction_gaps.some(
+      (gap) =>
+        gap.kind === "missing-extractor-dependency" &&
+        gap.dependencies.includes("debugfs") &&
+        gap.handler === "extfs",
+    ),
+    "The missing extractor must be named in its explicit recovery row",
+  );
   console.log(
-    "PASS real missing-extractor diagnostics retained despite Unblob exit 1",
+    "PASS real missing-extractor diagnostics and recovery row retained despite Unblob exit 1",
   );
 }
 
 async function stageGhidra(mcpFiles) {
   if (process.env.GHIDRA_INSTALL_DIR === undefined) {
     throw new Error(
-      "Firmware Ghidra handoff requires GHIDRA_INSTALL_DIR and Java; see docs/ghidra.md",
+      "Firmware Ghidra handoff requires GHIDRA_INSTALL_DIR and Java; see docs/providers/ghidra-provider.md",
     );
   }
 
@@ -313,14 +359,16 @@ async function stageGhidra(mcpFiles) {
 
   const dossierRaw = await callTool("analyze_function", {
     procedure: "firmware_probe",
+    detail: "complete",
   });
   const dossier = parseEvidence(dossierRaw);
   assert.equal(
-    dossier.subject.digest.sha256,
+    dossier.subject.identity.sha256,
     oracle.files["usr/bin/probe"].sha256,
   );
 
   const pseudoRaw = await callTool("procedure_pseudo_code", {
+    detail: "complete",
     procedure: "firmware_probe",
   });
   assert.equal(parseEvidence(pseudoRaw).provider.id, "ghidra");
@@ -338,7 +386,15 @@ async function stageGhidra(mcpFiles) {
 // Entry point
 // ---------------------------------------------------------------------------
 
-try {
+// The MCP server and open file handles may still use files under the work
+// directory: each confirms cleanup before the root is removed.
+workFixture.releaseAfter(() => mcpClient.close());
+workFixture.releaseAfter(() => fileResources.close());
+await withVerifierFixture(workFixture, async () => {
+  assert.equal(
+    (await hashVerifierFile(firmwarePath, fileResources)).sha256,
+    oracle.sha256,
+  );
   const cli = await stageCli();
   await connectMcp();
   const mcpFiles = await stageMcp(cli);
@@ -348,11 +404,8 @@ try {
     await stageGhidra(mcpFiles);
 
   assert.equal(
-    await hashFirmwareFile(firmwarePath),
+    (await hashVerifierFile(firmwarePath, fileResources)).sha256,
     oracle.sha256,
     "Original firmware bytes must remain unchanged",
   );
-} finally {
-  await mcpClient.close();
-  await fs.rm(workDir, { recursive: true, force: true });
-}
+});

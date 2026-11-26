@@ -1,19 +1,20 @@
+import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution.js";
+import { javascriptSourceRangeKey } from "../../domain/javascript/javascriptSourceCoordinates.js";
 import type { ElectronNativeAddonBindingFinding } from "../../domain/javascript/electronStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
+  artifactLocalIdentity,
   javascriptAnalysisCoverage,
-  resolveArtifactPath,
   type JavaScriptArtifactGraphContext,
   type JavaScriptArtifactGraphCoverage,
 } from "./JavaScriptArtifactGraphContext.js";
-import { astObservationEvidence } from "./JavaScriptArtifactGraphEvidence.js";
 import { compositeKey } from "../../domain/unicodeCodePointOrder.js";
 import { javascriptDisplayText } from "../../domain/javascript/javascriptAstValues.js";
 import {
   addElectronInferenceEdge,
+  electronFindingEvidence,
   electronFindingSourceNode,
   electronObservationIdentity,
-  electronRangeKey,
 } from "./ElectronBoundaryGraphContext.js";
 
 interface NativeBindingInput {
@@ -45,28 +46,48 @@ const addNativeBinding = (input: NativeBindingInput): void => {
     value.module_runtime,
   );
   if (source === undefined) return;
-  const resolved = resolveArtifactPath(
-    value.specifier,
+  const resolved =
+    value.loader_authority === "candidate"
+      ? null
+      : resolveArtifactPathByContext({
+          declaredPath: value.specifier,
+          sourcePath: file.path,
+          context: "module-specifier",
+          files: context.filesByPath,
+          jsonDocuments: context.analysis.jsonDocuments,
+          directoryPaths: context.directoryPaths,
+          moduleKind: value.module_kind,
+        }).resolved_path;
+  // Extension probing can resolve `./addon.node` to `addon.node.js`; only a
+  // native-addon artifact can expose the requested binding.
+  const addon =
+    resolved === null ||
+    context.filesByPath.get(resolved)?.kind !== "native-addon"
+      ? undefined
+      : context.fileNodes.get(resolved);
+  const bindingKey = compositeKey([
     file.path,
-    context.filesByPath,
-    value.module_kind,
-  );
-  const addon = resolved === null ? undefined : context.fileNodes.get(resolved);
+    value.specifier,
+    value.binding_kind,
+    value.members,
+    value.namespace_access ?? null,
+    value.dynamic_member_access ?? null,
+    javascriptSourceRangeKey(value.location),
+  ]);
   const binding = context.accumulator.addNode({
     kind: "native-export",
-    identity: electronObservationIdentity(
-      context,
-      "javascript-requested-native-export",
-      compositeKey([
-        file.path,
-        value.specifier,
-        value.binding_kind,
-        value.members,
-        value.namespace_access ?? null,
-        value.dynamic_member_access ?? null,
-        electronRangeKey(value.location),
-      ]),
-    ),
+    identity:
+      value.loader_authority === "candidate"
+        ? artifactLocalIdentity(
+            file.sha256,
+            "javascript-requested-native-export",
+            bindingKey,
+          )
+        : electronObservationIdentity(
+            context,
+            "javascript-requested-native-export",
+            bindingKey,
+          ),
     observations: [
       {
         label:
@@ -80,17 +101,23 @@ const addNativeBinding = (input: NativeBindingInput): void => {
           dynamic_member_access: value.dynamic_member_access ?? null,
           resolved_path: resolved,
           native_export_verification: "not-performed",
+          ...(value.loader_authority === "candidate"
+            ? { loader_authority: "candidate" }
+            : {}),
         },
-        evidence: astObservationEvidence({
-          sha256: file.sha256,
-          path: file.path,
-          range: value.location,
-          operation: "observe-native-addon-binding",
-          coverage,
-          limitations: [
-            "JavaScript syntax identifies requested member names; it does not prove that the native binary exports or implements them.",
-          ],
-        }),
+        evidence: electronFindingEvidence(
+          {
+            sha256: file.sha256,
+            path: file.path,
+            range: value.location,
+            operation: "observe-native-addon-binding",
+            coverage,
+            limitations: [
+              "JavaScript syntax identifies requested member names; it does not prove that the native binary exports or implements them.",
+            ],
+          },
+          value.loader_authority,
+        ),
       },
     ],
   });
@@ -102,6 +129,7 @@ const addNativeBinding = (input: NativeBindingInput): void => {
     coverage,
     relation: value.binding_kind === "re-export" ? "exposes" : "imports",
     operation: "map-native-addon-binding",
+    loaderAuthority: value.loader_authority,
     properties: {
       specifier: value.specifier,
       binding_kind: value.binding_kind,

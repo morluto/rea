@@ -4,6 +4,9 @@ import { isAbsolute } from "node:path";
 import { verifyBrowserSourceMap } from "./lib/browser-source-map-e2e.mjs";
 import { verifyBrowserNestedSourceMaps } from "./lib/browser-nested-source-map-e2e.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { requireOrdinaryWindowsVerifierCaller } from "./lib/windows-ordinary-user-verifier.mjs";
+
+await requireOrdinaryWindowsVerifierCaller();
 const executable = process.env.REA_BROWSER_EXECUTABLE;
 if (!executable || !isAbsolute(executable))
   throw new Error(

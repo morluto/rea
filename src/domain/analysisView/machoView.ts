@@ -1,20 +1,26 @@
+import {
+  invalidAnalysisViewSubject,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { isMachOFormat } from "../binaryTargetTypes.js";
-import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
+import { machoSliceEncryptionViewSchema } from "../apple/machoEncryption.js";
 import { inspectMachoSchema } from "../native/nativeInspection.js";
-import { err, ok, type Result } from "../result.js";
+import { ok, type Result } from "../result.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
-  analysisViewInputError,
-  type AnalysisViewParent,
-  type AnalysisViewRequest,
-  type UnsignedAnalysisView,
-} from "./analysisView.js";
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
+import { evidenceFileTarget, evidenceSubjectTarget } from "../evidence.js";
 
 const MACHO_COLLECTIONS = [
   "entrypoints",
@@ -25,6 +31,7 @@ const MACHO_COLLECTIONS = [
   "imports",
   "exports",
   "segments",
+  "encryption",
 ] as const;
 type MachoCollection = (typeof MACHO_COLLECTIONS)[number];
 
@@ -32,45 +39,44 @@ type MachoCollection = (typeof MACHO_COLLECTIONS)[number];
 export const machoViewRequestSchema = z.strictObject({
   kind: z.literal("macho"),
   facet: z.enum([...MACHO_COLLECTIONS, "provenance"]),
-  offset: z.number().int().nonnegative().default(0),
-  limit: z.number().int().positive().default(64),
+  offset: z.int().nonnegative().default(0),
+  limit: z.int().positive().default(64),
 });
 
 const { shape } = inspectMachoSchema;
-/**
- * Union members are tried in order and plain objects drop unknown keys, so a
- * segment or architecture row would otherwise match the entrypoint row and
- * lose every field but file_offset. Exact key sets keep each page's rows whole.
- */
+/** Preserve the existing exact page rows using the producer's fields and defaults. */
 const exactRows = <Shape extends z.ZodRawShape>(
   rows: z.ZodArray<z.ZodObject<Shape>>,
 ) => z.array(z.strictObject(rows.element.shape));
-export const machoViewItemSchema = z.union([
-  exactRows(shape.entrypoints.shape.items),
-  exactRows(shape.architectures.shape.items),
-  exactRows(shape.build_metadata.shape.items),
-  exactRows(shape.load_commands.shape.items),
-  exactRows(shape.dependencies.shape.items),
-  // Imports and exports share one row shape.
-  exactRows(shape.imports.shape.items),
-  exactRows(shape.segments.shape.items),
-  exactRows(shape.provenance),
-]);
+/** Each facet's exact rows, owned by the complete producer contract. */
+export const machoViewRows = {
+  entrypoints: exactRows(shape.entrypoints.shape.items),
+  architectures: exactRows(shape.architectures.shape.items),
+  build_metadata: exactRows(shape.build_metadata.shape.items),
+  load_commands: exactRows(shape.load_commands.shape.items),
+  dependencies: exactRows(shape.dependencies.shape.items),
+  imports: exactRows(shape.imports.shape.items),
+  exports: exactRows(shape.exports.shape.items),
+  segments: exactRows(shape.segments.shape.items),
+  encryption: z.array(machoSliceEncryptionViewSchema),
+  provenance: exactRows(shape.provenance),
+};
 
 /** The producer's own coverage of the paged collection, not of this page. */
 export const machoViewContextSchema = z.strictObject({
-  source_total: z.number().int().nonnegative().nullable(),
+  source_total: z.int().nonnegative().nullable(),
   source_exhaustive: z.boolean(),
 });
 
 const collectionCountSchema = z.strictObject({
-  returned: z.number().int().nonnegative(),
-  total: z.number().int().nonnegative().nullable(),
+  returned: z.int().nonnegative(),
+  total: z.int().nonnegative().nullable(),
   exhaustive: z.boolean(),
 });
 
 /** Slice identity and per-collection counts without the collections themselves. */
 export const machoSummarySchema = z.strictObject({
+  bundle_provenance: shape.bundle_provenance,
   format: shape.format,
   selected_architecture: shape.selected_architecture,
   endian: shape.endian,
@@ -83,41 +89,26 @@ export const machoSummarySchema = z.strictObject({
       MACHO_COLLECTIONS.map((name) => [name, collectionCountSchema]),
     ) as Record<MachoCollection, typeof collectionCountSchema>,
   ),
-  provenance_count: z.number().int().nonnegative(),
-  limitation_count: z.number().int().nonnegative(),
+  provenance_count: z.int().nonnegative(),
+  limitation_count: z.int().nonnegative(),
 });
 
 type MachoReport = z.output<typeof inspectMachoSchema>;
+
+const readMachoReport = createAnalysisViewResultReader(inspectMachoSchema);
 
 /** Admit a well-formed report whose recorded subject, if any, is a Mach-O. */
 const parseMachoReport = (
   parent: AnalysisViewParent,
 ): Result<MachoReport, AnalysisError> => {
-  const parsed = inspectMachoSchema.safeParse(parent.normalizedResult);
-  if (!parsed.success)
-    return err(
-      analysisInputErrorFromIssues(
-        "inspect_analysis_view",
-        parsed.error.issues.map((issue) => ({
-          ...issue,
-          path: ["source", "normalized_result", ...issue.path],
-        })),
-        { source: { normalized_result: parent.normalizedResult } },
-        { cause: parsed.error },
-      ),
+  const parsed = readMachoReport(parent);
+  if (!parsed.ok) return parsed;
+  const file = evidenceFileTarget(parent);
+  if (file !== undefined && !isMachOFormat(file.format))
+    return invalidAnalysisViewSubject(
+      "Mach-O parent Evidence subject must identify a thin or universal Mach-O.",
     );
-  if (parent.subject != null && !isMachOFormat(parent.subject.format))
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message:
-            "Mach-O parent Evidence subject must identify a thin or universal Mach-O.",
-        },
-      ]),
-    );
-  return ok(parsed.data);
+  return ok(parsed.value);
 };
 
 /** Counts replace rows; every collection caveat stays in the limitations. */
@@ -147,6 +138,9 @@ const summarizeMacho = (
       0,
     ),
     summary: {
+      ...(report.bundle_provenance === undefined
+        ? {}
+        : { bundle_provenance: report.bundle_provenance }),
       format: report.format,
       selected_architecture: report.selected_architecture,
       endian: report.endian,
@@ -164,17 +158,14 @@ const summarizeMacho = (
 /** Project retained inspect_macho Evidence without rerunning native tools. */
 export const projectMachoView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "macho")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "Mach-O inspection supports summary and macho views.",
-        },
-      ]),
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof machoViewRequestSchema>
+  >(admitted, "summary", "macho");
+  if (view === undefined)
+    return invalidAnalysisView(
+      "Mach-O inspection supports summary and macho views.",
     );
   const parsed = parseMachoReport(parent);
   if (!parsed.ok) return parsed;
@@ -182,24 +173,22 @@ export const projectMachoView = (
   const incomplete = MACHO_COLLECTIONS.filter(
     (name) => !report[name].exhaustive,
   );
+  const subject = evidenceSubjectTarget(parent.subject);
   const shared = {
     parent_evidence_id: parent.evidenceId,
     parent_operation: "inspect_macho" as const,
     parent_digest: parent.evidenceId.slice(3),
     artifact:
-      parent.subject == null
+      subject === undefined
         ? { path: "", sha256: null }
-        : {
-            path: parent.subject.local_path,
-            sha256: parent.subject.digest.sha256,
-          },
+        : { path: subject.path, sha256: subject.sha256 },
     unknowns: [
       ...(incomplete.length === 0
         ? []
         : [
-            `Native tools did not report exhaustive ${incomplete.join(", ")}; page exhaustion does not establish absence of unreturned rows.`,
+            `Inspection did not establish exhaustive ${incomplete.join(", ")}; page exhaustion does not establish absence of unreturned rows.`,
           ]),
-      ...(parent.subject == null
+      ...(evidenceFileTarget(parent) === undefined
         ? [
             "The parent has no recorded subject, so the inspected artifact path and SHA-256 are unknown.",
           ]
@@ -212,12 +201,12 @@ export const projectMachoView = (
       parent.limitations,
     );
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       limitations,
       summary,
-      coverage: completeWithinViewCoverage(returned, returned),
+      coverage: completeWithinViewCoverage(returned),
     });
   }
   const source =
@@ -229,11 +218,8 @@ export const projectMachoView = (
           limitations: [],
         }
       : report[view.facet];
-  const item = source.items.slice(view.offset, view.offset + view.limit);
-  return ok({
-    kind: "macho",
-    view,
-    item,
+  const common = {
+    kind: "macho" as const,
     ...shared,
     limitations: uniqueSorted([
       ...parent.limitations,
@@ -242,6 +228,39 @@ export const projectMachoView = (
     ]),
     source_total: source.total,
     source_exhaustive: source.exhaustive,
-    coverage: pageViewCoverage(view.offset, item.length, source.items.length),
-  });
+  };
+  const page = <Facet extends MachoCollection | "provenance", Row>(
+    facet: Facet,
+    rows: Row[],
+  ) => {
+    const item = rows.slice(view.offset, view.offset + view.limit);
+    return {
+      ...common,
+      view: { ...view, facet },
+      item,
+      coverage: pageViewCoverage(view.offset, item.length, rows.length),
+    };
+  };
+  switch (view.facet) {
+    case "entrypoints":
+      return ok(page("entrypoints", report.entrypoints.items));
+    case "architectures":
+      return ok(page("architectures", report.architectures.items));
+    case "build_metadata":
+      return ok(page("build_metadata", report.build_metadata.items));
+    case "load_commands":
+      return ok(page("load_commands", report.load_commands.items));
+    case "dependencies":
+      return ok(page("dependencies", report.dependencies.items));
+    case "imports":
+      return ok(page("imports", report.imports.items));
+    case "exports":
+      return ok(page("exports", report.exports.items));
+    case "segments":
+      return ok(page("segments", report.segments.items));
+    case "encryption":
+      return ok(page("encryption", report.encryption.items));
+    case "provenance":
+      return ok(page("provenance", report.provenance));
+  }
 };

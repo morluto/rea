@@ -3,7 +3,9 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 import { inspectBundleKeyedArchive } from "../../../src/artifacts/apple/KeyedArchiveReader.js";
+import type { OpenStepPropertyListCode } from "../../../src/domain/propertyListOpenStep.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { deeplyNestedXmlPlist } from "../../fixtures/keyedArchiveXmlNesting.js";
 
@@ -18,12 +20,86 @@ it.each([129, 3000])(
       parameters: { path: "Deep.plist" },
       platform: "linux",
     }).catch((cause: unknown) => cause);
-    // Recursive decoding exhausts the call stack before the projection limit
-    // can report it, so the limit diagnostic must come from the preflight.
+    // The format owner must reject source depth before recursive decoding
+    // exhausts the call stack.
     expect(rejected).toMatchObject({
       reason: "limit",
-      message:
-        "Cannot decode selected Foundation keyed archive: Plist exceeds 128 nesting levels",
+      parserLimit: { name: "plist-nesting-depth", maximum: 128 },
+      message: expect.stringMatching(
+        /keyed archive.*128 nesting levels.*no runtime override/iu,
+      ),
+    });
+  },
+);
+
+it.each([
+  ["{key @", "expected_equals", 5],
+  ["(x ", "expected_separator", 3],
+] as const)(
+  "reports OpenStep %s before a deep suffix as %s at %s",
+  async (prefix, code: OpenStepPropertyListCode, position) => {
+    const root = await createTestTempDirectory("rea-keyed-openstep-malformed-");
+    await writeFile(join(root, "Malformed.plist"), prefix + "(".repeat(130));
+    const rejected = await inspectBundleKeyedArchive({
+      bundlePath: root,
+      targetSha256: "a".repeat(64),
+      parameters: { path: "Malformed.plist" },
+      platform: "linux",
+    }).catch((cause: unknown) => cause);
+    expect(rejected).toBeInstanceOf(ArtifactReaderFailure);
+    expect(rejected).toMatchObject({
+      reason: "malformed",
+      cause: {
+        name: "OpenStepPropertyListError",
+        code,
+        position,
+      },
+    });
+  },
+);
+
+it("retains the limit classification for syntactically valid deep OpenStep values", async () => {
+  const root = await createTestTempDirectory("rea-keyed-openstep-limit-");
+  await writeFile(
+    join(root, "Deep.plist"),
+    "(".repeat(129) + "x" + ")".repeat(129),
+  );
+  const rejected = await inspectBundleKeyedArchive({
+    bundlePath: root,
+    targetSha256: "a".repeat(64),
+    parameters: { path: "Deep.plist" },
+    platform: "linux",
+  }).catch((cause: unknown) => cause);
+  expect(rejected).toMatchObject({
+    reason: "limit",
+    message: expect.stringMatching(
+      /keyed archive.*128 nesting levels.*no runtime override/iu,
+    ),
+  });
+});
+
+it.each([
+  ["array sibling", (deep: string) => `((x),${deep})`],
+  ["compound dictionary key", (deep: string) => `{(key)=${deep};}`],
+] as const)(
+  "retains the named OpenStep depth limit after a completed %s",
+  async (_name, document) => {
+    const root = await createTestTempDirectory(
+      "rea-keyed-openstep-sibling-depth-",
+    );
+    const deep = "(".repeat(30000) + "x" + ")".repeat(30000);
+    await writeFile(join(root, "Deep.plist"), document(deep));
+    const rejected = await inspectBundleKeyedArchive({
+      bundlePath: root,
+      targetSha256: "a".repeat(64),
+      parameters: { path: "Deep.plist" },
+      platform: "linux",
+    }).catch((cause: unknown) => cause);
+    expect(rejected).toMatchObject({
+      reason: "limit",
+      message: expect.stringMatching(
+        /keyed archive.*128 nesting levels.*no runtime override/iu,
+      ),
     });
   },
 );

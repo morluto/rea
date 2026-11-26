@@ -1,12 +1,30 @@
+import { appendToMapList } from "../../domain/appendToMapList.js";
+import { artifactFormatDescriptor } from "../artifactFormats.js";
+import {
+  isStandaloneArtifactFormat,
+  recognizeArtifactFormat,
+} from "../../domain/artifactFormatRecognition.js";
+import type { ArtifactClassificationEvidence } from "../ArtifactClassificationProbe.js";
+import {
+  hasDestinationPath,
+  asarHeaderAdmissionFailure,
+} from "../../resources/index.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
+import { isJavaScriptSourcePath } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
+import type { DirectoryRootDigest } from "../../domain/directoryTreeDigest.js";
 import { hasBinaryPlistSignature } from "../../domain/apple/appleArchiveFormat.js";
 import {
   artifactEdgeId,
-  artifactIdForContent,
+  artifactIdForNode,
   occurrenceIdForLocation,
+  logicalPathNfc,
 } from "../../domain/artifactIdentity.js";
-import type { ArtifactEntry } from "../ArtifactReader.js";
+import type {
+  ArtifactEntry,
+  ArtifactReader,
+  ArtifactReaderTraversal,
+} from "../../resources/index.js";
 import type {
   ArtifactCommand,
   ArtifactEdge,
@@ -14,25 +32,25 @@ import type {
   ArtifactOccurrence,
 } from "../../domain/artifactGraph.js";
 import {
-  hasZipSignature,
-  isZipPackageFormat,
   zipPackageFormatForPath,
   type ZipPackageFormat,
 } from "../../domain/zipPackageFormat.js";
+import { hasDosMzMagic, parseMzHeaderEvidence } from "../../domain/dosMz.js";
+import { classifyFatContainerEvidence } from "../../domain/apple/machoContainer.js";
 import {
-  observeMzWindowsHeader,
-  parseDosMzHeader,
-} from "../../domain/dosMz.js";
-import {
-  classifyFatContainerIdentity,
-  readFatContainerHeader,
-} from "../../domain/apple/machoContainer.js";
+  parsePeRecordFacts,
+  parsePeRecordStructure,
+  readNativeHeaderFormat,
+} from "../../domain/binaryTarget.js";
 
 /** Mutable internal occurrence used until root-bound IDs are known. */
 export interface MutableOccurrence {
   occurrence_id: string;
   artifact_id: string | null;
   parent_occurrence_id: string | null;
+  relationship_coverage?: NonNullable<
+    ArtifactOccurrence["relationship_coverage"]
+  >;
   logical_path: string;
   entry_kind: ArtifactOccurrence["entry_kind"];
   artifact_kind: ArtifactOccurrence["artifact_kind"];
@@ -41,19 +59,24 @@ export interface MutableOccurrence {
   compressed_size: number | null;
   executable: boolean;
   encrypted: boolean;
+  unpacked?: boolean;
   hash_status: ArtifactOccurrence["hash_status"];
   source_location: ArtifactOccurrence["source_location"];
+  source_path?: string;
+  declared_integrity?: NonNullable<ArtifactOccurrence["declared_integrity"]>;
+  format_metadata?: NonNullable<ArtifactOccurrence["format_metadata"]>;
   limitations: string[];
 }
 
-/** Index the first occurrence for each canonical logical path. */
-export const indexOccurrencesByPath = (
+/** Index destination paths without mixing in declaration query names or choosing an owner. */
+export const indexDestinationOccurrencesByPath = (
   occurrences: readonly MutableOccurrence[],
-): ReadonlyMap<string, MutableOccurrence> => {
-  const byPath = new Map<string, MutableOccurrence>();
-  for (const occurrence of occurrences)
-    if (!byPath.has(occurrence.logical_path))
-      byPath.set(occurrence.logical_path, occurrence);
+): ReadonlyMap<string, readonly MutableOccurrence[]> => {
+  const byPath = new Map<string, MutableOccurrence[]>();
+  for (const occurrence of occurrences) {
+    if (!hasDestinationPath(occurrence.entry_kind)) continue;
+    appendToMapList(byPath, occurrence.logical_path, occurrence);
+  }
   return byPath;
 };
 
@@ -66,23 +89,39 @@ export const createOccurrence = (
   entry: ArtifactEntry,
   path: string,
   parent: string | null,
+  options: {
+    readonly duplicateOrdinal?: number;
+    readonly sourceFormat?: ArtifactReader["format"];
+  } = {},
 ): MutableOccurrence => {
+  const duplicateOrdinal = options.duplicateOrdinal ?? 0;
   const role =
-    entry.kind === "directory"
-      ? {
-          kind: path.toLowerCase().endsWith(".framework")
-            ? ("framework" as const)
-            : ("container" as const),
-          format: "directory" as const,
-        }
-      : containerSuffixFamily(path) === undefined
-        ? classifyArtifactPath(path)
-        : ({ kind: "unknown", format: "unknown" } as const);
+    entry.kind === "metadata"
+      ? { kind: "package-metadata" as const, format: "unknown" as const }
+      : entry.kind === "directory"
+        ? {
+            kind: path.toLowerCase().endsWith(".framework")
+              ? ("framework" as const)
+              : ("container" as const),
+            format: "directory" as const,
+          }
+        : containerSuffixFamily(path) === undefined
+          ? classifyArtifactPath(path)
+          : ({ kind: "unknown", format: "unknown" } as const);
   return {
-    occurrence_id: `occ_${digestCanonicalValue({ path, kind: entry.kind }, "Artifact")}`,
+    occurrence_id: `occ_${digestCanonicalValue(
+      duplicateOrdinal === 0
+        ? { path, kind: entry.kind }
+        : { path, kind: entry.kind, duplicate_ordinal: duplicateOrdinal },
+      "Artifact",
+    )}`,
     artifact_id: null,
     parent_occurrence_id: parent,
     logical_path: path,
+    ...(entry.sourcePath !== undefined ||
+    entry.path !== logicalPathNfc(entry.path)
+      ? { source_path: entry.sourcePath ?? entry.path }
+      : {}),
     entry_kind: entry.kind,
     artifact_kind: role.kind,
     artifact_format: role.format,
@@ -90,12 +129,30 @@ export const createOccurrence = (
     compressed_size: entry.compressedSize,
     executable: entry.executable,
     encrypted: entry.encrypted,
+    ...(entry.unpacked ||
+    (options.sourceFormat === "asar" && entry.kind === "file")
+      ? { unpacked: entry.unpacked }
+      : {}),
     hash_status: entry.encrypted ? "unavailable" : "not-hashed",
     source_location:
-      entry.byteOffset === null || entry.declaredSize === null
+      entry.encrypted ||
+      entry.byteOffset === null ||
+      entry.declaredSize === null
         ? null
-        : { offset: entry.byteOffset, length: entry.declaredSize },
+        : {
+            offset: entry.byteOffset,
+            length: entry.byteLength ?? entry.declaredSize,
+          },
     limitations: [...entry.limitations],
+    ...(entry.declaredIntegrity === null
+      ? {}
+      : { declared_integrity: { ...entry.declaredIntegrity } }),
+    ...(entry.formatMetadata === undefined
+      ? {}
+      : { format_metadata: { ...entry.formatMetadata } }),
+    ...(entry.linkTarget === undefined
+      ? {}
+      : { link_target: { ...entry.linkTarget } }),
   };
 };
 
@@ -124,17 +181,21 @@ export const materializeDirectoryNodes = (
   nodes: Map<string, ArtifactNode>,
 ): void => {
   const directories = occurrences
-    .filter(({ entry_kind: kind }) => kind === "directory")
+    .filter(
+      ({ entry_kind: kind, hash_status }) =>
+        kind === "directory" && hash_status !== "unavailable",
+    )
     .sort(
       (left, right) => depth(right.logical_path) - depth(left.logical_path),
     );
   const childrenByParent = new Map<string, MutableOccurrence[]>();
   for (const occurrence of occurrences) {
     if (occurrence.parent_occurrence_id === null) continue;
-    const children = childrenByParent.get(occurrence.parent_occurrence_id);
-    if (children === undefined)
-      childrenByParent.set(occurrence.parent_occurrence_id, [occurrence]);
-    else children.push(occurrence);
+    appendToMapList(
+      childrenByParent,
+      occurrence.parent_occurrence_id,
+      occurrence,
+    );
   }
   for (const directory of directories) {
     const children = (childrenByParent.get(directory.occurrence_id) ?? [])
@@ -149,6 +210,7 @@ export const materializeDirectoryNodes = (
       sha256: digestCanonicalValue({ kind: "directory", children }, "Artifact"),
       size: 0,
       format: "directory",
+      architecture: null,
       contentState: "virtual",
     });
     nodes.set(node.artifact_id, node);
@@ -158,16 +220,24 @@ export const materializeDirectoryNodes = (
 };
 
 export const createRootNode = (input: {
-  readonly digest: {
-    readonly sha256: string;
-    readonly bytes: number;
-    readonly prefix: Buffer;
-  } | null;
+  readonly digest:
+    | ({
+        readonly sha256: string;
+        readonly bytes: number;
+      } & ArtifactClassificationEvidence)
+    | null;
   readonly occurrences: readonly MutableOccurrence[];
+  /** A directory root's tree digest, which names it when complete. */
+  readonly treeDigest?: DirectoryRootDigest | undefined;
 }): ArtifactNode =>
   createArtifactNode({
     sha256:
       input.digest?.sha256 ??
+      (input.treeDigest?.status === "complete"
+        ? input.treeDigest.sha256
+        : undefined) ??
+      // A partial walk has no tree identity. This listing commitment keeps
+      // the graph addressable, and the inventory reports the digest partial.
       digestCanonicalValue(
         {
           kind: "directory-root",
@@ -183,10 +253,9 @@ export const createRootNode = (input: {
         "Artifact",
       ),
     size: input.digest?.bytes ?? 0,
-    format:
-      input.digest === null
-        ? "directory"
-        : classifyArtifactBytes(input.digest.prefix, input.digest.bytes),
+    ...(input.digest === null
+      ? { format: "directory" as const, architecture: null }
+      : classifyArtifactHeader(input.digest, input.digest.bytes)),
     contentState: "materialized",
   });
 
@@ -194,14 +263,18 @@ export const createArtifactNode = (input: {
   readonly sha256: string;
   readonly size: number;
   readonly format: ArtifactNode["format"];
+  readonly architecture: ArtifactNode["architecture"];
   readonly contentState: ArtifactNode["content_state"];
 }): ArtifactNode => ({
-  artifact_id: artifactIdForContent(input.sha256),
+  artifact_id: artifactIdForNode({
+    sha256: input.sha256,
+    content_state: input.contentState,
+  }),
   format: input.format,
   sha256: input.sha256,
   size: input.size,
   media_type: null,
-  architecture: null,
+  architecture: input.architecture,
   content_state: input.contentState,
   limitations: [],
 });
@@ -213,6 +286,7 @@ export const rootOccurrenceFor = (
     readonly executable: boolean;
     readonly format: ArtifactOccurrence["artifact_format"];
     readonly path: string;
+    readonly formatMetadata?: ArtifactOccurrence["format_metadata"];
   },
 ): MutableOccurrence => ({
   occurrence_id: occurrenceIdForLocation({
@@ -225,18 +299,23 @@ export const rootOccurrenceFor = (
   logical_path: ".",
   entry_kind: metadata.format === "directory" ? "directory" : "file",
   artifact_kind:
-    metadata.format === "directory" ||
-    isZipPackageFormat(metadata.format) ||
-    ["asar", "dmg", "pkg"].includes(metadata.format)
+    artifactFormatDescriptor(metadata.format)?.occurrenceContainer === true
       ? "container"
       : artifactRoleForFormat(metadata.path, metadata.format).kind,
   artifact_format: metadata.format,
   declared_size: metadata.size,
   compressed_size: null,
   executable: metadata.executable,
-  encrypted: false,
+  encrypted:
+    (metadata.formatMetadata?.kind === "godot-pck" ||
+      metadata.formatMetadata?.kind === "unityfs" ||
+      metadata.formatMetadata?.kind === "wxapkg") &&
+    metadata.formatMetadata.directory_status === "encrypted",
   hash_status: "verified",
   source_location: null,
+  ...(metadata.formatMetadata === undefined
+    ? {}
+    : { format_metadata: metadata.formatMetadata }),
   limitations: [],
 });
 
@@ -245,15 +324,20 @@ export const rekeyOccurrences = (
   occurrences: MutableOccurrence[],
 ): void => {
   const replacements = new Map<string, string>();
-  for (const occurrence of occurrences)
+  const ordinalByPath = new Map<string, number>();
+  for (const occurrence of occurrences) {
+    const ordinal = ordinalByPath.get(occurrence.logical_path) ?? 0;
+    ordinalByPath.set(occurrence.logical_path, ordinal + 1);
     replacements.set(
       occurrence.occurrence_id,
       occurrenceIdForLocation({
         rootArtifactId,
         logicalPath: occurrence.logical_path,
         entryKind: occurrence.entry_kind,
+        ...(ordinal === 0 ? {} : { duplicateOrdinal: ordinal }),
       }),
     );
+  }
   for (const occurrence of occurrences) {
     occurrence.occurrence_id =
       replacements.get(occurrence.occurrence_id) ?? occurrence.occurrence_id;
@@ -267,20 +351,63 @@ export const rekeyOccurrences = (
 export const createArtifactEdges = (
   rootArtifactId: string,
   occurrences: MutableOccurrence[],
+  traversalStatus: ArtifactReaderTraversal["status"],
   producer?: ArtifactCommand,
-): ArtifactEdge[] => {
+): { readonly edges: ArtifactEdge[]; readonly limitations: string[] } => {
   const byId = new Map(occurrences.map((item) => [item.occurrence_id, item]));
-  const byPath = indexOccurrencesByPath(occurrences);
+  const byPath = indexDestinationOccurrencesByPath(occurrences);
   const edges: ArtifactEdge[] = [];
+  const limitations: string[] = [];
   for (const occurrence of occurrences) {
+    let relationshipComplete =
+      occurrence.logical_path === "." ||
+      (occurrence.parent_occurrence_id !== null &&
+        occurrence.artifact_id !== null);
+    // Use the occurrence's own classification: a directory named `x.map` is
+    // a container, not a source map of its sibling.
+    const isSourceMap = occurrence.artifact_kind === "source-map";
+    const sourcePath =
+      isSourceMap && occurrence.logical_path !== "."
+        ? occurrence.logical_path.slice(0, -".map".length)
+        : undefined;
+    const sourceCandidates =
+      sourcePath === undefined ? [] : (byPath.get(sourcePath) ?? []);
+    const mappedSource =
+      sourceCandidates.length === 1 &&
+      sourceCandidates[0]?.entry_kind === "file" &&
+      sourceCandidates[0].artifact_id !== null
+        ? sourceCandidates[0]
+        : undefined;
+    if (sourcePath !== undefined) {
+      const unknownMapping =
+        sourceCandidates.length > 1
+          ? {
+              occurrence: `Source-map target is unknown because multiple occurrences share ${JSON.stringify(sourcePath)}.`,
+              coverage: `Source-map relationships are unknown because multiple occurrences share ${JSON.stringify(sourcePath)}.`,
+            }
+          : sourceCandidates.length === 1 &&
+              sourceCandidates[0]?.entry_kind === "file" &&
+              mappedSource === undefined
+            ? {
+                occurrence: `Source-map target identity is unknown because the matching occurrence at ${JSON.stringify(sourcePath)} has no content identity.`,
+                coverage: `Source-map relationships are unknown because the matching occurrence at ${JSON.stringify(sourcePath)} has no content identity.`,
+              }
+            : undefined;
+      if (unknownMapping !== undefined) {
+        relationshipComplete = false;
+        occurrence.limitations.push(unknownMapping.occurrence);
+        limitations.push(unknownMapping.coverage);
+      }
+      if (traversalStatus === "unknown") relationshipComplete = false;
+    }
+    occurrence.relationship_coverage = relationshipComplete
+      ? "complete"
+      : "unknown";
     if (
       occurrence.parent_occurrence_id === null ||
       occurrence.artifact_id === null
     )
       continue;
-    const mappedSource = occurrence.logical_path.toLowerCase().endsWith(".map")
-      ? byPath.get(occurrence.logical_path.slice(0, -".map".length))
-      : undefined;
     const parentArtifactId =
       mappedSource?.artifact_id ??
       byId.get(occurrence.parent_occurrence_id)?.artifact_id ??
@@ -290,7 +417,14 @@ export const createArtifactEdges = (
       relation:
         occurrence.entry_kind === "slice"
           ? ("slice-of" as const)
-          : relationFor(occurrence.logical_path),
+          : occurrence.format_metadata?.kind === "pyinstaller-entry" &&
+              occurrence.format_metadata.bytecode_header === "derived"
+            ? ("derived-from" as const)
+            : isSourceMap
+              ? mappedSource === undefined
+                ? ("contains" as const)
+                : ("maps-source" as const)
+              : relationFor(occurrence.logical_path),
       occurrence_id: occurrence.occurrence_id,
     };
     edges.push({
@@ -300,29 +434,46 @@ export const createArtifactEdges = (
       ordinal: edges.length,
     });
   }
-  return edges;
+  return { edges, limitations };
 };
 
 interface ArtifactParentIndex {
   readonly children: Map<string, ArtifactParentIndex>;
-  occurrence?: MutableOccurrence;
+  occurrences?: readonly MutableOccurrence[];
+}
+
+export interface ArtifactParentResolution {
+  readonly limitations: readonly string[];
+  readonly unknownParentOccurrences: ReadonlySet<MutableOccurrence>;
 }
 
 /** Resolve strict observed ancestors without rebuilding every path prefix. */
 export const resolveOccurrenceParents = (
   occurrences: readonly MutableOccurrence[],
-  byPath: ReadonlyMap<string, MutableOccurrence>,
+  byPath: ReadonlyMap<string, readonly MutableOccurrence[]>,
   expandedContainerIds: ReadonlySet<string>,
-): void => {
+): ArtifactParentResolution => {
   const root: ArtifactParentIndex = { children: new Map() };
-  for (const occurrence of byPath.values()) {
-    if (
-      occurrence.entry_kind !== "directory" &&
-      !expandedContainerIds.has(occurrence.occurrence_id)
-    )
-      continue;
+  for (const matches of byPath.values()) {
+    const parents = matches.filter(
+      (occurrence) =>
+        occurrence.entry_kind === "directory" ||
+        expandedContainerIds.has(occurrence.occurrence_id),
+    );
+    if (parents.length === 0) continue;
+    if (parents.length > 1)
+      for (const parent of parents)
+        if (parent.entry_kind === "directory") {
+          parent.artifact_id = null;
+          parent.hash_status = "unavailable";
+          parent.limitations.push(
+            "This directory occurrence cannot be materialized because multiple directory entries share its logical path.",
+          );
+        }
+    const path = matches[0]?.logical_path;
+    if (path === undefined) continue;
     let branch = root;
-    for (const segment of occurrence.logical_path.split("/")) {
+    for (const segment of path.split("/")) {
       let child = branch.children.get(segment);
       if (child === undefined) {
         child = { children: new Map() };
@@ -330,12 +481,19 @@ export const resolveOccurrenceParents = (
       }
       branch = child;
     }
-    branch.occurrence = occurrence;
+    branch.occurrences = parents;
   }
+  const limitations = new Set<string>();
+  const unknownParentOccurrences = new Set<MutableOccurrence>();
   for (const occurrence of occurrences) {
+    // Query paths do not imply filesystem containment. The scanner records
+    // the declaring container for metadata instead.
+    if (occurrence.entry_kind === "metadata") continue;
     const path = occurrence.logical_path;
     let branch = root;
     let parent: MutableOccurrence | undefined;
+    let ambiguousParentPath: string | undefined;
+    let prefix = "";
     // Walk parent segments only. Stop scanning the path once no observed
     // directory or expanded container can be an ancestor.
     for (let start = 0; ;) {
@@ -345,11 +503,29 @@ export const resolveOccurrenceParents = (
       const child = branch.children.get(segment);
       if (child === undefined) break;
       branch = child;
-      parent = branch.occurrence ?? parent;
+      prefix = prefix.length === 0 ? segment : `${prefix}/${segment}`;
+      const candidates = branch.occurrences ?? [];
+      if (candidates.length === 1) {
+        parent = candidates[0];
+        ambiguousParentPath = undefined;
+      } else if (candidates.length > 1) {
+        parent = undefined;
+        ambiguousParentPath = prefix;
+      }
       start = slash + 1;
     }
     occurrence.parent_occurrence_id = parent?.occurrence_id ?? null;
+    if (ambiguousParentPath !== undefined) {
+      const limitation = `The parent occurrence for ${JSON.stringify(path)} is unknown because multiple observed directory or container occurrences share ${JSON.stringify(ambiguousParentPath)}.`;
+      occurrence.limitations.push(limitation);
+      limitations.add(limitation);
+      unknownParentOccurrences.add(occurrence);
+    }
   }
+  return {
+    limitations: [...limitations].sort(compareUnicodeCodePoints),
+    unknownParentOccurrences,
+  };
 };
 
 /**
@@ -365,7 +541,7 @@ export const classifyArtifactPath = (
   const lower = path.toLowerCase();
   if (lower.endsWith(".map"))
     return { kind: "source-map", format: "source-map" };
-  if (/\.(?:m?js|cjs)$/u.test(lower))
+  if (isJavaScriptSourcePath(path))
     return { kind: "javascript", format: "javascript-bundle" };
   if (/\.framework(?:\/|$)/u.test(lower))
     return { kind: "framework", format: "file" };
@@ -383,35 +559,41 @@ export const classifyArtifactPath = (
 /** Classify executable formats from bytes while retaining path-specific roles. */
 export const classifyArtifactContent = (
   path: string,
-  prefix: Buffer,
-  fileSize = prefix.length,
+  evidence: ArtifactClassificationEvidence,
+  fileSize: number,
 ): {
   readonly kind: ArtifactOccurrence["artifact_kind"];
   readonly format: ArtifactOccurrence["artifact_format"];
+  readonly contentFormat: ArtifactNode["format"];
+  readonly contentArchitecture: ArtifactNode["architecture"];
 } => {
-  const format = classifyArtifactBytes(prefix, fileSize);
+  const { prefix, asarHeader } = evidence;
+  const { format: contentFormat, architecture: contentArchitecture } =
+    classifyArtifactHeader(evidence, fileSize);
+  const byPath = classifyArtifactPath(path);
+  let role: ReturnType<typeof classifyArtifactPath>;
   if (
-    format === "file" &&
-    path.toLowerCase().endsWith(".asar") &&
-    hasAsarHeader(prefix)
+    contentFormat === "plist" &&
+    !hasBinaryPlistSignature(prefix) &&
+    (["javascript", "source-map", "entitlements"].includes(byPath.kind) ||
+      path.toLowerCase().endsWith(".asar"))
   )
-    return { kind: "container", format: "asar" };
-  return artifactRoleForFormat(path, format);
-};
-
-/**
- * Electron ASAR starts with a size pickle whose payload is one uint32, then
- * a header pickle whose payload begins with a JSON object.
- */
-export const hasAsarHeader = (prefix: Buffer): boolean => {
-  if (prefix.length < 17 || prefix.readUInt32LE(0) !== 4) return false;
-  const headerSize = prefix.readUInt32LE(4);
-  const payloadSize = prefix.readUInt32LE(8);
-  if (headerSize < 16 || payloadSize !== headerSize - 4) return false;
-  const stringLength = prefix.readUInt32LE(12);
-  return (
-    stringLength >= 2 && stringLength <= payloadSize - 4 && prefix[16] === 0x7b
-  );
+    role = byPath;
+  else if (
+    contentFormat === "file" &&
+    path.toLowerCase().endsWith(".asar") &&
+    asarHeader.state !== "rejected"
+  ) {
+    if (asarHeader.state === "limit")
+      throw asarHeaderAdmissionFailure(
+        asarHeader.admission,
+        asarHeader.extents?.headerBytes,
+      );
+    if (asarHeader.state === "matched")
+      role = { kind: "container", format: "asar" };
+    else role = artifactRoleForFormat(path, contentFormat);
+  } else role = artifactRoleForFormat(path, contentFormat);
+  return { ...role, contentFormat, contentArchitecture };
 };
 
 const artifactRoleForFormat = (
@@ -426,7 +608,11 @@ const artifactRoleForFormat = (
       kind: "container",
       format: zipPackageFormatForPath(path) ?? format,
     };
+  if (format === "uefi" || isStandaloneArtifactFormat(format))
+    return { kind: "resource", format };
   if (format === "plist") return { kind: "plist", format };
+  if (artifactFormatDescriptor(format)?.roleContainer === true)
+    return { kind: "container", format };
   return {
     kind: ["native-addon", "dynamic-library"].includes(byPath.kind)
       ? byPath.kind
@@ -437,66 +623,123 @@ const artifactRoleForFormat = (
 
 /** Classify storage bytes independently of path names, roles, and permissions. */
 export const classifyArtifactBytes = (
-  prefix: Buffer,
-  fileSize = prefix.length,
-): ArtifactNode["format"] => {
-  if (hasZipSignature(prefix)) return "zip";
-  if (hasBinaryPlistSignature(prefix)) return "plist";
-  const fatFormat = classifyFatArtifact(prefix, fileSize);
-  if (fatFormat !== null) return fatFormat;
-  if (prefix.length >= 4) {
-    const magic = prefix.readUInt32BE(0);
-    if ([0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe].includes(magic))
-      return "mach-o";
-    if (prefix.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])))
-      return "elf";
-  }
-  if (prefix.length >= 2 && prefix[0] === 0x4d && prefix[1] === 0x5a) {
+  evidence: ArtifactClassificationEvidence,
+  fileSize: number,
+): ArtifactNode["format"] => classifyArtifactHeader(evidence, fileSize).format;
+
+/**
+ * The storage format and, for a thin native image, the CPU family its header
+ * names. Architecture is null when the header names a machine REA does not
+ * decode, and for containers such as universal Mach-O whose slices name
+ * their own.
+ */
+export const classifyArtifactHeader = (
+  evidence: ArtifactClassificationEvidence,
+  fileSize: number,
+): Pick<ArtifactNode, "format" | "architecture"> => {
+  const {
+    prefix,
+    suffix,
+    iso9660Descriptor,
+    mzWindowsHeaderSignature,
+    mzWindowsHeaderRecord,
+  } = evidence;
+  const only = (format: ArtifactNode["format"]) => ({
+    format,
+    architecture: null,
+  });
+  // A refused claim falls through: a header-only iNES region, for example,
+  // has the signature but not the declared cartridge extent, so it stays a
+  // file instead of becoming another container. A claim that needs more
+  // bytes falls through too: the scan holds a bounded prefix, the trailer and
+  // the ISO 9660 descriptor signature, so it cannot locate an ESP flash
+  // partition table, and a flash dump is classified by its first image.
+  const input = { prefix, fileSize, suffix, iso9660Descriptor };
+  for (
+    let recognition = recognizeArtifactFormat(input);
+    recognition !== undefined;
+    recognition = recognizeArtifactFormat(input, recognition.index + 1)
+  )
+    if (
+      recognition.state === "recognized" &&
+      recognition.format !== "esp-flash-image"
+    )
+      return only(recognition.format);
+  if (evidence.xmlPlistSignature) return only("plist");
+  const fatFormat = classifyFatArtifact(evidence);
+  if (fatFormat !== null) return only(fatFormat);
+  // Admit ELF and thin Mach-O as target resolution does: a magic number
+  // whose header does not decode is not an executable REA can open.
+  const native = readNativeHeaderFormat(prefix, fileSize);
+  if (!native.ok) return only("unknown");
+  if (native.value !== null) return native.value;
+  if (hasDosMzMagic(prefix)) {
     if (
       !Number.isSafeInteger(fileSize) ||
       fileSize < prefix.length ||
       prefix.length < Math.min(fileSize, 64)
     )
-      return "unknown";
-    const windowsHeader = observeMzWindowsHeader(prefix, fileSize);
-    if (windowsHeader.state === "signature-needed") return "unknown";
+      return only("unknown");
+    const mzEvidence = parseMzHeaderEvidence(
+      prefix,
+      fileSize,
+      mzWindowsHeaderSignature,
+    );
+    const { windowsHeader } = mzEvidence;
+    if (windowsHeader.state === "signature-needed") return only("unknown");
+    if (windowsHeader.state === "candidate") return only("unknown");
     if (windowsHeader.state === "declared") {
       const windowsOffset = windowsHeader.offset;
-      if (
-        windowsHeader.signature === "PE" &&
-        windowsOffset >= 64 &&
-        windowsOffset <= prefix.length - 4
-      )
-        return "pe";
-      return "unknown";
+      if (windowsHeader.signature === "PE" && windowsOffset >= 64) {
+        const inline =
+          windowsOffset < prefix.length
+            ? prefix.subarray(windowsOffset)
+            : undefined;
+        const observed =
+          mzWindowsHeaderRecord?.offset === windowsOffset
+            ? mzWindowsHeaderRecord.bytes
+            : undefined;
+        const record =
+          (observed?.length ?? 0) > (inline?.length ?? 0) ? observed : inline;
+        if (record !== undefined && parsePeRecordStructure(record).ok) {
+          // Target admission's parser owns the machine and optional-header
+          // agreement; a structure it refuses keeps an unknown architecture.
+          const facts = parsePeRecordFacts(record, undefined);
+          return {
+            format: "pe",
+            architecture: facts.ok ? facts.value.metadata.architecture : null,
+          };
+        }
+      }
+      return only("unknown");
     }
-    if (parseDosMzHeader(prefix, fileSize).ok) return "dos-mz";
-    return "unknown";
+    if (mzEvidence.dos.ok) return only("dos-mz");
+    return only("unknown");
   }
-  return "file";
+  return only("file");
 };
 
 const classifyFatArtifact = (
-  prefix: Buffer,
-  fileSize: number,
+  evidence: ArtifactClassificationEvidence,
 ): ArtifactNode["format"] | null => {
-  const fatHeader = readFatContainerHeader(prefix, fileSize);
-  if (fatHeader.state === "needs-data" || fatHeader.state === "malformed")
+  const { prefix, fatHeader, fatSliceHeadersByOffset } = evidence;
+  if (
+    fatHeader.state === "needs-data" ||
+    fatHeader.state === "malformed" ||
+    fatHeader.state === "truncated"
+  )
     return "unknown";
   if (fatHeader.state === "not-fat") return null;
-  const identity = classifyFatContainerIdentity(fatHeader, (offset) => {
-    if (offset >= prefix.length) return undefined;
-    if (offset + 4 > prefix.length) return null;
-    return prefix.readUInt32BE(offset);
-  });
+  const identity = classifyFatContainerEvidence(
+    fatHeader,
+    prefix,
+    fatSliceHeadersByOffset,
+  );
   return identity.state === "mach-o" ? "mach-o-universal" : "unknown";
 };
 
-const relationFor = (path: string): ArtifactEdge["relation"] => {
-  const lower = path.toLowerCase();
-  if (lower.endsWith(".map")) return "maps-source";
-  if (lower.includes(".framework/")) return "embeds";
-  return "contains";
-};
+/** Relation of a non-source-map occurrence to its parent. */
+const relationFor = (path: string): ArtifactEdge["relation"] =>
+  path.toLowerCase().includes(".framework/") ? "embeds" : "contains";
 
 const depth = (path: string): number => path.split("/").length;

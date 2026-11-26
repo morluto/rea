@@ -1,13 +1,24 @@
+import { fileIdentity } from "../../tests/fixtures/evidenceSubject.js";
 import { expect, it } from "vitest";
 import { WebNetworkCaptureService } from "./WebNetworkCaptureService.js";
 import { historicalHar } from "../../tests/fixtures/historicalHar.js";
-import { ok } from "../domain/result.js";
+import { err, ok } from "../domain/result.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { parseEvidence } from "../domain/evidence.js";
+import {
+  AnalysisCancelledError,
+  AnalysisOutputError,
+} from "../domain/analysisErrorCore.js";
 import {
   webNetworkCaptureSchema,
   type WebNetworkCapture,
 } from "../domain/webNetworkCapture.js";
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+} from "../resources/AnalysisCleanupLease.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 
 it.each(["REDACTED", "[", "]", "/capture.har"])(
   "excludes sensitive path text even when a replacement marker would collide: %s",
@@ -30,9 +41,35 @@ it.each(["REDACTED", "[", "]", "/capture.har"])(
           location.kind !== "artifact-path" || !location.path.includes(literal),
       ),
     ).toBe(true);
-    expect(result.value.subject?.digest.sha256).toBe(report.artifact.sha256);
+    expect(fileIdentity(result.value.subject).sha256).toBe(
+      report.artifact.sha256,
+    );
   },
 );
+
+it("records an explicit capture deadline and omits the default", async () => {
+  const seen: Array<number | undefined> = [];
+  const service = new WebNetworkCaptureService({
+    inspect: (input) => {
+      seen.push(input.capture_timeout_ms);
+      return Promise.resolve(ok(fixture()));
+    },
+  });
+  const explicit = await service.inspect({
+    capture_path: "/capture.har",
+    format: "har",
+    capture_timeout_ms: 250,
+  });
+  if (!explicit.ok) throw explicit.error;
+  expect(explicit.value.parameters.capture_timeout_ms).toBe(250);
+  const omitted = await service.inspect({
+    capture_path: "/capture.har",
+    format: "har",
+  });
+  if (!omitted.ok) throw omitted.error;
+  expect(omitted.value.parameters).not.toHaveProperty("capture_timeout_ms");
+  expect(seen).toEqual([250, undefined]);
+});
 
 it("keeps observed artifact identity when the entire sensitive path is excluded", async () => {
   const result = await new WebNetworkCaptureService({
@@ -45,7 +82,7 @@ it("keeps observed artifact identity when the entire sensitive path is excluded"
   if (!result.ok) throw result.error;
   expect(result.value.subject).toMatchObject({
     local_path: "",
-    digest: { sha256: "a".repeat(64) },
+    identity: { sha256: "a".repeat(64) },
   });
   expect(result.value.locations).toEqual([]);
 });
@@ -87,7 +124,7 @@ it.each(["a".repeat(64), "aaaa"])(
       sensitive_values: [literal],
     });
     if (!result.ok) throw result.error;
-    expect(result.value.subject).toBeNull();
+    expect(result.value.subject.identity.kind).toBe("unknown");
     expect(result.value.normalized_result).toMatchObject({
       artifact: { path: "/capture.har", sha256: null, bytes: 10 },
     });
@@ -108,7 +145,10 @@ it("projects the unknown-subject explanation before generating its Evidence ID",
     sensitive_values: ["a"],
   });
   if (!result.ok) throw result.error;
-  expect(result.value.subject).toBeNull();
+  expect(result.value.subject.identity.kind).toBe("unknown");
+  expect(result.value.limitations).toContainEqual(
+    expect.stringMatching(/digest.*unknown.*Evidence/u),
+  );
   expect(result.value.limitations.every((text) => !text.includes("a"))).toBe(
     true,
   );
@@ -123,6 +163,160 @@ it("rejects an adapter omitting its original observed digest before caller proje
   }).inspect({ capture_path: report.artifact.path, format: "har" });
   expect(result.ok).toBe(false);
   if (!result.ok) expect(result.error._tag).toBe("AnalysisOutputError");
+});
+
+it("retains valid completed capture Evidence on late cancellation and preserves invalid output", async () => {
+  const controller = new AbortController();
+  const report = fixture();
+  const late = await new WebNetworkCaptureService({
+    inspect: () => {
+      controller.abort();
+      return Promise.resolve(ok(report));
+    },
+  }).inspect(
+    { capture_path: report.artifact.path, format: "har" },
+    { signal: controller.signal },
+  );
+  expect(late.ok).toBe(false);
+  if (!late.ok) {
+    expect(late.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(parseEvidence(late.error.partialObservation)).toMatchObject({
+      operation: "inspect_web_network_capture",
+      normalized_result: expect.objectContaining({ total_records: 1 }),
+    });
+  }
+
+  const malformed = fixture();
+  malformed.artifact.path = "/other.har";
+  const outputController = new AbortController();
+  const invalid = await new WebNetworkCaptureService({
+    inspect: () => {
+      outputController.abort();
+      return Promise.resolve(ok(malformed));
+    },
+  }).inspect(
+    { capture_path: "/capture.har", format: "har" },
+    { signal: outputController.signal },
+  );
+  expect(invalid.ok).toBe(false);
+  if (!invalid.ok) expect(invalid.error).toBeInstanceOf(AnalysisOutputError);
+});
+
+it("projects completed raw capture facts on failure through the sensitivity rules", async () => {
+  const report = fixture();
+  report.artifact.path = "/private-marker/capture.har";
+  report.limitations = ["private-marker producer limitation"];
+  const reason = { request: "cancel after decoder completion" };
+  const error = new AnalysisCancelledError("inspect_web_network_capture", {
+    cause: reason,
+    partialObservation: report,
+  });
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve({ ok: false, error }),
+  }).inspect(
+    {
+      capture_path: report.artifact.path,
+      format: "har",
+      record_ordinals: [0],
+      sensitive_values: ["private-marker"],
+    },
+    undefined,
+  );
+  if (result.ok) throw new Error("Cancellation must remain the primary result");
+  expect(result.error._tag).toBe("AnalysisCancelledError");
+  expect(result.error.cause).toBe(reason);
+  const partial = parseEvidence(result.error.partialObservation);
+  expect(partial).toMatchObject({
+    operation: "inspect_web_network_capture",
+    parameters: { record_ordinals: [0] },
+    subject: { local_path: "" },
+    normalized_result: {
+      artifact: { path: "", sha256: "a".repeat(64) },
+      records: [{ ordinal: 0 }],
+    },
+  });
+  // Caller spellings belong to the CLI delivery, not the service.
+  expect(partial.caller_input_path).toBeUndefined();
+  expect(JSON.stringify(partial)).not.toContain("private-marker");
+});
+
+it("does not expose a malformed capture-shaped partial observation", async () => {
+  const malformed = fixture();
+  malformed.artifact.path = "/private-marker";
+  malformed.artifact.sha256 = "invalid";
+  const error = new AnalysisCancelledError("inspect_web_network_capture", {
+    partialObservation: malformed,
+  });
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve({ ok: false, error }),
+  }).inspect({
+    capture_path: "/capture.har",
+    format: "har",
+    sensitive_values: ["private-marker"],
+  });
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error.partialObservation).toBeUndefined();
+});
+
+it("does not recover a rejected capture from a cleanup primary", async () => {
+  const malformed = fixture();
+  malformed.artifact.sha256 = "invalid";
+  malformed.limitations = ["rejected-capture-only-marker"];
+  const primary = new AnalysisCancelledError("inspect_web_network_capture", {
+    partialObservation: malformed,
+  });
+  const cleanup = new ProviderCleanupError("fixture", ["workspace"], {});
+  const error = analysisErrorWithCleanupFailure(primary, cleanup);
+  const result = await new WebNetworkCaptureService({
+    inspect: async () => err(error),
+  }).inspect({ capture_path: "/capture.har", format: "har" });
+  if (result.ok) throw new Error("expected rejected capture");
+  const projected = projectAnalysisError(result.error);
+  expect(projected.code).toBe("cleanup_incomplete");
+  expect(JSON.stringify(projected)).not.toContain(
+    "rejected-capture-only-marker",
+  );
+});
+
+it("keeps a redacted cleanup error linked to its live owner through service close", async () => {
+  const report = fixture();
+  const cleanupPath = "/tmp/private-marker-capture-root";
+  const lease = new AnalysisCleanupLease(async () => {}, [cleanupPath]);
+  const original = new ProviderCleanupError(
+    "test-capture",
+    [cleanupPath],
+    { reason: "private-marker cleanup remains pending" },
+    {
+      operation: "inspect_web_network_capture",
+      partialObservation: report,
+    },
+  );
+  new AnalysisCleanupLeaseGroup(original, [lease]);
+  const service = new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(err(original)),
+    close: () => lease.release(),
+  });
+  const result = await service.inspect({
+    capture_path: report.artifact.path,
+    format: "har",
+    sensitive_values: ["private-marker"],
+  });
+  if (result.ok) throw new Error("Retained cleanup must remain a failure");
+  const returnedError = result.error;
+  expect(returnedError.cleanupIncomplete).toBe(true);
+  expect(returnedError.cleanupResources).toEqual([
+    "/tmp/[REDACTED]-capture-root",
+  ]);
+  expect(JSON.stringify(projectAnalysisError(returnedError))).not.toContain(
+    "private-marker",
+  );
+  expect(parseEvidence(returnedError.partialObservation)).toMatchObject({
+    operation: "inspect_web_network_capture",
+  });
+
+  await service.close();
+  expect(returnedError.cleanupIncomplete).toBe(false);
+  expect(returnedError.cleanupResources).toEqual([]);
 });
 
 it.each([
@@ -160,7 +354,9 @@ it.each([
     ].flat();
     for (const literal of literals)
       expect(texts.every((text) => !text.includes(literal))).toBe(true);
-    expect(result.value.subject?.digest.sha256).toBe(report.artifact.sha256);
+    expect(fileIdentity(result.value.subject).sha256).toBe(
+      report.artifact.sha256,
+    );
     expect(projected.decoder).toEqual(report.decoder);
     expect(projected.records[0]?.reported).toEqual(first.reported);
   },
@@ -212,6 +408,31 @@ it.each([
   }).inspect({ capture_path: "/capture.har", format: "har", ...extra });
   expect(result.ok).toBe(false);
   if (!result.ok) expect(result.error._tag).toBe("AnalysisInputError");
+});
+
+it("reports an ordinal past the capture's records as an out-of-range selection", async () => {
+  const report = fixture();
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(report)),
+  }).inspect({
+    capture_path: "/capture.har",
+    format: "har",
+    record_ordinals: [0, 5],
+  });
+  if (result.ok) throw new Error("expected an out-of-range ordinal");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: ["record_ordinals", 1],
+          reason: "out_of_range",
+          minimum: 0,
+          maximum: report.total_records - 1,
+        },
+      ],
+    },
+  });
 });
 
 it("rejects a port changing the artifact identity or producer ordinal sequence", async () => {
@@ -338,3 +559,321 @@ it.each(["12345", "67890", "234", "789"])(
     expect(parseEvidence(result.value)).toEqual(result.value);
   },
 );
+
+it("preserves a pre-abort reason without entering the capture adapter", async () => {
+  const reason = new Error("stop historical capture inspection");
+  const controller = new AbortController();
+  controller.abort(reason);
+  let providerCalls = 0;
+  const service = new WebNetworkCaptureService({
+    inspect: async () => {
+      providerCalls += 1;
+      return ok(fixture());
+    },
+  });
+
+  const result = await service.inspect(
+    {
+      capture_path: "/capture.har",
+      format: "har",
+      sensitive_values: [],
+    },
+    { signal: controller.signal },
+  );
+
+  expect(result.ok).toBe(false);
+  if (!result.ok) {
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
+  }
+  expect(providerCalls).toBe(0);
+});
+
+it("reports malformed retained facts while keeping their cleanup owner retryable", async () => {
+  const report = fixture();
+  report.artifact.sha256 = "invalid";
+  const lease = new AnalysisCleanupLease(async () => {}, [
+    "/tmp/private-marker-root",
+  ]);
+  const cleanup = new ProviderCleanupError(
+    "test-historical-port",
+    ["/tmp/private-marker-root"],
+    { reason: "close denied" },
+    { operation: "inspect_web_network_capture", partialObservation: report },
+  );
+  new AnalysisCleanupLeaseGroup(cleanup, [lease]);
+  const service = new WebNetworkCaptureService({
+    inspect: async () => err(cleanup),
+    close: async () => {
+      await lease.release();
+    },
+  });
+  const result = await service.inspect({
+    capture_path: "/capture.har",
+    format: "har",
+    sensitive_values: ["private-marker"],
+  });
+  if (result.ok) throw new Error("Expected malformed retained evidence");
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.cleanupPrimary).toBeInstanceOf(AnalysisOutputError);
+  expect(result.error.partialObservation).toBeUndefined();
+  expect(JSON.stringify(projectAnalysisError(result.error))).not.toContain(
+    "private-marker",
+  );
+  await service.close();
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(projectAnalysisError(result.error).code).toBe("unreadable_output");
+});
+
+it("rejects relative descriptor paths before starting a capture decoder", async () => {
+  const service = new WebNetworkCaptureService({
+    inspect: () => {
+      throw new Error("Invalid input must fail before provider admission");
+    },
+  });
+  const result = await service.inspect({
+    capture_path: "/capture.har",
+    format: "har",
+    record_ordinals: [0],
+    protobuf: {
+      schema: {
+        descriptor_set_path: "relative.pb",
+        message_type: "capture.Message",
+      },
+    },
+  });
+  if (result.ok) throw new Error("Expected typed invalid input");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [{ path: ["protobuf", "schema", "descriptor_set_path"] }],
+    },
+  });
+});
+
+/** HAR-shaped record whose credential-named members hold values the decoder retains. */
+const credentialNamedReport = (): WebNetworkCapture => {
+  const report = fixture();
+  report.records[0]!.reported = {
+    request: {
+      method: "POST",
+      url: "https://example.test/login?api_key=demo-key",
+      headers: [
+        { name: "Authorization", value: null },
+        { name: "X-Demo-Token", value: "demo-token" },
+        { name: "Accept", value: "application/json" },
+      ],
+      queryString: [{ name: "api_key", value: "demo-key" }],
+      postData: {
+        mimeType: "application/json",
+        text: '{"user":"demo","password":"demo-pass"}',
+      },
+    },
+    response: {
+      status: 200,
+      headers: [{ name: "Set-Cookie", value: null }],
+      content: {
+        mimeType: "application/json",
+        text: '{"session_token":"demo-session"}',
+      },
+    },
+  };
+  return report;
+};
+
+const credentialNameLimitation = (limitations: readonly string[]) =>
+  limitations.filter((text) => text.includes("look like credentials"));
+
+it("counts credential-named members that hold a retained value, by pointer and never by value", async () => {
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(credentialNamedReport())),
+  }).inspect({ capture_path: "/capture.har", format: "har" });
+  if (!result.ok) throw result.error;
+  const [limitation, ...others] = credentialNameLimitation(
+    result.value.limitations,
+  );
+  expect(others).toEqual([]);
+  expect(limitation).toMatch(/^4 /);
+  for (const pointer of [
+    "record 0 request header X-Demo-Token",
+    "record 0 request query api_key",
+    "record 0 request /password",
+    "record 0 response /session_token",
+  ])
+    expect(limitation).toContain(pointer);
+  // Redacted standard credentials and ordinary names are not counted.
+  expect(limitation).not.toContain("Authorization");
+  expect(limitation).not.toContain("Accept");
+  for (const value of ["demo-token", "demo-key", "demo-pass", "demo-session"])
+    expect(limitation).not.toContain(value);
+  expect(result.value.normalized_result).toMatchObject({
+    limitations: expect.arrayContaining([limitation]),
+  });
+  expect(parseEvidence(result.value)).toEqual(result.value);
+});
+
+it("bounds the listed pointers so a long member name cannot inflate the limitation", async () => {
+  const report = credentialNamedReport();
+  const long = "k".repeat(2048);
+  report.records[0]!.reported = {
+    request: {
+      method: "POST",
+      url: "https://example.test/login",
+      postData: {
+        mimeType: "application/json",
+        text: JSON.stringify({
+          [long]: { token: "demo-token" },
+          password: "p",
+        }),
+      },
+    },
+    response: { status: 204 },
+  };
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(report)),
+  }).inspect({ capture_path: "/capture.har", format: "har" });
+  if (!result.ok) throw result.error;
+  const [limitation] = credentialNameLimitation(result.value.limitations);
+  expect(limitation).toMatch(/^2 /);
+  expect(limitation).toContain("record 0 request /password");
+  expect(limitation).toContain("1 more not listed");
+  expect(limitation).not.toContain(long);
+  expect(limitation!.length).toBeLessThan(1024 + 400);
+});
+
+it("adds no credential-name limitation when no counted name holds a value", async () => {
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(fixture())),
+  }).inspect({ capture_path: "/capture.har", format: "har" });
+  if (!result.ok) throw result.error;
+  expect(credentialNameLimitation(result.value.limitations)).toEqual([]);
+});
+
+it("scans only HAR records for credential names", async () => {
+  const report = credentialNamedReport();
+  report.format = "mitmproxy";
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(report)),
+  }).inspect({ capture_path: "/capture.har", format: "mitmproxy" });
+  if (!result.ok) throw result.error;
+  expect(credentialNameLimitation(result.value.limitations)).toEqual([]);
+});
+
+it("reports a body whose values would expand past the credential-name scan's bound", async () => {
+  const report = credentialNamedReport();
+  report.records[0]!.reported = {
+    request: { method: "GET", url: "https://example.test/expansive" },
+    response: {
+      status: 200,
+      content: {
+        mimeType: "application/json",
+        text: `[${"[],".repeat(300_000)}{"password":"x"}]`,
+      },
+    },
+  };
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(report)),
+  }).inspect({ capture_path: "/capture.har", format: "har" });
+  if (!result.ok) throw result.error;
+  expect(credentialNameLimitation(result.value.limitations)).toEqual([]);
+  const skipped = result.value.limitations.filter((text) =>
+    text.includes("were not scanned"),
+  );
+  expect(skipped).toHaveLength(1);
+  expect(skipped[0]).toMatch(/^1 /);
+  expect(skipped[0]).toContain("record 0 response");
+});
+
+it("shares the credential-name scan's value budget across the selected records", async () => {
+  const expansive = (path: string) => ({
+    request: { method: "GET", url: `https://example.test/${path}` },
+    response: {
+      status: 200,
+      content: {
+        mimeType: "application/json",
+        text: `[${"1,".repeat(300_000)}{"password":"x"}]`,
+      },
+    },
+  });
+  const base = credentialNamedReport();
+  const first = { ...base.records[0]!, reported: expansive("first") };
+  const report: WebNetworkCapture = {
+    ...base,
+    total_records: 2,
+    records: [
+      first,
+      {
+        ...first,
+        ordinal: 1,
+        location: { kind: "json-pointer", pointer: "/log/entries/1" },
+        reported: expansive("second"),
+      },
+    ],
+  };
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(report)),
+  }).inspect({ capture_path: "/capture.har", format: "har" });
+  if (!result.ok) throw result.error;
+  const [found] = credentialNameLimitation(result.value.limitations);
+  expect(found).toMatch(/^1 /);
+  expect(found).toContain("record 0 response /300000/password");
+  const skipped = result.value.limitations.filter((text) =>
+    text.includes("were not scanned"),
+  );
+  expect(skipped).toHaveLength(1);
+  expect(skipped[0]).toMatch(/^1 /);
+  expect(skipped[0]).toContain("record 1 response");
+});
+
+it("reports a response body whose retained source is unavailable", async () => {
+  const report = credentialNamedReport();
+  // A base64 body with no retained binary field has no source to decode.
+  report.records[0]!.reported = {
+    request: { method: "GET", url: "https://example.test/unretained" },
+    response: {
+      status: 200,
+      content: {
+        mimeType: "application/json",
+        text: "eyJwYXNzd29yZCI6IngifQ==",
+        encoding: "base64",
+      },
+    },
+  };
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(report)),
+  }).inspect({ capture_path: "/capture.har", format: "har" });
+  if (!result.ok) throw result.error;
+  expect(credentialNameLimitation(result.value.limitations)).toEqual([]);
+  const skipped = result.value.limitations.filter((text) =>
+    text.includes("were not scanned"),
+  );
+  expect(skipped).toHaveLength(1);
+  expect(skipped[0]).toMatch(/^1 /);
+  expect(skipped[0]).toContain("record 0 response");
+  expect(skipped[0]).toContain("retained source is unavailable");
+});
+
+it("reports bodies the credential-name scan could not read", async () => {
+  const report = credentialNamedReport();
+  report.records[0]!.reported = {
+    request: { method: "GET", url: "https://example.test/large" },
+    response: {
+      status: 200,
+      content: {
+        mimeType: "application/json",
+        text: `{"password":"${"x".repeat(4 * 1024 * 1024)}"}`,
+      },
+    },
+  };
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(report)),
+  }).inspect({ capture_path: "/capture.har", format: "har" });
+  if (!result.ok) throw result.error;
+  expect(credentialNameLimitation(result.value.limitations)).toEqual([]);
+  const skipped = result.value.limitations.filter((text) =>
+    text.includes("were not scanned"),
+  );
+  expect(skipped).toHaveLength(1);
+  expect(skipped[0]).toMatch(/^1 /);
+  expect(skipped[0]).toContain("record 0 response");
+});

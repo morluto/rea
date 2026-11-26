@@ -1,14 +1,15 @@
+import { evidenceFileTarget } from "../evidence.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { z } from "zod";
-import type { AnalysisError } from "../analysisErrorBase.js";
 import { flutterResultSchemas } from "../flutter/flutterBuildAnalysis.js";
-import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
-import { err, ok, type Result } from "../result.js";
+import { ok } from "../result.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
-  analysisViewInputError,
-  type AnalysisViewParent,
-  type AnalysisViewRequest,
-  type UnsignedAnalysisView,
-} from "./analysisView.js";
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
@@ -22,9 +23,9 @@ export const dartAotSummarySchema = aotSchema.extend({
     .omit({ package_uris: true, dart_uris: true, class_like_tokens: true })
     .extend({
       returned_counts: z.strictObject({
-        package_uris: z.number().int().nonnegative(),
-        dart_uris: z.number().int().nonnegative(),
-        class_like_tokens: z.number().int().nonnegative(),
+        package_uris: z.int().nonnegative(),
+        dart_uris: z.int().nonnegative(),
+        class_like_tokens: z.int().nonnegative(),
       }),
     }),
 });
@@ -33,8 +34,8 @@ export const dartAotSummarySchema = aotSchema.extend({
 export const dartAotViewRequestSchema = z.strictObject({
   kind: z.literal("dart-aot"),
   collection: z.enum(["package_uris", "dart_uris", "class_like_tokens"]),
-  offset: z.number().int().nonnegative().default(0),
-  limit: z.number().int().positive().default(64),
+  offset: z.int().nonnegative().default(0),
+  limit: z.int().positive().default(64),
 });
 
 export const dartAotViewContextSchema = z.strictObject({
@@ -44,35 +45,23 @@ export const dartAotViewContextSchema = z.strictObject({
   string_pool: dartAotSummarySchema.shape.string_pool,
 });
 
+const readAotReport = createAnalysisViewResultReader(aotSchema);
+
 /** Reuse authenticated AOT Evidence without opening the APK or rescanning its ELF. */
 export const projectDartAotView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "dart-aot")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "Dart AOT Evidence supports summary and string-pool pages.",
-        },
-      ]),
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof dartAotViewRequestSchema>
+  >(admitted, "summary", "dart-aot");
+  if (view === undefined)
+    return invalidAnalysisView(
+      "Dart AOT Evidence supports summary and string-pool pages.",
     );
-  const parsed = aotSchema.safeParse(parent.normalizedResult);
-  if (!parsed.success)
-    return err(
-      analysisInputErrorFromIssues(
-        "inspect_analysis_view",
-        parsed.error.issues.map((issue) => ({
-          ...issue,
-          path: ["source", "normalized_result", ...issue.path],
-        })),
-        { source: { normalized_result: parent.normalizedResult } },
-        { cause: parsed.error },
-      ),
-    );
-  const report = parsed.data;
+  const parsed = readAotReport(parent);
+  if (!parsed.ok) return parsed;
+  const report = parsed.value;
   const { package_uris, dart_uris, class_like_tokens, ...pool } =
     report.string_pool;
   const string_pool = {
@@ -92,7 +81,7 @@ export const projectDartAotView = (
     unknowns: [
       "String-pool entries are byte-pattern observations, not recovered typed classes or functions.",
       "Counts ending in _at_least remain lower bounds; exhausting returned strings does not establish a complete snapshot inventory.",
-      ...(parent.subject == null
+      ...(evidenceFileTarget(parent) === undefined
         ? [
             "The parent has no recorded subject; its normalized target identity cannot be cross-checked against a subject digest.",
           ]
@@ -101,16 +90,16 @@ export const projectDartAotView = (
   };
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: { ...report, string_pool },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   const collection = report.string_pool[view.collection];
   const items = collection.slice(view.offset, view.offset + view.limit);
   return ok({
-    kind: "dart-aot",
+    kind: "dart-aot" as const,
     view,
     ...shared,
     items,

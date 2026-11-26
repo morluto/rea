@@ -1,13 +1,15 @@
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import {
-  canonicalExportShapeValue,
-  digestExportShapeValue,
-} from "./javascriptExportShapeComparisonIdentity.js";
+import { canonicalJson } from "../comparisonSemantics.js";
+import { digestCanonicalValue } from "../canonicalDigest.js";
+import { joinCoverageStatus } from "../coverage.js";
+import { known, knownOrNull, unknownBecause, type Known } from "../known.js";
+import { applicationCoverageKnowledge } from "./javascriptApplicationEvidenceSchemas.js";
 import {
   javaScriptExportShapeComparisonResultSchema,
   type JavaScriptExportShapeComparisonChange,
   type JavaScriptExportShapeComparisonResult,
+  type ProjectedExportReturnShapes,
 } from "./javascriptExportShapeComparisonSchemas.js";
 import {
   retainJavaScriptExportShapes,
@@ -86,7 +88,7 @@ export const compareJavaScriptExportShapes = (
   };
   return javaScriptExportShapeComparisonResultSchema.parse({
     ...semantic,
-    comparison_id: `jesc_${digestExportShapeValue(semantic)}`,
+    comparison_id: `jesc_${digestCanonicalValue(semantic, "JavaScript export shape comparison")}`,
   });
 };
 
@@ -97,14 +99,17 @@ const sortChanges = (
     .map((change, index) => ({
       change,
       index,
-      sortKey: canonicalExportShapeValue({
-        discriminant: change.discriminant,
-        path: change.path,
-        status: change.status,
-        left_source_range: change.left_source_range,
-        right_source_range: change.right_source_range,
-        change_id: change.change_id,
-      }),
+      sortKey: canonicalJson(
+        {
+          discriminant: change.discriminant,
+          path: change.path,
+          status: change.status,
+          left_source_range: change.left_source_range,
+          right_source_range: change.right_source_range,
+          change_id: change.change_id,
+        },
+        "JavaScript export shape comparison",
+      ),
     }))
     .sort(
       (left, right) =>
@@ -124,20 +129,42 @@ interface CoverageInput {
   readonly omittedChanges: number;
 }
 
+type ReturnShapeCoverage = ProjectedExportReturnShapes["return_shape_coverage"];
+
+/**
+ * The side's source return-shape coverage. A side without a projection did
+ * not recover return shapes, so its source omissions are unknown, not zero.
+ */
+const sourceCoverage = (
+  selection: SelectedJavaScriptExport,
+): Known<ReturnShapeCoverage> =>
+  selection.projection === null
+    ? unknownBecause(`the export selection is ${selection.selection.status}`)
+    : known(selection.projection.return_shape_coverage);
+
 const comparisonCoverage = (context: CoverageInput) => {
-  const leftSource = context.left.projection?.return_shape_coverage;
-  const rightSource = context.right.projection?.return_shape_coverage;
+  const leftSource = sourceCoverage(context.left);
+  const rightSource = sourceCoverage(context.right);
   const omittedCandidates =
     context.left.selection.omitted_candidates +
     context.right.selection.omitted_candidates;
   const truncated = comparisonTruncated(context, omittedCandidates);
   const partial = comparisonPartial(context);
+  // A source graph that cannot tell its coverage makes the comparison
+  // unknown, even beside a known gap.
+  const graphs = joinCoverageStatus([
+    applicationCoverageKnowledge(context.input.left.graph.coverage.status),
+    applicationCoverageKnowledge(context.input.right.graph.coverage.status),
+  ]);
   return {
-    status: truncated
-      ? ("truncated" as const)
-      : partial
-        ? ("partial" as const)
-        : ("complete-within-inputs" as const),
+    status:
+      graphs === "unknown"
+        ? ("unknown" as const)
+        : truncated
+          ? ("truncated" as const)
+          : partial
+            ? ("partial" as const)
+            : ("complete-within-inputs" as const),
     left_graph_status: context.input.left.graph.coverage.status,
     right_graph_status: context.input.right.graph.coverage.status,
     paired_variants: context.pairing.pairs.length,
@@ -145,13 +172,32 @@ const comparisonCoverage = (context: CoverageInput) => {
     unpaired_right_variants: context.pairing.unpairedRight.length,
     omitted_left_variants: context.leftRetained.omitted,
     omitted_right_variants: context.rightRetained.omitted,
-    left_source_omitted_variants: leftSource?.omitted_return_sites ?? null,
-    right_source_omitted_variants: rightSource?.omitted_return_sites ?? null,
-    left_omitted_fields: leftSource?.omitted_fields ?? 0,
-    right_omitted_fields: rightSource?.omitted_fields ?? 0,
-    left_omitted_property_coverage: leftSource?.omitted_property_coverage ?? 0,
-    right_omitted_property_coverage:
-      rightSource?.omitted_property_coverage ?? 0,
+    // omitted_return_sites is itself null when the projection could not
+    // count them.
+    left_source_omitted_variants: knownOrNull(
+      leftSource,
+      ({ omitted_return_sites }) => omitted_return_sites,
+    ),
+    right_source_omitted_variants: knownOrNull(
+      rightSource,
+      ({ omitted_return_sites }) => omitted_return_sites,
+    ),
+    left_omitted_fields: knownOrNull(
+      leftSource,
+      ({ omitted_fields }) => omitted_fields,
+    ),
+    right_omitted_fields: knownOrNull(
+      rightSource,
+      ({ omitted_fields }) => omitted_fields,
+    ),
+    left_omitted_property_coverage: knownOrNull(
+      leftSource,
+      ({ omitted_property_coverage }) => omitted_property_coverage,
+    ),
+    right_omitted_property_coverage: knownOrNull(
+      rightSource,
+      ({ omitted_property_coverage }) => omitted_property_coverage,
+    ),
     omitted_candidates: omittedCandidates,
     omitted_changes: context.omittedChanges,
   };
@@ -171,8 +217,9 @@ const comparisonTruncated = (
 const sourceProjectionTruncated = (
   selection: SelectedJavaScriptExport,
 ): boolean => {
-  const coverage = selection.projection?.return_shape_coverage;
-  if (coverage === undefined) return false;
+  const source = sourceCoverage(selection);
+  if (!source.known) return false;
+  const coverage = source.value;
   return (
     coverage.status === "truncated" ||
     coverage.omitted_fields > 0 ||
@@ -193,19 +240,38 @@ const comparisonPartial = (context: CoverageInput): boolean =>
   context.allChanges.some(({ status }) => status === "unknown");
 
 const selectionPartial = (selection: SelectedJavaScriptExport): boolean => {
-  const coverage = selection.projection?.return_shape_coverage;
+  const source = sourceCoverage(selection);
   return (
     selection.selection.status !== "selected" ||
     !selection.observationComplete ||
-    coverage?.status !== "complete" ||
-    coverage.projection_complete !== true
+    !source.known ||
+    source.value.status !== "complete" ||
+    !source.value.projection_complete
   );
 };
+
+/** Name each side whose source omission counts are null, and why. */
+const unknownSourceLimitations = (
+  left: SelectedJavaScriptExport,
+  right: SelectedJavaScriptExport,
+): string[] =>
+  (
+    [
+      ["left", sourceCoverage(left)],
+      ["right", sourceCoverage(right)],
+    ] as const
+  ).flatMap(([side, source]) =>
+    source.known
+      ? []
+      : [
+          `The ${side} export has no return-shape projection because ${source.reason}, so its source omission counts are null (unknown), not zero.`,
+        ],
+  );
 
 const comparisonLimitations = (
   left: SelectedJavaScriptExport,
   right: SelectedJavaScriptExport,
-  status: "complete-within-inputs" | "partial" | "truncated",
+  status: JavaScriptExportShapeComparisonResult["coverage"]["status"],
 ): string[] =>
   uniqueSorted([
     "Return shapes are inferred from inert syntax and do not prove runtime behavior.",
@@ -214,6 +280,7 @@ const comparisonLimitations = (
     "This static comparison cannot establish runtime semantics; run behavioral probes directly against the relevant application versions when that evidence is required.",
     ...left.limitations,
     ...right.limitations,
+    ...unknownSourceLimitations(left, right),
     ...(status === "truncated"
       ? [
           "Comparison output or source return-shape recovery reached an explicit limit.",
@@ -222,6 +289,11 @@ const comparisonLimitations = (
     ...(status === "partial"
       ? [
           "At least one selector, graph, return shape, or property boundary is incomplete.",
+        ]
+      : []),
+    ...(status === "unknown"
+      ? [
+          "At least one source graph's coverage is unknown or unavailable, so the comparison's coverage is unknown.",
         ]
       : []),
   ]);

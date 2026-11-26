@@ -11,25 +11,26 @@ export const idaAddressSchema = z
       `0x${BigInt(value.startsWith("0x") || value.startsWith("0X") ? value : `0x${value}`).toString(16)}`,
   );
 
-/** A function observation; size is an enclosing span, never a complete body. */
+/**
+ * Function identity only. Upstream size is an enclosing span, not body coverage;
+ * retain it in the raw observation rather than requiring it for identity.
+ */
 export const idaFunctionSchema = z.union([
   z.object({
     address: idaAddressSchema,
     name: z.string().min(1),
-    size: z.string(),
   }),
   z
     .object({
       addr: idaAddressSchema,
       name: z.string().min(1),
-      size: z.string(),
     })
     .transform(({ addr, ...rest }) => ({ address: addr, ...rest })),
 ]);
 export type IdaFunction = z.infer<typeof idaFunctionSchema>;
 
-/** Legacy metadata describes the recorded input, whereas modern health names live paths. */
-export const legacyMetadataSchema = z
+/** Attached metadata describes the recorded input, whereas modern health names live paths. */
+export const attachedMetadataSchema = z
   .object({
     path: z.string().min(1),
     module: z.string(),
@@ -48,6 +49,10 @@ export const modernHealthSchema = z
   .object({
     status: z.literal("ok"),
     input_path: z.string().min(1),
+    input_sha256: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/iu)
+      .nullish(),
     idb_path: z.string().nullable(),
     imagebase: idaAddressSchema,
     auto_analysis_ready: z.boolean().nullable(),
@@ -57,30 +62,32 @@ export const modernHealthSchema = z
 
 /** An upstream cursor must either finish or advance strictly to avoid replay loops. */
 export const cursorSchema = z.union([
-  z.object({ next: z.number().int().nonnegative() }),
+  z.object({ next: z.int().nonnegative() }),
   z.object({ done: z.literal(true) }),
 ]);
-export const nextOffset = (
-  cursor: z.infer<typeof cursorSchema>,
+/** Offset pages and cursors must finish or advance strictly. */
+export const nextPageOffset = (
+  next: number | null,
   current: number,
 ): number | null => {
-  if ("done" in cursor) return null;
-  if (cursor.next <= current)
+  if (next !== null && next <= current)
     throw new AnalysisProtocolError(
       "IDA MCP pagination did not advance its offset.",
     );
-  return cursor.next;
+  return next;
 };
+export const nextOffset = (
+  cursor: z.infer<typeof cursorSchema>,
+  current: number,
+): number | null =>
+  nextPageOffset("done" in cursor ? null : cursor.next, current);
 
-export const legacyPageSchema = z.object({
-  data: z.array(jsonValueSchema),
-  next_offset: z.number().int().nonnegative().nullable(),
-});
+/** One `list_funcs` page: a single-query batch with an offset continuation. */
 export const modernPageSchema = z
   .array(
     z.object({
       data: z.array(jsonValueSchema),
-      next_offset: z.number().int().nonnegative().nullable(),
+      next_offset: z.int().nonnegative().nullable(),
     }),
   )
   .length(1);
@@ -126,26 +133,15 @@ export const modernDecompileSchema = z.object({
   code: z.string().nullable(),
   error: z.string().optional(),
   cursor: cursorSchema,
-  line_count: z.number().int().nonnegative().optional(),
-  total_lines: z.number().int().nonnegative().optional(),
+  line_count: z.int().nonnegative().optional(),
+  total_lines: z.int().nonnegative().optional(),
 });
 
-export const legacyStringSchema = z.object({
-  address: idaAddressSchema,
-  string: z.string(),
-  length: z.number().int().nonnegative(),
-});
-export const modernStringsSchema = z.object({
+export const idaStringsPageSchema = z.object({
   matches: z.array(z.object({ addr: idaAddressSchema, string: z.string() })),
   cursor: cursorSchema,
+  error: z.string().nullish(),
 });
-export const legacyXrefsSchema = z.array(
-  z.object({
-    address: idaAddressSchema,
-    type: z.string(),
-    function: idaFunctionSchema.nullable(),
-  }),
-);
 export const modernXrefsSchema = z
   .array(
     z.object({
@@ -199,15 +195,12 @@ export const modernCallGraphSchema = z
         ),
         truncated: z.boolean().optional(),
         limit_reason: z.string().nullable().optional(),
-        max_edges_per_func: z.number().int().positive().optional(),
+        max_edges_per_func: z.int().positive().optional(),
         per_func_capped: z.boolean().optional(),
       })
       .passthrough(),
   )
   .length(1);
-export const legacyCalleesSchema = z.array(
-  z.object({ address: idaAddressSchema, name: z.string() }).passthrough(),
-);
 
 /** Parsed database lifecycle observations retain explicit ownership information. */
 export const openDatabaseSchema = z
@@ -218,6 +211,26 @@ export const openDatabaseSchema = z
       .passthrough(),
   })
   .passthrough();
+/**
+ * ida-pro-mcp's database supervisor (snapshot c133c385) rejects an open whose
+ * worker outlived IDA_MCP_OPEN_TIMEOUT with this sentence and the whole-second
+ * deadline. Only that exact prefix is read; any other rejection keeps its text.
+ */
+const SUPERVISOR_OPEN_TIMEOUT =
+  /^idalib worker timed out after (\d+)s while opening and analyzing /u;
+
+/** The supervisor's open deadline in seconds when a rejection reports it. */
+export const supervisorOpenTimeoutSeconds = (
+  reason: string,
+): number | undefined => {
+  const digits = SUPERVISOR_OPEN_TIMEOUT.exec(reason)?.[1];
+  if (digits === undefined) return undefined;
+  const seconds = Number(digits);
+  return seconds > 0 && Number.isSafeInteger(seconds * 1000)
+    ? seconds
+    : undefined;
+};
+
 /** Only an explicit completed rejection preserves legacy no-worker cleanup. */
 export const rejectedOpenDatabaseSchema = z
   .object({
@@ -270,7 +283,7 @@ const hexCoordinate = z
 export const surveySegmentsSchema = z
   .object({
     statistics: z
-      .object({ total_segments: z.number().int().nonnegative().optional() })
+      .object({ total_segments: z.int().nonnegative().optional() })
       .passthrough()
       .optional(),
     segments: z
@@ -305,3 +318,38 @@ export const surveySegmentsSchema = z
         });
     }
   });
+
+/**
+ * Translate a `search_strings` literal query into a candidate regex for upstream
+ * `find_regex` across all IDA protocols (`modern`, `hexrays`, and `native`)
+ * while keeping REA's ECMAScript Unicode simple case folding as the final filter.
+ *
+ * Across all 1,114,112 Unicode code points, only U+017F (`ſ` ↔ `s`/`S`) and
+ * U+212A (`K` ↔ `k`/`K`) fold to ASCII under `/iu`. Spelling them inline as
+ * `(?:[sS]|\u017f)` and `(?:[kK]|\u212a)` matches both Unicode regex engines
+ * (Python `re`) and UTF-8-as-bytes matchers (`ida-free-mcp`) without a catch-all
+ * wildcard that forces every non-ASCII string across paginated RPCs.
+ *
+ * Returns `undefined` when ill-formed UTF-16 surrogates or non-ASCII
+ * case-insensitive characters require unfiltered enumeration.
+ */
+export const idaLiteralSearchPattern = (
+  pattern: string,
+  caseSensitive: boolean,
+): string | undefined => {
+  if (/[\uD800-\uDFFF]/u.test(pattern)) return undefined;
+  if (!caseSensitive && /[\u0080-\u{10ffff}]/u.test(pattern)) return undefined;
+  let literal = (caseSensitive ? pattern : pattern.toLowerCase()).replace(
+    /[.*+?^${}()|[\]\\]/gu,
+    "\\$&",
+  );
+  // Spell ASCII variants (plus U+017F/U+212A simple folds) explicitly rather
+  // than depending on upstream regex case flags or locale rules.
+  if (!caseSensitive)
+    literal = literal.replace(/[a-z]/gu, (char) => {
+      if (char === "s") return "(?:[sS]|\u017f)";
+      if (char === "k") return "(?:[kK]|\u212a)";
+      return `[${char}${char.toUpperCase()}]`;
+    });
+  return literal;
+};

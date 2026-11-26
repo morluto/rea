@@ -1,21 +1,79 @@
+import {
+  unknownTarget,
+  type SessionTargetIdentity,
+} from "../domain/targetIdentity.js";
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
+import {
+  observeDebuggerLaunchFile,
+  retryDebuggerStartupFileCleanup,
+  type DebuggerLaunchFileObservation,
+} from "../process/DebuggerLaunchFile.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { ArtifactResourceScope } from "../resources/index.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import type { JsonValue } from "../domain/jsonValue.js";
+import { commandMayChangeInferiorOutput } from "./GdbCommandClassification.js";
+import {
+  gdbThreadGroupPids,
+  miQuote,
+  miStringField,
+  verifyGdbInferiorOutputSink,
+} from "./GdbInferiorVerification.js";
+import { gdbMiResultHeader, parseGdbMiDoneRecord } from "./GdbMiRecord.js";
+import {
+  GDB_OBSERVATION_AUTHORITY,
+  GDB_PROVIDER_IDENTITY,
+  gdbReportedVersion,
+  type GdbProviderIdentity,
+} from "./GdbProviderIdentity.js";
+import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { waitForCommandTurn } from "../process/AbortablePromise.js";
+import {
+  describeLaunchFailure,
+  launcherFailureOf,
+} from "../process/launchFailure.js";
+import {
+  classifyLaunchFailure,
+  type LaunchUnavailableFailure,
+} from "../process/classifyProviderOutcome.js";
+import { snapshotGdbCommandRecords } from "./GdbCommandRecords.js";
 import { randomUUID } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
 import { isUtf8 } from "node:buffer";
-import { readFile, readlink, realpath, stat } from "node:fs/promises";
 
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisCancelledError,
   AnalysisInputError,
-  AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  OwnerCancellation,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
+import {
+  GDB_SESSION_TOOLS,
+  type DebuggerCleanupIncompleteCode,
+  type DebuggerSessionStop,
+  type DebuggerSessionStopCode,
+  stoppedDebuggerSessionError,
+  unknownDebuggerSessionError,
+} from "../domain/debuggerSessionErrors.js";
 import {
   AnalysisError,
   type AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
-import { createEvidence, type Evidence } from "../domain/evidence.js";
+import {
+  createEvidence,
+  type Evidence,
+  type EvidenceObservationInput,
+} from "../domain/evidence.js";
+import type {
+  GdbCommandResult,
+  GdbOutputLimit,
+} from "../domain/commandObservation.js";
+import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
@@ -23,31 +81,116 @@ import {
   type SpawnedOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
 import {
-  closeOwnedDebuggerSessions,
+  debuggerConstructionLimits,
+  debuggerControlReplyOutput,
+  parseDebuggerCommandDeadline,
+  parseDebuggerCommandOutput,
+  type DebuggerAdmissionLimit,
+} from "../config/debuggerSessionLimits.js";
+import {
+  configurableDeadlineGuidance,
+  debuggerAdmissionDiagnostics,
+  debuggerAdmissionRecovery,
+  debuggerResourceConstraintError,
+  fixedDeadlineGuidance,
+  OwnedDebuggerDetachFailure,
+  incompleteStopFacts,
   stopOwnedDebuggerProcess,
   type OwnedDebuggerDetachResult,
   type OwnedInferiorIdentity,
   type ProcessStartTimeReader,
   verifyOwnedInferiorsEnded,
 } from "../process/ownedDebuggerSession.js";
-import { parseLinuxProcessStartTime } from "../process/ProcessOwnershipObservation.js";
+import {
+  OwnedDebuggerSessionRegistry,
+  cancelledWithCallerReason,
+} from "../process/OwnedDebuggerSessionRegistry.js";
+import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const STARTUP_TIMEOUT_MS = 10_000;
-const COMMAND_TIMEOUT_MS = 120_000;
-const MAX_COMMAND_OUTPUT_BYTES = 16 * 1024 * 1024;
+
+const copiedTimeoutGuidance = (
+  cause: AnalysisTimeoutError,
+): {
+  readonly userMessage?: string;
+  readonly remediationAction?: string;
+  readonly diagnostics?: AnalysisTimeoutError["diagnostics"];
+} => ({
+  ...(cause.userMessage === undefined
+    ? {}
+    : { userMessage: cause.userMessage }),
+  ...(cause.remediationAction === undefined
+    ? {}
+    : { remediationAction: cause.remediationAction }),
+  ...(cause.diagnostics === undefined
+    ? {}
+    : { diagnostics: cause.diagnostics }),
+  ...(cause.limit === undefined ? {} : { limit: cause.limit }),
+});
+/** The selected GDB executable could not be started. */
+const gdbLaunchUnavailable = (
+  command: string,
+  failure: LaunchUnavailableFailure,
+  details: AnalysisErrorOptions,
+): AnalysisCapabilityUnavailableError => {
+  const reason = `Could not launch the selected GDB executable ${JSON.stringify(command)} (${describeLaunchFailure(failure)}).`;
+  return new AnalysisCapabilityUnavailableError(
+    "gdb",
+    "start_gdb_session",
+    reason,
+    {
+      ...details,
+      userMessage: reason,
+      remediationAction:
+        "Set REA_GDB_COMMAND to an installed executable GDB command, or make that command available on PATH. Check execute permission on the command and search permission on its parent directories before retrying.",
+    },
+  );
+};
+
+interface GdbStartOptions {
+  readonly inferiorTty?: string;
+  readonly executable?: string;
+}
+
+type GdbStarted = {
+  readonly session_id: string;
+  readonly mi_version: "mi3" | "mi2";
+};
+
+interface GdbStartupFailure {
+  readonly error: AnalysisError;
+  /** A load attempt or a physical launch refusal cannot be repaired by MI2. */
+  readonly retryDialect: boolean;
+}
+
+interface GdbLaunchFile extends DebuggerLaunchFileObservation {
+  readonly provenance?: {
+    readonly caller_selected_path: string;
+    readonly resolved_path: string;
+  };
+}
+
 const MAX_COMMAND_OUTPUT_RECORDS = 16_384;
 const MAX_MI_LINE_BYTES = 16 * 1024 * 1024;
 const MAX_RECENT_MI_LINE_BYTES = 64 * 1024;
 const MAX_DIAGNOSTIC_BYTES = 64 * 1024;
-const DEFAULT_MAX_SESSIONS = 8;
-const MAX_PENDING_GDB_COMMANDS = 16;
 const RECENT_RECORD_TRUNCATION_MARKER = "[recent record truncated]";
 
-export const GDB_PROVIDER_IDENTITY = {
-  id: "gnu.gdb",
-  name: "GNU GDB",
-  version: null,
-} as const;
+const gdbRetainedOutputLimitations = (
+  result: GdbCommandResult,
+  output: DebuggerAdmissionLimit,
+): string[] =>
+  (result.output_limits ?? []).map((limit) => {
+    switch (limit.kind) {
+      case "command_bytes":
+        return `Retained MI records reached the ${String(limit.maximum)} byte command-output cap. ${debuggerAdmissionRecovery(output)} Retained output is partial.`;
+      case "command_records":
+        return `Retained MI records reached the ${String(limit.maximum)} record cap. This release has no runtime override for that count; REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES does not raise it. Narrow the command's output on the next call. Retained output is partial.`;
+      case "mi_line_bytes":
+        return `GDB emitted a stream record exceeding the ${String(limit.maximum)} byte MI line limit; that record was dropped. This release has no runtime override for that protocol limit; REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES does not raise it. Select a command that emits smaller records on the next call. Retained output is partial.`;
+    }
+  });
 
 interface PendingCommand {
   readonly token: number;
@@ -55,38 +198,47 @@ interface PendingCommand {
   readonly evidenceCommand: string;
   readonly lines: string[];
   outputBytes: number;
-  outputTruncated: boolean;
+  /** Caller output uses the setting. Startup and detach replies use the control budget. */
+  readonly outputBudgetBytes: number;
+  readonly outputLimits: Set<GdbOutputLimit["kind"]>;
   outputInvalidUtf8: boolean;
   terminalRecord: string | undefined;
-  awaitingInferiorStop: boolean;
+  completionToken: number | undefined;
   readonly resolve: (result: GdbCommandResult) => void;
   readonly reject: (error: Error) => void;
   readonly cleanup: () => void;
   timer: ReturnType<typeof setTimeout>;
 }
 
-export interface GdbCommandResult {
-  readonly command: string;
-  readonly mi: string;
-  readonly records: readonly string[];
-  readonly console: string;
-  readonly target: string;
-  readonly log: string;
-  readonly process_exit_observed?: boolean;
-  readonly process_exit_code?: number | null;
-  readonly process_exit_signal?: NodeJS.Signals | null;
-  readonly output_truncated: boolean;
-  readonly completion_status: "complete" | "unknown";
-  readonly output_invalid_utf8?: true;
-}
+/** Preserve the producer's exact exhaustion facts through every completion path. */
+const gdbOutputCapture = (
+  pending: PendingCommand,
+): Pick<GdbCommandResult, "output_truncated" | "output_limits"> => ({
+  output_truncated: pending.outputLimits.size > 0,
+  ...(pending.outputLimits.size === 0
+    ? {}
+    : {
+        output_limits: [...pending.outputLimits].map((kind) => ({
+          kind,
+          maximum:
+            kind === "command_bytes"
+              ? pending.outputBudgetBytes
+              : kind === "command_records"
+                ? MAX_COMMAND_OUTPUT_RECORDS
+                : MAX_MI_LINE_BYTES,
+        })),
+      }),
+});
 
 class GdbCommandTimeoutError extends AnalysisTimeoutError {
   constructor(
     readonly partial: GdbCommandResult,
     readonly evidence: Evidence,
-    timeoutMs: number,
+    deadline: DebuggerAdmissionLimit,
   ) {
-    super("gdb_console", timeoutMs);
+    super("gdb_console", deadline.value, {
+      ...configurableDeadlineGuidance("The GDB MI command", deadline),
+    });
   }
 }
 
@@ -94,143 +246,7 @@ const truncateUtf8RecordPrefix = (line: string): string => {
   const budget =
     MAX_RECENT_MI_LINE_BYTES -
     Buffer.byteLength(RECENT_RECORD_TRUNCATION_MARKER, "utf8");
-  let prefix = "";
-  let retainedBytes = 0;
-  for (const codePoint of line) {
-    const codePointBytes = Buffer.byteLength(codePoint, "utf8");
-    if (retainedBytes + codePointBytes > budget) break;
-    prefix += codePoint;
-    retainedBytes += codePointBytes;
-  }
-  return `${prefix}${RECENT_RECORD_TRUNCATION_MARKER}`;
-};
-
-/** @internal Pure parser for live PIDs in recursive GDB MI thread groups. */
-export const gdbThreadGroupPids = (
-  mi: string,
-): readonly string[] | undefined => {
-  const marker = mi.indexOf("groups=[");
-  if (marker < 0) return undefined;
-  const start = marker + "groups=[".length;
-  let squareDepth = 1;
-  let objectDepth = 0;
-  let quoted = false;
-  let escaped = false;
-  const pids: string[] = [];
-  let fieldStart = start;
-  let pidStart: number | undefined;
-  let hasLivePid = false;
-  let currentPid: string | undefined;
-  for (let index = start; index < mi.length; index += 1) {
-    const character = mi[index];
-    if (quoted) {
-      if (escaped) escaped = false;
-      else if (character === "\\") escaped = true;
-      else if (character === '"') {
-        quoted = false;
-        if (pidStart !== undefined) {
-          const pid = mi.slice(pidStart, index);
-          if (!/^[1-9]\d*$/u.test(pid)) return undefined;
-          hasLivePid = true;
-          currentPid = pid;
-          pidStart = undefined;
-        }
-      }
-      continue;
-    }
-    if (character === '"') {
-      if (
-        squareDepth === 1 &&
-        objectDepth === 1 &&
-        mi.slice(fieldStart, index) === "pid="
-      ) {
-        if (hasLivePid) return undefined;
-        pidStart = index + 1;
-      }
-      quoted = true;
-      continue;
-    }
-    if (character === "[") squareDepth += 1;
-    else if (character === "]") {
-      squareDepth -= 1;
-      if (squareDepth === 0) {
-        if (objectDepth !== 0) return undefined;
-        const body = mi.slice(start, index);
-        if (body.includes("groups=[")) return undefined;
-        return pids;
-      }
-    } else if (character === "{") {
-      if (squareDepth === 1 && objectDepth === 0) {
-        hasLivePid = false;
-        currentPid = undefined;
-        fieldStart = index + 1;
-      }
-      objectDepth += 1;
-    } else if (character === "}") {
-      if (squareDepth === 1 && objectDepth === 1) {
-        const field = mi.slice(fieldStart, index);
-        if (field.startsWith("pid=") && !/^pid="[1-9]\d*"$/u.test(field))
-          return undefined;
-      }
-      objectDepth -= 1;
-      if (objectDepth < 0) return undefined;
-      if (squareDepth === 1 && objectDepth === 0 && hasLivePid) {
-        if (currentPid === undefined) return undefined;
-        pids.push(currentPid);
-      }
-    } else if (character === "," && squareDepth === 1 && objectDepth === 1) {
-      const field = mi.slice(fieldStart, index);
-      if (field.startsWith("pid=") && !/^pid="[1-9]\d*"$/u.test(field))
-        return undefined;
-      fieldStart = index + 1;
-    }
-  }
-  return undefined;
-};
-
-/** @internal Pure count of recursive GDB MI groups with live PIDs. */
-export const gdbThreadGroupCount = (mi: string): number | undefined => {
-  const pids = gdbThreadGroupPids(mi);
-  return pids?.length;
-};
-
-const verifyGdbInferiorOutputSink = async (
-  pid: string,
-  selectedTty: string,
-  rememberIdentity: (identity: OwnedInferiorIdentity) => void,
-): Promise<void> => {
-  if (process.platform !== "linux")
-    throw new Error(
-      "GDB cannot confirm live inferior output descriptors outside Linux /proc.",
-    );
-  const statPath = `/proc/${pid}/stat`;
-  const before = parseLinuxProcessStartTime(await readFile(statPath, "utf8"));
-  if (before === undefined)
-    throw new Error("GDB could not establish the live inferior identity.");
-  const ttyPath = await realpath(selectedTty);
-  const tty = await stat(ttyPath);
-  if ((tty.mode & fsConstants.S_IFMT) !== fsConstants.S_IFCHR)
-    throw new Error("The selected GDB output sink is not a character device.");
-  for (const descriptor of ["1", "2"]) {
-    const descriptorPath = `/proc/${pid}/fd/${descriptor}`;
-    const destination = await readlink(descriptorPath);
-    const observed = await stat(descriptorPath);
-    if (
-      observed.dev !== tty.dev ||
-      observed.ino !== tty.ino ||
-      (observed.mode & fsConstants.S_IFMT) !== fsConstants.S_IFCHR ||
-      (await realpath(destination)) !== ttyPath
-    )
-      throw new Error(
-        `GDB inferior descriptor ${descriptor} no longer points to the selected TTY.`,
-      );
-  }
-  const after = parseLinuxProcessStartTime(await readFile(statPath, "utf8"));
-  if (after !== before)
-    throw new Error(
-      "The GDB inferior identity changed during descriptor readback.",
-    );
-  rememberIdentity({ pid, startTime: before });
+  return `${utf8HeadExcerpt(line, budget).text}${RECENT_RECORD_TRUNCATION_MARKER}`;
 };
 
 class GdbCommandProcessExitError extends Error {
@@ -250,13 +266,12 @@ class GdbProtocolFailureError extends Error {
   }
 }
 
-/** @internal Convert an unknown boundary failure without dropping non-Error values. */
-export const gdbErrorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
-
 interface GdbSession {
   readonly id: string;
+  readonly launchFile: GdbLaunchFile;
   readonly miVersion: "mi3" | "mi2";
+  /** Identity for this session's Evidence; version is set from -gdb-version. */
+  provider: GdbProviderIdentity;
   readonly launched: SpawnedOwnedProviderProcess;
   readonly supervisor: ProviderProcessSupervisor;
   /** Confirms target disposition and any durable sink before process cleanup. */
@@ -265,19 +280,21 @@ interface GdbSession {
   readonly verifyInferiorsEndedAfterExit: () => Promise<boolean>;
   readonly knownInferiorIdentities: Map<string, OwnedInferiorIdentity>;
   readonly inferiorTty: string | undefined;
-  readonly maxCommandOutputBytes: number;
   readonly stdoutSettled: Promise<void>;
   readonly settleStdout: () => void;
   inferiorTtyVerified: boolean;
   noInferiorVerified: boolean;
-  stopAttempt: ReturnType<typeof stopOwnedDebuggerProcess> | undefined;
+  /** Sticky admission seal once destructive cleanup starts, including failed stops. */
+  cleanupStarted: boolean;
+  /** close_gdb_session started cleanup, so a successful retry releases the ID. */
+  closeRequested: boolean;
   readonly pending: Map<number, PendingCommand>;
-  readonly cleanupFailures: Set<AnalysisError>;
   readonly lines: string[];
   readonly bufferChunks: Buffer[];
   bufferTail: Buffer | undefined;
   bufferTailBytes: number;
   bufferBytes: number;
+  discardingOversizedStreamRecord: boolean;
   invalidUtf8Observed: boolean;
   promptTail: string;
   ready: boolean;
@@ -289,28 +306,71 @@ interface GdbSession {
   startupReject: ((error: Error) => void) | undefined;
   commandTail: Promise<void>;
   pendingCommandCount: number;
-  protocolError: string | undefined;
+  protocolError: DebuggerSessionStop | undefined;
   recentRecordsTruncated: boolean;
 }
 
+/**
+ * The session names its initial file selection. Later unrestricted console
+ * commands do not rebind it or establish the current inferior's identity.
+ */
+const gdbSessionSubject = (
+  session: Pick<GdbSession, "id" | "launchFile">,
+): SessionTargetIdentity => ({
+  kind: "session",
+  session_kind: "gdb",
+  id: session.id,
+  target: session.launchFile.identity,
+});
+
+/** Preserve initial selection facts across complete and partial observations. */
+const createGdbSessionEvidence = (
+  session: Pick<GdbSession, "id" | "provider" | "launchFile">,
+  observation: Omit<EvidenceObservationInput, "parameters"> & {
+    readonly parameters: Readonly<Record<string, JsonValue>>;
+  },
+): Evidence => {
+  const { provenance, unobservedReason } = session.launchFile;
+  const withAuthority = {
+    ...observation,
+    authority: observation.authority ?? GDB_OBSERVATION_AUTHORITY,
+  };
+  return createEvidence(
+    gdbSessionSubject(session),
+    session.provider,
+    provenance === undefined
+      ? withAuthority
+      : {
+          ...withAuthority,
+          parameters: {
+            ...observation.parameters,
+            launch_provenance: { ...provenance },
+          },
+          limitations: [
+            "The session target is the initial file selected and hashed before loading; later debugger commands do not rebind it or establish the current inferior's identity.",
+            ...(unobservedReason === undefined
+              ? []
+              : [
+                  `The launch file could not be hashed at session start, so the session target is unknown: ${unobservedReason}`,
+                ]),
+            ...(observation.limitations ?? []),
+          ],
+        },
+  );
+};
+
+const gdbCloseUnavailable = (): AnalysisInputError =>
+  unknownDebuggerSessionError(GDB_SESSION_TOOLS, "close_gdb_session");
+
 /** Owns persistent GDB/MI sessions independently from the active binary target. */
 export class GdbSessionManager {
-  readonly #sessions = new Map<string, GdbSession>();
-  readonly #activeStarts = new Map<
-    AbortController,
-    Promise<
-      Result<
-        { readonly session_id: string; readonly mi_version: "mi3" | "mi2" },
-        AnalysisError
-      >
-    >
-  >();
+  readonly #startupResources = new ArtifactResourceScope();
+  readonly #sessions: OwnedDebuggerSessionRegistry<GdbSession>;
   readonly #command: string;
   readonly #environment: NodeJS.ProcessEnv;
-  readonly #commandTimeoutMs: number;
+  readonly #launchCommandDeadline: DebuggerAdmissionLimit;
   readonly #startupTimeoutMs: number;
   readonly #platform: NodeJS.Platform;
-  readonly #stopProcess: typeof stopOwnedDebuggerProcess;
   readonly #spawnProcess: typeof spawnOwnedProviderProcess;
   readonly #verifyInferiorOutputSink: (
     pid: string,
@@ -318,16 +378,45 @@ export class GdbSessionManager {
     rememberIdentity: (identity: OwnedInferiorIdentity) => void,
   ) => Promise<void>;
   readonly #readInferiorProcessStartTime: ProcessStartTimeReader | undefined;
-  readonly #maxSessions: number;
-  readonly #maxCommandOutputBytes: number;
-  #sessionReservations = 0;
+  readonly #maxSessions: DebuggerAdmissionLimit;
+  readonly #maxPendingCommands: DebuggerAdmissionLimit;
+  readonly #launchCommandOutput: DebuggerAdmissionLimit;
+  get #commandDeadline(): DebuggerAdmissionLimit {
+    const override =
+      currentAnalysisOperationSnapshot()?.overrides[
+        "debugger.command_deadline_ms"
+      ];
+    if (override !== undefined)
+      return {
+        ...this.#launchCommandDeadline,
+        value: override,
+        source: "runtime",
+      };
+    const parsed = parseDebuggerCommandDeadline(this.#environment);
+    if (!parsed.ok) throw parsed.error;
+    return parsed.value;
+  }
+  get #commandOutput(): DebuggerAdmissionLimit {
+    const override =
+      currentAnalysisOperationSnapshot()?.overrides[
+        "debugger.max_command_output_bytes"
+      ];
+    if (override !== undefined)
+      return {
+        ...this.#launchCommandOutput,
+        value: override,
+        source: "runtime",
+      };
+    const parsed = parseDebuggerCommandOutput(this.#environment);
+    if (!parsed.ok) throw parsed.error;
+    return parsed.value;
+  }
   #closing = false;
   #closePromise: Promise<void> | undefined;
 
   constructor(
     options: {
       readonly environment?: Readonly<NodeJS.ProcessEnv>;
-      readonly commandTimeoutMs?: number;
       readonly startupTimeoutMs?: number;
       readonly platform?: NodeJS.Platform;
       readonly stopProcess?: typeof stopOwnedDebuggerProcess;
@@ -340,35 +429,51 @@ export class GdbSessionManager {
       ) => Promise<void>;
       /** @internal Read-only process identity observer for lifecycle tests. */
       readonly readInferiorProcessStartTime?: ProcessStartTimeReader;
-      readonly maxSessions?: number;
-      /** @internal Test seam; production callers should use the 16 MiB default. */
-      readonly maxCommandOutputBytes?: number;
     } = {},
   ) {
     this.#environment = { ...(options.environment ?? process.env) };
     this.#command = this.#environment.REA_GDB_COMMAND ?? "gdb";
-    this.#commandTimeoutMs = options.commandTimeoutMs ?? COMMAND_TIMEOUT_MS;
+    const limits = debuggerConstructionLimits(this.#environment);
+    this.#launchCommandDeadline = limits.commandDeadline;
     this.#startupTimeoutMs = options.startupTimeoutMs ?? STARTUP_TIMEOUT_MS;
-    this.#platform = options.platform ?? process.platform;
-    this.#stopProcess = options.stopProcess ?? stopOwnedDebuggerProcess;
+    this.#platform = options.platform ?? HOST_PLATFORM.platform;
+    const stopProcess = options.stopProcess ?? stopOwnedDebuggerProcess;
+    this.#sessions = new OwnedDebuggerSessionRegistry({
+      provider: "gdb",
+      displayName: "GDB",
+      sealSession: (session) => {
+        session.cleanupStarted = true;
+      },
+      stopProcess: (session) => stopProcess(session, "GDB"),
+      stopFailurePrefix: "Owned GDB shutdown failed",
+    });
     this.#spawnProcess = options.spawnProcess ?? spawnOwnedProviderProcess;
     this.#verifyInferiorOutputSink =
       options.verifyInferiorOutputSink ?? verifyGdbInferiorOutputSink;
     this.#readInferiorProcessStartTime = options.readInferiorProcessStartTime;
-    this.#maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS;
-    this.#maxCommandOutputBytes =
-      options.maxCommandOutputBytes ?? MAX_COMMAND_OUTPUT_BYTES;
+    this.#maxSessions = limits.maxSessions;
+    this.#maxPendingCommands = limits.maxPendingCommands;
+    this.#launchCommandOutput = limits.maxCommandOutputBytes;
   }
 
   async start(
     signal?: AbortSignal,
-    options: { readonly inferiorTty?: string } = {},
-  ): Promise<
-    Result<
-      { readonly session_id: string; readonly mi_version: "mi3" | "mi2" },
-      AnalysisError
-    >
-  > {
+    options: GdbStartOptions = {},
+  ): Promise<Result<GdbStarted, AnalysisError>> {
+    if (
+      options.executable !== undefined &&
+      (options.executable.length === 0 || options.executable.includes("\0"))
+    )
+      return err(
+        new AnalysisInputError("start_gdb_session", undefined, [
+          {
+            path: ["executable"],
+            reason: "invalid_value",
+            message:
+              "The executable path must be non-empty and must not contain NUL.",
+          },
+        ]),
+      );
     if (
       options.inferiorTty !== undefined &&
       (options.inferiorTty.length === 0 || options.inferiorTty.includes("\0"))
@@ -383,9 +488,17 @@ export class GdbSessionManager {
           },
         ]),
       );
-    if (this.#closing || signal?.aborted)
-      return err(new AnalysisCancelledError("start_gdb_session"));
-    if (this.#platform !== "linux")
+    return this.#sessions.start("start_gdb_session", signal, (started) =>
+      this.#startWithReservation(started, options),
+    );
+  }
+
+  async #startWithReservation(
+    signal: AbortSignal,
+    options: GdbStartOptions = {},
+  ): Promise<Result<GdbStarted, AnalysisError>> {
+    if (signal?.aborted) return err(cancelledBy("start_gdb_session", signal));
+    if (!persistentDebuggerHostSupported(this.#platform))
       return err(
         new AnalysisCapabilityUnavailableError(
           "gdb",
@@ -395,51 +508,24 @@ export class GdbSessionManager {
             : "Persistent GDB sessions are available only on Linux because REA verifies live inferior output descriptors through /proc.",
         ),
       );
-    const controller = new AbortController();
-    const relayAbort = (): void => controller.abort(signal?.reason);
-    signal?.addEventListener("abort", relayAbort, { once: true });
-    if (signal?.aborted) relayAbort();
-    const tracked = Promise.resolve()
-      .then(() => this.#startWithReservation(controller.signal, options))
-      .finally(() => {
-        signal?.removeEventListener("abort", relayAbort);
-        this.#activeStarts.delete(controller);
-      });
-    this.#activeStarts.set(controller, tracked);
-    return tracked;
-  }
-
-  async #startWithReservation(
-    signal: AbortSignal,
-    options: { readonly inferiorTty?: string } = {},
-  ): Promise<
-    Result<
-      { readonly session_id: string; readonly mi_version: "mi3" | "mi2" },
-      AnalysisError
-    >
-  > {
-    if (signal?.aborted)
-      return err(new AnalysisCancelledError("start_gdb_session"));
-    const occupied = this.#sessions.size + this.#sessionReservations;
-    if (occupied >= this.#maxSessions)
+    const files = await this.#retryStartupFileCleanup();
+    if (!files.ok) return files;
+    const occupied = this.#sessions.occupied();
+    if (occupied >= this.#maxSessions.value)
       return err(
-        new AnalysisResourceConstraintError(
+        debuggerResourceConstraintError(
           "start_gdb_session",
           "memory",
-          "GDB session capacity reached.",
+          `GDB session capacity reached (${String(this.#maxSessions.value)} sessions).`,
+          "Close a GDB session before starting another; a stopped session that gdb_session_status reports closed still holds its slot until close_gdb_session releases it.",
+          this.#maxSessions,
           {
-            max_sessions: this.#maxSessions,
+            max_sessions: this.#maxSessions.value,
             active_or_reserved_sessions: occupied,
           },
         ),
       );
-    this.#sessionReservations += 1;
-    let reservationHeld = true;
-    const releaseReservation = (): void => {
-      if (!reservationHeld) return;
-      reservationHeld = false;
-      this.#sessionReservations -= 1;
-    };
+    const releaseReservation = this.#sessions.reserve();
     try {
       return await this.#startReserved(releaseReservation, signal, options);
     } finally {
@@ -450,30 +536,48 @@ export class GdbSessionManager {
   async #startReserved(
     releaseReservation: () => void,
     signal: AbortSignal,
-    options: { readonly inferiorTty?: string } = {},
-  ): Promise<
-    Result<
-      { readonly session_id: string; readonly mi_version: "mi3" | "mi2" },
-      AnalysisError
-    >
-  > {
+    options: GdbStartOptions = {},
+  ): Promise<Result<GdbStarted, AnalysisError>> {
+    let launchFile: GdbLaunchFile = { identity: unknownTarget("not-observed") };
+    if (options.executable !== undefined) {
+      const resolved = absoluteCallerPath(options.executable);
+      const observed = await observeDebuggerLaunchFile(resolved, {
+        provider: "gdb",
+        operation: "start_gdb_session",
+        resources: this.#startupResources,
+        signal,
+      });
+      if (!observed.ok) return observed;
+      launchFile = {
+        ...observed.value,
+        provenance: {
+          caller_selected_path: options.executable,
+          resolved_path: resolved,
+        },
+      };
+    }
+    if (signal.aborted) return err(cancelledBy("start_gdb_session", signal));
     const id = randomUUID();
     const mi3 = await this.#startProtocol(
       id,
       "mi3",
       releaseReservation,
       signal,
-      options.inferiorTty,
+      options,
+      launchFile,
     );
-    return mi3.ok || signal.aborted || this.#sessions.has(id)
-      ? mi3
-      : this.#startProtocol(
-          id,
-          "mi2",
-          releaseReservation,
-          signal,
-          options.inferiorTty,
-        );
+    if (mi3.ok) return mi3;
+    if (signal.aborted || this.#sessions.has(id) || !mi3.error.retryDialect)
+      return err(mi3.error.error);
+    const mi2 = await this.#startProtocol(
+      id,
+      "mi2",
+      releaseReservation,
+      signal,
+      options,
+      launchFile,
+    );
+    return mi2.ok ? mi2 : err(mi2.error.error);
   }
 
   async #startProtocol(
@@ -481,13 +585,13 @@ export class GdbSessionManager {
     miVersion: "mi3" | "mi2",
     releaseReservation: () => void,
     signal: AbortSignal,
-    inferiorTty?: string,
-  ): Promise<
-    Result<
-      { readonly session_id: string; readonly mi_version: "mi3" | "mi2" },
-      AnalysisError
-    >
-  > {
+    options: GdbStartOptions,
+    launchFile: GdbLaunchFile,
+  ): Promise<Result<GdbStarted, GdbStartupFailure>> {
+    const { inferiorTty } = options;
+    let loadAttempted = false;
+    const failed = (error: AnalysisError, retryDialect = !loadAttempted) =>
+      err({ error, retryDialect });
     let launched: SpawnedOwnedProviderProcess;
     try {
       const spawnOptions: OwnedProviderProcessSpawnOptions = {
@@ -500,13 +604,32 @@ export class GdbSessionManager {
       };
       launched = await this.#spawnProcess(spawnOptions);
     } catch (cause) {
-      if (signal?.aborted || cause instanceof AnalysisCancelledError)
-        return err(new AnalysisCancelledError("start_gdb_session", { cause }));
-      return err(
+      if (
+        (signal?.aborted && cause === signal.reason) ||
+        cause instanceof AnalysisCancelledError
+      )
+        return failed(cancelledBy("start_gdb_session", carriedReason(cause)));
+      const launch = launcherFailureOf(cause);
+      if (launch !== undefined) {
+        const command = this.#command;
+        const failure = classifyLaunchFailure(launch, {
+          providerId: "gdb",
+          operation: "start_gdb_session",
+          command,
+          fixedArguments: true,
+          selection: "REA_GDB_COMMAND",
+          details: { cause },
+          unavailable: (unavailable, details) =>
+            gdbLaunchUnavailable(command, unavailable, details),
+        });
+        return failed(failure, false);
+      }
+      return failed(
         new AnalysisCapabilityUnavailableError(
           "gdb",
           "start_gdb_session",
           cause instanceof Error ? cause.message : "Unable to start GDB",
+          { cause },
         ),
       );
     }
@@ -520,7 +643,9 @@ export class GdbSessionManager {
     });
     const session: GdbSession = {
       id,
+      launchFile,
       miVersion,
+      provider: GDB_PROVIDER_IDENTITY,
       launched,
       supervisor,
       detachInferior: () => this.#detachInferior(session),
@@ -535,21 +660,21 @@ export class GdbSessionManager {
       },
       knownInferiorIdentities: new Map(),
       inferiorTty,
-      maxCommandOutputBytes: this.#maxCommandOutputBytes,
       stdoutSettled,
       settleStdout,
       inferiorTtyVerified: false,
       // GDB is launched with --nx and receives no target-execution commands
       // during startup, so no inferior can exist until execute() is called.
       noInferiorVerified: true,
-      stopAttempt: undefined,
+      cleanupStarted: false,
+      closeRequested: false,
       pending: new Map(),
-      cleanupFailures: new Set(),
       lines: [],
       bufferChunks: [],
       bufferTail: undefined,
       bufferTailBytes: 0,
       bufferBytes: 0,
+      discardingOversizedStreamRecord: false,
       invalidUtf8Observed: false,
       promptTail: "",
       ready: false,
@@ -573,10 +698,18 @@ export class GdbSessionManager {
     if (launched.process.stdout === null) settleStdout();
     else launched.process.stdout.once("end", settleStdout);
     launched.process.stdin?.on("error", (cause: Error) =>
-      this.#failProtocol(session, `GDB stdin stream failed: ${cause.message}`),
+      this.#failProtocol(
+        session,
+        "input-stream-failure",
+        `GDB stdin stream failed: ${cause.message}`,
+      ),
     );
     launched.process.stdin?.once("close", () =>
-      this.#failProtocol(session, "GDB stdin stream closed unexpectedly."),
+      this.#failProtocol(
+        session,
+        "input-stream-failure",
+        "GDB stdin stream closed unexpectedly.",
+      ),
     );
     launched.process.once("exit", (code, signalCode) => {
       session.exited = true;
@@ -598,7 +731,7 @@ export class GdbSessionManager {
         session.startupResolve = resolve;
         session.startupReject = reject;
         startupAbortListener = () =>
-          reject(new AnalysisCancelledError("start_gdb_session"));
+          reject(cancelledBy("start_gdb_session", signal));
         signal?.addEventListener("abort", startupAbortListener, {
           once: true,
         });
@@ -613,6 +746,10 @@ export class GdbSessionManager {
                   cause: new Error(
                     "GDB did not emit the MI prompt before the startup deadline",
                   ),
+                  ...fixedDeadlineGuidance(
+                    "GDB startup",
+                    this.#startupTimeoutMs,
+                  ),
                 },
               ),
             ),
@@ -620,16 +757,32 @@ export class GdbSessionManager {
         );
         startupTimer.unref();
       });
-      session.ready = true;
-      if (signal?.aborted)
-        throw new AnalysisCancelledError("start_gdb_session");
+      if (signal?.aborted) throw cancelledBy("start_gdb_session", signal);
+      // -gdb-version loads nothing, so it may precede the auto-load setting.
+      const reported = await this.#request(
+        session,
+        "-gdb-version",
+        signal,
+        "start_gdb_session",
+      );
+      // The version is text: a lossy decode would report replacement text.
+      if (
+        reported.completion_status === "complete" &&
+        !reported.output_truncated &&
+        reported.output_invalid_utf8 !== true &&
+        parseGdbMiDoneRecord(reported.mi).ok
+      )
+        session.provider = {
+          ...GDB_PROVIDER_IDENTITY,
+          version: gdbReportedVersion(reported.records),
+        };
       const autoLoad = await this.#request(
         session,
         "-gdb-set auto-load off",
         signal,
         "start_gdb_session",
       );
-      if (!/^\d+\^done(?:,|$)/u.test(autoLoad.mi)) {
+      if (!parseGdbMiDoneRecord(autoLoad.mi).ok) {
         throw new AnalysisCapabilityUnavailableError(
           "gdb",
           "start_gdb_session",
@@ -646,7 +799,7 @@ export class GdbSessionManager {
         if (
           configured.completion_status !== "complete" ||
           configured.output_truncated ||
-          !/^\d+\^done(?:,|$)/u.test(configured.mi)
+          !parseGdbMiDoneRecord(configured.mi).ok
         )
           throw new AnalysisCapabilityUnavailableError(
             "gdb",
@@ -665,7 +818,7 @@ export class GdbSessionManager {
             ? miStringField(observed.mi, "inferior_tty_terminal")
             : undefined;
         if (
-          !/^\d+\^done(?:,|$)/u.test(observed.mi) ||
+          !parseGdbMiDoneRecord(observed.mi).ok ||
           reportedTty !== inferiorTty
         )
           throw new AnalysisCapabilityUnavailableError(
@@ -675,20 +828,41 @@ export class GdbSessionManager {
           );
         session.inferiorTtyVerified = true;
       }
-      if (signal?.aborted)
-        throw new AnalysisCancelledError("start_gdb_session");
+      if (launchFile.provenance !== undefined) {
+        loadAttempted = true;
+        const loaded = await this.#request(
+          session,
+          `-file-exec-and-symbols ${miQuote(launchFile.provenance.resolved_path)}`,
+          signal,
+          "start_gdb_session",
+        );
+        if (
+          loaded.completion_status !== "complete" ||
+          loaded.output_truncated ||
+          !parseGdbMiDoneRecord(loaded.mi).ok
+        )
+          throw new AnalysisCapabilityUnavailableError(
+            "gdb",
+            "start_gdb_session",
+            `GDB did not confirm loading the selected executable (${loaded.mi}). Check the selected file and GDB's load diagnostic before retrying start_gdb_session.`,
+          );
+      }
+      if (signal?.aborted) throw cancelledBy("start_gdb_session", signal);
       // Give queued exit notifications a turn before publishing startup.
       await new Promise<void>((resolve) => setImmediate(resolve));
-      if (signal?.aborted)
-        throw new AnalysisCancelledError("start_gdb_session");
+      if (signal?.aborted) throw cancelledBy("start_gdb_session", signal);
       if (session.exited || session.protocolError !== undefined)
         throw new Error(
-          session.protocolError ?? "GDB exited during startup readiness.",
+          session.protocolError?.reason ??
+            "GDB exited during startup readiness.",
         );
-      // Before this point no target command can run. Once a usable session is
-      // published, the inferior state is no longer inferred from startup phase.
+      // Publish readiness only after every mandatory startup check completes.
+      // Retained failed-start owners remain addressable for cleanup, not work.
+      session.ready = true;
+      // Before publication no target command can run. Once usable, the
+      // inferior state is no longer inferred from startup phase.
       session.noInferiorVerified = false;
-      this.#sessions.set(id, session);
+      this.#sessions.add(session);
       releaseReservation();
       return ok({ session_id: id, mi_version: miVersion });
     } catch (cause) {
@@ -701,16 +875,7 @@ export class GdbSessionManager {
             ? {
                 command: "GDB startup",
                 mi: "",
-                records: [...session.lines],
-                console: session.lines
-                  .filter((line) => line.startsWith("~"))
-                  .join("\n"),
-                target: session.lines
-                  .filter((line) => line.startsWith("@"))
-                  .join("\n"),
-                log: session.lines
-                  .filter((line) => line.startsWith("&"))
-                  .join("\n"),
+                ...snapshotGdbCommandRecords(session.lines),
                 process_exit_observed: true,
                 process_exit_code: session.exitCode,
                 process_exit_signal: session.exitSignal,
@@ -724,16 +889,7 @@ export class GdbSessionManager {
           ? {
               command: "GDB startup",
               mi: "",
-              records: [...session.lines],
-              console: session.lines
-                .filter((line) => line.startsWith("~"))
-                .join("\n"),
-              target: session.lines
-                .filter((line) => line.startsWith("@"))
-                .join("\n"),
-              log: session.lines
-                .filter((line) => line.startsWith("&"))
-                .join("\n"),
+              ...snapshotGdbCommandRecords(session.lines),
               output_truncated: session.recentRecordsTruncated,
               completion_status: "unknown" as const,
             }
@@ -750,7 +906,7 @@ export class GdbSessionManager {
       const startupEvidence =
         startupEvidencePayload === undefined
           ? undefined
-          : createEvidence(undefined, GDB_PROVIDER_IDENTITY, {
+          : createGdbSessionEvidence(session, {
               predicateType: "rea.debugger.startup-observation",
               operation: "start_gdb_session",
               parameters: {
@@ -761,13 +917,8 @@ export class GdbSessionManager {
                 ...startupEvidencePayload,
                 records: [...startupEvidencePayload.records],
               },
-              rawResult: {
-                ...startupEvidencePayload,
-                records: [...startupEvidencePayload.records],
-              },
-              subjectUnavailableReason:
-                "No usable debugger session became ready during GDB startup.",
               limitations: [
+                "No usable debugger session became ready during GDB startup.",
                 "GDB startup failed before a usable session could be established; captured startup records are incomplete.",
                 ...(session.invalidUtf8Observed
                   ? [
@@ -776,65 +927,98 @@ export class GdbSessionManager {
                   : []),
               ],
             });
-      const processOutput = session.supervisor.snapshot();
-      const capturedOutput = {
-        stdout: processOutput.stdout.text,
-        stderr: processOutput.stderr.text,
-        truncated:
-          processOutput.diagnosticTruncated === true ||
-          processOutput.stdout.observedBytes > processOutput.stdout.bytes ||
-          processOutput.stderr.observedBytes > processOutput.stderr.bytes,
-        stdout_bytes: processOutput.stdout.observedBytes,
-        stderr_bytes: processOutput.stderr.observedBytes,
-        exit_code: processOutput.exitCode ?? null,
-        signal: processOutput.signal ?? null,
-      };
+      const capturedOutput = capturedProviderOutput(
+        session.supervisor.snapshot(),
+      );
       const stopped = await this.#stopDebuggerOnly(session);
       if (stopped.status === "incomplete") {
-        this.#sessions.set(id, session);
+        this.#sessions.add(session);
         releaseReservation();
-        const cleanup = { reason: stopped.reason, resources: [session.id] };
-        const details = {
-          cause,
+        const cleanupFailure = this.#sessions.retainCleanupFailure(
+          session,
+          "start_gdb_session",
+          stopped,
+          { cause },
+        );
+        const retainCleanup = <T extends AnalysisError>(failure: T): T =>
+          failure.bindCleanupDependencies([cleanupFailure], {
+            cleanupResources: [session.id],
+          });
+        const { cleanup, diagnostics } = incompleteStopFacts(stopped, [
+          session.id,
+        ]);
+        const detailsWithoutCause = {
           capturedOutput,
           cleanup,
+          diagnostics,
           ...(startupEvidence === undefined
             ? {}
             : { partialObservation: startupEvidence }),
         };
+        const details = { cause, ...detailsWithoutCause };
         if (cause instanceof AnalysisTimeoutError)
-          return err(
-            new AnalysisTimeoutError(cause.operation, cause.timeoutMs, details),
+          return failed(
+            retainCleanup(
+              new AnalysisTimeoutError(cause.operation, cause.timeoutMs, {
+                ...details,
+                ...copiedTimeoutGuidance(cause),
+              }),
+            ),
           );
         if (cause instanceof AnalysisCancelledError)
-          return err(new AnalysisCancelledError(cause.operation, details));
-        const startupFailureMessage = gdbErrorMessage(cause);
-        return err(
-          new AnalysisCapabilityUnavailableError(
-            "gdb",
-            "start_gdb_session",
-            `GDB startup failed (${startupFailureMessage}) and its owned process could not be confirmed stopped: ${stopped.reason}`,
-            details,
+          return failed(
+            retainCleanup(
+              cancelledBy(
+                cause.operation,
+                carriedReason(cause),
+                detailsWithoutCause,
+              ),
+            ),
+          );
+        const startupFailureMessage = errorMessage(cause);
+        return failed(
+          retainCleanup(
+            new AnalysisCapabilityUnavailableError(
+              "gdb",
+              "start_gdb_session",
+              `GDB startup failed (${startupFailureMessage}) and its owned process could not be confirmed stopped: ${stopped.reason}`,
+              session.protocolError === undefined
+                ? details
+                : {
+                    ...details,
+                    diagnostics: {
+                      ...diagnostics,
+                      session_stop: session.protocolError.code,
+                    },
+                  },
+            ),
           ),
         );
       }
-      const errorDetails = {
-        cause,
+      const errorDetailsWithoutCause = {
         capturedOutput,
         ...(startupEvidence === undefined
           ? {}
           : { partialObservation: startupEvidence }),
       };
+      const errorDetails = { cause, ...errorDetailsWithoutCause };
       const error =
-        signal?.aborted || cause instanceof AnalysisCancelledError
-          ? new AnalysisCancelledError("start_gdb_session", errorDetails)
+        cause instanceof AnalysisCancelledError
+          ? cancelledBy(
+              "start_gdb_session",
+              carriedReason(cause),
+              errorDetailsWithoutCause,
+            )
           : cause instanceof AnalysisTimeoutError
             ? new AnalysisTimeoutError(
                 cause instanceof GdbCommandTimeoutError
                   ? "start_gdb_session"
                   : cause.operation,
                 cause.timeoutMs,
-                errorDetails,
+                {
+                  ...errorDetails,
+                  ...copiedTimeoutGuidance(cause),
+                },
               )
             : cause instanceof AnalysisCapabilityUnavailableError
               ? new AnalysisCapabilityUnavailableError(
@@ -847,16 +1031,19 @@ export class GdbSessionManager {
                 ? new AnalysisCapabilityUnavailableError(
                     "gdb",
                     "start_gdb_session",
-                    session.protocolError,
-                    errorDetails,
+                    session.protocolError.reason,
+                    {
+                      ...errorDetails,
+                      diagnostics: { session_stop: session.protocolError.code },
+                    },
                   )
                 : new AnalysisCapabilityUnavailableError(
                     "gdb",
                     "start_gdb_session",
-                    `GDB startup failed (${gdbErrorMessage(cause)}).`,
+                    `GDB startup failed (${errorMessage(cause)}).`,
                     errorDetails,
                   );
-      return err(error);
+      return failed(error);
     } finally {
       clearTimeout(startupTimer);
       signal?.removeEventListener("abort", startupAbortListener);
@@ -874,33 +1061,42 @@ export class GdbSessionManager {
     >
   > {
     const session = this.#sessions.get(sessionId);
-    if (
-      this.#closing ||
-      session === undefined ||
-      !session.ready ||
-      session.exited ||
-      session.protocolError !== undefined
-    )
+    if (session === undefined)
+      return err(unknownDebuggerSessionError(GDB_SESSION_TOOLS, "gdb_console"));
+    const stopped = this.#stopReason(session);
+    if (stopped !== undefined)
       return err(
-        new AnalysisInputError("gdb_console", undefined, [
-          {
-            path: ["session_id"],
-            reason: "invalid_value",
-            message: "GDB session is unavailable or closed.",
-          },
-        ]),
+        stoppedDebuggerSessionError(GDB_SESSION_TOOLS, "gdb_console", stopped),
       );
-    if (signal?.aborted) return err(new AnalysisCancelledError("gdb_console"));
+    if (signal?.aborted)
+      return err(cancelledWithCallerReason("gdb_console", signal));
     try {
       const completed = await this.#serialize(
         session,
         async () => {
-          if (session.exited || session.protocolError !== undefined)
-            return err(new AnalysisInputError("gdb_console"));
+          // Retained cleanup ownership and a delayed exit event do not imply
+          // command readiness. Recheck admission when this queued turn starts.
+          // Every path that releases a session first records why it stopped.
+          const stoppedWhileQueued = this.#stopReason(session);
+          if (stoppedWhileQueued !== undefined)
+            return err(
+              stoppedDebuggerSessionError(
+                GDB_SESSION_TOOLS,
+                "gdb_console",
+                stoppedWhileQueued,
+              ),
+            );
           session.noInferiorVerified = false;
           session.knownInferiorIdentities.clear();
           if (commandMayChangeInferiorOutput(command))
             session.inferiorTtyVerified = false;
+          const accepted = readRuntimeSetting(() => ({
+            deadline: this.#commandDeadline,
+            output: this.#commandOutput,
+          }));
+          if (!accepted.ok) return accepted;
+          const { deadline: acceptedDeadline, output: acceptedOutput } =
+            accepted.value;
           try {
             const result = await this.#request(
               session,
@@ -908,53 +1104,45 @@ export class GdbSessionManager {
               signal,
               "gdb_console",
               command,
+              accepted.value,
             );
-            const evidence = createEvidence(
-              undefined,
-              { id: "gnu.gdb", name: "GNU GDB", version: null },
-              {
-                predicateType: "rea.debugger.console-observation",
-                operation: "gdb_console",
-                parameters: { session_id: sessionId, command },
-                result: {
-                  command,
-                  mi: result.mi,
-                  records: [...result.records],
-                  console: result.console,
-                  target: result.target,
-                  log: result.log,
-                  output_truncated: result.output_truncated,
-                  ...(result.output_invalid_utf8
-                    ? { output_invalid_utf8: true as const }
-                    : {}),
-                  completion_status: result.completion_status,
-                },
-                rawResult: {
-                  command,
-                  mi: result.mi,
-                  records: [...result.records],
-                  console: result.console,
-                  target: result.target,
-                  log: result.log,
-                  output_truncated: result.output_truncated,
-                  ...(result.output_invalid_utf8
-                    ? { output_invalid_utf8: true as const }
-                    : {}),
-                  completion_status: result.completion_status,
-                },
-                subjectUnavailableReason:
-                  "The active GDB inferior identity is not established by the debugger session identifier.",
-                limitations: [
-                  "MI records are returned as decoded text; their semantics depend on GDB version and target.",
-                  ...(result.output_invalid_utf8
-                    ? [
-                        "MI stream bytes were not valid UTF-8; returned text contains replacement characters.",
-                      ]
-                    : []),
-                  "The unrestricted GDB console can access local shell, filesystem, network, and target controls.",
-                ],
+            const evidence = createGdbSessionEvidence(session, {
+              predicateType: "rea.debugger.console-observation",
+              operation: "gdb_console",
+              parameters: { session_id: sessionId, command },
+              result: {
+                command,
+                mi: result.mi,
+                records: [...result.records],
+                console: result.console,
+                target: result.target,
+                log: result.log,
+                output_truncated: result.output_truncated,
+                ...(result.output_limits === undefined
+                  ? {}
+                  : { output_limits: result.output_limits }),
+                ...(result.output_invalid_utf8
+                  ? { output_invalid_utf8: true as const }
+                  : {}),
+                completion_status: result.completion_status,
               },
-            );
+              limitations: [
+                "The active GDB inferior identity is not established by the debugger session identifier.",
+                ...(result.mi.length === 0
+                  ? [
+                      "A separately tokenized read-only query confirmed return to GDB's command loop. The original result record could not be framed independently from raw stdout; its bytes remain in records and its result class is unknown.",
+                    ]
+                  : []),
+                "MI records are returned as decoded text; their semantics depend on GDB version and target.",
+                ...gdbRetainedOutputLimitations(result, acceptedOutput),
+                ...(result.output_invalid_utf8
+                  ? [
+                      "MI stream bytes were not valid UTF-8; returned text contains replacement characters.",
+                    ]
+                  : []),
+                "The unrestricted GDB console can access local shell, filesystem, network, and target controls.",
+              ],
+            });
             return ok({ result, evidence });
           } catch (cause) {
             if (cause instanceof AnalysisCancelledError) return err(cause);
@@ -972,42 +1160,47 @@ export class GdbSessionManager {
                 ...processExit.partial,
                 command,
               };
-              const evidence = createEvidence(
-                undefined,
-                { id: "gnu.gdb", name: "GNU GDB", version: null },
-                {
-                  predicateType: "rea.debugger.console-observation",
-                  operation: "gdb_console",
-                  parameters: { session_id: sessionId, command },
-                  result: { ...result, records: [...result.records] },
-                  rawResult: { ...result, records: [...result.records] },
-                  subjectUnavailableReason:
-                    "The active GDB inferior identity is not established by the debugger session identifier.",
-                  limitations: [
-                    "GDB exited before returning a correlated MI result record; only records retained for the active command are returned raw.",
-                    ...(result.output_truncated
-                      ? [
-                          "Retained MI records are a truncated prefix; output completeness is unknown.",
-                        ]
-                      : []),
-                  ],
-                },
-              );
+              const evidence = createGdbSessionEvidence(session, {
+                predicateType: "rea.debugger.console-observation",
+                operation: "gdb_console",
+                parameters: { session_id: sessionId, command },
+                result: { ...result, records: [...result.records] },
+                limitations: [
+                  "The active GDB inferior identity is not established by the debugger session identifier.",
+                  "GDB exited before returning a correlated MI result record; only records retained for the active command are returned raw.",
+                  ...gdbRetainedOutputLimitations(result, acceptedOutput),
+                ],
+              });
               const stopped = await this.#stopDebuggerOnly(session);
               if (stopped.status === "incomplete")
                 return err(
-                  this.#retainCleanupFailure(
+                  this.#sessions.retainCleanupFailure(
                     session,
                     "gdb_console",
-                    stopped.reason,
-                    { cause, partialObservation: evidence },
+                    stopped,
+                    {
+                      cause,
+                      partialObservation: evidence,
+                      ...(result.output_limits?.some(
+                        (limit) => limit.kind === "command_bytes",
+                      )
+                        ? {
+                            diagnostics:
+                              debuggerAdmissionDiagnostics(acceptedOutput),
+                          }
+                        : {}),
+                    },
                   ),
                 );
               return ok({ result, evidence });
             }
             return err(
-              new AnalysisTimeoutError("gdb_console", this.#commandTimeoutMs, {
+              new AnalysisTimeoutError("gdb_console", acceptedDeadline.value, {
                 cause,
+                ...configurableDeadlineGuidance(
+                  "The GDB MI command",
+                  acceptedDeadline,
+                ),
               }),
             );
           }
@@ -1016,14 +1209,14 @@ export class GdbSessionManager {
         "gdb_console",
       );
       if (!completed.ok && completed.error.cleanupIncomplete)
-        session.cleanupFailures.add(completed.error);
+        this.#sessions.retain(session, completed.error);
       return completed;
     } catch (cause) {
       const error =
         cause instanceof AnalysisError
           ? cause
-          : new AnalysisCancelledError("gdb_console", { cause });
-      if (error.cleanupIncomplete) session.cleanupFailures.add(error);
+          : cancelledBy("gdb_console", carriedReason(cause));
+      if (error.cleanupIncomplete) this.#sessions.retain(session, error);
       return err(error);
     }
   }
@@ -1043,18 +1236,18 @@ export class GdbSessionManager {
         readonly diagnostics_truncated: boolean;
         readonly inferior_tty: string | null;
         readonly inferior_tty_verified: boolean;
+        readonly closed_reason?: string;
+        readonly closed_reason_code?: DebuggerSessionStopCode;
       }
     | undefined {
     const session = this.#sessions.get(sessionId);
     if (session === undefined) return undefined;
     const diagnostics = session.supervisor.snapshot();
+    const stopped = this.#stopReason(session);
     return {
       session_id: session.id,
       mi_version: session.miVersion,
-      state:
-        session.exited || session.protocolError !== undefined || !session.ready
-          ? "closed"
-          : "ready",
+      state: stopped === undefined ? "ready" : "closed",
       recent_mi_records: [...session.lines],
       recent_mi_records_truncated: session.recentRecordsTruncated,
       mi_invalid_utf8: session.invalidUtf8Observed,
@@ -1066,7 +1259,34 @@ export class GdbSessionManager {
       diagnostics_truncated: diagnostics.diagnosticTruncated === true,
       inferior_tty: session.inferiorTty ?? null,
       inferior_tty_verified: session.inferiorTtyVerified,
+      ...(stopped === undefined
+        ? {}
+        : { closed_reason: stopped.reason, closed_reason_code: stopped.code }),
     };
+  }
+
+  /** Why a retained session accepts no commands, or undefined while it is ready. */
+  #stopReason(session: GdbSession): DebuggerSessionStop | undefined {
+    if (session.protocolError !== undefined) return session.protocolError;
+    if (this.#closing)
+      return {
+        code: "server-shutdown",
+        reason: "REA is shutting down and closing every GDB session.",
+      };
+    if (session.closeRequested)
+      return {
+        code: "close-requested",
+        reason:
+          "close_gdb_session started releasing this session, and its owned cleanup has not completed.",
+      };
+    if (session.exited)
+      return {
+        code: "process-exited",
+        reason: `The GDB process exited (exit code ${String(session.exitCode)}, signal ${String(session.exitSignal)}); a command such as quit, or a crash, can end it.`,
+      };
+    if (session.cleanupStarted || !session.ready)
+      return { code: "stopped", reason: "REA stopped this GDB session." };
+    return undefined;
   }
 
   async close(
@@ -1078,40 +1298,21 @@ export class GdbSessionManager {
     >
   > {
     if (this.#closing)
-      return err(new AnalysisCancelledError("close_gdb_session"));
+      return err(
+        cancelledBy("close_gdb_session", OwnerCancellation.ownerClosed),
+      );
     const session = this.#sessions.get(sessionId);
-    if (session === undefined)
-      return err(new AnalysisInputError("close_gdb_session"));
-    if (session.exited) {
-      const stopped = await this.#stopDebuggerOnly(session);
-      if (stopped.status === "incomplete")
-        return err(
-          this.#retainCleanupFailure(
-            session,
-            "close_gdb_session",
-            stopped.reason,
-          ),
-        );
-      this.#sessions.delete(sessionId);
-      return ok({ target_state: "unknown" });
-    }
+    if (session === undefined) return err(gdbCloseUnavailable());
+    if (session.exited) return this.#finishSessionCleanup(session);
     try {
       return await this.#serialize(
         session,
         async () => {
-          if (session.exited) {
-            const stopped = await this.#stopDebuggerOnly(session);
-            if (stopped.status === "incomplete")
-              return err(
-                this.#retainCleanupFailure(
-                  session,
-                  "close_gdb_session",
-                  stopped.reason,
-                ),
-              );
-            this.#sessions.delete(sessionId);
-            return ok({ target_state: "unknown" });
-          }
+          // An earlier close can remove this session while this close waits.
+          if (this.#sessions.get(sessionId) !== session)
+            return err(gdbCloseUnavailable());
+          if (session.exited || session.cleanupStarted)
+            return this.#finishSessionCleanup(session);
           let targetState: "none_observed" | "unknown" = "unknown";
           try {
             const groups = await this.#request(
@@ -1121,27 +1322,53 @@ export class GdbSessionManager {
             if (
               groups.completion_status !== "complete" ||
               groups.output_truncated ||
-              !/^\d+\^done(?:,|$)/u.test(groups.mi)
+              !parseGdbMiDoneRecord(groups.mi).ok
             )
               throw new Error(
                 "GDB could not confirm its complete, untruncated inferior list before shutdown.",
               );
-            const groupCount = gdbThreadGroupCount(groups.mi);
-            if (groupCount === undefined)
+            const pids = gdbThreadGroupPids(groups.mi);
+            if (pids === undefined)
               throw new Error(
                 "GDB returned an unknown inferior list before shutdown.",
               );
-            if (groupCount > 0 && !session.inferiorTtyVerified)
+            const groupCount = pids.length;
+            if (
+              groupCount > 1 ||
+              (groupCount > 0 && !session.inferiorTtyVerified)
+            )
               return err(
-                new AnalysisInputError("close_gdb_session", undefined, [
+                new AnalysisCapabilityUnavailableError(
+                  GDB_PROVIDER_IDENTITY.id,
+                  "close_gdb_session",
+                  groupCount > 1
+                    ? "Multiple live GDB inferiors require an explicit disposition because automatic detach supports only one inferior."
+                    : "Live GDB inferiors require an explicit disposition because no durable inferior TTY is verified.",
                   {
-                    path: ["session_id"],
-                    reason: "invalid_value",
-                    message:
-                      "Live GDB thread groups remain and no verified durable inferior TTY is configured. Select a safe disposition through the GDB console or restart with inferior_tty before closing.",
+                    retryable: true,
+                    // Why automatic detach is refused, as the cleanup code a
+                    // forced stop would report, and how many inferiors remain.
+                    diagnostics: {
+                      inferior_disposition_required:
+                        groupCount > 1
+                          ? "multiple-inferiors"
+                          : "no-durable-output-sink",
+                      live_inferiors: groupCount,
+                    } satisfies {
+                      readonly inferior_disposition_required: DebuggerCleanupIncompleteCode;
+                      readonly live_inferiors: number;
+                    },
+                    userMessage:
+                      "Close requires an explicit inferior disposition.",
+                    remediationAction:
+                      "Use gdb_console with this session_id to explicitly detach or terminate each remaining inferior, then retry close_gdb_session.",
                   },
-                ]),
+                ),
               );
+            // Refusing inferior disposition above leaves console remediation
+            // available; from here onward only owned cleanup may be retried.
+            session.cleanupStarted = true;
+            session.closeRequested = true;
             if (groupCount === 0) {
               session.noInferiorVerified = true;
               targetState = "none_observed";
@@ -1160,13 +1387,13 @@ export class GdbSessionManager {
           const stopped = await this.#stopDebuggerOnly(session);
           if (stopped.status === "incomplete")
             return err(
-              this.#retainCleanupFailure(
+              this.#sessions.retainCleanupFailure(
                 session,
                 "close_gdb_session",
-                stopped.reason,
+                stopped,
               ),
             );
-          this.#sessions.delete(sessionId);
+          this.#sessions.remove(session);
           return ok({ target_state: targetState });
         },
         undefined,
@@ -1178,22 +1405,45 @@ export class GdbSessionManager {
     }
   }
 
+  async #finishSessionCleanup(
+    session: GdbSession,
+  ): Promise<Result<{ readonly target_state: "unknown" }, AnalysisError>> {
+    session.closeRequested = true;
+    const stopped = await this.#stopDebuggerOnly(session);
+    if (stopped.status === "incomplete")
+      return err(
+        this.#sessions.retainCleanupFailure(
+          session,
+          "close_gdb_session",
+          stopped,
+        ),
+      );
+    this.#sessions.remove(session);
+    return ok({ target_state: "unknown" });
+  }
+
   async retryCleanupFailures(): Promise<Result<null, AnalysisError>> {
-    for (const session of this.#sessions.values()) {
-      if (session.cleanupFailures.size === 0) continue;
-      const stopped = await this.#stopDebuggerOnly(session);
-      if (stopped.status === "incomplete")
-        return err(
-          [...session.cleanupFailures].at(-1) ??
-            this.#retainCleanupFailure(
-              session,
-              "close_gdb_session",
-              stopped.reason,
-            ),
-        );
-      this.#sessions.delete(session.id);
-    }
-    return ok(null);
+    const files = await this.#retryStartupFileCleanup();
+    const sessions = await this.#sessions.retryCleanupFailures(
+      (session) => session.ready && !session.closeRequested,
+    );
+    if (!files.ok && !sessions.ok)
+      return err(
+        analysisErrorWithCleanupFailure(
+          files.error,
+          sessions.error,
+          "start_gdb_session",
+        ),
+      );
+    return !files.ok ? files : sessions;
+  }
+
+  #retryStartupFileCleanup(): Promise<Result<null, AnalysisError>> {
+    return retryDebuggerStartupFileCleanup({
+      provider: "gdb",
+      operation: "start_gdb_session",
+      resources: this.#startupResources,
+    });
   }
 
   async closeAll(): Promise<void> {
@@ -1208,17 +1458,20 @@ export class GdbSessionManager {
   }
 
   async #drainStartsAndCloseSessions(): Promise<void> {
-    const active = [...this.#activeStarts.entries()];
-    for (const [controller] of active) controller.abort();
-    await Promise.allSettled(active.map(([, start]) => start));
+    await this.#sessions.closeStarts();
     await Promise.all(
       [...this.#sessions.values()].map((session) => session.commandTail),
     );
-    await closeOwnedDebuggerSessions(
-      this.#sessions,
-      (session) => this.#stopDebuggerOnly(session),
-      "GDB",
+    const outcomes = await Promise.allSettled([
+      this.#sessions.closeAll(),
+      this.#startupResources.close(),
+    ]);
+    const failures = outcomes.flatMap((outcome) =>
+      outcome.status === "rejected" ? [outcome.reason] : [],
     );
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1)
+      throw new AggregateError(failures, "GDB cleanup remains incomplete");
   }
 
   async #serialize<Value>(
@@ -1227,13 +1480,15 @@ export class GdbSessionManager {
     signal?: AbortSignal,
     operationName: "gdb_console" | "close_gdb_session" = "gdb_console",
   ): Promise<Value> {
-    if (session.pendingCommandCount >= MAX_PENDING_GDB_COMMANDS)
-      throw new AnalysisResourceConstraintError(
+    if (session.pendingCommandCount >= this.#maxPendingCommands.value)
+      throw debuggerResourceConstraintError(
         operationName,
         "transport",
-        "GDB command queue capacity reached.",
+        `GDB command queue capacity reached (${String(this.#maxPendingCommands.value)} pending commands).`,
+        "Wait for a GDB command on this session to finish, then retry.",
+        this.#maxPendingCommands,
         {
-          max_pending_commands: MAX_PENDING_GDB_COMMANDS,
+          max_pending_commands: this.#maxPendingCommands.value,
           active_or_queued_commands: session.pendingCommandCount,
         },
       );
@@ -1245,7 +1500,7 @@ export class GdbSessionManager {
       release = resolve;
     });
     try {
-      await waitForGdbCommandTurn(previous, signal);
+      await waitForCommandTurn(previous, signal, "gdb_console");
       acquired = true;
       return await operation();
     } finally {
@@ -1274,10 +1529,21 @@ export class GdbSessionManager {
       }
       session.promptTail = prompt.slice(-4);
     }
-    const lines: { readonly value: string; readonly invalidUtf8: boolean }[] =
-      [];
+    const lines: {
+      readonly value: string;
+      readonly invalidUtf8: boolean;
+      readonly utf8Bytes: number;
+    }[] = [];
     let offset = 0;
+    let framingFailure: string | undefined;
     while (offset < data.byteLength) {
+      if (session.discardingOversizedStreamRecord) {
+        const newline = data.indexOf(0x0a, offset);
+        if (newline < 0) break;
+        session.discardingOversizedStreamRecord = false;
+        offset = newline + 1;
+        continue;
+      }
       const newline = data.indexOf(0x0a, offset);
       const piece = data.subarray(
         offset,
@@ -1287,37 +1553,74 @@ export class GdbSessionManager {
       const lineBytes =
         session.bufferBytes - (newline >= 0 && piece.at(-1) === 0x0d ? 1 : 0);
       if (lineBytes > MAX_MI_LINE_BYTES) {
-        this.#failProtocol(
-          session,
-          "GDB emitted an MI line exceeding the 16 MiB protocol limit.",
-        );
-        return;
+        const firstByte =
+          session.bufferChunks[0]?.at(0) ??
+          session.bufferTail?.at(0) ??
+          piece.at(0);
+        if (firstByte === 0x7e || firstByte === 0x40 || firstByte === 0x26) {
+          session.bufferChunks.length = 0;
+          session.bufferTail = undefined;
+          session.bufferTailBytes = 0;
+          session.bufferBytes = 0;
+          for (const pending of session.pending.values())
+            pending.outputLimits.add("mi_line_bytes");
+          session.recentRecordsTruncated = true;
+          if (newline < 0) {
+            session.discardingOversizedStreamRecord = true;
+            break;
+          }
+          offset = newline + 1;
+          continue;
+        }
+        framingFailure = `GDB emitted an MI line exceeding the ${String(MAX_MI_LINE_BYTES)} byte (16 MiB) protocol limit. This release has no runtime override.`;
+        break;
       }
-      this.#appendLineBytes(session, piece);
-      if (newline < 0) break;
-      const record = Buffer.concat(
-        [
-          ...session.bufferChunks,
-          ...(session.bufferTail === undefined
-            ? []
-            : [session.bufferTail.subarray(0, session.bufferTailBytes)]),
-        ],
-        session.bufferBytes,
-      );
+      let record: Buffer;
+      if (
+        newline >= 0 &&
+        session.bufferChunks.length === 0 &&
+        session.bufferTailBytes === 0
+      ) {
+        // Fast path: complete line sits contiguously inside `data`, avoiding a
+        // 64 KiB slab allocation and Buffer.concat copy per line.
+        record = piece;
+      } else {
+        this.#appendLineBytes(session, piece);
+        if (newline < 0) break;
+        if (
+          session.bufferChunks.length === 0 &&
+          session.bufferTail !== undefined
+        ) {
+          record = session.bufferTail.subarray(0, session.bufferTailBytes);
+        } else {
+          record = Buffer.concat(
+            [
+              ...session.bufferChunks,
+              ...(session.bufferTail === undefined
+                ? []
+                : [session.bufferTail.subarray(0, session.bufferTailBytes)]),
+            ],
+            session.bufferBytes,
+          );
+        }
+      }
       const withoutCarriageReturn =
         record.at(-1) === 0x0d ? record.subarray(0, -1) : record;
       const invalidUtf8 = !isUtf8(withoutCarriageReturn);
       const line = withoutCarriageReturn.toString("utf8");
+      const utf8Bytes = invalidUtf8
+        ? Buffer.byteLength(line, "utf8")
+        : withoutCarriageReturn.byteLength;
       session.bufferChunks.length = 0;
       session.bufferTail = undefined;
       session.bufferTailBytes = 0;
       session.bufferBytes = 0;
       if (invalidUtf8) session.invalidUtf8Observed = true;
-      if (line.length > 0) lines.push({ value: line, invalidUtf8 });
+      if (line.length > 0) lines.push({ value: line, invalidUtf8, utf8Bytes });
       offset = newline + 1;
     }
-    for (const { value: line } of lines) {
-      if (Buffer.byteLength(line, "utf8") > MAX_RECENT_MI_LINE_BYTES) {
+    for (const { value: line, utf8Bytes } of lines) {
+      if (utf8Bytes > MAX_RECENT_MI_LINE_BYTES) {
         session.lines.push(truncateUtf8RecordPrefix(line));
         session.recentRecordsTruncated = true;
       } else session.lines.push(line);
@@ -1326,76 +1629,108 @@ export class GdbSessionManager {
       session.lines.splice(0, session.lines.length - 256);
       session.recentRecordsTruncated = true;
     }
-    for (const { value: line, invalidUtf8 } of lines) {
+    for (const { value: line, invalidUtf8, utf8Bytes } of lines) {
       for (const pending of session.pending.values()) {
-        const lineBytes = Buffer.byteLength(line, "utf8") + 1;
+        const lineBytes = utf8Bytes + 1;
         if (
-          pending.outputBytes + lineBytes <= session.maxCommandOutputBytes &&
-          pending.outputBytes + lineBytes <= MAX_COMMAND_OUTPUT_BYTES &&
+          pending.outputBytes + lineBytes <= pending.outputBudgetBytes &&
           pending.lines.length < MAX_COMMAND_OUTPUT_RECORDS
         ) {
           pending.lines.push(line);
           pending.outputBytes += lineBytes;
           pending.outputInvalidUtf8 ||= invalidUtf8;
-        } else pending.outputTruncated = true;
-      }
-      if (line.startsWith("*stopped")) {
-        for (const [token, pending] of session.pending) {
-          if (!pending.awaitingInferiorStop) continue;
-          clearTimeout(pending.timer);
-          session.pending.delete(token);
-          pending.cleanup();
-          const records = [...pending.lines];
-          pending.resolve({
-            command: "",
-            mi: pending.terminalRecord ?? "",
-            records,
-            console: records
-              .filter((record) => record.startsWith("~"))
-              .join("\n"),
-            target: records
-              .filter((record) => record.startsWith("@"))
-              .join("\n"),
-            log: records.filter((record) => record.startsWith("&")).join("\n"),
-            output_truncated: pending.outputTruncated,
-            ...(pending.outputInvalidUtf8
-              ? { output_invalid_utf8: true as const }
-              : {}),
-            completion_status: "complete",
-          });
+        } else {
+          if (pending.outputBytes + lineBytes > pending.outputBudgetBytes)
+            pending.outputLimits.add("command_bytes");
+          if (pending.lines.length >= MAX_COMMAND_OUTPUT_RECORDS)
+            pending.outputLimits.add("command_records");
         }
-        continue;
       }
-      const match = /^(\d+)\^(done|running|connected|error|exit)(?:,|$)/u.exec(
-        line,
-      );
-      if (match === null) continue;
-      const token = Number(match[1]);
-      const pending = session.pending.get(token);
+      if (line === "(gdb)" || line === "(gdb) ") {
+        // Shell stdout can precede its result token without an LF. Never scan
+        // caller output for a token-looking suffix. Once GDB returns its prompt,
+        // correlate a fresh read-only query before completing that console turn.
+        for (const pending of session.pending.values()) {
+          if (
+            session.ready &&
+            pending.command.startsWith("-interpreter-exec console ") &&
+            pending.terminalRecord === undefined &&
+            pending.completionToken === undefined
+          ) {
+            pending.completionToken = session.nextToken++;
+            this.#writeMiRequest(
+              session,
+              pending.completionToken,
+              "-gdb-show mi-async",
+            );
+          }
+        }
+      }
+      const header = gdbMiResultHeader(line);
+      if (header === undefined) continue;
+      if (invalidUtf8) {
+        this.#failProtocol(
+          session,
+          "output-correlation-failure",
+          "GDB emitted an MI result record containing invalid UTF-8.",
+        );
+        return;
+      }
+      const { token } = header;
+      const pending =
+        session.pending.get(token) ??
+        [...session.pending.values()].find(
+          (command) => command.completionToken === token,
+        );
       if (pending === undefined) continue;
-      if (match[2] === "running") {
+      if (token === pending.completionToken) {
+        if (header.resultClass !== "done") {
+          this.#failProtocol(
+            session,
+            "output-correlation-failure",
+            "GDB command completion query failed.",
+          );
+          continue;
+        }
+      } else {
         pending.terminalRecord = line;
-        pending.awaitingInferiorStop = true;
-        continue;
+        if (
+          header.resultClass === "running" &&
+          pending.completionToken === undefined
+        ) {
+          // ^running and *stopped describe inferior execution, not completion
+          // of an outer CLI command such as a multi-run command file. GDB
+          // processes this read-only query after returning to its command loop.
+          pending.completionToken = session.nextToken++;
+          this.#writeMiRequest(
+            session,
+            pending.completionToken,
+            "-gdb-show mi-async",
+          );
+        }
+        if (pending.completionToken !== undefined) continue;
       }
       clearTimeout(pending.timer);
-      session.pending.delete(token);
+      session.pending.delete(pending.token);
       pending.cleanup();
-      const records = [...pending.lines];
+
       pending.resolve({
         command: "",
-        mi: line,
-        records,
-        console: records.filter((record) => record.startsWith("~")).join("\n"),
-        target: records.filter((record) => record.startsWith("@")).join("\n"),
-        log: records.filter((record) => record.startsWith("&")).join("\n"),
-        output_truncated: pending.outputTruncated,
+        // A query proves return to the command loop, not the class of a
+        // result record that raw stdout prevented us from framing separately.
+        mi:
+          pending.terminalRecord ??
+          (token === pending.completionToken ? "" : line),
+        ...snapshotGdbCommandRecords(pending.lines),
+        ...gdbOutputCapture(pending),
         ...(pending.outputInvalidUtf8
           ? { output_invalid_utf8: true as const }
           : {}),
         completion_status: "complete",
       });
     }
+    if (framingFailure !== undefined)
+      this.#failProtocol(session, "output-correlation-failure", framingFailure);
   }
 
   #appendLineBytes(session: GdbSession, piece: Buffer): void {
@@ -1421,22 +1756,23 @@ export class GdbSessionManager {
     }
   }
 
-  #failProtocol(session: GdbSession, message: string): void {
+  #failProtocol(
+    session: GdbSession,
+    code: DebuggerSessionStopCode,
+    message: string,
+  ): void {
     if (session.exited || session.protocolError !== undefined) return;
-    session.protocolError = message;
+    session.protocolError = { code, reason: message };
     for (const pending of session.pending.values()) {
       clearTimeout(pending.timer);
       pending.cleanup();
-      const records = [...pending.lines];
+
       pending.reject(
         new GdbProtocolFailureError(message, {
-          command: pending.command,
+          command: pending.evidenceCommand,
           mi: "",
-          records,
-          console: records.filter((line) => line.startsWith("~")).join("\n"),
-          target: records.filter((line) => line.startsWith("@")).join("\n"),
-          log: records.filter((line) => line.startsWith("&")).join("\n"),
-          output_truncated: pending.outputTruncated,
+          ...snapshotGdbCommandRecords(pending.lines),
+          ...gdbOutputCapture(pending),
           ...(pending.outputInvalidUtf8
             ? { output_invalid_utf8: true as const }
             : {}),
@@ -1458,7 +1794,7 @@ export class GdbSessionManager {
     const partialObservation =
       partial === undefined
         ? undefined
-        : createEvidence(undefined, GDB_PROVIDER_IDENTITY, {
+        : createGdbSessionEvidence(session, {
             predicateType: "rea.debugger.console-observation",
             operation: "gdb_console",
             parameters: {
@@ -1466,30 +1802,30 @@ export class GdbSessionManager {
               command: partial.command,
             },
             result: { ...partial, records: [...partial.records] },
-            rawResult: { ...partial, records: [...partial.records] },
-            subjectUnavailableReason:
-              "The active GDB inferior identity is not established by the debugger session identifier.",
             limitations: [
+              "The active GDB inferior identity is not established by the debugger session identifier.",
               "The GDB MI protocol failed; retained records are partial and command completion is unknown.",
               "The unrestricted GDB console can access local shell, filesystem, network, and target controls.",
             ],
           });
+    const stop = session.protocolError!;
     return new AnalysisCapabilityUnavailableError(
       "gdb",
       "gdb_console",
       stopped.status === "incomplete"
-        ? `${session.protocolError} The owned process could not be confirmed stopped: ${stopped.reason}`
-        : session.protocolError!,
+        ? `${stop.reason} The owned process could not be confirmed stopped: ${stopped.reason}`
+        : stop.reason,
       {
         cause,
         ...(stopped.status === "incomplete"
-          ? {
-              cleanup: {
-                reason: stopped.reason,
-                resources: [session.id],
-              },
-            }
+          ? incompleteStopFacts(stopped, [session.id])
           : {}),
+        diagnostics: {
+          session_stop: stop.code,
+          ...(stopped.status === "incomplete"
+            ? incompleteStopFacts(stopped, [session.id]).diagnostics
+            : {}),
+        },
         ...(partialObservation === undefined ? {} : { partialObservation }),
       },
     );
@@ -1498,37 +1834,7 @@ export class GdbSessionManager {
   #stopDebuggerOnly(
     session: GdbSession,
   ): ReturnType<typeof stopOwnedDebuggerProcess> {
-    if (session.stopAttempt !== undefined) return session.stopAttempt;
-    const attempt = this.#stopProcess(session, "GDB")
-      .then((stopped) => {
-        if (stopped.status !== "incomplete") {
-          for (const failure of session.cleanupFailures)
-            failure.resolveCleanup();
-          session.cleanupFailures.clear();
-        }
-        return stopped;
-      })
-      .finally(() => {
-        if (session.stopAttempt === attempt) session.stopAttempt = undefined;
-      });
-    session.stopAttempt = attempt;
-    return attempt;
-  }
-
-  #retainCleanupFailure(
-    session: GdbSession,
-    operation: string,
-    reason: string,
-    options: AnalysisErrorOptions = {},
-  ): AnalysisError {
-    const failure = new AnalysisCapabilityUnavailableError(
-      "gdb",
-      operation,
-      `The owned GDB process could not be confirmed stopped: ${reason}`,
-      { ...options, cleanup: { reason, resources: [session.id] } },
-    );
-    session.cleanupFailures.add(failure);
-    return failure;
+    return this.#sessions.stop(session);
   }
 
   async #detachInferior(
@@ -1536,17 +1842,18 @@ export class GdbSessionManager {
   ): Promise<OwnedDebuggerDetachResult> {
     if (session.noInferiorVerified) return { status: "no-inferior" };
     if (session.exited)
-      throw new Error("GDB exited before inferior state could be verified.");
+      throw new OwnedDebuggerDetachFailure(
+        "inferior-state-unknown",
+        "GDB exited before inferior state could be verified.",
+      );
     // A new MI inspection replaces the old snapshot. If this read is
     // incomplete, malformed, or reports multiple inferiors, no earlier PID
     // can stand in for the current unknown inventory.
     session.knownInferiorIdentities.clear();
-    if (
-      session.protocolError !== undefined ||
-      session.pending.size > 0 ||
-      session.pendingCommandCount > 1
-    )
-      throw new Error(
+    // Queue reservations have not sent MI requests and do not affect synchronization.
+    if (session.protocolError !== undefined || session.pending.size > 0)
+      throw new OwnedDebuggerDetachFailure(
+        "inferior-state-unknown",
         "GDB MI state is not synchronized; inferior state is unknown.",
       );
     const groups = await this.#request(
@@ -1556,9 +1863,12 @@ export class GdbSessionManager {
     if (
       groups.completion_status !== "complete" ||
       groups.output_truncated ||
-      !/^\d+\^done(?:,|$)/u.test(groups.mi)
+      !parseGdbMiDoneRecord(groups.mi).ok
     )
-      throw new Error("GDB could not confirm its inferior state.");
+      throw new OwnedDebuggerDetachFailure(
+        "inferior-state-unknown",
+        "GDB could not confirm its inferior state.",
+      );
     const inferiorPids = gdbThreadGroupPids(groups.mi);
     if (inferiorPids?.length === 0) {
       session.knownInferiorIdentities.clear();
@@ -1567,24 +1877,30 @@ export class GdbSessionManager {
     }
     session.noInferiorVerified = false;
     if (inferiorPids?.length !== 1)
-      throw new Error(
-        inferiorPids === undefined
-          ? "GDB returned an unknown recursive inferior list."
-          : "GDB reports multiple inferiors; automatic detach cannot be confirmed safely.",
-      );
+      throw inferiorPids === undefined
+        ? new OwnedDebuggerDetachFailure(
+            "inferior-state-unknown",
+            "GDB returned an unknown recursive inferior list.",
+          )
+        : new OwnedDebuggerDetachFailure(
+            "multiple-inferiors",
+            "GDB reports multiple inferiors; automatic detach cannot be confirmed safely.",
+          );
     if (!session.inferiorTtyVerified)
-      throw new Error(
+      throw new OwnedDebuggerDetachFailure(
+        "no-durable-output-sink",
         "GDB cannot detach the live inferior because no durable output sink was verified at session startup.",
       );
     const observedTty = await this.#request(session, "-inferior-tty-show");
     if (
       observedTty.completion_status !== "complete" ||
       observedTty.output_truncated ||
-      !/^\d+\^done(?:,|$)/u.test(observedTty.mi) ||
+      !parseGdbMiDoneRecord(observedTty.mi).ok ||
       miStringField(observedTty.mi, "inferior_tty_terminal") !==
         session.inferiorTty
     )
-      throw new Error(
+      throw new OwnedDebuggerDetachFailure(
+        "inferior-tty-changed",
         "GDB no longer reports the caller-selected inferior TTY; detachment cannot be confirmed safely.",
       );
     await this.#verifyInferiorOutputSink(
@@ -1600,10 +1916,16 @@ export class GdbSessionManager {
     if (
       detached.completion_status !== "complete" ||
       detached.output_truncated ||
-      !/^\d+\^done(?:,|$)/u.test(detached.mi)
+      !parseGdbMiDoneRecord(detached.mi).ok
     )
-      throw new Error("GDB did not confirm inferior detachment.");
+      throw new OwnedDebuggerDetachFailure(
+        "detach-failed",
+        "GDB did not confirm inferior detachment.",
+      );
     session.knownInferiorIdentities.clear();
+    // The sole recursively inventoried inferior is now detached. Retain this
+    // fact for owned shutdown even if the MI transport becomes unavailable.
+    session.noInferiorVerified = true;
     return { status: "detached", outputSink: "durable" };
   }
 
@@ -1617,20 +1939,13 @@ export class GdbSessionManager {
       clearTimeout(pending.timer);
       pending.reject(
         new GdbCommandProcessExitError({
-          command: pending.command,
+          command: pending.evidenceCommand,
           mi: "",
-          records: [...pending.lines],
-          console: pending.lines
-            .filter((line) => line.startsWith("~"))
-            .join("\n"),
-          target: pending.lines
-            .filter((line) => line.startsWith("@"))
-            .join("\n"),
-          log: pending.lines.filter((line) => line.startsWith("&")).join("\n"),
+          ...snapshotGdbCommandRecords(pending.lines),
           process_exit_observed: true,
           process_exit_code: code,
           process_exit_signal: signalCode,
-          output_truncated: pending.outputTruncated,
+          ...gdbOutputCapture(pending),
           ...(pending.outputInvalidUtf8
             ? { output_invalid_utf8: true as const }
             : {}),
@@ -1662,6 +1977,10 @@ export class GdbSessionManager {
     signal?: AbortSignal,
     operation: "gdb_console" | "start_gdb_session" = "gdb_console",
     evidenceCommand: string = command,
+    accepted?: {
+      readonly deadline: DebuggerAdmissionLimit;
+      readonly output: DebuggerAdmissionLimit;
+    },
   ): Promise<GdbCommandResult> {
     const stdin = session.launched.process.stdin;
     if (session.exited)
@@ -1677,10 +1996,14 @@ export class GdbSessionManager {
       !stdin.writable
     ) {
       const message = "GDB MI input stream is closed";
-      this.#failProtocol(session, message);
+      this.#failProtocol(session, "input-stream-failure", message);
       return Promise.reject(new Error(message));
     }
     const token = session.nextToken++;
+    const acceptedDeadline = accepted?.deadline ?? this.#commandDeadline;
+    const acceptedOutput = command.startsWith("-interpreter-exec console ")
+      ? (accepted?.output ?? this.#commandOutput)
+      : debuggerControlReplyOutput;
     return new Promise<GdbCommandResult>((resolve, reject) => {
       let abortListener!: () => void;
       const cleanup = (): void => {
@@ -1689,21 +2012,18 @@ export class GdbSessionManager {
       let pending!: PendingCommand;
       const timer = setTimeout(() => {
         session.pending.delete(token);
-        session.protocolError =
-          "A GDB MI command timed out; untagged stream output can no longer be safely correlated with later commands.";
+        const stop: DebuggerSessionStop = {
+          code: "command-deadline",
+          reason:
+            "A GDB MI command timed out; untagged stream output can no longer be safely correlated with later commands.",
+        };
+        session.protocolError = stop;
         pending.cleanup();
         const partial: GdbCommandResult = {
           command: pending.evidenceCommand,
           mi: "",
-          records: [...pending.lines],
-          console: pending.lines
-            .filter((line) => line.startsWith("~"))
-            .join("\n"),
-          target: pending.lines
-            .filter((line) => line.startsWith("@"))
-            .join("\n"),
-          log: pending.lines.filter((line) => line.startsWith("&")).join("\n"),
-          output_truncated: pending.outputTruncated,
+          ...snapshotGdbCommandRecords(pending.lines),
+          ...gdbOutputCapture(pending),
           ...(pending.outputInvalidUtf8
             ? { output_invalid_utf8: true as const }
             : {}),
@@ -1711,10 +2031,16 @@ export class GdbSessionManager {
         };
         const timeout = new AnalysisTimeoutError(
           operation,
-          this.#commandTimeoutMs,
-          { cause: new Error(`GDB MI command timed out: ${command}`) },
+          acceptedDeadline.value,
+          {
+            cause: new Error(`GDB MI command timed out: ${command}`),
+            ...configurableDeadlineGuidance(
+              "The GDB MI command",
+              acceptedDeadline,
+            ),
+          },
         );
-        const evidence = createEvidence(undefined, GDB_PROVIDER_IDENTITY, {
+        const evidence = createGdbSessionEvidence(session, {
           predicateType:
             operation === "start_gdb_session"
               ? "rea.debugger.startup-observation"
@@ -1725,73 +2051,51 @@ export class GdbSessionManager {
             command: pending.evidenceCommand,
           },
           result: { ...partial, records: [...partial.records] },
-          rawResult: { ...partial, records: [...partial.records] },
-          subjectUnavailableReason:
-            "The active GDB inferior identity is not established by the debugger session identifier.",
           limitations: [
-            "The GDB command exceeded its deadline; retained MI and stream records are partial and command completion is unknown.",
+            "The active GDB inferior identity is not established by the debugger session identifier.",
+            `The GDB command exceeded its ${String(acceptedDeadline.value)} ms deadline (deadlineExpired). ${debuggerAdmissionRecovery(acceptedDeadline)} Retained MI and stream records are partial and command completion is unknown.`,
+            ...gdbRetainedOutputLimitations(partial, acceptedOutput),
             "Cleanup of the owned GDB process was requested because output correlation could no longer be guaranteed.",
             "The unrestricted GDB console can access local shell, filesystem, network, and target controls.",
           ],
         });
-        void this.#stopDebuggerOnly(session).then(
-          (stopped) => {
-            if (
-              stopped.status === "incomplete" &&
-              operation === "start_gdb_session"
-            ) {
-              pending.reject(
-                new AnalysisTimeoutError(operation, this.#commandTimeoutMs, {
-                  cause: timeout,
-                  cleanup: { reason: stopped.reason, resources: [session.id] },
-                  partialObservation: evidence,
-                }),
-              );
-              return;
-            }
+        void this.#stopDebuggerOnly(session).then((stopped) => {
+          if (
+            stopped.status === "incomplete" &&
+            operation === "start_gdb_session"
+          ) {
             pending.reject(
-              stopped.status === "incomplete"
-                ? new AnalysisCapabilityUnavailableError(
-                    "gdb",
-                    "gdb_console",
-                    `GDB command output could not be correlated and its owned process could not be confirmed stopped: ${stopped.reason}`,
-                    {
-                      cause: timeout,
-                      cleanup: {
-                        reason: stopped.reason,
-                        resources: [session.id],
-                      },
-                      partialObservation: evidence,
-                    },
-                  )
-                : new GdbCommandTimeoutError(
-                    partial,
-                    evidence,
-                    this.#commandTimeoutMs,
-                  ),
+              new AnalysisTimeoutError(operation, acceptedDeadline.value, {
+                cause: timeout,
+                ...incompleteStopFacts(stopped, [session.id]),
+                partialObservation: evidence,
+                ...copiedTimeoutGuidance(timeout),
+              }),
             );
-          },
-          (cause: unknown) =>
-            pending.reject(
-              new AnalysisCapabilityUnavailableError(
-                "gdb",
-                "gdb_console",
-                "GDB command output could not be correlated and owned process shutdown failed.",
-                {
-                  cause: new AggregateError(
-                    [timeout, cause],
-                    "GDB timeout and cleanup both failed.",
-                  ),
-                  cleanup: {
-                    reason: gdbErrorMessage(cause),
-                    resources: [session.id],
+            return;
+          }
+          pending.reject(
+            stopped.status === "incomplete"
+              ? new AnalysisCapabilityUnavailableError(
+                  "gdb",
+                  "gdb_console",
+                  `GDB command output could not be correlated and its owned process could not be confirmed stopped: ${stopped.reason}`,
+                  {
+                    cause: timeout,
+                    ...incompleteStopFacts(stopped, [session.id]),
+                    diagnostics: {
+                      session_stop: stop.code,
+                      ...incompleteStopFacts(stopped, [session.id]).diagnostics,
+                    },
+                    partialObservation: evidence,
                   },
-                  partialObservation: evidence,
-                },
-              ),
-            ),
-        );
-      }, this.#commandTimeoutMs);
+                )
+              : new GdbCommandTimeoutError(partial, evidence, acceptedDeadline),
+          );
+        });
+      }, acceptedDeadline.value);
+      // Cleanup bounds its own wait, so a late reply must not hold the host open.
+      if (session.cleanupStarted) timer.unref();
       pending = {
         token,
         command,
@@ -1808,10 +2112,11 @@ export class GdbSessionManager {
         cleanup,
         timer,
         outputBytes: 0,
-        outputTruncated: false,
+        outputBudgetBytes: acceptedOutput.value,
+        outputLimits: new Set(),
         outputInvalidUtf8: false,
         terminalRecord: undefined,
-        awaitingInferiorStop: false,
+        completionToken: undefined,
       };
       session.pending.set(token, pending);
       abortListener = (): void => {
@@ -1819,239 +2124,98 @@ export class GdbSessionManager {
         const partial: GdbCommandResult = {
           command: pending.evidenceCommand,
           mi: "",
-          records: [...pending.lines],
-          console: pending.lines
-            .filter((line) => line.startsWith("~"))
-            .join("\n"),
-          target: pending.lines
-            .filter((line) => line.startsWith("@"))
-            .join("\n"),
-          log: pending.lines.filter((line) => line.startsWith("&")).join("\n"),
-          output_truncated: pending.outputTruncated,
+          ...snapshotGdbCommandRecords(pending.lines),
+          ...gdbOutputCapture(pending),
           ...(pending.outputInvalidUtf8
             ? { output_invalid_utf8: true as const }
             : {}),
           completion_status: "unknown",
         };
-        const evidence = createEvidence(undefined, GDB_PROVIDER_IDENTITY, {
-          predicateType: "rea.debugger.console-observation",
-          operation: "gdb_console",
+        const evidence = createGdbSessionEvidence(session, {
+          predicateType:
+            operation === "start_gdb_session"
+              ? "rea.debugger.startup-observation"
+              : "rea.debugger.console-observation",
+          operation,
           parameters: {
             session_id: session.id,
             command: pending.evidenceCommand,
           },
           result: { ...partial, records: [...partial.records] },
-          rawResult: { ...partial, records: [...partial.records] },
-          subjectUnavailableReason:
-            "The active GDB inferior identity is not established by the debugger session identifier.",
           limitations: [
+            "The active GDB inferior identity is not established by the debugger session identifier.",
             "The GDB command was cancelled; retained MI records are partial and command completion is unknown.",
+            ...gdbRetainedOutputLimitations(partial, acceptedOutput),
             "Shutdown of the owned GDB process was requested because output correlation could no longer be guaranteed.",
             "The unrestricted GDB console can access local shell, filesystem, network, and target controls.",
           ],
         });
         session.pending.delete(token);
-        session.protocolError =
-          "A GDB MI command was cancelled; owned-session shutdown was requested because output correlation can no longer be guaranteed.";
-        void this.#stopDebuggerOnly(session).then(
-          (stopped) => {
+        session.protocolError = {
+          code: "command-cancelled",
+          reason:
+            "A GDB MI command was cancelled; owned-session shutdown was requested because output correlation can no longer be guaranteed.",
+        };
+        void this.#stopDebuggerOnly(session).then((stopped) => {
+          if (stopped.status !== "incomplete") {
             pending.reject(
-              stopped.status === "incomplete"
-                ? new AnalysisCancelledError("gdb_console", {
-                    cause: new Error(stopped.reason),
-                    cleanup: {
-                      reason: stopped.reason,
-                      resources: [session.id],
-                    },
-                    partialObservation: evidence,
-                  })
-                : new AnalysisCancelledError("gdb_console", {
-                    partialObservation: evidence,
-                  }),
-            );
-          },
-          (cause: unknown) =>
-            pending.reject(
-              new AnalysisCancelledError("gdb_console", {
-                cause,
+              cancelledBy(operation, carriedReason(signal?.reason), {
                 partialObservation: evidence,
               }),
-            ),
-        );
+            );
+            return;
+          }
+          const cancellation = cancelledBy(
+            operation,
+            carriedReason(signal?.reason),
+            {
+              partialObservation: evidence,
+            },
+          );
+          const cleanupFailure = this.#sessions.retainCleanupFailure(
+            session,
+            operation,
+            stopped,
+            { cause: cancellation },
+          );
+          pending.reject(
+            cancelledBy(operation, carriedReason(signal?.reason), {
+              ...incompleteStopFacts(stopped, [session.id]),
+              partialObservation: evidence,
+            }).bindCleanupDependencies([cleanupFailure], {
+              cleanupResources: [session.id],
+            }),
+          );
+        });
       };
       signal?.addEventListener("abort", abortListener, { once: true });
       if (signal?.aborted) {
         abortListener();
         return;
       }
-      try {
-        session.launched.process.stdin?.write(
-          `${token}${command}\n`,
-          "utf8",
-          (cause?: Error | null) => {
-            if (cause)
-              this.#failProtocol(
-                session,
-                `GDB stdin write failed: ${cause.message}`,
-              );
-          },
-        );
-      } catch (cause) {
-        this.#failProtocol(
-          session,
-          `GDB stdin write failed: ${cause instanceof Error ? cause.message : "unknown error"}`,
-        );
-      }
+      this.#writeMiRequest(session, token, command);
     }).then((result) => ({ ...result, command }));
   }
-}
-
-const miQuote = (value: string): string =>
-  `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("\r", "\\r").replaceAll("\n", "\\n").replaceAll("\t", "\\t")}"`;
-
-/** @internal Decode one unambiguous GDB MI C-string field. */
-export const miStringField = (
-  record: string,
-  field: string,
-): string | undefined => {
-  const escapedField = field.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-  const valuePattern = `((?:\\\\.|[^"\\\\])*)`;
-  const fieldPattern = new RegExp(
-    `(?:^|,)${escapedField}="${valuePattern}"`,
-    "gu",
-  );
-  const matches = [...record.matchAll(fieldPattern)];
-  if (matches.length !== 1) return undefined;
-  const match = new RegExp(
-    `^\\d+\\^done,${escapedField}="${valuePattern}"$`,
-    "u",
-  ).exec(record);
-  const raw = match?.[1];
-  if (raw === undefined) return undefined;
-  const bytes: number[] = [];
-  for (let index = 0; index < raw.length;) {
-    const character = raw[index]!;
-    if (character !== "\\") {
-      const codePoint = raw.codePointAt(index);
-      if (
-        codePoint === undefined ||
-        (codePoint >= 0xd800 && codePoint <= 0xdfff)
-      )
-        return undefined;
-      const value = String.fromCodePoint(codePoint);
-      bytes.push(...Buffer.from(value, "utf8"));
-      index += value.length;
-      continue;
+  #writeMiRequest(session: GdbSession, token: number, command: string): void {
+    try {
+      session.launched.process.stdin?.write(
+        `${token}${command}\n`,
+        "utf8",
+        (cause?: Error | null) => {
+          if (cause)
+            this.#failProtocol(
+              session,
+              "input-stream-failure",
+              `GDB stdin write failed: ${cause.message}`,
+            );
+        },
+      );
+    } catch (cause) {
+      this.#failProtocol(
+        session,
+        "input-stream-failure",
+        `GDB stdin write failed: ${cause instanceof Error ? cause.message : "unknown error"}`,
+      );
     }
-    const escaped = raw[++index]!;
-    const simple: Readonly<Record<string, number>> = {
-      a: 7,
-      b: 8,
-      f: 12,
-      n: 10,
-      r: 13,
-      t: 9,
-      v: 11,
-      "\\": 92,
-      '"': 34,
-      "'": 39,
-      "?": 63,
-    };
-    const simpleByte = simple[escaped];
-    if (simpleByte !== undefined) {
-      bytes.push(simpleByte);
-      index += 1;
-      continue;
-    }
-    if (escaped === "x") {
-      const hex = /^[0-9a-f]+/iu.exec(raw.slice(index + 1))?.[0];
-      if (hex === undefined) return undefined;
-      bytes.push(Number.parseInt(hex, 16) & 0xff);
-      index += hex.length;
-      index += 1;
-      continue;
-    }
-    if (/[0-7]/u.test(escaped)) {
-      const octal = `${escaped}${/^[0-7]{0,2}/u.exec(raw.slice(index + 1))![0]}`;
-      bytes.push(Number.parseInt(octal, 8) & 0xff);
-      index += octal.length;
-      continue;
-    }
-    return undefined;
   }
-  const decoded = Buffer.from(bytes).toString("utf8");
-  return Buffer.from(decoded, "utf8").equals(Buffer.from(bytes))
-    ? decoded
-    : undefined;
-};
-
-/** @internal Classify commands that can invalidate the configured output sink. */
-export const gdbOneShotCommandMayInvalidateDetachProof = (
-  command: string,
-): boolean => {
-  if (commandMayChangeInferiorOutput(command)) return true;
-  const firstToken = /^\s*([^\s;]+)/u.exec(command)?.[1]?.toLowerCase();
-  if (
-    firstToken !== undefined &&
-    (["source", "define", "alias"].some((name) =>
-      name.startsWith(firstToken),
-    ) ||
-      firstToken === "py" ||
-      "python".startsWith(firstToken))
-  )
-    return true;
-  // One-shot execution cannot establish which shell/GDB context interprets
-  // redirections, nor safely track multiline command definitions.
-  return /[<>]{1,2}|&>|[\r\n;]/u.test(command);
-};
-
-/** @internal Classify commands that can invalidate the configured output sink. */
-export const commandMayChangeInferiorOutput = (command: string): boolean => {
-  const setting = /^\s*(?:set|with)\s+(\S+)/iu.exec(command)?.[1];
-  const maySetInferiorTty =
-    setting !== undefined && "inferior-tty".startsWith(setting.toLowerCase());
-  const firstToken = /^\s*([^\s;]+)/u.exec(command)?.[1]?.toLowerCase();
-  const mayBeTtyCommand =
-    firstToken !== undefined && "tty".startsWith(firstToken);
-  const mayDefineAlias =
-    firstToken !== undefined && "alias".startsWith(firstToken);
-  const mayRunWithOutputRedirection =
-    firstToken !== undefined &&
-    ["run", "start", "starti"].some((name) => name.startsWith(firstToken)) &&
-    /[<>]{1,2}|&>/u.test(command.slice(firstToken.length));
-  return (
-    maySetInferiorTty ||
-    mayBeTtyCommand ||
-    mayDefineAlias ||
-    /\binferior-tty\b/iu.test(command) ||
-    /^\s*(?:wit(?:h)?(?:\s|$)|tty(?:\s|$)|source\b|py\w*|define\b)/iu.test(
-      command,
-    ) ||
-    mayRunWithOutputRedirection
-  );
-};
-
-/** Terminate only the directly owned debugger process, never its process group or inferiors. */
-export const waitForGdbCommandTurn = (
-  previous: Promise<void>,
-  signal?: AbortSignal,
-): Promise<void> => {
-  if (signal === undefined) return previous;
-  if (signal.aborted)
-    return Promise.reject(new AnalysisCancelledError("gdb_console"));
-  return new Promise<void>((resolve, reject) => {
-    const onAbort = (): void =>
-      reject(new AnalysisCancelledError("gdb_console"));
-    signal.addEventListener("abort", onAbort, { once: true });
-    previous.then(
-      () => {
-        signal.removeEventListener("abort", onAbort);
-        resolve();
-      },
-      (cause: unknown) => {
-        signal.removeEventListener("abort", onAbort);
-        reject(cause);
-      },
-    );
-  });
-};
+}

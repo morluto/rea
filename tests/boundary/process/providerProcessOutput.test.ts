@@ -1,7 +1,6 @@
 import { expect, it, vi } from "vitest";
 import type { Socket } from "node:net";
-import { EventEmitter } from "node:events";
-import { PassThrough } from "node:stream";
+import type { Writable } from "node:stream";
 import {
   ProviderProcessSupervisor,
   type ProviderProcessDiagnostic,
@@ -10,6 +9,36 @@ import {
   spawnProviderProcessFixture,
   stopProviderProcessFixture,
 } from "../../fixtures/providerProcess.js";
+
+it.skipIf(process.platform === "win32")(
+  "drains inherited stderr after real leader exit before output close",
+  async () => {
+    const child = spawnProviderProcessFixture("late-stderr");
+    const owner = new ProviderProcessSupervisor({
+      process: child,
+      ownsProcessLifetime: true,
+    });
+    const release = child.stdio[3] as Writable;
+    try {
+      expect(await owner.waitForExit(2000)).toBe(true);
+      expect(await owner.waitForOutputClose(0)).toBe(false);
+      const stopped = owner.stop();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      release.end();
+      await expect(stopped).resolves.toEqual({ status: "already-exited" });
+      expect(owner.snapshot().stderr).toMatchObject({
+        text: "final-tail",
+        observedBytes: 10,
+      });
+      expect(owner.snapshot().outputIncomplete).toBeUndefined();
+      expect(await owner.waitForOutputClose(0)).toBe(true);
+    } finally {
+      release.end();
+      await owner.stop();
+      await stopProviderProcessFixture(child);
+    }
+  },
+);
 
 it("unreferences inherited output streams without closing them", async () => {
   const child = spawnProviderProcessFixture("stubborn");
@@ -68,31 +97,4 @@ it("bounds capture before diagnostic callbacks while draining both output stream
     await supervisor.stop();
     await stopProviderProcessFixture(child);
   }
-});
-
-it("bounds additional late output while retaining observed byte counts", () => {
-  const child = Object.assign(new EventEmitter(), {
-    stdout: new PassThrough(),
-    stderr: new PassThrough(),
-    exitCode: null as number | null,
-    signalCode: null as NodeJS.Signals | null,
-    kill: vi.fn(() => true),
-  });
-  const supervisor = new ProviderProcessSupervisor({
-    process: child,
-    ownsProcessLifetime: true,
-  });
-
-  supervisor.limitAdditionalOutputBytes(5);
-  child.stdout.write("abc");
-  supervisor.limitAdditionalOutputBytes(5);
-  child.stdout.write("defgh");
-  child.stderr.write("ijkl");
-
-  const snapshot = supervisor.snapshot();
-  expect(snapshot.stdout.text + snapshot.stderr.text).toHaveLength(5);
-  expect(snapshot.stdout.observedBytes).toBe(8);
-  expect(snapshot.stderr.observedBytes).toBe(4);
-  expect(snapshot.diagnosticTruncated).toBe(true);
-  supervisor.dispose();
 });

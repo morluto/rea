@@ -1,41 +1,64 @@
+import { appendToMapList } from "./appendToMapList.js";
+import { objcClassSymbol, objcSymbolLeaf } from "./objcClassSymbol.js";
 import type { JsonValue } from "./jsonValue.js";
-import type { AddressedName } from "./hopperValues.js";
+import type { AddressedName } from "./native/nativeInventory.js";
+import type {
+  MachoImportBinding,
+  ObjcClassDiscoveryCoverage,
+} from "./native/objcSwiftMetadata.js";
 import {
   classifySwiftSymbol,
+  isSwiftSymbolName,
   type SwiftTypeCategory,
 } from "./swiftSymbolClassification.js";
-
-/** Objective-C class definition markers emitted by modern Apple clang. */
-const OBJC_CLASS_MARKER = "OBJC_CLASS_$_" as const;
 
 /** Local class records emitted by Apple's fragile Objective-C ABI. */
 const LEGACY_OBJC_CLASS_PREFIX = "l_OBJC_CLASS_" as const;
 
-/**
- * Objective-C protocol declaration marker. `PROTOCOL_REFERENCE` slots
- * share the substring but are uses, not definitions.
- */
-const OBJC_PROTOCOL_MARKER = "OBJC_PROTOCOL_$_" as const;
+/** Objective-C protocol declaration labels with their object-file prefixes. */
+const OBJC_PROTOCOL_SYMBOL = /^_{0,2}OBJC_PROTOCOL_\$_[^\s]+$/u;
 
-/** Select and deduplicate Objective-C class labels. */
-export const discoverObjcClasses = (
+export interface ObjcClassImportBindingScan {
+  readonly bindings: readonly MachoImportBinding[];
+  readonly coverage: ObjcClassDiscoveryCoverage;
+}
+
+/** Select class labels and apply the caller's literal filter before identity joins. */
+export const selectObjcClassCandidates = (
   names: readonly AddressedName[],
   pattern: string,
+): AddressedName[] => {
+  const seen = new Set<string>();
+  return names.filter(({ address, name, objc_class_label }) => {
+    if (pattern.length > 0 && !name.includes(pattern)) return false;
+    const classLabel =
+      objcClassSymbol(name)?.metaclass === false ||
+      objc_class_label === "hopper_legacy_class_object" ||
+      (name.startsWith(LEGACY_OBJC_CLASS_PREFIX) &&
+        name.length > LEGACY_OBJC_CLASS_PREFIX.length &&
+        !/^l_OBJC_CLASS_NAME_(?:\.\d+)?$/u.test(name));
+    if (!classLabel) return false;
+    // Keep equal labels at distinct addresses until their slot identity is known.
+    const key = JSON.stringify([address, name]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+/** Project selected class labels, coalescing only exact proven import identities. */
+export const projectObjcClassCandidates = (
+  candidates: readonly AddressedName[],
+  bindingScan: ObjcClassImportBindingScan,
 ): JsonValue => {
-  const classes = uniqueByName(
-    names
-      .filter(
-        ({ name }) =>
-          name.includes(OBJC_CLASS_MARKER) ||
-          (name.startsWith(LEGACY_OBJC_CLASS_PREFIX) &&
-            name.length > LEGACY_OBJC_CLASS_PREFIX.length &&
-            !/^l_OBJC_CLASS_NAME_(?:\.\d+)?$/u.test(name)),
-      )
-      .filter(({ name }) => pattern.length === 0 || name.includes(pattern)),
-  );
+  const classes = coalesceBoundClassAliases(candidates, bindingScan.bindings);
   return {
     count: classes.length,
-    classes: classes.map(toJsonEntry),
+    classes,
+    identity_coverage: {
+      status: bindingScan.coverage.status,
+      reason: bindingScan.coverage.reason,
+    },
   };
 };
 
@@ -44,13 +67,10 @@ export const discoverObjcProtocols = (
   names: readonly AddressedName[],
 ): JsonValue => {
   const protocols = uniqueByName(
-    names.filter(
-      ({ name }) =>
-        name.includes(OBJC_PROTOCOL_MARKER) ||
-        name.includes("_TtP") ||
-        (name.endsWith("Mp") &&
-          classifySwiftSymbol(name)?.category === "protocols"),
-    ),
+    names,
+    (name) =>
+      OBJC_PROTOCOL_SYMBOL.test(objcSymbolLeaf(name)) ||
+      classifySwiftSymbol(name)?.protocolIdentity === true,
   );
   return {
     count: protocols.length,
@@ -92,22 +112,37 @@ export const categorizeSwiftTypes = (
 
   for (const entry of procedures) {
     if (seen.has(entry.name)) continue;
-    const mangledNames = [
-      ...new Set([
-        ...(classifySwiftSymbol(entry.name) === undefined ? [] : [entry.name]),
-        ...(aliases.get(entry.address) ?? []),
-      ]),
-    ];
-    if (mangledNames.length === 0) continue;
+    const addressAliases = aliases.get(entry.address);
+    const hasMangledName = isSwiftSymbolName(entry.name);
+    if (!hasMangledName && addressAliases === undefined) continue;
     if (
       pattern !== undefined &&
-      ![entry.name, ...mangledNames].some((name) => name.includes(pattern))
+      !entry.name.includes(pattern) &&
+      addressAliases?.some((name) => name.includes(pattern)) !== true
     )
       continue;
-    const kinds = new Set(
-      mangledNames.map((name) => classifySwiftSymbol(name)?.category ?? null),
-    );
-    const category = kinds.size === 1 ? ([...kinds][0] ?? null) : null;
+    const mangledNames =
+      addressAliases === undefined
+        ? [entry.name]
+        : [
+            ...new Set(
+              hasMangledName ? [entry.name, ...addressAliases] : addressAliases,
+            ),
+          ];
+    // Aliases remain evidence after two distinct decoded categories establish
+    // a conflict. Undecoded aliases do not decide the category.
+    let category: SwiftTypeCategory | null = null;
+    let conflictingCategories = false;
+    for (const name of mangledNames) {
+      const decoded = classifySwiftSymbol(name)?.category;
+      if (decoded === undefined || decoded === null) continue;
+      if (category !== null && category !== decoded) {
+        conflictingCategories = true;
+        category = null;
+        break;
+      }
+      category = decoded;
+    }
     const item = {
       address: entry.address,
       name: entry.name,
@@ -117,10 +152,9 @@ export const categorizeSwiftTypes = (
       unclassifiedNames.add(entry.name);
       unclassified.push({
         ...item,
-        reason:
-          kinds.size > 1 && !kinds.has(null)
-            ? "conflicting_categories"
-            : "category_not_decoded",
+        reason: conflictingCategories
+          ? "conflicting_categories"
+          : "category_not_decoded",
       });
     }
     const bucket = category ?? "other";
@@ -154,21 +188,105 @@ export const categorizeSwiftTypes = (
 const swiftAliasesByAddress = (symbols: readonly AddressedName[]) => {
   const aliases = new Map<string, string[]>();
   for (const { address, name } of symbols) {
-    if (classifySwiftSymbol(name) === undefined) continue;
-    const existing = aliases.get(address);
-    if (existing === undefined) aliases.set(address, [name]);
-    else existing.push(name);
+    if (!isSwiftSymbolName(name)) continue;
+    appendToMapList(aliases, address, name);
   }
   return aliases;
 };
 
-const uniqueByName = (entries: readonly AddressedName[]): AddressedName[] => {
+const uniqueByName = (
+  entries: readonly AddressedName[],
+  matches: (name: string) => boolean,
+): AddressedName[] => {
   const seen = new Set<string>();
   return entries.filter(({ name }) => {
-    if (seen.has(name)) return false;
+    if (seen.has(name) || !matches(name)) return false;
     seen.add(name);
     return true;
   });
+};
+
+interface ObjcClassBindingGroup {
+  readonly identity: MachoImportBinding;
+  readonly slotAddresses: Set<string>;
+  readonly canonicalSymbol: string | undefined;
+  representative: AddressedName | undefined;
+  canonical: boolean;
+}
+
+const coalesceBoundClassAliases = (
+  candidates: readonly AddressedName[],
+  bindings: readonly MachoImportBinding[],
+): JsonValue[] => {
+  const groupByIdentity = new Map<string, ObjcClassBindingGroup>();
+  const groupByAddress = new Map<string, ObjcClassBindingGroup>();
+  for (const identity of bindings) {
+    const key = JSON.stringify([
+      identity.symbol,
+      identity.binding_source,
+      identity.library_ordinal,
+      identity.library,
+      identity.weak,
+      identity.addend,
+    ]);
+    let group = groupByIdentity.get(key);
+    if (group === undefined) {
+      group = {
+        identity,
+        slotAddresses: new Set(),
+        canonicalSymbol: classNameFromImport(identity.symbol),
+        representative: undefined,
+        canonical: false,
+      };
+      groupByIdentity.set(key, group);
+    }
+    group.slotAddresses.add(identity.requested_address);
+    groupByAddress.set(identity.requested_address, group);
+  }
+
+  const ordered: Array<AddressedName | ObjcClassBindingGroup> = [];
+  for (const candidate of candidates) {
+    const group = groupByAddress.get(candidate.address);
+    if (group === undefined) {
+      ordered.push(candidate);
+      continue;
+    }
+    if (group.representative === undefined) {
+      group.representative = candidate;
+      ordered.push(group);
+    }
+    if (
+      !group.canonical &&
+      group.canonicalSymbol !== undefined &&
+      classNameFromImport(candidate.name) === group.canonicalSymbol
+    ) {
+      group.representative = candidate;
+      group.canonical = true;
+    }
+  }
+
+  return ordered.map((entry) => {
+    if (!("identity" in entry)) return toJsonEntry(entry);
+    const { identity, representative, slotAddresses } = entry;
+    return {
+      address: representative!.address,
+      name: representative!.name,
+      binding_identity: {
+        symbol: identity.symbol,
+        binding_source: identity.binding_source,
+        library_ordinal: identity.library_ordinal,
+        library: identity.library,
+        weak: identity.weak,
+        addend: identity.addend,
+        slot_addresses: [...slotAddresses],
+      },
+    };
+  });
+};
+
+const classNameFromImport = (symbol: string): string | undefined => {
+  const facts = objcClassSymbol(symbol);
+  return facts?.metaclass === false ? facts.symbol : undefined;
 };
 
 const toJsonEntry = ({ address, name }: AddressedName): JsonValue => ({

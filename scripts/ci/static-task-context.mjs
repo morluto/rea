@@ -6,6 +6,10 @@ import { promisify } from "node:util";
 import { z } from "zod";
 
 const execute = promisify(execFile);
+const STATIC_CONTEXT_SCRIPTS = new Set([
+  "check:ci:fast:tasks",
+  "check:ci:deep:tasks",
+]);
 const contextSchema = z.object({
   version: z.literal(1),
   sourceSha: z.string().regex(/^[a-f0-9]{40}$/u),
@@ -30,7 +34,10 @@ export async function recordStaticTaskContext({
   root = process.cwd(),
   npmCli = process.env.npm_execpath,
   outputDirectory = join(root, ".cache/static-checks"),
+  script = process.env.CI_STATIC_CONTEXT_SCRIPT ?? "check:ci:fast:tasks",
 } = {}) {
+  if (!STATIC_CONTEXT_SCRIPTS.has(script))
+    throw new Error("Static context script is not a known check");
   if (typeof npmCli !== "string" || !npmCli)
     throw new Error(
       "Run static context recording through npm run ci:static-context",
@@ -44,7 +51,7 @@ export async function recordStaticTaskContext({
   const [graph, source, status, npmVersion, turbo] = await Promise.all([
     execute(
       process.execPath,
-      [npmCli, "run", "--silent", "check:ci:tasks", "--", "--dry=json"],
+      [npmCli, "run", "--silent", script, "--", "--dry=json"],
       options,
     ),
     execute("git", ["rev-parse", "HEAD"], options),

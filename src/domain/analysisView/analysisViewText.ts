@@ -1,15 +1,17 @@
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { err, ok, type Result } from "../result.js";
+import { ok, type Result } from "../result.js";
+import { z } from "zod";
 import {
-  analysisViewInputError,
+  pageViewCoverage,
   type AnalysisViewCoverage,
-} from "./analysisView.js";
-import { pageViewCoverage } from "./analysisViewCoverage.js";
+} from "./analysisViewCoverage.js";
 
-const viewError = (message: string): AnalysisError =>
-  analysisViewInputError([
-    { path: ["view"], reason: "invalid_value", message },
-  ]);
+/** Exact text pages use UTF-16 code-unit offsets without splitting surrogate pairs. */
+export const analysisTextPageItemSchema = z.strictObject({
+  text: z.string(),
+  unit: z.literal("utf16-code-units"),
+});
 
 /** Slice text by UTF-16 code units without losing a partial Unicode character. */
 export const analysisTextPage = (
@@ -19,7 +21,7 @@ export const analysisTextPage = (
   label = "Pseudocode",
 ): Result<
   {
-    readonly item: { readonly text: string; readonly unit: "utf16-code-units" };
+    readonly item: Readonly<z.output<typeof analysisTextPageItemSchema>>;
     readonly coverage: AnalysisViewCoverage;
   },
   AnalysisError
@@ -33,7 +35,9 @@ export const analysisTextPage = (
     high(body.charCodeAt(start - 1)) &&
     low(body.charCodeAt(start))
   )
-    return err(viewError(`${label} offset splits a UTF-16 surrogate pair.`));
+    return invalidAnalysisView(
+      `${label} offset splits a UTF-16 surrogate pair.`,
+    );
   let end = Math.min(start + limit, body.length);
   if (
     end > start &&
@@ -43,10 +47,8 @@ export const analysisTextPage = (
   )
     end--;
   if (end === start && start < body.length)
-    return err(
-      viewError(
-        `Increase ${label.toLowerCase()} limit to include the next complete Unicode character.`,
-      ),
+    return invalidAnalysisView(
+      `Increase ${label.toLowerCase()} limit to include the next complete Unicode character.`,
     );
   return ok({
     item: { text: body.slice(start, end), unit: "utf16-code-units" },

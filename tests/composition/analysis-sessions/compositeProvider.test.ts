@@ -2,15 +2,18 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import {
+  createBinarySessionTargets,
+  createTestBinarySession,
+} from "../../fixtures/binarySession.js";
 import { CompositeProvider } from "../../../src/application/binary/CompositeProvider.js";
 import type {
   AnalysisOperation,
   AnalysisProvider,
   CapabilityDescriptor,
   ProviderIdentity,
-} from "../../../src/application/AnalysisProvider.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import type { BinaryTarget } from "../../../src/domain/binaryTargetTypes.js";
 import { ok } from "../../../src/domain/result.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -19,15 +22,15 @@ const target: BinaryTarget = {
   path: "/fixture",
   kind: "database",
   format: "analysis-database",
+  databaseEngine: null,
   sha256: "0".repeat(64),
 };
 
 describe("composite analysis provider", () => {
   it("routes disjoint operations and does not start children during health", async () => {
-    const hopperCalls: string[] = [];
-    const nativeCalls: string[] = [];
-    const hopper = provider("hopper", "address_name", hopperCalls);
-    const native = provider("native", "analyze_function", nativeCalls);
+    const starts: string[] = [];
+    const hopper = provider("hopper", "address_name", starts);
+    const native = provider("native", "analyze_function", starts);
     const composite = new CompositeProvider([hopper, native]);
     const client = composite.createClient(target);
 
@@ -35,12 +38,12 @@ describe("composite analysis provider", () => {
       ok: true,
       value: { result: null, provider: { id: "composite:hopper+native" } },
     });
-    expect(hopperCalls).toEqual([]);
-    expect(nativeCalls).toEqual([]);
+    expect(starts).toEqual([]);
     expect(await client.execute("address_name", {})).toEqual({
       ok: true,
       value: createAnalysisExecution("hopper:address_name", hopper.identity()),
     });
+    expect(starts).toEqual(["hopper"]);
     expect(await client.execute("analyze_function", {})).toEqual({
       ok: true,
       value: createAnalysisExecution(
@@ -52,6 +55,7 @@ describe("composite analysis provider", () => {
       ok: false,
       error: { _tag: "AnalysisCapabilityUnavailableError" },
     });
+    expect(starts).toEqual(["hopper", "native"]);
   });
 
   it("rejects ambiguous provider routes", () => {
@@ -83,7 +87,7 @@ describe("composite analysis provider", () => {
       ok: true,
     });
 
-    expect(session.status()).toMatchObject({
+    expect(await session.status()).toMatchObject({
       analysis_run: {
         process_lineage: {
           status: "snapshots",
@@ -127,6 +131,65 @@ describe("composite analysis provider", () => {
             queued_requests: 2,
           },
         ],
+      },
+    });
+    await session.close();
+  });
+});
+
+describe("composite provider health status", () => {
+  it("keeps a known failed child visible in public status when another child has no health snapshot", async () => {
+    const [targetPath] = await createBinarySessionTargets();
+    const failedIdentity: ProviderIdentity = {
+      id: "failed-child",
+      name: "Failed child",
+      version: "1",
+    };
+    const unobservedIdentity: ProviderIdentity = {
+      id: "unobserved-child",
+      name: "Unobserved child",
+      version: "1",
+    };
+    let failed = false;
+    const failedProvider: AnalysisProvider = {
+      identity: () => failedIdentity,
+      capabilities: () => [capability(failedIdentity, "address_name")],
+      createClient: () => ({
+        execute: async () => ok(createAnalysisExecution(null, failedIdentity)),
+        operationHealthSnapshot: () => ({
+          state: failed ? "exited" : "idle",
+          stage: failed ? "connection" : null,
+          retryAction: failed ? "restart_provider" : null,
+          exitCode: failed ? 7 : null,
+          requests: [],
+        }),
+        close: async () => ok(null),
+      }),
+    };
+    const unobservedProvider: AnalysisProvider = {
+      identity: () => unobservedIdentity,
+      capabilities: () => [capability(unobservedIdentity, "procedure_info")],
+      createClient: () => ({
+        execute: async () =>
+          ok(createAnalysisExecution(null, unobservedIdentity)),
+        close: async () => ok(null),
+      }),
+    };
+    const session = createTestBinarySession(
+      new CompositeProvider([failedProvider, unobservedProvider]),
+    );
+
+    expect((await session.open(targetPath)).ok).toBe(true);
+    expect((await session.execute("address_name", {})).ok).toBe(true);
+    expect((await session.execute("procedure_info", {})).ok).toBe(true);
+    failed = true;
+
+    expect(await session.status()).toMatchObject({
+      provider_operation_health: {
+        state: "exited",
+        stage: "connection",
+        retry_action: "restart_provider",
+        exit_code: 7,
       },
     });
     await session.close();
@@ -193,21 +256,20 @@ const dynamicProvider = (
 const provider = (
   id: string,
   operation: Exclude<AnalysisOperation, "health">,
-  calls: string[],
+  starts: string[],
 ): AnalysisProvider => {
   const identity: ProviderIdentity = { id, name: id, version: "1" };
   return {
     identity: () => identity,
     capabilities: () => [capability(identity, operation)],
-    createClient: () => ({
-      execute: (called) => {
-        calls.push(called);
-        return Promise.resolve(
+    createClient: () => {
+      starts.push(id);
+      return {
+        execute: async (called) =>
           ok(createAnalysisExecution(`${id}:${called}`, identity)),
-        );
-      },
-      close: () => Promise.resolve(ok(null)),
-    }),
+        close: async () => ok(null),
+      };
+    },
   };
 };
 
