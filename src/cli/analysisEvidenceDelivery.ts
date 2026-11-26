@@ -388,11 +388,7 @@ const retainOverBudgetEvidence = async (
     write: async (path) => {
       attemptedPath = path;
       // The bundle writer creates the file exclusively and never overwrites.
-      const published = await publishPreparedEvidence(
-        prepared,
-        path,
-        input,
-      );
+      const published = await publishPreparedEvidence(prepared, path, input);
       if (published.ok) {
         const { bytes } = published.value.receipt as { readonly bytes: number };
         return ok({ bytes });
