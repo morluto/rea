@@ -468,6 +468,10 @@ subresources, child-frame requests and failures without admitted request ownersh
 are excluded. Redirects reuse their request identity, and completed/failed requests
 release it. Active request identity metadata uses the existing 8 MiB retained-event
 allowance; exhaustion fails the observation explicitly instead of guessing scope.
+Armed timeline rows use that same allowance. Each row counts its retained
+strings plus a fixed overhead for its numbers. A row that does not fit fails
+the observation with `payload_limit` and does not return a shorter timeline.
+Event count has no separate ceiling.
 
 ## Data minimization
 

@@ -127,6 +127,7 @@ export const observeCdpSession = async (
     capture.assertPreArmBufferWithinLimit();
     capture.arm(armTimestamp);
     capture.assertRequestOwnershipWithinLimit();
+    capture.assertTimelineWithinLimit();
     // A capture that ended before arming observes nothing more; do not turn
     // lifecycle reporting on for a target it no longer follows.
     if (!capture.stopped)
@@ -151,9 +152,11 @@ export const observeCdpSession = async (
       context.signal,
     );
     capture.assertRequestOwnershipWithinLimit();
+    capture.assertTimelineWithinLimit();
     if (endReason === "window_elapsed")
       endReason = await captureFinalUrl(context, capture, allowedOrigins);
     capture.assertRequestOwnershipWithinLimit();
+    capture.assertTimelineWithinLimit();
     await context.progress?.report({
       phase: "browser_observation",
       completed: 2,
@@ -163,6 +166,7 @@ export const observeCdpSession = async (
     });
     // Terminal progress is awaited and may admit more protocol events.
     capture.assertRequestOwnershipWithinLimit();
+    capture.assertTimelineWithinLimit();
     if (capture.scopeExcluded) endReason = "target_left_scope";
     // A termination observed after the window, while the final state was
     // read, means that state belongs to a target that no longer exists.
@@ -221,6 +225,8 @@ class TimelineCapture {
   >();
   #documentRequestBytes = 0;
   #requestOwnershipFailure: BrowserObservationError | undefined;
+  #timelineBytes = 0;
+  #timelineBudgetFailure: BrowserObservationError | undefined;
   readonly #listeners = new Set<(reason: EndReason) => void>();
 
   constructor(
@@ -591,6 +597,11 @@ class TimelineCapture {
       throw this.#requestOwnershipFailure;
   }
 
+  assertTimelineWithinLimit(): void {
+    if (this.#timelineBudgetFailure !== undefined)
+      throw this.#timelineBudgetFailure;
+  }
+
   #loadingFailed(
     facts: CdpEventPayload<"Network.loadingFailed">,
     bufferedBeforeArm: boolean,
@@ -675,9 +686,9 @@ class TimelineCapture {
     if (timestamp !== null && timestamp !== undefined && timestamp < 0) {
       this.completeness.exclude("timeline", "invalid_protocol_value");
     }
-    this.#sequence += 1;
-    this.timeline.push({
-      sequence: this.#sequence,
+    if (this.#timelineBudgetFailure !== undefined) return;
+    const entry: TimelineEvent = {
+      sequence: this.#sequence + 1,
       type,
       timestamp:
         timestamp === undefined || (timestamp !== null && timestamp < 0)
@@ -692,9 +703,50 @@ class TimelineCapture {
       ...(options.redirectResponse === undefined
         ? {}
         : { redirect_response: options.redirectResponse }),
-    });
+    };
+    // Numbers stay inside the fixed overhead. The strings are the part that
+    // can grow with the page, so admission measures those before the row is kept.
+    const bytes = timelineRowBytes(entry);
+    if (
+      bytes >
+      WEB_RUNTIME_LIMITS.retainedEventBytes - this.#timelineBytes
+    ) {
+      this.#timelineBudgetFailure = new BrowserObservationError(
+        "observe_web_session",
+        "payload_limit",
+        {
+          detail: `Armed timeline rows exceeded the ${WEB_RUNTIME_LIMITS.retainedEventBytes}-byte retained event allowance.`,
+        },
+      );
+      this.end("window_elapsed");
+      return;
+    }
+    this.#sequence += 1;
+    this.#timelineBytes += bytes;
+    this.timeline.push(entry);
   }
 }
+
+const TIMELINE_ROW_OVERHEAD_BYTES = 64;
+
+const retainedTextBytes = (value: string | null | undefined): number =>
+  value == null ? 0 : Buffer.byteLength(value);
+
+const timelineRowBytes = (entry: TimelineEvent): number => {
+  const redirect = entry.redirect_response;
+  return (
+    TIMELINE_ROW_OVERHEAD_BYTES +
+    Buffer.byteLength(entry.type) +
+    retainedTextBytes(entry.frame_id) +
+    retainedTextBytes(entry.loader_id) +
+    retainedTextBytes(entry.request_id) +
+    retainedTextBytes(entry.url) +
+    retainedTextBytes(entry.destination_scope) +
+    retainedTextBytes(entry.detail) +
+    retainedTextBytes(redirect?.url) +
+    retainedTextBytes(redirect?.scope)
+  );
+};
 
 const performanceTimestamp = ({
   metrics,
