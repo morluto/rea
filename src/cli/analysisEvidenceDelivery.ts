@@ -177,7 +177,7 @@ export const publishCliAnalysisEvidence = async (
     );
   if (!result.ok)
     return evidenceOutput === undefined
-      ? budgetFailurePartialEvidence(result.error, input)
+      ? budgetFailurePartialEvidence(result.error, closureInput)
       : publishFailurePartialEvidence(
           result.error,
           evidenceOutput,
@@ -265,21 +265,30 @@ const deliverRetainedSummary = async (
       }
     : {
         summary,
-        delivery: deliveryJson(
-          overBudget({
-            kind: "not-retained",
-            ...(retained === undefined
-              ? {}
-              : {
-                  reason: redactExplicitText(
-                    retained.error.reason,
-                    input.sensitiveValues ?? [],
-                  ),
-                }),
-          }),
+        delivery: notRetainedDelivery(
+          overBudget,
+          retained?.error.reason,
+          input,
         ),
       };
 };
+
+/** Delivery facts when an over-budget record was not kept in the cache. */
+const notRetainedDelivery = (
+  overBudget: (recovery: AgentBudgetRecovery) => AgentBudgetDelivery,
+  reason: string | undefined,
+  input: Pick<CliEvidencePublication, "sensitiveValues">,
+): JsonValue =>
+  deliveryJson(
+    overBudget({
+      kind: "not-retained",
+      ...(reason === undefined
+        ? {}
+        : {
+            reason: redactExplicitText(reason, input.sensitiveValues ?? []),
+          }),
+    }),
+  );
 
 /**
  * Keep an over-budget result this invocation was not told to save in the
@@ -294,7 +303,7 @@ const retainOverBudgetEvidence = async (
 ): Promise<
   | Result<
       { readonly path: string; readonly receipt: JsonValue },
-      RetentionStop<AnalysisError>
+      RetentionStop<AnalysisError> & { readonly recordSha256?: string }
     >
   | undefined
 > => {
@@ -308,8 +317,9 @@ const retainOverBudgetEvidence = async (
     return err({ reason: sensitiveCachePathReason });
   const { retainCliEvidence, retainedEvidenceDigest } =
     await import("./cliEvidenceRetention.js");
+  const sha256 = retainedEvidenceDigest(complete);
   const kept = await retainCliEvidence<AnalysisError>({
-    sha256: retainedEvidenceDigest(complete),
+    sha256,
     completeBytes,
     retention,
     rejectResolvedDirectory: (resolved) =>
@@ -343,6 +353,7 @@ const retainOverBudgetEvidence = async (
       clearCliEvidencePublication();
     return err({
       ...kept.error,
+      ...(kept.error.committed === undefined ? {} : { recordSha256: sha256 }),
       reason: redactExplicitText(
         kept.error.reason,
         input.sensitiveValues ?? [],
@@ -424,8 +435,11 @@ const failurePartialEvidence = (
 /**
  * Without --evidence_output, a failure whose partial Evidence does not fit
  * the agent result budget beside its own facts delivers that Evidence's
- * summary, with delivery facts naming the arguments that keep it complete.
- * The failure's code, retry and recovery are never budgeted.
+ * summary. Complete partial Evidence is retained in the private cache when
+ * retention is enabled (reporting path, bytes and record_sha256 under
+ * details.diagnostics.evidence_bundle), and falls back to the rerun arguments
+ * when retention is off or fails. Cancellation keeps its no-publication
+ * contract, and the failure's code, retry and recovery are never budgeted.
  */
 const budgetFailurePartialEvidence = async (
   failure: JsonValue,
@@ -445,13 +459,59 @@ const budgetFailurePartialEvidence = async (
   if (overBudget === undefined) return failure;
   const summary = await overBudgetSummary(found.partial);
   if (summary === undefined) return failure;
+  const details = found.failure.details as JsonObject;
+  // Cancellation keeps its no-publication contract: budget the reply without
+  // writing to or renewing the retained-Evidence cache.
+  const retained =
+    input.signal.aborted || found.failure.code === "cancelled"
+      ? undefined
+      : await retainOverBudgetEvidence(
+          found.partial,
+          input,
+          overBudget({ kind: "not-retained" }).complete_bytes,
+        );
+  // The cache file was saved, but a later step failed: preserve the original
+  // analysis failure and report the committed receipt and cleanup owner.
+  if (retained?.ok === false && retained.error.committed !== undefined)
+    return refusedPartialPublication(
+      found.failure,
+      details,
+      { error: retained.error.committed, delivered: summary },
+      input,
+      (receipt) =>
+        typeof receipt?.path === "string"
+          ? deliveryJson(overBudget({ kind: "cache-file", path: receipt.path }))
+          : notRetainedDelivery(overBudget, retained.error.reason, input),
+      { target: "retained-cache", recordSha256: retained.error.recordSha256 },
+    );
+  if (retained?.ok === true) {
+    const diagnostics = isObject(details.diagnostics)
+      ? details.diagnostics
+      : {};
+    return {
+      ...found.failure,
+      details: {
+        ...details,
+        partial_observation: summary,
+        [PARTIAL_OBSERVATION_DELIVERY]: deliveryJson(
+          overBudget({ kind: "cache-file", path: retained.value.path }),
+        ),
+        diagnostics: {
+          ...diagnostics,
+          evidence_bundle: retained.value.receipt,
+        },
+      },
+    };
+  }
   return {
     ...found.failure,
     details: {
-      ...(found.failure.details as JsonObject),
+      ...details,
       partial_observation: summary,
-      [PARTIAL_OBSERVATION_DELIVERY]: deliveryJson(
-        overBudget({ kind: "not-retained" }),
+      [PARTIAL_OBSERVATION_DELIVERY]: notRetainedDelivery(
+        overBudget,
+        retained?.error.reason,
+        input,
       ),
     },
   };
@@ -733,7 +793,13 @@ const refusedPartialPublication = (
   refused: { readonly error: AnalysisError; readonly delivered?: Evidence },
   input: CliEvidencePublication,
   /** Delivery facts for a budgeted summary that replaced the partial. */
-  delivery?: JsonValue,
+  delivery?:
+    | JsonValue
+    | ((receipt: JsonObject | undefined) => JsonValue | undefined),
+  options: {
+    readonly target?: "evidence-output" | "retained-cache";
+    readonly recordSha256?: string | undefined;
+  } = {},
 ): JsonValue => {
   const diagnostics = isObject(details.diagnostics) ? details.diagnostics : {};
   const refusal = projectAnalysisError(
@@ -742,8 +808,14 @@ const refusedPartialPublication = (
   const refusalDetails: JsonObject = isObject(refusal.details)
     ? refusal.details
     : {};
-  const receipt = committedReceipt(refusalDetails, input);
+  const receipt = committedReceipt(refusalDetails, input, options.recordSha256);
   const cleanupIncomplete = refusalDetails.cleanup === "incomplete";
+  const resolvedDelivery =
+    typeof delivery === "function" ? delivery(receipt) : delivery;
+  const destination =
+    options.target === "retained-cache"
+      ? "the retained-Evidence cache"
+      : "--evidence_output";
   return {
     ...failure,
     ...(cleanupIncomplete
@@ -765,9 +837,9 @@ const refusedPartialPublication = (
         ? {}
         : {
             partial_observation: refused.delivered,
-            ...(delivery === undefined
+            ...(resolvedDelivery === undefined
               ? {}
-              : { [PARTIAL_OBSERVATION_DELIVERY]: delivery }),
+              : { [PARTIAL_OBSERVATION_DELIVERY]: resolvedDelivery }),
           }),
       diagnostics: {
         ...diagnostics,
@@ -777,37 +849,49 @@ const refusedPartialPublication = (
           message: refusal.message,
           limitation:
             receipt === undefined
-              ? "The partial Evidence was not published to --evidence_output; it remains complete in details.partial_observation."
+              ? `The partial Evidence was not published to ${destination}; it remains complete in details.partial_observation.`
               : cleanupIncomplete
-                ? "The partial Evidence was published to --evidence_output, but its staging cleanup remains incomplete; details.resources lists what remains."
-                : "The partial Evidence was published to --evidence_output before delivery stopped.",
+                ? `The partial Evidence was published to ${destination}, but its staging cleanup remains incomplete; details.resources lists what remains.`
+                : `The partial Evidence was published to ${destination} before delivery stopped.`,
         },
       },
     },
   };
 };
 
-/** Either committed receipt form, as {path, bytes}. */
+/** Either committed receipt form, as {path, bytes, record_sha256?}. */
 const committedReceipt = (
   refusalDetails: JsonObject,
   input: CliEvidencePublication,
-): JsonValue | undefined => {
+  recordSha256?: string,
+): JsonObject | undefined => {
+  const withDigest = (receipt: {
+    readonly path?: string;
+    readonly bytes: JsonValue;
+  }): JsonObject => ({
+    ...receipt,
+    ...(recordSha256 === undefined ? {} : { record_sha256: recordSha256 }),
+  });
   if (refusalDetails.published === true && refusalDetails.bytes !== undefined)
-    return bundleReceipt(
-      typeof refusalDetails.published_path === "string"
-        ? refusalDetails.published_path
-        : undefined,
-      refusalDetails.bytes,
-      input,
+    return withDigest(
+      bundleReceipt(
+        typeof refusalDetails.published_path === "string"
+          ? refusalDetails.published_path
+          : undefined,
+        refusalDetails.bytes,
+        input,
+      ),
     );
   const later = isObject(refusalDetails.diagnostics)
     ? refusalDetails.diagnostics.evidence_bundle
     : undefined;
   return isObject(later)
-    ? bundleReceipt(
-        typeof later.path === "string" ? later.path : undefined,
-        later.bytes ?? null,
-        input,
+    ? withDigest(
+        bundleReceipt(
+          typeof later.path === "string" ? later.path : undefined,
+          later.bytes ?? null,
+          input,
+        ),
       )
     : undefined;
 };

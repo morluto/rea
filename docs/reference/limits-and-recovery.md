@@ -498,8 +498,14 @@ view, and `details.partial_observation_delivery` carries the same delivery
 facts as a successful result. On MCP the session retains the complete
 partial Evidence, `next` pages it, and a `resource_link` to it follows
 the error text when one read can deliver it. On the CLI, `--evidence_output`
-publishes it and `next` names the bundle. Without `--evidence_output`,
-nothing is written and `rerun` names the arguments to add.
+publishes it and `next` names the bundle. Without `--evidence_output`, it is
+retained in the same private cache as a successful over-budget result
+(`retained: "cache-file"`), with `details.diagnostics.evidence_bundle`
+reporting its `path`, `bytes`, and `record_sha256` and `next` paging that
+file. When retention is off (`--no-retain` or
+`REA_CLI_RETAINED_EVIDENCE_BYTES=0`) or fails, nothing is written and `rerun`
+names the arguments to add (with `retention_failure` when a write failed);
+cancelled failures do not write to the cache.
 
 Recovery: pass `detail: "complete"` (CLI `--detail complete`) for everything
 inline on one call, or raise the setting for the runtime with
