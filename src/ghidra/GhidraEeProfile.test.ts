@@ -61,7 +61,7 @@ describe("PlayStation 2 EE profile", () => {
       mips_support_lane: GHIDRA_EE_SUPPORT_LANE,
       language_id: GHIDRA_EE_LANGUAGE_ID,
       compiler_spec_id: "default",
-      language_selection: "provider-pinned-v1",
+      language_selection: "provider-pinned",
     });
   });
 
@@ -123,6 +123,28 @@ describe("PlayStation 2 EE profile", () => {
     expect(
       ghidraEeLanguageOverride(target({ flags: 0x70001001 })),
     ).toBeUndefined();
+  });
+
+  it.each([
+    { fpAbi: 1, msa: 0 },
+    { fpAbi: 0, msa: null },
+    { fpAbi: null, msa: null },
+  ])("refuses GNU MIPS attributes %o", (gnuAttributes) => {
+    const value = target({ gnuAttributes });
+    expect(ghidraEeUnsupportedReason(value)).toMatch(
+      /GNU MIPS ABI attributes/u,
+    );
+    expect(ghidraEeLanguageOverride(value)).toBeUndefined();
+    expect(ghidraProcessorUnsupportedReason(value)).not.toBeNull();
+  });
+
+  it("refuses an uninspected GNU attributes section", () => {
+    const value = target();
+    if (value.kind !== "executable" || value.architecture !== "mips")
+      throw new Error("expected MIPS target");
+    const facts = { ...value.mips };
+    delete facts.gnuAttributes;
+    expect(ghidraEeUnsupportedReason({ ...value, mips: facts })).not.toBeNull();
   });
 
   it("binds the committed EE lane, not the generic MIPS lane, at open", () => {

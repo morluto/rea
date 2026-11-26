@@ -42,7 +42,7 @@ export interface GhidraProcessorExtension<Id extends string = string> {
 
 /**
  * A compiled SLEIGH language Ghidra must load as installed. See
- * docs/ghidra-ps2.md#precompiled-sleigh-language for the rule it mirrors.
+ * docs/providers/ghidra-ps2.md#precompiled-sleigh-language for the rule it mirrors.
  */
 export interface GhidraCompiledLanguageSpec {
   readonly source: string;

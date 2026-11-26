@@ -7,7 +7,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import type { BinaryTarget } from "../../../src/domain/binaryTargetTypes.js";
 import { ok as javaProbeOk } from "../../../src/domain/result.js";
@@ -16,6 +16,8 @@ import type { GhidraInstallationHost } from "../../../src/ghidra/GhidraInstallat
 import type { GhidraJavaObservation } from "../../../src/ghidra/GhidraJavaProbe.js";
 import { GhidraHeadlessLauncher } from "../../../src/ghidra/GhidraLauncher.js";
 import { GhidraProvider } from "../../../src/ghidra/GhidraProvider.js";
+import type { GhidraProviderClientFactory } from "../../../src/ghidra/GhidraProviderClient.js";
+import { GHIDRA_SESSION_CAPABILITIES } from "../../../src/ghidra/GhidraSessionValues.js";
 import {
   SUPPORTED_GHIDRA_JAVA_MAJOR,
   SUPPORTED_GHIDRA_VERSION,
@@ -110,12 +112,48 @@ async function installation(
   await mkdir(join(directory, "support"));
   const parsed = parseConfig({ GHIDRA_INSTALL_DIR: directory });
   if (!parsed.ok) throw parsed.error;
+  const launches: Parameters<GhidraProviderClientFactory>[0][] = [];
   return {
     directory,
     root,
+    launches,
     provider: new GhidraProvider(parsed.value, silentLogger, {}, host),
+    // The client seam stands in for the JVM after every open-time check ran.
+    opening: new GhidraProvider(
+      parsed.value,
+      silentLogger,
+      {},
+      host,
+      (options) => {
+        launches.push(options);
+        return {
+          start: () => Promise.resolve(javaProbeOk(eeSession)),
+          callTool: () => Promise.resolve(javaProbeOk(null)),
+          close: () => Promise.resolve(javaProbeOk(null)),
+        };
+      },
+    ),
   };
 }
+
+const eeSession = {
+  name: "REA Ghidra bridge" as const,
+  run_id: "11111111-1111-4111-8111-111111111111",
+  profile_digest: "a".repeat(64),
+  provider: { id: "ghidra" as const, version: INSTALL_VERSION },
+  read_only: false,
+  analysis_complete: true,
+  analysis_timed_out: false,
+  capabilities: [...GHIDRA_SESSION_CAPABILITIES],
+  target: {
+    name: "ps2.elf",
+    language_id: "r5900:LE:32:default",
+    compiler_spec_id: "default",
+    image_base: "0x0",
+    default_address_space: "ram",
+    sha256: "a".repeat(64),
+  },
+};
 
 /** Every installed path with its bytes and modification time. */
 async function snapshot(root: string): Promise<Record<string, string>> {
@@ -152,6 +190,36 @@ describe.skipIf(process.platform === "win32")(
           root,
           ghidra_version: INSTALL_VERSION,
           sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        },
+      });
+    });
+
+    it("opens a resolved EE profile with the pinned language and extension", async () => {
+      const { opening, launches, root } = await installation();
+      onTestFinished(async () => {
+        await opening.closeOwnedResources();
+      });
+      const resolved = await opening.resolveAnalysisProfile(target);
+      if (!resolved.ok || resolved.value.profile === null)
+        throw new Error("expected an EE profile");
+      const client = opening.createClient(target, resolved.value.profile);
+      onTestFinished(async () => {
+        await client.close();
+      });
+      const health = await client.execute("health", {});
+      if (!health.ok) throw health.error;
+      expect(launches).toHaveLength(1);
+      expect(launches[0]).toMatchObject({
+        expectedLanguageId: "r5900:LE:32:default",
+        expectedCompilerSpecId: "default",
+        launcher: {
+          options: {
+            languageOverride: {
+              languageId: "r5900:LE:32:default",
+              compilerSpecId: "default",
+            },
+            eeExtension: { id: "ghidra-emotionengine-reloaded", root },
+          },
         },
       });
     });

@@ -619,6 +619,11 @@ export const documentationSections = [
         route: "/ghidra-psp",
       },
       {
+        text: "PlayStation 2 EE static ELF analysis through Ghidra",
+        source: "providers/ghidra-ps2.md",
+        route: "/ghidra-ps2",
+      },
+      {
         text: "RISC-V ELF analysis through Ghidra",
         source: "providers/ghidra-riscv.md",
         route: "/ghidra-riscv",

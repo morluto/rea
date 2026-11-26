@@ -66,7 +66,7 @@ JVM starts, and never writes to the installation.
 ## Language selection
 
 The profile pins `r5900:LE:32:default` with the `default` compiler
-specification (`language_selection: provider-pinned-v1`, lane
+specification (`language_selection: provider-pinned`, lane
 `ps2-elf32-exec-eabi64-r5900-v1`) and passes it to the standard ELF loader; a
 caller-selected `REA_GHIDRA_LANGUAGE_ID` is refused for this lane because the
 generic MIPS languages do not decode the R5900's 128-bit and COP2

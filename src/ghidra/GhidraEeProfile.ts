@@ -41,6 +41,9 @@ export const ghidraEeUnsupportedReason = (
   const gnuAttributesReason =
     ghidraMipsGnuAttributesUnsupportedReason(metadata);
   if (gnuAttributesReason !== null) return gnuAttributesReason;
+  // ee-gcc writes no GNU attributes; generic-MIPS-verified records are not EE evidence.
+  if (metadata.gnuAttributes !== null)
+    return "The PlayStation 2 EE profile covers producers without GNU MIPS ABI attributes; an attributes section needs separate verification.";
   const incomplete = ghidraMipsIncompleteDeclarationsReason(metadata);
   if (incomplete !== null) return incomplete;
   if (metadata.elfClass !== 32 || metadata.byteOrder !== "little")
@@ -84,7 +87,7 @@ export const ghidraEeProfileParameters = (
     mips_abi_basis: "declared-eabi64-r5900-extension-v1",
     language_id: language.languageId,
     compiler_spec_id: language.compilerSpecId ?? "default",
-    language_selection: "provider-pinned-v1",
+    language_selection: "provider-pinned",
   };
 };
 
