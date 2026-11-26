@@ -195,7 +195,16 @@ it("omits effects of IDA calls hidden behind unavailable workflow prerequisites"
     },
     enabledPolicy,
   );
-  for (const name of ["find_xrefs_to_name", "get_navigation_context"]) {
+  // Without a name inventory, find_xrefs_to_name resolves names through the
+  // procedure lookup, so it is reachable and declares IDA's effects.
+  expect(
+    entries.find((entry) => entry.name === "find_xrefs_to_name"),
+  ).toMatchObject({
+    available: true,
+    effects: { accessesNetwork: true },
+    annotations: { open_world: true },
+  });
+  for (const name of ["get_navigation_context"]) {
     expect(contractNamed(name)?.effects, name).toMatchObject({
       accessesNetwork: false,
       launchesProcess: false,

@@ -13,10 +13,12 @@ import type {
 } from "../ports/AnalysisProvider.js";
 import {
   projectRetainedAnalysis,
-  requireAnalysisViewRetention,
   summarizeRetainedAnalysis,
-  type AnalysisViewRetention,
 } from "../application/analysisView/AnalysisViewService.js";
+import {
+  requireAnalysisViewRetention,
+  type AnalysisViewRetention,
+} from "../application/analysisView/AnalysisViewRetention.js";
 import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewRequest.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
@@ -71,6 +73,7 @@ export const deliverEvidenceResult = (
     contract,
     recorded,
     viewSource,
+    recordEvidence,
   );
 };
 
@@ -96,7 +99,7 @@ export const createRetainedSummaryToolHandler = <
   Name extends string,
   InputSchema extends z.ZodType<
     Readonly<Record<string, unknown>> & {
-      readonly detail: "complete" | "summary";
+      readonly detail?: "complete" | "summary" | undefined;
       readonly view?: AnalysisViewRequest;
     }
   >,
@@ -583,6 +586,8 @@ export const createAnalysisToolHandler =
                   analyzed.value.evidence,
                   contract,
                   analyzed.value.recorded,
+                  undefined,
+                  retention.recordEvidence,
                 );
         return progress.complete(response);
       },

@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { JsonValue } from "../jsonValue.js";
 
-import {
-  timedCaptureEvidence,
-  type TimedCaptureRow,
-} from "../../../tests/fixtures/analysisView.js";
+import type { TimedCaptureRow } from "../../../tests/fixtures/analysisView.js";
 import {
   LISTED_LABEL_ROWS,
   READ_BACK_TAG_ROWS,
@@ -14,15 +11,7 @@ import {
   slugSaveRows,
   slugOnlySaveRows,
 } from "../../../tests/fixtures/environmentStateWriteViews.js";
-import { environmentStateViewOf } from "../../../tests/fixtures/environmentStateWrites.js";
-
-const planOf = (rows: readonly TimedCaptureRow[], tool: string) => {
-  const plan = environmentStateViewOf(timedCaptureEvidence(rows)).writes.find(
-    (candidate) => candidate.tool === tool,
-  );
-  if (plan === undefined) throw new Error(`No plan for ${tool}`);
-  return plan;
-};
+import { planOf } from "../../../tests/fixtures/environmentStateWrites.js";
 
 describe("creates whose answer shows the entity otherwise than reads do", () => {
   it.each(["123456", "123457"])(

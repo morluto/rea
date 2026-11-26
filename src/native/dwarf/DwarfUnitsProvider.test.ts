@@ -5,10 +5,14 @@ import { expect, it, vi } from "vitest";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
+  AnalysisTargetFailureError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { readMachoImageFromReader } from "../../domain/apple/machoImage.js";
-import { BinaryResourceFailure } from "../../domain/binaryContainer.js";
+import {
+  BinaryResourceFailure,
+  DEFAULT_NATIVE_STRUCTURE_BYTES,
+} from "../../domain/binaryContainer.js";
 import {
   MAX_DWARF_DECOMPRESSED_SECTION_BYTES,
   inspectDwarfUnitsInputSchema,
@@ -23,6 +27,7 @@ import { DwarfUnitsProvider } from "./DwarfUnitsProvider.js";
 import {
   DwarfSectionAllowanceFailure,
   locateDwarfSectionsFromHandle,
+  MAX_PE_SECTION_NAME_BYTES,
 } from "./DwarfSections.js";
 import {
   abbrevTable,
@@ -37,7 +42,6 @@ import {
   peImage,
   strxBeforeBase,
 } from "./DwarfUnits.fixture.js";
-import type { ByteSource } from "../../domain/byteSource.js";
 import { bufferByteSource } from "../../domain/byteSource.js";
 
 const inspect = async (
@@ -46,6 +50,8 @@ const inspect = async (
     readonly architecture?: "x86" | "x86_64" | "arm" | "arm64";
     readonly offset?: number;
     readonly limit?: number;
+    readonly max_structure_bytes?: number;
+    readonly max_decompressed_bytes?: number;
   } = {},
 ) => {
   const root = await createTestTempDirectory("rea-dwarf-units-");
@@ -132,12 +138,7 @@ it("reads a little-endian ELF unit and refuses architecture on a thin file", asy
   if (!rejected.ok) {
     expect(rejected.error).toBeInstanceOf(AnalysisInputError);
     expect(rejected.error).toMatchObject({
-      issues: [
-        {
-          path: ["architecture"],
-          message: expect.stringContaining("omit architecture"),
-        },
-      ],
+      issues: [{ path: ["architecture"] }],
     });
   }
 });
@@ -191,12 +192,49 @@ it("refuses a decompression bomb before inflation and reads zlib, zstd, and GNU 
     expect(bomb.error).toBeInstanceOf(AnalysisResourceConstraintError);
     expect(bomb.error).toMatchObject({
       resource: "memory",
-      fixedAllowance: {
-        name: "The DWARF decompressed section allowance",
-        kind: "parser",
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_decompressed_bytes",
+        effective_value: 268435456,
+        default_value: 268435456,
       },
     });
+    expect(
+      "limit" in bomb.error ? bomb.error.limit : undefined,
+    ).not.toHaveProperty("required_value");
   }
+  const compressedImage = elfDebugImage(
+    { info: elfCompressedBody(named.info, "zlib"), abbrev: named.abbrev },
+    { infoFlags: 0x800n },
+  );
+  const small = await inspect(compressedImage, { max_decompressed_bytes: 1 });
+  expect(small.ok).toBe(false);
+  if (!small.ok)
+    expect(small.error).toMatchObject({
+      limit: { parameter: "max_decompressed_bytes", effective_value: 1 },
+    });
+  const raised = await inspect(compressedImage, {
+    max_decompressed_bytes: Math.max(
+      named.info.length,
+      elfCompressedBody(named.info, "zlib").length,
+    ),
+  });
+  if (!raised.ok) throw raised.error;
+  expect(raised.value.units[0]).toMatchObject({
+    name: { state: "present", value: "compressed.c" },
+  });
+  expect(
+    inspectDwarfUnitsInputSchema.safeParse({
+      path: "/tmp/example.elf",
+      max_decompressed_bytes: 0,
+    }).success,
+  ).toBe(false);
+  expect(
+    inspectDwarfUnitsInputSchema.safeParse({
+      path: "/tmp/example.elf",
+      max_decompressed_bytes: 1_073_741_825,
+    }).success,
+  ).toBe(false);
   for (const [compression, body] of [
     ["zlib", elfCompressedBody(named.info, "zlib")],
     ["zstd", elfCompressedBody(named.info, "zstd")],
@@ -313,13 +351,22 @@ it("decodes a shared PE long name once, including at the per-name allowance", as
 
 it("bounds individual PE long names before decoding", async () => {
   const read = await inspect(
-    peImage([{ name: "x".repeat(65537), body: Buffer.alloc(0) }]),
+    peImage([
+      {
+        name: "x".repeat(MAX_PE_SECTION_NAME_BYTES + 1),
+        body: Buffer.alloc(0),
+      },
+    ]),
   );
-  expect(read.ok).toBe(false);
-  if (!read.ok) {
-    expect(read.error).toBeInstanceOf(AnalysisResourceConstraintError);
-    expect(read.error.message).toContain("65536-byte decoding allowance");
-  }
+  if (read.ok) throw new Error("Expected a per-name allowance refusal");
+  expect(read.error).toBeInstanceOf(AnalysisResourceConstraintError);
+  expect(read.error).toMatchObject({
+    reportedLimits: {
+      boundary: "pe-section-name-bytes",
+      maximum: MAX_PE_SECTION_NAME_BYTES,
+    },
+    fixedAllowance: { name: "The PE section-name decoding allowance" },
+  });
 });
 
 it("bounds aggregate PE name decoding for overlapping string-table offsets", async () => {
@@ -332,11 +379,37 @@ it("bounds aggregate PE name decoding for overlapping string-table offsets", asy
       })),
     ]),
   );
-  expect(read.ok).toBe(false);
-  if (!read.ok) {
-    expect(read.error).toBeInstanceOf(AnalysisResourceConstraintError);
-    expect(read.error.message).toContain("16 MiB structural budget");
-  }
+  if (read.ok) throw new Error("Expected an aggregate allowance refusal");
+  expect(read.error).toBeInstanceOf(AnalysisResourceConstraintError);
+  expect(read.error).toMatchObject({
+    reportedLimits: {
+      boundary: "max_structure_bytes",
+      maximum: DEFAULT_NATIVE_STRUCTURE_BYTES,
+    },
+    limit: {
+      control_kind: "parameter",
+      parameter: "max_structure_bytes",
+      effective_value: DEFAULT_NATIVE_STRUCTURE_BYTES,
+      default_value: DEFAULT_NATIVE_STRUCTURE_BYTES,
+      maximum: 512 * 1024 * 1024,
+      applies_at: "next_call",
+    },
+  });
+});
+
+it("admits aggregate PE name decoding with a larger max_structure_bytes", async () => {
+  const read = await inspect(
+    peImage([
+      { name: "x".repeat(65536), body: Buffer.alloc(0) },
+      ...Array.from({ length: 299 }, (_, index) => ({
+        name: `/${String(index + 5)}`,
+        body: Buffer.alloc(0),
+      })),
+    ]),
+    { max_structure_bytes: 64 * 1024 * 1024 },
+  );
+  if (!read.ok) throw read.error;
+  expect(read.value.debug_info).toBe("absent");
 });
 
 it("rejects an unterminated PE long name within the decoding allowance", async () => {
@@ -345,9 +418,9 @@ it("rejects an unterminated PE long name within the decoding allowance", async (
   const read = await inspect(image);
   expect(read.ok).toBe(false);
   if (!read.ok) {
-    expect(read.error).toBeInstanceOf(AnalysisInputError);
+    expect(read.error).toBeInstanceOf(AnalysisTargetFailureError);
     expect(read.error).toMatchObject({
-      issues: [{ message: expect.stringContaining("could not be resolved") }],
+      failure: { detail: expect.stringContaining("could not be resolved") },
     });
   }
 });
@@ -388,15 +461,13 @@ it("rejects PE long section names when PointerToSymbolTable is zero", async () =
   }).toEqual({ zeroCountOk: false, nonZeroCountOk: false });
   for (const rejected of [readZeroCount, readNonZeroCount]) {
     if (rejected.ok) continue;
-    expect(rejected.error).toBeInstanceOf(AnalysisInputError);
+    expect(rejected.error).toBeInstanceOf(AnalysisTargetFailureError);
     expect(rejected.error).toMatchObject({
-      issues: [
-        {
-          message: expect.stringContaining(
-            "PE long section name string table is unavailable",
-          ),
-        },
-      ],
+      failure: {
+        detail: expect.stringContaining(
+          "PE long section name string table is unavailable",
+        ),
+      },
     });
   }
 

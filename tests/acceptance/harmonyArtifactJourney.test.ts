@@ -182,7 +182,7 @@ test("preserves Harmony archive formats through the public CLI/MCP lifecycle", a
       });
       const inspected = await artifactMcpCall(client, {
         name: "inspect_artifact",
-        arguments: {},
+        arguments: { detail: "complete" },
       });
       expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
       const inventoryEvidence = parseEvidence(inspected.structuredContent);

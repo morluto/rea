@@ -19,7 +19,7 @@ console.log("bounded allocation completed", kept.length);`;
 
 /** Exercise owned Job Object commit limits through the native boundary and its production wrapper. */
 export async function verifyWindowsJobMemoryLimit(packageRoot, workspace) {
-  const { WindowsOwnedProcess } = await import(
+  const { WindowsOwnedProcess, quoteWindowsProcessArgument } = await import(
     pathToFileURL(join(packageRoot, "dist/windows/WindowsOwnedProcess.js"))
   );
   const { requireWindowsNativeAuthority } = await import(
@@ -27,7 +27,7 @@ export async function verifyWindowsJobMemoryLimit(packageRoot, workspace) {
   );
   const native = requireWindowsNativeAuthority();
   assert.equal(native.inspection.jobMemoryLimit, true);
-  const launch = nativeLauncher(native, workspace);
+  const launch = nativeLauncher(native, workspace, quoteWindowsProcessArgument);
 
   for (const invalid of [
     0,
@@ -90,12 +90,10 @@ export async function verifyWindowsJobMemoryLimit(packageRoot, workspace) {
   };
 }
 
-function nativeLauncher(native, workspace) {
+function nativeLauncher(native, workspace, quote) {
   const environment = Object.entries(process.env)
     .filter(([, value]) => value !== undefined)
     .map(([key, value]) => `${key}=${value}`);
-  const quote = (value) =>
-    `"${value.replace(/(\\*)"/gu, '$1$1\\"').replace(/(\\+)$/u, "$1$1")}"`;
   return (script, ...controls) =>
     native.call("process_spawn", [
       process.execPath,

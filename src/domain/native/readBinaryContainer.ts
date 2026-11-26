@@ -5,6 +5,7 @@ import {
 } from "../binaryContainer.js";
 import {
   classifyFatContainerEvidence,
+  MACHO_FORMAT,
   readFatContainerHeader,
   readFatHeaderPrefix,
   readMachoHeaderPrefixFacts,
@@ -47,6 +48,8 @@ export const readBinaryContainerFromReader = async (
   source: ByteSource,
   operation: string,
   pause: ZstandardFramePause,
+  /** `max_structure_bytes` for the ELF directory and Mach-O load commands. */
+  structureBytes?: number,
 ): Promise<BinaryContainer> => {
   const probeLength = Math.min(source.size, 64);
   const prefix =
@@ -56,7 +59,7 @@ export const readBinaryContainerFromReader = async (
         ? Buffer.alloc(0)
         : await source.readRange(0, probeLength);
   if (hasElfMagic(prefix))
-    return readElfImageFromReader(source, operation, pause);
+    return readElfImageFromReader(source, operation, pause, { structureBytes });
   if (prefix.subarray(0, 2).equals(Buffer.from("MZ")))
     return readPeImageFromReader({
       size: source.size,
@@ -67,8 +70,21 @@ export const readBinaryContainerFromReader = async (
     const fatPrefix = readFatHeaderPrefix(prefix);
     if (fatPrefix.state === "incomplete" || fatPrefix.state === "parsed") {
       const fat = await readUniversalMachoImageFromReader(source);
-      if (!fat.ok)
-        throw new BinaryFormatFailure("malformed", fat.error.message);
+      if (!fat.ok) {
+        const { failure } = fat.error;
+        // A read short of the measured file is raised as the bytes ending
+        // early; the stable-file owner re-verifies the file on any parse
+        // failure and reports a changed file as changed.
+        const kind = failure.kind === "changed" ? "truncated" : failure.kind;
+        const { detail, offset } = failure;
+        throw new BinaryFormatFailure(kind, detail, {
+          format: failure.format,
+          ...(offset === undefined ? {} : { offset }),
+          ...(failure.kind === "truncated" && failure.extent !== undefined
+            ? { extent: failure.extent }
+            : {}),
+        });
+      }
       if (fat.value !== null)
         throw new BinaryFormatFailure(
           "unsupported",
@@ -76,7 +92,7 @@ export const readBinaryContainerFromReader = async (
         );
     }
     if (readMachoHeaderPrefixFacts(prefix).format !== null)
-      return readMachoImageFromReader(source);
+      return readMachoImageFromReader(source, structureBytes);
   }
   throw new BinaryFormatFailure(
     "unsupported",
@@ -91,7 +107,14 @@ const readNonElfContainer = (bytes: Buffer): BinaryContainer => {
     if (fatPrefix.state === "incomplete" || fatPrefix.state === "parsed") {
       const fatHeader = readFatContainerHeader(bytes, bytes.length);
       if (fatHeader.state === "malformed")
-        throw new BinaryFormatFailure("malformed", fatHeader.reason);
+        throw new BinaryFormatFailure("malformed", fatHeader.reason, {
+          format: MACHO_FORMAT,
+        });
+      if (fatHeader.state === "truncated")
+        throw new BinaryFormatFailure("truncated", fatHeader.reason, {
+          format: MACHO_FORMAT,
+          extent: fatHeader.extent,
+        });
       const identity =
         fatHeader.state === "parsed"
           ? classifyFatContainerEvidence(fatHeader, bytes)

@@ -1,3 +1,5 @@
+import { appendToMapList } from "../appendToMapList.js";
+import { selectViewRows } from "./selectViewRows.js";
 import { z } from "zod";
 import { canonicalJson } from "../comparisonSemantics.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
@@ -132,16 +134,6 @@ const factsIndexes = new WeakMap<
   { readonly nodes: readonly ApplicationNode[]; readonly index: FactsIndex }
 >();
 
-const pushIndex = (
-  map: Map<string, number[]>,
-  key: string,
-  ordinal: number,
-): void => {
-  const existing = map.get(key);
-  if (existing === undefined) map.set(key, [ordinal]);
-  else existing.push(ordinal);
-};
-
 const buildFactsIndex = (nodes: readonly ApplicationNode[]): FactsIndex => {
   const all: FactEntry[] = [];
   const byKind = new Map<string, number[]>();
@@ -152,15 +144,15 @@ const buildFactsIndex = (nodes: readonly ApplicationNode[]): FactsIndex => {
     for (const observation of node.observations) {
       const ordinal = all.length;
       all.push({ node, observation });
-      pushIndex(byKind, node.kind, ordinal);
+      appendToMapList(byKind, node.kind, ordinal);
       const path = observationPath(observation);
       if (path !== null) {
-        pushIndex(byPath, path, ordinal);
+        appendToMapList(byPath, path, ordinal);
         if (kindPaths === undefined) {
           kindPaths = new Map();
           byKindAndPath.set(node.kind, kindPaths);
         }
-        pushIndex(kindPaths, path, ordinal);
+        appendToMapList(kindPaths, path, ordinal);
       }
     }
   }
@@ -380,44 +372,20 @@ const projectIndexedFacts = (
   keys: readonly string[],
 ): { readonly rows: FactRow[]; readonly total: number } => {
   const buckets = collectMatchingBuckets(index, kinds, paths);
-  if (buckets === undefined) {
-    const total = index.all.length;
-    if (view.offset >= total || view.limit <= 0) return { rows: [], total };
-    const end = view.offset + Math.min(view.limit, total - view.offset);
-    const rows: FactRow[] = [];
-    for (let i = view.offset; i < end; i++) {
-      const entry = index.all[i]!;
-      rows.push(
-        buildFactRow(
-          entry.node,
-          entry.observation,
-          keys,
-          view.include_available_property_keys,
-        ),
-      );
-    }
-    return { rows, total };
-  }
+  const project = (entry: FactEntry) =>
+    buildFactRow(
+      entry.node,
+      entry.observation,
+      keys,
+      view.include_available_property_keys,
+    );
+  if (buckets === undefined)
+    return selectViewRows(index.all, view, undefined, project);
   if (buckets.length === 0) return { rows: [], total: 0 };
-  if (buckets.length === 1) {
-    const bucket = buckets[0]!;
-    const total = bucket.length;
-    if (view.offset >= total || view.limit <= 0) return { rows: [], total };
-    const end = view.offset + Math.min(view.limit, total - view.offset);
-    const rows: FactRow[] = [];
-    for (let i = view.offset; i < end; i++) {
-      const entry = index.all[bucket[i]!]!;
-      rows.push(
-        buildFactRow(
-          entry.node,
-          entry.observation,
-          keys,
-          view.include_available_property_keys,
-        ),
-      );
-    }
-    return { rows, total };
-  }
+  if (buckets.length === 1)
+    return selectViewRows(buckets[0]!, view, undefined, (ordinal) =>
+      project(index.all[ordinal]!),
+    );
   let total = 0;
   for (const bucket of buckets) total += bucket.length;
   if (view.offset >= total || view.limit <= 0) return { rows: [], total };
@@ -427,19 +395,10 @@ const projectIndexedFacts = (
     view.limit,
     total,
   );
-  const rows: FactRow[] = [];
-  for (const ordinal of ordinals) {
-    const entry = index.all[ordinal]!;
-    rows.push(
-      buildFactRow(
-        entry.node,
-        entry.observation,
-        keys,
-        view.include_available_property_keys,
-      ),
-    );
-  }
-  return { rows, total };
+  return {
+    rows: ordinals.map((ordinal) => project(index.all[ordinal]!)),
+    total,
+  };
 };
 
 type PropertyFilter = readonly (readonly [string, ReadonlySet<unknown>])[];

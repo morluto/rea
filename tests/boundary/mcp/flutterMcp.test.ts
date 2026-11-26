@@ -228,11 +228,11 @@ it("advertises and enforces the same Unicode selector grammar through MCP", asyn
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(ajv.validateSchema(canonicalInputSchema(tool.name))).toBe(true);
   for (const abi of [
-    "😀".repeat(1010),
-    "l".repeat(1010),
-    "😀".repeat(1009) + "\n",
+    "😀".repeat(65_521),
+    "l".repeat(65_521),
+    "😀".repeat(65_520) + "\n",
     ...["\n", "\r", "\u2028", "\u2029"].map(
-      (terminator) => "l".repeat(1009) + terminator,
+      (terminator) => "l".repeat(65_520) + terminator,
     ),
   ]) {
     const arguments_ = { path: "/fixture.apk", abi };
@@ -251,9 +251,10 @@ it("advertises and enforces the same Unicode selector grammar through MCP", asyn
   for (const [abi, reason] of [
     ["", "out_of_range"],
     ["lib/x86_64", "invalid_format"],
-    ["😀".repeat(1011), "invalid_value"],
+    ["😀".repeat(65_522), "invalid_value"],
     ...["\n", "\r", "\u2028", "\u2029"].map(
-      (terminator) => ["l".repeat(1010) + terminator, "invalid_value"] as const,
+      (terminator) =>
+        ["l".repeat(65_521) + terminator, "invalid_value"] as const,
     ),
   ] as const) {
     const arguments_ = { path: "/fixture.apk", abi };
@@ -274,7 +275,7 @@ it("advertises and enforces the same Unicode selector grammar through MCP", asyn
             path: ["abi"],
             reason,
             message: expect.stringMatching(
-              /exact lib\/ directory label.*1–1010 Unicode characters.*without '\/'/iu,
+              /exact lib\/ directory label.*1–65521 Unicode characters.*without '\/'/iu,
             ),
           }),
         ],

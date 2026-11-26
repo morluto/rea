@@ -122,7 +122,7 @@ it.each([-1, Number.NaN, "oversized"] as const)(
           return handle;
         },
       }),
-    ).rejects.toMatchObject({ reason: "format" });
+    ).rejects.toMatchObject({ reason: "io" });
   },
 );
 
@@ -650,7 +650,7 @@ describe("streamStableArtifact async chunks and custom chunkBytes", () => {
   });
 
   it.each([0, -1, 1.5, Number.NaN])(
-    "rejects invalid chunkBytes (%j) with format failure",
+    "rejects invalid chunkBytes (%j) as an internal invariant violation",
     async (chunkBytes) => {
       const root = await createTestTempDirectory("rea-stable-bad-chunk-");
       const path = join(root, "sample.bin");
@@ -661,7 +661,7 @@ describe("streamStableArtifact async chunks and custom chunkBytes", () => {
           retainBytes: () => 0,
           onChunk: async () => {},
         }),
-      ).rejects.toMatchObject({ reason: "format" });
+      ).rejects.toMatchObject({ _tag: "InternalInvariantError" });
     },
   );
 

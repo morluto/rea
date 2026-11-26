@@ -12,6 +12,7 @@ import {
   type AnalysisRefusal,
 } from "./analysisRefusal.js";
 import { analysisErrorProjectionSchema } from "./analysisErrorProjectionSchema.js";
+import type { AnalysisParameterLimit } from "./analysisSettings.js";
 
 const budgetError = (
   setting: Parameters<typeof analysisSettingLimit>[0],
@@ -77,13 +78,14 @@ describe("typed refusals", () => {
     );
 
     expect(projected.remediation.action).toBe(
-      `analyze_javascript_application reached its max_heap_mb budget of 128 MiB (source request). Pass a larger max_heap_mb on the next analyze_javascript_application call (range ${String(limit.minimum)}..${String(limit.maximum)} MiB), then retry.`,
+      `analyze_javascript_application reached its max_heap_mb budget of 128 MiB (source request). Pass a larger max_heap_mb on the next analyze_javascript_application call (range ${String(limit.minimum)}..${String(limit.maximum)} MiB), then retry. To raise it for this session, set javascript.max_heap_mb with update_analysis_settings.`,
     );
     expect(projected.details?.refusal).toEqual({
       kind: "adjustable_budget",
       operation: "analyze_javascript_application",
       control: "max_heap_mb",
       setting: "javascript.max_heap_mb",
+      source: "request",
       effective_value: 128,
       unit: "MiB",
       range: { minimum: limit.minimum, maximum: limit.maximum },
@@ -281,5 +283,176 @@ describe("adjustable budget minimum", () => {
     ).remediation.action;
     expect(unreachable).toContain("above the asar.max_listing_bytes maximum");
     expect(unreachable).not.toContain("update_analysis_settings");
+  });
+});
+
+describe("setting-backed per-call budgets", () => {
+  const refused = (
+    limit: ReturnType<typeof analysisSettingLimit>,
+    callerLifetime?: "invocation",
+  ) =>
+    projectAnalysisError(
+      new AnalysisResourceConstraintError(
+        "inspect_binary_layout",
+        "memory",
+        "Input exceeds the budget.",
+        null,
+        { retryable: false, limit },
+      ),
+      callerLifetime,
+    ).remediation.action;
+  const limit = {
+    ...analysisSettingLimit("pwntools.max_input_bytes", 1024, "request"),
+    required_value: 4096,
+  };
+  const perCall = `inspect_binary_layout reached its producer_limits.input_bytes budget of 1024 bytes (source request). Pass a larger producer_limits.input_bytes on the next inspect_binary_layout call (at least 4096 bytes; range ${String(limit.minimum)}..${String(limit.maximum)} bytes), then retry.`;
+
+  it("offers the next call and the session setting for every source", () => {
+    expect(refused(limit)).toBe(
+      `${perCall} To raise it for this session, set pwntools.max_input_bytes with update_analysis_settings.`,
+    );
+    expect(
+      refused({
+        ...analysisSettingLimit("pwntools.max_input_bytes", 1024, "default"),
+        required_value: 4096,
+      }),
+    ).toBe(
+      `${perCall.replace("(source request)", "(source default)")} To raise it for this session, set pwntools.max_input_bytes with update_analysis_settings.`,
+    );
+  });
+
+  it("names the launch environment for a one-invocation caller", () => {
+    expect(refused(limit, "invocation")).toBe(
+      `${perCall} To raise it for later invocations, set REA_PWNTOOLS_MAX_INPUT_BYTES in the environment that starts them.`,
+    );
+  });
+
+  it("keeps the single per-call route when an invocation has no seed", () => {
+    const heap = analysisSettingLimit("javascript.max_heap_mb", 128, "default");
+    const action = refused(heap, "invocation");
+
+    expect(action).toContain("Pass a larger max_heap_mb");
+    expect(action).not.toContain("To raise it");
+    expect(action).not.toContain("update_analysis_settings");
+  });
+});
+
+describe("per-call parameter budgets", () => {
+  const parameterLimit = (
+    effective: number,
+    required?: number,
+  ): AnalysisParameterLimit => ({
+    control_kind: "parameter",
+    parameter: "max_file_bytes",
+    effective_value: effective,
+    unit: "bytes",
+    minimum: 64,
+    maximum: 4096,
+    default_value: 1024,
+    applies_at: "next_call",
+    ...(required === undefined ? {} : { required_value: required }),
+  });
+  const refusal = (
+    limit: AnalysisParameterLimit,
+    remediationAction?: string,
+  ): AnalysisResourceConstraintError =>
+    new AnalysisResourceConstraintError(
+      "inspect_elf_notes",
+      "capacity",
+      "Reads exceed max_file_bytes.",
+      null,
+      {
+        retryable: false,
+        limit,
+        ...(remediationAction === undefined ? {} : { remediationAction }),
+      },
+    );
+
+  it("derives the next-call value from the measured need for every caller lifetime", () => {
+    const limit = parameterLimit(1024, 2048);
+    const expected =
+      "inspect_elf_notes reached its max_file_bytes budget of 1024 bytes. Pass a larger max_file_bytes on the next inspect_elf_notes call (at least 2048 bytes; range 64..4096 bytes), then retry.";
+    const projected = projectAnalysisError(refusal(limit));
+
+    expect(analysisErrorProjectionSchema.parse(projected)).toBeDefined();
+    expect(projected.retryable).toBe(false);
+    expect(projected.remediation.action).toBe(expected);
+    expect(
+      projectAnalysisError(refusal(limit), "invocation").remediation.action,
+    ).toBe(expected);
+    expect(projected.details?.limit).toEqual(limit);
+    expect(projected.details?.refusal).toEqual({
+      kind: "adjustable_budget",
+      operation: "inspect_elf_notes",
+      control: "max_file_bytes",
+      effective_value: 1024,
+      unit: "bytes",
+      range: { minimum: 64, maximum: 4096 },
+      default_value: 1024,
+      required_value: 2048,
+    });
+  });
+
+  it("omits the minimum when the producer did not measure it", () => {
+    const projected = projectAnalysisError(refusal(parameterLimit(1024)));
+
+    expect(projected.remediation.action).toBe(
+      "inspect_elf_notes reached its max_file_bytes budget of 1024 bytes. Pass a larger max_file_bytes on the next inspect_elf_notes call (range 64..4096 bytes), then retry.",
+    );
+    expect(projected.details?.refusal).not.toHaveProperty("required_value");
+  });
+
+  it("does not suggest raising a control at its maximum or below the need", () => {
+    const atMaximum = projectAnalysisError(refusal(parameterLimit(4096)))
+      .remediation.action;
+    const aboveMaximum = projectAnalysisError(
+      refusal(parameterLimit(1024, 8192)),
+    ).remediation.action;
+
+    expect(atMaximum).toContain(
+      "max_file_bytes is already at its maximum (64..4096 bytes)",
+    );
+    expect(aboveMaximum).toContain(
+      "The request requires 8192 bytes, above the max_file_bytes maximum (64..4096 bytes)",
+    );
+    for (const action of [atMaximum, aboveMaximum])
+      expect(action).not.toContain("Pass a larger");
+  });
+
+  it("keeps a producer's authored recovery beside the typed refusal", () => {
+    const projected = projectAnalysisError(
+      refusal(parameterLimit(1024), "Producer recovery."),
+    );
+
+    expect(projected.remediation.action).toBe("Producer recovery.");
+    expect(projected.details?.refusal).toMatchObject({
+      kind: "adjustable_budget",
+      control: "max_file_bytes",
+    });
+  });
+
+  it("leaves an environment control without a typed refusal", () => {
+    const projected = projectAnalysisError(
+      new AnalysisResourceConstraintError(
+        "inspect_process",
+        "capacity",
+        "Token buffer exceeded.",
+        null,
+        {
+          limit: {
+            control_kind: "environment",
+            environment: "REA_EXAMPLE_BYTES",
+            effective_value: 1,
+            unit: "bytes",
+            minimum: 1,
+            maximum: 2,
+            default_value: 1,
+            applies_at: "next_startup",
+          },
+        },
+      ),
+    );
+
+    expect(projected.details).not.toHaveProperty("refusal");
   });
 });

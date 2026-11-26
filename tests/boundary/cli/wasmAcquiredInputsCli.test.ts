@@ -214,9 +214,12 @@ cliTest(
 );
 
 cliTest(
-  "names max_artifact_paths by field and the CLI flag that sets it before reading selections",
+  "reports the max_artifact_paths value a selection needs by CLI flag and MCP field before reading selections",
   async ({ cli }) => {
     const directory = await createTestTempDirectory("rea-wasm-paths-");
+    const selected = join(directory, "selected.wasm");
+    const glue = [join(directory, "first.js"), join(directory, "second.js")];
+    const environment = { HOME: directory, XDG_CONFIG_HOME: directory };
     const invocation = await cli.run({
       arguments: [
         "inspect-wasm-artifact",
@@ -230,22 +233,59 @@ cliTest(
         "--format",
         "json",
       ],
-      environment: { HOME: directory, XDG_CONFIG_HOME: directory },
+      environment,
       cwd: directory,
     });
     expect(invocation.exitCode, invocation.stderr).toBe(1);
     const cliError = analysisErrorProjectionSchema.parse(invocation.json);
+    const limit = {
+      control_kind: "parameter",
+      parameter: "max_artifact_paths",
+      effective_value: 1,
+      unit: "count",
+      minimum: 1,
+      default_value: expect.any(Number),
+      applies_at: "next_call",
+      required_value: 2,
+    };
+    const refusal = {
+      kind: "adjustable_budget",
+      operation: "inspect_wasm_artifact",
+      control: "max_artifact_paths",
+      effective_value: 1,
+      required_value: 2,
+    };
     expect(cliError).toMatchObject({
       code: "resource_constraint",
+      retryable: false,
       details: {
-        limit: {
-          control_kind: "parameter",
-          parameter: "max_artifact_paths",
-          effective_value: 1,
-          cli_flag: "--max-artifact-paths",
-        },
+        limit: { ...limit, cli_flag: "--max-artifact-paths" },
+        refusal,
       },
     });
-    expect(JSON.stringify(cliError.remediation)).not.toContain("--");
+    expect(cliError.remediation.action).toMatch(
+      /^inspect_wasm_artifact reached its max_artifact_paths budget of 1\. Pass a larger --max-artifact-paths on the next rea \S.* run \(at least 2; range 1\.\.\d+\), then retry\.$/u,
+    );
+
+    const { client, call } = await connectLocalToolsMcp(environment);
+    try {
+      const mcpError = parseMcpToolError(
+        await call("inspect_wasm_artifact", {
+          path: selected,
+          glue_paths: glue,
+          max_artifact_paths: 1,
+        }),
+      ).error;
+      expect(mcpError).toMatchObject({
+        code: "resource_constraint",
+        details: { limit, refusal },
+      });
+      expect(mcpError.details).not.toHaveProperty("limit.cli_flag");
+      expect(mcpError.remediation.action).toMatch(
+        /^inspect_wasm_artifact reached its max_artifact_paths budget of 1\. Pass a larger max_artifact_paths on the next inspect_wasm_artifact call \(at least 2; range 1\.\.\d+\), then retry\.$/u,
+      );
+    } finally {
+      await client.close();
+    }
   },
 );

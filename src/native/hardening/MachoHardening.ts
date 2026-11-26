@@ -1,5 +1,8 @@
 import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
-import { validateFatSliceIdentity } from "../../domain/apple/machoContainer.js";
+import {
+  validateFatSliceIdentity,
+  type FatSliceRangeFailure,
+} from "../../domain/apple/machoContainer.js";
 import {
   machoArchitectureName,
   machoKnownArm64Subtype,
@@ -34,7 +37,10 @@ import {
   MAX_BINARY_HARDENING_SYMBOL_SCAN_BYTES,
   MAX_BINARY_HARDENING_TABLE_ENTRIES,
 } from "../../domain/native/binaryHardening.js";
-import { assertArtifactReadActive } from "../../resources/index.js";
+import {
+  assertArtifactReadActive,
+  readFailureError,
+} from "../../resources/index.js";
 import {
   BinaryFormatFailure,
   BinaryReader,
@@ -48,7 +54,11 @@ import {
   type MachoSliceHeader,
   type ReadAt,
 } from "../../domain/apple/machoLoadCommandReader.js";
-import type { ByteSource } from "../../domain/byteSource.js";
+import {
+  bufferByteSource,
+  readByteSourceSlice,
+  type ByteSource,
+} from "../../domain/byteSource.js";
 
 const STREAM_WINDOW_BYTES = 65536;
 
@@ -101,13 +111,7 @@ export const readMachoHardening = async (
   signal?: AbortSignal,
 ): Promise<BinaryHardeningImage[]> => {
   assertArtifactReadActive(signal);
-  const readAt: ReadAt = async (offset, length) => {
-    assertArtifactReadActive(signal);
-    if (offset < 0 || length < 0 || offset > bytes.length)
-      return Buffer.alloc(0);
-    return bytes.subarray(offset, Math.min(bytes.length, offset + length));
-  };
-  return readMachoHardeningFromReader(readAt, bytes.length, signal);
+  return readMachoHardeningFromHandle(bufferByteSource(bytes), signal);
 };
 
 /** Same Mach-O hardening read over a random-access handle without buffering the full image. */
@@ -118,38 +122,23 @@ export const readMachoHardeningFromHandle = async (
   assertArtifactReadActive(signal);
   const readAt: ReadAt = async (offset, length) => {
     assertArtifactReadActive(signal);
-    if (offset < 0 || length <= 0 || offset >= source.size)
-      return Buffer.alloc(0);
-    const clamped = Math.min(length, source.size - offset);
-    if (source.prefix !== undefined && offset + clamped <= source.prefix.length)
-      return source.prefix.subarray(offset, offset + clamped);
-    return source.readRange(offset, clamped);
+    if (offset < 0) return Buffer.alloc(0);
+    return readByteSourceSlice(source, offset, length);
   };
-  return readMachoHardeningFromReader(readAt, source.size, signal);
-};
-
-const readMachoHardeningFromReader = async (
-  readAt: ReadAt,
-  fileSize: number,
-  signal?: AbortSignal,
-): Promise<BinaryHardeningImage[]> => {
+  const fileSize = source.size;
   const container = await readMachoContainer(readAt, fileSize);
   if (container.kind === "not-mach-o")
     throw new BinaryFormatFailure(
       "unsupported",
       "File is not ELF, PE, or Mach-O",
     );
-  if (container.kind === "issue")
-    throw new BinaryFormatFailure(container.status, container.reason);
+  if (container.kind === "issue") throw readFailureError(container.failure);
   if (
     container.kind === "fat" &&
     container.hidden !== null &&
     container.hidden.status !== "declared"
   )
-    throw new BinaryFormatFailure(
-      container.hidden.status,
-      container.hidden.reason,
-    );
+    throw readFailureError(container.hidden.failure);
   const refs = sliceRefs(container, fileSize);
   const encryption = await readMachoEncryption(
     readAt,
@@ -162,7 +151,7 @@ const readMachoHardeningFromReader = async (
       "File is not ELF, PE, or Mach-O",
     );
   if (encryption.status !== "parsed")
-    throw new BinaryFormatFailure(encryption.status, encryption.reason);
+    throw readFailureError(encryption.failure);
   if (encryption.slices.length !== refs.length)
     malformed("Mach-O encryption slice coverage disagrees with the container");
   const images: BinaryHardeningImage[] = [];
@@ -178,6 +167,17 @@ const readMachoHardeningFromReader = async (
   }
   return images;
 };
+
+/** Hardening status for a FAT row whose own range cannot be read. */
+const sliceRangeIssue = (
+  issue: FatSliceRangeFailure | null,
+): SliceRef["rangeIssue"] =>
+  issue === null
+    ? null
+    : {
+        status: issue.kind === "unsupported" ? "unknown" : "malformed",
+        reason: issue.detail,
+      };
 
 const sliceRefs = (
   container: Exclude<
@@ -207,14 +207,7 @@ const sliceRefs = (
       size: declaration.size,
       cpuType: declaration.cpuType,
       cpuSubtype: declaration.cpuSubtype,
-      rangeIssue:
-        issue === null
-          ? null
-          : {
-              status:
-                issue.category === "unsupported" ? "unknown" : "malformed",
-              reason: issue.reason,
-            },
+      rangeIssue: sliceRangeIssue(issue),
     };
   });
   const hidden = container.hidden;
@@ -226,10 +219,7 @@ const sliceRefs = (
       size: hidden.declaration.size,
       cpuType: hidden.declaration.cpuType,
       cpuSubtype: hidden.declaration.cpuSubtype,
-      rangeIssue:
-        hidden.rangeIssue === null
-          ? null
-          : { status: "malformed", reason: hidden.rangeIssue },
+      rangeIssue: sliceRangeIssue(hidden.rangeIssue),
     });
   return refs;
 };
@@ -278,15 +268,11 @@ const readSliceImage = async (
   const table = await readSliceCommandTable(readAt, ref.offset, ref.size);
   if (table.status !== "read") {
     // A thin image has no sibling slice. A bad header is a failed file.
-    if (ref.thin)
-      throw new BinaryFormatFailure(
-        table.status === "unsupported" ? "unsupported" : "malformed",
-        table.reason,
-      );
+    if (ref.thin) throw readFailureError(table.failure);
     return failedImage(
       ref,
-      table.status === "unsupported" ? "unknown" : "malformed",
-      table.reason,
+      table.failure.kind === "unsupported" ? "unknown" : "malformed",
+      table.failure.detail,
       table.header,
     );
   }
@@ -379,7 +365,7 @@ const readCommandFacts = (
       facts.symtab = command;
     }
   });
-  if (framed.status !== "framed") malformed(framed.reason);
+  if (framed.status !== "framed") malformed(framed.failure.detail);
   return facts;
 };
 

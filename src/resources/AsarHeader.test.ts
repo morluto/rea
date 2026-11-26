@@ -69,7 +69,7 @@ it("refuses a header that declares one member name twice", async () => {
   const { handle } = positionalHeader(archive);
   const extents = await admitAsarHeader(handle);
   await expect(readAsarHeader(handle, extents)).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringContaining('"a.js"'),
   });
 });
@@ -113,7 +113,9 @@ it("admits the fixed prefix and decodes JSON across short reads without consumin
       extents,
     ),
   ).rejects.toMatchObject({
-    reason: "format",
-    message: expect.stringMatching(/truncated.*header/iu),
+    // The extents were checked against the file size: a short read is a
+    // file that changed during the read, not a truncated archive.
+    reason: "integrity",
+    integrityCheck: "read-coverage",
   });
 });

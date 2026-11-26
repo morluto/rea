@@ -20,7 +20,7 @@ import type { ProviderProcessSupervisor } from "../../../src/process/ProviderPro
 import {
   AnalysisCancelledError,
   AnalysisProtocolError,
-  AnalysisUnsupportedTargetError,
+  AnalysisTargetFailureError,
 } from "../../../src/domain/analysisErrorCore.js";
 
 const posixIt = test.skipIf(process.platform === "win32");
@@ -459,7 +459,7 @@ posixIt(
   async () => {
     const { limiter, capinfos } = await prlimitStandIn();
     const failure = await runLimited(limiter, capinfos);
-    expect(failure).toBeInstanceOf(AnalysisUnsupportedTargetError);
+    expect(failure).toBeInstanceOf(AnalysisTargetFailureError);
     expect(projectAnalysisError(failure as AnalysisError)).toMatchObject({
       code: "unsupported_target",
     });
