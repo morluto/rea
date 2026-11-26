@@ -106,7 +106,7 @@ it("refuses a decode whose declared length exceeds the budget", async () => {
   ).rejects.toMatchObject({ kind: "limit" });
 });
 
-it("preserves timer-driven cancellation during decode", async () => {
+it("preserves timer-driven cancellation during Unity LZMA decode", async () => {
   const plain = Buffer.alloc(2 * 1024 * 1024, 0x61);
   const budget = 64 * 1024 * 1024;
   const encoded = encodeUnityLzma(plain);
