@@ -270,6 +270,11 @@ it("adjusts string_literals file offsets inside a universal Mach-O slice and rec
     truncated: true,
     limits_reached: ["max_string_literals"],
   });
+  // Chained fixups are not a field on the report. The limitation is the
+  // record that pointer recovery can miss rebase-encoded slots.
+  expect(result.value.limitations).toContain(
+    "This Mach-O declares LC_DYLD_CHAINED_FIXUPS; rebase-encoded pointer slots in writable data may not hold raw virtual addresses statically, so (ptr, len) recovery can miss writable-section string headers.",
+  );
 });
 
 it.each([
