@@ -14,6 +14,10 @@ import {
   producerOutputBytesLimit,
   resolveProducerOutputBytes,
 } from "../config/producerOutputBytes.js";
+import {
+  sigrokHostSupported,
+  sigrokUnsupportedHostError,
+} from "./SigrokHostAdmission.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
@@ -81,8 +85,7 @@ const OPERATION = "decode_signal_recording";
 type Launcher = NonNullable<Parameters<typeof runOwnedCommand>[2]>["launcher"];
 
 /** Signal decoding runs only on Linux; discovery and execution share this check. */
-export const sigrokHostSupported = (platform: NodeJS.Platform): boolean =>
-  platform === "linux";
+export { sigrokHostSupported };
 
 /**
  * A nonzero version probe ran under the resource limiter, so the status is not
@@ -174,9 +177,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
       await this.#resources.release();
       if (!output.ok) throw output.error;
       if (!sigrokHostSupported(this.platform))
-        throw new Error(
-          "Signal decoding requires Linux with util-linux prlimit and REA_SIGROK_COMMAND so expanded recordings are processed under an enforced address-space limit.",
-        );
+        throw sigrokUnsupportedHostError(operation);
       const configured = environment.REA_SIGROK_COMMAND ?? "";
       if (!isAbsolute(configured))
         throw new Error(
