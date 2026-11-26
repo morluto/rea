@@ -279,14 +279,20 @@ running with an unknown initial state.
 Declared non-cookie seeds are also installed with a browser-context init
 script. Playwright runs that script after a document is created and before
 the document's own scripts, including a popup opened later in the same
-context. Page-session CDP auto-attach does not pause a `window.open` target,
-so that init script is what seeds the popup before its first script. Each
-local-storage partition and each top-level session area is seeded once; a
-later document in that same area keeps the page's updates and deletions. The
-bookkeeping key is omitted from captured storage inventories. If the context
-cannot install the script, discovering a popup still retains completed
-observations and marks `storage` coverage missing, with equality ineligible,
-even when popup lifecycle events were not selected.
+context. In connect mode the hook still uses the shared context so a
+`window.open` target receives it, but seeding runs only for the selected page
+and its descendant popups. Page-session CDP auto-attach does not pause a
+`window.open` target, so that init script is what seeds the popup before its
+first script. Each local-storage partition and each top-level session area is
+seeded once through one shared decision owner used by both the init script and
+the selected-page CDP seeder; a later document in that same area keeps the
+page's updates and deletions. Bookkeeping stays outside clearable local and
+session storage and is scenario-specific, so a later connected run can seed
+again. Captured storage inventories omit any legacy bookkeeping key. A
+storage write failure inside the init script marks popup seed coverage
+unknown. If the context cannot install the script, discovering a popup still
+retains completed observations and marks `storage` coverage missing, with
+equality ineligible, even when popup lifecycle events were not selected.
 
 The result is Evidence with an initial state followed by one record per
 declared action. Each step reports action status, elapsed time, sanitized URLs,

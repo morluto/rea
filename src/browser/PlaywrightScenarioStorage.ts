@@ -11,7 +11,7 @@ import type { BrowserContext, Page } from "playwright-core";
 
 import {
   applyDeclaredBrowserStorageSeeds,
-  declaredBrowserStorageSeedMark,
+  type DeclaredBrowserStorageSeedCommand,
 } from "./declaredBrowserStorageSeed.js";
 
 import type { BrowserScenario } from "../domain/browserScenario.js";
@@ -147,10 +147,15 @@ export type PlaywrightScenarioStorageCleanup = {
 export class PlaywrightScenarioStorage {
   readonly #seeds = new Map<string, StorageSeed>();
   readonly #initializedLocal = new Set<string>();
+  readonly #initializedLocalOrigins = new Set<string>();
   readonly #initializedSession = new Set<string>();
   readonly #targets = new Map<string, StorageTarget>();
   readonly #replies = new Map<number, PendingReply>();
   readonly #sourceUrl = `rea-storage-${randomUUID()}`;
+  readonly #seedToken = randomUUID();
+  readonly #seedBinding = `__reaStorageSeed_${this.#seedToken.replaceAll("-", "")}`;
+  readonly #lineage = new Set<Page>();
+  readonly #pageIds = new WeakMap<Page, string>();
   readonly #unsubscribers: (() => void)[] = [];
   #sequence = 0;
   #generation = 0;
@@ -267,7 +272,6 @@ export class PlaywrightScenarioStorage {
     page: Page,
     context: BrowserContext,
   ): Promise<void> {
-    await this.installDocumentSeedScript(context);
     if (this.#closed) return;
     const rootInfo = await withScenarioCommandDeadline(
       () => this.cdp.send("Target.getTargetInfo"),
@@ -275,6 +279,9 @@ export class PlaywrightScenarioStorage {
       "command",
       "Target.getTargetInfo",
     );
+    if (this.#closed) return;
+    this.#pageIds.set(page, rootInfo.targetInfo.targetId);
+    await this.installDocumentSeedScript(page, context);
     if (this.#closed) return;
     const root = this.createTarget(
       undefined,
@@ -294,7 +301,51 @@ export class PlaywrightScenarioStorage {
     await ready;
   }
 
+  private pageId(page: Page): string {
+    const existing = this.#pageIds.get(page);
+    if (existing !== undefined) return existing;
+    const id = randomUUID();
+    this.#pageIds.set(page, id);
+    return id;
+  }
+
+  private seedBridge(
+    source: { readonly page: Page },
+    command: DeclaredBrowserStorageSeedCommand,
+    area?: "local" | "session",
+    origin?: string,
+  ): boolean | void {
+    if (command === "scope")
+      return this.ownsContext || this.#lineage.has(source.page);
+    if (command === "fail") {
+      this.#popupSeedCoverageUnknown = true;
+      return;
+    }
+    if (
+      origin === undefined ||
+      (area !== "local" && area !== "session")
+    )
+      return false;
+    if (command === "was") {
+      if (area === "local") return this.#initializedLocalOrigins.has(origin);
+      return this.#initializedSession.has(
+        JSON.stringify([this.pageId(source.page), origin]),
+      );
+    }
+    if (command === "mark") {
+      if (area === "local") {
+        this.#initializedLocalOrigins.add(origin);
+        this.#initializedLocal.add(origin);
+        return;
+      }
+      this.#initializedSession.add(
+        JSON.stringify([this.pageId(source.page), origin]),
+      );
+    }
+  }
+
   private async installDocumentSeedScript(
+    page: Page,
     context: BrowserContext,
   ): Promise<void> {
     const seeds = [...this.#seeds].map(([origin, seed]) => ({
@@ -302,12 +353,51 @@ export class PlaywrightScenarioStorage {
       local: seed.local,
       session: seed.session,
     }));
-    if (seeds.length === 0 || typeof context.addInitScript !== "function")
+    if (
+      seeds.length === 0 ||
+      typeof context.addInitScript !== "function" ||
+      typeof context.exposeBinding !== "function"
+    )
       return;
-    await context.addInitScript(applyDeclaredBrowserStorageSeeds, {
-      mark: declaredBrowserStorageSeedMark,
-      seeds,
-    });
+    this.#lineage.add(page);
+    try {
+      await withScenarioCommandDeadline(
+        async () => {
+          await context.exposeBinding(
+            this.#seedBinding,
+            (
+              source: { readonly page: Page },
+              command: DeclaredBrowserStorageSeedCommand,
+              area?: "local" | "session",
+              origin?: string,
+            ) => this.seedBridge(source, command, area, origin),
+          );
+          return context.addInitScript(applyDeclaredBrowserStorageSeeds, {
+            binding: this.#seedBinding,
+            seeds,
+          });
+        },
+        this.commandTimeoutMs,
+        "command",
+        "BrowserContext.addInitScript",
+      );
+    } catch (cause: unknown) {
+      const pending = scenarioCommandPending(cause);
+      if (pending !== undefined) {
+        void pending
+          .then(async (result) => {
+            if (
+              typeof result === "object" &&
+              result !== null &&
+              "dispose" in result &&
+              typeof result.dispose === "function"
+            )
+              await result.dispose();
+          })
+          .catch(() => undefined);
+      }
+      throw cause;
+    }
     this.#popupSeedsInstalled = true;
   }
 
@@ -337,7 +427,12 @@ export class PlaywrightScenarioStorage {
     // Without the context init script, discovery is later than the first
     // popup script and cannot establish that page-session instrumentation
     // controlled that top-level document.
+    const rememberLineage = (opened: Page): void => {
+      this.#lineage.add(opened);
+      opened.on("popup", rememberLineage);
+    };
     const popup = (opened: Page): void => {
+      if (!this.ownsContext) rememberLineage(opened);
       if (opened !== page && !this.#popupSeedsInstalled)
         this.#popupSeedCoverageUnknown = true;
     };
@@ -549,12 +644,21 @@ export class PlaywrightScenarioStorage {
       { frameId },
     );
     const sessionKey = JSON.stringify([target.topLevelTargetId, storageKey]);
+    const sessionOriginKey = JSON.stringify([
+      target.topLevelTargetId,
+      origin,
+    ]);
     const local =
-      this.#initializedLocal.has(storageKey) || seed.local.length === 0
+      this.#initializedLocal.has(storageKey) ||
+      this.#initializedLocalOrigins.has(storageKey) ||
+      seed.local.length === 0
         ? []
         : seed.local;
     const session =
-      this.#initializedSession.has(sessionKey) || seed.session.length === 0
+      this.#initializedSession.has(sessionKey) ||
+      (storageKey === origin &&
+        this.#initializedSession.has(sessionOriginKey)) ||
+      seed.session.length === 0
         ? []
         : seed.session;
     if (local.length === 0 && session.length === 0) return;
@@ -578,8 +682,15 @@ export class PlaywrightScenarioStorage {
         "protocol_error",
         { detail: "The browser denied initial storage initialization." },
       );
-    if (local.length > 0) this.#initializedLocal.add(storageKey);
-    if (session.length > 0) this.#initializedSession.add(sessionKey);
+    if (local.length > 0) {
+      this.#initializedLocal.add(storageKey);
+      this.#initializedLocalOrigins.add(storageKey);
+    }
+    if (session.length > 0) {
+      this.#initializedSession.add(sessionKey);
+      if (storageKey === origin)
+        this.#initializedSession.add(sessionOriginKey);
+    }
   }
 
   private async frameOrigin(
