@@ -78,6 +78,79 @@ export const unwrapJavaScriptExpression = (
   return { node: current, depth };
 };
 
+/**
+ * Whether evaluating `node` is provably free of runtime side effects and
+ * abrupt errors, admitting only literal expressions, safe unary forms,
+ * nested pure sequences, and caller-verified unshadowed `undefined`.
+ */
+export const isPureJavaScriptLiteralExpression = (
+  node: t.Node,
+  isUnshadowedUndefined?: (node: t.Identifier) => boolean,
+): boolean => {
+  const pending: t.Node[] = [node];
+  while (pending.length > 0) {
+    const current = unwrapJavaScriptExpression(pending.pop()!).node;
+    if (
+      t.isNumericLiteral(current) ||
+      t.isStringLiteral(current) ||
+      t.isBooleanLiteral(current) ||
+      t.isNullLiteral(current) ||
+      t.isBigIntLiteral(current) ||
+      (t.isTemplateLiteral(current) &&
+        current.expressions.length === 0 &&
+        current.quasis.every((quasi) => quasi.value.cooked !== null))
+    )
+      continue;
+    if (
+      t.isIdentifier(current, { name: "undefined" }) &&
+      isUnshadowedUndefined?.(current) === true
+    )
+      continue;
+    if (t.isUnaryExpression(current)) {
+      if (current.operator === "void" || current.operator === "!") {
+        pending.push(current.argument);
+        continue;
+      }
+      const argument = unwrapJavaScriptExpression(current.argument).node;
+      if (
+        (current.operator === "+" || current.operator === "-") &&
+        (t.isNumericLiteral(argument) ||
+          (current.operator === "-" && t.isBigIntLiteral(argument)))
+      )
+        continue;
+    }
+    if (t.isSequenceExpression(current) && current.expressions.length > 0) {
+      for (const expression of current.expressions) pending.push(expression);
+      continue;
+    }
+    return false;
+  }
+  return true;
+};
+
+/**
+ * Unwrap transparent expression wrappers and comma expressions with at least
+ * two operands whose leading expressions (`0 .. n-2`) are provably pure.
+ */
+export const unwrapPureJavaScriptSequenceExpression = (
+  node: t.Node,
+  isUnshadowedUndefined?: (node: t.Identifier) => boolean,
+): t.Node => {
+  let current = unwrapJavaScriptExpression(node).node;
+  while (
+    t.isSequenceExpression(current) &&
+    current.expressions.length >= 2 &&
+    current.expressions
+      .slice(0, -1)
+      .every((expression) =>
+        isPureJavaScriptLiteralExpression(expression, isUnshadowedUndefined),
+      )
+  ) {
+    current = unwrapJavaScriptExpression(current.expressions.at(-1)!).node;
+  }
+  return current;
+};
+
 /** Read one syntax-level primitive only when its value is exact. */
 export const readExactJavaScriptLiteral = (
   node: t.Node,

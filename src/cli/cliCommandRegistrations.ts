@@ -104,6 +104,10 @@ export const CLI_COMMAND_REGISTRATIONS = {
     () => import("./nugetNupkgCommands.js"),
     "registerNugetNupkgCommands",
   ),
+  ociImageLayout: cliRegistrar(
+    () => import("./ociImageLayoutCommands.js"),
+    "registerOciImageLayoutCommands",
+  ),
   yara: cliRegistrarWithEnvironment(
     () => import("./yaraCommands.js"),
     "registerYaraCommands",
@@ -309,6 +313,7 @@ const CLI_FAMILY_REGISTRATIONS: {
     "rust",
     "pythonPyc",
     "nugetNupkg",
+    "ociImageLayout",
     "yara",
     "erlang",
     "v8CodeCache",

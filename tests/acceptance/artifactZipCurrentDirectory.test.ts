@@ -43,10 +43,14 @@ cliTest(
     expect(inventory.occurrences).toContainEqual(
       expect.objectContaining({
         logical_path: "nested/data.txt",
-        limitations: [
-          'ZIP member name "././nested/data.txt" has a leading current-directory prefix omitted from its logical path.',
-        ],
+        source_path: "././nested/data.txt",
+        limitations: [],
       }),
+    );
+    expect(inventory.limitations).toContainEqual(
+      expect.stringContaining(
+        "2 ZIP member name(s) have a leading current-directory prefix (./) omitted",
+      ),
     );
     expect(
       inventory.occurrences.map(({ logical_path }) => logical_path),

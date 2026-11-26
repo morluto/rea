@@ -1689,7 +1689,12 @@ describe("JSON-document delivery options", () => {
     ).toEqual(["required", "optional"]);
     expect(flagged.admitDelivery({ detail: "complete" })).toEqual({
       ok: true,
-      value: { detail: "complete", evidenceOutput: undefined },
+      // A contract that declares no effects is assumed rerunnable.
+      value: {
+        detail: "complete",
+        evidenceOutput: undefined,
+        rerunRecoversResult: true,
+      },
     });
     expect(
       flagged.admitDelivery({
@@ -1702,6 +1707,7 @@ describe("JSON-document delivery options", () => {
       value: {
         detail: "summary",
         evidenceOutput: "out.json",
+        rerunRecoversResult: true,
         view: { offset: 2 },
       },
     });

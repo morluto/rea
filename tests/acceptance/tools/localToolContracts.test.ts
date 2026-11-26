@@ -274,6 +274,7 @@ const pathRequests: readonly [string, Record<string, unknown>][] = [
   ["inspect_binary_hardening", { path: nul }],
   ["inspect_python_pyc", { path: nul }],
   ["inspect_nuget_nupkg", { path: nul }],
+  ["inspect_oci_image_layout", { path: nul }],
   ["inspect_yara_matches", { path: nul, rule_paths: ["/tmp/rules.yar"] }],
   ["inspect_yara_matches", { path: "/tmp/sample.bin", rule_paths: [nul] }],
   ["inspect_erlang_beam", { path: nul }],

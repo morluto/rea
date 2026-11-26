@@ -1117,6 +1117,7 @@ const admitInvocation = (
   const delivery: CliEvidenceDeliveryChoice = {
     detail: detail ?? (view === undefined ? undefined : "summary"),
     evidenceOutput: decoded.evidence_output as string | undefined,
+    rerunRecoversResult: contract.effects?.idempotent !== false,
     ...(view === undefined
       ? {}
       : {

@@ -49,6 +49,7 @@ import { createElectronFuseService } from "./electronFuses.js";
 import { createReleaseExposureService } from "./releaseExposure.js";
 import { createPythonPycService } from "./pythonPyc.js";
 import { createNugetNupkgService } from "./nugetNupkg.js";
+import { createOciImageLayoutService } from "./ociImageLayout.js";
 import { createYaraMatchesService } from "./yara.js";
 import { createWebNetworkCaptureService } from "./webNetworkCaptures.js";
 import { createWebSourceLocationService } from "./webSourceLocations.js";
@@ -113,6 +114,7 @@ import type { ElectronFuseService } from "../application/electron/ElectronFuseSe
 import type { RustBinaryService } from "../application/rust/RustBinaryService.js";
 import type { PythonPycService } from "../application/python/PythonPycService.js";
 import type { NugetNupkgService } from "../application/nuget/NugetNupkgService.js";
+import type { OciImageLayoutService } from "../application/oci/OciImageLayoutService.js";
 import type { YaraMatchesService } from "../application/yara/YaraMatchesService.js";
 import type { BeamService } from "../application/erlang/BeamService.js";
 import type { V8CodeCacheService } from "../application/v8CodeCache/V8CodeCacheService.js";
@@ -151,6 +153,7 @@ export interface CapabilityServiceOptions {
   readonly rustBinary?: RustBinaryService;
   readonly pythonPyc?: PythonPycService;
   readonly nugetNupkg?: NugetNupkgService;
+  readonly ociImageLayout?: OciImageLayoutService;
   readonly yaraMatches?: YaraMatchesService;
   readonly erlangBeam?: BeamService;
   readonly v8CodeCache?: V8CodeCacheService;
@@ -426,6 +429,9 @@ const modules = {
   ),
   nugetNupkg: service(
     ({ options }) => options.nugetNupkg ?? createNugetNupkgService(),
+  ),
+  ociImageLayout: service(
+    ({ options }) => options.ociImageLayout ?? createOciImageLayoutService(),
   ),
   yaraMatches: service(
     ({ environment, options, platform, settings }) =>
