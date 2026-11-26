@@ -232,6 +232,19 @@ describe("RIFF XMA2 headers", () => {
     });
   });
 
+  it("reports a cut-off RIFF header as truncated rather than malformed", async () => {
+    await expect(
+      read("riff-xma2", Buffer.from("RIFFWAV", "latin1")),
+    ).rejects.toMatchObject({
+      parseFailure: {
+        kind: "truncated",
+        format: "riff-xma2",
+        offset: 0,
+        extent: { availableBytes: 7, requiredBytes: 12 },
+      },
+    });
+  });
+
   it("does not invent WAVE members past the declared RIFF end", async () => {
     const base = riffXma2Fixture(64);
     const trailing = Buffer.concat([
@@ -329,6 +342,19 @@ describe("Bink 2 headers", () => {
     expect(result.entries.map((entry) => entry.path)).toEqual([]);
     expect(result.coverage[0]?.status).toBe("unknown");
   });
+
+  it("reports a cut-off Bink 2 header as truncated rather than malformed", async () => {
+    await expect(
+      read("bink2", Buffer.from("KB2j\0\0\0\0", "latin1")),
+    ).rejects.toMatchObject({
+      parseFailure: {
+        kind: "truncated",
+        format: "bink2",
+        offset: 0,
+        extent: { availableBytes: 8, requiredBytes: 44 },
+      },
+    });
+  });
 });
 
 describe("Vulkan pipeline cache headers", () => {
@@ -363,6 +389,18 @@ describe("Vulkan pipeline cache headers", () => {
         kind: "malformed",
         format: "vulkan-pipeline-cache",
         offset: 0,
+      },
+    });
+  });
+
+  it("reports a cut-off Vulkan pipeline cache header as truncated rather than malformed", async () => {
+    const prefix = vulkanPipelineCacheFixture().subarray(0, 16);
+    await expect(read("vulkan-pipeline-cache", prefix)).rejects.toMatchObject({
+      parseFailure: {
+        kind: "truncated",
+        format: "vulkan-pipeline-cache",
+        offset: 0,
+        extent: { availableBytes: 16, requiredBytes: 32 },
       },
     });
   });

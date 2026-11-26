@@ -418,7 +418,13 @@ export const riffXma2Layout = async (
 
   await ensure(12);
   if (buffer.length < 12)
-    throw malformed("riff-xma2", "RIFF header is shorter than 12 bytes", 0);
+    throw truncatedInput("riff-xma2", "RIFF header is cut off", {
+      offset: 0,
+      extent: {
+        availableBytes: buffer.length,
+        requiredBytes: 12,
+      },
+    });
   const root = new BinaryReader(buffer, true, "riff-xma2");
   if (buffer.toString("latin1", 0, 4) !== "RIFF")
     throw malformed("riff-xma2", "RIFF magic is missing", 0);
@@ -581,7 +587,13 @@ export const bink2Layout = (
   fileSize: number,
 ): MediaAssetLayout<Bink2Metadata> => {
   if (header.length < 44)
-    throw malformed("bink2", "Bink 2 header is shorter than 44 bytes", 0);
+    throw truncatedInput("bink2", "Bink 2 header is cut off", {
+      offset: 0,
+      extent: {
+        availableBytes: header.length,
+        requiredBytes: 44,
+      },
+    });
   if (header.toString("latin1", 0, 3) !== "KB2")
     throw malformed("bink2", "Bink 2 magic is missing", 0);
   const fields = new BinaryReader(header, true, "bink2");
@@ -650,10 +662,16 @@ export const vulkanPipelineCacheLayout = (
   fileSize: number,
 ): MediaAssetLayout<VulkanPipelineCacheMetadata> => {
   if (header.length < VK_PIPELINE_CACHE_HEADER_SIZE)
-    throw malformed(
+    throw truncatedInput(
       "vulkan-pipeline-cache",
-      "Vulkan pipeline cache header is shorter than 32 bytes",
-      0,
+      "Vulkan pipeline cache header is cut off",
+      {
+        offset: 0,
+        extent: {
+          availableBytes: header.length,
+          requiredBytes: VK_PIPELINE_CACHE_HEADER_SIZE,
+        },
+      },
     );
   const fields = new BinaryReader(header, true, "vulkan-pipeline-cache");
   const headerSize = fields.u32(0);
