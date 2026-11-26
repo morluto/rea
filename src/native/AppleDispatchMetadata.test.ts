@@ -3072,6 +3072,339 @@ describe("Objective-C category class property applicability", () => {
   });
 });
 
+/**
+ * Minimal Mach-O with one `__objc_protolist` entry pointing at a `protocol_t`
+ * at 0x740 (`instanceProperties` at 0x778, `size` at 0x780, `_classProperties` at 0x798).
+ */
+const protocolClassPropertiesImage = (
+  protocolSize: number,
+  classProperties: number,
+): Buffer => {
+  const bytes = Buffer.alloc(4096);
+  const u32 = (offset: number, value: number) =>
+    bytes.writeUInt32LE(value, offset);
+  const ptr = (offset: number, target: number) =>
+    bytes.writeBigUInt64LE(base + BigInt(target), offset);
+  u32(0, 0xfeedfacf);
+  u32(4, 0x0100000c);
+  u32(16, 1);
+  u32(20, 152);
+  u32(32, 0x19);
+  u32(36, 152);
+  bytes.write("__DATA", 40);
+  ptr(56, 0);
+  bytes.writeBigUInt64LE(4096n, 64);
+  bytes.writeBigUInt64LE(4096n, 80);
+  u32(92, 5);
+  u32(96, 1);
+  bytes.write("__objc_protolist", 104);
+  bytes.write("__DATA", 120);
+  ptr(136, 0x708);
+  bytes.writeBigUInt64LE(8n, 144);
+  u32(152, 0x708);
+  ptr(0x708, 0x740);
+  ptr(0x748, 0x900);
+  ptr(0x758, 0x800);
+  ptr(0x778, 0x600);
+  u32(0x780, protocolSize);
+  if (classProperties !== 0) ptr(0x798, classProperties);
+  u32(0x800, 24);
+  u32(0x804, 1);
+  ptr(0x808, 0x920);
+  u32(0x600, 16);
+  u32(0x604, 1);
+  ptr(0x608, 0x640);
+  ptr(0x610, 0x650);
+  bytes.write("title\0", 0x640);
+  bytes.write("Tq,N\0", 0x650);
+  bytes.write("FixtureProtocol\0", 0x900);
+  bytes.write("requiredAction:\0", 0x920);
+  return bytes;
+};
+
+describe("Objective-C protocol class properties", () => {
+  /** Append LC_DYLD_INFO_ONLY at 184; rebase stream is at 192, bind stream is at 200. */
+  const withLegacyFixups = (bytes: Buffer): Buffer => {
+    bytes.writeUInt32LE(2, 16);
+    bytes.writeUInt32LE(200, 20);
+    bytes.writeUInt32LE(0x80000022, 184);
+    bytes.writeUInt32LE(48, 188);
+    return bytes;
+  };
+  /** Bind segment 0 offset 0x798 (`_classProperties`) to an external symbol. */
+  const bindClassProperties = (bytes: Buffer, symbol: string): void => {
+    const bindings = Buffer.from([
+      0x3e, // SET_DYLIB_SPECIAL_IMM flat lookup
+      0x40,
+      ...Buffer.from(`${symbol}\0`),
+      0x51, // SET_TYPE_IMM pointer
+      0x70, // SET_SEGMENT_AND_OFFSET_ULEB: segment 0, offset 0x798
+      0x98,
+      0x0f,
+      0x90, // DO_BIND
+      0x00,
+    ]);
+    bindings.copy(bytes, 0xf00);
+    bytes.writeUInt32LE(0xf00, 200);
+    bytes.writeUInt32LE(bindings.length, 204);
+  };
+  /** Rebase segment 0 offset 0x798 (`_classProperties`) as a 64-bit pointer. */
+  const rebaseClassProperties = (bytes: Buffer): void => {
+    const rebases = Buffer.from([
+      0x11, // REBASE_OPCODE_SET_TYPE_IMM pointer
+      0x20, // REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB: segment 0, offset 0x798
+      0x98,
+      0x0f,
+      0x51, // REBASE_OPCODE_DO_REBASE_IMM_TIMES 1
+      0x00,
+    ]);
+    rebases.copy(bytes, 0xf80);
+    bytes.writeUInt32LE(0xf80, 192);
+    bytes.writeUInt32LE(rebases.length, 196);
+  };
+  const protocolFacts = (bytes: Buffer) => {
+    const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+    return {
+      protocols: result.objc_protocols,
+      decode: result.objc_protocol_records.map(({ decode }) => decode),
+      coverage: result.coverage.find(
+        ({ facet }) => facet === "objc_class_method_ivar_metadata",
+      ),
+    };
+  };
+
+  it("marks a protocol partial when its class property list is a raw or rebased pointer", () => {
+    for (const withRebase of [false, true]) {
+      const bytes = protocolClassPropertiesImage(96, 0x600);
+      if (withRebase) {
+        withLegacyFixups(bytes);
+        rebaseClassProperties(bytes);
+      }
+      const { protocols, decode, coverage } = protocolFacts(bytes);
+      expect(protocols[0]?.properties.map(({ name }) => name)).toEqual([
+        "title",
+      ]);
+      expect(decode).toEqual([
+        {
+          status: "partial",
+          reason: "protocol class properties are not decoded",
+        },
+      ]);
+      expect(coverage).toMatchObject({
+        status: "partial",
+        reason: expect.stringContaining(
+          "Protocol 0x100000740: Objective-C protocol FixtureProtocol properties: protocol class properties are not decoded",
+        ),
+      });
+    }
+  });
+
+  it.each([
+    ["raw null class property list", 96, 0, false],
+    ["rebased null class property list", 96, 0, true],
+    [
+      "older protocol revision without _classProperties (88 bytes)",
+      88,
+      0x600,
+      false,
+    ],
+    ["protocol record ending before offset 96 (95 bytes)", 95, 0x600, false],
+  ])(
+    "keeps a protocol decoded when it has a %s",
+    (_, size, classProperties, withRebase) => {
+      const bytes = protocolClassPropertiesImage(size, classProperties);
+      if (withRebase) {
+        withLegacyFixups(bytes);
+        rebaseClassProperties(bytes);
+      }
+      const { decode, coverage } = protocolFacts(bytes);
+      expect(decode).toEqual([{ status: "decoded", reason: null }]);
+      expect(coverage).toMatchObject({ status: "complete", reason: null });
+    },
+  );
+
+  it("reports a protocol class property list bound to another image as not decoded", () => {
+    const bytes = withLegacyFixups(protocolClassPropertiesImage(96, 0));
+    bindClassProperties(bytes, "_external_protocol_class_props");
+    const { protocols, decode, coverage } = protocolFacts(bytes);
+    expect(protocols[0]?.methods).toMatchObject([
+      { selector: "requiredAction:" },
+    ]);
+    expect(protocols[0]?.properties.map(({ name }) => name)).toEqual(["title"]);
+    expect(decode).toEqual([
+      {
+        status: "partial",
+        reason:
+          "protocol class properties are bound to _external_protocol_class_props and are not decoded",
+      },
+    ]);
+    expect(coverage).toMatchObject({
+      status: "partial",
+      reason: expect.stringContaining(
+        "Protocol 0x100000740: Objective-C protocol FixtureProtocol properties: protocol class properties are bound to _external_protocol_class_props and are not decoded",
+      ),
+    });
+  });
+
+  it("does not read a zero protocol class property field as null when its fixups are unknown", () => {
+    const bytes = withLegacyFixups(protocolClassPropertiesImage(96, 0));
+    // An undecodable rebase stream leaves every raw pointer's fixup unknown.
+    bytes.writeUInt32LE(0xf80, 192);
+    bytes.writeUInt32LE(1, 196);
+    bytes.writeUInt8(0xf0, 0xf80);
+    const { decode, coverage } = protocolFacts(bytes);
+    expect(decode).toEqual([
+      {
+        status: "partial",
+        reason: expect.stringContaining(
+          "protocol class property list at 0x100000798: LC_DYLD_INFO pointer-fixup applicability was not completely decoded",
+        ),
+      },
+    ]);
+    expect(coverage).toMatchObject({
+      status: "partial",
+      reason: expect.stringContaining(
+        "Protocol 0x100000740: Objective-C protocol FixtureProtocol properties: protocol class property list at 0x100000798: LC_DYLD_INFO pointer-fixup applicability was not completely decoded",
+      ),
+    });
+  });
+
+  it("marks a nonzero protocol class property field not decoded when its fixups are unknown", () => {
+    const bytes = withLegacyFixups(protocolClassPropertiesImage(96, 0x600));
+    bytes.writeUInt32LE(0xf80, 192);
+    bytes.writeUInt32LE(1, 196);
+    bytes.writeUInt8(0xf0, 0xf80);
+    const { decode, coverage } = protocolFacts(bytes);
+    expect(decode).toEqual([
+      {
+        status: "partial",
+        reason: "protocol class properties are not decoded",
+      },
+    ]);
+    expect(coverage).toMatchObject({ status: "partial" });
+  });
+
+  it("reports an unsupported fixup on a protocol class property field while retaining decoded facts", () => {
+    const bytes = withLegacyFixups(protocolClassPropertiesImage(96, 0));
+    bindClassProperties(bytes, "_external_protocol_class_props");
+    rebaseClassProperties(bytes);
+    const { protocols, decode, coverage } = protocolFacts(bytes);
+    expect(protocols[0]?.properties.map(({ name }) => name)).toEqual(["title"]);
+    expect(decode).toEqual([
+      {
+        status: "partial",
+        reason:
+          "protocol class property list at 0x100000798: Both bind and rebase records target pointer location 0x100000798",
+      },
+    ]);
+    expect(coverage).toMatchObject({
+      status: "partial",
+      reason: expect.stringContaining(
+        "protocol class property list at 0x100000798: Both bind and rebase records target pointer location 0x100000798",
+      ),
+    });
+  });
+
+  it("retains protocol facts when _classProperties is unmapped or instance properties also fail", () => {
+    const unmapped = protocolClassPropertiesImage(96, 0);
+    // Place the 96-byte protocol at 0xfa8 so its first 88 bytes are mapped and +88 lies at 0x1000 past the segment end.
+    unmapped.copy(unmapped, 0xfa8, 0x740, 0x798);
+    unmapped.writeBigUInt64LE(base + 0xfa8n, 0x708);
+    const unmappedFacts = protocolFacts(unmapped);
+    expect(unmappedFacts.protocols[0]).toMatchObject({
+      name: "FixtureProtocol",
+      methods: [{ selector: "requiredAction:" }],
+      properties: [{ name: "title" }],
+    });
+    expect(unmappedFacts.decode).toEqual([
+      {
+        status: "partial",
+        reason: expect.stringContaining(
+          "protocol class property list at 0x100001000:",
+        ),
+      },
+    ]);
+    expect(unmappedFacts.coverage).toMatchObject({ status: "partial" });
+
+    const bothFailed = withLegacyFixups(protocolClassPropertiesImage(96, 0));
+    bothFailed.writeBigUInt64LE(base + 0x5000n, 0x778); // unmapped instanceProperties
+    bindClassProperties(bothFailed, "_external_protocol_class_props");
+    const bothFacts = protocolFacts(bothFailed);
+    expect(bothFacts.protocols[0]).toMatchObject({
+      name: "FixtureProtocol",
+      methods: [{ selector: "requiredAction:" }],
+      properties: [],
+    });
+    expect(bothFacts.decode[0]?.status).toBe("partial");
+    expect(bothFacts.decode[0]?.reason).toContain("0x100005000");
+    expect(bothFacts.decode[0]?.reason).toContain(
+      "protocol class properties are bound to _external_protocol_class_props and are not decoded",
+    );
+  });
+
+  it("propagates unexpected errors thrown while resolving _classProperties", () => {
+    const result: Parameters<typeof decodeObjcDispatchFacets>[0]["result"] = {
+      objc_classes: [],
+      objc_protocols: [],
+      objc_categories: [],
+      swift_decls: [],
+      objc_ivars: [],
+      objc_protocol_records: [],
+      objc_dispatch_implementations: [],
+      swift_conformances: [],
+      swift_dispatch_slots: [],
+      swift_symbols: [],
+      relative_pointers: [],
+      coverage: [],
+      db_save_result: null,
+    };
+    const readers: Parameters<typeof decodeObjcDispatchFacets>[0]["readers"] = {
+      pointer: (addr) => {
+        if (addr === 0x1000n) return 0x2000n;
+        if (addr === 0x2008n) return 0x3000n;
+        return 0n;
+      },
+      u32: (addr) => (addr === 0x2040n ? 96 : 0),
+      u64: () => 0n,
+      i32: () => 0,
+      resolvePointer: () => {
+        throw new TypeError("unexpected fixup failure");
+      },
+      bound: () => undefined,
+      string: () => "FixtureProtocol",
+      location: (addr) => ({
+        address: `0x${addr.toString(16)}`,
+        file_offset: 0,
+      }),
+      evidence: (addr, description) => [
+        {
+          kind: "binary_metadata",
+          description,
+          location: { address: `0x${addr.toString(16)}`, file_offset: 0 },
+          artifact_path: "/fixture",
+          artifact_sha256: "0".repeat(64),
+        },
+      ],
+      offset: () => 0,
+    };
+    expect(() =>
+      decodeObjcDispatchFacets({
+        sections: [{ name: "__objc_protolist", address: 0x1000n, size: 8 }],
+        segments: [],
+        readers,
+        budget: {
+          truncated: false,
+          admit: () => true,
+          isFull: () => false,
+          markTruncated: () => {},
+        },
+        maxListSlots: 10,
+        result,
+      }),
+    ).toThrow(TypeError);
+  });
+});
+
 describe("Objective-C class method owner index parity", () => {
   it("projects instance and class methods accurately across multiple classes without cross-class leakage", () => {
     const result: Parameters<typeof decodeObjcDispatchFacets>[0]["result"] = {
