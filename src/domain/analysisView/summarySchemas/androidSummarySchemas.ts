@@ -20,10 +20,12 @@ import {
   androidManifestViewItemSchema,
   androidPackageSummarySchema,
 } from "../androidPackageView.js";
+import { androidMethodSummarySchema } from "../androidSymbolView.js";
 import {
   androidClassSummarySchema,
-  androidMethodSummarySchema,
-} from "../androidSymbolView.js";
+  androidClassViewItemsSchema,
+} from "../androidClassView.js";
+import { androidClassViewRequestSchema } from "../../android/androidClassQuery.js";
 import {
   androidReferencesViewRequestSchema,
   androidReferenceTopClassesViewRequestSchema,
@@ -61,7 +63,7 @@ export const androidJniPageViewResultSchema = z.strictObject({
   }),
 });
 
-/** Exact class facts with complete raw protocol Evidence retained separately. */
+/** Class identity and counts; members page through the android-class view. */
 export const androidClassSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   parent_operation: z.literal("inspect_android_class"),
@@ -140,3 +142,14 @@ export const androidReferencesPageViewResultSchema = z.discriminatedUnion(
     }),
   ],
 );
+
+/** One page of a retained class inspection's methods, fields, inner classes or mapping symbols. */
+export const androidClassPageViewResultSchema = z.strictObject({
+  ...viewResultBaseFields,
+  kind: z.literal("android-class"),
+  parent_operation: z.literal("inspect_android_class"),
+  view: androidClassViewRequestSchema,
+  class_name: z.string(),
+  items: androidClassViewItemsSchema,
+  byte_limited: z.boolean(),
+});

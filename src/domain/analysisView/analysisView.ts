@@ -107,6 +107,7 @@ import { projectEnvironmentCoverageView } from "./environmentCoverageView.js";
 import { projectPcapCaptureView } from "./pcapCaptureView.js";
 import { projectAndroidPackageView } from "./androidPackageView.js";
 import { projectAndroidSymbolSummary } from "./androidSymbolView.js";
+import { projectAndroidClassView } from "./androidClassView.js";
 import { projectAndroidJniView } from "./androidJniView.js";
 import { projectDartAotView } from "./dartAotView.js";
 import { projectIl2cppMetadataView } from "./il2cppMetadataView.js";
@@ -227,7 +228,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_managed_artifact", projectManagedArtifactView),
   retain("inspect_managed_members", projectManagedMemberView),
   retain("inspect_android_package", projectAndroidPackageView),
-  retain("inspect_android_class", projectAndroidSymbolSummary),
+  retain("inspect_android_class", projectAndroidClassView),
   retain("inspect_android_method", projectAndroidSymbolSummary),
   retain("inspect_android_jni_bindings", projectAndroidJniView),
   retain("capture_browser_scenario", projectBrowserScenarioView),

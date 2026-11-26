@@ -17,6 +17,7 @@ import {
 } from "./androidJniBindings.js";
 import { androidJniViewRequestSchema } from "./androidJniQuery.js";
 import { androidReferencesViewSchema } from "./androidReferencesQuery.js";
+import { androidClassViewRequestSchema } from "./androidClassQuery.js";
 
 const target = {
   path: localPathStringSchema.describe(
@@ -103,9 +104,12 @@ export const androidPackageInspectionInputSchema =
 
 /** Delivery is an adapter/application choice, never a provider analysis option. */
 export const androidSymbolInspectionInputSchemas = {
-  inspect_android_class: androidInputSchemas.inspect_android_class.extend({
-    detail: z.enum(["complete", "summary"]).optional(),
-  }),
+  inspect_android_class: androidInputSchemas.inspect_android_class
+    .extend({
+      detail: z.enum(["complete", "summary"]).optional(),
+      view: androidClassViewRequestSchema.optional(),
+    })
+    .superRefine(validateAndroidPackageDelivery),
   inspect_android_method: androidInputSchemas.inspect_android_method.extend({
     detail: z.enum(["complete", "summary"]).optional(),
   }),
