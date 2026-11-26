@@ -201,7 +201,12 @@ async function executionMcp(
   const response = await client.callTool(
     {
       name: "observe_web_execution",
-      arguments: { ...input, observation_ms: executionObservationMs },
+      // The assertions read the complete observation, whatever its size.
+      arguments: {
+        ...input,
+        observation_ms: executionObservationMs,
+        detail: "complete",
+      },
     },
     {
       timeout: 40_000,
@@ -238,6 +243,9 @@ async function executionCli(entrypoint, input, env, action, isolatedContext) {
       input.target_id,
       "--observation-ms",
       String(executionObservationMs),
+      // The assertions read the complete observation, whatever its size.
+      "--detail",
+      "complete",
       "--json",
     ],
     { env, stdio: ["ignore", "pipe", "pipe"] },
