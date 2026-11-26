@@ -1468,9 +1468,7 @@ const tlsOptionMerge = (
     )
       return "object";
     if (
-      t.isFunctionExpression(value) ||
-      t.isArrowFunctionExpression(value) ||
-      t.isClassExpression(value) ||
+      isFunctionValuedSyntax(value) ||
       primitiveOwnKeys(value, (child) => isNullishPlaceholder(child, state)) !==
         null
     )
@@ -1730,9 +1728,7 @@ const tlsPositionalSuppliesPipePath = (
     t.isArrayExpression(first) ||
     t.isRegExpLiteral(first) ||
     t.isNewExpression(first) ||
-    t.isFunctionExpression(first) ||
-    t.isArrowFunctionExpression(first) ||
-    t.isClassExpression(first) ||
+    isFunctionValuedSyntax(first) ||
     primitiveOwnKeys(first, (child) => isNullishPlaceholder(child, state)) ===
       "none" ||
     isUnshadowedNonFiniteIdentifier(first, state)
