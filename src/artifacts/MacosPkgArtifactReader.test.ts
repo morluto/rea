@@ -1,15 +1,21 @@
+import { createHash } from "node:crypto";
 import { buffer } from "node:stream/consumers";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
-import { deflateSync, gzipSync } from "node:zlib";
+import { deflateSync, gzipSync, inflateSync } from "node:zlib";
 
 import { expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
+import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
+import { compareArtifacts } from "../domain/artifactComparison.js";
+import { createEvidence } from "../domain/evidence.js";
+import { MACOS_PKG_MAX_TOC_PATH_BYTES } from "../domain/macosPkgFormat.js";
 import { ArtifactEntryContentUnavailable } from "../resources/ArtifactReader.js";
 import { MacosPkgArtifactReader } from "./MacosPkgArtifactReader.js";
+import { parseXarHeader } from "./macosPkg/XarHeader.js";
 import {
   createBoundedXarInflate,
   inflateXarMemberBytes,
@@ -1045,4 +1051,199 @@ it("records an oversize refusal when a zlib PackageInfo inflates past its metada
   } finally {
     await reader.close();
   }
+});
+
+it("refuses a TOC whose repeated directory prefix exceeds the expanded path-byte allowance", async () => {
+  const dir = "d".repeat(1024 * 1024);
+  const path = await writePkg(
+    "long-toc-paths.pkg",
+    buildXar({
+      files: [
+        { path: dir, type: "directory" },
+        ...Array.from({ length: 5 }, (_, index) => ({
+          path: `${dir}/f${String(index)}`,
+          bytes: Buffer.from("x"),
+        })),
+      ],
+    }),
+  );
+  const reader = new MacosPkgArtifactReader(path);
+  try {
+    await expect(async () => {
+      for await (const _entry of reader.entries()) {
+        /* Exhaust the iterator. */
+      }
+    }).rejects.toMatchObject({
+      reason: "limit",
+      boundary: "capacity",
+      parserLimit: {
+        name: "macos_pkg_toc_path_bytes",
+        maximum: MACOS_PKG_MAX_TOC_PATH_BYTES,
+      },
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
+it("keeps intact PackageInfo, payload and signature when an unrelated TOC file record is damaged", async () => {
+  const base = buildSignedProductArchive();
+  const parsed = parseXarHeader(base);
+  if (!parsed.ok) throw parsed.error;
+  const { headerSize, tocCompressedLength } = parsed.value;
+  const tocXml = inflateSync(
+    base.subarray(headerSize, headerSize + tocCompressedLength),
+  )
+    .toString("utf8")
+    .replace(
+      "</toc>",
+      '<file id="999"><name>damaged.bin</name><type>file</type><data><offset>0</offset><length>4</length></data></file></toc>',
+    );
+  const uncompressedToc = Buffer.from(tocXml, "utf8");
+  const compressedToc = deflateSync(uncompressedToc);
+  const checksum = createHash("sha1").update(compressedToc).digest();
+  const header = Buffer.from(base.subarray(0, headerSize));
+  header.writeBigUInt64BE(BigInt(compressedToc.length), 8);
+  header.writeBigUInt64BE(BigInt(uncompressedToc.length), 16);
+  const heapRest = base.subarray(
+    headerSize + tocCompressedLength + checksum.length,
+  );
+  const damaged = Buffer.concat([header, compressedToc, checksum, heapRest]);
+
+  const { reader, entries, coverage } = await entriesOf(
+    damaged,
+    "damaged-toc-record.pkg",
+  );
+  try {
+    const metadata = reader.formatMetadata();
+    expect(metadata?.signature).toMatchObject({
+      present: true,
+      toc_signature: true,
+      certificate_count: 1,
+    });
+    expect(metadata?.packages).toEqual([
+      expect.objectContaining({ identifier: "com.rea.fixture.component" }),
+    ]);
+    expect(metadata?.payload).toMatchObject({
+      present: true,
+      compression: "gzip-cpio-odc",
+    });
+    expect(metadata?.refusals).toEqual([
+      expect.objectContaining({
+        code: "toc-xml",
+        path: "damaged.bin",
+        message: expect.stringContaining("<size>"),
+      }),
+    ]);
+    expect(entries.map((entry) => entry.path)).toEqual(
+      expect.arrayContaining([
+        "Distribution",
+        "Component.pkg/PackageInfo",
+        "Component.pkg/Payload/usr/local/rea/hello.txt",
+      ]),
+    );
+    expect(entries.map((entry) => entry.path)).not.toContain("damaged.bin");
+    expect(coverage).toEqual([
+      expect.objectContaining({
+        status: "unknown",
+        limitations: expect.arrayContaining([
+          expect.stringContaining("<size>"),
+        ]),
+      }),
+    ]);
+  } finally {
+    await reader.close();
+  }
+});
+
+it("populates linkTarget for XAR and cpio symlinks, keeps raw cpio target bytes, and compares symlinks", async () => {
+  const rawNonUtf8 = Buffer.from([0x66, 0x6f, 0x6f, 0xff]);
+  const buildSymlinkPkg = (xarTarget: string, cpioTarget: Buffer): Buffer =>
+    buildXar({
+      files: [
+        { path: "PackageInfo", bytes: Buffer.from("<pkg-info/>") },
+        { path: "xar-link", type: "symlink", link: xarTarget },
+        {
+          path: "Payload",
+          bytes: gzipSync(
+            buildCpioOdc([
+              { name: ".", mode: 0o040755 },
+              { name: "cpio-link", mode: 0o120777, data: cpioTarget },
+            ]),
+          ),
+        },
+      ],
+    });
+
+  const leftBytes = buildSymlinkPkg("target-a", rawNonUtf8);
+  const rightBytes = buildSymlinkPkg("target-b", Buffer.from("target-c"));
+
+  const { reader, entries } = await entriesOf(leftBytes, "symlinks-left.pkg");
+  try {
+    const xarLink = entries.find((entry) => entry.path === "xar-link");
+    const cpioLink = entries.find(
+      (entry) => entry.path === "Payload/cpio-link",
+    );
+    expect(xarLink).toMatchObject({
+      kind: "symlink",
+      linkTarget: {
+        text: "target-a",
+        hex: Buffer.from("target-a", "utf8").toString("hex"),
+      },
+      formatMetadata: expect.objectContaining({ symlink_target: "target-a" }),
+    });
+    expect(cpioLink).toMatchObject({
+      kind: "symlink",
+      declaredSize: rawNonUtf8.length,
+      linkTarget: {
+        text: null,
+        hex: rawNonUtf8.toString("hex"),
+      },
+      formatMetadata: expect.objectContaining({ symlink_target: null }),
+    });
+    expect(
+      (await buffer(await reader.open(cpioLink!))).equals(rawNonUtf8),
+    ).toBe(true);
+  } finally {
+    await reader.close();
+  }
+
+  const evidenceFor = async (name: string, bytes: Buffer) => {
+    const filePath = await writePkg(name, bytes);
+    const inventory = await scanCanonicalArtifactInventory(filePath);
+    return createEvidence(
+      {
+        path: name,
+        sha256: inventory.manifest.root_sha256,
+        format: "pkg",
+      },
+      ARTIFACT_COMPARISON_EXAMPLE.left.provider,
+      {
+        operation: "inventory_artifact",
+        parameters: {},
+        result: inventory,
+        confidence: "observed",
+        authority: "shipped-artifact",
+      },
+    );
+  };
+  const leftEv = await evidenceFor("compare-left.pkg", leftBytes);
+  const leftEvAgain = await evidenceFor("compare-left-again.pkg", leftBytes);
+  const rightEv = await evidenceFor("compare-right.pkg", rightBytes);
+
+  const same = compareArtifacts(leftEv, leftEvAgain);
+  expect(same.changes).toEqual([]);
+
+  const diff = compareArtifacts(leftEv, rightEv);
+  const changedByPath = new Map(
+    diff.changes.map((change) => [change.logical_path, change]),
+  );
+  expect(changedByPath.get("xar-link")).toMatchObject({
+    classification: "changed",
+    dimensions: expect.arrayContaining(["content"]),
+  });
+  expect(changedByPath.get("Payload/cpio-link")).toMatchObject({
+    classification: "changed",
+    dimensions: expect.arrayContaining(["content"]),
+  });
 });

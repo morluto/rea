@@ -15,6 +15,7 @@ import {
   unsupportedInput,
 } from "../../domain/parseFailure.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { observedSymlinkTarget } from "../../domain/symlinkTarget.js";
 import { isZlibOutputLimitError } from "./XarInflate.js";
 
 export const CPIO_ODC_MAGIC = "070707";
@@ -202,7 +203,8 @@ const parseCpioOdcInto = (
             "link",
           ),
         );
-      symlinkTarget = body.toString("utf8");
+      contents = Buffer.from(body);
+      symlinkTarget = observedSymlinkTarget(contents).text;
     } else if (kind === "file") contents = Buffer.from(body);
     members.push({
       name,

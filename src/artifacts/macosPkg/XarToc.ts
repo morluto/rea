@@ -1,9 +1,11 @@
 import { X509Certificate } from "node:crypto";
 import type { Document, Element } from "@xmldom/xmldom";
 
+import { ellipsisExcerpt } from "../../domain/excerpt.js";
 import {
   MACOS_PKG_FORMAT,
   MACOS_PKG_MAX_TOC_FILES,
+  MACOS_PKG_MAX_TOC_PATH_BYTES,
   MACOS_PKG_MAX_TOC_XML_NODES,
   macosPkgLimitFailure,
   type MacosPkgParseError,
@@ -53,9 +55,15 @@ export interface XarTocSignature {
   readonly certificates: readonly XarCertificateNames[];
 }
 
+export interface XarTocRefusal {
+  readonly path: string | null;
+  readonly error: MacosPkgParseError;
+}
+
 export interface XarToc {
   readonly files: readonly XarTocFile[];
   readonly signatures: readonly XarTocSignature[];
+  readonly refusals: readonly XarTocRefusal[];
 }
 
 const UINT32_MAX = 0xffffffff;
@@ -186,63 +194,102 @@ const unsafeName = (name: string): boolean =>
   name.includes("/") ||
   name.includes("\\");
 
+interface WalkState {
+  readonly files: XarTocFile[];
+  readonly refusals: XarTocRefusal[];
+  visitedFiles: number;
+  totalPathBytes: number;
+}
+
 const walkFiles = (
   parent: Element,
   prefix: string,
-  files: XarTocFile[],
+  prefixBytes: number,
+  state: WalkState,
 ): Result<void, MacosPkgParseError> => {
   for (const file of childElements(parent, "file")) {
-    if (files.length >= MACOS_PKG_MAX_TOC_FILES)
+    if (state.visitedFiles >= MACOS_PKG_MAX_TOC_FILES)
       return err(
         macosPkgLimitFailure(
           `XAR TOC declares more than ${String(MACOS_PKG_MAX_TOC_FILES)} files`,
           {
             name: "macos_pkg_toc_files",
             maximum: MACOS_PKG_MAX_TOC_FILES,
-            required: files.length + 1,
+            required: state.visitedFiles + 1,
           },
           "file",
         ),
       );
+    state.visitedFiles += 1;
+    const refusalPath = prefix === "" ? null : prefix;
     const names = childElements(file, "name").map(
       (element) => element.textContent ?? "",
     );
-    if (names.length === 0)
-      return err(
-        malformedInput(MACOS_PKG_FORMAT, "XAR TOC <file> omits <name>", {
+    if (names.length === 0) {
+      state.refusals.push({
+        path: refusalPath,
+        error: malformedInput(MACOS_PKG_FORMAT, "XAR TOC <file> omits <name>", {
           field: "name",
         }),
-      );
-    if (names.some((name) => name !== names[0]))
-      return err(
-        malformedInput(
+      });
+      continue;
+    }
+    if (names.some((name) => name !== names[0])) {
+      state.refusals.push({
+        path: refusalPath,
+        error: malformedInput(
           MACOS_PKG_FORMAT,
           "XAR TOC <file> has conflicting <name> declarations",
           { field: "name" },
         ),
-      );
+      });
+      continue;
+    }
     const name = names[0] ?? "";
-    if (unsafeName(name))
-      return err(
-        malformedInput(
+    if (unsafeName(name)) {
+      state.refusals.push({
+        path: refusalPath,
+        error: malformedInput(
           MACOS_PKG_FORMAT,
-          `XAR TOC file name is not a single relative path component: ${name}`,
+          `XAR TOC file name is not a single relative path component: ${ellipsisExcerpt(name, 128)}`,
           { field: "name" },
         ),
+      });
+      continue;
+    }
+    // Account for repeated parent prefixes before allocating the joined path.
+    const nameBytes = Buffer.byteLength(name, "utf8");
+    const pathBytes =
+      prefixBytes === 0 ? nameBytes : prefixBytes + 1 + nameBytes;
+    if (state.totalPathBytes + pathBytes > MACOS_PKG_MAX_TOC_PATH_BYTES)
+      return err(
+        macosPkgLimitFailure(
+          `XAR TOC expanded paths exceed ${String(MACOS_PKG_MAX_TOC_PATH_BYTES)} bytes`,
+          {
+            name: "macos_pkg_toc_path_bytes",
+            maximum: MACOS_PKG_MAX_TOC_PATH_BYTES,
+            required: state.totalPathBytes + pathBytes,
+          },
+          "name",
+        ),
       );
+    state.totalPathBytes += pathBytes;
     const path = prefix === "" ? name : `${prefix}/${name}`;
     const type = (childText(file, "type") ?? "file").trim() || "file";
     const data = parseData(file);
-    if (!data.ok) return data;
-    files.push({
-      id: file.getAttribute("id") || null,
-      path,
-      type,
-      mode: parseMode(childText(file, "mode")),
-      data: data.value,
-      link: childText(file, "link") ?? null,
-    });
-    const nested = walkFiles(file, path, files);
+    if (!data.ok) {
+      state.refusals.push({ path, error: data.error });
+    } else {
+      state.files.push({
+        id: file.getAttribute("id") || null,
+        path,
+        type,
+        mode: parseMode(childText(file, "mode")),
+        data: data.value,
+        link: childText(file, "link") ?? null,
+      });
+    }
+    const nested = walkFiles(file, path, pathBytes, state);
     if (!nested.ok) return nested;
   }
   return ok(undefined);
@@ -305,14 +352,19 @@ const parseXarTocDocument = (
     return err(
       malformedInput(MACOS_PKG_FORMAT, "XAR TOC omits <toc>", { field: "toc" }),
     );
-  const files: XarTocFile[] = [];
-  const walked = walkFiles(toc, "", files);
+  const state: WalkState = {
+    files: [],
+    refusals: [],
+    visitedFiles: 0,
+    totalPathBytes: 0,
+  };
+  const walked = walkFiles(toc, "", 0, state);
   if (!walked.ok) return walked;
   const signatures = [
     parseSignature(toc, "signature"),
     parseSignature(toc, "x-signature"),
   ].filter((record): record is XarTocSignature => record !== null);
-  return ok({ files, signatures });
+  return ok({ files: state.files, signatures, refusals: state.refusals });
 };
 
 export const heapRangeRefusal = (

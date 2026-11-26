@@ -12,6 +12,7 @@ import {
   MACOS_PKG_FORMAT,
   MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES,
   MACOS_PKG_MAX_METADATA_XML_BYTES,
+  MACOS_PKG_MAX_TOC_PATH_BYTES,
   MACOS_PKG_MAX_TOC_UNCOMPRESSED_BYTES,
   XAR_HEADER_MIN_BYTES,
   XAR_MAGIC_TEXT,
@@ -20,6 +21,7 @@ import {
   macosPkgLimitFailure,
   type MacosPkgParseError,
 } from "../domain/macosPkgFormat.js";
+import { observedSymlinkTarget } from "../domain/symlinkTarget.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
@@ -559,6 +561,14 @@ export class MacosPkgArtifactReader implements ArtifactReader {
       limitations.push(
         "XAR table of contents signature is reported and not verified.",
       );
+    for (const refusal of toc.value.refusals) {
+      metadata.refusals.push({
+        code: "toc-xml",
+        message: refusal.error.message,
+        path: refusal.path,
+      });
+      limitations.push(refusal.error.message);
+    }
     for (const [index, file] of toc.value.files.entries()) {
       if (index % 256 === 0) await setImmediate();
       this.#assertOpen(signal);
@@ -619,10 +629,15 @@ export class MacosPkgArtifactReader implements ArtifactReader {
     // occurrence, not a replacement of the earlier one.
     const adapterKey = `pkg:xar:${String(tocIndex)}:${file.path}`;
     const executable = xarModeIsExecutable(file.mode);
+    const kind = file.type === "symlink" ? "symlink" : "file";
+    const linkTarget =
+      kind === "symlink" && file.link !== null
+        ? observedSymlinkTarget(Buffer.from(file.link, "utf8"))
+        : undefined;
     this.#entries.set(adapterKey, {
       path: file.path,
       sourcePath: file.path,
-      kind: file.type === "symlink" ? "symlink" : "file",
+      kind,
       declaredSize: data.size,
       compressedSize: data.length,
       executable,
@@ -633,6 +648,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
       unpacked: data.encoding !== "application/octet-stream",
       limitations: [],
       adapterKey,
+      ...(linkTarget === undefined ? {} : { linkTarget }),
       formatMetadata: {
         kind: "macos-pkg-entry",
         role,
@@ -672,7 +688,13 @@ export class MacosPkgArtifactReader implements ArtifactReader {
             ? "file"
             : "metadata";
     const bytes =
-      kind === "symlink" ? Buffer.from(file.link ?? "") : Buffer.alloc(0);
+      kind === "symlink"
+        ? Buffer.from(file.link ?? "", "utf8")
+        : Buffer.alloc(0);
+    const linkTarget =
+      kind === "symlink" && file.link !== null
+        ? observedSymlinkTarget(bytes)
+        : undefined;
     const sized = kind === "file" || kind === "symlink";
     this.#entries.set(adapterKey, {
       path: file.path,
@@ -692,6 +714,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
             ]
           : [],
       adapterKey,
+      ...(linkTarget === undefined ? {} : { linkTarget }),
       formatMetadata: {
         kind: "macos-pkg-entry",
         role: "xar-file",
@@ -931,9 +954,23 @@ export class MacosPkgArtifactReader implements ArtifactReader {
         compression: parsed.value.compression,
         members: cpioMetadataMembers(members),
       });
+    const entryPathBytes = Buffer.byteLength(entry.path, "utf8");
+    let archivePathBytes = 0;
     for (const [index, member] of members.entries()) {
       if (member.name === "." || member.name === "./") continue;
-      const logical = `${entry.path}/${member.name.replace(/^\.\//u, "")}`;
+      const stripped = member.name.replace(/^\.\//u, "");
+      const logicalBytes =
+        entryPathBytes + 1 + Buffer.byteLength(stripped, "utf8");
+      if (archivePathBytes + logicalBytes > MACOS_PKG_MAX_TOC_PATH_BYTES) {
+        metadata.refusals.push({
+          code: "oversize",
+          message: `${entry.path} expanded member paths exceed the ${String(MACOS_PKG_MAX_TOC_PATH_BYTES)}-byte allowance`,
+          path: entry.path,
+        });
+        break;
+      }
+      archivePathBytes += logicalBytes;
+      const logical = `${entry.path}/${stripped}`;
       const adapterKey = `${entry.adapterKey}:${role}:${String(index)}:${logical}`;
       // FIFOs, devices and sockets have no file contents; they stay as
       // non-materializable declarations instead of becoming empty files.
@@ -946,10 +983,9 @@ export class MacosPkgArtifactReader implements ArtifactReader {
             : special
               ? "metadata"
               : "file";
-      const bytesForOpen =
-        member.kind === "symlink"
-          ? Buffer.from(member.symlinkTarget ?? "")
-          : (member.contents ?? Buffer.alloc(0));
+      const bytesForOpen = member.contents ?? Buffer.alloc(0);
+      const linkTarget =
+        kind === "symlink" ? observedSymlinkTarget(bytesForOpen) : undefined;
       const limitations: string[] = [];
       if (role === "scripts" && isInstallScriptName(member.name))
         limitations.push("Installer script bytes are not executed.");
@@ -971,6 +1007,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
         unpacked: true,
         limitations,
         adapterKey,
+        ...(linkTarget === undefined ? {} : { linkTarget }),
         formatMetadata: {
           kind: "macos-pkg-entry",
           role: role === "scripts" ? "scripts-member" : "payload-member",
