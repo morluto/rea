@@ -165,7 +165,7 @@ export class DebPackageProvider implements DebPackagePort {
         ),
       );
       return ok(
-        parseDebPackage(
+        await parseDebPackage(
           snapshot.bytes,
           {
             path: input.path,

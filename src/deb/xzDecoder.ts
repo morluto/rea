@@ -1,14 +1,28 @@
 import { createRequire } from "node:module";
+import { crc32 } from "node:zlib";
 
 import { err, ok, type Result } from "../domain/result.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { isAbortOf } from "../process/SignalAbort.js";
 
 const XZ_MAGIC = Buffer.from([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
 const XZ_HEADER_SIZE = 12;
 const XZ_FOOTER_SIZE = 12;
+const XZ_FILTER_LZMA2 = 0x21;
+const XZ_STREAM_INPUT_CHUNK_BYTES = 64 * 1024;
+
+/**
+ * Fixed XZ LZMA2 dictionary allowance: 128 MiB, matching the Zstandard window
+ * ceiling. Covers standard `xz -0`..`xz -9` presets (up to 64 MiB) while
+ * refusing pathological 256 MiB–4 GiB dictionary declarations before the
+ * native decoder allocates working memory.
+ */
+export const XZ_DICTIONARY_MAX_BYTES = 128 * 1024 * 1024;
 
 type XzApi = {
-  readonly decompressSync: (input: Uint8Array) => Buffer;
+  readonly decompressStream: (
+    input: ReadableStream<Uint8Array>,
+  ) => ReadableStream<Buffer>;
   readonly compressSync: (input: string | Uint8Array) => Buffer;
 };
 
@@ -20,7 +34,12 @@ export type XzDecodeFailure =
   | { readonly kind: "unavailable" }
   | { readonly kind: "truncated" }
   | { readonly kind: "malformed"; readonly cause?: unknown }
-  | { readonly kind: "too_large" };
+  | { readonly kind: "too_large" }
+  | {
+      readonly kind: "dictionary_too_large";
+      readonly dictionaryBytes: number;
+      readonly maximum: number;
+    };
 
 let loaded: XzBinding | undefined;
 let override: XzBinding | undefined;
@@ -30,10 +49,12 @@ const loadNativeXz = (): XzBinding => {
     const require = createRequire(import.meta.url);
     const api = require("@napi-rs/lzma/xz") as XzApi;
     if (
-      typeof api.decompressSync !== "function" ||
+      typeof api.decompressStream !== "function" ||
       typeof api.compressSync !== "function"
     )
-      throw new Error("@napi-rs/lzma/xz does not export sync xz codecs.");
+      throw new Error(
+        "@napi-rs/lzma/xz does not export streaming xz decompression and sync compression.",
+      );
     return { status: "ready", api };
   } catch (cause: unknown) {
     return { status: "unavailable", cause };
@@ -53,21 +74,33 @@ export const replaceXzBindingForTests = (
   override = binding;
 };
 
-const looksLikeXz = (bytes: Uint8Array): boolean => {
-  if (bytes.length < XZ_MAGIC.length) return false;
+const throwIfAborted = (signal: AbortSignal | undefined): void => {
+  signal?.throwIfAborted();
+};
+
+const hasMagicAt = (bytes: Uint8Array, offset: number): boolean => {
+  if (offset < 0 || offset + XZ_MAGIC.length > bytes.length) return false;
   for (let i = 0; i < XZ_MAGIC.length; i++)
-    if (bytes[i] !== XZ_MAGIC[i]) return false;
+    if (bytes[offset + i] !== XZ_MAGIC[i]) return false;
   return true;
 };
+
+const readU32LE = (bytes: Uint8Array, offset: number): number =>
+  (bytes[offset]! |
+    (bytes[offset + 1]! << 8) |
+    (bytes[offset + 2]! << 16) |
+    (bytes[offset + 3]! << 24)) >>>
+  0;
 
 const readMbInt = (
   bytes: Uint8Array,
   offset: number,
+  end: number = bytes.length,
 ): { readonly value: number; readonly next: number } | null => {
   let value = 0;
   for (let index = 0; index < 9; index++) {
-    const byte = bytes[offset + index];
-    if (byte === undefined) return null;
+    if (offset + index >= end) return null;
+    const byte = bytes[offset + index]!;
     value += (byte & 0x7f) * 128 ** index;
     if (!Number.isSafeInteger(value)) return null;
     if ((byte & 0x80) === 0) return { value, next: offset + index + 1 };
@@ -75,15 +108,31 @@ const readMbInt = (
   return null;
 };
 
+/** Decode an LZMA2 filter properties byte into dictionary bytes (XZ spec §5.3.1). */
+export const lzma2DictionaryBytes = (props: number): number | null => {
+  if (!Number.isInteger(props) || props < 0 || props > 40) return null;
+  if (props === 40) return 0xffffffff;
+  return (2 | (props & 1)) * 2 ** (Math.floor(props / 2) + 11);
+};
+
+const validCheckType = (flagsByte1: number): boolean => {
+  if ((flagsByte1 & 0xf0) !== 0) return false;
+  const check = flagsByte1 & 0x0f;
+  return check === 0x00 || check === 0x01 || check === 0x04 || check === 0x0a;
+};
+
 /**
  * End of the stream before trailing Stream Padding. The xz format allows zero
  * padding in 4-byte groups after the footer; a ragged zero tail stays in place
  * so the footer check rejects it.
  */
-const xzStreamEnd = (bytes: Uint8Array): number => {
-  let end = bytes.length;
+const xzStreamEnd = (
+  bytes: Uint8Array,
+  from: number = bytes.length,
+): number => {
+  let end = from;
   while (
-    end >= XZ_HEADER_SIZE + XZ_FOOTER_SIZE + 4 &&
+    end >= 4 &&
     bytes[end - 1] === 0 &&
     bytes[end - 2] === 0 &&
     bytes[end - 3] === 0 &&
@@ -93,72 +142,277 @@ const xzStreamEnd = (bytes: Uint8Array): number => {
   return end;
 };
 
-/** Uncompressed size from a completed single xz stream index, or null when absent. */
-export const xzUncompressedSize = (bytes: Uint8Array): number | null => {
-  if (bytes.length < XZ_HEADER_SIZE + XZ_FOOTER_SIZE) return null;
-  if (!looksLikeXz(bytes)) return null;
-  const footer = xzStreamEnd(bytes) - XZ_FOOTER_SIZE;
-  if (bytes[footer + 10] !== 0x59 || bytes[footer + 11] !== 0x5a) return null;
-  const backwardSize =
-    (bytes[footer + 4] ?? 0) |
-    ((bytes[footer + 5] ?? 0) << 8) |
-    ((bytes[footer + 6] ?? 0) << 16) |
-    ((bytes[footer + 7] ?? 0) << 24);
-  const indexSize = (backwardSize + 1) * 4;
-  const indexStart = footer - indexSize;
-  if (indexStart < XZ_HEADER_SIZE) return null;
-  const index = bytes.subarray(indexStart, footer);
-  if (index[0] !== 0) return null;
-  const records = readMbInt(index, 1);
-  if (records === null) return null;
-  let cursor = records.next;
-  let uncompressed = 0;
-  for (let n = 0; n < records.value; n++) {
-    const unpadded = readMbInt(index, cursor);
-    if (unpadded === null) return null;
-    const size = readMbInt(index, unpadded.next);
-    if (size === null) return null;
-    uncompressed += size.value;
-    if (!Number.isSafeInteger(uncompressed)) return null;
-    cursor = size.next;
-  }
-  return uncompressed;
-};
-
 const xzFooterPresent = (bytes: Uint8Array): boolean => {
   const end = xzStreamEnd(bytes);
   return (
     end >= XZ_HEADER_SIZE + XZ_FOOTER_SIZE &&
-    looksLikeXz(bytes) &&
+    hasMagicAt(bytes, 0) &&
     bytes[end - 2] === 0x59 &&
     bytes[end - 1] === 0x5a
   );
 };
 
-const isTruncatedXzError = (cause: unknown): boolean => {
-  return /failed to fill whole buffer/iu.test(errorMessage(cause));
+interface XzPreflight {
+  readonly declaredUncompressed: number;
+  readonly maxDictionaryBytes: number;
+}
+
+/**
+ * Validate every stream header, footer, index, and block header in an `.xz`
+ * byte buffer before any bytes reach the native decoder. Verifies CRCs,
+ * declared uncompressed sizes, and every LZMA2 dictionary size property byte.
+ */
+const inspectXzStreams = (
+  bytes: Uint8Array,
+): Result<XzPreflight, XzDecodeFailure> => {
+  if (bytes.length < XZ_HEADER_SIZE + XZ_FOOTER_SIZE)
+    return err({ kind: "truncated" });
+  if (!hasMagicAt(bytes, 0)) return err({ kind: "malformed" });
+  let streamEnd = xzStreamEnd(bytes);
+  if (streamEnd < XZ_HEADER_SIZE + XZ_FOOTER_SIZE)
+    return err({ kind: xzFooterPresent(bytes) ? "malformed" : "truncated" });
+
+  let totalUncompressed = 0;
+  let maxDictionaryBytes = 0;
+
+  while (streamEnd > 0) {
+    if (streamEnd < XZ_HEADER_SIZE + XZ_FOOTER_SIZE)
+      return err({ kind: "malformed" });
+    const footer = streamEnd - XZ_FOOTER_SIZE;
+    if (bytes[footer + 10] !== 0x59 || bytes[footer + 11] !== 0x5a)
+      return err({
+        kind: streamEnd === xzStreamEnd(bytes) ? "truncated" : "malformed",
+      });
+    if (
+      readU32LE(bytes, footer) !==
+      crc32(bytes.subarray(footer + 4, footer + 10))
+    )
+      return err({ kind: "malformed" });
+    const flags0 = bytes[footer + 8]!;
+    const flags1 = bytes[footer + 9]!;
+    if (flags0 !== 0x00 || !validCheckType(flags1))
+      return err({ kind: "malformed" });
+
+    const backwardSize = (readU32LE(bytes, footer + 4) + 1) * 4;
+    const indexStart = footer - backwardSize;
+    if (indexStart < XZ_HEADER_SIZE || backwardSize < 8)
+      return err({ kind: "malformed" });
+
+    const index = bytes.subarray(indexStart, footer);
+    if (index[0] !== 0x00) return err({ kind: "malformed" });
+    if (
+      readU32LE(index, index.length - 4) !==
+      crc32(index.subarray(0, index.length - 4))
+    )
+      return err({ kind: "malformed" });
+
+    const records = readMbInt(index, 1, index.length - 4);
+    if (records === null) return err({ kind: "malformed" });
+    let cursor = records.next;
+    let totalBlocksPadded = 0;
+    const blocks: {
+      readonly padded: number;
+      readonly uncompressed: number;
+    }[] = [];
+
+    for (let n = 0; n < records.value; n++) {
+      const unpadded = readMbInt(index, cursor, index.length - 4);
+      if (unpadded === null || unpadded.value < 8)
+        return err({ kind: "malformed" });
+      const size = readMbInt(index, unpadded.next, index.length - 4);
+      if (size === null) return err({ kind: "malformed" });
+      const padded = Math.ceil(unpadded.value / 4) * 4;
+      totalBlocksPadded += padded;
+      totalUncompressed += size.value;
+      if (
+        !Number.isSafeInteger(totalBlocksPadded) ||
+        !Number.isSafeInteger(totalUncompressed)
+      )
+        return err({ kind: "malformed" });
+      blocks.push({ padded, uncompressed: size.value });
+      cursor = size.next;
+    }
+
+    const indexPadLength = index.length - 4 - cursor;
+    if (indexPadLength < 0 || indexPadLength > 3)
+      return err({ kind: "malformed" });
+    for (let i = cursor; i < index.length - 4; i++)
+      if (index[i] !== 0) return err({ kind: "malformed" });
+
+    const streamHeaderStart = indexStart - totalBlocksPadded - XZ_HEADER_SIZE;
+    if (streamHeaderStart < 0 || !hasMagicAt(bytes, streamHeaderStart))
+      return err({ kind: "malformed" });
+    if (
+      bytes[streamHeaderStart + 6] !== flags0 ||
+      bytes[streamHeaderStart + 7] !== flags1
+    )
+      return err({ kind: "malformed" });
+    if (
+      readU32LE(bytes, streamHeaderStart + 8) !==
+      crc32(bytes.subarray(streamHeaderStart + 6, streamHeaderStart + 8))
+    )
+      return err({ kind: "malformed" });
+
+    let blockOffset = streamHeaderStart + XZ_HEADER_SIZE;
+    for (const block of blocks) {
+      const encodedHeaderSize = bytes[blockOffset];
+      if (encodedHeaderSize === undefined || encodedHeaderSize === 0)
+        return err({ kind: "malformed" });
+      const blockHeaderSize = (encodedHeaderSize + 1) * 4;
+      if (
+        blockHeaderSize > block.padded ||
+        blockOffset + blockHeaderSize > indexStart
+      )
+        return err({ kind: "malformed" });
+      const blockHeader = bytes.subarray(
+        blockOffset,
+        blockOffset + blockHeaderSize,
+      );
+      if (
+        readU32LE(blockHeader, blockHeaderSize - 4) !==
+        crc32(blockHeader.subarray(0, blockHeaderSize - 4))
+      )
+        return err({ kind: "malformed" });
+      const blockFlags = blockHeader[1]!;
+      if ((blockFlags & 0x3c) !== 0) return err({ kind: "malformed" });
+      const numFilters = (blockFlags & 0x03) + 1;
+      let headerCursor = 2;
+      const headerBodyEnd = blockHeaderSize - 4;
+
+      if ((blockFlags & 0x40) !== 0) {
+        const compressedSize = readMbInt(
+          blockHeader,
+          headerCursor,
+          headerBodyEnd,
+        );
+        if (compressedSize === null) return err({ kind: "malformed" });
+        headerCursor = compressedSize.next;
+      }
+      if ((blockFlags & 0x80) !== 0) {
+        const uncompressedSize = readMbInt(
+          blockHeader,
+          headerCursor,
+          headerBodyEnd,
+        );
+        if (
+          uncompressedSize === null ||
+          uncompressedSize.value !== block.uncompressed
+        )
+          return err({ kind: "malformed" });
+        headerCursor = uncompressedSize.next;
+      }
+
+      for (let f = 0; f < numFilters; f++) {
+        const filterId = readMbInt(blockHeader, headerCursor, headerBodyEnd);
+        if (filterId === null) return err({ kind: "malformed" });
+        const propsSize = readMbInt(blockHeader, filterId.next, headerBodyEnd);
+        if (propsSize === null) return err({ kind: "malformed" });
+        headerCursor = propsSize.next;
+        if (headerCursor + propsSize.value > headerBodyEnd)
+          return err({ kind: "malformed" });
+        if (filterId.value === XZ_FILTER_LZMA2) {
+          if (propsSize.value !== 1) return err({ kind: "malformed" });
+          const dictBytes = lzma2DictionaryBytes(blockHeader[headerCursor]!);
+          if (dictBytes === null) return err({ kind: "malformed" });
+          if (dictBytes > maxDictionaryBytes) maxDictionaryBytes = dictBytes;
+          if (dictBytes > XZ_DICTIONARY_MAX_BYTES)
+            return err({
+              kind: "dictionary_too_large",
+              dictionaryBytes: dictBytes,
+              maximum: XZ_DICTIONARY_MAX_BYTES,
+            });
+        }
+        headerCursor += propsSize.value;
+      }
+
+      for (let i = headerCursor; i < headerBodyEnd; i++)
+        if (blockHeader[i] !== 0) return err({ kind: "malformed" });
+
+      blockOffset += block.padded;
+    }
+
+    streamEnd = xzStreamEnd(bytes, streamHeaderStart);
+  }
+
+  return ok({
+    declaredUncompressed: totalUncompressed,
+    maxDictionaryBytes,
+  });
 };
 
-export const decodeXz = (
+/** Uncompressed size from a completed xz stream index, or null when absent/invalid. */
+export const xzUncompressedSize = (bytes: Uint8Array): number | null => {
+  const preflight = inspectXzStreams(bytes);
+  return preflight.ok ? preflight.value.declaredUncompressed : null;
+};
+
+const isTruncatedXzError = (cause: unknown): boolean => {
+  return /failed to fill whole buffer|unexpected eof/iu.test(
+    errorMessage(cause),
+  );
+};
+
+const chunkedReadableStream = (
+  bytes: Uint8Array,
+): ReadableStream<Uint8Array> => {
+  let offset = 0;
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (offset >= bytes.length) {
+        controller.close();
+        return;
+      }
+      const end = Math.min(offset + XZ_STREAM_INPUT_CHUNK_BYTES, bytes.length);
+      controller.enqueue(bytes.subarray(offset, end));
+      offset = end;
+    },
+  });
+};
+
+export const decodeXz = async (
   bytes: Uint8Array,
   limit: number,
-): Result<Uint8Array, XzDecodeFailure> => {
+  signal?: AbortSignal,
+): Promise<Result<Uint8Array, XzDecodeFailure>> => {
+  throwIfAborted(signal);
   const binding = loadXzBinding();
   if (binding.status === "unavailable") return err({ kind: "unavailable" });
-  // The sync binding takes no output bound, so only a stream whose index
-  // declares its size within the limit reaches the decoder.
-  const declared = xzUncompressedSize(bytes);
-  if (declared === null)
-    return err({ kind: xzFooterPresent(bytes) ? "malformed" : "truncated" });
-  if (declared > limit) return err({ kind: "too_large" });
+  // Validate stream framing, CRCs, LZMA2 dictionary size, and index-declared
+  // uncompressed size before any bytes reach the native decoder.
+  const preflight = inspectXzStreams(bytes);
+  if (!preflight.ok) return preflight;
+  if (preflight.value.declaredUncompressed > limit)
+    return err({ kind: "too_large" });
+
+  // Stream-decode with a hard chunk-by-chunk output cap so a spoofed index
+  // cannot cause unbounded output allocation.
+  const reader = binding.api
+    .decompressStream(chunkedReadableStream(bytes))
+    .getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
   try {
-    const expanded = binding.api.decompressSync(bytes);
-    if (expanded.length > limit) return err({ kind: "too_large" });
-    return ok(expanded);
+    for (;;) {
+      throwIfAborted(signal);
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value.length === 0) continue;
+      total += value.length;
+      if (total > limit) {
+        await reader.cancel().catch(() => {});
+        return err({ kind: "too_large" });
+      }
+      chunks.push(value);
+    }
+    return ok(chunks.length === 1 ? chunks[0]! : Buffer.concat(chunks, total));
   } catch (cause: unknown) {
-    if (!looksLikeXz(bytes) || bytes.length < 32 || isTruncatedXzError(cause))
+    await reader.cancel().catch(() => {});
+    if (isAbortOf(cause, signal)) throw cause;
+    if (!hasMagicAt(bytes, 0) || bytes.length < 32 || isTruncatedXzError(cause))
       return err({ kind: "truncated" });
     return err({ kind: "malformed", cause });
+  } finally {
+    reader.releaseLock();
   }
 };
 

@@ -1,5 +1,6 @@
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { ellipsisExcerpt } from "../domain/excerpt.js";
+import { redactRecordedTransportUrl } from "../domain/recordedTransportUrl.js";
 import {
   isZeroBlock,
   parseTarNumber,
@@ -460,10 +461,11 @@ const parseTar = (
   // to the next one, and override global values for it.
   const globalPax: Partial<Record<(typeof PAX_KEYS)[number], string>> = {};
   const globalUndecodable = new Set<string>();
-  // Global numeric owners are parsed once per global record, not per entry:
+  // Global numeric fields are parsed once per global record, not per entry:
   // a long global value would otherwise be rescanned for every later row.
   let globalUid: number | undefined;
   let globalGid: number | undefined;
+  let globalSize: { readonly value: number } | "invalid" | undefined;
   // A global value is stored once but copied into every later row, so each
   // reuse is charged to the member's byte budget alongside its expanded bytes.
   let charged = bytes.length;
@@ -495,23 +497,38 @@ const parseTar = (
       typeFlag === TAR_TYPEFLAGS.gnuLongLink ||
       typeFlag === TAR_TYPEFLAGS.paxLocal ||
       typeFlag === TAR_TYPEFLAGS.paxGlobal;
-    // A PAX size record overrides the following entry's header size field;
-    // reading or skipping by the header field would desynchronize the stream.
-    const paxSize = extension ? undefined : pax.size;
-    if (paxSize !== undefined && paxId(paxSize) === undefined)
-      return {
-        entries,
-        files,
-        undecodableNames,
-        error: new DebPackageFormatFailure(
-          "malformed",
-          `PAX size record is not a decimal byte count in ${memberName} at offset ${String(offset)}.`,
-        ),
-      };
-    const size =
-      paxSize === undefined
-        ? nonNegativeTarNumber(header.subarray(124, 136))
-        : (paxId(paxSize) ?? null);
+    // A PAX size record (local `x` overriding inherited global `g`) overrides
+    // the following entry's header size field; reading or skipping by the
+    // header field would desynchronize the stream.
+    let size: number | null;
+    if (!extension && pax.size !== undefined) {
+      const parsedSize = paxId(pax.size);
+      if (parsedSize === undefined)
+        return {
+          entries,
+          files,
+          undecodableNames,
+          error: new DebPackageFormatFailure(
+            "malformed",
+            `PAX size record is not a decimal byte count in ${memberName} at offset ${String(offset)}.`,
+          ),
+        };
+      size = parsedSize;
+    } else if (!extension && globalSize !== undefined) {
+      if (globalSize === "invalid")
+        return {
+          entries,
+          files,
+          undecodableNames,
+          error: new DebPackageFormatFailure(
+            "malformed",
+            `PAX size record is not a decimal byte count in ${memberName} at offset ${String(offset)}.`,
+          ),
+        };
+      size = globalSize.value;
+    } else {
+      size = nonNegativeTarNumber(header.subarray(124, 136));
+    }
     if (size === null)
       return {
         entries,
@@ -628,6 +645,12 @@ const parseTar = (
       if (isGlobal) {
         globalUid = paxId(globalPax.uid);
         globalGid = paxId(globalPax.gid);
+        if (globalPax.size === undefined) globalSize = undefined;
+        else {
+          const parsedSize = paxId(globalPax.size);
+          globalSize =
+            parsedSize === undefined ? "invalid" : { value: parsedSize };
+        }
       }
       offset = dataStart + tarPaddedSize(size);
       continue;
@@ -748,11 +771,11 @@ const detectCompression = (
   return fromName === "none" ? "none" : "unknown";
 };
 
-const expandArchive = (
+const expandArchive = async (
   member: ParsedArMember,
   limit: number,
   signal: AbortSignal | undefined,
-): Uint8Array => {
+): Promise<Uint8Array> => {
   throwIfAborted(signal);
   const compression = detectCompression(member.name, member.bytes);
   const resource =
@@ -769,9 +792,15 @@ const expandArchive = (
       `${member.name} is ${compression}-compressed; this reader has no ${compression} decoder.`,
     );
   if (compression === "xz") {
-    const decoded = decodeXz(member.bytes, limit);
+    const decoded = await decodeXz(member.bytes, limit, signal);
     if (!decoded.ok) {
       if (decoded.error.kind === "too_large") throw oversize(true);
+      if (decoded.error.kind === "dictionary_too_large")
+        throw new DebPackageAllowanceFailure(
+          "xz_dictionary_bytes",
+          decoded.error.maximum,
+          `${member.name} requires an XZ LZMA2 dictionary of ${String(decoded.error.dictionaryBytes)} bytes, above the fixed ${String(decoded.error.maximum / 2 ** 20)} MiB allowance; the stream is not necessarily corrupt.`,
+        );
       if (decoded.error.kind === "unavailable")
         throw new DebPackageFormatFailure(
           "unsupported",
@@ -858,7 +887,11 @@ const interpreterLine = (bytes: Uint8Array): string | null => {
   return interpreter.length === 0 ? null : interpreter;
 };
 
-const parseControl = (tar: TarParse, issues: DebPackageIssue[]): DebControl => {
+const parseControl = (
+  tar: TarParse,
+  issues: DebPackageIssue[],
+  limitations: string[],
+): DebControl => {
   // Only the first paragraph describes the package; stop there so a control
   // file of many small paragraphs never builds one map for each of them.
   const bytes = tar.files.get("control");
@@ -973,6 +1006,11 @@ const parseControl = (tar: TarParse, issues: DebPackageIssue[]): DebControl => {
       detail: "control is not valid UTF-8.",
       offset: null,
     });
+  const redactedHomepage = redactRecordedTransportUrl(textField("homepage"));
+  if (redactedHomepage.url_credentials_redacted)
+    limitations.push(
+      "Transport credentials were redacted from the Homepage URL.",
+    );
   return {
     package: textField("package"),
     version,
@@ -981,7 +1019,7 @@ const parseControl = (tar: TarParse, issues: DebPackageIssue[]): DebControl => {
     installed_size,
     section: textField("section"),
     priority: textField("priority"),
-    homepage: textField("homepage"),
+    homepage: redactedHomepage.url,
     description_summary:
       description_summary === "" ? null : description_summary,
     source: textField("source"),
@@ -1102,12 +1140,12 @@ const draftReport = (fields: {
 });
 
 /** Decode one Debian .deb into typed Evidence facts. */
-export const parseDebPackage = (
+export const parseDebPackage = async (
   bytes: Uint8Array,
   artifact: DebPackage["artifact"],
   input: InspectDebPackageInput,
   signal?: AbortSignal,
-): DebPackage => {
+): Promise<DebPackage> => {
   throwIfAborted(signal);
   const parsedAr = parseArMembers(bytes, input.max_ar_members);
   const arMembers = parsedAr.members;
@@ -1170,7 +1208,7 @@ export const parseDebPackage = (
   if (parsedAr.error !== undefined) attachPartial(parsedAr.error, snapshot());
   try {
     if (controlMember !== undefined) {
-      const expanded = expandArchive(
+      const expanded = await expandArchive(
         controlMember,
         input.max_control_bytes,
         signal,
@@ -1183,12 +1221,16 @@ export const parseDebPackage = (
         { resource: "max_control_bytes", maximum: input.max_control_bytes },
       );
       if (controlTar.entries.length > 0 || controlTar.files.size > 0)
-        control = parseControl(controlTar, issues);
+        control = parseControl(controlTar, issues, limitations);
       if (controlTar.error !== undefined)
         attachPartial(controlTar.error, snapshot());
     }
     if (dataMember !== undefined) {
-      const expanded = expandArchive(dataMember, input.max_data_bytes, signal);
+      const expanded = await expandArchive(
+        dataMember,
+        input.max_data_bytes,
+        signal,
+      );
       examined_data_bytes = expanded.length;
       dataTar = parseTar(expanded, input.max_data_entries, dataMember.name, {
         resource: "max_data_bytes",

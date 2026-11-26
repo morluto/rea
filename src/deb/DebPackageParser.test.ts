@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { gzipSync } from "node:zlib";
+import { crc32, gzipSync } from "node:zlib";
 
 import { inspectDebPackageInputSchema } from "../domain/deb/debPackage.js";
 import { projectDebPackageView } from "../domain/analysisView/debPackageView.js";
@@ -25,7 +25,11 @@ import {
   undecodableTarNamesLimitation,
   unreadableRelationshipsDetail,
 } from "./DebPackageParser.js";
-import { replaceXzBindingForTests } from "./xzDecoder.js";
+import {
+  compressXz,
+  replaceXzBindingForTests,
+  XZ_DICTIONARY_MAX_BYTES,
+} from "./xzDecoder.js";
 import { zstandardWindowFrameFixture } from "../../tests/fixtures/zipZstandard.js";
 
 const artifact = (bytes: Uint8Array) => ({
@@ -67,12 +71,12 @@ vi.mock("../domain/desktop/aptRepositories.js", async (importOriginal) => {
   };
 });
 
-const expectFailure = <Failure>(
-  run: () => unknown,
+const expectFailure = async <Failure>(
+  run: () => Promise<unknown>,
   ErrorType: new (...args: never[]) => Failure,
-): Failure => {
+): Promise<Failure> => {
   try {
-    run();
+    await run();
   } catch (cause: unknown) {
     expect(cause).toBeInstanceOf(ErrorType);
     return cause as Failure;
@@ -80,8 +84,8 @@ const expectFailure = <Failure>(
   throw new Error("Expected Debian package parse failure");
 };
 
-it("reads identity, relationships, scripts, inventory, and md5sums cross-check", () => {
-  const report = parse(debPackageFixture());
+it("reads identity, relationships, scripts, inventory, and md5sums cross-check", async () => {
+  const report = await parse(debPackageFixture());
   expect(report.ar.magic).toBe("!<arch>\n");
   expect(report.ar.format_version).toBe("2.0");
   expect(report.ar.members.map((member) => member.name)).toEqual([
@@ -189,8 +193,8 @@ it("reads identity, relationships, scripts, inventory, and md5sums cross-check",
 
 it.each(["gzip", "zstd", "xz", "none"] as const)(
   "decodes %s control and data members",
-  (compression) => {
-    const report = parse(
+  async (compression) => {
+    const report = await parse(
       debPackageFixture({
         controlCompression: compression,
         dataCompression: compression,
@@ -208,8 +212,8 @@ it.each(["gzip", "zstd", "xz", "none"] as const)(
   },
 );
 
-it("decodes xz data after reading gzip control", () => {
-  const report = parse(
+it("decodes xz data after reading gzip control", async () => {
+  const report = await parse(
     debPackageFixture({
       controlCompression: "gzip",
       dataCompression: "xz",
@@ -226,8 +230,8 @@ it("decodes xz data after reading gzip control", () => {
   ]);
 });
 
-it("refuses a truncated xz control member", () => {
-  const error = expectFailure(
+it("refuses a truncated xz control member", async () => {
+  const error = await expectFailure(
     () =>
       parse(
         debPackageFixture({
@@ -247,8 +251,8 @@ it("refuses a truncated xz control member", () => {
   expect(error.partial?.control).toBeNull();
 });
 
-it("refuses an xz control member that expands past max_control_bytes", () => {
-  const error = expectFailure(
+it("refuses an xz control member that expands past max_control_bytes", async () => {
+  const error = await expectFailure(
     () =>
       parse(debPackageFixture({ controlCompression: "xz" }), {
         max_control_bytes: 1024,
@@ -262,7 +266,7 @@ it("refuses an xz control member that expands past max_control_bytes", () => {
   );
 });
 
-it("refuses xz members when the native decoder cannot load", () => {
+it("refuses xz members when the native decoder cannot load", async () => {
   const bytes = debPackageFixture({ controlCompression: "xz" });
   replaceXzBindingForTests({
     status: "unavailable",
@@ -270,15 +274,18 @@ it("refuses xz members when the native decoder cannot load", () => {
       code: "ERR_DLOPEN_FAILED",
     }),
   });
-  const error = expectFailure(() => parse(bytes), DebPackageFormatFailure);
+  const error = await expectFailure(
+    () => parse(bytes),
+    DebPackageFormatFailure,
+  );
   expect(error.kind).toBe("unsupported");
   expect(error.message).toMatch(/unavailable on this platform/u);
 });
 
-it("reports a Zstandard frame above the decoder window as an allowance, not damage", () => {
+it("reports a Zstandard frame above the decoder window as an allowance, not damage", async () => {
   // Window descriptor 0x90 declares 256 MiB; the single raw block is valid.
   const { compressed } = zstandardWindowFrameFixture(0x90);
-  const error = expectFailure(
+  const error = await expectFailure(
     () =>
       parse(
         debPackageFixture({
@@ -298,9 +305,9 @@ it("reports a Zstandard frame above the decoder window as an allowance, not dama
   );
 });
 
-it("reads only the first control paragraph however many follow", () => {
+it("reads only the first control paragraph however many follow", async () => {
   paragraphReads.largest = 0;
-  const report = parse(
+  const report = await parse(
     debPackageFixture({
       controlText: `Package: hello\nVersion: 1.0\nArchitecture: all\n\n${"a:b\n\n".repeat(100_000)}`,
     }),
@@ -312,8 +319,8 @@ it("reads only the first control paragraph however many follow", () => {
   expect(paragraphReads.largest).toBe(1);
 });
 
-it("reports an unreadable tar mode as null with a malformed issue", () => {
-  const report = parse(
+it("reports an unreadable tar mode as null with a malformed issue", async () => {
+  const report = await parse(
     debPackageFixture({
       dataEntries: [
         { name: "./", type: "5", mode: 0o755, content: "" },
@@ -331,8 +338,8 @@ it("reports an unreadable tar mode as null with a malformed issue", () => {
   expect(report.coverage.status).toBe("partial");
 });
 
-it("keeps missing optional control fields null rather than empty", () => {
-  const report = parse(
+it("keeps missing optional control fields null rather than empty", async () => {
+  const report = await parse(
     debPackageFixture({
       controlText: "Package: hello\nVersion: 1.0\nArchitecture: all\n",
       conffiles: null,
@@ -360,8 +367,8 @@ it("keeps missing optional control fields null rather than empty", () => {
   expect(report.md5sums_cross_check).toBeNull();
 });
 
-it("refuses bytes that are not an ar archive", () => {
-  const error = expectFailure(
+it("refuses bytes that are not an ar archive", async () => {
+  const error = await expectFailure(
     () => parse(notArBytes()),
     DebPackageFormatFailure,
   );
@@ -370,8 +377,8 @@ it("refuses bytes that are not an ar archive", () => {
   expect(error.partial).toBeUndefined();
 });
 
-it("keeps debian-binary when a later ar member is truncated", () => {
-  const error = expectFailure(
+it("keeps debian-binary when a later ar member is truncated", async () => {
+  const error = await expectFailure(
     () => parse(truncatedAfterDebianBinaryBytes()),
     DebPackageFormatFailure,
   );
@@ -382,8 +389,8 @@ it("keeps debian-binary when a later ar member is truncated", () => {
   ]);
 });
 
-it("refuses a truncated first member without inventing ar facts", () => {
-  const error = expectFailure(
+it("refuses a truncated first member without inventing ar facts", async () => {
+  const error = await expectFailure(
     () => parse(truncatedArMemberBytes()),
     DebPackageFormatFailure,
   );
@@ -392,7 +399,7 @@ it("refuses a truncated first member without inventing ar facts", () => {
 });
 
 /** A fixture whose final data.tar.gz member has an odd stored size. */
-const oddFinalMemberFixture = (bsdNames: boolean): Buffer => {
+const oddFinalMemberFixture = async (bsdNames: boolean): Promise<Buffer> => {
   for (let extra = 0; extra < 64; extra++) {
     const bytes = debPackageFixture({
       bsdNames,
@@ -401,7 +408,7 @@ const oddFinalMemberFixture = (bsdNames: boolean): Buffer => {
         { name: "./usr/share/hello.txt", content: "y".repeat(extra) },
       ],
     });
-    const payload = parse(bytes).ar.members.at(-1)?.size ?? 0;
+    const payload = (await parse(bytes)).ar.members.at(-1)?.size ?? 0;
     const stored = payload + (bsdNames ? "data.tar.gz".length : 0);
     if (stored % 2 === 1) return bytes;
   }
@@ -410,10 +417,10 @@ const oddFinalMemberFixture = (bsdNames: boolean): Buffer => {
 
 it.for([false, true])(
   "refuses an odd final ar member missing its padding byte (BSD names: %s)",
-  (bsdNames) => {
-    const bytes = oddFinalMemberFixture(bsdNames);
-    expect(parse(bytes).coverage.status).toBe("complete");
-    const error = expectFailure(
+  async (bsdNames) => {
+    const bytes = await oddFinalMemberFixture(bsdNames);
+    expect((await parse(bytes)).coverage.status).toBe("complete");
+    const error = await expectFailure(
       () => parse(bytes.subarray(0, bytes.length - 1)),
       DebPackageFormatFailure,
     );
@@ -422,10 +429,10 @@ it.for([false, true])(
   },
 );
 
-it("aligns BSD extended-name members by their stored size", () => {
+it("aligns BSD extended-name members by their stored size", async () => {
   // debian-binary (13 bytes) plus "2.0\n" stores 17 bytes, so the padding
   // byte follows the stored extent even though the payload is even.
-  const report = parse(debPackageFixture({ bsdNames: true }));
+  const report = await parse(debPackageFixture({ bsdNames: true }));
   expect(report.ar.members.map((member) => member.name)).toEqual([
     "debian-binary",
     "control.tar.gz",
@@ -435,8 +442,8 @@ it("aligns BSD extended-name members by their stored size", () => {
   expect(report.coverage.status).toBe("complete");
 });
 
-it("keeps parsed control when the data tar checksum fails", () => {
-  const error = expectFailure(
+it("keeps parsed control when the data tar checksum fails", async () => {
+  const error = await expectFailure(
     () => parse(debPackageFixture({ corruptDataChecksum: true })),
     DebPackageFormatFailure,
   );
@@ -446,8 +453,8 @@ it("keeps parsed control when the data tar checksum fails", () => {
   expect(error.partial?.data_entries).toEqual([]);
 });
 
-it("keeps inventoried data entries when the selected count is exceeded", () => {
-  const error = expectFailure(
+it("keeps inventoried data entries when the selected count is exceeded", async () => {
+  const error = await expectFailure(
     () => parse(debPackageFixture(), { max_data_entries: 1 }),
     DebPackageCapacityFailure,
   );
@@ -456,21 +463,21 @@ it("keeps inventoried data entries when the selected count is exceeded", () => {
   expect(error.partial?.data_entries).toHaveLength(1);
 });
 
-it("reports partial coverage when control.tar holds no control file", () => {
-  const report = parse(debPackageFixture({ controlEntries: [] }));
+it("reports partial coverage when control.tar holds no control file", async () => {
+  const report = await parse(debPackageFixture({ controlEntries: [] }));
   expect(report.coverage.status).toBe("partial");
   expect(report.limitations).toContain("control.tar held no control file.");
 });
 
-it("reports partial coverage when debian-binary is empty", () => {
-  const report = parse(debPackageFixture({ debianBinary: "" }));
+it("reports partial coverage when debian-binary is empty", async () => {
+  const report = await parse(debPackageFixture({ debianBinary: "" }));
   expect(report.ar.format_version).toBeNull();
   expect(report.coverage.status).toBe("partial");
 });
 
-it("counts a hardlinked md5sums path as present in the inventory", () => {
+it("counts a hardlinked md5sums path as present in the inventory", async () => {
   const sum = "d41d8cd98f00b204e9800998ecf8427e";
-  const report = parse(
+  const report = await parse(
     debPackageFixture({
       md5sums: `${sum}  usr/bin/hello\n${sum}  usr/bin/hello-link\n`,
       dataEntries: [
@@ -506,8 +513,8 @@ const paxRecord = (key: string, value: string | Uint8Array): Buffer => {
   return Buffer.concat([Buffer.from(String(length), "utf8"), body]);
 };
 
-it("reads PAX records by byte length, so a UTF-8 path keeps the next field", () => {
-  const report = parse(
+it("reads PAX records by byte length, so a UTF-8 path keeps the next field", async () => {
+  const report = await parse(
     debPackageFixture({
       dataEntries: [
         { name: "./", type: "5", mode: 0o755, content: "" },
@@ -529,11 +536,11 @@ it("reads PAX records by byte length, so a UTF-8 path keeps the next field", () 
   expect(entry?.link_target).toBe("target");
 });
 
-it("keeps only the PAX keys it applies, so distinct unknown keys cost no storage", () => {
+it("keeps only the PAX keys it applies, so distinct unknown keys cost no storage", async () => {
   const unknown = Array.from({ length: 10_000 }, (_, index) =>
     paxRecord(`k${String(index)}`, ""),
   );
-  const report = parse(
+  const report = await parse(
     debPackageFixture({
       dataEntries: [
         { name: "./", type: "5", mode: 0o755, content: "" },
@@ -559,8 +566,8 @@ it("keeps only the PAX keys it applies, so distinct unknown keys cost no storage
   });
 });
 
-it("refuses a GNU PAX sparse entry instead of reporting its stored name and size", () => {
-  const error = expectFailure(
+it("refuses a GNU PAX sparse entry instead of reporting its stored name and size", async () => {
+  const error = await expectFailure(
     () =>
       parse(
         debPackageFixture({
@@ -586,8 +593,8 @@ it("refuses a GNU PAX sparse entry instead of reporting its stored name and size
   expect(error.message).toMatch(/GNU sparse entry/u);
 });
 
-it("refuses an old GNU sparse entry", () => {
-  const error = expectFailure(
+it("refuses an old GNU sparse entry", async () => {
+  const error = await expectFailure(
     () =>
       parse(
         debPackageFixture({
@@ -600,8 +607,8 @@ it("refuses an old GNU sparse entry", () => {
   expect(error.message).toMatch(/GNU sparse entry/u);
 });
 
-it("reports a PAX path that is not UTF-8 as a limitation", () => {
-  const report = parse(
+it("reports a PAX path that is not UTF-8 as a limitation", async () => {
+  const report = await parse(
     debPackageFixture({
       dataEntries: [
         { name: "./", type: "5", mode: 0o755, content: "" },
@@ -620,8 +627,8 @@ it("reports a PAX path that is not UTF-8 as a limitation", () => {
   expect(report.limitations).toContain(undecodableTarNamesLimitation(1));
 });
 
-it("reads control files from the control.tar root, not nested paths", () => {
-  const report = parse(
+it("reads control files from the control.tar root, not nested paths", async () => {
+  const report = await parse(
     debPackageFixture({
       controlEntries: [
         {
@@ -640,14 +647,14 @@ it("reads control files from the control.tar root, not nested paths", () => {
   expect(report.control?.maintainer_scripts).toEqual([]);
 });
 
-it("keeps UTF-8, surrounding spaces, and backslashes in tar names", () => {
+it("keeps UTF-8, surrounding spaces, and backslashes in tar names", async () => {
   const sum = "d41d8cd98f00b204e9800998ecf8427e";
   const names = [
     "usr/share/café",
     "usr/share/ padded ",
     "usr/share/back\\slash",
   ];
-  const report = parse(
+  const report = await parse(
     debPackageFixture({
       md5sums: names.map((name) => `${sum}  ${name}\n`).join(""),
       dataEntries: [
@@ -677,8 +684,8 @@ it("keeps UTF-8, surrounding spaces, and backslashes in tar names", () => {
   expect(report.limitations).not.toContain(undecodableTarNamesLimitation(1));
 });
 
-it("reports tar names that are not UTF-8 as a limitation", () => {
-  const report = parse(
+it("reports tar names that are not UTF-8 as a limitation", async () => {
+  const report = await parse(
     debPackageFixture({
       dataEntries: [
         { name: "./", type: "5", mode: 0o755, content: "" },
@@ -699,8 +706,8 @@ it("reports tar names that are not UTF-8 as a limitation", () => {
   expect(report.limitations).toContain(undecodableTarNamesLimitation(1));
 });
 
-it("keeps the md5sums cross-check unknown when md5sums is not UTF-8", () => {
-  const report = parse(
+it("keeps the md5sums cross-check unknown when md5sums is not UTF-8", async () => {
+  const report = await parse(
     debPackageFixture({
       controlEntries: [
         {
@@ -720,8 +727,8 @@ it("keeps the md5sums cross-check unknown when md5sums is not UTF-8", () => {
 
 it.each(["1:", "1:-1", "1.0-"])(
   "reports a field issue for the malformed Version %s",
-  (version) => {
-    const report = parse(
+  async (version) => {
+    const report = await parse(
       debPackageFixture({
         controlText: `Package: hello\nVersion: ${version}\nArchitecture: all\n`,
       }),
@@ -734,12 +741,12 @@ it.each(["1:", "1:-1", "1.0-"])(
   },
 );
 
-it("reads an Installed-Size with a long NUL run and continuation in linear time", () => {
+it("reads an Installed-Size with a long NUL run and continuation in linear time", async () => {
   // A NUL run followed by a continuation line makes a NUL-to-end regex retry
   // from every NUL; 128 KiB of this took over ten seconds before the fix.
   const value = `1${"\0".repeat(128 * 1024)}\n x`;
   const started = performance.now();
-  const report = parse(
+  const report = await parse(
     debPackageFixture({
       controlText: `Package: hello\nVersion: 1.0\nArchitecture: all\nInstalled-Size: ${value}\n`,
     }),
@@ -751,8 +758,8 @@ it("reads an Installed-Size with a long NUL run and continuation in linear time"
   );
 });
 
-it("reports a field issue for an Installed-Size past the safe integer range", () => {
-  const report = parse(
+it("reports a field issue for an Installed-Size past the safe integer range", async () => {
+  const report = await parse(
     debPackageFixture({
       controlText: `Package: hello\nVersion: 1.0\nArchitecture: all\nInstalled-Size: ${"9".repeat(400)}\n`,
     }),
@@ -763,8 +770,8 @@ it("reports a field issue for an Installed-Size past the safe integer range", ()
   );
 });
 
-it("flags extra ar members without treating them as control or data", () => {
-  const report = parse(
+it("flags extra ar members without treating them as control or data", async () => {
+  const report = await parse(
     debPackageFixture({
       extraMembers: [{ name: "_gpgorigin", data: Buffer.from("sig") }],
     }),
@@ -773,8 +780,8 @@ it("flags extra ar members without treating them as control or data", () => {
   expect(report.coverage.status).toBe("partial");
 });
 
-it("flags a repeated data member as extra and keeps coverage partial", () => {
-  const report = parse(
+it("flags a repeated data member as extra and keeps coverage partial", async () => {
+  const report = await parse(
     debPackageFixture({
       dataEntries: [],
       extraMembers: [
@@ -795,8 +802,8 @@ it("flags a repeated data member as extra and keeps coverage partial", () => {
   );
 });
 
-it("summarizes retained Debian package facts without reopening the archive", () => {
-  const report = parse(debPackageFixture());
+it("summarizes retained Debian package facts without reopening the archive", async () => {
+  const report = await parse(debPackageFixture());
   const projected = projectDebPackageView(
     {
       evidenceId: `ev_${"b".repeat(64)}`,
@@ -819,8 +826,8 @@ it("summarizes retained Debian package facts without reopening the archive", () 
   });
 });
 
-it("keeps an unreadable dependency alternative as an issue and reports partial coverage", () => {
-  const report = parse(
+it("keeps an unreadable dependency alternative as an issue and reports partial coverage", async () => {
+  const report = await parse(
     debPackageFixture({
       controlText:
         "Package: hello\nVersion: 1.0\nArchitecture: all\nDepends: libc6 (>= 2.34), libbar (2.0) | libfoo:kfreebsd-amd64\n",
@@ -856,13 +863,13 @@ it("keeps an unreadable dependency alternative as an issue and reports partial c
   expect(report.coverage.status).toBe("partial");
 });
 
-it("reads a maintainer script interpreter when later bytes are not UTF-8", () => {
+it("reads a maintainer script interpreter when later bytes are not UTF-8", async () => {
   const body = Buffer.concat([
     Buffer.from("#!/bin/sh\n# ", "utf8"),
     Buffer.alloc(300, 0xff),
     Buffer.from("\nexit 0\n", "utf8"),
   ]);
-  const report = parse(
+  const report = await parse(
     debPackageFixture({
       controlEntries: [
         {
@@ -878,8 +885,8 @@ it("reads a maintainer script interpreter when later bytes are not UTF-8", () =>
   ]);
 });
 
-it("records one bounded issue for a field with many unreadable alternatives", () => {
-  const report = parse(
+it("records one bounded issue for a field with many unreadable alternatives", async () => {
+  const report = await parse(
     debPackageFixture({
       controlText: `Package: hello\nVersion: 1.0\nArchitecture: all\nDepends: libc6${" | (".repeat(5000)}\n`,
     }),
@@ -891,13 +898,13 @@ it("records one bounded issue for a field with many unreadable alternatives", ()
   );
 });
 
-it("refuses a run of PAX headers with no entry before it costs work", () => {
+it("refuses a run of PAX headers with no entry before it costs work", async () => {
   const headers = Array.from({ length: 9 }, (_, index) => ({
     name: `./PaxHeaders/${String(index)}`,
     type: "x",
     content: paxRecord(`key${String(index)}`, "value"),
   }));
-  const error = expectFailure(
+  const error = await expectFailure(
     () =>
       parse(
         debPackageFixture({
@@ -913,8 +920,8 @@ it("refuses a run of PAX headers with no entry before it costs work", () => {
   expect(error.partial?.control?.package).toBe("hello");
 });
 
-it("accepts the few PAX and GNU headers a real entry uses", () => {
-  const report = parse(
+it("accepts the few PAX and GNU headers a real entry uses", async () => {
+  const report = await parse(
     debPackageFixture({
       dataEntries: [
         { name: "./", type: "5", mode: 0o755, content: "" },
@@ -935,8 +942,8 @@ it("accepts the few PAX and GNU headers a real entry uses", () => {
   );
 });
 
-it("applies PAX owner records over the fixed header fields", () => {
-  const report = parse(
+it("applies PAX owner records over the fixed header fields", async () => {
+  const report = await parse(
     debPackageFixture({
       dataEntries: [
         { name: "./", type: "5", mode: 0o755, content: "" },
@@ -976,7 +983,7 @@ const gnuLongNameReferences = (bytes: Buffer): Buffer => {
   return copy;
 };
 
-it("refuses a GNU ar long name above the name limit before repeating it", () => {
+it("refuses a GNU ar long name above the name limit before repeating it", async () => {
   const longName = "n".repeat(4097);
   const bytes = gnuLongNameReferences(
     debPackageFixture({
@@ -987,7 +994,10 @@ it("refuses a GNU ar long name above the name limit before repeating it", () => 
       ],
     }),
   );
-  const error = expectFailure(() => parse(bytes), DebPackageAllowanceFailure);
+  const error = await expectFailure(
+    () => parse(bytes),
+    DebPackageAllowanceFailure,
+  );
   expect(error.failure).toMatchObject({
     kind: "limit",
     limit: { name: "ar_member_name_bytes", maximum: 4096 },
@@ -998,9 +1008,9 @@ it("refuses a GNU ar long name above the name limit before repeating it", () => 
   expect(error.partial?.ar.format_version).toBe("2.0");
 });
 
-it("resolves a GNU ar long name at the name limit", () => {
+it("resolves a GNU ar long name at the name limit", async () => {
   const longName = "n".repeat(4096);
-  const report = parse(
+  const report = await parse(
     gnuLongNameReferences(
       debPackageFixture({
         extraMembers: [
@@ -1022,7 +1032,7 @@ it.for([
   ["at an empty string-table entry", "/17", /empty string-table entry/u],
 ] as const)(
   "refuses a GNU ar long name reference %s with the partial report",
-  ([, reference, message]) => {
+  async ([, reference, message]) => {
     const fixture = debPackageFixture({
       extraMembers: [
         { name: "//", data: Buffer.from("long-member-name/\n") },
@@ -1032,7 +1042,10 @@ it.for([
     // The fixture writes `/40/`; GNU ar writes the reference as `/40`.
     const bytes = Buffer.from(fixture);
     bytes[bytes.indexOf(`${reference}/ `) + reference.length] = 0x20;
-    const error = expectFailure(() => parse(bytes), DebPackageFormatFailure);
+    const error = await expectFailure(
+      () => parse(bytes),
+      DebPackageFormatFailure,
+    );
     expect(error.kind).toBe("malformed");
     expect(error.message).toMatch(message);
     expect(error.partial?.artifact.sha256).toBe("a".repeat(64));
@@ -1043,15 +1056,15 @@ it.for([
   },
 );
 
-it("keeps a GNU ar string table as a counted member", () => {
+it("keeps a GNU ar string table as a counted member", async () => {
   const bytes = debPackageFixture({
     extraMembers: [{ name: "//", data: Buffer.from("long-member-name/\n") }],
   });
-  const report = parse(bytes);
+  const report = await parse(bytes);
   expect(report.ar.members.map((member) => member.name)).toContain("//");
   expect(report.ar.extra_member_names).toContain("//");
   expect(report.coverage.status).toBe("partial");
-  const error = expectFailure(
+  const error = await expectFailure(
     () => parse(bytes, { max_ar_members: 3 }),
     DebPackageCapacityFailure,
   );
@@ -1061,21 +1074,21 @@ it("keeps a GNU ar string table as a counted member", () => {
 it.for([
   ["a partial next header", 100],
   ["missing member padding", -200],
-] as const)("refuses a control tar cut off with %s", ([, cut]) => {
+] as const)("refuses a control tar cut off with %s", async ([, cut]) => {
   const first = tarMember({ name: "./control", content: "Package: hello\n" });
   const second = tarMember({ name: "./md5sums", content: "x".repeat(300) });
   const tar =
     cut > 0
       ? Buffer.concat([first, second.subarray(0, cut)])
       : Buffer.concat([first, second.subarray(0, second.length + cut)]);
-  const error = expectFailure(
+  const error = await expectFailure(
     () => parse(debPackageFixture({ controlMemberBytes: gzipSync(tar) })),
     DebPackageFormatFailure,
   );
   expect(error.kind).toBe("truncated");
 });
 
-it("reads an entry whose PAX size record overrides its header size", () => {
+it("reads an entry whose PAX size record overrides its header size", async () => {
   const control = Buffer.from(DEFAULT_CONTROL_TEXT, "utf8");
   const block = Buffer.alloc(Math.ceil(control.length / 512) * 512);
   block.set(control);
@@ -1090,13 +1103,13 @@ it("reads an entry whose PAX size record overrides its header size", () => {
     block,
     Buffer.alloc(1024),
   ]);
-  const report = parse(
+  const report = await parse(
     debPackageFixture({ controlMemberBytes: gzipSync(tar) }),
   );
   expect(report.control?.package).toBe("hello");
 });
 
-it("ignores the prefix region of GNU tar headers", () => {
+it("ignores the prefix region of GNU tar headers", async () => {
   // GNU headers use "ustar  \0" and store atime at 345, not a path prefix.
   const gnu = (member: Buffer): Buffer => {
     const header = member.subarray(0, 512);
@@ -1112,14 +1125,14 @@ it("ignores the prefix region of GNU tar headers", () => {
     gnu(tarMember({ name: "./control", content: DEFAULT_CONTROL_TEXT })),
     Buffer.alloc(1024),
   ]);
-  const report = parse(
+  const report = await parse(
     debPackageFixture({ controlMemberBytes: gzipSync(tar) }),
   );
   expect(report.control?.package).toBe("hello");
 });
 
-it("compares md5sums lines whose names GNU md5sum escaped", () => {
-  const report = parse(
+it("compares md5sums lines whose names GNU md5sum escaped", async () => {
+  const report = await parse(
     debPackageFixture({
       md5sums: [
         `\\${"0".repeat(32)}  usr/share/doc/a\\\\b`,
@@ -1139,8 +1152,8 @@ it("compares md5sums lines whose names GNU md5sum escaped", () => {
   );
 });
 
-it("applies a global PAX record to every later entry", () => {
-  const report = parse(
+it("applies a global PAX record to every later entry", async () => {
+  const report = await parse(
     debPackageFixture({
       dataEntries: [
         {
@@ -1159,7 +1172,7 @@ it("applies a global PAX record to every later entry", () => {
   expect(uids).toEqual([3_000_000, 3_000_000]);
 });
 
-it("charges a global PAX value repeated into every row to the data byte budget", () => {
+it("charges a global PAX value repeated into every row to the data byte budget", async () => {
   const owner = "u".repeat(16 * 1024);
   const bytes = debPackageFixture({
     dataEntries: [
@@ -1173,14 +1186,14 @@ it("charges a global PAX value repeated into every row to the data byte budget",
       })),
     ],
   });
-  const error = expectFailure(
+  const error = await expectFailure(
     () => parse(bytes, { max_data_bytes: 64 * 1024 }),
     DebPackageCapacityFailure,
   );
   expect(error.resource).toBe("max_data_bytes");
   expect(error.message).toMatch(/global PAX text repeated/u);
   expect(error.partial?.data_entries.length).toBeLessThan(8);
-  const report = parse(bytes, { max_data_bytes: 256 * 1024 });
+  const report = await parse(bytes, { max_data_bytes: 256 * 1024 });
   expect(
     report.data_entries
       .filter((entry) => entry.path.startsWith("usr/share/doc/"))
@@ -1188,7 +1201,7 @@ it("charges a global PAX value repeated into every row to the data byte budget",
   ).toBe(true);
 });
 
-it("parses a long global PAX owner once rather than per entry", () => {
+it("parses a long global PAX owner once rather than per entry", async () => {
   const uid = `${"0".repeat(4 * 1024 * 1024)}7`;
   const bytes = debPackageFixture({
     dataEntries: [
@@ -1203,7 +1216,7 @@ it("parses a long global PAX owner once rather than per entry", () => {
     ],
   });
   const started = performance.now();
-  const report = parse(bytes, { max_data_bytes: 32 * 1024 * 1024 });
+  const report = await parse(bytes, { max_data_bytes: 32 * 1024 * 1024 });
   expect(performance.now() - started).toBeLessThan(2000);
   const docs = report.data_entries.filter((entry) =>
     entry.path.startsWith("usr/share/doc/"),
@@ -1212,8 +1225,8 @@ it("parses a long global PAX owner once rather than per entry", () => {
   expect(docs.every((entry) => entry.uid === 7 && entry.gid === 7)).toBe(true);
 });
 
-it("restores header owners when a later global PAX record clears the override", () => {
-  const report = parse(
+it("restores header owners when a later global PAX record clears the override", async () => {
+  const report = await parse(
     debPackageFixture({
       dataEntries: [
         {
@@ -1237,10 +1250,10 @@ it("restores header owners when a later global PAX record clears the override", 
   expect(users).toEqual(["alice", "builder"]);
 });
 
-it("trims a long slash run in a PAX path in linear time", () => {
+it("trims a long slash run in a PAX path in linear time", async () => {
   const name = `${"/".repeat(256 * 1024)}a`;
   const started = performance.now();
-  const report = parse(
+  const report = await parse(
     debPackageFixture({
       dataEntries: [
         {
@@ -1256,8 +1269,8 @@ it("trims a long slash run in a PAX path in linear time", () => {
   expect(report.data_entries.some((entry) => entry.path === name)).toBe(true);
 });
 
-it("refuses a PAX extended header whose record cannot be read", () => {
-  const error = expectFailure(
+it("refuses a PAX extended header whose record cannot be read", async () => {
+  const error = await expectFailure(
     () =>
       parse(
         debPackageFixture({
@@ -1273,8 +1286,8 @@ it("refuses a PAX extended header whose record cannot be read", () => {
   expect(error.message).toMatch(/unreadable record/u);
 });
 
-it("refuses relationship fields past the alternatives allowance before building them", () => {
-  const error = expectFailure(
+it("refuses relationship fields past the alternatives allowance before building them", async () => {
+  const error = await expectFailure(
     () =>
       parse(
         debPackageFixture({
@@ -1306,7 +1319,7 @@ const withHeaderField = (
   return copy;
 };
 
-it("reads GNU base-256 uid magnitude and sign bits without dropping the first byte", () => {
+it("reads GNU base-256 uid magnitude and sign bits without dropping the first byte", async () => {
   // First byte 0x81 has base-256 bit 0x80 plus nonzero magnitude bit 0x01
   // (2^56 + 7 > MAX_SAFE_INTEGER); dropping byte 0 would mis-read this as 7.
   const unsafeUid = withHeaderField(
@@ -1333,7 +1346,7 @@ it("reads GNU base-256 uid magnitude and sign bits without dropping the first by
     safeUid,
     Buffer.alloc(1024),
   ]);
-  const report = parse(
+  const report = await parse(
     arArchive([
       { name: "debian-binary", data: Buffer.from("2.0\n", "utf8") },
       {
@@ -1352,7 +1365,7 @@ it("reads GNU base-256 uid magnitude and sign bits without dropping the first by
   ]);
 });
 
-it("refuses a GNU base-256 size whose first byte carries nonzero magnitude bits", () => {
+it("refuses a GNU base-256 size whose first byte carries nonzero magnitude bits", async () => {
   // First byte 0x81 encodes 2^88 (> MAX_SAFE_INTEGER); dropping byte 0 would
   // mis-read this as size 0 and accept the entry.
   const hugeSize = withHeaderField(
@@ -1361,10 +1374,143 @@ it("refuses a GNU base-256 size whose first byte carries nonzero magnitude bits"
     [0x81, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   );
   const tar = Buffer.concat([hugeSize, Buffer.alloc(1024)]);
-  const error = expectFailure(
+  const error = await expectFailure(
     () => parse(debPackageFixture({ controlMemberBytes: gzipSync(tar) })),
     DebPackageFormatFailure,
   );
   expect(error.kind).toBe("malformed");
   expect(error.message).toMatch(/tar size field is unreadable/u);
+});
+
+it("reports an XZ member above the LZMA2 dictionary allowance as an allowance, not damage", async () => {
+  const base = Buffer.from(compressXz(Buffer.from("small payload")));
+  const blockStart = 12;
+  const headerSize = (base[blockStart]! + 1) * 4;
+  // Property byte 32 declares a 256 MiB LZMA2 dictionary (above 128 MiB).
+  base[blockStart + 4] = 32;
+  base.writeUInt32LE(
+    crc32(base.subarray(blockStart, blockStart + headerSize - 4)) >>> 0,
+    blockStart + headerSize - 4,
+  );
+  const error = await expectFailure(
+    () =>
+      parse(
+        debPackageFixture({
+          controlCompression: "xz",
+          controlMemberBytes: base,
+        }),
+      ),
+    DebPackageAllowanceFailure,
+  );
+  expect(error.failure).toMatchObject({
+    kind: "limit",
+    limit: { name: "xz_dictionary_bytes", maximum: XZ_DICTIONARY_MAX_BYTES },
+  });
+  expect(error.message).toContain("fixed 128 MiB allowance");
+  expect(error.partial?.ar.members.map((member) => member.name)).toContain(
+    "control.tar.xz",
+  );
+});
+
+it("resolves inherited global PAX size before member framing while preserving local overrides", async () => {
+  const globalPayload = Buffer.from("global-body!");
+  const globalBlock = Buffer.alloc(512);
+  globalBlock.set(globalPayload);
+  const localPayload = Buffer.from("local-override-body-longer");
+  const localBlock = Buffer.alloc(512);
+  localBlock.set(localPayload);
+
+  const dataTar = Buffer.concat([
+    // Global PAX sets size = globalPayload.length for subsequent members.
+    tarMember({
+      name: "./pax_global_header",
+      type: "g",
+      content: paxRecord("size", String(globalPayload.length)),
+    }),
+    // First member declares 0 in ustar header; must frame using global PAX size.
+    tarMember({ name: "./usr/share/inherited" }),
+    globalBlock,
+    // Second member overrides size locally via `x` header; must frame using local PAX size.
+    tarMember({
+      name: "./PaxHeaders/local",
+      type: "x",
+      content: paxRecord("size", String(localPayload.length)),
+    }),
+    tarMember({ name: "./usr/share/local-override" }),
+    localBlock,
+    // Clear global PAX size so the third member uses its own ustar header size.
+    tarMember({
+      name: "./pax_global_header",
+      type: "g",
+      content: paxRecord("size", ""),
+    }),
+    tarMember({ name: "./usr/share/header-sized", content: "abc" }),
+    Buffer.alloc(1024),
+  ]);
+
+  const report = await parse(
+    arArchive([
+      { name: "debian-binary", data: Buffer.from("2.0\n", "utf8") },
+      {
+        name: "control.tar.gz",
+        data: gzipSync(
+          tarArchive([{ name: "./control", content: DEFAULT_CONTROL_TEXT }]),
+        ),
+      },
+      { name: "data.tar.gz", data: gzipSync(dataTar) },
+    ]),
+  );
+  expect(report.data_entries.map((entry) => [entry.path, entry.size])).toEqual([
+    ["usr/share/inherited", globalPayload.length],
+    ["usr/share/local-override", localPayload.length],
+    ["usr/share/header-sized", 3],
+  ]);
+});
+
+it("redacts transport userinfo from Homepage while preserving non-credential URLs and text", async () => {
+  const withCreds = await parse(
+    debPackageFixture({
+      controlText:
+        "Package: hello\nVersion: 1.0\nArchitecture: all\nHomepage: https://alice:secret@example.invalid/hello?q=1\n",
+    }),
+  );
+  expect(withCreds.control?.homepage).toBe("https://example.invalid/hello?q=1");
+  expect(withCreds.limitations).toContain(
+    "Transport credentials were redacted from the Homepage URL.",
+  );
+
+  const plainUrl = await parse(
+    debPackageFixture({
+      controlText:
+        "Package: hello\nVersion: 1.0\nArchitecture: all\nHomepage: https://example.invalid/hello\n",
+    }),
+  );
+  expect(plainUrl.control?.homepage).toBe("https://example.invalid/hello");
+  expect(plainUrl.limitations).not.toContain(
+    "Transport credentials were redacted from the Homepage URL.",
+  );
+
+  const nonUrlText = await parse(
+    debPackageFixture({
+      controlText:
+        "Package: hello\nVersion: 1.0\nArchitecture: all\nHomepage: example.invalid/hello (internal wiki)\n",
+    }),
+  );
+  expect(nonUrlText.control?.homepage).toBe(
+    "example.invalid/hello (internal wiki)",
+  );
+  expect(nonUrlText.limitations).not.toContain(
+    "Transport credentials were redacted from the Homepage URL.",
+  );
+
+  const ambiguous = await parse(
+    debPackageFixture({
+      controlText:
+        "Package: hello\nVersion: 1.0\nArchitecture: all\nHomepage: https://user:pa\tss@example.invalid/hello\n",
+    }),
+  );
+  expect(ambiguous.control?.homepage).toBeNull();
+  expect(ambiguous.limitations).toContain(
+    "Transport credentials were redacted from the Homepage URL.",
+  );
 });

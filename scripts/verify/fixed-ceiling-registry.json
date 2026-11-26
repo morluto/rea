@@ -123,7 +123,7 @@
   "src/deb/DebPackageProvider.ts": {
     "DEB_PACKAGE_FIXED_ALLOWANCES[cause.allowance]": {
       "class": "forwarding",
-      "reason": "Reports the Debian parser's named ar name, tar extension, relationship alternative, or Zstandard window allowance using the parser's maximum."
+      "reason": "Reports the Debian parser's named ar name, tar extension, relationship alternative, Zstandard window, or XZ dictionary allowance using the parser's maximum."
     }
   },
   "src/domain/analysisErrorCore.ts": {
