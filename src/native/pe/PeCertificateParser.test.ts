@@ -1017,10 +1017,9 @@ it("distinguishes an empty RDNSequence from an empty RDN", () => {
   const certificate = readAsn1(
     namedCertificate(directoryName(der(0x0c, Buffer.from("Issuer"))), derSeq()),
   );
-  expect(parseCertificate(certificate).subject).toEqual({
-    text: "",
-    attributes: [],
-  });
+  const { subject } = parseCertificate(certificate);
+  expect(subject.text).toBe("");
+  expect(subject.attributes).toEqual([]);
 });
 
 it.each(["signature", "public-key", "issuer-id", "subject-id"] as const)(
@@ -1582,3 +1581,44 @@ it.each([
     });
   },
 );
+
+it("stops at max_entries lazily without materializing the rest of the table", async () => {
+  // Two well-formed 8-byte WIN_CERTIFICATE entries. With max_entries=1 the
+  // lazy walk must refuse on capacity after the first entry instead of
+  // retaining an array of every range up front.
+  const entry = Buffer.alloc(8);
+  entry.writeUInt32LE(8, 0);
+  entry.writeUInt16LE(0x0200, 4);
+  entry.writeUInt16LE(0x0001, 6);
+  const table = Buffer.concat([entry, entry]);
+  const headerBytes = 0x200;
+  const bytes = Buffer.alloc(headerBytes + table.length);
+  bytes.writeUInt16LE(0x5a4d, 0);
+  bytes.writeUInt32LE(0x80, 60);
+  bytes.writeUInt32LE(0x4550, 0x80);
+  bytes.writeUInt16LE(0x14c, 0x84);
+  bytes.writeUInt16LE(1, 0x86);
+  bytes.writeUInt16LE(224, 0x94);
+  bytes.writeUInt16LE(0x10b, 0x98);
+  bytes.writeUInt32LE(headerBytes, 0x98 + 60);
+  bytes.writeUInt32LE(16, 0x98 + 92);
+  const directoryAt = 0x98 + 96 + 4 * 8;
+  bytes.writeUInt32LE(headerBytes, directoryAt);
+  bytes.writeUInt32LE(table.length, directoryAt + 4);
+  table.copy(bytes, headerBytes);
+
+  const limited = inspectPeCertificatesInputSchema.parse({
+    path: "/artifacts/app.exe",
+    max_entries: 1,
+  });
+  await expect(parsePeCertificateFixture(bytes, limited)).rejects.toMatchObject(
+    {
+      name: "ArtifactReaderFailure",
+      reason: "limit",
+    },
+  );
+
+  const report = await parse(bytes);
+  expect(report.coverage.examined_entries).toBe(2);
+  expect(report.entries).toHaveLength(2);
+});

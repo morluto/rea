@@ -21,7 +21,16 @@ import {
 
 import { parseAdbTransportIdentity } from "../domain/adb/adbTransportIdentity.js";
 
-const DEVICE_LINE = /^(\S+)\s+(.*)$/u;
+/**
+ * The serial column of a `devices` line, which is not always a single token.
+ *
+ * AOSP `transport.cpp append_transport()` substitutes the literal `(no serial number)` when the
+ * transport has none to report — `client/usb_linux.cpp` keeps an empty serial for a device that
+ * cannot report one during early bringup (http://b/20883914) and still registers the transport.
+ * The long listing pads that column with `%-22s`, the short one separates it with a tab, and in
+ * both forms the placeholder carries spaces, so `\S+` alone never matched it.
+ */
+const DEVICE_LINE = /^(\(no serial number\)|\S+)\s+(.*)$/u;
 
 /**
  * adb prints a wireless-debugging transport's serial as the mDNS instance
@@ -117,7 +126,10 @@ export const parseAdbDevicesOutput = (
       if (rawLine.trim() !== "") unparsed.add(rawLine);
       continue;
     }
-    const serial = match[1]!;
+    // The placeholder names no device; two transports without a serial would otherwise be
+    // indistinguishable, and the text cannot be passed to any device operation.
+    const placeholder = match[1]! === "(no serial number)";
+    const serial = placeholder ? null : match[1]!;
     const remainder = match[2]!.slice(state.length);
     const usb = metadataValue(remainder, "usb");
     // AOSP appends the authoritative field last; earlier metadata may contain
@@ -128,7 +140,7 @@ export const parseAdbDevicesOutput = (
       transportToken,
       rawLine,
     );
-    const isEmulator = /^emulator-\d+$/u.test(serial);
+    const isEmulator = serial !== null && /^emulator-\d+$/u.test(serial);
     const kind = isEmulator
       ? ("emulator" as const)
       : usb !== null
@@ -140,7 +152,9 @@ export const parseAdbDevicesOutput = (
       transport:
         usb !== null
           ? "usb"
-          : isEmulator || serial.includes(":") || isAdbMdnsTcpSerial(serial)
+          : isEmulator ||
+              (serial !== null &&
+                (serial.includes(":") || isAdbMdnsTcpSerial(serial)))
             ? "tcp"
             : "unknown",
       product: metadataValue(remainder, "product"),
