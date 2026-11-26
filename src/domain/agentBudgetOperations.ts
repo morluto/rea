@@ -36,6 +36,7 @@ export const AGENT_BUDGET_OPERATIONS = [
   "inspect_pcap_capture",
   "inspect_python_pyc",
   "inspect_rust_binary",
+  "inspect_vsix_package",
   "inspect_wasm_artifact",
   "inspect_web_network_capture",
   "inspect_web_page",

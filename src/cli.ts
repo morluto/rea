@@ -33,6 +33,7 @@ import * as gpuModule from "./cli/gpuCommands.js";
 import * as rustModule from "./cli/rustCommands.js";
 import * as pythonPycModule from "./cli/pythonPycCommands.js";
 import * as nugetNupkgModule from "./cli/nugetNupkgCommands.js";
+import * as vsixPackageModule from "./cli/vsixPackageCommands.js";
 import * as ociImageLayoutModule from "./cli/ociImageLayoutCommands.js";
 import * as yaraModule from "./cli/yaraCommands.js";
 import * as erlangModule from "./cli/erlangCommands.js";
@@ -97,6 +98,7 @@ const CLI_COMMAND_MODULES: CliCommandModules = {
   rust: rustModule,
   pythonPyc: pythonPycModule,
   nugetNupkg: nugetNupkgModule,
+  vsixPackage: vsixPackageModule,
   ociImageLayout: ociImageLayoutModule,
   yara: yaraModule,
   erlang: erlangModule,

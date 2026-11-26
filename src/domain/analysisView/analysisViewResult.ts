@@ -295,6 +295,7 @@ import {
   sourceToBundlePageViewResultSchema,
   sourceToBundleSummaryViewResultSchema,
 } from "./summarySchemas/sourceToBundleSummarySchemas.js";
+import { vsixPackageSummaryViewResultSchema } from "./summarySchemas/vsixPackageSummarySchema.js";
 import { wasmArtifactSummaryViewResultSchema } from "./summarySchemas/wasmArtifactSummarySchema.js";
 import {
   webBundlePageViewResultSchema,
@@ -397,6 +398,7 @@ export {
   uefiExtractionSummaryViewResultSchema,
   uefiFirmwarePageViewResultSchema,
   uefiFirmwareSummaryViewResultSchema,
+  vsixPackageSummaryViewResultSchema,
   wasmArtifactSummaryViewResultSchema,
   webBundlePageViewResultSchema,
   webBundleSummaryViewResultSchema,
@@ -420,6 +422,7 @@ const viewResultBase = {
     "trace_web_source_location",
     "inspect_python_pyc",
     "inspect_nuget_nupkg",
+    "inspect_vsix_package",
     "inspect_oci_image_layout",
     "inspect_erlang_beam",
     "inspect_devicetree",
@@ -836,6 +839,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     androidReferencesSummaryViewResultSchema,
     artifactExtractionSummaryViewResultSchema,
     nugetNupkgSummaryViewResultSchema,
+    vsixPackageSummaryViewResultSchema,
     ociImageLayoutSummaryViewResultSchema,
   ]),
   z.strictObject({
