@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **browser:** an observe_web_execution call that omits detail on an observation above the agent result budget now returns the retained summary. Pass detail: "complete" (--detail complete) for the previous shape.
 * **native:** the PE retained-text, exception-directory entry and resource metadata refusals report details.limit instead of a fixed_ceiling refusal.
 * **native:** export inventory and retained-text refusals report details.limit for max_entries or max_text_bytes instead of a fixed_ceiling refusal, and MAX_NATIVE_EXPORT_ROWS is renamed DEFAULT_NATIVE_EXPORT_ROWS.
 * **native:** a DWARF decompression refusal reports details.limit for max_decompressed_bytes instead of a fixed_ceiling refusal.
@@ -72,6 +73,7 @@
 * **analysis-view:** count distinct retained JavaScript fact values ([e19dbcf](https://github.com/morluto/rea/commit/e19dbcf857e98f402b61b1ef793dd62d9929426a))
 * **analysis-view:** filter native exports and ELF dependencies by name prefix ([a148da5](https://github.com/morluto/rea/commit/a148da56ccfb370e7a638832c2a1290fb208ca63))
 * **analysis-view:** order inventory occurrences by size before paging ([386d294](https://github.com/morluto/rea/commit/386d294f90d1ebfc0d6d01374ead49fc5bc637e0))
+* **analysis-view:** page retained observe_web_execution observations ([38536f9](https://github.com/morluto/rea/commit/38536f9fdb8a66ff44375b888c8fabe1a4bff3ba))
 * **analysis-view:** page retained UEFI extraction manifests ([5e8388a](https://github.com/morluto/rea/commit/5e8388a655e2eae83c31e6e21a611c2fc9910156))
 * **analysis-view:** page retained UEFI firmware maps ([fc4c453](https://github.com/morluto/rea/commit/fc4c453683213991d2338b25c6752f24236a3052))
 * **analysis-view:** select inventory occurrences by artifact kind ([e128a69](https://github.com/morluto/rea/commit/e128a69c2fd2bd51125eb36d479d7e573d07267b))
@@ -86,6 +88,7 @@
 * **artifacts:** inventory and extract stored and gzip-compressed tar archives ([#14245](https://github.com/morluto/rea/issues/14245)) ([225a19a](https://github.com/morluto/rea/commit/225a19ae7a39d06d03a8d5df4d9bf44e645a6c54))
 * **artifacts:** report declared DDS, GLB, KTX and KTX2 headers and regions ([#14248](https://github.com/morluto/rea/issues/14248)) ([78d2593](https://github.com/morluto/rea/commit/78d2593a4543592636a49c0cead0ca64dcef78ea))
 * **browser:** accept mitmproxy 12.3.1 for native capture decode ([#8088](https://github.com/morluto/rea/issues/8088)) ([4f43d74](https://github.com/morluto/rea/commit/4f43d7422f5b4666a12570105ff5e25a6df7ec6c))
+* **browser:** budget observe_web_execution delivery ([42ce0ea](https://github.com/morluto/rea/commit/42ce0ea2310e310d07794955cc254e8ced3446b7))
 * **browser:** count credential-named members in HAR capture inspection ([#8708](https://github.com/morluto/rea/issues/8708)) ([3c7ea1c](https://github.com/morluto/rea/commit/3c7ea1ce850c20c067add363ffcddbc1d48f2aac))
 * **browser:** size inspect_web_page delivery and page captures by section ([#14368](https://github.com/morluto/rea/issues/14368)) ([67a1e2c](https://github.com/morluto/rea/commit/67a1e2c9371131a93fb1eecb00d74bb160c6d215))
 * **cli:** add human-TTY failure rendering with CLI-only issue hint ([#14355](https://github.com/morluto/rea/issues/14355)) ([64279ef](https://github.com/morluto/rea/commit/64279efb5a01fc768d66033bd69a41a647c3e175))
@@ -1006,6 +1009,7 @@
 
 * **analysis-view:** qualify javascript-fact-groups readback to scalar values ([1dc1c20](https://github.com/morluto/rea/commit/1dc1c20cd614d38a8bfe8ef23d0cea4e391fc561))
 * **artifacts:** explain the per-file verification cost of extraction ([#12745](https://github.com/morluto/rea/issues/12745)) ([6878c17](https://github.com/morluto/rea/commit/6878c17a833e6a595d4f80e47e98c256d60ca9c0))
+* **browser:** describe paging retained execution observations ([440edb5](https://github.com/morluto/rea/commit/440edb5ac050b6b746a8c24cd91bed2ec079fbdd))
 * **ci:** correct default main push coverage ([#14535](https://github.com/morluto/rea/issues/14535)) ([1ff864b](https://github.com/morluto/rea/commit/1ff864bd21d9df6c6f48c0adde570acac905ca62))
 * **cli:** explain Ghidra annotation lifetime in command help ([f8192bd](https://github.com/morluto/rea/commit/f8192bd39d233ccf6e3dd8fd06b1e21082316ddf)), refs [#8242](https://github.com/morluto/rea/issues/8242)
 * **cli:** list the desktop_build doctor scope in provider selection ([4bd9327](https://github.com/morluto/rea/commit/4bd9327325b75a4632a3a50f0500ae2bfbd00718)), refs [#10251](https://github.com/morluto/rea/issues/10251)
