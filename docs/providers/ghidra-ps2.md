@@ -77,8 +77,8 @@ limitations state.
 ## Ordinary public interfaces
 
 ```bash
-rea analyze /absolute/path/to/SCES_511.90 --provider ghidra --json
-rea decompile /absolute/path/to/SCES_511.90 sceGsSyncPath --provider ghidra
+rea analyze /absolute/path/to/executable.elf --provider ghidra --json
+rea decompile /absolute/path/to/executable.elf ram:0xADDRESS --provider ghidra
 ```
 
 MCP uses `open_binary` with an absolute path and `provider_id: "ghidra"`, then
