@@ -66,6 +66,12 @@ it.each([false, true])(
               boundary: "max_structure_bytes",
               maximum: 16 * 1024 * 1024,
             },
+            limit: {
+              control_kind: "parameter",
+              parameter: "max_structure_bytes",
+              effective_value: 16 * 1024 * 1024,
+            },
+            refusal: { kind: "adjustable_budget" },
           },
         });
       else {

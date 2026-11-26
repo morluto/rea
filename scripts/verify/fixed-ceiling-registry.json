@@ -185,13 +185,6 @@
       "reason": "Bounds Ghidra's own Ghidra/application.properties, a short key=value installation descriptor of the bring-your-own provider (about 1 KiB); no analysis input passes through it, and a larger file is not a Ghidra installation REA can drive."
     }
   },
-  "src/go/GoBinaryProvider.ts": {
-    "\"The Go structural decoding allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "Projects the shared native structural decoding allowance (BinaryResourceFailure), a resource policy."
-    }
-  },
   "src/gpu/GpuCodeObjectsProvider.ts": {
     "\"The GPU object allowance\"": {
       "class": "pending",
@@ -432,17 +425,7 @@
     }
   },
   "src/rust/RustBinaryProvider.ts": {
-    "\"The WebAssembly section-walk allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "Rust container, dependency and WebAssembly section-walk allowances are resource policies."
-    },
     "\"This Rust dependency parser allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "Rust container, dependency and WebAssembly section-walk allowances are resource policies."
-    },
-    "\"This native container parser allowance\"": {
       "class": "pending",
       "issue": 14235,
       "reason": "Rust container, dependency and WebAssembly section-walk allowances are resource policies."

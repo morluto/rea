@@ -129,8 +129,13 @@ covers the ELF header tables, section names and dynamic table; Mach-O load
 commands keep the Mach-O command reader's own limit, and the PE headers it reads
 are bounded by the PE format.
 
-The Go, Rust and IL2CPP readers and `inspect_native_exports` read the same
-tables with the 16 MiB default and report it as a fixed allowance.
+`inspect_go_binary` and `inspect_rust_binary` accept it for their ELF directory
+and Mach-O load commands. The IL2CPP and `inspect_native_exports` readers read
+the same tables with the 16 MiB default and report it as a fixed allowance.
+
+`inspect_rust_binary` also accepts `max_wasm_sections` (WebAssembly sections
+walked; default 65,536, at most 16,777,216). The walk stops at the first excess,
+so the refusal reports no `required_value`.
 
 ### Static reader read allowance
 
