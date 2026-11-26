@@ -140,3 +140,25 @@ await test("a Markdown-preferring client keeps the HTML validator when the sidec
   assert.equal(response.headers.get("ETag"), '"html"');
   assert.equal(await response.text(), "");
 });
+
+await test("a Markdown preference keeps validators on responses without a Markdown route", async () => {
+  // The probe drops validators for the Markdown representation. A response
+  // that never reaches Markdown negotiation must still honor them.
+  for (const path of ["/guide/page", "/assets/site.webmanifest"]) {
+    const response = await worker.fetch(
+      new Request(`https://rea.tools${path}`, {
+        headers: { Accept: "text/markdown", "If-None-Match": '"html"' },
+      }),
+      assets(),
+    );
+    assert.equal(response.status, 304, path);
+  }
+  const fresh = await worker.fetch(
+    new Request("https://rea.tools/guide/page", {
+      headers: { Accept: "text/markdown" },
+    }),
+    assets(),
+  );
+  assert.equal(fresh.status, 200);
+  assert.equal(await fresh.text(), "<h1>Guide</h1>");
+});

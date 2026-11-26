@@ -21,7 +21,7 @@ from urllib.request import build_opener, ProxyHandler, urlopen
 import xml.etree.ElementTree as ET
 
 import polib
-from website_i18n import Document, build_translations, checked_catalog, extract_catalogs, languages, prose_units, reading_pages, read_runtime
+from website_i18n import FALLBACK_NOTICE, Document, build_translations, checked_catalog, extract_catalogs, languages, prose_units, reading_pages, read_runtime
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -863,6 +863,27 @@ class WebsiteTranslationChecks(unittest.TestCase):
             self.assertIn('href="../assets/styles.css"', (site / "zh-CN/index.html").read_text())
             self.assertIn('hreflang="zh-CN"', (site / "faq/index.html").read_text())
             self.assertIn("https://rea.tools/zh-CN/faq/", (site / "sitemap.xml").read_text())
+
+    def test_fallback_notice_direction_follows_its_own_language(self):
+        with self.translated_project() as root:
+            page = root / "website/public/faq/index.html"
+            page.write_text(page.read_text().replace("How do I install REA?", "How do I install REA today?"))
+            extract_catalogs(root)
+            path = root / "website/locales/ar/messages.po"
+            catalog = polib.pofile(path)
+            notice = catalog.find(FALLBACK_NOTICE, msgctxt="runtime")
+            translated_notice = notice.msgstr
+            self.assertNotEqual(translated_notice, "")
+            site = root / "website/_site"
+            for msgstr, attributes in (
+                ("", 'lang="en" dir="ltr"'),
+                (translated_notice, 'lang="ar" dir="rtl"'),
+            ):
+                notice.msgstr = msgstr
+                catalog.save(path)
+                build_translations(root, site)
+                result = (site / "ar/faq/index.html").read_text()
+                self.assertIn(f'<aside class="container translation-notice" {attributes}>', result)
 
     def test_broken_placeholders_and_inline_markup_fail_before_replacing_preview(self):
         with self.translated_project() as root:
