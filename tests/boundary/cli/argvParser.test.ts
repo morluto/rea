@@ -2,6 +2,7 @@ import { z } from "zod";
 import { describe, expect, it } from "vitest";
 
 import { parseCliArgv } from "../../../src/cli/argvParser.js";
+import { cliDecimalField } from "../../../src/cli/options.js";
 
 const schemas = {
   args: z.object({ path: z.string(), rest: z.array(z.string()).optional() }),
@@ -24,8 +25,11 @@ const bound = (
   return result.value;
 };
 
-const failure = (argv: readonly string[]) => {
-  const result = parseCliArgv(argv, schemas);
+const failure = (
+  argv: readonly string[],
+  selected: Parameters<typeof parseCliArgv>[1] = schemas,
+) => {
+  const result = parseCliArgv(argv, selected);
   if (result.ok) throw new Error("parse succeeded");
   return result.error;
 };
@@ -68,6 +72,73 @@ describe("parseCliArgv", () => {
     expect(failure(["file", "--block-size="])).toMatchObject({
       kind: "validation",
       fieldErrors: [{ path: "blockSize", expected: "number" }],
+    });
+  });
+
+  it("keeps a rejected boolean or number literal when a later occurrence is valid", () => {
+    const rejectedBoolean = {
+      kind: "validation",
+      fieldErrors: [{ path: "yes", code: "invalid_type", expected: "boolean" }],
+    };
+    expect(failure(["file", "--yes=1", "--yes"])).toMatchObject(
+      rejectedBoolean,
+    );
+    expect(failure(["file", "--yes=1", "--yes=true"])).toMatchObject(
+      rejectedBoolean,
+    );
+    expect(failure(["file", "--yes=1", "-y"])).toMatchObject(rejectedBoolean);
+    expect(failure(["file", "--global=no", "--no-global"])).toMatchObject({
+      kind: "validation",
+      fieldErrors: [
+        { path: "global", code: "invalid_type", expected: "boolean" },
+      ],
+    });
+    expect(
+      failure(["file", "--block-size=abc", "--block-size=8"]),
+    ).toMatchObject({
+      kind: "validation",
+      fieldErrors: [
+        {
+          path: "blockSize",
+          code: "invalid_type",
+          expected: "number",
+          received: "NaN",
+        },
+      ],
+    });
+    expect(bound(["file", "--yes=false", "--yes"]).options.yes).toBe(true);
+    expect(bound(["file", "--yes=true", "--yes=false"]).options.yes).toBe(
+      false,
+    );
+    expect(
+      bound(["file", "--block-size=8", "--block-size=16"]).options.blockSize,
+    ).toBe(16);
+
+    const counted = {
+      options: z.object({
+        verbosity: z.number().default(0).meta({ count: true }),
+      }),
+      alias: { verbosity: "v" },
+    };
+    expect(failure(["--verbosity=no", "-v"], counted)).toMatchObject({
+      kind: "validation",
+      fieldErrors: [
+        { path: "verbosity", code: "invalid_type", expected: "number" },
+      ],
+    });
+    expect(bound(["-vv"], counted).options).toEqual({ verbosity: 2 });
+
+    const decimal = {
+      options: z.object({
+        limit: cliDecimalField(z.number().int().nonnegative().optional()),
+      }),
+    };
+    expect(failure(["--limit=no", "--limit=4"], decimal)).toMatchObject({
+      kind: "validation",
+      fieldErrors: [{ path: "limit", code: "invalid_union" }],
+    });
+    expect(bound(["--limit=4", "--limit=8"], decimal).options).toEqual({
+      limit: 8,
     });
   });
 
