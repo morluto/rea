@@ -7,6 +7,9 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **elf:** an inspect_elf_unwind_ranges call that omits limit returns at most 64 ranges. Page with next_offset, or pass limit.
+* **android:** a search_android_classes call that omits limit returns at most 256 matches. Page with next_offset, or pass a larger limit.
+* **artifacts:** an extract_artifact call that omits detail on an extraction above the agent result budget now returns the retained summary. Pass detail: "complete" (--detail complete) for the previous shape.
 * **dwarf:** Oversized individual PE COFF long section names in inspect_dwarf_units now project an adjustable_budget refusal (boundary max_structure_bytes with details.limit) instead of fixed_ceiling (pe-section-name-bytes).
 * **native:** Oversized Android APS2 packed relocation tables in inspect_native_initializers now project a memory/adjustable_budget refusal (boundary max_structure_bytes with details.limit) instead of capacity/fixed_ceiling (native-index-capacity).
 * **android:** the inspect_android_package summary no longer lists component declarations. Page them with view {kind: "android", facet: "components"}, or pass detail: "complete".
@@ -85,6 +88,7 @@
 * **analysis-view:** order inventory occurrences by size before paging ([386d294](https://github.com/morluto/rea/commit/386d294f90d1ebfc0d6d01374ead49fc5bc637e0))
 * **analysis-view:** page retained Android reference traces ([c0f1bc6](https://github.com/morluto/rea/commit/c0f1bc6a6d1dc6d5262690ed5234bfc133977c63))
 * **analysis-view:** page retained Apktool resource decodes ([8ce5c00](https://github.com/morluto/rea/commit/8ce5c00a6eb5c4634ee2e6e117a5e640b6e69419))
+* **analysis-view:** page retained artifact extractions ([03626b9](https://github.com/morluto/rea/commit/03626b96a898331947106580458f95ff22da0725))
 * **analysis-view:** page retained observe_web_execution observations ([38536f9](https://github.com/morluto/rea/commit/38536f9fdb8a66ff44375b888c8fabe1a4bff3ba))
 * **analysis-view:** page retained UEFI extraction manifests ([5e8388a](https://github.com/morluto/rea/commit/5e8388a655e2eae83c31e6e21a611c2fc9910156))
 * **analysis-view:** page retained UEFI firmware maps ([fc4c453](https://github.com/morluto/rea/commit/fc4c453683213991d2338b25c6752f24236a3052))
@@ -98,6 +102,7 @@
 * **android:** pin jadx-headless-mcp 0.8.0 ([3ca89d8](https://github.com/morluto/rea/commit/3ca89d8272b3d8e49580ed261753ad6780df2839))
 * **apktool:** budget decode_android_resources delivery ([a16facb](https://github.com/morluto/rea/commit/a16facbd9f2b323f9bd575e251af6cba7b62e48f))
 * **artifacts:** back archive member counts with the artifact.member_count setting ([#14650](https://github.com/morluto/rea/issues/14650)) ([3129747](https://github.com/morluto/rea/commit/31297470ef829a404dc38c2acf327272e222c404))
+* **artifacts:** budget extract_artifact delivery ([981dd11](https://github.com/morluto/rea/commit/981dd11ec4cd8ea7d54840550a5214acf420eb38))
 * **artifacts:** decode Android Verified Boot vbmeta images offline ([#13239](https://github.com/morluto/rea/issues/13239)) ([3e8f6a4](https://github.com/morluto/rea/commit/3e8f6a43a9402fea3108e5b15dd5a152b4665960))
 * **artifacts:** give Deno, wxapkg and tar readers artifact_limits controls ([#14620](https://github.com/morluto/rea/issues/14620)) ([3dae567](https://github.com/morluto/rea/commit/3dae567185ac08126d40ea38435d5cbe9aa64afe))
 * **artifacts:** inspect and compare directories by a content-addressed root digest ([#14270](https://github.com/morluto/rea/issues/14270)) ([56cf155](https://github.com/morluto/rea/commit/56cf15566ee1fee1cb0d3573bf0e23b1a682e635))
@@ -166,6 +171,7 @@
 
 * **adb:** list a transport adb reports without a serial number ([#10187](https://github.com/morluto/rea/issues/10187)) ([df70b66](https://github.com/morluto/rea/commit/df70b6685edeffc1d96bc33dd47efdbc0f9388bd))
 * **adb:** report macOS ownership preparation failures as typed host prerequisites ([#14140](https://github.com/morluto/rea/issues/14140)) ([604e087](https://github.com/morluto/rea/commit/604e087c3173e0a98c12409ac824017e20559094)), refs [#13943](https://github.com/morluto/rea/issues/13943)
+* **analysis-view:** bound extraction summary samples by bytes ([7f07cab](https://github.com/morluto/rea/commit/7f07cab954f6ac5a1a789334e04f736434029e42))
 * **analysis-view:** match inventory path globs without backtracking ([17877d9](https://github.com/morluto/rea/commit/17877d9df51ac258b447a97656f6b4e91b4c3b75))
 * **analysis-view:** read older UEFI extraction Evidence and drop filter-count ceilings ([ca26f2a](https://github.com/morluto/rea/commit/ca26f2ac8499fa06af59f2590ec071af8a020094))
 * **analysis:** prevent self-append loop in appendAll ([#14665](https://github.com/morluto/rea/issues/14665)) ([6c1dbc4](https://github.com/morluto/rea/commit/6c1dbc4f8f4a437167de5e267b93385400b5ecef))
@@ -175,7 +181,9 @@
 * **android:** allow filtering references by the unnamed package ([#14752](https://github.com/morluto/rea/issues/14752)) ([752f576](https://github.com/morluto/rea/commit/752f5769e20998c427aa5dc4d28f8961259d5ff7))
 * **android:** bound the JNI summary preview by bytes with its relations ([f3aecfa](https://github.com/morluto/rea/commit/f3aecfa5ec8005251922db54281cf78f35cac0ae))
 * **android:** let the bridge advertise its own tool schemas ([2b6ede2](https://github.com/morluto/rea/commit/2b6ede2d0c0c82ea466c61a6694df3353c998637))
+* **android:** page class-name search by default and name the next offset ([2b69ddd](https://github.com/morluto/rea/commit/2b69ddd368160556cfcc436c5e1c76130ab83738))
 * **android:** preview 16 JNI bindings and libraries in the summary ([b827326](https://github.com/morluto/rea/commit/b827326ef3ff54a70aa5a27a0d188eb57d2891ca))
+* **android:** record only caller-selected search parameters in Evidence ([d2248df](https://github.com/morluto/rea/commit/d2248dffd04b57902903b91d5c5114327cc3d792))
 * **apk:** disclose v1 scan scope without duplicate names ([#13572](https://github.com/morluto/rea/issues/13572)) ([110b990](https://github.com/morluto/rea/commit/110b990c687bdb498de0134dce8b49547983273a))
 * **apktool:** restore package identity from decoded metadata ([#14767](https://github.com/morluto/rea/issues/14767)) ([5b2936c](https://github.com/morluto/rea/commit/5b2936c4e81b2835443b44235319b1de1f255997))
 * **apple-application:** trust declared coverage for empty disk images ([#13678](https://github.com/morluto/rea/issues/13678)) ([01c0e5a](https://github.com/morluto/rea/commit/01c0e5a870ce1bf684fc1ced8d1cfa74d404e48c))
@@ -274,6 +282,7 @@
 * **cli:** accept only the documented kebab-case option spelling ([#14204](https://github.com/morluto/rea/issues/14204)) ([c4fa5b4](https://github.com/morluto/rea/commit/c4fa5b475c26b6cce0e301154dad928634d84f2b))
 * **cli:** complete inline option values ([#13366](https://github.com/morluto/rea/issues/13366)) ([0451a86](https://github.com/morluto/rea/commit/0451a8688d55c389c67048fa7764af0c0d5a8ab1))
 * **cli:** count and page emitted output with tokenx 2 ([#14330](https://github.com/morluto/rea/issues/14330)) ([948835a](https://github.com/morluto/rea/commit/948835a41e04c0d0c6eacac71d6ee4428418981d))
+* **cli:** deliver an unretained non-idempotent result complete ([c536c67](https://github.com/morluto/rea/commit/c536c67ee18bbde27d6a0f16bb6a3f1d3ae18ae4))
 * **cli:** load Electron fuse inspection on demand ([#13922](https://github.com/morluto/rea/issues/13922)) ([b48b986](https://github.com/morluto/rea/commit/b48b9860a4e646793b9972d09b76fecb52e04d24))
 * **cli:** preserve doctor routing with empty output values ([#13262](https://github.com/morluto/rea/issues/13262)) ([a06e04b](https://github.com/morluto/rea/commit/a06e04b4dfcd994a426cc6b6ab77082260b95a3f))
 * **cli:** preserve explicit null output ([#13342](https://github.com/morluto/rea/issues/13342)) ([d4f78cb](https://github.com/morluto/rea/commit/d4f78cb5922d9fd83222514dda85db8bf5287f1b))
@@ -337,6 +346,7 @@
 * **elf:** retain verified artifact reports through descriptor finalization ([fbf7963](https://github.com/morluto/rea/commit/fbf79630d23a02ef26bb560dbdbc17ed3055b992))
 * **elf:** retain verified debug-link evidence through descriptor finalization ([#13986](https://github.com/morluto/rea/issues/13986)) ([1032be8](https://github.com/morluto/rea/commit/1032be8314085309713302d5c26f7f8d2e023e9e))
 * **elf:** retain verified kernel reports through descriptor finalization ([#14022](https://github.com/morluto/rea/issues/14022)) ([1689fb3](https://github.com/morluto/rea/commit/1689fb3c1256e7a5698bf82e3079b2774a89bb39))
+* **elf:** return 64 unwind ranges by default, as PE unwind ranges do ([17eef93](https://github.com/morluto/rea/commit/17eef93a0a794e3bf943af0539be562959928133))
 * **elf:** validate core paths before charging mapping output ([#13771](https://github.com/morluto/rea/issues/13771)) ([7c75a5f](https://github.com/morluto/rea/commit/7c75a5f91b704105bc55711c5c6da2ec155bb077))
 * **entropy:** keep the whole-file census in a counter that cannot wrap ([a3acfcf](https://github.com/morluto/rea/commit/a3acfcf003a1213c751a46051630f06023766d1f))
 * **environment:** admit state records before decoding timing ([#13795](https://github.com/morluto/rea/issues/13795)) ([61e8f73](https://github.com/morluto/rea/commit/61e8f73f4be15d8cae6926fc8ca2d06a52b87d60))
@@ -1129,7 +1139,9 @@
 * **analysis-view:** qualify javascript-fact-groups readback to scalar values ([1dc1c20](https://github.com/morluto/rea/commit/1dc1c20cd614d38a8bfe8ef23d0cea4e391fc561))
 * **android:** describe budgeted delivery and the class and reference views ([4027711](https://github.com/morluto/rea/commit/402771122c09cc6f412fe2bc0617446703b439fc))
 * **android:** describe the 16-row JNI summary preview ([b5d0b49](https://github.com/morluto/rea/commit/b5d0b49a903204a92ec0b92df28835c570673920))
+* **android:** describe the default class-search page and next_offset ([100dc96](https://github.com/morluto/rea/commit/100dc966c7456f900db5cec3e535867060882f3b))
 * **apktool:** describe decode delivery and resource views ([3ffbf5d](https://github.com/morluto/rea/commit/3ffbf5dea08eaebf3ab8faee7a9a88e1e214cbb8))
+* **artifacts:** describe budgeted extraction delivery and its view ([4099d8f](https://github.com/morluto/rea/commit/4099d8feb1d43f410deb442eb579139e32dbf885))
 * **artifacts:** explain the per-file verification cost of extraction ([#12745](https://github.com/morluto/rea/issues/12745)) ([6878c17](https://github.com/morluto/rea/commit/6878c17a833e6a595d4f80e47e98c256d60ca9c0))
 * **browser:** describe comparing retained captures ([b33b8e8](https://github.com/morluto/rea/commit/b33b8e8ce6189d5db36f0e1ca90f2ab0a3ea87a6))
 * **browser:** describe paging retained execution observations ([440edb5](https://github.com/morluto/rea/commit/440edb5ac050b6b746a8c24cd91bed2ec079fbdd))
@@ -1142,6 +1154,7 @@
 * **development:** document streaming, reader/queue reuse, and O(limit) view hot-path patterns ([#13778](https://github.com/morluto/rea/issues/13778)) ([0f2437c](https://github.com/morluto/rea/commit/0f2437cca384d174a4791d1c0b69bfeee027049e))
 * **development:** route first contact by parsed facts and split admission limits from delivery budgets ([#14193](https://github.com/morluto/rea/issues/14193)) ([a1d53d3](https://github.com/morluto/rea/commit/a1d53d39565fe0976e0c86aeca9130901f4db7c6))
 * document per-call pagination, call-graph bounds, and streaming NuGet inspection ([#13851](https://github.com/morluto/rea/issues/13851)) ([46d41e4](https://github.com/morluto/rea/commit/46d41e4b79302539222dc6eeac9e8c36466491a4)), refs [#13850](https://github.com/morluto/rea/issues/13850)
+* **elf:** give the 64-range default unwind page ([54a186d](https://github.com/morluto/rea/commit/54a186da88d9759a582d1498383277fd1ed1c9c7))
 * **firmware:** describe UEFI extraction summaries and owners ([4db1058](https://github.com/morluto/rea/commit/4db10585f0b52921bf3caa2540aebc149aeb4689))
 * **firmware:** describe UEFI summaries and views ([89fc51b](https://github.com/morluto/rea/commit/89fc51ba975e630743f2718d7cac3d4d817cc22c))
 * **ghidra:** link the native build steps for Linux arm64 ([dc10161](https://github.com/morluto/rea/commit/dc10161a9e0663c005fffb038e697306ca224482)), refs [#7018](https://github.com/morluto/rea/issues/7018)
