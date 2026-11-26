@@ -89,14 +89,21 @@ export const DEFAULT_ELF_EXPORT_TABLE_LIMITS: ElfExportTableLimits = {
   structureBytes: DEFAULT_NATIVE_STRUCTURE_BYTES,
 };
 
-const overBudget = (label: string, count: number, rows: number): never => {
+const overBudget = (
+  label: string,
+  count: number,
+  rows: number,
+  lowerBound?: true,
+): never => {
   throw new BinaryResourceFailure(
     "structure",
     rows,
-    `${label} declares ${String(count)} entries, above max_entries (${String(rows)})`,
+    lowerBound === true
+      ? `${label} exceeds max_entries (${String(rows)})`
+      : `${label} declares ${String(count)} entries, above max_entries (${String(rows)})`,
     "rows",
     "entries",
-    count,
+    lowerBound === true ? undefined : count,
   );
 };
 
@@ -106,7 +113,12 @@ const admitCount = (
 ): number | null => {
   if (result.ok) return result.value;
   if (result.error.kind === "malformed") return malformed(result.error.message);
-  return overBudget(result.error.label, result.error.count, rows);
+  return overBudget(
+    result.error.label,
+    result.error.count,
+    rows,
+    result.error.lowerBound,
+  );
 };
 
 type ElfExportDirectory = ReturnType<typeof readElfDirectoryFromBuffer>;

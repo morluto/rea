@@ -413,7 +413,7 @@ describe("native export entry allowance", () => {
     ],
   ])(
     "keeps count recovery for a %s export table above the entry allowance",
-    async (_case, image) => {
+    async (caseName, image) => {
       const root = await createTestTempDirectory("rea-native-export-rows-");
       const path = join(root, "rows.dll");
       await writeFile(path, image());
@@ -439,11 +439,17 @@ describe("native export entry allowance", () => {
           },
         });
         const raised = await service.inspect({ path, max_entries: 0x40001 });
-        expect(
-          raised.ok ||
-            !("limit" in raised.error) ||
-            raised.error.limit === undefined,
-        ).toBe(true);
+        if (caseName === "stored") {
+          if (!raised.ok) throw raised.error;
+          expect(raised.value.normalized_result).toMatchObject({
+            format: "pe",
+            exports: expect.any(Array),
+          });
+        } else {
+          expect(raised.ok).toBe(false);
+          if (raised.ok) throw new Error("Expected truncated export failure");
+          expect(raised.error._tag).toBe("AnalysisTargetFailureError");
+        }
       } finally {
         await service.close();
       }

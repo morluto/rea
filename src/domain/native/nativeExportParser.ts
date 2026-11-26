@@ -231,13 +231,9 @@ type DecodedElfString = ReturnType<typeof decodeElfExportName>;
 
 class ElfVersionWorkFailure extends BinaryResourceFailure {}
 
-/** Charge both headers and auxiliary visits, including aliased record replays. */
-const versionRecordStep = (
-  size: number,
-  width: number,
-  rows: number,
-): (() => boolean) => {
-  const allowance = Math.min(Math.floor(size / width), rows);
+/** Charge both headers and auxiliary visits, bounded by the admitted version section. */
+const versionRecordStep = (size: number, width: number): (() => boolean) => {
+  const allowance = Math.floor(size / width);
   let visited = 0;
   return () => {
     if (++visited > allowance)
@@ -1083,7 +1079,7 @@ function* readVersionNamesSteps(
         "Version requirements",
       );
       const reader = new BinaryReader(tableBytes, little, "elf");
-      const visit = versionRecordStep(tableBytes.length, 16, budgets.rows);
+      const visit = versionRecordStep(tableBytes.length, 16);
       let offset = 0;
       for (let record = 0; record < verneed.info; record++) {
         if (offset + 16 > tableBytes.length)
@@ -1163,7 +1159,7 @@ function* readVersionNamesSteps(
         "Version definitions",
       );
       const reader = new BinaryReader(tableBytes, little, "elf");
-      const visit = versionRecordStep(tableBytes.length, 8, budgets.rows);
+      const visit = versionRecordStep(tableBytes.length, 8);
       let offset = 0;
       for (let index = 0; index < verdef.info; index++) {
         if (offset + 20 > tableBytes.length)
