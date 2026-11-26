@@ -33,6 +33,12 @@ import {
   hasKtx1Identifier,
   hasKtx2Identifier,
 } from "./gpuAssetFormats.js";
+import {
+  hasBink2Header,
+  hasOggOpusHeader,
+  hasRiffXma2Header,
+  hasVulkanPipelineCacheHeader,
+} from "./mediaAssetFormats.js";
 import { hasWxapkgEncryptedMagic, hasWxapkgHeader } from "./wxapkgFormat.js";
 import { hasZipSignature } from "./zipPackageFormat.js";
 
@@ -49,6 +55,10 @@ export type RecognizedArtifactFormat = Extract<
   | "glb"
   | "ktx"
   | "ktx2"
+  | "ogg-opus"
+  | "riff-xma2"
+  | "bink2"
+  | "vulkan-pipeline-cache"
   | "uimage"
   | "android-boot-image"
   | "android-ota-payload"
@@ -171,6 +181,10 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     when("glb", hasGlbHeader),
     when("ktx", hasKtx1Identifier),
     when("ktx2", hasKtx2Identifier),
+    when("ogg-opus", hasOggOpusHeader),
+    when("riff-xma2", hasRiffXma2Header),
+    when("bink2", hasBink2Header),
+    when("vulkan-pipeline-cache", hasVulkanPipelineCacheHeader),
     when("uimage", hasUImageMagic),
     when("android-boot-image", hasAndroidBootImageMagic),
     ({ prefix }) => {

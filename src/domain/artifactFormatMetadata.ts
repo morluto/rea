@@ -52,6 +52,13 @@ import {
   ktx2MetadataSchema,
   ktxMetadataSchema,
 } from "./formatMetadata/gpuAssetMetadata.js";
+import {
+  bink2MetadataSchema,
+  mediaAssetRegionMetadataSchema,
+  oggOpusMetadataSchema,
+  riffXma2MetadataSchema,
+  vulkanPipelineCacheMetadataSchema,
+} from "./formatMetadata/mediaAssetMetadata.js";
 
 export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   godotPckMetadataSchema,
@@ -99,6 +106,11 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   ktxMetadataSchema,
   ktx2MetadataSchema,
   gpuAssetRegionMetadataSchema,
+  oggOpusMetadataSchema,
+  riffXma2MetadataSchema,
+  bink2MetadataSchema,
+  vulkanPipelineCacheMetadataSchema,
+  mediaAssetRegionMetadataSchema,
 ]);
 export type ArtifactFormatMetadata = z.infer<
   typeof artifactFormatMetadataSchema
@@ -340,6 +352,26 @@ const declarationsByKind: {
       "Its header and index facts come from the texture's own bytes, which content comparison covers.",
   },
   "gpu-asset-region": {
+    notCompared:
+      "role and index restate the region's path; its stored bytes are compared by content.",
+  },
+  "ogg-opus": {
+    notCompared:
+      "Its header facts come from the stream's own bytes, which content comparison covers.",
+  },
+  "riff-xma2": {
+    notCompared:
+      "Its chunk and fmt facts come from the WAVE's own bytes, which content comparison covers.",
+  },
+  bink2: {
+    notCompared:
+      "Its header facts come from the video's own bytes, which content comparison covers.",
+  },
+  "vulkan-pipeline-cache": {
+    notCompared:
+      "Its header facts come from the cache's own bytes, which content comparison covers.",
+  },
+  "media-asset-region": {
     notCompared:
       "role and index restate the region's path; its stored bytes are compared by content.",
   },
