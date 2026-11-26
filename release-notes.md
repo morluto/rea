@@ -197,6 +197,7 @@
 * **browser:** report only grammatical CORP and X-Content-Type-Options values ([1aa394d](https://github.com/morluto/rea/commit/1aa394d62d6f60809e9fbc1ca6cbfdb3341bc95f))
 * **browser:** retain passive coverage and failure identity ([#13231](https://github.com/morluto/rea/issues/13231)) ([eba41af](https://github.com/morluto/rea/commit/eba41afd6c873258f7c8bb4d9a7f2d9a707e6653))
 * **browser:** retire detached WebMCP frame descendants ([#13233](https://github.com/morluto/rea/issues/13233)) ([190395e](https://github.com/morluto/rea/commit/190395eade8c1164189b0e1ac4fb724f73e3bad0))
+* **browser:** return completed scenario capture when cleanup is unconfirmed ([#6381](https://github.com/morluto/rea/issues/6381)) ([aa78851](https://github.com/morluto/rea/commit/aa78851b8565b6724efe8a68c134ba22bc8678e4))
 * **browser:** separate the decoder CPU budget from an inherited ceiling ([947fa8f](https://github.com/morluto/rea/commit/947fa8f14d6c3688f29a440c6d6468e812897ab8))
 * **browser:** share the capture resource-constraint constructor ([d6a5b32](https://github.com/morluto/rea/commit/d6a5b32ed0a1dd368eaeaca0d91ca30765a75581))
 * **browser:** split mixed CRLF and LF headers in SAZ HTTP decoding ([#13691](https://github.com/morluto/rea/issues/13691)) ([87503ad](https://github.com/morluto/rea/commit/87503ad3bd9436bf06723e473156ac4cfa017244))
