@@ -505,6 +505,7 @@
 * **package:** declare the projected manifest scripts without prepare ([68e1ec3](https://github.com/morluto/rea/commit/68e1ec3e3633af005bbac8ab3a077a3741107e41))
 * **package:** leave the source-checkout prepare script out of the published manifest ([30c8721](https://github.com/morluto/rea/commit/30c87211f384c389eedd0e85065304dd17c28572))
 * **pe-unwind:** mark exception directory coverage partial when trailing bytes exist ([#14515](https://github.com/morluto/rea/issues/14515)) ([b1907ae](https://github.com/morluto/rea/commit/b1907ae5915245c283487a8c2be03bc543881952))
+* **pe:** accept Qualcomm MBN as a PE overlay leading format ([cd614ee](https://github.com/morluto/rea/commit/cd614ee6c6fc02924e14a4df214105a27ae0f459))
 * **pe:** bound static readers by the bytes they read, not file size ([#14262](https://github.com/morluto/rea/issues/14262)) ([789ca04](https://github.com/morluto/rea/commit/789ca0412579d2a1ae84ad1683dfe8808937908a))
 * **pe:** exclude section padding from RVA metadata reads ([#12755](https://github.com/morluto/rea/issues/12755)) ([c5b5d9f](https://github.com/morluto/rea/commit/c5b5d9f7ea3f0f32a3ebf0834314ae3888ab4132))
 * **pe:** keep pefile's unrounded raw offset for a sub-page section ([985fa2f](https://github.com/morluto/rea/commit/985fa2fac939d0da5de31d59a4df055d90df1cd8))
