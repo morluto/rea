@@ -23,15 +23,6 @@ export const PE_RICH_HEADER_ENTRY_BUDGET = {
   default_value: 1024,
   unit: "count",
 } as const satisfies ParameterBudget;
-/** Minimum caller-selected Rich header entry budget. */
-export const MIN_INSPECT_PE_RICH_HEADER_ENTRIES =
-  PE_RICH_HEADER_ENTRY_BUDGET.minimum;
-/** Default caller-selected Rich header entry budget. */
-export const DEFAULT_INSPECT_PE_RICH_HEADER_ENTRIES =
-  PE_RICH_HEADER_ENTRY_BUDGET.default_value;
-/** Hard ceiling on decoded Rich header entries. */
-export const MAX_INSPECT_PE_RICH_HEADER_ENTRIES =
-  PE_RICH_HEADER_ENTRY_BUDGET.maximum;
 
 /** Structured `details.limit` for an exhausted Rich header entry budget. */
 export const peRichHeaderEntryLimit = (
