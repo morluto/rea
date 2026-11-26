@@ -16,7 +16,6 @@ import {
   isBinaryStringReadLimit,
   createFileMappingIndex,
   mappedFileOffset,
-  readMappedCString,
 } from "../../domain/binaryContainer.js";
 
 it("preserves representable offsets for invalid file ranges", () => {
@@ -308,20 +307,19 @@ it("refuses a zero-fill alias inside a span spanning multiple mappings", () => {
   expect(prefix(105n, 4)).toEqual({ address: 105n, offset: 5, size: 3 });
 });
 
-it.each(["scan", "index"] as const)(
-  "reads strings across discontiguous source ranges without examining bytes after NUL (%s)",
-  (mode) => {
-    const ranges = [mappings[0]!, { address: 104n, offset: 8, size: 4 }];
-    const zeroFills = [{ address: 106n, size: 2n }];
-    const bytes = Buffer.from("ABCDxxxxE\0xx");
-    const result =
-      mode === "scan"
-        ? readMappedCString(bytes, ranges, 102n, 8, zeroFills)
-        : createFileMappingIndex(ranges, zeroFills).readCString(bytes, 102n, 8);
-    expect(result.toString()).toBe("CDE");
-    expect(() => mappedFileOffset(ranges, 102n, 4)).toThrow(/ambiguous/);
-  },
-);
+it("reads strings across discontiguous file ranges up to the NUL before a zero-fill alias", async () => {
+  const ranges = [mappings[0]!, { address: 104n, offset: 8, size: 4 }];
+  const index = createFileMappingIndex(ranges, [{ address: 106n, size: 2n }]);
+  const bytes = Buffer.from("ABCDxxxxE\0xx");
+  expect(index.readCString(bytes, 102n, 8).toString()).toBe("CDE");
+  const fromReader = await index.readCStringFromReader(
+    async (offset) => bytes.subarray(offset, offset + 1),
+    102n,
+    8,
+  );
+  expect(fromReader.toString()).toBe("CDE");
+  expect(() => mappedFileOffset(ranges, 102n, 4)).toThrow(/ambiguous/);
+});
 
 it.each([0, -1, 0.5, Number.NaN, Number.POSITIVE_INFINITY])(
   "preserves zero-span and invalid-size semantics for %s",
@@ -382,9 +380,11 @@ it("keeps a JVM-sized FAT count unconfirmed while rejecting malformed zero-count
   );
   bytes.writeUInt32BE(0, 4);
   expect(() => readBinaryContainer(bytes, "elf-directory")).toThrow(
+    // The universal container's owner names its own format.
     new BinaryFormatFailure(
       "malformed",
       "FAT header declares no architectures",
+      { format: "macho" },
     ),
   );
 });

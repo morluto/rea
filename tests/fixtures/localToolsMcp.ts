@@ -1,7 +1,4 @@
-import {
-  canonicalOutputSchema,
-  withCanonicalOutputSchema,
-} from "./canonicalOutputSchema.js";
+import { withCanonicalOutputSchema } from "./canonicalOutputSchema.js";
 import {
   Client,
   type CallToolRequestOptions,
@@ -16,6 +13,10 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, onTestFinished } from "vitest";
 import { createMcpSchemaValidation } from "./mcpSchemaValidation.js";
 import { createSharedMcpSession } from "../support/mcp/sharedMcpSession.js";
+import {
+  applyCompleteEvidenceByDefault,
+  type TestDelivery,
+} from "../support/completeEvidenceByDefault.js";
 
 /** Default to native tools while preserving explicit caller configuration. */
 export const localToolsMcpEnvironment = (
@@ -34,6 +35,7 @@ export async function connectLocalToolsMcp(
   registerCleanup: (cleanup: () => Promise<void>) => void = onTestFinished,
   transportOptions: Readonly<Pick<StdioServerParameters, "maxBufferSize">> = {},
   jsonSchemaValidator?: NonNullable<ClientOptions["jsonSchemaValidator"]>,
+  delivery: TestDelivery = "completeEvidenceByDefault",
 ) {
   const transport = new StdioClientTransport({
     ...transportOptions,
@@ -46,9 +48,12 @@ export async function connectLocalToolsMcp(
     stderr: "pipe",
   });
   const validation = createMcpSchemaValidation();
-  const client = new Client(
-    { name: "local-tools-e2e", version: "1" },
-    { jsonSchemaValidator: jsonSchemaValidator ?? validation },
+  const client = applyCompleteEvidenceByDefault(
+    new Client(
+      { name: "local-tools-e2e", version: "1" },
+      { jsonSchemaValidator: jsonSchemaValidator ?? validation },
+    ),
+    delivery,
   );
   registerCleanup(async () => {
     await closeVerifierResources([

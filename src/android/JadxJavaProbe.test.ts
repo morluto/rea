@@ -1,98 +1,33 @@
 import { validateJadxConfiguration } from "./JadxConfiguration.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { ArtifactResourceRetryFailure } from "../resources/ArtifactResourceScope.js";
 import { expect, it, vi } from "vitest";
 import { inspectJadxJava, type JadxJavaProbeOptions } from "./JadxJavaProbe.js";
-import {
-  AnalysisError,
-  primaryAnalysisError,
-} from "../domain/analysisErrorBase.js";
-import {
-  ProcessOwnershipIdentityBatchFailure,
-  ProcessOwnershipInspectionCancelled,
-} from "../process/ProcessInspectionCancellation.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { ProcessOwnershipInspectionCancelled } from "../process/ProcessInspectionCancellation.js";
 import {
   prepareProcessOwnershipInspection,
   systemProcessOwnershipHost,
 } from "../process/ProcessOwnershipObservation.js";
 import type { OwnedProviderProcessSpawnOptions } from "../process/ProviderProcess.js";
-import { failedInspectionDescriptor } from "../../tests/fixtures/processInspectionCleanup.js";
+import { expectJavaProbePreparationCleanup } from "../../tests/support/process/javaProbePreparation.js";
 import { createInspectionResources } from "../../tests/fixtures/inspectionResources.js";
 import { spawnFailure } from "../../tests/support/process/spawnFailure.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 
 it.each([false, true])(
   "retains physical preparation instead of reporting a Java refusal (batch: %s)",
-  async (batch) => {
-    const descriptor = await failedInspectionDescriptor();
-    const resources = createInspectionResources();
-    const reason = { source: "inspection caller" };
-    const cause = batch
-      ? new ProcessOwnershipIdentityBatchFailure(
-          [
-            { pid: 41, requestIndex: 0, cause: descriptor.failure },
-            {
-              pid: 42,
-              requestIndex: 1,
-              cause: new ProcessOwnershipInspectionCancelled(reason),
-            },
-          ],
-          new Map(),
-        )
-      : descriptor.failure;
-    const prepare = vi
-      .spyOn(systemProcessOwnershipHost, "prepare")
-      .mockRejectedValue(cause);
-    // macOS prepares before launcher admission; other hosts prepare inside it.
-    // Keep that real admission step while recording that Java never starts.
-    const startJava = vi.fn(() => {
-      throw new Error("Java must not start");
-    });
-    const launcher = async (input: OwnedProviderProcessSpawnOptions) => {
-      await prepareProcessOwnershipInspection(input.signal);
-      return startJava();
-    };
-    try {
+  (batch) =>
+    expectJavaProbePreparationCleanup(batch, async (options) => {
       const result: unknown = await inspectJadxJava(
         "/selected/java",
         {},
-        { resourceOwner: resources.owner, launcher },
+        options,
       ).catch((cause: unknown) => cause);
       expect(result).toBeInstanceOf(AnalysisError);
       if (!(result instanceof AnalysisError)) throw result;
-      const primary = primaryAnalysisError(result);
-      expect(primary).toMatchObject({
-        _tag: "ProviderAdapterError",
-        diagnostics: { stage: "ownership_preparation" },
-      });
-      expect(primary.cause).toBe(cause);
-      if (batch)
-        expect(primary.secondaryFailures).toContainEqual(
-          expect.objectContaining({
-            _tag: "AnalysisCancelledError",
-            cause: reason,
-          }),
-        );
-      expect(primary.capturedOutput).toBeUndefined();
-      expect(primary.diagnostics).not.toHaveProperty("compiler_outcome");
-      expect(startJava).not.toHaveBeenCalled();
-      expect(result.cleanupResources).toEqual([descriptor.failure.path]);
-      await expect(resources.close()).rejects.toBeInstanceOf(
-        ArtifactResourceRetryFailure,
-      );
-      expect(result.cleanupIncomplete).toBe(true);
-      descriptor.allow();
-      await resources.close();
-      expect(result.cleanupIncomplete).toBe(false);
-      expect(descriptor.failure.owner.handle.fd).toBe(-1);
-    } finally {
-      prepare.mockRestore();
-      descriptor.allow();
-      await resources.close();
-      await descriptor.failure.owner.close();
-    }
-  },
+      return result;
+    }),
 );
 
 it("preserves the actual inspection cancellation record and opaque caller reason", async () => {

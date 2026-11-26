@@ -1,3 +1,4 @@
+import { sameFileStatStamp } from "../filesystem/FileStatStamp.js";
 import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import type { BigIntStats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
@@ -19,7 +20,6 @@ import {
 } from "./ReferenceSourceReaderErrors.js";
 import {
   isAborted,
-  sameFile,
   validateDirectory,
 } from "./ReferenceSourceReaderValidate.js";
 import type { ReferenceSourceEntry } from "./ReferenceSourceReaderTypes.js";
@@ -69,7 +69,7 @@ const prepareFileRead = async (
     };
   }
   const before = await handle.stat({ bigint: true });
-  if (!sameFile(expected, before)) {
+  if (!sameFileStatStamp(expected, before)) {
     return {
       status: "failed",
       entry: entryFailure(
@@ -180,7 +180,7 @@ const finalizeFileRead = async (
       total,
       parentAfter.localDiagnostic,
     );
-  if (!sameFile(parentBefore.stats, parentAfter.stats))
+  if (!sameFileStatStamp(parentBefore.stats, parentAfter.stats))
     return entryFailure(
       path,
       "file",
@@ -188,7 +188,7 @@ const finalizeFileRead = async (
       "Parent directory changed while file was read",
       total,
     );
-  if (!sameFile(before, after) || BigInt(total) !== after.size)
+  if (!sameFileStatStamp(before, after) || BigInt(total) !== after.size)
     return entryFailure(
       path,
       "file",

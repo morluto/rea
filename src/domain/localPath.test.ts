@@ -9,6 +9,10 @@ import {
   windowsAbsolutePathPattern,
 } from "./localPath.js";
 
+import { inspectErlangBeamInputSchema } from "./erlang/beam.js";
+import { inspectMavenGradleMetadataInputSchema } from "./java/mavenGradleMetadata.js";
+import { inspectNugetNupkgInputSchema } from "./nuget/nupkg.js";
+
 const PATHS = [
   "/absolute/path",
   "/",
@@ -21,6 +25,51 @@ const PATHS = [
   "//server/share/path",
   "file:///absolute/path",
 ];
+
+it.each([
+  {
+    schema: inspectErlangBeamInputSchema,
+    name: "app.beam",
+    withNul: "/artifacts/app\0.beam",
+    description: "Absolute filesystem path to a BEAM file",
+  },
+  {
+    schema: inspectMavenGradleMetadataInputSchema,
+    name: "pom.xml",
+    withNul: "/artifacts/pom\0.xml",
+    description:
+      "Absolute filesystem path to a Maven pom.xml or Gradle .module metadata file",
+  },
+  {
+    schema: inspectNugetNupkgInputSchema,
+    name: "pkg.nupkg",
+    withNul: "/artifacts/pkg\0.nupkg",
+    description: "Absolute filesystem path to a NuGet .nupkg package",
+  },
+])(
+  "applies the shared absolute local-path policy to $name",
+  ({ schema, name, withNul, description }) => {
+    for (const path of [name, "", withNul])
+      expect(schema.safeParse({ path }).success).toBe(false);
+    expect(schema.safeParse({ path: `/artifacts/${name}` }).success).toBe(true);
+
+    const target = { target: "draft-2020-12" } as const;
+    const shared =
+      absoluteLocalPathStringSchema["~standard"].jsonSchema.input(target);
+    const advertised = schema["~standard"].jsonSchema.input(target);
+    const path = (
+      advertised.properties as Record<string, Record<string, unknown>>
+    ).path;
+    const {
+      $schema: _schema,
+      description: _sharedDescription,
+      ...sharedPolicy
+    } = shared;
+    const { description: pathDescription, ...pathPolicy } = path ?? {};
+    expect(pathPolicy).toEqual(sharedPolicy);
+    expect(pathDescription).toBe(description);
+  },
+);
 
 it("serializes portable path constraints for catalogs shipped to another host", () => {
   const ajv = new Ajv2020({ strict: false });

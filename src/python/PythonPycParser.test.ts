@@ -1,3 +1,7 @@
+import {
+  uint32LE as u32,
+  int32LE as i32,
+} from "../native/BinaryInteger.fixture.js";
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 import {
@@ -484,16 +488,6 @@ it("classifies the 12-byte 3.7 alpha header as unsupported", () => {
   }
 });
 
-const u32 = (value: number): Buffer => {
-  const bytes = Buffer.alloc(4);
-  bytes.writeUInt32LE(value);
-  return bytes;
-};
-const i32 = (value: number): Buffer => {
-  const bytes = Buffer.alloc(4);
-  bytes.writeInt32LE(value);
-  return bytes;
-};
 const f64 = (value: number): Buffer => {
   const bytes = Buffer.alloc(8);
   bytes.writeDoubleLE(value);
