@@ -5,6 +5,7 @@ import {
   artifactIntegrityDetails,
   type ArtifactContainerIntegrityPair,
   type ArtifactIntegrityPair,
+  type SignedAfterPackingExplanation,
 } from "../../domain/artifactIntegrity.js";
 import { isAbsolute } from "node:path";
 import { createHash, type Hash } from "node:crypto";
@@ -21,6 +22,7 @@ import {
   abortIfNeeded,
   DirectoryArtifactEntryAccessDenied,
   DirectoryArtifactReader,
+  streamChunkToBuffer,
 } from "../../resources/index.js";
 import {
   ArtifactTraversalObservation,
@@ -51,12 +53,18 @@ import {
   DirectoryTreeDigestBuilder,
   type DirectoryRootDigest,
 } from "../../domain/directoryTreeDigest.js";
+import {
+  explainPeSignedAfterPacking,
+  MAX_SIGNED_AFTER_PACKING_PE_BYTES,
+  signedAfterPackingBudgetLimitation,
+} from "../../native/pe/PeUnsignedDigest.js";
 
 export interface PendingIntegrityContradiction {
   readonly occurrence: MutableOccurrence;
   readonly integrity: ArtifactIntegrityPair;
   readonly entryKind: "file" | "slice";
   readonly unpacked: boolean;
+  readonly signingExplanation?: SignedAfterPackingExplanation;
 }
 
 const emptyScan = (): {
@@ -344,6 +352,9 @@ const visitArtifactEntries = async (
         | {
             readonly node: ArtifactNode;
             readonly mismatched: boolean;
+            readonly signingExplanation:
+              | SignedAfterPackingExplanation
+              | undefined;
             readonly classification: ReturnType<typeof classifyArtifactContent>;
           }
         | undefined;
@@ -372,7 +383,10 @@ const visitArtifactEntries = async (
             : { status: "unknown" as const, limitations: [limitation] };
         if (traversal !== undefined) context.traversal.record(traversal);
         occurrence.hash_status = "unavailable";
-        occurrence.limitations.push(limitation);
+        // A reader that refuses content it already listed with a limitation
+        // names the same reason on the entry and on the refusal.
+        if (!occurrence.limitations.includes(limitation))
+          occurrence.limitations.push(limitation);
       }
       if (digested === undefined) noteUnreadContainerSuffix(occurrence);
       else {
@@ -392,7 +406,9 @@ const visitArtifactEntries = async (
           : "verified";
         if (digested.mismatched)
           occurrence.limitations.push(
-            "Declared integrity metadata contradicts observed bytes.",
+            digested.signingExplanation === undefined
+              ? "Declared integrity metadata contradicts observed bytes."
+              : "Declared integrity metadata contradicts observed bytes; Authenticode signing after packing restores the declared SHA-256 when IMAGE_DIRECTORY_ENTRY_SECURITY is stripped. Bytes remain observed-untrusted.",
           );
       }
       context.occurrences.push(occurrence);
@@ -479,6 +495,7 @@ const digestArtifactEntry = async (
   | {
       readonly node: ArtifactNode;
       readonly mismatched: boolean;
+      readonly signingExplanation: SignedAfterPackingExplanation | undefined;
       readonly classification: ReturnType<typeof classifyArtifactContent>;
     }
   | undefined
@@ -527,21 +544,6 @@ const digestArtifactEntry = async (
       { integrityCheck: "declared-digest" },
     );
   const mismatched = claim !== null && claim.digest !== observed;
-  if (mismatched && claim !== null && observed !== undefined) {
-    if (context.integrity === "fail")
-      throw new ArtifactReaderFailure(
-        "integrity",
-        `Artifact integrity metadata disagrees with content: ${logicalPath}`,
-        { integrityCheck: "declared-digest" },
-        artifactIntegrityDetails(logicalPath, claim, observed, entry.unpacked),
-      );
-    context.pendingContradictions.push({
-      occurrence,
-      integrity: artifactIntegrityPair(claim, observed),
-      entryKind: entry.kind,
-      unpacked: entry.unpacked,
-    });
-  }
   const sliceHeader =
     entry.kind === "slice"
       ? classifyArtifactHeader(digest, digest.bytes)
@@ -555,6 +557,117 @@ const digestArtifactEntry = async (
           contentArchitecture: sliceHeader.architecture,
         }
       : classifyArtifactContent(logicalPath, digest, digest.bytes);
+  let signingExplanation: SignedAfterPackingExplanation | undefined;
+  let explanationFailure: unknown;
+  if (
+    mismatched &&
+    claim !== null &&
+    observed !== undefined &&
+    entry.unpacked &&
+    claim.algorithm === "sha256" &&
+    classified.contentFormat === "pe"
+  ) {
+    const mismatchDetails = artifactIntegrityDetails(
+      logicalPath,
+      claim,
+      observed,
+      entry.unpacked,
+    );
+    try {
+      const attempt = await explainUnpackedPeSignedAfterPacking({
+        reader: currentReader,
+        entry,
+        observedBytes: digest.bytes,
+        observedSha256: digest.sha256,
+        declaredSha256: claim.digest,
+        signal: context.signal,
+        context,
+      });
+      if (attempt.status === "explained")
+        signingExplanation = attempt.explanation;
+      else if (attempt.status === "skipped")
+        occurrence.limitations.push(attempt.limitation);
+    } catch (cause: unknown) {
+      if (
+        cause instanceof ArtifactReaderFailure &&
+        (cause.cleanup !== undefined || (cause.cleanupLeases?.length ?? 0) > 0)
+      ) {
+        const cleanup = ArtifactReaderFailure.cleanupObservation(
+          cause,
+          `signing explanation for ${logicalPath}`,
+        );
+        if (context.signal?.aborted === true)
+          throw ArtifactReaderFailure.withCleanup(
+            new ArtifactReaderFailure(
+              "cancelled",
+              "Artifact inventory cancelled",
+              { cause: context.signal.reason },
+            ),
+            cleanup,
+            cause.partialObservation,
+            cause.cleanupLeases,
+          );
+        // Keep the first mismatch digest pair when the optional read's cleanup
+        // also fails; completed observations must survive later cleanup.
+        throw ArtifactReaderFailure.withCleanup(
+          new ArtifactReaderFailure(
+            "integrity",
+            `Artifact integrity metadata disagrees with content: ${logicalPath}`,
+            {
+              integrityCheck: "declared-digest",
+              cause,
+            },
+            mismatchDetails,
+          ),
+          cleanup,
+          cause.partialObservation,
+          cause.cleanupLeases,
+        );
+      }
+      abortIfNeeded(context.signal);
+      if (
+        !(cause instanceof ArtifactEntryContentUnavailable) &&
+        !(cause instanceof DirectoryArtifactEntryAccessDenied) &&
+        !(
+          cause instanceof ArtifactReaderFailure &&
+          (cause.reason === "io" || cause.reason === "unavailable")
+        )
+      )
+        throw cause;
+      if (cause.cancellation !== undefined) throw cause;
+      explanationFailure = cause;
+      occurrence.limitations.push(
+        `Signing explanation unavailable: ${cause instanceof ArtifactEntryContentUnavailable ? cause.limitation : cause.message}`,
+      );
+    }
+  }
+  if (mismatched && claim !== null && observed !== undefined) {
+    if (context.integrity === "fail")
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `Artifact integrity metadata disagrees with content: ${logicalPath}`,
+        {
+          integrityCheck: "declared-digest",
+          ...(explanationFailure === undefined
+            ? {}
+            : { cause: explanationFailure }),
+        },
+        artifactIntegrityDetails(
+          logicalPath,
+          claim,
+          observed,
+          entry.unpacked,
+          signingExplanation,
+        ),
+      );
+    context.pendingContradictions.push({
+      occurrence,
+      integrity: artifactIntegrityPair(claim, observed),
+      entryKind: entry.kind,
+      unpacked: entry.unpacked,
+      ...(signingExplanation === undefined ? {} : { signingExplanation }),
+    });
+  }
   return {
     node: createArtifactNode({
       sha256: digest.sha256,
@@ -564,8 +677,86 @@ const digestArtifactEntry = async (
       contentState: "embedded",
     }),
     mismatched,
+    signingExplanation,
     classification: classified,
   };
+};
+
+type SigningExplanationAttempt =
+  | {
+      readonly status: "explained";
+      readonly explanation: SignedAfterPackingExplanation;
+    }
+  | { readonly status: "unexplained" }
+  | { readonly status: "skipped"; readonly limitation: string };
+
+const explainUnpackedPeSignedAfterPacking = async (input: {
+  readonly reader: ArtifactReader;
+  readonly entry: ArtifactEntry;
+  readonly observedBytes: number;
+  readonly observedSha256: string;
+  readonly declaredSha256: string;
+  readonly signal: AbortSignal | undefined;
+  readonly context: ScanContext;
+}): Promise<SigningExplanationAttempt> => {
+  const {
+    reader,
+    entry,
+    observedBytes,
+    observedSha256,
+    declaredSha256,
+    signal,
+    context,
+  } = input;
+  if (!Number.isSafeInteger(observedBytes) || observedBytes <= 0)
+    return { status: "unexplained" };
+  const remainingAcquisition =
+    context.acquisitionLimits === undefined
+      ? undefined
+      : context.acquisitionLimits.maximumBytes - context.bytesRead;
+  const budget = Math.min(
+    MAX_SIGNED_AFTER_PACKING_PE_BYTES,
+    remainingAcquisition ?? MAX_SIGNED_AFTER_PACKING_PE_BYTES,
+  );
+  if (observedBytes > budget)
+    return {
+      status: "skipped",
+      limitation: signedAfterPackingBudgetLimitation(observedBytes, budget),
+    };
+  const stream = await reader.open(entry, signal);
+  const chunks: Buffer[] = [];
+  const hash = createHash("sha256");
+  let total = 0;
+  for await (const raw of stream) {
+    abortIfNeeded(signal);
+    const chunk = streamChunkToBuffer(raw);
+    if (
+      context.acquisitionLimits !== undefined &&
+      chunk.length > context.acquisitionLimits.maximumBytes - context.bytesRead
+    )
+      return {
+        status: "skipped",
+        limitation: signedAfterPackingBudgetLimitation(
+          observedBytes,
+          context.acquisitionLimits.maximumBytes,
+        ),
+      };
+    total += chunk.length;
+    if (total > observedBytes) return { status: "unexplained" };
+    if (context.acquisitionLimits !== undefined)
+      context.bytesRead += chunk.length;
+    hash.update(chunk);
+    chunks.push(chunk);
+  }
+  if (total !== observedBytes || hash.digest("hex") !== observedSha256)
+    return { status: "unexplained" };
+  const explanation = explainPeSignedAfterPacking(
+    Buffer.concat(chunks, total),
+    declaredSha256,
+  );
+  return explanation === null
+    ? { status: "unexplained" }
+    : { status: "explained", explanation };
 };
 
 const isExpandableAsar = (entry: ArtifactEntry, logicalPath: string): boolean =>

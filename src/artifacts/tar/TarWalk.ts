@@ -18,6 +18,8 @@ import {
   artifactReaderLimitFailure,
   artifactParseFailure,
   assertArtifactReadActive,
+  currentDirectoryPrefixLimitation,
+  withoutCurrentDirectoryPrefix,
 } from "../../resources/index.js";
 import { TarStreamEnded, type TarByteStream } from "./TarByteStream.js";
 
@@ -245,6 +247,7 @@ export const walkTar = async (
   const members: TarMember[] = [];
   const omissions: { path: string; kind: ArtifactTraversalOmissionKind }[] = [];
   const limitations: string[] = [];
+  let prefixedMembers = 0;
   const dialects = new Set<TarHeaderDialect>();
   let paxHeaders = 0;
   const retained = new Budget(limits.metadata_bytes);
@@ -252,6 +255,8 @@ export const walkTar = async (
   const global = new Map<string, string>();
   let chargedGlobalPax = 0;
   let local: TarPaxRecords | undefined;
+  let localLimitations: string[] = [];
+  let chargedLocalLimitations = 0;
   let longName: Uint8Array | undefined;
   let longLink: Uint8Array | undefined;
   let endState: TarEndState | undefined;
@@ -386,6 +391,17 @@ export const walkTar = async (
             );
             break;
           }
+          // Charge each warning before its hex doubles the raw value; the
+          // global map charge does not see a same-sized replacement.
+          let latin1Bytes = 0;
+          const latin1 = pax.latin1.map((key) => {
+            const raw = Buffer.from(pax.records.get(key)!, "latin1");
+            const prefix = `tar pax ${key} is not UTF-8 under hdrcharset=BINARY; decoded as Latin-1; raw hex: `;
+            const bytes = prefix.length + 2 * raw.length + 1;
+            retained.charge(bytes, metadataLimit);
+            latin1Bytes += bytes;
+            return `${prefix}${raw.toString("hex")}.`;
+          });
           if (typeflag === TAR_TYPEFLAGS.paxGlobal) {
             // Charge the map that withPax is about to copy. Repeated global
             // headers otherwise accumulate without reaching this budget.
@@ -399,7 +415,14 @@ export const walkTar = async (
               retained.refund(chargedGlobalPax - nextBytes);
             chargedGlobalPax = nextBytes;
             applyPaxInPlace(global, pax.records);
-          } else local = pax.records;
+            limitations.push(...latin1);
+          } else {
+            // A later local header discards the warnings of this one.
+            retained.refund(chargedLocalLimitations);
+            chargedLocalLimitations = latin1Bytes;
+            local = pax.records;
+            localLimitations = latin1;
+          }
         } else {
           const end = data.indexOf(0);
           const value = data.subarray(0, end === -1 ? data.length : end);
@@ -408,7 +431,8 @@ export const walkTar = async (
         }
         continue;
       }
-      const memberLimitations: string[] = [];
+      const memberLimitations = localLimitations;
+      const chargedMemberLimitations = chargedLocalLimitations;
       const name =
         records.get("path") ??
         decodeName(longName ?? header.name, "name", memberLimitations);
@@ -419,6 +443,8 @@ export const walkTar = async (
           ? null
           : decodeName(linkBytes, "link name", memberLimitations));
       local = undefined;
+      localLimitations = [];
+      chargedLocalLimitations = 0;
       longName = undefined;
       longLink = undefined;
       // An old GNU sparse header continues its sparse map in extension
@@ -445,8 +471,11 @@ export const walkTar = async (
         break;
       }
       const sourcePath = name;
-      const path = name.replace(/^(?:\.\/)+/u, "");
+      const path = withoutCurrentDirectoryPrefix(name);
       const role = memberRole(typeflag, name, records);
+      // Only an inventoried member keeps its pax warnings.
+      if ("omit" in role || role.member === "root")
+        retained.refund(chargedMemberLimitations);
       // Omissions are retained too, so they share the metadata allowance.
       if ("omit" in role || role.member !== "root")
         retained.charge(
@@ -457,10 +486,7 @@ export const walkTar = async (
       if ("omit" in role)
         omissions.push({ path: path.replace(/\/+$/u, ""), kind: role.omit });
       else if (role.member !== "root") {
-        if (path !== sourcePath)
-          memberLimitations.push(
-            `tar member name ${JSON.stringify(sourcePath)} has a leading current-directory prefix omitted from its logical path.`,
-          );
+        if (path !== sourcePath) prefixedMembers += 1;
         members.push({
           kind: role.member,
           path,
@@ -514,6 +540,8 @@ export const walkTar = async (
     )
       members.pop();
   }
+  if (prefixedMembers > 0)
+    limitations.push(currentDirectoryPrefixLimitation("tar", prefixedMembers));
   return {
     members,
     omissions,

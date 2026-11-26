@@ -130,7 +130,9 @@ commands keep the Mach-O command reader's own limit, and the PE headers it reads
 are bounded by the PE format.
 
 For `inspect_native_exports` it also bounds the ELF dynamic, symbol and version
-tables located through PT_DYNAMIC.
+tables located through PT_DYNAMIC. For `inspect_native_initializers` it also
+bounds Android APS2 packed relocation tables (both compressed input bytes and
+equivalent unpacked REL/RELA work).
 
 `inspect_go_binary` and `inspect_rust_binary` accept it for their ELF directory
 and Mach-O load commands. The IL2CPP reader reads the same tables with the 16
@@ -745,20 +747,23 @@ editable setting or active worker telemetry.
 
 `inspect_artifact` and `extract_artifact` accept `bun`, `dotnet_bundle`,
 `node_sea`, `godot`, `iso9660`, `deno`, `wxapkg`, `tar` and
-`android_sparse_image` groups in `artifact_limits`. Their controls apply when
+`android_sparse_image` and `android_vbmeta` groups in `artifact_limits`. Their controls apply when
 recognition or inventory encounters that format. Supplying a policy does not
 assert the format is present. Unsupported keys are rejected. Each group follows
 one domain-owned default policy. See [.NET bundles](../dotnet-bundles.md),
 [Node SEA](../node-sea.md), [Godot PCK](../godot-pck.md),
 [Bun standalone](../bun-standalone.md), [Deno compile](../deno-standalone.md),
 [wxapkg](../wxapkg.md), [tar](../tar-archives.md) and
-[Android sparse images](../guides/firmware/android-sparse-image.md) for format semantics.
+[Android sparse images](../guides/firmware/android-sparse-image.md) and
+[Android vbmeta](../guides/firmware/android-vbmeta.md) for format semantics.
 
 `artifact_limits.expanded_bytes` selects aggregate plaintext work for ZIP, Bun,
-SEA, PCK, ISO 9660, Deno, wxapkg, tar and Android sparse image readers,
-including repeated readable logical occurrences. Omission retains each
-archive's encoded-size-derived default. The .NET bundle group's
-own `expanded_bytes` controls its independently enforced bundle expansion.
+SEA, PCK, ISO 9660, Deno, wxapkg, tar and Android sparse image readers, NSO
+segment decompression, and bFLT gzip decompression (which is also capped at a
+fixed 128 MiB in-memory inflation ceiling), including repeated readable logical
+occurrences. Omission retains each archive's encoded-size-derived default. The
+.NET bundle group's own `expanded_bytes` controls its independently enforced
+bundle expansion.
 
 `artifact.member_count` (launch seed `REA_ARTIFACT_MEMBER_COUNT`, default
 100,000, range 1 to 2,147,483,647) is the session default for the per-call

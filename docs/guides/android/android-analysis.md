@@ -308,8 +308,9 @@ that class the summary was 5,987 bytes. Page the using nodes with
 - `references`: using nodes with their `index`, and only the `fields` you name.
 
 Both filter by exact `kinds`, `packages` (the top class's name before its last
-dot) and `top_classes`. A top class can itself be a nested synthetic class, so
-group by the name before the first `$` when you need outer classes.
+dot) and `top_classes`. Use `packages: [""]` for classes in the unnamed
+package. A top class can itself be a nested synthetic class, so group by the
+name before the first `$` when you need outer classes.
 
 External prototype and caller metadata use a bridge-frame-derived representation
 allowance that reserves space for retained raw calls and CLI/MCP copies. Exhausting
@@ -498,9 +499,11 @@ is `unknown`, never `unmatched`. ELF/ABI label mismatches preserve facts without
 asserting a binding. No result establishes library loading, runtime registration
 or method invocation.
 
-Summary returns the first 64 selected binding rows, their declaration/candidate
-closure and every selected library's identity, coverage and failure reason;
-counts and page coverage describe the full selected binding set. Selected
+Summary returns the first 16 selected binding rows, their declaration/candidate
+closure and the first 16 selected libraries' identity, coverage and failure
+reason, so a large APK's summary stays within the default agent result budget.
+Counts and page coverage describe the full selected binding set, and
+`library_coverage` says how many libraries the summary omits. Selected
 declaration IDs have separate preview coverage, so native declarations remain
 visible even when the APK has no bundled ABI libraries. Complete
 Evidence stays retained. Read exact fields or further pages without reopening

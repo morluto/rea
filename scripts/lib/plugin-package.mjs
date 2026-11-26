@@ -22,6 +22,13 @@ export function pluginPackageMetadata(manifest, lock) {
   const packageJson = { ...manifest };
   delete packageJson.devDependencies;
   delete packageJson.overrides;
+  // prepare patches development dependencies in a source checkout and does
+  // nothing in an installed package, but npm counts it as an install script
+  // and asks every global install to allow it.
+  if (packageJson.scripts !== undefined) {
+    packageJson.scripts = { ...packageJson.scripts };
+    delete packageJson.scripts.prepare;
+  }
   // Codex's npm source fetches the archive without installing dependencies.
   // Keep optional Frida outside the bundle so ordinary npm installs can still
   // run its host-specific installer. PTY binaries are transitive optionals of

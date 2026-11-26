@@ -1,3 +1,5 @@
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { expect, it } from "vitest";
 
 import { failedInspectionDescriptor } from "../../tests/fixtures/processInspectionCleanup.js";
@@ -110,3 +112,114 @@ it("closes cleanly after a launch failure that transferred no cleanup", async ()
   await expect(owned.start()).rejects.toThrow("command not found");
   await expect(owned.close()).resolves.toBeUndefined();
 });
+
+it("stops delivering queued frames in the same chunk once onmessage closes the transport and fires onclose once across retries", async () => {
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  const stdin = new PassThrough();
+  const child = Object.assign(new EventEmitter(), {
+    stdout,
+    stderr,
+    stdin,
+    pid: 99999,
+    exitCode: null as number | null,
+    signalCode: null as NodeJS.Signals | null,
+    killed: false,
+    kill: () => true,
+  });
+  let cleanupFails = true;
+  const owned = new OwnedMcpStdioTransport(
+    { command: "/fixture/server", arguments: [] },
+    {
+      provider: "fixture",
+      label: "Fixture MCP",
+      maxFrameBytes: 4096,
+      gracefulInputCloseMs: 5,
+    },
+    async () => ({
+      process: child as never,
+      ownership: { runId: "run-1", leaderPid: 99999, processGroupId: 99999 },
+      cleanup: async () => {
+        if (cleanupFails)
+          return { cleaned: false as const, reason: "still alive" };
+        child.exitCode = 0;
+        child.emit("exit", 0, null);
+        stdout.end();
+        stderr.end();
+        child.emit("close", 0, null);
+        return { cleaned: true, signaled: false };
+      },
+    }),
+  );
+  await owned.start();
+  let closeNotifications = 0;
+  const seenIds: unknown[] = [];
+  owned.onclose = () => {
+    closeNotifications += 1;
+  };
+  owned.onmessage = (message) => {
+    seenIds.push("id" in message ? message.id : undefined);
+    void owned.close();
+  };
+  const frame1 = JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} });
+  const frame2 = JSON.stringify({ jsonrpc: "2.0", id: 2, result: {} });
+  stdout.push(`${frame1}\n${frame2}\n`);
+  await expect(owned.close()).rejects.toBeInstanceOf(ProviderCleanupError);
+  expect(seenIds).toEqual([1]);
+  expect(closeNotifications).toBe(1);
+
+  cleanupFails = false;
+  await expect(owned.close()).resolves.toBeUndefined();
+  expect(closeNotifications).toBe(1);
+});
+
+it.each([
+  { notifyOnExit: undefined, notifiedBy: "close" },
+  { notifyOnExit: true, notifiedBy: "exit" },
+] as const)(
+  "notifies onclose once when the server $notifiedBy happens before close",
+  async ({ notifyOnExit }) => {
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    const stdin = new PassThrough();
+    const child = Object.assign(new EventEmitter(), {
+      stdout,
+      stderr,
+      stdin,
+      pid: 99999,
+      exitCode: null as number | null,
+      signalCode: null as NodeJS.Signals | null,
+      killed: false,
+      kill: () => true,
+    });
+    const owned = new OwnedMcpStdioTransport(
+      { command: "/fixture/server", arguments: [] },
+      {
+        provider: "fixture",
+        label: "Fixture MCP",
+        maxFrameBytes: 4096,
+        ...(notifyOnExit === undefined ? {} : { notifyOnExit }),
+      },
+      async () => ({
+        process: child as never,
+        ownership: { runId: "run-1", leaderPid: 99999, processGroupId: 99999 },
+        cleanup: async () => ({ cleaned: true, signaled: false }),
+      }),
+    );
+    await owned.start();
+    let closeNotifications = 0;
+    owned.onclose = () => {
+      closeNotifications += 1;
+    };
+    child.exitCode = 0;
+    child.emit("exit", 0, null);
+    stdout.end();
+    stderr.end();
+    child.emit("close", 0, null);
+
+    expect(closeNotifications).toBe(1);
+    expect(owned.observedFailure()).toEqual({ kind: "exit" });
+    await expect(owned.close()).resolves.toBeUndefined();
+    expect(closeNotifications).toBe(1);
+  },
+);

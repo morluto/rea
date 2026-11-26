@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { jsonRecordSchema } from "../jsonRecord.js";
 import { jsonValueSchema } from "../jsonValue.js";
-import { offset, uint32 } from "./primitives.js";
+import { offset, sha256Hex, uint32 } from "./primitives.js";
 
 /** Parsed source fields owned by the PCK adapter, independent of content hashes. */
 export const godotPckMetadataSchema = z.strictObject({
@@ -360,3 +360,62 @@ export const tarEntryMetadataSchema = z.strictObject({
   gname: z.string().nullable(),
   link_name: z.string().nullable(),
 });
+
+const switchExtentSchema = z.strictObject({ offset: uint32, size: uint32 });
+
+/**
+ * Nintendo Switch NSO or NRO header facts. Offsets and sizes are the header's
+ * declarations; `asset_section` is null when an NRO has no `ASET` trailer.
+ */
+export const switchExecutableMetadataSchema = z.strictObject({
+  kind: z.literal("switch-executable"),
+  format: z.enum(["nso", "nro"]),
+  version: uint32,
+  flags: uint32,
+  /** NSO flag bits outside compression and hash checks; 0 for NRO. */
+  unknown_flags: uint32,
+  /** Build id that pairs the module with crash logs and patches. */
+  module_id: z.string().regex(/^[0-9a-f]{64}$/u),
+  bss_size: uint32,
+  /**
+   * MOD0 header offset, when it could be read: for NSO relative to the start
+   * of text (read at text+4); for NRO the header's file-relative field at 0x4.
+   */
+  mod0_offset: uint32.nullable(),
+  /** NRO: whether `MOD0` is at that file offset; null for NSO or when unread. */
+  mod0_present: z.boolean().nullable(),
+  embedded: switchExtentSchema,
+  dynstr: switchExtentSchema,
+  dynsym: switchExtentSchema,
+  /** NRO declared image size; null for NSO. */
+  image_size: uint32.nullable(),
+  asset_section: z.strictObject({ offset, version: uint32 }).nullable(),
+});
+export type SwitchExecutableMetadata = z.infer<
+  typeof switchExecutableMetadataSchema
+>;
+
+/** One NSO/NRO segment or NRO asset as the header declares it. */
+export const switchExecutableEntryMetadataSchema = z.strictObject({
+  kind: z.literal("switch-executable-entry"),
+  role: z.enum(["text", "rodata", "data", "icon", "nacp", "romfs"]),
+  file_offset: offset,
+  /** Load offset of a segment; null for assets. */
+  memory_offset: offset.nullable(),
+  /** Bytes stored in the file; differs from the entry size when compressed. */
+  file_size: offset,
+  compressed: z.boolean(),
+  /** Declared SHA-256 of the loaded segment (NSO only). */
+  declared_sha256: sha256Hex.nullable(),
+  /** SHA-256 REA computed over the loaded segment, when it was read. */
+  observed_sha256: sha256Hex.nullable(),
+  /**
+   * `match`/`mismatch`: the header asked for a hash check and REA compared.
+   * `not-checked`: the header does not request a check. `unavailable`: the
+   * segment could not be read or decompressed within budget.
+   */
+  hash_status: z.enum(["match", "mismatch", "not-checked", "unavailable"]),
+});
+export type SwitchExecutableEntryMetadata = z.infer<
+  typeof switchExecutableEntryMetadataSchema
+>;

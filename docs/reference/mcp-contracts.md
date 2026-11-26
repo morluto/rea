@@ -2103,7 +2103,8 @@ when both are omitted, storage is not compared.
 `compare_artifacts` also compares the declarations in the `format_metadata` of <!-- BEGIN:compare-artifacts:compared-format-metadata-kinds -->UnityFS members (`unityfs-entry`), PyInstaller entries
 (`pyinstaller-entry`), Node SEA members (`node-sea-entry`),
 ESP image segments (`esp-image-segment`), DfuSe elements (`dfuse-element`),
-ESP flash partitions (`esp-flash-partition`), FIT images (`fit-image`) and tar
+ESP flash partitions (`esp-flash-partition`), Nintendo DS ROM members
+(`nds-entry`), FIT images (`fit-image`) and tar
 members (`tar-entry`)<!-- END:compare-artifacts:compared-format-metadata-kinds -->;
 each format's guide names the compared fields. A changed declaration is a
 metadata change, including when content is unavailable. A declaration that
@@ -2162,6 +2163,25 @@ writing the archive header, so their declared hashes no longer match. Electron
 does not check unpacked companions against those hashes at runtime. Integrity
 failures for such entries name this cause and the operation to rerun with
 `record-and-continue`; REA does not exempt unpacked entries silently.
+
+When an unpacked PE companion already mismatches and removing
+`IMAGE_DIRECTORY_ENTRY_SECURITY` (plus zeroing the security directory and PE
+checksum) restores the declared SHA-256, the contradiction records a
+`signing_explanation` with `kind: "signed-after-packing"`, `platform:
+"pe-authenticode"`, the unsigned digest, certificate-table size, and signer
+subjects when PKCS#7 decoding supplies a unique issuer-and-serial match. Exact
+encoded issuer identity is required; unmatched or ambiguous signers are not
+named. `signer_subjects_complete: false` indicates unresolved signers, incomplete
+certificate coverage, a decoding limit, or unreadable PKCS#7. The optional
+reconstruction buffers the companion in memory and is capped at 67108864 bytes
+(representation bound for one PE rebuild); inventory acquisition
+`maximumBytes` also bounds the second read. When either budget refuses the
+companion, the contradiction stays unexplained and a limitation names the
+effective ceiling. This does not verify a signature or certificate chain.
+Observed bytes stay `observed-untrusted` and `hash_status` remains `mismatched`;
+the explanation is additive evidence, not a trust upgrade. Mach-O
+code-signature growth is not classified yet. A mismatch that does not restore
+the declared digest stays an ordinary unexplained contradiction.
 
 ## Schema advertisement
 

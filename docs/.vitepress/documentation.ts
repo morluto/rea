@@ -409,6 +409,11 @@ export const documentationSections = [
         route: "/android-ota-payload",
       },
       {
+        text: "Android Verified Boot vbmeta images",
+        source: "guides/firmware/android-vbmeta.md",
+        route: "/android-vbmeta",
+      },
+      {
         text: "Android sparse images",
         source: "guides/firmware/android-sparse-image.md",
         route: "/android-sparse-image",
@@ -447,6 +452,21 @@ export const documentationSections = [
         text: "U-Boot legacy uImage containers",
         source: "uimage.md",
         route: "/uimage",
+      },
+      {
+        text: "uClinux bFLT flat executables",
+        source: "bflt-executables.md",
+        route: "/bflt-executables",
+      },
+    ],
+  },
+  {
+    text: "Container images",
+    items: [
+      {
+        text: "OCI image layouts",
+        source: "guides/artifacts/oci-image-layout.md",
+        route: "/oci-image-layout",
       },
     ],
   },
@@ -519,6 +539,11 @@ export const documentationSections = [
         route: "/ines-containers",
       },
       {
+        text: "Nintendo DS ROMs",
+        source: "guides/firmware/nds-roms.md",
+        route: "/nds-roms",
+      },
+      {
         text: "WeChat mini-program wxapkg archives",
         source: "wxapkg.md",
         route: "/wxapkg",
@@ -532,6 +557,11 @@ export const documentationSections = [
         text: "tar and gzip-compressed tar archives",
         source: "tar-archives.md",
         route: "/tar-archives",
+      },
+      {
+        text: "Nintendo Switch NSO and NRO executables",
+        source: "guides/firmware/switch-executables.md",
+        route: "/switch-executables",
       },
       {
         text: "GPU asset headers: DDS, GLB, KTX and KTX2",
