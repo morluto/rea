@@ -32,6 +32,20 @@ export const PE_RESOURCE_ENTRY_BUDGET = {
   default_value: 16384,
   unit: "count",
 } as const satisfies ParameterBudget;
+/** `max_metadata_bytes`: the complete resource result retained before a refusal. */
+export const PE_RESOURCE_METADATA_BUDGET = {
+  minimum: 1024,
+  maximum: 256 * 1024 * 1024,
+  default_value: 8 * 1024 * 1024,
+  unit: "bytes",
+} as const satisfies ParameterBudget;
+/** The `max_metadata_bytes` control that refused a resource result. */
+export const peResourceMetadataLimit = (effectiveValue: number) =>
+  parameterBudgetLimit(
+    "max_metadata_bytes",
+    PE_RESOURCE_METADATA_BUDGET,
+    effectiveValue,
+  );
 /** The `max_entries` control that refused a resource directory. */
 export const peResourceEntryLimit = (effectiveValue: number) =>
   parameterBudgetLimit("max_entries", PE_RESOURCE_ENTRY_BUDGET, effectiveValue);
@@ -55,6 +69,11 @@ export const inspectPeResourcesInputSchema = z.strictObject({
   // shell32.dll.mun at 5903 and wmploc.DLL.mun at 5440. The default admits
   // those stock images with headroom; the independent 8 MiB metadata budget
   // still bounds allocation.
+  max_metadata_bytes: parameterBudgetSchema(
+    PE_RESOURCE_METADATA_BUDGET,
+  ).describe(
+    "Maximum bytes of the complete resource result retained before refusal (default 8 MiB)",
+  ),
   max_entries: parameterBudgetSchema(PE_RESOURCE_ENTRY_BUDGET).describe(
     "Maximum resource directory entries to examine; exceeding the budget fails without partial success",
   ),
