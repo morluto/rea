@@ -1901,6 +1901,24 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
     typedFailures("tests/boundary/filesystem/windowsShortcut.test.ts"),
   ),
+  "rea-firmware-architecture-candidates": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/firmwareArchitectureCandidatesMcpCli.test.ts",
+        "executes inspect_firmware_architecture_candidates with CLI and advertised MCP parity",
+      ),
+    ),
+    covered(
+      test(
+        "src/application/binaryDiagnostics/FirmwareArchitectureCandidatesService.test.ts",
+        "retains completed Evidence and caller selections on late cancellation",
+      ),
+      test(
+        "tests/boundary/mcp/firmwareArchitectureCandidatesMcpCli.test.ts",
+        "returns typed resource and cancellation failures",
+      ),
+    ),
+  ),
   rizin: {
     ownership: "process",
     stages: {

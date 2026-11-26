@@ -295,7 +295,11 @@ not been exercised.
 ## Limitations
 
 - Headers are not discovered from file bytes. REA does not guess load
-  addresses, profiles, vector-table locations, or memory maps.
+  addresses, profiles, vector-table locations, or memory maps during
+  `open_binary`; use
+  [`inspect_firmware_architecture_candidates`](../guides/firmware/firmware-architecture-candidates.md)
+  to inspect ranked CPU, endianness, and Cortex-M base-address candidates
+  offline first.
 - Big-endian ARM is unsupported, and m68k is the only big-endian family.
   `architecture_variant` names only the ARM M profiles; no other processor of a
   family, such as the 65C02 or ColdFire, can be selected.

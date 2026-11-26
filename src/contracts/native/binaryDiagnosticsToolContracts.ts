@@ -108,6 +108,10 @@ import {
   espNvsReportSchema,
   inspectEspNvsInputSchema,
 } from "../../domain/firmware/espNvs.js";
+import {
+  firmwareArchitectureCandidatesSchema,
+  inspectFirmwareArchitectureCandidatesInputSchema,
+} from "../../domain/firmware/firmwareArchitectureCandidates.js";
 
 /** Caller-selected delivery of completed binary layout Evidence. */
 export const inspectBinaryLayoutRequestSchema =
@@ -621,6 +625,27 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
           partition_offset: 36864,
           partition_bytes: 24576,
         },
+      },
+    ],
+  },
+  {
+    name: "inspect_firmware_architecture_candidates",
+    availability: "standalone",
+    cli: true,
+    ...toolContractMetadata(
+      "inspect_firmware_architecture_candidates",
+      evidenceEffects,
+    ),
+    kind: "native-provider",
+    description:
+      "Propose ranked CPU family, word-size, byte-order, and Cortex-M load-base candidates for a local firmware blob or container without opening a disassembler session or changing open_binary's explicit-choice contract. Combines CRC-verified U-Boot uImage headers (keeping raw ih_arch beside its name and qualifying payload-relative load/entry addresses), validated embedded ELF e_machine censuses (reporting mixed when no strict majority exists), 128-byte aligned ARM M-profile vector-table load-base candidates, and instruction prologue/return signature censuses with alignment, hit counts, and runner-up margins. Reports explicit unknown with examined detector coverage when nothing qualifies, and states whether each candidate is admitted by open_binary format=raw-binary today.",
+    inputSchema: inspectFirmwareArchitectureCandidatesInputSchema,
+    outputSchema: evidenceResultOf(firmwareArchitectureCandidatesSchema),
+    examples: [
+      {
+        title:
+          "Inspect CPU and load-base candidates for a headerless firmware dump",
+        input: { path: "/artifacts/firmware.bin" },
       },
     ],
   },

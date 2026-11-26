@@ -8,7 +8,11 @@ that build. Binwalk and Unblob operations run only on Linux; other hosts
 report the capability as unavailable. Verification covers Linux x64.
 No device, root privilege, mount, emulation or execution of extracted programs
 is needed. Arbitrary firmware bytes do not pass native executable admission;
-select a returned ELF separately for supported Ghidra analysis.
+select a returned ELF separately for supported Ghidra analysis. When a carved
+firmware blob has no known header or load base, run
+[`inspect_firmware_architecture_candidates`](firmware-architecture-candidates.md)
+first to inspect embedded uImage/ELF declarations, Cortex-M vector-table load
+bases, and instruction-signature margins before choosing `open_binary` inputs.
 
 On Linux, Binwalk and Unblob run as REA-owned processes and require a
 procps-compatible system `ps`; see the shared
