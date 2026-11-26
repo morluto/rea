@@ -4,6 +4,7 @@ import {
   mkdir,
   rm,
   realpath,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -17,6 +18,7 @@ import {
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { resolveProcessScenarioRuntimePaths } from "./ProcessScenarioRuntimeValidation.js";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
+import { withoutSearchPermission } from "../../../tests/fixtures/permissionDenial.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 
 it.skipIf(process.platform === "win32")(
@@ -189,19 +191,6 @@ it.skipIf(process.platform === "win32")(
 const SKIP_PERMISSIONS =
   process.platform === "win32" || process.getuid?.() === 0;
 
-/** Remove search permission from `directory` for the duration of `run`. */
-const withoutSearchPermission = async <T>(
-  directory: string,
-  run: () => Promise<T>,
-): Promise<T> => {
-  await chmod(directory, 0o000);
-  try {
-    return await run();
-  } finally {
-    await chmod(directory, 0o700);
-  }
-};
-
 const deniedFixture = async () => {
   const root = await createTestTempDirectory("rea-process-denied-");
   const denied = join(root, "denied");
@@ -227,6 +216,7 @@ it.skipIf(SKIP_PERMISSIONS)(
   "reports a search-denied working directory as host access denial",
   async () => {
     const { denied } = await deniedFixture();
+    await chmod(denied, 0o750);
     const selected = join(denied, "cwd");
     const failure = await withoutSearchPermission(denied, () =>
       runtimePathOutcome({
@@ -234,6 +224,7 @@ it.skipIf(SKIP_PERMISSIONS)(
         working_directory: selected,
       }),
     );
+    expect((await stat(denied)).mode & 0o7777).toBe(0o750);
     expect(failure).toBeInstanceOf(AnalysisAccessDeniedError);
     if (!(failure instanceof AnalysisAccessDeniedError)) return;
     expect(projectAnalysisError(failure)).toMatchObject({
