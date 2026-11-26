@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **limits:** the SQLite snapshot refusal reports details.limit for producer_limits.input_bytes, and the SQLite column and reply refusals carry a fixed_ceiling refusal in place of their authored remediation.
 * **limits:** per-call parameter refusals gain `details.refusal`, and their `remediation.action` wording changes to the generated form.
 * **trace:** PlaywrightTracePort.inspect takes the resolved limits, and trace archive and nesting refusals report details.limit instead of a fixed_ceiling refusal.
 * **native:** refusals at the structural budget report reported_limits.boundary "max_structure_bytes" instead of "structure".
@@ -353,6 +354,7 @@
 * **javascript:** track shared ESM HTTP agent mutations ([d500638](https://github.com/morluto/rea/commit/d500638d5d4b666cf0b255085ce4d75a29cbc35e))
 * **javascript:** verify Expo context getter ownership ([#13803](https://github.com/morluto/rea/issues/13803)) ([8c16d7d](https://github.com/morluto/rea/commit/8c16d7d18f71c0057240db4122c5df9a8b907a95))
 * **limits:** let inspect_pcap_capture take producer_limits for its snapshot and TShark output ([#14280](https://github.com/morluto/rea/issues/14280)) ([fd09e2b](https://github.com/morluto/rea/commit/fd09e2b9a1ca8e6730d3d030ae23d012c5dea6f9))
+* **limits:** let inspect_sqlite_database take producer_limits.input_bytes and type SQLite, Kuna and web-bundle refusals ([#14627](https://github.com/morluto/rea/issues/14627)) ([a5c71e8](https://github.com/morluto/rea/commit/a5c71e8c88e75b1c8906a47996dbe4b360bb65a0))
 * **limits:** make the IL2CPP pointer index adjustable and require owned refusal limits ([#14243](https://github.com/morluto/rea/issues/14243)) ([6ab595c](https://github.com/morluto/rea/commit/6ab595cfd6fc67f6bfe7313e39f736ed67f036a3))
 * **limits:** report packet and signal producer budgets as details.limit and page discovery at its record budget ([#14621](https://github.com/morluto/rea/issues/14621)) ([33e4e07](https://github.com/morluto/rea/commit/33e4e07dd05f6968d106c6671ca9b38033b10f11))
 * **macho:** correct encryption range VM mapping ([#13918](https://github.com/morluto/rea/issues/13918)) ([0fb1d11](https://github.com/morluto/rea/commit/0fb1d112f699b5619607f564f95fe52f14b7b061))
