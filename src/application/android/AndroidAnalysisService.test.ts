@@ -18,6 +18,7 @@ it("retains the selected subject in bounded search Evidence", () => {
   const relationshipCoverage = {
     status: "unknown",
     reason: "Class search does not inspect calls",
+    limited_directions: ["callers", "callees"] as ["callers", "callees"],
   } as const;
   const source = createEvidence(
     {
@@ -67,6 +68,7 @@ it.each(["omitted", "null", "explicit"] as const)(
     const relationshipCoverage = {
       status: "unknown",
       reason: "Calls were not inspected",
+      limited_directions: ["callers", "callees"] as ["callers", "callees"],
     } as const;
     const source = createEvidence(unknownTarget("not-observed"), provider, {
       operation: "read_dex",

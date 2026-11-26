@@ -7,8 +7,8 @@ import {
   AnalysisOutputError,
   AnalysisCapabilityUnavailableError,
   OwnerCancellation,
+  AnalysisTargetFailureError,
 } from "../../domain/analysisErrorCore.js";
-import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { createHash, randomUUID } from "node:crypto";
 import { lstat } from "node:fs/promises";
 import {
@@ -20,21 +20,29 @@ import {
   type ArtifactReaderTraversal,
   DirectoryArtifactReader,
   translateArtifactFailure,
+  translateArtifactOperationFailure,
 } from "../../resources/index.js";
 import { InternalInvariantError } from "../../domain/internalInvariant.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";
+import type { AnalysisLimit } from "../../domain/analysisSettings.js";
+import {
+  producerOutputBytesLimit,
+  resolveProducerOutputBytes,
+} from "../../config/producerOutputBytes.js";
 import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import {
   ArtifactTraversalObservation,
   declaredArtifactEntries,
 } from "../ArtifactTraversalObservation.js";
-import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
 import { parseJsonWithDuplicatePolicy } from "../../domain/jsonDuplicateMember.js";
 import {
   appleAssetCatalogInputSchema,
   appleResourceKeyFields,
+  assetUtilOutputLimit,
+  DEFAULT_ASSETUTIL_OUTPUT_BYTES,
+  MAX_ASSETUTIL_OUTPUT_BYTES,
   parseAppleAssetCatalogRecords,
   projectAppleAssetCatalogPage,
   type AppleAssetAnalysisCoverage,
@@ -65,7 +73,6 @@ const ASSETUTIL = "/usr/bin/assetutil";
 const ASSETUTIL_TIMEOUT_MS = 60_000;
 const OPERATION = "inspect_asset_catalog";
 const MAX_CATALOG_BYTES = 64 * 1024 * 1024;
-const MAX_TOTAL_METADATA_BYTES = 64 * 1024 * 1024;
 
 /** Launches assetutil under owned supervision; tests substitute a stand-in process. */
 export type AssetUtilLauncher = (
@@ -127,13 +134,31 @@ export const analyzeAppleAssetCatalogs = async (input: {
   let traversal: ArtifactReaderTraversal;
   let catalogCoverage: AppleAssetAnalysisCoverage;
   try {
+    const output = resolveProducerOutputBytes(
+      page.producer_limits?.output_bytes,
+      input.environment,
+      {
+        defaultValue: DEFAULT_ASSETUTIL_OUTPUT_BYTES,
+        maximum: MAX_ASSETUTIL_OUTPUT_BYTES,
+      },
+    );
+    if (!output.ok) throw output.error;
+    const outputLimit =
+      output.value.source === "runtime" || output.value.source === "setting"
+        ? producerOutputBytesLimit(output.value, MAX_ASSETUTIL_OUTPUT_BYTES)
+        : assetUtilOutputLimit(output.value.value);
     ({
       catalogs,
       uninspected,
       traversal,
       coverage: catalogCoverage,
     } = await resources.run(() =>
-      collectAssetCatalogs({ ...input, resources }),
+      collectAssetCatalogs({
+        ...input,
+        resources,
+        outputBytes: output.value.value,
+        outputLimit,
+      }),
     ));
   } catch (cause: unknown) {
     interfaceBuilderCancel.abort(OwnerCancellation.noLongerNeeded);
@@ -154,9 +179,14 @@ export const analyzeAppleAssetCatalogs = async (input: {
               "inspect_asset_catalog",
               { cause },
             )
-          : translateArtifactFailure("inspect_asset_catalog", cause);
+          : translateArtifactFailure(
+              "inspect_asset_catalog",
+              input.bundlePath,
+              cause,
+            );
       const cleanup = translateArtifactFailure(
         "inspect_asset_catalog",
+        input.bundlePath,
         joined.error,
       );
       throw analysisErrorWithCleanupDependencies(
@@ -231,12 +261,16 @@ const collectAssetCatalogs = async (input: {
   readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly signal?: AbortSignal;
   readonly resources: ArtifactResourceScope;
+  /** The selected producer_limits.output_bytes: per stream and across catalogs. */
+  readonly outputBytes: number;
+  readonly outputLimit: AnalysisLimit;
   readonly runAssetUtil?: (
     path: string,
     signal?: AbortSignal,
   ) => Promise<string>;
   readonly assetUtilLauncher?: AssetUtilLauncher;
 }) => {
+  const { outputBytes } = input;
   const reader = new DirectoryArtifactReader(input.bundlePath);
   const catalogs: {
     path: string;
@@ -247,7 +281,7 @@ const collectAssetCatalogs = async (input: {
   const traversal = new ArtifactTraversalObservation();
   let symlinks = 0;
   let firstSymlink: string | undefined;
-  let totalMetadataBytes = 0;
+  let retainedOutputBytes = 0;
   let outcome: { kind: "completed" } | { kind: "failed"; cause: unknown } = {
     kind: "completed",
   };
@@ -275,6 +309,9 @@ const collectAssetCatalogs = async (input: {
         uninspected.push(`${entry.path} (${entry.kind})`);
         continue;
       }
+      // Every catalog's JSON is retained, so each run may capture only the
+      // stdout the earlier catalogs left of the one selected budget.
+      const stdoutBytes = outputBytes - retainedOutputBytes;
       const inspected = await inspectAssetCatalogEntry({
         reader,
         entry,
@@ -284,18 +321,16 @@ const collectAssetCatalogs = async (input: {
             runAssetUtil(
               path,
               input.environment,
+              { stdout: stdoutBytes, stderr: outputBytes },
               signal,
               input.assetUtilLauncher,
             )),
+        outputBytes,
+        outputLimit: input.outputLimit,
         resources: input.resources,
         ...(input.signal === undefined ? {} : { signal: input.signal }),
       });
-      totalMetadataBytes += inspected.metadataBytes;
-      if (totalMetadataBytes > MAX_TOTAL_METADATA_BYTES)
-        throw new ArtifactReaderFailure(
-          "limit",
-          `Combined asset catalog metadata exceeds ${MAX_TOTAL_METADATA_BYTES} bytes`,
-        );
+      retainedOutputBytes += inspected.metadataBytes;
       catalogs.push(inspected.catalog);
     }
   } catch (cause: unknown) {
@@ -308,7 +343,7 @@ const collectAssetCatalogs = async (input: {
   });
   if (released.kind === "failed") {
     if (outcome.kind === "failed" && outcome.cause instanceof AnalysisError) {
-      const cleanup = translateArtifactFailure(
+      const cleanup = translateArtifactOperationFailure(
         "inspect_asset_catalog",
         input.resources.cleanupFailure({ kind: "completed" }, [released]),
       );
@@ -357,6 +392,8 @@ const inspectAssetCatalogEntry = async (input: {
     signal?: AbortSignal,
   ) => Promise<string>;
   readonly resources: ArtifactResourceScope;
+  readonly outputBytes: number;
+  readonly outputLimit: AnalysisLimit;
   readonly signal?: AbortSignal;
 }) => {
   const { entry, reader, signal } = input;
@@ -375,7 +412,13 @@ const inspectAssetCatalogEntry = async (input: {
   try {
     output = await input.runAssetUtil(entry.adapterKey, signal);
   } catch (cause) {
-    throw assetUtilFailure(cause, entry, input.resources);
+    throw assetUtilFailure(
+      cause,
+      entry,
+      input.resources,
+      input.outputBytes,
+      input.outputLimit,
+    );
   }
   const after = await lstat(entry.adapterKey, { bigint: true });
   if (
@@ -466,12 +509,13 @@ export const collectInterfaceBuilderResourceKeys = (
 /**
  * Run assetutil under owned supervision and return its complete output. The
  * macOS ownership helper is prepared first, under its own compile allowance,
- * so a cold helper build does not spend assetutil's deadline. Each stream
- * keeps its own 64 MiB allowance.
+ * so a cold helper build does not spend assetutil's deadline. stdout keeps
+ * what remains of the selected output budget; stderr keeps the whole budget.
  */
 const runAssetUtil = async (
   path: string,
   environment: Readonly<NodeJS.ProcessEnv>,
+  outputBytes: { readonly stdout: number; readonly stderr: number },
   signal?: AbortSignal,
   launcher?: AssetUtilLauncher,
 ): Promise<string> => {
@@ -485,7 +529,7 @@ const runAssetUtil = async (
     },
     {
       timeoutMs: ASSETUTIL_TIMEOUT_MS,
-      diagnosticBytes: { stdout: MAX_CATALOG_BYTES, stderr: MAX_CATALOG_BYTES },
+      diagnosticBytes: outputBytes,
     },
     {
       ...(signal === undefined ? {} : { signal }),
@@ -504,6 +548,8 @@ const assetUtilFailure = (
   cause: unknown,
   entry: ArtifactEntry,
   resources: ArtifactResourceScope,
+  outputBytes: number,
+  outputLimit: AnalysisLimit,
 ): unknown => {
   if (cause instanceof AnalysisError) return cause;
   const outcome = providerOutcomeOf(cause);
@@ -532,7 +578,10 @@ const assetUtilFailure = (
   const primary =
     processInspectionCancellationError(cause, OPERATION) ??
     (outcome !== undefined
-      ? classifyProviderOutcome(outcome, assetUtilOutcomeContext(entry))
+      ? classifyProviderOutcome(
+          outcome,
+          assetUtilOutcomeContext(entry, outputBytes, outputLimit),
+        )
       : processInspectionFailure(cause) !== undefined
         ? new ProviderAdapterError(ARTIFACT_GRAPH_PROVIDER.id, OPERATION, {
             cause,
@@ -546,6 +595,8 @@ const assetUtilFailure = (
 /** What an assetutil outcome means; owner-observed facts are shared. */
 const assetUtilOutcomeContext = (
   entry: ArtifactEntry,
+  outputBytes: number,
+  outputLimit: AnalysisLimit,
 ): ProviderOutcomeContext => ({
   providerId: ARTIFACT_GRAPH_PROVIDER.id,
   operation: OPERATION,
@@ -553,16 +604,11 @@ const assetUtilOutcomeContext = (
   details: { diagnostics: { catalog_path: entry.path } },
   timeout: { ms: ASSETUTIL_TIMEOUT_MS },
   outputLimit: {
-    reason: "assetutil output exceeds the 64 MiB capture allowance",
-    limits: { maximum_output_bytes: MAX_CATALOG_BYTES },
-    recovery: fixedAllowanceOptions(
-      "The assetutil capture allowance",
-      "capture",
-      {
-        limit: MAX_CATALOG_BYTES,
-        unit: "bytes",
-      },
-    ),
+    reason: `assetutil output exceeds producer_limits.output_bytes (${String(outputBytes)} bytes)`,
+    limits: { maximum_output_bytes: outputBytes },
+    limit: outputLimit,
+    // Capture stops at the budget, so the output it needs is unmeasured.
+    recovery: { retryable: false },
   },
   launchUnavailable: (failure, details) =>
     new AnalysisCapabilityUnavailableError(
@@ -599,11 +645,14 @@ const assetUtilOutcomeContext = (
       outcome.output?.truncated === false &&
       rejectsCatalog
     )
-      return new ArtifactOperationError(
+      return new AnalysisTargetFailureError(
         OPERATION,
-        "format",
-        undefined,
-        `assetutil rejected ${entry.path} as an invalid asset catalog`,
+        entry.adapterKey,
+        {
+          kind: "malformed",
+          format: "asset-catalog",
+          detail: `assetutil rejected ${entry.path} as an invalid asset catalog`,
+        },
         details,
       );
     return new AnalysisOutputError(

@@ -365,6 +365,7 @@ export const ENTRY_FILES = Object.freeze(
         "pe/PeCertificatesProvider.ts",
         "pe/PeImportsProvider.ts",
         "pe/PeLoadConfigProvider.ts",
+        "pe/PeUnwindRangesProvider.ts",
         "pe/PeResourcesProvider.ts",
         "pwntools/PwntoolsDecoder.ts",
         "pwntools/PwntoolsLayoutProvider.ts",
@@ -430,6 +431,13 @@ const isEntryFile = (unit, target) =>
  * still is. Keep the list short and say why.
  */
 export const PROVIDER_DEPENDENCIES = Object.freeze([
+  Object.freeze({
+    from: "artifacts",
+    to: "native",
+    files: Object.freeze(["pe/PeUnsignedDigest.ts"]),
+    reason:
+      "ASAR inventory explains PE Authenticode signed-after-packing integrity mismatches",
+  }),
   Object.freeze({
     from: "artifacts",
     to: "uefi",

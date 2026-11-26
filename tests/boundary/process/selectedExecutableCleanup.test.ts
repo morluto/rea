@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, open, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { open, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, expect, it, vi } from "vitest";

@@ -61,7 +61,7 @@ const readSliceIdentities = async (
 ): Promise<SliceParse> => {
   const container = await readMachoContainer(handle.readRange, handle.size);
   if (container.kind === "issue")
-    return { kind: "unreadable", reason: container.reason };
+    return { kind: "unreadable", reason: container.failure.detail };
   if (container.kind === "not-mach-o")
     return {
       kind: "unreadable",
@@ -78,11 +78,11 @@ const readSliceIdentities = async (
   }
   const { header, hidden } = container;
   const issue = header.rangeIssues.find((value) => value !== null);
-  if (issue !== undefined) return { kind: "unreadable", reason: issue.reason };
+  if (issue !== undefined) return { kind: "unreadable", reason: issue.detail };
   if (hidden !== null && hidden.status !== "declared")
-    return { kind: "unreadable", reason: hidden.reason };
+    return { kind: "unreadable", reason: hidden.failure.detail };
   if (hidden?.status === "declared" && hidden.rangeIssue !== null)
-    return { kind: "unreadable", reason: hidden.rangeIssue };
+    return { kind: "unreadable", reason: hidden.rangeIssue.detail };
   const declarations = [
     ...header.slices,
     ...(hidden?.status === "declared" ? [hidden.declaration] : []),

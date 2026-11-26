@@ -13,11 +13,10 @@ import {
   applicationContainerIdentity,
   addApplicationRootCandidate,
   artifactLocalIdentity,
-  chunkLookupKey,
+  bundlerLookupKey,
   createElectronRoleNode,
   javascriptAnalysisCoverage,
   linkElectronRoleToAsset,
-  moduleLookupKey,
   selfReferenceOmissions,
   sourceNodeFor,
   type JavaScriptArtifactGraphContext,
@@ -774,7 +773,7 @@ const resolveReference = (
     reference.loader === "commonjs-loader"
       ? undefined
       : context.moduleNodes.get(
-          moduleLookupKey(sourcePath, reference.module_runtime, specifier),
+          bundlerLookupKey(sourcePath, reference.module_runtime, specifier),
         );
   if (module !== undefined) {
     const file = context.filesByPath.get(sourcePath);
@@ -979,7 +978,7 @@ const resolveBundlerChunkReference = (
   if (registrations === undefined) return null;
   const candidates = registrations.flatMap(({ runtime }) => {
     const node = context.chunkNodes.get(
-      chunkLookupKey(sourcePath, runtime, key),
+      bundlerLookupKey(sourcePath, runtime, key),
     );
     return node === undefined ? [] : [node];
   });

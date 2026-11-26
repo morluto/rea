@@ -346,6 +346,15 @@ export abstract class BinarySessionRecords {
     );
   }
 
+  /** Why recording this execution would keep no replay entry, if anything. */
+  protected snapshotRecordingRefusal(
+    input: Parameters<AnalysisSnapshotCache["recordingRefusal"]>[0],
+  ): string | undefined {
+    return this.#snapshotInvalidated
+      ? "a metadata write in this session invalidated its snapshot"
+      : this.#snapshot.recordingRefusal(input);
+  }
+
   protected recordSnapshot(
     input: Parameters<AnalysisSnapshotCache["record"]>[0],
   ): void {

@@ -41,9 +41,15 @@ entry stride. Mitigation claims derived from those flags carry
 never executed. Missing directories are observed absence of those declarations,
 not proof that no callback or mitigation exists by another mechanism.
 
-The default read budget is 64 MiB (`max_file_bytes`, ceiling 512 MiB). The default
+The default [read allowance](reference/limits-and-recovery.md#static-reader-read-allowance) is 64 MiB of reads (`max_file_bytes`, ceiling 512 MiB),
+whatever the file size. The default
 callback budget is 64 (`max_callbacks`, ceiling 4096). An exact-budget array is
-accepted if its next slot is null. Truncated, ambiguous or unmapped directory and
+accepted if its next slot is null. A TLS directory `Size` below its structure is
+read at its RVA, cited as `tls.structure_location`, and reported in
+`header_anomalies`, and a zero directory RVA is
+absent, as the loader treats them; see
+[PE header admission](guides/native/binary-diagnostics.md#pe-header-admission).
+Truncated, ambiguous or unmapped directory and
 callback-array storage fails closed, as does budget exhaustion; no partial
 success is returned. An unmapped callback **target** retains its VA/RVA with an
 unknown file offset. Load-config versions beyond the supported fields remain

@@ -1,3 +1,4 @@
+import type { AnalysisViewParent } from "../../src/domain/analysisView/analysisViewParent.js";
 import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import type { JsonValue } from "../../src/domain/jsonValue.js";
 import {
@@ -316,6 +317,21 @@ export const environmentManifestCaptureFixture = (
 /** The same capture with distinct start times, as the environment-state view orders it. */
 export const environmentStateCaptureFixture = () =>
   environmentManifestCaptureFixture(environmentStateHar().log.entries);
+
+/** Parent facts passed to a view of captured traffic. */
+export const captureParent = (
+  evidence: Evidence = analysisViewCaptureEvidence(
+    environmentStateCaptureFixture(),
+  ),
+): AnalysisViewParent => ({
+  predicateType: evidence.predicate_type,
+  evidenceId: evidence.evidence_id,
+  operation: evidence.operation,
+  normalizedResult: evidence.normalized_result,
+  subject: evidence.subject,
+  limitations: [],
+  parameters: evidence.parameters,
+});
 
 /** One synthetic exchange. A string response body is recorded as written. */
 export type TimedCaptureRow = readonly [

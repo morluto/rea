@@ -5,7 +5,7 @@ import { expect, it, onTestFinished } from "vitest";
 import { AnalysisResourceConstraintError } from "../../src/domain/analysisErrorCore.js";
 import { FIRMWARE_LIMITS } from "../../src/firmware/FirmwareRelease.js";
 import { firmwareFileSizeService } from "../fixtures/firmware/fileSizeProducer.js";
-import { assertFirmwareCleanup } from "../fixtures/firmware/provider.js";
+import { expectProviderLaunchCleanup } from "../support/process/expectProviderLaunchCleanup.js";
 
 const execFileAsync = promisify(execFile);
 const budget = 16 * 1024 * 1024;
@@ -60,6 +60,6 @@ it.skipIf(process.platform !== "linux")(
     await expect(access(fixture.output)).rejects.toMatchObject({
       code: "ENOENT",
     });
-    await assertFirmwareCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   },
 );

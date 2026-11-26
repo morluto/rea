@@ -1,4 +1,5 @@
 import { setImmediate as immediate } from "node:timers/promises";
+import { CoverageAccumulator } from "../coverageAccumulator.js";
 import { err, ok, type Result } from "../result.js";
 import { dexDescriptorSchema } from "./dexTypes.js";
 import type {
@@ -15,6 +16,7 @@ import {
 } from "../native/nativeSectionDirectory.js";
 import { readElfImageFromDirectory } from "../native/elfImage.js";
 import {
+  hasElfMagic,
   BinaryFormatFailure,
   BinaryMappingFailure,
   BinaryResourceFailure,
@@ -111,13 +113,7 @@ export const inspectAndroidJniLibrary = async (
   };
   try {
     active();
-    if (
-      bytes.length < 4 ||
-      bytes[0] !== 0x7f ||
-      bytes[1] !== 0x45 ||
-      bytes[2] !== 0x4c ||
-      bytes[3] !== 0x46
-    )
+    if (!hasElfMagic(bytes))
       return err({
         kind: "unsupported",
         message: "JNI library inspection requires an ELF image",
@@ -171,12 +167,14 @@ export const inspectAndroidJniLibrary = async (
     }
     const rawExports = exportStep.value;
     const exportRows: AndroidJniLibraryFacts["exports"] = [];
+    const exportsAcc = new CoverageAccumulator().recordComplete();
+    if (rawExports.coverage.status === "unsupported") {
+      exportsAcc.recordUnknown("Dynamic export inventory is unsupported");
+    } else if (rawExports.coverage.status !== "complete") {
+      exportsAcc.recordOmission("Dynamic export inventory is incomplete");
+    }
     let exportsStatus: AndroidJniLibraryFacts["coverage"]["exports_status"] =
-      rawExports.coverage.status === "complete"
-        ? "complete"
-        : rawExports.coverage.status === "unsupported"
-          ? "unknown"
-          : "partial";
+      exportsAcc.finalize().status;
     if (exportsStatus !== "complete")
       unknowns.add(
         rawExports.coverage.reason ?? "Dynamic export inventory is incomplete",
@@ -286,13 +284,17 @@ export const inspectAndroidJniLibrary = async (
       unknowns.add(
         `${overlay.unresolved.size} unresolved, conflicting or indirect relocation destinations have unknown values`,
       );
-    const relocationStatus = !overlay.pointer_coverage_known
-      ? "unknown"
-      : overlay.unresolved.size !== 0
-        ? "partial"
-        : "complete";
+    const relocationAcc = new CoverageAccumulator().recordComplete();
+    if (!overlay.pointer_coverage_known)
+      relocationAcc.recordUnknown("Pointer coverage is unknown");
+    if (overlay.unresolved.size !== 0)
+      relocationAcc.recordOmission("Unresolved relocation destinations");
+    const relocationStatus = relocationAcc.finalize().status;
+    const tablesAcc = new CoverageAccumulator().recordComplete();
+    if (!overlay.pointer_coverage_known)
+      tablesAcc.recordUnknown("Pointer coverage is unknown");
     let tablesStatus: AndroidJniLibraryFacts["coverage"]["tables_status"] =
-      !overlay.pointer_coverage_known ? "unknown" : "complete";
+      tablesAcc.finalize().status;
     const tables: AndroidJniLibraryFacts["tables"] = [];
     const word = directory.bits / 8;
     const strings = new Map<bigint, string | null>();
@@ -500,12 +502,11 @@ export const inspectAndroidJniLibrary = async (
       jni_on_load: onLoad,
       tables,
       coverage: {
-        status:
-          exportsStatus === "complete" &&
-          tablesStatus === "complete" &&
-          relocationStatus === "complete"
-            ? "complete"
-            : "partial",
+        status: new CoverageAccumulator()
+          .merge(exportsStatus)
+          .merge(tablesStatus)
+          .merge(relocationStatus)
+          .finalizeKnown(),
         exports_status: exportsStatus,
         tables_status: tablesStatus,
         relocations_status: relocationStatus,

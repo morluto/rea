@@ -115,9 +115,11 @@ it.each([
     // A valid selected load reaches the second stat during hash finalization.
     const resolved = await parseBinaryTarget(path, {
       signal: controller.signal,
-      formatHint: "raw-binary",
-      architecture: "x86",
-      entryPoint: "0x1000",
+      loadSelection: {
+        format: "raw-binary",
+        architecture: "x86",
+        entryPoint: "0x1000",
+      },
     });
     if (resolved.ok) throw new Error("cancelled target was admitted");
     expect(projectAnalysisError(resolved.error)).toMatchObject({
@@ -163,9 +165,11 @@ it.each([
       admission.closeFailure = new Error("descriptor close failed");
     const resolved = await parseBinaryTarget(path, {
       signal: controller.signal,
-      formatHint: "raw-binary",
-      architecture: "x86",
-      entryPoint: "0x1000",
+      loadSelection: {
+        format: "raw-binary",
+        architecture: "x86",
+        entryPoint: "0x1000",
+      },
     });
     if (resolved.ok) throw new Error("Expected the physical stat failure");
     const primary = resolved.error.cleanupPrimary ?? resolved.error;

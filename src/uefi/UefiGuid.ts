@@ -1,19 +1,10 @@
-import { BinaryReader } from "../domain/binaryContainer.js";
+import { createBinaryReaderCache } from "../domain/binaryContainer.js";
 import { Buffer } from "node:buffer";
 
 /** UEFI GUIDs are 16 raw bytes rendered as 8-4-4-4-12 hex digits. */
 export const GUID_LENGTH = 16;
 
-const guidReaders = new WeakMap<Buffer, BinaryReader>();
-
-function guidReader(buffer: Buffer): BinaryReader {
-  let reader = guidReaders.get(buffer);
-  if (reader === undefined) {
-    reader = new BinaryReader(buffer, true, "UEFI GUID");
-    guidReaders.set(buffer, reader);
-  }
-  return reader;
-}
+const guidReader = createBinaryReaderCache(true, "UEFI GUID");
 
 /**
  * Format a raw GUID with UEFI mixed-endian decoding: the first data word and

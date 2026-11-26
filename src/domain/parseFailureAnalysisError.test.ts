@@ -1,10 +1,11 @@
 import { expect, it } from "vitest";
 
 import {
-  AnalysisInputError,
+  AnalysisTargetFailureError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
 } from "./analysisErrorCore.js";
+import { projectAnalysisError } from "./analysisErrorProjection.js";
+import { analysisErrorProjectionSchema } from "./analysisErrorProjectionSchema.js";
 import { fixedAllowanceOptions } from "./fixedAllowanceRemediation.js";
 import {
   decodeLimit,
@@ -30,41 +31,60 @@ it.each([
     offset: 64,
     field: "section table",
   }),
-])("refuses $failure.kind bytes as an invalid selected path", (cause) => {
-  const error = project(cause);
-  expect(error).toBeInstanceOf(AnalysisInputError);
-  expect(error).toMatchObject({
-    cause,
-    issues: [
-      {
-        path: ["path"],
-        reason: "invalid_format",
-        message: `Selected artifact /tmp/sample.bin: ${cause.message}`,
-      },
-    ],
-  });
-});
-
-it("names the input that selected the malformed artifact", () => {
-  const cause = malformedInput(
-    "apple-ips",
-    "IPS metadata is not a JSON object",
-  );
-  expect(
-    parseFailureAnalysisError(
-      "inspect_example",
-      "/tmp/join.dylib",
+])(
+  "refuses $failure.kind bytes as a malformed target, not invalid input",
+  (cause) => {
+    const error = project(cause);
+    expect(error).toBeInstanceOf(AnalysisTargetFailureError);
+    expect(error).toMatchObject({
       cause,
-      "join_path",
-    ),
-  ).toMatchObject({
-    issues: [
-      {
-        path: ["join_path"],
-        reason: "invalid_format",
-        message: `Selected artifact /tmp/join.dylib: ${cause.message}`,
+      operation: "inspect_example",
+      path: "/tmp/sample.bin",
+      failure: cause.failure,
+    });
+    const projected = projectAnalysisError(error as AnalysisTargetFailureError);
+    expect(projected).toMatchObject({
+      code: "unsupported_target",
+      category: "unsupported_target",
+      retryable: false,
+      message: expect.stringContaining(cause.message),
+      remediation: {
+        action: expect.stringContaining("request arguments are not at fault"),
       },
-    ],
+      details: {
+        operation: "inspect_example",
+        path: "/tmp/sample.bin",
+        reason: cause.message,
+        failure_kind: cause.failure.kind,
+        format: "elf",
+      },
+    });
+    // A target refusal never sends the caller back to its input contract.
+    expect(projected).not.toHaveProperty("recovery");
+    expect(projected.details).not.toHaveProperty("issues");
+    expect(projected.remediation.action).not.toContain(
+      "Correct the listed fields",
+    );
+    expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
+  },
+);
+
+it("keeps the parser's structure and offset on a malformed target", () => {
+  const cause = new ParseFailureError({
+    kind: "truncated",
+    format: "gguf",
+    detail: "tensor data's declared byte length exceeds the file",
+    offset: 64,
+    field: "tensor data",
+  });
+  const error = project(cause);
+  if (!(error instanceof AnalysisTargetFailureError))
+    throw new Error("Expected a malformed target");
+  expect(projectAnalysisError(error).details).toMatchObject({
+    failure_kind: "truncated",
+    format: "gguf",
+    offset: 64,
+    field: "tensor data",
   });
 });
 
@@ -73,12 +93,16 @@ it("refuses an unsupported form as an unsupported target, keeping undecoded cont
     undecodedContent: true,
   });
   const error = project(cause);
-  expect(error).toBeInstanceOf(AnalysisUnsupportedTargetError);
+  expect(error).toBeInstanceOf(AnalysisTargetFailureError);
   expect(error).toMatchObject({
     cause,
     path: "/tmp/sample.bin",
-    reason: "compressed build-info section",
-    undecodedContent: true,
+    failure: {
+      kind: "unsupported",
+      format: "go",
+      detail: "compressed build-info section",
+      undecodedContent: true,
+    },
   });
 });
 

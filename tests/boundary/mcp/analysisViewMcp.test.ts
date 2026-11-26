@@ -69,6 +69,7 @@ import {
   BINARY_LAYOUT_TEST_PROVIDER,
   binaryLayoutFixture,
 } from "../../fixtures/binaryDiagnostics/layout.js";
+import { inspectionTestProvider } from "../../fixtures/binaryDiagnostics/inspectionProvider.js";
 import { wasmArtifactFixture } from "../../fixtures/wasm/artifact.js";
 import { evmInterfaceFixture } from "../../fixtures/evm/interface.js";
 import type { RelationshipCoverage } from "../../../src/domain/relationshipCoverage.js";
@@ -226,7 +227,11 @@ it("preserves native relationship coverage through inline and retained MCP views
       limitations: ["Callees: fixture read limit"],
       diagnostics: ["Fixture relationship diagnostic"],
     },
-    { status: "partial", limitations: ["Historical read limit"] },
+    {
+      status: "partial",
+      limited_directions: ["callers", "callees"],
+      limitations: ["Historical read limit"],
+    },
     {
       status: "unknown",
       limited_directions: ["callees"],
@@ -311,17 +316,14 @@ it("directs unsupported parent views to the original Evidence", async () => {
     expect(error).toMatchObject({
       code: "unsupported_target",
       retryable: false,
+      retry: "none",
       details: {
         operation: "inspect_analysis_view",
-        reason: expect.stringContaining(
-          'Parent Evidence operation "inspect_recorded_crash"',
-        ),
+        failure_kind: "unsupported",
+        format: "evidence",
+        related_operations: ["get_evidence_bundle", "export_evidence_bundle"],
       },
     });
-    expect(error.remediation.action).toContain("original complete Evidence");
-    expect(error.remediation.action).toContain("get_evidence_bundle");
-    expect(error.remediation.action).toContain("export_evidence_bundle");
-    expect(error.remediation.action).not.toContain("target format");
   }
   const complete = await client.callTool({
     name: "get_evidence_bundle",
@@ -591,13 +593,11 @@ it("discovers an oversized native dossier by exact metadata and reads its retain
 
 it("advertises exact schemas and projects one layout section from retained Evidence", async () => {
   const layout = analysisViewLayoutFixture();
-  const service = new BinaryLayoutService({
-    inspectAndClose(input, options) {
-      return this.inspect(input, options);
-    },
-    identity: BINARY_LAYOUT_TEST_PROVIDER,
-    inspect: () => Promise.resolve(ok(layout)),
-  });
+  const service = new BinaryLayoutService(
+    inspectionTestProvider(BINARY_LAYOUT_TEST_PROVIDER, () =>
+      Promise.resolve(ok(layout)),
+    ),
+  );
   const { client, session } = await connect(service);
   const {
     ajv,
@@ -1823,10 +1823,15 @@ it("extracts an environment state identically from retained, portable and file M
     arguments: { source: { kind: "inline", evidence: hidden }, view },
   });
   const hiddenError = parseMcpToolError(refused).error;
-  expect(hiddenError.code).toBe("unsupported_target");
-  expect(hiddenError.remediation.action).toContain("sensitivity declarations");
-  expect(hiddenError.remediation.action).toContain("capture or summary view");
-  expect(hiddenError.remediation.action).not.toContain("target format");
+  expect(hiddenError).toMatchObject({
+    code: "unsupported_target",
+    retry: "none",
+    details: {
+      failure_kind: "unsupported",
+      format: "evidence",
+      field: "sensitive_value_count",
+    },
+  });
   expect(JSON.stringify(refused)).not.toContain("probe folder");
   await client.ping();
 });
@@ -2082,10 +2087,15 @@ it("projects an environment manifest identically from retained, portable and fil
     arguments: { source: { kind: "inline", evidence: hidden }, view },
   });
   const hiddenError = parseMcpToolError(refused).error;
-  expect(hiddenError.code).toBe("unsupported_target");
-  expect(hiddenError.remediation.action).toContain("sensitivity declarations");
-  expect(hiddenError.remediation.action).toContain("capture or summary view");
-  expect(hiddenError.remediation.action).not.toContain("target format");
+  expect(hiddenError).toMatchObject({
+    code: "unsupported_target",
+    retry: "none",
+    details: {
+      failure_kind: "unsupported",
+      format: "evidence",
+      field: "sensitive_value_count",
+    },
+  });
   expect(JSON.stringify(refused)).toContain("sensitive_values_unretained");
   expect(JSON.stringify(refused)).not.toContain("/api/folders");
   await client.ping();

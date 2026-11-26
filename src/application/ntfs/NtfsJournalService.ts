@@ -1,4 +1,4 @@
-import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
+import { isHostLimitFailure } from "../../domain/parseFailure.js";
 import type { BigIntStats } from "node:fs";
 import {
   ntfsJournalCacheFor,
@@ -8,7 +8,7 @@ import {
 import {
   ArtifactReaderFailure,
   type ArtifactResourceScope,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   artifactFilePrimaryFacts,
   readStableArtifact,
   assertStableArtifactState,
@@ -24,9 +24,8 @@ import {
   AnalysisAccessDeniedError,
   AnalysisCancelledError,
   AnalysisInputError,
+  AnalysisTargetFailureError,
   AnalysisResourceConstraintError,
-  cancelledBy,
-  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
@@ -34,6 +33,7 @@ import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   NTFS_JOURNAL_FILE_BYTES,
+  ntfsJournalFileBytesLimit,
   NTFS_JOURNAL_OPERATION as operation,
   NTFS_JOURNAL_PROVIDER,
   ntfsJournalInputSchema,
@@ -53,7 +53,7 @@ type PathParameter = "mft_path" | "journal_path";
 const inputFailure = (
   parameter: PathParameter,
   message: string,
-  cause?: unknown,
+  cause?: Error,
 ) =>
   new AnalysisInputError(
     operation,
@@ -66,41 +66,77 @@ const inputFailure = (
     [{ path: [parameter], reason: "invalid_format", message }],
   );
 
+/**
+ * An acquisition the call could not hold: above the caller's
+ * `max_file_bytes`, or (measured) beyond what the host could allocate.
+ */
+const acquisitionConstraint = (
+  kind: "budget" | "host",
+  message: string,
+  maxFileBytes: number,
+  cause?: Error,
+): AnalysisError =>
+  new AnalysisResourceConstraintError(
+    operation,
+    kind === "budget" ? "file-size" : "memory",
+    message,
+    { maximum_file_bytes: maxFileBytes },
+    {
+      ...(cause === undefined ? {} : { cause }),
+      ...(kind === "host"
+        ? {
+            measuredExhaustion: true,
+            remediationAction:
+              "Run on a host with more available memory, or select a smaller acquisition. A larger max_file_bytes does not help.",
+          }
+        : {
+            retryable: false,
+            limit: ntfsJournalFileBytesLimit(maxFileBytes),
+            remediationAction:
+              maxFileBytes < NTFS_JOURNAL_FILE_BYTES.maximum
+                ? `Raise max_file_bytes above ${String(maxFileBytes)} bytes on the next call for the same acquisitions; both are read into memory.`
+                : "max_file_bytes is at its maximum; select a smaller acquisition.",
+          }),
+    },
+  );
+
 const readFailure = (
   failure: unknown,
   path: string,
   parameter: PathParameter,
+  maxFileBytes: number,
 ): AnalysisError => {
   const { cause } = artifactFilePrimaryFacts(failure);
+  // The host could not hold an admitted acquisition in memory; this is
+  // measured capacity, not file I/O or the caller's byte budget.
+  if (cause instanceof Error && isHostLimitFailure(cause))
+    return acquisitionConstraint(
+      "host",
+      `The host could not hold the ${parameter} acquisition in memory.`,
+      maxFileBytes,
+      cause,
+    );
   if (cause instanceof ArtifactReaderFailure) {
     if (cause.reason === "cancelled")
-      return cancelledBy(
-        operation,
-        carriedReason(artifactFileCancellationCause(cause)),
-      );
+      return artifactFileCancellationError(operation, cause);
     if (cause.reason === "integrity")
       return readerIntegrityFailure(operation, path, cause);
     if (cause.reason === "limit")
-      return new AnalysisResourceConstraintError(
-        operation,
-        "file-size",
+      return acquisitionConstraint(
+        "budget",
         cause.message,
-        {
-          maximum_file_bytes: NTFS_JOURNAL_FILE_BYTES,
-        },
-        {
-          cause,
-          ...fixedAllowanceOptions("The NTFS journal file allowance", "input", {
-            limit: NTFS_JOURNAL_FILE_BYTES,
-            unit: "bytes",
-          }),
-        },
+        maxFileBytes,
+        cause,
       );
   }
   if (
     cause instanceof ArtifactReaderFailure &&
-    (cause.reason === "path" || cause.reason === "format")
+    cause.parseFailure !== undefined
   )
+    return new AnalysisTargetFailureError(operation, path, cause.parseFailure, {
+      cause,
+    });
+  if (cause instanceof ArtifactReaderFailure && cause.reason === "path")
     return inputFailure(parameter, cause.message, cause);
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")
@@ -126,19 +162,29 @@ const readFailure = (
 const readAcquisition = async (
   path: string,
   parameter: PathParameter,
+  maxFileBytes: number,
   resources: ArtifactResourceScope,
   signal?: AbortSignal,
   cached?: NtfsAcquisition,
 ): Promise<Result<NtfsAcquisition, AnalysisError>> => {
   try {
     if (cached !== undefined) {
+      // A retained acquisition is admitted again under this call's budget.
+      if (cached.snapshot.bytes.length > maxFileBytes)
+        return err(
+          acquisitionConstraint(
+            "budget",
+            `The retained ${parameter} acquisition has ${String(cached.snapshot.bytes.length)} bytes, above max_file_bytes (${String(maxFileBytes)}).`,
+            maxFileBytes,
+          ),
+        );
       await assertStableArtifactState(path, cached.state, signal);
       return ok(cached);
     }
     let state: BigIntStats | undefined;
     const snapshot = await readStableArtifact(
       path,
-      NTFS_JOURNAL_FILE_BYTES,
+      maxFileBytes,
       signal,
       undefined,
       resources,
@@ -156,7 +202,7 @@ const readAcquisition = async (
     return err(
       projectStableArtifactFailure(
         cause,
-        readFailure(cause, path, parameter),
+        readFailure(cause, path, parameter, maxFileBytes),
         path,
         NTFS_JOURNAL_PROVIDER.id,
         operation,
@@ -246,7 +292,12 @@ export const inspectNtfsJournalEvidence = async (
     return err(
       projectStableArtifactFailure(
         cause,
-        readFailure(cause, input.mft_path, "mft_path"),
+        readFailure(
+          cause,
+          input.mft_path,
+          "mft_path",
+          input.max_file_bytes ?? NTFS_JOURNAL_FILE_BYTES.default_value,
+        ),
         input.mft_path,
         NTFS_JOURNAL_PROVIDER.id,
         operation,
@@ -263,10 +314,14 @@ const inspectAdmittedJournal = async (
   cache: NtfsJournalCache,
   signal?: AbortSignal,
 ): Promise<Result<Evidence, AnalysisError>> => {
+  // Evidence records the caller's input; execution uses the resolved budget.
+  const maxFileBytes =
+    input.max_file_bytes ?? NTFS_JOURNAL_FILE_BYTES.default_value;
   const retained = cache.select(input.mft_path, input.journal_path);
   const mft = await readAcquisition(
     input.mft_path,
     "mft_path",
+    maxFileBytes,
     resources,
     signal,
     retained?.mft,
@@ -298,6 +353,7 @@ const inspectAdmittedJournal = async (
   const journal = await readAcquisition(
     input.journal_path,
     "journal_path",
+    maxFileBytes,
     resources,
     signal,
     retained?.journal,

@@ -1,3 +1,4 @@
+import { sameFileStatStamp } from "../filesystem/FileStatStamp.js";
 import type { BigIntStats } from "node:fs";
 import { constants } from "node:fs";
 import { lstat, realpath } from "node:fs/promises";
@@ -17,13 +18,6 @@ import { rootFilesystemFailure } from "./ReferenceSourceFailureBuilders.js";
 
 export const bigLstat = (path: string): Promise<BigIntStats> =>
   lstat(path, { bigint: true });
-
-export const sameFile = (left: BigIntStats, right: BigIntStats): boolean =>
-  left.dev === right.dev &&
-  left.ino === right.ino &&
-  left.size === right.size &&
-  left.mtimeNs === right.mtimeNs &&
-  left.ctimeNs === right.ctimeNs;
 
 export const isAborted = (signal?: AbortSignal): boolean =>
   signal?.aborted === true;
@@ -55,7 +49,7 @@ export const validateDirectory = async (
     };
   try {
     const rootNow = await bigLstat(root);
-    if (!sameFile(rootIdentity, rootNow))
+    if (!sameFileStatStamp(rootIdentity, rootNow))
       return { ok: false, code: "changed", message: "Reference root changed" };
     const stats = path === root ? rootNow : await bigLstat(path);
     if (stats.isSymbolicLink())
@@ -114,7 +108,7 @@ export const prepareRoot = async (
     const canonicalRoot = await realpath(root);
     if (isAborted(signal)) return err(cancelled(signal));
     const canonicalMetadata = await bigLstat(canonicalRoot);
-    if (!sameFile(metadata, canonicalMetadata))
+    if (!sameFileStatStamp(metadata, canonicalMetadata))
       return err(
         failure(
           "invalid-root",

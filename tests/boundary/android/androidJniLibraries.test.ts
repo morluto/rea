@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256 as digest } from "../../support/sha256.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { scheduler } from "node:timers/promises";
@@ -43,9 +43,6 @@ import type { ArtifactReaderFailureReason } from "../../../src/resources/Artifac
 
 const OPERATION = "inspect_android_jni_bindings";
 const LIBRARY = "lib/arm64-v8a/libfixture.so";
-const digest = (bytes: Uint8Array) =>
-  createHash("sha256").update(bytes).digest("hex");
-
 const fixture = async (
   members: readonly (readonly [string, Uint8Array])[] = [
     [LIBRARY, jniElfFixture().bytes],

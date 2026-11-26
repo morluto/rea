@@ -771,18 +771,16 @@ it.each([
     source: repeatedVariantModule(),
     maximum: 4_194_304,
     required: 5_000_000,
-    recovery: "character allowance for variant names",
   },
   {
     boundary: "variants",
     source: `{"formatVersion":"1.1","variants":[${Array(4_097).fill("{}").join(",")}]}`,
     maximum: 4_096,
     required: 4_097,
-    recovery: "4096-variant allowance",
   },
-])(
-  "reports the measured $boundary fixed allowance",
-  async ({ boundary, source, maximum, required, recovery }) => {
+] as const)(
+  "reports the measured $boundary allowance as its report_limits control",
+  async ({ boundary, source, maximum, required }) => {
     const root = await createTestTempDirectory("rea-gradle-report-");
     const path = join(root, "demo.module");
     await writeFile(path, source);
@@ -792,17 +790,31 @@ it.each([
         path,
         max_file_bytes: 1024 * 1024,
       });
-      if (result.ok)
-        throw new Error(`Expected a fixed allowance for ${boundary}`);
+      if (result.ok) throw new Error(`Expected a report limit for ${boundary}`);
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: "resource_constraint",
         retryable: false,
         details: {
           reported_limits: { boundary, maximum, required },
-          refusal: { kind: "fixed_ceiling", allowance_kind: "report" },
+          limit: {
+            control_kind: "parameter",
+            parameter: `report_limits.${boundary}`,
+            effective_value: maximum,
+            default_value: maximum,
+            applies_at: "next_call",
+          },
         },
-        remediation: { action: expect.stringContaining(recovery) },
+        remediation: {
+          action: expect.stringContaining(`report_limits.${boundary}`),
+        },
       });
+      // The same document is reported once the caller raises the control.
+      const raised = await provider.inspect({
+        path,
+        max_file_bytes: 1024 * 1024,
+        report_limits: { [boundary]: required },
+      });
+      if (!raised.ok) throw raised.error;
     } finally {
       await provider.close();
     }

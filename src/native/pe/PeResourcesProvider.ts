@@ -1,21 +1,26 @@
 import {
-  imageFileSizeRemediation,
+  maxFileBytesReadBudget,
+  PE_FILE_CEILING_BYTES,
+} from "../../domain/artifactReadBudget.js";
+import {
+  artifactFileCeilingConstraint,
+  artifactReadBudgetConstraint,
   projectStableArtifactFailure,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   ArtifactReaderFailure,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
   ArtifactResourceScope,
   artifactParseFailure,
 } from "../../resources/index.js";
-import { fixedNativeAllowance } from "../../domain/native/nativeDeadlines.js";
 import type { PeResourcesPort } from "../../ports/binaryDiagnostics/PeResourcesPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import {
-  MAX_INSPECT_PE_DIRECTORY_ENTRIES,
+  peResourceEntryLimit,
+  peResourceMetadataLimit,
   MAX_INSPECT_PE_FILE_BYTES,
   type InspectPeResourcesInput,
 } from "../../domain/native/peResources.js";
@@ -37,16 +42,12 @@ export class PeResourcesProvider implements PeResourcesPort {
   readonly identity = PE_RESOURCES_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        PE_RESOURCES_PROVIDER.id,
-        "inspect_pe_resources",
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      PE_RESOURCES_PROVIDER,
+      "inspect_pe_resources",
+    );
   }
 
   async inspect(input: InspectPeResourcesInput, options?: ExecutionOptions) {
@@ -57,8 +58,12 @@ export class PeResourcesProvider implements PeResourcesPort {
       return await this.#resources.run(async () =>
         withStableArtifactHandle(
           input.path,
-          input.max_file_bytes,
+          PE_FILE_CEILING_BYTES,
           {
+            readBudget: maxFileBytesReadBudget(
+              input.max_file_bytes,
+              MAX_INSPECT_PE_FILE_BYTES,
+            ),
             retainBytes: (size) => Math.min(size, PE_HEADER_PREFIX_BYTES),
             signal: options?.signal,
             resourceScope: this.#resources,
@@ -102,11 +107,6 @@ export class PeResourcesProvider implements PeResourcesPort {
  * there is no value left to raise the bound to, so the advice names the
  * ceiling instead of an impossible raise.
  */
-const entryBudgetRemediation = (maximum: number): string =>
-  maximum >= MAX_INSPECT_PE_DIRECTORY_ENTRIES
-    ? `The image exceeds the ${String(MAX_INSPECT_PE_DIRECTORY_ENTRIES)}-entry resource-directory ceiling this operation accepts. This release has no runtime override. Select a smaller artifact.`
-    : `Raise max_entries above ${String(maximum)} or select a smaller artifact; the limit is the caller-selected resource directory entry budget.`;
-
 const peResourcesFailure = (
   cause: unknown,
   input: InspectPeResourcesInput,
@@ -127,6 +127,27 @@ const peResourcesFailure = (
       description: "PE image",
       fallbackMessage: "PE artifact inspection failed.",
       recognise: (failure, origin) => {
+        const readBudget = artifactReadBudgetConstraint(
+          operation,
+          failure,
+          reportedLimitContext,
+        );
+        if (readBudget !== undefined) return readBudget;
+        if (
+          origin === "owned-or-classified" &&
+          failure instanceof ArtifactReaderFailure &&
+          failure.reason === "limit" &&
+          failure.boundary === "file-size"
+        )
+          return artifactFileCeilingConstraint(
+            operation,
+            failure,
+            {
+              name: "The PE whole-file ceiling (32-bit file offsets)",
+              bytes: PE_FILE_CEILING_BYTES,
+            },
+            reportedLimitContext,
+          );
         if (origin === "owned-or-classified" && isParseLimit(failure, "pe")) {
           const { limit } = failure.failure;
           const boundary = peResourceLimitBoundary(limit);
@@ -136,12 +157,10 @@ const peResourcesFailure = (
                 ...reportedLimitContext,
                 maximum_metadata_bytes: limit.maximum,
               },
-              ...fixedNativeAllowance(
-                "The PE resource metadata allowance",
-                "parser",
-                limit.maximum,
-                "bytes",
-              ),
+              retryable: false,
+              // The result is measured until it passes the budget, so its
+              // complete size is unknown.
+              limit: peResourceMetadataLimit(limit.maximum),
             });
           if (boundary === "capacity")
             return parseLimitConstraint(operation, boundary, failure, {
@@ -150,7 +169,7 @@ const peResourcesFailure = (
                 max_entries: limit.maximum,
               },
               retryable: false,
-              remediationAction: entryBudgetRemediation(limit.maximum),
+              limit: peResourceEntryLimit(limit.maximum),
             });
         }
         if (
@@ -163,18 +182,9 @@ const peResourcesFailure = (
             failure.boundary ?? "memory",
             failure.message,
             reportedLimitContext,
-            {
-              cause: failure,
-              ...(failure.boundary === "file-size"
-                ? {
-                    retryable: false,
-                    remediationAction: imageFileSizeRemediation(
-                      input.max_file_bytes,
-                      MAX_INSPECT_PE_FILE_BYTES,
-                    ),
-                  }
-                : {}),
-            },
+            // A reader limit other than the read allowance and the file
+            // ceiling is an exhaustion the reader observed.
+            { cause: failure, measuredExhaustion: true },
           );
         return undefined;
       },
