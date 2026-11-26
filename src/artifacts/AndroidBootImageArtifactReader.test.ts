@@ -455,6 +455,57 @@ it("retains header metadata and other components when vendor ramdisk table parsi
   expect(stored.get("bootconfig")?.equals(bootconfig)).toBe(true);
 });
 
+it.each([
+  {
+    name: "a vendor ramdisk section without table entries",
+    image: () =>
+      buildVendorBootImage({
+        version: 4,
+        section: Buffer.from("uncovered-section"),
+      }),
+    children: [],
+    limitation: "outside the ramdisk table were not exposed",
+  },
+  {
+    name: "table entries that cover part of the vendor ramdisk section",
+    image: () =>
+      buildVendorBootImage({
+        version: 4,
+        ramdisks: [{ name: "one", bytes: Buffer.from("ramdisk-one") }],
+        section: Buffer.from("ramdisk-onetail-bytes"),
+      }),
+    children: ["vendor_ramdisk/one"],
+    limitation: "outside the ramdisk table were not exposed",
+  },
+  {
+    name: "bytes between the sequential layout and recovery_dtbo",
+    image: () =>
+      buildBootImage({
+        version: 1,
+        kernel: Buffer.from("kernel"),
+        ramdisk: Buffer.alloc(0),
+        recoveryDtbo: Buffer.from("dtbo"),
+        recoveryDtboOffset: 4096 * 5,
+      }),
+    children: ["kernel", "recovery_dtbo"],
+    limitation: "Bytes between the sequential layout and recovery_dtbo",
+  },
+])(
+  "keeps coverage unknown for $name",
+  async ({ image, children, limitation }) => {
+    const path = await writeCarrier("unexposed.img", image());
+    const snapshot = await scanCanonicalArtifactInventory(path);
+    expect(snapshot.coverage.status).toBe("unknown");
+    expect(snapshot.limitations.join(" ")).toContain(limitation);
+    expect(
+      snapshot.occurrences
+        .filter((row) => row.logical_path !== ".")
+        .map((row) => row.logical_path)
+        .sort(),
+    ).toEqual(children);
+  },
+);
+
 it("refuses an AVB footer whose vbmeta overlaps the boot header even when original_image_size is also invalid", async () => {
   const image = buildBootImage({
     version: 0,
