@@ -1,3 +1,8 @@
+import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
+import {
+  ARTIFACT_MEMBER_COUNT_ENVIRONMENT,
+  MAXIMUM_ARTIFACT_READER_COUNT,
+} from "../domain/artifactReaderLimits.js";
 import { err, ok } from "../domain/result.js";
 import type { z } from "zod";
 import type { AnalysisSettingId } from "../domain/analysisSettings.js";
@@ -39,8 +44,15 @@ import {
   agentResultBudgetBytesSchema,
   cliRetainedEvidenceBytesSchema,
 } from "../domain/agentResultBudget.js";
+/** Launch seed for `artifact.member_count`. */
+const artifactMemberCountSchema = positiveDecimalIntegerSchema(
+  1,
+  MAXIMUM_ARTIFACT_READER_COUNT,
+  `${ARTIFACT_MEMBER_COUNT_ENVIRONMENT} must be a decimal integer from 1 to ${String(MAXIMUM_ARTIFACT_READER_COUNT)} members`,
+);
 const environmentSchemas: Readonly<Record<string, z.ZodType<number, string>>> =
   {
+    [ARTIFACT_MEMBER_COUNT_ENVIRONMENT]: artifactMemberCountSchema,
     REA_ASAR_MAX_HEADER_BYTES: asarMaxHeaderBytesSchema,
     REA_ASAR_MAX_LISTING_BYTES: asarMaxListingBytesSchema,
     REA_GHIDRA_VALUE_FLOW_MAX_OPERATIONS: ghidraValueFlowCountSchema,

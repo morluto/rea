@@ -675,6 +675,20 @@ SEA, PCK, ISO 9660, Deno, wxapkg and tar readers, including repeated readable lo
 retains each archive's encoded-size-derived default. The .NET bundle group's
 own `expanded_bytes` controls its independently enforced bundle expansion.
 
+`artifact.member_count` (launch seed `REA_ARTIFACT_MEMBER_COUNT`, default
+100,000, range 1 to 2,147,483,647) is the session default for the per-call
+member counts `bun.module_count`, `dotnet_bundle.entry_count`,
+`node_sea.asset_count` and `deno.vfs_entries`. An explicit `artifact_limits`
+field wins for that call; otherwise the runtime override, then the launch
+seed, then the default applies (see [precedence](#precedence-and-lifetime)).
+A refusal at one of those fields also reports `details.limit` as that
+setting's limit, with the field as `parameter` and the value's `source`, so the
+recovery names both routes: the field for one large artifact, then
+`update_analysis_settings` (or the launch seed for a CLI invocation) for
+repeated work. When a non-default session value applies, inventory and
+extraction report the resolved `effective_limits` even if the call selected no
+`artifact_limits`. Other reader fields are per-call only.
+
 Failures preserve `details.reader_limit` with the exact parameter, effective
 value, units, supported range, required value when known, next-call scope and
 `can_increase`. `update_mode` is `parameter`: the caller selects the value on

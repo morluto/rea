@@ -76,6 +76,11 @@ import {
   JAVASCRIPT_WORKER_HEAP_MIB_MAXIMUM,
 } from "./javascript/javascriptAnalysisResourceControls.js";
 import { DEFAULT_WASM_COMMAND_TIMEOUT_MS } from "./wasm/wasmArtifact.js";
+import {
+  ARTIFACT_MEMBER_COUNT_ENVIRONMENT,
+  DEFAULT_ARTIFACT_MEMBER_COUNT,
+  MAXIMUM_ARTIFACT_READER_COUNT,
+} from "./artifactReaderLimits.js";
 import { AGENT_BUDGET_OPERATIONS } from "./agentBudgetOperations.js";
 interface SettingDefinition {
   readonly environment?: string;
@@ -189,6 +194,17 @@ export const ANALYSIS_SETTINGS = {
     appliesAt: "next_operation",
     provider: "ghidra",
     operations: ghidraDecompileOperations,
+  },
+  "artifact.member_count": {
+    updateMode: "runtime",
+    environment: ARTIFACT_MEMBER_COUNT_ENVIRONMENT,
+    defaultValue: DEFAULT_ARTIFACT_MEMBER_COUNT,
+    minimum: 1,
+    maximum: MAXIMUM_ARTIFACT_READER_COUNT,
+    unit: "count",
+    appliesAt: "next_operation",
+    provider: "rea-artifact-graph",
+    operations: ["inspect_artifact", "extract_artifact"],
   },
   "asar.max_listing_bytes": {
     updateMode: "runtime",

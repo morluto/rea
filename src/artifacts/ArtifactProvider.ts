@@ -1,11 +1,21 @@
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
 import {
+  ARTIFACT_MEMBER_COUNT_PARAMETERS,
+  ARTIFACT_MEMBER_COUNT_SETTING,
+  artifactMemberCountSelected,
+  artifactReaderLimitsInputSchema,
   resolveArtifactReaderLimits,
+  type ArtifactMemberCount,
   type ArtifactReaderLimitsInput,
 } from "../domain/artifactReaderLimits.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
-import { runtimeAsarHeaderAdmission } from "../config/runtimeAnalysisSettings.js";
+import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
+import { ArtifactOperationError } from "../domain/artifactOperationError.js";
+import {
+  runtimeArtifactMemberCount,
+  runtimeAsarHeaderAdmission,
+} from "../config/runtimeAnalysisSettings.js";
 import { artifactTargetRefusal } from "../domain/apple/artifactTargetApplicability.js";
 import {
   bindArtifactFileCleanup,
@@ -128,6 +138,7 @@ export class ArtifactProvider implements AnalysisProvider {
     retained?: RetainedResourceScope,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const resources = new ArtifactResourceScope();
+    const policy = new ArtifactReaderPolicy(this.environment, this.settings);
     let inspected: Result<AnalysisExecution, AnalysisError>;
     try {
       inspected = await inspectInventory(
@@ -141,6 +152,7 @@ export class ArtifactProvider implements AnalysisProvider {
               this.settings,
               inventoryParameters,
               options,
+              policy,
             ),
           }),
         (inventory) => ({
@@ -154,6 +166,7 @@ export class ArtifactProvider implements AnalysisProvider {
         translateArtifactFailure("inspect_artifact", path, cause),
       );
     }
+    if (!inspected.ok) policy.bind(inspected.error, parameters);
     // A completed inspection still fails when its readers could not be
     // released. The caller's lifetime keeps this scope, so a later close of
     // that lifetime retries exactly the owners that are still pending.
@@ -321,6 +334,23 @@ class ArtifactClient implements AnalysisClient {
     parameters: Readonly<Record<string, JsonValue>>,
     options?: ExecutionOptions,
   ) {
+    const policy = new ArtifactReaderPolicy(this.environment, this.settings);
+    const executed = await this.#execute(
+      operation,
+      parameters,
+      policy,
+      options,
+    );
+    if (!executed.ok) policy.bind(executed.error, parameters);
+    return executed;
+  }
+
+  async #execute(
+    operation: AnalysisOperation,
+    parameters: Readonly<Record<string, JsonValue>>,
+    policy: ArtifactReaderPolicy,
+    options?: ExecutionOptions,
+  ) {
     if (operation === "health")
       return ok(createAnalysisExecution(null, ARTIFACT_GRAPH_PROVIDER));
     if (!isArtifactOperation(operation))
@@ -336,7 +366,11 @@ class ArtifactClient implements AnalysisClient {
       if (targetRefusal !== undefined)
         throw this.unsupportedTarget(operation, targetRefusal.reason);
       if (operation === "inspect_artifact") {
-        const inspected = await this.inspectArtifact(parameters, options);
+        const inspected = await this.inspectArtifact(
+          parameters,
+          policy,
+          options,
+        );
         return inspected;
       }
       if (operation === "decode_interface_builder") {
@@ -445,13 +479,7 @@ class ArtifactClient implements AnalysisClient {
               this.settings,
             ),
             integrityPolicy: parsed.integrity_policy,
-            ...(parsed.artifact_limits === undefined
-              ? {}
-              : {
-                  readerLimits: resolveArtifactReaderLimits(
-                    parsed.artifact_limits,
-                  ),
-                }),
+            ...policy.readerLimits(parsed.artifact_limits),
             resourceScope: this.#resourceScope,
           },
           options?.signal,
@@ -469,7 +497,7 @@ class ArtifactClient implements AnalysisClient {
         );
       }
       const parsed = artifactInventoryInputSchema.parse(parameters);
-      const result = await this.inventory(parsed, options);
+      const result = await this.inventory(parsed, policy, options);
       return ok(
         createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
           rawResult: null,
@@ -583,11 +611,13 @@ class ArtifactClient implements AnalysisClient {
 
   private inspectArtifact(
     parameters: Readonly<Record<string, JsonValue>>,
+    policy: ArtifactReaderPolicy,
     options?: ExecutionOptions,
   ) {
     return inspectInventory(
       artifactInventoryInputSchema.parse(parameters),
-      (inventoryParameters) => this.inventory(inventoryParameters, options),
+      (inventoryParameters) =>
+        this.inventory(inventoryParameters, policy, options),
       (inventory) => ({
         subject: subjectFor(this.target, inventory),
         rootImage: rootImage(this.target, inventory.manifest),
@@ -596,7 +626,11 @@ class ArtifactClient implements AnalysisClient {
     );
   }
 
-  private inventory(parsed: InventoryParameters, options?: ExecutionOptions) {
+  private inventory(
+    parsed: InventoryParameters,
+    policy: ArtifactReaderPolicy,
+    options?: ExecutionOptions,
+  ) {
     return inventoryArtifact(this.target.sourcePath ?? this.target.path, {
       expectedRootSha256:
         this.target.bundleInfoPlist === undefined
@@ -610,6 +644,7 @@ class ArtifactClient implements AnalysisClient {
         this.settings,
         parsed,
         options,
+        policy,
       ),
     });
   }
@@ -627,15 +662,83 @@ const inventoryRuntimeOptions = (
   settings: AnalysisSettingsReader | undefined,
   parsed: InventoryParameters,
   options: ExecutionOptions | undefined,
+  policy: ArtifactReaderPolicy,
 ) => ({
   environment,
   asarHeaderAdmission: runtimeAsarHeaderAdmission(environment, settings),
   ...(options?.signal === undefined ? {} : { signal: options.signal }),
   integrity: parsed.integrity_policy,
-  ...(parsed.artifact_limits === undefined
-    ? {}
-    : { readerLimits: resolveArtifactReaderLimits(parsed.artifact_limits) }),
+  ...policy.readerLimits(parsed.artifact_limits),
 });
+
+/**
+ * One call's reader admission policy. The session member count is resolved at
+ * most once, so the limits a reader enforced and the setting a refusal names
+ * agree. Without a caller selection or a non-default session value, readers
+ * keep their own defaults and Evidence reports no effective limits.
+ */
+class ArtifactReaderPolicy {
+  #memberCount: ArtifactMemberCount | undefined;
+
+  constructor(
+    private readonly environment: Readonly<NodeJS.ProcessEnv>,
+    private readonly settings: AnalysisSettingsReader | undefined,
+  ) {}
+
+  #resolved(): ArtifactMemberCount {
+    this.#memberCount ??= runtimeArtifactMemberCount(
+      this.environment,
+      this.settings,
+    );
+    return this.#memberCount;
+  }
+
+  readerLimits(selected: ArtifactReaderLimitsInput | undefined) {
+    const memberCount = this.#resolved();
+    return selected === undefined && memberCount.source === "default"
+      ? {}
+      : {
+          readerLimits: resolveArtifactReaderLimits(
+            selected,
+            memberCount.value,
+          ),
+        };
+  }
+
+  /**
+   * Report a member-count refusal as the setting that backs its field, with
+   * that field as the per-call route and the value's source.
+   */
+  bind(
+    error: AnalysisError,
+    parameters: Readonly<Record<string, JsonValue>>,
+  ): void {
+    const memberCount = this.#memberCount;
+    if (memberCount === undefined || !(error instanceof ArtifactOperationError))
+      return;
+    const fact = error.readerLimit;
+    const parameter = ARTIFACT_MEMBER_COUNT_PARAMETERS.find(
+      (candidate) => candidate === fact?.parameter,
+    );
+    if (fact === undefined || parameter === undefined) return;
+    const selected = artifactReaderLimitsInputSchema.safeParse(
+      parameters.artifact_limits,
+    );
+    const requested =
+      selected.success && artifactMemberCountSelected(selected.data, parameter);
+    error.bindLimit({
+      ...analysisSettingLimit(
+        ARTIFACT_MEMBER_COUNT_SETTING,
+        fact.effective_value,
+        requested ? "request" : memberCount.source,
+      ),
+      parameter,
+      ...(typeof fact.required_value === "number"
+        ? { required_value: fact.required_value }
+        : {}),
+    });
+  }
+}
 
 /**
  * Inventory once, commit the inventory as nested Evidence, and derive the

@@ -351,6 +351,65 @@ test("applies the selected reader budget before extraction and preserves its out
   ).toBe("second");
 });
 
+test("names artifact.member_count and both routes when the launch seed refuses a bundle", async ({
+  cli,
+  workspace,
+}) => {
+  const path = workspace.path("seeded.bin");
+  const bytes = dotnetBundleFixture([
+    { path: "first.txt", bytes: Buffer.from("first") },
+    { path: "second.txt", bytes: Buffer.from("second") },
+  ]).bytes;
+  await writeFile(path, bytes);
+  const command = ["inspect-artifact", path, "--json"];
+  const refused = await cli.run({
+    arguments: command,
+    environment: { REA_ARTIFACT_MEMBER_COUNT: "1" },
+  });
+  expect(refused.exitCode).toBe(1);
+  expect(refused.json).toMatchObject({
+    details: {
+      limit: {
+        setting: "artifact.member_count",
+        parameter: "artifact_limits.dotnet_bundle.entry_count",
+        effective_value: 1,
+        source: "setting",
+      },
+      reader_limit: {
+        parameter: "artifact_limits.dotnet_bundle.entry_count",
+        effective_value: 1,
+      },
+    },
+  });
+  // A one-invocation caller is told the per-call field and the launch seed.
+  const action = (refused.json as { remediation: { action: string } })
+    .remediation.action;
+  expect(action).toContain("artifact_limits.dotnet_bundle.entry_count");
+  expect(action).toContain("REA_ARTIFACT_MEMBER_COUNT");
+  // The caller's own field wins over the session value for this call.
+  const selected = await cli.run({
+    arguments: [
+      ...command,
+      "--artifact-limits",
+      '{"dotnet_bundle":{"entry_count":2}}',
+    ],
+    environment: { REA_ARTIFACT_MEMBER_COUNT: "1" },
+  });
+  expect(selected.exitCode, selected.stderr).toBe(0);
+  const raised = await cli.run({
+    arguments: command,
+    environment: { REA_ARTIFACT_MEMBER_COUNT: "2" },
+  });
+  expect(raised.exitCode, raised.stderr).toBe(0);
+  const inspected = readInspection(raised.json);
+  // The caller selected nothing; the session value is the accepted policy.
+  expect(inspected.source.parameters).toEqual({ integrity_policy: "fail" });
+  expect(inspected.inventory.effective_limits).toMatchObject({
+    dotnet_bundle: { entry_count: 2 },
+    bun: { module_count: 2 },
+  });
+});
+
 test("rejects unknown reader-policy fields before opening the selected artifact", async ({
   cli,
   workspace,
