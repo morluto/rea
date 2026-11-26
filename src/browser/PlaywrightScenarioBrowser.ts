@@ -46,6 +46,9 @@ import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "capture_browser_scenario" as const;
 
+const defaultRemoveDirectory = (path: string): Promise<void> =>
+  rm(path, { recursive: true, force: true, maxRetries: 3 });
+
 const throwIfScenarioCancelled = (signal: AbortSignal | undefined): void => {
   if (signal?.aborted === true)
     throw new BrowserObservationError(OPERATION, "cancelled", {
@@ -784,6 +787,7 @@ const openAttachedScenarioBrowser = async (
   signal: AbortSignal | undefined,
   retainCleanup: ((lease: AnalysisCleanupLease) => void) | undefined,
   commandTimeoutMs: number,
+  removeDirectory: (path: string) => Promise<void>,
 ): Promise<OpenedScenarioBrowser> => {
   const lease = await acquireAttachedScenario(browserRequest, signal);
   let cleanupOwner: PlaywrightScenarioBrowserCleanupOwner | undefined;
@@ -864,12 +868,7 @@ const openAttachedScenarioBrowser = async (
         removeProfile:
           artifactsDir === undefined
             ? undefined
-            : () =>
-                rm(artifactsDir!, {
-                  recursive: true,
-                  force: true,
-                  maxRetries: 3,
-                }),
+            : () => removeDirectory(artifactsDir!),
       });
     cleanupOwner = cleanup;
     lease.admission.cleanupOwner = cleanup;
@@ -930,11 +929,7 @@ const openAttachedScenarioBrowser = async (
               releaseLeaseOnce();
             }
             if (!artifactsRemoved && ownedArtifactsDir !== undefined) {
-              await rm(ownedArtifactsDir, {
-                recursive: true,
-                force: true,
-                maxRetries: 3,
-              });
+              await removeDirectory(ownedArtifactsDir);
               artifactsRemoved = true;
             }
           },
@@ -958,12 +953,7 @@ const openAttachedScenarioBrowser = async (
       if (artifactsDir !== undefined) {
         const ownedArtifactsDir = artifactsDir;
         const cleanup = new AnalysisCleanupLease(
-          () =>
-            rm(ownedArtifactsDir, {
-              recursive: true,
-              force: true,
-              maxRetries: 3,
-            }),
+          () => removeDirectory(ownedArtifactsDir),
           ["browser_profile"],
         );
         try {
@@ -996,10 +986,13 @@ export const openPlaywrightScenarioBrowser = async (
     readonly retainCleanup?: (lease: AnalysisCleanupLease) => void;
     /** The host Chromium launches on; defaults to the running host. */
     readonly platform?: NodeJS.Platform;
+    /** Override temporary directory removal in lifecycle tests. */
+    readonly removeDirectory?: (path: string) => Promise<void>;
   } = {},
 ): Promise<OpenedScenarioBrowser> => {
   throwIfScenarioCancelled(options.signal);
   const platform = options.platform ?? HOST_PLATFORM.platform;
+  const removeDirectory = options.removeDirectory ?? defaultRemoveDirectory;
   // Load Playwright only when a scenario opens; MCP startup stays off its module graph.
   const launcher =
     options.launcher ?? (await import("playwright-core")).chromium;
@@ -1014,6 +1007,7 @@ export const openPlaywrightScenarioBrowser = async (
       options.signal,
       options.retainCleanup,
       commandTimeoutMs,
+      removeDirectory,
     );
 
   throwIfScenarioCancelled(options.signal);
@@ -1071,7 +1065,7 @@ export const openPlaywrightScenarioBrowser = async (
   } catch (cause: unknown) {
     const cleanup = new AnalysisCleanupLease(async () => {
       await releaseLateScenarioCommand(cause);
-      await rm(profilePath, { recursive: true, force: true, maxRetries: 3 });
+      await removeDirectory(profilePath);
     }, ["browser_profile"]);
     // Preserve Playwright's launch diagnostics before the generic provider
     // boundary discards an untyped error. Keep the original cause for late
@@ -1103,8 +1097,7 @@ export const openPlaywrightScenarioBrowser = async (
     closeBrowser: async (disconnectAtBoundary) => {
       await disconnectAtBoundary(() => context.close());
     },
-    removeProfile: () =>
-      rm(profilePath, { recursive: true, force: true, maxRetries: 3 }),
+    removeProfile: () => removeDirectory(profilePath),
   });
   try {
     throwIfScenarioCancelled(options.signal);
