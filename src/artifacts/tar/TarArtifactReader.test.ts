@@ -468,6 +468,38 @@ describe("tar header edge cases", () => {
     ]);
   });
 
+  it("decodes a pax path under hdrcharset=BINARY as Latin-1 and keeps later members", async () => {
+    // Python tarfile and libarchive write this for a name that is not UTF-8.
+    const pax = Buffer.from(
+      "21 hdrcharset=BINARY\n17 path=caf\xe9.txt\n",
+      "latin1",
+    );
+    const strict = Buffer.from("17 path=caf\xe9.txt\n", "latin1");
+    const archive = (records: Buffer) =>
+      Buffer.concat([
+        tarHeader({ name: "PaxHeader", type: "x" }, records.length),
+        records,
+        Buffer.alloc(512 - records.length),
+        tarMembers([
+          { name: "ignored", data: "a" },
+          { name: "after.txt", data: "b" },
+        ]),
+        end,
+      ]);
+    const result = await read(archive(pax));
+    expect(result.entries.map((entry) => entry.path)).toEqual([
+      "café.txt",
+      "after.txt",
+    ]);
+    expect(result.entries[0]?.limitations).toEqual([
+      "tar pax path is not UTF-8 under hdrcharset=BINARY; decoded as Latin-1; raw hex: 636166e92e747874.",
+    ]);
+    expect(result.metadata?.end_state).toBe("end-marker");
+    expect(result.coverage[0]?.status).toBe("complete");
+    // Without hdrcharset=BINARY the value must still be UTF-8.
+    expect((await read(archive(strict))).metadata?.end_state).toBe("malformed");
+  });
+
   it("raises cancellation from a gzip read that is waiting for output", async () => {
     // A descriptor whose reads never complete keeps the inflater waiting.
     const handle = { read: () => new Promise<never>(() => undefined) };

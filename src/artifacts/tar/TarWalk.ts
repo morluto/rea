@@ -252,6 +252,7 @@ export const walkTar = async (
   const global = new Map<string, string>();
   let chargedGlobalPax = 0;
   let local: TarPaxRecords | undefined;
+  let localLimitations: string[] = [];
   let longName: Uint8Array | undefined;
   let longLink: Uint8Array | undefined;
   let endState: TarEndState | undefined;
@@ -386,6 +387,10 @@ export const walkTar = async (
             );
             break;
           }
+          const latin1 = pax.latin1.map(
+            (key) =>
+              `tar pax ${key} is not UTF-8 under hdrcharset=BINARY; decoded as Latin-1; raw hex: ${Buffer.from(pax.records.get(key)!, "latin1").toString("hex")}.`,
+          );
           if (typeflag === TAR_TYPEFLAGS.paxGlobal) {
             // Charge the map that withPax is about to copy. Repeated global
             // headers otherwise accumulate without reaching this budget.
@@ -399,7 +404,11 @@ export const walkTar = async (
               retained.refund(chargedGlobalPax - nextBytes);
             chargedGlobalPax = nextBytes;
             applyPaxInPlace(global, pax.records);
-          } else local = pax.records;
+            limitations.push(...latin1);
+          } else {
+            local = pax.records;
+            localLimitations = latin1;
+          }
         } else {
           const end = data.indexOf(0);
           const value = data.subarray(0, end === -1 ? data.length : end);
@@ -408,7 +417,7 @@ export const walkTar = async (
         }
         continue;
       }
-      const memberLimitations: string[] = [];
+      const memberLimitations = localLimitations;
       const name =
         records.get("path") ??
         decodeName(longName ?? header.name, "name", memberLimitations);
@@ -419,6 +428,7 @@ export const walkTar = async (
           ? null
           : decodeName(linkBytes, "link name", memberLimitations));
       local = undefined;
+      localLimitations = [];
       longName = undefined;
       longLink = undefined;
       // An old GNU sparse header continues its sparse map in extension

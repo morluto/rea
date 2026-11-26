@@ -17,9 +17,11 @@ reason. A gzip stream that does not hold tar is not claimed.
 Each regular file, directory and symbolic link is an occurrence. Names come
 from, in order: a pax `path` record, a GNU `L` long-name record, or the ustar
 `prefix` and `name` fields. A leading `./` is dropped from the logical path
-and kept in `source_path`. Member contents are hashed and classified like
-ZIP members, so an ELF, Godot PCK or UnityFS member inside a tarball is
-named by its format.
+and kept in `source_path`. A pax `path`, `linkpath`, `uname` or `gname`
+value that is not UTF-8 is read only under `hdrcharset=BINARY`, as Latin-1
+with a limitation giving its raw bytes. Member contents are hashed and
+classified like ZIP members, so an ELF, Godot PCK or UnityFS member inside a
+tarball is named by its format.
 
 The root occurrence's `format_metadata` (`kind: "tar"`) records:
 
