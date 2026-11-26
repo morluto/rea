@@ -287,24 +287,27 @@ In launch mode, declared non-cookie seeds are also installed with a single
 synchronous browser-context init script for top-level documents. Playwright
 runs that script after a document is created and before the document's own
 scripts, including a popup opened later in the scenario-owned context, without
-waiting for an asynchronous round trip before writing storage. Skip decisions
-and writes share that one ordered hook so page/context init-script ordering
-cannot re-seed after a reload. Third-party iframes are skipped by that init
-script and continue to be seeded by the CDP path keyed on
-`Storage.getStorageKey`, so a partitioned iframe at origin B does not block a
-later first-party popup at origin B. Once-per-area state stays outside
-clearable local and session storage: Node tracks first-party local origins and
-refreshes the context init payload before CDP resume when a first-party local
-area is initialized, and each seeded tab records durable per-tab once flags in
-`window.name` (including after CDP writes) so a reload after the application
-deletes seeded keys does not restore them. Captured storage inventories omit
-any legacy bookkeeping key. A storage write failure inside the init script, or
-a failure while refreshing the context seed hook, marks popup seed coverage
-unknown. In connect mode, REA does not install a context-wide init script on
-the caller's shared browser context, so unrelated tabs are not mutated; if a
-popup is discovered when non-cookie seeds are declared, the capture retains
-completed observations and marks `storage` coverage missing, with equality
-ineligible, even when popup lifecycle events were not selected.
+waiting for an asynchronous round trip before writing storage. The selected
+page's tab is marked CDP-owned in durable `window.name` so later same-tab
+navigations skip that context hook (CDP continues to own that tab); popups
+still receive the hook. Skip decisions and writes share one ordered path so
+page/context init-script ordering cannot re-seed a popup after a reload.
+Third-party iframes are skipped by that init script and continue to be seeded
+by the CDP path keyed on `Storage.getStorageKey`, so a partitioned iframe at
+origin B does not block a later first-party popup at origin B. Once-per-area
+state stays outside clearable local and session storage: Node tracks
+first-party local origins and refreshes the context init payload before CDP
+resume when a first-party local area is initialized, and each seeded popup tab
+records durable per-tab once flags in `window.name` so a reload after the
+application deletes seeded keys does not restore them. Captured storage
+inventories omit any legacy bookkeeping key. A storage write failure inside
+the init script, or a failure while refreshing the context seed hook, marks
+popup seed coverage unknown. In connect mode, REA does not install a
+context-wide init script on the caller's shared browser context, so unrelated
+tabs are not mutated; if a popup is discovered when non-cookie seeds are
+declared, the capture retains completed observations and marks `storage`
+coverage missing, with equality ineligible, even when popup lifecycle events
+were not selected.
 
 The result is Evidence with an initial state followed by one record per
 declared action. Each step reports action status, elapsed time, sanitized URLs,
