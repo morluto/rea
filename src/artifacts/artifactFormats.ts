@@ -20,6 +20,7 @@ import {
 } from "../resources/index.js";
 import type { ArtifactReaderAdmission } from "./ArtifactReaderAdmission.js";
 import { AndroidBootImageArtifactReader } from "./AndroidBootImageArtifactReader.js";
+import { AndroidVbmetaArtifactReader } from "./AndroidVbmetaArtifactReader.js";
 import {
   AsarArtifactReader,
   type AsarAdmission,
@@ -41,7 +42,9 @@ import { WindowsPrefetchArtifactReader } from "./WindowsPrefetchArtifactReader.j
 import type { GodotPckAdmission } from "./GodotPckLocation.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
 import { InesArtifactReader } from "./InesArtifactReader.js";
+import { NdsRomArtifactReader } from "./NdsRomArtifactReader.js";
 import { Iso9660ArtifactReader } from "./Iso9660ArtifactReader.js";
+import { QualcommMbnArtifactReader } from "./QualcommMbnArtifactReader.js";
 import { HexRecordArtifactReader } from "./HexRecordArtifactReader.js";
 import { MachOSliceArtifactReader } from "./MachOSliceArtifactReader.js";
 import { NativeDmgArtifactReader } from "./NativeDmgArtifactReader.js";
@@ -56,6 +59,7 @@ import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactRead
 import { AndroidSparseImageArtifactReader } from "./AndroidSparseImageArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { BfltArtifactReader } from "./BfltArtifactReader.js";
+import { SwitchExecutableArtifactReader } from "./SwitchExecutableArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
 import { TarArtifactReader } from "./tar/TarArtifactReader.js";
@@ -264,6 +268,25 @@ const gpuAsset = <Id extends GpuAssetFormat>(id: Id) =>
       new GpuAssetArtifactReader(path, id, sourceOf(options)),
   });
 
+const switchExecutable = <Id extends "nso" | "nro">(id: Id) =>
+  container(id, {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      id === "nso"
+        ? "NSO inventory reports header facts and text, rodata and data segments. LZ4-compressed segments are decompressed within artifact_limits.expanded_bytes and hashed against the header; code is not disassembled or executed."
+        : "NRO inventory reports header facts, text, rodata and data segments and the ASET icon, NACP and RomFS ranges. Asset contents are not interpreted, and code is not disassembled or executed.",
+    createReader: (path, options) =>
+      new SwitchExecutableArtifactReader(
+        path,
+        id,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+      ),
+  });
+
 const NON_ZIP_FORMATS = {
   "dotnet-bundle": container("dotnet-bundle", {
     retainClassifiedSource: true,
@@ -406,6 +429,20 @@ const NON_ZIP_FORMATS = {
         options.readerLimits?.tar,
       ),
   }),
+  nds: container("nds", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Nintendo DS ROM inventory reports cartridge header facts and lists the ARM9 and ARM7 binaries, overlay files and NitroROM filesystem files as stored byte ranges. Secure-area encryption, compression and NitroARC archives inside files are not decoded.",
+    createReader: (path, options) =>
+      new NdsRomArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+      ),
+  }),
   dds: gpuAsset("dds"),
   glb: gpuAsset("glb"),
   ktx: gpuAsset("ktx"),
@@ -420,6 +457,8 @@ const NON_ZIP_FORMATS = {
     createReader: (path, options) =>
       new UImageArtifactReader(path, sourceOf(options), options.integrity),
   }),
+  nso: switchExecutable("nso"),
+  nro: switchExecutable("nro"),
   "android-boot-image": container("android-boot-image", {
     roleContainer: true,
     retainClassifiedSource: true,
@@ -438,6 +477,20 @@ const NON_ZIP_FORMATS = {
     readerLimitation: ANDROID_OTA_PAYLOAD_LIMITATIONS.inventoryScope,
     createReader: (path, options) =>
       new AndroidOtaPayloadArtifactReader(path, sourceOf(options)),
+  }),
+  "android-vbmeta": container("android-vbmeta", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Android vbmeta inventory exposes the authentication block, public key, public key metadata, and decoded descriptors as stored children. AVB footers on partition images other than boot images are out of scope.",
+    createReader: (path, options) =>
+      new AndroidVbmetaArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.android_vbmeta,
+      ),
   }),
   "android-sparse-image": container("android-sparse-image", {
     roleContainer: true,
@@ -626,6 +679,16 @@ const NON_ZIP_FORMATS = {
       "Windows Prefetch inventory reports the recorded executable name, its name hash, the declared file size beside the observed size, the recorded run count and whether a last-run timestamp is present. The timestamp value, the volume list and the read-ahead file list are not decoded; MAM-compressed containers are identified without being decoded, and nothing is executed or read from a live endpoint.",
     createReader: (path, options) =>
       new WindowsPrefetchArtifactReader(path, sourceOf(options)),
+  }),
+  "qualcomm-mbn": container("qualcomm-mbn", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Qualcomm MBN inventory reports the header fields (40 bytes for v3 and v5, 48 for v6) and the stored code, signature, certificate-chain and metadata ranges. For an ELF image whose program headers declare a Qualcomm hash segment it decodes the hash-segment header, hash count and per-program-header hash positions, listing the first 64 positions inline. Signatures and certificates are located, not verified; hashes are not recomputed and nothing is executed. Ranges outside the file or the ELF hash segment are reported as limitations and omitted from inventory.",
+    createReader: (path, options) =>
+      new QualcommMbnArtifactReader(path, sourceOf(options)),
   }),
   "ntfs-mft": described("ntfs-mft", {
     ...plain,

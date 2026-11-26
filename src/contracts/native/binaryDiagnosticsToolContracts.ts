@@ -21,6 +21,10 @@ import {
 import { inspectByteEntropyInputSchema } from "../../domain/native/byteEntropy.js";
 import { byteEntropyOutputSchema } from "./byteEntropyOutputSchema.js";
 import {
+  inspectPeOverlayInputSchema,
+  peOverlaySchema,
+} from "../../domain/native/peOverlay.js";
+import {
   inspectRecordedCrashInputSchema,
   recordedCrashSchema,
 } from "../../domain/native/recordedCrash.js";
@@ -147,6 +151,23 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     examples: [
       {
         title: "Inspect PE TLS callbacks and load configuration",
+        input: { path: "/artifacts/program" },
+      },
+    ],
+  },
+  {
+    name: "inspect_pe_overlay",
+    availability: "standalone",
+    cli: true,
+    ...toolContractMetadata("inspect_pe_overlay", evidenceEffects),
+    kind: "native-provider",
+    description:
+      "Report the overlay appended after a PE32/PE32+ image without executing it. Image end is the maximum of SizeOfHeaders and every contributing section's declared PointerToRawData plus SizeOfRawData; each section also records its loader-rounded pointer, which does not shorten that end. Zero-size and uninitialized sections are listed and do not extend that end. present is false when no bytes follow the image. A security directory that passes extent checks and lies inside the overlay is split into certificate_table and other ranges. Each other range has its offset, size, SHA-256, a fixed 4096-byte Shannon entropy sample, the first 16 bytes, and a leading format when a bounded content probe identifies one. Packers are not identified, signatures are not verified, and section slack is not treated as overlay. Reads one stable local regular file.",
+    inputSchema: inspectPeOverlayInputSchema,
+    outputSchema: evidenceResultOf(peOverlaySchema),
+    examples: [
+      {
+        title: "Report the overlay appended after a PE image",
         input: { path: "/artifacts/program" },
       },
     ],

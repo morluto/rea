@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import {
+  countJsonValues,
   equalJsonValues,
   jsonObjectSchema,
   ownedJsonObjectSchema,
@@ -303,5 +304,20 @@ describe("inert JSON data boundaries", () => {
       },
     });
     expect(jsonValueSchema.parse(value)).toEqual([1, { nested: "preserved" }]);
+  });
+});
+
+describe("countJsonValues", () => {
+  it.each([
+    ["{}", 1],
+    ['{"a":[1,-2.5e+3,true,null,"x"]}', 8],
+    ['["{[\\"]", "\\\\", {"k":"v"}]', 6],
+    ["  [ 0 , 1 ]  ", 3],
+  ])("counts the values JSON.parse allocates in %s", (text, expected) => {
+    expect(countJsonValues(text, 100)).toBe(expected);
+  });
+
+  it("stops one value past the limit", () => {
+    expect(countJsonValues(`[${"0,".repeat(10)}0]`, 4)).toBe(5);
   });
 });

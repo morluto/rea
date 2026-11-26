@@ -642,6 +642,34 @@ it("follows an existing owner's release via withInheritedCleanupOwnership", () =
   expect(cleanWrapper.cleanupIncomplete).toBe(false);
 });
 
+it("reports a capability refusal as retryable once its cleanup settles", () => {
+  // The refusal is retryable only after the bound cleanup owner releases, so the
+  // flag has to follow the live cleanup state rather than the build-time one.
+  const error = new AnalysisCapabilityUnavailableError(
+    "ghidra",
+    "inspect",
+    "the selected provider is unavailable",
+    {
+      retryable: true,
+      cleanup: { reason: "close denied", resources: ["owned-worker"] },
+    },
+  );
+  expect(error.cleanupIncomplete).toBe(true);
+  expect(error.retryable).toBe(false);
+  releaseOwnedCleanup(error);
+  expect(error.cleanupIncomplete).toBe(false);
+  expect(error.retryable).toBe(true);
+});
+
+it("keeps a refusal the owner did not mark retryable non-retryable", () => {
+  const error = new AnalysisCapabilityUnavailableError(
+    "ghidra",
+    "inspect",
+    "the selected provider is unavailable",
+  );
+  expect(error.retryable).toBe(false);
+});
+
 it("keeps cleanupIncomplete and cleanupResources consistent when attaching secondary cleanup to a non-cleanup error", () => {
   const primary = new AnalysisInputError("open", undefined, []);
   const secondary = new ProviderCleanupError("fixture", ["leaked-fd"], {});

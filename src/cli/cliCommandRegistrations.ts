@@ -104,6 +104,14 @@ export const CLI_COMMAND_REGISTRATIONS = {
     () => import("./nugetNupkgCommands.js"),
     "registerNugetNupkgCommands",
   ),
+  vsixPackage: cliRegistrar(
+    () => import("./vsixPackageCommands.js"),
+    "registerVsixPackageCommands",
+  ),
+  ociImageLayout: cliRegistrar(
+    () => import("./ociImageLayoutCommands.js"),
+    "registerOciImageLayoutCommands",
+  ),
   erlang: cliRegistrar(
     () => import("./erlangCommands.js"),
     "registerErlangCommands",
@@ -305,6 +313,8 @@ const CLI_FAMILY_REGISTRATIONS: {
     "rust",
     "pythonPyc",
     "nugetNupkg",
+    "vsixPackage",
+    "ociImageLayout",
     "erlang",
     "v8CodeCache",
     "mavenGradleMetadata",
