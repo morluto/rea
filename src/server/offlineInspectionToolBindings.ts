@@ -18,6 +18,7 @@ import type { PeCertificatesService } from "../application/binaryDiagnostics/PeC
 import type { PeImportsService } from "../application/binaryDiagnostics/PeImportsService.js";
 import type { PeLoadConfigService } from "../application/binaryDiagnostics/PeLoadConfigService.js";
 import type { PeUnwindRangesService } from "../application/binaryDiagnostics/PeUnwindRangesService.js";
+import type { PeOverlayService } from "../application/binaryDiagnostics/PeOverlayService.js";
 import type { PeResourcesService } from "../application/binaryDiagnostics/PeResourcesService.js";
 import type { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
 import type { WindowsShortcutService } from "../application/binaryDiagnostics/WindowsShortcutService.js";
@@ -130,6 +131,12 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
       run: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<PeUnwindRangesService>,
+  peOverlay: ((service) => ({
+    inspect_pe_overlay: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<PeOverlayService>,
   releaseExposure: ((service) => ({
     audit_release_exposure: {
       admission: "sdk",

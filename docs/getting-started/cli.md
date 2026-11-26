@@ -506,6 +506,16 @@ rea extract-artifact ./game.nds --json
 See [Nintendo DS ROMs](../guides/firmware/nds-roms.md) for header detection, member paths,
 checksum and range limitations, and what is not decoded.
 
+Inventory and extract a Qualcomm MBN boot image or an ELF image with a hash segment:
+
+```sh
+rea inspect-artifact ./sbl1.mbn --json
+rea extract-artifact ./sbl1.mbn --json
+```
+
+See [Qualcomm MBN images](../guides/firmware/qualcomm-mbn-images.md) for header
+recognition, regions, hash segments and what is not verified.
+
 Inspect local model declarations without loading weights:
 
 ```bash
@@ -1862,6 +1872,16 @@ rea inspect-pe-load-config /absolute/path/to/application.exe --json
 Reports TLS callbacks and size-covered load-config fields without execution.
 Use `--max-callbacks` and `--max-file-bytes` to set read budgets. See
 [PE TLS and load configuration](../pe-load-config.md).
+
+### PE overlay
+
+```sh
+rea inspect-pe-overlay /absolute/path/to/application.exe --json
+```
+
+Reports where the PE image ends on disk and the bytes appended after it. A
+certificate table inside that span is split from the other ranges. Use
+`--max-file-bytes` to set the read budget. See [PE overlay](../guides/native/pe-overlay.md).
 
 ### Binary hardening
 

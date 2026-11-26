@@ -55,6 +55,7 @@ import {
   PE_IMPORTS_PROVIDER,
   PE_LOAD_CONFIG_PROVIDER,
   PE_UNWIND_RANGES_PROVIDER,
+  PE_OVERLAY_PROVIDER,
   PE_RESOURCES_PROVIDER,
   RELEASE_EXPOSURE_PROVIDER,
   WEB_SCRIPT_EXPORT_PROVIDER,
@@ -500,6 +501,9 @@ export const CAPABILITY_DECLARATIONS = {
     providers: [
       providerBinding(PE_UNWIND_RANGES_PROVIDER, ["inspect_pe_unwind_ranges"]),
     ],
+  },
+  peOverlay: {
+    providers: [providerBinding(PE_OVERLAY_PROVIDER, ["inspect_pe_overlay"])],
   },
   binaryHardening: {
     providers: [

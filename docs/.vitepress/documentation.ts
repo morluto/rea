@@ -184,6 +184,11 @@ export const documentationSections = [
         route: "/pe-unwind-ranges",
       },
       {
+        text: "PE overlay",
+        source: "guides/native/pe-overlay.md",
+        route: "/pe-overlay",
+      },
+      {
         text: "Match native functions across builds",
         source: "native-function-matching.md",
         route: "/native-function-matching",
@@ -442,6 +447,11 @@ export const documentationSections = [
         text: "U-Boot FIT images",
         source: "fit-images.md",
         route: "/fit-images",
+      },
+      {
+        text: "Qualcomm MBN images",
+        source: "guides/firmware/qualcomm-mbn-images.md",
+        route: "/qualcomm-mbn-images",
       },
       {
         text: "Intel HEX and S-record images",
