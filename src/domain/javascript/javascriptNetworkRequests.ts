@@ -4,10 +4,12 @@ import type {
   JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import * as t from "@babel/types";
-import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
+import {
+  stringValue,
+  unwrapJavaScriptExpression,
+} from "./javascriptAstValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
 import { isIntrinsicInstanceMethodCall } from "./javascriptSemanticIntrinsicInstances.js";
-import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
 
 const isFetchCall = (
   node: t.Node,

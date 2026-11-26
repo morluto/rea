@@ -1,12 +1,12 @@
 import {
-  analysisViewInputError,
+  invalidAnalysisViewSubject,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import { analysisTextPage } from "./analysisViewText.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import type { FunctionDossier } from "../native/functionDossier.js";
 import { jsonValueSchema } from "../jsonValue.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   assertOwnedView,
@@ -235,15 +235,8 @@ export const projectNativeFunctionView = (
   );
   const artifact = parent.artifact;
   if (!artifact)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message:
-            "Native function Evidence requires an artifact-bound subject.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "Native function Evidence requires an artifact-bound subject.",
     );
   const common = parentFields(parent, dossier, artifact);
   if (view.kind === "summary") return ok(summaryView(view, dossier, common));

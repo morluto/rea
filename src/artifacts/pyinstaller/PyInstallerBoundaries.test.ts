@@ -5,7 +5,8 @@ import { getEventListeners, once } from "node:events";
 import { Readable } from "node:stream";
 import { finished } from "node:stream/promises";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
+import { sha256 as hash } from "../../../tests/support/sha256.js";
 import { rename, unlink, writeFile, type FileHandle } from "node:fs/promises";
 import { buffer } from "node:stream/consumers";
 import { deflateSync, Inflate } from "node:zlib";
@@ -30,8 +31,6 @@ import {
   PYTHON_39_MAGIC,
 } from "./CArchive.fixture.js";
 
-const hash = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 const archive = (body: Buffer) =>
   cArchiveExecutable({
     layout: "2.1",
@@ -167,6 +166,47 @@ it.each(
   },
 );
 
+it("distinguishes a short compressed source from unused bytes in the declared span", async () => {
+  const payload = Buffer.from("member");
+  const compressed = deflateSync(payload);
+  const signal = new AbortController().signal;
+  const open = (
+    bytes: Buffer,
+    sourceBytes: number,
+  ): ReturnType<typeof pyInstallerMemberStream> =>
+    pyInstallerMemberStream(Readable.from([bytes]), {
+      sourceBytes,
+      compressed: true,
+      header: undefined,
+      expectedBytes: payload.length,
+      maxBytes: payload.length,
+      signal,
+    });
+  const short = open(compressed, compressed.length + 4);
+  try {
+    await expect(buffer(short.output)).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "read-coverage",
+    });
+  } finally {
+    short.output.destroy();
+    await short.completion.catch(() => undefined);
+  }
+  const unused = open(
+    Buffer.concat([compressed, Buffer.from("junk")]),
+    compressed.length + 4,
+  );
+  try {
+    await expect(buffer(unused.output)).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "layout-consistency",
+    });
+  } finally {
+    unused.output.destroy();
+    await unused.completion.catch(() => undefined);
+  }
+});
+
 it.each([false, true])(
   "forwards a queued source failure before cancellation (compressed: %s)",
   async (compressed) => {
@@ -227,13 +267,13 @@ it("forwards an established native inflate failure before cancellation", async (
   });
   try {
     await expect(buffer(member.output)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       cause: { code: "Z_DATA_ERROR" },
     });
     expect(compressionFailure).toBeDefined();
     expect(member.output.errored?.cause).toBe(compressionFailure);
     await expect(member.completion).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       cause: compressionFailure,
     });
   } finally {
@@ -469,7 +509,9 @@ it("binds materialization to the inventoried digest and checks cached carrier fr
     );
     await reader.prepareContainer(hash(bytes));
     await reader.prepareContainer(hash(bytes));
-    await writeFile(path, archive(Buffer.from("other")));
+    // A same-length rewrite can keep the previous timestamp, which the
+    // cached carrier treats as unchanged. The replacement has to change size.
+    await writeFile(path, archive(Buffer.from("other-content")));
     await expect(reader.prepareContainer(hash(bytes))).rejects.toMatchObject({
       reason: "integrity",
     });
@@ -531,7 +573,11 @@ it.each(["ENOENT", "ENOTDIR"] as const)(
           });
           expect(
             projectAnalysisError(
-              translateArtifactFailure("extract_artifact", cause),
+              translateArtifactFailure(
+                "extract_artifact",
+                "/selected/artifact",
+                cause,
+              ),
             ),
           ).toMatchObject({
             category: "integrity_mismatch",
@@ -779,7 +825,7 @@ it("reports a truncated compressed member when reading its stream", async () => 
   await withPyInstallerReader(bytes, async (reader) => {
     const entry = (await members(reader))[0]!;
     await expect(buffer(await reader.open(entry))).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
     });
   });
 });

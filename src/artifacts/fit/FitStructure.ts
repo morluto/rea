@@ -1,3 +1,4 @@
+import { appendToMapList } from "../../domain/appendToMapList.js";
 import { createHash } from "node:crypto";
 import { crc32 } from "node:zlib";
 import {
@@ -24,7 +25,10 @@ import {
   BinaryReader,
 } from "../../domain/binaryContainer.js";
 import { isParseLimit } from "../../domain/parseFailureAnalysisError.js";
-import { ArtifactReaderFailure } from "../../resources/index.js";
+import {
+  ArtifactReaderFailure,
+  malformedArtifact,
+} from "../../resources/index.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 // Fixed resource bounds; configurable ceilings are tracked in #6176.
@@ -90,7 +94,7 @@ const CONFIGURATION_REFERENCES = [
 
 const align4 = (value: number): number => Math.ceil(value / 4) * 4;
 const formatFailure = (detail: string): ArtifactReaderFailure =>
-  new ArtifactReaderFailure("format", `FIT is malformed: ${detail}`);
+  malformedArtifact("fit", `FIT is malformed: ${detail}`);
 const capacityFailure = (message: string): ArtifactReaderFailure =>
   new ArtifactReaderFailure("limit", message, { boundary: "capacity" });
 const nodeName = (node: FitNode): string =>
@@ -607,9 +611,7 @@ export const readFitStructure = (
   const children = new Map<string, FitNode[]>();
   for (const node of tree.nodes) {
     if (node.parent === null) continue;
-    const siblings = children.get(node.parent);
-    if (siblings === undefined) children.set(node.parent, [node]);
-    else siblings.push(node);
+    appendToMapList(children, node.parent, node);
   }
   const root = byPath.get("/");
   if (root === undefined || !byPath.has("/images"))

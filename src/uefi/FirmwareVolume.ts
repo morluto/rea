@@ -1,6 +1,9 @@
 import { Budget } from "../domain/budget.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
-import { BinaryReader } from "../domain/binaryContainer.js";
+import {
+  BinaryReader,
+  createBinaryReaderCache,
+} from "../domain/binaryContainer.js";
 import { Buffer } from "node:buffer";
 import { absoluteOffset, alignUp, type ScanRegion } from "./UefiBytes.js";
 import {
@@ -63,16 +66,7 @@ export const unsupportedVolumeBodyReason = (
 ): string =>
   `Firmware volume at 0x${header.absoluteBase.toString(16)} has an unsupported file-system GUID (${header.fileSystemGuid ?? "unavailable"}); its body was not parsed.`;
 
-const fvReaders = new WeakMap<Buffer, BinaryReader>();
-
-const fvReaderFor = (buffer: Buffer): BinaryReader => {
-  let reader = fvReaders.get(buffer);
-  if (reader === undefined) {
-    reader = new BinaryReader(buffer, true, "UEFI firmware volume");
-    fvReaders.set(buffer, reader);
-  }
-  return reader;
-};
+const fvReaderFor = createBinaryReaderCache(true, "UEFI firmware volume");
 
 /**
  * Parse one header at a local position. Returns null when the position cannot

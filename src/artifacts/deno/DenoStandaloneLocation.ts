@@ -1,8 +1,11 @@
+import { decodeMachoFixedName } from "../../domain/apple/appleMachoNames.js";
 import { BinaryReader, hasElfMagic } from "../../domain/binaryContainer.js";
 import { hasDosMzMagic } from "../../domain/dosMz.js";
 import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import {
   hashArtifactRange,
+  uniqueArtifactRanges,
+  type ArtifactCarrierRange,
   readArtifactRange as readExact,
 } from "../ArtifactCarrierRange.js";
 import type { FileHandle } from "node:fs/promises";
@@ -54,6 +57,7 @@ import {
 import {
   abortIfNeeded,
   ArtifactReaderFailure,
+  malformedArtifact,
   artifactParseFailure,
 } from "../../resources/index.js";
 import { ParseFailureError } from "../../domain/parseFailure.js";
@@ -98,9 +102,7 @@ export type DenoStandaloneProbe =
       readonly failure: ArtifactReaderFailure;
     };
 
-interface SectionRange {
-  readonly offset: number;
-  readonly length: number;
+interface SectionRange extends ArtifactCarrierRange {
   readonly embedding: DenoStandaloneLocation["embedding"];
 }
 
@@ -157,8 +159,7 @@ export const locateDenoStandalone = async (
   } catch (cause) {
     if (
       cause instanceof ArtifactReaderFailure &&
-      (cause.reason === "format" ||
-        cause.reason === "malformed" ||
+      (cause.reason === "malformed" ||
         cause.reason === "truncated" ||
         cause.reason === "unsupported" ||
         cause.reason === "limit")
@@ -225,12 +226,12 @@ const locateMachO = async (carrier: Carrier): Promise<SectionRange[]> => {
   for (const [index, slice] of container.header.slices.entries())
     await scan(
       `slice ${String(index)}`,
-      container.header.rangeIssues[index]?.reason,
+      container.header.rangeIssues[index]?.detail,
       slice,
     );
   const hidden = container.hidden;
   if (hidden?.status === "declared")
-    await scan("hidden slice", hidden.rangeIssue, hidden.declaration);
+    await scan("hidden slice", hidden.rangeIssue?.detail, hidden.declaration);
   // A sibling that could not be examined may declare a different Deno
   // application, so a section found elsewhere cannot stand for the whole
   // universal image. With none found, the image stays with native inventory.
@@ -250,7 +251,7 @@ const locateMachOSlice = async (
 ): Promise<SliceScan> => {
   const table = await readSliceCommandTable(readAt, base, sliceSize);
   if (table.status !== "read")
-    return { found: [], unread: `cannot be read: ${table.reason}` };
+    return { found: [], unread: `cannot be read: ${table.failure.detail}` };
   // A FAT row that misstates the slice's CPU cannot choose how the slice is
   // searched, so the slice stays unread.
   const identityIssue =
@@ -288,7 +289,7 @@ const locateMachOSlice = async (
     if (!admitted.ok) damage ??= admitted.error.message;
     if (segment64 !== table.header.wide)
       damage ??= "Mach-O segment command width disagrees with its header";
-    const segmentName = fixedCString(segment.nameBytes);
+    const segmentName = decodeMachoFixedName(segment.nameBytes);
     if (segmentName !== LINKEDIT_SEGMENT_NAME && segment.fileSize > 0n) {
       // libsui appends the Intel trailer after the image's content, inside
       // or past __LINKEDIT. Bytes any other segment maps belong to the native
@@ -319,7 +320,7 @@ const locateMachOSlice = async (
         return;
       }
       const record = parsedSection.value;
-      if (fixedCString(record.nameBytes) !== SECTION_NAME) continue;
+      if (decodeMachoFixedName(record.nameBytes) !== SECTION_NAME) continue;
       confirmed = true;
       found.push(
         denoSectionRange(record, segment, base, sliceSize, carrier.fileSize),
@@ -342,7 +343,7 @@ const locateMachOSlice = async (
   if (framed.status !== "framed")
     return {
       found,
-      unread: `load commands cannot be framed: ${framed.reason}`,
+      unread: `load commands cannot be framed: ${framed.failure.detail}`,
     };
   // A damaged or unparsed segment may hold an unread d3n0l4nd section, so the
   // slice is not fully examined and the trailer search cannot stand for it.
@@ -359,7 +360,8 @@ const locateMachOSlice = async (
  */
 const namesDenoSection = (body: Uint8Array, at: number): boolean =>
   at + 16 <= body.byteLength &&
-  fixedCString(body.subarray(at, at + 16)) === SECTION_NAME;
+  decodeMachoFixedName(Buffer.from(body.subarray(at, at + 16))) ===
+    SECTION_NAME;
 
 /**
  * The file range of a confirmed `d3n0l4nd` record, or a failure. A zero-fill
@@ -938,14 +940,7 @@ const collapseRanges = async (
   kind: DenoStandaloneLocation["carrier"],
   ranges: readonly SectionRange[],
 ): Promise<DenoStandaloneLocation | undefined> => {
-  const unique: SectionRange[] = [];
-  const seen = new Set<string>();
-  for (const range of ranges) {
-    const key = `${String(range.offset)}:${String(range.length)}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    unique.push(range);
-  }
+  const unique = uniqueArtifactRanges(ranges);
   const chosen = unique[0];
   if (chosen === undefined) return undefined;
   if (unique.length > 1) {
@@ -981,16 +976,9 @@ const collapseRanges = async (
   };
 };
 
-const fixedCString = (bytes: Uint8Array): string => {
-  const end = bytes.indexOf(0);
-  return Buffer.from(end < 0 ? bytes : bytes.subarray(0, end)).toString(
-    "latin1",
-  );
-};
-
 const denoCarrierFailure = (detail: string): ArtifactReaderFailure =>
-  new ArtifactReaderFailure(
-    "format",
+  malformedArtifact(
+    "deno-standalone",
     `Deno compile carrier is malformed: ${detail}`,
   );
 

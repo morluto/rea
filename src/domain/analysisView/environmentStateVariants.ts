@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import {
   iterateUrlQueryParameters,
   parseUrlQueryParameterNames,
@@ -13,6 +14,7 @@ import {
   type StateItemView,
   type StateListView,
   type StateRecordFacts,
+  requestLine,
 } from "./environmentStateRules.js";
 
 /** Query names that page a list rather than choose how it shows its entities. */
@@ -51,9 +53,7 @@ export const queryValues = (
 ): Map<string, string[]> => {
   const values = new Map<string, string[]>();
   for (const [name, value] of iterateUrlQueryParameters(query ?? "")) {
-    const previous = values.get(name);
-    if (previous === undefined) values.set(name, [value]);
-    else previous.push(value);
+    appendToMapList(values, name, value);
   }
   return values;
 };
@@ -138,9 +138,7 @@ const linesByEntity = (
       retain(ENTRY_BYTES);
       const showing = shown.get(key) ?? new Map<string, StateRecordFacts[]>();
       shown.set(key, showing);
-      const group = showing.get(members);
-      if (group === undefined) showing.set(members, [line]);
-      else group.push(line);
+      appendToMapList(showing, members, line);
     }
   return shown;
 };
@@ -414,9 +412,6 @@ export const replayReason = (
     ? "projection"
     : "variant";
 };
-
-const requestLine = (record: StateRecordFacts): string =>
-  record.path + (record.query ?? "");
 
 /** The found lines a replay key tells from the other latest lines, which are parsed once for all of them. */
 const keyedVariants = (

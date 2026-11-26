@@ -14,7 +14,10 @@ import {
 } from "vitest";
 
 import { runDoctor, type DoctorHost } from "../application/Doctor.js";
-import { createDoctorHostFixture } from "../application/Doctor.fixture.js";
+import {
+  createDoctorHostFixture,
+  ubuntu2404Distribution,
+} from "../application/Doctor.fixture.js";
 import { providerRegistrationEnvironment } from "../application/SetupRegistrationEnvironment.js";
 import * as nativeLoader from "../windows/WindowsNativeLoader.js";
 import {
@@ -90,13 +93,7 @@ const doctorHost = (
     platform: "linux",
     architecture: "x64",
     macosVersion: () => Promise.resolve(undefined),
-    linuxDistribution: () =>
-      Promise.resolve({
-        id: "ubuntu",
-        versionId: "24.04",
-        packageFamily: "deb",
-        hopperSetupSupported: true,
-      }),
+    linuxDistribution: ubuntu2404Distribution,
     executable: (path) =>
       Promise.resolve(hopperAvailable && path.includes("Hopper")),
     linuxDemoRuntimeCheck: () =>

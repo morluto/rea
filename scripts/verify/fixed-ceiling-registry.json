@@ -550,11 +550,6 @@
     }
   },
   "src/process/ArtifactAnalysisResources.ts": {
-    "`The retained command-output allowance of ${String(limits.output_bytes)} bytes (this release has no runtime override)`": {
-      "class": "pending",
-      "issue": 14237,
-      "reason": "Retained command output is a producer budget without a per-call control."
-    },
     "allowanceName": {
       "class": "forwarding",
       "reason": "Declares a producer input allowance only for callers that offer no budget parameter; the value is the caller's selected maximum."

@@ -569,7 +569,7 @@ cliTest(
       code: "unsupported_target",
       details: {
         operation: "inspect_python_pyc",
-        format_failure: "malformed",
+        failure_kind: "malformed",
         reason: expect.stringContaining("shorter than a 16-byte CPython"),
       },
     });

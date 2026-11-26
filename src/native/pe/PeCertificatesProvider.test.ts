@@ -12,7 +12,7 @@ import {
 } from "../../../tests/fixtures/apkSignature/v1SignatureBlock.js";
 import { inspectPeCertificatesInputSchema } from "../../domain/native/peCertificates.js";
 import {
-  AnalysisMalformedTargetError,
+  AnalysisTargetFailureError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { peCertificateFixture } from "./PeCertificates.fixture.js";
@@ -89,7 +89,7 @@ it("accepts shallower valid BER and refuses malformed BER as a malformed target"
   const malformed = await inspect(Buffer.from([0x30, 0x03, 0x05]));
   expect(malformed.ok).toBe(false);
   if (malformed.ok) throw new Error("Expected malformed target refusal");
-  expect(malformed.error).toBeInstanceOf(AnalysisMalformedTargetError);
+  expect(malformed.error).toBeInstanceOf(AnalysisTargetFailureError);
   expect(malformed.error).toMatchObject({
     failure: { kind: "malformed", format: "pe-certificate-table" },
   });

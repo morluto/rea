@@ -6,7 +6,7 @@ import type { BinarySessionPort } from "../application/binary/BinarySessionPort.
 import { ProcessCaptureResourceScope } from "../process/capture/ProcessCaptureLifecycle.js";
 import { ProcessCaptureError } from "../process/capture/ProcessCaptureError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { err, ok, type Result } from "../domain/result.js";
+import { err, ok } from "../domain/result.js";
 import type { Logger } from "pino";
 import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
 import { registerServiceTools } from "./serviceToolBindings.js";

@@ -33,7 +33,6 @@ import {
   AnalysisOutputError,
   fixedCeilingConstraint,
   occupiedCapacityConstraint,
-  AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";

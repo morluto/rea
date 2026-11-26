@@ -48,6 +48,7 @@ class UuidlessDyldRunner implements NativeCommandRunner {
     readonly diagnostic = missingUuidDiagnostic,
     readonly stderr = "",
     readonly signal: string | null = null,
+    readonly exitCode = 1,
   ) {
     this.fixture = new NativeFixtureRunner({
       lipo: "Non-fat file: fixture is architecture: arm64\n",
@@ -75,10 +76,10 @@ class UuidlessDyldRunner implements NativeCommandRunner {
         dyldDiagnosticOutput(arguments_.at(-1) ?? "", this.diagnostic),
       ),
       stderrBytes: Buffer.byteLength(this.stderr),
-      exitCode: 1,
+      exitCode: this.exitCode,
       signal: this.signal,
     };
-    if (options.acceptNonZero) return ok(capture);
+    if (this.exitCode === 0 || options.acceptNonZero) return ok(capture);
     return err(
       new NativeCommandFailure(tool, "nonzero-exit", 1, undefined, {
         stdout: capture.stdout,
@@ -93,19 +94,22 @@ class UuidlessDyldRunner implements NativeCommandRunner {
   }
 }
 
-it.each([
-  { fileType: 4, diagnostic: "unknown mh.filetype 4" },
-  { fileType: 3, diagnostic: "unknown mh.filetype 3" },
-  { fileType: 4, diagnostic: "unknown filetype 4" },
-  { fileType: 3, diagnostic: "unknown filetype 3" },
-  {
-    fileType: 10,
-    diagnostic: unbackedTextDiagnostic,
-  },
-])(
-  "classifies $diagnostic for Mach-O type $fileType before nm fallback",
-  async ({ fileType, diagnostic }) => {
-    const runner = new UuidlessDyldRunner(diagnostic);
+// Xcode 26 dyld_info exits 1 after a refusal; Xcode 16 exits 0.
+it.each(
+  [
+    { fileType: 4, diagnostic: "unknown mh.filetype 4" },
+    { fileType: 3, diagnostic: "unknown mh.filetype 3" },
+    { fileType: 4, diagnostic: "unknown filetype 4" },
+    { fileType: 3, diagnostic: "unknown filetype 3" },
+    {
+      fileType: 10,
+      diagnostic: unbackedTextDiagnostic,
+    },
+  ].flatMap((refusal) => [1, 0].map((exitCode) => ({ ...refusal, exitCode }))),
+)(
+  "classifies $diagnostic for Mach-O type $fileType with exit $exitCode before nm fallback",
+  async ({ fileType, diagnostic, exitCode }) => {
+    const runner = new UuidlessDyldRunner(diagnostic, "", null, exitCode);
     const target = await makeTarget("refused-type", fileType);
     const path = target.path;
     const result = await new NativeMacOSProvider({}, runner, "darwin")
@@ -115,13 +119,16 @@ it.each([
     expect(result).toMatchObject({
       ok: false,
       error: {
-        _tag: "AnalysisUnsupportedTargetError",
+        _tag: "AnalysisTargetFailureError",
         path,
-        reason: expect.stringContaining(fileType === 10 ? "dSYM" : diagnostic),
-        remediationAction: expect.stringContaining("linked Mach-O"),
+        failure: {
+          detail: expect.stringContaining(
+            fileType === 10 ? "dSYM" : diagnostic,
+          ),
+        },
         capturedOutput: {
           stdout: dyldDiagnosticOutput(path, diagnostic),
-          exit_code: 1,
+          exit_code: exitCode,
           signal: null,
           truncated: false,
         },
@@ -136,13 +143,19 @@ it.each([
 );
 
 it.each([
-  { fileType: 3, signal: null },
-  { fileType: 99, signal: null },
-  { fileType: 4, signal: "SIGTERM" },
+  { fileType: 3, signal: null, exitCode: 0 },
+  { fileType: 3, signal: null, exitCode: 1 },
+  { fileType: 99, signal: null, exitCode: 1 },
+  { fileType: 4, signal: "SIGTERM", exitCode: 1 },
 ])(
-  "keeps the dyld_info refusal as a failure for header $fileType and signal $signal",
-  async ({ fileType, signal }) => {
-    const runner = new UuidlessDyldRunner("unknown mh.filetype 4", "", signal);
+  "keeps the dyld_info refusal as a failure for header $fileType, exit $exitCode and signal $signal",
+  async ({ fileType, signal, exitCode }) => {
+    const runner = new UuidlessDyldRunner(
+      "unknown mh.filetype 4",
+      "",
+      signal,
+      exitCode,
+    );
     const target = await makeTarget("conflicting-type", fileType);
     const result = await new NativeMacOSProvider({}, runner, "darwin")
       .createClient(target)
@@ -152,49 +165,60 @@ it.each([
       ok: false,
       error: {
         _tag: signal === null ? "AnalysisOutputError" : "ProviderAdapterError",
-        capturedOutput: { exit_code: 1, signal },
+        capturedOutput: { exit_code: exitCode, signal },
       },
     });
   },
 );
 
-it("returns readable Mach-O Evidence when dyld_info identifies a missing UUID", async () => {
-  const target = await makeTarget("no-uuid");
-  const runner = new UuidlessDyldRunner();
-  const result = await new NativeMacOSProvider({}, runner, "darwin")
-    .createClient(target)
-    .execute("inspect_macho", {});
+// Xcode 26 dyld_info exits 1 after the diagnostic; Xcode 16 exits 0.
+it.for([1, 0])(
+  "returns readable Mach-O Evidence when dyld_info identifies a missing UUID with exit %i",
+  async (exitCode) => {
+    const target = await makeTarget("no-uuid");
+    const runner = new UuidlessDyldRunner(
+      missingUuidDiagnostic,
+      "",
+      null,
+      exitCode,
+    );
+    const result = await new NativeMacOSProvider({}, runner, "darwin")
+      .createClient(target)
+      .execute("inspect_macho", {});
 
-  expect(result.ok, JSON.stringify(result.ok ? null : result.error)).toBe(true);
-  if (!result.ok) return;
-  expect(result.value.result).toMatchObject({
-    uuid: null,
-    load_commands: { exhaustive: true },
-    imports: { items: [], total: null, exhaustive: false },
-    exports: {
-      items: expect.arrayContaining([
-        expect.objectContaining({ name: "_main", source: "nm" }),
+    expect(result.ok, JSON.stringify(result.ok ? null : result.error)).toBe(
+      true,
+    );
+    if (!result.ok) return;
+    expect(result.value.result).toMatchObject({
+      uuid: null,
+      load_commands: { exhaustive: true },
+      imports: { items: [], total: null, exhaustive: false },
+      exports: {
+        items: expect.arrayContaining([
+          expect.objectContaining({ name: "_main", source: "nm" }),
+        ]),
+        total: null,
+        exhaustive: false,
+      },
+      provenance: expect.arrayContaining([
+        expect.objectContaining({
+          tool: "dyld_info",
+          exit: { code: exitCode, signal: null },
+          stdout_bytes: Buffer.byteLength(
+            dyldDiagnosticOutput(target.path, missingUuidDiagnostic),
+          ),
+        }),
       ]),
-      total: null,
-      exhaustive: false,
-    },
-    provenance: expect.arrayContaining([
-      expect.objectContaining({
-        tool: "dyld_info",
-        exit: { code: 1, signal: null },
-        stdout_bytes: Buffer.byteLength(
-          dyldDiagnosticOutput(target.path, missingUuidDiagnostic),
-        ),
-      }),
-    ]),
-  });
-  expect(result.value.limitations).toContain(
-    "dyld_info -imports reported 'missing LC_UUID load command'; import observations are unavailable.",
-  );
-  expect(result.value.limitations).toContain(
-    "dyld_info -exports reported 'missing LC_UUID load command'; exports include nm symbol-table observations only.",
-  );
-});
+    });
+    expect(result.value.limitations).toContain(
+      "dyld_info -imports reported 'missing LC_UUID load command'; import observations are unavailable.",
+    );
+    expect(result.value.limitations).toContain(
+      "dyld_info -exports reported 'missing LC_UUID load command'; exports include nm symbol-table observations only.",
+    );
+  },
+);
 
 it.each([
   { stdout: "malformed load command table", stderr: "" },

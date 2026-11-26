@@ -4,7 +4,7 @@ import {
   artifactFileCeilingConstraint,
   artifactReadBudgetConstraint,
   projectStableArtifactFailure,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
   assertArtifactReadActive,
@@ -24,7 +24,6 @@ import {
   MAX_INSPECT_NATIVE_EXPORTS_FILE_BYTES,
   type InspectNativeExportsInput,
 } from "../../domain/native/nativeExports.js";
-import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { NATIVE_EXPORTS_PROVIDER } from "../../domain/investigationProviders.js";
 import {
@@ -37,7 +36,6 @@ import {
   type NativeExportLimit,
   parseNativeExportsFromHandle,
 } from "../../domain/native/nativeExportParser.js";
-import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_native_exports";
 const HEADER_PREFIX_BYTES = 4096;
@@ -47,16 +45,12 @@ export class NativeExportsProvider implements NativeExportsPort {
   readonly identity = NATIVE_EXPORTS_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        NATIVE_EXPORTS_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      NATIVE_EXPORTS_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectNativeExportsInput, options?: ExecutionOptions) {
@@ -84,11 +78,7 @@ export class NativeExportsProvider implements NativeExportsPort {
           },
           (handle) =>
             parseNativeExportsFromHandle(
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               { path: input.path, sha256: handle.sha256, bytes: handle.size },
               () => yieldArtifactRead(signal),
             ),
@@ -168,14 +158,6 @@ const nativeExportsFailure = (
             max_file_bytes: input.max_file_bytes,
           },
         ),
-      unclassified: (failure) =>
-        new ProviderAdapterError(NATIVE_EXPORTS_PROVIDER.id, OPERATION, {
-          cause: failure,
-          diagnostics: {
-            path: input.path,
-            reason: errorMessage(failure),
-          },
-        }),
     }),
   );
   return projectStableArtifactFailure(

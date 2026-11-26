@@ -1,12 +1,13 @@
 // Run from the repository root after `npm run build:cached` on macOS arm64,
 // with Hopper and the Xcode command-line tools installed. No target is executed.
 import assert from "node:assert/strict";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { runOwnedCommand } from "../dist/process/OwnedCommand.js";
 import { artifactMcpCall } from "./lib/artifact-e2e.mjs";
 import { snapshotHopperRuntime } from "./lib/real-hopper-cleanup.mjs";
@@ -19,6 +20,10 @@ import {
 } from "./lib/verifier-run.mjs";
 import { HOPPER_TARGET_LEASE_DIRECTORY } from "../dist/process/HopperLease.js";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import {
+  completeEvidenceClient,
+  completeEvidenceToolArguments,
+} from "./lib/complete-evidence.mjs";
 
 const verifierRun = createVerifierRun();
 // xcrun resolves the compiler before a workspace exists. A failed probe must
@@ -96,14 +101,13 @@ const large = join(directory, "long-scan");
 const source = fileURLToPath(
   new URL("./fixtures/hopper-tail-call.c", import.meta.url),
 );
-const digest = async (path) =>
-  createHash("sha256")
-    .update(await readFile(path))
-    .digest("hex");
+
 const sessionsBefore = (
   await snapshotHopperRuntime("/tmp", HOPPER_TARGET_LEASE_DIRECTORY)
 ).paths;
-const client = new Client({ name: "hopper-callers-verifier", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "hopper-callers-verifier", version: "1" }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: ["dist/main.js"],
@@ -175,8 +179,8 @@ try {
     "-o",
     large,
   ]);
-  const before = await digest(fixture),
-    beforeLarge = await digest(large);
+  const before = await sha256File(fixture),
+    beforeLarge = await sha256File(large);
   await client.connect(transport);
   if (transport.pid === null)
     throw new Error("MCP process identity unavailable");
@@ -204,7 +208,7 @@ try {
   );
   assert(
     (
-      await call("procedure_callees", { procedure: from })
+      await call("procedure_callees", { detail: "complete", procedure: from })
     ).normalized_result.includes(to),
   );
   const callers = await call("procedure_callers", {
@@ -220,7 +224,11 @@ try {
     "forward caller provenance missing",
   );
   const refs = (
-    await call("procedure_references", { procedure: to, direction: "incoming" })
+    await call("procedure_references", {
+      detail: "complete",
+      procedure: to,
+      direction: "incoming",
+    })
   ).normalized_result.references;
   assert(
     refs.some((x) => matchingRef(x, site, from, to)),
@@ -264,7 +272,7 @@ try {
     ),
   );
   await call("close_binary", {});
-  assert.equal(await digest(fixture), before);
+  assert.equal(await sha256File(fixture), before);
   console.log(
     JSON.stringify({
       event: "tail_call_verified",
@@ -282,10 +290,17 @@ try {
     detail: "complete",
   };
   const count = notifications;
-  await call("get_call_graph", query);
+  await call(
+    "get_call_graph",
+    await completeEvidenceToolArguments("get_call_graph", query),
+  );
   assert.equal(notifications, count, "unsolicited progress without token");
   const progress = [];
-  await call("get_call_graph", query, { onprogress: (x) => progress.push(x) });
+  await call(
+    "get_call_graph",
+    await completeEvidenceToolArguments("get_call_graph", query),
+    { onprogress: (x) => progress.push(x) },
+  );
   assert(
     progress.every((x, i) => i === 0 || x.progress > progress[i - 1].progress),
     "progress not monotonic",
@@ -302,7 +317,7 @@ try {
   try {
     await artifactMcpCall(
       client,
-      { name: "get_call_graph", arguments: query },
+      { name: "get_call_graph", arguments: { ...query, detail: "complete" } },
       {
         timeout: 120000,
         signal: controller.signal,
@@ -326,10 +341,13 @@ try {
     "did not observe cancellation after partial scan progress; cancellation coverage unavailable on this host",
   );
   await client.ping();
-  const retry = await call("get_call_graph", query);
+  const retry = await call(
+    "get_call_graph",
+    await completeEvidenceToolArguments("get_call_graph", query),
+  );
   assert(retry.normalized_result.graph, "retry did not return graph");
   await call("close_binary", {});
-  assert.equal(await digest(large), beforeLarge);
+  assert.equal(await sha256File(large), beforeLarge);
   console.log(
     JSON.stringify({
       event: "progress_cancel_retry_verified",

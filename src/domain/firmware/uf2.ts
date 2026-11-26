@@ -486,6 +486,6 @@ const conflict = ({
   existing,
   incoming,
 }: RunConflict<BlockRun>): RegionDecodeFailure => ({
-  kind: "format",
+  kind: "malformed",
   message: `${familyText(run.familyId)} address ${hex32(address)} is written with different values by ${blockSpan(writer)} (0x${byteToHex(existing)}) and ${blockSpan(run)} (0x${byteToHex(incoming)})`,
 });

@@ -274,6 +274,23 @@ export interface StableArtifactHandle {
   readonly readRange: (offset: number, length: number) => Promise<Buffer>;
 }
 
+/** Read an already-admitted extent and preserve the format in a read-coverage failure. */
+export const readAdmittedRange = async (
+  format: string,
+  source: Pick<StableArtifactHandle, "readRange">,
+  offset: number,
+  length: number,
+): Promise<Buffer> => {
+  const bytes = await source.readRange(offset, length);
+  if (bytes.length !== length)
+    throw new ArtifactReaderFailure(
+      "integrity",
+      `${format} read at offset ${String(offset)} ended before its ${String(length)} admitted bytes.`,
+      { integrityCheck: "read-coverage" },
+    );
+  return bytes;
+};
+
 /** Options for {@link withStableArtifactHandle}. */
 export interface StableArtifactHandleOptions<Value = unknown> {
   /** Bytes to retain from the start of the file, given its admitted size. */
@@ -345,7 +362,8 @@ export const withStableArtifactHandle = async <Value>(
         // independent physical I/O, cancellation, and decoder failures primary.
         if (
           (cause instanceof ParseFailureError && cause.kind !== "limit") ||
-          (cause instanceof ArtifactReaderFailure && cause.reason === "format")
+          (cause instanceof ArtifactReaderFailure &&
+            cause.parseFailure !== undefined)
         )
           await verifyState();
         throw cause;
@@ -544,7 +562,8 @@ export const readStableArtifactRanges = async <T>(
         // Keep independent physical I/O, cancellation, and limit failures primary.
         if (
           (cause instanceof ParseFailureError && cause.kind !== "limit") ||
-          (cause instanceof ArtifactReaderFailure && cause.reason === "format")
+          (cause instanceof ArtifactReaderFailure &&
+            cause.parseFailure !== undefined)
         )
           await verifyStableArtifactRead(path, fileSystem, file, initial, size);
         throw cause;
@@ -560,8 +579,7 @@ export const readStableArtifactRanges = async <T>(
         assertArtifactReadActive(signal);
         const value: unknown = chunk;
         if (!Buffer.isBuffer(value))
-          throw new ArtifactReaderFailure(
-            "format",
+          throw invariantViolation(
             `Artifact stream did not return bytes: ${path}`,
           );
         count += value.length;

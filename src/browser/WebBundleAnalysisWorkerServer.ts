@@ -1,3 +1,4 @@
+import { writeWorkerControlFrame } from "../process/writeWorkerControlFrame.js";
 import { ellipsisExcerpt } from "../domain/excerpt.js";
 import {
   javaScriptMemberMutationAllowanceFromField,
@@ -51,17 +52,11 @@ class WebBundleWorkerOutputError extends Error {}
 const WEB_BUNDLE_RESULT_FORMAT = "web-bundle-worker-result";
 
 const send = async (input: WebBundleWorkerMessage): Promise<void> => {
-  const value = webBundleWorkerMessageSchema.parse(input);
-  const frame = `${JSON.stringify(value)}\n`;
-  if (Buffer.byteLength(frame) > LIMITS.protocolBytes)
-    throw new RangeError(
-      "Web bundle worker control frame exceeds its byte budget",
-    );
-  await new Promise<void>((resolve, reject) => {
-    process.stdout.write(frame, (error) =>
-      error === null || error === undefined ? resolve() : reject(error),
-    );
-  });
+  await writeWorkerControlFrame(
+    webBundleWorkerMessageSchema.parse(input),
+    LIMITS.protocolBytes,
+    "Web bundle worker control frame exceeds its byte budget",
+  );
 };
 
 /** Serve sequential script jobs from the private root owned by the worker runtime. */

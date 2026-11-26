@@ -10,6 +10,7 @@ import {
 import { ParseFailureError } from "../../domain/parseFailure.js";
 import { peSubjectArchitecture } from "../../domain/peMachine.js";
 import {
+  hasElfMagic,
   BinaryFormatFailure,
   BinaryReader,
   BinaryResourceFailure,
@@ -182,14 +183,7 @@ export const locateDwarfSectionsFromHandle = async (
 ): Promise<LocatedDwarfImage> => {
   const budget: InflateBudget = { allowance: maximumDecodedBytes, used: 0 };
   const magic = await readSourceSlice(source, 0, Math.min(4, source.size));
-  if (
-    magic.length >= 4 &&
-    magic[0] === 0x7f &&
-    magic[1] === 0x45 &&
-    magic[2] === 0x4c &&
-    magic[3] === 0x46
-  )
-    return finish(await locateElf(source, budget, pause));
+  if (hasElfMagic(magic)) return finish(await locateElf(source, budget, pause));
   if (hasDosMzMagic(magic)) return finish(await locatePe(source, budget));
   if (
     magic.length >= 4 &&

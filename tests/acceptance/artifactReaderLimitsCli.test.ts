@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256 as digest } from "../support/sha256.js";
 import { constants as bufferConstants } from "node:buffer";
 import { lstat, readFile, writeFile } from "node:fs/promises";
 
@@ -20,9 +20,6 @@ import { artifactInspectionResultSchema } from "../../src/domain/artifactInspect
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { buildGodotPck } from "../fixtures/godotPck.js";
 import { workspaceCliTest as test } from "../support/cli/workspaceCliFixture.js";
-
-const digest = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const readInspection = (value: unknown) => {
   const evidence = parseEvidence(value);
@@ -139,10 +136,11 @@ test("rejects malformed directory dimensions before suggesting a budget increase
   });
   expect(result.exitCode).toBe(1);
   expect(result.json).toMatchObject({
-    code: "artifact_operation_failed",
+    code: "unsupported_target",
     retryable: false,
     details: {
-      reason: "format",
+      path,
+      failure_kind: "truncated",
     },
   });
   const failure = result.json as {
@@ -178,7 +176,7 @@ for (const reader of readers)
     });
     expect(refused.exitCode).toBe(1);
     expect(refused.json).toMatchObject({
-      code: "truncated",
+      code: "partial",
       retryable: true,
       details: {
         reader_limit: {
@@ -229,7 +227,7 @@ test("admits the same SEA carrier above the legacy 4096-argument ceiling", async
   const refused = await cli.run({ arguments: command });
   expect(refused.exitCode).toBe(1);
   expect(refused.json).toMatchObject({
-    code: "truncated",
+    code: "partial",
     details: {
       reader_limit: {
         parameter: "artifact_limits.node_sea.argument_count",
@@ -273,7 +271,7 @@ test("applies the selected reader budget before extraction and preserves its out
   });
   expect(refused.exitCode).toBe(1);
   expect(refused.json).toMatchObject({
-    code: "truncated",
+    code: "partial",
     details: {
       reader_limit: { parameter: "artifact_limits.dotnet_bundle.entry_count" },
     },

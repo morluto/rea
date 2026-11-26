@@ -5,7 +5,7 @@ import { expect, it, vi } from "vitest";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
-  AnalysisMalformedTargetError,
+  AnalysisTargetFailureError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { readMachoImageFromReader } from "../../domain/apple/machoImage.js";
@@ -40,7 +40,6 @@ import {
   peImage,
   strxBeforeBase,
 } from "./DwarfUnits.fixture.js";
-import type { ByteSource } from "../../domain/byteSource.js";
 import { bufferByteSource } from "../../domain/byteSource.js";
 
 const inspect = async (
@@ -354,7 +353,7 @@ it("rejects an unterminated PE long name within the decoding allowance", async (
   const read = await inspect(image);
   expect(read.ok).toBe(false);
   if (!read.ok) {
-    expect(read.error).toBeInstanceOf(AnalysisMalformedTargetError);
+    expect(read.error).toBeInstanceOf(AnalysisTargetFailureError);
     expect(read.error).toMatchObject({
       failure: { detail: expect.stringContaining("could not be resolved") },
     });
@@ -397,7 +396,7 @@ it("rejects PE long section names when PointerToSymbolTable is zero", async () =
   }).toEqual({ zeroCountOk: false, nonZeroCountOk: false });
   for (const rejected of [readZeroCount, readNonZeroCount]) {
     if (rejected.ok) continue;
-    expect(rejected.error).toBeInstanceOf(AnalysisMalformedTargetError);
+    expect(rejected.error).toBeInstanceOf(AnalysisTargetFailureError);
     expect(rejected.error).toMatchObject({
       failure: {
         detail: expect.stringContaining(

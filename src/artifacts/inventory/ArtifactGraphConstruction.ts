@@ -1,3 +1,4 @@
+import { appendToMapList } from "../../domain/appendToMapList.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
 import {
   isStandaloneArtifactFormat,
@@ -74,10 +75,7 @@ export const indexDestinationOccurrencesByPath = (
   const byPath = new Map<string, MutableOccurrence[]>();
   for (const occurrence of occurrences) {
     if (!hasDestinationPath(occurrence.entry_kind)) continue;
-    const matches = byPath.get(occurrence.logical_path);
-    if (matches === undefined)
-      byPath.set(occurrence.logical_path, [occurrence]);
-    else matches.push(occurrence);
+    appendToMapList(byPath, occurrence.logical_path, occurrence);
   }
   return byPath;
 };
@@ -193,10 +191,11 @@ export const materializeDirectoryNodes = (
   const childrenByParent = new Map<string, MutableOccurrence[]>();
   for (const occurrence of occurrences) {
     if (occurrence.parent_occurrence_id === null) continue;
-    const children = childrenByParent.get(occurrence.parent_occurrence_id);
-    if (children === undefined)
-      childrenByParent.set(occurrence.parent_occurrence_id, [occurrence]);
-    else children.push(occurrence);
+    appendToMapList(
+      childrenByParent,
+      occurrence.parent_occurrence_id,
+      occurrence,
+    );
   }
   for (const directory of directories) {
     const children = (childrenByParent.get(directory.occurrence_id) ?? [])

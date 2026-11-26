@@ -222,7 +222,7 @@ cliTest.for([
       details: {
         operation: "inspect_native_initializers",
         ...(code === "unsupported_target"
-          ? { path, format_failure: "malformed" }
+          ? { path, failure_kind: "malformed" }
           : {
               reported_limits: {
                 boundary: "structure",

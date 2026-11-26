@@ -1,3 +1,4 @@
+import { EVMOLE_VERSION } from "../../../src/evm/EvmoleProviderIdentity.js";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -220,7 +221,7 @@ it.each([
             request.reply_path,
             JSON.stringify({
               ok: true,
-              version: "0.9.4",
+              version: EVMOLE_VERSION,
               bytecode: {
                 sha256: createHash("sha256").update(bytes).digest("hex"),
                 bytes: bytes.length,
@@ -486,7 +487,7 @@ it("releases a retained process independently while a root cleanup retry remains
         request.reply_path,
         JSON.stringify({
           ok: true,
-          version: "0.9.4",
+          version: EVMOLE_VERSION,
           bytecode: {
             sha256: createHash("sha256").update(bytes).digest("hex"),
             bytes: bytes.length,
@@ -721,10 +722,11 @@ it.each([
         const bytes = Buffer.from("60006000f3", "hex");
         const reply =
           scenario === "refusal"
-            ? { ok: false, reason: "format", message: "invalid carrier" }
+            ? { ok: false, reason: "malformed", message: "invalid carrier" }
             : {
                 ok: true,
-                version: scenario === "wrong-version" ? "0.0.0" : "0.9.4",
+                version:
+                  scenario === "wrong-version" ? "0.0.0" : EVMOLE_VERSION,
                 bytecode: {
                   sha256: createHash("sha256").update(bytes).digest("hex"),
                   bytes: bytes.length,

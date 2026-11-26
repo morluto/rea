@@ -28,10 +28,13 @@ import { TarStreamEnded, type TarByteStream } from "./TarByteStream.js";
 export const TAR_EXTENDED_HEADER_BYTES = 1024 * 1024;
 /**
  * Retained member metadata: a fixed per-member charge plus decoded path and
- * link bytes. It bounds memory for tar streams of many tiny members.
+ * link bytes, and the global pax map. It bounds memory for tar streams of
+ * many tiny members or repeated pax global headers.
  */
 export const TAR_RETAINED_METADATA_BYTES = 64 * 1024 * 1024;
 const MEMBER_OVERHEAD_BYTES = 512;
+/** One map entry retained with a pax keyword, besides its key and value bytes. */
+const PAX_ENTRY_OVERHEAD_BYTES = 64;
 const SCAN_CHUNK_BYTES = 64 * 1024;
 
 export interface TarMember {
@@ -134,8 +137,20 @@ const invalidPaxNumber = (records: TarPaxRecords): string | undefined => {
 };
 
 /**
- * Apply pax records over earlier ones. POSIX: an empty value deletes the
- * keyword, so the header field applies again.
+ * Mutate a retained global pax map in place after budget accounting. POSIX: an
+ * empty value deletes the keyword, so the header field applies again.
+ */
+const applyPaxInPlace = (
+  target: Map<string, string>,
+  records: TarPaxRecords,
+): void => {
+  for (const [key, value] of records)
+    if (value === "") target.delete(key);
+    else target.set(key, value);
+};
+
+/**
+ * Apply pax records over earlier ones without mutating `base`.
  */
 const withPax = (
   base: TarPaxRecords,
@@ -143,10 +158,31 @@ const withPax = (
 ): TarPaxRecords => {
   if (records === undefined) return base;
   const merged = new Map(base);
-  for (const [key, value] of records)
-    if (value === "") merged.delete(key);
-    else merged.set(key, value);
+  applyPaxInPlace(merged, records);
   return merged;
+};
+
+const paxRecordBytes = (key: string, value: string): number =>
+  Buffer.byteLength(key) + Buffer.byteLength(value) + PAX_ENTRY_OVERHEAD_BYTES;
+
+/**
+ * How many bytes merging `records` adds to the retained global map, before
+ * that map is allocated. Only the changed keys are counted, so a run of tiny
+ * global headers costs their own size, not the whole map's.
+ */
+const mergedPaxBytesDelta = (
+  base: TarPaxRecords,
+  records: TarPaxRecords,
+): number => {
+  let bytes = 0;
+  for (const [key, value] of records) {
+    const previous = base.get(key);
+    if (value === "") {
+      if (previous !== undefined) bytes -= paxRecordBytes(key, previous);
+    } else if (previous === undefined) bytes += paxRecordBytes(key, value);
+    else bytes += Buffer.byteLength(value) - Buffer.byteLength(previous);
+  }
+  return bytes;
 };
 
 const decimal = (value: string | undefined): bigint | undefined =>
@@ -219,7 +255,8 @@ export const walkTar = async (
   const dialects = new Set<TarHeaderDialect>();
   let paxHeaders = 0;
   const retained = new Budget(TAR_RETAINED_METADATA_BYTES);
-  let global: TarPaxRecords = new Map();
+  const global = new Map<string, string>();
+  let chargedGlobalPax = 0;
   let local: TarPaxRecords | undefined;
   let longName: Uint8Array | undefined;
   let longLink: Uint8Array | undefined;
@@ -355,9 +392,23 @@ export const walkTar = async (
             );
             break;
           }
-          if (typeflag === TAR_TYPEFLAGS.paxGlobal)
-            global = withPax(global, pax.records);
-          else local = pax.records;
+          if (typeflag === TAR_TYPEFLAGS.paxGlobal) {
+            // Charge the map that withPax is about to copy. Repeated global
+            // headers otherwise accumulate without reaching this budget.
+            const nextBytes = Math.max(
+              0,
+              chargedGlobalPax + mergedPaxBytesDelta(global, pax.records),
+            );
+            if (nextBytes > chargedGlobalPax)
+              retained.charge(
+                nextBytes - chargedGlobalPax,
+                retainedMetadataLimit,
+              );
+            else if (nextBytes < chargedGlobalPax)
+              retained.refund(chargedGlobalPax - nextBytes);
+            chargedGlobalPax = nextBytes;
+            applyPaxInPlace(global, pax.records);
+          } else local = pax.records;
         } else {
           const end = data.indexOf(0);
           const value = data.subarray(0, end === -1 ? data.length : end);
@@ -457,11 +508,12 @@ export const walkTar = async (
     }
   } catch (cause: unknown) {
     if (!(cause instanceof TarStreamEnded)) throw cause;
-    if (stream.position === 0) throw tarFormatFailure(cause.detail, 0);
+    // Nothing of the tar stream was read: the carrier's failure is the file's.
+    if (stream.position === 0) throw artifactParseFailure(cause, signal);
     endState = cause.kind;
     endOffset = stream.position;
     limitations.push(
-      `${cause.detail}; tar members after that point were not inventoried.`,
+      `${cause.message}; tar members after that point were not inventoried.`,
     );
     // A member whose data the stream did not finish is not usable.
     while (

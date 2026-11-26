@@ -12,6 +12,14 @@ import {
   type Evidence,
 } from "../../src/domain/evidence.js";
 
+export const occurrenceAt = (evidence: Evidence, path: string) => {
+  const found = artifactInventoryResultSchema
+    .parse(evidence.normalized_result)
+    .occurrences.find(({ logical_path }) => logical_path === path);
+  if (found === undefined) throw new Error(`Missing ${path}`);
+  return found;
+};
+
 /** Recommit altered inventory occurrences as a historically recorded observation. */
 export const historicalInventoryEvidence = (
   source: Evidence,

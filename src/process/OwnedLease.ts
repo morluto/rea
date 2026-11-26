@@ -63,9 +63,9 @@ export class OwnedLeaseCleanupFailure extends ArtifactReaderFailure {
     failure: ArtifactReaderFailure,
   ) {
     super(failure.reason, failure.message, {
+      ...failure.primaryFacts(),
       cause: primary,
       cleanup: failure.cleanup,
-      integrityCheck: failure.integrityCheck,
     });
     this.cleanupLeases = failure.cleanupLeases;
   }

@@ -21,6 +21,7 @@ import {
 import {
   ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
   analysisViewInputError,
+  invalidAnalysisViewSubject,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
@@ -201,14 +202,8 @@ const readGpuFacts = (
   }
   const subject = evidenceFileTarget(parent);
   if (subject != null && subject.sha256 !== checked.report.artifact.sha256)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message: "GPU Evidence subject does not match its recorded artifact",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "GPU Evidence subject does not match its recorded artifact",
     );
   return ok(checked);
 };

@@ -4,10 +4,9 @@ import {
   artifactReaderLifecycleCases,
 } from "../../tests/fixtures/artifactReaderLifecycle.js";
 import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 import { expect, it, vi } from "vitest";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { buildUImage, buildMultiPayload } from "../../tests/fixtures/uimage.js";
@@ -18,14 +17,8 @@ import {
   UIMAGE_MULTI_TABLE_WINDOW,
 } from "../domain/uimageFormat.js";
 
-const fixture = async (bytes: Buffer): Promise<string> => {
-  const path = join(
-    await createTestTempDirectory("rea-uimage-boundary-"),
-    "image",
-  );
-  await writeFile(path, bytes);
-  return path;
-};
+const fixture = (bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-uimage-boundary-", "image", bytes);
 
 it.each([
   [13, "nios", 13, "lynxos"],
@@ -214,7 +207,7 @@ it("reports impossible over-cap component extents as malformed", async () => {
   );
   try {
     await expect(collectEntries(reader)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
     });
   } finally {
     await reader.close();

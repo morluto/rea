@@ -1,4 +1,5 @@
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { createFixtureProviderIdentity } from "../../fixtures/analysisExecution.js";
 import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -25,11 +26,7 @@ import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js
 it.each(["compact"] as const)(
   "delivers authenticated but unretained provider Evidence inline (%s schema)",
   async (profile) => {
-    const identity = {
-      id: "fixture",
-      name: "Fixture analysis provider",
-      version: "1",
-    };
+    const identity = createFixtureProviderIdentity();
     const target = join(
       await createTestTempDirectory("rea-evidence-refusal-"),
       "fixture.com",
@@ -126,11 +123,7 @@ it.each(["compact"] as const)(
 );
 
 it("keeps an oversized unretained observation failure bounded and the connection usable", async () => {
-  const identity = {
-    id: "fixture",
-    name: "Fixture analysis provider",
-    version: "1",
-  };
+  const identity = createFixtureProviderIdentity();
   const target = join(
     await createTestTempDirectory("rea-evidence-overflow-"),
     "fixture.com",

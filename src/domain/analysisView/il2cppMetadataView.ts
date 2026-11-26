@@ -2,6 +2,7 @@ import { selectIndexedViewRows, selectViewRows } from "./selectViewRows.js";
 import { z } from "zod";
 import {
   analysisViewInputError,
+  invalidAnalysisViewSubject,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
@@ -532,15 +533,8 @@ export const projectIl2cppMetadataView = (
     subject != null &&
     (subject.format !== "file" || subject.sha256 !== report.artifact.sha256)
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message:
-            "IL2CPP metadata artifact identity does not match its parent subject.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "IL2CPP metadata artifact identity does not match its parent subject.",
     );
   const {
     sections,
