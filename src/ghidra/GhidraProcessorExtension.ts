@@ -1,7 +1,7 @@
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { createHash } from "node:crypto";
 import { lstat, opendir, realpath } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, posix } from "node:path";
 import { z } from "zod";
 import { sameRegularFileState } from "../filesystem/RegularFile.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
@@ -40,6 +40,15 @@ export interface GhidraProcessorExtension<Id extends string = string> {
   readonly sha256: string;
 }
 
+/**
+ * A compiled SLEIGH language Ghidra must load as installed. See
+ * docs/ghidra-ps2.md#precompiled-sleigh-language for the rule it mirrors.
+ */
+export interface GhidraCompiledLanguageSpec {
+  readonly source: string;
+  readonly compiled: string;
+}
+
 /** One caller-installed processor extension REA fingerprints but never installs. */
 export interface GhidraProcessorExtensionSpec<Id extends string = string> {
   /** Directory and extension.properties name under Ghidra/Extensions. */
@@ -48,12 +57,22 @@ export interface GhidraProcessorExtensionSpec<Id extends string = string> {
   readonly profile: string;
   readonly unavailableCode: string;
   readonly required: readonly string[];
+  readonly compiledLanguage?: GhidraCompiledLanguageSpec;
 }
 
 // Resource bounds for scanning a caller-installed extension, not target limits.
 const MAX_ENTRIES = 1024;
 const MAX_BYTES = 64 * 1024 * 1024;
 const MAX_DEPTH = 16;
+// Ghidra 12.2 SlaFormat: "sla" followed by FORMAT_VERSION 4.
+const SLA_MAGIC = Buffer.from("sla", "latin1");
+const SLA_FORMAT_VERSION = 4;
+
+interface InstalledFile {
+  /** Java `File.lastModified()` resolution: whole milliseconds. */
+  readonly modifiedMs: number;
+  readonly bytes?: Buffer;
+}
 
 /** Read-only fingerprint of all installed files; no home scanning or installation. */
 export const inspectGhidraProcessorExtension = async <Id extends string>(
@@ -119,9 +138,15 @@ const fingerprint = async <Id extends string>(
       });
   if (!files.some((path) => path.startsWith("lib/") && path.endsWith(".jar")))
     throw new GhidraAdmissionError("loader_jar_missing");
+  const retainBytes = (relative: string): boolean =>
+    relative === "extension.properties" ||
+    (spec.compiledLanguage !== undefined &&
+      (relative === spec.compiledLanguage.compiled ||
+        relative.endsWith(".slaspec") ||
+        relative.endsWith(".sinc")));
+  const installed = new Map<string, InstalledFile>();
   const hash = createHash("sha256");
   let bytesRead = 0;
-  let properties = Buffer.alloc(0);
   for (const relative of files) {
     assertArtifactReadActive(signal);
     const path = join(root, relative);
@@ -145,6 +170,7 @@ const fingerprint = async <Id extends string>(
         const buffer = Buffer.alloc(Math.min(65536, before.size + 1));
         let offset = 0;
         const chunks: Buffer[] = [];
+        const retain = retainBytes(relative);
         // Serial reads keep final close behind every native read. One extra byte
         // detects growth without a stream's read-ahead or unbounded allocation.
         while (offset <= before.size) {
@@ -162,8 +188,7 @@ const fingerprint = async <Id extends string>(
             throw new GhidraAdmissionError("component_changed", { relative });
           const chunk = buffer.subarray(0, bytesRead);
           hash.update(chunk);
-          if (relative === "extension.properties")
-            chunks.push(Buffer.from(chunk));
+          if (retain) chunks.push(Buffer.from(chunk));
         }
         if (offset !== before.size)
           throw new GhidraAdmissionError("component_truncated", { relative });
@@ -173,15 +198,19 @@ const fingerprint = async <Id extends string>(
         )
           throw new GhidraAdmissionError("component_changed", { relative });
         bytesRead += before.size;
-        if (relative === "extension.properties")
-          properties = Buffer.concat(chunks);
+        installed.set(relative, {
+          modifiedMs: Math.trunc(before.mtimeMs),
+          ...(retain ? { bytes: Buffer.concat(chunks) } : {}),
+        });
       },
     );
   }
   // Ghidra's extension.properties version is the compatible Ghidra version,
   // not the extension release (e.g. v21.4); content identity supplies the latter.
   const parsedProperties = parseGhidraJavaProperties(
-    properties.toString("latin1"),
+    (installed.get("extension.properties")?.bytes ?? Buffer.alloc(0)).toString(
+      "latin1",
+    ),
   );
   if (!parsedProperties.ok)
     throw new GhidraAdmissionError("properties_invalid", {
@@ -193,6 +222,8 @@ const fingerprint = async <Id extends string>(
     throw new GhidraAdmissionError("metadata_mismatch", {
       ghidra_version: ghidraVersion,
     });
+  if (spec.compiledLanguage !== undefined)
+    validateCompiledLanguage(spec.compiledLanguage, installed);
   assertArtifactReadActive(signal);
   return {
     id: spec.id,
@@ -200,6 +231,107 @@ const fingerprint = async <Id extends string>(
     ghidra_version: ghidraVersion,
     sha256: hash.digest("hex"),
   };
+};
+
+/**
+ * Refuse a compiled language that Ghidra's SleighLanguageFile.needsCompilation
+ * would rebuild inside the installation: missing, another SLA format, or older
+ * than its source and every file the source includes.
+ */
+const validateCompiledLanguage = (
+  language: GhidraCompiledLanguageSpec,
+  installed: ReadonlyMap<string, InstalledFile>,
+): void => {
+  const compiled = installed.get(language.compiled);
+  if (compiled?.bytes === undefined)
+    throw new GhidraAdmissionError("compiled_language_missing", {
+      component: language.compiled,
+    });
+  const header = compiled.bytes;
+  const format =
+    header.length >= 4 && header.subarray(0, 3).equals(SLA_MAGIC)
+      ? header[3]
+      : undefined;
+  if (format !== SLA_FORMAT_VERSION)
+    throw new GhidraAdmissionError("compiled_language_format", {
+      component: language.compiled,
+      required_format: SLA_FORMAT_VERSION,
+      ...(format === undefined ? {} : { observed_format: format }),
+    });
+  for (const source of sleighSourceClosure(language.source, installed)) {
+    const modifiedMs = installed.get(source)?.modifiedMs;
+    if (
+      compiled.modifiedMs === 0 ||
+      modifiedMs === undefined ||
+      modifiedMs > compiled.modifiedMs
+    )
+      throw new GhidraAdmissionError("compiled_language_stale", {
+        component: language.compiled,
+        source,
+      });
+  }
+};
+
+// Ghidra 12.2 SleighPreprocessor's include directive.
+const INCLUDE = /^\s*@include\s+"(.*)"\s*$/u;
+
+/**
+ * The source and every file it can include. Conditional directives are not
+ * evaluated, so an inactive branch's include also counts; that can only refuse
+ * more. Includes Ghidra would resolve outside this inventory are unresolved.
+ */
+const sleighSourceClosure = (
+  source: string,
+  installed: ReadonlyMap<string, InstalledFile>,
+): readonly string[] => {
+  const closure = new Set<string>();
+  const active: string[] = [];
+  const visit = (relative: string): void => {
+    if (active.includes(relative))
+      throw new GhidraAdmissionError("compiled_language_source_unresolved", {
+        source: relative,
+        reason: "include_cycle",
+      });
+    if (closure.has(relative)) return;
+    const bytes = installed.get(relative)?.bytes;
+    if (bytes === undefined)
+      throw new GhidraAdmissionError("compiled_language_source_unresolved", {
+        source: relative,
+        reason: "not_installed",
+      });
+    closure.add(relative);
+    active.push(relative);
+    for (const raw of bytes.toString("latin1").split(/\r\n|\r|\n/u)) {
+      const line = raw.replace(/^\s*#.*/u, "");
+      if (!line.startsWith("@")) continue;
+      const include = INCLUDE.exec(line.replace(/#.*/u, ""))?.[1];
+      if (include === undefined) continue;
+      if (
+        include.includes("$(") ||
+        include.startsWith("/") ||
+        include.startsWith("\\") ||
+        /^[a-zA-Z_0-9]+:/u.test(include)
+      )
+        throw new GhidraAdmissionError("compiled_language_source_unresolved", {
+          source: relative,
+          include,
+          reason: "outside_inventory",
+        });
+      const resolved = posix.normalize(
+        posix.join(posix.dirname(relative), include),
+      );
+      if (resolved === ".." || resolved.startsWith("../"))
+        throw new GhidraAdmissionError("compiled_language_source_unresolved", {
+          source: relative,
+          include,
+          reason: "outside_inventory",
+        });
+      visit(resolved);
+    }
+    active.pop();
+  };
+  visit(source);
+  return [...closure];
 };
 
 /** Resolve prerequisites before opening or admitting cached extension-lane analysis. */
@@ -240,6 +372,13 @@ export const resolveGhidraProcessorExtension = async <Id extends string>(
   }
 };
 
+const COMPILED_LANGUAGE_CODES: ReadonlySet<string> = new Set([
+  "compiled_language_missing",
+  "compiled_language_format",
+  "compiled_language_stale",
+  "compiled_language_source_unresolved",
+]);
+
 /**
  * How a failed extension inspection is reported. The shared classifier keeps
  * typed failures, a cancelled read and the read's live cleanup; anything else
@@ -255,7 +394,13 @@ const inspectionDialect = (
     const admission =
       primary instanceof GhidraAdmissionError ? primary : undefined;
     const identity = admission?.code ?? errorMessage(primary);
-    const reason = `${spec.unavailableCode}: ${identity} Use a compatible caller-installed ${spec.id} under GHIDRA_INSTALL_DIR/Ghidra/Extensions; REA does not install it.`;
+    const remedy =
+      spec.compiledLanguage !== undefined &&
+      admission !== undefined &&
+      COMPILED_LANGUAGE_CODES.has(admission.code)
+        ? `Precompile ${spec.compiledLanguage.compiled} from ${spec.compiledLanguage.source} with the selected installation's support/sleigh before analysis; Ghidra would otherwise recompile it inside the installation, and REA does not compile or install it.`
+        : `Use a compatible caller-installed ${spec.id} under GHIDRA_INSTALL_DIR/Ghidra/Extensions; REA does not install it.`;
+    const reason = `${spec.unavailableCode}: ${identity} ${remedy}`;
     return new AnalysisCapabilityUnavailableError(
       "ghidra",
       "resolve_analysis_profile",

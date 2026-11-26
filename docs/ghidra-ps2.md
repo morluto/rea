@@ -26,8 +26,8 @@ emulation are outside this first profile.
 Install the extension in the selected Ghidra distribution at
 `$GHIDRA_INSTALL_DIR/Ghidra/Extensions/ghidra-emotionengine-reloaded`, with
 its `Module.manifest`, `extension.properties`, language files
-(`emotionengine.ldefs`, `r5900.slaspec`, `r5900.pspec`, `r5900.cspec`) and
-JAR. REA never downloads, installs, rebuilds or vendors it. The extension's
+(`emotionengine.ldefs`, `r5900.slaspec`, its included `.sinc` files, the
+precompiled `r5900.sla`, `r5900.pspec`, `r5900.cspec`) and JAR. REA never downloads, installs, rebuilds or vendors it. The extension's
 `version` property must name the selected Ghidra version (the project's
 releases ship one archive per Ghidra version).
 
@@ -36,6 +36,32 @@ and checks the identity again immediately before launch, exactly as for the
 PSP extension (bounded inspection, no symlinks, content identity rather than a
 signature). Missing prerequisites return `EE_EXTENSION_UNAVAILABLE` with an
 installation hint.
+
+## Precompiled SLEIGH language
+
+The project's release archives ship SLEIGH sources only. Ghidra 12.2
+(`SleighLanguageFile.needsCompilation`) recompiles a `.sla` that is missing,
+carries another format version, or is older than its `.slaspec` or any file
+it includes, and writes the result into the installation. REA therefore
+admits the extension only when `data/languages/r5900.sla` already exists, starts
+with the `sla` header and format version 4, and is at least as new (whole
+milliseconds, as Ghidra compares) as `r5900.slaspec` and every file reachable
+through its `@include` directives. Every `@include` line counts, including those
+in conditional branches, and an include that is absolute, uses a variable,
+leaves the extension directory or names a missing file is refused, so the
+check can only refuse more than Ghidra would recompile. A refusal is reported
+as `EE_EXTENSION_UNAVAILABLE` with the code `compiled_language_missing`,
+`compiled_language_format`, `compiled_language_stale` or
+`compiled_language_source_unresolved` and the remedy to precompile the
+language, for example:
+
+```bash
+"$GHIDRA_INSTALL_DIR/support/sleigh" \
+  "$GHIDRA_INSTALL_DIR/Ghidra/Extensions/ghidra-emotionengine-reloaded/data/languages/r5900.slaspec"
+```
+
+The check runs during profile resolution and again before launch, before any
+JVM starts, and never writes to the installation.
 
 ## Language selection
 

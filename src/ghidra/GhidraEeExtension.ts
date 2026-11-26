@@ -26,6 +26,11 @@ export const GHIDRA_EE_EXTENSION: GhidraProcessorExtensionSpec<"ghidra-emotionen
       `${LANGUAGES}/r5900.pspec`,
       `${LANGUAGES}/r5900.cspec`,
     ],
+    // Release archives ship SLEIGH sources only; the caller precompiles them.
+    compiledLanguage: {
+      source: `${LANGUAGES}/r5900.slaspec`,
+      compiled: `${LANGUAGES}/r5900.sla`,
+    },
   };
 
 export const ghidraEeExtensionSchema = ghidraProcessorExtensionSchema(
