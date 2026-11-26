@@ -35,9 +35,69 @@ it("refuses a file without a full NSO header", async () => {
     "nso",
   );
   try {
-    await expect(collect(reader)).rejects.toThrow(/NSO is malformed/u);
+    const failure = await collect(reader).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+    expect(failure).toMatchObject({
+      reason: "truncated",
+      message: expect.stringContaining("truncated"),
+      parseFailure: {
+        kind: "truncated",
+        format: "nso",
+        offset: 0,
+        field: "header",
+        extent: { availableBytes: 0x40, requiredBytes: 0x100 },
+      },
+    });
   } finally {
     await reader.close();
+  }
+});
+
+it("preserves parse failure facts for malformed NSO and NRO headers", async () => {
+  const overlap = buildNso();
+  overlap.writeUInt32LE(0x20, 0x10);
+  const nsoReader = new SwitchExecutableArtifactReader(
+    await fixture(overlap),
+    "nso",
+  );
+  try {
+    const failure = await collect(nsoReader).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+    expect(failure).toMatchObject({
+      reason: "malformed",
+      message: expect.stringContaining("overlaps the header"),
+      parseFailure: {
+        kind: "malformed",
+        format: "nso",
+        offset: 0x10,
+        field: "text_segment.file_offset",
+      },
+    });
+  } finally {
+    await nsoReader.close();
+  }
+
+  const badNro = buildNro();
+  badNro.writeUInt32LE(0x1000, 0x34);
+  const nroReader = new SwitchExecutableArtifactReader(
+    await fixture(badNro),
+    "nro",
+  );
+  try {
+    const failure = await collect(nroReader).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+    expect(failure).toMatchObject({
+      reason: "malformed",
+      message: expect.stringContaining("past the declared image size"),
+      parseFailure: {
+        kind: "malformed",
+        format: "nro",
+        offset: 0x30,
+        field: "data_segment",
+      },
+    });
+  } finally {
+    await nroReader.close();
   }
 });
 

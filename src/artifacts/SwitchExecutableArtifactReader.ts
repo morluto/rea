@@ -27,12 +27,12 @@ import {
   type NroHeader,
   type NsoHeader,
   type NsoSegment,
-  type SwitchExecutableParseFailure,
 } from "../domain/switchExecutable.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import {
   ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
+  artifactParseFailure,
   artifactReaderLimitFailure,
   malformedArtifact,
 } from "../resources/index.js";
@@ -204,7 +204,7 @@ export class SwitchExecutableArtifactReader extends PositionalArtifactReader<
     const headerBytes = await read(0, Math.min(initial.size, headerSize));
     return this.format === "nso"
       ? this.#prepareNso(headerBytes, initial.size, read, signal)
-      : this.#prepareNro(headerBytes, initial.size, read);
+      : this.#prepareNro(headerBytes, initial.size, read, signal);
   }
 
   async #prepareNso(
@@ -214,7 +214,7 @@ export class SwitchExecutableArtifactReader extends PositionalArtifactReader<
     signal?: AbortSignal,
   ): Promise<PositionalArtifactEntries<SwitchExecutableMetadata, SwitchEntry>> {
     const parsed = parseNsoHeader(headerBytes, fileSize);
-    if (!parsed.ok) throw parseFailure("nso", parsed.error);
+    if (!parsed.ok) throw artifactParseFailure(parsed.error, signal);
     const header = parsed.value;
     const budget = this.#budget;
     const entries: SwitchEntry[] = [];
@@ -391,9 +391,10 @@ export class SwitchExecutableArtifactReader extends PositionalArtifactReader<
     headerBytes: Buffer,
     fileSize: number,
     read: (offset: number, length: number) => Promise<Buffer>,
+    signal?: AbortSignal,
   ): Promise<PositionalArtifactEntries<SwitchExecutableMetadata, SwitchEntry>> {
     const parsed = parseNroHeader(headerBytes, fileSize);
-    if (!parsed.ok) throw parseFailure("nro", parsed.error);
+    if (!parsed.ok) throw artifactParseFailure(parsed.error, signal);
     const header = parsed.value;
     const limitations: string[] = [];
     const entries: SwitchEntry[] = [];
@@ -547,16 +548,6 @@ export class SwitchExecutableArtifactReader extends PositionalArtifactReader<
     return undefined;
   }
 }
-
-const parseFailure = (
-  format: "nso" | "nro",
-  failure: SwitchExecutableParseFailure,
-): ArtifactReaderFailure =>
-  malformedArtifact(
-    format,
-    `${format === "nso" ? "NSO" : "NRO"} is malformed: ${failure.message}`,
-    { cause: failure },
-  );
 
 const nsoMetadata = (
   header: NsoHeader,

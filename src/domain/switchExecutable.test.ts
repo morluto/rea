@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 
+import { ParseFailureError } from "./parseFailure.js";
 import { buildNro, buildNso, MODULE_ID } from "./switchExecutable.fixture.js";
 import {
   hasMod0Magic,
@@ -61,16 +62,33 @@ it("keeps unknown NSO flag bits and marks a short segment as truncated", () => {
 });
 
 it("refuses a truncated NSO header and a segment overlapping the header", () => {
-  expect(parseNsoHeader(buildNso().subarray(0, 0x80), 0x80)).toMatchObject({
-    ok: false,
-    error: { message: expect.stringContaining("truncated") },
-  });
+  const truncated = parseNsoHeader(buildNso().subarray(0, 0x80), 0x80);
+  expect(truncated.ok).toBe(false);
+  if (!truncated.ok) {
+    expect(truncated.error).toBeInstanceOf(ParseFailureError);
+    expect(truncated.error.failure).toEqual({
+      kind: "truncated",
+      format: "nso",
+      detail: expect.stringContaining("truncated"),
+      offset: 0,
+      field: "header",
+      extent: { availableBytes: 0x80, requiredBytes: 0x100 },
+    });
+  }
   const overlap = buildNso();
   overlap.writeUInt32LE(0x20, 0x10);
-  expect(parseNsoHeader(overlap, overlap.length)).toMatchObject({
-    ok: false,
-    error: { message: expect.stringContaining("overlaps the header") },
-  });
+  const overlapping = parseNsoHeader(overlap, overlap.length);
+  expect(overlapping.ok).toBe(false);
+  if (!overlapping.ok) {
+    expect(overlapping.error).toBeInstanceOf(ParseFailureError);
+    expect(overlapping.error.failure).toEqual({
+      kind: "malformed",
+      format: "nso",
+      detail: expect.stringContaining("overlaps the header"),
+      offset: 0x10,
+      field: "text_segment.file_offset",
+    });
+  }
 });
 
 it("parses an NRO header and its ASET section", () => {
@@ -156,10 +174,93 @@ it("returns no asset section when the trailer is not ASET", () => {
 it("refuses an NRO whose segment ends past the declared image size", () => {
   const bytes = buildNro();
   bytes.writeUInt32LE(0x1000, 0x34);
-  expect(parseNroHeader(bytes, bytes.length)).toMatchObject({
-    ok: false,
-    error: { message: expect.stringContaining("past the declared image size") },
-  });
+  const parsed = parseNroHeader(bytes, bytes.length);
+  expect(parsed.ok).toBe(false);
+  if (!parsed.ok) {
+    expect(parsed.error).toBeInstanceOf(ParseFailureError);
+    expect(parsed.error.failure).toEqual({
+      kind: "malformed",
+      format: "nro",
+      detail: expect.stringContaining("past the declared image size"),
+      offset: 0x30,
+      field: "data_segment",
+    });
+  }
+});
+
+it("reports structured parse failure facts for missing magic, small NRO size, and truncated headers", () => {
+  const missingNsoMagic = parseNsoHeader(Buffer.alloc(0x100), 0x100);
+  expect(missingNsoMagic.ok).toBe(false);
+  if (!missingNsoMagic.ok) {
+    expect(missingNsoMagic.error).toBeInstanceOf(ParseFailureError);
+    expect(missingNsoMagic.error.failure).toEqual({
+      kind: "malformed",
+      format: "nso",
+      detail: "NSO magic NSO0 is missing",
+      offset: 0,
+      field: "magic",
+    });
+  }
+
+  const missingNroMagic = parseNroHeader(Buffer.alloc(0x80), 0x80);
+  expect(missingNroMagic.ok).toBe(false);
+  if (!missingNroMagic.ok) {
+    expect(missingNroMagic.error).toBeInstanceOf(ParseFailureError);
+    expect(missingNroMagic.error.failure).toEqual({
+      kind: "malformed",
+      format: "nro",
+      detail: "NRO magic NRO0 is missing",
+      offset: 0x10,
+      field: "magic",
+    });
+  }
+
+  const truncatedNro = parseNroHeader(buildNro().subarray(0, 0x40), 0x40);
+  expect(truncatedNro.ok).toBe(false);
+  if (!truncatedNro.ok) {
+    expect(truncatedNro.error).toBeInstanceOf(ParseFailureError);
+    expect(truncatedNro.error.failure).toEqual({
+      kind: "truncated",
+      format: "nro",
+      detail: expect.stringContaining("truncated"),
+      offset: 0,
+      field: "header",
+      extent: { availableBytes: 0x40, requiredBytes: NRO_HEADER_SIZE },
+    });
+  }
+
+  const smallNro = buildNro();
+  smallNro.writeUInt32LE(0x40, 0x18);
+  const parsedSmallNro = parseNroHeader(smallNro, smallNro.length);
+  expect(parsedSmallNro.ok).toBe(false);
+  if (!parsedSmallNro.ok) {
+    expect(parsedSmallNro.error).toBeInstanceOf(ParseFailureError);
+    expect(parsedSmallNro.error.failure).toEqual({
+      kind: "malformed",
+      format: "nro",
+      detail: expect.stringContaining("smaller than"),
+      offset: 0x18,
+      field: "size",
+    });
+  }
+
+  const truncatedAset = parseNroAssetSection(
+    Buffer.from("ASET\0\0\0\0"),
+    0x100,
+    0x108,
+  );
+  expect(truncatedAset.ok).toBe(false);
+  if (!truncatedAset.ok) {
+    expect(truncatedAset.error).toBeInstanceOf(ParseFailureError);
+    expect(truncatedAset.error.failure).toEqual({
+      kind: "truncated",
+      format: "nro",
+      detail: expect.stringContaining("truncated"),
+      offset: 0x100,
+      field: "asset_header",
+      extent: { availableBytes: 8, requiredBytes: 0x38 },
+    });
+  }
 });
 
 it("reads the MOD0 offset at text+4 only from a full text prefix", () => {

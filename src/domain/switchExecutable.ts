@@ -1,4 +1,5 @@
 import { BinaryReader } from "./binaryContainer.js";
+import { ParseFailureError, type ParseFailure } from "./parseFailure.js";
 import { err, ok, type Result } from "./result.js";
 
 /**
@@ -17,15 +18,8 @@ export type SwitchSegmentName = (typeof SWITCH_SEGMENT_NAMES)[number];
 /** NSO flag bits 0-5: per-segment LZ4 compression, then per-segment hash checks. */
 const NSO_KNOWN_FLAGS = 0x3f;
 
-export interface SwitchExecutableParseFailure {
-  readonly _tag: "SwitchExecutableParseFailure";
-  readonly message: string;
-}
-
-const failure = (
-  message: string,
-): Result<never, SwitchExecutableParseFailure> =>
-  err({ _tag: "SwitchExecutableParseFailure", message });
+const fail = (failure: ParseFailure): Result<never, ParseFailureError> =>
+  err(new ParseFailureError(failure));
 
 export interface SwitchExtent {
   readonly offset: number;
@@ -123,12 +117,26 @@ const extent = (reader: BinaryReader, at: number): SwitchExtent => ({
 export const parseNsoHeader = (
   bytes: Buffer,
   fileSize: number,
-): Result<NsoHeader, SwitchExecutableParseFailure> => {
-  if (!hasNsoMagic(bytes)) return failure("NSO magic NSO0 is missing");
-  if (bytes.length < NSO_HEADER_SIZE || fileSize < NSO_HEADER_SIZE)
-    return failure(
-      `NSO header is truncated: ${String(Math.min(bytes.length, fileSize))} of ${String(NSO_HEADER_SIZE)} bytes`,
-    );
+): Result<NsoHeader, ParseFailureError> => {
+  if (!hasNsoMagic(bytes))
+    return fail({
+      kind: "malformed",
+      format: "nso",
+      detail: "NSO magic NSO0 is missing",
+      offset: 0,
+      field: "magic",
+    });
+  if (bytes.length < NSO_HEADER_SIZE || fileSize < NSO_HEADER_SIZE) {
+    const availableBytes = Math.min(bytes.length, fileSize);
+    return fail({
+      kind: "truncated",
+      format: "nso",
+      detail: `NSO header is truncated: ${String(availableBytes)} of ${String(NSO_HEADER_SIZE)} bytes`,
+      offset: 0,
+      field: "header",
+      extent: { availableBytes, requiredBytes: NSO_HEADER_SIZE },
+    });
+  }
   const reader = new BinaryReader(bytes, true, "nso");
   const flags = reader.u32(0x0c);
   const segments = SWITCH_SEGMENT_NAMES.map((name, index): NsoSegment => {
@@ -149,11 +157,15 @@ export const parseNsoHeader = (
       truncated: fileOffset + stored > fileSize,
     };
   });
-  for (const segment of segments)
+  for (const [index, segment] of segments.entries())
     if (segment.fileOffset < NSO_HEADER_SIZE && segment.fileSize > 0)
-      return failure(
-        `NSO ${segment.name} segment offset ${String(segment.fileOffset)} overlaps the header`,
-      );
+      return fail({
+        kind: "malformed",
+        format: "nso",
+        detail: `NSO ${segment.name} segment offset ${String(segment.fileOffset)} overlaps the header`,
+        offset: 0x10 + index * 0x10,
+        field: `${segment.name}_segment.file_offset`,
+      });
   return ok({
     format: "nso",
     version: reader.u32(0x04),
@@ -202,18 +214,36 @@ export const hasMod0Magic = (bytes: Buffer): boolean =>
 export const parseNroHeader = (
   bytes: Buffer,
   fileSize: number,
-): Result<NroHeader, SwitchExecutableParseFailure> => {
-  if (!hasNroMagic(bytes)) return failure("NRO magic NRO0 is missing");
-  if (bytes.length < NRO_HEADER_SIZE || fileSize < NRO_HEADER_SIZE)
-    return failure(
-      `NRO header is truncated: ${String(Math.min(bytes.length, fileSize))} of ${String(NRO_HEADER_SIZE)} bytes`,
-    );
+): Result<NroHeader, ParseFailureError> => {
+  if (!hasNroMagic(bytes))
+    return fail({
+      kind: "malformed",
+      format: "nro",
+      detail: "NRO magic NRO0 is missing",
+      offset: NRO_MAGIC_OFFSET,
+      field: "magic",
+    });
+  if (bytes.length < NRO_HEADER_SIZE || fileSize < NRO_HEADER_SIZE) {
+    const availableBytes = Math.min(bytes.length, fileSize);
+    return fail({
+      kind: "truncated",
+      format: "nro",
+      detail: `NRO header is truncated: ${String(availableBytes)} of ${String(NRO_HEADER_SIZE)} bytes`,
+      offset: 0,
+      field: "header",
+      extent: { availableBytes, requiredBytes: NRO_HEADER_SIZE },
+    });
+  }
   const reader = new BinaryReader(bytes, true, "nro");
   const size = reader.u32(0x18);
   if (size < NRO_HEADER_SIZE)
-    return failure(
-      `NRO declares size ${String(size)}, smaller than its ${String(NRO_HEADER_SIZE)}-byte header`,
-    );
+    return fail({
+      kind: "malformed",
+      format: "nro",
+      detail: `NRO declares size ${String(size)}, smaller than its ${String(NRO_HEADER_SIZE)}-byte header`,
+      offset: 0x18,
+      field: "size",
+    });
   const segments = SWITCH_SEGMENT_NAMES.map((name, index): NroSegment => {
     const at = 0x20 + index * 8;
     const fileOffset = reader.u32(at);
@@ -225,11 +255,15 @@ export const parseNroHeader = (
       truncated: fileOffset + segmentSize > fileSize,
     };
   });
-  for (const segment of segments)
+  for (const [index, segment] of segments.entries())
     if (segment.fileOffset + segment.size > size)
-      return failure(
-        `NRO ${segment.name} segment ends at ${String(segment.fileOffset + segment.size)}, past the declared image size ${String(size)}`,
-      );
+      return fail({
+        kind: "malformed",
+        format: "nro",
+        detail: `NRO ${segment.name} segment ends at ${String(segment.fileOffset + segment.size)}, past the declared image size ${String(size)}`,
+        offset: 0x20 + index * 8,
+        field: `${segment.name}_segment`,
+      });
   return ok({
     format: "nro",
     version: reader.u32(0x14),
@@ -253,12 +287,20 @@ export const parseNroAssetSection = (
   bytes: Buffer,
   offset: number,
   fileSize: number,
-): Result<NroAssetSection | undefined, SwitchExecutableParseFailure> => {
+): Result<NroAssetSection | undefined, ParseFailureError> => {
   if (!ascii(bytes, 0, "ASET")) return ok(undefined);
   if (bytes.length < NRO_ASSET_HEADER_SIZE)
-    return failure(
-      `NRO asset header is truncated: ${String(bytes.length)} of ${String(NRO_ASSET_HEADER_SIZE)} bytes`,
-    );
+    return fail({
+      kind: "truncated",
+      format: "nro",
+      detail: `NRO asset header is truncated: ${String(bytes.length)} of ${String(NRO_ASSET_HEADER_SIZE)} bytes`,
+      offset,
+      field: "asset_header",
+      extent: {
+        availableBytes: bytes.length,
+        requiredBytes: NRO_ASSET_HEADER_SIZE,
+      },
+    });
   const reader = new BinaryReader(bytes, true, "nro");
   const assets: NroAsset[] = [];
   const rejected: string[] = [];
