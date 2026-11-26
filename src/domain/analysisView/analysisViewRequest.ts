@@ -21,6 +21,7 @@ import { webBundleViewRequestSchema } from "./webBundleView.js";
 import { webPageViewRequestSchema } from "./webPageView.js";
 import { webExecutionViewRequestSchema } from "./webExecutionView.js";
 import { apktoolResourcesViewRequestSchema } from "../apktool/apktoolResourcesQuery.js";
+import { androidReferencesViewSchema } from "../android/androidReferencesQuery.js";
 import { sourceToBundleViewRequestSchema } from "./sourceToBundleView.js";
 import { endpointComparisonViewRequestSchema } from "./endpointComparisonView.js";
 import { featureTraceViewRequestSchema } from "./featureTraceView.js";
@@ -108,6 +109,7 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   webPageViewRequestSchema,
   webExecutionViewRequestSchema,
   apktoolResourcesViewRequestSchema,
+  androidReferencesViewSchema,
   nativeFunctionMatchingViewRequestSchema,
   sourceToBundleViewRequestSchema,
   endpointComparisonViewRequestSchema,

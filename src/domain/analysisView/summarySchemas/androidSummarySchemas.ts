@@ -24,6 +24,16 @@ import {
   androidClassSummarySchema,
   androidMethodSummarySchema,
 } from "../androidSymbolView.js";
+import {
+  androidReferencesViewRequestSchema,
+  androidReferenceTopClassesViewRequestSchema,
+} from "../../android/androidReferencesQuery.js";
+import {
+  androidReferenceRowSchema,
+  androidReferencesSummarySchema,
+  androidReferencesTargetSchema,
+  androidReferenceTopClassRowSchema,
+} from "../androidReferencesView.js";
 
 /** Exact package declarations with retained decoded manifest text. */
 export const androidPackageSummaryViewResultSchema = z.strictObject({
@@ -95,3 +105,38 @@ export const androidComponentSummaryViewResultSchema = z.strictObject({
   summary: androidComponentSummarySchema,
   parent_operation: z.literal("inspect_android_package"),
 });
+
+/** Counts of one retained trace_android_references result. */
+export const androidReferencesSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("trace_android_references"),
+  summary: androidReferencesSummarySchema,
+});
+
+const referencesPageBase = {
+  ...viewResultBaseFields,
+  kind: z.literal("android-references"),
+  parent_operation: z.literal("trace_android_references"),
+  target: androidReferencesTargetSchema,
+};
+
+/** One page of retained using nodes, or of their distinct top classes. */
+export const androidReferencesPageViewResultSchema = z.discriminatedUnion(
+  "facet",
+  [
+    z.strictObject({
+      ...referencesPageBase,
+      facet: z.literal("references"),
+      view: androidReferencesViewRequestSchema,
+      items: z.array(androidReferenceRowSchema),
+      byte_limited: z.boolean(),
+    }),
+    z.strictObject({
+      ...referencesPageBase,
+      facet: z.literal("top-classes"),
+      view: androidReferenceTopClassesViewRequestSchema,
+      items: z.array(androidReferenceTopClassRowSchema),
+      byte_limited: z.boolean(),
+    }),
+  ],
+);

@@ -4,6 +4,7 @@ import { projectPlaywrightTraceView } from "./playwrightTraceView.js";
 import { projectWebPageView } from "./webPageView.js";
 import { projectWebExecutionView } from "./webExecutionView.js";
 import { projectApktoolResourcesView } from "./apktoolResourcesView.js";
+import { projectAndroidReferencesView } from "./androidReferencesView.js";
 import { projectApiContractView } from "./apiContractView.js";
 import {
   isNativeObservationOperation,
@@ -251,6 +252,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_web_page", projectWebPageView),
   retain("observe_web_execution", projectWebExecutionView),
   retain("decode_android_resources", projectApktoolResourcesView),
+  retain("trace_android_references", projectAndroidReferencesView),
   retain("trace_web_source_location", projectWebSourceLocationView),
 ]);
 

@@ -199,6 +199,8 @@ import {
   androidManifestViewResultSchema,
   androidMethodSummaryViewResultSchema,
   androidPackageSummaryViewResultSchema,
+  androidReferencesPageViewResultSchema,
+  androidReferencesSummaryViewResultSchema,
 } from "./summarySchemas/androidSummarySchemas.js";
 import {
   apiContractPageViewResultSchema,
@@ -324,6 +326,8 @@ export {
   androidManifestViewResultSchema,
   androidMethodSummaryViewResultSchema,
   androidPackageSummaryViewResultSchema,
+  androidReferencesPageViewResultSchema,
+  androidReferencesSummaryViewResultSchema,
   apiContractPageViewResultSchema,
   apiContractSummaryViewResultSchema,
   apkSignaturePageViewResultSchema,
@@ -817,6 +821,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     webPageSummaryViewResultSchema,
     webExecutionSummaryViewResultSchema,
     apktoolResourcesSummaryViewResultSchema,
+    androidReferencesSummaryViewResultSchema,
     nugetNupkgSummaryViewResultSchema,
   ]),
   z.strictObject({
@@ -1001,6 +1006,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   }),
   androidPackageViewResultSchema,
   androidJniPageViewResultSchema,
+  androidReferencesPageViewResultSchema,
   z.strictObject({
     kind: z.literal("dart-aot"),
     view: dartAotViewRequestSchema,
