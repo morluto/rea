@@ -42,29 +42,30 @@ tools are unaffected.
 
 ## How the scan runs
 
-REA hashes each rule file, opens and hashes the scanned file, and then runs:
+REA streams each rule file and the scanned file into an owned private temporary
+snapshot directory while computing each file's SHA-256 digest and verifying that
+the source file did not change during acquisition. It then runs:
 
 ```text
-yara -s -L -m -g -q [-f] rea:<rule_path>... <path>
+yara -s -L -m -g -q [-f] rea:<snapshot_rule_path>... <snapshot_target_path>
 ```
 
 The command is started directly with an argument list, never through a shell,
-with its working directory at the root of the scanned path's filesystem. `-f`
-is added when `fast_scan` is true. The child runs with `LC_ALL=C` and
-`LANG=C`. Each rule path carries a `rea:` namespace prefix because yara reads
-a bare `a:b.yar` as namespace `a` and file `b.yar` whenever no file with the
-whole name exists. With the prefix, yara takes the rest of the argument as the
-file name, so a rule path that contains `:` names the same file REA hashed,
-and a rule path that no longer exists fails instead of resolving to another
-file. Match output names rules without the namespace. Paths that contain a
-line break are refused, because yara's output is line oriented.
+with its working directory at the root of the snapshot's filesystem. `-f` is
+added when `fast_scan` is true. The child runs with `LC_ALL=C` and `LANG=C`.
+Each rule argument carries a `rea:` namespace prefix so yara never splits a path
+containing `:` into `NAMESPACE:FILE`. Match output names rules without the
+namespace, and REA maps compile diagnostics and warnings back to the caller's
+selected paths. Paths that contain a line break are refused, because yara's
+output is line oriented.
 
-REA holds the scanned file and every rule file open until yara exits. Before
-reporting, it checks that each path still names the file it hashed, with the
-same device, inode, size, mode, and modification and change times. If any of
-them differs, the call fails with `artifact_changed` naming that path and no
-matches are reported. The files are not hashed a second time, so the binding
-between a reported digest and the bytes yara read rests on that check.
+Because yara reads only the owned snapshot files bound to the computed SHA-256
+digests, concurrent renames or replacements of the caller's files or parent
+directories after acquisition cannot attribute matches from different bytes to
+the reported digests. Before reporting, REA verifies that none of the snapshot
+files changed during the scan (failing with `artifact_changed` if one did) and
+removes the snapshot directory. Cleanup that cannot be proven is retained and
+retried before the next scan and on close.
 
 YARA output is parsed as it streams. Rule lines must name the scanned path, and
 every string line must follow a rule line; anything else fails with a provider

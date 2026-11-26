@@ -182,17 +182,11 @@ it.skipIf(yara === undefined)(
         path: sample,
         rule_paths: [rule],
       });
-      expect(result.ok, JSON.stringify(result)).toBe(false);
-      if (result.ok) return;
-      expect(result.error).toMatchObject({
-        _tag: "AnalysisInputError",
-        issues: [
-          {
-            path: ["rule_paths", 0],
-            message: `${rule}: could not open file`,
-          },
-        ],
-      });
+      expect(result.ok, JSON.stringify(result)).toBe(true);
+      if (!result.ok) return;
+      const report = yaraMatchesSchema.parse(result.value.normalized_result);
+      expect(report.matches.map((match) => match.rule)).toEqual(["HashedRule"]);
+      expect(report.rule_files.map((file) => file.path)).toEqual([rule]);
     } finally {
       await Promise.all(
         planted.map((path) => rm(path, { recursive: true, force: true })),

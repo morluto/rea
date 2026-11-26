@@ -1,15 +1,17 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, parse, relative, resolve } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 
 import { createYaraMatchesService } from "../../../src/composition/yara.js";
+import { YaraMatchesService } from "../../../src/application/yara/YaraMatchesService.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { ok } from "../../../src/domain/result.js";
 import {
   YARA_SETTING_BOUNDS,
   yaraMatchesSchema,
 } from "../../../src/domain/yara/yaraMatches.js";
+import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import {
   YaraMatchesProvider,
@@ -69,9 +71,20 @@ describe("inspect_yara_matches with a yara stand-in", () => {
     expect(result.ok, JSON.stringify(result)).toBe(true);
     if (!result.ok) return;
     const report = yaraMatchesSchema.parse(result.value.normalized_result);
-    expect(JSON.parse(await readFile(args, "utf8"))).toEqual({
-      args: ["-s", "-L", "-m", "-g", "-q", `rea:${rule}`, sample],
-      cwd: parse(sample).root,
+    const recorded = JSON.parse(await readFile(args, "utf8")) as {
+      args: string[];
+      cwd: string;
+    };
+    expect(recorded.args.slice(0, 5)).toEqual(["-s", "-L", "-m", "-g", "-q"]);
+    const snapshotRuleArg = recorded.args[5]!;
+    const snapshotTarget = recorded.args[6]!;
+    expect(snapshotRuleArg).toMatch(/^rea:.+rule-0\.yar$/u);
+    expect(snapshotRuleArg).not.toBe(`rea:${rule}`);
+    expect(snapshotTarget).not.toBe(sample);
+    expect(recorded.cwd).toBe(parse(snapshotTarget).root);
+    // The owned snapshot directory is removed before inspect returns.
+    await expect(stat(dirname(snapshotTarget))).rejects.toMatchObject({
+      code: "ENOENT",
     });
     expect(report.artifact).toEqual({
       path: sample,
@@ -383,22 +396,119 @@ describe("inspect_yara_matches with a yara stand-in", () => {
         path: sample,
         rule_paths: [rule],
       });
-      expect(result.ok, JSON.stringify(result)).toBe(false);
-      if (result.ok) return;
-      expect(result.error).toMatchObject({
-        _tag: "AnalysisInputError",
-        issues: [
-          {
-            path: ["rule_paths", 0],
-            message: `${rule}: could not open file`,
-          },
-        ],
-      });
+      // Because yara compiles the owned snapshot bound to the hashed digest,
+      // deleting the original rule path and planting a decoy after hashing
+      // still compiles HashedRule and never DecoyRule.
+      expect(result.ok, JSON.stringify(result)).toBe(true);
+      if (!result.ok) return;
+      const report = yaraMatchesSchema.parse(result.value.normalized_result);
+      expect(report.matches.map((match) => match.rule)).toEqual(["HashedRule"]);
+      expect(report.rule_files.map((file) => file.path)).toEqual([rule]);
     } finally {
       await Promise.all(
         planted.map((path) => rm(path, { recursive: true, force: true })),
       );
     }
+  });
+
+  it("scans the owned snapshot even when a parent directory is swapped before yara opens the file", async () => {
+    const { root, command, args } = await fixture("resolve");
+    const liveDir = join(root, "live");
+    const decoyDir = join(root, "decoy");
+    const backupDir = join(root, "backup");
+    await mkdir(liveDir);
+    await mkdir(decoyDir);
+    const liveSample = join(liveDir, "sample.bin");
+    const liveRule = join(liveDir, "rules.yar");
+    await writeFile(liveSample, SAMPLE);
+    await writeFile(liveRule, "rule HashedRule { condition: true }\n");
+    await writeFile(join(decoyDir, "sample.bin"), "DECOY BYTES");
+    await writeFile(
+      join(decoyDir, "rules.yar"),
+      "rule SwappedRule { condition: true }\n",
+    );
+    let swapped = false;
+    const launcher: YaraLauncher = async (spawn) => {
+      // Simulate a POSIX parent-directory rename TOCTOU between hashing and
+      // yara opening the paths; restore the directory in finally below.
+      await rename(liveDir, backupDir);
+      await rename(decoyDir, liveDir);
+      swapped = true;
+      return interpreterLauncher(spawn);
+    };
+    const service = stubService(
+      command,
+      { ...process.env, YARA_STUB_MODE: "resolve", YARA_STUB_ARGS: args },
+      launcher,
+    );
+    try {
+      const result = await service.inspect({
+        path: liveSample,
+        rule_paths: [liveRule],
+      });
+      expect(result.ok, JSON.stringify(result)).toBe(true);
+      if (!result.ok) return;
+      const report = yaraMatchesSchema.parse(result.value.normalized_result);
+      expect(report.matches.map((match) => match.rule)).toEqual(["HashedRule"]);
+      expect(report.artifact).toEqual({
+        path: liveSample,
+        sha256: createHash("sha256").update(SAMPLE).digest("hex"),
+        bytes: SAMPLE.length,
+      });
+      expect(report.rule_files).toEqual([
+        {
+          path: liveRule,
+          sha256: createHash("sha256")
+            .update("rule HashedRule { condition: true }\n")
+            .digest("hex"),
+          bytes: Buffer.byteLength("rule HashedRule { condition: true }\n"),
+        },
+      ]);
+    } finally {
+      if (swapped) {
+        await rename(liveDir, decoyDir);
+        await rename(backupDir, liveDir);
+      }
+    }
+  });
+
+  it("retains a failed snapshot directory cleanup and retries it before the next scan", async () => {
+    const { command, sample, rule } = await fixture("match");
+    let firstRootPath: string | undefined;
+    let firstCloseAttempts = 0;
+    const provider = new YaraMatchesProvider({
+      environment: { ...process.env, YARA_STUB_MODE: "match" },
+      selectCommand: () => ok(command),
+      launcher: interpreterLauncher,
+      createRuntime: async () => {
+        const real = await PrivateRuntimeRoot.create({ prefix: "rea-yara-" });
+        if (firstRootPath !== undefined) return real;
+        firstRootPath = real.path;
+        return {
+          path: real.path,
+          close: async () => {
+            firstCloseAttempts += 1;
+            if (firstCloseAttempts === 1)
+              throw new Error("injected snapshot root cleanup failure");
+            return real.close();
+          },
+        };
+      },
+    });
+    const service = new YaraMatchesService(provider, process.env);
+    const first = await service.inspect({ path: sample, rule_paths: [rule] });
+    expect(first.ok).toBe(false);
+    if (first.ok) return;
+    expect(first.error.cleanupIncomplete).toBe(true);
+    expect(firstRootPath).toBeDefined();
+    // Second scan retries removing the retained snapshot root before proceeding.
+    const second = await service.inspect({ path: sample, rule_paths: [rule] });
+    expect(second.ok, JSON.stringify(second)).toBe(true);
+    expect(firstCloseAttempts).toBe(2);
+    await expect(stat(firstRootPath!)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(service.close()).resolves.toBeUndefined();
   });
 
   it("reports a missing yara command as unavailable with remediation", async () => {
@@ -434,7 +544,7 @@ describe("inspect_yara_matches with a yara stand-in", () => {
     await expect(readFile(args)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("refuses a scanned file larger than max_file_bytes", async () => {
+  it("refuses a scanned file larger than max_file_bytes with required_value", async () => {
     const { sample, rule, service } = await fixture("match");
     const result = await service.inspect({
       path: sample,
@@ -445,8 +555,39 @@ describe("inspect_yara_matches with a yara stand-in", () => {
     if (result.ok) return;
     expect(result.error).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
-      limit: expect.objectContaining({ parameter: "max_file_bytes" }),
+      limit: expect.objectContaining({
+        parameter: "max_file_bytes",
+        effective_value: 8,
+        required_value: Buffer.byteLength(RULE),
+      }),
     });
+    const largeSampleOnly = await service.inspect({
+      path: sample,
+      rule_paths: [rule],
+      max_file_bytes: Buffer.byteLength(RULE),
+    });
+    if (SAMPLE.length > Buffer.byteLength(RULE)) {
+      expect(largeSampleOnly.ok).toBe(false);
+    } else {
+      const largeTarget = join(dirname(sample), "large.bin");
+      await writeFile(largeTarget, Buffer.alloc(Buffer.byteLength(RULE) + 17));
+      const targetResult = await service.inspect({
+        path: largeTarget,
+        rule_paths: [rule],
+        max_file_bytes: Buffer.byteLength(RULE),
+      });
+      expect(targetResult.ok).toBe(false);
+      if (!targetResult.ok) {
+        expect(targetResult.error).toMatchObject({
+          _tag: "AnalysisResourceConstraintError",
+          limit: expect.objectContaining({
+            parameter: "max_file_bytes",
+            effective_value: Buffer.byteLength(RULE),
+            required_value: Buffer.byteLength(RULE) + 17,
+          }),
+        });
+      }
+    }
   });
 
   it("refuses matches when the scanned file changes during the scan", async () => {

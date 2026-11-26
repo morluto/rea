@@ -274,7 +274,9 @@ const requiredValue = (
   parameter: ContractCliParameter,
 ): unknown =>
   parameter.callerPath
-    ? "rel/target"
+    ? parameter.repeatable
+      ? ["rel/target"]
+      : "rel/target"
     : probes(suppliedField(description, parameter)).find(
         (value) =>
           value !== undefined &&

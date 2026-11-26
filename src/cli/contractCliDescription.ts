@@ -268,9 +268,13 @@ export const describeContractCommand = <
           : analysisEvidenceDeliveryOptions.detail;
     else if (jsonText) schema = jsonTextField(declared, optionFlagName(key));
     else if (callerPath) {
+      const unwrapped = core(declared);
       const admitted =
-        core(declared) instanceof z.ZodArray
-          ? z.array(localPathStringSchema)
+        unwrapped instanceof z.ZodArray
+          ? new z.ZodArray({
+              ...unwrapped._zod.def,
+              element: localPathStringSchema,
+            })
           : localPathStringSchema;
       schema = admitsOmission(declared) ? admitted.optional() : admitted;
     } else {

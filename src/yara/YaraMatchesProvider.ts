@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { posix, win32 } from "node:path";
+import type { BigIntStats } from "node:fs";
+import { open } from "node:fs/promises";
+import { join, posix, win32 } from "node:path";
 
 import { isQualifiedCallerPath } from "../filesystem/callerPath.js";
 
@@ -18,15 +20,19 @@ import {
   ArtifactResourceScope,
   artifactFilePrimaryFacts,
   assertArtifactReadActive,
+  assertStableArtifactState,
   closeArtifactResources,
   projectStableArtifactFailure,
-  withStableArtifactHandle,
+  streamStableArtifact,
+  withArtifactFileHandle,
   type RequestField,
 } from "../resources/index.js";
 import {
   prepareOwnedCommand,
   runOwnedCommand,
 } from "../process/OwnedCommand.js";
+import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
+import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
 import type {
   OwnedProviderProcessSpawnOptions,
   ProviderProcessSnapshot,
@@ -59,6 +65,10 @@ import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import {
+  RuntimeControlUnavailableError,
+  runtimeControlCapabilityError,
+} from "../domain/runtimeControlUnavailableError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   INSPECT_YARA_MATCHES_OPERATION,
@@ -99,6 +109,9 @@ export interface YaraMatchesProviderOptions {
   readonly selectCommand: YaraCommandSelection;
   readonly platform?: NodeJS.Platform;
   readonly launcher?: YaraLauncher;
+  readonly createRuntime?: () => Promise<
+    Pick<PrivateRuntimeRoot, "path" | "close">
+  >;
 }
 
 /** The selected file a failed phase was reading. */
@@ -108,36 +121,61 @@ interface ReadPhase {
   readonly description: string;
 }
 
+/** One selected file staged into the private snapshot with its hashed identity. */
+interface StagedSnapshotFile {
+  readonly callerPath: string;
+  readonly snapshotPath: string;
+  readonly sha256: string;
+  readonly bytes: number;
+  readonly state: BigIntStats;
+}
+
+/** Owned snapshot inputs passed to yara and mapped back to caller paths. */
+interface StagedScanInputs {
+  readonly target: StagedSnapshotFile;
+  readonly rules: readonly StagedSnapshotFile[];
+  readonly fastScan: boolean;
+}
+
 /**
  * The namespace every rule file is compiled into. yara 4 reads a rule
  * argument as a file path, relative to its working directory, when that
  * file exists, and otherwise splits it at the first `:` into NAMESPACE:FILE.
- * A bare path that contains `:` and is replaced after it was hashed would
- * therefore compile a different file. With this prefix and the working
- * directory at the filesystem root, the whole argument names no file, so
- * yara takes the explicit namespace and reads the rest of the argument
- * verbatim as the hashed path.
+ * With this prefix and the working directory at the filesystem root, the whole
+ * argument names no file, so yara takes the explicit namespace and reads the
+ * rest of the argument verbatim as the snapshot path even if TMPDIR contains `:`.
  */
 const RULE_NAMESPACE = "rea";
 
-/** The argv yara receives; every path is absolute, so none parses as an option. */
-const yaraArguments = (input: InspectYaraMatchesInput): readonly string[] => [
+/** The argv yara receives; every snapshot path is absolute, so none parses as an option. */
+const yaraArguments = (staged: StagedScanInputs): readonly string[] => [
   ...BASE_ARGUMENTS,
-  ...(input.fast_scan === true ? ["-f"] : []),
-  ...input.rule_paths.map((path) => `${RULE_NAMESPACE}:${path}`),
-  input.path,
+  ...(staged.fastScan ? ["-f"] : []),
+  ...staged.rules.map((rule) => `${RULE_NAMESPACE}:${rule.snapshotPath}`),
+  staged.target.snapshotPath,
 ];
 
 /** The selected rule file yara named in a compile error, if it is one. */
-const ruleFileIndex = (
-  input: InspectYaraMatchesInput,
-  source: string,
-): number => {
+const ruleFileIndex = (staged: StagedScanInputs, source: string): number => {
   const prefix = `${RULE_NAMESPACE}:`;
   const named = source.startsWith(prefix)
     ? source.slice(prefix.length)
     : source;
-  return input.rule_paths.indexOf(named);
+  return staged.rules.findIndex((rule) => rule.snapshotPath === named);
+};
+
+/** Replace internal snapshot paths with the caller's selected paths in yara text. */
+const restoreCallerPaths = (text: string, staged: StagedScanInputs): string => {
+  let restored = text;
+  for (const rule of staged.rules) {
+    restored = restored
+      .replaceAll(`${RULE_NAMESPACE}:${rule.snapshotPath}`, rule.callerPath)
+      .replaceAll(rule.snapshotPath, rule.callerPath);
+  }
+  return restored.replaceAll(
+    staged.target.snapshotPath,
+    staged.target.callerPath,
+  );
 };
 
 /**
@@ -212,17 +250,29 @@ const RULE_COMPILE_REMEDIATION =
 /** A rule source yara refused to compile is the caller's selection. */
 const ruleCompileError = (
   diagnostics: YaraDiagnostics,
-  input: InspectYaraMatchesInput,
+  staged: StagedScanInputs,
   details: AnalysisErrorOptions,
 ): AnalysisInputError => {
-  const issues = diagnostics.compileErrors.map((failure) => {
-    const index = ruleFileIndex(input, failure.source);
+  const compileErrors = diagnostics.compileErrors.map((failure) => {
+    const index = ruleFileIndex(staged, failure.source);
+    const source =
+      index === -1
+        ? restoreCallerPaths(failure.source, staged)
+        : staged.rules[index]!.callerPath;
     return {
-      path: index === -1 ? ["rule_paths"] : ["rule_paths", index],
-      reason: "invalid_value" as const,
-      message: `${failure.source}${failure.line === null ? "" : `(${String(failure.line)})`}: ${failure.message}`,
+      index,
+      failure: {
+        ...failure,
+        source,
+        message: restoreCallerPaths(failure.message, staged),
+      },
     };
   });
+  const issues = compileErrors.map(({ index, failure }) => ({
+    path: index === -1 ? ["rule_paths"] : ["rule_paths", index],
+    reason: "invalid_value" as const,
+    message: `${failure.source}${failure.line === null ? "" : `(${String(failure.line)})`}: ${failure.message}`,
+  }));
   return new AnalysisInputError(
     OPERATION,
     {
@@ -232,9 +282,7 @@ const ruleCompileError = (
       remediationAction: RULE_COMPILE_REMEDIATION,
       diagnostics: {
         ...details.diagnostics,
-        compile_errors: diagnostics.compileErrors.map((failure) => ({
-          ...failure,
-        })),
+        compile_errors: compileErrors.map(({ failure }) => failure),
       },
     },
     issues,
@@ -243,7 +291,7 @@ const ruleCompileError = (
 
 /** What one yara outcome means; owner-observed facts are shared. */
 const yaraOutcomeContext = (
-  input: InspectYaraMatchesInput,
+  staged: StagedScanInputs,
   settings: YaraScanSettings,
   command: string,
 ): ProviderOutcomeContext => ({
@@ -288,7 +336,7 @@ const yaraOutcomeContext = (
   dialect: (outcome, details, unclassified) => {
     const diagnostics = parseYaraDiagnostics(
       outcome.output?.snapshot.stderr.text ?? "",
-      input.path,
+      staged.target.snapshotPath,
     );
     // yara exits 1 after printing why it refused the rules or the file.
     const reported =
@@ -298,13 +346,15 @@ const yaraOutcomeContext = (
       !outcome.stopRequested &&
       outcome.output?.truncated === false;
     if (reported && diagnostics.compileErrors.length > 0)
-      return ruleCompileError(diagnostics, input, details);
+      return ruleCompileError(diagnostics, staged, details);
     return unclassified({
       diagnostics: {
         ...(diagnostics.scanErrors.length === 0
           ? {}
           : {
-              scan_errors: diagnostics.scanErrors.map(({ reason }) => reason),
+              scan_errors: diagnostics.scanErrors.map(({ reason }) =>
+                restoreCallerPaths(reason, staged),
+              ),
             }),
         ...(diagnostics.unrecognized.length === 0
           ? {}
@@ -366,7 +416,7 @@ const limitations = (
   settings: YaraScanSettings,
 ): string[] => [
   "REA ran the caller-selected yara command; its implementation and version are not observed.",
-  "Rule files are hashed before the scan and their file identity is re-checked after it; their bytes are not hashed again. Files they include and module data that yara reads are not bound to this Evidence.",
+  "The scanned file and rule files are copied into an owned snapshot while computing their SHA-256 digests, and yara reads only those snapshot files; files included by rules and module data that yara reads are not bound to this Evidence.",
   "Only matching rules are reported; a rule that is absent did not match this file under these rules.",
   "String data is yara's display text and may be shortened; read file_offset and length from the artifact for the exact bytes.",
   ...(parsed.listedStringMatches < parsed.stringMatches
@@ -388,7 +438,7 @@ export class YaraMatchesProvider implements YaraMatchesPort {
 
   constructor(readonly options: YaraMatchesProviderOptions) {}
 
-  /** Retry retained command and descriptor cleanup. */
+  /** Retry retained command, snapshot, and descriptor cleanup. */
   close(): Promise<void> {
     return closeArtifactResources(
       () => this.#resources.close(),
@@ -414,104 +464,222 @@ export class YaraMatchesProvider implements YaraMatchesPort {
       | undefined;
     try {
       return await this.#resources.run(async () => {
-        const ruleFiles: YaraMatches["rule_files"][number][] = [];
-        const rulePhase = (index: number, path: string): ReadPhase => ({
-          path,
-          field: ["rule_paths", index],
-          description: "rule file",
-        });
-        // yara reopens each rule file by path. Every rule descriptor stays
-        // open across the scan and is re-verified the same way as the
-        // scanned file before it closes, so a rule file replaced or edited
-        // in place between hashing and compiling fails as artifact_changed.
-        const holdRuleFiles = async (index: number): Promise<YaraMatches> => {
-          const path = input.rule_paths[index];
-          if (path === undefined) return scanFile();
-          phase = rulePhase(index, path);
-          return withStableArtifactHandle(
-            path,
-            maxFileBytes,
-            { retainBytes: () => 0, signal, resourceScope: this.#resources },
-            async (handle): Promise<YaraMatches> => {
-              ruleFiles.push({
-                path,
-                sha256: handle.sha256,
-                bytes: handle.size,
-              });
-              const value = await holdRuleFiles(index + 1);
-              // The re-verification that follows names this rule file.
-              phase = rulePhase(index, path);
-              return value;
-            },
-          );
-        };
-        const scanFile = async (): Promise<YaraMatches> => {
-          phase = { path: input.path, field: "path", description: "file" };
-          // The descriptor stays open across the scan and the file is
-          // re-verified before it closes, so matches belong to this digest.
-          return withStableArtifactHandle(
-            input.path,
-            maxFileBytes,
-            {
-              retainBytes: () => 0,
+        const root = await this.#createRuntime(platform);
+        let outcome:
+          | { readonly kind: "completed"; readonly value: YaraMatches }
+          | { readonly kind: "failed"; readonly cause: unknown };
+        try {
+          outcome = {
+            kind: "completed",
+            value: await this.#inspectInSnapshot(
+              root.path,
+              command.value,
+              input,
+              settings,
+              maxFileBytes,
               signal,
-              resourceScope: this.#resources,
-              onIdentity: (verified) => {
+              (next) => {
+                phase = next;
+              },
+              (verified) => {
                 identity = verified;
               },
-            },
-            async (handle): Promise<YaraMatches> => {
-              const { parsed, warnings } = await this.#scan(
-                command.value,
-                input,
-                settings,
-                signal,
-              );
-              assertArtifactReadActive(signal);
-              return {
-                artifact: {
-                  path: input.path,
-                  sha256: handle.sha256,
-                  bytes: handle.size,
-                },
-                rule_files: ruleFiles,
-                fast_scan: input.fast_scan === true,
-                matches: [...parsed.matches],
-                coverage: {
-                  status:
-                    parsed.listedStringMatches < parsed.stringMatches
-                      ? "partial"
-                      : "complete",
-                  matched_rules: parsed.matches.length,
-                  string_matches: parsed.stringMatches,
-                  listed_string_matches: parsed.listedStringMatches,
-                },
-                limits: { ...settings, max_file_bytes: maxFileBytes },
-                warnings: [...warnings],
-                limitations: limitations(input, parsed, settings),
-              };
-            },
+            ),
+          };
+        } catch (cause: unknown) {
+          outcome = { kind: "failed", cause };
+        }
+        const release = await this.#resources.release({
+          kind: "private-runtime-root",
+          resource: root.path,
+          root,
+        });
+        if (release.kind === "failed")
+          throw this.#resources.cleanupFailure(
+            outcome.kind === "completed"
+              ? { kind: "completed" }
+              : { kind: "failed", cause: outcome.cause },
+            [release],
           );
-        };
-        const report = await holdRuleFiles(0);
-        return ok(report);
+        if (outcome.kind === "failed") throw outcome.cause;
+        assertArtifactReadActive(signal);
+        return ok(outcome.value);
       });
     } catch (cause: unknown) {
       return err(this.#failure(cause, input, phase, maxFileBytes, identity));
     }
   }
 
-  async #scan(
+  async #createRuntime(
+    platform: NodeJS.Platform,
+  ): Promise<Pick<PrivateRuntimeRoot, "path" | "close">> {
+    try {
+      return this.options.createRuntime === undefined
+        ? await PrivateRuntimeRoot.create({ prefix: "rea-yara-", platform })
+        : await this.options.createRuntime();
+    } catch (cause: unknown) {
+      if (cause instanceof RuntimeControlUnavailableError)
+        throw runtimeControlCapabilityError(PROVIDER_ID, OPERATION, cause);
+      throw privateWorkspaceFailure(PROVIDER_ID, OPERATION, cause, null);
+    }
+  }
+
+  async #stageFile(
+    sourcePath: string,
+    destinationPath: string,
+    maxFileBytes: number,
+    signal: AbortSignal | undefined,
+    rootPath: string,
+  ): Promise<StagedSnapshotFile> {
+    let destHandle;
+    try {
+      destHandle = await open(destinationPath, "wx", 0o600);
+    } catch (cause: unknown) {
+      throw privateWorkspaceFailure(PROVIDER_ID, OPERATION, cause, rootPath);
+    }
+    return withArtifactFileHandle(
+      destinationPath,
+      destHandle,
+      this.#resources,
+      signal,
+      async (dest) => {
+        const streamed = await streamStableArtifact(sourcePath, maxFileBytes, {
+          retainBytes: () => 0,
+          signal,
+          resourceScope: this.#resources,
+          onChunk: async (chunk) => {
+            try {
+              await dest.writeFile(chunk);
+            } catch (cause: unknown) {
+              throw privateWorkspaceFailure(
+                PROVIDER_ID,
+                OPERATION,
+                cause,
+                rootPath,
+              );
+            }
+          },
+        });
+        const state = await dest.stat({ bigint: true });
+        return {
+          callerPath: sourcePath,
+          snapshotPath: destinationPath,
+          sha256: streamed.sha256,
+          bytes: streamed.size,
+          state,
+        };
+      },
+    );
+  }
+
+  async #inspectInSnapshot(
+    rootPath: string,
     command: string,
     input: InspectYaraMatchesInput,
+    settings: YaraScanSettings,
+    maxFileBytes: number,
+    signal: AbortSignal | undefined,
+    setPhase: (phase: ReadPhase) => void,
+    setIdentity: (identity: {
+      readonly sha256: string;
+      readonly bytes: number;
+    }) => void,
+  ): Promise<YaraMatches> {
+    const rulePhase = (index: number, path: string): ReadPhase => ({
+      path,
+      field: ["rule_paths", index],
+      description: "rule file",
+    });
+    const targetPhase: ReadPhase = {
+      path: input.path,
+      field: "path",
+      description: "file",
+    };
+    const stagedRules: StagedSnapshotFile[] = [];
+    for (const [index, path] of input.rule_paths.entries()) {
+      setPhase(rulePhase(index, path));
+      stagedRules.push(
+        await this.#stageFile(
+          path,
+          join(rootPath, `rule-${String(index)}.yar`),
+          maxFileBytes,
+          signal,
+          rootPath,
+        ),
+      );
+    }
+    setPhase(targetPhase);
+    const stagedTarget = await this.#stageFile(
+      input.path,
+      join(rootPath, "target.bin"),
+      maxFileBytes,
+      signal,
+      rootPath,
+    );
+    setIdentity({ sha256: stagedTarget.sha256, bytes: stagedTarget.bytes });
+    const staged: StagedScanInputs = {
+      target: stagedTarget,
+      rules: stagedRules,
+      fastScan: input.fast_scan === true,
+    };
+    const { parsed, warnings } = await this.#scan(
+      command,
+      staged,
+      settings,
+      signal,
+    );
+    // Verify that neither the target snapshot nor any rule snapshot was
+    // modified while yara ran before attributing matches to their digests.
+    setPhase(targetPhase);
+    await assertStableArtifactState(
+      stagedTarget.snapshotPath,
+      stagedTarget.state,
+      signal,
+    );
+    for (const [index, rule] of stagedRules.entries()) {
+      setPhase(rulePhase(index, rule.callerPath));
+      await assertStableArtifactState(rule.snapshotPath, rule.state, signal);
+    }
+    assertArtifactReadActive(signal);
+    return {
+      artifact: {
+        path: input.path,
+        sha256: stagedTarget.sha256,
+        bytes: stagedTarget.bytes,
+      },
+      rule_files: stagedRules.map((rule) => ({
+        path: rule.callerPath,
+        sha256: rule.sha256,
+        bytes: rule.bytes,
+      })),
+      fast_scan: input.fast_scan === true,
+      matches: [...parsed.matches],
+      coverage: {
+        status:
+          parsed.listedStringMatches < parsed.stringMatches
+            ? "partial"
+            : "complete",
+        matched_rules: parsed.matches.length,
+        string_matches: parsed.stringMatches,
+        listed_string_matches: parsed.listedStringMatches,
+      },
+      limits: { ...settings, max_file_bytes: maxFileBytes },
+      warnings: [...warnings],
+      limitations: limitations(input, parsed, settings),
+    };
+  }
+
+  async #scan(
+    command: string,
+    staged: StagedScanInputs,
     settings: YaraScanSettings,
     signal: AbortSignal | undefined,
   ): Promise<CompletedScan> {
     const parser = new YaraMatchOutputParser(
-      input.path,
+      staged.target.snapshotPath,
       settings.max_matches.value,
     );
-    const context = yaraOutcomeContext(input, settings, command);
+    const context = yaraOutcomeContext(staged, settings, command);
     const maxOutputBytes = settings.max_output_bytes.value;
     const platform = this.options.platform ?? HOST_PLATFORM.platform;
     const pathApi = platform === "win32" ? win32 : posix;
@@ -522,9 +690,9 @@ export class YaraMatchesProvider implements YaraMatchesPort {
       snapshot = await runOwnedCommand(
         {
           command,
-          arguments: yaraArguments(input),
+          arguments: yaraArguments(staged),
           // See RULE_NAMESPACE: no relative path resolves to a rule file.
-          cwd: pathApi.parse(input.path).root,
+          cwd: pathApi.parse(staged.target.snapshotPath).root,
           runId: `rea-yara-${randomUUID()}`,
           hostEnvironment: {
             ...snapshotEnvironment(this.options.environment, platform),
@@ -555,10 +723,15 @@ export class YaraMatchesProvider implements YaraMatchesPort {
         `yara stdout line ${String(parsed.error.line)} is not a documented match line: ${parsed.error.reason}.`,
         { capturedOutput: capturedProviderOutput(snapshot) },
       );
-    const diagnostics = parseYaraDiagnostics(snapshot.stderr.text, input.path);
+    const diagnostics = parseYaraDiagnostics(
+      snapshot.stderr.text,
+      staged.target.snapshotPath,
+    );
     return {
       parsed: parsed.value,
-      warnings: [...diagnostics.warnings, ...diagnostics.unrecognized],
+      warnings: [...diagnostics.warnings, ...diagnostics.unrecognized].map(
+        (line) => restoreCallerPaths(line, staged),
+      ),
     };
   }
 
@@ -596,7 +769,13 @@ export class YaraMatchesProvider implements YaraMatchesPort {
             {
               path: read.path,
               retryable: false,
-              limit: yaraFileBytesLimit(maxFileBytes),
+              limit: yaraFileBytesLimit(
+                maxFileBytes,
+                failure.observedBytes !== undefined &&
+                  failure.observedBytes <= BigInt(Number.MAX_SAFE_INTEGER)
+                  ? Number(failure.observedBytes)
+                  : undefined,
+              ),
             },
           ),
       }),
