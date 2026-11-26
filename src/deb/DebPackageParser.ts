@@ -1236,17 +1236,17 @@ export const parseDebPackage = async (
   // member with the same role is left unread and flagged as extra.
   const seenRoles = new Set<DebArMember["role"]>();
   const repeated_member_names: string[] = [];
-  const extra_member_names = members
-    .filter((member) => {
-      if (member.role === "unknown") return true;
-      if (!seenRoles.has(member.role)) {
-        seenRoles.add(member.role);
-        return false;
-      }
+  const extra_member_names: string[] = [];
+  for (const member of members) {
+    if (member.role === "unknown") {
+      extra_member_names.push(member.name);
+    } else if (!seenRoles.has(member.role)) {
+      seenRoles.add(member.role);
+    } else {
       repeated_member_names.push(member.name);
-      return true;
-    })
-    .map((member) => member.name);
+      extra_member_names.push(member.name);
+    }
+  }
   const debianBinary = arMembers.find(
     (member) => member.role === "debian-binary",
   );
@@ -1339,11 +1339,11 @@ export const parseDebPackage = async (
       limitations.push(
         `${String(unread)} md5sums line(s) are not md5sum digest lines and were not compared.`,
       );
-    const inventory = new Set(
-      dataTar.entries
-        .filter((entry) => entry.type === "file" || entry.type === "hardlink")
-        .map((entry) => logicalTarPath(entry.path)),
-    );
+    const inventory = new Set<string>();
+    for (const entry of dataTar.entries) {
+      if (entry.type === "file" || entry.type === "hardlink")
+        inventory.add(logicalTarPath(entry.path));
+    }
     let present = 0;
     let missing_from_inventory = 0;
     for (const path of listed) {
@@ -1369,13 +1369,14 @@ export const parseDebPackage = async (
     [dataTar, dataMember],
   ] as const) {
     if (tar === null || member === undefined) continue;
-    const unreadable = tar.entries.filter((entry) => entry.mode === null);
-    if (unreadable.length > 0)
+    let unreadable = 0;
+    for (const entry of tar.entries) if (entry.mode === null) unreadable += 1;
+    if (unreadable > 0)
       issues.push({
         kind: "malformed",
         member: member.name,
         field: "mode",
-        detail: `${String(unreadable.length)} tar entries in ${member.name} have a mode field that is not octal; their mode is reported as null.`,
+        detail: `${String(unreadable)} tar entries in ${member.name} have a mode field that is not octal; their mode is reported as null.`,
         offset: null,
       });
   }
