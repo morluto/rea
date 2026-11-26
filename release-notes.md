@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **native:** Go and Rust structural refusals and the WebAssembly section refusal report details.limit instead of a fixed_ceiling refusal.
 * **limits:** register producer.output_bytes as the session default for bounded producer output ([#14648](https://github.com/morluto/rea/issues/14648))
 * **browser:** an observe_web_execution call that omits detail on an observation above the agent result budget now returns the retained summary. Pass detail: "complete" (--detail complete) for the previous shape.
 * **native:** the PE retained-text, exception-directory entry and resource metadata refusals report details.limit instead of a fixed_ceiling refusal.
@@ -118,6 +119,7 @@
 * **metadata:** give NTFS, Maven report and NuGet budgets typed per-call controls ([#14629](https://github.com/morluto/rea/issues/14629)) ([4f66985](https://github.com/morluto/rea/commit/4f6698597884d709be8a98ec43f9f5320ae598ce))
 * **native:** give inspect_dwarf_units a per-call max_decompressed_bytes ([#14660](https://github.com/morluto/rea/issues/14660)) ([1cc655b](https://github.com/morluto/rea/commit/1cc655bbc0c17c7138a6457d069578fe93505d3a))
 * **native:** give inspect_native_exports per-call inventory, text and structure budgets ([#14658](https://github.com/morluto/rea/issues/14658)) ([4d3fa5a](https://github.com/morluto/rea/commit/4d3fa5a0802ea31c4dc1b2ad559562e63b8dd7a2))
+* **native:** give the Go and Rust readers max_structure_bytes and Rust max_wasm_sections ([#14661](https://github.com/morluto/rea/issues/14661)) ([4c9dca6](https://github.com/morluto/rea/commit/4c9dca63a0e8bc08030a703565f26e1df49a2c94))
 * **native:** give the native structural decoding allowance a per-call max_structure_bytes ([#14626](https://github.com/morluto/rea/issues/14626)) ([e540cbd](https://github.com/morluto/rea/commit/e540cbdafd8170701b07b4735f8a5da40e47e10e))
 * **native:** give the PE readers per-call text, entry and metadata budgets ([#14659](https://github.com/morluto/rea/issues/14659)) ([0aca049](https://github.com/morluto/rea/commit/0aca049128687828bddc32e8c4c0a39d7544c1ff))
 * **native:** report the stored RVA of PE exports ([bf8448c](https://github.com/morluto/rea/commit/bf8448cdfc90c4c077f03b877cf09ea150509092))
