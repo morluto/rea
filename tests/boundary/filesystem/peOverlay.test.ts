@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { symlink, writeFile } from "node:fs/promises";
+import { symlink, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createPeOverlayService } from "../../../src/composition/binaryDiagnostics/peOverlay.js";
@@ -56,7 +56,8 @@ describe("PE overlay stable filesystem boundary", () => {
   it("returns typed resource and cancellation failures", async () => {
     const root = await createTestTempDirectory("rea-pe-overlay-budget-");
     const path = join(root, "app.exe");
-    await writeFile(path, peOverlayImage());
+    const bytes = peOverlayImage();
+    await writeFile(path, bytes);
     const service = createPeOverlayService();
     const tooSmall = await service.inspect({ path, max_file_bytes: 64 });
     if (tooSmall.ok) throw new Error("Expected resource budget failure");
@@ -68,6 +69,7 @@ describe("PE overlay stable filesystem boundary", () => {
         control_kind: "parameter",
         parameter: "max_file_bytes",
         effective_value: 64,
+        required_value: bytes.length,
         unit: "bytes",
         minimum: PE_OVERLAY_FILE_BYTES.minimum,
         maximum: MAX_INSPECT_PE_OVERLAY_FILE_BYTES,
@@ -77,18 +79,24 @@ describe("PE overlay stable filesystem boundary", () => {
     });
     expect(projectAnalysisError(tooSmall.error)).toMatchObject({
       code: "resource_constraint",
-      remediation: { action: expect.stringContaining("max_file_bytes") },
+      remediation: {
+        action: expect.stringContaining(
+          `at least ${String(bytes.length)} bytes`,
+        ),
+      },
       details: {
         limit: {
           control_kind: "parameter",
           parameter: "max_file_bytes",
           effective_value: 64,
+          required_value: bytes.length,
         },
         refusal: {
           kind: "adjustable_budget",
           operation: "inspect_pe_overlay",
           control: "max_file_bytes",
           effective_value: 64,
+          required_value: bytes.length,
           unit: "bytes",
           range: {
             minimum: PE_OVERLAY_FILE_BYTES.minimum,
@@ -105,6 +113,48 @@ describe("PE overlay stable filesystem boundary", () => {
     if (cancelled.ok) throw new Error("Expected cancellation");
     expect(cancelled.error._tag).toBe("AnalysisCancelledError");
   });
+
+  // Avoid reserving the file on filesystems without sparse truncation.
+  it.skipIf(process.platform === "win32")(
+    "reports when a file exceeds the max_file_bytes ceiling",
+    async () => {
+      const root = await createTestTempDirectory("rea-pe-overlay-ceiling-");
+      const oversized = join(root, "oversized.exe");
+      const oneGiB = 1024 * 1024 * 1024;
+      await writeFile(oversized, Buffer.alloc(0));
+      await truncate(oversized, oneGiB);
+      const service = createPeOverlayService();
+      const result = await service.inspect({ path: oversized });
+      if (result.ok) throw new Error("Expected ceiling refusal");
+      const projected = projectAnalysisError(result.error);
+      expect(projected).toMatchObject({
+        code: "resource_constraint",
+        remediation: {
+          action: expect.stringContaining(
+            `requires ${String(oneGiB)} bytes, above the max_file_bytes maximum`,
+          ),
+        },
+        details: {
+          limit: {
+            control_kind: "parameter",
+            parameter: "max_file_bytes",
+            effective_value: PE_OVERLAY_FILE_BYTES.default_value,
+            required_value: oneGiB,
+            maximum: MAX_INSPECT_PE_OVERLAY_FILE_BYTES,
+          },
+          refusal: {
+            kind: "adjustable_budget",
+            operation: "inspect_pe_overlay",
+            control: "max_file_bytes",
+            required_value: oneGiB,
+          },
+        },
+      });
+      expect(projected.remediation.action).not.toContain(
+        "Pass a larger max_file_bytes",
+      );
+    },
+  );
 
   it.each(["control", "close-failure", "close-cancel", "close-both"] as const)(
     "retains completed PE acquisition through %s",

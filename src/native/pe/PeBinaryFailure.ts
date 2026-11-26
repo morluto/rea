@@ -83,33 +83,44 @@ export const projectPeBinaryFailure = <Limit extends string = never>(
         }
         return undefined;
       },
-      fileSize: (failure) =>
-        "parameterLimit" in options.fileCeiling
-          ? parseLimitConstraint(
-              operation,
-              "file-size",
-              decodeLimit(
-                "pe",
-                failure.message,
-                {
-                  name: options.fileCeiling.parameterLimit.parameter,
-                  maximum: options.fileCeiling.parameterLimit.effective_value,
-                },
-                { cause: failure },
-              ),
-              {
-                retryable: false,
-                limit: options.fileCeiling.parameterLimit,
-              },
-            )
-          : artifactFileCeilingConstraint(
-              operation,
-              failure,
-              options.fileCeiling,
-              {
-                max_file_bytes: input.max_file_bytes,
-              },
-            ),
+      fileSize: (failure) => {
+        if (!("parameterLimit" in options.fileCeiling))
+          return artifactFileCeilingConstraint(
+            operation,
+            failure,
+            options.fileCeiling,
+            {
+              max_file_bytes: input.max_file_bytes,
+            },
+          );
+        const { parameterLimit } = options.fileCeiling;
+        const requiredBytes = failure.observedBytes;
+        const limit: AnalysisParameterLimit =
+          requiredBytes === undefined ||
+          requiredBytes > BigInt(Number.MAX_SAFE_INTEGER)
+            ? parameterLimit
+            : { ...parameterLimit, required_value: Number(requiredBytes) };
+        return parseLimitConstraint(
+          operation,
+          "file-size",
+          decodeLimit(
+            "pe",
+            failure.message,
+            {
+              name: parameterLimit.parameter,
+              maximum: parameterLimit.effective_value,
+              ...(requiredBytes === undefined
+                ? {}
+                : { required: requiredBytes }),
+            },
+            { cause: failure },
+          ),
+          {
+            retryable: false,
+            limit,
+          },
+        );
+      },
     }),
   );
   if (options.completed !== undefined)
