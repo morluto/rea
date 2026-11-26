@@ -50,7 +50,7 @@ mcpTest(
     expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
     const inventoryReply = await client.callTool({
       name: "inspect_artifact",
-      arguments: { detail: "complete" },
+      arguments: {},
     });
     expect(
       inventoryReply.isError,

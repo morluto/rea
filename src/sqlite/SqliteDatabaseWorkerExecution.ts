@@ -2,7 +2,7 @@ import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { safeParseUtf8Json } from "../domain/safeJson.js";
 import {
   bindArtifactFileCleanup,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   completedStableArtifact,
   readStableArtifact,
   ArtifactReaderFailure,
@@ -25,8 +25,6 @@ import {
   AnalysisTargetFailureError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
-  cancelledBy,
-  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   sqliteDatabaseSchema,
@@ -341,11 +339,9 @@ const sqliteReplyCompletionFailure = (
   );
   bindArtifactFileCleanup(cause, cleanup);
   if (cause.reason !== "cancelled") return cleanup;
-  const cancellation = cancelledBy(
-    operation,
-    carriedReason(artifactFileCancellationCause(cause)),
-    { capturedOutput },
-  );
+  const cancellation = artifactFileCancellationError(operation, cause, {
+    capturedOutput,
+  });
   return analysisErrorWithCleanupDependencies(cancellation, cleanup, operation);
 };
 

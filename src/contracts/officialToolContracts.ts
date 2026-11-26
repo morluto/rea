@@ -365,8 +365,13 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   official(
     "xrefs",
     providerNetworkEvidenceEffects,
-    "Return analyzed references to a code or data address. Hopper may default to its current cursor. A name the provider does not accept as an address resolves as in find_xrefs_to_name. Kuna also accepts names in its own inventory, including data names; an unlisted name may still exist in the target. Use to connect strings, globals, selectors, and functions; bare addresses are untyped and indirect references may be incomplete. Page a retained result with inspect_analysis_view and native-observation; use native-context for source caveats. Use inspect_native_instruction at the target address for typed incoming references where supported.",
-    z.object({ document, address: optionalAddress }),
+    "Return analyzed references to a code or data address. Hopper may default to its current cursor. A name the provider does not accept as an address resolves as in find_xrefs_to_name. Kuna also accepts names in its own inventory, including data names; an unlisted name may still exist in the target. Use to connect strings, globals, selectors, and functions; bare addresses are untyped and indirect references may be incomplete. Omitted detail returns every address within the agent result budget and otherwise the retained summary; page it with inspect_analysis_view and native-observation, and use native-context for source caveats. Use inspect_native_instruction at the target address for typed incoming references where supported.",
+    z.object({
+      document,
+      address: optionalAddress,
+      detail: analysisDetailSchema,
+    }),
+    { evidenceParameters: "omit-detail" },
   ),
 ] as const satisfies readonly ToolContract[];
 

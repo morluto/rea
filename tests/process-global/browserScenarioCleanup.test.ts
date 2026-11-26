@@ -34,7 +34,6 @@ import {
 import { ok } from "../../src/domain/result.js";
 import { phaseGate } from "../support/lifecycleHarness.js";
 import { primaryAnalysisError } from "../../src/domain/analysisErrorBase.js";
-import { COMPLETE_DETAIL } from "../support/completeDetail.js";
 
 const state = vi.hoisted(() => ({
   provider: undefined as BrowserScenarioCapturePort | undefined,
@@ -152,12 +151,7 @@ const serveScenario = async () => {
   let stdout = "";
   let exitCode = 0;
   await cli.serve(
-    [
-      "capture-browser-scenario",
-      ...COMPLETE_DETAIL,
-      JSON.stringify(scenario),
-      "--json",
-    ],
+    ["capture-browser-scenario", JSON.stringify(scenario), "--json"],
     {
       env: {},
       exit: (code) => {

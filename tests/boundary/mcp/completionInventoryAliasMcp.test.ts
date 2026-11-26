@@ -56,7 +56,7 @@ it.each([false, true])(
       await client.connect(clientTransport);
       const listed = await client.callTool({
         name: "list_procedures",
-        arguments: { detail: "complete" },
+        arguments: {},
       });
       expect(listed.isError).not.toBe(true);
       expect(listed.structuredContent).toMatchObject({

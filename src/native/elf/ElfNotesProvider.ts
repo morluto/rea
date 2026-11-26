@@ -22,8 +22,6 @@ import {
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   ELF_NOTES_READ_BUDGETS,
-  MAX_INSPECT_ELF_NOTE_ENTRIES,
-  MAX_INSPECT_ELF_NOTE_FILE_BYTES,
   type ElfNotes,
   type InspectElfNotesInput,
 } from "../../domain/native/elfNotes.js";
@@ -93,23 +91,6 @@ export class ElfNotesProvider implements ElfNotesPort {
   }
 }
 
-const inputBudgetRemediation = (
-  boundary: "file-size" | "capacity",
-  input: InspectElfNotesInput,
-): string =>
-  boundary === "file-size"
-    ? input.max_file_bytes >= MAX_INSPECT_ELF_NOTE_FILE_BYTES
-      ? `The image exceeds the ${String(MAX_INSPECT_ELF_NOTE_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller artifact.`
-      : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`
-    : input.max_entries >= MAX_INSPECT_ELF_NOTE_ENTRIES
-      ? `The image exceeds the ${String(MAX_INSPECT_ELF_NOTE_ENTRIES)}-entry note-table ceiling this operation accepts; select a smaller artifact.`
-      : `Raise max_entries above ${String(input.max_entries)} or select a smaller artifact; the limit is the caller-selected note entry budget.`;
-
-const sectionNameBudgetRemediation = (required: bigint): string =>
-  required <= BigInt(MAX_INSPECT_ELF_NOTE_FILE_BYTES)
-    ? `Raise max_file_bytes to at least ${String(required)} bytes to admit the source and decoded ELF section names.`
-    : `The source and decoded ELF section names require ${String(required)} bytes, above this operation's ${String(MAX_INSPECT_ELF_NOTE_FILE_BYTES)}-byte maximum; select an image with a smaller section-name table.`;
-
 const elfNotesFailure = (
   cause: unknown,
   input: InspectElfNotesInput,
@@ -136,8 +117,6 @@ const elfNotesFailure = (
               ELF_NOTES_READ_BUDGETS,
               "max_file_bytes",
               input.max_file_bytes,
-            ),
-            remediationAction: sectionNameBudgetRemediation(
               sectionNameBudget.required,
             ),
           });
@@ -155,7 +134,6 @@ const elfNotesFailure = (
                     "max_entries",
                     input.max_entries,
                   ),
-                  remediationAction: inputBudgetRemediation("capacity", input),
                 }
               : fixedAllowanceOptions(ELF_NOTE_TEXT_ALLOWANCE, "parser", {
                   limit: failure.failure.limit.maximum,
@@ -182,7 +160,6 @@ const elfNotesFailure = (
               "max_file_bytes",
               input.max_file_bytes,
             ),
-            remediationAction: inputBudgetRemediation("file-size", input),
           },
         ),
     }),

@@ -15,7 +15,6 @@ import {
 import {
   PCAP_PRODUCER_LIMITS,
   pcapProducerLimit,
-  pcapProducerLimitRecovery,
 } from "../domain/pcap/pcapAnalysis.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { withSecondaryCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -168,10 +167,10 @@ export class PcapSnapshot {
           { max_capture_bytes: maximumBytes },
           {
             retryable: false,
-            limit: pcapProducerLimit("input_bytes", maximumBytes),
-            remediationAction: pcapProducerLimitRecovery(
+            limit: pcapProducerLimit(
               "input_bytes",
               maximumBytes,
+              Number(before.size),
             ),
           },
         );

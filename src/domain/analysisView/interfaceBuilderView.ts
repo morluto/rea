@@ -1,3 +1,4 @@
+import { countValues, sortedCountEntries } from "./analysisViewCounts.js";
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import {
@@ -93,13 +94,8 @@ export const interfaceBuilderSummarySchema = z.strictObject({
   limitation_count: z.int().nonnegative(),
 });
 
-const tally = (values: readonly string[]): Record<string, number> => {
-  const counts = new Map<string, number>();
-  for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1);
-  return Object.fromEntries(
-    [...counts].sort(([left], [right]) => (left < right ? -1 : 1)),
-  );
-};
+const tally = (values: readonly string[]): Record<string, number> =>
+  Object.fromEntries(sortedCountEntries(countValues(values)));
 
 type InterfaceBuilderReport = z.output<typeof interfaceBuilderAnalysisSchema>;
 type InterfaceBuilderPage = z.output<typeof interfaceBuilderViewRequestSchema>;

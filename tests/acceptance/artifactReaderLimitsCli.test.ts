@@ -9,7 +9,12 @@ import {
   bunModuleGraphPayload,
   elfAppendedBunPayload,
 } from "../../src/artifacts/bun/BunStandalone.fixture.js";
+import {
+  buildDenoSection,
+  denoElf,
+} from "../../src/artifacts/deno/DenoStandalone.fixture.js";
 import { dotnetBundleFixture } from "../../src/artifacts/dotnet/DotnetBundle.fixture.js";
+import { tarFixture } from "../../src/artifacts/tar/tar.fixture.js";
 import { nodeSeaElf } from "../../src/artifacts/nodeSea/NodeSea.fixture.js";
 import type { ArtifactReaderLimitsInput } from "../../src/domain/artifactReaderLimits.js";
 import {
@@ -19,6 +24,7 @@ import {
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { buildGodotPck } from "../fixtures/godotPck.js";
+import { buildWxapkg } from "../fixtures/wxapkg.js";
 import { workspaceCliTest as test } from "../support/cli/workspaceCliFixture.js";
 
 const readInspection = (value: unknown) => {
@@ -96,6 +102,47 @@ const readers: readonly ReaderCase[] = [
     lower: { godot: { directory_bytes: 1 } },
     raised: { godot: { directory_bytes: 4096 } },
     parameter: "artifact_limits.godot.directory_bytes",
+    value: 1,
+  },
+  {
+    format: "deno-standalone",
+    create: () =>
+      denoElf(
+        buildDenoSection({
+          vfs: [
+            { File: { n: "main.ts", o: [0, 4], u: true } },
+            { File: { n: "other.ts", o: [0, 4], u: true } },
+          ],
+          vfsFileData: Buffer.from("main"),
+        }),
+      ),
+    lower: { deno: { vfs_entries: 1 } },
+    raised: { deno: { vfs_entries: 2 } },
+    parameter: "artifact_limits.deno.vfs_entries",
+    value: 1,
+  },
+  {
+    format: "wxapkg",
+    create: () =>
+      buildWxapkg([
+        { path: "/app.js", data: "app" },
+        { path: "/page.wxml", data: "page" },
+      ]),
+    lower: { wxapkg: { table_bytes: 1 } },
+    raised: { wxapkg: { table_bytes: 4096 } },
+    parameter: "artifact_limits.wxapkg.table_bytes",
+    value: 1,
+  },
+  {
+    format: "tar",
+    create: () =>
+      tarFixture([
+        { name: "first.txt", data: "first" },
+        { name: "second.txt", data: "second" },
+      ]),
+    lower: { tar: { metadata_bytes: 1 } },
+    raised: { tar: { metadata_bytes: 4096 } },
+    parameter: "artifact_limits.tar.metadata_bytes",
     value: 1,
   },
   {
@@ -311,6 +358,8 @@ test("rejects unknown reader-policy fields before opening the selected artifact"
   for (const policy of [
     { unknown: 1 },
     { node_sea: { argument_count: 1, unknown: 1 } },
+    // An indexed Deno fallback path has two parts, so one is unrepresentable.
+    { deno: { path_parts: 1 } },
   ]) {
     const invalid = await cli.run({
       arguments: [

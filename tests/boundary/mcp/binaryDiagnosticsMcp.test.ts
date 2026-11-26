@@ -79,7 +79,7 @@ it("reports the exhausted native export allowance through MCP", async () => {
     await writeFile(path, fixture.bytes);
     const response = await client.callTool({
       name: "inspect_native_exports",
-      arguments: { detail: "complete", path },
+      arguments: { path },
     });
     const { error } = parseMcpToolError(response);
     expect(error).toMatchObject({
@@ -231,7 +231,7 @@ it.each([false, true])(
     await client.connect(clientTransport);
     const response = await client.callTool({
       name: "inspect_byte_entropy",
-      arguments: { detail: "complete", path, block_size: 256 },
+      arguments: { path, block_size: 256 },
     });
     const failure = parseMcpToolError(response).error;
     expect(failure).toMatchObject({
@@ -333,10 +333,7 @@ it("records inline layout with compact schemas and canonical path checks", async
     }),
   ).toBe(false);
   const response = await client.callTool(
-    {
-      name: "inspect_binary_layout",
-      arguments: { detail: "complete", path: value.artifact.path },
-    },
+    { name: "inspect_binary_layout", arguments: { path: value.artifact.path } },
     { toolDefinition: schemas.toolDefinition },
   );
   const evidence = assertRecordedMcpEvidence(
@@ -368,7 +365,7 @@ it("records inline layout with compact schemas and canonical path checks", async
   });
   const relative = await client.callTool({
     name: "inspect_binary_layout",
-    arguments: { detail: "complete", path: "relative.elf" },
+    arguments: { path: "relative.elf" },
   });
   expect(parseMcpToolError(relative).error.code).toBe("invalid_request");
   expect(providerCalls).toBe(1);
@@ -421,7 +418,7 @@ it("profiles real bytes with exact offsets, valid advertised schemas and read-on
   );
   expect(ajv.validate(inputSchema, { path, surprise: true })).toBe(false);
   const response = await client.callTool(
-    { name: "inspect_byte_entropy", arguments: { detail: "complete", path } },
+    { name: "inspect_byte_entropy", arguments: { path } },
     { toolDefinition },
   );
   expect(response.isError).not.toBe(true);
@@ -450,7 +447,7 @@ it("profiles real bytes with exact offsets, valid advertised schemas and read-on
     (
       await client.callTool({
         name: "inspect_byte_entropy",
-        arguments: { detail: "complete", path, offset: 999999 },
+        arguments: { path, offset: 999999 },
       })
     ).isError,
   ).toBe(true);
@@ -491,7 +488,7 @@ it("records a portable export inventory through MCP without a binary target", as
   );
   expect(schemas.ajv.validate(schemas.inputSchema, { path })).toBe(true);
   const response = await client.callTool(
-    { name: "inspect_native_exports", arguments: { detail: "complete", path } },
+    { name: "inspect_native_exports", arguments: { path } },
     { toolDefinition: schemas.toolDefinition },
   );
   expect(
@@ -523,7 +520,7 @@ it("records a portable export inventory through MCP without a binary target", as
   );
   const relative = await client.callTool({
     name: "inspect_native_exports",
-    arguments: { detail: "complete", path: "relative.so" },
+    arguments: { path: "relative.so" },
   });
   expect(parseMcpToolError(relative).error).toMatchObject({
     code: "invalid_request",

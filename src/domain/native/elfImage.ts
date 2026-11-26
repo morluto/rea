@@ -17,6 +17,7 @@ import {
   type ElfSectionDirectory,
 } from "./nativeSectionDirectory.js";
 import { bufferByteSource, type ByteSource } from "../byteSource.js";
+import type { NativeDirectoryBudgets } from "./nativeStructureBudget.js";
 
 type ElfSection = Extract<ImageSection, { format: "elf" }>;
 
@@ -200,15 +201,11 @@ export const architectureForElfMachine = (machine: number): string => {
 export const readElfImage = (
   bytes: Buffer,
   operation: string,
-  maximumSourceAndDecodedNamesBytes?: number,
+  budgets?: NativeDirectoryBudgets,
 ): Extract<BinaryContainer, { format: "elf" }> =>
   readElfImageFromDirectory(
     bytes,
-    readElfDirectoryFromBuffer(
-      bytes,
-      operation,
-      maximumSourceAndDecodedNamesBytes,
-    ),
+    readElfDirectoryFromBuffer(bytes, operation, budgets),
   );
 
 /** Same image as {@link readElfImage}. Section names yield through `pause`. */
@@ -216,14 +213,14 @@ export const readElfImageCooperative = async (
   bytes: Buffer,
   operation: string,
   pause: ZstandardFramePause,
-  maximumSourceAndDecodedNamesBytes?: number,
+  budgets?: NativeDirectoryBudgets,
   decode?: CooperativeElfSectionNameDecoder,
 ): Promise<Extract<BinaryContainer, { format: "elf" }>> =>
   readElfImageFromReader(
     bufferByteSource(bytes),
     operation,
     pause,
-    maximumSourceAndDecodedNamesBytes,
+    budgets,
     decode,
   );
 
@@ -232,16 +229,10 @@ export const readElfImageFromReader = async (
   source: ByteSource,
   operation: string,
   pause: ZstandardFramePause,
-  maximumSourceAndDecodedNamesBytes?: number,
+  budgets?: NativeDirectoryBudgets,
   decode?: CooperativeElfSectionNameDecoder,
 ): Promise<Extract<BinaryContainer, { format: "elf" }>> =>
   readElfImageFromDirectorySize(
     source.size,
-    await readElfDirectoryFromReader(
-      source,
-      pause,
-      operation,
-      maximumSourceAndDecodedNamesBytes,
-      decode,
-    ),
+    await readElfDirectoryFromReader(source, pause, operation, budgets, decode),
   );

@@ -21,7 +21,8 @@ import type {
   ArtifactTraversalOmission,
 } from "../../resources/index.js";
 import { TarArtifactReader } from "./TarArtifactReader.js";
-import { TAR_RETAINED_METADATA_BYTES, walkTar } from "./TarWalk.js";
+import { walkTar } from "./TarWalk.js";
+import { DEFAULT_TAR_READER_LIMITS } from "../../domain/artifactReaderLimits.js";
 import { GzipTarStream, TarStreamEnded } from "./TarByteStream.js";
 import {
   gzipTarFixture,
@@ -277,7 +278,9 @@ describe("truncated tar", () => {
       trailingCarrierNonZero: () => Promise.reject(ended),
       close: () => undefined,
     };
-    await expect(walkTar(stream, undefined)).rejects.toMatchObject({
+    await expect(
+      walkTar(stream, undefined, DEFAULT_TAR_READER_LIMITS),
+    ).rejects.toMatchObject({
       reason: "truncated",
       parseFailure: { kind: "truncated", format: "gzip" },
     });
@@ -480,10 +483,11 @@ describe("tar header edge cases", () => {
   });
 
   it("refuses repeated global pax headers at the retained metadata allowance", async () => {
-    const value = "x".repeat(800_000);
+    const metadataBytes = 64 * 1024;
+    const value = "x".repeat(8_000);
     const pieces: Buffer[] = [];
     const perRecord = Buffer.byteLength("k000") + value.length + 64;
-    const count = Math.floor(TAR_RETAINED_METADATA_BYTES / perRecord) + 2;
+    const count = Math.floor(metadataBytes / perRecord) + 2;
     for (let index = 0; index < count; index += 1) {
       const key = `k${String(index).padStart(3, "0")}`;
       const body = ` ${key}=${value}\n`;
@@ -499,6 +503,9 @@ describe("tar header edge cases", () => {
     }
     const reader = new TarArtifactReader(
       await write("global-pax-budget.tar", Buffer.concat(pieces)),
+      undefined,
+      undefined,
+      { ...DEFAULT_TAR_READER_LIMITS, metadata_bytes: metadataBytes },
     );
     try {
       await expect(async () => {
@@ -506,9 +513,11 @@ describe("tar header edge cases", () => {
       }).rejects.toMatchObject({
         reason: "limit",
         boundary: "memory",
-        fixedAllowance: {
-          limit: TAR_RETAINED_METADATA_BYTES,
+        readerLimit: {
+          parameter: "artifact_limits.tar.metadata_bytes",
+          effective_value: metadataBytes,
           unit: "bytes",
+          can_increase: true,
         },
       });
     } finally {

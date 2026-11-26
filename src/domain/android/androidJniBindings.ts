@@ -1,6 +1,7 @@
 import { appendToMapList } from "../appendToMapList.js";
 import { ARTIFACT_INTEGRITY_CHECKS } from "../artifactOperationError.js";
 import { coverageStatusSchema } from "../coverage.js";
+import { CoverageAccumulator } from "../coverageAccumulator.js";
 import { excludedValues } from "../schemaConstraints.js";
 import { z } from "zod";
 import {
@@ -517,7 +518,13 @@ export const projectAndroidJniBindings = (input: {
                 : incomplete
                   ? "unknown"
                   : "unmatched",
-        coverage: incomplete || unknown ? "partial" : "complete",
+        coverage: (() => {
+          const acc = new CoverageAccumulator().recordComplete();
+          if (incomplete)
+            acc.recordOmission("JNI binding inputs are incomplete");
+          if (unknown) acc.recordOmission("JNI binding resolution is unknown");
+          return acc.finalizeKnown();
+        })(),
         candidate_ids: selected.map((candidate) => candidate.candidate_id),
         unknowns: [
           ...(incomplete

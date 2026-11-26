@@ -15,6 +15,7 @@ import {
   renderInputSchemaRemediation,
   type InputSchemaRemediationSpelling,
 } from "../domain/analysisErrorPresentation.js";
+import type { AnalysisRefusalSpelling } from "../domain/analysisRefusalSpelling.js";
 import type { Result } from "../domain/result.js";
 import {
   cliCommandForOperation,
@@ -543,6 +544,37 @@ const cliFlagForOperations = (
   }
   return undefined;
 };
+
+/**
+ * How this command names a refusal's per-call control and next request: the
+ * option that sets the control, or the whole field's JSON option that carries
+ * a member, and the command that runs the operation. A CLI caller's runtime
+ * ends with the invocation, so a setting's route is its launch environment.
+ */
+export const cliRefusalSpelling = (
+  context: CliCommandOutputProjectionContext,
+): AnalysisRefusalSpelling => ({
+  callerLifetime: "invocation",
+  control: (parameter, operation) => {
+    const operations = orderedOperations(context.operations, operation);
+    const flag = cliFlagForOperations(parameter, operations);
+    if (flag === undefined) return parameter;
+    return operations.some(({ flags }) => flags[parameter] === flag)
+      ? flag
+      : `${parameter} (in ${flag})`;
+  },
+  call: (operation) => {
+    const command = cliCommandForOperation(
+      operation,
+      context.commands,
+      context.cliName ?? "rea",
+      context.recordedCommands,
+    );
+    return command === undefined
+      ? `the next ${operation} call`
+      : `the next ${command} run`;
+  },
+});
 
 /** The reported per-call control with the flag that sets it. */
 const flaggedLimit = (

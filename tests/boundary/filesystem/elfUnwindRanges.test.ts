@@ -79,6 +79,36 @@ describe("ELF unwind range stable filesystem boundary", () => {
 });
 
 describe("ELF unwind range budgets", () => {
+  it("names max_structure_bytes when a header table exceeds it", async () => {
+    const root = await createTestTempDirectory("rea-elf-unwind-structure-");
+    const path = join(root, "program");
+    await writeFile(path, elfUnwindFixture());
+    const service = createElfUnwindRangesService();
+    try {
+      const refused = await service.inspect({ path, max_structure_bytes: 64 });
+      if (refused.ok) throw new Error("Expected a max_structure_bytes refusal");
+      expect(refused.error).toMatchObject({
+        _tag: "AnalysisResourceConstraintError",
+        resource: "memory",
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_structure_bytes",
+          effective_value: 64,
+          unit: "bytes",
+          minimum: 64,
+          maximum: 512 * 1024 * 1024,
+          default_value: 16 * 1024 * 1024,
+          applies_at: "next_call",
+        },
+      });
+      expect(
+        (await service.inspect({ path, max_structure_bytes: 65536 })).ok,
+      ).toBe(true);
+    } finally {
+      await service.close();
+    }
+  });
+
   it("tells a caller over the symbol-name text allowance to request a smaller page", async () => {
     const root = await createTestTempDirectory("rea-elf-unwind-names-");
     const path = join(root, "program");

@@ -26,10 +26,6 @@ import {
 } from "../../domain/native/elfDependencies.js";
 import { err, ok } from "../../domain/result.js";
 import { ELF_DEPENDENCIES_PROVIDER } from "../../domain/investigationProviders.js";
-import {
-  BinaryResourceFailure,
-  binaryResourceCeiling,
-} from "../../domain/binaryContainer.js";
 import { parseElfDependenciesFromHandle } from "./ElfDependencyParser.js";
 
 const OPERATION = "inspect_elf_dependencies";
@@ -125,17 +121,6 @@ const elfDependenciesFailure = (
       description: "ELF image",
       fallbackMessage: "ELF dependency inspection failed.",
       recognise: (failure) => {
-        if (failure instanceof BinaryResourceFailure)
-          return parseLimitConstraint(
-            OPERATION,
-            "memory",
-            failure,
-            fixedAllowanceOptions(
-              "The ELF structural decoding allowance",
-              "parser",
-              binaryResourceCeiling(failure),
-            ),
-          );
         if (isParseLimit(failure, "elf-dependencies")) {
           const limit = failure.failure.limit;
           const parameter = (
