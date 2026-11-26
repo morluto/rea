@@ -118,9 +118,7 @@ it.each(["success", "failure"] as const)(
     await closed;
     let acknowledged = false;
     try {
-      await expect
-        .poll(() => source.readableEnded, { timeout: 300 })
-        .toBe(true);
+      await expect.poll(() => source.readableEnded).toBe(true);
       const failure = await progress.close();
       expect(failure?.message).toContain("destination closed");
       expect(destination.listenerCount("error")).toBe(1);
@@ -155,7 +153,7 @@ it("drains when attached to a destination whose close event already passed", asy
   const source = new PassThrough();
   progress.pipe(source);
   source.end("remaining output");
-  await expect.poll(() => source.readableEnded, { timeout: 300 }).toBe(true);
+  await expect.poll(() => source.readableEnded).toBe(true);
   expect((await progress.close())?.message).toContain("destination closed");
   await nextTurn();
   expect(destination.listenerCount("error")).toBe(0);
