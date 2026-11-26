@@ -468,12 +468,21 @@ export const parseCompoundFile = (
       ),
     );
 
-  // Collect FAT sector ids: 109 inline, then the DIFAT chain.
+  // Collect FAT sector ids: 109 inline, then the DIFAT chain. Free slots are
+  // skipped, which would compact a later id into an earlier block ordinal, so
+  // the gap is tracked and charged to the block the id actually occupies.
+  let fatOrdinal = 0;
   const fatSectorIds: number[] = [];
-  for (let index = 0; index < DIFAT_ENTRIES_IN_HEADER; index += 1) {
-    const sector = header.u32(HEADER.difatEntries + index * 4);
-    if (sector !== CFB_FREE_SECTOR) fatSectorIds.push(sector);
-  }
+  const fatBlockOrdinals: number[] = [];
+  const fatIdOf = (sector: number): void => {
+    if (sector !== CFB_FREE_SECTOR) {
+      fatSectorIds.push(sector);
+      fatBlockOrdinals.push(fatOrdinal);
+    }
+    fatOrdinal += 1;
+  };
+  for (let index = 0; index < DIFAT_ENTRIES_IN_HEADER; index += 1)
+    fatIdOf(header.u32(HEADER.difatEntries + index * 4));
   const difatSectors: number[] = [];
   let difatSector = firstDifatSector;
   const seenDifat = new Set<number>();
@@ -505,15 +514,13 @@ export const parseCompoundFile = (
       // Bound the collection while it grows rather than after the whole chain:
       // a near-ceiling v3 file would otherwise retain tens of millions of ids
       // before the count check ran.
-      if (sector !== CFB_FREE_SECTOR) {
-        fatSectorIds.push(sector);
-        if (fatSectorIds.length > sectorCount)
-          return err(
-            failure(
-              `DIFAT names more than the ${String(sectorCount)} FAT sector(s) the file holds`,
-            ),
-          );
-      }
+      if (sector !== CFB_FREE_SECTOR && fatSectorIds.length >= sectorCount)
+        return err(
+          failure(
+            `DIFAT names more than the ${String(sectorCount)} FAT sector(s) the file holds`,
+          ),
+        );
+      fatIdOf(sector);
     }
     difatSector = difat.u32(perSector * 4);
   }
@@ -537,16 +544,18 @@ export const parseCompoundFile = (
   // malformed file reserve hundreds of MiB for cells no chain can reach.
   const fatBlockLimit = Math.ceil(sectorCount / entriesPerSector);
   const excessFatBlocks = Math.max(0, fatSectorIds.length - fatBlockLimit);
-  const fat = new Uint32Array(
-    Math.min(fatSectorIds.length, fatBlockLimit) * entriesPerSector,
-  );
   // DIFAT order defines which FAT indexes each sector supplies, so a block is
-  // kept at its declared ordinal: a repeated or out-of-file id leaves its cells
-  // as markers instead of letting a later block shift one position early.
-  let fatCells = 0;
+  // kept at the ordinal its DIFAT slot declares: skipping a free slot would
+  // compact a later id into an earlier block and make every chain it resolves
+  // use the wrong FAT cells. A free slot leaves its cells as markers, and so
+  // does a repeated or out-of-file id.
+  const fat = new Uint32Array(
+    Math.min(fatOrdinal, fatBlockLimit) * entriesPerSector,
+  );
+  fat.fill(CFB_FREE_SECTOR);
   let unlistedFatSectors = 0;
   const seenFatSectors = new Set<number>();
-  for (const sector of fatSectorIds) {
+  fatSectorIds.forEach((sector, listed) => {
     // A block the DIFAT chain itself occupies is container structure, not FAT
     // cells: the last word of a DIFAT sector is simultaneously a FAT cell, so
     // reading it as one would let an ENDOFCHAIN pointer make an arbitrary
@@ -556,30 +565,35 @@ export const parseCompoundFile = (
       !isMarker(sector) &&
       !seenDifat.has(sector) &&
       !seenFatSectors.has(sector);
-    if (usable) {
-      seenFatSectors.add(sector);
-      if (fatCells < fat.length) {
-        const offset = sectorOf(sector, sectorBytes);
-        const sectorView = new BinaryReader(
-          Buffer.from(bytes.buffer, bytes.byteOffset + offset, sectorBytes),
-          true,
-          "compound-file",
-        );
-        for (let index = 0; index < entriesPerSector; index += 1) {
-          fat[fatCells + index] = sectorView.u32(index * 4);
-        }
-      }
-    } else {
+    if (!usable) {
       unlistedFatSectors += 1;
-      fat.fill(
-        CFB_FREE_SECTOR,
-        fatCells,
-        Math.min(fatCells + entriesPerSector, fat.length),
-      );
+      return;
     }
-    fatCells = Math.min(fatCells + entriesPerSector, fat.length);
-  }
-  const table = fat.subarray(0, fatCells);
+    seenFatSectors.add(sector);
+    const blockStart = (fatBlockOrdinals[listed] as number) * entriesPerSector;
+    if (blockStart >= fat.length) return;
+    const offset = sectorOf(sector, sectorBytes);
+    const sectorView = new BinaryReader(
+      Buffer.from(bytes.buffer, bytes.byteOffset + offset, sectorBytes),
+      true,
+      "compound-file",
+    );
+    for (let index = 0; index < entriesPerSector; index += 1)
+      fat[blockStart + index] = sectorView.u32(index * 4);
+  });
+  const lastListedBlock =
+    fatSectorIds.length === 0
+      ? 0
+      : (fatBlockOrdinals[fatSectorIds.length - 1] as number) + 1;
+  const table = fat.subarray(
+    0,
+    Math.min(lastListedBlock, fatBlockLimit) * entriesPerSector,
+  );
+  const fatGapBlocks = lastListedBlock - fatSectorIds.length;
+  if (fatGapBlocks > 0)
+    limitations.push(
+      `the DIFAT leaves ${String(fatGapBlocks)} free slot(s) before a listed FAT sector; the affected FAT blocks are left unread rather than shifting a later sector into an earlier block ordinal`,
+    );
   if (fatSectorIds.length !== declaredFatSectors)
     limitations.push(
       `header declares ${String(declaredFatSectors)} FAT sector(s) but the DIFAT lists ${String(fatSectorIds.length)}`,

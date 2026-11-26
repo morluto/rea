@@ -513,6 +513,40 @@ it("refuses a FAT block that the DIFAT chain already owns", () => {
   );
 });
 
+it("keeps a FAT sector at its declared slot ordinal across a free DIFAT slot", () => {
+  // Inline DIFAT slots 0, 1, 2 name sector 0, FREE, sector 3. Sector 0 holds
+  // the FAT block that describes this 10-sector file, and sector 3 is a second
+  // declared block past what the file can address. Compacting the free slot
+  // away would read sector 3's bytes as block 1; the gap must instead be
+  // reported and its slot left with markers.
+  const bytes = compoundFile({ entries: root(undefined, []) });
+  bytes.writeUInt32LE(0, 0x4c);
+  bytes.writeUInt32LE(FREE, 0x50);
+  bytes.writeUInt32LE(3, 0x54);
+  const image = parseCompoundFile(bytes);
+  if (!image.ok) throw new Error(image.error.message);
+  // The directory chain still resolves from block 0, so the gap did not move
+  // the block that names it.
+  expect(image.value.metadata.directory_entry_count).toBe(4);
+  expect(image.value.limitations).toContainEqual(
+    expect.stringMatching(/free slot\(s\) before a listed FAT sector/u),
+  );
+});
+
+it("refuses a chain the gap left unresolved instead of using the shifted block", () => {
+  // Slots 0 and 1 name FREE and sector 0. Nothing declares block 0, so the
+  // directory chain has no FAT cells to follow; the parse refuses it rather
+  // than reading sector 0's bytes at an ordinal the header did not give it.
+  const bytes = compoundFile({ entries: root(undefined, []) });
+  bytes.writeUInt32LE(FREE, 0x4c);
+  bytes.writeUInt32LE(0, 0x50);
+  const result = parseCompoundFile(bytes);
+  expect(result).toMatchObject({
+    ok: false,
+    error: { message: expect.stringMatching(/directory chain .* is broken/u) },
+  });
+});
+
 it("caps FAT cells at the blocks that can describe a sector", () => {
   // A 20-sector file indexes 20 * 4 = 80 cells in a single 512-byte block, so
   // only one block can describe any of its sectors. Naming a second readable
