@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **native:** Oversized Android APS2 packed relocation tables in inspect_native_initializers now project a memory/adjustable_budget refusal (boundary max_structure_bytes with details.limit) instead of capacity/fixed_ceiling (native-index-capacity).
 * **android:** the inspect_android_package summary no longer lists component declarations. Page them with view {kind: "android", facet: "components"}, or pass detail: "complete".
 * **android:** the inspect_android_class summary, delivered for detail summary or above the agent result budget, no longer lists methods, fields, inner classes or mapping symbols. Page them with the android-class view, or pass detail: "complete".
 * **android:** a trace_android_references call that omits detail on a trace above the agent result budget now returns the retained summary. Pass detail: "complete" (--detail complete) for the previous shape.
@@ -451,6 +452,7 @@
 * **native-exports:** verify the declared PE directory size ([#13661](https://github.com/morluto/rea/issues/13661)) ([ef3eb1e](https://github.com/morluto/rea/commit/ef3eb1e46e37836fe91984ec15a8a1d0a352fe5c))
 * **native:** admit every recognized dyld_info refusal when it exits 0 ([2d8309d](https://github.com/morluto/rea/commit/2d8309dfe73d4283853f381e6245da6fc16b65f1))
 * **native:** admit the missing-UUID dyld_info refusal when it exits 0 ([0e8f9d0](https://github.com/morluto/rea/commit/0e8f9d05864028da3ef5d0099463d63daca96f01))
+* **native:** bound Android packed relocations with max_structure_bytes ([#14788](https://github.com/morluto/rea/issues/14788)) ([47875ba](https://github.com/morluto/rea/commit/47875ba073c5c6049e5cce67ff72aeb5a8f876b5))
 * **native:** decode Objective-C categories that Swift lists in __objc_catlist2 ([#14025](https://github.com/morluto/rea/issues/14025)) ([94c1c6a](https://github.com/morluto/rea/commit/94c1c6aec0b65fc34c6e0516a7330ac24f38a11f))
 * **native:** label XML plists that file calls data as xml ([#12910](https://github.com/morluto/rea/issues/12910)) ([f03cce9](https://github.com/morluto/rea/commit/f03cce9c01d184ffade34dcb36fd05c0c0350a5e))
 * **native:** preserve Apple tool diagnostics across macOS versions ([a9d1031](https://github.com/morluto/rea/commit/a9d103167484234027415cf7816f4bd8335bf8a7))
