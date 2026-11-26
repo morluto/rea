@@ -123,15 +123,21 @@ const rangeOccupied = (
   range: OccupiedRange,
 ): boolean => occupied.some((entry) => rangesOverlap(entry, range));
 
+const ERASED_BLOCK_BYTES = 65_536;
+const ERASED_BLOCK = Buffer.alloc(ERASED_BLOCK_BYTES, 0xff);
+
 const isErasedRange = (
   image: Buffer,
   start: number,
   end: number,
   checkpoint: () => void,
 ): boolean => {
-  for (let cursor = start; cursor < end; cursor += 1) {
+  for (let cursor = start; cursor < end; cursor += ERASED_BLOCK_BYTES) {
     checkpoint();
-    if (image[cursor] !== 0xff) return false;
+    const blockEnd = Math.min(cursor + ERASED_BLOCK_BYTES, end);
+    const length = blockEnd - cursor;
+    if (image.compare(ERASED_BLOCK, 0, length, cursor, blockEnd) !== 0)
+      return false;
   }
   return true;
 };
@@ -170,7 +176,7 @@ const readUtf16Name = (
 type ParsedEdk2Variable =
   | { kind: "end" }
   | { kind: "erased" }
-  | { kind: "invalid"; endOffset: number; detail: string }
+  | { kind: "invalid"; detail: string }
   | {
       kind: "active";
       variable: Edk2NvramVariable;
@@ -193,13 +199,11 @@ const parseEdk2Variable = (
   if (startId !== VARIABLE_DATA_START_ID)
     return {
       kind: "invalid",
-      endOffset: offset + HEADER_ALIGNMENT,
       detail: `EDK2 variable at 0x${offset.toString(16)} has StartId 0x${startId.toString(16)} (expected 0x55aa).`,
     };
   if (offset + headerBytes > storeEnd)
     return {
       kind: "invalid",
-      endOffset: storeEnd,
       detail: `EDK2 variable at 0x${offset.toString(16)} is truncated before its header ends.`,
     };
 
@@ -214,7 +218,6 @@ const parseEdk2Variable = (
   if (vendorGuid === null)
     return {
       kind: "invalid",
-      endOffset: alignUp(offset + headerBytes, HEADER_ALIGNMENT),
       detail: `EDK2 variable at 0x${offset.toString(16)} has an unreadable VendorGuid.`,
     };
 
@@ -228,10 +231,6 @@ const parseEdk2Variable = (
   )
     return {
       kind: "invalid",
-      endOffset: alignUp(
-        Math.min(storeEnd, offset + headerBytes),
-        HEADER_ALIGNMENT,
-      ),
       detail: `EDK2 variable at 0x${offset.toString(16)} declares NameSize/DataSize beyond the store.`,
     };
 
@@ -309,7 +308,13 @@ const collectStoreAt = (
   if (declaredSize < VARIABLE_STORE_HEADER_BYTES) return;
   const available = image.length - offset;
   const readableSize = Math.min(declaredSize, available);
-  if (rangeOccupied(occupied, { start: offset, end: offset + readableSize }))
+  // Skip candidates starting inside an already-claimed store extent.
+  if (
+    rangeOccupied(occupied, {
+      start: offset,
+      end: offset + VARIABLE_STORE_HEADER_BYTES,
+    })
+  )
     return;
   const storeGuid = formatGuidLittleEndian(image, offset);
   if (storeGuid === null) return;
@@ -322,7 +327,6 @@ const collectStoreAt = (
     return;
   }
 
-  occupied.push({ start: offset, end: offset + readableSize });
   const storeEnd = offset + readableSize;
   if (declaredSize > available)
     noteOmission(
@@ -331,6 +335,8 @@ const collectStoreAt = (
 
   const variables: Edk2NvramVariable[] = [];
   let cursor = offset + VARIABLE_STORE_HEADER_BYTES;
+  let claimedEnd = cursor;
+  let sawInvalid = false;
   while (cursor < storeEnd) {
     checkpoint();
     if (cursor + 2 > storeEnd) {
@@ -338,6 +344,7 @@ const collectStoreAt = (
         noteOmission(
           `EDK2 store at 0x${offset.toString(16)} has a non-erased one-byte suffix at 0x${cursor.toString(16)}.`,
         );
+      else if (!sawInvalid) claimedEnd = storeEnd;
       break;
     }
     if (!records.tryCharge(1)) {
@@ -355,20 +362,25 @@ const collectStoreAt = (
       nameBytes,
     );
     if (parsed.kind === "erased") {
-      if (!isErasedRange(image, cursor, storeEnd, checkpoint))
+      if (!isErasedRange(image, cursor, storeEnd, checkpoint)) {
         noteOmission(
           `EDK2 store at 0x${offset.toString(16)} has a non-erased suffix after 0xffff at 0x${cursor.toString(16)}.`,
         );
+        claimedEnd = Math.max(claimedEnd, cursor + 2);
+      } else if (!sawInvalid) {
+        claimedEnd = storeEnd;
+      }
       break;
     }
     if (parsed.kind === "end") break;
     if (parsed.kind === "invalid") {
+      sawInvalid = true;
       noteOmission(parsed.detail);
-      cursor = parsed.endOffset;
-      continue;
+      break;
     }
     if (parsed.limitation !== null) noteOmission(parsed.limitation);
     variables.push(parsed.variable);
+    claimedEnd = Math.max(claimedEnd, parsed.variable.endOffset);
     if (parsed.variable.endOffset <= cursor) {
       noteOmission(
         `EDK2 variable at 0x${cursor.toString(16)} did not advance the store cursor.`,
@@ -378,6 +390,7 @@ const collectStoreAt = (
     cursor = parsed.variable.endOffset;
   }
 
+  occupied.push({ start: offset, end: Math.min(storeEnd, claimedEnd) });
   stores.push({
     offset,
     storeGuid,
@@ -414,22 +427,28 @@ export const scanEdk2VariableStores = (
     stop: false,
   };
 
-  const searchGuid = (needle: Buffer, authenticated: boolean): void => {
-    let searchFrom = 0;
-    const last = image.length - VARIABLE_STORE_HEADER_BYTES;
-    while (!walk.stop && searchFrom <= last) {
-      checkpoint();
-      const hit = image.indexOf(needle, searchFrom);
-      if (hit < 0) break;
-      collectStoreAt(walk, hit, authenticated);
-      searchFrom = hit + 1;
+  // Merge both GUID searches in ascending offset order so an enclosing store
+  // is always inspected before an embedded signature inside its variable data.
+  const last = image.length - VARIABLE_STORE_HEADER_BYTES;
+  let nextAuth =
+    last >= 0 ? image.indexOf(EFI_AUTHENTICATED_VARIABLE_GUID_BYTES, 0) : -1;
+  let nextPlain = last >= 0 ? image.indexOf(EFI_VARIABLE_GUID_BYTES, 0) : -1;
+  while (!walk.stop) {
+    const authValid = nextAuth >= 0 && nextAuth <= last;
+    const plainValid = nextPlain >= 0 && nextPlain <= last;
+    if (!authValid && !plainValid) break;
+    checkpoint();
+    if (authValid && (!plainValid || nextAuth <= nextPlain)) {
+      const hit = nextAuth;
+      nextAuth = image.indexOf(EFI_AUTHENTICATED_VARIABLE_GUID_BYTES, hit + 1);
+      collectStoreAt(walk, hit, true);
+    } else {
+      const hit = nextPlain;
+      nextPlain = image.indexOf(EFI_VARIABLE_GUID_BYTES, hit + 1);
+      collectStoreAt(walk, hit, false);
     }
-  };
+  }
 
-  searchGuid(EFI_AUTHENTICATED_VARIABLE_GUID_BYTES, true);
-  searchGuid(EFI_VARIABLE_GUID_BYTES, false);
-
-  stores.sort((left, right) => left.offset - right.offset);
   return {
     stores,
     coverage: partial ? "partial" : "complete",

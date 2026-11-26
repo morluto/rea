@@ -556,20 +556,92 @@ it("keeps an EDK2 variable with a damaged name as name null", () => {
   ]);
 });
 
-it("skips overlapping EDK2 store candidates that share an already occupied range", () => {
-  const image = Buffer.alloc(0x100, 0xff);
-  const writeStore = (offset: number, size: number): void => {
-    uuidLe("aaf32c78-947b-439a-a180-2e144ec37792").copy(image, offset);
-    image.writeUInt32LE(size, offset + 16);
-    image.writeUInt8(0x5a, offset + 20);
-    image.writeUInt8(0xfe, offset + 21);
-  };
-  writeStore(0, 0x80);
-  writeStore(0x40, 0x80);
+it("preserves an enclosing non-authenticated EDK2 store when variable data embeds an authenticated header", () => {
+  const image = Buffer.alloc(0x200, 0xff);
+  const embedded = Buffer.alloc(28, 0xff);
+  uuidLe("aaf32c78-947b-439a-a180-2e144ec37792").copy(embedded, 0);
+  embedded.writeUInt32LE(0x80, 16);
+  embedded.writeUInt8(0x5a, 20);
+  embedded.writeUInt8(0xfe, 21);
+
+  uuidLe("ddcf3616-3275-4164-98b6-fe85707ffe7d").copy(image, 0);
+  image.writeUInt32LE(0x200, 16);
+  image.writeUInt8(0x5a, 20);
+  image.writeUInt8(0xfe, 21);
+
+  const nameBuf = Buffer.from("Outer\0", "utf16le");
+  const off = 28;
+  image.writeUInt16LE(0x55aa, off);
+  image.writeUInt8(0x3f, off + 2);
+  image.writeUInt32LE(0x7, off + 4);
+  image.writeUInt32LE(nameBuf.length, off + 8);
+  image.writeUInt32LE(embedded.length, off + 12);
+  uuidLe("8be4df61-93ca-11d2-aa0d-00e098032b8c").copy(image, off + 16);
+  nameBuf.copy(image, off + 32);
+  embedded.copy(image, off + 32 + nameBuf.length);
 
   const scan = scanEdk2VariableStores(image, 8);
+  expect(scan.coverage).toBe("complete");
   expect(scan.stores).toHaveLength(1);
-  expect(scan.stores[0]?.offset).toBe(0);
+  expect(scan.stores[0]).toMatchObject({
+    offset: 0,
+    authenticated: false,
+  });
+  expect(scan.stores[0]?.variables).toEqual([
+    expect.objectContaining({
+      name: "Outer",
+      dataLength: embedded.length,
+    }),
+  ]);
+});
+
+it("does not let a damaged oversized header hide a valid later EDK2 store", () => {
+  const image = Buffer.alloc(0x200, 0xff);
+  // Damaged oversized header at offset 0 whose body hits a bad StartId.
+  uuidLe("aaf32c78-947b-439a-a180-2e144ec37792").copy(image, 0);
+  image.writeUInt32LE(0x200, 16);
+  image.writeUInt8(0x5a, 20);
+  image.writeUInt8(0xfe, 21);
+  image.writeUInt16LE(0x1234, 28);
+
+  // Valid non-authenticated store at offset 0x80.
+  uuidLe("ddcf3616-3275-4164-98b6-fe85707ffe7d").copy(image, 0x80);
+  image.writeUInt32LE(0x180, 0x80 + 16);
+  image.writeUInt8(0x5a, 0x80 + 20);
+  image.writeUInt8(0xfe, 0x80 + 21);
+  const nameBuf = Buffer.from("Real\0", "utf16le");
+  const varOff = 0x80 + 28;
+  image.writeUInt16LE(0x55aa, varOff);
+  image.writeUInt8(0x3f, varOff + 2);
+  image.writeUInt32LE(0x7, varOff + 4);
+  image.writeUInt32LE(nameBuf.length, varOff + 8);
+  image.writeUInt32LE(2, varOff + 12);
+  uuidLe("8be4df61-93ca-11d2-aa0d-00e098032b8c").copy(image, varOff + 16);
+  nameBuf.copy(image, varOff + 32);
+  Buffer.from([0xaa, 0xbb]).copy(image, varOff + 32 + nameBuf.length);
+
+  const scan = scanEdk2VariableStores(image, 8);
+  expect(scan.coverage).toBe("partial");
+  expect(scan.stores.map((store) => store.offset)).toEqual([0, 0x80]);
+  expect(scan.stores[1]?.variables).toEqual([
+    expect.objectContaining({ name: "Real", dataLength: 2 }),
+  ]);
+});
+
+it("scans large erased EDK2 store suffixes in blocks rather than per byte", () => {
+  const image = Buffer.alloc(1024 * 1024, 0xff);
+  uuidLe("aaf32c78-947b-439a-a180-2e144ec37792").copy(image, 0);
+  image.writeUInt32LE(image.length, 16);
+  image.writeUInt8(0x5a, 20);
+  image.writeUInt8(0xfe, 21);
+
+  let checkpoints = 0;
+  const scan = scanEdk2VariableStores(image, 8, () => {
+    checkpoints += 1;
+  });
+  expect(scan.coverage).toBe("complete");
+  expect(scan.stores).toHaveLength(1);
+  expect(checkpoints).toBeLessThan(128);
 });
 
 it("exposes edk2_stores digests and suppresses AMI-absent wording through the provider", async () => {
