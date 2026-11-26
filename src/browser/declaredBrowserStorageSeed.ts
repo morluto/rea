@@ -57,8 +57,7 @@ export const applyDeclaredBrowserStorageSeeds = async (
     command: DeclaredBrowserStorageSeedCommand,
     area?: "local" | "session",
     origin?: string,
-  ): Promise<boolean | void> =>
-    (bridge as SeedBridge)(command, area, origin);
+  ): Promise<boolean | void> => (bridge as SeedBridge)(command, area, origin);
 
   if ((await call("scope")) !== true) return;
 
