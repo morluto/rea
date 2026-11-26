@@ -28,7 +28,6 @@ import {
   createTestWorkspace,
   removeTestWorkspace,
 } from "../../support/workspace/workspaceFixture.js";
-import { completeApplicationAnalysis } from "../../support/completeDetail.js";
 
 const requireFixture = createRequire(import.meta.url);
 const comparisonEnvelope = z.object({
@@ -999,7 +998,7 @@ it("retains runtime namespace re-exports and erases type-only re-exports through
 
   const documents = [
     await analyzeThroughMcp(root),
-    await runCli(completeApplicationAnalysis(root)),
+    await runCli(["analyze-javascript-application", root, "--json"]),
   ];
   const digest = createHash("sha256").update(source).digest("hex");
   for (const document of documents) {
@@ -1368,7 +1367,6 @@ const expectRuntimeReceiver = (
 const analyzeThroughMcp = async (inputPath: string) => {
   const call = await mcp.session.call();
   const response = await call("analyze_javascript_application", {
-    detail: "complete",
     input_path: inputPath,
     format: "auto",
   });
@@ -1384,7 +1382,7 @@ const expectCliAnalysisParity = async (
     [join(fixture.root, "right"), fixture.input.right],
   ] as const) {
     const cli = applicationEnvelope.parse(
-      await runCli(completeApplicationAnalysis(root)),
+      await runCli(["analyze-javascript-application", root, "--json"]),
     );
     const mcp = applicationEnvelope.parse(evidence);
     expect(cli.normalized_result).toEqual(mcp.normalized_result);

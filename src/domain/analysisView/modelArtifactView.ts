@@ -18,7 +18,6 @@ import {
 } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
-import type { JsonValue } from "../jsonValue.js";
 import {
   pickFields,
   selectIndexedViewRows,

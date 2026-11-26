@@ -9,6 +9,7 @@ import {
   MINIMUM_ELF_READ_FILE_BYTES,
   type ElfReadBudgets,
 } from "./elfReadBudgets.js";
+import { maxStructureBytesSchema } from "./nativeStructureBudget.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const crc32Hex = z.string().regex(/^[0-9a-f]{8}$/u);
@@ -219,6 +220,7 @@ export const inspectElfDebugLinkInputSchema = z.strictObject({
     .describe(
       "Optional absolute path of one caller-selected file to verify against the debuglink CRC32 and GNU build-id",
     ),
+  max_structure_bytes: maxStructureBytesSchema,
   max_file_bytes: z
     .number()
     .int()

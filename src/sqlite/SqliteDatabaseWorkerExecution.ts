@@ -2,7 +2,7 @@ import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { safeParseUtf8Json } from "../domain/safeJson.js";
 import {
   bindArtifactFileCleanup,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   completedStableArtifact,
   readStableArtifact,
   ArtifactReaderFailure,
@@ -25,8 +25,6 @@ import {
   AnalysisTargetFailureError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
-  cancelledBy,
-  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   sqliteDatabaseSchema,
@@ -48,6 +46,7 @@ import {
   SQLITE_WORKER_HEAP_BYTES,
 } from "./SqliteDatabaseLimits.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 
 const operation = "inspect_sqlite_database";
 const {
@@ -167,9 +166,16 @@ const rejectedReply = (
       {
         capturedOutput,
         diagnostics: { selected_path: selectedPath },
-        retryable: false,
-        remediationAction:
-          "The SQLite value/record, SQL statement and worker JSON reply allowances are each fixed at 16 MiB; this refusal does not identify which was exceeded. worker_timeout_ms and client deadlines do not raise them. If it preserves the requested facts, select exact columns, reduce row_limit, or use schema_scope: inventory instead of database. This worker refusal leaves no completed Evidence to retrieve. Do not repeat the unchanged request or truncate required database bytes.",
+        ...fixedAllowanceOptions(
+          "The SQLite value/record, SQL statement and worker reply allowance",
+          "bytes",
+          {
+            limit: SQLITE_DATABASE_LIMITS.outputBytes,
+            unit: "bytes",
+            narrowing:
+              "This refusal does not identify which of the three allowances was exceeded, and worker_timeout_ms does not raise them; if it preserves the requested facts, select exact columns, reduce row_limit, or use schema_scope: inventory instead of database.",
+          },
+        ),
       },
     );
   if (reply.reason === "column-limit")
@@ -184,8 +190,15 @@ const rejectedReply = (
       {
         capturedOutput,
         diagnostics: { selected_path: selectedPath },
-        retryable: false,
-        remediationAction: `The selected database is readable; only the combined projection exceeded this connection's native result-column limit. Request at most ${String(reply.engine_column_limit)} columns per call, splitting wider facts across calls, or omit table to inspect stored declarations with schema_scope: database. The limit belongs to SQLite's connection, so worker_timeout_ms and client deadlines do not raise it. Do not repeat the unchanged request.`,
+        ...fixedAllowanceOptions(
+          "SQLite's result-column limit for this connection",
+          "count",
+          {
+            limit: reply.engine_column_limit,
+            unit: "columns",
+            narrowing: `The database is readable; request at most ${String(reply.engine_column_limit)} columns per call, splitting wider facts across calls, or omit table to inspect stored declarations with schema_scope: database.`,
+          },
+        ),
       },
     );
   // SQLite established that the selected snapshot's bytes are not a valid
@@ -341,11 +354,9 @@ const sqliteReplyCompletionFailure = (
   );
   bindArtifactFileCleanup(cause, cleanup);
   if (cause.reason !== "cancelled") return cleanup;
-  const cancellation = cancelledBy(
-    operation,
-    carriedReason(artifactFileCancellationCause(cause)),
-    { capturedOutput },
-  );
+  const cancellation = artifactFileCancellationError(operation, cause, {
+    capturedOutput,
+  });
   return analysisErrorWithCleanupDependencies(cancellation, cleanup, operation);
 };
 

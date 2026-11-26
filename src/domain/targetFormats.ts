@@ -30,6 +30,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   uimage: "archive",
   "android-boot-image": "archive",
   "android-ota-payload": "archive",
+  "android-sparse-image": "archive",
   iso9660: "archive",
   dmg: "archive",
   pkg: "archive",
@@ -48,6 +49,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   "windows-shortcut": "artifact",
   "python-pyc": "artifact",
   devicetree: "artifact",
+  "labview-rsrc": "artifact",
   "source-map": "artifact",
 } as const;
 

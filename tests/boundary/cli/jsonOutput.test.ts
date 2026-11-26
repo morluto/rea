@@ -20,7 +20,6 @@ import { logCliCommand } from "../../../src/cliLogging.js";
 import { registerManagedCommands } from "../../../src/cli/managedCommands.js";
 import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { silentLogger } from "../../../src/logger.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 /** These managed commands inspect one target; none composes Evidence. */
 const unusedManagedEvidence = (): never => {
@@ -532,7 +531,6 @@ describe("full-output token counts", () => {
     };
     const argv = [
       "inspect-managed-artifact",
-      ...COMPLETE_DETAIL,
       "missing.dll",
       "--json",
       "--full-output",
@@ -687,12 +685,7 @@ describe("CLI result output surface", () => {
     });
     // A terminal destination exercises the indented encoding past the limit.
     Object.defineProperty(destination, "isTTY", { value: true });
-    const argv = [
-      "inspect-managed-members",
-      ...COMPLETE_DETAIL,
-      "fixture.dll",
-      "--json",
-    ];
+    const argv = ["inspect-managed-members", "fixture.dll", "--json"];
     const output = createCliResultOutput(
       parseCliOutputArguments(argv),
       destination,

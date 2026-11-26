@@ -1,8 +1,7 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, writeFile, rm, readFile } from "node:fs/promises";
+import { writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it } from "vitest";
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -25,7 +24,6 @@ const cli = async (
       [
         entrypoint,
         "inspect-web-network-capture",
-        ...COMPLETE_DETAIL,
         path,
         format,
         "--json",
@@ -48,7 +46,6 @@ import {
   historicalHar,
   harWithContainerLookalikes,
 } from "../../fixtures/historicalHar.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 it("preserves opaque HAR container fields through CLI and MCP", async () => {
   const root = await createTestTempDirectory("rea-har-container-fields-");
@@ -67,7 +64,6 @@ it("preserves opaque HAR container fields through CLI and MCP", async () => {
     expect(fromCli.ok, fromCli.stdout).toBe(true);
     const cliEvidence = parseEvidence(JSON.parse(fromCli.stdout));
     const response = await call("inspect_web_network_capture", {
-      detail: "complete",
       capture_path: path,
       format: "har",
       sensitive_values: sensitive,
@@ -183,7 +179,6 @@ it("retains Playwright IPv6 spelling through public CLI and MCP workflows", asyn
   expect(fromCli.ok, fromCli.stdout).toBe(true);
   const cliEvidence = parseEvidence(JSON.parse(fromCli.stdout));
   const response = await call("inspect_web_network_capture", {
-    detail: "complete",
     capture_path: path,
     format: "har",
   });
@@ -448,7 +443,6 @@ it("counts credential-named HAR members by pointer, excluding values the decoder
     expect(fromCli.ok, fromCli.stdout).toBe(true);
     const cliEvidence = parseEvidence(JSON.parse(fromCli.stdout));
     const response = await call("inspect_web_network_capture", {
-      detail: "complete",
       capture_path: path,
       format: "har",
       sensitive_values: sensitive,

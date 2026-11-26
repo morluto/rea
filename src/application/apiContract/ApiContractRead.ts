@@ -1,5 +1,5 @@
 import {
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   artifactFilePrimaryFacts,
   ArtifactReaderFailure,
   type ArtifactResourceScope,
@@ -13,8 +13,6 @@ import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
-  cancelledBy,
-  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import {
@@ -62,10 +60,7 @@ const readFailure = (
     cause instanceof ArtifactReaderFailure
   ) {
     if (cause.reason === "cancelled")
-      return cancelledBy(
-        operation,
-        carriedReason(artifactFileCancellationCause(cause)),
-      );
+      return artifactFileCancellationError(operation, cause);
     if (cause.reason === "integrity")
       return readerIntegrityFailure(operation, input.path, cause);
     if (cause.reason === "limit")

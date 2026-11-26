@@ -373,7 +373,13 @@ export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
           `${identifier}:${String(sectionOffset)}`,
           decodedSections,
         );
-        if (identifier === "vers")
+        // Only content this reader actually read can report a version: a
+        // failed or skipped decode leaves compressed bytes that can contain
+        // digit-like binary values.
+        if (
+          identifier === "vers" &&
+          (decoded.coding === "none" || decoded.coding === "zlib")
+        )
           versionSections.push(decoded.decoded ?? stored);
         sections.push({
           index: declaredIndex >= 0 ? declaredIndex : index,

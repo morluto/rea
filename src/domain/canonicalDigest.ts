@@ -53,6 +53,15 @@ export const serializeCanonicalValue = (value: unknown): string | undefined => {
   return encoded ? text : undefined;
 };
 
+/** Serialize a required JSON value with the caller's diagnostic when no text can be produced. */
+export const canonicalJsonSerializer =
+  <Value = unknown>(failureMessage: string) =>
+  (value: Value): string => {
+    const text = serializeCanonicalValue(value);
+    if (text === undefined) throw new TypeError(failureMessage);
+    return text;
+  };
+
 type Emit = (part: string) => void;
 
 /** Canonical-JSON refusal. The code is the stable identity. */

@@ -21,7 +21,8 @@ import type {
   ArtifactTraversalOmission,
 } from "../../resources/index.js";
 import { TarArtifactReader } from "./TarArtifactReader.js";
-import { TAR_RETAINED_METADATA_BYTES, walkTar } from "./TarWalk.js";
+import { walkTar } from "./TarWalk.js";
+import { DEFAULT_TAR_READER_LIMITS } from "../../domain/artifactReaderLimits.js";
 import { GzipTarStream, TarStreamEnded } from "./TarByteStream.js";
 import {
   gzipTarFixture,
@@ -229,6 +230,78 @@ describe.each([
   });
 });
 
+describe.each([
+  ["stored", tarFixture],
+  ["gzip", gzipTarFixture],
+] as const)("%s tar header-only members", (_name, build) => {
+  it("reads the next header after header-only members that declare a size", async () => {
+    // Skipped as data, the directory size would hide hidden.sh and the
+    // other sizes would misalign every later header.
+    const result = await read(
+      build([
+        { name: "dir/", type: "5", mode: 0o755, size: 1024 },
+        { name: "dir/hidden.sh", data: "hidden", mode: 0o755 },
+        { name: "dir/latest", type: "2", linkname: "hidden.sh", size: 512 },
+        { name: "dir/pipe", type: "6", size: 512 },
+        { name: "dir/tty", type: "3", size: 512 },
+        { name: "dir/a.txt", data: "a" },
+      ]),
+    );
+    expect(result.entries.map(({ path, kind }) => ({ path, kind }))).toEqual([
+      { path: "dir/", kind: "directory" },
+      { path: "dir/hidden.sh", kind: "file" },
+      { path: "dir/latest", kind: "symlink" },
+      { path: "dir/a.txt", kind: "file" },
+    ]);
+    expect(result.contents).toEqual(
+      new Map([
+        ["dir/hidden.sh", "hidden"],
+        ["dir/a.txt", "a"],
+      ]),
+    );
+    expect(result.omissions).toEqual([
+      { path: "dir/pipe", kind: "fifo" },
+      { path: "dir/tty", kind: "character-device" },
+    ]);
+    expect(result.metadata).toMatchObject({
+      member_count: 4,
+      end_state: "end-marker",
+    });
+  });
+
+  it("ignores pax and long-name sizes on header-only members", async () => {
+    const longDir = `${"d/".repeat(60)}dir/`;
+    const result = await read(
+      build([
+        {
+          name: "latest",
+          type: "2",
+          linkname: "a.txt",
+          pax: { size: "512" },
+        },
+        { name: "a.txt", data: "a" },
+        {
+          name: "././@LongLink",
+          type: "L",
+          data: `${longDir}\u0000`,
+          dialect: "gnu",
+        },
+        // A NUL typeflag is a directory only through its resolved name.
+        { name: "truncated", type: "\u0000", dialect: "gnu", size: 512 },
+        { name: "b.txt", data: "b" },
+      ]),
+    );
+    expect(result.entries.map(({ path, kind }) => ({ path, kind }))).toEqual([
+      { path: "latest", kind: "symlink" },
+      { path: "a.txt", kind: "file" },
+      { path: longDir, kind: "directory" },
+      { path: "b.txt", kind: "file" },
+    ]);
+    expect(result.contents.get("b.txt")).toBe("b");
+    expect(result.coverage).toEqual([{ status: "complete", limitations: [] }]);
+  });
+});
+
 describe("truncated tar", () => {
   it("drops a stored member whose data the file does not hold", async () => {
     const bytes = tarFixture([
@@ -277,7 +350,9 @@ describe("truncated tar", () => {
       trailingCarrierNonZero: () => Promise.reject(ended),
       close: () => undefined,
     };
-    await expect(walkTar(stream, undefined)).rejects.toMatchObject({
+    await expect(
+      walkTar(stream, undefined, DEFAULT_TAR_READER_LIMITS),
+    ).rejects.toMatchObject({
       reason: "truncated",
       parseFailure: { kind: "truncated", format: "gzip" },
     });
@@ -480,10 +555,11 @@ describe("tar header edge cases", () => {
   });
 
   it("refuses repeated global pax headers at the retained metadata allowance", async () => {
-    const value = "x".repeat(800_000);
+    const metadataBytes = 64 * 1024;
+    const value = "x".repeat(8_000);
     const pieces: Buffer[] = [];
     const perRecord = Buffer.byteLength("k000") + value.length + 64;
-    const count = Math.floor(TAR_RETAINED_METADATA_BYTES / perRecord) + 2;
+    const count = Math.floor(metadataBytes / perRecord) + 2;
     for (let index = 0; index < count; index += 1) {
       const key = `k${String(index).padStart(3, "0")}`;
       const body = ` ${key}=${value}\n`;
@@ -499,6 +575,9 @@ describe("tar header edge cases", () => {
     }
     const reader = new TarArtifactReader(
       await write("global-pax-budget.tar", Buffer.concat(pieces)),
+      undefined,
+      undefined,
+      { ...DEFAULT_TAR_READER_LIMITS, metadata_bytes: metadataBytes },
     );
     try {
       await expect(async () => {
@@ -506,9 +585,11 @@ describe("tar header edge cases", () => {
       }).rejects.toMatchObject({
         reason: "limit",
         boundary: "memory",
-        fixedAllowance: {
-          limit: TAR_RETAINED_METADATA_BYTES,
+        readerLimit: {
+          parameter: "artifact_limits.tar.metadata_bytes",
+          effective_value: metadataBytes,
           unit: "bytes",
+          can_increase: true,
         },
       });
     } finally {

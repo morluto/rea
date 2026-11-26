@@ -82,6 +82,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "uimage",
   "android-boot-image",
   "android-ota-payload",
+  "android-sparse-image",
   "iso9660",
   "uefi",
   "javascript-bundle",
@@ -115,6 +116,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "windows-shortcut",
   "python-pyc",
   "devicetree",
+  "labview-rsrc",
   "unknown",
 ] as const;
 
@@ -137,6 +139,7 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "uimage",
   "android-boot-image",
   "android-ota-payload",
+  "android-sparse-image",
   "iso9660",
   "uefi",
   "intel-hex",
@@ -156,6 +159,7 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "windows-shortcut",
   "python-pyc",
   "devicetree",
+  "labview-rsrc",
   "directory",
   "file",
   "unknown",

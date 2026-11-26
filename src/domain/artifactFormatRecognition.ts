@@ -14,6 +14,7 @@ import {
   ISO9660_RECOGNITION_BYTES,
 } from "./iso9660/iso9660Structures.js";
 import { recognizeAndroidOtaPayload } from "./firmware/androidOtaPayload.js";
+import { recognizeAndroidSparseImage } from "./firmware/androidSparseImage.js";
 import { hasUImageMagic } from "./uimageFormat.js";
 import { hasUnityFsHeader } from "./unityfsFormat.js";
 import { hasMftFileRecordHeader } from "./windows/ntfsMft.js";
@@ -51,6 +52,7 @@ export type RecognizedArtifactFormat = Extract<
   | "uimage"
   | "android-boot-image"
   | "android-ota-payload"
+  | "android-sparse-image"
   | "iso9660"
   | "intel-hex"
   | "srec"
@@ -73,6 +75,7 @@ export const STANDALONE_ARTIFACT_FORMATS = [
   "windows-shortcut",
   "python-pyc",
   "devicetree",
+  "labview-rsrc",
 ] as const;
 
 export type StandaloneArtifactFormat =
@@ -140,6 +143,10 @@ const when =
  * target resolution both walk it, so the same bytes reach the same verdict;
  * each route decides only what a refusal or a missing input means for it.
  */
+/** A LabVIEW RSRC container starts with its own six-byte magic. */
+const hasLabviewRsrcHeader = (prefix: Buffer): boolean =>
+  prefix.length >= 6 && prefix.subarray(0, 6).toString("latin1") === "RSRC\r\n";
+
 export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
   [
     ({ prefix, fileSize }) => {
@@ -180,6 +187,17 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
             state: "refused",
             format: "android-ota-payload",
             reason: ota.reason,
+          };
+    },
+    ({ prefix }) => {
+      const sparse = recognizeAndroidSparseImage(prefix);
+      if (sparse === undefined) return undefined;
+      return sparse.state === "recognized"
+        ? { state: "recognized", format: "android-sparse-image" }
+        : {
+            state: "refused",
+            format: "android-sparse-image",
+            reason: sparse.reason,
           };
     },
     ({ prefix }) => {
@@ -253,6 +271,7 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
       return { state: "recognized", format: "devicetree" };
     },
     // Binary plists, including keyed archives, often use other extensions.
+    when("labview-rsrc", hasLabviewRsrcHeader),
     when("plist", hasBinaryPlistSignature),
   ];
 

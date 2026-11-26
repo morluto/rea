@@ -11,7 +11,6 @@ import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { verifyJavaScriptReturnShapes } from "../../fixtures/javascriptReturnShapes.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const createCallbackFixture = async () => {
   const root = await createTestTempDirectory("rea-callback-targets-");
@@ -166,7 +165,6 @@ cliTest(
     const analyzed = await cli.run({
       arguments: [
         "analyze-javascript-application",
-        ...COMPLETE_DETAIL,
         root,
         "--artifact-format",
         "directory",

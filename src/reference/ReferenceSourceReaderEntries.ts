@@ -1,3 +1,4 @@
+import { sameFileStatStamp } from "../filesystem/FileStatStamp.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import type { BigIntStats, Dir, Dirent } from "node:fs";
 import { opendir, readlink, realpath, stat } from "node:fs/promises";
@@ -31,7 +32,6 @@ import { readStableFile } from "./ReferenceSourceReaderFile.js";
 import { decodeDirectoryEntryName } from "../filesystem/decodeDirectoryEntryName.js";
 import {
   isAborted,
-  sameFile,
   validateDirectory,
   bigLstat,
 } from "./ReferenceSourceReaderValidate.js";
@@ -322,7 +322,7 @@ export const traverseDirectory = async (
     current.path,
     state.signal,
   ).then((after) => {
-    if (!after.ok || !sameFile(before.stats, after.stats))
+    if (!after.ok || !sameFileStatStamp(before.stats, after.stats))
       recordDirectoryFailure(
         state,
         current.path,
@@ -533,14 +533,14 @@ export const readStableSymlinkTarget = async (
   try {
     const before = await bigLstat(absolute);
     if (isAborted(signal)) return cancelledSymlink(path);
-    if (!before.isSymbolicLink() || !sameFile(expected, before))
+    if (!before.isSymbolicLink() || !sameFileStatStamp(expected, before))
       return changedSymlink(path);
     const observed = await readTarget();
     if (observed.status === "failed") return observed;
     if (isAborted(signal)) return cancelledSymlink(path);
     const after = await bigLstat(absolute);
     if (isAborted(signal)) return cancelledSymlink(path);
-    if (!after.isSymbolicLink() || !sameFile(expected, after))
+    if (!after.isSymbolicLink() || !sameFileStatStamp(expected, after))
       return changedSymlink(path);
     return observed;
   } catch (cause: unknown) {

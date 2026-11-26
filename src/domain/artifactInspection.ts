@@ -662,6 +662,11 @@ const STANDALONE_FORMAT_READERS = {
     rationale:
       "Decode the flattened devicetree header, reservations and node tree.",
   },
+  "labview-rsrc": {
+    operation: "inspect_labview_artifact",
+    rationale:
+      "Inventory RSRC blocks, section codings and heap presence without executing the artifact.",
+  },
 } as const satisfies Record<
   "uefi" | StandaloneArtifactFormat,
   { readonly operation: string; readonly rationale: string }

@@ -40,7 +40,6 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import {
   AnalysisError,
-  type AnalysisCapturedOutput,
   type AnalysisCleanupObservation,
   type AnalysisErrorOptions,
 } from "../../domain/analysisErrorBase.js";

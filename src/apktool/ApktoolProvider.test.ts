@@ -24,6 +24,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   apktoolRequestSchema,
   apktoolResultSchemas,
+  DEFAULT_APKTOOL_STRING_TABLE_BYTES,
 } from "../domain/apktool/apktoolResourceAnalysis.js";
 import type { ApktoolRequest } from "../domain/apktool/apktoolResourceAnalysis.js";
 
@@ -726,13 +727,27 @@ it("notes a missing default strings table without strings", async () => {
   const apk = await apkFixture(root);
   const execution = await providerOver(command).execute({
     operation: "decode_android_resources",
-    input: { path: apk.path, include_strings: true },
+    input: {
+      path: apk.path,
+      include_strings: true,
+      max_string_table_bytes: DEFAULT_APKTOOL_STRING_TABLE_BYTES,
+    },
   });
   if (!execution.ok) throw execution.error;
-  expect(execution.value.result).toMatchObject({ strings: [] });
-  expect(execution.value.limitations).toContain(
-    "No default res/values/strings.xml was found in the decoded workspace",
-  );
+  expect(execution.value.result).toMatchObject({
+    strings: [],
+    coverage: "complete",
+    string_tables: [
+      {
+        locale: null,
+        status: "missing",
+        strings: [],
+        total_count: 0,
+        unparsed_count: 0,
+        coverage: "complete",
+      },
+    ],
+  });
 });
 
 it("reports a missing launcher as a capability gap with recovery", async () => {
@@ -1115,15 +1130,27 @@ it("marks an oversized strings document partial without claiming it is missing",
   const apk = await apkFixture(root);
   const result = await providerOver(command).execute({
     operation: "decode_android_resources",
-    input: { path: apk.path, include_strings: true },
+    input: {
+      path: apk.path,
+      include_strings: true,
+      max_string_table_bytes: DEFAULT_APKTOOL_STRING_TABLE_BYTES,
+    },
   });
   if (!result.ok) throw result.error;
   expect(result.value.result).toMatchObject({
     coverage: "partial",
     strings: [],
+    string_tables: [
+      {
+        locale: null,
+        status: "oversized",
+        strings: [],
+        total_count: null,
+        unparsed_count: null,
+        coverage: "partial",
+      },
+    ],
   });
-  expect(result.value.limitations.join(" ")).toContain("exceeds");
-  expect(result.value.limitations.join(" ")).not.toContain("No default");
 });
 
 describe("truncated manifest prefixes", () => {
@@ -1156,9 +1183,6 @@ describe("truncated manifest prefixes", () => {
       manifest: manifest.slice(0, 512 * 1024),
       metadata: { package_name: null, version_name: "1.2.3" },
     });
-    expect(result.value.limitations.join(" ")).toContain(
-      "manifest is truncated",
-    );
   });
 });
 
@@ -1300,7 +1324,11 @@ it.each([
       const result = await provider.execute(
         {
           operation: "decode_android_resources",
-          input: { path: apk.path, include_strings: true },
+          input: {
+            path: apk.path,
+            include_strings: true,
+            max_string_table_bytes: DEFAULT_APKTOOL_STRING_TABLE_BYTES,
+          },
         },
         { signal: controller.signal },
       );
@@ -1318,9 +1346,15 @@ it.each([
       });
       if (stringsXml !== undefined)
         expect(result.error.partialObservation).toMatchObject({
-          limitations: expect.arrayContaining([
-            expect.stringContaining("entry counts are unknown"),
-          ]),
+          normalized_result: {
+            string_tables: [
+              {
+                status: "malformed",
+                total_count: null,
+                unparsed_count: null,
+              },
+            ],
+          },
         });
       denied = false;
       await provider.close();
@@ -1720,33 +1754,34 @@ it.each([
     try {
       const result = await provider.execute({
         operation: "decode_android_resources",
-        input: { path: apk.path, include_strings: true },
+        input: {
+          path: apk.path,
+          include_strings: true,
+          max_string_table_bytes: DEFAULT_APKTOOL_STRING_TABLE_BYTES,
+        },
       });
       if (!result.ok) throw result.error;
       expect(result.value.result).toMatchObject({
         strings,
         target: { sha256: apk.sha256 },
         coverage: "partial",
+        string_tables: [
+          kind === "unsupported"
+            ? {
+                locale: null,
+                status: "present",
+                unparsed_count: 2,
+                coverage: "partial",
+              }
+            : {
+                locale: null,
+                status: "malformed",
+                total_count: null,
+                unparsed_count: null,
+                coverage: "partial",
+              },
+        ],
       });
-      const limitations = result.value.limitations.join("\n");
-      if (kind === "unsupported") {
-        expect(limitations).toMatch(/omitted[^\n]*2/iu);
-        expect(limitations).toMatch(
-          /omitted.*unsupported markup.*missing names/iu,
-        );
-        expect(limitations).not.toContain("entry counts are unknown");
-      } else {
-        expect(limitations).toContain(
-          'String table "res/values/strings.xml" could not be projected:',
-        );
-        expect(limitations).toContain("entry counts are unknown");
-        expect(limitations).not.toContain("String entries omitted");
-        expect(limitations).toContain(
-          kind === "wrong_root"
-            ? "root must be <resources>"
-            : "XML is not well-formed",
-        );
-      }
     } finally {
       await provider.close();
     }
