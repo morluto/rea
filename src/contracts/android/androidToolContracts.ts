@@ -5,8 +5,10 @@ import {
   androidSymbolInspectionInputSchemas,
   androidResultSchemas,
   androidJniInspectionInputSchema,
+  androidReferencesInspectionInputSchema,
 } from "../../domain/android/androidAnalysis.js";
 import {
+  androidClassPageViewResultSchema,
   androidClassSummaryViewResultSchema,
   androidComponentSummaryViewResultSchema,
   androidComponentsViewResultSchema,
@@ -15,6 +17,8 @@ import {
   androidManifestViewResultSchema,
   androidMethodSummaryViewResultSchema,
   androidPackageSummaryViewResultSchema,
+  androidReferencesPageViewResultSchema,
+  androidReferencesSummaryViewResultSchema,
 } from "../../domain/analysisView/summarySchemas/androidSummarySchemas.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
@@ -69,7 +73,7 @@ export const ANDROID_TOOL_CONTRACTS = [
       }),
     ),
     description:
-      "Inspect APK package/SDK/permission declarations, decoded manifest, static components and class/resource counts without executing it or verifying signatures. Requires caller-supplied JADX MCP JAR and JDK. Omitted detail returns full Evidence within the agent result budget, else the retained summary; detail summary retains it and omits manifest text/raw duplicates. With summary, view kind android selects facet components (exact filters, fields, paging), component-summary or manifest (UTF-16 text pages); complete detail rejects view. Use normalized_result.parent_evidence_id with inspect_analysis_view for later views. Component source_index identifies the original declaration, and declaration_coverage marks partial declarations.",
+      "Inspect APK package/SDK/permission declarations, decoded manifest, static components and class/resource counts without executing it or verifying signatures. Requires caller-supplied JADX MCP JAR and JDK. Omitted detail returns full Evidence within the agent result budget, else the retained summary; detail summary retains it and returns declarations with component counts instead of component rows and manifest text. With summary, view kind android selects facet components (exact filters, fields, paging), component-summary or manifest (UTF-16 text pages); complete detail rejects view. Use normalized_result.parent_evidence_id with inspect_analysis_view for later views. Component source_index identifies the original declaration, and declaration_coverage marks partial declarations.",
     kind: "android-provider",
     inputSchema: androidPackageInspectionInputSchema,
     outputSchema: evidenceResultOf(
@@ -146,13 +150,14 @@ export const ANDROID_TOOL_CONTRACTS = [
       }),
     ),
     description:
-      "Inspect one exact Android class's methods, fields, inner classes, DEX prototypes and encoded static final values without generating source. Select an overload_index from these results for inspect_android_method; indices are artifact/engine-session scoped and prototypes are not complete raw method IDs. Optional mapping_path adds verified R8/ProGuard names separately; observed names remain primary. detail summary retains complete Evidence and returns normalized symbols without duplicate raw calls; omitted detail is complete within the agent result budget, else the retained summary.",
+      'Inspect one exact Android class\'s methods, fields, inner classes, DEX prototypes and encoded static final values without generating source. Select an overload_index from these results for inspect_android_method; indices are artifact/engine-session scoped and prototypes are not complete raw method IDs. Optional mapping_path adds verified R8/ProGuard names separately; observed names remain primary. detail summary retains complete Evidence and returns counts and overloaded method names; omitted detail is complete within the agent result budget, else that summary. With detail summary, view {kind: "android-class", facet} pages methods (names, name_prefixes, constructors), fields (names, name_prefixes, static_values), inner-classes or mapping-symbols; later pages use inspect_analysis_view with parent_evidence_id.',
     kind: "android-provider",
     inputSchema: androidSymbolInspectionInputSchemas.inspect_android_class,
     outputSchema: evidenceResultOf(
       z.union([
         androidResultSchemas.inspect_android_class,
         androidClassSummaryViewResultSchema,
+        androidClassPageViewResultSchema,
       ]),
     ),
     examples: [
@@ -215,11 +220,15 @@ export const ANDROID_TOOL_CONTRACTS = [
       }),
     ),
     description:
-      "Trace incoming static using nodes to an exact Android class or selected method overload. A method target may be an external class directly named by DEX invokes: target_definition external and reference_scope direct_dex_invokes identify this narrower inventory, without inventing a class definition or body. Ambiguous external requests list observed DEX prototypes; select overload_index explicitly. For APK-defined targets use inspect_android_class. The total counts containing nodes, not individual invokes. External callers include source_selector for inspect_android_method. Source lines and the containing node dex_offset remain unknown. direct_invokes carries exact DEX code-unit offsets when available; direct_invokes_exhaustive false marks byte-bounded partial instruction evidence, and null means unknown. No reflection, JNI or runtime dispatch is inferred.",
+      'Trace incoming static using nodes to an exact Android class or selected method overload. A method target may be an external class directly named by DEX invokes: target_definition external and reference_scope direct_dex_invokes identify this narrower inventory, without inventing a class definition or body. Ambiguous external requests list observed DEX prototypes; select overload_index explicitly. For APK-defined targets use inspect_android_class. The total counts containing nodes, not individual invokes. External callers include source_selector for inspect_android_method. Source lines and the containing node dex_offset remain unknown. direct_invokes carries exact DEX code-unit offsets when available; direct_invokes_exhaustive false marks byte-bounded partial instruction evidence, and null means unknown. No reflection, JNI or runtime dispatch is inferred. Omitted detail returns the trace inline when it fits the agent result budget, else retains it and returns counts by kind, top class and package. With detail summary, view {kind: "android-references", facet: "top-classes"} lists distinct top classes with reference counts, and facet "references" pages using nodes with selected fields; both filter by kinds, packages or top_classes. Later pages use inspect_analysis_view with parent_evidence_id.',
     kind: "android-provider",
-    inputSchema: androidInputSchemas.trace_android_references,
+    inputSchema: androidReferencesInspectionInputSchema,
     outputSchema: evidenceResultOf(
-      androidResultSchemas.trace_android_references,
+      z.union([
+        androidResultSchemas.trace_android_references,
+        androidReferencesSummaryViewResultSchema,
+        androidReferencesPageViewResultSchema,
+      ]),
     ),
     examples: [
       {

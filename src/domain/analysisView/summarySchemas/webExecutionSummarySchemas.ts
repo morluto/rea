@@ -6,8 +6,8 @@ import {
   viewResultBaseFields,
 } from "../analysisViewBase.js";
 import {
+  webExecutionCollections,
   webExecutionSummarySchema,
-  webExecutionViewItemsSchema,
   webExecutionViewRequestSchema,
 } from "../webExecutionView.js";
 
@@ -20,13 +20,13 @@ export const webExecutionSummaryViewResultSchema = z.strictObject({
   summary: webExecutionSummarySchema,
 });
 
-/** One page of a retained observation's functions, requests, sources or source text. */
-export const webExecutionPageViewResultSchema = z.strictObject({
+const page = z.strictObject({
   ...viewResultBaseFields,
   artifact: artifactSchema.nullable(),
   kind: z.literal("web-execution"),
   parent_operation: z.literal("observe_web_execution"),
   target_url: z.string(),
+  // Keep the serialized field order when each collection narrows its view.
   view: webExecutionViewRequestSchema,
   coverage_context: webExecutionObservationSchema.shape.coverage.omit({
     scripts: true,
@@ -36,5 +36,17 @@ export const webExecutionPageViewResultSchema = z.strictObject({
     not_reported_scripts: z.int().nonnegative(),
     coverage_absence: z.literal("unknown"),
   }),
-  items: webExecutionViewItemsSchema,
 });
+
+/** Keep outer kind dispatch while validating each collection with its own rows. */
+export const webExecutionPageViewResultSchema = z
+  .object({ kind: page.shape.kind })
+  .passthrough()
+  .pipe(
+    z.union([
+      page.extend(webExecutionCollections.functions),
+      page.extend(webExecutionCollections.requests),
+      page.extend(webExecutionCollections.sources),
+      page.extend(webExecutionCollections["source-text"]),
+    ]),
+  );

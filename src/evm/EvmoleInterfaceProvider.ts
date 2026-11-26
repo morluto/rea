@@ -1,3 +1,4 @@
+import { systemCodeFromError } from "../kernel/reportedSystemCode.js";
 import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import {
   capturedProviderOutput,
@@ -193,12 +194,7 @@ const selectEvmLimiter = async (
         reason: `Set REA_EVM_PRLIMIT_COMMAND to an absolute executable regular file for caller-supplied util-linux prlimit. The selected path ${path} ${cause.code === "prlimit_not_absolute" ? "is not absolute" : "is not a regular file"}.`,
         cause,
       });
-    const systemCode =
-      cause instanceof Error &&
-      "code" in cause &&
-      typeof cause.code === "string"
-        ? cause.code
-        : undefined;
+    const systemCode = systemCodeFromError(cause);
     const permissionDenied = systemCode === "EACCES" || systemCode === "EPERM";
     const missing = systemCode === "ENOENT" || systemCode === "ENOTDIR";
     const recovery = permissionDenied

@@ -40,14 +40,6 @@ const readReport = createAnalysisViewResultReader(packageSchema);
 const DIGEST_BYTES = jsonValueByteLength({ view_digest: "0".repeat(64) }) - 1;
 const PROJECTION_BYTES = PAGE_BYTES - DIGEST_BYTES;
 
-/** Legacy package summary preserves its declarations; only manifest text is retained. */
-export const androidPackageSummarySchema = packageSchema.extend({
-  manifest: packageSchema.shape.manifest.omit({ text: true }).extend({
-    text_code_units: z.int().nonnegative(),
-    text_included: z.literal(false),
-  }),
-});
-
 export const androidManifestViewItemSchema = analysisTextPageItemSchema.extend({
   source_status: packageSchema.shape.manifest.shape.status,
   reported_total_bytes: packageSchema.shape.manifest.shape.reported_total_bytes,
@@ -87,6 +79,51 @@ export const androidComponentSummarySchema = z.strictObject({
     partial: z.int().nonnegative(),
   }),
 });
+
+/** Package declarations with component counts; components and manifest text page separately. */
+export const androidPackageSummarySchema = packageSchema.extend({
+  manifest: packageSchema.shape.manifest.omit({ text: true }).extend({
+    text_code_units: z.int().nonnegative(),
+    text_included: z.literal(false),
+  }),
+  components: androidManifestComponentsSchema
+    .omit({ items: true })
+    .extend(androidComponentSummarySchema.shape)
+    .describe(
+      "Component counts; page declarations with view facet components, or count a filtered set with component-summary",
+    ),
+});
+
+/** Count components that satisfy `matches`, by kind, export and coverage. */
+const countComponents = (
+  rows: readonly AndroidManifestComponent[],
+  matches: (row: AndroidManifestComponent) => boolean,
+): z.output<typeof androidComponentSummarySchema> => {
+  const summary: z.output<typeof androidComponentSummarySchema> = {
+    matching_components: 0,
+    by_kind: {
+      activity: 0,
+      "activity-alias": 0,
+      service: 0,
+      receiver: 0,
+      provider: 0,
+    },
+    exported_declarations: { true: 0, false: 0, unknown: 0 },
+    exported_defaults: { true: 0, false: 0, unknown: 0 },
+    declaration_coverage: { complete: 0, partial: 0 },
+  };
+  const state = (value: boolean | null) =>
+    value === null ? "unknown" : value ? "true" : "false";
+  for (const row of rows) {
+    if (!matches(row)) continue;
+    summary.matching_components++;
+    summary.by_kind[row.kind]++;
+    summary.exported_declarations[state(row.exported)]++;
+    summary.exported_defaults[state(row.exported_default)]++;
+    summary.declaration_coverage[row.declaration_coverage]++;
+  }
+  return summary;
+};
 
 const choose = <T extends object>(
   row: T,
@@ -148,6 +185,7 @@ export const projectAndroidPackageView = (
   };
   if (view.kind === "summary") {
     const { text, ...manifest } = report.manifest;
+    const { items, ...components } = report.components;
     return ok({
       kind: "summary" as const,
       view,
@@ -158,6 +196,10 @@ export const projectAndroidPackageView = (
           ...manifest,
           text_code_units: text.length,
           text_included: false as const,
+        },
+        components: {
+          ...components,
+          ...countComponents(items, () => true),
         },
       },
       coverage: completeWithinViewCoverage(1),
@@ -242,35 +284,7 @@ export const projectAndroidPackageView = (
     (view.exported === undefined || row.exported === view.exported);
 
   if (view.facet === "component-summary") {
-    const summary: z.output<typeof androidComponentSummarySchema> = {
-      matching_components: 0,
-      by_kind: {
-        activity: 0,
-        "activity-alias": 0,
-        service: 0,
-        receiver: 0,
-        provider: 0,
-      },
-      exported_declarations: { true: 0, false: 0, unknown: 0 },
-      exported_defaults: { true: 0, false: 0, unknown: 0 },
-      declaration_coverage: { complete: 0, partial: 0 },
-    };
-    for (const row of rows) {
-      if (!matches(row)) continue;
-      summary.matching_components++;
-      summary.by_kind[row.kind]++;
-      summary.exported_declarations[
-        row.exported === null ? "unknown" : row.exported ? "true" : "false"
-      ]++;
-      summary.exported_defaults[
-        row.exported_default === null
-          ? "unknown"
-          : row.exported_default
-            ? "true"
-            : "false"
-      ]++;
-      summary.declaration_coverage[row.declaration_coverage]++;
-    }
+    const summary = countComponents(rows, matches);
     const result = {
       ...context,
       kind: "android" as const,

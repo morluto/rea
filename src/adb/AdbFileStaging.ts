@@ -1,3 +1,4 @@
+import { systemCodeFromError } from "../kernel/reportedSystemCode.js";
 import { constants as fsConstants } from "node:fs";
 import {
   access,
@@ -11,7 +12,6 @@ import {
 import { basename, extname } from "node:path";
 
 import { ADB_PROVIDER_IDENTITY } from "./AdbProviderIdentity.js";
-import { adbFilesystemErrorCode } from "./AdbFilesystemAdmission.js";
 import { displayDevicePath } from "./AdbDeviceOutput.js";
 import {
   absoluteCallerPath,
@@ -277,7 +277,7 @@ export const prepareOutputDirectory = async (
     await mkdir(root, { recursive: true });
     await access(root, fsConstants.W_OK);
   } catch (cause) {
-    const code = adbFilesystemErrorCode(cause);
+    const code = systemCodeFromError(cause);
     if (code === "EEXIST" || code === "ENOTDIR")
       return err(
         new AnalysisInputError(operation, { cause }, [
@@ -598,12 +598,7 @@ export const reservePackageDestinations = async (
         },
       });
     } catch (cause: unknown) {
-      const errorCode =
-        cause instanceof Error &&
-        "code" in cause &&
-        typeof cause.code === "string"
-          ? cause.code
-          : null;
+      const errorCode = systemCodeFromError(cause) ?? null;
       return new AnalysisOutputError(
         operation,
         "local_destination_unavailable",
@@ -638,12 +633,7 @@ export const reservePackageDestinations = async (
         );
       await rmdir(reservation.path);
     } catch (cause: unknown) {
-      const errorCode =
-        cause instanceof Error &&
-        "code" in cause &&
-        typeof cause.code === "string"
-          ? cause.code
-          : null;
+      const errorCode = systemCodeFromError(cause) ?? null;
       return new AnalysisOutputError(
         operation,
         "local_destination_unavailable",

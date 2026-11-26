@@ -23,11 +23,8 @@ import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { evidenceSubjectTarget } from "../evidence.js";
 
 /** Exact requested facts; only the parent Evidence's raw protocol calls are omitted. */
-export const androidClassSummarySchema =
-  androidResultSchemas.inspect_android_class;
 export const androidMethodSummarySchema =
   androidResultSchemas.inspect_android_method;
-const readClass = createAnalysisViewResultReader(androidClassSummarySchema);
 const readMethod = createAnalysisViewResultReader(androidMethodSummarySchema);
 const DIGEST_BYTES = jsonValueByteLength({ view_digest: "0".repeat(64) }) - 1;
 const PROJECTION_BYTES = PAGE_BYTES - DIGEST_BYTES;
@@ -39,15 +36,12 @@ const boundedSummary = <View extends { readonly parent_evidence_id: string }>(
   PROJECTION_BYTES
     ? analysisViewPageTooLarge(
         result.parent_evidence_id,
-        "The complete Android symbol summary exceeds the analysis-view byte budget. Read complete parent Evidence, or select one method when inspecting a class.",
-        {
-          remediationAction:
-            "Select complete detail, or inspect a single method rather than the entire class.",
-        },
+        "The complete Android method summary exceeds the analysis-view byte budget. Read complete parent Evidence.",
+        { remediationAction: "Select complete detail." },
       )
     : ok(result);
 
-/** Reuse authenticated Android facts without reopening the APK, mapping or engine. */
+/** Reuse authenticated method facts without reopening the APK, mapping or engine. */
 export const projectAndroidSymbolSummary = (
   parent: AnalysisViewParent,
   admitted: AdmittedView,
@@ -55,19 +49,16 @@ export const projectAndroidSymbolSummary = (
   const view = ownedView<SummaryAnalysisView>(admitted, "summary");
   if (view === undefined)
     return invalidAnalysisView(
-      "Android class and method Evidence supports summary views.",
+      "Android method Evidence supports summary views.",
     );
-  if (
-    parent.operation !== "inspect_android_class" &&
-    parent.operation !== "inspect_android_method"
-  )
+  if (parent.operation !== "inspect_android_method")
     return err(
       analysisViewInputError([
         {
           path: ["source", "operation"],
           reason: "invalid_value",
           message:
-            "Android symbol summaries require class or method inspection Evidence.",
+            "Android method summaries require method inspection Evidence.",
         },
       ]),
     );
@@ -93,15 +84,6 @@ export const projectAndroidSymbolSummary = (
       "Static class and method analysis does not establish runtime behavior or APK authenticity.",
     ],
   };
-  if (parent.operation === "inspect_android_class") {
-    const parsed = readClass(parent);
-    if (!parsed.ok) return parsed;
-    return boundedSummary({
-      ...shared,
-      parent_operation: "inspect_android_class" as const,
-      summary: parsed.value,
-    });
-  }
   const parsed = readMethod(parent);
   if (!parsed.ok) return parsed;
   return boundedSummary({

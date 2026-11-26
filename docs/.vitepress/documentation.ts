@@ -409,6 +409,11 @@ export const documentationSections = [
         route: "/android-ota-payload",
       },
       {
+        text: "Android sparse images",
+        source: "guides/firmware/android-sparse-image.md",
+        route: "/android-sparse-image",
+      },
+      {
         text: "Flattened devicetree inspection",
         source: "devicetree.md",
         route: "/devicetree",
