@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { parseClientConfiguration } from "./ClientConfigurationDocument.js";
+import {
+  clientRegistrationLauncherEntry,
+  parseClientConfiguration,
+} from "./ClientConfigurationDocument.js";
 
 const parsed = (text: string) => {
   const result = parseClientConfiguration(text, "muse");
@@ -47,5 +50,19 @@ describe("Muse Code settings", () => {
     );
     expect(document.document.theme).toBe("dark");
     expect(document.document.schema_version).toBe(2);
+  });
+});
+
+/**
+ * Muse Code requires `type: "stdio"` on a registration row, so the launcher a
+ * fresh row starts from must carry it rather than relying on a prior row.
+ */
+describe("Muse Code registration launcher entry", () => {
+  it("carries the stdio type a fresh row needs", () => {
+    expect(clientRegistrationLauncherEntry("muse", ["rea", "mcp"])).toEqual({
+      type: "stdio",
+      command: "rea",
+      args: ["mcp"],
+    });
   });
 });

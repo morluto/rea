@@ -1154,6 +1154,10 @@ export const clientRegistrationLauncherEntry = (
       return { type: "local", command: [...command] };
     case "goose":
       return { type: "stdio", cmd: executable, args };
+    // Muse Code requires `type: "stdio"` on every registration row, so a fresh
+    // row carries it instead of being written and then rejected by the client.
+    case "muse":
+      return { type: "stdio", command: executable, args };
     case "vscode":
     case "omp":
     case "pi":
