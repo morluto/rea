@@ -14,6 +14,7 @@ import {
 } from "../../ports/AnalysisProvider.js";
 import { ok, err } from "../../domain/result.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { executeWithNativeSymbolSelection } from "../NativeSymbolSelection.js";
 import { parseConfig } from "../../config/parseConfig.js";
 import {
@@ -42,7 +43,10 @@ import {
   estimateJsonStorage,
   requireAuthenticationHeadroom,
 } from "../JsonAuthenticationHeadroom.js";
-import type { RecoveryAdmission } from "../investigation/InvestigationRetention.js";
+import {
+  admitInvestigationAuthentication,
+  type RecoveryAdmission,
+} from "../investigation/InvestigationRetention.js";
 
 const fixture = (
   id: string,
@@ -55,14 +59,19 @@ const fixture = (
   const profile = createAnalysisProfile(identity, { fixture: true });
   const calls: string[] = [];
   const capability = (
-    operation: "address_name" | "read_bytes" | "list_names" | "xrefs",
+    operation:
+      | "address_name"
+      | "read_bytes"
+      | "list_names"
+      | "xrefs"
+      | "set_address_name",
   ): CapabilityDescriptor => ({
     provider: identity,
     operation,
     available: true,
     reason: null,
     effects: {
-      mutatesArtifact: false,
+      mutatesArtifact: operation === "set_address_name",
       launchesProcess: false,
       mayShowUi: false,
       mayAccessNetwork: false,
@@ -80,6 +89,7 @@ const fixture = (
       capability("read_bytes"),
       capability("list_names"),
       capability("xrefs"),
+      capability("set_address_name"),
     ],
     createClient: () => ({
       execute: async (operation, parameters) => {
@@ -800,3 +810,105 @@ it("includes native selection in the session's first retained-record admission",
     await session.dispose();
   }
 });
+
+it.each(["recover", "omit", "normal"] as const)(
+  "preserves a completed native mutation through context admission: %s",
+  async (outcome) => {
+    const [path] = await createBinarySessionTargets();
+    const records = new InvestigationRecords();
+    const originalAdmission = records.admitRecoveryObservation.bind(records);
+    let attempts = 0;
+    const operations: string[] = [];
+    const admission = vi
+      .spyOn(records, "admitRecoveryObservation")
+      .mockImplementation((input, operation, additional) => {
+        operations.push(operation);
+        attempts += 1;
+        return outcome === "normal" || (outcome === "recover" && attempts > 1)
+          ? originalAdmission(input, operation, additional)
+          : admitInvestigationAuthentication(
+              input,
+              operation,
+              { availableAuthenticationBytes: () => 0 },
+              additional,
+            );
+      });
+    const { session, calls } = fixture(
+      "ghidra",
+      ["Shared provider limitation"],
+      "reference",
+      [],
+      records,
+    );
+    try {
+      const opened = await session.open(path, { providerId: "ghidra" });
+      if (!opened.ok) throw opened.error;
+      const parameters = { address: "0x1000", name: "renamed" };
+      const result = await session.execute("set_address_name", parameters);
+      expect(
+        calls.filter((operation) => operation === "set_address_name"),
+      ).toHaveLength(1);
+      expect(
+        operations.every((operation) => operation === "set_address_name"),
+      ).toBe(true);
+      if (outcome === "normal") {
+        expect(result.ok).toBe(true);
+        return;
+      }
+      if (result.ok) throw new Error("Expected context admission failure");
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisResourceConstraintError",
+        operation: "set_address_name",
+      });
+      const completed = result.error.sourcePublicationRecovery?.completed;
+      const projected = projectAnalysisError(result.error);
+      expect(projected).toMatchObject({
+        code: "resource_constraint",
+        details: { operation: "set_address_name" },
+      });
+      if (outcome === "omit") {
+        expect(projected).toMatchObject({
+          details: {
+            completed_observation_omitted: {
+              reason: "insufficient-authentication-headroom",
+              source_closure: "not-established",
+            },
+          },
+        });
+        expect(completed).toMatchObject({
+          kind: "omitted",
+          reason: "insufficient-authentication-headroom",
+        });
+      } else {
+        if (completed?.kind !== "unretained-evidence")
+          throw new Error("Expected completed mutation Evidence");
+        expect(completed.evidence).toMatchObject({
+          operation: "set_address_name",
+          parameters,
+          normalized_result: "set_address_name",
+          provider_selection: { selection_source: "request" },
+          evidence_links: [],
+        });
+        expect(completed.evidence.limitations).toContain(
+          "Shared provider limitation",
+        );
+        expect(projected).toMatchObject({
+          details: {
+            completed_observation: {
+              kind: "unretained-evidence",
+              evidence: {
+                operation: "set_address_name",
+                normalized_result: "set_address_name",
+                provider_selection: { selection_source: "request" },
+              },
+            },
+          },
+        });
+      }
+      expect(session.exportEvidenceBundle().records).toHaveLength(0);
+    } finally {
+      admission.mockRestore();
+      await session.dispose();
+    }
+  },
+);

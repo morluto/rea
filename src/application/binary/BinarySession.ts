@@ -1577,9 +1577,27 @@ export class BinarySession
           captured.value,
           captured.value.subject ?? active.target,
           this.#sessionLimitations,
-          this.admitRecoveryObservation.bind(this),
+          (input, _contextOperation, additional) =>
+            this.admitRecoveryObservation(input, name, additional),
         )
       : captured;
+    if (captured.ok && !observed.ok) {
+      recoverProviderSourceFailure({
+        error: observed.error,
+        operation: name,
+        parameters: recoveryParameters ?? arguments_,
+        execution: carrySessionExecutionProvenance(captured.value, {
+          ...captured.value,
+          sourceEvidence: captured.value.sourceEvidence ?? [],
+          subject:
+            captured.value.subject === undefined
+              ? active.target
+              : captured.value.subject,
+        }),
+        admit: this.admitRecoveryObservation.bind(this),
+        evidenceForAnalysis: this.evidenceForAnalysis.bind(this),
+      });
+    }
     // A caller who asked for a one-shot snapshot learns when it cannot replay.
     const recordingRefusal = (
       execution: AnalysisExecution,
