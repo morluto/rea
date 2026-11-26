@@ -319,11 +319,19 @@ The Hopper launcher action used by REA creates a document from an executable;
 its supported command-line interface does not attach to an already-open
 document. While another live REA session owns the same target and loader
 profile, a second session reports the owning run ID instead of opening a
-duplicate document. Closing the owning REA session releases this guard; Hopper
-keeps its document open. A later REA session can therefore open another
-document for the same target. REA does not currently identify, focus, or reuse
-that existing GUI document, and the supported launcher exposes no attach or
-reuse action for it.
+duplicate document.
+
+**MCP server shutdown** (or connection drop) releases the session guard but
+**retains the Hopper document** by default (`retainProviderDocuments: true`).
+A later REA session can therefore open another document for the same target.
+
+**Closing or switching a target** (via `close_binary` or target switch) closes
+its bound Hopper document, shuts down REA's bridge, and removes its temporary
+socket directory while preserving the Hopper application and unrelated
+documents.
+
+REA does not currently identify, focus, or reuse an existing GUI document, and
+the supported launcher exposes no attach or reuse action for it.
 
 On supported Linux distributions, approved setup verifies Hopper's official
 `.deb`, `.rpm`, or Arch package before invoking the native package manager.
@@ -436,10 +444,11 @@ An external GUI's helper exit does not establish that the GUI itself exited.
 For cursor navigation, string decoding, symbol-name limits, and regex matching,
 see [Hopper analysis behavior](native-investigation.md#hopper-analysis-behavior).
 
-Closing or switching a target closes its bound Hopper document, shuts down REA's
-bridge and removes its temporary socket directory while preserving the Hopper
-application and unrelated documents. A `cleanup_incomplete`
-result identifies resources whose cleanup could not be verified.
+Closing or switching a target (via `close_binary` or target switch) closes its
+bound Hopper document, shuts down REA's bridge and removes its temporary socket
+directory while preserving the Hopper application and unrelated documents.
+A `cleanup_incomplete` result identifies resources whose cleanup could not be
+verified.
 REA retains unresolved cleanup ownership and any confirmed shutdown phases.
 After addressing the reported failure, retry `close_binary` on the same
 connection. Unconfirmed document or process cleanup retains the target/application
@@ -451,6 +460,10 @@ An unconfirmed external document can be retried while its authenticated bridge
 remains connected. If that bridge has disconnected, another close cannot confirm
 the document: inspect and close the reported document in Hopper before ending
 the owning REA connection.
+
+**Note:** This target-close behavior differs from MCP server shutdown, which
+retains provider documents by default (`retainProviderDocuments: true`). See the
+Hopper session lifecycle section above for details.
 
 ### Hopper in CI
 
