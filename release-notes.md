@@ -292,6 +292,7 @@
 * **cli:** complete inline option values ([#13366](https://github.com/morluto/rea/issues/13366)) ([0451a86](https://github.com/morluto/rea/commit/0451a8688d55c389c67048fa7764af0c0d5a8ab1))
 * **cli:** count and page emitted output with tokenx 2 ([#14330](https://github.com/morluto/rea/issues/14330)) ([948835a](https://github.com/morluto/rea/commit/948835a41e04c0d0c6eacac71d6ee4428418981d))
 * **cli:** deliver an unretained non-idempotent result complete ([c536c67](https://github.com/morluto/rea/commit/c536c67ee18bbde27d6a0f16bb6a3f1d3ae18ae4))
+* **cli:** isolate a synchronous resource-closer throw ([#14796](https://github.com/morluto/rea/issues/14796)) ([1c8b3b6](https://github.com/morluto/rea/commit/1c8b3b64e864f886b81d85b99f2ebe70536e781d))
 * **cli:** load Electron fuse inspection on demand ([#13922](https://github.com/morluto/rea/issues/13922)) ([b48b986](https://github.com/morluto/rea/commit/b48b9860a4e646793b9972d09b76fecb52e04d24))
 * **cli:** preserve doctor routing with empty output values ([#13262](https://github.com/morluto/rea/issues/13262)) ([a06e04b](https://github.com/morluto/rea/commit/a06e04b4dfcd994a426cc6b6ab77082260b95a3f))
 * **cli:** preserve explicit null output ([#13342](https://github.com/morluto/rea/issues/13342)) ([d4f78cb](https://github.com/morluto/rea/commit/d4f78cb5922d9fd83222514dda85db8bf5287f1b))
