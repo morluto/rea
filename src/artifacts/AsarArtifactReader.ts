@@ -722,6 +722,9 @@ export class AsarArtifactReader implements ArtifactReader {
     ) {
       return this.#snapshotHandle;
     }
+    // The snapshot operation queue admits one acquisition at a time. Publish
+    // the handle only after cancellation is ruled out, and close it first so
+    // a cancelled open does not leave the descriptor owned.
     const snapshotPath = this.#snapshotPath();
     const handle = await this.#openOwned(
       snapshotPath,

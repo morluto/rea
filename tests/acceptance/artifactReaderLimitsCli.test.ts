@@ -16,6 +16,10 @@ import {
 import { dotnetBundleFixture } from "../../src/artifacts/dotnet/DotnetBundle.fixture.js";
 import { tarFixture } from "../../src/artifacts/tar/tar.fixture.js";
 import { nodeSeaElf } from "../../src/artifacts/nodeSea/NodeSea.fixture.js";
+import {
+  ANDROID_VBMETA_OVERFLOW_DESCRIPTORS,
+  androidVbmetaDescriptorCountOverflow,
+} from "../../src/domain/firmware/androidVbmeta.fixture.js";
 import type { ArtifactReaderLimitsInput } from "../../src/domain/artifactReaderLimits.js";
 import {
   artifactExtractionResultSchema,
@@ -297,6 +301,46 @@ test("admits the same SEA carrier above the legacy 4096-argument ceiling", async
   });
 });
 
+test("admits the same vbmeta image above the default 4096-descriptor admission", async ({
+  cli,
+  workspace,
+}) => {
+  const path = workspace.path("vbmeta.img");
+  const bytes = androidVbmetaDescriptorCountOverflow();
+  await writeFile(path, bytes);
+  const command = ["inspect-artifact", path, "--json"];
+  const refused = await cli.run({ arguments: command });
+  expect(refused.exitCode).toBe(1);
+  expect(refused.json).toMatchObject({
+    code: "partial",
+    retryable: true,
+    details: {
+      reader_limit: {
+        parameter: "artifact_limits.android_vbmeta.descriptor_count",
+        effective_value: 4096,
+        required_value: ANDROID_VBMETA_OVERFLOW_DESCRIPTORS,
+        can_increase: true,
+        update_mode: "parameter",
+      },
+    },
+  });
+  const selected = {
+    android_vbmeta: { descriptor_count: ANDROID_VBMETA_OVERFLOW_DESCRIPTORS },
+  };
+  const recovered = await cli.run({
+    arguments: [...command, "--artifact-limits", JSON.stringify(selected)],
+  });
+  expect(recovered.exitCode, recovered.stderr).toBe(0);
+  const { inventory } = readInspection(recovered.json);
+  expect(inventory.effective_limits).toMatchObject(selected);
+  expect(inventory.coverage.status).toBe("complete");
+  expect(inventory.manifest).toMatchObject({
+    root_format: "android-vbmeta",
+    root_sha256: digest(bytes),
+  });
+  expect(digest(await readFile(path))).toBe(digest(bytes));
+});
+
 test("applies the selected reader budget before extraction and preserves its output", async ({
   cli,
   workspace,
@@ -349,6 +393,98 @@ test("applies the selected reader budget before extraction and preserves its out
   expect(
     await readFile(workspace.path("selected-output/second.txt"), "utf8"),
   ).toBe("second");
+});
+
+test("names artifact.member_count and both routes when the launch seed refuses a bundle", async ({
+  cli,
+  workspace,
+}) => {
+  const path = workspace.path("seeded.bin");
+  const bytes = dotnetBundleFixture([
+    { path: "first.txt", bytes: Buffer.from("first") },
+    { path: "second.txt", bytes: Buffer.from("second") },
+  ]).bytes;
+  await writeFile(path, bytes);
+  const command = ["inspect-artifact", path, "--json"];
+  const refused = await cli.run({
+    arguments: command,
+    environment: { REA_ARTIFACT_MEMBER_COUNT: "1" },
+  });
+  expect(refused.exitCode).toBe(1);
+  expect(refused.json).toMatchObject({
+    details: {
+      limit: {
+        setting: "artifact.member_count",
+        parameter: "artifact_limits.dotnet_bundle.entry_count",
+        effective_value: 1,
+        source: "setting",
+      },
+      reader_limit: {
+        parameter: "artifact_limits.dotnet_bundle.entry_count",
+        effective_value: 1,
+      },
+    },
+  });
+  // A one-invocation caller is told the per-call field and the launch seed.
+  const action = (refused.json as { remediation: { action: string } })
+    .remediation.action;
+  expect(action).toContain("artifact_limits.dotnet_bundle.entry_count");
+  expect(action).toContain("REA_ARTIFACT_MEMBER_COUNT");
+  // The caller's own field wins over the session value for this call.
+  const selected = await cli.run({
+    arguments: [
+      ...command,
+      "--artifact-limits",
+      '{"dotnet_bundle":{"entry_count":2}}',
+    ],
+    environment: { REA_ARTIFACT_MEMBER_COUNT: "1" },
+  });
+  expect(selected.exitCode, selected.stderr).toBe(0);
+  const raised = await cli.run({
+    arguments: command,
+    environment: { REA_ARTIFACT_MEMBER_COUNT: "2" },
+  });
+  expect(raised.exitCode, raised.stderr).toBe(0);
+  const inspected = readInspection(raised.json);
+  // The caller selected nothing; the session value is the accepted policy.
+  expect(inspected.source.parameters).toEqual({ integrity_policy: "fail" });
+  expect(inspected.inventory.effective_limits).toMatchObject({
+    dotnet_bundle: { entry_count: 2 },
+    bun: { module_count: 2 },
+  });
+});
+
+test("admits explicit member counts without reading an invalid artifact.member_count seed", async ({
+  cli,
+  workspace,
+}) => {
+  const path = workspace.path("explicit.bin");
+  const bytes = dotnetBundleFixture([
+    { path: "first.txt", bytes: Buffer.from("first") },
+    { path: "second.txt", bytes: Buffer.from("second") },
+  ]).bytes;
+  await writeFile(path, bytes);
+  const command = ["inspect-artifact", path, "--json"];
+  const environment = { REA_ARTIFACT_MEMBER_COUNT: "invalid" };
+  // Every field the setting backs is selected, so the seed is not consulted.
+  const explicit = await cli.run({
+    arguments: [
+      ...command,
+      "--artifact-limits",
+      JSON.stringify({
+        bun: { module_count: 2 },
+        dotnet_bundle: { entry_count: 2 },
+        node_sea: { asset_count: 2 },
+        deno: { vfs_entries: 2 },
+      }),
+    ],
+    environment,
+  });
+  expect(explicit.exitCode, explicit.stderr).toBe(0);
+  // A field left to the session value still reports the invalid seed.
+  const fallback = await cli.run({ arguments: command, environment });
+  expect(fallback.exitCode).toBe(1);
+  expect(fallback.json).toMatchObject({ code: "configuration_invalid" });
 });
 
 test("rejects unknown reader-policy fields before opening the selected artifact", async ({

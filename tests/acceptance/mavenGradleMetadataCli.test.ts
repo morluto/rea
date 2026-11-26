@@ -30,6 +30,58 @@ const bundleOutputSchema = contractNamed(
 ).outputSchema;
 
 cliTest(
+  "refuses a POM at report_limits.xml_nodes and reports it when raised through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-maven-report-limits-");
+    const path = join(root, "pom.xml");
+    await writeFile(path, mavenPomFixture);
+    const command = ["inspect-maven-gradle-metadata", path, "--json"];
+    const limit = {
+      control_kind: "parameter",
+      parameter: "report_limits.xml_nodes",
+      effective_value: 8,
+      unit: "count",
+      minimum: 1,
+      default_value: 1_048_576,
+      applies_at: "next_call",
+    };
+    const refused = await cli.run({
+      arguments: [...command, "--report-limits", '{"xml_nodes":8}'],
+    });
+    expect(refused.exitCode).toBe(1);
+    expect(refused.json).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: { limit },
+      remediation: {
+        action: expect.stringContaining("report_limits.xml_nodes"),
+      },
+    });
+    const raised = await cli.run({
+      arguments: [...command, "--report-limits", '{"xml_nodes":100000}'],
+    });
+    expect(raised.exitCode, raised.stderr).toBe(0);
+    expect(outputSchema.parse(raised.json).parameters).toMatchObject({
+      report_limits: { xml_nodes: 100_000 },
+    });
+    const { call } = await connectLocalToolsMcp();
+    const mcpRefused = await call("inspect_maven_gradle_metadata", {
+      path,
+      report_limits: { xml_nodes: 8 },
+    });
+    expect(mcpRefused.isError).toBe(true);
+    expect(parseMcpToolError(mcpRefused).error).toMatchObject({
+      details: { limit },
+    });
+    const mcpRaised = await call("inspect_maven_gradle_metadata", {
+      path,
+      report_limits: { xml_nodes: 100_000 },
+    });
+    expect(mcpRaised.isError, JSON.stringify(mcpRaised)).not.toBe(true);
+  },
+);
+
+cliTest(
   "preserves Maven property value characters through CLI, MCP and retained Evidence",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-maven-property-values-");

@@ -296,6 +296,75 @@ describe("declared-extent edge cases", () => {
   });
 });
 
+describe("GLB JSON root and images shape", () => {
+  it("reports a non-object GLB JSON root as invalid with unknown coverage", async () => {
+    const json = Buffer.from("[]  ", "utf8");
+    const body = Buffer.concat([
+      Buffer.from([json.length, 0, 0, 0]),
+      Buffer.from("JSON", "latin1"),
+      json,
+    ]);
+    const header = Buffer.alloc(12);
+    header.write("glTF", 0, "latin1");
+    header.writeUInt32LE(2, 4);
+    header.writeUInt32LE(12 + body.length, 8);
+    const result = await read("glb", Buffer.concat([header, body]));
+    expect(result.metadata).toMatchObject({
+      kind: "glb",
+      json_status: "invalid",
+      counts: {},
+      extent_check: "consistent",
+    });
+    expect(result.entries.map((entry) => entry.path)).toEqual([
+      "chunks/0.json",
+    ]);
+    expect(result.coverage).toEqual([
+      {
+        status: "unknown",
+        limitations: [
+          "The GLB JSON chunk is not a readable JSON object; collection counts were not read.",
+        ],
+      },
+    ]);
+  });
+
+  it("reports a non-array GLB images member with unknown inventory coverage", async () => {
+    const raw = JSON.stringify({
+      asset: { version: "2.0" },
+      images: { invalid: true },
+    });
+    const padded = Buffer.from(
+      raw + " ".repeat((4 - (raw.length % 4)) % 4),
+      "utf8",
+    );
+    const chunkHeader = Buffer.alloc(8);
+    chunkHeader.writeUInt32LE(padded.length, 0);
+    chunkHeader.write("JSON", 4, "latin1");
+    const header = Buffer.alloc(12);
+    header.write("glTF", 0, "latin1");
+    header.writeUInt32LE(2, 4);
+    header.writeUInt32LE(12 + chunkHeader.length + padded.length, 8);
+    const graph = await inventoryArtifact(
+      await write(
+        "bad-images.glb",
+        Buffer.concat([header, chunkHeader, padded]),
+      ),
+    );
+    expect(graph.coverage.status).toBe("unknown");
+    expect(graph.limitations).toContain(
+      "The GLB images member is not a JSON array; embedded images were not listed.",
+    );
+    expect(
+      graph.occurrences.find((row) => row.logical_path === ".")
+        ?.format_metadata,
+    ).toMatchObject({
+      kind: "glb",
+      json_status: "parsed",
+      extent_check: "consistent",
+    });
+  });
+});
+
 describe("KTX headers", () => {
   it("reads KTX 1.1 fields, key/value data and mip levels", async () => {
     const result = await read("ktx", ktxFixture());

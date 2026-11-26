@@ -6,6 +6,7 @@ import {
 } from "../../../src/domain/analysisErrorCore.js";
 import { signalDecodersSchema } from "../../../src/domain/signals/signalDecoders.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import { it, expect, onTestFinished } from "vitest";
 import { writeFile, readFile, readdir, chmod, symlink } from "node:fs/promises";
@@ -78,6 +79,7 @@ const fixture = async (
   mode = "ok",
   failCleanup = false,
   recordingName?: string,
+  launchEnvironment: Readonly<Record<string, string>> = {},
 ) => {
   const directory = await createTestTempDirectory("rea-signal-test-");
   const path = join(
@@ -114,6 +116,7 @@ const fixture = async (
   const provider = new SigrokRecordingProvider(
     {
       ...process.env,
+      ...launchEnvironment,
       REA_SIGROK_COMMAND: configuredCommand,
       REA_SIGROK_PRLIMIT_COMMAND:
         mode === "limiter-refused" ? limiter : configuredCommand,
@@ -1173,6 +1176,12 @@ it("refuses unsupported hosts before launching or allocating a workspace", async
     _tag: "AnalysisCapabilityUnavailableError",
     reason: expect.stringContaining("Linux"),
   });
+  // The host is the limit: recovery must not ask for a sigrok command that this
+  // host cannot use, which is what the tool-path branch is for.
+  const unavailable = result.error as { remediationAction?: string };
+  expect(unavailable.remediationAction).toBeDefined();
+  expect(unavailable.remediationAction).toContain("Linux");
+  expect(unavailable.remediationAction).not.toContain("REA_SIGROK_COMMAND");
 });
 
 it("preserves complete Evidence when aborted during post-run integrity checks", async () => {
@@ -1384,25 +1393,105 @@ it.each(["bad-version", "nonzero", "overflow", "wait", "oversized-tool"])(
         reportedLimits: { output_bytes: 4194304 },
         retryable: false,
       });
-      expect(projectAnalysisError(result.error).details?.limit).toEqual({
-        control_kind: "parameter",
+      // The per-call field is backed by the session setting.
+      expect(projectAnalysisError(result.error).details?.limit).toMatchObject({
+        setting: "producer.output_bytes",
         parameter: "producer_limits.output_bytes",
         effective_value: 4194304,
-        unit: "bytes",
+        source: "default",
+        update_mode: "runtime",
         minimum: 1,
         maximum: Number.MAX_SAFE_INTEGER,
-        default_value: 4194304,
-        applies_at: "next_call",
       });
-      expect(analysisErrorRemediationAction(result.error)).toContain(
-        "producer_limits.output_bytes",
-      );
-      expect(analysisErrorRemediationAction(result.error)).not.toMatch(
-        /Review the reported worker memory limits/u,
+      expect(projectAnalysisError(result.error).details?.refusal).toMatchObject(
+        {
+          kind: "adjustable_budget",
+          control: "producer_limits.output_bytes",
+          setting: "producer.output_bytes",
+          effective_value: 4194304,
+          source: "default",
+        },
       );
     }
   },
 );
+
+it("applies a runtime producer.output_bytes override below the per-call field", async () => {
+  const f = await fixture("overflow");
+  const snapshot = (value: number) => ({
+    revision: 1,
+    overrides: { "producer.output_bytes": value },
+  });
+  // A lower session value refuses the 5 MiB output and reports its source.
+  const lowered = await runWithAnalysisOperationSnapshot(snapshot(1024), () =>
+    f.service.inspectDecoders({}),
+  );
+  if (lowered.ok) throw new Error("Expected the lowered output refusal");
+  expect(projectAnalysisError(lowered.error).details?.limit).toMatchObject({
+    setting: "producer.output_bytes",
+    effective_value: 1024,
+    source: "runtime",
+  });
+  // A higher session value admits the output; it then fails only on grammar.
+  const raised = await runWithAnalysisOperationSnapshot(
+    snapshot(8 * 1024 * 1024),
+    () => f.service.inspectDecoders({}),
+  );
+  if (raised.ok) throw new Error("Expected the malformed catalog");
+  // The whole output was admitted; only the catalog grammar refused it.
+  expect(raised.error).toBeInstanceOf(AnalysisOutputError);
+  expect(raised.error.capturedOutput?.stdout).toHaveLength(5 * 1024 * 1024);
+  // An explicit per-call field still wins over the session value.
+  const request = await runWithAnalysisOperationSnapshot(
+    snapshot(8 * 1024 * 1024),
+    () =>
+      f.service.inspectDecoders({ producer_limits: { output_bytes: 2048 } }),
+  );
+  if (request.ok) throw new Error("Expected the per-call output refusal");
+  expect(projectAnalysisError(request.error).details?.limit).toMatchObject({
+    setting: "producer.output_bytes",
+    effective_value: 2048,
+    source: "request",
+    update_mode: "parameter",
+  });
+  await f.service.close();
+});
+
+it("seeds producer.output_bytes from REA_PRODUCER_OUTPUT_BYTES and refuses an invalid seed until a runtime value repairs it", async () => {
+  const seeded = await fixture("overflow", false, undefined, {
+    REA_PRODUCER_OUTPUT_BYTES: "1024",
+  });
+  const refused = await seeded.service.inspectDecoders({});
+  if (refused.ok) throw new Error("Expected the seeded output refusal");
+  expect(projectAnalysisError(refused.error).details?.limit).toMatchObject({
+    setting: "producer.output_bytes",
+    effective_value: 1024,
+    source: "setting",
+  });
+  await seeded.service.close();
+
+  const invalid = await fixture("overflow", false, undefined, {
+    REA_PRODUCER_OUTPUT_BYTES: "0",
+  });
+  const rejected = await invalid.service.inspectDecoders({});
+  if (rejected.ok) throw new Error("Expected the invalid seed refusal");
+  expect(rejected.error).toMatchObject({ _tag: "ConfigurationError" });
+  // A runtime value repairs the session without editing the seed.
+  const repaired = await runWithAnalysisOperationSnapshot(
+    { revision: 1, overrides: { "producer.output_bytes": 2048 } },
+    () => invalid.service.inspectDecoders({}),
+  );
+  if (repaired.ok) throw new Error("Expected the repaired output refusal");
+  expect(projectAnalysisError(repaired.error).details?.limit).toMatchObject({
+    effective_value: 2048,
+    source: "runtime",
+  });
+  // Resetting the override exposes the invalid seed again.
+  const reset = await invalid.service.inspectDecoders({});
+  if (reset.ok) throw new Error("Expected the invalid seed refusal again");
+  expect(reset.error).toMatchObject({ _tag: "ConfigurationError" });
+  await invalid.service.close();
+});
 
 it("pages help output longer than one page record budget instead of refusing it", async () => {
   const f = await fixture("long-help");

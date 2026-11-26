@@ -212,7 +212,7 @@ const walkEntries = (
     if (tagged === undefined) throw new UnsupportedVfsShape();
     const index = state.count;
     if (index >= state.limits.vfs_entries)
-      throw denoVfsEntryLimit(state.limits, index + 1);
+      throw denoVfsEntryLimit(state.limits);
     state.count += 1;
     const name = tagged.body.n;
     if (typeof name !== "string") throw new UnsupportedVfsShape();
@@ -456,7 +456,8 @@ const retainText = (state: WalkState, text: string | null): string | null => {
       "artifact_limits.deno.vfs_name_units",
       state.limits.vfs_name_units,
       "count",
-      next,
+      // The walk stops here, so the units counted so far are only a lower bound.
+      undefined,
       "memory",
     );
   state.retainedUnits = next;
@@ -513,15 +514,12 @@ const asRecord = (value: unknown): Record<string, unknown> | undefined => {
   return Object.fromEntries(Object.entries(value));
 };
 
-const denoVfsEntryLimit = (
-  limits: DenoReaderLimits,
-  count: number,
-): ArtifactReaderFailure =>
+/** The walk stops at the first entry past the allowance; the total is unknown. */
+const denoVfsEntryLimit = (limits: DenoReaderLimits): ArtifactReaderFailure =>
   artifactReaderLimitFailure(
     "artifact_limits.deno.vfs_entries",
     limits.vfs_entries,
     "count",
-    count,
   );
 
 const denoVfsDepthLimit = (depth: number): ArtifactReaderFailure =>

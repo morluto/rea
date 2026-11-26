@@ -2,12 +2,30 @@ import { z } from "zod";
 import { constants as bufferConstants } from "node:buffer";
 
 const bytes = z.int().min(1).max(Number.MAX_SAFE_INTEGER);
-const count = z.int().min(1).max(0x7fffffff);
+/** The largest count field any reader group accepts. */
+export const MAXIMUM_ARTIFACT_READER_COUNT = 0x7fffffff;
+
+/**
+ * `artifact.member_count`: the session default for the member, entry, module
+ * and asset count each archive reader admits from one container. An explicit
+ * `artifact_limits` field wins for that call; otherwise a runtime override,
+ * then the `REA_ARTIFACT_MEMBER_COUNT` launch seed, then this default.
+ */
+export const ARTIFACT_MEMBER_COUNT_SETTING = "artifact.member_count" as const;
+export const DEFAULT_ARTIFACT_MEMBER_COUNT = 100_000;
+
+/** Where the session member count came from. */
+export type ArtifactMemberCountSource = "default" | "setting" | "runtime";
+export interface ArtifactMemberCount {
+  readonly value: number;
+  readonly source: ArtifactMemberCountSource;
+}
+const count = z.int().min(1).max(MAXIMUM_ARTIFACT_READER_COUNT);
 const representedBytes = bytes.max(bufferConstants.MAX_STRING_LENGTH);
 
 export const DEFAULT_BUN_READER_LIMITS = {
   payload_bytes: 256 * 1024 * 1024,
-  module_count: 100_000,
+  module_count: DEFAULT_ARTIFACT_MEMBER_COUNT,
   representation_bytes: 256 * 1024 * 1024,
   metadata_read_bytes: 256 * 1024 * 1024,
   recognition_table_bytes: 1024 * 1024,
@@ -29,7 +47,7 @@ export type BunReaderLimits = z.output<typeof bunReaderLimitsSchema>;
 
 export const DEFAULT_DOTNET_BUNDLE_READER_LIMITS = {
   metadata_bytes: 16 * 1024 * 1024,
-  entry_count: 100_000,
+  entry_count: DEFAULT_ARTIFACT_MEMBER_COUNT,
   string_bytes: 64 * 1024,
   path_parts: 256,
   path_nodes: 250_000,
@@ -51,7 +69,7 @@ export type DotnetBundleReaderLimits = z.output<
 
 export const DEFAULT_NODE_SEA_READER_LIMITS = {
   blob_bytes: 256 * 1024 * 1024,
-  asset_count: 100_000,
+  asset_count: DEFAULT_ARTIFACT_MEMBER_COUNT,
   asset_name_bytes: 8 * 1024 * 1024,
   argument_count: 4096,
   argument_bytes: 1024 * 1024,
@@ -77,6 +95,35 @@ export const godotReaderLimitsSchema = z.strictObject({
 });
 export type GodotReaderLimits = z.output<typeof godotReaderLimitsSchema>;
 
+/**
+ * Android vbmeta admission. The format caps none of these: the header declares
+ * both block sizes as u64 values and the descriptor table has no count field.
+ */
+export const DEFAULT_ANDROID_VBMETA_READER_LIMITS = {
+  authentication_block_bytes: 64 * 1024,
+  auxiliary_block_bytes: 2 * 1024 * 1024,
+  descriptor_bytes: 1024 * 1024,
+  descriptor_count: 4096,
+};
+export const androidVbmetaReaderLimitsSchema = z.strictObject({
+  authentication_block_bytes: bytes,
+  auxiliary_block_bytes: bytes,
+  descriptor_bytes: bytes,
+  descriptor_count: count,
+});
+export type AndroidVbmetaReaderLimits = z.output<
+  typeof androidVbmetaReaderLimitsSchema
+>;
+
+export const DEFAULT_ANDROID_SPARSE_IMAGE_READER_LIMITS = {
+  chunk_count: 1_048_576,
+};
+export const androidSparseImageReaderLimitsSchema = z.strictObject({
+  chunk_count: count,
+});
+export type AndroidSparseImageReaderLimits = z.output<
+  typeof androidSparseImageReaderLimitsSchema
+>;
 export const DEFAULT_ISO9660_READER_LIMITS = {
   descriptor_count: 64,
   directory_depth: 64,
@@ -99,7 +146,7 @@ export const DEFAULT_DENO_READER_LIMITS = {
   table_records: 100_000,
   specifier_text_bytes: 8 * 1024 * 1024,
   remote_body_bytes: 256 * 1024 * 1024,
-  vfs_entries: 100_000,
+  vfs_entries: DEFAULT_ARTIFACT_MEMBER_COUNT,
   vfs_name_units: 32 * 1024 * 1024,
   retained_bytes: 256 * 1024 * 1024,
   path_parts: 256,
@@ -214,6 +261,30 @@ export const artifactReaderLimitsInputSchema = z.strictObject({
     .describe(
       `Godot directory representation admission; omitted fields use ${JSON.stringify(DEFAULT_GODOT_READER_LIMITS)}. Applies before path allocation and again to retained metadata.`,
     ),
+  android_vbmeta: z
+    .strictObject({
+      authentication_block_bytes:
+        androidVbmetaReaderLimitsSchema.shape.authentication_block_bytes.exactOptional(),
+      auxiliary_block_bytes:
+        androidVbmetaReaderLimitsSchema.shape.auxiliary_block_bytes.exactOptional(),
+      descriptor_bytes:
+        androidVbmetaReaderLimitsSchema.shape.descriptor_bytes.exactOptional(),
+      descriptor_count:
+        androidVbmetaReaderLimitsSchema.shape.descriptor_count.exactOptional(),
+    })
+    .exactOptional()
+    .describe(
+      `Android vbmeta admission; omitted fields use ${JSON.stringify(DEFAULT_ANDROID_VBMETA_READER_LIMITS)}. Header-declared block and descriptor-table sizes are admitted before the image is read; the descriptor count bounds the descriptor walk.`,
+    ),
+  android_sparse_image: z
+    .strictObject({
+      chunk_count:
+        androidSparseImageReaderLimitsSchema.shape.chunk_count.exactOptional(),
+    })
+    .exactOptional()
+    .describe(
+      `Android sparse image admission; omitted fields use ${JSON.stringify(DEFAULT_ANDROID_SPARSE_IMAGE_READER_LIMITS)}. The declared total_chunks is admitted before the chunk walk; it bounds walked chunk headers and the retained expansion plan.`,
+    ),
   iso9660: z
     .strictObject({
       descriptor_count:
@@ -283,31 +354,79 @@ export const artifactReaderLimitsInputSchema = z.strictObject({
 export type ArtifactReaderLimitsInput = z.output<
   typeof artifactReaderLimitsInputSchema
 >;
-export const artifactReaderLimitsSchema = z.strictObject({
+const readerLimitGroups = {
   bun: bunReaderLimitsSchema,
   dotnet_bundle: dotnetBundleReaderLimitsSchema,
   node_sea: nodeSeaReaderLimitsSchema,
   godot: godotReaderLimitsSchema,
+  android_vbmeta: androidVbmetaReaderLimitsSchema,
+  android_sparse_image: androidSparseImageReaderLimitsSchema,
   iso9660: iso9660ReaderLimitsSchema,
   deno: denoReaderLimitsSchema,
   wxapkg: wxapkgReaderLimitsSchema,
   tar: tarReaderLimitsSchema,
+} as const;
+
+const resolvedArtifactReaderLimitsSchema = z.strictObject({
+  ...readerLimitGroups,
   expanded_bytes: bytes.exactOptional(),
 });
-export type ArtifactReaderLimits = z.output<typeof artifactReaderLimitsSchema>;
+export type ArtifactReaderLimits = z.output<
+  typeof resolvedArtifactReaderLimitsSchema
+>;
+
+// Earlier Evidence may omit the later vbmeta and sparse-image policies.
+export const artifactReaderLimitsSchema =
+  resolvedArtifactReaderLimitsSchema.extend({
+    android_vbmeta: androidVbmetaReaderLimitsSchema.exactOptional(),
+    android_sparse_image: androidSparseImageReaderLimitsSchema.exactOptional(),
+  });
+
+/**
+ * The per-call fields that `artifact.member_count` backs. Each counts the
+ * members one reader admits from a single container.
+ */
+export const ARTIFACT_MEMBER_COUNT_PARAMETERS = [
+  "artifact_limits.bun.module_count",
+  "artifact_limits.dotnet_bundle.entry_count",
+  "artifact_limits.node_sea.asset_count",
+  "artifact_limits.deno.vfs_entries",
+] as const satisfies readonly ArtifactReaderLimitParameter[];
 
 export const resolveArtifactReaderLimits = (
   selected?: ArtifactReaderLimitsInput,
+  memberCount: number = DEFAULT_ARTIFACT_MEMBER_COUNT,
 ): ArtifactReaderLimits => ({
-  bun: { ...DEFAULT_BUN_READER_LIMITS, ...selected?.bun },
+  bun: {
+    ...DEFAULT_BUN_READER_LIMITS,
+    module_count: memberCount,
+    ...selected?.bun,
+  },
   dotnet_bundle: {
     ...DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
+    entry_count: memberCount,
     ...selected?.dotnet_bundle,
   },
-  node_sea: { ...DEFAULT_NODE_SEA_READER_LIMITS, ...selected?.node_sea },
+  node_sea: {
+    ...DEFAULT_NODE_SEA_READER_LIMITS,
+    asset_count: memberCount,
+    ...selected?.node_sea,
+  },
   godot: { ...DEFAULT_GODOT_READER_LIMITS, ...selected?.godot },
+  android_vbmeta: {
+    ...DEFAULT_ANDROID_VBMETA_READER_LIMITS,
+    ...selected?.android_vbmeta,
+  },
+  android_sparse_image: {
+    ...DEFAULT_ANDROID_SPARSE_IMAGE_READER_LIMITS,
+    ...selected?.android_sparse_image,
+  },
   iso9660: { ...DEFAULT_ISO9660_READER_LIMITS, ...selected?.iso9660 },
-  deno: { ...DEFAULT_DENO_READER_LIMITS, ...selected?.deno },
+  deno: {
+    ...DEFAULT_DENO_READER_LIMITS,
+    vfs_entries: memberCount,
+    ...selected?.deno,
+  },
   wxapkg: { ...DEFAULT_WXAPKG_READER_LIMITS, ...selected?.wxapkg },
   tar: { ...DEFAULT_TAR_READER_LIMITS, ...selected?.tar },
   ...(selected?.expanded_bytes === undefined
@@ -315,25 +434,34 @@ export const resolveArtifactReaderLimits = (
     : { expanded_bytes: selected.expanded_bytes }),
 });
 
-/** Every group's resolved schema; the source of each field's supported range. */
-const READER_LIMIT_GROUPS = {
-  bun: bunReaderLimitsSchema,
-  dotnet_bundle: dotnetBundleReaderLimitsSchema,
-  node_sea: nodeSeaReaderLimitsSchema,
-  godot: godotReaderLimitsSchema,
-  iso9660: iso9660ReaderLimitsSchema,
-  deno: denoReaderLimitsSchema,
-  wxapkg: wxapkgReaderLimitsSchema,
-  tar: tarReaderLimitsSchema,
-} as const;
-type ReaderLimitGroup = keyof typeof READER_LIMIT_GROUPS;
+/**
+ * Whether the caller's own selection set this member-count field; otherwise
+ * the session setting supplied it.
+ */
+export const artifactMemberCountSelected = (
+  selected: ArtifactReaderLimitsInput | undefined,
+  parameter: (typeof ARTIFACT_MEMBER_COUNT_PARAMETERS)[number],
+): boolean => {
+  switch (parameter) {
+    case "artifact_limits.bun.module_count":
+      return selected?.bun?.module_count !== undefined;
+    case "artifact_limits.dotnet_bundle.entry_count":
+      return selected?.dotnet_bundle?.entry_count !== undefined;
+    case "artifact_limits.node_sea.asset_count":
+      return selected?.node_sea?.asset_count !== undefined;
+    case "artifact_limits.deno.vfs_entries":
+      return selected?.deno?.vfs_entries !== undefined;
+  }
+};
+
+type ReaderLimitGroup = keyof typeof readerLimitGroups;
 
 /** The exact contract field a reader admission names on refusal. */
 export type ArtifactReaderLimitParameter =
   | {
       [
         Group in ReaderLimitGroup
-      ]: `artifact_limits.${Group}.${keyof z.output<(typeof READER_LIMIT_GROUPS)[Group]> & string}`;
+      ]: `artifact_limits.${Group}.${keyof z.output<(typeof readerLimitGroups)[Group]> & string}`;
     }[ReaderLimitGroup]
   | "artifact_limits.expanded_bytes";
 
@@ -364,7 +492,7 @@ export const artifactReaderLimitMaximum = (
     field === undefined
       ? bytes
       : (
-          READER_LIMIT_GROUPS[group as ReaderLimitGroup].shape as Record<
+          readerLimitGroups[group as ReaderLimitGroup].shape as Record<
             string,
             typeof bytes
           >

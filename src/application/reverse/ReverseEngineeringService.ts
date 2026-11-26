@@ -328,40 +328,64 @@ export class ReverseEngineeringService {
       );
       bindArtifactFileCleanup(cause, failure);
     }
-    for (const [owner, retained] of this.#pendingCleanup) {
-      let stopped: Awaited<ReturnType<ProviderProcessSupervisor["stop"]>>;
-      try {
-        stopped = await owner.stop();
-      } catch (cause) {
-        stopped = {
-          status: "incomplete",
-          reason: errorMessage(cause),
-        };
+    // A stop await yields. Commands that already passed admission can register
+    // another owner during that yield, and a concurrent retry can confirm one
+    // this attempt is still stopping. Keep visiting owners that appear, but
+    // visit each identity once per attempt: an incomplete stop must not replace
+    // an owner another retry has already confirmed. Success requires the map
+    // to be empty, because admission stays blocked only while this attempt
+    // reports cleanup unresolved.
+    const visited = new Set<RetainedCleanupOwner>();
+    for (;;) {
+      const owners = [...this.#pendingCleanup.keys()].filter(
+        (owner) => !visited.has(owner),
+      );
+      if (owners.length === 0) {
+        if (failure !== undefined || this.#pendingCleanup.size === 0) break;
+        // Confirmed, then registered again under the same owner identity.
+        visited.clear();
+        continue;
       }
-      if (stopped.status === "incomplete") {
-        const observation = {
-          reason: stopped.reason,
-          resources: retained.observation.resources,
-        };
-        let retryFailure = retained.retryFailure;
-        if (retryFailure === undefined) {
-          retryFailure = retained.release.bind(
-            new AnalysisOutputError(
-              operation,
-              "A previous provider process still requires cleanup.",
-              { cleanup: observation },
-            ),
-          );
+      for (const owner of owners) {
+        visited.add(owner);
+        let stopped: Awaited<ReturnType<ProviderProcessSupervisor["stop"]>>;
+        try {
+          stopped = await owner.stop();
+        } catch (cause) {
+          stopped = {
+            status: "incomplete",
+            reason: errorMessage(cause),
+          };
         }
-        this.#pendingCleanup.set(owner, {
-          observation,
-          release: retained.release,
-          retryFailure,
-        });
-        if (failure === undefined) failure = retryFailure;
-      } else {
-        retained.release.confirm();
-        this.#pendingCleanup.delete(owner);
+        // A concurrent retry may have confirmed this owner meanwhile. A verified
+        // stop is authoritative; an incomplete one never resurrects a confirmed
+        // owner from this retry's stale snapshot.
+        const current = this.#pendingCleanup.get(owner);
+        if (stopped.status === "incomplete") {
+          if (current === undefined) continue;
+          const observation = {
+            reason: stopped.reason,
+            resources: current.observation.resources,
+          };
+          const retryFailure =
+            current.retryFailure ??
+            current.release.bind(
+              new AnalysisOutputError(
+                operation,
+                "A previous provider process still requires cleanup.",
+                { cleanup: observation },
+              ),
+            );
+          this.#pendingCleanup.set(owner, {
+            observation,
+            release: current.release,
+            retryFailure,
+          });
+          if (failure === undefined) failure = retryFailure;
+        } else {
+          current?.release.confirm();
+          this.#pendingCleanup.delete(owner);
+        }
       }
     }
     return failure === undefined ? ok(null) : err(failure);

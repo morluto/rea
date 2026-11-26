@@ -10,6 +10,14 @@ import {
   resolveProducerLimits,
 } from "../domain/producerResourceLimits.js";
 import { SIGROK_PROVIDER_IDENTITY } from "./SigrokProviderIdentity.js";
+import {
+  producerOutputBytesLimit,
+  resolveProducerOutputBytes,
+} from "../config/producerOutputBytes.js";
+import {
+  sigrokHostSupported,
+  sigrokUnsupportedHostError,
+} from "./SigrokHostAdmission.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
@@ -77,8 +85,7 @@ const OPERATION = "decode_signal_recording";
 type Launcher = NonNullable<Parameters<typeof runOwnedCommand>[2]>["launcher"];
 
 /** Signal decoding runs only on Linux; discovery and execution share this check. */
-export const sigrokHostSupported = (platform: NodeJS.Platform): boolean =>
-  platform === "linux";
+export { sigrokHostSupported };
 
 /**
  * A nonzero version probe ran under the resource limiter, so the status is not
@@ -145,7 +152,17 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
     input: DecodeSignalRecordingInput | InspectSignalDecodersInput,
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
-    const limits = resolveProducerLimits(LIMITS, input.producer_limits);
+    // Decoding and decoder discovery share the session-adjustable output
+    // budget. An invalid launch seed is refused inside the cleanup boundary
+    // below, after retained cleanup is retried.
+    const output = resolveProducerOutputBytes(
+      input.producer_limits?.output_bytes,
+      this.environment,
+    );
+    const limits = resolveProducerLimits(LIMITS, {
+      ...input.producer_limits,
+      ...(output.ok ? { output_bytes: output.value.value } : {}),
+    });
     const environment = snapshotEnvironment(this.environment, this.platform);
     const operation = "path" in input ? OPERATION : "inspect_signal_decoders";
     let phase: RecordingProducerPhase = "configuration";
@@ -158,10 +175,9 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
       if (options?.signal?.aborted)
         throw cancelledBy(operation, options.signal);
       await this.#resources.release();
+      if (!output.ok) throw output.error;
       if (!sigrokHostSupported(this.platform))
-        throw new Error(
-          "Signal decoding requires Linux with util-linux prlimit and REA_SIGROK_COMMAND so expanded recordings are processed under an enforced address-space limit.",
-        );
+        throw sigrokUnsupportedHostError(operation);
       const configured = environment.REA_SIGROK_COMMAND ?? "";
       if (!isAbsolute(configured))
         throw new Error(
@@ -438,7 +454,17 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         phase,
         path: resourcePath,
         workspacePath: root?.path ?? null,
-        limits: { selected: limits, defaults: LIMITS },
+        limits: {
+          selected: limits,
+          defaults: LIMITS,
+          output: output.ok
+            ? producerOutputBytesLimit(output.value)
+            : producerLimitControl(
+                "output_bytes",
+                limits.output_bytes,
+                LIMITS.output_bytes,
+              ),
+        },
         effectiveLimits,
         observedOutput: capturedOutput,
         configurationHelp:

@@ -104,6 +104,8 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 
 - [Firmware analysis](guides/firmware/firmware-analysis.md)
 - [Android OTA update payloads](guides/firmware/android-ota-payload.md)
+- [Android Verified Boot vbmeta images](guides/firmware/android-vbmeta.md)
+- [Android sparse images](guides/firmware/android-sparse-image.md)
 - [Flattened devicetree inspection](devicetree.md)
 - [ESP flash images](esp-flash-image.md)
 - [ESP images](esp-image.md)
@@ -111,6 +113,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [Intel HEX and S-record images](hex-records.md)
 - [UF2 and DfuSe images](uf2-dfuse.md)
 - [U-Boot legacy uImage containers](uimage.md)
+- [uClinux bFLT flat executables](bflt-executables.md)
 
 ## HarmonyOS packages
 
@@ -123,6 +126,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [Offline API contract inventory](api-contracts.md)
 - [CycloneDX dependencies](guides/native/cyclonedx-view.md)
 - [Maven POM and Gradle module metadata](maven-gradle-metadata.md)
+- [OCI image layouts](guides/artifacts/oci-image-layout.md)
 - [Release exposure](release-exposure.md)
 - [Model file declarations](model-artifacts.md)
 - [Python packaged applications](python-packaged-applications.md)
@@ -131,9 +135,11 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [Godot PCK archives](godot-pck.md)
 - [UnityFS AssetBundle archives](unityfs.md)
 - [iNES containers](ines-containers.md)
+- [Nintendo DS ROMs](guides/firmware/nds-roms.md)
 - [WeChat mini-program wxapkg archives](wxapkg.md)
 - [ISO 9660 disc images](guides/firmware/iso9660-images.md)
 - [tar and gzip-compressed tar archives](tar-archives.md)
+- [Nintendo Switch NSO and NRO executables](guides/firmware/switch-executables.md)
 - [GPU asset headers: DDS, GLB, KTX and KTX2](gpu-asset-headers.md)
 
 ## WebAssembly

@@ -64,6 +64,21 @@ export class DestinationPathUnrepresentableFailure extends ArtifactReaderFailure
 }
 
 /** Normalize slash-separated logical names; backslashes are literal components. */
+/** A member name without its leading `./` segments, which name no directory. */
+export const withoutCurrentDirectoryPrefix = (name: string): string =>
+  name.replace(/^(?:\.\/)+/u, "");
+
+/**
+ * Reader-level note for members whose leading `./` was omitted. Each such
+ * occurrence keeps its recorded name in source_path, so one note per reader
+ * replaces one per member.
+ */
+export const currentDirectoryPrefixLimitation = (
+  format: "ZIP" | "tar",
+  members: number,
+): string =>
+  `${String(members)} ${format} member name(s) have a leading current-directory prefix (./) omitted from their logical paths; each occurrence's source_path keeps the recorded name.`;
+
 export const normalizeArtifactPath = (input: string): string => {
   if (
     input.includes("\0") ||
@@ -143,7 +158,7 @@ export class ArtifactPathRegistry {
         `artifact_limits.${budget.group}.path_parts`,
         budget.maxParts,
         "count",
-        parts.length,
+        // A later, deeper path may need more; this path is a lower bound.
       );
     if (budget !== undefined) {
       let observed = this.#root;
@@ -155,7 +170,7 @@ export class ArtifactPathRegistry {
               `artifact_limits.${budget.group}.path_nodes`,
               budget.maxNodes,
               "count",
-              this.#nodeCount + parts.length - index,
+              // Paths not yet visited add nodes; the count is a lower bound.
             );
           break;
         }

@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { z } from "zod";
 
+import { withParsedStdout, type CliResult } from "./cliResult.js";
 import { waitForExit } from "../process/processFixture.js";
 import {
   completeEvidenceCliArguments,
@@ -42,18 +43,9 @@ export interface CliCommandRequest {
   readonly delivery?: TestDelivery;
 }
 
-/** Captured result from one shared CLI command. */
-export interface CliCommandResult {
-  readonly exitCode: number | null;
-  readonly signal: NodeJS.Signals | null;
-  readonly stdout: string;
-  readonly stderr: string;
-  readonly json: unknown | undefined;
-}
-
 /** File-scoped compiled CLI process. */
 export interface CliCommandSession {
-  run(request: CliCommandRequest): Promise<CliCommandResult>;
+  run(request: CliCommandRequest): Promise<CliResult>;
   /** PID of the live process, when one is running. */
   processId(): number | undefined;
   close(): Promise<void>;
@@ -76,7 +68,7 @@ interface CliCommandSessionDependencies {
 
 interface PendingCommand {
   readonly id: number;
-  readonly resolve: (result: CliCommandResult) => void;
+  readonly resolve: (result: CliResult) => void;
   readonly reject: (error: unknown) => void;
   readonly timer: ReturnType<typeof setTimeout> | undefined;
 }
@@ -106,16 +98,6 @@ const envKey = (environment: Readonly<Record<string, string>>): string =>
       .sort()
       .map((key) => [key, environment[key]]),
   );
-
-const parseCliStdout = (stdout: string): unknown | undefined => {
-  const document = stdout.trim();
-  if (document.length === 0) return undefined;
-  try {
-    return JSON.parse(document) as unknown;
-  } catch {
-    return undefined;
-  }
-};
 
 const signalChild = (
   child: ChildProcessWithoutNullStreams,
@@ -155,13 +137,13 @@ const stopChild = (
   graceMs: number,
 ): Promise<void> => stopOwnedChildProcess(child, graceMs, "shared CLI process");
 
-const commandResult = (message: SessionResponse): CliCommandResult => ({
-  exitCode: message.exitCode ?? null,
-  signal: null,
-  stdout: message.stdout ?? "",
-  stderr: message.stderr ?? "",
-  json: parseCliStdout(message.stdout ?? ""),
-});
+const commandResult = (message: SessionResponse): CliResult =>
+  withParsedStdout({
+    exitCode: message.exitCode ?? null,
+    signal: null,
+    stdout: message.stdout ?? "",
+    stderr: message.stderr ?? "",
+  });
 
 const writeChild = (
   child: ChildProcessWithoutNullStreams,
@@ -225,7 +207,7 @@ class SharedCliProcess implements CliCommandSession {
     );
   }
 
-  run(request: CliCommandRequest): Promise<CliCommandResult> {
+  run(request: CliCommandRequest): Promise<CliResult> {
     const result = this.#queue.then(async () => {
       const selected =
         request.delivery === "budgeted"
@@ -280,7 +262,7 @@ class SharedCliProcess implements CliCommandSession {
     if (pendingStart !== undefined) await pendingStart.catch(() => undefined);
   }
 
-  async #invoke(request: CliCommandRequest): Promise<CliCommandResult> {
+  async #invoke(request: CliCommandRequest): Promise<CliResult> {
     if (this.#closed) throw closedError();
     await this.#finishRetirement();
     const current = this.#child;
@@ -292,7 +274,7 @@ class SharedCliProcess implements CliCommandSession {
       await this.#finishRetirement();
     }
     if (this.#closed) throw closedError();
-    let result: CliCommandResult;
+    let result: CliResult;
     try {
       if (this.#child === undefined) await this.#start(request.environment);
       result = await this.#run(request);
@@ -316,12 +298,12 @@ class SharedCliProcess implements CliCommandSession {
     return result;
   }
 
-  async #run(request: CliCommandRequest): Promise<CliCommandResult> {
+  async #run(request: CliCommandRequest): Promise<CliResult> {
     const owner = this.#child;
     if (this.#closed || owner === undefined) throw closedError();
     const id = this.#nextId;
     this.#nextId += 1;
-    const result = new Promise<CliCommandResult>((resolve, reject) => {
+    const result = new Promise<CliResult>((resolve, reject) => {
       const timer =
         this.#requestTimeoutMs === undefined
           ? undefined

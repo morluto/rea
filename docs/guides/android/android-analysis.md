@@ -18,10 +18,15 @@ package. See [Android OTA update payloads](../firmware/android-ota-payload.md).
 
 ## Optional package delivery
 
-The MCP `inspect_android_package` request keeps complete output when `detail` is
-omitted or `"complete"`. Select `detail: "summary"` explicitly to receive all
-package, SDK and permission declarations, engine identity and class/resource
-counts without decoded manifest text or duplicate raw provider replies. A
+An MCP `inspect_android_package` call that omits `detail` returns the complete
+package inline when its Evidence fits the
+[agent result budget](../../reference/limits-and-recovery.md#agent-result-budget),
+and the retained summary otherwise; `detail: "complete"` always returns it
+inline. The summary carries package, SDK and permission declarations, engine
+identity, class/resource counts, the manifest's length and component counts by
+kind, exported declaration, exported default and declaration coverage. It omits
+the decoded manifest text, component rows and duplicate raw provider replies.
+On VLC 3.7.2 it was 62,118 bytes before component rows moved to the view. A
 retaining session keeps the complete original Evidence and returns a distinct
 linked `inspect_analysis_view` summary. This changes delivery, not JADX analysis.
 
@@ -287,6 +292,26 @@ inherited method lookup or possible runtime dispatch. Class-only queries and
 class/method inspection still require an APK definition; an external target has
 no invented body. Unknown class/method names remain input errors.
 
+A trace lists every using node, so it grows with the target's callers: on VLC's
+`org.videolan.vlc.PlaybackService` the MCP result was 214,955 bytes, 140 KB of it
+the retained raw provider reply. An MCP call that omits `detail` returns the
+trace inline when it fits the
+[agent result budget](../../reference/limits-and-recovery.md#agent-result-budget),
+else the retained summary: the target, `total`, direct-invoke coverage and
+counts by kind, top class and package, with the 32 most referenced packages. On
+that class the summary was 5,987 bytes. Page the using nodes with
+`view: {kind: "android-references", facet: ...}`, in the call with
+`detail: "summary"` or later through `inspect_analysis_view`:
+
+- `top-classes`: distinct `top_class` names with their package and using-node
+  count, sorted by name.
+- `references`: using nodes with their `index`, and only the `fields` you name.
+
+Both filter by exact `kinds`, `packages` (the top class's name before its last
+dot) and `top_classes`. Use `packages: [""]` for classes in the unnamed
+package. A top class can itself be a nested synthetic class, so group by the
+name before the first `$` when you need outer classes.
+
 External prototype and caller metadata use a bridge-frame-derived representation
 allowance that reserves space for retained raw calls and CLI/MCP copies. Exhausting
 it returns a typed `resource_constraint`, rather than a truncated caller list
@@ -346,19 +371,29 @@ rea inspect-android-class /path/Example.apk a.b --mapping-path /path/mapping.txt
   --detail summary --evidence_output /tmp/class-evidence.json
 ```
 
-For agent workflows, select `detail: "summary"` on class and method inspection.
-It preserves the complete normalized member inventory or selected method body,
-including mapping annotations, while retaining duplicate raw provider calls in
-the complete parent Evidence. The reply links that parent's identity and digest;
-export it with `export_evidence_bundle` or read its summary again through
-`inspect_analysis_view`. CLI summaries require `--evidence_output` and return
-the portable bundle path. Omitted or `complete` detail preserves complete inline
-Evidence. Search and reference operations retain their existing contracts.
-Symbol summary views admit at most **1 MiB**, including view context. An admitted
-method's source can already consume that amount; a larger combined summary
-fails explicitly instead of silently truncating facts. MCP refusal includes
-the retained parent ID. Select complete detail, or inspect one method rather
-than a whole class, when the requested summary does not fit.
+Class and method inspection follow the same budget: omitted `detail` returns
+the result inline when it fits, else the retained summary. A method summary is
+the selected body with its normalized facts and mapping annotations. A class
+summary counts methods, constructors, overloaded method names, fields, encoded
+static values and inner classes, lists overloaded method names with their
+overload counts, and keeps the mapping's identity and record counts. On VLC's
+`org.videolan.vlc.PlaybackService` (302 methods) the previous summary, the whole
+member inventory, was 70,266 bytes. Page members with
+`view: {kind: "android-class", facet: ...}`, in the call with `detail: "summary"`
+or later through `inspect_analysis_view`:
+
+- `methods`: one row per overload with its `index`; filter by exact `names`,
+  `name_prefixes` or `constructors`.
+- `fields`: filter by `names`, `name_prefixes` or `static_values`.
+- `inner-classes`, and `mapping-symbols` for the selected mapping.
+
+The reply links the complete parent's identity and digest; export it with
+`export_evidence_bundle`. CLI summaries require `--evidence_output` and return
+the portable bundle path. Symbol summary views admit at most **1 MiB**,
+including view context. An admitted method's source can already consume that
+amount; a larger summary fails explicitly instead of silently truncating facts.
+MCP refusal includes the retained parent ID; select complete detail when the
+requested summary does not fit.
 
 The mapping path must be absolute. Mapping records accept optional spacing
 around `->` and spaces or tabs between a member type and its name.
@@ -369,8 +404,9 @@ the file's path, SHA-256 and size, the header values the file reports
 `pg_map_hash`), valid record counts and up to 16 malformed line samples. Its
 `symbols` list has one entry per observed class, inner class, method and field;
 `inspect_android_method` lists the class and the selected method. `coverage`
-counts each resolution status. With summary delivery, these unchanged facts are
-under the view's `summary` field; the view separately reports source coverage.
+counts each resolution status. A method summary keeps these facts under the
+view's `summary` field; a class summary pages its symbols with facet
+`mapping-symbols`.
 
 Lookups use the bridge's raw DEX names, not JADX display aliases such as a
 renamed reserved word. Each symbol resolves as:
@@ -463,9 +499,11 @@ is `unknown`, never `unmatched`. ELF/ABI label mismatches preserve facts without
 asserting a binding. No result establishes library loading, runtime registration
 or method invocation.
 
-Summary returns the first 64 selected binding rows, their declaration/candidate
-closure and every selected library's identity, coverage and failure reason;
-counts and page coverage describe the full selected binding set. Selected
+Summary returns the first 16 selected binding rows, their declaration/candidate
+closure and the first 16 selected libraries' identity, coverage and failure
+reason, so a large APK's summary stays within the default agent result budget.
+Counts and page coverage describe the full selected binding set, and
+`library_coverage` says how many libraries the summary omits. Selected
 declaration IDs have separate preview coverage, so native declarations remain
 visible even when the APK has no bundled ABI libraries. Complete
 Evidence stays retained. Read exact fields or further pages without reopening
@@ -578,6 +616,21 @@ or provide split APK/AAB handling,
 signature validation, full resource-table semantics, native-library analysis or
 Android runtime capture. An `.aab` suffix is a ZIP archive, not an APK, so
 Android tools and the application graph do not treat it as a standalone APK.
+JADX package, class, method, and reference operations also admit a ZIP root
+whose name does not already select another package family when the central
+directory lists a root `AndroidManifest.xml` or `classes*.dex` entry
+(`classes.dex`, `classes2.dex`, and further numbered members). The probe reads
+at most 8 MiB across all candidate central directories, in addition to the
+ZIP format's bounded end-record tail. It checks each candidate's fixed header
+before reading its directory prefix. A completely examined directory with
+neither entry stays `zip`. Unsupported, malformed, unreadable, or unexamined
+directory data leaves Android classification unknown and also keeps `zip`;
+this does not establish that Android entries are absent. Android operations
+then refuse that ZIP. Inspect its archive inventory, and use an `.apk` path
+only when it is independently known to be a standalone Android package.
+The caller's path is kept when content classification succeeds; renaming the
+file to `.apk` is not required. A selected `.aab` path stays a ZIP even when
+it is an alias to an extensionless file.
 Existing artifact inventory/extraction tools can supply archive evidence.
 Inventory records an APK root only for ZIP bytes whose name ends in `.apk`.
 The projection adds a limitation when no root `AndroidManifest.xml` was

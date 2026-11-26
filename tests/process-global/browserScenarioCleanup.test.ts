@@ -86,7 +86,13 @@ class RetrySession implements BrowserScenarioSessionPort {
   get cleanupLease() {
     return this.cleanup.cleanupLease;
   }
-  constructor(private readonly closeFailures = 1) {}
+  constructor(
+    private readonly closeFailures = 1,
+    private readonly finalizationCompleted = false,
+  ) {}
+  captureFinalized() {
+    return this.finalizationCompleted;
+  }
 
   currentUrl() {
     return this.initialUrl;
@@ -170,54 +176,42 @@ const serveScenario = async () => {
 };
 
 it.each([false, true])(
-  "preserves the initial capture when the one-shot CLI retries close (retry refused: %s)",
+  "preserves finalized capture when the one-shot CLI retries close (retry refused: %s)",
   async (retryRefused) => {
     const savedExitCode = process.exitCode;
-    const session = new RetrySession(retryRefused ? 2 : 1);
+    const session = new RetrySession(retryRefused ? 2 : 1, true);
     const provider = new PlaywrightBrowserScenarioProvider(async () => session);
     const close = vi.spyOn(provider, "close");
     state.provider = provider;
     try {
       const result = await serveScenario();
-      expect(result.processExitCode).toBe(1);
-      expect(result.output).toMatchObject({
-        code: "cleanup_incomplete",
-        category: "execution_failure",
-        details: {
-          cleanup: "incomplete",
-          resources: ["browser_transport", "browser_profile"],
-          partial_observation: {
-            capture: {
-              browser: { cleanup: "incomplete" },
-              steps: [{ step_id: "scenario_start" }, { step_id: "wait" }],
-            },
-          },
-        },
+      expect(result.processExitCode).toBe(retryRefused ? 1 : savedExitCode);
+      const evidence = retryRefused
+        ? parseEvidence(
+            jsonObjectSchema.parse(result.output.details).partial_observation,
+          )
+        : parseEvidence(result.output);
+      expect(evidence.normalized_result).toMatchObject({
+        browser: { cleanup: "incomplete" },
+        steps: [
+          { step_id: "scenario_start", status: "completed" },
+          { step_id: "wait", status: "completed" },
+        ],
       });
+      expect(evidence.limitations).toContain(
+        "Browser cleanup could not be confirmed: injected close failure 1. Reported resources may remain: browser_transport, browser_profile.",
+      );
       expect(close).toHaveBeenCalledOnce();
       expect(session.closeBrowserCalls).toBe(2);
       expect(session.profileRemovalCalls).toBe(retryRefused ? 0 : 1);
       if (retryRefused) {
         expect(result.output).toMatchObject({
-          details: {
-            diagnostics: {
-              primary_error: {
-                details: {
-                  diagnostics: {
-                    primary_error: {
-                      details: { cleanup_reason: "injected close failure 1" },
-                    },
-                  },
-                },
-              },
-              cleanup_error: {
-                details: {
-                  diagnostics: { reason: "injected close failure 2" },
-                },
-              },
-            },
-          },
+          code: "cleanup_incomplete",
+          details: { resources: ["browser_transport", "browser_profile"] },
         });
+        expect(JSON.stringify(result.output)).toContain(
+          "injected close failure 2",
+        );
         await provider.close();
         expect(session.closeBrowserCalls).toBe(3);
         expect(session.profileRemovalCalls).toBe(1);

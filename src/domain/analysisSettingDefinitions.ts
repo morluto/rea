@@ -76,6 +76,11 @@ import {
   JAVASCRIPT_WORKER_HEAP_MIB_MAXIMUM,
 } from "./javascript/javascriptAnalysisResourceControls.js";
 import { DEFAULT_WASM_COMMAND_TIMEOUT_MS } from "./wasm/wasmArtifact.js";
+import { BOUNDED_PRODUCER_LIMITS } from "./producerResourceLimits.js";
+import {
+  DEFAULT_ARTIFACT_MEMBER_COUNT,
+  MAXIMUM_ARTIFACT_READER_COUNT,
+} from "./artifactReaderLimits.js";
 import { AGENT_BUDGET_OPERATIONS } from "./agentBudgetOperations.js";
 interface SettingDefinition {
   readonly environment?: string;
@@ -189,6 +194,17 @@ export const ANALYSIS_SETTINGS = {
     appliesAt: "next_operation",
     provider: "ghidra",
     operations: ghidraDecompileOperations,
+  },
+  "artifact.member_count": {
+    updateMode: "runtime",
+    environment: "REA_ARTIFACT_MEMBER_COUNT",
+    defaultValue: DEFAULT_ARTIFACT_MEMBER_COUNT,
+    minimum: 1,
+    maximum: MAXIMUM_ARTIFACT_READER_COUNT,
+    unit: "count",
+    appliesAt: "next_operation",
+    provider: "rea-artifact-graph",
+    operations: ["inspect_artifact", "inventory_artifact", "extract_artifact"],
   },
   "asar.max_listing_bytes": {
     updateMode: "runtime",
@@ -578,6 +594,33 @@ export const ANALYSIS_SETTINGS = {
     operations: ["inspect_binary_layout", "inspect_recorded_crash"],
     parameter: "producer_limits.input_bytes",
   },
+  // Session default for omitted producer_limits.output_bytes. Producers whose
+  // own default or maximum differs keep that default until this setting is
+  // set, then clamp an explicit value to their maximum.
+  "producer.output_bytes": {
+    updateMode: "runtime",
+    environment: "REA_PRODUCER_OUTPUT_BYTES",
+    defaultValue: BOUNDED_PRODUCER_LIMITS.output_bytes,
+    minimum: 1,
+    maximum: Number.MAX_SAFE_INTEGER,
+    unit: "bytes",
+    appliesAt: "next_operation",
+    provider: "producer",
+    relatedProviders: [
+      "tshark-capture",
+      "sigrok-recording",
+      "apktool",
+      "rea-artifact-graph",
+    ],
+    operations: [
+      "inspect_packet_capture",
+      "decode_signal_recording",
+      "inspect_signal_decoders",
+      "decode_android_resources",
+      "inspect_asset_catalog",
+    ],
+    parameter: "producer_limits.output_bytes",
+  },
   "windows.change_time_drift_ms": {
     updateMode: "runtime",
     environment: "REA_WINDOWS_CHANGE_TIME_DRIFT_MS",
@@ -717,6 +760,7 @@ export const analysisParameterLimitSchema = z.strictObject({
   maximum: z.number(),
   default_value: z.number(),
   applies_at: z.literal("next_call"),
+  required_value: z.number().exactOptional(),
 }) satisfies z.ZodType<AnalysisParameterLimit>;
 
 /** The control a result records for a refusal: a setting or a request parameter. */
