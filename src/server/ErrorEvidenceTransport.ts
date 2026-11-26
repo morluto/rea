@@ -219,6 +219,7 @@ export const forgetPendingMcpRequest = (
 };
 
 export class ErrorEvidenceTransport extends ForwardingTransport {
+  private readonly pendingRequestTokens = new Map<RequestId, object>();
   private readonly pendingTools = new Map<RequestId, string>();
   private readonly pendingValidation = new Map<RequestId, McpToolRequest>();
   private readonly pendingToolListCursors = new Map<
@@ -226,6 +227,7 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
     string | undefined
   >();
   private readonly pendingCompletions = new Map<RequestId, AbortController>();
+  private readonly activeToolRequests = new Set<McpToolRequest>();
   private closing = false;
 
   private get recordEvidence(): EvidenceWriter["recordEvidence"] | undefined {
@@ -252,28 +254,84 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
     super(transport);
   }
 
+  private sendProtocolError(
+    id: RequestId,
+    code: number,
+    message: string,
+  ): void {
+    // Reject directly on the wrapped transport so neither duplicate-id nor
+    // malformed-request replies mutate or settle an active request's state.
+    void this.transport
+      .send({
+        jsonrpc: "2.0",
+        id,
+        error: { code, message },
+      })
+      .catch((cause: unknown) =>
+        this.onerror?.(
+          cause instanceof Error ? cause : new Error(String(cause)),
+        ),
+      );
+  }
+
+  private releasePendingRequest(
+    id: RequestId,
+    reason: CallerAbort | OwnerCancellation,
+    fallbackRequest?: McpToolRequest,
+  ): void {
+    this.pendingRequestTokens.delete(id);
+    const pending = this.pendingValidation.get(id) ?? fallbackRequest;
+    if (pending !== undefined) {
+      pending.cancel(reason);
+      this.activeToolRequests.delete(pending);
+    }
+    this.pendingValidation.delete(id);
+    forgetPendingMcpRequest(
+      this.pendingTools,
+      this.pendingToolListCursors,
+      this.pendingCompletions,
+      id,
+      reason,
+    );
+  }
+
+  private clearPendingRequests(reason: CallerAbort | OwnerCancellation): void {
+    this.pendingRequestTokens.clear();
+    this.pendingTools.clear();
+    for (const validation of this.pendingValidation.values())
+      validation.cancel(reason);
+    this.pendingValidation.clear();
+    for (const request of this.activeToolRequests) request.cancel(reason);
+    this.activeToolRequests.clear();
+    this.pendingToolListCursors.clear();
+    for (const completion of this.pendingCompletions.values())
+      completion.abort(reason);
+    this.pendingCompletions.clear();
+  }
+
   protected override receive(
     message: JSONRPCMessage,
     extra?: MessageExtraInfo,
   ): void {
-    // The pinned SDK classifies generic method schema failures as internal
-    // errors. Validate these wire requests with its canonical schemas before
-    // dispatch, leaving callback failures and negotiated-era checks to it.
     if (isJSONRPCRequest(message)) {
+      if (this.pendingRequestTokens.has(message.id)) {
+        this.sendProtocolError(
+          message.id,
+          -32600,
+          `Duplicate in-flight request id: ${String(message.id)}`,
+        );
+        return;
+      }
+      // The pinned SDK classifies generic method schema failures as internal
+      // errors. Validate these wire requests with its canonical schemas before
+      // dispatch, leaving callback failures and negotiated-era checks to it.
       const schema = discoveryRequestSchema(message.method);
       const result = schema?.["~standard"].validate(message);
       if (result?.issues !== undefined) {
-        void this.send({
-          jsonrpc: "2.0",
-          id: message.id,
-          error: {
-            code: -32602,
-            message: `Invalid ${message.method} request: ${JSON.stringify(result.issues)}`,
-          },
-        }).catch((cause: unknown) =>
-          this.onerror?.(
-            cause instanceof Error ? cause : new Error(String(cause)),
-          ),
+        this.sendProtocolError(
+          message.id,
+          -32602,
+          `Invalid ${message.method} request: ${JSON.stringify(result.issues)}`,
         );
         return;
       }
@@ -287,7 +345,10 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
       this.pendingTools.set(message.id, message.params["name"]);
       validation = new McpToolRequest(message.id, message.params["name"]);
       this.pendingValidation.set(message.id, validation);
+      this.activeToolRequests.add(validation);
     }
+    if (isJSONRPCRequest(message))
+      this.pendingRequestTokens.set(message.id, validation ?? {});
     if (isJSONRPCRequest(message) && message.method === "tools/list") {
       const params = message.params;
       this.pendingToolListCursors.set(
@@ -297,8 +358,12 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
           : undefined,
       );
     }
-    if (isJSONRPCRequest(message) && message.method === "completion/complete")
+    if (isJSONRPCRequest(message) && message.method === "completion/complete") {
+      this.pendingCompletions
+        .get(message.id)
+        ?.abort(OwnerCancellation.ownerClosed);
       this.pendingCompletions.set(message.id, new AbortController());
+    }
     // The SDK suppresses replies after cancellation, so send() cannot release
     // this bookkeeping. Keep transport authentication outside retained data.
     if (
@@ -311,28 +376,30 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
           "request-cancelled",
           message.params?.["reason"],
         );
-        this.pendingValidation.get(id)?.cancel(cancellation);
-        this.pendingValidation.delete(id);
-        forgetPendingMcpRequest(
-          this.pendingTools,
-          this.pendingToolListCursors,
-          this.pendingCompletions,
-          id,
-          cancellation,
-        );
+        this.releasePendingRequest(id, cancellation);
       }
     }
     const completion =
       isJSONRPCRequest(message) && message.method === "completion/complete"
         ? this.pendingCompletions.get(message.id)
         : undefined;
-    if (validation !== undefined)
-      runMcpToolRequest(validation, () => this.onmessage?.(message, extra));
-    else if (completion === undefined) this.onmessage?.(message, extra);
-    else
-      currentRequestSignal.run(completion.signal, () =>
-        this.onmessage?.(message, extra),
-      );
+    try {
+      if (validation !== undefined)
+        runMcpToolRequest(validation, () => this.onmessage?.(message, extra));
+      else if (completion === undefined) this.onmessage?.(message, extra);
+      else
+        currentRequestSignal.run(completion.signal, () =>
+          this.onmessage?.(message, extra),
+        );
+    } catch (cause: unknown) {
+      if (isJSONRPCRequest(message))
+        this.releasePendingRequest(
+          message.id,
+          OwnerCancellation.ownerClosed,
+          validation,
+        );
+      throw cause;
+    }
   }
 
   protected override closed(): void {
@@ -340,14 +407,7 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
       this.closing || transportClosedByOwner(this.transport)
         ? OwnerCancellation.ownerClosed
         : new CallerAbort("client-disconnected");
-    this.pendingTools.clear();
-    for (const validation of this.pendingValidation.values())
-      validation.cancel(disconnected);
-    this.pendingValidation.clear();
-    this.pendingToolListCursors.clear();
-    for (const completion of this.pendingCompletions.values())
-      completion.abort(disconnected);
-    this.pendingCompletions.clear();
+    this.clearPendingRequests(disconnected);
     this.onclose?.();
   }
 
@@ -356,14 +416,7 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
     try {
       await this.transport.close();
     } finally {
-      this.pendingTools.clear();
-      for (const validation of this.pendingValidation.values())
-        validation.cancel(OwnerCancellation.ownerClosed);
-      this.pendingValidation.clear();
-      this.pendingToolListCursors.clear();
-      for (const completion of this.pendingCompletions.values())
-        completion.abort(OwnerCancellation.ownerClosed);
-      this.pendingCompletions.clear();
+      this.clearPendingRequests(OwnerCancellation.ownerClosed);
     }
   }
 
@@ -371,21 +424,33 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
     message: JSONRPCMessage,
     options?: TransportSendOptions,
   ): Promise<void> {
+    const isResponse =
+      isJSONRPCResultResponse(message) || isJSONRPCErrorResponse(message);
     const id =
-      "id" in message &&
+      isResponse &&
       (typeof message.id === "string" || typeof message.id === "number")
         ? message.id
         : undefined;
-    const tool = id === undefined ? undefined : this.pendingTools.get(id);
     const scopedRequest = currentMcpToolRequest();
-    const request =
-      id === undefined ||
-      (!isJSONRPCResultResponse(message) && !isJSONRPCErrorResponse(message))
-        ? undefined
-        : (this.pendingValidation.get(id) ??
-          (scopedRequest?.id === id ? scopedRequest : undefined));
+    const matchedScoped =
+      id !== undefined && scopedRequest?.id === id ? scopedRequest : undefined;
+    const pendingRequest =
+      id === undefined ? undefined : this.pendingValidation.get(id);
+    const request = matchedScoped ?? pendingRequest;
+    const ownerToken =
+      request ??
+      (id === undefined ? undefined : this.pendingRequestTokens.get(id));
+    const ownsPendingId =
+      id !== undefined &&
+      ownerToken !== undefined &&
+      this.pendingRequestTokens.get(id) === ownerToken;
+    const tool =
+      request?.tool ??
+      (ownsPendingId && id !== undefined
+        ? this.pendingTools.get(id)
+        : undefined);
     const rewritesOutputSchemas =
-      id !== undefined && this.pendingToolListCursors.has(id);
+      ownsPendingId && id !== undefined && this.pendingToolListCursors.has(id);
     try {
       const publish = async (): Promise<void> => {
         const recovered = this.recoverProtocolError(message, tool, request);
@@ -432,8 +497,18 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
           );
       } else await publish();
     } finally {
-      request?.finishPublication();
-      if (!isJSONRPCRequest(message) && id !== undefined) {
+      if (request !== undefined) {
+        request.finishPublication();
+        this.activeToolRequests.delete(request);
+      }
+      // Re-check ownership right before cleanup so a request superseded during
+      // `await` never deletes the replacement request's active state.
+      if (
+        id !== undefined &&
+        ownerToken !== undefined &&
+        this.pendingRequestTokens.get(id) === ownerToken
+      ) {
+        this.pendingRequestTokens.delete(id);
         this.pendingValidation.delete(id);
         // The reply settled the request, so REA ends any work it left behind.
         forgetPendingMcpRequest(
@@ -458,6 +533,7 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
     // Measure the advertised schema presentation, not the canonical schemas
     // retained by SDK registrations, before publishing a tools/list page.
     const paged =
+      request === undefined &&
       isJSONRPCResultResponse(message) &&
       message.id !== undefined &&
       this.pendingToolListCursors.has(message.id)
@@ -569,7 +645,7 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
           tool,
           targetContent,
           sdkDiagnostic,
-          this.pendingValidation.get(message.id)?.validation,
+          request?.validation,
         )
       : undefined;
     if (
