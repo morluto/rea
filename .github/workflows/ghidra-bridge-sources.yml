@@ -58,7 +58,7 @@ jobs:
         run: |
           ghidra_root="${RUNNER_TEMP}/rea-ghidra"
           mkdir -p "${ghidra_root}"
-          curl -fsSL --retry 3 --write-out 'ghidra_download_bytes=%{size_download} ghidra_download_seconds=%{time_total}\n' -o "${ghidra_root}/ghidra.zip" "${GHIDRA_RELEASE_URL}"
+          curl -fsSL --retry 3 --retry-all-errors --write-out 'ghidra_download_bytes=%{size_download} ghidra_download_seconds=%{time_total}\n' -o "${ghidra_root}/ghidra.zip" "${GHIDRA_RELEASE_URL}"
           echo "${GHIDRA_RELEASE_SHA256}  ${ghidra_root}/ghidra.zip" | sha256sum -c -
           unzip -q "${ghidra_root}/ghidra.zip" -d "${ghidra_root}"
           rm "${ghidra_root}/ghidra.zip"
