@@ -1121,13 +1121,25 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
       effective_value: 8 * 1024 ** 2,
       unit: "bytes",
     });
-    // The same APK passes metadata admission when the caller raises it.
+    // The same APK passes metadata admission when the caller raises it; it
+    // carries no Flutter libraries, which each operation then reports.
     const raised = await provider.execute({
       operation,
       input: { path, apk_limits: { metadata_read_bytes: 16 * 1024 ** 2 } },
     });
-    if (raised.ok) return;
-    expect(projectAnalysisError(raised.error).details?.limit).toBeUndefined();
+    if (operation === "identify_flutter_build") {
+      if (!raised.ok) throw raised.error;
+      expect(
+        flutterResultSchemas.identify_flutter_build.parse(raised.value.result)
+          .abis,
+      ).toEqual([]);
+    } else {
+      if (raised.ok) throw new Error("Expected the no-payload refusal");
+      expect(projectAnalysisError(raised.error)).toMatchObject({
+        code: "unsupported_target",
+        message: expect.stringContaining("No lib/<abi>/libapp.so was found"),
+      });
+    }
   },
 );
 
@@ -1661,6 +1673,14 @@ it("refuses truncated hash-candidate evidence and includes five-character tokens
     input: { path, apk_limits: { snapshot_hash_candidates: 65 } },
   });
   if (!raised.ok) throw raised.error;
+  expect(
+    flutterResultSchemas.identify_flutter_build.parse(raised.value.result)
+      .abis[0]?.libapp.snapshot_hash_candidates,
+  ).toEqual(
+    Array.from({ length: 65 }, (_, index) =>
+      index.toString(16).padStart(32, "0"),
+    ),
+  );
 });
 
 it.each([

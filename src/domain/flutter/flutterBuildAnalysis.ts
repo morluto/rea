@@ -8,6 +8,12 @@ import { analysisParameterLimitSchema } from "../analysisSettingDefinitions.js";
 
 /** ZIP stores a member name length in a 16-bit field. */
 const ZIP_NAME_MAX_BYTES = 0xffff;
+/**
+ * Inventory counts the decoded UTF-8 path. A stored byte decodes to at most
+ * three UTF-8 bytes (a CP437 box-drawing character is U+25xx), so a valid
+ * stored name needs at most three times its stored length.
+ */
+const ZIP_NAME_MAX_DECODED_BYTES = 3 * ZIP_NAME_MAX_BYTES;
 const COUNT_MAXIMUM = 0x7fffffff;
 
 /**
@@ -40,7 +46,7 @@ export const FLUTTER_APK_LIMIT_BOUNDS = {
   abi_count: { default_value: 32, maximum: COUNT_MAXIMUM, unit: "count" },
   library_path_bytes: {
     default_value: 1024,
-    maximum: ZIP_NAME_MAX_BYTES,
+    maximum: ZIP_NAME_MAX_DECODED_BYTES,
     unit: "bytes",
   },
   snapshot_hash_candidates: {
@@ -117,9 +123,7 @@ const gnuBuildIdSchema = z
  * unmatched labels; inventory owns the exact UTF-8 byte check on real paths.
  */
 const ABI_SELECTOR_MAX_CHARACTERS =
-  FLUTTER_APK_LIMIT_BOUNDS.library_path_bytes.maximum -
-  "lib/".length -
-  "/libapp.so".length;
+  ZIP_NAME_MAX_BYTES - "lib/".length - "/libapp.so".length;
 
 /**
  * ZIP labels are literal names, including backslashes and controls. They are

@@ -170,8 +170,8 @@ server; older servers keep the complete request after schema discovery.
   from retained ranges and reports partial coverage with `build_id: null`.
 - **Metadata and candidate capacity.** Both operations refuse duplicate
   relevant library paths. Inventory admits `apk_limits.abi_count` (32) ABIs
-  and `apk_limits.library_path_bytes` (1024, at most the 65,535-byte ZIP name
-  field) bytes per relevant library path, independently of compressed size.
+  and `apk_limits.library_path_bytes` (1024; at most 196,605, the decoded UTF-8
+  size of the largest 65,535-byte stored ZIP name) bytes per relevant library path, independently of compressed size.
   Identification refuses more than `apk_limits.snapshot_hash_candidates` (64)
   distinct snapshot hashes with `resource_constraint` rather than silently
   dropping conflicting evidence.
