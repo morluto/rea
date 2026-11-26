@@ -4,7 +4,6 @@ import { parseLimitConstraint } from "../parseFailureAnalysisError.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { ellipsisExcerpt } from "../excerpt.js";
-import { compositeKey } from "../unicodeCodePointOrder.js";
 import { err, ok, type Result } from "../result.js";
 import { parseRecordedTransportUrl } from "../recordedTransportUrl.js";
 import {
@@ -52,11 +51,13 @@ export class ContractInventory {
   /** Operation keys already diagnosed as conflicting declarations. */
   readonly #conflictedKeys = new Set<string>();
   /**
-   * Diagnostics already retained, by code and source pointer. A diagnostic
+   * Diagnostics already retained, by code then source pointer. A diagnostic
    * identifies one fact at one location; a shared $ref target enumerated
-   * under several paths must not repeat the same fact under one ID.
+   * under several paths must not repeat the same fact under one ID. The
+   * nested lookup compares pointers without serializing them, so no copy
+   * is made before the retained-facts allowance is checked.
    */
-  readonly #reportedDiagnostics = new Set<string>();
+  readonly #reportedDiagnostics = new Map<string, Set<string>>();
 
   constructor(readonly artifact: ApiContractArtifact) {}
 
@@ -93,8 +94,8 @@ export class ContractInventory {
     pointer: string,
     message: string,
   ): Result<void, AnalysisError> {
-    const key = compositeKey([code, pointer]);
-    if (this.#reportedDiagnostics.has(key)) return ok(undefined);
+    const reported = this.#reportedDiagnostics.get(code);
+    if (reported?.has(pointer)) return ok(undefined);
     const admitted = this.reserve(1024 + pointer.length * 12);
     if (!admitted.ok) return admitted;
     this.diagnostics.push({
@@ -107,7 +108,12 @@ export class ContractInventory {
       code,
       message,
     });
-    this.#reportedDiagnostics.add(key);
+    let retained = reported;
+    if (retained === undefined) {
+      retained = new Set<string>();
+      this.#reportedDiagnostics.set(code, retained);
+    }
+    retained.add(pointer);
     return ok(undefined);
   }
 
