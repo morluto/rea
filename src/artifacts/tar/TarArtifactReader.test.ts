@@ -595,6 +595,52 @@ describe("tar header edge cases", () => {
     }
   });
 
+  it("refunds hdrcharset=BINARY warnings that no inventoried member keeps", async () => {
+    const metadataBytes = 64 * 1024;
+    const pax = Buffer.concat([
+      Buffer.from("21 hdrcharset=BINARY\n8012 uname="),
+      Buffer.alloc(8_000, 0xe9),
+      Buffer.from("\n"),
+    ]);
+    const local = Buffer.concat([
+      tarHeader({ name: "PaxHeader", type: "x" }, pax.length),
+      pax,
+      Buffer.alloc((512 - (pax.length % 512)) % 512),
+    ]);
+    const fifo = (index: number) =>
+      tarHeader({ name: `fifo${String(index)}`, type: "6" }, 0);
+    const count = Math.floor(metadataBytes / (2 * 8_000)) + 2;
+    // Each warning is discarded by an omitted member, or by the next local
+    // header that replaces it.
+    const archives = [
+      Array.from({ length: count }, (_, index) =>
+        Buffer.concat([local, fifo(index)]),
+      ),
+      [...Array.from({ length: count }, () => local), fifo(0)],
+    ];
+    for (const [index, pieces] of archives.entries()) {
+      const reader = new TarArtifactReader(
+        await write(
+          `local-pax-binary-refund-${String(index)}.tar`,
+          Buffer.concat([...pieces, end]),
+        ),
+        undefined,
+        undefined,
+        { ...DEFAULT_TAR_READER_LIMITS, metadata_bytes: metadataBytes },
+      );
+      const omissions: ArtifactTraversalOmission[] = [];
+      try {
+        for await (const entry of reader.entries(undefined, {
+          onOmission: (value) => omissions.push(value),
+        }))
+          void entry;
+      } finally {
+        await reader.close();
+      }
+      expect(omissions.length).toBeGreaterThan(0);
+    }
+  });
+
   it("stops as malformed at a pax size that is not a number, keeping earlier members", async () => {
     const pax = Buffer.from("12 size=abc\n");
     const result = await read(
