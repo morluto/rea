@@ -172,3 +172,54 @@ it("stops delivering queued frames in the same chunk once onmessage closes the t
   await expect(owned.close()).resolves.toBeUndefined();
   expect(closeNotifications).toBe(1);
 });
+
+it.each([
+  { notifyOnExit: undefined, notifiedBy: "close" },
+  { notifyOnExit: true, notifiedBy: "exit" },
+] as const)(
+  "notifies onclose once when the server $notifiedBy happens before close",
+  async ({ notifyOnExit }) => {
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    const stdin = new PassThrough();
+    const child = Object.assign(new EventEmitter(), {
+      stdout,
+      stderr,
+      stdin,
+      pid: 99999,
+      exitCode: null as number | null,
+      signalCode: null as NodeJS.Signals | null,
+      killed: false,
+      kill: () => true,
+    });
+    const owned = new OwnedMcpStdioTransport(
+      { command: "/fixture/server", arguments: [] },
+      {
+        provider: "fixture",
+        label: "Fixture MCP",
+        maxFrameBytes: 4096,
+        ...(notifyOnExit === undefined ? {} : { notifyOnExit }),
+      },
+      async () => ({
+        process: child as never,
+        ownership: { runId: "run-1", leaderPid: 99999, processGroupId: 99999 },
+        cleanup: async () => ({ cleaned: true, signaled: false }),
+      }),
+    );
+    await owned.start();
+    let closeNotifications = 0;
+    owned.onclose = () => {
+      closeNotifications += 1;
+    };
+    child.exitCode = 0;
+    child.emit("exit", 0, null);
+    stdout.end();
+    stderr.end();
+    child.emit("close", 0, null);
+
+    expect(closeNotifications).toBe(1);
+    expect(owned.observedFailure()).toEqual({ kind: "exit" });
+    await expect(owned.close()).resolves.toBeUndefined();
+    expect(closeNotifications).toBe(1);
+  },
+);

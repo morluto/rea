@@ -289,10 +289,7 @@ export class OwnedMcpStdioTransport implements Transport {
     // settled, so shutdown diagnostics still reach the caller's report.
     if (this.settings.onStderr !== undefined)
       process?.stderr?.off("data", this.settings.onStderr);
-    if (!this.#onCloseNotified) {
-      this.#onCloseNotified = true;
-      this.onclose?.();
-    }
+    this.#notifyClosed();
     if (stopped?.status === "incomplete") {
       const failure = new ProviderCleanupError(
         this.settings.provider,
@@ -376,12 +373,18 @@ export class OwnedMcpStdioTransport implements Transport {
       this.onerror?.(cause instanceof Error ? cause : new Error(String(cause))),
     );
   };
+  /** One close notification for exit, output close, and explicit close. */
+  #notifyClosed(): void {
+    if (this.#onCloseNotified) return;
+    this.#onCloseNotified = true;
+    this.onclose?.();
+  }
   readonly #exit = (): void => {
     this.#failure ??= { kind: "exit" };
-    if (this.settings.notifyOnExit === true) this.onclose?.();
+    if (this.settings.notifyOnExit === true) this.#notifyClosed();
   };
   readonly #outputClosed = (): void => {
-    if (this.settings.notifyOnExit !== true) this.onclose?.();
+    if (this.settings.notifyOnExit !== true) this.#notifyClosed();
   };
   readonly #countStderr = (chunk: Buffer | string): void => {
     if (this.#closed) return;
