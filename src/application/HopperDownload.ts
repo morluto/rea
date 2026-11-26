@@ -279,8 +279,7 @@ const fetchHopperResponse = async (
     // downgrade still reports non_https and a credentialed destination
     // still reports credentials, as the next loop pass would.
     if (next.protocol !== "https:") return err("non_https");
-    if (next.username !== "" || next.password !== "")
-      return err("credentials");
+    if (next.username !== "" || next.password !== "") return err("credentials");
     // Redirects may leave the validated origin; only the initial URL was
     // checked by callers, so refuse a hop another origin would produce.
     if (next.origin !== expectedOrigin) return err("redirect_cross_origin");
