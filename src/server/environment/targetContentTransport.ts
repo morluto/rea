@@ -1,5 +1,6 @@
 import {
   isCallToolResult,
+  isJSONRPCErrorResponse,
   isJSONRPCNotification,
   isJSONRPCRequest,
   isJSONRPCResultResponse,
@@ -21,21 +22,21 @@ const requestId = (value: unknown): RequestId | undefined =>
 
 /** Marks every tools/call result as target content, including errors the SDK builds before a replay callback runs. */
 export class TargetContentTransport extends ForwardingTransport {
-  readonly #calls = new Set<RequestId>();
+  readonly #calls = new Map<RequestId, number>();
 
   protected override receive(
     message: JSONRPCMessage,
     extra?: MessageExtraInfo,
   ): void {
     if (isJSONRPCRequest(message) && message.method === "tools/call")
-      this.#calls.add(message.id);
-    // The SDK sends no reply after a cancellation, so release the id here.
+      this.#calls.set(message.id, (this.#calls.get(message.id) ?? 0) + 1);
+    // The SDK sends no reply after a cancellation, so release one reference here.
     if (
       isJSONRPCNotification(message) &&
       message.method === "notifications/cancelled"
     ) {
       const id = requestId(message.params?.["requestId"]);
-      if (id !== undefined) this.#calls.delete(id);
+      if (id !== undefined) this.#releaseCall(id);
     }
     super.receive(message, extra);
   }
@@ -45,12 +46,26 @@ export class TargetContentTransport extends ForwardingTransport {
     super.closed();
   }
 
+  override async close(): Promise<void> {
+    try {
+      await super.close();
+    } finally {
+      this.#calls.clear();
+    }
+  }
+
   override send(
     message: JSONRPCMessage,
     options?: TransportSendOptions,
   ): Promise<void> {
-    const id = "id" in message ? requestId(message.id) : undefined;
-    const call = id !== undefined && this.#calls.delete(id);
+    const id =
+      (isJSONRPCErrorResponse(message) ||
+        (isJSONRPCResultResponse(message) &&
+          isCallToolResult(message.result))) &&
+      "id" in message
+        ? requestId(message.id)
+        : undefined;
+    const call = id !== undefined && this.#releaseCall(id);
     if (
       call &&
       isJSONRPCResultResponse(message) &&
@@ -68,5 +83,13 @@ export class TargetContentTransport extends ForwardingTransport {
         options,
       );
     return super.send(message, options);
+  }
+
+  #releaseCall(id: RequestId): boolean {
+    const count = this.#calls.get(id);
+    if (count === undefined) return false;
+    if (count <= 1) this.#calls.delete(id);
+    else this.#calls.set(id, count - 1);
+    return true;
   }
 }

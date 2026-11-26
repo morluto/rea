@@ -16,8 +16,15 @@ import { CallerAbort, OwnerCancellation } from "../domain/analysisErrorCore.js";
 import { InvestigationRecords } from "../application/investigation/InvestigationRecords.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
 import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
+import { DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET } from "../config/mcpToolsListPageBudget.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
-import { forgetPendingMcpRequest } from "./ErrorEvidenceTransport.js";
+import {
+  ErrorEvidenceTransport,
+  forgetPendingMcpRequest,
+} from "./ErrorEvidenceTransport.js";
+import { currentMcpToolRequest } from "./McpToolRequest.js";
+import { TargetContentTransport } from "./environment/targetContentTransport.js";
+import { TARGET_CONTENT_RESULT_META } from "./toolResultEncoding.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { createToolResultDelivery } from "./toolResult.js";
@@ -969,5 +976,410 @@ describe("unknown MCP tool remediation", () => {
     } finally {
       await Promise.all([client.close(), serving.close()]);
     }
+  });
+});
+
+describe("Duplicate in-flight JSON-RPC request IDs (#14733)", () => {
+  it("rejects duplicate in-flight tools/call id with -32600 without orphaning admission", async () => {
+    const records = new InvestigationRecords();
+    const server = new EvidenceMcpServer(
+      { name: "duplicate-id-test", version: "1" },
+      { capabilities: {} },
+      (evidence) => records.recordEvidence(evidence),
+      createToolResultDelivery(4096),
+    );
+    const handlerGate = phaseGate();
+    let invocations = 0;
+    let activeAdmissionDone: Promise<unknown> | undefined;
+    const fakeSession = {
+      withAdmittedAnalysis: (
+        _operation: string,
+        _signal: AbortSignal | undefined,
+        operation: (analysis: never) => Promise<unknown>,
+      ) => {
+        const promise = operation(undefined as never).then((value) => ({
+          ok: true as const,
+          value,
+        }));
+        activeAdmissionDone ??= promise;
+        return promise;
+      },
+    };
+    server.registerTool(
+      "admitted_tool",
+      { inputSchema: z.strictObject({ label: z.string() }) },
+      async (input) => {
+        invocations += 1;
+        const req = currentMcpToolRequest();
+        if (req === undefined)
+          throw new Error("Expected active McpToolRequest");
+        await req.admit(
+          fakeSession as never,
+          "admitted_tool",
+          undefined,
+          async () => {
+            await handlerGate.hold();
+            return input.label;
+          },
+        );
+        return { content: [{ type: "text", text: input.label }] };
+      },
+    );
+
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const received: unknown[] = [];
+    const waiters: Array<() => void> = [];
+    const waitForMessage = (predicate: (msg: unknown) => boolean) =>
+      new Promise<unknown>((resolve) => {
+        const check = () => {
+          const index = received.findIndex(predicate);
+          if (index >= 0) {
+            resolve(received[index]);
+            return true;
+          }
+          return false;
+        };
+        if (check()) return;
+        const listener = () => {
+          if (check()) {
+            const pos = waiters.indexOf(listener);
+            if (pos >= 0) waiters.splice(pos, 1);
+          }
+        };
+        waiters.push(listener);
+      });
+    clientTransport.onmessage = (message) => {
+      received.push(message);
+      for (const listener of [...waiters]) listener();
+    };
+
+    const serving = serveStdio(() => server, { transport: serverTransport });
+    try {
+      await clientTransport.start();
+      const initReply = waitForMessage(
+        (m) =>
+          typeof m === "object" &&
+          m !== null &&
+          "id" in m &&
+          (m as { id: unknown }).id === "init",
+      );
+      await clientTransport.send({
+        jsonrpc: "2.0",
+        id: "init",
+        method: "initialize",
+        params: {
+          protocolVersion: "2026-07-28",
+          capabilities: {},
+          clientInfo: { name: "raw", version: "1" },
+        },
+      });
+      await initReply;
+      await clientTransport.send({
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+      });
+
+      const firstReply = waitForMessage(
+        (m) =>
+          typeof m === "object" &&
+          m !== null &&
+          "id" in m &&
+          (m as { id: unknown }).id === 42 &&
+          "result" in m,
+      );
+      await clientTransport.send({
+        jsonrpc: "2.0",
+        id: 42,
+        method: "tools/call",
+        params: { name: "admitted_tool", arguments: { label: "first" } },
+      });
+      await handlerGate.reached(firstReply, "first admitted_tool handler");
+
+      // Send a duplicate tools/call AND a malformed tools/list with the same id 42.
+      const dupToolReply = waitForMessage(
+        (m) =>
+          typeof m === "object" &&
+          m !== null &&
+          "id" in m &&
+          (m as { id: unknown }).id === 42 &&
+          "error" in m,
+      );
+      await clientTransport.send({
+        jsonrpc: "2.0",
+        id: 42,
+        method: "tools/call",
+        params: { name: "admitted_tool", arguments: { label: "duplicate" } },
+      });
+      expect(await dupToolReply).toMatchObject({
+        jsonrpc: "2.0",
+        id: 42,
+        error: { code: -32600 },
+      });
+
+      received.length = 0;
+      const dupListReply = waitForMessage(
+        (m) =>
+          typeof m === "object" &&
+          m !== null &&
+          "id" in m &&
+          (m as { id: unknown }).id === 42 &&
+          "error" in m,
+      );
+      await clientTransport.send({
+        jsonrpc: "2.0",
+        id: 42,
+        method: "tools/list",
+        params: { cursor: 12345 } as never,
+      });
+      expect(await dupListReply).toMatchObject({
+        jsonrpc: "2.0",
+        id: 42,
+        error: { code: -32600 },
+      });
+
+      expect(invocations).toBe(1);
+      handlerGate.release();
+      expect(await firstReply).toMatchObject({
+        id: 42,
+        result: { content: [{ type: "text", text: "first" }] },
+      });
+      // Admission settles cleanly after publication finishes (no deadlock).
+      expect(await activeAdmissionDone).toEqual({ ok: true, value: "first" });
+
+      // Once id 42 has completed, reusing id 42 succeeds normally.
+      received.length = 0;
+      const reusedReply = waitForMessage(
+        (m) =>
+          typeof m === "object" &&
+          m !== null &&
+          "id" in m &&
+          (m as { id: unknown }).id === 42 &&
+          "result" in m,
+      );
+      await clientTransport.send({
+        jsonrpc: "2.0",
+        id: 42,
+        method: "tools/call",
+        params: { name: "admitted_tool", arguments: { label: "reused" } },
+      });
+      expect(await reusedReply).toMatchObject({
+        id: 42,
+        result: { content: [{ type: "text", text: "reused" }] },
+      });
+      expect(invocations).toBe(2);
+    } finally {
+      handlerGate.release();
+      await Promise.all([clientTransport.close(), serving.close()]);
+    }
+  });
+
+  it("refcounts overlapping tools/call IDs in TargetContentTransport", async () => {
+    const sent: unknown[] = [];
+    let receiveOnInner:
+      | ((message: unknown, extra?: unknown) => void)
+      | undefined;
+    const inner = {
+      start: async () => undefined,
+      close: async () => undefined,
+      send: async (message: unknown) => {
+        sent.push(message);
+      },
+      set onmessage(
+        handler: ((message: unknown, extra?: unknown) => void) | undefined,
+      ) {
+        receiveOnInner = handler;
+      },
+      get onmessage() {
+        return receiveOnInner;
+      },
+      onclose: undefined,
+      onerror: undefined,
+    };
+    const transport = new TargetContentTransport(inner as never);
+    transport.onmessage = () => undefined;
+
+    receiveOnInner?.({
+      jsonrpc: "2.0",
+      id: 7,
+      method: "tools/call",
+      params: { name: "replay_a", arguments: {} },
+    });
+    receiveOnInner?.({
+      jsonrpc: "2.0",
+      id: 7,
+      method: "tools/call",
+      params: { name: "replay_b", arguments: {} },
+    });
+    // Non-CallToolResult responses and server-to-client requests sharing id 7
+    // must not decrement the tools/call reference count.
+    await transport.send({
+      jsonrpc: "2.0",
+      id: 7,
+      result: { tools: [] },
+    });
+    await transport.send({
+      jsonrpc: "2.0",
+      id: 7,
+      method: "ping",
+    });
+
+    await transport.send({
+      jsonrpc: "2.0",
+      id: 7,
+      result: { content: [{ type: "text", text: "first" }], isError: true },
+    });
+    await transport.send({
+      jsonrpc: "2.0",
+      id: 7,
+      result: { content: [{ type: "text", text: "second" }], isError: true },
+    });
+
+    expect(sent).toHaveLength(4);
+    expect(sent[2]).toMatchObject({
+      result: { _meta: TARGET_CONTENT_RESULT_META },
+    });
+    expect(sent[3]).toMatchObject({
+      result: { _meta: TARGET_CONTENT_RESULT_META },
+    });
+
+    // Cancellation decrements only one reference, and close() clears retained IDs.
+    sent.length = 0;
+    receiveOnInner?.({
+      jsonrpc: "2.0",
+      id: 8,
+      method: "tools/call",
+      params: { name: "replay_a", arguments: {} },
+    });
+    receiveOnInner?.({
+      jsonrpc: "2.0",
+      id: 8,
+      method: "tools/call",
+      params: { name: "replay_b", arguments: {} },
+    });
+    receiveOnInner?.({
+      jsonrpc: "2.0",
+      method: "notifications/cancelled",
+      params: { requestId: 8 },
+    });
+    await transport.send({
+      jsonrpc: "2.0",
+      id: 8,
+      result: { content: [{ type: "text", text: "remaining" }], isError: true },
+    });
+    expect(sent[0]).toMatchObject({
+      result: { _meta: TARGET_CONTENT_RESULT_META },
+    });
+
+    sent.length = 0;
+    receiveOnInner?.({
+      jsonrpc: "2.0",
+      id: 9,
+      method: "tools/call",
+      params: { name: "replay_c", arguments: {} },
+    });
+    await transport.close();
+    await transport.send({
+      jsonrpc: "2.0",
+      id: 9,
+      result: {
+        content: [{ type: "text", text: "after-close" }],
+        isError: true,
+      },
+    });
+    expect(
+      (sent[0] as { result?: { _meta?: unknown } }).result?._meta,
+    ).toBeUndefined();
+  });
+
+  it("does not clear a reused request id when an earlier non-tool send finishes after cancellation", async () => {
+    const releaseSend = phaseGate();
+    let receiveOnInner:
+      | ((message: unknown, extra?: unknown) => void)
+      | undefined;
+    const sent: unknown[] = [];
+    const inner = {
+      start: async () => undefined,
+      close: async () => undefined,
+      send: async (message: unknown) => {
+        if (
+          typeof message === "object" &&
+          message !== null &&
+          "result" in message &&
+          (message as { id?: unknown }).id === 42
+        ) {
+          await releaseSend.hold();
+        }
+        sent.push(message);
+      },
+      set onmessage(
+        handler: ((message: unknown, extra?: unknown) => void) | undefined,
+      ) {
+        receiveOnInner = handler;
+      },
+      get onmessage() {
+        return receiveOnInner;
+      },
+      onclose: undefined,
+      onerror: undefined,
+    };
+    const forwarded: unknown[] = [];
+    const transport = new ErrorEvidenceTransport(
+      inner as never,
+      () => undefined,
+      () => createToolResultDelivery(4096),
+      () => undefined,
+      undefined,
+      1024,
+      new Set(),
+      DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
+      () => ({ tools: [], discoveryAvailable: false }),
+    );
+    transport.onmessage = (message) => {
+      forwarded.push(message);
+    };
+
+    receiveOnInner?.({
+      jsonrpc: "2.0",
+      id: 42,
+      method: "tools/list",
+    });
+    const inFlightSend = transport.send({
+      jsonrpc: "2.0",
+      id: 42,
+      result: { tools: [] },
+    });
+    await releaseSend.reached(inFlightSend, "tools/list send");
+
+    receiveOnInner?.({
+      jsonrpc: "2.0",
+      method: "notifications/cancelled",
+      params: { requestId: 42 },
+    });
+    receiveOnInner?.({
+      jsonrpc: "2.0",
+      id: 42,
+      method: "tools/call",
+      params: { name: "admitted_tool", arguments: {} },
+    });
+
+    releaseSend.release();
+    await inFlightSend;
+
+    // The reused request id 42 must still be tracked as in-flight.
+    const forwardedBeforeDup = forwarded.length;
+    receiveOnInner?.({
+      jsonrpc: "2.0",
+      id: 42,
+      method: "tools/call",
+      params: { name: "admitted_tool", arguments: {} },
+    });
+    expect(forwarded).toHaveLength(forwardedBeforeDup);
+    expect(sent).toContainEqual(
+      expect.objectContaining({
+        id: 42,
+        error: expect.objectContaining({ code: -32600 }),
+      }),
+    );
   });
 });

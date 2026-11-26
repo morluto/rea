@@ -219,14 +219,38 @@ export const forgetPendingMcpRequest = (
 };
 
 export class ErrorEvidenceTransport extends ForwardingTransport {
+  private readonly pendingRequests = new Map<RequestId, symbol>();
   private readonly pendingTools = new Map<RequestId, string>();
   private readonly pendingValidation = new Map<RequestId, McpToolRequest>();
+  private readonly activeToolRequests = new Set<McpToolRequest>();
   private readonly pendingToolListCursors = new Map<
     RequestId,
     string | undefined
   >();
   private readonly pendingCompletions = new Map<RequestId, AbortController>();
   private closing = false;
+
+  private isRequestInFlight(id: RequestId): boolean {
+    return (
+      this.pendingRequests.has(id) ||
+      this.pendingTools.has(id) ||
+      this.pendingValidation.has(id) ||
+      this.pendingToolListCursors.has(id) ||
+      this.pendingCompletions.has(id)
+    );
+  }
+
+  private cancelActiveToolRequests(
+    reason: CallerAbort | OwnerCancellation,
+  ): void {
+    const active = new Set<McpToolRequest>([
+      ...this.activeToolRequests,
+      ...this.pendingValidation.values(),
+    ]);
+    this.activeToolRequests.clear();
+    this.pendingValidation.clear();
+    for (const request of active) request.cancel(reason);
+  }
 
   private get recordEvidence(): EvidenceWriter["recordEvidence"] | undefined {
     return this.currentEvidenceWriter();
@@ -256,27 +280,50 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
     message: JSONRPCMessage,
     extra?: MessageExtraInfo,
   ): void {
-    // The pinned SDK classifies generic method schema failures as internal
-    // errors. Validate these wire requests with its canonical schemas before
-    // dispatch, leaving callback failures and negotiated-era checks to it.
+    // Reject duplicate in-flight request IDs before validation or bookkeeping
+    // mutation, replying directly on the wrapped transport so the active
+    // request's state and admission stay intact.
     if (isJSONRPCRequest(message)) {
+      if (this.isRequestInFlight(message.id)) {
+        void this.transport
+          .send({
+            jsonrpc: "2.0",
+            id: message.id,
+            error: {
+              code: -32600,
+              message: `Duplicate in-flight request id: ${String(message.id)}`,
+            },
+          })
+          .catch((cause: unknown) =>
+            this.onerror?.(
+              cause instanceof Error ? cause : new Error(String(cause)),
+            ),
+          );
+        return;
+      }
+      // The pinned SDK classifies generic method schema failures as internal
+      // errors. Validate these wire requests with its canonical schemas before
+      // dispatch, leaving callback failures and negotiated-era checks to it.
       const schema = discoveryRequestSchema(message.method);
       const result = schema?.["~standard"].validate(message);
       if (result?.issues !== undefined) {
-        void this.send({
-          jsonrpc: "2.0",
-          id: message.id,
-          error: {
-            code: -32602,
-            message: `Invalid ${message.method} request: ${JSON.stringify(result.issues)}`,
-          },
-        }).catch((cause: unknown) =>
-          this.onerror?.(
-            cause instanceof Error ? cause : new Error(String(cause)),
-          ),
-        );
+        void this.transport
+          .send({
+            jsonrpc: "2.0",
+            id: message.id,
+            error: {
+              code: -32602,
+              message: `Invalid ${message.method} request: ${JSON.stringify(result.issues)}`,
+            },
+          })
+          .catch((cause: unknown) =>
+            this.onerror?.(
+              cause instanceof Error ? cause : new Error(String(cause)),
+            ),
+          );
         return;
       }
+      this.pendingRequests.set(message.id, Symbol("mcp-request"));
     }
     let validation: McpToolRequest | undefined;
     if (
@@ -287,6 +334,7 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
       this.pendingTools.set(message.id, message.params["name"]);
       validation = new McpToolRequest(message.id, message.params["name"]);
       this.pendingValidation.set(message.id, validation);
+      this.activeToolRequests.add(validation);
     }
     if (isJSONRPCRequest(message) && message.method === "tools/list") {
       const params = message.params;
@@ -311,8 +359,11 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
           "request-cancelled",
           message.params?.["reason"],
         );
-        this.pendingValidation.get(id)?.cancel(cancellation);
+        const cancelled = this.pendingValidation.get(id);
+        cancelled?.cancel(cancellation);
+        if (cancelled !== undefined) this.activeToolRequests.delete(cancelled);
         this.pendingValidation.delete(id);
+        this.pendingRequests.delete(id);
         forgetPendingMcpRequest(
           this.pendingTools,
           this.pendingToolListCursors,
@@ -340,10 +391,9 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
       this.closing || transportClosedByOwner(this.transport)
         ? OwnerCancellation.ownerClosed
         : new CallerAbort("client-disconnected");
+    this.pendingRequests.clear();
     this.pendingTools.clear();
-    for (const validation of this.pendingValidation.values())
-      validation.cancel(disconnected);
-    this.pendingValidation.clear();
+    this.cancelActiveToolRequests(disconnected);
     this.pendingToolListCursors.clear();
     for (const completion of this.pendingCompletions.values())
       completion.abort(disconnected);
@@ -356,10 +406,9 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
     try {
       await this.transport.close();
     } finally {
+      this.pendingRequests.clear();
       this.pendingTools.clear();
-      for (const validation of this.pendingValidation.values())
-        validation.cancel(OwnerCancellation.ownerClosed);
-      this.pendingValidation.clear();
+      this.cancelActiveToolRequests(OwnerCancellation.ownerClosed);
       this.pendingToolListCursors.clear();
       for (const completion of this.pendingCompletions.values())
         completion.abort(OwnerCancellation.ownerClosed);
@@ -376,14 +425,20 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
       (typeof message.id === "string" || typeof message.id === "number")
         ? message.id
         : undefined;
-    const tool = id === undefined ? undefined : this.pendingTools.get(id);
+    const isResponse =
+      isJSONRPCResultResponse(message) || isJSONRPCErrorResponse(message);
+    const pendingToken =
+      id !== undefined && isResponse ? this.pendingRequests.get(id) : undefined;
     const scopedRequest = currentMcpToolRequest();
     const request =
-      id === undefined ||
-      (!isJSONRPCResultResponse(message) && !isJSONRPCErrorResponse(message))
+      id === undefined || !isResponse
         ? undefined
-        : (this.pendingValidation.get(id) ??
-          (scopedRequest?.id === id ? scopedRequest : undefined));
+        : scopedRequest !== undefined && scopedRequest.id === id
+          ? scopedRequest
+          : this.pendingValidation.get(id);
+    const tool =
+      request?.tool ??
+      (id === undefined ? undefined : this.pendingTools.get(id));
     const rewritesOutputSchemas =
       id !== undefined && this.pendingToolListCursors.has(id);
     try {
@@ -433,8 +488,16 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
       } else await publish();
     } finally {
       request?.finishPublication();
-      if (!isJSONRPCRequest(message) && id !== undefined) {
+      if (request !== undefined) this.activeToolRequests.delete(request);
+      if (
+        isResponse &&
+        id !== undefined &&
+        pendingToken !== undefined &&
+        this.pendingRequests.get(id) === pendingToken &&
+        (request === undefined || this.pendingValidation.get(id) === request)
+      ) {
         this.pendingValidation.delete(id);
+        this.pendingRequests.delete(id);
         // The reply settled the request, so REA ends any work it left behind.
         forgetPendingMcpRequest(
           this.pendingTools,
@@ -569,7 +632,7 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
           tool,
           targetContent,
           sdkDiagnostic,
-          this.pendingValidation.get(message.id)?.validation,
+          request?.validation,
         )
       : undefined;
     if (
