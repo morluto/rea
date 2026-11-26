@@ -11,6 +11,25 @@ rea observe-web-execution http://127.0.0.1:9222 TARGET_ID \
 
 MCP: `observe_web_execution` with `cdp_endpoint`, `target_id`, optional `allowed_origins` and optional `observation_ms` (default 10000). The operation itself selects instrumentation; no extra approval flag is needed.
 
+Script sources are captured in full, so the complete observation grows with
+the page's JavaScript. On a local page loading rxjs, openpgp and
+isomorphic-git, it was 1.9 MB, nearly all source text. An MCP call that omits
+`detail` returns the observation inline when its Evidence fits the
+[agent result budget](../../reference/limits-and-recovery.md#agent-result-budget).
+Otherwise the observation is retained, and the call returns a summary with
+counts: coverage scripts, functions, executed functions, requests, sources and
+captured UTF-16 units. On that page the summary was 7.5 KB. Page it with
+`inspect_analysis_view` view `{"kind":"web-execution","collection":...}`:
+
+- `functions`: coverage rows, filtered by `script_ids` or `executed_only`;
+- `requests`: filtered by `methods`;
+- `sources`: script metadata and text sizes;
+- `source-text`: one script's text by `script_id`, `offset` and `limit` in
+  UTF-16 code units.
+
+`detail: "complete"` returns everything inline. On the CLI,
+`--detail summary` requires `--evidence_output`.
+
 Starting precise coverage resets counters and prevents optimized execution until REA stops it. This changes timing/JIT behavior. REA requests accurate call counts and detailed ranges, takes one resetting sample, stops coverage, disables enabled domains and detaches its own connection. It does not navigate, click, evaluate selected application code or close the page.
 
 Wait for the actual armed progress event before performing an action. MCP emits negotiated progress notifications; CLI emits `rea_progress` JSON on stderr while the Evidence result stays on stdout. Use ordinary commands, scripts or user actions to trigger behavior. CLI SIGINT/SIGTERM and MCP cancellation await instrumentation cleanup; unconfirmed cleanup is an error with the target, failed commands and previous failure.
