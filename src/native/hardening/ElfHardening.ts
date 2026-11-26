@@ -139,8 +139,8 @@ const budgetFailure = (count: number, label: string): BinaryResourceFailure =>
   new BinaryResourceFailure(
     "structure",
     MAX_BINARY_HARDENING_TABLE_ENTRIES,
-    `${label} has ${String(count)} entries, above the ${String(MAX_BINARY_HARDENING_TABLE_ENTRIES)}-entry structural budget. This release has no runtime override.`,
-    "structure",
+    `${label} has ${String(count)} entries, above the ${String(MAX_BINARY_HARDENING_TABLE_ENTRIES)}-entry table allowance. This release has no runtime override.`,
+    "hardening-table-entries",
     "entries",
   );
 
@@ -210,9 +210,12 @@ function* readSlice(
 export const readElfHardening = (
   bytes: Buffer,
   signal?: AbortSignal,
+  structureBytes?: number,
 ): BinaryHardeningImage => {
   assertArtifactReadActive(signal);
-  const directory = readElfDirectoryFromBuffer(bytes, OPERATION);
+  const directory = readElfDirectoryFromBuffer(bytes, OPERATION, {
+    structureBytes,
+  });
   assertElfDeclaredRangesFromBuffer(bytes);
   const steps = elfHardeningSteps(bytes.length, directory, signal);
   let next = steps.next();
@@ -228,12 +231,14 @@ export const readElfHardening = (
 export const readElfHardeningFromHandle = async (
   source: ByteSource,
   signal?: AbortSignal,
+  structureBytes?: number,
 ): Promise<BinaryHardeningImage> => {
   assertArtifactReadActive(signal);
   const directory = await readElfDirectoryFromReader(
     source,
     () => yieldArtifactRead(signal),
     OPERATION,
+    { structureBytes },
   );
   assertArtifactReadActive(signal);
   await assertElfDeclaredRangesFromReader(source);

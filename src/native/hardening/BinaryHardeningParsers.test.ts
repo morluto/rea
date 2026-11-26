@@ -215,7 +215,7 @@ it("rejects truncated, duplicate and over-budget ELF tables", () => {
   expect(findRow(overBudget.rows, "nx").state).toBe("enabled");
   expect(findRow(overBudget.rows, "stack_protector")).toMatchObject({
     state: "unknown",
-    note: expect.stringContaining("structural budget"),
+    note: expect.stringContaining("table allowance"),
   });
   expect(findRow(overBudget.rows, "fortify").state).toBe("unknown");
   const longPath = "A".repeat(70000);

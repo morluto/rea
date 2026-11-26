@@ -33,10 +33,8 @@ import {
 import { err, ok } from "../../domain/result.js";
 import type { AnalysisPartialObservation } from "../../domain/analysisErrorBase.js";
 import { ELF_DEBUG_LINK_PROVIDER } from "../../domain/investigationProviders.js";
-import {
-  binaryResourceCeiling,
-  BinaryResourceFailure,
-} from "../../domain/binaryContainer.js";
+import { isNativeStructureFailure } from "../../domain/binaryContainer.js";
+import { nativeStructureConstraint } from "../nativeStructureConstraint.js";
 import {
   continueGnuDebuglinkCrc32,
   parseElfDebugLinkFromHandle,
@@ -362,17 +360,8 @@ const elfDebugLinkFailure = (
               field,
             ),
           });
-        if (failure instanceof BinaryResourceFailure)
-          return parseLimitConstraint(
-            OPERATION,
-            "memory",
-            failure,
-            fixedAllowanceOptions(
-              "The ELF structural decoding allowance",
-              "parser",
-              binaryResourceCeiling(failure),
-            ),
-          );
+        if (isNativeStructureFailure(failure))
+          return nativeStructureConstraint(OPERATION, failure);
         if (isParseLimit(failure, "elf-notes")) {
           const entryBudget = failure.failure.limit.name === "max_entries";
           return parseLimitConstraint(

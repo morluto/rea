@@ -4,6 +4,7 @@ import { knownCoverageStatusSchema } from "../coverage.js";
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { ELF_OBJECT_TYPE_NAMES } from "./elfNotes.js";
+import { maxStructureBytesSchema } from "./nativeStructureBudget.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const hexAddress = z.string().regex(/^0x[0-9a-f]+$/u);
@@ -120,6 +121,7 @@ export const inspectElfUnwindRangesInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to an ELF image",
   ),
+  max_structure_bytes: maxStructureBytesSchema,
   max_file_bytes: z
     .number()
     .int()
