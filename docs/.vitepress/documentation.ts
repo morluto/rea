@@ -454,6 +454,11 @@ export const documentationSections = [
         route: "/devicetree",
       },
       {
+        text: "Firmware literal-pool MMIO disassembly",
+        source: "guides/firmware/firmware-literal-pools.md",
+        route: "/firmware-literal-pools",
+      },
+      {
         text: "ESP flash images",
         source: "esp-flash-image.md",
         route: "/esp-flash-image",

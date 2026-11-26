@@ -953,6 +953,15 @@ For ESP32/ESP8266 flash dumps or carved `partitions/nvs.bin` files (`esp-nvs`), 
 to decode ESP-IDF v1/v2 Non-Volatile Storage pages, CRC32 checksums, namespaces,
 strings, integers, floats, and multi-chunk v2 blobs, marking older copies of a
 key `superseded`; encrypted NVS entries are not decrypted. See [ESP-IDF NVS partitions](https://github.com/morluto/rea/blob/main/docs/guides/firmware/esp-nvs.md).
+For stripped or headerless ARM Cortex-M/A32 (`arm-thumb`, `arm-a32`) and
+Espressif Xtensa (`xtensa`) firmware slices at a known `base_address`, use
+`inspect_firmware_literal_pools` (`rea inspect-firmware-literal-pools PATH --isa <arm-thumb|arm-a32|xtensa> --base-address <hex> [--svd-xml <xml>] [--detail summary]`)
+to disassemble PC-relative literal-pool loads (`LDR Rt,[PC,#imm]` / `LDR.W` / `L32R`),
+resolve 32-bit loaded constants, and attribute CMSIS-SVD `<peripheral>` blocks,
+Cortex-M PPB/SCS (`SCB`, `NVIC`, `SysTick`, `MPU`, `SAU`, `FPU` for `arm-thumb`),
+and peripheral MMIO targets before or without opening an external deep
+disassembler; page retained `mmio_summary` and `references` with
+`inspect_analysis_view` kind `firmware-literal-pools`. See [Firmware literal-pool MMIO disassembly](https://github.com/morluto/rea/blob/main/docs/guides/firmware/firmware-literal-pools.md).
 
 For other headerless images (embedded firmware without ELF/Mach-O/PE/MZ
 headers), open with `format: "raw-binary"`, `architecture` (`x86`, `x86_64`,

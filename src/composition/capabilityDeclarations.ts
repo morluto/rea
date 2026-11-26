@@ -54,6 +54,7 @@ import {
   PE_UNWIND_RANGES_PROVIDER,
   PE_OVERLAY_PROVIDER,
   PE_RESOURCES_PROVIDER,
+  FIRMWARE_LITERAL_POOLS_PROVIDER,
   RELEASE_EXPOSURE_PROVIDER,
   ESP_NVS_PROVIDER,
   WEB_SCRIPT_EXPORT_PROVIDER,
@@ -345,6 +346,13 @@ export const CAPABILITY_DECLARATIONS = {
       providerBinding(FRIDA_PROVIDER_IDENTITY, {
         group: "FRIDA_TOOL_CONTRACTS",
       }),
+    ],
+  },
+  firmwareLiteralPools: {
+    providers: [
+      providerBinding(FIRMWARE_LITERAL_POOLS_PROVIDER, [
+        "inspect_firmware_literal_pools",
+      ]),
     ],
   },
   gdbSessions: {

@@ -26,6 +26,7 @@ export const AGENT_BUDGET_OPERATIONS = [
   "inspect_erlang_beam",
   "inspect_esp_nvs",
   "inspect_evm_interface",
+  "inspect_firmware_literal_pools",
   "inspect_go_binary",
   "inspect_macho",
   "inspect_managed_artifact",

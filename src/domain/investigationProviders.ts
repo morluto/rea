@@ -271,3 +271,10 @@ export const ESP_NVS_PROVIDER = Object.freeze({
   name: "REA ESP-IDF NVS partition decoder",
   version: "1",
 } as const);
+
+/** Provider identity for portable ARM and Xtensa firmware literal-pool MMIO disassembly. */
+export const FIRMWARE_LITERAL_POOLS_PROVIDER = Object.freeze({
+  id: "rea-firmware-literal-pools",
+  name: "REA firmware literal-pool MMIO disassembler",
+  version: "1",
+} as const);
