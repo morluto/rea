@@ -1,4 +1,4 @@
-import canonicalize from "canonicalize";
+import { canonicalJsonSerializer } from "./canonicalDigest.js";
 import { z } from "zod";
 
 import {
@@ -47,12 +47,12 @@ import {
   ownedJsonObjectSchema,
   type JsonValue,
 } from "./jsonValue.js";
-import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 import { canonicalJsonDigestSteps } from "./canonicalJsonDigestSteps.js";
 import { freezeJsonSnapshot } from "./immutableJson.js";
 import {
-  relationshipCoverageSchema,
-  type RelationshipCoverage,
+  evidenceRelationshipCoverageSchema,
+  type EvidenceRelationshipCoverage,
 } from "./relationshipCoverage.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import {
@@ -156,7 +156,7 @@ const createEntrySchema = (
       raw_result: valueSchema.nullable(),
       provider: committedProviderSchema,
       limitations: z.array(z.string()),
-      relationship_coverage: relationshipCoverageSchema.nullable(),
+      relationship_coverage: evidenceRelationshipCoverageSchema.nullable(),
       locations: z.array(evidenceLocationSchema),
       subject: evidenceSubjectSchema,
     }),
@@ -395,7 +395,10 @@ interface SnapshotExecution {
   };
   readonly analysisProfile?: AnalysisProfileCommitment;
   readonly limitations: readonly string[];
-  readonly relationshipCoverage?: RelationshipCoverage | null | undefined;
+  readonly relationshipCoverage?:
+    | EvidenceRelationshipCoverage
+    | null
+    | undefined;
   readonly locations: readonly EvidenceLocation[];
   readonly subject: Evidence["subject"];
 }
@@ -426,12 +429,9 @@ const snapshotExecutionProjection = (
     subject: execution.subject,
   });
 
-const canonicalJsonValidated = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined)
-    throw new TypeError("RFC 8785 canonicalization rejected snapshot data");
-  return encoded;
-};
+const canonicalJsonValidated = canonicalJsonSerializer(
+  "RFC 8785 canonicalization rejected snapshot data",
+);
 
 const canonicalJson = (value: unknown): string =>
   canonicalJsonValidated(jsonValueSchema.parse(value));

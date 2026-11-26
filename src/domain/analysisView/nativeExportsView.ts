@@ -1,3 +1,4 @@
+import { analysisViewPageFields } from "./analysisViewPageFields.js";
 import { z } from "zod";
 import {
   nativeExportsSchema,
@@ -5,14 +6,14 @@ import {
   elfNativeExportsSchema as elf,
   type NativeExports,
 } from "../native/nativeExports.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   assertOwnedView,
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { namePrefixesSchema, startsWithAny } from "./namePrefixFilter.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
@@ -30,11 +31,7 @@ const peRow = pe.shape.exports.element;
 const elfRow = elf.shape.exports.element;
 const issue = pe.shape.issues.element;
 const sourceIndex = { source_index: z.int().nonnegative() };
-const page = {
-  kind: z.literal("native-exports"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
-};
+const page = analysisViewPageFields("native-exports");
 
 /** Exact names preserve all versions/aliases; indices are scoped to the complete parent. */
 export const nativeExportsViewRequestSchema = z.discriminatedUnion(
@@ -143,14 +140,8 @@ export const projectNativeExportsView = (
   parent: AnalysisViewParent,
   view: AdmittedView,
 ) => {
-  const invalid = (message: string) =>
-    err(
-      analysisViewInputError([
-        { path: ["view"], reason: "invalid_value", message },
-      ]),
-    );
   if (view.kind !== "summary" && view.kind !== "native-exports")
-    return invalid(
+    return invalidAnalysisView(
       "Native export Evidence supports summary and native-exports views.",
     );
   assertOwnedView<
@@ -227,7 +218,7 @@ export const projectNativeExportsView = (
     view.fields === undefined ? allowed : [...new Set(view.fields)];
   const allowedFields: readonly string[] = allowed;
   if (fields.some((field) => !allowedFields.includes(field)))
-    return invalid(
+    return invalidAnalysisView(
       `Selected export fields do not belong to ${report.format}; available fields: ${allowed.join(", ")}.`,
     );
   // A projected decoded name still carries its exact bytes and encoding qualification.

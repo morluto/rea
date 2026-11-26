@@ -61,6 +61,7 @@ import {
   semanticResourceLimitUnknown,
   semanticResourceLimitReason,
 } from "./javascriptSemanticResourceLimits.js";
+import { semanticConsumerMemo } from "./javascriptSemanticConsumer.js";
 
 // Function identity is outside the public constant lattice. Retain its
 // non-undefined proof with the immutable value rather than interpreting an
@@ -118,10 +119,8 @@ interface EvaluationMemo {
 
 // Indexing owns stable binding identities; effects invalidate values, not this
 // identity-only layout. No query result or dependency closure is retained here.
-const dependencyProofsByState = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  SemanticDependencyProofs
->();
+const dependencyProofsByState =
+  semanticConsumerMemo<SemanticDependencyProofs>();
 
 const createEvaluationMemo = (
   state: JavaScriptSemanticAnalysisState,
@@ -172,25 +171,17 @@ interface CallerIndependentBindingValue extends MemoizedEvaluation<JavaScriptSem
   readonly expressionDepth: number;
 }
 
-const callerIndependentBindingValuesByState = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  Map<string, CallerIndependentBindingValue>
->();
+const callerIndependentBindingValuesByState =
+  semanticConsumerMemo<Map<string, CallerIndependentBindingValue>>();
 
-const primitiveBindingValuesByState = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  Map<string, JavaScriptSemanticValue>
->();
+const primitiveBindingValuesByState =
+  semanticConsumerMemo<Map<string, JavaScriptSemanticValue>>();
 
-const primitiveExpressionValuesByState = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  WeakMap<t.Node, JavaScriptSemanticValue>
->();
+const primitiveExpressionValuesByState =
+  semanticConsumerMemo<WeakMap<t.Node, JavaScriptSemanticValue>>();
 
-const capturedBindingValuesByState = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  CapturedBindingValues
->();
+const capturedBindingValuesByState =
+  semanticConsumerMemo<CapturedBindingValues>();
 
 /** Discard every state-owned value derived before the effects boundary changed. */
 export const clearSemanticValueCaches = (
@@ -1278,7 +1269,7 @@ const provenanceForExpression = (
 ): JavaScriptBindingProvenance => {
   if (context.expressionDepth > context.state.precision.expression_depth) {
     context.dependence.lowest = EVERY_CALLER;
-    context.state.valueResourceLimits.add("expression-depth");
+    context.state.observations.valueResourceLimits.add("expression-depth");
     return semanticUnresolvedProvenance(
       "unknown",
       semanticResourceLimitReason("expression-depth", context.state.precision),
@@ -1291,7 +1282,7 @@ const provenanceForExpression = (
       context.state.precision.expression_depth
     ) {
       context.dependence.lowest = EVERY_CALLER;
-      context.state.valueResourceLimits.add("expression-depth");
+      context.state.observations.valueResourceLimits.add("expression-depth");
       return semanticUnresolvedProvenance(
         "unknown",
         semanticResourceLimitReason(

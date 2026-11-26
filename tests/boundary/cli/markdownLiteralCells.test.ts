@@ -14,20 +14,15 @@ import { renderCliDocument } from "../../../src/cli/cliOutput.js";
 import { safetensorsFixture } from "../../fixtures/model/model.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { renderedText } from "../../support/cli/renderedText.js";
 
 afterAll(() => disposeMdItInstance());
 
 const renderedCells = (html: string): string[] => {
-  const text = (node: DefaultTreeAdapterTypes.Node): string =>
-    node.nodeName === "#text" && "value" in node
-      ? node.value
-      : "childNodes" in node
-        ? node.childNodes.map(text).join("")
-        : "";
   const cells: string[] = [];
   const visit = (node: DefaultTreeAdapterTypes.Node): void => {
     if ("tagName" in node && (node.tagName === "th" || node.tagName === "td"))
-      cells.push(text(node));
+      cells.push(renderedText(node));
     else if ("childNodes" in node) node.childNodes.forEach(visit);
   };
   visit(parseFragment(html));
@@ -35,12 +30,6 @@ const renderedCells = (html: string): string[] => {
 };
 
 const tableColumnByHeader = (html: string, header: string): string[] => {
-  const text = (node: DefaultTreeAdapterTypes.Node): string =>
-    node.nodeName === "#text" && "value" in node
-      ? node.value
-      : "childNodes" in node
-        ? node.childNodes.map(text).join("")
-        : "";
   const descendants = (
     node: DefaultTreeAdapterTypes.Node,
     tagName: string,
@@ -60,7 +49,7 @@ const tableColumnByHeader = (html: string, header: string): string[] => {
         (node): node is DefaultTreeAdapterTypes.Element =>
           "tagName" in node && (node.tagName === "th" || node.tagName === "td"),
       )
-      .map(text);
+      .map(renderedText);
 
   for (const table of descendants(parseFragment(html), "table")) {
     const rows = descendants(table, "tr");
@@ -291,12 +280,6 @@ cliTest(
     });
     const renderer = await createMarkdownRenderer(root, { linkify: false });
     const html = renderer.render(markdown.stdout);
-    const text = (node: DefaultTreeAdapterTypes.Node): string =>
-      node.nodeName === "#text" && "value" in node
-        ? node.value
-        : "childNodes" in node
-          ? node.childNodes.map(text).join("")
-          : "";
     const children = parseFragment(html).childNodes;
     for (const [key, value] of Object.entries(result).filter(
       ([, value]) => typeof value === "string",
@@ -305,14 +288,17 @@ cliTest(
         (node) =>
           "tagName" in node &&
           node.tagName === "h2" &&
-          text(node).replaceAll("\u200b", "").trim().endsWith(`.${key}`),
+          renderedText(node)
+            .replaceAll("\u200b", "")
+            .trim()
+            .endsWith(`.${key}`),
       );
       expect(index, key).toBeGreaterThanOrEqual(0);
       const body = children.slice(index + 1).find((node) => "tagName" in node);
       expect(body && "tagName" in body ? body.tagName : undefined, key).toBe(
         "p",
       );
-      expect(body ? text(body) : undefined, key).toBe(value);
+      expect(body ? renderedText(body) : undefined, key).toBe(value);
     }
     expect(html).not.toMatch(/<(?:details|ol|li)(?:\s|>)/u);
     expect(renderedCells(html)).toContain(
@@ -416,13 +402,7 @@ cliTest(
       renderCliDocument(result, "md", false),
     ]) {
       const html = renderer.render(document);
-      const text = (node: DefaultTreeAdapterTypes.Node): string =>
-        node.nodeName === "#text" && "value" in node
-          ? node.value
-          : "childNodes" in node
-            ? node.childNodes.map(text).join("")
-            : "";
-      expect(text(parseFragment(html))).toContain(literal);
+      expect(renderedText(parseFragment(html))).toContain(literal);
       expect(html).toContain("**key**<br># injected");
       expect(html).toContain("literal<br>- next<br># heading");
       expect(html).toContain("<p>1.</p>");

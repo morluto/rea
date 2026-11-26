@@ -17,8 +17,9 @@ export class SafeOutputTreeDestinationRefusal extends ArtifactReaderFailure {
 
 /**
  * Attribute a destination refusal to the caller's selected directory argument.
- * A refusal raised after tree acquisition, such as a non-empty accepted root,
- * arrives wrapped by `SafeOutputTreeCreationFailure`; every other failure,
+ * `create` rethrows a refusal of an accepted existing root directly, because
+ * the caller still owns that directory. A wrapped
+ * `SafeOutputTreeCreationFailure` is still recognized. Every other failure,
  * including acquired-tree setup failures, keeps its artifact semantics.
  */
 export const outputDirectoryAdmissionRefusal = (

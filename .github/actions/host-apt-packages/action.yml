@@ -1,11 +1,11 @@
 name: Install hosted Ubuntu packages
-description: Download fixture prerequisites within a deadline, then install from the local APT cache.
+description: Download fixture prerequisites within bounded attempts, then install from the local APT cache.
 inputs:
   packages:
     description: Space-separated package names from the already selected signed sources.
     required: true
   download-timeout-seconds:
-    description: Outer download deadline in seconds, before the five-second termination grace.
+    description: Deadline in seconds for each of three download attempts, before the five-second termination grace.
     default: "180"
   install-recommends:
     description: Leave APT's recommendation policy in effect when true.
@@ -28,10 +28,21 @@ runs:
         if [[ "$REA_APT_INSTALL_RECOMMENDS" == 'false' ]]; then
           options+=(--no-install-recommends)
         fi
-        sudo timeout --kill-after=5s "${REA_APT_DOWNLOAD_TIMEOUT}s" \
-          apt-get -o Acquire::Retries=2 --download-only install "${options[@]}" -- "${packages[@]}" || {
-          status=$?
-          echo "::error::APT package download failed (exit ${status})"
-          exit "$status"
-        }
-        sudo apt-get --no-download install "${options[@]}" -- "${packages[@]}"
+        # A slow archive connection can outlast one deadline while still
+        # progressing. APT keeps completed archives and resumes partial ones,
+        # so a later attempt reconnects and continues rather than restarting.
+        for attempt in 1 2 3; do
+          if sudo timeout --kill-after=5s "${REA_APT_DOWNLOAD_TIMEOUT}s" \
+            apt-get -o Acquire::Retries=2 --download-only install "${options[@]}" -- "${packages[@]}"; then
+            sudo apt-get --no-download install "${options[@]}" -- "${packages[@]}"
+            exit 0
+          else
+            status=$?
+            echo "APT package download attempt ${attempt} failed (exit ${status})" >&2
+          fi
+          if [ "$attempt" -lt 3 ]; then
+            sleep $((attempt * 5))
+          fi
+        done
+        echo "::error::APT package download failed after three bounded attempts (last exit ${status})"
+        exit "$status"

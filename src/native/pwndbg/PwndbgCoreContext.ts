@@ -5,7 +5,7 @@ import {
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import {
   bindArtifactFileCleanup,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   completedStableArtifact,
   readStableArtifact,
   ArtifactReaderFailure,
@@ -25,7 +25,6 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
   cancelledBy,
-  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import {
@@ -52,13 +51,7 @@ const replySchema = z.discriminatedUnion("ok", [
   z.strictObject({ ok: z.literal(true), value: recordedCrashDebuggerSchema }),
   z.strictObject({
     ok: z.literal(false),
-    reason: z.enum([
-      "unavailable",
-      "unsupported",
-      "decoder",
-      "format",
-      "output-limit",
-    ]),
+    reason: z.enum(["unavailable", "unsupported", "decoder", "output-limit"]),
     message: z.string(),
   }),
 ]);
@@ -269,17 +262,13 @@ export const inspectPwndbgCore = async ({
         cause instanceof ArtifactReaderFailure &&
         cause.reason === "cancelled"
       ) {
-        const error = cancelledBy(
-          OPERATION,
-          carriedReason(artifactFileCancellationCause(cause)),
-          {
-            capturedOutput: recordedCrashStageOutput(diagnostics, output),
-            ...(cause instanceof ArtifactReaderFailure &&
-            cause.cleanup !== undefined
-              ? { cleanup: cause.cleanup }
-              : {}),
-          },
-        );
+        const error = artifactFileCancellationError(OPERATION, cause, {
+          capturedOutput: recordedCrashStageOutput(diagnostics, output),
+          ...(cause instanceof ArtifactReaderFailure &&
+          cause.cleanup !== undefined
+            ? { cleanup: cause.cleanup }
+            : {}),
+        });
         bindArtifactFileCleanup(cause, error);
         throw pwndbgContextFinalizationFailure(error, finalization);
       }
@@ -314,13 +303,11 @@ export const inspectPwndbgCore = async ({
           ),
           finalization,
         );
-      if (reply.reason === "format" || reply.reason === "output-limit")
+      if (reply.reason === "output-limit")
         throw pwndbgContextFinalizationFailure(
           new AnalysisOutputError(OPERATION, reply.message, {
             capturedOutput: recordedCrashStageOutput(diagnostics, output),
-            ...(reply.reason === "output-limit"
-              ? pwntoolsReplyOutputLimit(producerLimits)
-              : {}),
+            ...pwntoolsReplyOutputLimit(producerLimits),
           }),
           finalization,
         );
@@ -380,11 +367,7 @@ const completedReplyFailure = (
 ): AnalysisError => {
   const cancellation =
     cause.reason === "cancelled"
-      ? cancelledBy(
-          OPERATION,
-          carriedReason(artifactFileCancellationCause(cause)),
-          { capturedOutput },
-        )
+      ? artifactFileCancellationError(OPERATION, cause, { capturedOutput })
       : undefined;
   if (cause.cleanup === undefined) {
     if (cancellation !== undefined) return cancellation;

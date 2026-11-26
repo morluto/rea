@@ -8,18 +8,18 @@ import type { Element, Node } from "@xmldom/xmldom";
 
 import {
   isXmlElement,
+  iterateXmlChildElements,
   opensLikeXml,
+  parseTrueFalseText,
   parseXmlDocumentWithinNodeLimit,
   xmlChildElements,
   xmlChildrenNamed,
   xmlFirstChildNamed,
 } from "../domain/xmlDocument.js";
 import {
-  MAVEN_GRADLE_METADATA_DEPENDENCY_ROWS,
-  MAVEN_GRADLE_METADATA_EXCLUSIONS,
-  MAVEN_GRADLE_METADATA_REPEATED_VARIANT_NAME_CHARS,
-  MAVEN_GRADLE_METADATA_VARIANTS,
-  MAVEN_GRADLE_METADATA_XML_NODES,
+  mavenGradleReportLimits,
+  type MavenGradleReportLimitField,
+  type MavenGradleReportLimits,
   requestedVersionKind,
   type MavenGradleDependency,
   type MavenGradleMetadata,
@@ -28,7 +28,6 @@ import { redactRecordedTransportUrl } from "../domain/recordedTransportUrl.js";
 import {
   MAVEN_GRADLE_METADATA_FORMAT,
   metadataReportLimit,
-  type MavenGradleReportAllowance,
 } from "./MavenGradleMetadata.errors.js";
 
 const BASE_LIMITATIONS = [
@@ -39,27 +38,17 @@ const BASE_LIMITATIONS = [
 const GRADLE_MODULE_METADATA_VERSION = "1.1";
 
 const soleNamed = (element: Element, local: string): Element | undefined => {
-  const ns = element.namespaceURI ?? "";
-  let found: Element | undefined;
-  for (
-    let child = element.firstChild;
-    child !== null;
-    child = child.nextSibling
-  ) {
-    if (
-      isXmlElement(child) &&
-      (child.namespaceURI ?? "") === ns &&
-      child.localName === local
-    ) {
-      if (found !== undefined)
-        throw malformedInput(
-          MAVEN_GRADLE_METADATA_FORMAT,
-          `Maven POM declares <${local}> more than once in one <${element.localName}>.`,
-        );
-      found = child;
-    }
-  }
-  return found;
+  const [match, duplicate] = iterateXmlChildElements(
+    element,
+    local,
+    element.namespaceURI ?? "",
+  );
+  if (duplicate !== undefined)
+    throw malformedInput(
+      MAVEN_GRADLE_METADATA_FORMAT,
+      `Maven POM declares <${local}> more than once in one <${element.localName}>.`,
+    );
+  return match;
 };
 
 const MAVEN_POM_NAMESPACE = "http://maven.apache.org/POM/4.0.0";
@@ -81,7 +70,7 @@ const isMavenProjectRoot = (root: Node | null): root is Element => {
 
 /** Refuse a report whose expanded collection would outgrow its fixed allowance. */
 const admit = (
-  allowance: MavenGradleReportAllowance,
+  allowance: MavenGradleReportLimitField,
   limit: number,
   required: number,
 ): void => {
@@ -123,14 +112,6 @@ const childText = (element: Element, local: string): string | null => {
 /** Keep Gradle JSON spelling for Evidence and exact comparisons. */
 const gradleText = (value: unknown): string | null =>
   typeof value === "string" && value.trim() !== "" ? value : null;
-
-const boolOf = (value: string | null): boolean | null => {
-  if (value === null) return null;
-  const folded = value.toLowerCase();
-  if (folded === "true") return true;
-  if (folded === "false") return false;
-  return null;
-};
 
 const emptyGradleVersion = {
   requires: null,
@@ -274,7 +255,7 @@ const parseMavenDependency = <
     gradle_version: null,
     scope,
     type,
-    optional: boolOf(optional_spelling),
+    optional: parseTrueFalseText(optional_spelling),
     optional_spelling,
     classifier,
     exclusions,
@@ -288,12 +269,13 @@ const parseMavenDependency = <
 const parsePom = (
   xml: string,
   artifact: { path: string; sha256: string; bytes: number },
+  limits: MavenGradleReportLimits,
 ): MavenGradleMetadata => {
   const limitations: string[] = [...BASE_LIMITATIONS];
   // Maven applies XML 1.0 end-of-line handling to property and coordinate text.
   const parsed = parseXmlDocumentWithinNodeLimit(xml, {
     lineEndings: "normalize",
-    maximumNodes: MAVEN_GRADLE_METADATA_XML_NODES,
+    maximumNodes: limits.xml_nodes,
   });
   if (!parsed.ok && parsed.error.kind === "node-limit")
     throw metadataReportLimit(
@@ -317,7 +299,9 @@ const parsePom = (
       MAVEN_GRADLE_METADATA_FORMAT,
       "Selected XML document is not a Maven project POM.",
     );
-  const unresolved = new MavenGradleUnresolvedCollector();
+  const unresolved = new MavenGradleUnresolvedCollector(
+    limits.unresolved_records,
+  );
   const parentElement = soleNamed(root, "parent");
   const parent =
     parentElement === undefined
@@ -381,12 +365,12 @@ const parsePom = (
         );
   admit(
     "dependency_rows",
-    MAVEN_GRADLE_METADATA_DEPENDENCY_ROWS,
+    limits.dependency_rows,
     managedElements.length + dependencyElements.length,
   );
   admit(
     "exclusions",
-    MAVEN_GRADLE_METADATA_EXCLUSIONS,
+    limits.exclusions,
     [...managedElements, ...dependencyElements].reduce(
       (count, element) => count + mavenExclusionElements(element).length,
       0,
@@ -485,6 +469,7 @@ const parseGradleDependency = <
 const parseGradle = (
   source: string,
   artifact: { path: string; sha256: string; bytes: number },
+  limits: MavenGradleReportLimits,
 ): MavenGradleMetadata => {
   const json = parseJsonWithDuplicatePolicy(source, "reject");
   if (!json.ok) {
@@ -534,7 +519,9 @@ const parseGradle = (
     limitations.push(
       `Recognized fields in this unfamiliar format version were interpreted using Gradle module metadata ${GRADLE_MODULE_METADATA_VERSION}. Version-specific declarations may be unreported.`,
     );
-  const unresolved = new MavenGradleUnresolvedCollector();
+  const unresolved = new MavenGradleUnresolvedCollector(
+    limits.unresolved_records,
+  );
   const coordinates = {
     group_id: component === null ? null : gradleText(component.group),
     artifact_id: component === null ? null : gradleText(component.module),
@@ -547,7 +534,7 @@ const parseGradle = (
   // Count each expanded collection before any report record is built.
   admit(
     "variants",
-    MAVEN_GRADLE_METADATA_VARIANTS,
+    limits.variants,
     gradleArray(variantsValue, "variants").length,
   );
   const variants = gradleObjects(variantsValue, "variants");
@@ -557,7 +544,7 @@ const parseGradle = (
   ]);
   admit(
     "dependency_rows",
-    MAVEN_GRADLE_METADATA_DEPENDENCY_ROWS,
+    limits.dependency_rows,
     rowLists.reduce((count, rows) => count + rows.length, 0),
   );
   let exclusions = 0;
@@ -565,16 +552,14 @@ const parseGradle = (
     for (const row of rows)
       if (isRecord(row))
         exclusions += gradleArray(row.excludes, "excludes").length;
-  admit("exclusions", MAVEN_GRADLE_METADATA_EXCLUSIONS, exclusions);
+  admit("exclusions", limits.exclusions, exclusions);
   const dependencies: MavenGradleDependency<"variant-dependencies">[] = [];
   const dependency_management: MavenGradleDependency<"variant-constraints">[] =
     [];
   const gradleVariants: NonNullable<MavenGradleMetadata["gradle"]>["variants"] =
     [];
   let nextIndex = 0;
-  const repeatedVariantNames = new Budget(
-    MAVEN_GRADLE_METADATA_REPEATED_VARIANT_NAME_CHARS,
-  );
+  const repeatedVariantNames = new Budget(limits.repeated_variant_name_chars);
   const variantNameIndices = new Map<string, number>();
   for (const [index, variant] of variants.entries()) {
     const declaredName = variant.name;
@@ -686,6 +671,7 @@ const parseGradle = (
 export const parseMavenGradleMetadata = (
   bytes: Uint8Array,
   artifact: { path: string; sha256: string; bytes: number },
+  limits: MavenGradleReportLimits = mavenGradleReportLimits(),
 ): MavenGradleMetadata => {
   if (bytes.length !== artifact.bytes)
     throw malformedInput(
@@ -708,9 +694,9 @@ export const parseMavenGradleMetadata = (
   }
   const trimmed = source.trimStart();
   if (trimmed.startsWith("{") || trimmed.startsWith("["))
-    return parseGradle(source, artifact);
+    return parseGradle(source, artifact, limits);
   if (opensLikeXml(trimmed) || trimmed.startsWith("<"))
-    return parsePom(source, artifact);
+    return parsePom(source, artifact, limits);
   throw unsupportedInput(
     MAVEN_GRADLE_METADATA_FORMAT,
     "Selected file is not a Maven POM or Gradle module-metadata document.",

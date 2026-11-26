@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { inspectElfNotesInputSchema } from "../../domain/native/elfNotes.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   decodeElfSectionNameRequest,
   decodeElfSectionNameTable,
@@ -169,7 +168,7 @@ it("still checks an independent PT_NOTE beside an exact compressed-note alias", 
   };
   await expect(parse(withDisjointNotes(Buffer.from([1])))).rejects.toThrow(
     expect.objectContaining({
-      reason: "format",
+      kind: "malformed",
       message: "ELF note table has trailing non-zero bytes.",
     }),
   );
@@ -204,7 +203,9 @@ it("does not allocate the declared decoded note size, but still validates stored
     expect.objectContaining({ kind: "unsupported" }),
   );
   bytes.writeBigUInt64LE(BigInt(bytes.length), noteSection + 32);
-  await expect(parse(bytes)).rejects.toThrow(ArtifactReaderFailure);
+  await expect(parse(bytes)).rejects.toThrow(
+    expect.objectContaining({ kind: "malformed" }),
+  );
 });
 
 it("does not decode an earlier raw section overlapping compressed storage", async () => {
@@ -527,7 +528,7 @@ it("diagnoses incomplete note framing at the entry limit", async () => {
     });
     await expect(parse(image, input)).rejects.toThrow(
       expect.objectContaining({
-        reason: "format",
+        kind: "malformed",
       }),
     );
   }
@@ -929,7 +930,13 @@ it("reuses one descriptor hash and GNU NUL scan across note headers", async () =
         max_file_bytes: payload.length + 160,
       }),
     ),
-  ).rejects.toThrow(/byte budget/u);
+  ).rejects.toMatchObject({
+    failure: {
+      kind: "limit",
+      format: "elf-notes",
+      limit: { name: "note_text_bytes" },
+    },
+  });
 });
 
 it("preserves interior NULs in GNU gold alongside a bounded trailing scan", async () => {
@@ -954,7 +961,7 @@ it("preserves interior NULs in GNU gold alongside a bounded trailing scan", asyn
 it("rejects a declared note table that extends past the file", async () => {
   const truncated = elfNoteTablePastEnd();
   await expect(parse(truncated)).rejects.toMatchObject({
-    reason: "format",
+    kind: "malformed",
     message: expect.stringMatching(/leaves the artifact/u),
   });
   const report = await parse(Buffer.concat([truncated, Buffer.alloc(3)]));

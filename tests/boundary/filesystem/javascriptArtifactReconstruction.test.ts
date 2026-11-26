@@ -427,7 +427,7 @@ it("rejects traversal from a production reader seam and malformed ASAR container
     reconstructJavaScriptArtifact({ input_path: malformed }),
   ).rejects.toMatchObject({
     name: "ArtifactReaderFailure",
-    reason: "format",
+    reason: "unsupported",
   });
 });
 

@@ -198,7 +198,7 @@ const enumValues = (field: z.ZodType): readonly string[] | undefined => {
     : undefined;
 };
 
-/** Resolve `--foo-bar`, `--fooBar` or a short alias to its option key. */
+/** Resolve `--foo-bar` or a short alias to its option key. */
 const optionKey = (
   token: string,
   options: z.ZodObject,
@@ -207,10 +207,7 @@ const optionKey = (
   const keys = Object.keys(options.shape);
   if (token.startsWith("--")) {
     const raw = token.slice(2);
-    return (
-      keys.find((key) => optionFlagName(key) === raw) ??
-      (keys.includes(raw) ? raw : undefined)
-    );
+    return keys.find((key) => optionFlagName(key) === raw);
   }
   if (token.length === 2 && alias !== undefined)
     return Object.entries(alias).find(([, short]) => short === token[1])?.[0];

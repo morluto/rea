@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { knownCoverage } from "../coverageAccumulator.js";
 
 import type {
   JavaScriptSemanticCallable,
@@ -242,9 +243,7 @@ const collectEvent = (
     resolution:
       eventName === null
         ? "unresolved"
-        : emitter.complete
-          ? "complete"
-          : "partial",
+        : knownCoverage(emitter.complete, "emitter binding resolution partial"),
   });
 };
 
@@ -540,17 +539,18 @@ const resolveTimers = (
       delayMilliseconds: timerDelay(candidate),
       resolution:
         candidate.kind === "schedule"
-          ? "complete"
-          : linked.length === 1 &&
-              candidate.handleRead?.complete &&
-              !incompleteOrigins &&
-              !linked[0]?.projectedResultBindings.some(
-                ({ bindingId }) => bindingId === candidate.handleBindingId,
-              )
-            ? "complete"
-            : linked.length > 0
-              ? "partial"
-              : "unresolved",
+          ? knownCoverage(true)
+          : linked.length === 0
+            ? "unresolved"
+            : knownCoverage(
+                linked.length === 1 &&
+                  Boolean(candidate.handleRead?.complete) &&
+                  !incompleteOrigins &&
+                  !linked[0]?.projectedResultBindings.some(
+                    ({ bindingId }) => bindingId === candidate.handleBindingId,
+                  ),
+                "timer handle cancellation resolution partial",
+              ),
     };
   });
 };

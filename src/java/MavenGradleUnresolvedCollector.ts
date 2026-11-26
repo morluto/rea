@@ -1,6 +1,6 @@
 import { Budget } from "../domain/budget.js";
 import {
-  MAVEN_GRADLE_METADATA_UNRESOLVED_RECORDS,
+  MAVEN_GRADLE_REPORT_LIMIT_BOUNDS,
   mavenPropertyOccurrences,
   type MavenGradleUnresolved,
 } from "../domain/java/mavenGradleMetadata.js";
@@ -13,7 +13,10 @@ export class MavenGradleUnresolvedCollector {
   readonly #records: MavenGradleUnresolved[] = [];
   readonly #budget: Budget;
 
-  constructor(maximum = MAVEN_GRADLE_METADATA_UNRESOLVED_RECORDS) {
+  constructor(
+    maximum: number = MAVEN_GRADLE_REPORT_LIMIT_BOUNDS.unresolved_records
+      .default_value,
+  ) {
     this.#budget = new Budget(maximum);
   }
 

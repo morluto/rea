@@ -4,6 +4,7 @@ import { jsonValueByteLength } from "../jsonValueByteLength.js";
 import type { JsonValue } from "../jsonValue.js";
 import { JAVASCRIPT_STATIC_FACT_BYTES } from "./javascriptAnalysisResourceControls.js";
 import {
+  stringValue,
   semanticMemberChain,
   isObjectPrototypeSetter,
   semanticStaticPropertyName,
@@ -16,7 +17,6 @@ import {
   calleeName,
   range as sourceRange,
   STATIC_ROUTE_CALL_NAMES,
-  stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
 import { traverseJavaScriptValueAstSteps } from "./javascriptSemanticTraversal.js";
 import {
