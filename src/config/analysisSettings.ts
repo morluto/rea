@@ -1,3 +1,4 @@
+import { artifactMemberCountSchema } from "./artifactMemberCount.js";
 import { err, ok } from "../domain/result.js";
 import type { z } from "zod";
 import type { AnalysisSettingId } from "../domain/analysisSettings.js";
@@ -41,6 +42,7 @@ import {
 } from "../domain/agentResultBudget.js";
 const environmentSchemas: Readonly<Record<string, z.ZodType<number, string>>> =
   {
+    REA_ARTIFACT_MEMBER_COUNT: artifactMemberCountSchema,
     REA_ASAR_MAX_HEADER_BYTES: asarMaxHeaderBytesSchema,
     REA_ASAR_MAX_LISTING_BYTES: asarMaxListingBytesSchema,
     REA_GHIDRA_VALUE_FLOW_MAX_OPERATIONS: ghidraValueFlowCountSchema,

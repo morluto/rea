@@ -2,12 +2,30 @@ import { z } from "zod";
 import { constants as bufferConstants } from "node:buffer";
 
 const bytes = z.int().min(1).max(Number.MAX_SAFE_INTEGER);
-const count = z.int().min(1).max(0x7fffffff);
+/** The largest count field any reader group accepts. */
+export const MAXIMUM_ARTIFACT_READER_COUNT = 0x7fffffff;
+
+/**
+ * `artifact.member_count`: the session default for the member, entry, module
+ * and asset count each archive reader admits from one container. An explicit
+ * `artifact_limits` field wins for that call; otherwise a runtime override,
+ * then the `REA_ARTIFACT_MEMBER_COUNT` launch seed, then this default.
+ */
+export const ARTIFACT_MEMBER_COUNT_SETTING = "artifact.member_count" as const;
+export const DEFAULT_ARTIFACT_MEMBER_COUNT = 100_000;
+
+/** Where the session member count came from. */
+export type ArtifactMemberCountSource = "default" | "setting" | "runtime";
+export interface ArtifactMemberCount {
+  readonly value: number;
+  readonly source: ArtifactMemberCountSource;
+}
+const count = z.int().min(1).max(MAXIMUM_ARTIFACT_READER_COUNT);
 const representedBytes = bytes.max(bufferConstants.MAX_STRING_LENGTH);
 
 export const DEFAULT_BUN_READER_LIMITS = {
   payload_bytes: 256 * 1024 * 1024,
-  module_count: 100_000,
+  module_count: DEFAULT_ARTIFACT_MEMBER_COUNT,
   representation_bytes: 256 * 1024 * 1024,
   metadata_read_bytes: 256 * 1024 * 1024,
   recognition_table_bytes: 1024 * 1024,
@@ -29,7 +47,7 @@ export type BunReaderLimits = z.output<typeof bunReaderLimitsSchema>;
 
 export const DEFAULT_DOTNET_BUNDLE_READER_LIMITS = {
   metadata_bytes: 16 * 1024 * 1024,
-  entry_count: 100_000,
+  entry_count: DEFAULT_ARTIFACT_MEMBER_COUNT,
   string_bytes: 64 * 1024,
   path_parts: 256,
   path_nodes: 250_000,
@@ -51,7 +69,7 @@ export type DotnetBundleReaderLimits = z.output<
 
 export const DEFAULT_NODE_SEA_READER_LIMITS = {
   blob_bytes: 256 * 1024 * 1024,
-  asset_count: 100_000,
+  asset_count: DEFAULT_ARTIFACT_MEMBER_COUNT,
   asset_name_bytes: 8 * 1024 * 1024,
   argument_count: 4096,
   argument_bytes: 1024 * 1024,
@@ -99,7 +117,7 @@ export const DEFAULT_DENO_READER_LIMITS = {
   table_records: 100_000,
   specifier_text_bytes: 8 * 1024 * 1024,
   remote_body_bytes: 256 * 1024 * 1024,
-  vfs_entries: 100_000,
+  vfs_entries: DEFAULT_ARTIFACT_MEMBER_COUNT,
   vfs_name_units: 32 * 1024 * 1024,
   retained_bytes: 256 * 1024 * 1024,
   path_parts: 256,
@@ -296,24 +314,69 @@ export const artifactReaderLimitsSchema = z.strictObject({
 });
 export type ArtifactReaderLimits = z.output<typeof artifactReaderLimitsSchema>;
 
+/**
+ * The per-call fields that `artifact.member_count` backs. Each counts the
+ * members one reader admits from a single container.
+ */
+export const ARTIFACT_MEMBER_COUNT_PARAMETERS = [
+  "artifact_limits.bun.module_count",
+  "artifact_limits.dotnet_bundle.entry_count",
+  "artifact_limits.node_sea.asset_count",
+  "artifact_limits.deno.vfs_entries",
+] as const satisfies readonly ArtifactReaderLimitParameter[];
+
 export const resolveArtifactReaderLimits = (
   selected?: ArtifactReaderLimitsInput,
+  memberCount: number = DEFAULT_ARTIFACT_MEMBER_COUNT,
 ): ArtifactReaderLimits => ({
-  bun: { ...DEFAULT_BUN_READER_LIMITS, ...selected?.bun },
+  bun: {
+    ...DEFAULT_BUN_READER_LIMITS,
+    module_count: memberCount,
+    ...selected?.bun,
+  },
   dotnet_bundle: {
     ...DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
+    entry_count: memberCount,
     ...selected?.dotnet_bundle,
   },
-  node_sea: { ...DEFAULT_NODE_SEA_READER_LIMITS, ...selected?.node_sea },
+  node_sea: {
+    ...DEFAULT_NODE_SEA_READER_LIMITS,
+    asset_count: memberCount,
+    ...selected?.node_sea,
+  },
   godot: { ...DEFAULT_GODOT_READER_LIMITS, ...selected?.godot },
   iso9660: { ...DEFAULT_ISO9660_READER_LIMITS, ...selected?.iso9660 },
-  deno: { ...DEFAULT_DENO_READER_LIMITS, ...selected?.deno },
+  deno: {
+    ...DEFAULT_DENO_READER_LIMITS,
+    vfs_entries: memberCount,
+    ...selected?.deno,
+  },
   wxapkg: { ...DEFAULT_WXAPKG_READER_LIMITS, ...selected?.wxapkg },
   tar: { ...DEFAULT_TAR_READER_LIMITS, ...selected?.tar },
   ...(selected?.expanded_bytes === undefined
     ? {}
     : { expanded_bytes: selected.expanded_bytes }),
 });
+
+/**
+ * Whether the caller's own selection set this member-count field; otherwise
+ * the session setting supplied it.
+ */
+export const artifactMemberCountSelected = (
+  selected: ArtifactReaderLimitsInput | undefined,
+  parameter: (typeof ARTIFACT_MEMBER_COUNT_PARAMETERS)[number],
+): boolean => {
+  switch (parameter) {
+    case "artifact_limits.bun.module_count":
+      return selected?.bun?.module_count !== undefined;
+    case "artifact_limits.dotnet_bundle.entry_count":
+      return selected?.dotnet_bundle?.entry_count !== undefined;
+    case "artifact_limits.node_sea.asset_count":
+      return selected?.node_sea?.asset_count !== undefined;
+    case "artifact_limits.deno.vfs_entries":
+      return selected?.deno?.vfs_entries !== undefined;
+  }
+};
 
 /** Every group's resolved schema; the source of each field's supported range. */
 const READER_LIMIT_GROUPS = {

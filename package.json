@@ -445,7 +445,7 @@
     "@vitest/coverage-v8": "5.1.1",
     "husky": "9.1.7",
     "jscpd": "5.4.3",
-    "knip": "6.45.1",
+    "knip": "6.46.1",
     "lint-staged": "17.6.1",
     "markdown-it": "15.0.3",
     "oxfmt": "0.79.0",

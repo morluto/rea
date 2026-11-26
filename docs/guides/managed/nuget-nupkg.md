@@ -96,7 +96,7 @@ are not decoded.
 
 ## Limits and failures
 
-The selected file is limited to 64 MiB by default (512 MiB maximum). Inspection
+The selected file is limited to 256 MiB by default (512 MiB maximum). Inspection
 streams the file in fixed chunks for SHA-256 verification and reads only the
 ZIP central directory and selected metadata members over the same verified file
 handle without buffering the entire archive in memory. At most
