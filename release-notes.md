@@ -541,6 +541,7 @@
 * **setup:** use Windows launch settings for registration deadlines ([#13512](https://github.com/morluto/rea/issues/13512)) ([411f8a4](https://github.com/morluto/rea/commit/411f8a434275228a5ba735211773a7587f3dbcd1))
 * **setup:** verify restored files before reporting rollback ([#13491](https://github.com/morluto/rea/issues/13491)) ([a329ce6](https://github.com/morluto/rea/commit/a329ce621af3b4d25a8205c0d014aa17b706f746))
 * **setup:** verify the effective OpenCode project launcher ([#13538](https://github.com/morluto/rea/issues/13538)) ([d185754](https://github.com/morluto/rea/commit/d1857543f3caecbc3db6734b7c54adb814898aa4))
+* **signals:** report an unsupported host as a capability limit ([#14127](https://github.com/morluto/rea/issues/14127)) ([a35bfb9](https://github.com/morluto/rea/commit/a35bfb909813199dd86ecb9cc5c27d499254ff39))
 * **snapshot:** replay every one-shot Ghidra read and say when a live result cannot replay ([#14249](https://github.com/morluto/rea/issues/14249)) ([95190b1](https://github.com/morluto/rea/commit/95190b1ebcfe1007e81f431ede5f74ac97c16c6c))
 * **source-maps:** cancel requests waiting for decoder admission ([#13844](https://github.com/morluto/rea/issues/13844)) ([72eede7](https://github.com/morluto/rea/commit/72eede75d1211e5ffa78de861ce9c5dae29ec387))
 * **sqlite:** accept the documented sqlite_master spelling of the schema catalog ([#10277](https://github.com/morluto/rea/issues/10277)) ([3ab1db2](https://github.com/morluto/rea/commit/3ab1db27e3b52f225d037ad667373bf945d41bc5))
