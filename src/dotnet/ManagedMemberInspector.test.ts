@@ -2990,7 +2990,7 @@ describe("managed member type selection", () => {
     expect(result.coverage).toEqual(everything.coverage);
     expect(result.limitations).toContainEqual(
       expect.stringMatching(
-        /types.*fields.*methods.*call edges.*field accesses.*user strings.*only the selected declaring types.*targets outside.*names.*not described/iu,
+        /types.*fields.*methods.*member references.*call edges.*field accesses.*user strings.*only the selected declaring types.*targets outside.*names.*not described/iu,
       ),
     );
   });
@@ -3027,7 +3027,7 @@ describe("managed member type selection", () => {
     },
   );
 
-  it("omits members of unselected types without dropping member references", () => {
+  it("narrows member references to the rows selected bodies use", () => {
     const result = inspectManagedMembersBytes(bytes, target, {
       typeNames: ["Missing.Type"],
     });
@@ -3041,7 +3041,23 @@ describe("managed member type selection", () => {
     expect(result.methods).toEqual([]);
     expect(result.call_edges).toEqual([]);
     expect(result.field_accesses).toEqual([]);
-    expect(result.member_refs).toEqual(everything.member_refs);
+    expect(everything.member_refs.length).toBeGreaterThan(0);
+    expect(result.member_refs).toEqual([]);
+  });
+
+  it("keeps the member references a selected body calls", () => {
+    const result = inspectManagedMembersBytes(bytes, target, {
+      typeNames: ["Fixture.Program"],
+    });
+    const called = new Set(
+      result.call_edges.map(({ target_token }) => target_token),
+    );
+    expect(result.member_refs.length).toBeGreaterThan(0);
+    for (const ref of result.member_refs)
+      expect(called.has(ref.token)).toBe(true);
+    expect(result.member_refs).toEqual(
+      everything.member_refs.filter(({ token }) => called.has(token)),
+    );
   });
 });
 

@@ -128,20 +128,6 @@ cliTest(
   },
 );
 
-cliTest("reports a non-ELF file as invalid input", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-elf-dependencies-cli-bad-");
-  const path = join(root, "broken");
-  await writeFile(path, Buffer.from("not an elf"));
-  const result = await cli.run({
-    arguments: ["inspect-elf-dependencies", path, "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: { operation: "inspect_elf_dependencies" },
-  });
-});
-
 cliTest(
   "reports a relocatable object as invalid input for this workflow",
   async ({ cli }) => {

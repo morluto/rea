@@ -1,4 +1,7 @@
-import type { AnalysisPartialObservation } from "../domain/analysisErrorBase.js";
+import {
+  appendCleanupObservation,
+  type AnalysisPartialObservation,
+} from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { JavaScriptSourceAnalysisPort } from "../domain/javascript/javascriptSourceAnalysis.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
@@ -100,6 +103,19 @@ export class ArtifactResourceRetryFailure extends ArtifactReaderFailure {
   }
 }
 
+/** One lifecycle owner for retained resources and abortable inspection work. */
+export interface RetainedResourceScope {
+  retain(
+    owner: {
+      close(): Promise<void>;
+      /** Complete labels authored by this exact owner; the display label is only a fallback. */
+      readonly cleanupResources?: readonly string[] | undefined;
+    },
+    resource: string,
+  ): void;
+  run<T>(operation: () => Promise<T>): Promise<T>;
+}
+
 /** Caller-owned scope that retains failed artifact cleanup for a later close. */
 export class ArtifactResourceScope {
   readonly #pending = new Set<ArtifactResourceOwner>();
@@ -132,6 +148,19 @@ export class ArtifactResourceScope {
         }),
       ),
     ];
+  }
+
+  /** Expose admission and retained close authority to an inspection or verifier. */
+  forCloseOwners(): RetainedResourceScope {
+    return {
+      run: (operation) => this.run(operation),
+      retain: (owner, resource) =>
+        this.retain({
+          kind: "lease",
+          resource,
+          lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
+        }),
+    };
   }
 
   /** Admit a resource operation while the scope remains open. */
@@ -314,18 +343,15 @@ export class ArtifactResourceScope {
       hookFailure,
       "close hook",
     );
-    const resources = [...new Set([...retained.resources, ...hook.resources])];
+    const observation = appendCleanupObservation(retained, hook);
     const options = {
       cause: new AggregateError(
         [cleanup, hookFailure],
         "Retained cleanup and a close hook both failed",
       ),
-      cleanup: {
-        reason: `${retained.reason}; ${hook.reason}`,
-        resources,
-      },
+      cleanup: observation,
     };
-    const message = `Artifact cleanup remains incomplete: ${resources.join(", ")}`;
+    const message = `Artifact cleanup remains incomplete: ${observation.resources.join(", ")}`;
     if (cleanup instanceof ArtifactResourceRetryFailure)
       return new ArtifactResourceRetryFailure(
         cleanup.failedOwners.map((owner) => ({

@@ -1,3 +1,4 @@
+import { appendToMapList } from "../domain/appendToMapList.js";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import {
   readTsharkJsonPackets,
@@ -16,12 +17,14 @@ import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { parseDnsMessageRaw } from "./PcapDnsWire.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { isRecord as object } from "../kernel/isRecord.js";
+import {
+  PCAP_PRODUCER_LIMITS,
+  PCAP_TSHARK_DECODED_BYTES,
+  pcapProducerLimit,
+} from "../domain/pcap/pcapAnalysis.js";
 
 const OPERATION = "inspect_pcap_capture";
-/** Bounds JSON decoding plus its expanded object graph before JSON.parse. */
-export const TSHARK_JSON_MAX_BYTES = 8 * 1024 * 1024;
 const MAX_RETAINED_BYTES = 16 * 1024 * 1024;
-const MAX_DECODED_BYTES = 128 * 1024 * 1024;
 const MAX_REQUEST_TARGET_CACHE_ENTRIES = 1024;
 const MAX_REQUEST_TARGET_CACHE_KEY_LENGTH = 512;
 
@@ -205,12 +208,12 @@ const decodeTsharkPackets = async (
       throw new AnalysisResourceConstraintError(
         OPERATION,
         "memory",
-        "tshark JSON exceeds the bounded decoding budget",
+        "tshark JSON exceeds the producer_limits.output_bytes budget",
         { max_json_bytes: failure.maxBytes },
-        fixedAllowanceOptions("The tshark JSON decoding allowance", "capture", {
-          limit: failure.maxBytes,
-          unit: "bytes",
-        }),
+        {
+          retryable: false,
+          limit: pcapProducerLimit("output_bytes", failure.maxBytes),
+        },
       );
     case "json-expansion":
       throw new AnalysisResourceConstraintError(
@@ -289,16 +292,6 @@ const joinDnsPackets = (
   return joinedIndices;
 };
 
-const appendFieldValue = (
-  values: Map<string, string[]>,
-  key: string,
-  item: string,
-): void => {
-  const list = values.get(key);
-  if (list === undefined) values.set(key, [item]);
-  else list.push(item);
-};
-
 const appendFieldArray = (
   values: Map<string, string[]>,
   key: string,
@@ -333,7 +326,7 @@ const collectTargetFieldsFromNodes = (
       if (key.endsWith("_raw")) continue;
       const child = value[key];
       if (typeof child === "string") {
-        if (TARGET_FIELD_KEYS.has(key)) appendFieldValue(values, key, child);
+        if (TARGET_FIELD_KEYS.has(key)) appendToMapList(values, key, child);
       } else if (Array.isArray(child)) {
         if (isStringArray(child)) {
           if (TARGET_FIELD_KEYS.has(key)) appendFieldArray(values, key, child);
@@ -917,6 +910,8 @@ const DNS_FAMILY_PROTOCOL_PATTERN = /(?:^|:)(?:dns|mdns|llmnr)(?::|$)/iu;
 export interface PreparedTsharkBaseOutput {
   readonly packets: TsharkPacketLayers[];
   readonly baseDecodedBytes: number;
+  /** The selected `producer_limits.output_bytes`, which also bounds the DNS pass. */
+  readonly outputBytes: number;
   readonly state: NonDnsAccumulator;
   readonly nonDnsRetainedBytes: number;
   readonly dnsFrameIndices: readonly number[];
@@ -928,10 +923,11 @@ export interface PreparedTsharkBaseOutput {
 export const prepareTsharkBaseOutput = async (
   stdout: string,
   signal?: AbortSignal,
+  outputBytes: number = PCAP_PRODUCER_LIMITS.output_bytes,
 ): Promise<PreparedTsharkBaseOutput> => {
   const budget: TsharkJsonBudget = {
-    maxBytes: TSHARK_JSON_MAX_BYTES,
-    maxDecodedBytes: MAX_DECODED_BYTES,
+    maxBytes: outputBytes,
+    maxDecodedBytes: PCAP_TSHARK_DECODED_BYTES,
     decodedBytes: 0,
   };
   const packets = await decodeTsharkPackets(stdout, budget, signal, "");
@@ -967,6 +963,7 @@ export const prepareTsharkBaseOutput = async (
   return {
     packets,
     baseDecodedBytes: budget.decodedBytes,
+    outputBytes,
     state,
     nonDnsRetainedBytes,
     dnsFrameIndices,
@@ -982,8 +979,8 @@ export const finalizeTsharkWithDns = async (
   signal?: AbortSignal,
 ): Promise<TsharkFields> => {
   const budget: TsharkJsonBudget = {
-    maxBytes: TSHARK_JSON_MAX_BYTES,
-    maxDecodedBytes: MAX_DECODED_BYTES,
+    maxBytes: prepared.outputBytes,
+    maxDecodedBytes: PCAP_TSHARK_DECODED_BYTES,
     decodedBytes: prepared.baseDecodedBytes,
   };
   const dnsPackets = await decodeTsharkPackets(
@@ -1030,43 +1027,4 @@ export const finalizeTsharkWithDns = async (
   }
   assertOutputReadActive(signal);
   return projectTsharkFields(prepared.state, dnsState);
-};
-
-/** Decode each bounded acquisition, then join DNS PDUs by unique capture frame. */
-export const parseTsharkJsonOutput = async (
-  stdout: string,
-  signal?: AbortSignal,
-  dnsStdout?: string,
-): Promise<TsharkFields> => {
-  const budget: TsharkJsonBudget = {
-    maxBytes: TSHARK_JSON_MAX_BYTES,
-    maxDecodedBytes: MAX_DECODED_BYTES,
-    decodedBytes: 0,
-  };
-  const packets = await decodeTsharkPackets(stdout, budget, signal, "");
-  validateSelectedLayerFields(packets);
-  if (dnsStdout !== undefined) {
-    const dnsPackets = await decodeTsharkPackets(
-      dnsStdout,
-      budget,
-      signal,
-      "DNS ",
-    );
-    joinDnsPackets(packets, dnsPackets);
-  }
-  const state = createNonDnsAccumulator(packets.length);
-  const dnsState = createDnsAccumulator();
-  const hasDnsAcquisition = dnsStdout !== undefined;
-  for (let index = 0; index < packets.length; index += 1) {
-    if (index % 256 === 0) {
-      await yieldToEventLoop();
-      assertOutputReadActive(signal);
-    }
-    const layers = packets[index]!;
-    const hasDns = processPacketNonDns(state, index, layers);
-    if (hasDns || hasDnsAcquisition)
-      processPacketDns(state, dnsState, index, layers, hasDnsAcquisition);
-  }
-  assertOutputReadActive(signal);
-  return projectTsharkFields(state, dnsState);
 };

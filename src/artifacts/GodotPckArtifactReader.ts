@@ -14,6 +14,8 @@ import type { FileHandle } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
 import {
   ArtifactReaderFailure,
+  malformedArtifact,
+  truncatedArtifact,
   assertArtifactReadActive,
   artifactReaderLimitFailure,
 } from "../resources/index.js";
@@ -237,7 +239,14 @@ const readGodotPckHeader = async (
   if (location === undefined)
     throw formatFailure("no standalone header or executable trailer");
   const { start, end, embedded } = location;
-  const fixed = await readArtifactFileBytes(handle, start, 40, end, signal);
+  const fixed = await readArtifactFileBytes(
+    "godot-pck",
+    handle,
+    start,
+    40,
+    end,
+    signal,
+  );
   const fixedReader = new BinaryReader(fixed, true, "godot-pck");
   const header = readGodotPckHeaderFacts(fixed);
   const version = header.formatVersion;
@@ -271,7 +280,7 @@ const readGodotPckHeader = async (
   if (!godotPckDataStartsAfterHeader(start, version, directory))
     throw formatFailure("directory overlaps the pack header");
   const count = new BinaryReader(
-    await readArtifactFileBytes(handle, directory, 4, end, signal),
+    await readArtifactFileBytes("godot-pck", handle, directory, 4, end, signal),
     true,
     "godot-pck",
   ).u32(0);
@@ -310,11 +319,10 @@ const pckMemberPath = (raw: Buffer): string => {
   try {
     path = UTF8.decode(raw.subarray(0, end));
   } catch (cause: unknown) {
-    throw new ArtifactReaderFailure(
-      "format",
-      "Godot PCK path is not valid UTF-8",
-      { cause },
-    );
+    throw malformedArtifact("godot-pck", "Godot PCK path is not valid UTF-8", {
+      cause,
+      field: "path",
+    });
   }
   if (path.length === 0 || path === "res://" || path.includes("\0"))
     throw formatFailure("empty or NUL-containing member path");
@@ -344,7 +352,15 @@ class PckCursor {
   }
   requireBytes(length: number): void {
     if (length > this.end - this.position)
-      throw formatFailure("directory entry exceeds the pack");
+      throw truncatedArtifact(
+        "godot-pck",
+        "Godot PCK is malformed: directory entry exceeds the pack",
+        {
+          offset: this.position,
+          availableBytes: Math.max(0, this.end - this.position),
+          requiredBytes: length,
+        },
+      );
   }
   async bytes(length: number): Promise<Buffer> {
     if (length > DIRECTORY_CHUNK_BYTES) {
@@ -352,6 +368,7 @@ class PckCursor {
       // A large valid virtual path is bounded by retained representation, not
       // the host filesystem's PATH_MAX. Only this path receives a larger read.
       const value = await readArtifactFileBytes(
+        "godot-pck",
         this.handle,
         this.position,
         length,
@@ -374,6 +391,7 @@ class PckCursor {
     const offset = this.position - this.#bufferStart;
     if (offset < 0 || offset + length > this.#buffer.length) {
       this.#buffer = await readArtifactFileBytes(
+        "godot-pck",
         this.handle,
         this.position,
         Math.min(DIRECTORY_CHUNK_BYTES, this.end - this.position),
@@ -408,7 +426,7 @@ const toSafeOffset = (
   return base + Number(offset);
 };
 const formatFailure = (detail: string): ArtifactReaderFailure =>
-  new ArtifactReaderFailure("format", `Godot PCK is malformed: ${detail}`);
+  malformedArtifact("godot-pck", `Godot PCK is malformed: ${detail}`);
 const metadataLimit = (
   limits: GodotReaderLimits,
   required: number,

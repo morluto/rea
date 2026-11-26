@@ -1,13 +1,13 @@
 import { z } from "zod";
 import { erlangBeamSchema, type ErlangBeam } from "../erlang/beam.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ownedView,
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewMessages,
@@ -164,14 +164,8 @@ export const projectErlangBeamView = (
     SummaryAnalysisView | z.output<typeof erlangBeamViewRequestSchema>
   >(admitted, "summary", "beam");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "BEAM Evidence supports summary and beam views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "BEAM Evidence supports summary and beam views.",
     );
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;

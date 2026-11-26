@@ -1,6 +1,5 @@
-import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import type { Readable } from "node:stream";
+import { readFile } from "node:fs/promises";
+import { buffer } from "node:stream/consumers";
 
 import { expect, it } from "vitest";
 
@@ -14,21 +13,11 @@ import {
   osVersionRaw,
   truncateImage,
 } from "../../tests/fixtures/androidBootImage.js";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import { elf } from "../domain/binaryTarget.fixture.js";
 
-const collect = async (stream: Readable): Promise<Buffer> => {
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) chunks.push(chunk as Buffer);
-  return Buffer.concat(chunks);
-};
-
-const writeCarrier = async (name: string, bytes: Buffer): Promise<string> => {
-  const directory = await createTestTempDirectory("rea-android-boot-");
-  const path = join(directory, name);
-  await writeFile(path, bytes);
-  return path;
-};
+const writeCarrier = (name: string, bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-android-boot-", name, bytes);
 
 const openAll = async (path: string): Promise<ReadonlyMap<string, Buffer>> => {
   const reader = new AndroidBootImageArtifactReader(path);
@@ -37,7 +26,7 @@ const openAll = async (path: string): Promise<ReadonlyMap<string, Buffer>> => {
     const entries = [];
     for await (const entry of reader.entries()) entries.push(entry);
     for (const entry of entries)
-      out.set(entry.path, await collect(await reader.open(entry)));
+      out.set(entry.path, await buffer(await reader.open(entry)));
     return out;
   } finally {
     await reader.close();
@@ -401,3 +390,159 @@ it.each([1, 32])(
     );
   },
 );
+
+it("retains boot components with unknown coverage when optional trailing AVB footer parsing fails", async () => {
+  const kernel = Buffer.from("kernel-bytes");
+  const image = buildBootImage({
+    version: 0,
+    kernel,
+    ramdisk: Buffer.alloc(0),
+  });
+  // Append an AVB footer whose original_image_size is smaller than dataEnd (non-overlap parse failure).
+  const badFooter = Buffer.alloc(64);
+  badFooter.write("AVBf", 0, "ascii");
+  badFooter.writeUInt32BE(1, 4);
+  badFooter.writeBigUInt64BE(16n, 12);
+  const path = await writeCarrier(
+    "bad-avb-footer.img",
+    Buffer.concat([image, badFooter]),
+  );
+  const snapshot = await scanCanonicalArtifactInventory(path);
+  expect(snapshot.manifest.root_format).toBe("android-boot-image");
+  expect(snapshot.coverage.status).toBe("unknown");
+  expect(snapshot.limitations.join(" ")).toContain(
+    "Optional trailing AVB footer could not be parsed",
+  );
+  expect(
+    snapshot.occurrences.find((row) => row.logical_path === ".")
+      ?.format_metadata,
+  ).toMatchObject({
+    kind: "android-boot-image",
+    avb_footer_present: false,
+    component_count: 1,
+  });
+  expect((await openAll(path)).get("kernel")?.equals(kernel)).toBe(true);
+});
+
+it("retains header metadata and other components when vendor ramdisk table parsing fails without overlap", async () => {
+  const dtb = Buffer.from("vendor-dtb");
+  const bootconfig = Buffer.from("androidboot.hardware=test\n");
+  const vendor = buildVendorBootImage({
+    version: 4,
+    ramdisks: [{ name: "platform", type: 1, bytes: Buffer.from("platform") }],
+    dtb,
+    bootconfig,
+  });
+  const corrupted = Buffer.from(vendor);
+  // Header page (4096) + ramdisk page (4096) + dtb page (4096) = table at 12288.
+  // Corrupt entry 0's size so it overruns vendorRamdiskSize (non-overlap failure).
+  corrupted.writeUInt32LE(0x10_0000, 12288);
+  const path = await writeCarrier("bad-vendor-table.img", corrupted);
+  const snapshot = await scanCanonicalArtifactInventory(path);
+  expect(snapshot.manifest.root_format).toBe("android-boot-image");
+  expect(snapshot.coverage.status).toBe("unknown");
+  expect(snapshot.limitations.join(" ")).toContain(
+    "Vendor ramdisk table could not be parsed",
+  );
+  expect(
+    snapshot.occurrences
+      .filter((row) => row.logical_path !== ".")
+      .map((row) => row.logical_path)
+      .sort(),
+  ).toEqual(["bootconfig", "dtb"]);
+  const stored = await openAll(path);
+  expect(stored.get("dtb")?.equals(dtb)).toBe(true);
+  expect(stored.get("bootconfig")?.equals(bootconfig)).toBe(true);
+});
+
+it.each([
+  {
+    name: "a vendor ramdisk section without table entries",
+    image: () =>
+      buildVendorBootImage({
+        version: 4,
+        section: Buffer.from("uncovered-section"),
+      }),
+    children: [],
+    limitation: "outside the ramdisk table were not exposed",
+  },
+  {
+    name: "table entries that cover part of the vendor ramdisk section",
+    image: () =>
+      buildVendorBootImage({
+        version: 4,
+        ramdisks: [{ name: "one", bytes: Buffer.from("ramdisk-one") }],
+        section: Buffer.from("ramdisk-onetail-bytes"),
+      }),
+    children: ["vendor_ramdisk/one"],
+    limitation: "outside the ramdisk table were not exposed",
+  },
+  {
+    name: "bytes between the sequential layout and recovery_dtbo",
+    image: () =>
+      buildBootImage({
+        version: 1,
+        kernel: Buffer.from("kernel"),
+        ramdisk: Buffer.alloc(0),
+        recoveryDtbo: Buffer.from("dtbo"),
+        recoveryDtboOffset: 4096 * 5,
+      }),
+    children: ["kernel", "recovery_dtbo"],
+    limitation: "Bytes between the sequential layout and recovery_dtbo",
+  },
+])(
+  "keeps coverage unknown for $name",
+  async ({ image, children, limitation }) => {
+    const path = await writeCarrier("unexposed.img", image());
+    const snapshot = await scanCanonicalArtifactInventory(path);
+    expect(snapshot.coverage.status).toBe("unknown");
+    expect(snapshot.limitations.join(" ")).toContain(limitation);
+    expect(
+      snapshot.occurrences
+        .filter((row) => row.logical_path !== ".")
+        .map((row) => row.logical_path)
+        .sort(),
+    ).toEqual(children);
+  },
+);
+
+it("refuses an AVB footer whose vbmeta overlaps the boot header even when original_image_size is also invalid", async () => {
+  const image = buildBootImage({
+    version: 0,
+    kernel: Buffer.from("kernel-bytes"),
+    ramdisk: Buffer.alloc(0),
+  });
+  const badFooter = Buffer.alloc(64);
+  badFooter.write("AVBf", 0, "ascii");
+  badFooter.writeUInt32BE(1, 4);
+  // Both faults present: original_image_size < dataEnd AND vbmeta overlaps header at offset 0.
+  badFooter.writeBigUInt64BE(16n, 12);
+  badFooter.writeBigUInt64BE(0n, 20);
+  badFooter.writeBigUInt64BE(16n, 28);
+  const path = await writeCarrier(
+    "bad-avb-footer-overlap.img",
+    Buffer.concat([image, badFooter]),
+  );
+  await expect(scanCanonicalArtifactInventory(path)).rejects.toThrow(
+    /AVB vbmeta overlaps the boot image header/u,
+  );
+});
+
+it("refuses a vendor ramdisk table with overlapping entries even when an entry also overruns the section", async () => {
+  const vendor = buildVendorBootImage({
+    version: 4,
+    ramdisks: [
+      { name: "one", type: 1, bytes: Buffer.from("aaa") },
+      { name: "two", type: 1, bytes: Buffer.from("bbbbb") },
+    ],
+  });
+  const corrupted = Buffer.from(vendor);
+  const entrySize = corrupted.readUInt32LE(2120);
+  // Entry 0 overruns vendorRamdiskSize AND entry 1 overlaps entry 0 at offset 0.
+  corrupted.writeUInt32LE(0x10_0000, 8192);
+  corrupted.writeUInt32LE(0, 8192 + entrySize + 4);
+  const path = await writeCarrier("vendor-overrun-and-overlap.img", corrupted);
+  await expect(scanCanonicalArtifactInventory(path)).rejects.toThrow(
+    /overlaps entry/u,
+  );
+});

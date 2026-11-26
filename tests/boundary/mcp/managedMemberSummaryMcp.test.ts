@@ -76,7 +76,10 @@ const verifyProjection = async ({
   const viewOutputSchema: Record<string, unknown> = canonicalOutputSchema(
     viewDefinition.name,
   );
-  for (const collection of COLLECTIONS) {
+  // The type selection leaves no exported type rows to project.
+  for (const collection of COLLECTIONS.filter(
+    (name) => name !== "exported_types",
+  )) {
     const projectedReply = await client.callTool(
       {
         name: "inspect_analysis_view",
@@ -271,7 +274,9 @@ it("summarizes selected members and pages every original collection after the fi
         : report[collection];
     if (rows == null) throw new Error(`${collection} was not examined`);
     // Empty collections would compare equal even if a row schema dropped facts.
-    expect(rows.length, collection).toBeGreaterThan(0);
+    // The selection narrows exported types to selected names; none is exported.
+    if (collection !== "exported_types")
+      expect(rows.length, collection).toBeGreaterThan(0);
     expect(view.summary.reported_counts[collection]).toBe(rows.length);
     const paged: unknown[] = [];
     for (let offset: number | null = 0; offset !== null;) {

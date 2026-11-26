@@ -14,6 +14,7 @@ import {
   type StandardToolRegistration,
 } from "./EvidenceMcpServerCore.js";
 import { currentMcpRequestSignal } from "./ErrorEvidenceTransport.js";
+import type { McpToolsListPageBudget } from "../config/mcpToolsListPageBudget.js";
 import { promptArgumentsSchema } from "./promptArguments.js";
 import { SERVER_START_FAILED } from "./serverStartFailure.js";
 import { isToolFamilyAdvertised } from "../contracts/toolFamilyIds.js";
@@ -67,11 +68,19 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
       // Recorded tools carry their presented schemas. The selected presentation
       // still applies to transport discovery, which is not recorded.
       readonly compactPresentation?: CompactInputSchemaPresentation | undefined;
+      /** Selected tools/list page budget; absent keeps the default page. */
+      readonly toolsListPageBudget?: McpToolsListPageBudget | undefined;
       readonly identity?: RecordedMcpCatalog["identity"] | undefined;
       readonly toolFamilies?: ReadonlySet<string> | undefined;
+      /** Serve build-recorded compact output advertisements instead of omitting outputs. */
+      readonly outputProfile?: "off" | "compact" | undefined;
     } = {},
   ) {
     const families = options.toolFamilies;
+    const recordedCompactTools =
+      options.outputProfile === "compact"
+        ? new Set(Object.keys(catalog.compactOutputSchemas ?? {}))
+        : undefined;
     const advertisesTool = (tool: string) =>
       isToolFamilyAdvertised(families, catalog.toolFamilies[tool]);
     super(
@@ -92,16 +101,21 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
       delivery,
       options.compactPresentation,
       // The recorded output shape supplies the SDK's result codec.
-      // Listings omit it and the canonical runtime validates results.
-      "off",
+      // Listings omit it (or serve its recorded compact form) and the
+      // canonical runtime validates results.
+      options.outputProfile === "compact" ? "recorded" : "off",
       // Scoped digests belong to the canonical runtime, which attaches them
       // before serving any tool or prompt that can report an identity.
       families === undefined
         ? (options.identity ?? catalog.identity)
         : undefined,
       families,
+      recordedCompactTools,
+      options.toolsListPageBudget,
     );
     this.canAdvertise = advertisesTool;
+    // The runtime attaches the session ledger; until then nothing is retained.
+    this.serveRetainedEvidence(undefined);
     for (const name of catalog.evidenceReferenceAlternatives)
       this.registerEvidenceReferenceAlternative(name);
     for (const tool of catalog.tools) {
@@ -121,16 +135,20 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
           },
         },
       };
+      const advertisedOutputSchema =
+        options.outputProfile === "compact"
+          ? (catalog.compactOutputSchemas?.[name] ?? outputSchema)
+          : outputSchema;
       const output: StandardSchemaWithJSON | undefined =
-        outputSchema === undefined
+        advertisedOutputSchema === undefined
           ? undefined
           : {
               "~standard": {
                 version: 1,
                 vendor: "rea",
                 jsonSchema: {
-                  input: () => outputSchema,
-                  output: () => outputSchema,
+                  input: () => advertisedOutputSchema,
+                  output: () => advertisedOutputSchema,
                 },
                 validate: async (value) => {
                   await this.ensureRuntime();
@@ -157,7 +175,11 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
         }) as InputCallback,
       );
       if (!advertisesTool(name)) registered.disable();
-      binding = { registered, input: inputSchema, output: outputSchema };
+      binding = {
+        registered,
+        input: inputSchema,
+        output: advertisedOutputSchema,
+      };
       this.tools.set(name, binding);
     }
     const completion = {

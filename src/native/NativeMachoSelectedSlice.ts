@@ -4,7 +4,11 @@ import {
   validateFatSlice,
   type FatSliceDeclaration,
 } from "../domain/apple/machoContainer.js";
-import { decodeLimit, malformedInput } from "../domain/parseFailure.js";
+import {
+  decodeLimit,
+  malformedInput,
+  truncatedInput,
+} from "../domain/parseFailure.js";
 import type { MachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import type { NativeMachoSource } from "./NativeMachoSource.js";
 import {
@@ -50,10 +54,11 @@ export const resolveSelectedMachoSlice = async (
     );
   const entrySize = prefix.wide ? 32 : 20;
   const tableEnd = 8 + rows * entrySize;
-  if (!Number.isSafeInteger(tableEnd) || tableEnd > source.bytes)
-    throw malformedInput(
+  if (tableEnd > source.bytes)
+    throw truncatedInput(
       "macho",
-      "Selected Mach-O universal table is truncated",
+      `Selected Mach-O universal table is truncated: the file has ${source.bytes} bytes and the table needs ${tableEnd}`,
+      { extent: { availableBytes: source.bytes, requiredBytes: tableEnd } },
     );
   const matches: FatSliceDeclaration[] = [];
   const declarations: FatSliceDeclaration[] = [];

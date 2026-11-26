@@ -2,6 +2,7 @@ import { MFT_INLINE_HEADER_LIMIT } from "./ntfsMft.js";
 import { ntfsMftMetadataSchema } from "../formatMetadata/androidAndSystemMetadata.js";
 import { USN_INLINE_EXTENT_LIMIT } from "./ntfsUsnJournal.js";
 import { z } from "zod";
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
@@ -13,8 +14,28 @@ export const NTFS_JOURNAL_PROVIDER = {
   version: "1",
 } as const;
 
-/** Working-set allowance for each in-memory acquisition, independent of page size. */
-export const NTFS_JOURNAL_FILE_BYTES = 64 * 1024 * 1024;
+/**
+ * `max_file_bytes`: the per-call working-set allowance for each in-memory
+ * acquisition (MFT and journal), independent of page size. Acquisitions are
+ * held in memory, so host heap is an independent constraint.
+ */
+export const NTFS_JOURNAL_FILE_BYTES = {
+  minimum: 1,
+  maximum: Number.MAX_SAFE_INTEGER,
+  default_value: 64 * 1024 * 1024,
+} as const;
+
+/** The per-call control that stopped an acquisition read. */
+export const ntfsJournalFileBytesLimit = (
+  effectiveValue: number,
+): AnalysisParameterLimit => ({
+  control_kind: "parameter",
+  parameter: "max_file_bytes",
+  effective_value: effectiveValue,
+  unit: "bytes",
+  ...NTFS_JOURNAL_FILE_BYTES,
+  applies_at: "next_call",
+});
 const offset = z.int().nonnegative();
 export const ntfsJournalRowLimitSchema = z
   .int()
@@ -27,6 +48,14 @@ export const ntfsJournalRowLimitSchema = z
 export const ntfsJournalInputSchema = z.strictObject({
   mft_path: absoluteLocalPathStringSchema,
   journal_path: absoluteLocalPathStringSchema,
+  max_file_bytes: z
+    .int()
+    .min(NTFS_JOURNAL_FILE_BYTES.minimum)
+    .max(NTFS_JOURNAL_FILE_BYTES.maximum)
+    .optional()
+    .describe(
+      `Bytes read into memory from each of the MFT and journal acquisitions (default ${String(NTFS_JOURNAL_FILE_BYTES.default_value)}); the whole acquisition is read, independent of page size.`,
+    ),
   start_file_offset: offset
     .default(0)
     .describe(

@@ -5,6 +5,7 @@ import { Budget } from "../domain/budget.js";
 import { jsonParts } from "../domain/jsonSerialization.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import {
+  DEFAULT_SQLITE_INPUT_BYTES,
   SQLITE_ROW_LIMIT_DEFAULT,
   sqliteSchemaHasObjectDeclaration,
   sqliteSchemaScope,
@@ -238,7 +239,7 @@ const decodeSchemaText = (
       : FATAL_UTF16_DECODERS[encoding].decode(value);
   } catch (cause: unknown) {
     throw new SqliteInspectionFailure(
-      "format",
+      "malformed",
       `SQLite schema ${label} contains malformed ${encoding} text: ${errorMessage(cause)}`,
     );
   }
@@ -266,13 +267,13 @@ const cell = (
   const hex = value.slice(1).toLowerCase();
   if (!/^(?:[0-9a-f]{2})*$/.test(hex))
     throw new SqliteInspectionFailure(
-      "format",
+      "malformed",
       "SQLite returned an invalid encoded cell.",
     );
   if (value[0] === "b") return { type: "blob", hex };
   if (value[0] !== "t")
     throw new SqliteInspectionFailure(
-      "format",
+      "malformed",
       "SQLite returned an unknown encoded cell type.",
     );
   return {
@@ -576,7 +577,7 @@ const readSchema = (
         } catch (cause: unknown) {
           if (
             !(cause instanceof SqliteInspectionFailure) ||
-            cause.reason !== "format"
+            cause.reason !== "malformed"
           )
             throw cause;
           // The catalog walk reports malformed names at the schema row. Never
@@ -682,7 +683,7 @@ const readSchema = (
       const listed = metadata.get(sqliteNameBytesKey(parsed.name));
       if (listed === undefined || listed.type === "view")
         throw new SqliteInspectionFailure(
-          "format",
+          "malformed",
           `SQLite schema/table inventory mismatch: ${value.name}`,
         );
       const possibleShadowParent =
@@ -1116,7 +1117,7 @@ export const inspectSqliteDatabaseSnapshot = (
   // SQLite's Unix VFS reports a one-byte file as size zero, so the engine would
   // open it as an empty database and never reach its own header check.
   if (statSync(snapshotPath).size === 1)
-    throw new SqliteInspectionFailure("format", "file is not a database");
+    throw new SqliteInspectionFailure("malformed", "file is not a database");
   const db = new DatabaseSync(snapshotPath, {
     readOnly: true,
     allowExtension: false,
@@ -1139,7 +1140,7 @@ export const inspectSqliteDatabaseSnapshot = (
     if (!supported.success)
       throw new SqliteInspectionFailure(
         "unavailable",
-        "SQLite inspection requires the native DatabaseSync.limits API to bound untrusted values and SQL. Use Node.js 24.15 or newer in the supported 24.x line, or a compatible Node.js 26+ runtime.",
+        "SQLite inspection requires the native DatabaseSync.limits API to bound untrusted values and SQL. Run REA on a supported Node.js 24.x or 26.x runtime.",
       );
     db.exec(
       "PRAGMA trusted_schema=OFF; PRAGMA query_only=ON; PRAGMA mmap_size=0; PRAGMA cell_size_check=ON; BEGIN;",
@@ -1156,7 +1157,7 @@ export const inspectSqliteDatabaseSnapshot = (
       "SQLite reports current schema and selected committed rows from its valid database/WAL state. Deleted records, uncommitted or invalid WAL tails, encrypted databases, forensic recovery, and full integrity verification are outside this profile.",
       "Stored CREATE statements preserve index/view/trigger definitions. Views, triggers, and virtual/shadow table rows are not executed; virtual-table column expansion is unsupported.",
       "Selected rows are a bounded sample; rows.order names the order they were read in, and rows.next_row_offset is null either when the window reaches the end or when rows.order is unspecified, so a truncated sample with no stated order cannot be paged further. Text display may replace invalid sequences; bytes_hex and encoding preserve SQLite's text byte representation, not original on-disk page offsets.",
-      `Resource boundaries: at most two concurrent inspections per provider; combined input 256 MiB per inspection, complete worker JSON 16 MiB, native SQLite value/record and SQL statement lengths 16 MiB, owned-worker JavaScript heap ${String(SQLITE_DATABASE_LIMITS.workerHeapMiB)} MiB. The parent applies a separate supervised worker deadline, reported in worker_timeout_ms. These are distinct from total resident memory; an overall native SQLite heap cap is not claimed. Failures return no partial success.`,
+      `Resource boundaries: at most two concurrent inspections per provider; combined input ${String(input.producer_limits?.input_bytes ?? DEFAULT_SQLITE_INPUT_BYTES)} bytes per inspection (producer_limits.input_bytes), complete worker JSON 16 MiB, native SQLite value/record and SQL statement lengths 16 MiB, owned-worker JavaScript heap ${String(SQLITE_DATABASE_LIMITS.workerHeapMiB)} MiB. The parent applies a separate supervised worker deadline, reported in worker_timeout_ms. These are distinct from total resident memory; an overall native SQLite heap cap is not claimed. Failures return no partial success.`,
     ];
     const budget = new OutputBudget();
     const { schema, selectedTable } = readSchema(db, input, {
