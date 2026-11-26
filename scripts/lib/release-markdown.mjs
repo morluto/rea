@@ -57,11 +57,12 @@ export function githubReleaseReference(href) {
   const url = githubUrl(href);
   if (url === undefined) return undefined;
   const match =
-    /^\/([\w.-]+\/[\w.-]+)\/(pull|issues|commit)\/([^/]+)(\/?)$/u.exec(
+    /^\/([\w.-]+\/[\w.-]+)\/(pull|issues|commit)\/([^/]+)(\/files)?(\/?)$/u.exec(
       url.pathname,
     );
   if (match === null) return undefined;
-  const [, repository, route, target, trailingSlash] = match;
+  const [, repository, route, target, filesPath, trailingSlash] = match;
+  if (filesPath !== undefined && route !== "pull") return undefined;
   if (route === "commit")
     return url.search === "" &&
       url.hash === "" &&

@@ -853,6 +853,7 @@ it("verifies complete bullets without counting inline code as credit or referenc
 it.each([
   "https://github.com/fixture/rea/pull/101?tab=conversation#issuecomment-123",
   "https://github.com/fixture/rea/pull/101/#discussion_r123",
+  "https://github.com/fixture/rea/pull/101/files#r123",
 ])("requires PR credit for a GitHub deep link (%s)", async (href) => {
   const f = await fixture();
   const changelog = join(f.directory, "CHANGELOG.md");
