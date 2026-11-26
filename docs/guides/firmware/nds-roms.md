@@ -46,6 +46,10 @@ was read in full and every range fits in the file. Otherwise coverage is
 
 - A logo or header CRC mismatch is named. A header CRC mismatch means the
   fields that locate every region may be corrupt.
+- A header text field (`title`, `game_code` or `maker_code`) with unprintable
+  bytes or non-zero bytes after its first NUL is reported with its raw hex
+  bytes; the decoded text replaces unprintable bytes with `?` and drops bytes
+  after the first NUL.
 - A CPU binary or FAT entry that ends past the file is not listed. A range is
   never clipped.
 - A table that starts past the file is not read. A table that runs past the

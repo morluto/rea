@@ -98,6 +98,42 @@ describe("DS cartridge header", () => {
     ]);
   });
 
+  it("reports a non-printable byte in a header text field with its raw bytes", () => {
+    const rom = ndsRomFixture();
+    rom[3] = 0x01;
+    rom[0x11] = 0x80;
+    const { metadata, limitations } = parseNdsHeader(rom);
+    expect(metadata.title).toBe("REA?TEST");
+    expect(metadata.maker_code).toBe("0?");
+    expect(limitations).toContainEqual(
+      "DS header title at 0x0000 is not clean NUL-padded ASCII; raw bytes 52 45 41 01 54 45 53 54 00 00 00 00; the shown text replaces unprintable bytes with ? and drops bytes after the first NUL.",
+    );
+    expect(limitations).toContainEqual(
+      "DS header maker_code at 0x0010 is not clean NUL-padded ASCII; raw bytes 30 80; the shown text replaces unprintable bytes with ? and drops bytes after the first NUL.",
+    );
+    expect(limitations).toContainEqual(
+      expect.stringContaining("DS header CRC does not match"),
+    );
+  });
+
+  it("reports non-zero bytes after a NUL in a header text field with its raw bytes", () => {
+    const rom = ndsRomFixture();
+    rom[10] = 0x58;
+    rom[0x0e] = 0x00;
+    const { metadata, limitations } = parseNdsHeader(rom);
+    expect(metadata.title).toBe("REA TEST");
+    expect(metadata.game_code).toBe("RE");
+    expect(limitations).toContainEqual(
+      "DS header title at 0x0000 is not clean NUL-padded ASCII; raw bytes 52 45 41 20 54 45 53 54 00 00 58 00; the shown text replaces unprintable bytes with ? and drops bytes after the first NUL.",
+    );
+    expect(limitations).toContainEqual(
+      "DS header game_code at 0x000c is not clean NUL-padded ASCII; raw bytes 52 45 00 45; the shown text replaces unprintable bytes with ? and drops bytes after the first NUL.",
+    );
+    expect(limitations).toContainEqual(
+      expect.stringContaining("DS header CRC does not match"),
+    );
+  });
+
   it("refuses an unknown unit code as malformed", () => {
     const rom = ndsRomFixture();
     rom[0x12] = 1;

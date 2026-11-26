@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { byteToHex } from "../kernel/byteToHex.js";
 import { readUint16At, readUint32At } from "./binaryContainer.js";
 import { malformedInput, truncatedInput } from "./parseFailure.js";
 import { isPortablePathSegment } from "./portablePathSegment.js";
@@ -92,7 +93,12 @@ const crcSchema = z.strictObject({ declared: uint16, computed: uint16 });
 /** Cartridge header facts as declared, with both CRC results. */
 export const ndsMetadataSchema = z.strictObject({
   kind: z.literal("nds"),
-  /** Up to 12 printable ASCII characters; NUL padding removed. */
+  /**
+   * Up to 12 printable ASCII characters before the first NUL; unprintable
+   * bytes appear as `?` and any lossy decoding (unprintable bytes before the
+   * first NUL or non-zero bytes after it) is reported in limitations with the
+   * raw bytes.
+   */
   title: z.string(),
   game_code: z.string(),
   maker_code: z.string(),
@@ -166,11 +172,40 @@ export interface NdsHeader {
   readonly limitations: readonly string[];
 }
 
-const ascii = (bytes: Uint8Array): string => {
+const hex16 = (value: number): string =>
+  `0x${value.toString(16).padStart(4, "0")}`;
+
+const ascii = (
+  header: Uint8Array,
+  field: string,
+  at: number,
+  length: number,
+  limitations: string[],
+): string => {
+  const bytes = header.subarray(at, at + length);
   let text = "";
+  let seenNul = false;
+  let lossy = false;
   for (const byte of bytes) {
-    if (byte === 0) break;
-    text += byte >= 0x20 && byte <= 0x7e ? String.fromCharCode(byte) : "?";
+    if (seenNul) {
+      if (byte !== 0) lossy = true;
+      continue;
+    }
+    if (byte === 0) {
+      seenNul = true;
+      continue;
+    }
+    if (byte >= 0x20 && byte <= 0x7e) text += String.fromCharCode(byte);
+    else {
+      text += "?";
+      lossy = true;
+    }
+  }
+  if (lossy) {
+    const raw = Array.from(bytes, byteToHex).join(" ");
+    limitations.push(
+      `DS header ${field} at ${hex16(at)} is not clean NUL-padded ASCII; raw bytes ${raw}; the shown text replaces unprintable bytes with ? and drops bytes after the first NUL.`,
+    );
   }
   return text;
 };
@@ -186,7 +221,7 @@ const tableAt = (header: Uint8Array, at: number) => ({
   length: readUint32At(header, at + 4, true),
 });
 
-/** Interpret the cartridge header. CRC disagreements are limitations. */
+/** Interpret the cartridge header. CRC disagreements and lossy text fields are limitations. */
 export const parseNdsHeader = (header: Uint8Array): NdsHeader => {
   if (header.length < NDS_RECOGNITION_BYTES)
     throw truncatedInput(
@@ -219,22 +254,24 @@ export const parseNdsHeader = (header: Uint8Array): NdsHeader => {
     declared: readUint16At(header, HEADER_CRC_OFFSET, true),
     computed: ndsCrc16(header.subarray(0, HEADER_CRC_OFFSET)),
   };
-  const hex = (value: number) => `0x${value.toString(16).padStart(4, "0")}`;
   const limitations: string[] = [];
   if (logoCrc.declared !== logoCrc.computed)
     limitations.push(
-      `DS logo CRC does not match: declared ${hex(logoCrc.declared)}, computed ${hex(logoCrc.computed)}.`,
+      `DS logo CRC does not match: declared ${hex16(logoCrc.declared)}, computed ${hex16(logoCrc.computed)}.`,
     );
   if (headerCrc.declared !== headerCrc.computed)
     limitations.push(
-      `DS header CRC does not match: declared ${hex(headerCrc.declared)}, computed ${hex(headerCrc.computed)}; header fields may be corrupt.`,
+      `DS header CRC does not match: declared ${hex16(headerCrc.declared)}, computed ${hex16(headerCrc.computed)}; header fields may be corrupt.`,
     );
+  const title = ascii(header, "title", 0x00, 12, limitations);
+  const gameCode = ascii(header, "game_code", 0x0c, 4, limitations);
+  const makerCode = ascii(header, "maker_code", 0x10, 2, limitations);
   return {
     metadata: {
       kind: "nds",
-      title: ascii(header.subarray(0, 12)),
-      game_code: ascii(header.subarray(0x0c, 0x10)),
-      maker_code: ascii(header.subarray(0x10, 0x12)),
+      title,
+      game_code: gameCode,
+      maker_code: makerCode,
       unit_code: unitCode,
       unit,
       device_capacity: header[0x14]!,
