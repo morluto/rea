@@ -1219,6 +1219,50 @@ describe("assetutil producer_limits.output_bytes", () => {
         source: "runtime",
         maximum: MAX_ASSETUTIL_OUTPUT_BYTES,
       });
+
+      const aboveCap = MAX_ASSETUTIL_OUTPUT_BYTES + 1;
+      const overflowing = standInAssetUtil(
+        `process.stdout.write("x".repeat(${String(aboveCap)}));`,
+      );
+      const clampedRuntime = await runWithAnalysisOperationSnapshot(
+        { revision: 1, overrides: { "producer.output_bytes": aboveCap } },
+        () =>
+          analyzeAppleAssetCatalogs({
+            environment: {},
+            bundlePath: bundle,
+            targetSha256: "a".repeat(64),
+            analyzeInterfaceBuilder: noInterfaceBuilder,
+            assetUtilLauncher: overflowing,
+            platform: "darwin",
+          }),
+      ).catch((cause: unknown) => cause);
+      if (!(clampedRuntime instanceof AnalysisError))
+        throw new Error("Expected the above-cap runtime value to be reduced");
+      expect(projectAnalysisError(clampedRuntime).details?.limit).toMatchObject(
+        {
+          setting: "producer.output_bytes",
+          effective_value: MAX_ASSETUTIL_OUTPUT_BYTES,
+          source: "runtime",
+          maximum: MAX_ASSETUTIL_OUTPUT_BYTES,
+        },
+      );
+
+      const clampedSeed = await analyzeAppleAssetCatalogs({
+        environment: { REA_PRODUCER_OUTPUT_BYTES: String(aboveCap) },
+        bundlePath: bundle,
+        targetSha256: "a".repeat(64),
+        analyzeInterfaceBuilder: noInterfaceBuilder,
+        assetUtilLauncher: overflowing,
+        platform: "darwin",
+      }).catch((cause: unknown) => cause);
+      if (!(clampedSeed instanceof AnalysisError))
+        throw new Error("Expected the above-cap launch seed to be reduced");
+      expect(projectAnalysisError(clampedSeed).details?.limit).toMatchObject({
+        setting: "producer.output_bytes",
+        effective_value: MAX_ASSETUTIL_OUTPUT_BYTES,
+        source: "setting",
+        maximum: MAX_ASSETUTIL_OUTPUT_BYTES,
+      });
     },
   );
 });
