@@ -109,7 +109,8 @@ their per-call budgets (`max_file_bytes`, entry, depth and decoded-byte budgets,
 `max_decoded_bytes` (default 32 MiB, at most 256 MiB).
 `inspect_elf_dependencies`, `inspect_elf_unwind_ranges`, `inspect_apple_ips`,
 `inspect_dwarf_units`, `inspect_native_initializers`, `inspect_pe_resources`
-(`max_entries`) and `inspect_erlang_beam` report it too. The per-page symbol-name text allowance of `inspect_elf_unwind_ranges` is a fixed allowance (`details.refusal.kind` `fixed_ceiling`); its `narrowing` asks for a smaller page `limit` or paging with `offset`. `inspect_erlang_beam` accepts `max_table_rows` (export,
+(`max_entries`), `inspect_v8_code_cache` (`max_file_bytes`, `max_strings`) and
+`inspect_erlang_beam` report it too. The per-page symbol-name text allowance of `inspect_elf_unwind_ranges` is a fixed allowance (`details.refusal.kind` `fixed_ceiling`); its `narrowing` asks for a smaller page `limit` or paging with `offset`. `inspect_erlang_beam` accepts `max_table_rows` (export,
 import and lambda rows combined; default 65,536, at most 1,048,576).
 
 ### Native table structure budget
