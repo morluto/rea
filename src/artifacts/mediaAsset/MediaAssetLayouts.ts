@@ -9,6 +9,7 @@ import { BinaryReader } from "../../domain/binaryContainer.js";
 import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 import {
   malformedInput,
+  truncatedInput,
   type ParseFailureError,
 } from "../../domain/parseFailure.js";
 import {
@@ -42,12 +43,26 @@ export type MediaAssetRead = (
 
 type Extent = "consistent" | "truncated" | "trailing-bytes";
 
-/** Pages walked for Ogg Opus identification and comment inventory. */
+/**
+ * Pages walked for Ogg Opus identification and comment inventory. OpusHead and
+ * OpusTags normally fit in a few pages; the allowance stops a page-flood from
+ * unbounded comment continuations. Fixed: RFC 3533 does not bound page count.
+ */
 const MAX_OGG_PAGES = 64;
-/** RIFF chunks walked before the remainder is left unexamined. */
+/**
+ * RIFF chunks walked before the remainder is left unexamined. WAVE files carry
+ * a small chunk table; the allowance stops zero-length chunk floods. Fixed:
+ * the RIFF form does not bound chunk count.
+ */
 const MAX_RIFF_CHUNKS = 256;
-/** OpusTags vendor string bytes read for the vendor fact. */
+/**
+ * OpusTags vendor string bytes retained for the vendor fact. Longer vendors
+ * stay in the comment page regions; only the root fact is capped. Fixed:
+ * metadata field representation bound, not a decode of comment payloads.
+ */
 const MAX_VENDOR_BYTES = 4096;
+/** Fmt fields read for WAVEFORMATEX plus XMA2WAVEFORMATEX extras. */
+const XMA2_FMT_READ_BYTES = 52;
 
 /**
  * Keep regions that fit the file and name each one that does not. A region
@@ -97,6 +112,13 @@ const malformed = (
 
 const OPUS_TAGS = Buffer.from("OpusTags", "latin1");
 
+/** True when the page's last lacing value is 255, so its packet continues. */
+const pagePacketContinues = (bytes: Buffer, at: number): boolean => {
+  const segments = bytes[at + 26]!;
+  if (segments === 0) return false;
+  return bytes[at + 27 + segments - 1] === 255;
+};
+
 /** One Ogg page's capture header and segment payload extent. */
 const readOggPage = (
   bytes: Buffer,
@@ -111,6 +133,7 @@ const readOggPage = (
       readonly offset: number;
       readonly length: number;
       readonly packet: Buffer;
+      readonly continues: boolean;
     }
   | "truncated"
   | "malformed" => {
@@ -139,6 +162,7 @@ const readOggPage = (
     offset: at,
     length,
     packet: bytes.subarray(at + headerLength, at + length),
+    continues: pagePacketContinues(bytes, at),
   };
 };
 
@@ -165,9 +189,12 @@ export const oggOpusLayout = async (
     offset: number;
     length: number;
     packet: Buffer;
+    continues: boolean;
   }[] = [];
   let at = 0;
   let truncated = false;
+  let tagsPacketOpen = false;
+  let tagsComplete = false;
   while (at < fileSize && pages.length < MAX_OGG_PAGES) {
     await ensure(Math.min(at + 27 + 255 + 65_536, fileSize));
     const page = readOggPage(buffer, at, fileSize);
@@ -183,23 +210,52 @@ export const oggOpusLayout = async (
       truncated = true;
       break;
     }
+
+    if (pages.length === 0) {
+      pages.push(page);
+      at = page.offset + page.length;
+      continue;
+    }
+
+    if (!tagsPacketOpen) {
+      if (
+        page.packet.length >= OPUS_TAGS.length &&
+        page.packet.subarray(0, 8).equals(OPUS_TAGS)
+      ) {
+        tagsPacketOpen = true;
+        pages.push(page);
+        at = page.offset + page.length;
+        if (!page.continues) {
+          tagsComplete = true;
+          break;
+        }
+        continue;
+      }
+      // No comment header; this page begins the opaque audio stream.
+      break;
+    }
+
     pages.push(page);
     at = page.offset + page.length;
-    if (pages.length >= 2) {
-      const head = pages[0]!.packet;
-      const tags = pages[1]!.packet;
-      if (
-        head.length >= OPUS_HEAD.length &&
-        head.subarray(0, 8).equals(OPUS_HEAD) &&
-        tags.length >= OPUS_TAGS.length &&
-        tags.subarray(0, 8).equals(OPUS_TAGS)
-      )
-        break;
+    if (!page.continues) {
+      tagsComplete = true;
+      break;
     }
   }
 
-  if (pages.length === 0)
+  if (pages.length === 0) {
+    if (truncated)
+      throw truncatedInput("ogg-opus", "the first Ogg page is cut off", {
+        offset: 0,
+        extent: { availableBytes: fileSize, requiredBytes: fileSize + 1 },
+      });
     throw malformed("ogg-opus", "no Ogg pages were read", 0);
+  }
+
+  if (tagsPacketOpen && !tagsComplete && !truncated && at >= fileSize)
+    // A finished page still declared packet continuation past EOF.
+    truncated = true;
+
   const headPacket = pages[0]!.packet;
   if (headPacket.length < 19 || !headPacket.subarray(0, 8).equals(OPUS_HEAD))
     throw malformed(
@@ -222,29 +278,34 @@ export const oggOpusLayout = async (
   const mappingFamily = head.u8(18);
 
   let vendor: string | null = null;
-  const tagsPage = pages[1];
-  if (
-    tagsPage !== undefined &&
-    tagsPage.packet.length >= 12 &&
-    tagsPage.packet.subarray(0, 8).equals(OPUS_TAGS)
-  ) {
-    const vendorLength = new BinaryReader(
-      tagsPage.packet,
-      true,
-      "ogg-opus",
-    ).u32(8);
+  const limitations: string[] = [];
+  const tagsPages = tagsPacketOpen ? pages.slice(1) : [];
+  if (tagsPages.length > 0) {
+    const tagsPacket = Buffer.concat(tagsPages.map((page) => page.packet));
     if (
-      Number.isSafeInteger(vendorLength) &&
-      vendorLength <= MAX_VENDOR_BYTES &&
-      tagsPage.packet.length >= 12 + vendorLength
+      tagsPacket.length >= 12 &&
+      tagsPacket.subarray(0, 8).equals(OPUS_TAGS)
     ) {
-      try {
-        vendor = decodeStrictUtf8(
-          tagsPage.packet.subarray(12, 12 + vendorLength),
-          "preserve",
-        );
-      } catch {
-        vendor = null;
+      const vendorLength = new BinaryReader(tagsPacket, true, "ogg-opus").u32(
+        8,
+      );
+      if (
+        Number.isSafeInteger(vendorLength) &&
+        tagsPacket.length >= 12 + vendorLength
+      ) {
+        if (vendorLength > MAX_VENDOR_BYTES)
+          limitations.push(
+            `The OpusTags vendor string declares ${String(vendorLength)} bytes; only the first ${String(MAX_VENDOR_BYTES)} would be retained as a root fact, so the vendor fact was omitted. Raise is unavailable: this is a fixed metadata-field bound.`,
+          );
+        else
+          try {
+            vendor = decodeStrictUtf8(
+              tagsPacket.subarray(12, 12 + vendorLength),
+              "preserve",
+            );
+          } catch {
+            vendor = null;
+          }
       }
     }
   }
@@ -260,18 +321,25 @@ export const oggOpusLayout = async (
     offset: page.offset,
     length: page.length,
   }));
-  const limitations: string[] = [];
   let regionsExamined: "complete" | "unknown" = "complete";
   let declaredEnd = pageEnd;
+  const hitPageCeiling = pages.length >= MAX_OGG_PAGES && pageEnd < fileSize;
   if (truncated) {
     limitations.push(
       `An Ogg page at offset ${String(at)} is cut off; later pages were not listed.`,
     );
     regionsExamined = "unknown";
-  } else if (pageEnd < fileSize && pages.length >= MAX_OGG_PAGES) {
+  } else if (tagsPacketOpen && !tagsComplete) {
     regionsExamined = "unknown";
     limitations.push(
-      `Only the first ${String(MAX_OGG_PAGES)} Ogg pages were examined; ${String(fileSize - pageEnd)} byte(s) remain.`,
+      hitPageCeiling
+        ? `Only the first ${String(MAX_OGG_PAGES)} Ogg pages were examined while OpusTags still continued; ${String(fileSize - pageEnd)} byte(s) remain. Raise is unavailable: this is a fixed inventory walk ceiling.`
+        : `OpusTags still continues at offset ${String(pageEnd)}; later bytes were not classified as audio.`,
+    );
+  } else if (hitPageCeiling) {
+    regionsExamined = "unknown";
+    limitations.push(
+      `Only the first ${String(MAX_OGG_PAGES)} Ogg pages were examined; ${String(fileSize - pageEnd)} byte(s) remain. Raise is unavailable: this is a fixed inventory walk ceiling.`,
     );
   } else if (pageEnd < fileSize) {
     // Bytes after the identification/comment pages are the opaque audio stream.
@@ -289,10 +357,10 @@ export const oggOpusLayout = async (
     truncated || fitted.extent === "truncated"
       ? "truncated"
       : fitted.extent === "trailing-bytes" ||
-          (pageEnd < fileSize && pages.length >= MAX_OGG_PAGES)
+          hitPageCeiling ||
+          (tagsPacketOpen && !tagsComplete)
         ? "trailing-bytes"
         : "consistent";
-
   return {
     metadata: {
       kind: "ogg-opus",
@@ -320,6 +388,7 @@ export const riffXma2Layout = async (
   read: MediaAssetRead,
 ): Promise<MediaAssetLayout<RiffXma2Metadata>> => {
   let buffer = header;
+  /** Extend only through `end`; never fill opaque chunk payloads. */
   const ensure = async (end: number): Promise<Buffer> => {
     if (buffer.length >= end || buffer.length >= fileSize) return buffer;
     const more = await read(
@@ -328,6 +397,23 @@ export const riffXma2Layout = async (
     );
     buffer = Buffer.concat([buffer, more]);
     return buffer;
+  };
+  /** Read a bounded range by position without requiring prior bytes in buffer. */
+  const readRange = async (
+    offset: number,
+    length: number,
+  ): Promise<Buffer | "truncated"> => {
+    if (length <= 0) return Buffer.alloc(0);
+    if (offset + length > fileSize) return "truncated";
+    if (offset + length <= buffer.length)
+      return buffer.subarray(offset, offset + length);
+    if (offset < buffer.length) {
+      await ensure(offset + length);
+      if (buffer.length < offset + length) return "truncated";
+      return buffer.subarray(offset, offset + length);
+    }
+    const bytes = await read(offset, length);
+    return bytes.length < length ? "truncated" : bytes;
   };
 
   await ensure(12);
@@ -340,62 +426,79 @@ export const riffXma2Layout = async (
   if (buffer.toString("latin1", 8, 12) !== "WAVE")
     throw malformed("riff-xma2", "WAVE form type is missing", 8);
 
+  const declaredEnd = 8 + riffDeclaredSize;
+  const containerEnd = Math.min(fileSize, declaredEnd);
   const chunks: { id: string; offset: number; length: number }[] = [];
   let at = 12;
   let stopped = false;
-  while (at + 8 <= fileSize && chunks.length < MAX_RIFF_CHUNKS) {
-    await ensure(at + 8);
-    if (buffer.length < at + 8) {
+  let incompleteFraming = false;
+  const limitations: string[] = [];
+  while (at + 8 <= containerEnd && chunks.length < MAX_RIFF_CHUNKS) {
+    const headerBytes = await readRange(at, 8);
+    if (headerBytes === "truncated") {
       stopped = true;
+      incompleteFraming = true;
       break;
     }
-    const id = buffer.toString("latin1", at, at + 4);
-    const size = new BinaryReader(buffer, true, "riff-xma2").u32(at + 4);
+    const id = headerBytes.toString("latin1", 0, 4);
+    const size = new BinaryReader(headerBytes, true, "riff-xma2").u32(4);
     const dataAt = at + 8;
-    if (dataAt + size > fileSize) {
-      chunks.push({ id, offset: dataAt, length: size });
+    const payloadEnd = dataAt + size;
+    const alignedEnd = payloadEnd + (size & 1);
+    if (payloadEnd > containerEnd || alignedEnd > containerEnd) {
       stopped = true;
+      incompleteFraming = true;
+      limitations.push(
+        `RIFF chunk ${id.trimEnd() || "chunk"} at offset ${String(at)} declares a payload that does not fit inside the RIFF form ending at ${String(declaredEnd)}; the chunk was not listed.`,
+      );
       break;
     }
-    await ensure(dataAt + size);
     chunks.push({ id, offset: dataAt, length: size });
-    at = dataAt + size + (size & 1);
+    at = alignedEnd;
+  }
+  if (at < containerEnd && at + 8 > containerEnd) {
+    stopped = true;
+    incompleteFraming = true;
+    limitations.push(
+      `A partial RIFF chunk header remains at offset ${String(at)} before the RIFF form end at ${String(declaredEnd)}; framing is incomplete.`,
+    );
   }
 
   const fmt = chunks.find((chunk) => chunk.id === "fmt ");
   if (fmt === undefined)
     throw malformed("riff-xma2", "WAVE fmt chunk is missing", 12);
-  await ensure(fmt.offset + Math.min(fmt.length, 52));
-  if (buffer.length < fmt.offset + 16)
+  const fmtRead = Math.min(fmt.length, XMA2_FMT_READ_BYTES);
+  const fmtBytes = await readRange(fmt.offset, fmtRead);
+  if (fmtBytes === "truncated" || fmtBytes.length < 16)
     throw malformed("riff-xma2", "WAVE fmt chunk is cut off", fmt.offset);
-  const fmtFields = new BinaryReader(buffer, true, "riff-xma2");
-  const formatTag = fmtFields.u16(fmt.offset);
+  const fmtFields = new BinaryReader(fmtBytes, true, "riff-xma2");
+  const formatTag = fmtFields.u16(0);
   if (formatTag !== WAVE_FORMAT_XMA2)
     throw malformed(
       "riff-xma2",
       `WAVE fmt tag is 0x${formatTag.toString(16)}, not 0x166`,
       fmt.offset,
     );
-  const channels = fmtFields.u16(fmt.offset + 2);
-  const samplesPerSec = fmtFields.u32(fmt.offset + 4);
-  const avgBytesPerSec = fmtFields.u32(fmt.offset + 8);
-  const blockAlign = fmtFields.u16(fmt.offset + 12);
-  const bitsPerSample = fmtFields.u16(fmt.offset + 14);
-  const extraBytes = fmt.length >= 18 ? fmtFields.u16(fmt.offset + 16) : 0;
+  const channels = fmtFields.u16(2);
+  const samplesPerSec = fmtFields.u32(4);
+  const avgBytesPerSec = fmtFields.u32(8);
+  const blockAlign = fmtFields.u16(12);
+  const bitsPerSample = fmtFields.u16(14);
+  const extraBytes = fmtRead >= 18 ? fmtFields.u16(16) : 0;
   const xma2 =
-    fmt.length >= 52 && extraBytes >= 34
+    fmtRead >= 52 && extraBytes >= 34
       ? {
-          num_streams: fmtFields.u16(fmt.offset + 18),
-          channel_mask: fmtFields.u32(fmt.offset + 20),
-          samples_encoded: fmtFields.u32(fmt.offset + 24),
-          bytes_per_block: fmtFields.u32(fmt.offset + 28),
-          play_begin: fmtFields.u32(fmt.offset + 32),
-          play_length: fmtFields.u32(fmt.offset + 36),
-          loop_begin: fmtFields.u32(fmt.offset + 40),
-          loop_length: fmtFields.u32(fmt.offset + 44),
-          loop_count: fmtFields.u8(fmt.offset + 48),
-          encoder_version: fmtFields.u8(fmt.offset + 49),
-          block_count: fmtFields.u16(fmt.offset + 50),
+          num_streams: fmtFields.u16(18),
+          channel_mask: fmtFields.u32(20),
+          samples_encoded: fmtFields.u32(24),
+          bytes_per_block: fmtFields.u32(28),
+          play_begin: fmtFields.u32(32),
+          play_length: fmtFields.u32(36),
+          loop_begin: fmtFields.u32(40),
+          loop_length: fmtFields.u32(44),
+          loop_count: fmtFields.u8(48),
+          encoder_version: fmtFields.u8(49),
+          block_count: fmtFields.u16(50),
         }
       : null;
 
@@ -406,16 +509,15 @@ export const riffXma2Layout = async (
     offset: chunk.offset,
     length: chunk.length,
   }));
-  const declaredEnd = 8 + riffDeclaredSize;
   const fitted = fitRegions("riff-xma2", regions, fileSize, declaredEnd);
-  const limitations = [...fitted.limitations];
-  let extent = fitted.extent;
+  const allLimitations = [...limitations, ...fitted.limitations];
+  const extent: Extent = incompleteFraming ? "truncated" : fitted.extent;
   let regionsExamined: "complete" | "unknown" = "complete";
-  if (stopped || chunks.length >= MAX_RIFF_CHUNKS) {
+  if (stopped || chunks.length >= MAX_RIFF_CHUNKS || incompleteFraming) {
     regionsExamined = "unknown";
     if (chunks.length >= MAX_RIFF_CHUNKS)
-      limitations.push(
-        `Only the first ${String(MAX_RIFF_CHUNKS)} RIFF chunks were examined.`,
+      allLimitations.push(
+        `Only the first ${String(MAX_RIFF_CHUNKS)} RIFF chunks were examined. Raise is unavailable: this is a fixed inventory walk ceiling.`,
       );
   }
 
@@ -439,7 +541,7 @@ export const riffXma2Layout = async (
       extent_check: extent,
     },
     regions: fitted.regions,
-    limitations,
+    limitations: allLimitations,
     regionsExamined,
   };
 };
@@ -463,11 +565,13 @@ export const bink2Layout = (
   const height = fields.u32(28);
   const fpsNumerator = fields.u32(32);
   const fpsDenominator = fields.u32(36);
-  if (!Number.isSafeInteger(frameCount) || frameCount > 1_000_000)
+  // Frame-offset table length must stay a safe byte count; that is a
+  // representation bound, not an inventory policy. Valid counts are listed.
+  if (!Number.isSafeInteger(frameCount) || frameCount < 0)
     throw malformed("bink2", "Bink 2 frame count is not a safe table size", 12);
   const tableOffset = 44;
   const tableBytes = (frameCount + 1) * 4;
-  if (!Number.isSafeInteger(tableBytes))
+  if (!Number.isSafeInteger(tableBytes) || tableBytes < 0)
     throw malformed("bink2", "Bink 2 frame-offset table size is not safe", 12);
   const framesOffset = tableOffset + tableBytes;
   const regions: MediaAssetRegion[] = [

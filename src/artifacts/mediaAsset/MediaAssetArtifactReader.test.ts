@@ -15,6 +15,7 @@ import {
 import {
   bink2Fixture,
   oggOpusFixture,
+  oggOpusSpannedTagsFixture,
   riffXma2Fixture,
   vulkanPipelineCacheFixture,
 } from "./mediaAsset.fixture.js";
@@ -126,6 +127,42 @@ describe("Ogg Opus headers", () => {
     });
     expect(result.coverage[0]?.status).toBe("unknown");
   });
+
+  it("keeps spanned OpusTags pages out of audio.bin", async () => {
+    const bytes = oggOpusSpannedTagsFixture();
+    const result = await read("ogg-opus", bytes);
+    expect(result.metadata).toMatchObject({
+      kind: "ogg-opus",
+      vendor: "A".repeat(280),
+      pages_read: 3,
+      extent_check: "consistent",
+    });
+    expect(regions(result.entries).map((row) => row.path)).toEqual([
+      "pages/0.bin",
+      "pages/1.bin",
+      "pages/2.bin",
+      "audio.bin",
+    ]);
+    expect(result.contents.get("audio.bin")).toEqual(
+      bytes.subarray(bytes.length - (27 + 1 + 3)),
+    );
+    expect(result.contents.get("audio.bin")?.includes(0xab)).toBe(true);
+    expect(result.contents.get("audio.bin")?.includes(0x41)).toBe(false);
+  });
+
+  it("reports truncated when the first Ogg page payload is cut off", async () => {
+    const whole = oggOpusFixture();
+    const firstHeader = 27 + whole[26]!;
+    const declaredPayload = whole[27]!;
+    await expect(
+      read("ogg-opus", whole.subarray(0, firstHeader + declaredPayload - 1)),
+    ).rejects.toMatchObject({
+      parseFailure: {
+        kind: "truncated",
+        format: "ogg-opus",
+      },
+    });
+  });
 });
 
 describe("RIFF XMA2 headers", () => {
@@ -174,11 +211,64 @@ describe("RIFF XMA2 headers", () => {
     });
     expect(result.coverage[0]?.status).toBe("unknown");
   });
+
+  it("does not invent WAVE members past the declared RIFF end", async () => {
+    const base = riffXma2Fixture(64);
+    const trailing = Buffer.concat([
+      Buffer.from("LIST", "latin1"),
+      Buffer.from([4, 0, 0, 0]),
+      Buffer.from("adtl", "latin1"),
+    ]);
+    const bytes = Buffer.concat([base, trailing]);
+    const result = await read("riff-xma2", bytes);
+    expect(result.metadata).toMatchObject({
+      kind: "riff-xma2",
+      extent_check: "trailing-bytes",
+      chunks: [
+        { id: "fmt ", offset: 20, length: 52 },
+        { id: "data", offset: 80, length: 64 },
+      ],
+    });
+    expect(regions(result.entries).map((row) => row.path)).toEqual([
+      "chunks/0.fmt",
+      "chunks/1.data",
+    ]);
+    expect(
+      result.coverage[0]?.limitations.some((line) =>
+        line.includes("follow the last declared"),
+      ),
+    ).toBe(true);
+  });
+
+  it("treats a partial trailing chunk header inside the RIFF form as incomplete", async () => {
+    const whole = riffXma2Fixture(64);
+    // Shrink the declared RIFF size so the file ends mid-header after fmt.
+    const bytes = Buffer.from(whole.subarray(0, 20 + 52 + 4));
+    bytes.writeUInt32LE(bytes.length - 8, 4);
+    const result = await read("riff-xma2", bytes);
+    expect(result.metadata).toMatchObject({
+      kind: "riff-xma2",
+      extent_check: "truncated",
+      chunks: [{ id: "fmt ", offset: 20, length: 52 }],
+    });
+    expect(result.coverage[0]?.status).toBe("unknown");
+    expect(
+      result.coverage[0]?.limitations.some((line) =>
+        line.includes("partial RIFF chunk header"),
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("Bink 2 headers", () => {
   it("reports revision, frames, dimensions, fps and the offset table", async () => {
     const bytes = bink2Fixture(10);
+    const tableBytes = 44;
+    const tableOffset = 44;
+    const framesOffset = tableOffset + tableBytes;
+    const expectedTable = bytes.subarray(tableOffset, framesOffset);
+    const expectedFrames = bytes.subarray(framesOffset);
+    expect(bytes.length).toBe(44 + tableBytes + 10 * 0x40);
     const result = await read("bink2", bytes);
     expect(result.metadata).toMatchObject({
       kind: "bink2",
@@ -189,18 +279,24 @@ describe("Bink 2 headers", () => {
       height: 720,
       fps_numerator: 30,
       fps_denominator: 1,
-      frame_offset_table_offset: 44,
-      frame_offset_table_bytes: 44,
+      frame_offset_table_offset: tableOffset,
+      frame_offset_table_bytes: tableBytes,
       extent_check: "consistent",
     });
     expect(regions(result.entries)).toEqual([
-      { path: "frame-offsets.bin", byteOffset: 44, declaredSize: 44 },
+      {
+        path: "frame-offsets.bin",
+        byteOffset: tableOffset,
+        declaredSize: tableBytes,
+      },
       {
         path: "frames.bin",
-        byteOffset: 88,
-        declaredSize: bytes.length - 88,
+        byteOffset: framesOffset,
+        declaredSize: expectedFrames.length,
       },
     ]);
+    expect(result.contents.get("frame-offsets.bin")).toEqual(expectedTable);
+    expect(result.contents.get("frames.bin")).toEqual(expectedFrames);
     expect(result.coverage).toEqual([{ status: "complete", limitations: [] }]);
   });
 

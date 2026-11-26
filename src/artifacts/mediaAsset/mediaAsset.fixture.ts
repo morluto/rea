@@ -46,7 +46,12 @@ const oggPage = (
   granule: bigint,
   data: Buffer,
   flags: number,
+  segmentSizes?: readonly number[],
 ): Buffer => {
+  const segments =
+    segmentSizes === undefined ? [data.length] : [...segmentSizes];
+  if (segments.reduce((sum, size) => sum + size, 0) !== data.length)
+    throw new Error("ogg page segment sizes must cover the packet bytes");
   const page = Buffer.concat([
     Buffer.from("OggS", "latin1"),
     Buffer.from([0, flags]),
@@ -54,7 +59,7 @@ const oggPage = (
     u32(0x1234),
     u32(sequence),
     u32(0),
-    Buffer.from([1, data.length]),
+    Buffer.from([segments.length, ...segments]),
     data,
   ]);
   page.writeUInt32LE(oggCrc(page), 22);
@@ -81,6 +86,37 @@ export const oggOpusFixture = (): Buffer => {
     oggPage(0, 0n, head, 2),
     oggPage(1, 0n, tags, 0),
     oggPage(2, 960n, Buffer.concat([Buffer.from([0xfc]), fill(60)]), 4),
+  ]);
+};
+
+/**
+ * Ogg Opus whose OpusTags packet spans two pages (last lacing value 255 on
+ * the first tags page), then one audio page whose payload is a marker.
+ */
+export const oggOpusSpannedTagsFixture = (): Buffer => {
+  const head = Buffer.concat([
+    Buffer.from("OpusHead", "latin1"),
+    Buffer.from([1, 2]),
+    u16(312),
+    u32(48_000),
+    i16(0),
+    Buffer.from([0]),
+  ]);
+  const vendor = Buffer.alloc(280, 0x41);
+  const tags = Buffer.concat([
+    Buffer.from("OpusTags", "latin1"),
+    u32(vendor.length),
+    vendor,
+    u32(0),
+  ]);
+  const firstTags = tags.subarray(0, 255);
+  const restTags = tags.subarray(255);
+  const audioMarker = Buffer.from([0xab, 0xcd, 0xef]);
+  return Buffer.concat([
+    oggPage(0, 0n, head, 2),
+    oggPage(1, 0n, firstTags, 0, [255]),
+    oggPage(2, 0n, restTags, 1),
+    oggPage(3, 960n, audioMarker, 4),
   ]);
 };
 
@@ -117,7 +153,10 @@ export const riffXma2Fixture = (dataBytes = 4096): Buffer => {
   return Buffer.concat([Buffer.from("RIFF", "latin1"), u32(body.length), body]);
 };
 
-/** Bink 2 style header: KB2 + revision, frames, dimensions, fps, offset table. */
+/**
+ * Bink 2 style header: KB2 + revision through flags (44 bytes), then the
+ * frame-offset table of `frames + 1` little-endian words, then opaque frames.
+ */
 export const bink2Fixture = (frames = 10): Buffer => {
   const header = Buffer.concat([
     Buffer.from("KB2j", "latin1"),
@@ -130,7 +169,6 @@ export const bink2Fixture = (frames = 10): Buffer => {
     u32(720),
     u32(30),
     u32(1),
-    u32(0),
     u32(0),
   ]);
   const table = Buffer.concat(
