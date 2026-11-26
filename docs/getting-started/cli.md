@@ -475,6 +475,16 @@ rea extract-artifact ./busybox.bflt --json
 See [uClinux bFLT flat executables](../bflt-executables.md) for header facts,
 segments, gzip and gzdata bodies, and the limitations kept beside the facts.
 
+Inventory and extract a Nintendo DS ROM's CPU binaries, overlays, and files:
+
+```sh
+rea inspect-artifact ./game.nds --detail summary --json
+rea extract-artifact ./game.nds --json
+```
+
+See [Nintendo DS ROMs](../guides/firmware/nds-roms.md) for header detection, member paths,
+checksum and range limitations, and what is not decoded.
+
 Inspect local model declarations without loading weights:
 
 ```bash

@@ -8,6 +8,7 @@ import { detectHexRecordEncoding } from "./firmware/hexRecords.js";
 import { hasUf2Block } from "./firmware/uf2.js";
 import { hasGodotPckHeader } from "./godotPckFormat.js";
 import { nesContainerFormat, parseInesLayout } from "./inesContainer.js";
+import { hasNdsHeader } from "./ndsRom.js";
 import {
   hasIso9660Signature,
   ISO9660_DESCRIPTOR_OFFSET,
@@ -41,6 +42,7 @@ import { hasZipSignature } from "./zipPackageFormat.js";
 export type RecognizedArtifactFormat = Extract<
   ArtifactFormatId,
   | "ines"
+  | "nds"
   | "zip"
   | "godot-pck"
   | "unityfs"
@@ -270,6 +272,9 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     },
     // Binary plists, including keyed archives, often use other extensions.
     when("plist", hasBinaryPlistSignature),
+    // No magic: the stored logo CRC and a matching checksum claim it, after
+    // every format with a leading signature.
+    when("nds", hasNdsHeader),
   ];
 
 /**

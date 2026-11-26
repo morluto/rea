@@ -72,6 +72,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "pkg",
   "asar",
   "ines",
+  "nds",
   "godot-pck",
   "unityfs",
   "wxapkg",
@@ -128,6 +129,7 @@ const artifactFormatSchema = z.enum(ARTIFACT_FORMAT_IDS);
 /** Formats established from bytes or a virtual directory tree, independent of path roles. */
 const artifactContentFormatSchema = artifactFormatSchema.extract([
   "ines",
+  "nds",
   "zip",
   "godot-pck",
   "unityfs",

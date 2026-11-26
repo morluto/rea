@@ -123,6 +123,7 @@ const TARGETS: TargetFixtures = {
   "app-pack": { ...archive, format: "app-pack" },
   asar: { ...archive, format: "asar" },
   ines: { ...archive, format: "ines" },
+  nds: { ...archive, format: "nds" },
   "godot-pck": { ...archive, format: "godot-pck" },
   unityfs: { ...archive, format: "unityfs" },
   wxapkg: { ...archive, format: "wxapkg" },

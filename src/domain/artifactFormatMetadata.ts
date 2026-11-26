@@ -54,6 +54,7 @@ import {
   ktx2MetadataSchema,
   ktxMetadataSchema,
 } from "./formatMetadata/gpuAssetMetadata.js";
+import { ndsEntryMetadataSchema, ndsMetadataSchema } from "./ndsRom.js";
 
 export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   godotPckMetadataSchema,
@@ -103,6 +104,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   ktxMetadataSchema,
   ktx2MetadataSchema,
   gpuAssetRegionMetadataSchema,
+  ndsMetadataSchema,
+  ndsEntryMetadataSchema,
 ]);
 export type ArtifactFormatMetadata = z.infer<
   typeof artifactFormatMetadataSchema
@@ -126,7 +129,7 @@ const declarationsByKind: {
     | {
         readonly declaration: (
           metadata: FormatMetadataByKind[Kind],
-        ) => FormatMetadataDeclaration["facts"];
+        ) => FormatMetadataDeclaration["facts"] | undefined;
         /** Projected fields the producer could not interpret. */
         readonly unreadable?: (
           metadata: FormatMetadataByKind[Kind],
@@ -355,6 +358,37 @@ const declarationsByKind: {
     notCompared:
       "role and index restate the region's path; its stored bytes are compared by content.",
   },
+  nds: {
+    notCompared:
+      "Its header and table facts come from the ROM's own bytes, which content comparison covers.",
+  },
+  /**
+   * CPU load and entry addresses and overlay RAM and initialization facts.
+   * The role restates the path, and the file and overlay IDs describe layout.
+   * Ordinary filesystem files (`role: "file"`) declare neither CPU nor overlay
+   * facts, so they return no declaration and compare purely by content against
+   * extracted directories.
+   */
+  "nds-entry": {
+    declaration: ({ role, ram_address, entry_address, overlay }) =>
+      role === "file"
+        ? undefined
+        : {
+            ram_address,
+            entry_address,
+            overlay:
+              overlay === null
+                ? null
+                : {
+                    ram_address: overlay.ram_address,
+                    ram_size: overlay.ram_size,
+                    bss_size: overlay.bss_size,
+                    static_init_start: overlay.static_init_start,
+                    static_init_end: overlay.static_init_end,
+                    flags: overlay.flags,
+                  },
+          },
+  },
   fit: {
     notCompared:
       "Its fields come from the FIT's own bytes, which content comparison covers.",
@@ -398,13 +432,15 @@ const declarationOf = <Kind extends FormatMetadataKind>(
   metadata: FormatMetadataByKind[Kind],
 ): FormatMetadataDeclaration | undefined => {
   const entry = declarationsByKind[kind];
-  return "declaration" in entry
-    ? {
+  if (!("declaration" in entry)) return undefined;
+  const facts = entry.declaration(metadata);
+  return facts === undefined
+    ? undefined
+    : {
         kind,
-        facts: entry.declaration(metadata),
+        facts,
         unreadable: entry.unreadable?.(metadata) ?? [],
-      }
-    : undefined;
+      };
 };
 
 /** The compared declaration, or undefined when comparison uses none. */

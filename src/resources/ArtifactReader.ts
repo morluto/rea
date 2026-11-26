@@ -251,6 +251,7 @@ export interface ArtifactReader {
     | ZipPackageFormat
     | "asar"
     | "ines"
+    | "nds"
     | "godot-pck"
     | "unityfs"
     | "wxapkg"

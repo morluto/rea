@@ -327,6 +327,7 @@ export const projectArtifactInventoryView = (
     inventory.manifest.root_format === "bflt" ||
     inventory.manifest.root_format === "esp-flash-image" ||
     inventory.manifest.root_format === "fit" ||
+    inventory.manifest.root_format === "nds" ||
     inventory.manifest.root_format === "android-ota-payload" ||
     inventory.manifest.root_format === "android-sparse-image";
   const counts = inventoryCounts(source);

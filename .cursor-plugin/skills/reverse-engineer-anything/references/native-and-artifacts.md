@@ -994,6 +994,16 @@ under `artifact_limits.expanded_bytes`; revision 2 bodies are read as stored.
 Open `text.bin` as a raw binary with a chosen architecture. See
 [uClinux bFLT flat executables](https://github.com/morluto/rea/blob/main/docs/bflt-executables.md).
 
+Nintendo DS ROMs (`nds`) are detected from the header (logo CRC `0xCF56`,
+unit code, ARM9 offset, and a matching logo or header CRC), not the filename,
+and use the same inspection and extraction workflows. `root_format_metadata`
+holds the cartridge header facts; members are `arm9.bin`, `arm7.bin`,
+`overlays/<cpu>/overlay_<id>.bin`, FNT-named `data/<path>` files, and
+unnamed `fat/<id>.bin` files. A CRC mismatch, a partial table, or a range past
+the file end leaves coverage `unknown`. Secure-area encryption, compressed
+overlays, and NitroARC archives are not decoded. See
+[Nintendo DS ROMs](https://github.com/morluto/rea/blob/main/docs/guides/firmware/nds-roms.md).
+
 Android A/B OTA `payload.bin` files (CrAU v2) use the same
 inspection/extraction workflows. Prefer a retained summary for header,
 partition table, dynamic groups and signature counts. Signatures are not
