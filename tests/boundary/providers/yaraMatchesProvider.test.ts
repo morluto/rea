@@ -1,13 +1,20 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join, parse, resolve } from "node:path";
-import { describe, expect, test } from "vitest";
+import { dirname, join, parse, relative, resolve } from "node:path";
+import { describe, expect, test, vi } from "vitest";
 
 import { createYaraMatchesService } from "../../../src/composition/yara.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { yaraMatchesSchema } from "../../../src/domain/yara/yaraMatches.js";
+import { ok } from "../../../src/domain/result.js";
+import {
+  YARA_SETTING_BOUNDS,
+  yaraMatchesSchema,
+} from "../../../src/domain/yara/yaraMatches.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
-import type { YaraLauncher } from "../../../src/yara/YaraMatchesProvider.js";
+import {
+  YaraMatchesProvider,
+  type YaraLauncher,
+} from "../../../src/yara/YaraMatchesProvider.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   interpreterLauncher,
@@ -492,5 +499,87 @@ describe("inspect_yara_matches with a yara stand-in", () => {
       _tag: "AnalysisInputError",
       issues: [expect.objectContaining({ path: ["path"] })],
     });
+  });
+
+  it("resolves a relative REA_YARA_COMMAND against cwd before launching from root", async () => {
+    const { command, sample, rule, args } = await fixture("match");
+    const relativeCommand = relative(process.cwd(), command);
+    const service = createYaraMatchesService({
+      ...process.env,
+      REA_YARA_COMMAND: relativeCommand,
+      YARA_STUB_MODE: "match",
+      YARA_STUB_ARGS: args,
+    });
+    const result = await service.inspect({ path: sample, rule_paths: [rule] });
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+    if (!result.ok) return;
+    expect(JSON.parse(await readFile(args, "utf8")).cwd).toBe(
+      parse(sample).root,
+    );
+  });
+
+  test("refuses drive-relative rooted Windows paths across drives before hashing or launching", async () => {
+    const launcher = vi.fn<YaraLauncher>();
+    const provider = new YaraMatchesProvider({
+      environment: {},
+      platform: "win32",
+      selectCommand: () => ok("C:\\tools\\yara.exe"),
+      launcher,
+    });
+    const settings = {
+      max_matches: {
+        value: YARA_SETTING_BOUNDS.max_matches.default_value,
+        source: "default" as const,
+      },
+      max_output_bytes: {
+        value: YARA_SETTING_BOUNDS.max_output_bytes.default_value,
+        source: "default" as const,
+      },
+      command_timeout_ms: {
+        value: YARA_SETTING_BOUNDS.command_timeout_ms.default_value,
+        source: "default" as const,
+      },
+    };
+    const crossDriveRule = await provider.inspect({
+      input: {
+        path: "D:\\samples\\sample.bin",
+        rule_paths: ["\\rules\\packers.yar"],
+      },
+      settings,
+    });
+    expect(crossDriveRule.ok).toBe(false);
+    if (!crossDriveRule.ok) {
+      expect(crossDriveRule.error).toMatchObject({
+        _tag: "AnalysisInputError",
+        conformsToInputContract: true,
+        issues: [
+          expect.objectContaining({
+            path: ["rule_paths", 0],
+            reason: "invalid_value",
+          }),
+        ],
+      });
+    }
+    const rootedTarget = await provider.inspect({
+      input: {
+        path: "\\samples\\sample.bin",
+        rule_paths: ["D:\\rules\\packers.yar"],
+      },
+      settings,
+    });
+    expect(rootedTarget.ok).toBe(false);
+    if (!rootedTarget.ok) {
+      expect(rootedTarget.error).toMatchObject({
+        _tag: "AnalysisInputError",
+        conformsToInputContract: true,
+        issues: [
+          expect.objectContaining({
+            path: ["path"],
+            reason: "invalid_value",
+          }),
+        ],
+      });
+    }
+    expect(launcher).not.toHaveBeenCalled();
   });
 });

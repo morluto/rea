@@ -119,6 +119,34 @@ posixCliTest(
   },
 );
 
+posixCliTest(
+  "resolves a relative REA_YARA_COMMAND against the caller's working directory",
+  async ({ cli }) => {
+    const { root } = await workspace();
+    const output = await cli.run({
+      arguments: [
+        "inspect-yara-matches",
+        "./sample.bin",
+        "--rule_paths",
+        "./packers.yar",
+        "--format",
+        "json",
+      ],
+      cwd: root,
+      environment: {
+        REA_YARA_COMMAND: "./yara-stub.cjs",
+        YARA_STUB_MODE: "match",
+      },
+    });
+    expect(output.exitCode, output.stderr).toBe(0);
+    const evidence = completeYaraEvidenceSchema.parse(output.json);
+    expect(evidence.normalized_result.matches.map(({ rule }) => rule)).toEqual([
+      "Packed",
+      "Plain",
+    ]);
+  },
+);
+
 cliTest("reports a missing yara command as unavailable", async ({ cli }) => {
   const { root } = await workspace();
   const output = await cli.run({

@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { parse } from "node:path";
+import { posix, win32 } from "node:path";
+
+import { isQualifiedCallerPath } from "../filesystem/callerPath.js";
 
 import {
   YARA_COMMAND_REMEDIATION,
@@ -139,11 +141,17 @@ const ruleFileIndex = (
 };
 
 /**
- * yara prints one match per line and names the scanned path on each rule
- * line, so a line break in a selected path makes its output ambiguous.
+ * Pre-flight path checks that cannot be expressed in the portable schema:
+ * - yara prints one match per line and names the scanned path on each rule
+ *   line, so a line break in a selected path makes its output ambiguous.
+ * - On Windows, the child runs from the scanned path's root (for example
+ *   `D:\`). A drive-relative rooted path such as `\rules\packers.yar` would
+ *   resolve against REA's current drive when hashing and against the child's
+ *   drive when yara opens it, so Windows paths must be drive-qualified or UNC.
  */
-const lineBreakRefusal = (
+const pathInputRefusal = (
   input: InspectYaraMatchesInput,
+  platform: NodeJS.Platform,
 ): AnalysisInputError | undefined => {
   const fields: { path: (string | number)[]; value: string }[] = [
     { path: ["path"], value: input.path },
@@ -152,25 +160,50 @@ const lineBreakRefusal = (
       value,
     })),
   ];
-  const issues = fields
-    .filter(({ value }) => /[\r\n]/u.test(value))
-    .map(({ path }) => ({
-      path,
-      reason: "invalid_value" as const,
-      message:
-        "The path contains a line break, which yara's line-oriented output cannot represent.",
-    }));
-  return issues.length === 0
-    ? undefined
-    : new AnalysisInputError(
-        OPERATION,
-        {
-          conformsToInputContract: true,
-          remediationAction:
-            "Rename or link the file to a path without line breaks, then retry.",
-        },
-        issues,
-      );
+  const issues: {
+    path: (string | number)[];
+    reason: "invalid_value";
+    message: string;
+  }[] = [];
+  let hasLineBreak = false;
+  let hasUnqualifiedWindowsPath = false;
+  for (const { path, value } of fields) {
+    if (/[\r\n]/u.test(value)) {
+      hasLineBreak = true;
+      issues.push({
+        path,
+        reason: "invalid_value",
+        message:
+          "The path contains a line break, which yara's line-oriented output cannot represent.",
+      });
+    }
+    if (platform === "win32" && !isQualifiedCallerPath(value, platform)) {
+      hasUnqualifiedWindowsPath = true;
+      issues.push({
+        path,
+        reason: "invalid_value",
+        message:
+          "On Windows, paths must be drive-qualified (for example C:\\...) or UNC paths so they do not depend on the working drive.",
+      });
+    }
+  }
+  if (issues.length === 0) return undefined;
+  const remediation = [
+    ...(hasLineBreak
+      ? ["Rename or link the file to a path without line breaks."]
+      : []),
+    ...(hasUnqualifiedWindowsPath
+      ? ["Pass drive-qualified or UNC paths for path and rule_paths."]
+      : []),
+  ].join(" ");
+  return new AnalysisInputError(
+    OPERATION,
+    {
+      conformsToInputContract: true,
+      remediationAction: `${remediation} Then retry.`,
+    },
+    issues,
+  );
 };
 
 const RULE_COMPILE_REMEDIATION =
@@ -369,8 +402,9 @@ export class YaraMatchesProvider implements YaraMatchesPort {
     options?: ExecutionOptions,
   ): Promise<Result<YaraMatches, AnalysisError>> {
     const signal = options?.signal;
+    const platform = this.options.platform ?? HOST_PLATFORM.platform;
     const maxFileBytes = input.max_file_bytes ?? YARA_FILE_BYTES.default_value;
-    const refusal = lineBreakRefusal(input);
+    const refusal = pathInputRefusal(input, platform);
     if (refusal !== undefined) return err(refusal);
     const command = this.options.selectCommand();
     if (!command.ok) return err(command.error);
@@ -479,6 +513,8 @@ export class YaraMatchesProvider implements YaraMatchesPort {
     );
     const context = yaraOutcomeContext(input, settings, command);
     const maxOutputBytes = settings.max_output_bytes.value;
+    const platform = this.options.platform ?? HOST_PLATFORM.platform;
+    const pathApi = platform === "win32" ? win32 : posix;
     let snapshot: ProviderProcessSnapshot;
     try {
       // Ownership preparation has its own deadline; it does not spend yara's.
@@ -488,13 +524,10 @@ export class YaraMatchesProvider implements YaraMatchesPort {
           command,
           arguments: yaraArguments(input),
           // See RULE_NAMESPACE: no relative path resolves to a rule file.
-          cwd: parse(input.path).root,
+          cwd: pathApi.parse(input.path).root,
           runId: `rea-yara-${randomUUID()}`,
           hostEnvironment: {
-            ...snapshotEnvironment(
-              this.options.environment,
-              this.options.platform ?? HOST_PLATFORM.platform,
-            ),
+            ...snapshotEnvironment(this.options.environment, platform),
             LC_ALL: "C",
             LANG: "C",
           },

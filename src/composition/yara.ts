@@ -1,8 +1,11 @@
+import { posix } from "node:path";
+
 import { YaraMatchesService } from "../application/yara/YaraMatchesService.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { err, ok } from "../domain/result.js";
 import { INSPECT_YARA_MATCHES_OPERATION } from "../domain/yara/yaraMatches.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   YARA_COMMAND_REMEDIATION,
@@ -15,7 +18,11 @@ import {
 } from "../yara/YaraMatchesProvider.js";
 import { resolveWindowsProviderExecutable } from "./resolveWindowsProviderExecutable.js";
 
-/** Bind the configured yara executable, resolving Windows bare names on PATH. */
+/**
+ * Bind the configured yara executable. Relative paths are resolved against the
+ * caller's working directory before the provider switches the child to the
+ * filesystem root; Windows bare names are resolved on PATH.
+ */
 const selectYaraCommand =
   (
     environment: Readonly<NodeJS.ProcessEnv>,
@@ -32,7 +39,12 @@ const selectYaraCommand =
           { remediationAction: YARA_COMMAND_REMEDIATION },
         ),
       );
-    if (platform !== "win32") return ok(command);
+    if (platform !== "win32")
+      return ok(
+        command.includes("/") && !posix.isAbsolute(command)
+          ? absoluteCallerPath(command, { platform })
+          : command,
+      );
     const resolved = resolveWindowsProviderExecutable(command, environment);
     if (resolved.ok) return resolved;
     return err(
