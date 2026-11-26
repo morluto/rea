@@ -14,6 +14,7 @@ import {
   ISO9660_RECOGNITION_BYTES,
 } from "./iso9660/iso9660Structures.js";
 import { recognizeAndroidOtaPayload } from "./firmware/androidOtaPayload.js";
+import { hasQualcommMbnHeader } from "./qualcommMbnImage.js";
 import { hasUImageMagic } from "./uimageFormat.js";
 import { hasUnityFsHeader } from "./unityfsFormat.js";
 import { hasMftFileRecordHeader } from "./windows/ntfsMft.js";
@@ -59,6 +60,7 @@ export type RecognizedArtifactFormat = Extract<
   | "esp-flash-image"
   | "esp-image"
   | "fit"
+  | "qualcomm-mbn"
   | "ntfs-mft"
   | "plist"
   | StandaloneArtifactFormat
@@ -254,6 +256,13 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     },
     // Binary plists, including keyed archives, often use other extensions.
     when("plist", hasBinaryPlistSignature),
+    // A legacy MBN header has no magic; the version word, sizes and pointer
+    // arithmetic must agree, so it runs after every signature format. An ELF
+    // MBN is ELF here; root inventory reads it as MBN for its hash segment.
+    ({ prefix, fileSize }) =>
+      hasQualcommMbnHeader(prefix, fileSize)
+        ? { state: "recognized", format: "qualcomm-mbn" }
+        : undefined,
   ];
 
 /**

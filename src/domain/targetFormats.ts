@@ -31,6 +31,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   "android-boot-image": "archive",
   "android-ota-payload": "archive",
   iso9660: "archive",
+  "qualcomm-mbn": "archive",
   dmg: "archive",
   pkg: "archive",
   "intel-hex": "archive",

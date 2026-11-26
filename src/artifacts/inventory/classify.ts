@@ -44,6 +44,7 @@ import type { StableRegularFileDescriptor } from "../../filesystem/RegularFile.j
 import type { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 
 import { decodeNodeSeaBlob } from "../nodeSea/NodeSeaBlob.js";
+import { locatesQualcommMbnHashSegment } from "../QualcommMbnLocation.js";
 import { readNodeSeaBlob } from "../nodeSea/NodeSeaLocation.js";
 import { classifyArtifactContent } from "./ArtifactGraphConstruction.js";
 import {
@@ -523,6 +524,12 @@ const classifyRootFormat = async (
         cookie: embedded.cookie,
         carrierPathDialect: format === "pe" ? "windows" : "posix",
       };
+    if (
+      format === "elf" &&
+      embedded === undefined &&
+      (await locatesQualcommMbnHashSegment(read, archiveBytes))
+    )
+      return "qualcomm-mbn";
   }
   if (
     format === "asar" &&

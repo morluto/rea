@@ -108,6 +108,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [ESP flash images](esp-flash-image.md)
 - [ESP images](esp-image.md)
 - [U-Boot FIT images](fit-images.md)
+- [Qualcomm MBN images](guides/firmware/qualcomm-mbn-images.md)
 - [Intel HEX and S-record images](hex-records.md)
 - [UF2 and DfuSe images](uf2-dfuse.md)
 - [U-Boot legacy uImage containers](uimage.md)

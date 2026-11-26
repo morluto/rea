@@ -429,6 +429,11 @@ export const documentationSections = [
         route: "/fit-images",
       },
       {
+        text: "Qualcomm MBN images",
+        source: "guides/firmware/qualcomm-mbn-images.md",
+        route: "/qualcomm-mbn-images",
+      },
+      {
         text: "Intel HEX and S-record images",
         source: "hex-records.md",
         route: "/hex-records",

@@ -276,6 +276,7 @@ export interface ArtifactReader {
     | "dfuse"
     | "esp-flash-image"
     | "fit"
+    | "qualcomm-mbn"
     | "ntfs-mft"
     | "file";
   entries(

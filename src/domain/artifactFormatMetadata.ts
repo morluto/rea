@@ -30,6 +30,7 @@ import {
   fitMetadataSchema,
   hexRecordRegionMetadataSchema,
   hexRecordsMetadataSchema,
+  qualcommMbnMetadataSchema,
   uf2MetadataSchema,
   uf2RegionMetadataSchema,
   uImageEntryMetadataSchema,
@@ -88,6 +89,7 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   espFlashPartitionMetadataSchema,
   fitMetadataSchema,
   fitImageMetadataSchema,
+  qualcommMbnMetadataSchema,
   androidBootImageMetadataSchema,
   androidBootImageEntryMetadataSchema,
   iso9660MetadataSchema,
@@ -340,6 +342,10 @@ const declarationsByKind: {
   fit: {
     notCompared:
       "Its fields come from the FIT's own bytes, which content comparison covers.",
+  },
+  "qualcomm-mbn": {
+    notCompared:
+      "Its header and hash-segment facts come from the image's own bytes, which content comparison covers. Signatures are located, not verified.",
   },
   /**
    * Payload interpretation and sharing declarations, independent of FIT
