@@ -3290,13 +3290,21 @@ it("rejects a file URL whose hostname is not empty", async () => {
     const local = await outcome("file:///tmp/local.html");
     const loopback = await outcome("http://127.0.0.1/");
     const data = await outcome("data:text/html,hi");
-    const prevented = { remote: false, local: false };
-    window.webContents.emit("will-navigate", {
-      preventDefault() { prevented.remote = true; },
-    }, "file://attacker.example/share/a.html");
-    window.webContents.emit("will-navigate", {
-      preventDefault() { prevented.local = true; },
-    }, "file:///tmp/local.html");
+    const prevented = {
+      navigateRemote: false,
+      navigateLocal: false,
+      redirectRemote: false,
+      redirectLocal: false,
+    };
+    const emitNavigation = (slot, eventName, url) => {
+      window.webContents.emit(eventName, {
+        preventDefault() { prevented[slot] = true; },
+      }, url);
+    };
+    emitNavigation("navigateRemote", "will-navigate", "file://attacker.example/share/a.html");
+    emitNavigation("navigateLocal", "will-navigate", "file:///tmp/local.html");
+    emitNavigation("redirectRemote", "will-redirect", "file://attacker.example/share/a.html");
+    emitNavigation("redirectLocal", "will-redirect", "file:///tmp/local.html");
     process.stdout.write(JSON.stringify({ remote, localhost, local, loopback, data, reached, prevented }) + "\\n");
     })().catch((cause) => {
       console.error(cause);
@@ -3319,7 +3327,12 @@ it("rejects a file URL whose hostname is not empty", async () => {
       "http://127.0.0.1/",
       "data:text/html,hi",
     ],
-    prevented: { remote: true, local: false },
+    prevented: {
+      navigateRemote: true,
+      navigateLocal: false,
+      redirectRemote: true,
+      redirectLocal: false,
+    },
   });
 });
 
