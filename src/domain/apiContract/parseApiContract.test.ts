@@ -319,6 +319,70 @@ it("does not accept a target whose $ref is malformed", () => {
   expect(value.summary).toMatchObject({ unresolved_path_items: 1 });
 });
 
+it("reports one diagnostic for a malformed target reached twice", () => {
+  const input = {
+    ...document({
+      "/first": { $ref: "#/components/pathItems/Shared" },
+      "/second": { $ref: "#/components/pathItems/Shared" },
+    }),
+    components: { pathItems: { Shared: { $ref: 123, get: {} } } },
+  };
+  const value = report(input);
+  expect(value.path_item_references.map((row) => row.state)).toEqual([
+    "unresolved",
+    "unresolved",
+  ]);
+  expect(value.operations).toHaveLength(0);
+  expect(value.diagnostics).toHaveLength(1);
+  expect(value.diagnostics[0]).toMatchObject({
+    code: "invalid-path-reference",
+    source_pointer: "/components/pathItems/Shared/$ref",
+  });
+  expect(new Set(value.diagnostics.map((row) => row.diagnostic_id)).size).toBe(
+    1,
+  );
+});
+
+it("reports one diagnostic for a shared target's unknown field", () => {
+  const input = {
+    ...document({
+      "/first": { $ref: "#/components/pathItems/Shared" },
+      "/second": { $ref: "#/components/pathItems/Shared" },
+    }),
+    components: {
+      pathItems: { Shared: { get: {}, "not-a-field": true } },
+    },
+  };
+  const value = report(input);
+  expect(value.operations).toHaveLength(2);
+  expect(
+    value.diagnostics.filter((row) => row.code === "unknown-path-item-field"),
+  ).toHaveLength(1);
+  expect(new Set(value.diagnostics.map((row) => row.diagnostic_id)).size).toBe(
+    1,
+  );
+});
+
+it("reports one diagnostic for a shared target's malformed operation", () => {
+  const input = {
+    ...document({
+      "/first": { $ref: "#/components/pathItems/Shared" },
+      "/second": { $ref: "#/components/pathItems/Shared" },
+    }),
+    components: { pathItems: { Shared: { get: null } } },
+  };
+  const value = report(input);
+  expect(value.operations).toHaveLength(2);
+  expect(
+    value.operations.every(
+      (row) => row.state === "unknown" && row.reason === "malformed-operation",
+    ),
+  ).toBe(true);
+  expect(
+    value.diagnostics.filter((row) => row.code === "invalid-operation"),
+  ).toHaveLength(1);
+});
+
 it("preserves a method declared both by reference and inline as unknown", () => {
   const input = {
     ...document(

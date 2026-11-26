@@ -4,6 +4,7 @@ import { parseLimitConstraint } from "../parseFailureAnalysisError.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { ellipsisExcerpt } from "../excerpt.js";
+import { compositeKey } from "../unicodeCodePointOrder.js";
 import { err, ok, type Result } from "../result.js";
 import { parseRecordedTransportUrl } from "../recordedTransportUrl.js";
 import {
@@ -50,6 +51,12 @@ export class ContractInventory {
   readonly #operationRowByKey = new Map<string, number>();
   /** Operation keys already diagnosed as conflicting declarations. */
   readonly #conflictedKeys = new Set<string>();
+  /**
+   * Diagnostics already retained, by code and source pointer. A diagnostic
+   * identifies one fact at one location; a shared $ref target enumerated
+   * under several paths must not repeat the same fact under one ID.
+   */
+  readonly #reportedDiagnostics = new Set<string>();
 
   constructor(readonly artifact: ApiContractArtifact) {}
 
@@ -86,6 +93,8 @@ export class ContractInventory {
     pointer: string,
     message: string,
   ): Result<void, AnalysisError> {
+    const key = compositeKey([code, pointer]);
+    if (this.#reportedDiagnostics.has(key)) return ok(undefined);
     const admitted = this.reserve(1024 + pointer.length * 12);
     if (!admitted.ok) return admitted;
     this.diagnostics.push({
@@ -98,6 +107,7 @@ export class ContractInventory {
       code,
       message,
     });
+    this.#reportedDiagnostics.add(key);
     return ok(undefined);
   }
 
@@ -208,13 +218,13 @@ export class ContractInventory {
     if (object === undefined)
       return this.diagnostic(
         "invalid-operation",
-        slot.pointer,
+        slot.sourcePointer,
         "The method's value is not an Operation Object.",
       );
     if (Object.hasOwn(object, "operationId") && declaredId === null)
       return this.diagnostic(
         "invalid-operation-id",
-        `${slot.pointer}/operationId`,
+        `${slot.sourcePointer}/operationId`,
         "operationId is present but is not a string; its identity remains unavailable.",
       );
     return ok(undefined);

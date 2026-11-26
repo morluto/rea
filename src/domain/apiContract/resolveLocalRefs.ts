@@ -159,12 +159,14 @@ export class LocalRefResolver {
         };
       // A present but non-string $ref is malformed, not a terminal item:
       // accepting it would declare operations from an untrusted target.
+      // The detail names only the target, so one malformed target yields
+      // one diagnostic no matter how many references reach it.
       if (Object.hasOwn(target, "$ref")) {
         const next = target.$ref;
         if (typeof next !== "string")
           return {
             kind: "invalid-reference",
-            detail: `Local $ref ${quotedExcerpt(ref, DETAIL_REF_CHARS)} chains to "#${ellipsisExcerpt(pointer, DETAIL_REF_CHARS)}", whose $ref is present but is not a string; the referenced Path Item cannot be trusted.`,
+            detail: `The Path Item at "#${ellipsisExcerpt(pointer, DETAIL_REF_CHARS)}" has a $ref that is present but is not a string; references to it cannot be trusted.`,
             pointer,
           };
         if (hops >= this.#maxRefDepth)
