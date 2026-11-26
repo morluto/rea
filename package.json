@@ -455,7 +455,7 @@
     "rolldown": "1.3.3",
     "tsrs": "7.1.0-beta.tsrs2",
     "tsx": "4.23.15",
-    "turbo": "2.11.12",
+    "turbo": "2.11.13",
     "typescript": "7.0.2",
     "typescript-termux": "npm:typescript@5.9.3",
     "typescript6": "npm:typescript@6.0.3",
