@@ -7,11 +7,13 @@ import {
   PE_OVERLAY_MAX_REPORTED_SECTIONS,
   PE_OVERLAY_STRADDLING_SECURITY_LIMITATION,
   peOverlaySectionBudgetLimitation,
+  peOverlaySchema,
   type PeOverlay,
   type PeOverlaySectionInput,
 } from "../../domain/native/peOverlay.js";
 import { ParseFailureError } from "../../domain/parseFailure.js";
 import { readPeImage } from "../../domain/native/peImage.js";
+import { mbnLegacyImage } from "../../domain/qualcommMbnImage.fixture.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 import { peCertificateFixture } from "./PeCertificates.fixture.js";
 import {
@@ -96,6 +98,18 @@ describe("parsePeOverlay ranges", () => {
         prefix_hex: ZIP_LOCAL_HEADER.subarray(0, 16).toString("hex"),
         leading_format: "zip",
       },
+    ]);
+  });
+
+  it("admits the shared recognizer's Qualcomm MBN overlay format", () => {
+    const trailing = mbnLegacyImage({
+      code: Buffer.alloc(200, 0xab),
+      signature: Buffer.alloc(256, 0x5a),
+      certificateChain: Buffer.alloc(96, 0xc3),
+    });
+    const report = peOverlaySchema.parse(parse(peOverlayImage({ trailing })));
+    expect(report.ranges).toMatchObject([
+      { role: "other", size: trailing.length, leading_format: "qualcomm-mbn" },
     ]);
   });
 
