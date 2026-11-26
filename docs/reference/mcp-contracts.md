@@ -2057,6 +2057,20 @@ selected files face destination name collisions; input path and integrity checks
 still cover the full inventory. The extraction manifest records exactly which
 occurrences were materialized and retains the source manifest identity.
 
+`extract_artifact` delivery follows the agent result budget. Omitted `detail`
+returns the complete extraction Evidence when it fits
+`delivery.agent_result_budget_bytes`; a larger one, such as an APK's thousands
+of written files, is retained behind its summary. The summary keeps the
+manifests, `output_root`, containment and cleanup verification, coverage and
+counts of written files, created files, bytes written and integrity
+contradictions, with at most 16 provenance commands, contradictions and residual
+paths each. `inspect_analysis_view` with
+`{"kind": "artifact-extraction", "collection": "artifacts"}` pages written files
+by exact `relative_paths`, `path_globs` or `artifact_ids`, with optional
+`fields`; `integrity_contradictions` and `residual_paths` page those lists.
+`detail: "complete"` (`--detail complete`) returns everything inline. The files
+are written whichever delivery is selected.
+
 `extract_artifact` accepts the same policy in MCP and as `--integrity-policy`
 on `rea extract-artifact`. With `record-and-continue` it writes the observed
 bytes and returns the `integrity_contradictions` records for the extracted
