@@ -1018,6 +1018,16 @@ and DONT_CARE blocks are written as zeros. The expanded child is classified
 again. See
 [Android sparse images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/android-sparse-image.md).
 
+Nintendo Switch NSO modules (`NSO0`) and NRO executables (`NRO0` at `0x10`)
+use the same inspection and extraction workflows, without running or
+disassembling them. Root metadata holds the `module_id` build id and MOD0
+offset for matching crash logs. Entries are the text, rodata and data
+segments, plus NRO `ASET` icon, NACP and RomFS. Compressed NSO segments are
+LZ4-decoded within `artifact_limits.expanded_bytes` and their SHA-256 compared
+with the header (`hash_status`). Truncated or over-budget segments stay listed
+with unavailable content. See
+[Switch executables](https://github.com/morluto/rea/blob/main/docs/guides/firmware/switch-executables.md).
+
 ## ESP images
 
 For an ESP32-family app or bootloader image, `open_binary` then

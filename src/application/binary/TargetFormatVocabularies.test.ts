@@ -133,6 +133,8 @@ const TARGETS: TargetFixtures = {
   ktx: { ...archive, format: "ktx" },
   ktx2: { ...archive, format: "ktx2" },
   uimage: { ...archive, format: "uimage" },
+  nso: { ...archive, format: "nso" },
+  nro: { ...archive, format: "nro" },
   "android-boot-image": { ...archive, format: "android-boot-image" },
   iso9660: { ...archive, format: "iso9660" },
   "android-ota-payload": { ...archive, format: "android-ota-payload" },

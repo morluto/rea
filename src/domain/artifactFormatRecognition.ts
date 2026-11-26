@@ -18,6 +18,7 @@ import { recognizeAndroidOtaPayload } from "./firmware/androidOtaPayload.js";
 import { recognizeAndroidSparseImage } from "./firmware/androidSparseImage.js";
 import { hasUImageMagic } from "./uimageFormat.js";
 import { hasBfltMagic } from "./bfltExecutable.js";
+import { hasNroMagic, hasNsoMagic } from "./switchExecutable.js";
 import { hasUnityFsHeader } from "./unityfsFormat.js";
 import { hasMftFileRecordHeader } from "./windows/ntfsMft.js";
 import { hasWindowsShortcutHeader } from "./windows/windowsShortcutHeader.js";
@@ -53,6 +54,8 @@ export type RecognizedArtifactFormat = Extract<
   | "ktx"
   | "ktx2"
   | "uimage"
+  | "nso"
+  | "nro"
   | "android-boot-image"
   | "android-ota-payload"
   | "android-sparse-image"
@@ -176,6 +179,8 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     when("ktx", hasKtx1Identifier),
     when("ktx2", hasKtx2Identifier),
     when("uimage", hasUImageMagic),
+    when("nso", hasNsoMagic),
+    when("nro", hasNroMagic),
     when("android-boot-image", hasAndroidBootImageMagic),
     ({ prefix }) => {
       const ota = recognizeAndroidOtaPayload(prefix);

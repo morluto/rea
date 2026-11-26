@@ -17,6 +17,8 @@ import {
   wxapkgMetadataSchema,
   tarMetadataSchema,
   tarEntryMetadataSchema,
+  switchExecutableMetadataSchema,
+  switchExecutableEntryMetadataSchema,
 } from "./formatMetadata/packageAndGameMetadata.js";
 import {
   bfltMetadataSchema,
@@ -65,6 +67,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   wxapkgEntryMetadataSchema,
   tarMetadataSchema,
   tarEntryMetadataSchema,
+  switchExecutableMetadataSchema,
+  switchExecutableEntryMetadataSchema,
   pyInstallerMetadataSchema,
   pyInstallerEntryMetadataSchema,
   dotnetBundleEntryMetadataSchema,
@@ -231,6 +235,14 @@ const declarationsByKind: {
   "hex-record-region": {
     notCompared:
       "start_address and end_address restate the region's path, and length follows from them; record and line counts are layout.",
+  },
+  "switch-executable": {
+    notCompared:
+      "Its header facts come from the executable's own bytes, which content comparison covers.",
+  },
+  "switch-executable-entry": {
+    notCompared:
+      "role restates the entry's path, offsets and sizes are layout, and declared and observed hashes come from the executable's bytes, which content comparison covers.",
   },
   uimage: {
     notCompared:
