@@ -152,7 +152,8 @@ describe("kernel module stable filesystem boundary", () => {
   it("returns typed resource and cancellation failures", async () => {
     const root = await createTestTempDirectory("rea-kernel-module-budget-");
     const path = join(root, "demo.ko");
-    await writeFile(path, kernelModuleFixture());
+    const bytes = kernelModuleFixture();
+    await writeFile(path, bytes);
     const service = createKernelModuleService();
     try {
       const tooSmall = await service.inspect({ path, max_file_bytes: 64 });
@@ -168,6 +169,7 @@ describe("kernel module stable filesystem boundary", () => {
           maximum: 536870912,
           default_value: 67108864,
           applies_at: "next_call",
+          required_value: bytes.length,
         },
       });
       const tooMany = await service.inspect({ path, max_entries: 1 });

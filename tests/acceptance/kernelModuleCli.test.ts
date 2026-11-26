@@ -161,7 +161,8 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-kernel-module-cli-limit-");
     const path = join(root, "demo.ko");
-    await writeFile(path, kernelModuleFixture());
+    const bytes = kernelModuleFixture();
+    await writeFile(path, bytes);
 
     const fileBudget = await cli.run({
       arguments: [
@@ -185,6 +186,7 @@ cliTest(
           maximum: 536870912,
           default_value: 67108864,
           applies_at: "next_call",
+          required_value: bytes.length,
           cli_flag: "--max-file-bytes",
         },
       },
@@ -192,6 +194,10 @@ cliTest(
         action: expect.stringContaining("--max-file-bytes"),
       },
     });
+    expect(
+      (fileBudget.json as { remediation: { action: string } }).remediation
+        .action,
+    ).toContain(`at least ${String(bytes.length)}`);
 
     const entryBudget = await cli.run({
       arguments: [
@@ -222,5 +228,22 @@ cliTest(
         action: expect.stringContaining("--max-entries"),
       },
     });
+
+    const recovered = await cli.run({
+      arguments: [
+        "inspect-kernel-module",
+        path,
+        "--max-file-bytes",
+        String(bytes.length),
+        "--max-entries",
+        "16",
+        "--json",
+      ],
+    });
+    expect(recovered.exitCode, recovered.stderr).toBe(0);
+    expect(
+      toolContract("inspect_kernel_module").outputSchema.parse(recovered.json)
+        .normalized_result.applicability,
+    ).toBe("applicable");
   },
 );

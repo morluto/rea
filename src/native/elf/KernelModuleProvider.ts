@@ -135,6 +135,12 @@ const kernelModuleFailure = (
                         failure.boundary === "file-size"
                           ? input.max_file_bytes
                           : input.max_entries,
+                        failure.boundary === "file-size" &&
+                          failure.observedBytes !== undefined &&
+                          failure.observedBytes <=
+                            BigInt(Number.MAX_SAFE_INTEGER)
+                          ? failure.observedBytes
+                          : undefined,
                       ),
                     }),
             },

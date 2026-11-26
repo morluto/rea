@@ -149,3 +149,83 @@ fileInspectionTest(
     );
   },
 );
+
+fileInspectionTest(
+  "reports structured details.limit without CLI flags for max_file_bytes and max_entries refusals and recovers",
+  async ({ client }) => {
+    const root = await createTestTempDirectory("rea-kernel-module-mcp-limit-");
+    const path = join(root, "demo.ko");
+    const bytes = kernelModuleFixture();
+    await writeFile(path, bytes);
+
+    const parseError = (reply: Awaited<ReturnType<typeof client.callTool>>) => {
+      expect(reply.isError).toBe(true);
+      const first = (
+        reply.content as Array<{ type: string; text?: string }>
+      )[0];
+      return (
+        JSON.parse(first?.text ?? "{}") as {
+          error: {
+            code: string;
+            remediation: { action: string };
+            details: { limit?: Record<string, unknown> };
+          };
+        }
+      ).error;
+    };
+
+    const fileRefusal = parseError(
+      await client.callTool({
+        name: "inspect_kernel_module",
+        arguments: { path, max_file_bytes: 64 },
+      }),
+    );
+    expect(fileRefusal.code).toBe("resource_constraint");
+    expect(fileRefusal.details.limit).toEqual({
+      control_kind: "parameter",
+      parameter: "max_file_bytes",
+      effective_value: 64,
+      unit: "bytes",
+      minimum: 64,
+      maximum: 536870912,
+      default_value: 67108864,
+      applies_at: "next_call",
+      required_value: bytes.length,
+    });
+    expect(fileRefusal.details.limit).not.toHaveProperty("cli_flag");
+    expect(fileRefusal.remediation.action).toContain("max_file_bytes");
+    expect(fileRefusal.remediation.action).not.toContain("--max-file-bytes");
+
+    const entryRefusal = parseError(
+      await client.callTool({
+        name: "inspect_kernel_module",
+        arguments: { path, max_entries: 1 },
+      }),
+    );
+    expect(entryRefusal.code).toBe("resource_constraint");
+    expect(entryRefusal.details.limit).toEqual({
+      control_kind: "parameter",
+      parameter: "max_entries",
+      effective_value: 1,
+      unit: "count",
+      minimum: 1,
+      maximum: 65536,
+      default_value: 8192,
+      applies_at: "next_call",
+    });
+    expect(entryRefusal.details.limit).not.toHaveProperty("cli_flag");
+    expect(entryRefusal.remediation.action).toContain("max_entries");
+    expect(entryRefusal.remediation.action).not.toContain("--max-entries");
+
+    const recovered = await client.callTool({
+      name: "inspect_kernel_module",
+      arguments: { path, max_file_bytes: bytes.length, max_entries: 16 },
+    });
+    expect(recovered.isError, JSON.stringify(recovered.content)).not.toBe(true);
+    expect(
+      toolContract("inspect_kernel_module").outputSchema.parse(
+        recovered.structuredContent,
+      ).normalized_result.applicability,
+    ).toBe("applicable");
+  },
+);
