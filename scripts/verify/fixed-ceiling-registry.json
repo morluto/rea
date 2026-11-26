@@ -186,44 +186,9 @@
     }
   },
   "src/flutter/FlutterBuildProvider.ts": {
-    "\"The Flutter ABI inventory allowance\"": {
-      "class": "pending",
-      "issue": 14236,
-      "reason": "Flutter APK, library, extraction, ABI, path and snapshot-hash allowances are resource policies."
-    },
     "\"The Flutter APK expansion allowance (derived from the APK size)\"": {
       "class": "derived",
       "reason": "Expansion work is derived from the admitted APK's own size."
-    },
-    "\"The Flutter APK metadata read allowance\"": {
-      "class": "pending",
-      "issue": 14236,
-      "reason": "Flutter APK, library, extraction, ABI, path and snapshot-hash allowances are resource policies."
-    },
-    "\"The Flutter library path allowance\"": {
-      "class": "pending",
-      "issue": 14236,
-      "reason": "Flutter APK, library, extraction, ABI, path and snapshot-hash allowances are resource policies."
-    },
-    "\"The Flutter snapshot-hash candidate allowance\"": {
-      "class": "pending",
-      "issue": 14236,
-      "reason": "Flutter APK, library, extraction, ABI, path and snapshot-hash allowances are resource policies."
-    },
-    "\"the Flutter APK snapshot allowance\"": {
-      "class": "pending",
-      "issue": 14236,
-      "reason": "Flutter APK, library, extraction, ABI, path and snapshot-hash allowances are resource policies."
-    },
-    "\"the Flutter cumulative extraction allowance\"": {
-      "class": "pending",
-      "issue": 14236,
-      "reason": "Flutter APK, library, extraction, ABI, path and snapshot-hash allowances are resource policies."
-    },
-    "\"the Flutter library read allowance\"": {
-      "class": "pending",
-      "issue": 14236,
-      "reason": "Flutter APK, library, extraction, ABI, path and snapshot-hash allowances are resource policies."
     }
   },
   "src/ghidra/GhidraExecutableHeader.ts": {
