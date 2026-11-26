@@ -109,13 +109,11 @@ const warcFailureDialect = (
   },
   // A path that does not resolve to a readable regular file is the caller's
   // input, not an IO failure; the shared file projection would report it as an
-  // invalid value without the retry that names the host running REA.
+  // invalid value without the retry that names the host running REA. A byte
+  // fault is the target's and keeps the reader's own classification.
   recognise: (cause, details) => {
     const physical = artifactFilePrimaryFacts(cause).cause;
-    if (
-      physical instanceof ArtifactReaderFailure &&
-      (physical.reason === "path" || physical.reason === "format")
-    )
+    if (physical instanceof ArtifactReaderFailure && physical.reason === "path")
       return inputFailure(physical.message, physical, details);
     if (isSelectedRegularFileError(physical))
       return inputFailure(

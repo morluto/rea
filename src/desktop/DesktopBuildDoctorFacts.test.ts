@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { expect, it, vi } from "vitest";
+import { scopeChecksOf } from "../application/Doctor.fixture.js";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { runDoctor, systemDoctorHost } from "../application/Doctor.js";
@@ -508,7 +509,7 @@ it.skipIf(process.platform === "win32")(
         clients: ["claude_code"],
       });
       expect(
-        report.scope_checks.find(
+        scopeChecksOf(report).find(
           ({ name }) => name === "desktop_build-agent-env",
         ),
       ).toMatchObject({ ok: true });

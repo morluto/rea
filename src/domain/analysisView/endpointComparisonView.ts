@@ -1,3 +1,4 @@
+import { analysisViewPageFields } from "./analysisViewPageFields.js";
 import { z } from "zod";
 import type { StaticObservedEndpointComparison } from "../javascript/staticObservedEndpointSchemas.js";
 import {
@@ -21,14 +22,10 @@ import {
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 import { pickFields, selectViewRows } from "./selectViewRows.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
-import { err, ok } from "../result.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
+import { ok } from "../result.js";
 
-const page = {
-  kind: z.literal("endpoint-comparison"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
-};
+const page = analysisViewPageFields("endpoint-comparison");
 export const endpointComparisonViewRequestSchema = z.discriminatedUnion(
   "collection",
   [
@@ -173,15 +170,8 @@ export const projectEndpointComparisonView = (
     SummaryAnalysisView | z.output<typeof endpointComparisonViewRequestSchema>
   >(admitted, "summary", "endpoint-comparison");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Endpoint comparisons support summary and endpoint-comparison pages",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Endpoint comparisons support summary and endpoint-comparison pages",
     );
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;

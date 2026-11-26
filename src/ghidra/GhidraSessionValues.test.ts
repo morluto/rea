@@ -150,13 +150,28 @@ describe("Ghidra RISC-V calling-convention report", () => {
     functions: 11,
     definitions: 11,
   };
-  it("accepts the exact committed policy outcome", () => {
+  const single = {
+    policy: "ilp32f-prototype-v1",
+    functions: 17,
+    definitions: 16,
+  };
+  const refused = {
+    policy: "ilp32f-prototype-v1",
+    refused: "1 signature passes rea_riscv_abi_half (_Float16).",
+  };
+  it.each([
+    ["the ilp32 outcome", valid],
+    ["the ilp32f outcome", single],
+    ["an ilp32f refusal", refused],
+    // Either policy refuses functions compiled from another language.
+    ["an ilp32 refusal", { ...refused, policy: valid.policy }],
+  ])("accepts %s exactly", (_label, report) => {
     const parsed = parseGhidraSessionInfo(
-      { ...session(), riscv_calling_convention: valid },
+      { ...session(), riscv_calling_convention: report },
       expected,
     );
     if (!parsed.ok) throw parsed.error;
-    expect(parsed.value.riscv_calling_convention).toEqual(valid);
+    expect(parsed.value.riscv_calling_convention).toEqual(report);
   });
   it.each([
     ["the MIPS policy", { ...valid, policy: "o32-soft-float-prototype-v1" }],
@@ -165,10 +180,89 @@ describe("Ghidra RISC-V calling-convention report", () => {
     ["a missing count", { policy: valid.policy, functions: 2 }],
     ["an undeclared field", { ...valid, prototype: "__rea_ilp32" }],
     ["a non-object report", "ilp32-prototype-v1"],
+    ["a custom-storage count", { ...single, custom_storage: 1 }],
+    [
+      "a refusal of an unknown policy",
+      { ...refused, policy: "lp64-prototype-v1" },
+    ],
+    ["a refusal with counts", { ...refused, functions: 1 }],
+    ["an empty refusal", { ...refused, refused: "" }],
+    ["an unbounded refusal", { ...refused, refused: "x".repeat(2049) }],
   ])("rejects %s", (_label, report) => {
     expect(
       parseGhidraSessionInfo(
         { ...session(), riscv_calling_convention: report },
+        expected,
+      ).ok,
+    ).toBe(false);
+  });
+});
+
+describe("Ghidra RISC-V load preparation report", () => {
+  const code = {
+    name: ".flash.text",
+    address: "0x42000020",
+    size: "0xfff2",
+    file_offset: "0xc020",
+    space_before: ".flash.text",
+    space_after: "ram",
+  };
+  const moved = {
+    policy: "nobits-reservation-overlay-v1",
+    outcome: "moved",
+    code,
+    reservation: {
+      name: ".flash_rodata_dummy",
+      address: "0x42000020",
+      size: "0x18000",
+      space_before: "ram",
+      space_after: ".flash_rodata_dummy",
+    },
+    functions: 549,
+    entry_points: 331,
+    reservation_labels: 1,
+  };
+  const { reservation: _reservation, ...withoutReservation } = moved;
+  const { file_offset: _fileOffset, ...withoutOffset } = code;
+  it.each([
+    ["a moved outcome", moved],
+    [
+      "a canonical outcome",
+      { policy: "nobits-reservation-overlay-v1", outcome: "canonical", code },
+    ],
+    [
+      "a refusal",
+      { policy: "nobits-reservation-overlay-v1", refused: "no reservation" },
+    ],
+  ])("accepts %s", (_label, report) => {
+    const parsed = parseGhidraSessionInfo(
+      { ...session(), elf_load_preparation: report },
+      expected,
+    );
+    if (!parsed.ok) throw parsed.error;
+    expect(parsed.value.elf_load_preparation).toEqual(report);
+  });
+  it.each([
+    [
+      "an unknown policy",
+      { ...moved, policy: "nobits-reservation-overlay-v2" },
+    ],
+    ["an unknown outcome", { ...moved, outcome: "partial" }],
+    ["a negative count", { ...moved, entry_points: -1 }],
+    ["a moved outcome without its reservation", withoutReservation],
+    ["a code block without its file offset", { ...moved, code: withoutOffset }],
+    [
+      "a non-hex address",
+      { ...moved, code: { ...code, address: "1107296288" } },
+    ],
+    ["counts on a canonical outcome", { ...moved, outcome: "canonical" }],
+    ["an empty refusal", { policy: moved.policy, refused: "" }],
+    ["an outcome beside a refusal", { ...moved, refused: "no reservation" }],
+    ["a non-object report", "moved"],
+  ])("rejects %s", (_label, report) => {
+    expect(
+      parseGhidraSessionInfo(
+        { ...session(), elf_load_preparation: report },
         expected,
       ).ok,
     ).toBe(false);

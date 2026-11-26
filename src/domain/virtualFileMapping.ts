@@ -13,6 +13,21 @@ export interface ZeroFillMapping {
   readonly size: bigint;
 }
 
+/** Index of the last sorted value at or below `value`, or -1. */
+export const lastAtOrBelow = (
+  sorted: readonly bigint[],
+  value: bigint,
+): number => {
+  let low = 0;
+  let high = sorted.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if ((sorted[middle] as bigint) <= value) low = middle + 1;
+    else high = middle;
+  }
+  return low - 1;
+};
+
 /** Why a declared virtual span does not establish one contiguous file span. */
 export type VirtualFileMappingFailure =
   | {
@@ -93,7 +108,7 @@ export const resolveMappedFileOffset = (
   return ok(found);
 };
 
-const spansOverlap = (
+export const spansOverlap = (
   address: bigint,
   size: bigint,
   otherAddress: bigint,

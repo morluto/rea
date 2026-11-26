@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   ArtifactReaderFailure,
   assertArtifactReadActive,
@@ -22,16 +23,21 @@ import {
   type ImageSection,
   type BinaryContainer,
 } from "../../domain/binaryContainer.js";
-import { readElfImageFromReader } from "../../domain/native/elfImage.js";
-import type { NativeByteSource } from "../../domain/native/nativeSectionDirectory.js";
+import {
+  elfSectionFitsFile,
+  elfSectionLocation,
+  readElfImageFromReader,
+} from "../../domain/native/elfImage.js";
 import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
+import type { ByteSource } from "../../domain/byteSource.js";
 
 type ElfSection = Extract<ImageSection, { format: "elf" }>;
 type Report = KernelModule;
 type Limitations = string[];
 
 const MAGIC = Buffer.from(MODULE_SIGNATURE_MAGIC, "latin1");
+const SIGNATURE_HASH_CHUNK_BYTES = 1 << 20;
 const MODULE_CODECS = ["gzip", "xz", "zstd"] as const;
 
 const exceeds = (examined: number, maxEntries: number): void => {
@@ -42,32 +48,6 @@ const exceeds = (examined: number, maxEntries: number): void => {
       { boundary: "capacity" },
     );
 };
-
-const fits = (offset: bigint, size: bigint, fileLength: number): boolean =>
-  offset >= 0n &&
-  size >= 0n &&
-  offset <= BigInt(fileLength) &&
-  size <= BigInt(fileLength) - offset;
-
-const locationOf = (
-  section: ElfSection,
-): { offset: number; bytes: number } | null => {
-  if (
-    !fits(
-      section.declared_range.offset,
-      section.declared_range.size,
-      Number.MAX_SAFE_INTEGER,
-    )
-  )
-    return null;
-  return {
-    offset: Number(section.declared_range.offset),
-    bytes: Number(section.declared_range.size),
-  };
-};
-
-const inFile = (section: ElfSection, fileLength: number): boolean =>
-  fits(section.declared_range.offset, section.declared_range.size, fileLength);
 
 const rawHex = (bytes: Buffer): string | null =>
   bytes.length > MAX_KERNEL_MODULE_RAW_BYTES ? null : bytes.toString("hex");
@@ -331,9 +311,9 @@ const presence = (
 } => {
   if (section === undefined)
     return { status: namesComplete ? "absent" : "unknown", location: null };
-  if (section.type === 8 || !inFile(section, fileLength))
+  if (section.type === 8 || !elfSectionFitsFile(section, fileLength))
     return { status: "present", location: null };
-  const location = locationOf(section);
+  const location = elfSectionLocation(section);
   if (section.compressed) return { status: "unsupported", location };
   return { status: "present", location };
 };
@@ -352,7 +332,7 @@ const sized = (
       bytes: null,
       compressed: null,
     };
-  if (!inFile(section, fileLength) || section.type === 8) {
+  if (!elfSectionFitsFile(section, fileLength) || section.type === 8) {
     limitations.push(
       `${label} is declared but not file-backed, so its size is unknown.`,
     );
@@ -363,7 +343,7 @@ const sized = (
       compressed: null,
     };
   }
-  const location = locationOf(section);
+  const location = elfSectionLocation(section);
   if (section.compressed)
     limitations.push(
       `${label} is stored compressed. The reported size is the file-backed storage size; the decoded size is unknown.`,
@@ -482,38 +462,52 @@ const parseSignatureTrailer = (
   };
 };
 
+const readSourceRange = async (
+  source: ByteSource,
+  offset: number,
+  length: number,
+): Promise<Buffer> => {
+  if (length === 0) return Buffer.alloc(0);
+  const { prefix } = source;
+  if (prefix !== undefined && offset + length <= prefix.length)
+    return prefix.subarray(offset, offset + length);
+  const bytes = await source.readRange(offset, length);
+  if (bytes.length !== length)
+    throw new ArtifactReaderFailure(
+      "integrity",
+      "Kernel module ended before the admitted file range.",
+      { integrityCheck: "read-coverage" },
+    );
+  return bytes;
+};
+
 const parseSignatureFromSource = async (
-  source: NativeByteSource,
+  source: ByteSource,
+  signal: AbortSignal | undefined,
 ): Promise<Report["signature"]> => {
   const tailLen = Math.min(
     source.size,
     MAGIC.length + MODULE_SIGNATURE_INFO_BYTES,
   );
-  const tailOffset = source.size - tailLen;
-  const tail =
-    tailLen === 0
-      ? Buffer.alloc(0)
-      : source.prefix !== undefined &&
-          tailOffset + tailLen <= source.prefix.length
-        ? source.prefix.subarray(tailOffset, tailOffset + tailLen)
-        : await source.readRange(tailOffset, tailLen);
+  const tail = await readSourceRange(source, source.size - tailLen, tailLen);
   const trailer = parseSignatureTrailer(source.size, tail);
   if (trailer.done) return trailer.signature;
-  const pkcs7 =
-    source.prefix !== undefined &&
-    trailer.pkcs7Offset + trailer.pkcs7Bytes <= source.prefix.length
-      ? source.prefix.subarray(
-          trailer.pkcs7Offset,
-          trailer.pkcs7Offset + trailer.pkcs7Bytes,
-        )
-      : await source.readRange(trailer.pkcs7Offset, trailer.pkcs7Bytes);
+
+  const hash = createHash("sha256");
+  const end = trailer.pkcs7Offset + trailer.pkcs7Bytes;
+  for (let offset = trailer.pkcs7Offset; offset < end;) {
+    assertArtifactReadActive(signal);
+    const length = Math.min(end - offset, SIGNATURE_HASH_CHUNK_BYTES);
+    hash.update(await readSourceRange(source, offset, length));
+    offset += length;
+  }
   return {
     status: "present",
     magic: trailer.magic,
     info: trailer.info,
     pkcs7: {
       location: { offset: trailer.pkcs7Offset, bytes: trailer.pkcs7Bytes },
-      sha256: sha256Hex(pkcs7),
+      sha256: hash.digest("hex"),
     },
     reason: null,
   };
@@ -549,8 +543,12 @@ const modinfoSectionLocation = (
         reason: null,
       },
     };
-  const location = locationOf(section);
-  if (section.type === 8 || location === null || !inFile(section, fileLength))
+  const location = elfSectionLocation(section);
+  if (
+    section.type === 8 ||
+    location === null ||
+    !elfSectionFitsFile(section, fileLength)
+  )
     return {
       ready: false,
       result: {
@@ -592,8 +590,12 @@ const versionsSectionLocation = (
         reason: null,
       },
     };
-  const location = locationOf(section);
-  if (section.type === 8 || location === null || !inFile(section, fileLength))
+  const location = elfSectionLocation(section);
+  if (
+    section.type === 8 ||
+    location === null ||
+    !elfSectionFitsFile(section, fileLength)
+  )
     return {
       ready: false,
       result: {
@@ -608,17 +610,6 @@ const versionsSectionLocation = (
     };
   return { ready: true, location, compressed: section.compressed };
 };
-
-const readSourceRange = async (
-  source: NativeByteSource,
-  offset: number,
-  length: number,
-): Promise<Buffer> =>
-  length === 0
-    ? Buffer.alloc(0)
-    : source.prefix !== undefined && offset + length <= source.prefix.length
-      ? source.prefix.subarray(offset, offset + length)
-      : source.readRange(offset, length);
 
 interface KernelModulePrepared {
   readonly facts: ReturnType<typeof headerFacts>;
@@ -705,7 +696,7 @@ const finalizeKernelModule = (
     (section) => section.name?.startsWith("__ksymtab") === true,
   );
   const ksymtabSections = ksymtabNamed.filter(
-    (section) => section.type !== 8 && inFile(section, fileLength),
+    (section) => section.type !== 8 && elfSectionFitsFile(section, fileLength),
   );
   const unbacked = ksymtabNamed.length - ksymtabSections.length;
   if (unbacked > 0)
@@ -713,7 +704,7 @@ const finalizeKernelModule = (
       `${String(unbacked)} __ksymtab* section(s) are declared but not file-backed, so their ranges are unknown.`,
     );
   const ksymtab = ksymtabSections.flatMap((section) => {
-    const location = locationOf(section);
+    const location = elfSectionLocation(section);
     if (section.name === null || location === null) return [];
     const fitsName =
       section.name.length <= MAX_KERNEL_MODULE_SECTION_NAME_BYTES;
@@ -801,7 +792,7 @@ const finalizeKernelModule = (
 
 /** Decode kernel-module metadata positionally over a bounded file handle. */
 export const parseKernelModuleFromHandle = async (
-  source: NativeByteSource,
+  source: ByteSource,
   artifact: Report["artifact"],
   input: InspectKernelModuleInput,
   signal?: AbortSignal,
@@ -814,6 +805,7 @@ export const parseKernelModuleFromHandle = async (
     source,
     "inspect_kernel_module",
     () => yieldArtifactRead(signal),
+    { structureBytes: input.max_structure_bytes },
   );
   const facts = headerFacts(image);
   if (facts.type !== 1) return notApplicable(artifact, facts);
@@ -858,7 +850,7 @@ export const parseKernelModuleFromHandle = async (
         input.max_entries,
       )
     : versionsLoc.result;
-  const signature = await parseSignatureFromSource(source);
+  const signature = await parseSignatureFromSource(source, signal);
   return finalizeKernelModule(
     source.size,
     artifact,

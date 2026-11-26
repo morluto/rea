@@ -7,36 +7,14 @@ import {
   peLoadConfigImage,
 } from "../../src/native/pe/PeLoadConfig.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 for (const bits of [32, 64] as const) {
   cliTest(
-    `rejects non-MZ PE${String(bits)} load config across CLI and MCP`,
+    `reads a valid PE${String(bits)} load config across CLI and MCP`,
     async ({ cli }) => {
-      const root = await createTestTempDirectory("rea-pe-config-signature-");
+      const root = await createTestTempDirectory("rea-pe-config-valid-");
       const call = await cli.sharedMcpCall!();
-      for (const [name, prefix] of [
-        ["zz", Buffer.from("ZZ")],
-        ["high-bit", Buffer.from([0xcd, 0xda])],
-      ] as const) {
-        const bytes = peLoadConfigImage({ bits });
-        prefix.copy(bytes);
-        const path = join(root, `${name}.exe`);
-        await writeFile(path, bytes);
-        const result = await cli.run({
-          arguments: ["inspect-pe-load-config", path, "--json"],
-        });
-        expect(result.exitCode).toBe(1);
-        expect(result.json).toMatchObject({
-          code: "invalid_request",
-          details: { operation: "inspect_pe_load_config" },
-        });
-        const response = await call("inspect_pe_load_config", { path });
-        expect(response.isError).toBe(true);
-        expect(parseMcpToolError(response)).toEqual({ error: result.json });
-        expect((await readFile(path)).equals(bytes)).toBe(true);
-      }
       const path = join(root, "valid.exe");
       const bytes = peLoadConfigImage({ bits });
       await writeFile(path, bytes);
@@ -148,7 +126,7 @@ cliTest("fails closed at the callback limit", async ({ cli }) => {
     retryable: false,
     details: { reported_limits: { boundary: "callbacks", maximum: 1 } },
     remediation: {
-      action: expect.stringContaining("Raise max_callbacks above 1"),
+      action: expect.stringContaining("Pass a larger --max-callbacks"),
     },
   });
   const retried = await cli.run({

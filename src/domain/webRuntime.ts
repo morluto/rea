@@ -8,6 +8,7 @@ import {
   DEFAULT_CDP_COMMAND_TIMEOUT_MS,
   webRuntimeCommandTimeoutSchema,
 } from "./browserDeadline.js";
+import { SHA256_PATTERN } from "./digests.js";
 import { jsonObjectSchema } from "./jsonValue.js";
 import { cdpResourceColumnSchema } from "./cdpObservationSchemas.js";
 import { webTextFacts } from "./webContentArtifact.js";
@@ -41,6 +42,24 @@ export const webRuntimeScopeSchema = z.strictObject({
   command_timeout_ms: webRuntimeCommandTimeoutSchema,
 });
 
+const capturedSource = z.object({
+  state: z.literal("captured"),
+  text: z.string(),
+  sha256: z.string().regex(SHA256_PATTERN),
+  utf8_bytes: z.int().min(0),
+  utf16_units: z.int().min(0),
+});
+const absentSource = z.object({
+  state: z.enum(["unavailable", "excluded"]),
+  reason: z.string().min(1),
+});
+
+/** Captured source facts or the reason text was absent on a metadata-only page. */
+export const webRuntimeSourceMetadataSchema = z.discriminatedUnion("state", [
+  z.strictObject(capturedSource.omit({ text: true }).shape),
+  z.strictObject(absentSource.shape),
+]);
+
 /** Source evidence is bound by the selected CDP session's script ID, never URL equality. */
 export const webRuntimeSourceSchema = z.object({
   script_id: z.string().min(1),
@@ -60,32 +79,21 @@ export const webRuntimeSourceSchema = z.object({
     })
     .nullable(),
   source: z.discriminatedUnion("state", [
-    z
-      .object({
-        state: z.literal("captured"),
-        text: z.string(),
-        sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-        utf8_bytes: z.int().min(0),
-        utf16_units: z.int().min(0),
-      })
-      .superRefine((source, context) => {
-        const facts = webTextFacts(source.text);
-        for (const [field, expected] of [
-          ["sha256", facts.sha256],
-          ["utf8_bytes", facts.utf8Bytes],
-          ["utf16_units", facts.utf16Units],
-        ] as const)
-          if (source[field] !== expected)
-            context.addIssue({
-              code: "custom",
-              path: [field],
-              message: `${field} does not match captured source text.`,
-            });
-      }),
-    z.object({
-      state: z.enum(["unavailable", "excluded"]),
-      reason: z.string().min(1),
+    capturedSource.superRefine((source, context) => {
+      const facts = webTextFacts(source.text);
+      for (const [field, expected] of [
+        ["sha256", facts.sha256],
+        ["utf8_bytes", facts.utf8Bytes],
+        ["utf16_units", facts.utf16Units],
+      ] as const)
+        if (source[field] !== expected)
+          context.addIssue({
+            code: "custom",
+            path: [field],
+            message: `${field} does not match captured source text.`,
+          });
     }),
+    absentSource,
   ]),
 });
 export type WebRuntimeSource = z.infer<typeof webRuntimeSourceSchema>;

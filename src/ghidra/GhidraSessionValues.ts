@@ -10,7 +10,11 @@ import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryOperations.js";
 import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionOperations.js";
 import { ghidraExtensionResultSchema } from "./extensions/GhidraExtensions.js";
 import { GHIDRA_MIPS_SOFT_FLOAT_STORAGE } from "./GhidraMipsProfile.js";
-import { GHIDRA_RISCV_CALLING_CONVENTION_IDS } from "./GhidraRiscvProfile.js";
+import {
+  GHIDRA_RISCV_CALLING_CONVENTION_IDS,
+  GHIDRA_RISCV_LOAD_PREPARATION,
+  GHIDRA_RISCV_REFUSAL_MAX_LENGTH,
+} from "./GhidraRiscvProfile.js";
 import { isRecord } from "../kernel/isRecord.js";
 
 /** Exact methods proved by the selected Program bridge handshake. */
@@ -35,6 +39,20 @@ const pdbAttributeSchema = z
   .nullable();
 
 const capabilitySchema = z.enum(GHIDRA_SESSION_CAPABILITIES);
+
+const hexSchema = z.string().regex(/^0x[0-9a-f]+$/u);
+const preparedBlockSchema = z
+  .object({
+    name: z.string().min(1),
+    address: hexSchema,
+    size: hexSchema,
+    space_before: z.string().min(1),
+    space_after: z.string().min(1),
+  })
+  .strict();
+const preparedCodeSchema = preparedBlockSchema
+  .extend({ file_offset: hexSchema })
+  .strict();
 
 const sessionInfoSchema = z
   .object({
@@ -96,12 +114,46 @@ const sessionInfoSchema = z
       .strict()
       .optional(),
     riscv_calling_convention: z
-      .object({
-        policy: z.enum(GHIDRA_RISCV_CALLING_CONVENTION_IDS),
-        functions: z.int().nonnegative(),
-        definitions: z.int().nonnegative(),
-      })
-      .strict()
+      .union([
+        z.strictObject({
+          policy: z.enum(GHIDRA_RISCV_CALLING_CONVENTION_IDS),
+          functions: z.int().nonnegative(),
+          definitions: z.int().nonnegative(),
+        }),
+        z.strictObject({
+          policy: z.enum(GHIDRA_RISCV_CALLING_CONVENTION_IDS),
+          refused: z.string().min(1).max(GHIDRA_RISCV_REFUSAL_MAX_LENGTH),
+        }),
+      ])
+      .optional(),
+    // Written by ReaGhidraPrepareElfLoad before auto-analysis.
+    elf_load_preparation: z
+      .union([
+        z
+          .object({
+            policy: z.literal(GHIDRA_RISCV_LOAD_PREPARATION),
+            outcome: z.literal("moved"),
+            code: preparedCodeSchema,
+            reservation: preparedBlockSchema,
+            functions: z.int().nonnegative(),
+            entry_points: z.int().nonnegative(),
+            reservation_labels: z.int().nonnegative(),
+          })
+          .strict(),
+        z
+          .object({
+            policy: z.literal(GHIDRA_RISCV_LOAD_PREPARATION),
+            outcome: z.literal("canonical"),
+            code: preparedCodeSchema,
+          })
+          .strict(),
+        z
+          .object({
+            policy: z.literal(GHIDRA_RISCV_LOAD_PREPARATION),
+            refused: z.string().min(1).max(1024),
+          })
+          .strict(),
+      ])
       .optional(),
     capabilities: z.array(capabilitySchema),
     target: z
@@ -109,7 +161,7 @@ const sessionInfoSchema = z
         name: z.string().min(1),
         language_id: z.string().min(1),
         compiler_spec_id: z.string().min(1),
-        image_base: z.string().regex(/^0x[0-9a-f]+$/u),
+        image_base: hexSchema,
         default_address_space: z.string().min(1),
         sha256: z.string().regex(/^[a-f0-9]{64}$/u),
       })

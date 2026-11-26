@@ -190,7 +190,7 @@ function* collectExpressionFlowsSteps(
             value.status === "unknown" &&
             value.resourceLimit === "primitive-bytes"
           )
-            state.valueResourceLimits.add("primitive-bytes");
+            state.observations.valueResourceLimits.add("primitive-bytes");
         }
       }
       if (
@@ -268,7 +268,7 @@ function* collectExpressionFlowsSteps(
         literal?.status === "unknown" &&
         literal.resourceLimit === "primitive-bytes"
       )
-        state.valueResourceLimits.add("primitive-bytes");
+        state.observations.valueResourceLimits.add("primitive-bytes");
       operands.push({
         location: range(operand),
         conditional,

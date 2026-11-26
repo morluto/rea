@@ -203,10 +203,12 @@ describe("Hex-Rays query line", () => {
         1000,
       );
       // Parse only the generated line; evaluating literals runs no code.
+      // -S skips site, whose host sitecustomize may write to stderr.
       const decoded = spawnSync(
         "python3",
         [
           "-I",
+          "-S",
           "-c",
           [
             "import ast, json, sys",

@@ -2,6 +2,7 @@ import { unknownTarget } from "../../domain/targetIdentity.js";
 import { mkdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import { createFixtureProviderIdentity } from "../../../tests/fixtures/analysisExecution.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 
 import {
@@ -34,11 +35,7 @@ const identity: ProviderIdentity = {
   name: "Bundle resource fixture",
   version: "1",
 };
-const binaryIdentity: ProviderIdentity = {
-  id: "fixture",
-  name: "Fixture analysis provider",
-  version: "1",
-};
+const binaryIdentity: ProviderIdentity = createFixtureProviderIdentity();
 
 const expectResourceSnapshotRefusal = (
   error: AnalysisError,

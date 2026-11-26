@@ -1,3 +1,4 @@
+import { appendToMapList } from "../../domain/appendToMapList.js";
 import {
   addArtifactContainsEdge,
   addStaticInferenceEdge,
@@ -22,9 +23,7 @@ export const addJavaScriptHtmlRoles = (
   for (const script of context.analysis.html_scripts) {
     if (script.script_type !== "classic" && script.script_type !== "module")
       continue;
-    const existing = byHtml.get(script.html_path);
-    if (existing === undefined) byHtml.set(script.html_path, [script]);
-    else existing.push(script);
+    appendToMapList(byHtml, script.html_path, script);
   }
   for (const [htmlPath, scripts] of byHtml) {
     const html = context.filesByPath.get(htmlPath);

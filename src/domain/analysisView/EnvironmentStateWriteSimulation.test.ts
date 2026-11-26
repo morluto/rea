@@ -18,6 +18,7 @@ import {
   environmentStateViewOf,
   renamedBook,
   type Book,
+  planOf as gated,
 } from "../../../tests/fixtures/environmentStateWrites.js";
 import type { JsonValue } from "../jsonValue.js";
 import { ok } from "../result.js";
@@ -33,14 +34,6 @@ import {
   type ObservationSearch,
 } from "./environmentStateWriteObserve.js";
 import { updatedFields } from "./environmentStateWriteApply.js";
-
-/** The plan the gate gives `tool` over a capture of `rows`. */
-const gated = (rows: readonly TimedCaptureRow[], tool: string) => {
-  const { writes } = environmentStateViewOf(timedCaptureEvidence(rows));
-  const plan = writes.find((candidate) => candidate.tool === tool);
-  if (plan === undefined) throw new Error(`The gate planned no ${tool}`);
-  return plan;
-};
 
 const RENAMED = renamedBook(FIRST_BOOK, "Renamed Book", 3);
 

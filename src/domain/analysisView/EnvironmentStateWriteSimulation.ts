@@ -2,6 +2,7 @@ import { ENTRY_BYTES } from "./webNetworkRouteTemplates.js";
 import { CapturedWriteCompletion } from "./environmentStateWriteCompletion.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
+  succeeded,
   at,
   changesState,
   isObject,
@@ -47,7 +48,6 @@ import {
   entityTarget,
   isAbsence,
   itemTarget,
-  succeeded,
   withBodies,
   showsPlacement,
   SimulatedState,

@@ -1,13 +1,9 @@
-import { describe, it } from "vitest";
 import { fileURLToPath } from "node:url";
-import { RuleTester } from "oxlint/plugins-dev";
+import { createRuleTester } from "../support/createRuleTester.js";
 
 import rule from "../../scripts/lint/rules/no-shared-module-mock.mjs";
 
-RuleTester.describe = describe;
-RuleTester.it = it;
-
-const tester = new RuleTester({
+const tester = createRuleTester({
   cwd: fileURLToPath(new URL("../../", import.meta.url)),
   languageOptions: { parserOptions: { lang: "ts" } },
 });

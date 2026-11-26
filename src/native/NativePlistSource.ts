@@ -8,7 +8,7 @@ import {
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   bindArtifactFileCleanup,
   assertArtifactReadActive,
   withArtifactRegularFile,
@@ -243,10 +243,7 @@ const nativePlistPrimaryFailure = (
   if (origin === "owned-or-classified") {
     if (cause instanceof AnalysisError) return cause;
     if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      return cancelledBy(
-        "inspect_plist",
-        carriedReason(artifactFileCancellationCause(cause)),
-      );
+      return artifactFileCancellationError("inspect_plist", cause);
     if (
       cause instanceof ArtifactReaderFailure &&
       cause.reason === "unavailable"

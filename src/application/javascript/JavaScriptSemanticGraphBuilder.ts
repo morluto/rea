@@ -1,3 +1,4 @@
+import { appendToMapList } from "../../domain/appendToMapList.js";
 import type { AnalysisParameterLimit } from "../../domain/analysisSettings.js";
 import {
   createJavaScriptSemanticGraph,
@@ -1072,10 +1073,7 @@ const projectCalls = (context: FileContext): void => {
     JavaScriptSemanticCallReturnFlow[]
   >();
   for (const flow of context.ir.callReturnFlows) {
-    const grouped = returnFlowsByCallSite.get(flow.callSiteId);
-    if (grouped === undefined)
-      returnFlowsByCallSite.set(flow.callSiteId, [flow]);
-    else grouped.push(flow);
+    appendToMapList(returnFlowsByCallSite, flow.callSiteId, flow);
     addRelation(context.state, {
       source: context.returnSiteNodes.get(flow.returnSiteId),
       target: context.callSiteNodes.get(flow.callSiteId),

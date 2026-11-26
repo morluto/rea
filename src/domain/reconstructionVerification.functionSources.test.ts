@@ -286,11 +286,16 @@ describe("historical calls-only reconstruction changes", () => {
             : {
                 relationshipCoverage:
                   coverage === "unknown"
-                    ? { status: "unknown", reason: "Call graph unavailable." }
+                    ? {
+                        status: "unknown",
+                        reason: "Call graph unavailable.",
+                        limited_directions: ["callers", "callees"],
+                      }
                     : coverage === "partial"
                       ? {
                           status: "partial",
                           limitations: ["Additional edges omitted."],
+                          limited_directions: ["callers", "callees"],
                         }
                       : { status: "complete" },
               }),
@@ -434,6 +439,7 @@ describe("function reconstruction call coverage", () => {
       relationshipCoverage: {
         status: "unknown",
         reason: "Call graph unavailable.",
+        limited_directions: ["callers", "callees"],
         diagnostics: ["Indirect calls remain unresolved."],
       },
     });
@@ -495,6 +501,7 @@ describe("function reconstruction with independent changes", () => {
       relationshipCoverage: {
         status: "unknown",
         reason: "Call graph unavailable.",
+        limited_directions: ["callers", "callees"],
       },
     });
     const changedResult = compareFunctions(
