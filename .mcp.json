@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "rea": {
+      "command": "npx",
+      "args": ["-y", "rea-agents@6.9.0", "mcp"],
+      "env": {
+        "REA_ANALYSIS_PROVIDER": "auto",
+        "REA_MCP_TOOL_FAMILIES": "application"
+      }
+    }
+  }
+}
