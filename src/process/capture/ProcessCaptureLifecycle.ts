@@ -133,7 +133,12 @@ export type TerminalExitResult =
   | {
       readonly unobserved: true;
       readonly reason: "timeout" | "idle_timeout" | "cancelled";
-      readonly finalization: ProcessCaptureFinalization;
+      /**
+       * Present after a finalization interval recorded attempts. A direct
+       * kill that throws before that interval has none: there was no SIGTERM
+       * and the result does not invent an exit.
+       */
+      readonly finalization?: ProcessCaptureFinalization;
     };
 
 /**
@@ -848,7 +853,9 @@ export const describeUnverifiedCause = (
  * with its delivery result before the delivery is awaited, and each wait is
  * bounded by the cleanup verification grace. If the SIGKILL cannot be
  * delivered the wait ends with `unobserved: true` and no invented exit, so the
- * caller can keep its observations and release the run through cleanup.
+ * caller can keep its observations and release the run through cleanup. A
+ * direct `terminal.kill("SIGKILL")` that throws before the interval does the
+ * same and omits finalization, because that path never sent SIGTERM.
  */
 export const awaitTerminalExit = async ({
   terminal,
@@ -897,14 +904,20 @@ export const awaitTerminalExit = async ({
       signals: finalizationSignals.map((attempt) => ({ ...attempt })),
     });
     const unobservedExit = (): void => {
-      if (settled || exitObserved || finalizationStartedAt === undefined)
-        return;
+      if (settled || exitObserved) return;
       settled = true;
       for (const timer of timers) timer.cancel();
       timers.clear();
+      const initiating = reason === "exited" ? "timeout" : reason;
+      // A direct kill can fail before any finalization attempt exists. End
+      // the wait without an exit code or a SIGKILL-only finalization record.
+      if (finalizationStartedAt === undefined) {
+        resolveExit({ unobserved: true, reason: initiating });
+        return;
+      }
       resolveExit({
         unobserved: true,
-        reason: reason === "exited" ? "timeout" : reason,
+        reason: initiating,
         finalization: snapshot(null),
       });
     };
