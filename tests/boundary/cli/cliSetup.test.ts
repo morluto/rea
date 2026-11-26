@@ -215,6 +215,12 @@ cliTest(
   },
 );
 
+/**
+ * Approval asks about one change, or names the count when the host can also
+ * install Hopper. Either question is the consent prompt.
+ */
+const setupApprovalQuestion = /Apply this change\?|Apply these \d+ changes\?/u;
+
 const runSetupInTty = async (
   home: string,
   arguments_: readonly string[],
@@ -254,7 +260,7 @@ const runSetupInTty = async (
     if (
       approval !== undefined &&
       !answered &&
-      output.includes("Apply this change?")
+      setupApprovalQuestion.test(output)
     ) {
       answered = true;
       terminal.write(approval ? "\r" : "\u001b[C\r");
@@ -428,8 +434,8 @@ describe("TTY setup dry run", () => {
       false,
     );
 
-    const prompt = output.indexOf("Apply this change?");
-    expect(prompt, output).toBeGreaterThan(0);
+    const prompt = output.search(setupApprovalQuestion);
+    expect(prompt, output).toBeGreaterThanOrEqual(0);
     const beforePrompt = output.slice(0, prompt);
     expect(beforePrompt.split("REA setup").length - 1, output).toBe(1);
   });
