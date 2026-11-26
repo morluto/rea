@@ -1,3 +1,7 @@
+import {
+  createFixtureProviderIdentity,
+  supportedFixtureTarget,
+} from "../../fixtures/analysisExecution.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -38,11 +42,7 @@ afterEach(async () => {
   await Promise.all(resources.splice(0).map((resource) => resource.close()));
 });
 
-const identity = {
-  id: "fixture",
-  name: "Fixture analysis provider",
-  version: "1",
-};
+const identity = createFixtureProviderIdentity();
 const dispatchMetadata = inspectNativeDispatchMetadata(
   [
     {
@@ -295,12 +295,7 @@ const connectUnconfiguredSymbolFallback = async (
             remediation: "Configure the fixture symbol provider.",
             diagnostics: {},
           }),
-          inspectTargetSupport: () => ({
-            status: "supported",
-            code: null,
-            reason: null,
-            diagnostics: {},
-          }),
+          inspectTargetSupport: supportedFixtureTarget,
         },
       ],
       "auto",

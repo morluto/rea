@@ -9,6 +9,7 @@ import {
   MINIMUM_ELF_READ_FILE_BYTES,
   type ElfReadBudgets,
 } from "./elfReadBudgets.js";
+import { maxStructureBytesSchema } from "./nativeStructureBudget.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const crc32Hex = z.string().regex(/^[0-9a-f]{8}$/u);
@@ -95,6 +96,27 @@ export const MAX_ELF_DEBUG_CANDIDATE_BYTES = 0xffffffff;
 /** Distinct GNU build-ids were observed and none is selected. */
 export const ELF_DEBUG_LINK_MULTIPLE_BUILD_IDS_LIMITATION =
   "Multiple distinct GNU build-ids were observed. None is selected as the image build-id.";
+
+/** Typed limitation discriminators emitted by ELF debug-link inspection. */
+export const ELF_DEBUG_LINK_LIMITATION_CODES = [
+  "standing_caveats",
+  "name_not_single_segment",
+  "multiple_build_ids",
+  "candidate_prefix_only",
+  "candidate_budget_exceeded",
+  "candidate_unreadable",
+  "candidate_read_incomplete",
+  "candidate_comparison_incomplete",
+  "unavailable_check",
+  "cannot_verify",
+] as const;
+
+export const elfDebugLinkLimitationCodeSchema = z.enum(
+  ELF_DEBUG_LINK_LIMITATION_CODES,
+);
+export type ElfDebugLinkLimitationCode = z.infer<
+  typeof elfDebugLinkLimitationCodeSchema
+>;
 
 /** The debuglink name is not one path segment, so directory strings are omitted. */
 export const ELF_DEBUG_LINK_NAME_SEGMENT_LIMITATION =
@@ -198,6 +220,7 @@ export const inspectElfDebugLinkInputSchema = z.strictObject({
     .describe(
       "Optional absolute path of one caller-selected file to verify against the debuglink CRC32 and GNU build-id",
     ),
+  max_structure_bytes: maxStructureBytesSchema,
   max_file_bytes: z
     .number()
     .int()
@@ -319,6 +342,7 @@ export const elfDebugLinkSchema = z.strictObject({
     status: coverageStatusSchema,
     examined_sections: uint,
   }),
+  limitation_codes: z.array(elfDebugLinkLimitationCodeSchema),
   limitations: z.array(z.string()),
 });
 

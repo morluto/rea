@@ -1,3 +1,4 @@
+import { appendToMapList } from "../domain/appendToMapList.js";
 import { z } from "zod";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
@@ -53,26 +54,16 @@ export interface KunaResolvedEntry {
 
 const procedureSelectorSchema = z.string().min(1);
 
-const addIndexedName = (
-  byName: Map<string, KunaInventoryFunction[]>,
-  name: string,
-  entry: KunaInventoryFunction,
-): void => {
-  const named = byName.get(name);
-  if (named === undefined) byName.set(name, [entry]);
-  else named.push(entry);
-};
-
 const indexInventoryEntryNames = (
   byName: Map<string, KunaInventoryFunction[]>,
   entry: KunaInventoryFunction,
 ): void => {
-  addIndexedName(byName, entry.name, entry);
+  appendToMapList(byName, entry.name, entry);
   const { aliases } = entry;
   if (aliases.length === 0) return;
   if (aliases.length === 1) {
     const alias = aliases[0]!;
-    if (alias !== entry.name) addIndexedName(byName, alias, entry);
+    if (alias !== entry.name) appendToMapList(byName, alias, entry);
     return;
   }
   if (aliases.length <= 8) {
@@ -86,7 +77,7 @@ const indexInventoryEntryNames = (
           break;
         }
       }
-      if (!duplicate) addIndexedName(byName, alias, entry);
+      if (!duplicate) appendToMapList(byName, alias, entry);
     }
     return;
   }
@@ -95,7 +86,7 @@ const indexInventoryEntryNames = (
     const alias = aliases[i]!;
     if (!seen.has(alias)) {
       seen.add(alias);
-      addIndexedName(byName, alias, entry);
+      appendToMapList(byName, alias, entry);
     }
   }
 };

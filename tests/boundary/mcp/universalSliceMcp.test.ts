@@ -1,5 +1,5 @@
 import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
-import { createHash } from "node:crypto";
+import { sha256 } from "../../support/sha256.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -54,9 +54,6 @@ const sliceTest = mcpTest.extend<{
     }
   },
 });
-
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const goSlices = () => {
   const intel = createGoBinaryFixture({
@@ -270,7 +267,7 @@ sliceTest(
         code: "unsupported_target",
         details: {
           path: damaged,
-          format_failure: "malformed",
+          failure_kind: "truncated",
           format: "macho",
           reason: "FAT architecture 0 slice range extends beyond the file",
         },
@@ -290,7 +287,7 @@ sliceTest(
       code: "unsupported_target",
       details: {
         path: cutOff,
-        format_failure: "truncated",
+        failure_kind: "truncated",
         format: "macho",
         available_bytes: 20,
         required_bytes: 28,
@@ -320,7 +317,7 @@ sliceTest(
       code: "unsupported_target",
       details: {
         path: disagreeing,
-        format_failure: "malformed",
+        failure_kind: "malformed",
         format: "macho",
         reason:
           "FAT architecture 0 CPU type/subtype disagrees with its Mach-O header",
@@ -451,7 +448,7 @@ sliceTest(
         code: "unsupported_target",
         details: {
           path,
-          format_failure: "malformed",
+          failure_kind: "malformed",
           format: "macho",
           reason: "Mach-O slices 0 and 1 overlap.",
         },

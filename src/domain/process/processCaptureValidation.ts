@@ -1,4 +1,4 @@
-import canonicalize from "canonicalize";
+import { serializeCanonicalValue } from "../canonicalDigest.js";
 
 import {
   digestProcessCommitment,
@@ -23,8 +23,8 @@ type RequireInvariant = (
 ) => void;
 
 const sameJsonValue = (left: unknown, right: unknown): boolean => {
-  const encoded = canonicalize(left);
-  return encoded !== undefined && encoded === canonicalize(right);
+  const encoded = serializeCanonicalValue(left);
+  return encoded !== undefined && encoded === serializeCanonicalValue(right);
 };
 
 const orderedTimestamps = (values: readonly number[]): boolean =>

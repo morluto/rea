@@ -29,15 +29,7 @@ import { closeAnalysisClient } from "./AnalysisClientCleanup.js";
 /** Own deferred client creation while callers wait independently and close joins it. */
 export class AnalysisClientCreation {
   readonly #inspectionResources = new ArtifactResourceScope();
-  readonly #inspectionOwner: RetainedResourceScope = {
-    retain: (owner, resource) =>
-      this.#inspectionResources.retain({
-        kind: "lease",
-        resource,
-        lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
-      }),
-    run: (operation) => this.#inspectionResources.run(operation),
-  };
+  readonly #inspectionOwner = this.#inspectionResources.forCloseOwners();
   #attempt:
     | SharedStartupAttempt<Result<AnalysisClient, AnalysisError>>
     | undefined;

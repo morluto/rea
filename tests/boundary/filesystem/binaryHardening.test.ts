@@ -6,6 +6,7 @@ import { createBinaryHardeningService } from "../../../src/composition/binaryDia
 import { elfHardeningFixture } from "../../../src/native/hardening/BinaryHardening.fixture.js";
 import { elfFrameAllowanceFixture } from "../../fixtures/binaryDiagnostics/elfFrameAllowance.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expectFileSelectionErrors } from "../../support/expectFileSelectionErrors.js";
 
 describe("binary hardening stable filesystem boundary", () => {
   it("reports non-file and missing selections as caller input errors", async () => {
@@ -17,25 +18,16 @@ describe("binary hardening stable filesystem boundary", () => {
     await symlink(path, alias);
     const service = createBinaryHardeningService();
     try {
-      for (const [candidate, reason] of [
-        [root, "invalid_format"],
-        [alias, "invalid_format"],
-        [join(root, "missing"), "invalid_value"],
-        [join(path, "child"), "invalid_value"],
-      ] as const) {
-        const result = await service.inspect({ path: candidate });
-        if (result.ok) throw new Error("Expected file acquisition failure");
-        expect(result.error).toMatchObject({
-          _tag: "AnalysisInputError",
-          operation: "inspect_binary_hardening",
-          issues: [{ path: ["path"], reason, message: expect.any(String) }],
-        });
-      }
+      await expectFileSelectionErrors(service, "inspect_binary_hardening", {
+        root,
+        alias,
+        path,
+      });
       const foreign = join(root, "foreign");
       await writeFile(foreign, Buffer.from("not a binary"));
       const unsupported = await service.inspect({ path: foreign });
       if (unsupported.ok) throw new Error("Expected an unsupported target");
-      expect(unsupported.error._tag).toBe("AnalysisUnsupportedTargetError");
+      expect(unsupported.error._tag).toBe("AnalysisTargetFailureError");
     } finally {
       await service.close();
     }

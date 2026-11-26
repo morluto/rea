@@ -50,15 +50,13 @@ it("reports the cumulative staging-byte limit and only offers supported increase
       },
     });
     const action = projected.remediation.action;
-    expect(action).toContain(`max_output_bytes=${limit}`);
-    expect(action).toContain(`maximum ${MAX_FIRMWARE_STAGING_BYTES}`);
-    expect(action).toContain("analysis_timeout_ms does not raise");
-    expect(action.includes("Increase max_output_bytes")).toBe(adjustable);
-    expect(action).toContain(
-      adjustable
-        ? "narrower firmware byte range"
-        : "smaller firmware byte range",
-    );
+    expect(projected.details?.limit).toMatchObject({
+      parameter: "max_output_bytes",
+      effective_value: limit,
+      maximum: MAX_FIRMWARE_STAGING_BYTES,
+    });
+    expect(action.includes("Pass a larger max_output_bytes")).toBe(adjustable);
+    expect(action.includes("already at its maximum")).toBe(!adjustable);
   }
 });
 

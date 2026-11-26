@@ -68,6 +68,7 @@ const beamInput = (path: string, bytes: Buffer) => ({
   max_file_bytes: bytes.length,
   max_chunks: 5,
   max_atoms: 5,
+  max_table_rows: 65536,
 });
 
 const expectBeamEvidence = (

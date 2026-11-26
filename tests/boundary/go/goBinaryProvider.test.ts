@@ -5,8 +5,9 @@ import { expect, it, vi } from "vitest";
 import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js";
 import { GoBinaryProvider } from "../../../src/go/GoBinaryProvider.js";
 import { GO_ANALYSIS_BUDGET_DEFAULTS } from "../../../src/domain/go/goBinary.js";
+import { NATIVE_STRUCTURE_BYTES } from "../../../src/domain/native/nativeStructureBudget.js";
 import {
-  AnalysisMalformedTargetError,
+  AnalysisTargetFailureError,
   AnalysisResourceConstraintError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { BinaryFormatFailure } from "../../../src/domain/binaryContainer.js";
@@ -27,11 +28,25 @@ it("reads Go build information from a PE32 image declaring one data directory", 
   fixture.bytes.writeUInt32LE(1, 152 + 92);
   const path = join(root, "one-directory-pe32.exe");
   await writeFile(path, fixture.bytes);
-  const result = await new GoBinaryProvider().inspect({ path });
-  expect(result).toMatchObject({
-    ok: true,
-    value: { build_info: { go_version: "go1.26.0" } },
+  const structureBytes = NATIVE_STRUCTURE_BYTES.default_value * 2;
+  const result = await new GoBinaryProvider().inspect({
+    path,
+    max_structure_bytes: structureBytes,
   });
+  if (!result.ok) throw result.error;
+  expect(result.value.build_info).toMatchObject({ go_version: "go1.26.0" });
+  expect(
+    result.value.limitations.some((limitation) =>
+      limitation.includes(`max_structure_bytes=${String(structureBytes)}`),
+    ),
+  ).toBe(true);
+  expect(
+    result.value.limitations.some((limitation) =>
+      limitation.includes(
+        `max_structure_bytes=${String(NATIVE_STRUCTURE_BYTES.default_value)}`,
+      ),
+    ),
+  ).toBe(false);
 });
 
 it.each([false, true])(
@@ -63,14 +78,20 @@ it.each([false, true])(
           code: "resource_constraint",
           details: {
             reported_limits: {
-              boundary: "structure",
+              boundary: "max_structure_bytes",
               maximum: 16 * 1024 * 1024,
             },
+            limit: {
+              control_kind: "parameter",
+              parameter: "max_structure_bytes",
+              effective_value: 16 * 1024 * 1024,
+            },
+            refusal: { kind: "adjustable_budget" },
           },
         });
       else {
-        expect(result.error).toBeInstanceOf(AnalysisMalformedTargetError);
-        if (!(result.error instanceof AnalysisMalformedTargetError))
+        expect(result.error).toBeInstanceOf(AnalysisTargetFailureError);
+        if (!(result.error instanceof AnalysisTargetFailureError))
           throw result.error;
         expect(result.error.cause).toBeInstanceOf(BinaryFormatFailure);
         if (!(result.error.cause instanceof BinaryFormatFailure))
@@ -84,7 +105,7 @@ it.each([false, true])(
         expect(projected).toMatchObject({
           code: "unsupported_target",
           details: {
-            format_failure: "truncated",
+            failure_kind: "truncated",
             format: "macho",
             field: "Mach-O load commands",
             offset: 32,

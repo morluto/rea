@@ -1,19 +1,11 @@
 import { decodeLimit } from "../domain/parseFailure.js";
+import type { MavenGradleReportLimitField } from "../domain/java/mavenGradleMetadata.js";
 /** The ParseFailure format of a Maven POM or Gradle module metadata file. */
 export const MAVEN_GRADLE_METADATA_FORMAT = "maven-gradle-metadata";
 
-/** Fixed report allowances; each names the representation it bounds. */
-export type MavenGradleReportAllowance =
-  | "repeated_variant_name_chars"
-  | "dependency_rows"
-  | "variants"
-  | "exclusions"
-  | "unresolved_records"
-  | "xml_nodes";
-
 const REPORT_REFUSALS: Readonly<
   Record<
-    MavenGradleReportAllowance,
+    MavenGradleReportLimitField,
     (required: number, limit: number) => string
   >
 > = {
@@ -37,7 +29,7 @@ const REPORT_REFUSALS: Readonly<
  * repeated variant name expands a few input bytes into a much larger report.
  */
 export const metadataReportLimit = (
-  allowance: MavenGradleReportAllowance,
+  allowance: MavenGradleReportLimitField,
   maximum: number,
   required: number,
 ) =>

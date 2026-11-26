@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import {
   analysisViewInputError,
   invalidAnalysisView,
@@ -37,7 +38,7 @@ import type {
 
 export const MANAGED_MEMBER_SCOPE_GUIDANCE = {
   selectedNominalRows:
-    "Exported types and member references cover the whole assembly. Named type rows, fields, methods, call edges, field accesses and user strings follow the declaring-type selection.",
+    "Named type rows, exported types, fields, methods, call edges, field accesses and user strings follow the declaring-type selection; member references cover only rows referenced by selected method bodies.",
   unresolvedTypeRows:
     "Unresolved TypeDef coordinates cover the assembly-wide name scan.",
   unresolvedMethodRows:
@@ -85,9 +86,7 @@ const getCollectionFilterIndex = <T extends Row>(
     const value = row[key];
     if (typeof value !== "string") unresolved += 1;
     else {
-      const bucket = byValue.get(value);
-      if (bucket === undefined) byValue.set(value, [index]);
-      else bucket.push(index);
+      appendToMapList(byValue, value, index);
     }
   }
   const built = { byValue, unresolved };

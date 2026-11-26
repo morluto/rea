@@ -817,7 +817,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         if (consumedBytes !== payload.length)
           return {
             ok: false,
-            reason: "format",
+            reason: "malformed",
             message: `AMD zlib stream used ${consumedBytes} of ${payload.length} declared compressed bytes.`,
           };
         return {

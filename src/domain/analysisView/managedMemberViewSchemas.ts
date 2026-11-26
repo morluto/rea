@@ -1,3 +1,4 @@
+import { analysisViewPageFields } from "./analysisViewPageFields.js";
 import { z } from "zod";
 import { managedMemberInspectionSchema } from "../managed/managedArtifact.js";
 import { unresolvedDefinitionSchema } from "../managed/managedUnresolvedDefinitions.js";
@@ -17,11 +18,7 @@ const rows = {
   unresolved_definitions: unresolvedDefinitionSchema,
   accessors: accessor.shape.declarations.element,
 };
-const pageRequest = {
-  kind: z.literal("managed-members"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
-};
+const pageRequest = analysisViewPageFields("managed-members");
 const namedRequest = {
   ...pageRequest,
   names: z

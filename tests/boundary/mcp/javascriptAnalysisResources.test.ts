@@ -212,6 +212,7 @@ it("returns a directly usable partial analysis reference for an oversized timeou
       {
         name: "analyze_javascript_application",
         arguments: {
+          detail: "complete",
           input_path: root,
           format: "directory",
           max_heap_mb: 128,

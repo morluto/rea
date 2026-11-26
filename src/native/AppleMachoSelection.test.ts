@@ -897,8 +897,11 @@ describe("native Mach-O fixup load command boundaries", () => {
           bytes.length,
         ),
       ).toMatchObject({
-        status: "malformed",
-        reason: expect.stringContaining("not UTF-8"),
+        status: "failed",
+        failure: expect.objectContaining({
+          kind: "malformed",
+          detail: expect.stringContaining("not UTF-8"),
+        }),
       });
     },
   );
@@ -922,7 +925,7 @@ it.each([0, 129])(
         ? {
             ok: false,
             error: {
-              kind: "format",
+              kind: "target",
               message: "FAT header declares no architectures",
               failure: { kind: "malformed", format: "macho" },
             },
