@@ -105,8 +105,15 @@ const coerce = (value: unknown, schema: z.ZodObject, name: string): unknown => {
   const field = fieldOf(schema, name);
   if (field === undefined || typeof value !== "string") return value;
   const type = declaredOptionType(field);
-  if (type instanceof z.ZodNumber) return Number(value);
-  if (type instanceof z.ZodBoolean) return value === "true";
+  if (type instanceof z.ZodNumber) {
+    if (value.trim() === "") return value;
+    return Number(value);
+  }
+  if (type instanceof z.ZodBoolean) {
+    if (value === "true") return true;
+    if (value === "false") return false;
+    return value;
+  }
   return value;
 };
 

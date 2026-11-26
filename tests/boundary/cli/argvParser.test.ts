@@ -152,8 +152,30 @@ describe("parseCliArgv", () => {
     });
   });
 
-  it("reads boolean text as true only for 'true'", () => {
-    expect(bound(["file", "--yes=maybe"]).options.yes).toBe(false);
+  it("coerces boolean text strictly for 'true' and 'false' and validates invalid values", () => {
     expect(bound(["file", "--yes=true"]).options.yes).toBe(true);
+    expect(bound(["file", "--yes=false"]).options.yes).toBe(false);
+    expect(failure(["file", "--yes=maybe"])).toMatchObject({
+      kind: "validation",
+      fieldErrors: [{ path: "yes", expected: "boolean" }],
+    });
+    expect(failure(["file", "--yes=1"])).toMatchObject({
+      kind: "validation",
+      fieldErrors: [{ path: "yes", expected: "boolean" }],
+    });
+  });
+
+  it("refuses empty string for numeric options without coercing to zero", () => {
+    expect(failure(["file", "--block-size="])).toMatchObject({
+      kind: "validation",
+      fieldErrors: [{ path: "blockSize", expected: "number" }],
+    });
+  });
+
+  it("sets false for negated options so schema validation catches non-boolean negation", () => {
+    expect(failure(["file", "--no-block-size"])).toMatchObject({
+      kind: "validation",
+      fieldErrors: [{ path: "blockSize", expected: "number" }],
+    });
   });
 });
