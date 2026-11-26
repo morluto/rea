@@ -10,10 +10,9 @@ import {
   malformedInput,
   truncatedInput,
 } from "../domain/parseFailure.js";
-import {
-  MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS,
-  type ErlangBeam,
-  type InspectErlangBeamInput,
+import type {
+  ErlangBeam,
+  InspectErlangBeamInput,
 } from "../domain/erlang/beam.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 
@@ -278,13 +277,13 @@ const buildErlangBeamReport = (
     (exportTable?.count ?? 0) +
     (importTable?.count ?? 0) +
     (lambdaTable?.count ?? 0);
-  if (tableRows > MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS)
+  if (tableRows > input.max_table_rows)
     throw decodeLimit(
       "beam",
-      `BEAM tables exceed the ${String(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS)}-row budget.`,
+      `BEAM tables hold ${String(tableRows)} rows, above max_table_rows (${String(input.max_table_rows)}).`,
       {
         name: "max_table_rows",
-        maximum: MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS,
+        maximum: input.max_table_rows,
         required: tableRows,
       },
     );

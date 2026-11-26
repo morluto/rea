@@ -149,13 +149,18 @@ server; older servers keep the complete request after schema discovery.
   `artifact_changed`. Provider-owned storage failures report a
   `resource_constraint` with their native I/O cause. Cancellation is checked
   during copying, metadata/symbol walks, string scanning, and after cleanup.
-- **Bounded reads.** APK snapshots are bounded at 2 GiB, including while
-  copying. Identification permits 768 MiB of cumulative library extraction;
-  declared sizes are checked before extraction. Library reads are bounded at 256 MiB each and ZIP
-  metadata at 8 MiB. Before reading, the AOT image buffer reserves the
-  admitted declared size plus one byte; the reported byte count is the number
-  actually read. Exceeded budgets report
-  `resource_constraint`.
+- **Bounded reads.** Both operations accept `apk_limits` (CLI
+  `--apk-limits` JSON) with these defaults: `apk_bytes` 2 GiB for the APK
+  snapshot, including while copying; `extraction_bytes` 768 MiB of cumulative
+  library extraction during identification, with declared sizes checked before
+  extraction; `library_bytes` 256 MiB per library read; and
+  `metadata_read_bytes` 8 MiB of ZIP metadata. Before reading, the AOT image
+  buffer reserves the admitted declared size plus one byte; the reported byte
+  count is the number actually read. An exceeded budget reports
+  `resource_constraint` with `details.limit` naming the `apk_limits` field, its
+  effective value and range; raise it on the next call for the same APK. Byte
+  fields accept any positive safe integer; libraries and metadata are held in
+  memory, so host heap remains an independent constraint.
 - **Engine notes.** Engine libraries are spooled into the owned root. ELF
   headers, note tables and note payloads share an 8 MiB metadata budget;
   up to 64 distinct build IDs and 1024 distinct nonempty note ranges are retained.
@@ -164,10 +169,12 @@ server; older servers keep the complete request after schema discovery.
   consume no inventory slots. Exceeding a bound preserves the candidates examined
   from retained ranges and reports partial coverage with `build_id: null`.
 - **Metadata and candidate capacity.** Both operations refuse duplicate
-  relevant library paths. Inventory is limited to 32 ABIs and 1024 bytes per
-  relevant library path, independently of compressed size. Identification
-  refuses more than 64 distinct snapshot hashes with `resource_constraint`
-  rather than silently dropping conflicting evidence.
+  relevant library paths. Inventory admits `apk_limits.abi_count` (32) ABIs
+  and `apk_limits.library_path_bytes` (1024; at most 196,605, the decoded UTF-8
+  size of the largest 65,535-byte stored ZIP name) bytes per relevant library path, independently of compressed size.
+  Identification refuses more than `apk_limits.snapshot_hash_candidates` (64)
+  distinct snapshot hashes with `resource_constraint` rather than silently
+  dropping conflicting evidence.
 - **Selected ABI.** AOT inspection applies the library budget to the selected
   ABI after selection; an oversized unselected library does not block it.
   Undefined dynamic-symbol imports are not treated as snapshot exports.
@@ -250,7 +257,7 @@ layouts remain separate limitations. The default is 500; raising it can deliver
 more strings than a complete overview needs. Use `detail: "summary"` for the MCP
 identity/count task described above.
 
-These controls do not raise APK, ELF, library or response budgets, deserialize
+These controls do not raise `apk_limits`, ELF or response budgets, deserialize
 Dart objects, or establish typed class/function semantics. Retained
 `inspect_analysis_view` pages cover the returned selection; exhausting those
 pages does not recover facts that the producing pool scan omitted. Re-run the

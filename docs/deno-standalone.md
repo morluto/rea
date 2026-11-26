@@ -38,16 +38,19 @@ Layout reference: Deno `cli/lib/standalone/binary.rs` and `cli/lib/standalone/vi
 
 ## Deno compile sections
 
-`MAX_DENO_METADATA_JSON_BYTES` admits at most 8 MiB of metadata JSON.
-`MAX_DENO_VFS_HEADER_JSON_BYTES` admits at most 32 MiB of virtual-filesystem
-header JSON. Specifier, redirect, and remote tables each admit at most 100,000
-records. Specifier text admits at most 8 MiB, and remote module bodies admit at
-most 256 MiB. The virtual filesystem admits at most 100,000 directory, file,
-and symlink records and at most 512 nested levels (`MAX_DENO_VFS_DEPTH`). A
-name longer than 4,096 UTF-16 code units is indexed and is not retained.
-`MAX_DENO_VFS_RETAINED_UNITS` admits at most 32 million UTF-16 code units across
-the source path built for every entry, directories included, and retained
-symlink parts. A logical path deeper than 256 parts, a name that is not a safe
+Admission budgets are per-call fields of `artifact_limits.deno` on
+`inspect_artifact` and `extract_artifact`; a refusal reports the field in
+`details.reader_limit` ([artifact reader admission](reference/limits-and-recovery.md#artifact-reader-admission)).
+Defaults: `metadata_json_bytes` 8 MiB of metadata JSON, `vfs_header_json_bytes`
+32 MiB of virtual-filesystem header JSON, `table_records` 100,000 records in
+each specifier, redirect, and remote table, `specifier_text_bytes` 8 MiB,
+`remote_body_bytes` 256 MiB of remote module bodies, `vfs_entries` 100,000
+directory, file, and symlink records, and `vfs_name_units` 32 million UTF-16
+code units across the source path built for every entry, directories
+included, and retained symlink parts. The walk stops at 512 nested levels
+(`MAX_DENO_VFS_DEPTH`), a fixed recursion bound that protects the call stack.
+A name longer than 4,096 UTF-16 code units is indexed and is not retained. A
+logical path deeper than `path_parts` (256), a name that is not a safe
 relative path, a path component longer than 255 UTF-8 bytes
 (`MAX_DENO_PATH_COMPONENT_BYTES`, POSIX `NAME_MAX`), or a logical path longer
 than 512 UTF-8 bytes (`MAX_DENO_LOGICAL_PATH_BYTES`, half of the Darwin
@@ -56,11 +59,12 @@ spelling is within the name allowance. Component and path lengths include the
 `.deno-*` suffix of the stored regions a member has. A descendant has no source
 path when an ancestor spelling was not retained. Cancellation is checked before
 the virtual-filesystem walk. The walk does not yield, so it does not observe a
-cancellation that arrives while it is running; the retained allowance bounds its
-work. The combined logical path tree admits at most 250,000 distinct prefixes.
-`MAX_DENO_RETAINED_BYTES` admits at most 256 MiB of retained header and entry
-metadata. The shared artifact expansion budget also bounds the sum of referenced
-member lengths, with a 256 MiB floor.
+cancellation that arrives while it is running; `vfs_name_units` bounds its
+work. The combined logical path tree admits `path_nodes` (250,000) distinct
+prefixes, and `retained_bytes` admits 256 MiB of retained header and entry
+metadata. `artifact_limits.expanded_bytes` bounds the sum of referenced member
+lengths; omitted, it is the shared artifact expansion budget with a 256 MiB
+floor.
 
 Carrier location claims a file only after it confirms the carrier name: a
 Mach-O `__SUI` segment, a `SUI` ELF note descriptor named `d3n0l4nd`, a PE

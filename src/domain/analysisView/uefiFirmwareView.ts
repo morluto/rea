@@ -1,3 +1,4 @@
+import { exactNames, indexedRow, pageLimit } from "./uefiViewSelection.js";
 import { namedCounts } from "./analysisViewCounts.js";
 import { z } from "zod";
 import { boundedList } from "../boundedList.js";
@@ -43,14 +44,8 @@ const sourceIndex = {
 };
 const page = {
   offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().max(256).default(32),
+  limit: pageLimit(32),
 };
-const exactNames = <Schema extends z.ZodType>(schema: Schema, what: string) =>
-  z
-    .array(schema)
-    .min(1)
-    .optional()
-    .describe(`Exact ${what}; any listed value matches`);
 
 const pagedCollection = <Name extends string>(collection: Name) =>
   z.strictObject({
@@ -76,12 +71,7 @@ export const uefiFirmwareViewRequestSchema = z.discriminatedUnion(
         .optional()
         .describe("Exact logical_path of the owning firmware volume"),
       offset: page.offset,
-      limit: z
-        .int()
-        .positive()
-        .max(256)
-        .default(16)
-        .describe("File rows carry their section lists"),
+      limit: pageLimit(16).describe("File rows carry their section lists"),
     }),
     z.strictObject({
       kind: z.literal("uefi-firmware"),
@@ -284,11 +274,6 @@ const fileRowOf = ({ volume, file }: FileEntry, index: number) => {
     source_index: index,
   };
 };
-const indexedRow = <Row extends object>(row: Row, source_index: number) => ({
-  ...row,
-  source_index,
-});
-
 const selectedRows = (
   view: UefiFirmwareView,
   r: UefiInspectResult,

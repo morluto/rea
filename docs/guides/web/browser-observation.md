@@ -31,8 +31,10 @@ authority are validated independently before selection and connection.
   Page `dom` (`node_names`), `accessibility` (`roles`), `console` (`types`),
   `network` (`methods`), `scripts` or `resources` with
   `inspect_analysis_view` view `{"kind":"web-page","collection":...}`.
-  `compare_web_captures` needs the complete `normalized_result` inline, so
-  request `detail: "complete"` for a capture you will compare.
+  To compare a summarized capture, pass
+  `{"kind":"retained-evidence","evidence_id":...}` in `compare_web_captures`
+  instead of resending it; either the summary's or the complete record's ID
+  works.
 - `analyze_web_bundle` / `rea analyze-web-bundle` parses selected script artifacts without execution and derives chunk edges, route and endpoint candidates, vendor fingerprints, static WebMCP declarations, and optionally source-map/original-source evidence.
   Sources reported as JavaScript use JavaScript grammar even when the script
   has no URL or its URL ends in a different source extension.

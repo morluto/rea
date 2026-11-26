@@ -98,7 +98,7 @@ test("keeps Mach-O data symbols out of listings, overviews and decompile_all", a
 
   const refused = await client.callTool({
     name: "procedure_pseudo_code",
-    arguments: { detail: "complete", procedure: "global_count" },
+    arguments: { procedure: "global_count" },
   });
   expect(refused.isError).toBe(true);
   expect(parseMcpToolError(refused).error).toMatchObject({
@@ -292,11 +292,7 @@ test("recovers only an explicitly selected, evidenced Mach-O call destination", 
       (
         await client.callTool({
           name: "procedure_pseudo_code",
-          arguments: {
-            detail: "complete",
-            procedure,
-            analysis: "call_destination",
-          },
+          arguments: { procedure, analysis: "call_destination" },
         })
       ).isError,
       procedure,
@@ -306,7 +302,7 @@ test("recovers only an explicitly selected, evidenced Mach-O call destination", 
     (
       await client.callTool({
         name: "procedure_pseudo_code",
-        arguments: { detail: "complete", procedure: destination },
+        arguments: { procedure: destination },
       })
     ).isError,
   ).toBe(true);
@@ -373,11 +369,7 @@ test.for([
     }
     const failed = await client.callTool({
       name: "procedure_pseudo_code",
-      arguments: {
-        detail: "complete",
-        procedure: destination,
-        analysis: "call_destination",
-      },
+      arguments: { procedure: destination, analysis: "call_destination" },
     });
     expect(failed.isError).toBe(true);
     const error = parseMcpToolError(failed).error;

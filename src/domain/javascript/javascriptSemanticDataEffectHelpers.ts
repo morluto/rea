@@ -39,7 +39,7 @@ import {
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import {
-  readExactJavaScriptLiteral,
+  stringValue,
   semanticMemberChain,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
@@ -1222,13 +1222,7 @@ export const dataEffectLiteralString = (
     | t.JSXNamespacedName
     | t.ArgumentPlaceholder
     | undefined,
-): string | null => {
-  if (node === undefined) return null;
-  const literal = readExactJavaScriptLiteral(node);
-  return literal.found && typeof literal.value === "string"
-    ? literal.value
-    : null;
-};
+): string | null => stringValue(node) ?? null;
 
 /** Read a member callee from call or construction syntax. */
 export const dataEffectMemberCallee = (

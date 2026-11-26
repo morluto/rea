@@ -146,9 +146,12 @@ export const bindBrowserObservationTools = (
       run: (input, options) => discoverWebMcpTools(browser, input, options),
     },
     compare_web_captures: {
-      admission: "sdk",
+      // The comparison admits the raw request once: inline captures parse as
+      // the comparison input, and retained references resolve first.
+      admission: "application",
       ...optional,
-      run: (input) => compareWebCaptureEvidence(browser, input),
+      run: (input) =>
+        compareWebCaptureEvidence(browser, input, retention.evidenceById),
     },
     capture_web_screenshot: {
       admission: "sdk",
