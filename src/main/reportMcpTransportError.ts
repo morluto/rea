@@ -1,3 +1,4 @@
+import { systemCodeFromError } from "../kernel/reportedSystemCode.js";
 import type { Logger } from "pino";
 import { z } from "zod";
 import { StreamableHttpListenError } from "../server/http/streamableHttpListenError.js";
@@ -15,8 +16,7 @@ const transportSystemCode = (error: unknown): string | undefined => {
       : error.classification.error;
     return "systemCode" in failure ? failure.systemCode : undefined;
   }
-  if (!(error instanceof Error) || !("code" in error)) return undefined;
-  return typeof error.code === "string" ? error.code : undefined;
+  return systemCodeFromError(error);
 };
 
 /**
