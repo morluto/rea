@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **limits:** register producer.output_bytes as the session default for bounded producer output ([#14648](https://github.com/morluto/rea/issues/14648))
 * **browser:** an observe_web_execution call that omits detail on an observation above the agent result budget now returns the retained summary. Pass detail: "complete" (--detail complete) for the previous shape.
 * **native:** the PE retained-text, exception-directory entry and resource metadata refusals report details.limit instead of a fixed_ceiling refusal.
 * **native:** export inventory and retained-text refusals report details.limit for max_entries or max_text_bytes instead of a fixed_ceiling refusal, and MAX_NATIVE_EXPORT_ROWS is renamed DEFAULT_NATIVE_EXPORT_ROWS.
@@ -111,6 +112,7 @@
 * **javascript:** add semantic_analysis structure-only mode to analyze_javascript_application ([#14117](https://github.com/morluto/rea/issues/14117)) ([eccd18a](https://github.com/morluto/rea/commit/eccd18a2cc325bb97f66f23a4216dfcacd9e1bca))
 * **javascript:** inventory Expo Router require.context route keys ([#10624](https://github.com/morluto/rea/issues/10624)) ([7b6e816](https://github.com/morluto/rea/commit/7b6e816b0b61d24d1a3b79106481f29db676ea65))
 * **limits:** raise disk-backed admission defaults for large ordinary targets ([#14653](https://github.com/morluto/rea/issues/14653)) ([30be941](https://github.com/morluto/rea/commit/30be941a5adb36211cf0449fc980292b4cb8a470))
+* **limits:** register producer.output_bytes as the session default for bounded producer output ([#14648](https://github.com/morluto/rea/issues/14648)) ([6ae722a](https://github.com/morluto/rea/commit/6ae722a660048e90c4cba36052134339250e16d0))
 * **limits:** report the value a per-call limit needs and derive its recovery ([#14625](https://github.com/morluto/rea/issues/14625)) ([78cb717](https://github.com/morluto/rea/commit/78cb7172a6d38f726fe00acd530a8a8b7c21a737))
 * **mcp:** link retained Evidence from over-budget summaries ([#14603](https://github.com/morluto/rea/issues/14603)) ([fa65e51](https://github.com/morluto/rea/commit/fa65e51a24dc4c2983840af8d2ec119c28687cf7))
 * **metadata:** give NTFS, Maven report and NuGet budgets typed per-call controls ([#14629](https://github.com/morluto/rea/issues/14629)) ([4f66985](https://github.com/morluto/rea/commit/4f6698597884d709be8a98ec43f9f5320ae598ce))
