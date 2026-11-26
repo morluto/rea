@@ -1,3 +1,4 @@
+import { decode } from "@toon-format/toon";
 import { expect } from "vitest";
 
 import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
@@ -163,11 +164,26 @@ cliTest.skipIf(HOST_PLATFORM.platform === "win32")(
     });
     expect(counted.exitCode).toBe(1);
     expect(counted.stdout.trim()).toMatch(/^\d+$/u);
+    const skillError = {
+      ok: false,
+      error: {
+        code: "VALIDATION_ERROR",
+        fieldErrors: [
+          { path: "skill", code: "invalid_type", expected: "boolean" },
+        ],
+      },
+    };
     const full = await cli.run({
       arguments: [...invalid, "--full-output"],
       terminal: true,
     });
     expect(full.exitCode).toBe(1);
-    expect(full.stdout).not.toContain("See below for usage.");
+    expect(decode(full.stdout)).toMatchObject(skillError);
+    const jsonFull = await cli.run({
+      arguments: [...invalid, "--json", "--full-output"],
+      terminal: true,
+    });
+    expect(jsonFull.exitCode).toBe(1);
+    expect(JSON.parse(jsonFull.stdout)).toMatchObject(skillError);
   },
 );
