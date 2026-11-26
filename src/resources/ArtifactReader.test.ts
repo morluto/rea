@@ -91,3 +91,16 @@ it("names the format and label a shared malformed sentence reports", () => {
       .message,
   ).toContain("Node SEA blob is malformed: blob was not found");
 });
+
+it("keeps a file-size refusal's observed size through a rebuild", () => {
+  const primary = new ArtifactReaderFailure("limit", "too large", {
+    boundary: "file-size",
+    observedBytes: 4097n,
+  });
+  const rebuilt = new ArtifactReaderFailure(primary.reason, primary.message, {
+    cause: primary,
+    ...primary.primaryFacts(),
+  });
+  expect(rebuilt.observedBytes).toBe(4097n);
+  expect(rebuilt.boundary).toBe("file-size");
+});

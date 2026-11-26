@@ -25,11 +25,7 @@ import {
   analysisViewCoverageSchema,
   nullableCollectionViewCoverageSchema,
 } from "./analysisViewCoverage.js";
-import {
-  artifactSchema,
-  summaryViewResultBase,
-  viewResultBaseFields,
-} from "./analysisViewBase.js";
+import { artifactSchema, viewResultBaseFields } from "./analysisViewBase.js";
 import { recordedArrayViewSchema } from "./analysisViewRequest.js";
 import { evidenceJsonViewRequestSchema } from "./evidenceJsonView.js";
 import {
@@ -44,7 +40,6 @@ import {
   artifactInventoryViewRequestSchema,
 } from "./artifactInventoryView.js";
 import {
-  batchDecompileSummarySchema,
   batchDecompileViewCollections,
   batchDecompileViewContextSchema,
 } from "./batchDecompileView.js";
@@ -305,6 +300,10 @@ import {
   webPagePageViewResultSchema,
   webPageSummaryViewResultSchema,
 } from "./summarySchemas/webPageSummarySchemas.js";
+import {
+  webExecutionPageViewResultSchema,
+  webExecutionSummaryViewResultSchema,
+} from "./summarySchemas/webExecutionSummarySchemas.js";
 import { webNetworkCaptureSummaryViewResultSchema } from "./summarySchemas/webNetworkCaptureSummarySchema.js";
 import {
   webSourceLocationMatchesViewResultSchema,
@@ -387,6 +386,8 @@ export {
   webBundleSummaryViewResultSchema,
   webPagePageViewResultSchema,
   webPageSummaryViewResultSchema,
+  webExecutionPageViewResultSchema,
+  webExecutionSummaryViewResultSchema,
   webNetworkCaptureSummaryViewResultSchema,
   webSourceLocationMatchesViewResultSchema,
   webSourceLocationSummaryViewResultSchema,
@@ -695,6 +696,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   javaScriptRoutesViewResultSchema,
   webBundlePageViewResultSchema,
   webPagePageViewResultSchema,
+  webExecutionPageViewResultSchema,
   sourceToBundlePageViewResultSchema,
   endpointComparisonPageViewResultSchema,
   apiContractPageViewResultSchema,
@@ -806,6 +808,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     batchDecompileSummaryViewResultSchema,
     webBundleSummaryViewResultSchema,
     webPageSummaryViewResultSchema,
+    webExecutionSummaryViewResultSchema,
     nugetNupkgSummaryViewResultSchema,
   ]),
   z.strictObject({

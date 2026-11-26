@@ -20,7 +20,6 @@ import {
   NativeAotPeImage as PeImage,
   fileBackedVirtualExtent,
   virtualExtent,
-  type NativeAotImageOverlay as ImageOverlay,
 } from "./nativeAotPeImage.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 

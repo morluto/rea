@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { MachoReadFailure } from "./machoContainer.js";
 import { knownCoverageStatusSchema } from "../coverage.js";
+import { CoverageAccumulator } from "../coverageAccumulator.js";
 import { machoArchitectureFamily } from "./machoCpuIdentity.js";
 import { cancelledBy } from "../analysisErrorCore.js";
 
@@ -731,16 +732,23 @@ const projectTraceResult = (input: {
     edges: [...input.edges],
     findings: deriveFindings(input.edges, input.rootSlices),
     coverage: {
-      status:
-        unparsed.length === 0 &&
-        input.withoutArchitecture.length === 0 &&
-        input.environmentRoots.size === 0 &&
-        input.unknownArchitectureCandidates.size === 0 &&
-        input.unknownPlatformCandidates.size === 0 &&
-        input.undecodableSymlinkTargets.size === 0 &&
-        input.rootEnumeration?.status !== "unknown"
-          ? "complete"
-          : "partial",
+      status: (() => {
+        const acc = new CoverageAccumulator().recordComplete();
+        if (unparsed.length > 0) acc.recordOmission("unparsed images");
+        if (input.withoutArchitecture.length > 0)
+          acc.recordOmission("roots without architecture");
+        if (input.environmentRoots.size > 0)
+          acc.recordOmission("environment roots");
+        if (input.unknownArchitectureCandidates.size > 0)
+          acc.recordOmission("unknown architecture candidates");
+        if (input.unknownPlatformCandidates.size > 0)
+          acc.recordOmission("unknown platform candidates");
+        if (input.undecodableSymlinkTargets.size > 0)
+          acc.recordOmission("undecodable symlink targets");
+        if (input.rootEnumeration?.status === "unknown")
+          acc.recordOmission("root enumeration unknown");
+        return acc.finalizeKnown();
+      })(),
       unparsed_images: unparsed,
       roots_without_architecture: [...input.withoutArchitecture],
     },

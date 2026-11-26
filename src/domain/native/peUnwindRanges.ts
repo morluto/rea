@@ -3,6 +3,12 @@ import { z } from "zod";
 import { knownCoverageStatusSchema } from "../coverage.js";
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
+import {
+  parameterBudgetLimit,
+  parameterBudgetSchema,
+  type ParameterBudget,
+} from "../parameterBudget.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const hexRva = z.string().regex(/^0x[0-9a-f]+$/u);
@@ -34,6 +40,20 @@ export const PE_UNWIND_LIMITATIONS = {
     "Only the x64 RUNTIME_FUNCTION layout is decoded; this machine's exception directory uses another entry format.",
 } as const;
 
+/** `max_entries` of `inspect_pe_unwind_ranges`: RUNTIME_FUNCTION entries decoded into typed arrays. */
+export const PE_UNWIND_ENTRY_BUDGET = {
+  minimum: 1,
+  maximum: 16_777_216,
+  default_value: 2_097_152,
+  unit: "count",
+} as const satisfies ParameterBudget;
+
+/** The `max_entries` control that stopped an exception-directory decode. */
+export const peUnwindEntryLimit = (
+  effectiveValue: number,
+): AnalysisParameterLimit =>
+  parameterBudgetLimit("max_entries", PE_UNWIND_ENTRY_BUDGET, effectiveValue);
+
 export const inspectPeUnwindRangesInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to a PE32+ image",
@@ -47,6 +67,9 @@ export const inspectPeUnwindRangesInputSchema = z.strictObject({
     .describe(
       "Maximum bytes this reader reads from the artifact: headers, directories and the ranges they reference (default 64 MiB). The file may be larger; its one hashing pass is not counted",
     ),
+  max_entries: parameterBudgetSchema(PE_UNWIND_ENTRY_BUDGET).describe(
+    "Maximum exception-directory entries to decode (default 2097152); a larger directory fails without partial success",
+  ),
   kind: z
     .enum(["all", "primary", "chained", "issues"])
     .default("all")

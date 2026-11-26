@@ -1,6 +1,7 @@
 import { appendToMapList } from "../appendToMapList.js";
 import { z } from "zod";
 import { coverageStatusSchema } from "../coverage.js";
+import { CoverageAccumulator } from "../coverageAccumulator.js";
 
 import {
   nativeMetadataEvidenceSchema,
@@ -498,10 +499,14 @@ export const joinInterfaceBuilderDispatch = (
       ...graph.coverage,
       {
         facet: "ui_to_objc_dispatch",
-        status:
-          examined === resolved && inferredWithoutOwnerClass === 0
-            ? "complete"
-            : "partial",
+        status: (() => {
+          const acc = new CoverageAccumulator().recordComplete();
+          if (examined !== resolved)
+            acc.recordOmission("unresolved native investigation graph entries");
+          if (inferredWithoutOwnerClass !== 0)
+            acc.recordOmission("inferred entries without owner class");
+          return acc.finalizeKnown();
+        })(),
         reason:
           examined === resolved && inferredWithoutOwnerClass === 0
             ? null

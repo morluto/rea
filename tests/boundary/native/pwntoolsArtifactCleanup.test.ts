@@ -1,7 +1,6 @@
 import { SIMULATED_LINUX_X64 } from "../../fixtures/simulatedHost.js";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile, readFile, mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile, readFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { z } from "zod";

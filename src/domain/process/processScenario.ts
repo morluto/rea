@@ -2,8 +2,25 @@ import { serializeCanonicalValue } from "../canonicalDigest.js";
 import { z } from "zod";
 import { jsonRecordSchema } from "../jsonRecord.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
 
 const positiveBudget = z.int().safe().positive();
+/** Retained terminal and output bytes when `limits.output_bytes` is omitted. */
+export const DEFAULT_PROCESS_OUTPUT_BYTES = 1_000_000;
+
+/** The scenario output budget, as the per-call parameter that raises it. */
+export const processOutputBytesLimit = (
+  effectiveValue: number,
+): AnalysisParameterLimit => ({
+  control_kind: "parameter",
+  parameter: "limits.output_bytes",
+  effective_value: effectiveValue,
+  unit: "bytes",
+  minimum: 1,
+  maximum: Number.MAX_SAFE_INTEGER,
+  default_value: DEFAULT_PROCESS_OUTPUT_BYTES,
+  applies_at: "next_call",
+});
 /** Read the explicitly committed output budget without applying scenario defaults. */
 export const processScenarioOutputBudgetProjectionSchema = z
   .object({ output_bytes: positiveBudget })
@@ -245,7 +262,7 @@ export const processScenarioSchema = z
       ),
     limits: z
       .strictObject({
-        output_bytes: positiveBudget.default(1_000_000),
+        output_bytes: positiveBudget.default(DEFAULT_PROCESS_OUTPUT_BYTES),
         files: positiveBudget.default(10_000),
         file_bytes: positiveBudget.default(10_000_000),
         processes: positiveBudget.default(1_000),
@@ -253,7 +270,7 @@ export const processScenarioSchema = z
       })
       .strict()
       .default({
-        output_bytes: 1_000_000,
+        output_bytes: DEFAULT_PROCESS_OUTPUT_BYTES,
         files: 10_000,
         file_bytes: 10_000_000,
         processes: 1_000,

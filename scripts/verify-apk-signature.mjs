@@ -1,5 +1,8 @@
 #!/usr/bin/env node
-import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
+import {
+  assertCanonicalOutput,
+  canonicalOutputSchema,
+} from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -278,13 +281,7 @@ try {
       { timeout: 120000, toolDefinition: advertised },
     );
     assert.notEqual(reply.isError, true, mcpTextValue(reply));
-    assert.ok(
-      ajv.validate(
-        canonicalOutputSchema(advertised.name),
-        reply.structuredContent,
-      ),
-      JSON.stringify(ajv.errors),
-    );
+    assertCanonicalOutput(ajv, advertised, reply);
     const mcp = parseEvidence(requireMcpOutput(reply, "inspect_apk_signature"));
     const { caller_input_path: callerInputPath, ...cliShared } = cli;
     assert.equal(callerInputPath, path);

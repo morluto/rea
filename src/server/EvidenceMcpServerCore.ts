@@ -48,12 +48,15 @@ import {
 import { ErrorEvidenceTransport } from "./ErrorEvidenceTransport.js";
 import { isRecord } from "../kernel/isRecord.js";
 import { RETAINED_SUMMARY_VIEW_TOOL } from "./retainedSummaryDelivery.js";
+import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
+import { registerRetainedEvidenceResource } from "./retainedEvidenceResource.js";
 
 /** Capture caller selections and issues at the canonical SDK validation boundary. */
 const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
   tool: string,
   schema: Schema,
   pageable: boolean,
+  record: () => EvidenceWriter["recordEvidence"] | undefined,
 ): Schema => {
   const standard = schema["~standard"];
   // Zod issues feed field-level diagnostics; the delivery selection is
@@ -79,6 +82,7 @@ const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
             context.deliverySelection = {
               detail: isRecord(value) ? value.detail : undefined,
               pageable,
+              record: record(),
             };
           return result;
         };
@@ -268,6 +272,25 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     else super.sendToolListChanged();
   }
 
+  private evidenceLookup: EvidenceLookup | undefined;
+  private servesRetainedEvidence = false;
+
+  /**
+   * Serve `rea://evidence/{evidence_id}` from the session ledger. The
+   * template is registered once, before connecting, so the resource
+   * capability is advertised; a deferred server registers it before its
+   * runtime, and its ledger lookup attaches with the runtime.
+   */
+  serveRetainedEvidence(lookup: EvidenceLookup | undefined): void {
+    if (lookup !== undefined) this.evidenceLookup = lookup;
+    if (this.servesRetainedEvidence) return;
+    this.servesRetainedEvidence = true;
+    registerRetainedEvidenceResource(this, () => ({
+      lookup: this.evidenceLookup,
+      budgetBytes: this.delivery.resultBudgetBytes,
+    }));
+  }
+
   /** Attach the process-owned session only after lazy runtime construction. */
   attachRuntime(
     recordEvidence: EvidenceWriter["recordEvidence"] | undefined,
@@ -381,6 +404,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
                   name,
                   presented.inputSchema as StandardSchemaWithJSON,
                   this.advertisesTool(RETAINED_SUMMARY_VIEW_TOOL),
+                  () => this.recordEvidence,
                 ),
               }),
           ...(outputSchema === undefined ? {} : { outputSchema }),

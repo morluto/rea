@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { knownCoverage } from "../coverageAccumulator.js";
 
 import { BUILTIN_RESOURCE_METHODS } from "./javascriptBuiltinResourceMethods.js";
 import { semanticBuiltinNamespacePath } from "./javascriptSemanticProvenance.js";
@@ -38,7 +39,7 @@ import {
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import {
-  readExactJavaScriptLiteral,
+  stringValue,
   semanticMemberChain,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
@@ -108,7 +109,7 @@ const projectedPatternBindings = (
           bindingId: binding.bindingId,
           identifier: current,
           projectionPath: path,
-          resolution: partial ? "partial" : "complete",
+          resolution: knownCoverage(!partial, "data-effect projection partial"),
         });
       return;
     }
@@ -1221,13 +1222,7 @@ export const dataEffectLiteralString = (
     | t.JSXNamespacedName
     | t.ArgumentPlaceholder
     | undefined,
-): string | null => {
-  if (node === undefined) return null;
-  const literal = readExactJavaScriptLiteral(node);
-  return literal.found && typeof literal.value === "string"
-    ? literal.value
-    : null;
-};
+): string | null => stringValue(node) ?? null;
 
 /** Read a member callee from call or construction syntax. */
 export const dataEffectMemberCallee = (

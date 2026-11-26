@@ -43,7 +43,6 @@ import { PRODUCT_IDENTITY } from "../identity.js";
 import type { SetupClient } from "./SupportedClients.js";
 import {
   clientConfigurationRecordSchema,
-  clientConfigurationValuesEqual,
   isEmptyClientConfigurationText,
 } from "./ClientConfigurationValues.js";
 

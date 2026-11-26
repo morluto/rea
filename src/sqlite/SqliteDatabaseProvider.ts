@@ -136,9 +136,10 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
             active_inspections: this.#active.size,
             max_concurrent_inspections:
               SQLITE_DATABASE_LIMITS.concurrentInspections,
-            input_bytes_per_inspection: SQLITE_DATABASE_LIMITS.inputBytes,
           },
           {
+            // Occupied slots are measured capacity, not a request over a budget.
+            measuredExhaustion: true,
             remediationAction: `The concurrent SQLite inspection allowance is ${String(SQLITE_DATABASE_LIMITS.concurrentInspections)}. This release has no runtime override. Waiting for an active inspection to finish can free a slot. worker_timeout_ms does not raise it. Retry after an active SQLite inspection completes.`,
           },
         ),
@@ -287,6 +288,8 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
         root.path,
         this.#artifactResources,
         options?.signal,
+        undefined,
+        input.producer_limits?.input_bytes,
       );
       phase = "worker";
       const completed = await executeSqliteDatabaseWorker({

@@ -13,9 +13,7 @@ import {
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import {
-  clientPathDependence,
   type ClientRootFailure,
-  mcporterXdgConfigHome,
   vscodeUserDirectory,
   xdgConfigHomeOrDefault,
 } from "./ClientConfigRoots.js";

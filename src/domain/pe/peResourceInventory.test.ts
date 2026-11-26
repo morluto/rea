@@ -8,7 +8,6 @@ import {
 import {
   hasPeResourceName,
   locatePeResourcePayloads,
-  readPeResourceLayout,
 } from "./peResourceLayout.js";
 import {
   parsePeResourcesFromSource,

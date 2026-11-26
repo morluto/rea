@@ -16,14 +16,13 @@ import {
   imageFileMappings,
 } from "../../domain/binaryContainer.js";
 import { readPeImageFromReader } from "../../domain/native/peImage.js";
-import {
-  MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES,
-  type InspectPeImportsInput,
-  type PeDelayImportDll,
-  type PeImportDll,
-  type PeImportFunction,
-  type PeImportIssue,
-  type PeImports,
+import type {
+  InspectPeImportsInput,
+  PeDelayImportDll,
+  PeImportDll,
+  PeImportFunction,
+  PeImportIssue,
+  PeImports,
 } from "../../domain/native/peImports.js";
 import {
   IMPORT_DESCRIPTOR_BYTES,
@@ -90,15 +89,15 @@ const functionBudget = (count: number, max: number): void => {
     );
 };
 
-const createRetention = () => {
+const createRetention = (maximum: number) => {
   let text = 0;
   return (value: string): void => {
     text += value.length;
-    if (text > MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES)
+    if (text > maximum)
       throw peImportLimit(
         "retained_text",
-        MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES,
-        `Import names exceed the fixed ${String(MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES)}-byte retained-text allowance`,
+        maximum,
+        `Import names exceed max_text_bytes (${String(maximum)})`,
       );
   };
 };
@@ -277,7 +276,7 @@ export const parsePeImportsFromHandle = async (
       return null;
     }
   };
-  const retain = createRetention();
+  const retain = createRetention(input.max_text_bytes);
   let examinedDlls = 0;
   let examinedFunctions = 0;
   let entries = 0;

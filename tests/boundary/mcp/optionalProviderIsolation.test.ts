@@ -217,11 +217,7 @@ mcpTest.for(failedAdapters)(
       await writeFile(join(directory, "index.js"), "exports.answer = 42;\n");
       const analyzed = await client.callTool({
         name: "analyze_javascript_application",
-        arguments: {
-          detail: "complete",
-          input_path: directory,
-          format: "directory",
-        },
+        arguments: { input_path: directory, format: "directory" },
       });
       expect(analyzed.isError).not.toBe(true);
       expect(analyzed.structuredContent).toMatchObject({

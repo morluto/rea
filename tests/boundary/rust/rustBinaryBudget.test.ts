@@ -7,6 +7,7 @@ import { RustBinaryProvider } from "../../../src/rust/RustBinaryProvider.js";
 import {
   createRustImage,
   createRustHashOverflowImage,
+  createWasmSectionFlood,
 } from "../../fixtures/rust/image.js";
 import { elfFrameAllowanceFixture } from "../../fixtures/binaryDiagnostics/elfFrameAllowance.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -240,5 +241,33 @@ it("cancels a many-frame compressed ELF section-name table", async () => {
     });
   } finally {
     spy.mockRestore();
+  }
+});
+
+it("names max_wasm_sections when a module has more sections than it", async () => {
+  const root = await createTestTempDirectory("rea-rust-wasm-sections-");
+  const path = join(root, "module.wasm");
+  await writeFile(path, createWasmSectionFlood(8));
+  const provider = new RustBinaryProvider();
+  try {
+    const refused = await provider.inspect({ path, max_wasm_sections: 4 });
+    if (refused.ok) throw new Error("Expected a max_wasm_sections refusal");
+    expect(projectAnalysisError(refused.error)).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_wasm_sections",
+          effective_value: 4,
+          default_value: 65_536,
+        },
+        refusal: { kind: "adjustable_budget" },
+      },
+    });
+    const admitted = await provider.inspect({ path, max_wasm_sections: 8 });
+    if (!admitted.ok) throw admitted.error;
+    expect(admitted.value.format).toBe("wasm");
+  } finally {
+    await provider.close();
   }
 });

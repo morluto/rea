@@ -4,6 +4,12 @@ import { knownCoverageStatusSchema } from "../coverage.js";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
+import {
+  parameterBudgetLimit,
+  parameterBudgetSchema,
+  type ParameterBudget,
+} from "../parameterBudget.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const recordedIntegerSchema = z.strictObject({
@@ -54,77 +60,97 @@ export const APPLE_IPS_IMAGE_SOURCE_MEANING: Readonly<
   A: "absolute",
 };
 
+/** The per-call budgets of `inspect_apple_ips`. */
+export const APPLE_IPS_BUDGETS = {
+  max_file_bytes: {
+    minimum: 2,
+    maximum: MAX_INSPECT_APPLE_IPS_FILE_BYTES,
+    default_value: 1048576,
+    unit: "bytes",
+  },
+  max_threads: {
+    minimum: 1,
+    maximum: MAX_INSPECT_APPLE_IPS_THREADS,
+    default_value: 256,
+    unit: "count",
+  },
+  max_frames: {
+    minimum: 1,
+    maximum: MAX_INSPECT_APPLE_IPS_FRAMES,
+    default_value: 8192,
+    unit: "count",
+  },
+  max_images: {
+    minimum: 1,
+    maximum: MAX_INSPECT_APPLE_IPS_IMAGES,
+    default_value: 1024,
+    unit: "count",
+  },
+  max_registers: {
+    minimum: 1,
+    maximum: MAX_INSPECT_APPLE_IPS_REGISTERS,
+    default_value: 16384,
+    unit: "count",
+  },
+  max_integer_text_bytes: {
+    minimum: 1,
+    maximum: MAX_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES,
+    default_value: DEFAULT_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES,
+    unit: "bytes",
+  },
+  max_join_bytes: {
+    minimum: 2,
+    maximum: MAX_INSPECT_APPLE_IPS_JOIN_BYTES,
+    default_value: 67108864,
+    unit: "bytes",
+  },
+} as const satisfies Record<string, ParameterBudget>;
+export type AppleIpsBudget = keyof typeof APPLE_IPS_BUDGETS;
+
+/** The per-call budget that stopped an IPS inspection. */
+export const appleIpsBudgetLimit = (
+  parameter: AppleIpsBudget,
+  effectiveValue: number,
+): AnalysisParameterLimit =>
+  parameterBudgetLimit(parameter, APPLE_IPS_BUDGETS[parameter], effectiveValue);
+
 /** Complete bounded inspection of one Apple .ips crash report. */
 export const inspectAppleIpsInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to an Apple .ips crash report",
   ),
-  max_file_bytes: z
-    .number()
-    .int()
-    .min(2)
-    .max(MAX_INSPECT_APPLE_IPS_FILE_BYTES)
-    .default(1048576)
-    .describe("Maximum stable artifact bytes to read (default 1 MiB)"),
-  max_threads: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_APPLE_IPS_THREADS)
-    .default(256)
-    .describe(
-      "Maximum threads to examine; exceeding the budget fails without partial success",
-    ),
-  max_frames: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_APPLE_IPS_FRAMES)
-    .default(8192)
-    .describe(
-      "Maximum frames across every thread; exceeding the budget fails without partial success",
-    ),
-  max_images: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_APPLE_IPS_IMAGES)
-    .default(1024)
-    .describe(
-      "Maximum usedImages rows to examine; exceeding the budget fails without partial success",
-    ),
-  max_registers: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_APPLE_IPS_REGISTERS)
-    .default(16384)
-    .describe(
-      "Maximum threadState register slots across every thread; exceeding the budget fails without partial success",
-    ),
-  max_integer_text_bytes: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES)
-    .default(DEFAULT_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES)
-    .describe(
-      "Conservative UTF-16 byte allowance for all retained decimal/hex integer text, including derived addresses (default 8 MiB, maximum 64 MiB); checked before conversion and allocation",
-    ),
+  max_file_bytes: parameterBudgetSchema(
+    APPLE_IPS_BUDGETS.max_file_bytes,
+  ).describe("Maximum stable artifact bytes to read (default 1 MiB)"),
+  max_threads: parameterBudgetSchema(APPLE_IPS_BUDGETS.max_threads).describe(
+    "Maximum threads to examine; exceeding the budget fails without partial success",
+  ),
+  max_frames: parameterBudgetSchema(APPLE_IPS_BUDGETS.max_frames).describe(
+    "Maximum frames across every thread; exceeding the budget fails without partial success",
+  ),
+  max_images: parameterBudgetSchema(APPLE_IPS_BUDGETS.max_images).describe(
+    "Maximum usedImages rows to examine; exceeding the budget fails without partial success",
+  ),
+  max_registers: parameterBudgetSchema(
+    APPLE_IPS_BUDGETS.max_registers,
+  ).describe(
+    "Maximum threadState register slots across every thread; exceeding the budget fails without partial success",
+  ),
+  max_integer_text_bytes: parameterBudgetSchema(
+    APPLE_IPS_BUDGETS.max_integer_text_bytes,
+  ).describe(
+    "Conservative UTF-16 byte allowance for all retained decimal/hex integer text, including derived addresses (default 8 MiB, maximum 64 MiB); checked before conversion and allocation",
+  ),
   join_path: absoluteLocalPathStringSchema
     .optional()
     .describe(
       "Optional Mach-O executable or dSYM matched by slice LC_UUID and architecture; shared-cache images remain unjoined",
     ),
-  max_join_bytes: z
-    .number()
-    .int()
-    .min(2)
-    .max(MAX_INSPECT_APPLE_IPS_JOIN_BYTES)
-    .default(67108864)
-    .describe(
-      "Maximum stable artifact bytes read from join_path (default 64 MiB)",
-    ),
+  max_join_bytes: parameterBudgetSchema(
+    APPLE_IPS_BUDGETS.max_join_bytes,
+  ).describe(
+    "Maximum stable artifact bytes read from join_path (default 64 MiB)",
+  ),
 });
 export type InspectAppleIpsInput = z.infer<typeof inspectAppleIpsInputSchema>;
 
