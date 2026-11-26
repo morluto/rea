@@ -68,13 +68,14 @@ it("refuses PackageInfo XML that exceeds the bundle/record allowance", () => {
     `<pkg-info identifier="com.rea.many">${"<bundle/>".repeat(5)}</pkg-info>`,
     "utf8",
   );
-  const okWithinLimit = parsePackageInfoXml(xml, 6);
+  const okWithinLimit = parsePackageInfoXml(xml, { remainingRecords: 6 });
   expect(okWithinLimit.ok).toBe(true);
   if (okWithinLimit.ok) expect(okWithinLimit.value.bundles).toHaveLength(5);
 
-  const overLimit = parsePackageInfoXml(xml, 5);
+  const overLimit = parsePackageInfoXml(xml, { remainingRecords: 5 });
   expect(overLimit.ok).toBe(false);
   if (!overLimit.ok) {
+    expect(overLimit.error.message).toContain("artifact_limits.expanded_bytes");
     expect(overLimit.error).toMatchObject({
       kind: "limit",
       failure: {
@@ -96,6 +97,7 @@ it("refuses PackageInfo XML that exceeds the XML node ceiling before DOM constru
   const parsed = parsePackageInfoXml(xml);
   expect(parsed.ok).toBe(false);
   if (!parsed.ok) {
+    expect(parsed.error.message).toContain("artifact_limits.expanded_bytes");
     expect(parsed.error).toMatchObject({
       kind: "limit",
       failure: {
@@ -118,10 +120,11 @@ it("refuses Distribution XML that exceeds the metadata record allowance", () => 
     </installer-gui-script>`,
     "utf8",
   );
-  expect(parseDistributionXml(xml, 5).ok).toBe(true);
-  const overLimit = parseDistributionXml(xml, 4);
+  expect(parseDistributionXml(xml, { remainingRecords: 5 }).ok).toBe(true);
+  const overLimit = parseDistributionXml(xml, { remainingRecords: 4 });
   expect(overLimit.ok).toBe(false);
   if (!overLimit.ok) {
+    expect(overLimit.error.message).toContain("artifact_limits.expanded_bytes");
     expect(overLimit.error).toMatchObject({
       kind: "limit",
       failure: {
@@ -132,5 +135,26 @@ it("refuses Distribution XML that exceeds the metadata record allowance", () => 
         },
       },
     });
+  }
+});
+
+it("admits larger PackageInfo metadata when caller-scaled record and XML-node allowances are raised", () => {
+  const bundleCount = MACOS_PKG_MAX_METADATA_RECORDS + 100;
+  const xml = Buffer.from(
+    `<pkg-info identifier="com.rea.large">${"<bundle/>".repeat(bundleCount)}</pkg-info>`,
+    "utf8",
+  );
+  const defaultParsed = parsePackageInfoXml(xml);
+  expect(defaultParsed.ok).toBe(false);
+
+  const raisedMaxRecords = bundleCount + 1;
+  const raisedParsed = parsePackageInfoXml(xml, {
+    remainingRecords: raisedMaxRecords,
+    maxRecords: raisedMaxRecords,
+    maxXmlNodes: raisedMaxRecords * 16,
+  });
+  expect(raisedParsed.ok).toBe(true);
+  if (raisedParsed.ok) {
+    expect(raisedParsed.value.bundles).toHaveLength(bundleCount);
   }
 });

@@ -25,15 +25,65 @@ export const MACOS_PKG_MAX_CPIO_MEMBERS = 4096;
 export const MACOS_PKG_MAX_CPIO_NAME_BYTES = 4096;
 /** Resource policy: one gzip-decoded Scripts/Payload archive. */
 export const MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES = 64 * 1024 * 1024;
-/** Resource policy: Distribution or PackageInfo bytes decoded for metadata. */
+/** Default resource policy: Distribution or PackageInfo bytes decoded per document when `artifact_limits.expanded_bytes` is omitted. */
 export const MACOS_PKG_MAX_METADATA_XML_BYTES = 1 * 1024 * 1024;
-/** Resource policy: total Distribution and PackageInfo bytes decoded across one package. */
+/** Default resource policy: total Distribution and PackageInfo bytes decoded across one package when `artifact_limits.expanded_bytes` is omitted. */
 export const MACOS_PKG_MAX_TOTAL_METADATA_XML_BYTES = 4 * 1024 * 1024;
-/** Resource policy: total installer metadata records retained across Distribution and PackageInfo documents in one package. */
+/** Default resource policy: total installer metadata records retained across Distribution and PackageInfo documents when `artifact_limits.expanded_bytes` is omitted. */
 export const MACOS_PKG_MAX_METADATA_RECORDS = 4096;
-/** Resource policy: installer metadata XML nodes counted before the DOM is built, per document. */
+/** Scaling ratio tying installer metadata record allowance to an explicit `artifact_limits.expanded_bytes` budget (4 MiB / 4,096 records). */
+export const MACOS_PKG_METADATA_BYTES_PER_RECORD = 1024;
+/** XML nodes admitted per retained metadata record before DOM construction. */
+export const MACOS_PKG_METADATA_XML_NODES_PER_RECORD = 16;
+/** Default resource policy: installer metadata XML nodes counted before the DOM is built, per document. */
 export const MACOS_PKG_MAX_METADATA_XML_NODES =
-  MACOS_PKG_MAX_METADATA_RECORDS * 16;
+  MACOS_PKG_MAX_METADATA_RECORDS * MACOS_PKG_METADATA_XML_NODES_PER_RECORD;
+
+export interface MacosPkgMetadataBudget {
+  readonly totalBytes: number;
+  readonly perDocumentBytes: number;
+  readonly maxRecords: number;
+  readonly maxXmlNodes: number;
+  readonly callerControlled: boolean;
+}
+
+/**
+ * Derive installer metadata byte, record, and XML-node allowances from
+ * `artifact_limits.expanded_bytes`. Omission keeps the 4 MiB / 1 MiB /
+ * 4,096-record / 65,536-node defaults so aliased-heap metadata bombs stay
+ * bounded; an explicit `artifact_limits.expanded_bytes` raises the byte
+ * allowances to that budget and scales the record and XML-node allowances
+ * proportionally.
+ */
+export const macosPkgMetadataBudget = (
+  expandedBytes: number | undefined,
+): MacosPkgMetadataBudget => {
+  if (expandedBytes === undefined) {
+    return {
+      totalBytes: MACOS_PKG_MAX_TOTAL_METADATA_XML_BYTES,
+      perDocumentBytes: MACOS_PKG_MAX_METADATA_XML_BYTES,
+      maxRecords: MACOS_PKG_MAX_METADATA_RECORDS,
+      maxXmlNodes: MACOS_PKG_MAX_METADATA_XML_NODES,
+      callerControlled: false,
+    };
+  }
+  const totalBytes = Math.max(0, Math.floor(expandedBytes));
+  const scaledRecords = Math.floor(
+    totalBytes / MACOS_PKG_METADATA_BYTES_PER_RECORD,
+  );
+  const maxRecords = Math.max(MACOS_PKG_MAX_METADATA_RECORDS, scaledRecords);
+  const maxXmlNodes = Math.min(
+    Number.MAX_SAFE_INTEGER,
+    maxRecords * MACOS_PKG_METADATA_XML_NODES_PER_RECORD,
+  );
+  return {
+    totalBytes,
+    perDocumentBytes: totalBytes,
+    maxRecords,
+    maxXmlNodes,
+    callerControlled: true,
+  };
+};
 export const MACOS_PKG_MAX_SYMLINK_TARGET_BYTES = 4096;
 export const MACOS_PKG_FORMAT = "macos-pkg";
 

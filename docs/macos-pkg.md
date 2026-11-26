@@ -51,8 +51,17 @@ existing contained output tree. pbzx payload contents are not decoded.
 These are resource policies, not format maxima. The compressed TOC is limited
 to 16 MiB and the uncompressed TOC XML to 64 MiB. A TOC may declare at most
 4,096 files. One gzip-decoded Scripts or Payload archive is limited to 64 MiB
-and 4,096 cpio members. Distribution and PackageInfo documents used for
-metadata are limited to 1 MiB. A TOC extracted-size above the named allowance
+and 4,096 cpio members. When `artifact_limits.expanded_bytes` is omitted,
+`Distribution` and `PackageInfo` metadata decoding defaults to 1 MiB per
+document, 4 MiB total across the package, 4,096 retained metadata records, and
+65,536 XML nodes per document. Every `Distribution` and `PackageInfo` read
+(including repeated or aliased stored heap ranges) is charged against the
+shared `artifact_limits.expanded_bytes` budget alongside zlib XAR members and
+`Scripts`/`Payload` expansion. Setting `artifact_limits.expanded_bytes` raises
+the per-document and package-wide installer metadata byte allowance to that
+budget and scales the metadata record allowance (1 record per 1,024 bytes,
+minimum 4,096) and XML node allowance (16 nodes per record) so larger valid
+installers can be retried. A TOC extracted-size above the named allowance
 for that member is refused without inflating. A decoded length that disagrees
 with the TOC is `extracted-size-mismatch`. Extraction stream-decodes gzip/zlib
 XAR members with `artifact_limits.expanded_bytes` (the same expansion budget

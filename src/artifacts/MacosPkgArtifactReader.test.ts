@@ -623,13 +623,15 @@ it("names skipped component archives when the expansion budget is exhausted", as
     expect(coverage).toEqual([
       expect.objectContaining({
         status: "unknown",
-        limitations: [
+        limitations: expect.arrayContaining([
           expect.stringContaining("Did not expand Scripts/Payload for"),
-        ],
+        ]),
       }),
     ]);
     expect(coverage[0]).toMatchObject({
-      limitations: [expect.stringMatching(/A\.pkg\/Scripts.*B\.pkg\/Payload/s)],
+      limitations: expect.arrayContaining([
+        expect.stringMatching(/A\.pkg\/Scripts.*B\.pkg\/Payload/s),
+      ]),
     });
     const paths = entries.map((entry) => entry.path);
     expect(paths).toEqual(
@@ -1578,5 +1580,132 @@ it("bounds total retained bundle records across aliased PackageInfo entries and 
     ]);
   } finally {
     await dense.reader.close();
+  }
+});
+
+it("raises installer metadata byte, record, and XML-node allowances when artifact_limits.expanded_bytes is raised", async () => {
+  const largeDoc = Buffer.from(
+    `<pkg-info identifier="com.rea.large" version="1.0.0">${"<bundle/>".repeat(1500)}${" ".repeat(600 * 1024)}</pkg-info>`,
+    "utf8",
+  );
+  const pkgBytes = buildAliasedPackageInfos(largeDoc, 8);
+
+  // Under the default budget (4 MiB / 4,096 records), metadata stops early
+  // and points callers to artifact_limits.expanded_bytes for recovery.
+  const defaulted = await entriesOf(pkgBytes, "large-metadata-default.pkg");
+  try {
+    const metadata = defaulted.reader.formatMetadata();
+    expect(metadata?.packages).toHaveLength(2);
+    expect(metadata?.refusals.length).toBeGreaterThan(0);
+    expect(
+      metadata?.refusals.every(
+        (refusal) =>
+          refusal.code === "oversize" &&
+          refusal.message.includes("artifact_limits.expanded_bytes"),
+      ),
+    ).toBe(true);
+    expect(defaulted.coverage).toEqual([
+      expect.objectContaining({ status: "unknown" }),
+    ]);
+  } finally {
+    await defaulted.reader.close();
+  }
+
+  // Raising artifact_limits.expanded_bytes admits all 8 documents (> 4 MiB,
+  // 12,008 retained records > 4,096 default).
+  const raised = await entriesOf(
+    pkgBytes,
+    "large-metadata-raised.pkg",
+    16 * 1024 * 1024,
+  );
+  try {
+    const metadata = raised.reader.formatMetadata();
+    expect(metadata?.packages).toHaveLength(8);
+    expect(metadata?.refusals).toEqual([]);
+    expect(raised.coverage).toEqual([
+      expect.objectContaining({ status: "complete" }),
+    ]);
+  } finally {
+    await raised.reader.close();
+  }
+
+  // A single > 1 MiB PackageInfo is refused by default and admitted when
+  // artifact_limits.expanded_bytes is raised.
+  const singleOver1Mib = Buffer.from(
+    `<pkg-info identifier="com.rea.single-large" version="1.0.0">${" ".repeat(1200 * 1024)}</pkg-info>`,
+    "utf8",
+  );
+  const singlePkg = buildXar({
+    files: [{ path: "PackageInfo", bytes: singleOver1Mib }],
+  });
+  const singleDefault = await entriesOf(singlePkg, "single-1mib-default.pkg");
+  try {
+    expect(singleDefault.reader.formatMetadata()?.packages).toEqual([]);
+    expect(singleDefault.reader.formatMetadata()?.refusals).toEqual([
+      expect.objectContaining({
+        code: "oversize",
+        path: "PackageInfo",
+        message: expect.stringContaining("artifact_limits.expanded_bytes"),
+      }),
+    ]);
+  } finally {
+    await singleDefault.reader.close();
+  }
+  const singleRaised = await entriesOf(
+    singlePkg,
+    "single-1mib-raised.pkg",
+    2 * 1024 * 1024,
+  );
+  try {
+    expect(singleRaised.reader.formatMetadata()?.packages).toEqual([
+      expect.objectContaining({ identifier: "com.rea.single-large" }),
+    ]);
+    expect(singleRaised.reader.formatMetadata()?.refusals).toEqual([]);
+    expect(singleRaised.coverage).toEqual([
+      expect.objectContaining({ status: "complete" }),
+    ]);
+  } finally {
+    await singleRaised.reader.close();
+  }
+});
+
+it("charges stored PackageInfo reads against the shared artifact_limits.expanded_bytes budget before Payload expansion", async () => {
+  const pkgInfo = Buffer.from(
+    `<pkg-info identifier="com.rea.shared" version="1.0.0">${" ".repeat(64 * 1024)}</pkg-info>`,
+    "utf8",
+  );
+  const payloadBytes = gzipSync(
+    buildCpioOdc([
+      { name: ".", mode: 0o040755 },
+      { name: "big.bin", mode: 0o100644, data: Buffer.alloc(64 * 1024, 0x61) },
+    ]),
+  );
+  const pkg = buildXar({
+    files: [
+      { path: "PackageInfo", bytes: pkgInfo },
+      { path: "Payload", bytes: payloadBytes },
+    ],
+  });
+  // Budget fits PackageInfo (~64 KiB) but not PackageInfo + decoded Payload (~128 KiB).
+  const { reader, entries, coverage } = await entriesOf(
+    pkg,
+    "shared-metadata-payload-budget.pkg",
+    96 * 1024,
+  );
+  try {
+    expect(reader.formatMetadata()?.packages).toEqual([
+      expect.objectContaining({ identifier: "com.rea.shared" }),
+    ]);
+    expect(entries.map((entry) => entry.path)).not.toContain("Payload/big.bin");
+    expect(coverage).toEqual([
+      expect.objectContaining({
+        status: "unknown",
+        limitations: expect.arrayContaining([
+          expect.stringContaining("Did not expand Scripts/Payload for Payload"),
+        ]),
+      }),
+    ]);
+  } finally {
+    await reader.close();
   }
 });

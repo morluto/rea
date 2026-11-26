@@ -12,16 +12,14 @@ import {
   MACOS_PKG_FORMAT,
   MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES,
   MACOS_PKG_MAX_CPIO_MEMBERS,
-  MACOS_PKG_MAX_METADATA_RECORDS,
-  MACOS_PKG_MAX_METADATA_XML_BYTES,
   MACOS_PKG_MAX_TOC_PATH_BYTES,
   MACOS_PKG_MAX_TOC_UNCOMPRESSED_BYTES,
-  MACOS_PKG_MAX_TOTAL_METADATA_XML_BYTES,
   XAR_HEADER_MIN_BYTES,
   XAR_MAGIC_TEXT,
   XAR_VERSION,
   hasXarMagic,
   macosPkgLimitFailure,
+  macosPkgMetadataBudget,
   type MacosPkgParseError,
 } from "../domain/macosPkgFormat.js";
 import { observedSymlinkTarget } from "../domain/symlinkTarget.js";
@@ -793,35 +791,63 @@ export class MacosPkgArtifactReader implements ArtifactReader {
             path: bom.path,
             size: bom.declaredSize,
           };
+    const metadataPolicy = macosPkgMetadataBudget(this.#expandedBytes);
+    let used = chargedXarBytes;
     const metadataBudget = {
-      remainingBytes: MACOS_PKG_MAX_TOTAL_METADATA_XML_BYTES,
-      remainingRecords: MACOS_PKG_MAX_METADATA_RECORDS,
+      remainingBytes: metadataPolicy.totalBytes,
+      remainingRecords: metadataPolicy.maxRecords,
     };
     const readMetadataXml = async (
       entry: StoredEntry,
     ): Promise<Buffer | undefined> => {
       if (this.#refusedContent.has(entry.adapterKey)) return undefined;
-      if (metadataBudget.remainingBytes <= 0) {
+      const prepaid = xarExpansionCharge(entry);
+      const remainingShared = Math.max(
+        0,
+        this.#expansionBudgetBytes - used + prepaid,
+      );
+      const effectiveRemaining = Math.min(
+        metadataBudget.remainingBytes,
+        remainingShared,
+      );
+      const limitedByShared = remainingShared < metadataBudget.remainingBytes;
+      const effectiveAllowance = limitedByShared
+        ? this.#expansionBudgetBytes
+        : metadataPolicy.totalBytes;
+      const allowanceLabel =
+        limitedByShared || metadataPolicy.callerControlled
+          ? "artifact_limits.expanded_bytes"
+          : "default package installer metadata XML";
+      if (effectiveRemaining <= 0) {
         metadata.refusals.push({
           code: "oversize",
-          message: `${entry.path} exceeds the ${String(MACOS_PKG_MAX_TOTAL_METADATA_XML_BYTES)}-byte package installer metadata XML allowance`,
+          message: `${entry.path} exceeds the ${String(effectiveAllowance)}-byte ${allowanceLabel} allowance; raise artifact_limits.expanded_bytes to admit more installer metadata`,
           path: entry.path,
         });
         return undefined;
       }
       const declared = entry.declaredSize;
-      if (declared !== null && declared > metadataBudget.remainingBytes) {
+      if (declared !== null && declared > effectiveRemaining) {
         metadata.refusals.push({
           code: "oversize",
-          message: `${entry.path} declares ${String(declared)} bytes, exceeding the ${String(metadataBudget.remainingBytes)} bytes remaining in the ${String(MACOS_PKG_MAX_TOTAL_METADATA_XML_BYTES)}-byte package installer metadata XML allowance`,
+          message: `${entry.path} declares ${String(declared)} bytes, exceeding the ${String(effectiveRemaining)} bytes remaining in the ${String(effectiveAllowance)}-byte ${allowanceLabel} allowance; raise artifact_limits.expanded_bytes to admit more installer metadata`,
           path: entry.path,
         });
         return undefined;
       }
       const maxBytes = Math.min(
-        MACOS_PKG_MAX_METADATA_XML_BYTES,
-        metadataBudget.remainingBytes,
+        metadataPolicy.perDocumentBytes,
+        effectiveRemaining,
       );
+      if (declared !== null && declared > maxBytes) {
+        metadata.refusals.push({
+          code: "oversize",
+          message: `${entry.path} declares ${String(declared)} bytes, exceeding the ${String(maxBytes)}-byte default per-document installer metadata XML allowance; raise artifact_limits.expanded_bytes to admit larger installer metadata`,
+          path: entry.path,
+        });
+        return undefined;
+      }
+      const refusalCount = metadata.refusals.length;
       const bytes = await this.#readXarEntry(
         handle,
         entry,
@@ -829,21 +855,38 @@ export class MacosPkgArtifactReader implements ArtifactReader {
         metadata,
         signal,
       );
-      if (bytes === undefined) return undefined;
-      // Charge every metadata read, including TOC entries aliasing the same stored heap range.
+      if (bytes === undefined) {
+        const added = metadata.refusals[refusalCount];
+        if (
+          added !== undefined &&
+          added.code === "oversize" &&
+          !added.message.includes("artifact_limits.expanded_bytes")
+        ) {
+          metadata.refusals[refusalCount] = {
+            ...added,
+            message: `${added.message}; raise artifact_limits.expanded_bytes to admit larger installer metadata`,
+          };
+        }
+        return undefined;
+      }
+      // Charge every metadata read — including TOC entries aliasing the same
+      // stored heap range — against both the metadata allowance and the shared
+      // artifact_limits.expanded_bytes budget.
       metadataBudget.remainingBytes = Math.max(
         0,
         metadataBudget.remainingBytes - bytes.length,
       );
+      used += Math.max(0, bytes.length - prepaid);
       return bytes;
     };
     if (distribution !== undefined) {
       const bytes = await readMetadataXml(distribution);
       if (bytes !== undefined) {
-        const parsed = parseDistributionXml(
-          bytes,
-          metadataBudget.remainingRecords,
-        );
+        const parsed = parseDistributionXml(bytes, {
+          remainingRecords: metadataBudget.remainingRecords,
+          maxRecords: metadataPolicy.maxRecords,
+          maxXmlNodes: metadataPolicy.maxXmlNodes,
+        });
         if (parsed.ok) {
           metadataBudget.remainingRecords = Math.max(
             0,
@@ -882,17 +925,18 @@ export class MacosPkgArtifactReader implements ArtifactReader {
       if (metadataBudget.remainingRecords <= 0) {
         metadata.refusals.push({
           code: "oversize",
-          message: `${pkg.path} exceeds the ${String(MACOS_PKG_MAX_METADATA_RECORDS)}-record package installer metadata allowance`,
+          message: `${pkg.path} exceeds the ${String(metadataPolicy.maxRecords)}-record package installer metadata allowance; raise artifact_limits.expanded_bytes to admit more installer metadata`,
           path: pkg.path,
         });
         continue;
       }
       const bytes = await readMetadataXml(pkg);
       if (bytes === undefined) continue;
-      const parsed = parsePackageInfoXml(
-        bytes,
-        metadataBudget.remainingRecords,
-      );
+      const parsed = parsePackageInfoXml(bytes, {
+        remainingRecords: metadataBudget.remainingRecords,
+        maxRecords: metadataPolicy.maxRecords,
+        maxXmlNodes: metadataPolicy.maxXmlNodes,
+      });
       if (!parsed.ok) {
         metadata.refusals.push(refusalFromParse(parsed.error, pkg.path));
         continue;
@@ -924,7 +968,6 @@ export class MacosPkgArtifactReader implements ArtifactReader {
         : metadata.packages.length > 0
           ? "component"
           : "unknown";
-    let used = chargedXarBytes;
     const expansionState = {
       retainedMembers: 0,
       retainedPathBytes: 0,
