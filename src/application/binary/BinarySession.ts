@@ -1568,15 +1568,18 @@ export class BinarySession
             },
           })
         : profiled;
-    const observed = covered.ok
+    const captured = covered.ok
+      ? ok(bindFreshNativeExecution(covered.value, active.route))
+      : covered;
+    const observed = captured.ok
       ? ok(
           deliverSessionLimitations(
-            covered.value,
-            covered.value.subject ?? active.target,
+            captured.value,
+            captured.value.subject ?? active.target,
             this.#sessionLimitations,
           ),
         )
-      : covered;
+      : captured;
     // A caller who asked for a one-shot snapshot learns when it cannot replay.
     const recordingRefusal = (
       execution: AnalysisExecution,
@@ -1609,10 +1612,12 @@ export class BinarySession
     const execution =
       refusal === undefined || !observed.ok
         ? observed
-        : ok({
-            ...observed.value,
-            limitations: [...observed.value.limitations, refusal],
-          });
+        : ok(
+            carrySessionExecutionProvenance(observed.value, {
+              ...observed.value,
+              limitations: [...observed.value.limitations, refusal],
+            }),
+          );
     // A successful Ghidra operation proves this client's native source snapshot
     // was admitted; a composite health response and parsed path do not.
     const currentBinding = this.#active;
@@ -1665,7 +1670,7 @@ export class BinarySession
         profile,
         operation: name,
         parameters: arguments_,
-        execution: bindFreshNativeExecution(execution.value, active.route),
+        execution: execution.value,
         cacheable,
         ...(options?.snapshotContext === undefined
           ? {}

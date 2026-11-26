@@ -3,6 +3,7 @@ import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
 import {
   createEvidence,
+  type Evidence,
   withEvidenceProviderSelection,
 } from "../../domain/evidence.js";
 import {
@@ -32,11 +33,17 @@ import {
 } from "./SessionEvidenceReuse.js";
 import {
   createBinarySessionTargets,
-  createTestBinarySession,
   createTestProviderRouter,
 } from "../../../tests/fixtures/binarySession.js";
 
-const fixture = (id: string) => {
+import { BinarySession } from "./BinarySession.js";
+
+const fixture = (
+  id: string,
+  shared: readonly string[] = [],
+  delivery: "inline" | "reference" = "inline",
+  sources: readonly Evidence[] = [],
+) => {
   const identity = { id, name: `${id} fixture`, version: "1" };
   const profile = createAnalysisProfile(identity, { fixture: true });
   const calls: string[] = [];
@@ -87,12 +94,28 @@ const fixture = (id: string) => {
                   [{ path: ["address"], reason: "invalid_value" }],
                 ),
               );
-        return ok(createAnalysisExecution(operation, identity));
+        return ok(
+          createAnalysisExecution(operation, identity, {
+            ...(shared.length === 0
+              ? {}
+              : { limitations: shared, sessionLimitations: shared }),
+            ...(sources.length === 0 ? {} : { sourceEvidence: sources }),
+          }),
+        );
       },
       close: async () => ok(null),
     }),
   };
-  return { session: createTestBinarySession(provider), calls, provider };
+  return {
+    session: new BinarySession(
+      createTestProviderRouter(provider),
+      undefined,
+      undefined,
+      delivery,
+    ),
+    calls,
+    provider,
+  };
 };
 
 it.each(["hopper", "ghidra", "ida", "kuna"])(
@@ -454,3 +477,83 @@ it("preserves native selection when a named query is rebound without reusing the
     await session.dispose();
   }
 });
+
+it.each([
+  ["ghidra", "inline"],
+  ["ghidra", "reference"],
+  ["artifact-graph", "inline"],
+  ["artifact-graph", "reference"],
+] as const)(
+  "preserves %s dispatch provenance through %s session limitations",
+  async (id, delivery) => {
+    const [path] = await createBinarySessionTargets();
+    const historicalSources: Evidence[] = [];
+    const { session, provider } = fixture(
+      id,
+      ["Shared provider limitation"],
+      delivery,
+      historicalSources,
+    );
+    try {
+      const opened = await session.open(path, { providerId: id });
+      if (!opened.ok) throw opened.error;
+      const history = createEvidence(
+        opened.value,
+        provider.identity(),
+        {
+          operation: "health",
+          parameters: { facet: "historical-project-analysis-reports" },
+          result: { origin: "caller-project" },
+        },
+        { immutable: true },
+      );
+      historicalSources.push(history);
+      const parameters = { address: "0x1000", document: "fixture" };
+      const execution = await session.execute("address_name", parameters);
+      if (!execution.ok) throw execution.error;
+      const result = completedOperationEvidence(
+        "address_name",
+        parameters,
+        execution.value,
+        {
+          target: opened.value,
+          admitRecovery: session.admitRecoveryObservation.bind(session),
+          evidenceById: session.evidenceForAnalysis.bind(session),
+        },
+      );
+      if (!result.ok) throw result.error;
+      expect(
+        execution.value.sourceEvidence?.find(
+          (source) => source.evidence_id === history.evidence_id,
+        ),
+      ).toBe(history);
+      expect(history.provider_selection).toBeUndefined();
+      expect(
+        session.evidenceForAnalysis(history.evidence_id)?.provider_selection,
+      ).toBeUndefined();
+      const expected = id === "ghidra" ? "request" : undefined;
+      expect(result.value.provider_selection?.selection_source).toBe(expected);
+      const contexts = session
+        .exportEvidenceBundle()
+        .records.filter(
+          (record) =>
+            record.operation === "health" &&
+            record.parameters.facet === "session-limitations",
+        );
+      expect(contexts).toHaveLength(delivery === "reference" ? 1 : 0);
+      if (delivery === "reference") {
+        const context = contexts[0]!;
+        expect(context.provider_selection?.selection_source).toBe(expected);
+        expect(context.normalized_result).toEqual({
+          limitations: ["Shared provider limitation"],
+        });
+        expect(result.value.evidence_links).toContain(context.evidence_id);
+      } else
+        expect(result.value.limitations).toContain(
+          "Shared provider limitation",
+        );
+    } finally {
+      await session.dispose();
+    }
+  },
+);

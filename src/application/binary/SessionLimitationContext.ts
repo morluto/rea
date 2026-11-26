@@ -1,4 +1,8 @@
 import {
+  withSessionExecutionProvenance,
+  carrySessionExecutionProvenance,
+} from "./SessionEvidenceReuse.js";
+import {
   createEvidence,
   type Evidence,
   type EvidenceSubjectInput,
@@ -25,20 +29,23 @@ export const sessionLimitationContextEvidence = (
   sessionLimitations: readonly string[],
   target: EvidenceSubjectInput,
 ): Evidence =>
-  createEvidence(
-    target,
-    execution.provider,
-    {
-      operation: "health",
-      parameters: SESSION_LIMITATIONS_FACET,
-      ...(execution.analysisProfile === undefined
-        ? {}
-        : { analysisProfile: execution.analysisProfile }),
-      result: { limitations: [...sessionLimitations] },
-      confidence: "observed",
-      limitations: [...sessionLimitations],
-    },
-    { immutable: true },
+  withSessionExecutionProvenance(
+    execution,
+    createEvidence(
+      target,
+      execution.provider,
+      {
+        operation: "health",
+        parameters: SESSION_LIMITATIONS_FACET,
+        ...(execution.analysisProfile === undefined
+          ? {}
+          : { analysisProfile: execution.analysisProfile }),
+        result: { limitations: [...sessionLimitations] },
+        confidence: "observed",
+        limitations: [...sessionLimitations],
+      },
+      { immutable: true },
+    ),
   );
 
 /** The one limitation that stands in for the session's shared facts. */
@@ -62,21 +69,22 @@ export const deliverSessionLimitations = (
 ): AnalysisExecution => {
   const { sessionLimitations, ...rest } = execution;
   if (sessionLimitations === undefined) return execution;
-  if (delivery === "inline" || sessionLimitations.length === 0) return rest;
+  if (delivery === "inline" || sessionLimitations.length === 0)
+    return carrySessionExecutionProvenance(execution, rest);
   const context = sessionLimitationContextEvidence(
     execution,
     sessionLimitations,
     target,
   );
   const shared = new Set(sessionLimitations);
-  return {
+  return carrySessionExecutionProvenance(execution, {
     ...rest,
     limitations: [
       ...execution.limitations.filter((entry) => !shared.has(entry)),
       sessionLimitationReference(context, sessionLimitations.length),
     ],
     sourceEvidence: [...(execution.sourceEvidence ?? []), context],
-  };
+  });
 };
 
 const isSessionLimitationContext = (source: Evidence): boolean =>
@@ -100,10 +108,10 @@ export const inlineLinkedSessionLimitations = (
         source.limitations,
       );
   if (contexts.size === 0) return execution;
-  return {
+  return carrySessionExecutionProvenance(execution, {
     ...execution,
     limitations: execution.limitations.flatMap(
       (entry) => contexts.get(entry) ?? [entry],
     ),
-  };
+  });
 };
