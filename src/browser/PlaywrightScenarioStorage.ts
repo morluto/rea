@@ -11,8 +11,6 @@ import type { BrowserContext, Page } from "playwright-core";
 
 import {
   applyDeclaredBrowserStorageSeeds,
-  declaredBrowserStorageTabSeedRecordExpression,
-  markDeclaredBrowserStorageCdpOwned,
   type DeclaredBrowserStorageSeedOutcome,
   type DeclaredBrowserStorageSeedScript,
 } from "./declaredBrowserStorageSeed.js";
@@ -174,7 +172,6 @@ export class PlaywrightScenarioStorage {
   readonly #unsubscribers: (() => void)[] = [];
   #context: BrowserContext | undefined;
   #contextSeedScript: InitScriptHandle | undefined;
-  #rootCdpOwnedScript: InitScriptHandle | undefined;
   #sequence = 0;
   #generation = 0;
   #closed = false;
@@ -397,7 +394,7 @@ export class PlaywrightScenarioStorage {
   }
 
   private async installDocumentSeedScript(
-    page: Page,
+    _page: Page,
     context: BrowserContext,
   ): Promise<void> {
     // Only scenario-owned contexts can install a synchronous context-wide init
@@ -408,22 +405,13 @@ export class PlaywrightScenarioStorage {
     if (
       payload.seeds.length === 0 ||
       typeof context.addInitScript !== "function" ||
-      typeof context.exposeBinding !== "function" ||
-      typeof page.addInitScript !== "function"
+      typeof context.exposeBinding !== "function"
     )
       return;
-    const installed: InitScriptHandle[] = [];
+    let installed: InitScriptHandle | undefined;
     try {
-      const result = await withScenarioCommandDeadline(
+      const contextScript = (await withScenarioCommandDeadline(
         async () => {
-          // Durable CDP-owned flag for the selected page so later same-tab
-          // navigations skip the context hook without a page/context race on
-          // every document. Popups do not install this marker.
-          const rootOwned = (await page.addInitScript(
-            markDeclaredBrowserStorageCdpOwned,
-            { seedToken: this.#seedToken },
-          )) as InitScriptHandle | undefined;
-          if (rootOwned !== undefined) installed.push(rootOwned);
           await context.exposeBinding(
             this.#seedBinding,
             (
@@ -439,48 +427,30 @@ export class PlaywrightScenarioStorage {
                 sessionOutcome,
               ),
           );
-          const contextScript = (await context.addInitScript(
+          return (await context.addInitScript(
             applyDeclaredBrowserStorageSeeds,
             payload,
           )) as InitScriptHandle | undefined;
-          if (contextScript !== undefined) installed.push(contextScript);
-          return { rootOwned, contextScript };
         },
         this.commandTimeoutMs,
         "command",
         "BrowserContext.addInitScript",
-      );
+      )) as InitScriptHandle | undefined;
+      installed = contextScript;
       if (this.#closed) {
-        await Promise.all(
-          installed.map((handle) =>
-            disposeInitScriptHandle(handle).catch(() => undefined),
-          ),
-        );
+        await disposeInitScriptHandle(contextScript).catch(() => undefined);
         return;
       }
-      this.#rootCdpOwnedScript = result.rootOwned;
-      this.#contextSeedScript = result.contextScript;
+      this.#contextSeedScript = contextScript;
       this.#context = context;
       this.#popupSeedsInstalled = true;
     } catch (cause: unknown) {
-      for (const handle of installed)
-        void disposeInitScriptHandle(handle).catch(() => undefined);
+      void disposeInitScriptHandle(installed).catch(() => undefined);
       const pending = scenarioCommandPending(cause);
       if (pending !== undefined) {
         void pending
           .then(async (late) => {
-            if (typeof late === "object" && late !== null) {
-              const pair = late as {
-                rootOwned?: unknown;
-                contextScript?: unknown;
-              };
-              await Promise.all([
-                disposeInitScriptHandle(pair.rootOwned).catch(() => undefined),
-                disposeInitScriptHandle(pair.contextScript).catch(
-                  () => undefined,
-                ),
-              ]);
-            }
+            await disposeInitScriptHandle(late).catch(() => undefined);
           })
           .catch(() => undefined);
       }
@@ -747,21 +717,12 @@ export class PlaywrightScenarioStorage {
       "<",
       "\\u003c",
     );
-    const tabRecord = declaredBrowserStorageTabSeedRecordExpression(
-      this.#seedToken,
-      origin,
-      local.length > 0,
-      session.length > 0,
-      // Root target only: mark the selected page's tab CDP-owned so later
-      // same-tab navigations skip the context init hook.
-      target.parentId === undefined,
-    );
     const response = await this.sendObserved(
       target,
       "Debugger.evaluateOnCallFrame",
       {
         callFrameId: frame.callFrameId,
-        expression: `(() => { const seed = ${payload}; for (const [name, value] of seed.local) localStorage.setItem(name, value); for (const [name, value] of seed.session) sessionStorage.setItem(name, value); ${tabRecord} })()`,
+        expression: `(() => { const seed = ${payload}; for (const [name, value] of seed.local) localStorage.setItem(name, value); for (const [name, value] of seed.session) sessionStorage.setItem(name, value); })()`,
         returnByValue: true,
       },
     );
@@ -1017,16 +978,9 @@ export class PlaywrightScenarioStorage {
     const scriptSync = this.#scriptSync;
     const rootInitialization = this.#rootInitialization;
     const targets = [...this.#targets.values()];
-    const handles: InitScriptHandle[] = [
-      ...(this.#contextSeedScript === undefined
-        ? []
-        : [this.#contextSeedScript]),
-      ...(this.#rootCdpOwnedScript === undefined
-        ? []
-        : [this.#rootCdpOwnedScript]),
-    ];
+    const handles: InitScriptHandle[] =
+      this.#contextSeedScript === undefined ? [] : [this.#contextSeedScript];
     this.#contextSeedScript = undefined;
-    this.#rootCdpOwnedScript = undefined;
     this.#context = undefined;
     try {
       await withPlaywrightExecutionBoundary(

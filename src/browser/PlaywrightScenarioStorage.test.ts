@@ -11,7 +11,7 @@ import { resolveScenarioSecrets } from "../../tests/fixtures/browserScenarioSecr
 import {
   applyDeclaredBrowserStorageSeeds,
   declaredBrowserStorageSeedMark,
-  markDeclaredBrowserStorageCdpOwned,
+  isDeclaredBrowserStorageSeedMark,
   type DeclaredBrowserStorageSeed,
   type DeclaredBrowserStorageSeedOutcome,
   type DeclaredBrowserStorageSeedScript,
@@ -458,6 +458,9 @@ const memoryStorage = (fail = false) => {
   const items = new Map<string, string>();
   return {
     items,
+    getItem(name: string) {
+      return items.has(name) ? items.get(name)! : null;
+    },
     setItem(name: string, value: string) {
       if (fail) throw new Error("storage denied");
       items.set(name, value);
@@ -474,9 +477,9 @@ const applySeeds = (
       session: ReturnType<typeof memoryStorage>;
     };
     readonly isIframe?: boolean;
+    readonly isSelectedPage?: boolean;
     readonly seedToken?: string;
     readonly initializedLocalOrigins?: readonly string[];
-    readonly windowName?: string;
   } = {},
 ): {
   local: Map<string, string>;
@@ -486,7 +489,6 @@ const applySeeds = (
     local: DeclaredBrowserStorageSeedOutcome;
     session: DeclaredBrowserStorageSeedOutcome;
   }[];
-  windowName: string;
 } => {
   const storage = options.storage ?? {
     local: memoryStorage(),
@@ -501,7 +503,7 @@ const applySeeds = (
   }[] = [];
   const context = vm.createContext({
     location: { origin },
-    name: options.windowName ?? "",
+    opener: options.isSelectedPage === true ? null : {},
     localStorage: storage.local,
     sessionStorage: storage.session,
     [binding]: (
@@ -526,7 +528,6 @@ const applySeeds = (
     local: storage.local.items,
     session: storage.session.items,
     notifications,
-    windowName: String(context.name ?? ""),
   };
 };
 
@@ -547,6 +548,11 @@ it("writes declared seeds synchronously for top-level popups and skips iframes",
   expect(first.local.get("probe")).toBe("seed-local");
   expect(first.session.get("probe")).toBe("seed-session");
   expect(first.local.has(declaredBrowserStorageSeedMark)).toBe(false);
+  expect(
+    [...first.session.keys()].some((key) =>
+      isDeclaredBrowserStorageSeedMark(key),
+    ),
+  ).toBe(true);
   expect(first.notifications).toEqual([
     { origin: "http://child.example", local: "wrote", session: "wrote" },
   ]);
@@ -575,7 +581,7 @@ it("writes declared seeds synchronously for top-level popups and skips iframes",
   expect(opaque.session.size).toBe(0);
 });
 
-it("does not restore deleted seed values on reload of the same tab", () => {
+it("does not restore deleted seed values on reload of the same popup tab", () => {
   const seeds: DeclaredBrowserStorageSeed[] = [
     {
       origin: "http://child.example",
@@ -583,31 +589,28 @@ it("does not restore deleted seed values on reload of the same tab", () => {
       session: [["probe", "seed-session"]],
     },
   ];
+  const sharedSession = memoryStorage();
   const first = applySeeds("http://child.example", seeds, {
     seedToken: "reload-token",
+    storage: { local: memoryStorage(), session: sharedSession },
   });
   expect(first.local.get("probe")).toBe("seed-local");
   expect(first.session.get("probe")).toBe("seed-session");
-  expect(first.windowName.startsWith("\0rea-tab-seed:")).toBe(true);
+  sharedSession.items.delete("probe");
+  sharedSession.items.delete("seed-local");
 
-  // Application deletes the seeded keys, then the same tab reloads. The single
-  // ordered hook must honor the durable per-tab once flags and leave deletions.
-  const reloadedStorage = {
-    local: memoryStorage(),
-    session: memoryStorage(),
-  };
+  // Application deleted the seeded keys; the same popup tab reloads with the
+  // once flags still present in sessionStorage.
   const reloaded = applySeeds("http://child.example", seeds, {
-    storage: reloadedStorage,
     seedToken: "reload-token",
-    windowName: first.windowName,
-    // Even if Node has not yet emptied the context payload, tab state wins.
+    storage: { local: memoryStorage(), session: sharedSession },
   });
   expect(reloaded.local.has("probe")).toBe(false);
   expect(reloaded.session.has("probe")).toBe(false);
   expect(reloaded.notifications).toEqual([]);
 });
 
-it("skips the context hook entirely on a CDP-owned selected page tab", () => {
+it("skips the context hook on the selected page (no window.opener)", () => {
   const seeds: DeclaredBrowserStorageSeed[] = [
     {
       origin: "http://child.example",
@@ -615,47 +618,12 @@ it("skips the context hook entirely on a CDP-owned selected page tab", () => {
       session: [["probe", "seed-session"]],
     },
   ];
-  const binding = "__reaStorageSeedTest";
-  const seedToken = "cdp-owned-token";
-  const storage = { local: memoryStorage(), session: memoryStorage() };
-  const context = vm.createContext({
-    location: { origin: "http://child.example" },
-    name: "",
-    localStorage: storage.local,
-    sessionStorage: storage.session,
-    [binding]: () => undefined,
+  const selected = applySeeds("http://child.example", seeds, {
+    isSelectedPage: true,
   });
-  context.top = context;
-  vm.runInContext(
-    `(${markDeclaredBrowserStorageCdpOwned.toString()})(${JSON.stringify({
-      seedToken,
-    })})`,
-    context,
-  );
-  vm.runInContext(
-    `(${applyDeclaredBrowserStorageSeeds.toString()})(${JSON.stringify({
-      binding,
-      seedToken,
-      initializedLocalOrigins: [],
-      seeds,
-    })})`,
-    context,
-  );
-  expect(storage.local.items.size).toBe(0);
-  expect(storage.session.items.size).toBe(0);
-  // A later same-tab navigation still skips even if the page marker script
-  // has not run yet for that document: the durable window.name flag remains.
-  storage.session.items.set("probe", "page-updated");
-  vm.runInContext(
-    `(${applyDeclaredBrowserStorageSeeds.toString()})(${JSON.stringify({
-      binding,
-      seedToken,
-      initializedLocalOrigins: [],
-      seeds,
-    })})`,
-    context,
-  );
-  expect(storage.session.items.get("probe")).toBe("page-updated");
+  expect(selected.local.size).toBe(0);
+  expect(selected.session.size).toBe(0);
+  expect(selected.notifications).toEqual([]);
 });
 
 it("seeds a cloned popup session area and reports write failures", () => {
@@ -736,8 +704,7 @@ it("installs synchronous popup seeds in launch mode and avoids shared connect co
   });
   const launchOwner = await createInitializedStorage(launchContext, launchPage);
   expect(bindings).toHaveLength(1);
-  expect(pageScripts).toHaveLength(1);
-  expect(pageScripts[0]?.script).toBe(markDeclaredBrowserStorageCdpOwned);
+  expect(pageScripts).toHaveLength(0);
   expect(contextScripts).toHaveLength(1);
   expect(contextScripts[0]?.script).toBe(applyDeclaredBrowserStorageSeeds);
   expect(contextScripts[0]?.payload.initializedLocalOrigins).toEqual([]);

@@ -11,7 +11,8 @@ export type DeclaredBrowserStorageSeed = {
 export const declaredBrowserStorageSeedMark = "\u0000rea-storage-seed";
 
 export const isDeclaredBrowserStorageSeedMark = (key: string): boolean =>
-  key === declaredBrowserStorageSeedMark;
+  key === declaredBrowserStorageSeedMark ||
+  key.startsWith("\u0000rea-tab-seed:");
 
 export type DeclaredBrowserStorageSeedOutcome = "skipped" | "wrote" | "failed";
 
@@ -22,11 +23,8 @@ export type DeclaredBrowserStorageSeedScript = {
   readonly seeds: readonly DeclaredBrowserStorageSeed[];
 };
 
-export type DeclaredBrowserStorageCdpOwnedPayload = {
-  readonly seedToken: string;
-};
-
 type StorageArea = {
+  getItem(name: string): string | null;
   setItem(name: string, value: string): void;
 };
 
@@ -38,143 +36,22 @@ type SeedNotification = (
 
 type SeedGlobalHost = {
   top?: unknown;
-  name?: string;
+  opener?: unknown;
   location?: { origin?: string };
   localStorage?: StorageArea;
   sessionStorage?: StorageArea;
   [name: string]: unknown;
 };
 
-/** Prefix for the per-tab once-flag envelope stored in `window.name`. */
-export const declaredBrowserStorageTabSeedPrefix = "\u0000rea-tab-seed:";
-
-/**
- * Marks the selected page's tab as CDP-owned. Installed only on the scenario
- * root page so later in-tab navigations skip the context seed hook; popups keep
- * an empty envelope and still receive the context hook. The flag lives in
- * `window.name` so it survives reload without depending on init-script order.
- *
- * Body stays self-contained for Playwright/`Function#toString` serialization.
- */
-export const markDeclaredBrowserStorageCdpOwned = (
-  payload: DeclaredBrowserStorageCdpOwnedPayload,
-): void => {
-  const host = globalThis as SeedGlobalHost;
-  const prefix = "\u0000rea-tab-seed:";
-  try {
-    if (host.top !== host) return;
-  } catch {
-    return;
-  }
-  let prior: string | undefined;
-  let local: Record<string, true> = {};
-  let session: Record<string, true> = {};
-  let cdpOwned = false;
-  try {
-    const raw = typeof host.name === "string" ? host.name : "";
-    if (raw.startsWith(prefix)) {
-      try {
-        const parsed = JSON.parse(raw.slice(prefix.length)) as {
-          rea?: {
-            token?: string;
-            local?: Record<string, true>;
-            session?: Record<string, true>;
-            cdpOwned?: boolean;
-          };
-          prior?: string;
-        };
-        prior = parsed?.prior;
-        if (parsed?.rea?.token === payload.seedToken) {
-          local = { ...parsed.rea.local };
-          session = { ...parsed.rea.session };
-          cdpOwned = parsed.rea.cdpOwned === true;
-        }
-      } catch {
-        // Ignore unreadable envelopes.
-      }
-    } else if (raw !== "") {
-      prior = raw;
-    }
-  } catch {
-    // window.name may be unavailable.
-  }
-  if (cdpOwned) return;
-  const envelope: {
-    rea: {
-      token: string;
-      local: Record<string, true>;
-      session: Record<string, true>;
-      cdpOwned: true;
-    };
-    prior?: string;
-  } = {
-    rea: { token: payload.seedToken, local, session, cdpOwned: true },
-  };
-  if (prior !== undefined) envelope.prior = prior;
-  try {
-    host.name = `${prefix}${JSON.stringify(envelope)}`;
-  } catch {
-    // window.name may be unavailable.
-  }
-};
-
-/**
- * Expression fragment that records once-per-area flags in `window.name` after
- * CDP writes storage. Survives reload and `Storage.clear` for the same tab.
- */
-export const declaredBrowserStorageTabSeedRecordExpression = (
-  seedToken: string,
-  origin: string,
-  wroteLocal: boolean,
-  wroteSession: boolean,
-  cdpOwned = false,
-): string => {
-  if (!wroteLocal && !wroteSession && !cdpOwned) return "";
-  const tokenLiteral = JSON.stringify(seedToken);
-  const originLiteral = JSON.stringify(origin);
-  return `
-(() => {
-  const prefix = ${JSON.stringify(declaredBrowserStorageTabSeedPrefix)};
-  const token = ${tokenLiteral};
-  const origin = ${originLiteral};
-  const wroteLocal = ${wroteLocal ? "true" : "false"};
-  const wroteSession = ${wroteSession ? "true" : "false"};
-  const cdpOwned = ${cdpOwned ? "true" : "false"};
-  let prior;
-  let local = {};
-  let session = {};
-  let owned = false;
-  try {
-    const raw = String(globalThis.name ?? "");
-    if (raw.startsWith(prefix)) {
-      const parsed = JSON.parse(raw.slice(prefix.length));
-      prior = parsed?.prior;
-      if (parsed?.rea?.token === token) {
-        local = { ...(parsed.rea.local ?? {}) };
-        session = { ...(parsed.rea.session ?? {}) };
-        owned = parsed.rea.cdpOwned === true;
-      }
-    } else if (raw !== "") {
-      prior = raw;
-    }
-  } catch {}
-  if (wroteLocal) local[origin] = true;
-  if (wroteSession) session[origin] = true;
-  if (cdpOwned) owned = true;
-  const envelope = { rea: { token, local, session } };
-  if (owned) envelope.rea.cdpOwned = true;
-  if (prior !== undefined) envelope.prior = prior;
-  try { globalThis.name = prefix + JSON.stringify(envelope); } catch {}
-})();`;
-};
-
 /**
  * Playwright serializes this function into top-level documents in a scenario-
- * owned browser context. Skip decisions and writes share this one ordered
- * registration. CDP-owned tabs (selected page) skip entirely via a durable
- * `window.name` flag; popup tabs use per-origin once flags so a reload after
- * the application deletes seeded keys cannot restore them. Cross-tab local
- * once flags also arrive from Node via `initializedLocalOrigins`.
+ * owned browser context. The selected page (no `window.opener`) is skipped so
+ * CDP owns that tab across same-tab navigations without touching `window.name`.
+ * Popups keep skip decisions and writes in this one ordered hook; per-tab once
+ * flags live in filtered `sessionStorage` so a reload after the application
+ * deletes seeded keys cannot restore them, and application window names stay
+ * intact. Cross-tab local once flags also arrive from Node via
+ * `initializedLocalOrigins`.
  *
  * Helpers stay inside this function body so Playwright/`Function#toString`
  * serialization remains self-contained.
@@ -183,7 +60,6 @@ export const applyDeclaredBrowserStorageSeeds = (
   payload: DeclaredBrowserStorageSeedScript,
 ): void => {
   const host = globalThis as SeedGlobalHost;
-  const prefix = "\u0000rea-tab-seed:";
 
   try {
     if (host.top !== host) return;
@@ -191,43 +67,13 @@ export const applyDeclaredBrowserStorageSeeds = (
     return;
   }
 
-  let prior: string | undefined;
-  const areas: {
-    local: Record<string, true>;
-    session: Record<string, true>;
-    cdpOwned: boolean;
-  } = { local: {}, session: {}, cdpOwned: false };
+  // Selected page and its later same-tab navigations have no opener; CDP owns
+  // that tab. Popups opened from the page keep opener and receive this hook.
   try {
-    const raw = typeof host.name === "string" ? host.name : "";
-    if (raw.startsWith(prefix)) {
-      try {
-        const parsed = JSON.parse(raw.slice(prefix.length)) as {
-          rea?: {
-            token?: string;
-            local?: Record<string, true>;
-            session?: Record<string, true>;
-            cdpOwned?: boolean;
-          };
-          prior?: string;
-        };
-        prior = parsed?.prior;
-        if (parsed?.rea?.token === payload.seedToken) {
-          Object.assign(areas.local, parsed.rea.local ?? {});
-          Object.assign(areas.session, parsed.rea.session ?? {});
-          areas.cdpOwned = parsed.rea.cdpOwned === true;
-        }
-      } catch {
-        // Ignore unreadable envelopes and treat the tab as unset.
-      }
-    } else if (raw !== "") {
-      prior = raw;
-    }
+    if (host.opener == null) return;
   } catch {
-    // window.name may be unavailable.
+    return;
   }
-
-  // CDP owns the selected page's tab, including later same-tab navigations.
-  if (areas.cdpOwned) return;
 
   let origin = "";
   try {
@@ -239,10 +85,26 @@ export const applyDeclaredBrowserStorageSeeds = (
   const seed = payload.seeds.find((item) => item.origin === origin);
   if (seed === undefined) return;
 
+  const flagKey = `\u0000rea-tab-seed:${payload.seedToken}`;
+  let localDone = false;
+  let sessionDone = false;
+  try {
+    const raw = host.sessionStorage?.getItem(flagKey);
+    if (typeof raw === "string" && raw.length > 0) {
+      const parsed = JSON.parse(raw) as {
+        local?: Record<string, true>;
+        session?: Record<string, true>;
+      };
+      localDone = parsed?.local?.[origin] === true;
+      sessionDone = parsed?.session?.[origin] === true;
+    }
+  } catch {
+    // sessionStorage may be unavailable or hold unrelated data.
+  }
+
   const localAlready =
-    payload.initializedLocalOrigins.includes(origin) ||
-    areas.local[origin] === true;
-  const sessionAlready = areas.session[origin] === true;
+    payload.initializedLocalOrigins.includes(origin) || localDone;
+  const sessionAlready = sessionDone;
 
   const write = (
     storage: StorageArea | undefined,
@@ -263,35 +125,24 @@ export const applyDeclaredBrowserStorageSeeds = (
     sessionAlready ? [] : seed.session,
   );
 
-  let dirty = false;
-  if (localOutcome === "wrote" && areas.local[origin] !== true) {
-    areas.local[origin] = true;
-    dirty = true;
-  }
-  if (sessionOutcome === "wrote" && areas.session[origin] !== true) {
-    areas.session[origin] = true;
-    dirty = true;
-  }
-  if (dirty) {
-    const envelope: {
-      rea: {
-        token: string;
-        local: Record<string, true>;
-        session: Record<string, true>;
-      };
-      prior?: string;
-    } = {
-      rea: {
-        token: payload.seedToken,
-        local: areas.local,
-        session: areas.session,
-      },
-    };
-    if (prior !== undefined) envelope.prior = prior;
+  if (localOutcome === "wrote" || sessionOutcome === "wrote") {
     try {
-      host.name = `${prefix}${JSON.stringify(envelope)}`;
+      let local: Record<string, true> = {};
+      let session: Record<string, true> = {};
+      const raw = host.sessionStorage?.getItem(flagKey);
+      if (typeof raw === "string" && raw.length > 0) {
+        const parsed = JSON.parse(raw) as {
+          local?: Record<string, true>;
+          session?: Record<string, true>;
+        };
+        local = { ...parsed.local };
+        session = { ...parsed.session };
+      }
+      if (localOutcome === "wrote") local[origin] = true;
+      if (sessionOutcome === "wrote") session[origin] = true;
+      host.sessionStorage?.setItem(flagKey, JSON.stringify({ local, session }));
     } catch {
-      // window.name may be unavailable; Node still tracks once-per-area state.
+      // Flag persistence is best-effort; Node still tracks first-party local.
     }
   }
 
