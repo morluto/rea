@@ -10,6 +10,7 @@ import {
   androidJniViewItemsSchema,
   androidJniViewRequestSchema,
 } from "../android/androidJniQuery.js";
+import { boundedList } from "../boundedList.js";
 import type { JsonValue } from "../jsonValue.js";
 import { jsonValueByteLength } from "../jsonValueByteLength.js";
 import { ok } from "../result.js";
@@ -59,9 +60,18 @@ export const androidJniSummarySchema = reportSchema
     declarations: z.array(androidJniDeclarationSchema),
     candidates: z.array(androidJniCandidateSchema),
     libraries: z.array(androidJniLibrarySchema),
+    /** Libraries the summary lists; page collection libraries for the rest. */
+    library_coverage: analysisViewCoverageSchema,
     selected_declaration_ids: z.array(z.string()),
     declaration_coverage: analysisViewCoverageSchema,
   });
+
+/**
+ * Rows of each collection the summary previews. Every binding carries its
+ * declarations and candidates, so 16 keep a large APK's summary within the
+ * default agent result budget; collection pages read the rest.
+ */
+const SUMMARY_PREVIEW = 16;
 
 /** Source facts are already parsed; views never reopen the APK or rerun either reader. */
 export const projectAndroidJniView = (
@@ -106,7 +116,12 @@ export const projectAndroidJniView = (
       "JNI view exceeds its 1 MiB serialized allowance.",
     );
   if (view.kind === "summary") {
-    const bindings = report.bindings.slice(0, 64);
+    const bindings = [...boundedList(report.bindings, SUMMARY_PREVIEW).items];
+    const libraries = boundedList(report.libraries, SUMMARY_PREVIEW);
+    const selectedIds = boundedList(
+      report.selected_declaration_ids,
+      SUMMARY_PREVIEW,
+    );
     const candidateIds = new Set(
       bindings.flatMap((binding) => binding.candidate_ids),
     );
@@ -114,7 +129,7 @@ export const projectAndroidJniView = (
       candidateIds.has(candidate.candidate_id),
     );
     const declarationIds = new Set([
-      ...report.selected_declaration_ids.slice(0, 64),
+      ...selectedIds.items,
       ...bindings.map((binding) => binding.declaration_id),
       ...candidates.flatMap((candidate) => candidate.declaration_ids),
     ]);
@@ -147,13 +162,16 @@ export const projectAndroidJniView = (
         declarations: report.declarations.filter((method) =>
           declarationIds.has(method.declaration_id),
         ),
-        // Absence, unsupported encoding and read failures have no positive
-        // candidate edge. Their selected library provenance is still essential.
-        libraries: report.libraries,
-        selected_declaration_ids: report.selected_declaration_ids.slice(0, 64),
+        libraries: [...libraries.items],
+        library_coverage: pageViewCoverage(
+          0,
+          libraries.items.length,
+          report.libraries.length,
+        ),
+        selected_declaration_ids: [...selectedIds.items],
         declaration_coverage: pageViewCoverage(
           0,
-          Math.min(64, report.selected_declaration_ids.length),
+          selectedIds.items.length,
           report.selected_declaration_ids.length,
         ),
       },
