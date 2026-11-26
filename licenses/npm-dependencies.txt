@@ -2525,11 +2525,11 @@ eventsource-parser@3.1.0 | runtime | MIT
   Package: https://www.npmjs.com/package/eventsource-parser/v/3.1.0
   Archive: https://registry.npmjs.org/eventsource-parser/-/eventsource-parser-3.1.0.tgz
   Integrity: sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==
-evmole@0.9.6 | runtime | MIT
+evmole@0.10.1 | runtime | MIT
   Lockfile path: node_modules/evmole
-  Package: https://www.npmjs.com/package/evmole/v/0.9.6
-  Archive: https://registry.npmjs.org/evmole/-/evmole-0.9.6.tgz
-  Integrity: sha512-JKqceBQQz8tdM09rt8XsXBd9w+zq9qT1v7BuUN+aRTbpOcEbOmYXyqgUREi6XUEEEhb5yaTIYrTi5BxQwcU98Q==
+  Package: https://www.npmjs.com/package/evmole/v/0.10.1
+  Archive: https://registry.npmjs.org/evmole/-/evmole-0.10.1.tgz
+  Integrity: sha512-kSN/g/Wi4vXNJPV7jgV1TrKSFKCJuaNiBs2rvCDv5+mzRaHkM7inImkRhqQKHdLx41TCIsWKzAaDihVMf06iTg==
 execa@9.6.1 | development | MIT
   Lockfile path: node_modules/execa
   Package: https://www.npmjs.com/package/execa/v/9.6.1
@@ -2675,11 +2675,11 @@ github-from-package@0.0.0 | runtime, optional | MIT
   Package: https://www.npmjs.com/package/github-from-package/v/0.0.0
   Archive: https://registry.npmjs.org/github-from-package/-/github-from-package-0.0.0.tgz
   Integrity: sha512-SyHy3T1v2NUXn29OsWdxmK6RwHD+vkj3v8en8AOBZ1wBQ/hCAQ5bAQTD02kW4W9tUp/3Qh6J8r9EvntiyCmOOw==
-glob@14.0.4 | development | BlueOak-1.0.0
+glob@14.0.6 | development | BlueOak-1.0.0
   Lockfile path: node_modules/glob
-  Package: https://www.npmjs.com/package/glob/v/14.0.4
-  Archive: https://registry.npmjs.org/glob/-/glob-14.0.4.tgz
-  Integrity: sha512-mMiwNKoJZ4HAIRVJxotO6LsNRReA30gQwP9E2/p94tfLv+jygCNpKDjhhSL6OLY6LE371EZm5EAf7RpYuUqlsw==
+  Package: https://www.npmjs.com/package/glob/v/14.0.6
+  Archive: https://registry.npmjs.org/glob/-/glob-14.0.6.tgz
+  Integrity: sha512-OwXjVP2svY5EyLY75Vek96C8qK43gqrt4xsZ+qSILdnaEiJPXkd62mcfUSNx/TQErQRdu5uM5kF67sfONragKw==
 minimatch@11.0.5 | development | BlueOak-1.0.0
   Lockfile path: node_modules/glob/node_modules/minimatch
   Package: https://www.npmjs.com/package/minimatch/v/11.0.5
@@ -3630,11 +3630,11 @@ pure-rand@8.4.2 | development | MIT
   Package: https://www.npmjs.com/package/pure-rand/v/8.4.2
   Archive: https://registry.npmjs.org/pure-rand/-/pure-rand-8.4.2.tgz
   Integrity: sha512-vvuOGgcuPJAirlHvuQw1TrOiw7ptaIXXmIbNuiNOY6lNGJJH49PQ1Kj4nd783nPdQhQdicgOjVI2yI/9BD6/Ng==
-qs@6.16.1 | development | BSD-3-Clause
+qs@6.17.1 | development | BSD-3-Clause
   Lockfile path: node_modules/qs
-  Package: https://www.npmjs.com/package/qs/v/6.16.1
-  Archive: https://registry.npmjs.org/qs/-/qs-6.16.1.tgz
-  Integrity: sha512-5Px6J7rfHBAGUhNQ3es4YzcOdBBw0SDcVtThJml4RdnKw4tKs2epA0kPZ+K8X+WiHktT93RHVcQ/3ym5aTCgtg==
+  Package: https://www.npmjs.com/package/qs/v/6.17.1
+  Archive: https://registry.npmjs.org/qs/-/qs-6.17.1.tgz
+  Integrity: sha512-jd3COkaKVgGUW+ZHyEHCG9bH7RoaaiWuMgzsIBjUMVjLAaWGWpoUAVwljVvBHxRu/2qEHnadLGZrkutYUBPQJA==
 quick-format-unescaped@4.0.4 | runtime | MIT
   Lockfile path: node_modules/quick-format-unescaped
   Package: https://www.npmjs.com/package/quick-format-unescaped/v/4.0.4
@@ -4525,11 +4525,11 @@ esbuild@0.25.12 | development | MIT
   Package: https://www.npmjs.com/package/esbuild/v/0.25.12
   Archive: https://registry.npmjs.org/esbuild/-/esbuild-0.25.12.tgz
   Integrity: sha512-bbPBYYrtZbkt6Os6FiTLCTFxvq4tt3JKall1vRwshA3fdVztsLAatFaZobhkBC8/BrPetoa0oksYoKXoG4ryJg==
-vite@6.4.5 | development | MIT
+vite@6.4.6 | development | MIT
   Lockfile path: node_modules/vitepress/node_modules/vite
-  Package: https://www.npmjs.com/package/vite/v/6.4.5
-  Archive: https://registry.npmjs.org/vite/-/vite-6.4.5.tgz
-  Integrity: sha512-4enwjFfi4IwtEh0w+jPzpLVOFQiPHmmzPxcHXQOyEur47o6u0jE573DmGpjA+7irXoMLYRZD5ZaFUEneS3abPg==
+  Package: https://www.npmjs.com/package/vite/v/6.4.6
+  Archive: https://registry.npmjs.org/vite/-/vite-6.4.6.tgz
+  Integrity: sha512-RtsraAwEG68idOA6iUOoIpOlcSKROnf815aIq9qHTSrDNpLoBrBa12suyfcEd8qn0xwOVQI1Yhm1GbmTjF600A==
 vitest@5.1.1 | development | MIT
   Lockfile path: node_modules/vitest
   Package: https://www.npmjs.com/package/vitest/v/5.1.1

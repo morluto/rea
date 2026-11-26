@@ -5,7 +5,8 @@ import {
   type RetainedBrowserScenarioCapture as BrowserScenarioCapture,
 } from "../browserScenarioCapture.js";
 import type { BrowserScenarioStep as Step } from "../browserScenarioCaptureValues.js";
-import { incrementCount, sortedCountEntries } from "./analysisViewCounts.js";
+import { incrementCount } from "../valueCounts.js";
+import { sortedCountEntries } from "./analysisViewCounts.js";
 import { err, ok } from "../result.js";
 import {
   analysisViewInputError,

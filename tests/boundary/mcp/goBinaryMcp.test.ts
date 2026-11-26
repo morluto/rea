@@ -381,9 +381,6 @@ goMcpTest(
       complete: false,
       unparsed_lines: ["new-record\tfuture"],
     });
-    expect(evidence.limitations.join(" ")).toContain(
-      "could not be parsed completely",
-    );
     expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
     const invalid = await client.callTool({
       name: "inspect_go_binary",

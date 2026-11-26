@@ -985,12 +985,28 @@ unavailable hashes, so extract other files by `occurrence_ids`. Rock Ridge,
 UDF, and El Torito boot images are not decoded. See
 [ISO 9660 disc images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/iso9660-images.md).
 
+uClinux bFLT flat executables (`bFLT` magic, any filename) use the same
+inspection and extraction workflows. The header does not name a CPU, so the
+root architecture stays unknown. Header facts are big-endian declarations;
+relocations are listed, not applied. `text.bin` (header included), `data.bin`
+and `relocations.bin` are extractable. gzip and gzdata bodies are inflated
+under `artifact_limits.expanded_bytes`; revision 2 bodies are read as stored.
+Open `text.bin` as a raw binary with a chosen architecture. See
+[uClinux bFLT flat executables](https://github.com/morluto/rea/blob/main/docs/bflt-executables.md).
+
 Android A/B OTA `payload.bin` files (CrAU v2) use the same
 inspection/extraction workflows. Prefer a retained summary for header,
 partition table, dynamic groups and signature counts. Signatures are not
 verified. Reconstruct REPLACE, ZERO and REPLACE_ZSTD images only; delta
 operations stay inventoried with unavailable content. See
 [Android OTA update payloads](https://github.com/morluto/rea/blob/main/docs/guides/firmware/android-ota-payload.md).
+
+Android sparse images (`system.img`, `vendor.img`, `super.img` with magic
+`0xED26FF3A`) expand to one `image.raw` child without `simg2img`. Header,
+chunk counts and stored checksums are root facts; checksums are not verified
+and DONT_CARE blocks are written as zeros. The expanded child is classified
+again. See
+[Android sparse images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/android-sparse-image.md).
 
 ## ESP images
 

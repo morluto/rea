@@ -31,7 +31,7 @@ import {
   DEFAULT_NATIVE_STRUCTURE_BYTES,
   isNativeStructureFailure,
 } from "../../domain/binaryContainer.js";
-import { nativeStructureConstraint } from "../nativeStructureConstraint.js";
+import { nativeStructureConstraint } from "../../domain/native/nativeStructureBudget.js";
 import {
   NATIVE_EXPORT_LIMITS,
   type NativeExportLimit,

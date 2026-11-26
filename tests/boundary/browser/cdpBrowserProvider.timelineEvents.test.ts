@@ -411,3 +411,70 @@ describe("CdpBrowserProvider navigation timeline", () => {
     );
   });
 });
+
+it("reports a termination observed while the final state is read after the window", async () => {
+  const browser = await startFakeCdpBrowser({
+    eventsBeforeReply: ["Page.getFrameTree"],
+    commandEvents: ({ method, sessionId }) =>
+      method === "Page.getFrameTree"
+        ? [
+            {
+              method: "Inspector.targetCrashed",
+              ...(sessionId === undefined ? {} : { sessionId }),
+              params: {},
+            },
+          ]
+        : undefined,
+  });
+  trackBrowser(browser);
+  const provider = new CdpBrowserProvider();
+  try {
+    const result = await provider.observeSession(
+      observeWebSessionInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 1,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.window.end_reason).toBe("target_terminated");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("does not enable lifecycle events for a capture that ended before arming", async () => {
+  const browser = await startFakeCdpBrowser({
+    eventsBeforeReply: ["Performance.getMetrics"],
+    commandEvents: ({ method, sessionId }) =>
+      method === "Performance.getMetrics"
+        ? [
+            {
+              method: "Inspector.targetCrashed",
+              ...(sessionId === undefined ? {} : { sessionId }),
+              params: {},
+            },
+          ]
+        : undefined,
+  });
+  trackBrowser(browser);
+  const provider = new CdpBrowserProvider();
+  try {
+    const result = await provider.observeSession(
+      observeWebSessionInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 3_000_000_000,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.window.end_reason).toBe("target_terminated");
+    expect(browser.commands.map(({ method }) => method)).not.toContain(
+      "Page.setLifecycleEventsEnabled",
+    );
+  } finally {
+    await provider.close();
+  }
+});

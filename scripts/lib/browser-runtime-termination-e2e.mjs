@@ -26,6 +26,7 @@ export async function verifyRuntimeTargetTermination(client, input, origin) {
           ...input,
           target_id: targetId,
           observation_ms: 2_147_483_647,
+          detail: "complete",
         },
       },
       {

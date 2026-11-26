@@ -23,7 +23,10 @@ relative to the current directory; MCP paths must be absolute.
   with provider virtual addresses.
 - `coverage` counts every entry whatever page you select: `primary_entries`,
   `chained_entries`, `unknown_entries`, `entries_with_issues`, and the
-  directory's `trailing_bytes` after its last whole 12-byte entry.
+  directory's `trailing_bytes` after its last whole 12-byte entry. When
+  `unknown_entries` or `trailing_bytes` is nonzero, `coverage.status` is
+  `partial`, and nonzero trailing bytes add a limitation noting that the
+  trailing tail was not decoded.
 - Each entry has its begin, end and unwind RVAs, the `UNWIND_INFO` version,
   flags (`ehandler`, `uhandler`, `chaininfo`) and code count, and its `kind`:
   - `primary` starts a function.

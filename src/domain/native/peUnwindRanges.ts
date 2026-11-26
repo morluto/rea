@@ -38,6 +38,8 @@ export const PE_UNWIND_LIMITATIONS = {
   absent: "The image declares no exception directory (data directory 3).",
   machine:
     "Only the x64 RUNTIME_FUNCTION layout is decoded; this machine's exception directory uses another entry format.",
+  trailing:
+    "Trailing bytes shorter than one 12-byte RUNTIME_FUNCTION entry at the end of the exception directory were not decoded.",
 } as const;
 
 /** `max_entries` of `inspect_pe_unwind_ranges`: RUNTIME_FUNCTION entries decoded into typed arrays. */

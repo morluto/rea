@@ -409,6 +409,11 @@ export const documentationSections = [
         route: "/android-ota-payload",
       },
       {
+        text: "Android sparse images",
+        source: "guides/firmware/android-sparse-image.md",
+        route: "/android-sparse-image",
+      },
+      {
         text: "Flattened devicetree inspection",
         source: "devicetree.md",
         route: "/devicetree",
@@ -442,6 +447,11 @@ export const documentationSections = [
         text: "U-Boot legacy uImage containers",
         source: "uimage.md",
         route: "/uimage",
+      },
+      {
+        text: "uClinux bFLT flat executables",
+        source: "bflt-executables.md",
+        route: "/bflt-executables",
       },
     ],
   },

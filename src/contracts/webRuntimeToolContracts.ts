@@ -1,3 +1,9 @@
+import { z } from "zod";
+import { analysisDetailSchema } from "./analysisDetail.js";
+import {
+  webExecutionPageViewResultSchema,
+  webExecutionSummaryViewResultSchema,
+} from "../domain/analysisView/summarySchemas/webExecutionSummarySchemas.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import {
   toolContractMetadata,
@@ -31,10 +37,18 @@ export const WEB_RUNTIME_TOOL_CONTRACTS = [
       }),
     ),
     description:
-      "Instrument one selected CDP page for a finite, externally driven precise coverage window. Resets execution counters and prevents optimized execution until stopped. Returns complete nested UTF-16 ranges/counts, independently hashed script text and request initiator associations by session script ID. Does not navigate, click, evaluate selected code or close the externally owned page. Navigation ends document-scoped collection; workers and UI causality remain outside this claim. Emits an actual armed progress notification before external actions.",
+      'Instrument one selected CDP page for a finite, externally driven precise coverage window. Resets execution counters and prevents optimized execution until stopped. Returns complete nested UTF-16 ranges/counts, independently hashed script text and request initiator associations by session script ID. Does not navigate, click, evaluate selected code or close the externally owned page. Navigation ends document-scoped collection; workers and UI causality remain outside this claim. Emits an actual armed progress notification before external actions. Omitted detail returns the observation inline when it fits the agent result budget, else retains it and returns counts; page functions, requests, sources or source-text with inspect_analysis_view view {kind: "web-execution", collection}. complete or summary forces that shape.',
     kind: "browser-provider",
-    inputSchema: observeWebExecutionInputSchema,
-    outputSchema: evidenceResultOf(webExecutionSchema),
+    inputSchema: observeWebExecutionInputSchema.extend({
+      detail: analysisDetailSchema,
+    }),
+    outputSchema: evidenceResultOf(
+      z.union([
+        webExecutionSchema,
+        webExecutionSummaryViewResultSchema,
+        webExecutionPageViewResultSchema,
+      ]),
+    ),
     examples: [
       {
         title: "Attribute externally triggered page execution",

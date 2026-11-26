@@ -308,15 +308,24 @@ describe("decompile export creation", () => {
       failChmodFor.renumberDirectories = true;
       failChmodFor.functionsCreateMode = 0o2750;
       failChmodFor.swapFunctionsDevice = true;
+      const resources = new SessionResources();
       const opened = await DecompileExport.open({
         placement: { mode: "create", root },
         identity,
+        resourceScope: resources.resourceScope,
       });
-      expect(opened.ok).toBe(false);
-      if (opened.ok) return;
-      expect(opened.error.cleanupIncomplete).toBe(true);
-      expect((await lstat(functions)).isDirectory()).toBe(true);
-      expect((await lstat(root)).isDirectory()).toBe(true);
+      try {
+        expect(opened.ok).toBe(false);
+        if (!opened.ok) expect(opened.error.cleanupIncomplete).toBe(true);
+        expect((await lstat(functions)).isDirectory()).toBe(true);
+        expect((await lstat(root)).isDirectory()).toBe(true);
+      } finally {
+        // Restore the owned functions directory's identity before retrying cleanup.
+        failChmodFor.renumbered.delete(functions);
+        if (opened.ok) await opened.value.close();
+        expect((await resources.closeFileResources()).ok).toBe(true);
+      }
+      await expect(stat(root)).rejects.toMatchObject({ code: "ENOENT" });
     },
   );
 

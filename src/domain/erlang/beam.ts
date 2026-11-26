@@ -3,9 +3,8 @@ import { knownCoverageStatusSchema } from "../coverage.js";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
-import type { AnalysisParameterLimit } from "../analysisSettings.js";
 import {
-  parameterBudgetLimit,
+  parameterBudgetLimitFor,
   parameterBudgetSchema,
   type ParameterBudget,
 } from "../parameterBudget.js";
@@ -53,15 +52,8 @@ export const ERLANG_BEAM_BUDGETS = {
 export type ErlangBeamBudget = keyof typeof ERLANG_BEAM_BUDGETS;
 
 /** The per-call budget that stopped a BEAM inspection. */
-export const erlangBeamBudgetLimit = (
-  parameter: ErlangBeamBudget,
-  effectiveValue: number,
-): AnalysisParameterLimit =>
-  parameterBudgetLimit(
-    parameter,
-    ERLANG_BEAM_BUDGETS[parameter],
-    effectiveValue,
-  );
+export const erlangBeamBudgetLimit =
+  parameterBudgetLimitFor<ErlangBeamBudget>(ERLANG_BEAM_BUDGETS);
 
 /** Complete bounded inspection of one Erlang BEAM IFF container. */
 export const inspectErlangBeamInputSchema = z.strictObject({
