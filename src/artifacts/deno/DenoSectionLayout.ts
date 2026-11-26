@@ -2,9 +2,14 @@ import { BinaryReader } from "../../domain/binaryContainer.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import {
   ArtifactReaderFailure,
+  malformedArtifact,
   abortIfNeeded,
-  artifactFixedLimitFailure,
+  artifactReaderLimitFailure,
 } from "../../resources/index.js";
+import {
+  DEFAULT_DENO_READER_LIMITS,
+  type DenoReaderLimits,
+} from "../../domain/artifactReaderLimits.js";
 import { walkDenoVirtualFs, type DenoVfsWalk } from "./DenoVirtualFs.js";
 import { parseJsonWithDuplicatePolicy } from "../../domain/jsonDuplicateMember.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
@@ -12,11 +17,8 @@ import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 /** Opening and closing marker of a Deno compile data section. */
 export const DENO_SECTION_MAGIC = Buffer.from("d3n0l4nd", "latin1");
 
-const MAX_DENO_METADATA_JSON_BYTES = 8 * 1024 * 1024;
-export const MAX_DENO_VFS_HEADER_JSON_BYTES = 32 * 1024 * 1024;
-const MAX_DENO_TABLE_COUNT = 100_000;
-export const MAX_DENO_SPECIFIER_TEXT_BYTES = 8 * 1024 * 1024;
-export const MAX_DENO_REMOTE_BODY_BYTES = 256 * 1024 * 1024;
+const REDIRECT_ROW_BYTES = 8;
+const REDIRECT_BATCH_ROWS = 1_024;
 
 const KNOWN_REMOTE_FLAGS = 0x0f;
 const FLAG_TRANSPILED = 1 << 0;
@@ -115,6 +117,7 @@ export interface DenoParsedSection {
   readonly specifierText: ReadonlyMap<number, string | null>;
 }
 
+/** Read a section-relative range, returning the acquired prefix at physical EOF. */
 export type DenoSectionRead = (
   offset: number,
   length: number,
@@ -130,6 +133,7 @@ export const parseDenoSection = async (
   sectionLength: number,
   read: DenoSectionRead,
   signal?: AbortSignal,
+  limits: DenoReaderLimits = DEFAULT_DENO_READER_LIMITS,
 ): Promise<DenoParsedSection> => {
   abortIfNeeded(signal);
   if (
@@ -182,17 +186,18 @@ export const parseDenoSection = async (
     new BinaryReader(await pull(8), true, "deno").word(0, 64);
   const readBounded = async (
     claimed: bigint,
-    max: number,
+    field: "metadata_json_bytes" | "vfs_header_json_bytes",
     scope: string,
   ): Promise<Buffer> => {
     const range = takeRange(claimed, scope);
-    if (claimed > BigInt(max)) throw denoByteLimit(scope, claimed, max);
+    if (claimed > BigInt(limits[field]))
+      throw denoByteLimit(field, claimed, limits);
     return readExact(range.sectionOffset, range.length);
   };
 
   const metadataBytes = await readBounded(
     await u64(),
-    MAX_DENO_METADATA_JSON_BYTES,
+    "metadata_json_bytes",
     "metadata JSON",
   );
   const metadata = observeMetadata(decodeJson(metadataBytes, "metadata JSON"));
@@ -200,7 +205,7 @@ export const parseDenoSection = async (
 
   const specifierStart = cursor;
   const specifierCount = await u32();
-  assertTableCount(specifierCount, "specifier");
+  assertTableCount(specifierCount, limits);
   const specifierText = new Map<number, string | null>();
   let textBytes = 0;
   let invalidUtf8 = false;
@@ -209,12 +214,8 @@ export const parseDenoSection = async (
     const length = await u32();
     const range = takeRange(BigInt(length), "specifier text");
     textBytes += length;
-    if (textBytes > MAX_DENO_SPECIFIER_TEXT_BYTES)
-      throw denoByteLimit(
-        "specifier text",
-        textBytes,
-        MAX_DENO_SPECIFIER_TEXT_BYTES,
-      );
+    if (textBytes > limits.specifier_text_bytes)
+      throw denoByteLimit("specifier_text_bytes", undefined, limits);
     const bytes = await readExact(range.sectionOffset, range.length);
     const id = await u32();
     if (specifierText.has(id))
@@ -233,20 +234,43 @@ export const parseDenoSection = async (
 
   const redirectStart = cursor;
   const redirectCount = await u32();
-  assertTableCount(redirectCount, "redirect");
+  assertTableCount(redirectCount, limits);
   const redirectIds = new Set<number>();
   let redirectListing: DenoListing = "listed";
-  for (let index = 0; index < redirectCount; index += 1) {
+  for (let index = 0; index < redirectCount;) {
     abortIfNeeded(signal);
-    const from = await u32();
-    const to = await u32();
-    if (redirectIds.has(from))
-      throw denoFormatFailure(
-        `duplicate redirect specifier id ${String(from)}`,
-      );
-    redirectIds.add(from);
-    if (!hasSpecifierText(from) || !hasSpecifierText(to))
-      redirectListing = "unsupported";
+    // A short last batch still admits every complete earlier row, so an earlier duplicate retains precedence.
+    const rows = Math.min(
+      redirectCount - index,
+      REDIRECT_BATCH_ROWS,
+      Math.floor(Number(size - cursor) / REDIRECT_ROW_BYTES),
+    );
+    if (rows === 0) throw denoFormatFailure("length overruns the section");
+    const range = takeRange(BigInt(rows * REDIRECT_ROW_BYTES));
+    const bytes = await read(range.sectionOffset, range.length);
+    abortIfNeeded(signal);
+    if (bytes.length > range.length)
+      throw denoFormatFailure("section read was short");
+    const batch = new BinaryReader(bytes, true, "deno");
+    // Decode the acquired complete rows even if a later row ends at physical EOF.
+    for (
+      let offset = 0;
+      offset <= bytes.length - REDIRECT_ROW_BYTES;
+      offset += REDIRECT_ROW_BYTES
+    ) {
+      const from = batch.u32(offset);
+      const to = batch.u32(offset + 4);
+      if (redirectIds.has(from))
+        throw denoFormatFailure(
+          `duplicate redirect specifier id ${String(from)}`,
+        );
+      redirectIds.add(from);
+      if (!hasSpecifierText(from) || !hasSpecifierText(to))
+        redirectListing = "unsupported";
+    }
+    if (bytes.length < range.length)
+      throw denoFormatFailure("section read was short");
+    index += rows;
   }
   const redirects: DenoCountedRegion = {
     count: redirectCount,
@@ -256,13 +280,13 @@ export const parseDenoSection = async (
 
   const remoteStart = cursor;
   const remoteCount = await u32();
-  assertTableCount(remoteCount, "remote module");
+  assertTableCount(remoteCount, limits);
   const remoteIds = new Set<number>();
   const modules: DenoRemoteModule[] = [];
   let remoteBodies = 0n;
   const takeRemoteBody = (length: number, scope: string): DenoByteRange => {
     const range = takeRange(BigInt(length), scope);
-    remoteBodies = addRemoteBody(remoteBodies, length);
+    remoteBodies = addRemoteBody(remoteBodies, length, limits);
     return range;
   };
   let unresolvedRemote = false;
@@ -321,7 +345,7 @@ export const parseDenoSection = async (
 
   const vfsHeader = await readBounded(
     await u64(),
-    MAX_DENO_VFS_HEADER_JSON_BYTES,
+    "vfs_header_json_bytes",
     "vfs header JSON",
   );
   const vfsJson = decodeJson(vfsHeader, "vfs header JSON");
@@ -341,32 +365,30 @@ export const parseDenoSection = async (
     remoteModules,
     vfsHeaderByteLength: vfsHeader.length,
     vfsFileData,
-    vfs: walkDenoVirtualFs(vfsJson, vfsFileData.length, signal),
+    vfs: walkDenoVirtualFs(vfsJson, vfsFileData.length, signal, limits),
     specifierText,
   };
 };
 
-const addRemoteBody = (total: bigint, length: number): bigint => {
+const addRemoteBody = (
+  total: bigint,
+  length: number,
+  limits: DenoReaderLimits,
+): bigint => {
   const next = total + BigInt(length);
-  if (next > BigInt(MAX_DENO_REMOTE_BODY_BYTES))
-    throw denoByteLimit(
-      "remote module bodies",
-      next,
-      MAX_DENO_REMOTE_BODY_BYTES,
-    );
+  if (next > BigInt(limits.remote_body_bytes))
+    throw denoByteLimit("remote_body_bytes", undefined, limits);
   return next;
 };
 
-const assertTableCount = (count: number, scope: string): void => {
-  if (count > MAX_DENO_TABLE_COUNT)
-    throw artifactFixedLimitFailure(
-      {
-        name: `The Deno compile ${scope} record allowance`,
-        kind: "count",
-        limit: MAX_DENO_TABLE_COUNT,
-        unit: "records",
-      },
-      `Deno compile ${scope} table claims ${String(count)} records, exceeding MAX_DENO_TABLE_COUNT (${String(MAX_DENO_TABLE_COUNT)} records).`,
+/** Each specifier, redirect and remote-module table shares one record budget. */
+const assertTableCount = (count: number, limits: DenoReaderLimits): void => {
+  if (count > limits.table_records)
+    throw artifactReaderLimitFailure(
+      "artifact_limits.deno.table_records",
+      limits.table_records,
+      "count",
+      count,
     );
 };
 
@@ -501,8 +523,8 @@ const asRecord = (value: unknown): Record<string, unknown> | undefined => {
 };
 
 export const denoFormatFailure = (detail: string): ArtifactReaderFailure =>
-  new ArtifactReaderFailure(
-    "format",
+  malformedArtifact(
+    "deno-standalone",
     `Deno compile section is malformed: ${detail}`,
   );
 
@@ -512,18 +534,23 @@ export const denoUnsupported = (detail: string): ArtifactReaderFailure =>
     `Deno compile section layout is unsupported: ${detail}`,
   );
 
-export const denoByteLimit = (
-  scope: string,
-  claimed: number | bigint,
-  allowance: number,
+const denoByteLimit = (
+  field:
+    | "metadata_json_bytes"
+    | "vfs_header_json_bytes"
+    | "specifier_text_bytes"
+    | "remote_body_bytes",
+  /**
+   * A declared length is the complete need. A running total stops at the
+   * first crossing, a lower bound, and is passed as undefined.
+   */
+  claimed: number | bigint | undefined,
+  limits: DenoReaderLimits,
 ): ArtifactReaderFailure =>
-  artifactFixedLimitFailure(
-    {
-      name: `The Deno compile ${scope} allowance`,
-      kind: "parser",
-      limit: allowance,
-      unit: "bytes",
-    },
-    `The ${scope} claims ${String(claimed)} bytes, above ${String(allowance)} bytes.`,
+  artifactReaderLimitFailure(
+    `artifact_limits.deno.${field}`,
+    limits[field],
+    "bytes",
+    claimed,
     "memory",
   );

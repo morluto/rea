@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { chmod, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -13,7 +13,7 @@ import {
   selectWiresharkTool,
   wiresharkExecutableIdentity,
 } from "./PcapConfiguration.js";
-import { parseCapinfosOutput, parseTsharkJsonOutput } from "./PcapOutput.js";
+import { parseCapinfosOutput, prepareTsharkBaseOutput } from "./PcapOutput.js";
 
 describe("resolvePcapTools", () => {
   it("prefers absolute environment paths for both tools", () => {
@@ -80,38 +80,6 @@ describe("resolvePcapTools", () => {
     );
   });
 
-  // Windows X_OK reports existence only, so executable-bit selection is POSIX-only.
-  it.skipIf(process.platform === "win32")(
-    "selects the same executable as the packet tools ahead of a relative PATH entry",
-    async () => {
-      const root = await createTestTempDirectory("rea-wireshark-shared-");
-      const decoy = join(root, "relative-decoy");
-      const installed = join(root, "installed");
-      for (const directory of [decoy, installed]) {
-        await mkdir(directory);
-        for (const tool of ["tshark", "capinfos"]) {
-          await writeFile(join(directory, tool), "");
-          await chmod(join(directory, tool), 0o700);
-        }
-      }
-      const environment = {
-        PATH: [relative(process.cwd(), decoy), installed].join(":"),
-      };
-
-      const pcap = resolvePcapTools(environment, "linux");
-      expect(pcap).toEqual({
-        tshark: { command: join(installed, "tshark"), source: "path" },
-        capinfos: { command: join(installed, "capinfos"), source: "path" },
-      });
-      expect(pcap.tshark.command).toBe(
-        locateWiresharkTool(
-          selectWiresharkTool(environment, "tshark"),
-          environment,
-        ),
-      );
-    },
-  );
-
   it("rejects a relative tshark path explicitly", () => {
     expect(() =>
       resolvePcapTools({ [TSHARK_COMMAND_ENV]: "bin/tshark" }, "linux"),
@@ -144,45 +112,50 @@ describe("locateWiresharkTool", () => {
 
   // Windows X_OK reports existence only, so executable-bit selection is POSIX-only.
   it.skipIf(process.platform === "win32")(
-    "uses the first absolute PATH entry holding an executable regular file",
+    "selects the first executable regular file from an absolute PATH entry",
     async () => {
       const root = await createTestTempDirectory("rea-wireshark-path-");
-      // An absolute PATH entry that does not exist must be skipped.
+      const decoy = join(root, "relative-decoy");
       const missingDirectory = join(root, "missing-directory");
       const notExecutable = join(root, "not-executable");
       const directoryEntry = join(root, "directory-entry");
       const selected = join(root, "selected");
       const later = join(root, "later");
-      for (const directory of [notExecutable, directoryEntry, selected, later])
+      for (const directory of [
+        notExecutable,
+        directoryEntry,
+        decoy,
+        selected,
+        later,
+      ])
         await mkdir(directory);
-      await writeFile(join(notExecutable, "tshark"), "");
-      await chmod(join(notExecutable, "tshark"), 0o600);
+      await writeFile(join(notExecutable, "tshark"), "", { mode: 0o600 });
       await mkdir(join(directoryEntry, "tshark"));
-      for (const directory of [selected, later]) {
-        await writeFile(join(directory, "tshark"), "");
-        await chmod(join(directory, "tshark"), 0o700);
+      for (const directory of [decoy, selected, later]) {
+        for (const tool of ["tshark", "capinfos"])
+          await writeFile(join(directory, tool), "", { mode: 0o700 });
       }
-      const PATH = [
-        "relative-entry",
+
+      const ineligible = [
+        relative(process.cwd(), decoy),
         missingDirectory,
         notExecutable,
         directoryEntry,
-        selected,
-        later,
-      ].join(":");
+      ];
+      const environment = { PATH: [...ineligible, selected, later].join(":") };
 
+      expect(resolvePcapTools(environment, "linux")).toEqual({
+        tshark: { command: join(selected, "tshark"), source: "path" },
+        capinfos: { command: join(selected, "capinfos"), source: "path" },
+      });
+      const tshark = selectWiresharkTool(environment, "tshark");
+      expect(locateWiresharkTool(tshark, environment)).toBe(
+        join(selected, "tshark"),
+      );
       expect(
-        locateWiresharkTool({ command: "tshark", source: "path" }, { PATH }),
-      ).toBe(join(selected, "tshark"));
-      expect(
-        locateWiresharkTool(
-          { command: "tshark", source: "path" },
-          { PATH: [missingDirectory, notExecutable, directoryEntry].join(":") },
-        ),
+        locateWiresharkTool(tshark, { PATH: ineligible.join(":") }),
       ).toBeUndefined();
-      expect(
-        locateWiresharkTool({ command: "tshark", source: "path" }, {}),
-      ).toBeUndefined();
+      expect(locateWiresharkTool(tshark, {})).toBeUndefined();
     },
   );
 });
@@ -383,9 +356,10 @@ const PARTIAL_TSHARK_JSON = JSON.stringify([
   },
 ]);
 
-describe("parseTsharkJsonOutput", () => {
+describe("prepareTsharkBaseOutput", () => {
   it("projects endpoints, DNS, TLS SNI, protocols, and HTTP URIs", async () => {
-    const result = await parseTsharkJsonOutput(PARTIAL_TSHARK_JSON);
+    const { fallback: result } =
+      await prepareTsharkBaseOutput(PARTIAL_TSHARK_JSON);
     expect(result.endpoints).toEqual(
       expect.arrayContaining([
         { address: "192.168.1.1", port: null, packet_count: 3 },
@@ -425,7 +399,9 @@ describe("parseTsharkJsonOutput", () => {
         },
       },
     }));
-    const result = await parseTsharkJsonOutput(JSON.stringify(packets));
+    const { fallback: result } = await prepareTsharkBaseOutput(
+      JSON.stringify(packets),
+    );
     expect(result.endpoints).toHaveLength(11);
     expect(result.endpointCount).toBe(11); // 10 src + 1 dst
   });
@@ -438,7 +414,7 @@ describe("parseTsharkJsonOutput", () => {
     "[null]",
     '[{"_source":{"layers":{"ip.src":[3]}}}]',
   ])("rejects malformed producer output %s", async (text) => {
-    await expect(parseTsharkJsonOutput(text)).rejects.toMatchObject({
+    await expect(prepareTsharkBaseOutput(text)).rejects.toMatchObject({
       _tag: "AnalysisProtocolError",
     });
   });

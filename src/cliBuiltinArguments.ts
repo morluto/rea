@@ -12,14 +12,15 @@ export const VALUED_OUTPUT_FLAGS: ReadonlySet<string> = new Set([
 const spacedOutputValue = (
   flag: string,
   next: string | undefined,
-): string | undefined =>
-  VALUED_OUTPUT_FLAGS.has(flag) && next ? next : undefined;
+): string | undefined => (VALUED_OUTPUT_FLAGS.has(flag) ? next : undefined);
 
 export const OUTPUT_SWITCHES: ReadonlySet<string> = new Set([
   "--json",
   "--full-output",
   "--token-count",
   "--timings",
+  // Keeps an over-budget result out of the private retained-Evidence cache.
+  "--no-retain",
 ]);
 
 /** Valueless global flags taken out of every position before command parsing. */
@@ -37,6 +38,7 @@ export const CLI_BUILTIN_FLAGS: ReadonlySet<string> = new Set([
   "--json",
   "--token-count",
   "--timings",
+  "--no-retain",
 ]);
 
 /** The timing global's spellings: `--timings`, `--no-timings`, `--timings=<text>`. */
@@ -65,7 +67,7 @@ export interface CliGlobalArguments {
   readonly commandIndices: readonly number[];
   /** Valueless global flags and timing spellings taken out before command parsing. */
   readonly flags: ReadonlySet<string>;
-  /** Positions of nonempty values consumed by valued output flags. */
+  /** Positions of explicit values consumed by valued output flags, including empty values. */
   readonly outputValues: readonly {
     readonly flag: string;
     readonly index: number;
@@ -88,7 +90,7 @@ const normalizeCliArguments = (arguments_: readonly string[]): string[] => {
     const argument = arguments_[index]!;
     const outputValue = spacedOutputValue(argument, arguments_[index + 1]);
     if (outputValue !== undefined) {
-      // A nonempty spaced value is consumed before looking for more flags.
+      // A spaced value is consumed before looking for more flags.
       // Its contents belong to that option, even when they look like a flag.
       normalized.push(argument, outputValue);
       index += 1;
@@ -118,7 +120,7 @@ const normalizeCliArguments = (arguments_: readonly string[]): string[] => {
 /**
  * Read one invocation's global arguments. Builtin switches are taken from any
  * position, including after `--`; a valued output flag consumes the next
- * nonempty token as data. The timing global is then read from the remaining
+ * token as data even when it is empty. The timing global is then read from the remaining
  * tokens until `--`. The output argument reader reports malformed output
  * values from these same positions.
  */
@@ -305,7 +307,11 @@ const productionMcpDoctorArguments = (
   };
 };
 
-/** The command parser accepts the schema key and its kebab-case spelling. */
+/**
+ * The command parser accepts only `--sensitive-value`. The schema key spelling
+ * is still read as a declaration, so the value it names stays redacted from the
+ * parser's refusal and from any other text that echoes the invocation.
+ */
 const FLAGS = ["--sensitive-value", "--sensitiveValue"] as const;
 
 /**
@@ -389,7 +395,7 @@ const readMcpHttpOption = (argument: string, next: string | undefined) => {
 const readMcpHttpCommand = (
   arguments_: readonly string[],
 ): McpHttpCommand | undefined => {
-  let mode: "explicit" | "required" | undefined;
+  let transportFlag: string | undefined;
   const values = new Map<string, string>();
   const allowedHosts: string[] = [];
   let problem: McpHttpCommandProblem | undefined;
@@ -400,13 +406,13 @@ const readMcpHttpCommand = (
       continue;
     }
     if (argument === "--http") {
-      mode = "explicit";
+      transportFlag = "--http";
       continue;
     }
     const next = arguments_[index + 1];
     const { flag, inline, value } = readMcpHttpOption(argument, next);
     if (MCP_HTTP_VALUED_FLAGS.has(flag)) {
-      mode ??= "required";
+      transportFlag ??= flag;
       if (value === undefined) {
         problem ??= invalidMcpHttpCommand(`Missing value for ${flag}`);
       } else {
@@ -424,10 +430,10 @@ const readMcpHttpCommand = (
     if (!argument.startsWith("-") || argument === "--") break;
     if (!inline && spacedOutputValue(flag, next) !== undefined) index += 1;
   }
-  if (mode === undefined) return undefined;
+  if (transportFlag === undefined) return undefined;
   if (problem !== undefined) return problem;
-  if (mode === "required")
-    return invalidMcpHttpCommand("--host and --port require --http");
+  if (transportFlag !== "--http")
+    return invalidMcpHttpCommand(`${transportFlag} requires --http`);
   return {
     kind: "listen",
     host: values.get("--host"),

@@ -1,5 +1,5 @@
 import { once } from "node:events";
-import { createServer, type AddressInfo } from "node:net";
+import { createServer, type AddressInfo, type Socket } from "node:net";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -9,31 +9,43 @@ for (const transport of ["tcp", "unix"] as const)
   it.skipIf(transport === "unix" && process.platform === "win32")(
     `connects a real local ${transport} socket and transfers ownership`,
     async () => {
-      const directory = await createTestTempDirectory("rea-local-socket-");
-      const server = createServer();
-      const path = join(directory, "socket");
+      const path =
+        transport === "unix"
+          ? join(await createTestTempDirectory("rea-local-socket-"), "socket")
+          : undefined;
+      const peers = new Set<Socket>();
+      const server = createServer((peer) => {
+        peers.add(peer);
+        peer.once("close", () => peers.delete(peer));
+        peer.once("data", (bytes) => peer.end(bytes));
+      });
+      let client: Socket | undefined;
       try {
-        if (transport === "unix") server.listen(path);
+        if (path !== undefined) server.listen(path);
         else server.listen(0, "127.0.0.1");
         await once(server, "listening");
-        const incoming = once(server, "connection");
         const target =
-          transport === "unix"
+          path !== undefined
             ? { path }
             : {
                 host: "127.0.0.1",
                 port: (server.address() as AddressInfo).port,
               };
-        const result = await connectLocalSocketOnce(
-          target,
-          new AbortController().signal,
-        );
+        const controller = new AbortController();
+        const result = await connectLocalSocketOnce(target, controller.signal);
         if (!result.ok)
           throw new Error(`Connection failed: ${result.error.kind}`);
-        const [peer] = await incoming;
-        result.value.destroy();
-        peer.destroy();
+        client = result.value;
+        controller.abort();
+        expect(client.destroyed).toBe(false);
+        client.setEncoding("utf8");
+        client.end("ownership receipt");
+        let receipt = "";
+        for await (const chunk of client) receipt += String(chunk);
+        expect(receipt).toBe("ownership receipt");
       } finally {
+        client?.destroy();
+        for (const peer of peers) peer.destroy();
         await new Promise<void>((resolve, reject) =>
           server.close((error) => (error ? reject(error) : resolve())),
         );
@@ -49,7 +61,12 @@ it("retains an already-aborted caller's reason", async () => {
     { host: "127.0.0.1", port: -1 },
     controller.signal,
   );
-  expect(result).toEqual({ ok: false, error: { kind: "cancelled", reason } });
+  if (result.ok) {
+    result.value.destroy();
+    throw new Error("An already cancelled caller connected");
+  }
+  if (result.error.kind !== "cancelled") throw result.error.cause;
+  expect(result.error.reason).toBe(reason);
 });
 
 it("cancels an outstanding connection attempt with the caller's reason", async () => {
@@ -64,10 +81,13 @@ it("cancels an outstanding connection attempt with the caller's reason", async (
       controller.signal,
     );
     controller.abort(reason);
-    expect(await pending).toEqual({
-      ok: false,
-      error: { kind: "cancelled", reason },
-    });
+    const result = await pending;
+    if (result.ok) {
+      result.value.destroy();
+      throw new Error("A cancelled connection was handed off");
+    }
+    if (result.error.kind !== "cancelled") throw result.error.cause;
+    expect(result.error.reason).toBe(reason);
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),

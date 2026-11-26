@@ -6,13 +6,13 @@ import {
   nativeDisassemblySchema,
   nativeCalleesSchema,
   nativeXrefsSchema,
-  nativeLiteralSearchPattern,
 } from "./IdaNativeProtocol.js";
 import {
   analysisSearchPredicate,
   analysisSearchQuerySchema,
   type AnalysisSearchQuery,
 } from "../domain/analysisSearch.js";
+import { extractRequiredRegexLiteral } from "../domain/regexLiteralCandidate.js";
 import {
   matchRegexValues,
   launchRegexMatchingLimitation,
@@ -44,6 +44,7 @@ import type { EvidenceLocation } from "../domain/evidence.js";
 import {
   idaAddressSchema,
   idaFunctionSchema,
+  idaLiteralSearchPattern,
   idaStringsPageSchema,
   modernCalleesSchema,
   modernDecompileSchema,
@@ -64,6 +65,8 @@ export interface IdaRawObservation {
   readonly tool: string;
   readonly arguments: Readonly<Record<string, JsonValue>>;
   readonly result: JsonValue;
+  /** Engine output the upstream reported beside the result, when nonempty. */
+  readonly output?: { readonly stdout: string; readonly stderr: string };
 }
 
 const unknownBody = {
@@ -118,6 +121,11 @@ export class IdaOperationRunner {
       readonly surveyAvailable?: boolean;
       /** The program identity REA admitted, reported by `list_documents`. */
       readonly admittedDocument?: string;
+      /** Answers modern reads through another upstream tool and reports that actual observation. */
+      readonly invoke?: (
+        tool: string,
+        args: Readonly<Record<string, JsonValue>>,
+      ) => Promise<IdaRawObservation>;
     } = {},
   ) {}
 
@@ -129,22 +137,38 @@ export class IdaOperationRunner {
       throw cancelledBy(tool, this.options.signal);
     const scoped =
       this.database === undefined ? args : { ...args, database: this.database };
-    const result = await this.connection.call(tool, scoped, {
-      signal: this.options.signal,
-    });
-    this.raw.push({ tool, arguments: scoped, result });
+    const observation =
+      this.options.invoke === undefined
+        ? {
+            tool,
+            arguments: scoped,
+            result: await this.connection.call(tool, scoped, {
+              signal: this.options.signal,
+            }),
+          }
+        : await this.options.invoke(tool, scoped);
+    this.raw.push(observation);
     if (this.options.signal?.aborted)
       throw cancelledBy(tool, this.options.signal);
-    return result;
+    return observation.result;
   }
 
-  async functions(): Promise<IdaFunction[]> {
+  private get isHexRaysBridge(): boolean {
+    return this.options.invoke !== undefined;
+  }
+
+  async functions(candidatePattern?: string): Promise<IdaFunction[]> {
     const result: IdaFunction[] = [];
+    const count = this.isHexRaysBridge ? 1000 : 100;
     let offset: number | null = 0;
     while (offset !== null) {
       const current: number = offset;
+      const queries =
+        candidatePattern !== undefined && this.isHexRaysBridge
+          ? { offset, count, filter: candidatePattern }
+          : { offset, count };
       const value = modernPageSchema.parse(
-        await this.call("list_funcs", { queries: { offset, count: 100 } }),
+        await this.call("list_funcs", { queries }),
       )[0];
       if (value === undefined)
         throw new AnalysisProtocolError("IDA MCP omitted its function page.");
@@ -216,18 +240,25 @@ export class IdaOperationRunner {
       throw new AnalysisProtocolError(
         `IDA function lookup failed for ${query}: ${outcome.missing}`,
       );
+    const message = `IDA could not resolve procedure ${JSON.stringify(query)}: ${outcome.missing}.`;
     throw new AnalysisInputError(
       requestedBy,
       {
         cause: new AnalysisProtocolError(
           `IDA function lookup failed for ${query}: ${outcome.missing}`,
         ),
+        userMessage: message,
+        conformsToInputContract: true,
+        related: { operations: ["list_procedures", "search_procedures"] },
+        remediationAction:
+          "Choose an observed name or address from the current IDA inventory. CLI: rea search <path> . --kind procedures --mode regex --provider ida. MCP: use search_procedures or list_procedures. An inventory miss leaves the function's presence in the artifact unknown.",
       },
       [
         {
-          path: [],
+          path: ["procedure"],
           reason: "invalid_value",
-          message: `IDA could not resolve procedure ${JSON.stringify(query)}: ${outcome.missing}.`,
+          message,
+          observed: { procedure: query },
         },
       ],
     );
@@ -297,22 +328,22 @@ export class IdaOperationRunner {
   }
 
   async strings(
-    nativePattern?: string,
+    candidatePattern?: string,
   ): Promise<{ address: string; value: string }[]> {
     if (this.protocol === "native")
       this.limitations.push(IDA_NATIVE_STRING_LIMITATION);
     const result: { address: string; value: string }[] = [];
+    const limit = this.isHexRaysBridge ? 1000 : 100;
     let offset: number | null = 0;
     while (offset !== null) {
       const current: number = offset;
       const page = idaStringsPageSchema.parse(
         await this.call("find_regex", {
           pattern:
-            this.protocol === "native"
-              ? (nativePattern ?? "[\\s\\S]*")
-              : "(?s).*",
+            candidatePattern ??
+            (this.protocol === "native" ? "[\\s\\S]*" : "(?s).*"),
           offset,
-          limit: 100,
+          limit,
         }),
       );
       if (page.error !== undefined && page.error !== null)
@@ -327,8 +358,22 @@ export class IdaOperationRunner {
     return result;
   }
 
+  private async stringAt(
+    address: string,
+  ): Promise<{ address: string; value: string }[]> {
+    const page = idaStringsPageSchema.parse(
+      await this.call("string_at", { addr: address }),
+    );
+    if (page.error !== undefined && page.error !== null)
+      throw new AnalysisProtocolError(
+        `IDA string lookup failed: ${page.error}`,
+      );
+    return page.matches.map((s) => ({ address: s.addr, value: s.string }));
+  }
+
   async assembly(fn: IdaFunction): Promise<IdaDisassembly> {
     let result: IdaDisassembly | undefined;
+    const maxInstructions = this.isHexRaysBridge ? 1000 : 100;
     let offset: number | null = 0;
     while (offset !== null) {
       const page = (
@@ -339,7 +384,7 @@ export class IdaOperationRunner {
         await this.call("disasm", {
           addr: fn.address,
           offset,
-          max_instructions: 100,
+          max_instructions: maxInstructions,
         }),
       );
       if (page.asm === null || page.error !== undefined)
@@ -382,13 +427,14 @@ export class IdaOperationRunner {
       return page.pseudocode;
     }
     const result: string[] = [];
+    const maxLines = this.isHexRaysBridge ? 1000 : 100;
     let offset: number | null = 0;
     while (offset !== null) {
       const page = modernDecompileSchema.parse(
         await this.call("decompile", {
           addr: fn.address,
           offset,
-          max_lines: 100,
+          max_lines: maxLines,
         }),
       );
       if (page.code === null || page.error !== undefined)
@@ -458,6 +504,7 @@ export class IdaOperationRunner {
           status: "unknown",
           reason:
             "Upstream xrefs do not establish direct caller relationships.",
+          limited_directions: ["callers"],
         },
       };
     }
@@ -478,6 +525,7 @@ export class IdaOperationRunner {
             status: "unknown" as const,
             reason:
               "Upstream callees omitted an explicit truncation marker; additional callees remain unknown.",
+            limited_directions: ["callees"] as const,
           }
         : page.more
           ? {
@@ -565,7 +613,17 @@ export class IdaOperationRunner {
         ? analysisSearchQuerySchema.parse(parameters)
         : undefined;
     if (operation === "list_procedures" || operation === "search_procedures") {
-      const items = (await this.functions()).map((fn) => ({
+      const candidateLiteral =
+        query === undefined
+          ? undefined
+          : query.mode === "literal"
+            ? query.pattern
+            : extractRequiredRegexLiteral(query.pattern, query.case_sensitive);
+      const candidatePattern =
+        candidateLiteral === undefined || query === undefined
+          ? undefined
+          : idaLiteralSearchPattern(candidateLiteral, query.case_sensitive);
+      const items = (await this.functions(candidatePattern)).map((fn) => ({
         address: fn.address,
         value: fn.name,
       }));
@@ -576,11 +634,19 @@ export class IdaOperationRunner {
         query === undefined && parameters.address !== undefined
           ? idaAddressSchema.parse(parameters.address)
           : undefined;
-      const nativePattern =
-        this.protocol === "native" && query?.mode === "literal"
-          ? nativeLiteralSearchPattern(query.pattern, query.case_sensitive)
-          : undefined;
-      const items = await this.strings(nativePattern);
+      if (selectedAddress !== undefined && this.isHexRaysBridge)
+        return this.stringAt(selectedAddress);
+      const candidateLiteral =
+        query === undefined
+          ? undefined
+          : query.mode === "literal"
+            ? query.pattern
+            : extractRequiredRegexLiteral(query.pattern, query.case_sensitive);
+      const candidatePattern =
+        candidateLiteral === undefined || query === undefined
+          ? undefined
+          : idaLiteralSearchPattern(candidateLiteral, query.case_sensitive);
+      const items = await this.strings(candidatePattern);
       return query !== undefined
         ? this.searchItems(operation, items, query)
         : selectedAddress === undefined

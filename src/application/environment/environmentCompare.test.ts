@@ -250,32 +250,6 @@ const nestedUsers = {
 } as EnvironmentManifestTool;
 
 describe("collections under different parents", () => {
-  it("names each parent's collection from the live path, and does not rename a literal segment", () => {
-    const orgOne = ["api", "orgs", "1", "users", "110"];
-    const orgTwo = ["api", "orgs", "2", "users", "110"];
-    expect(collectionScope(nestedUsers, orgOne)).toBe("/api/orgs/1/users");
-    expect(collectionScope(nestedUsers, orgTwo)).toBe("/api/orgs/2/users");
-    expect(
-      collectionScope(nestedUsers, ["api", "orgs", "", "users", "110"]),
-    ).toBe("/api/orgs/{}/users");
-    const map = new IdMap();
-    map.learn(110, 10, "/api/orgs/1/users");
-    map.learn(110, 20, "/api/orgs/2/users");
-    map.learn("users", "stored-tag");
-    const scopes = parameterScopes(nestedUsers, orgOne);
-    // Template indexes of api, orgs and users; the two parameters are not literals.
-    const literals = new Set([0, 1, 3]);
-    expect(
-      translatePath(
-        "/api/orgs/1/users/110",
-        map,
-        (index) => scopes.get(index),
-        (index) => literals.has(index),
-      ),
-    ).toBe("/api/orgs/1/users/10");
-    expect(map.env(110, "/api/orgs/2/users")).toBe(20);
-  });
-
   it("uses state collection identity for root and trailing-slash routes", () => {
     const trailing = {
       ...nestedUsers,

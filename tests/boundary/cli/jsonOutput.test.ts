@@ -1,4 +1,9 @@
-import { registerCliCommand } from "../../../src/cli/commandRegistry.js";
+import { captureOutput } from "../../support/cli/capturedOutput.js";
+import {
+  cliCommandForOperation,
+  cliCommands,
+  registerCliCommand,
+} from "../../../src/cli/commandRegistry.js";
 import { createCommandCli } from "../../support/cli/commandCli.js";
 import { constants } from "node:buffer";
 import { createHash } from "node:crypto";
@@ -9,7 +14,7 @@ import { parse as parseYaml } from "yaml";
 import { describe, expect, it } from "vitest";
 
 import { writeJsonOutput } from "../../../src/cli/jsonOutput.js";
-import { parseCliOutputArguments } from "../../../src/cliOutput.js";
+import { parseCliOutputArguments } from "../../../src/cli/cliOutput.js";
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 import { logCliCommand } from "../../../src/cliLogging.js";
 import { registerManagedCommands } from "../../../src/cli/managedCommands.js";
@@ -195,13 +200,7 @@ describe("incremental CLI JSON", () => {
 
 describe("CLI command output wrapping", () => {
   it("delivers a registered command through the result owner", async () => {
-    const chunks: Buffer[] = [];
-    const destination = new Writable({
-      write(chunk: Buffer, _encoding, callback) {
-        chunks.push(chunk);
-        callback();
-      },
-    });
+    const { destination, text: readText } = captureOutput();
     const output = createCliResultOutput(
       parseCliOutputArguments(["--format", "json", "--full-output"]),
       destination,
@@ -223,7 +222,7 @@ describe("CLI command output wrapping", () => {
 
     expect(output.handled).toBe(true);
     expect(fallback).toBe("");
-    expect(JSON.parse(Buffer.concat(chunks).toString("utf8"))).toMatchObject({
+    expect(JSON.parse(readText())).toMatchObject({
       ok: true,
       data: { kind: "command-result" },
       meta: { command: "fixture" },
@@ -235,13 +234,7 @@ describe("CLI result output surface", () => {
   it.each(["json", "yaml", "toon", "md"] as const)(
     "places typed analysis failures in the full-output error envelope (%s)",
     async (format) => {
-      const chunks: Buffer[] = [];
-      const destination = new Writable({
-        write(chunk: Buffer, _encoding, callback) {
-          chunks.push(chunk);
-          callback();
-        },
-      });
+      const { destination, text: readText } = captureOutput();
       const failure = {
         error: "Analysis failed",
         code: "target_unavailable",
@@ -286,7 +279,7 @@ describe("CLI result output surface", () => {
         process.exitCode = previousExitCode;
       }
 
-      const text = Buffer.concat(chunks).toString("utf8");
+      const text = readText();
       expect(output.handled).toBe(true);
       expect(fallback).toBe("");
       if (format === "json" || format === "yaml") {
@@ -336,13 +329,7 @@ describe("CLI result output surface", () => {
       isFailure: undefined,
     },
   ])("preserves $name as a full-output error payload", async (scenario) => {
-    const chunks: Buffer[] = [];
-    const destination = new Writable({
-      write(chunk: Buffer, _encoding, callback) {
-        chunks.push(chunk);
-        callback();
-      },
-    });
+    const { destination, text: readText } = captureOutput();
     const argv = ["fixture", "--json", "--full-output"];
     const output = createCliResultOutput(
       parseCliOutputArguments(argv),
@@ -366,22 +353,85 @@ describe("CLI result output surface", () => {
     } finally {
       process.exitCode = previousExitCode;
     }
-    expect(JSON.parse(Buffer.concat(chunks).toString("utf8"))).toMatchObject({
+    expect(JSON.parse(readText())).toMatchObject({
       ok: false,
       error: scenario.value,
     });
   });
 });
 
+it.each([
+  { flags: ["--json", "--filter-output", "healthy"], expected: "false" },
+  {
+    flags: ["--json", "--filter-output", "checks[0].name", "--token-count"],
+    // The estimate for the selected `"provider"`, not the whole report.
+    expected: String(estimateTokenCount('"provider"\n')),
+  },
+  {
+    flags: ["--json", "--full-output", "--filter-output", "healthy"],
+    expected: { ok: false, error: false },
+  },
+  {
+    flags: [
+      "--json",
+      "--full-output",
+      "--filter-output",
+      "checks[0].name",
+      "--token-count",
+    ],
+    // The envelope around the selection; the whole report is over 100.
+    expected: "<60",
+  },
+  // A selection that omits the health signal, or selects nothing (an
+  // audit-wide report has no scope_checks), must not read as success.
+  {
+    flags: ["--json", "--full-output", "--filter-output", "scope_checks"],
+    expected: { ok: false },
+  },
+  {
+    flags: ["--json", "--full-output", "--filter-output", "checks"],
+    expected: { ok: false, error: { checks: [{ name: "provider" }] } },
+    selectsDetail: true,
+  },
+])(
+  "applies $flags to an unhealthy doctor report and keeps exit 1",
+  async ({ flags, expected, selectsDetail }) => {
+    const { destination, text: readText } = captureOutput();
+    const argv = ["fixture", ...flags];
+    const output = createCliResultOutput(
+      parseCliOutputArguments(argv),
+      destination,
+    );
+    if (output === undefined) throw new Error("Missing JSON output surface");
+    const cli = createCommandCli(output);
+    registerCliCommand(cli, "fixture", {
+      run: () =>
+        logCliCommand(silentLogger, "fixture", async () => ({
+          healthy: false,
+          checks: [{ name: "provider", ok: false, detail: "x".repeat(400) }],
+        })),
+    });
+    const previousExitCode = process.exitCode;
+    try {
+      await cli.serve(argv, { stdout: () => undefined });
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+    const text = readText().trim();
+    // The selection replaces the report; its detail reaches output only when
+    // the selection includes it.
+    if (selectsDetail !== true) expect(text).not.toContain("x".repeat(400));
+    if (expected.toString().startsWith("<"))
+      expect(Number(text)).toBeLessThan(Number(String(expected).slice(1)));
+    else if (typeof expected === "string") expect(text).toBe(expected);
+    else expect(JSON.parse(text)).toMatchObject(expected);
+  },
+);
+
 describe("full-output token windows", () => {
   it("preserves token-window metadata when truncating a TOON failure", async () => {
-    const chunks: Buffer[] = [];
-    const destination = new Writable({
-      write(chunk: Buffer, _encoding, callback) {
-        chunks.push(chunk);
-        callback();
-      },
-    });
+    const { destination, text: readText } = captureOutput();
     const argv = [
       "inspect-managed-artifact",
       "missing.dll",
@@ -418,7 +468,7 @@ describe("full-output token windows", () => {
     } finally {
       process.exitCode = previousExitCode;
     }
-    const text = Buffer.concat(chunks).toString("utf8");
+    const text = readText();
     expect(text).toContain("[truncated: showing tokens 0–3 of");
     expect(text).toMatch(/nextOffset:?\s*3/);
     expect(text).toContain("ok: false");
@@ -427,13 +477,7 @@ describe("full-output token windows", () => {
 
 describe("logger classification handoff", () => {
   it("honors an explicit success for data containing error-shaped fields", async () => {
-    const chunks: Buffer[] = [];
-    const destination = new Writable({
-      write(chunk: Buffer, _encoding, callback) {
-        chunks.push(chunk);
-        callback();
-      },
-    });
+    const { destination, text: readText } = captureOutput();
     const result = {
       error: {
         code: "target_unavailable",
@@ -467,7 +511,7 @@ describe("logger classification handoff", () => {
     } finally {
       process.exitCode = previousExitCode;
     }
-    expect(JSON.parse(Buffer.concat(chunks).toString("utf8"))).toMatchObject({
+    expect(JSON.parse(readText())).toMatchObject({
       ok: true,
       data: result,
     });
@@ -476,13 +520,7 @@ describe("logger classification handoff", () => {
 
 describe("full-output token counts", () => {
   it("counts the full failure payload before applying output filters", async () => {
-    const chunks: Buffer[] = [];
-    const destination = new Writable({
-      write(chunk: Buffer, _encoding, callback) {
-        chunks.push(chunk);
-        callback();
-      },
-    });
+    const { destination, text: readText } = captureOutput();
     const failure = {
       code: "target_unavailable",
       category: "unavailable",
@@ -510,7 +548,7 @@ describe("full-output token counts", () => {
       duration: "0ms",
     });
     expect(output.handled).toBe(true);
-    expect(Buffer.concat(chunks).toString("utf8")).toBe(
+    expect(readText()).toBe(
       `${estimateTokenCount(JSON.stringify({ ok: false, error: failure, meta: { command: "inspect-managed-artifact", duration: "0ms" } }) + "\n")}\n`,
     );
   });
@@ -521,17 +559,12 @@ describe("full-output token counts", () => {
         [],
         ["--full-output"],
         ["--filter-output", "missing"],
+        ["--filter-output", "raw_result"],
         ["--format", "jsonl"],
       ]) {
         const argv = ["fixture", "--json", ...flags];
         const render = async (count: boolean) => {
-          const chunks: Buffer[] = [];
-          const destination = new Writable({
-            write(chunk: Buffer, _encoding, callback) {
-              chunks.push(chunk);
-              callback();
-            },
-          });
+          const { destination, text: readText } = captureOutput();
           Object.defineProperty(destination, "isTTY", { value: terminal });
           const output = createCliResultOutput(
             parseCliOutputArguments([
@@ -541,8 +574,11 @@ describe("full-output token counts", () => {
             destination,
           );
           if (output === undefined) throw new Error("Missing output surface");
-          await output.write({ rows: ["hello", "雪😀"] }, metadata);
-          return Buffer.concat(chunks).toString("utf8");
+          await output.write(
+            { rows: ["hello", "雪😀"], raw_result: null },
+            metadata,
+          );
+          return readText();
         };
         const document = await render(false);
         // JSONL counts each emitted line independently, including metadata.
@@ -561,13 +597,7 @@ describe("full-output token counts", () => {
   });
 
   it("normalizes exhausted failure window display coordinates", async () => {
-    const chunks: Buffer[] = [];
-    const destination = new Writable({
-      write(chunk: Buffer, _encoding, callback) {
-        chunks.push(chunk);
-        callback();
-      },
-    });
+    const { destination, text: readText } = captureOutput();
     const output = createCliResultOutput(
       parseCliOutputArguments([
         "fixture",
@@ -592,7 +622,7 @@ describe("full-output token counts", () => {
       },
       { command: "fixture", duration: "0ms" },
     );
-    const text = Buffer.concat(chunks).toString("utf8");
+    const text = readText();
     expect(text).toMatch(/showing tokens (\d+)–\1 of \1/);
     expect(text).not.toContain("nextOffset");
     expect(text).toContain("ok: false");
@@ -753,13 +783,7 @@ describe("streamed CLI filtered selections", () => {
   ] as const)(
     "keeps the selected value of --filter-output %s in %s",
     async (filter, format, expected) => {
-      const chunks: Buffer[] = [];
-      const destination = new Writable({
-        write(chunk: Buffer, _encoding, callback) {
-          chunks.push(chunk);
-          callback();
-        },
-      });
+      const { destination, text: readText } = captureOutput();
       const output = createCliResultOutput(
         parseCliOutputArguments([
           "--format",
@@ -774,7 +798,7 @@ describe("streamed CLI filtered selections", () => {
         { raw_result: null, nested: { value: null }, count: 0, enabled: false },
         { command: "fixture", duration: "1ms" },
       );
-      const text = Buffer.concat(chunks).toString("utf8");
+      const text = readText();
       if (expected === "JSONL_BOUNDARY_ERROR")
         expect(JSON.parse(text)).toMatchObject({
           $rea: "jsonl/v1",
@@ -784,4 +808,22 @@ describe("streamed CLI filtered selections", () => {
       else expect(text).toBe(expected);
     },
   );
+});
+
+it("refreshes the operation lookup after registering another command", () => {
+  const cli = createCommandCli();
+  registerCliCommand(cli, "existing", { run: () => undefined });
+  const commands = cliCommands(cli);
+  const lookup = () =>
+    cliCommandForOperation("fixture_late_operation", commands, "rea");
+  expect(lookup()).toBeUndefined();
+  registerCliCommand(
+    cli,
+    "fixture-late-operation",
+    { run: () => undefined },
+    {
+      operations: [{ name: "fixture_late_operation", flags: {} }],
+    },
+  );
+  expect(lookup()).toBe("rea fixture-late-operation");
 });

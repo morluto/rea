@@ -1,7 +1,7 @@
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { isAborted } from "../domain/analysisErrorCore.js";
 import fs from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import {
   locateReferenceSourceGitDirectory,
   ReferenceSourceGitDirectoryCancelled,
@@ -76,8 +76,7 @@ const resolveSourceVcs = async (
 ): Promise<ReferenceSourceVcsInfo> => {
   // isomorphic-git is loaded on first use so CLI and MCP startup skip it.
   const { resolveRef } = await import("isomorphic-git");
-  let failedRead: { readonly cause: unknown } | undefined;
-  const cleanupFailures: ArtifactReaderFailure[] = [];
+  let firstReadFailure: { readonly cause: unknown } | undefined;
   const readMetadataBytes = async (path: string): Promise<Buffer> => {
     try {
       return await readRegularFile(path, {
@@ -104,6 +103,7 @@ const resolveSourceVcs = async (
               : cause;
           // The Git directory owner interprets absence of optional metadata.
           if (errorCode(physical) === "ENOENT") throw physical;
+          firstReadFailure ??= { cause: physical };
           throw new ArtifactReaderFailure(
             "io",
             `Git metadata could not be read safely: ${errorMessage(physical)}`,
@@ -121,7 +121,7 @@ const resolveSourceVcs = async (
         cancellation === undefined &&
         errorCode(retry.outcome.cause) !== "ENOENT"
       )
-        failedRead ??= { cause: retry.outcome.cause };
+        firstReadFailure ??= { cause: retry.outcome.cause };
       if (
         retry.cleanup === undefined &&
         retry.outcome.kind === "failed" &&
@@ -144,43 +144,12 @@ const resolveSourceVcs = async (
   };
   const readMetadataText = async (path: string): Promise<string> =>
     decodeStrictUtf8(await readMetadataBytes(path), "preserve");
-  const throwCleanupFailures = (primary: unknown): never => {
-    const observations = cleanupFailures.flatMap((failure) =>
-      failure.cleanup === undefined ? [] : [failure.cleanup],
-    );
-    throw new ArtifactReaderFailure(
-      primary instanceof ArtifactReaderFailure && primary.reason === "cancelled"
-        ? "cancelled"
-        : "io",
-      `Git metadata could not be read safely: ${errorMessage(primary)}`,
-      {
-        cause: new AggregateError(
-          [primary, ...cleanupFailures],
-          "Git metadata reads and cleanup failed",
-          { cause: primary },
-        ),
-        ...(observations.length === 0
-          ? {}
-          : {
-              cleanup: {
-                reason: observations.map(({ reason }) => reason).join("; "),
-                resources: [
-                  ...new Set(
-                    observations.flatMap(({ resources }) => resources),
-                  ),
-                ],
-              },
-            }),
-      },
-    );
-  };
   const referenceFs = {
     ...fs,
     promises: {
       ...fs.promises,
-      // Let isomorphic-git finish probing refs, then report original failures.
-      // A later resolved ref must not discard an earlier physical read or
-      // retained cleanup failure.
+      // Ref lookup may skip a directory-shaped candidate. Retain its physical
+      // read failure even if a later candidate resolves or fails cleanup.
       readFile: async (
         path: string | undefined,
         options:
@@ -193,7 +162,8 @@ const resolveSourceVcs = async (
         if (path === undefined)
           throw new TypeError("Git metadata path is required");
         try {
-          const bytes = await readMetadataBytes(path);
+          // Keep filesystem reads and cleanup resources in host spelling.
+          const bytes = await readMetadataBytes(path.replaceAll("/", sep));
           const encoding =
             typeof options === "string"
               ? options
@@ -207,11 +177,11 @@ const resolveSourceVcs = async (
             throw new TypeError("Unsupported Git metadata text encoding");
           return bytes.toString(encoding);
         } catch (cause: unknown) {
-          if (cause instanceof ArtifactReaderFailure) {
-            cleanupFailures.push(cause);
-            if (cause.reason !== "cancelled")
-              failedRead ??= { cause: cause.cause ?? cause };
-          } else if (errorCode(cause) !== "ENOENT") failedRead ??= { cause };
+          if (
+            !(cause instanceof ArtifactReaderFailure) &&
+            errorCode(cause) !== "ENOENT"
+          )
+            firstReadFailure ??= { cause };
           throw cause;
         }
       },
@@ -225,15 +195,33 @@ const resolveSourceVcs = async (
     try {
       head = await resolveRef({ fs: referenceFs, dir: root, ...options });
     } catch (cause: unknown) {
-      if (cleanupFailures.length > 0)
-        throwCleanupFailures(failedRead?.cause ?? cleanupFailures[0] ?? cause);
-      if (failedRead !== undefined) throw failedRead.cause;
-      throw cause;
+      if (!(cause instanceof ArtifactReaderFailure)) {
+        if (firstReadFailure !== undefined) throw firstReadFailure.cause;
+        throw cause;
+      }
+      const primary =
+        firstReadFailure?.cause ??
+        (cause.reason === "cancelled" ? cause : (cause.cause ?? cause));
+      throw new ArtifactReaderFailure(
+        primary instanceof ArtifactReaderFailure &&
+          primary.reason === "cancelled"
+          ? "cancelled"
+          : "io",
+        `Git metadata could not be read safely: ${errorMessage(primary)}`,
+        {
+          cause: new AggregateError(
+            [primary, cause],
+            "Git metadata reads and cleanup failed",
+            {
+              cause: primary,
+            },
+          ),
+          ...(cause.cleanup === undefined ? {} : { cleanup: cause.cleanup }),
+        },
+      );
     }
-    if (cleanupFailures.length > 0)
-      throwCleanupFailures(failedRead?.cause ?? cleanupFailures[0]);
     signal?.throwIfAborted();
-    if (failedRead !== undefined) throw failedRead.cause;
+    if (firstReadFailure !== undefined) throw firstReadFailure.cause;
     return head;
   };
   let locations;

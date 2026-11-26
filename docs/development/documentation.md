@@ -11,56 +11,23 @@ so readers can reach it from the task they are performing.
 
 ## Choose a destination
 
-| Document                                                 | Destination                            |
-| -------------------------------------------------------- | -------------------------------------- |
-| Installation, client setup and first CLI/MCP steps       | `docs/getting-started/`                |
-| Analyst workflows and evidence interpretation            | `docs/guides/<domain>/`                |
-| Analysis-engine configuration and format prerequisites   | `docs/providers/`                      |
-| Shared runtime contracts and evidence semantics          | `docs/reference/`                      |
-| Development, testing, release and authoring instructions | `docs/development/`                    |
-| Composition diagrams                                     | `docs/architecture/`                   |
-| Compatibility changes for a released version             | `docs/migrations/`                     |
-| One feature specification, plan and tasks                | `docs/specs/<domain>/<feature-slug>/`  |
-| One architectural decision                               | `docs/adr/<domain>/<decision-slug>.md` |
+| Document                                                 | Destination             |
+| -------------------------------------------------------- | ----------------------- |
+| Installation, client setup and first CLI/MCP steps       | `docs/getting-started/` |
+| Analyst workflows and evidence interpretation            | `docs/guides/<domain>/` |
+| Analysis-engine configuration and format prerequisites   | `docs/providers/`       |
+| Shared runtime contracts and evidence semantics          | `docs/reference/`       |
+| Development, testing, release and authoring instructions | `docs/development/`     |
+| Compatibility changes for a released version             | `docs/migrations/`      |
 
-Use meaningful, lowercase domain and feature slugs. Global numeric prefixes are
-unnecessary: different domains can add features independently, and branches do
-not compete for the next sequence number. Check the existing domain directory
-and linked issues before creating a feature with the same slug.
+Use meaningful, lowercase slugs. Guides describe current workflows, behavior and
+limitations. Ground their claims in the implementation and verify examples
+through the supported entry points.
 
-Guides describe existing behavior and limitations. Specs define one proposed
-feature or domain change; an existing guide does not become a specification by
-moving it into `specs/`.
-
-## Feature lifecycle
-
-Create a feature record before implementation when the change adds a new MCP
-tool or CLI command, a new provider lane or format reader, or a new public
-contract. A bug fix inside an existing contract does not require a record.
-Records nest under `docs/specs/<domain>/<slug>/`. Every new record gets a
-`docs/specs/README.md` entry in the same pull request.
-
-Create the specification before implementation. Each feature directory contains:
-
-- `spec.md`: problem, desired behavior, requirements, acceptance and non-goals.
-- `plan.md`: the single implementation plan, contracts and architectural choices.
-- `tasks.md`: incremental, testable implementation and verification steps linked
-  to requirements. Do not record pull-request process or review steps.
-
-Split independent domains or separately reviewable features before writing their
-specs. A broad `ROADMAP.md`, when useful, only lists child specifications, order
-and dependencies; requirements and implementation tasks belong to each child.
-Cross-repository contracts have one producer-owned specification. Consumers link
-to that contract instead of maintaining competing copies.
-
-Record an isolated architectural decision separately in
-`docs/adr/<domain>/<decision-slug>.md`, with **Status**, **Context**,
-**Decision** and **Consequences**. Link the ADR from affected specifications.
-Do not create decision records for routine file moves or invent past decisions.
-
-Specs do not replace the contribution-scope decision required for a new provider
-or expanded execution authority. Follow
-[contribution scope](https://github.com/morluto/rea/blob/main/CONTRIBUTING.md#contribution-scope).
+Follow the [repository guidance on where to keep planning and architecture records](https://github.com/morluto/rea/blob/main/AGENTS.md#development)
+and the
+[contribution scope](https://github.com/morluto/rea/blob/main/CONTRIBUTING.md#contribution-scope)
+for proposals that require a maintainer decision.
 
 ## Links and public routes
 
@@ -90,7 +57,12 @@ or its inputs and regenerate.
 
 Do not write the number of tools in living prose; link the generated catalog
 instead. `docs:check` refuses a count of ten or more tools outside dated
-records (`docs/releases/`, `docs/specs/`, `docs/verification/`, `docs/adr/`).
+records (`docs/releases/` and `docs/verification/`).
+Keep a verification record only while a document, test or script cites it;
+otherwise put its measurements in the PR or issue, as the
+[repository guidance](https://github.com/morluto/rea/blob/main/AGENTS.md#development)
+directs for plans and design records. Test data that a test reads belongs in
+`tests/fixtures/`, not `docs/verification/`.
 
 Run `npm run docs:check` for documentation facts and generated consistency, and
 `npm run verify:docs:routes` to build the complete production site and check local

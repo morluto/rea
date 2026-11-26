@@ -1,7 +1,6 @@
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { KernelBuildConfigPort } from "../../ports/binaryDiagnostics/KernelBuildConfigPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   inspectKernelBuildConfigInputSchema,
@@ -13,14 +12,11 @@ import {
   type KernelBuildConfig,
   type KernelBuildConfigEntry,
 } from "../../domain/native/kernelBuildConfig.js";
-import { err, type Result } from "../../domain/result.js";
-import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import type { Result } from "../../domain/result.js";
+import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_kernel_build_config";
 const MARKER_BYTES = KERNEL_BUILD_CONFIG_MARKER_BYTES;
-
-type Range = KernelBuildConfig["config"]["marker"];
 
 /** Shared caller validation, output parsing and Evidence provenance for CLI/MCP. */
 export class KernelBuildConfigService {
@@ -30,50 +26,43 @@ export class KernelBuildConfigService {
     return this.provider.close?.() ?? Promise.resolve();
   }
 
-  async inspect(
+  inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    const input = parseAnalysisInput(
-      OPERATION,
-      rawInput,
-      inspectKernelBuildConfigInputSchema,
-      options?.signal,
-    );
-    if (!input.ok) return input;
-    const result = await this.provider.inspect(input.value, options);
-    if (!result.ok) return result;
-    const report = kernelBuildConfigSchema.safeParse(result.value);
-    if (
-      !report.success ||
-      report.data.artifact.path !== input.value.path ||
-      !validReport(report.data, input.value)
-    )
-      return err(
-        new AnalysisOutputError(
-          OPERATION,
+    return executeArtifactInspection(
+      {
+        operation: OPERATION,
+        inputSchema: inspectKernelBuildConfigInputSchema,
+        outputSchema: kernelBuildConfigSchema,
+        provider: this.provider,
+        retainCompletedReport: true,
+        invalidOutputMessage:
           "Kernel build config provider returned malformed output or changed artifact identity.",
-        ),
-      );
-    const value = report.data;
-    return completeProviderEvidence(
-      createEvidence(
-        {
-          path: value.artifact.path,
-          format: value.format === "elf" ? "elf" : "file",
-          sha256: value.artifact.sha256,
-        },
-        this.provider.identity,
-        {
-          operation: OPERATION,
-          parameters: input.value,
-          result: value,
-          confidence: "observed",
-          limitations: value.limitations,
-          locations: locationsOf(value),
-        },
-      ),
-      options?.signal,
+        toParameters: (input) => input,
+        validateReport: (report, parameters) =>
+          report.artifact.path === parameters.path &&
+          validReport(report, parameters),
+        buildEvidence: (value, identity, parameters) =>
+          createEvidence(
+            {
+              path: value.artifact.path,
+              format: value.format === "elf" ? "elf" : "file",
+              sha256: value.artifact.sha256,
+            },
+            identity,
+            {
+              operation: OPERATION,
+              parameters,
+              result: value,
+              confidence: "observed",
+              limitations: value.limitations,
+              locations: locationsOf(value),
+            },
+          ),
+      },
+      rawInput,
+      options,
     );
   }
 }
@@ -83,21 +72,17 @@ const fits = (
   range: { offset: number; bytes: number },
 ): boolean => range.bytes <= length && range.offset <= length - range.bytes;
 
-const fileRanges = (
-  report: KernelBuildConfig,
-): { offset: number; bytes: number }[] => {
-  const found: { offset: number; bytes: number }[] = [];
-  const add = (range: Range): void => {
-    if (range !== null && range.space === "file") found.push(range);
-  };
-  if (report.payload.offset !== null && report.payload.bytes !== null)
-    found.push({ offset: report.payload.offset, bytes: report.payload.bytes });
-  add(report.banner.location);
-  add(report.config.marker);
-  add(report.config.gzip);
-  add(report.config.end_marker);
-  return found;
-};
+const metadataRanges = ({ banner, config }: KernelBuildConfig) =>
+  [banner.location, config.marker, config.gzip, config.end_marker].filter(
+    (range) => range !== null,
+  );
+
+const fileRanges = (report: KernelBuildConfig) => [
+  ...(report.payload.offset !== null && report.payload.bytes !== null
+    ? [{ offset: report.payload.offset, bytes: report.payload.bytes }]
+    : []),
+  ...metadataRanges(report).filter((range) => range.space === "file"),
+];
 
 const locationsOf = (report: KernelBuildConfig) => [
   { kind: "artifact-path" as const, path: report.artifact.path },
@@ -132,18 +117,17 @@ const markersAgree = (config: KernelBuildConfig["config"]): boolean => {
 };
 
 const rangesAgree = (report: KernelBuildConfig): boolean => {
-  if (!fileRanges(report).every((range) => fits(report.artifact.bytes, range)))
+  const { bytes, offset, inflated_bytes: inflated } = report.payload;
+  if (
+    offset !== null &&
+    bytes !== null &&
+    !fits(report.artifact.bytes, { offset, bytes })
+  )
     return false;
-  const inflated = report.payload.inflated_bytes;
-  const inflatedRanges = [
-    report.banner.location,
-    report.config.marker,
-    report.config.gzip,
-    report.config.end_marker,
-  ].filter((range) => range !== null && range.space === "inflated_payload");
-  if (inflated === null) return inflatedRanges.length === 0;
-  return inflatedRanges.every(
-    (range) => range !== null && fits(inflated, range),
+  const space = inflated === null ? "file" : "inflated_payload";
+  const extent = inflated ?? report.artifact.bytes;
+  return metadataRanges(report).every(
+    (range) => range.space === space && fits(extent, range),
   );
 };
 
@@ -302,11 +286,7 @@ const validReport = (
     report.config.name !== (input.name ?? null)
   )
     return false;
-  if (
-    report.limitations.length === 0 ||
-    !report.limitations.some((line) => line.includes("untrusted"))
-  )
-    return false;
+  if (report.limitations.length === 0) return false;
   if (report.config.status === "present") {
     if (
       report.coverage.examined_entries !== report.config.option_count ||

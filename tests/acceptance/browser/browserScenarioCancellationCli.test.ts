@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { browserScenarioCaptureSchema } from "../../../src/domain/browserScenarioCapture.js";
 import { processTest } from "../../support/process/processFixture.js";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
 
 // Actual CLI subprocess and OS signals with a controlled browser session.
 // This verifies adapter wiring and awaited cleanup, without launching Chromium.
@@ -37,32 +38,37 @@ processTest
       { env: { PATH: process.env.PATH ?? "" } },
     );
     child.stdin.end();
-    let stdout = "",
-      stderr = "",
-      requested = false;
-    child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
-      if (!requested && stderr.includes("REA_CONTROLLED_BROWSER_READY"))
-        requested = child.kill(signal);
+    const ready = phaseArrival();
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+      stdout += chunk;
     });
-    const deadline = setTimeout(() => child.kill("SIGKILL"), 20_000);
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+      stderr += chunk;
+      if (stderr.includes("REA_CONTROLLED_BROWSER_READY signal_present=1\n"))
+        ready.arrive();
+    });
+    const closed = new Promise<{
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }>((resolveExit, reject) => {
+      child.once("error", reject);
+      child.once("close", (code, exitSignal) =>
+        resolveExit({ code, signal: exitSignal }),
+      );
+    });
     try {
-      const exited = await new Promise<{
-        code: number | null;
-        signal: NodeJS.Signals | null;
-      }>((resolveExit, reject) => {
-        child.once("error", reject);
-        child.once("close", (code, exitSignal) =>
-          resolveExit({ code, signal: exitSignal }),
-        );
-      });
-      expect(requested, stderr).toBe(true);
+      await ready.reached(
+        closed,
+        "browser action ready to handle cancellation",
+      );
+      expect(child.kill(signal), stderr).toBe(true);
+      const exited = await closed;
       expect(exited, stderr).toEqual({
         code: signal === "SIGINT" ? 130 : 143,
         signal: null,
       });
-      expect(stderr).toContain("signal_present=1");
       expect(stderr).toContain("REA_CONTROLLED_CLOSE_CALLBACK");
       expect(stderr).toContain("REA_CONTROLLED_PROFILE_CALLBACK");
       const document: unknown = JSON.parse(stdout);
@@ -89,7 +95,8 @@ processTest
       ]);
       expect(capture.completeness.status).toBe("incomplete");
     } finally {
-      clearTimeout(deadline);
+      await processes.shutdown();
+      await closed.catch(() => undefined);
     }
   },
 );

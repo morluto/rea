@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { parseWabtInterface } from "./WabtInterface.js";
 import { parseWabtWat } from "./WabtWat.js";
 
 it("resolves imported index spaces and decoded escaped names without depending on body/type numbering", () => {
@@ -243,4 +244,58 @@ it("rejects a second module after a CR-terminated line comment", () => {
       code: "unexpected_second_module",
     }),
   );
+});
+
+it("resolves repeated typed signatures across many functions while stopping at bodies", () => {
+  const functions = Array.from(
+    { length: 200 },
+    (_, i) =>
+      `(func $f${i} (type $sig) (local i32 i64) local.get 0 i64.extend_i32_s)`,
+  ).join("\n");
+  const exports = Array.from(
+    { length: 200 },
+    (_, i) => `(export "e${i}" (func $f${i}))`,
+  ).join("\n");
+  const report = parseWabtWat(`(module
+    (type $sig (func\u00a0(param i32) (result i64)))
+    (import "env" "imp" (func (type $sig)))
+    ${functions}
+    ${exports})`).interface;
+  expect(report.state).toBe("complete");
+  expect(report.entries).toHaveLength(201);
+  expect(report.entries[0]?.signature).toEqual({
+    kind: "func",
+    params: ["i32"],
+    results: ["i64"],
+  });
+  expect(report.entries[200]?.signature).toEqual({
+    kind: "func",
+    params: ["i32"],
+    results: ["i64"],
+  });
+});
+
+it("marks type index space unknown for commented rec forms and enforces tight interface budgets", () => {
+  const commentedRec = parseWabtInterface([
+    "( (; block comment before head ;) rec (type $a (func)))",
+    "(type (func (param i32)))",
+    "(func $f (type 0))",
+    '(export "f" (func $f))',
+  ]);
+  expect(commentedRec.state).toBe("complete");
+  expect(commentedRec.entries[0]).toMatchObject({
+    name: "f",
+    signature: null,
+    issue: expect.any(String),
+  });
+
+  const manyFunctions = Array.from(
+    { length: 50 },
+    (_, i) =>
+      `(func $f${i} (param i32) (result i64)) (export "e${i}" (func $f${i}))`,
+  ).join("\n");
+  const budgeted = parseWabtWat(`(module ${manyFunctions})`, 512).interface;
+  expect(budgeted.state).toBe("partial");
+  expect(budgeted.entries.length).toBeLessThan(50);
+  expect(budgeted.issues.length).toBeGreaterThan(0);
 });

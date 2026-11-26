@@ -181,6 +181,7 @@ it("Ghidra verifier probes await the shared owned inspection contract", async ()
   );
   const paths = [
     ...names.map((name) => `scripts/${name}`),
+    "scripts/verify-ghidra-loader-relocation.mjs",
     "scripts/lib/real-ghidra-namespace-annotations.mjs",
   ];
   const probes: string[] = [];
@@ -200,6 +201,8 @@ it("Ghidra verifier probes await the shared owned inspection contract", async ()
         [
           "inspectGhidraInstallation",
           "inspectVerifierGhidraInstallation",
+          "inspectVerifierGhidraFromEnvironment",
+          "requireVerifierGhidraInstallation",
         ].includes(node.expression.text)
       ) {
         probes.push(path);
@@ -208,7 +211,7 @@ it("Ghidra verifier probes await the shared owned inspection contract", async ()
             path,
             reason: "installation result was not awaited",
           });
-        if (node.expression.text !== "inspectVerifierGhidraInstallation")
+        if (node.expression.text === "inspectGhidraInstallation")
           violations.push({
             path,
             reason: "inspection has no shared cleanup owner",

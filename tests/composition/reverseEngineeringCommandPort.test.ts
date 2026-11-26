@@ -6,6 +6,7 @@ import { expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { ReverseEngineeringService } from "../../src/application/reverse/ReverseEngineeringService.js";
+import { findsNoExecutable } from "../support/reverseEngineeringService.js";
 import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { ok } from "../../src/domain/result.js";
@@ -46,7 +47,7 @@ it("uses provider profiles supplied through the application port", async () => {
           identity: { id: "test.rizin", name: "Injected Rizin", version: null },
         }),
     },
-    runOwned: run,
+    processes: { lookup: findsNoExecutable, runOwned: run },
   });
 
   const result = await service.inspectWithObjdump({
@@ -94,7 +95,7 @@ it("does not reintroduce ambient variables absent from the captured provider env
           identity: { id: "test.rizin", name: "Captured Rizin", version: null },
         }),
     },
-    runOwned: run,
+    processes: { lookup: findsNoExecutable, runOwned: run },
   });
 
   try {
@@ -136,18 +137,19 @@ it("projects missing and non-file objdump targets with actionable path reasons",
           identity: { id: "test.rizin", name: "Test Rizin", version: null },
         }),
     },
-    runOwned: run,
+    processes: { lookup: findsNoExecutable, runOwned: run },
   });
 
-  for (const [path, reason] of [
-    [missing, "not found"],
-    [directory, "not a regular file"],
+  for (const [path, reason, code] of [
+    [missing, "not found", "ENOENT"],
+    [directory, "not a regular file", "EINVAL"],
   ] as const) {
     const result = await service.inspectWithObjdump({
       path,
       operation: "symbols",
     });
     if (result.ok) throw new Error("Expected target validation failure");
+    expect(result.error.cause).toMatchObject({ code });
     const projection = projectAnalysisError(result.error);
     expect(analysisErrorProjectionSchema.safeParse(projection).success).toBe(
       true,
@@ -211,7 +213,7 @@ it("keeps target preflight I/O failures out of invalid-input classification", as
           identity: { id: "test.rizin", name: "Test Rizin", version: null },
         }),
     },
-    runOwned: run,
+    processes: { lookup: findsNoExecutable, runOwned: run },
   });
 
   const result = await service.inspectWithObjdump({
@@ -277,7 +279,7 @@ it.each([
             identity: { id: "test.rizin", name: "Test Rizin", version: null },
           }),
       },
-      runOwned: run,
+      processes: { lookup: findsNoExecutable, runOwned: run },
     });
 
     const result = await service.inspectWithObjdump({
@@ -340,7 +342,7 @@ it.each([
     const service = new ReverseEngineeringService({
       environment,
       commands: createReverseEngineeringCommandPort(environment, "win32"),
-      runOwned: run,
+      processes: { lookup: findsNoExecutable, runOwned: run },
     });
     const result = await execute(service);
     if (result.ok) throw new Error("Expected a lookup refusal");
@@ -385,8 +387,11 @@ it("reports a launch refusal with the repair the command port names", async () =
   };
   const service = new ReverseEngineeringService({
     commands: { objdump: () => ok(profile), rizin: () => ok(profile) },
-    runOwned: async (spawn) => {
-      throw spawnFailure("ENOENT", spawn.command);
+    processes: {
+      lookup: findsNoExecutable,
+      runOwned: async (spawn) => {
+        throw spawnFailure("ENOENT", spawn.command);
+      },
     },
   });
   try {

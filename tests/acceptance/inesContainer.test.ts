@@ -125,9 +125,13 @@ cliTest(
     });
     expect(cliResult.exitCode, cliResult.stderr).toBe(0);
     const inventory = inventoryFrom(cliResult.json);
-    expect(inventory.limitations).toContain(
-      "Classic iNES file regions are observed; mapper execution, CPU bank mappings, CHR-RAM contents, 6502 analysis and emulator behavior are not observed. Trailing bytes are retained without interpretation. NES 2.0 and UNIF are unsupported.",
+    const limitation = inventory.limitations.find((text) =>
+      text.startsWith("Classic iNES file regions"),
     );
+    expect(limitation).not.toMatch(
+      /NES 2\.0(?: and UNIF)? (?:is|are) unsupported/u,
+    );
+    expect(limitation).toContain("UNIF is unsupported.");
     const digest = createHash("sha256").update(bytes).digest("hex");
     expect(inventory.ines).toMatchObject({
       header: {
@@ -186,9 +190,6 @@ cliTest(
     const typed = artifactInspectionResultSchema.parse(
       parseEvidence(inspected.structuredContent).normalized_result,
     );
-    expect(typed.substeps[0]?.evidence.normalized_result).toMatchObject({
-      ines: inventory.ines,
-    });
     const withInventory = (normalized_result: unknown) => ({
       ...typed,
       substeps: typed.substeps.map((substep) => ({

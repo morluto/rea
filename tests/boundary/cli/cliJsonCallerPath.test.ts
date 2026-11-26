@@ -2,14 +2,11 @@ import { createCommandCli } from "../../support/cli/commandCli.js";
 import {
   chmod,
   mkdir,
-  mkdtemp,
   readFile,
   realpath,
-  rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import pino from "pino";
@@ -17,7 +14,7 @@ import { expect, it } from "vitest";
 
 import type { BrowserScenarioCapturePort } from "../../../src/ports/BrowserScenarioCapturePort.js";
 import type { ElectronActiveObservationPort } from "../../../src/ports/javascript/ElectronActiveObservationPort.js";
-import { registerBrowserScenarioCommands } from "../../../src/cliBrowserScenarioCommands.js";
+import { registerBrowserScenarioCommands } from "../../../src/cli/browserScenarioCommands.js";
 import { registerAnalysisViewCommands } from "../../../src/cli/analysisViewCommands.js";
 import { registerElectronCommands } from "../../../src/cli/electronCommands.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";

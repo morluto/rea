@@ -3,7 +3,7 @@ import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { createWindowsShortcutService } from "../../../src/composition/binaryDiagnostics.js";
+import { createWindowsShortcutService } from "../../../src/composition/binaryDiagnostics/windowsShortcut.js";
 import { WindowsShortcutProvider } from "../../../src/native/windows/WindowsShortcutProvider.js";
 import {
   LINK_FLAG,
@@ -12,6 +12,7 @@ import {
 } from "../../fixtures/binaryDiagnostics/windowsShortcut.js";
 import { phaseGate } from "../../support/lifecycleHarness.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expectFileSelectionErrors } from "../../support/expectFileSelectionErrors.js";
 
 const { realpathCalls, lstatCalls, lstatGate } = vi.hoisted(() => ({
   realpathCalls: vi.fn(),
@@ -62,27 +63,20 @@ describe("Windows shortcut stable filesystem boundary", () => {
     await writeFile(malformed, Buffer.from("not a shell link"));
     await symlink(path, alias);
     const service = createWindowsShortcutService();
-    for (const [candidate, reason] of [
-      [root, "invalid_format"],
-      [alias, "invalid_format"],
-      [malformed, "invalid_format"],
-      [join(root, "missing.lnk"), "invalid_value"],
-      [join(path, "child.lnk"), "invalid_value"],
-    ] as const) {
-      const result = await service.inspect({ path: candidate });
-      if (result.ok) throw new Error("Expected file acquisition failure");
-      expect(result.error).toMatchObject({
-        _tag: "AnalysisInputError",
-        operation: "inspect_windows_shortcut",
-        issues: [
-          {
-            path: ["path"],
-            reason,
-            message: expect.any(String),
-          },
-        ],
-      });
-    }
+    await expectFileSelectionErrors(
+      service,
+      "inspect_windows_shortcut",
+      { root, alias, path },
+      ".lnk",
+    );
+    // Malformed bytes are a target refusal, not a request-field error.
+    const malformedResult = await service.inspect({ path: malformed });
+    if (malformedResult.ok) throw new Error("Expected a malformed target");
+    expect(malformedResult.error).toMatchObject({
+      _tag: "AnalysisTargetFailureError",
+      operation: "inspect_windows_shortcut",
+      path: malformed,
+    });
   });
 
   it.skipIf(process.platform === "win32")(
@@ -227,7 +221,7 @@ it.each([false, true])(
         details: { resource: "capacity" },
         remediation: {
           action: expect.stringContaining(
-            `Effective max_string_bytes is ${String(maximum)} bytes`,
+            "Pass a larger max_string_bytes on the next inspect_windows_shortcut call",
           ),
         },
         retryable: false,
@@ -235,6 +229,16 @@ it.each([false, true])(
       expect(projected.details?.reported_limits).toEqual({
         boundary: "string_bytes",
         maximum,
+      });
+      expect(projected.details?.limit).toEqual({
+        control_kind: "parameter",
+        parameter: "max_string_bytes",
+        effective_value: maximum,
+        unit: "bytes",
+        minimum: 1,
+        maximum: 1024 * 1024,
+        default_value: 65536,
+        applies_at: "next_call",
       });
     } finally {
       await service.close();
@@ -249,7 +253,14 @@ it("returns typed resource and cancellation failures", async () => {
   const service = createWindowsShortcutService();
   const tooSmall = await service.inspect({ path, max_file_bytes: 76 });
   if (tooSmall.ok) throw new Error("Expected resource budget failure");
-  expect(tooSmall.error._tag).toBe("AnalysisResourceConstraintError");
+  expect(tooSmall.error).toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    limit: {
+      parameter: "max_file_bytes",
+      effective_value: 76,
+      default_value: 1048576,
+    },
+  });
   for (const [argument, boundary] of [
     ["max_id_list_items", "id_list_items"],
     ["max_extra_data_blocks", "extra_data_blocks"],
@@ -266,7 +277,7 @@ it("returns typed resource and cancellation failures", async () => {
         },
       },
       reportedLimits: { boundary, maximum: 1 },
-      remediationAction: expect.stringContaining(`Effective ${argument} is 1`),
+      limit: { parameter: argument, effective_value: 1, unit: "count" },
       retryable: false,
     });
   }

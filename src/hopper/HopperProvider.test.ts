@@ -13,6 +13,7 @@ import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { hopperDeclinedArchitectureReason } from "./HopperAnalysisProfile.js";
 import { HopperClient } from "./HopperClient.js";
 import { HopperProvider } from "./HopperProvider.js";
+import { rawLoadAtEntry } from "../domain/rawBinary.fixture.js";
 import { isSnapshotCacheable } from "../application/binary/AnalysisSnapshotCache.js";
 import { routeAllowsSnapshotReplay } from "../application/binary/SessionProviderPolicy.js";
 import type { SessionProviderRoute } from "../application/binary/SessionProviderRouter.js";
@@ -96,8 +97,7 @@ describe("Hopper provider target support", () => {
         format: "raw-binary",
         architecture: "arm",
         availableArchitectures: ["arm"],
-        entryPoint: "0x8000000",
-        entryPointSource: "0x8000000",
+        rawLoad: rawLoadAtEntry("0x8000000"),
       }),
     ).toMatchObject({
       status: "unsupported",
@@ -295,6 +295,7 @@ describe("Hopper relationship coverage", () => {
         sha256: "a".repeat(64),
         kind: "database",
         format: "analysis-database",
+        databaseEngine: "hopper",
       });
       try {
         const observed = await client.execute(operation, {
@@ -404,6 +405,7 @@ describe("Hopper caller reconciliation failures", () => {
       sha256: "a".repeat(64),
       kind: "database",
       format: "analysis-database",
+      databaseEngine: "hopper",
     });
     try {
       const observed = await client.execute("procedure_callers", {
@@ -492,6 +494,7 @@ it("preserves pre-abort with invalid startup seed", async () => {
     sha256: "a".repeat(64),
     kind: "database",
     format: "analysis-database",
+    databaseEngine: "hopper",
   });
   const result = await client.execute(
     "health",

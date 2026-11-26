@@ -26,33 +26,39 @@ import {
   KUNA_VERSION_PROBE_REMEDIATION,
 } from "./KunaRelease.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { kunaCacheLocationSettings } from "./KunaConfiguration.js";
 
-/** Client settings consulted by this readiness probe. */
-export const KUNA_DOCTOR_SETTINGS = [
+/** Settings setup writes into a client registration. */
+export const KUNA_REGISTRATION_SETTINGS = [
   "REA_KUNA_COMMAND",
   "REA_KUNA_CACHE_DIR",
-  // The cache root falls back to these when REA_KUNA_CACHE_DIR is unset, so an
-  // unresolved expression in either leaves the probed directory unknown.
-  "HOME",
-  "USERPROFILE",
-  "XDG_CACHE_HOME",
   "REA_KUNA_CACHE_MAX_BYTES",
   "REA_KUNA_PROJECT_TIMEOUT_MS",
   "REA_KUNA_TIMEOUT_MS",
   "REA_KUNA_JOBS",
 ] as const;
 
-/**
- * Settings setup writes into a client registration.
- *
- * `HOME` and `XDG_CACHE_HOME` are readiness inputs only: they decide where the
- * cache root falls back to, and recording them would persist the ambient
- * environment a child already inherits.
- */
-export const KUNA_REGISTRATION_SETTINGS = KUNA_DOCTOR_SETTINGS.filter(
-  (name) =>
-    name !== "HOME" && name !== "USERPROFILE" && name !== "XDG_CACHE_HOME",
-);
+// These affect readiness when they select a cache root. Setup leaves them
+// inherited by the child process.
+const CACHE_FALLBACK_SETTINGS = [
+  "HOME",
+  "USERPROFILE",
+  "XDG_CACHE_HOME",
+] as const;
+
+/** Client settings consulted by this readiness probe. */
+export const KUNA_DOCTOR_SETTINGS = [
+  ...KUNA_REGISTRATION_SETTINGS,
+  ...CACHE_FALLBACK_SETTINGS,
+] as const;
+
+export const kunaSettingAffectsProbe = (
+  name: string,
+  environment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform,
+): boolean =>
+  !CACHE_FALLBACK_SETTINGS.some((setting) => setting === name) ||
+  kunaCacheLocationSettings(environment, platform).includes(name);
 
 /**
  * Project Kuna readiness into the doctor contract without writing anything.
@@ -102,7 +108,7 @@ export const inspectKunaProvider = async (
         code: null,
         detail: `REA_KUNA_COMMAND ${command} is an executable regular file.`,
         remediation: null,
-        classification: "config_drift",
+        classification: "healthy",
         details: { command },
       },
       version.check,
@@ -168,7 +174,7 @@ const versionCheck = async (
           : `; REA verified ${KUNA_VERIFIED_VERSION}, so this release's project layout is unverified. ${versionGuidance}`
       }`,
       remediation: versionGuidance,
-      classification: "config_drift",
+      classification: "healthy",
       details: {
         executable: value.executable,
         version: value.version,
@@ -200,7 +206,7 @@ const admissionFailure = (
 
 /** An installation check whose inspection left cleanup unconfirmed. */
 const cleanupIncompleteCheck = (
-  check: Omit<DoctorProviderCheck, "details">,
+  check: Omit<Extract<DoctorProviderCheck, { readonly ok: false }>, "details">,
   diagnostics: Readonly<Record<string, JsonValue>> | undefined,
   cleanupResources: readonly string[] | undefined,
 ): DoctorProviderCheck => ({
@@ -251,7 +257,9 @@ const probeCleanupFailure = (
 };
 
 /** A failed version probe of an admitted command. */
-const probeFailure = (failure: KunaReadinessFailure): DoctorProviderCheck => ({
+const probeFailure = (
+  failure: KunaReadinessFailure,
+): Extract<DoctorProviderCheck, { readonly ok: false }> => ({
   name: "version",
   ok: false,
   code: failure.code,
@@ -297,7 +305,7 @@ const cacheCheck = async (
             code: null,
             detail: `REA creates the Kuna project cache at ${cacheRoot} on first use.`,
             remediation: null,
-            classification: "config_drift",
+            classification: "healthy",
             details,
           }
         : {
@@ -328,7 +336,7 @@ const cacheCheck = async (
     code: null,
     detail: `Kuna project exports are cached in ${cacheRoot} (at most ${String(cacheMaxBytes)} bytes).`,
     remediation: null,
-    classification: "config_drift",
+    classification: "healthy",
     details,
   };
 };

@@ -21,11 +21,11 @@ import {
 import { err, ok, type Result } from "../../domain/result.js";
 import { fridaSessionStatusInputSchema } from "../../domain/fridaSessionStatus.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
+import { summarizeRetainedAnalysis } from "../analysisView/AnalysisViewService.js";
 import {
   requireAnalysisViewRetention,
-  summarizeRetainedAnalysis,
   type AnalysisViewRetention,
-} from "../analysisView/AnalysisViewService.js";
+} from "../analysisView/AnalysisViewRetention.js";
 import { fridaCaptureLimitations } from "../../domain/fridaCaptureLimits.js";
 import { unknownFridaSession } from "../../domain/fridaInputErrors.js";
 import { FridaScriptLoadCancelledError } from "../../ports/frida/FridaInstrumentationPort.js";
@@ -139,15 +139,33 @@ export class FridaInstrumentationService {
 
   async listProcesses(
     selector: FridaDeviceSelector,
+    paging?: {
+      readonly limit?: number | undefined;
+      readonly offset?: number | undefined;
+    },
   ): Promise<Result<FridaProcessList, AnalysisError>> {
     const result = await this.#provider.listProcesses(selector);
-    return result.ok
-      ? ok({
-          device_id: result.value.deviceId,
-          processes: [...result.value.processes],
-          cleanup_error: result.value.cleanupError,
-        })
-      : result;
+    if (!result.ok) return result;
+    const all = result.value.processes;
+    const limit = paging?.limit;
+    const hasPaging = limit !== undefined || paging?.offset !== undefined;
+    const offset = paging?.offset ?? 0;
+    const processes = hasPaging
+      ? all
+          .toSorted((left, right) => left.pid - right.pid)
+          .slice(offset, limit === undefined ? undefined : offset + limit)
+      : [...all];
+    return ok({
+      device_id: result.value.deviceId,
+      processes,
+      ...(hasPaging
+        ? {
+            total_processes: all.length,
+            truncated: processes.length < all.length,
+          }
+        : {}),
+      cleanup_error: result.value.cleanupError,
+    });
   }
 
   async startSession(input: StartFridaSessionInput, signal?: AbortSignal) {
@@ -242,13 +260,13 @@ export class FridaInstrumentationService {
     return this.#provider.status(sessionId);
   }
 
-  inspectStatus(
+  async inspectStatus(
     rawInput: unknown,
     retention: AnalysisViewRetention = {
       recordEvidence: undefined,
       evidenceById: undefined,
     },
-  ): Result<Evidence, AnalysisError> {
+  ): Promise<Result<Evidence, AnalysisError>> {
     const input = parseAnalysisInput(
       "frida_session_status",
       rawInput,
@@ -275,7 +293,9 @@ export class FridaInstrumentationService {
       },
     );
     return input.value.detail === "summary"
-      ? summarizeRetainedAnalysis(evidence, retention)
+      ? (
+          await import("../analysisView/AnalysisViewService.js")
+        ).summarizeRetainedAnalysis(evidence, retention)
       : ok(evidence);
   }
 

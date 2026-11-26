@@ -2,7 +2,6 @@ import { unknownTarget } from "../domain/targetIdentity.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
@@ -164,7 +163,6 @@ export class CutterBridgeService {
         json: input.json,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
-      const normalizedOutput = jsonValueSchema.parse(output.output);
       const evidence = createEvidence(
         unknownTarget("not-observed"),
         {
@@ -182,7 +180,7 @@ export class CutterBridgeService {
           },
           result: {
             command: input.command,
-            output: normalizedOutput,
+            output: output.output,
             execution_state: output.executionState,
             error: output.error,
             message: output.message,
@@ -192,7 +190,6 @@ export class CutterBridgeService {
             document_generation: output.documentGeneration,
             identity_status: output.identityStatus,
           },
-          rawResult: normalizedOutput,
           authority: "external-service",
           limitations: [
             "Cutter exposes no verified stable identity for the active unsaved document or tab.",

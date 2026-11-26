@@ -1,3 +1,4 @@
+import { emptyCutterDiscovery } from "../../fixtures/cutterDiscovery.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
@@ -25,13 +26,7 @@ it("propagates MCP cancellation into an active Cutter command", async () => {
   let observedAbort = false;
   const dispatch = phaseArrival();
   const service = new CutterBridgeService({
-    listSessions: async () => ({
-      sessions: [],
-      bridge_directory: "/private/bridge",
-      discovery_status: "no_live_bridge_found",
-      bridge_directory_security: "private_verified",
-      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
-    }),
+    listSessions: async () => emptyCutterDiscovery(),
     execute: async ({ signal }) => {
       dispatch.arrive();
       await new Promise<void>((resolve) => {
@@ -96,13 +91,7 @@ it("shares one cleanup proof across concurrent Cutter MCP commands without Binar
   let confirmations = 0;
   let dispatches = 0;
   const service = new CutterBridgeService({
-    listSessions: async () => ({
-      sessions: [],
-      bridge_directory: "/private/bridge",
-      discovery_status: "no_live_bridge_found",
-      bridge_directory_security: "private_verified",
-      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
-    }),
+    listSessions: async () => emptyCutterDiscovery(),
     confirmCommandCompletion: async () => {
       confirmations += 1;
       if (confirmations > 1) {

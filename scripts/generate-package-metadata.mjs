@@ -48,6 +48,9 @@ export const PACKAGE_METADATA = {
   serverSdkVersion: ${JSON.stringify(versionOf("@modelcontextprotocol/server"))},
   clientSdkVersion: ${JSON.stringify(versionOf("@modelcontextprotocol/client"))},
   coreSdkVersion: ${JSON.stringify(versionOf("@modelcontextprotocol/core"))},
+  evmoleVersion: ${JSON.stringify(versionOf("evmole"))},
+  jsoncParserVersion: ${JSON.stringify(versionOf("jsonc-parser"))},
+  losslessJsonVersion: ${JSON.stringify(versionOf("lossless-json"))},
   skillVersion: ${JSON.stringify(skillVersion)},
 } as const;
 `;

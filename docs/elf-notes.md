@@ -106,7 +106,7 @@ scan budget for the same source and decoded names. Repeated table ranges count a
 and each GNU version's trailing NUL run is scanned once; neither walk may
 exceed that byte ceiling. Malformed ELF headers, truncated header
 tables, declared note tables that extend past the file, and truncated
-note entries fail without partial success. ELF extended
+note entries are malformed-target refusals without partial success. ELF extended
 numbering (`PN_XNUM`, including a section count stored when `e_shnum` is 0) is
 unsupported and returns an unsupported-target outcome rather than invalid-input
 recovery. A direct section count of `0xff00` or greater in `e_shnum` is
@@ -119,7 +119,7 @@ descriptor consumes projected bytes for each entry that includes it. Metadata
 that would exceed the Evidence JSON nesting allowance is also left undecoded.
 
 Zstandard section-name tables also use a 128 MiB decoder window limit and the
-shared [`zstd.max_frames` work limit](design/limits-and-recovery.md#runtime-settings-through-mcp).
+shared [`zstd.max_frames` work limit](reference/limits-and-recovery.md#runtime-settings-through-mcp).
 
 `SHF_COMPRESSED` note sections return `unsupported_target` before their payload
 is interpreted or decompressed. Their compression header is storage metadata,

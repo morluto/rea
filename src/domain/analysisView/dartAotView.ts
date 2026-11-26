@@ -1,9 +1,9 @@
 import { evidenceFileTarget } from "../evidence.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { z } from "zod";
 import { flutterResultSchemas } from "../flutter/flutterBuildAnalysis.js";
-import { err, ok } from "../result.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { ok } from "../result.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ownedView,
@@ -45,6 +45,8 @@ export const dartAotViewContextSchema = z.strictObject({
   string_pool: dartAotSummarySchema.shape.string_pool,
 });
 
+const readAotReport = createAnalysisViewResultReader(aotSchema);
+
 /** Reuse authenticated AOT Evidence without opening the APK or rescanning its ELF. */
 export const projectDartAotView = (
   parent: AnalysisViewParent,
@@ -54,16 +56,10 @@ export const projectDartAotView = (
     SummaryAnalysisView | z.output<typeof dartAotViewRequestSchema>
   >(admitted, "summary", "dart-aot");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "Dart AOT Evidence supports summary and string-pool pages.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Dart AOT Evidence supports summary and string-pool pages.",
     );
-  const parsed = parseAnalysisViewResult(aotSchema, parent);
+  const parsed = readAotReport(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
   const { package_uris, dart_uris, class_like_tokens, ...pool } =

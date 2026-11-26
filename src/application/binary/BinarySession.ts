@@ -1,3 +1,4 @@
+import { finalizedResult, runOwned } from "../../providers/runOwned.js";
 import { bindSessionEvidenceExecution } from "./SessionEvidenceReuse.js";
 import { admitCompletedAnalysis } from "../investigation/admitCompletedAnalysis.js";
 import { randomUUID } from "node:crypto";
@@ -37,6 +38,7 @@ import { createAnalysisExecutionEvidence } from "../../domain/analysisObservatio
 import type {
   AnalysisClient,
   AnalysisExecution,
+  CapabilityDescriptor,
   ExecutionOptions,
   AnalysisOperationPort,
   ProviderIdentity,
@@ -65,7 +67,13 @@ import {
   currentRouteCapability,
 } from "./BinarySessionStatus.js";
 import { SessionRuntimeAvailability } from "./SessionRuntimeAvailability.js";
-import { isSourceEvidenceRetainable } from "./AnalysisSnapshotCache.js";
+import {
+  isSnapshotCacheable,
+  isSourceEvidenceRetainable,
+  oneShotSnapshotReplayRefusal,
+  requiresNativeSourceAdmissionBeforeReplay,
+  snapshotNotSavedLimitation,
+} from "./AnalysisSnapshotCache.js";
 import type { BinarySessionDetail } from "../../contracts/sessionStatusContract.js";
 import {
   resolveSessionOpen,
@@ -80,6 +88,7 @@ import {
   prepareSessionExecution,
 } from "./BinarySessionExecution.js";
 import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
+import { bundleExecutableProvenance } from "../../domain/apple/bundleExecutableProvenance.js";
 import {
   analysisErrorWithCleanupDependencies,
   analysisErrorWithCloseRejection,
@@ -102,6 +111,10 @@ import type {
   BundleResourceClientFactory,
 } from "./BundleResourceSession.js";
 import { BUNDLE_RESOURCE_OPERATIONS } from "../../ports/BundleResourceOperations.js";
+import {
+  deliverSessionLimitations,
+  type SessionLimitationDelivery,
+} from "./SessionLimitationContext.js";
 
 interface SessionRun {
   readonly client: AnalysisClient;
@@ -204,6 +217,7 @@ export class BinarySession
   #shutdownStarted = false;
   readonly #calls = new Map<Promise<unknown>, number>();
   readonly #promptCompletionControllers = new Set<AbortController>();
+  readonly #sessionLimitations: SessionLimitationDelivery;
   readonly #providerRouter: SessionProviderRouter;
   readonly #bundleResourceFactory: BundleResourceClientFactory | undefined;
   #activeBundleResources: ActiveBundleResourceSession | undefined;
@@ -215,10 +229,13 @@ export class BinarySession
     providerRouter: SessionProviderRouter,
     records: InvestigationRecords = new InvestigationRecords(),
     bundleResourceFactory?: BundleResourceClientFactory,
+    /** How results deliver limitations their provider session shares. */
+    sessionLimitations: SessionLimitationDelivery = "inline",
   ) {
     super(records);
     this.#providerRouter = providerRouter;
     this.#bundleResourceFactory = bundleResourceFactory;
+    this.#sessionLimitations = sessionLimitations;
   }
 
   /** Create an isolated session over this session's auxiliary providers. */
@@ -382,9 +399,8 @@ export class BinarySession
       const imported = this.importAnalysisSnapshot(options.snapshot);
       if (!imported.ok) return imported;
     }
-    // The same bytes can be selected through a different spelling without retiring the engine.
-    if (retained.target.callerInputPath !== target.callerInputPath)
-      this.#active = { ...retained, target };
+    // Refresh selection facts from this open while keeping the live engine.
+    this.#active = { ...retained, target };
     return ok(target);
   }
 
@@ -437,23 +453,30 @@ export class BinarySession
   }
 
   /** Resolve a target and provider profile without creating a provider client. */
-  previewTarget(
+  async previewTarget(
     target: BinaryTarget,
     options: BinarySessionOpenOptions = {},
   ): Promise<Result<ResolvedSessionOpen, AnalysisError>> {
     if (isAborted(options.signal))
-      return Promise.resolve(err(cancelledBy("open_binary", options.signal)));
-    return resolveSessionTarget({
-      router: this.#providerRouter,
-      current: this.#active,
-      target,
-      options,
-      stagedSnapshotMismatch: (target, profile) =>
-        this.snapshotMismatch(target, profile),
-    }).then((resolved) =>
-      resolved.ok && isAborted(options.signal)
-        ? err(cancelledBy("open_binary", options.signal))
-        : resolved,
+      return err(cancelledBy("open_binary", options.signal));
+    return finalizedResult(
+      await runOwned(
+        () =>
+          resolveSessionTarget({
+            router: this.#providerRouter,
+            current: this.#active,
+            target,
+            options,
+            stagedSnapshotMismatch: (target, profile) =>
+              this.snapshotMismatch(target, profile),
+          }),
+        {
+          providerId: "rea",
+          operation: "open_binary",
+          signal: options.signal,
+          diagnostics: () => undefined,
+        },
+      ),
     );
   }
 
@@ -1223,12 +1246,16 @@ export class BinarySession
       run,
       onCleanupFailure === undefined ? {} : { onCleanupFailure },
     );
-    if (!closed.ok)
+    if (!closed.ok) {
+      // A fresh session can hold an imported snapshot and no retired target.
+      // Clear only a binding left by a target this open already retired.
+      if (previous !== undefined) this.#clearUnrestoredSnapshot();
       return analysisErrorWithCloseRejection(
         primary,
         closed.error,
         "open_binary",
       );
+    }
     return this.#restoreAfterFailedOpen(previous, primary);
   }
 
@@ -1238,6 +1265,7 @@ export class BinarySession
   ): Promise<AnalysisError> {
     const restored = await this.#restore(previous);
     if (restored.ok) return primary;
+    this.#clearUnrestoredSnapshot();
     primary.retainSecondaryFailure(restored.error, {
       restoration_error: projectAnalysisError(
         primaryAnalysisError(restored.error),
@@ -1436,6 +1464,10 @@ export class BinarySession
           resourceScope: this.resourceScope,
           execute: (name, arguments_, options) =>
             this.#execute(name, arguments_, options, Promise.resolve()),
+          lookupCachedExecution: (name, arguments_, options) =>
+            this.lookupCachedExecution(name, arguments_, options),
+          retainResolvedExecution: (name, arguments_, execution, options) =>
+            this.retainResolvedExecution(name, arguments_, execution, options),
         }),
       );
     })();
@@ -1495,14 +1527,26 @@ export class BinarySession
     // Stop replay before dispatch, including reads overlapping the write.
     if (capability.effects.mutatesArtifact) this.invalidateSnapshot();
     const dispatch = this.#runtimeAvailability.dispatch();
-    const dispatched = await active.client.execute(name, arguments_, options);
+    const executionOptions =
+      name === "inspect_macho" || name === "inspect_signature"
+        ? {
+            ...options,
+            bundleExecutableProvenance:
+              bundleExecutableProvenance(active.target) ?? null,
+          }
+        : options;
+    const dispatched = await active.client.execute(
+      name,
+      arguments_,
+      executionOptions,
+    );
     const result = unrecordedExecution(dispatched);
     const profiled = bindExecutionTarget(
       commitExecutionProfile(name, result, profile),
       name,
       active.target,
     );
-    const execution =
+    const covered =
       profiled.ok &&
       (name === "procedure_callers" || name === "procedure_callees") &&
       profiled.value.relationshipCoverage === undefined
@@ -1512,9 +1556,58 @@ export class BinarySession
               status: "unknown" as const,
               reason:
                 "Provider did not report relationship coverage for this observation.",
+              limited_directions:
+                name === "procedure_callers"
+                  ? (["callers"] as ["callers"])
+                  : (["callees"] as ["callees"]),
             },
           })
         : profiled;
+    const observed = covered.ok
+      ? ok(
+          deliverSessionLimitations(
+            covered.value,
+            covered.value.subject ?? active.target,
+            this.#sessionLimitations,
+          ),
+        )
+      : covered;
+    // A caller who asked for a one-shot snapshot learns when it cannot replay.
+    const recordingRefusal = (
+      execution: AnalysisExecution,
+      selected: AnalysisProfileCommitment,
+    ): string | undefined => {
+      const reason = this.snapshotRecordingRefusal({
+        target: active.target,
+        profile: selected,
+        operation: name,
+        parameters: arguments_,
+        execution,
+      });
+      return reason === undefined
+        ? undefined
+        : snapshotNotSavedLimitation(reason);
+    };
+    const refusal =
+      observed.ok && options?.snapshotContext === "one-shot-target"
+        ? (oneShotSnapshotReplayRefusal({
+            operation: name,
+            descriptor: capability,
+            parameters: arguments_,
+            execution: observed.value,
+            profiled: profile !== undefined,
+          }) ??
+          (profile === undefined
+            ? undefined
+            : recordingRefusal(observed.value, profile)))
+        : undefined;
+    const execution =
+      refusal === undefined || !observed.ok
+        ? observed
+        : ok({
+            ...observed.value,
+            limitations: [...observed.value.limitations, refusal],
+          });
     // A successful Ghidra operation proves this client's native source snapshot
     // was admitted; a composite health response and parsed path do not.
     const currentBinding = this.#active;
@@ -1560,66 +1653,196 @@ export class BinarySession
         return sourcesRecorded;
       }
     }
-    if (
-      execution.ok &&
-      isSourceEvidenceRetainable(name, capability, arguments_, {
-        snapshotContext: options?.snapshotContext,
-        requiresSourceEvidence: execution.value.requiresSourceEvidence === true,
-      }) &&
-      profile !== undefined
-    ) {
-      const evidenceExecution = {
-        ...execution.value,
-        analysisProfile: profile,
-        subject:
-          execution.value.subject === undefined
-            ? active.target
-            : execution.value.subject,
-      };
-      const admitted = admitCompletedAnalysis(
-        name,
-        arguments_,
-        evidenceExecution,
-        {
-          callerTarget: active.target,
-          admit: this.admitRecoveryObservation.bind(this),
-        },
-      );
-      if (!admitted.ok) return admitted;
-      const evidence = createAnalysisExecutionEvidence(
-        name,
-        arguments_,
-        evidenceExecution,
-        "observed",
-        { callerTarget: active.target },
-      );
-      const recorded = this.recordEvidence(evidence);
-      if (!recorded.ok) {
-        // The provider finished. A full ledger must not discard that observation.
-        recorded.error.retainPartialObservation(evidence);
-        return recorded;
-      }
-      const authenticated = this.evidenceForAnalysis(evidence.evidence_id);
-      const retained =
-        authenticated === undefined
-          ? { ...execution.value, evidenceId: evidence.evidence_id }
-          : bindSessionEvidenceExecution(
-              { ...execution.value, evidenceId: evidence.evidence_id },
-              authenticated,
-              active.target.callerInputPath,
-            );
-      if (cacheable && execution.value.cachePolicy !== "live")
-        this.recordSnapshot({
-          target: active.target,
-          profile,
-          operation: name,
-          parameters: arguments_,
-          execution: retained,
-          evidence: this.evidenceForAnalysis(evidence.evidence_id) ?? evidence,
-        });
-      return ok(retained);
-    }
+    if (execution.ok)
+      return this.#retainCompletedExecution({
+        active,
+        capability,
+        profile,
+        operation: name,
+        parameters: arguments_,
+        execution: execution.value,
+        cacheable,
+        ...(options?.snapshotContext === undefined
+          ? {}
+          : { snapshotContext: options.snapshotContext }),
+      });
     return execution;
+  }
+
+  /** Look up an exact snapshot replay without starting or invoking the provider. */
+  lookupCachedExecution(
+    name: Parameters<AnalysisOperationPort["execute"]>[0],
+    arguments_: Readonly<Record<string, JsonValue>>,
+    options?: Pick<ExecutionOptions, "snapshotContext">,
+  ): AnalysisExecution | undefined {
+    if (this.#shutdownStarted || this.#activeBundleResources !== undefined)
+      return undefined;
+    const active = this.#active;
+    if (active === undefined) return undefined;
+    const capability = active.route.capabilities.get(name);
+    if (capability?.available !== true) return undefined;
+    const profile =
+      active.profile !== null &&
+      capability.provider.id === active.profile.provider.id
+        ? active.profile
+        : undefined;
+    if (
+      profile === undefined ||
+      !isSnapshotCacheable(
+        name,
+        capability,
+        arguments_,
+        options?.snapshotContext,
+      ) ||
+      (requiresNativeSourceAdmissionBeforeReplay(capability.provider.id) &&
+        !active.nativeSourceAdmitted)
+    )
+      return undefined;
+    return this.lookupSnapshot(active.target, profile, name, arguments_);
+  }
+
+  /**
+   * Retain Evidence and snapshot replay for an execution answered under a
+   * resolved address while keeping the caller's original selector parameters.
+   */
+  retainResolvedExecution(
+    operation: Parameters<AnalysisOperationPort["execute"]>[0],
+    parameters: Readonly<Record<string, JsonValue>>,
+    execution: AnalysisExecution,
+    options?: Pick<ExecutionOptions, "snapshotContext">,
+  ): Result<AnalysisExecution, AnalysisError> {
+    if (this.#shutdownStarted || this.#activeBundleResources !== undefined)
+      return ok(execution);
+    const active = this.#active;
+    if (active === undefined) return ok(execution);
+    const capability = active.route.capabilities.get(operation);
+    if (capability?.available !== true) return ok(execution);
+    const profile =
+      active.profile !== null &&
+      capability.provider.id === active.profile.provider.id
+        ? active.profile
+        : undefined;
+    const cacheable =
+      profile !== undefined &&
+      isSnapshotCacheable(
+        operation,
+        capability,
+        parameters,
+        options?.snapshotContext,
+      );
+    const refusal =
+      options?.snapshotContext === "one-shot-target" &&
+      cacheable &&
+      execution.cachePolicy !== "live" &&
+      profile !== undefined
+        ? this.snapshotRecordingRefusal({
+            target: active.target,
+            profile,
+            operation,
+            parameters,
+            execution,
+          })
+        : undefined;
+    const refusalLimitation =
+      refusal === undefined ? undefined : snapshotNotSavedLimitation(refusal);
+    const observed =
+      refusalLimitation === undefined ||
+      execution.limitations.includes(refusalLimitation)
+        ? execution
+        : {
+            ...execution,
+            limitations: [...execution.limitations, refusalLimitation],
+          };
+    return this.#retainCompletedExecution({
+      active,
+      capability,
+      profile,
+      operation,
+      parameters,
+      execution: observed,
+      cacheable,
+      ...(options?.snapshotContext === undefined
+        ? {}
+        : { snapshotContext: options.snapshotContext }),
+    });
+  }
+
+  #retainCompletedExecution(input: {
+    readonly active: Pick<SessionBinding, "target">;
+    readonly capability: CapabilityDescriptor;
+    readonly profile: AnalysisProfileCommitment | undefined;
+    readonly operation: Parameters<AnalysisOperationPort["execute"]>[0];
+    readonly parameters: Readonly<Record<string, JsonValue>>;
+    readonly execution: AnalysisExecution;
+    readonly cacheable: boolean;
+    readonly snapshotContext?: ExecutionOptions["snapshotContext"];
+  }): Result<AnalysisExecution, AnalysisError> {
+    const {
+      active,
+      capability,
+      profile,
+      operation,
+      parameters,
+      execution,
+      cacheable,
+      snapshotContext,
+    } = input;
+    if (
+      !isSourceEvidenceRetainable(operation, capability, parameters, {
+        snapshotContext,
+        requiresSourceEvidence: execution.requiresSourceEvidence === true,
+      }) ||
+      profile === undefined
+    )
+      return ok(execution);
+    const evidenceExecution = {
+      ...execution,
+      analysisProfile: profile,
+      subject:
+        execution.subject === undefined ? active.target : execution.subject,
+    };
+    const admitted = admitCompletedAnalysis(
+      operation,
+      parameters,
+      evidenceExecution,
+      {
+        callerTarget: active.target,
+        admit: this.admitRecoveryObservation.bind(this),
+      },
+    );
+    if (!admitted.ok) return admitted;
+    const evidence = createAnalysisExecutionEvidence(
+      operation,
+      parameters,
+      evidenceExecution,
+      "observed",
+      { callerTarget: active.target, immutable: true },
+    );
+    const recorded = this.recordEvidence(evidence);
+    if (!recorded.ok) {
+      // The provider finished. A full ledger must not discard that observation.
+      recorded.error.retainPartialObservation(evidence);
+      return recorded;
+    }
+    const authenticated = this.evidenceForAnalysis(evidence.evidence_id);
+    const retained =
+      authenticated === undefined
+        ? { ...execution, evidenceId: evidence.evidence_id }
+        : bindSessionEvidenceExecution(
+            { ...execution, evidenceId: evidence.evidence_id },
+            authenticated,
+            active.target.callerInputPath,
+          );
+    if (cacheable && execution.cachePolicy !== "live")
+      this.recordSnapshot({
+        target: active.target,
+        profile,
+        operation,
+        parameters,
+        execution: retained,
+        evidence: authenticated ?? evidence,
+      });
+    return ok(retained);
   }
 
   /** Whether the active route can run an operation now, as status reports it. */
@@ -1721,6 +1944,13 @@ export class BinarySession
     } catch {
       return false;
     }
+  }
+
+  /** The retired target did not return, so its snapshot binding must not block the next open. */
+  #clearUnrestoredSnapshot(): void {
+    if (this.#active !== undefined) return;
+    this.clearSnapshot();
+    this.#clearRuntimeAvailability();
   }
 
   async #restore(

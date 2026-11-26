@@ -1,24 +1,13 @@
-import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
-
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { expect, it } from "vitest";
+import { runOwnedCommand } from "../../../../src/process/OwnedCommand.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
-const execute = promisify(execFile);
-
-it.each([
-  { protocol: "native", flags: [], required: true },
-  {
-    protocol: "native",
-    flags: ["--second-procedure", "other", "--second-marker", "unique"],
-    required: false,
-  },
-  { protocol: "modern", flags: [], required: false },
-])(
-  "enforces native switching requirements for $protocol with $flags",
-  async ({ protocol, flags, required }) => {
+it.each(["native", "modern"] as const)(
+  "checks the %s verifier's admission without switching options",
+  async (protocol) => {
     const root = await createTestTempDirectory("rea-ida-verifier-options-");
     const config = join(root, "ida.json");
     await writeFile(
@@ -29,24 +18,28 @@ it.each([
         ...(protocol === "modern" ? {} : { protocol }),
       }),
     );
-    // The absent target stops accepted option sets at admission, before any provider call.
-    await expect(
-      execute(
-        process.execPath,
-        [
+    // The absent target stops admitted options before the provider is called.
+    const result = await runOwnedCommand(
+      {
+        command: process.execPath,
+        arguments: [
           "scripts/verify-real-ida.mjs",
           "--target",
           join(root, "absent"),
-          ...flags,
         ],
-        {
-          cwd: process.cwd(),
-          env: { ...process.env, REA_IDA_MCP_CONFIG: config },
-          timeout: 10_000,
-        },
-      ),
-    ).rejects.toMatchObject(
-      required
+        runId: `rea-ida-verifier-options-${randomUUID()}`,
+        cwd: process.cwd(),
+        hostEnvironment: process.env,
+        env: { REA_IDA_MCP_CONFIG: config },
+      },
+      { timeoutMs: 90_000, diagnosticBytes: 16_384, acceptNonZeroExit: true },
+    );
+    expect(result.exitCode).toBe(1);
+    expect({
+      stdout: result.stdout.text,
+      stderr: result.stderr.text,
+    }).toMatchObject(
+      protocol === "native"
         ? {
             stdout: "",
             stderr: expect.stringContaining(

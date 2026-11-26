@@ -15,7 +15,7 @@ it("reports a decompile marker only when a nonempty requested marker was observe
     `
 import { registerHooks } from 'node:module';
 const service = \`
-export class JebAnalysisService {
+export const createJebAnalysisService = () => ({
   async execute(name) {
     if (name === 'inspect_jeb_client') return { ok: true, value: { normalized_result: { engine: { version: 'fixture', gui_client: false, endpoint: 'fixture' } } } };
     if (name === 'open_jeb_project') return { ok: false, error: { message: 'not available' } };
@@ -23,11 +23,11 @@ export class JebAnalysisService {
     if (name === 'decompile_jeb_item') return { ok: true, value: { normalized_result: { text: process.env.REA_JEB_PROBE_TEXT ?? '' } } };
     throw new Error('unexpected operation');
   }
-}\`;
+});\`;
 const provider = \`export const createJebAnalysisProvider = () => ({ close: async () => {} });\`;
 registerHooks({ resolve(specifier, context, next) {
   if (context.parentURL?.endsWith('/scripts/verify-jeb.mjs')) {
-    if (specifier.endsWith('/JebAnalysisService.js')) return { shortCircuit: true, url: 'data:text/javascript,' + encodeURIComponent(service) };
+    if (specifier.endsWith('/ProviderOperationServices.js')) return { shortCircuit: true, url: 'data:text/javascript,' + encodeURIComponent(service) };
     if (specifier.endsWith('/composition/jeb.js')) return { shortCircuit: true, url: 'data:text/javascript,' + encodeURIComponent(provider) };
   }
   return next(specifier, context);

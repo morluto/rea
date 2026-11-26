@@ -9,7 +9,7 @@ import { expect, it, vi } from "vitest";
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { closeCliResources } from "../../../src/cli/cliResources.js";
-import { parseCliOutputArguments } from "../../../src/cliOutput.js";
+import { parseCliOutputArguments } from "../../../src/cli/cliOutput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 vi.mock("node:fs/promises", { spy: true });

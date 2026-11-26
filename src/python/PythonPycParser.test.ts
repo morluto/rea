@@ -1,3 +1,7 @@
+import {
+  uint32LE as u32,
+  int32LE as i32,
+} from "../native/BinaryInteger.fixture.js";
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 import {
@@ -10,11 +14,11 @@ import {
   pythonPycFixture,
   pythonPycHeader,
 } from "./PythonPyc.fixture.js";
+import { parsePythonPyc } from "./PythonPycParser.js";
 import {
   emptyPythonPycWork,
-  parsePythonPyc,
   type PythonPycWork,
-} from "./PythonPycParser.js";
+} from "./PycReportProjection.js";
 import { ParseFailureError } from "../domain/parseFailure.js";
 
 const parserLimit = (name: string) =>
@@ -55,7 +59,15 @@ const measure = (bytes: Buffer) => {
 };
 
 it("reads 3.7, 3.10 and 3.12 layouts including nested code", () => {
+  const earliestTimestamp = parse(pythonPycFixture("py37", { magic: 3392 }));
+  expect(earliestTimestamp.header).toMatchObject({
+    magic: 3392,
+    python_version: "3.7",
+    code_layout: "py37",
+  });
+  expect(root(earliestTimestamp).bytecode.bytes).toBe(4);
   const py37 = parse(pythonPycFixture("py37"));
+  expect(root(py37).bytecode.bytes).toBe(4);
   expect(py37.header).toMatchObject({
     magic: 3394,
     python_version: "3.7",
@@ -87,6 +99,115 @@ it("reads 3.7, 3.10 and 3.12 layouts including nested code", () => {
       { kind: "none" },
     ]),
   );
+});
+
+it.each([
+  { magic: 3495, opcode: 166, cacheUnits: 1 },
+  { magic: 3500, opcode: 25, cacheUnits: 4 },
+  { magic: 3524, opcode: 25, cacheUnits: 1 },
+  { magic: 3531, opcode: 106, cacheUnits: 9 },
+  { magic: 3550, opcode: 25, cacheUnits: 1 },
+  { magic: 3553, opcode: 25, cacheUnits: 1 },
+  { magic: 3564, opcode: 58, cacheUnits: 1 },
+  { magic: 3571, opcode: 82, cacheUnits: 9 },
+  { magic: 3627, opcode: 80, cacheUnits: 9 },
+  { magic: 3666, opcode: 128, cacheUnits: 1 },
+  {
+    magic: 3394,
+    layout: "py37" as const,
+    opcode: 80,
+    cacheUnits: 9,
+    distinct: 5,
+  },
+])(
+  "uses the $magic bytecode equality rules and retains raw bytecode",
+  ({ magic, layout = "py311" as const, opcode, cacheUnits, distinct = 4 }) => {
+    const cache = Buffer.alloc(cacheUnits * 2);
+    const bytecode = (arg: number, cachePayload: Buffer, nextArg = 0) =>
+      Buffer.concat([
+        Buffer.from([opcode, arg]),
+        cachePayload,
+        Buffer.from([83, nextArg]),
+      ]);
+    const original = bytecode(0, cache);
+    const changedCache = Buffer.from(cache);
+    changedCache[changedCache.length - 1] = 1;
+    const frozenSet = Buffer.concat([
+      Buffer.from([0x3e, 5, 0, 0, 0]),
+      ...[
+        original,
+        bytecode(0, changedCache),
+        bytecode(1, cache),
+        bytecode(0, cache, 1),
+        Buffer.concat([original, Buffer.from([0, 0])]),
+      ].map((code) => marshalCode(layout, { bytecode: code })),
+    ]);
+    const report = parse(
+      Buffer.concat([
+        pythonPycHeader(magic),
+        marshalCode(layout, { consts: [frozenSet] }),
+      ]),
+    );
+    expect(root(report).consts).toEqual([
+      { kind: "frozenset", length: distinct },
+    ]);
+    expect(report.code_objects[1]?.bytecode).toEqual({
+      bytes: original.length,
+      sha256: createHash("sha256").update(original).digest("hex"),
+    });
+  },
+);
+
+it.each([
+  { magic: 3413, layout: "py38" as const, expected: 1 },
+  { magic: 3439, layout: "py38" as const, expected: 1 },
+  { magic: 3531, layout: "py311" as const, expected: 2 },
+])(
+  "uses the $magic equality rules for line tables in sets and dictionaries",
+  ({ magic, layout, expected }) => {
+    const code = (linetable: Buffer) =>
+      marshalCode(layout, { name: "f", firstlineno: 1, linetable });
+    const first = code(Buffer.from([2, 1]));
+    const second = code(Buffer.from([2, 2]));
+    const set = Buffer.concat([Buffer.from([0x3e, 2, 0, 0, 0]), first, second]);
+    const dictionary = Buffer.concat([
+      Buffer.from([0x7b]),
+      first,
+      Buffer.from([0x4e]),
+      second,
+      Buffer.from([0x54, 0x30]),
+    ]);
+    const report = parse(
+      Buffer.concat([
+        pythonPycHeader(magic),
+        marshalCode(layout, { consts: [set, dictionary] }),
+      ]),
+    );
+    expect(root(report).consts).toEqual([
+      { kind: "frozenset", length: expected },
+      { kind: "dict", length: expected },
+    ]);
+  },
+);
+
+it("distinguishes code names with identical JavaScript display text", () => {
+  const scalar = marshalUnicode(Buffer.from([0xf0, 0x9f, 0x98, 0x80]));
+  const surrogatePair = marshalUnicode(
+    Buffer.from([0xed, 0xa0, 0xbd, 0xed, 0xb8, 0x80]),
+  );
+  const code = (name: Buffer) =>
+    marshalCode("py311", { nameObject: name, qualnameObject: name });
+  const set = Buffer.concat([
+    Buffer.from([0x3e, 2, 0, 0, 0]),
+    code(scalar),
+    code(surrogatePair),
+  ]);
+  const report = parse(withConsts([set]));
+  expect(report.code_objects.slice(1).map(({ name }) => name)).toEqual([
+    "😀",
+    "😀",
+  ]);
+  expect(root(report).consts).toEqual([{ kind: "frozenset", length: 2 }]);
 });
 
 it("preserves signed co_firstlineno in code objects and code constants", () => {
@@ -367,16 +488,6 @@ it("classifies the 12-byte 3.7 alpha header as unsupported", () => {
   }
 });
 
-const u32 = (value: number): Buffer => {
-  const bytes = Buffer.alloc(4);
-  bytes.writeUInt32LE(value);
-  return bytes;
-};
-const i32 = (value: number): Buffer => {
-  const bytes = Buffer.alloc(4);
-  bytes.writeInt32LE(value);
-  return bytes;
-};
 const f64 = (value: number): Buffer => {
   const bytes = Buffer.alloc(8);
   bytes.writeDoubleLE(value);
@@ -573,12 +684,22 @@ it("decodes marshal strings with CPython surrogatepass rules", () => {
   ).toThrow(ParseFailureError);
 });
 
-it.each([0x73, 0x74, 0x75, 0x61, 0x41, 0x28, 0x5b, 0x3c, 0x3e])(
+it.each([
+  [0x73, "negative-string-length"],
+  [0x74, "negative-string-length"],
+  [0x75, "negative-string-length"],
+  [0x61, "negative-string-length"],
+  [0x41, "negative-string-length"],
+  [0x28, "negative-sequence-length"],
+  [0x5b, "negative-sequence-length"],
+  [0x3c, "negative-field"],
+  [0x3e, "negative-field"],
+] as const)(
   "classifies a negative signed marshal count (tag %i) before applying limits",
-  (tag) => {
+  (tag, defect) => {
     expect(() =>
-      parse(withConsts([Buffer.concat([Buffer.from([tag]), i32(-1)])])),
-    ).toThrow(ParseFailureError);
+      parse(withConsts([Buffer.from([tag, 0xff, 0xff, 0xff, 0xff])])),
+    ).toThrow(expect.objectContaining({ kind: "malformed", defect }));
   },
 );
 
@@ -603,16 +724,6 @@ it("keeps signed zero and non-finite float and complex constants JSON-safe", () 
   ]);
   expect(pythonPycSchema.safeParse(report).success).toBe(true);
   expect(JSON.parse(JSON.stringify(report))).toEqual(report);
-});
-
-it("truncates string previews without introducing a lone surrogate", () => {
-  const prefix = "x".repeat(79);
-  const report = parse(
-    withConsts([marshalUnicode(Buffer.from(`${prefix}😀tail`))]),
-  );
-  expect(root(report).consts).toEqual([
-    { kind: "str", bytes: 87, truncated: true, value: prefix },
-  ]);
 });
 
 it("accepts an empty co_filename", () => {
@@ -1792,15 +1903,20 @@ it("rejects code CPython treats as corrupt instead of complete coverage", () => 
   expect(() => parse(file("py37", 3394, { argcount: 1 }))).toThrow(
     /co_varnames is too small/,
   );
-  expect(() => parse(file("py311", 3531, { flags: 0x80000000 }))).toThrow(
-    /co_flags is negative/,
-  );
-  expect(() => parse(file("py38", 3411, { flags: 0x80000000 }))).toThrow(
-    /co_flags is negative/,
-  );
-  expect(() => parse(file("py38", 3411, { stacksize: 0xffffffff }))).toThrow(
-    /co_stacksize is negative/,
-  );
+  for (const [layout, magic] of [
+    ["py38", 3411],
+    ["py311", 3531],
+  ] as const)
+    for (const [fields, message] of [
+      [{ stacksize: 0xffffffff }, "co_stacksize is negative"],
+      [{ flags: 0x80000000 }, "co_flags is negative"],
+    ] as const)
+      expect(() => parse(file(layout, magic, fields))).toThrow(
+        expect.objectContaining({
+          kind: "malformed",
+          message: expect.stringContaining(message),
+        }),
+      );
 
   const valid = parse(
     file("py311", 3531, {

@@ -9,20 +9,28 @@ import {
 } from "./analysisErrorBase.js";
 import { AnalysisCancelledError } from "./analysisErrorCore.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { ProviderCleanupError } from "./providerCleanupError.js";
 
 /** Describe browser cleanup failure without discarding its resource evidence. */
 export const browserCleanupObservation = (
   cause: unknown,
-): AnalysisCleanupObservation =>
-  cause instanceof AnalysisError && cause.cleanup !== undefined
-    ? cause.cleanup
-    : {
-        reason: errorMessage(cause),
-        resources:
-          cause instanceof AnalysisError && cause.cleanupResources.length > 0
-            ? cause.cleanupResources
-            : ["browser_transport"],
-      };
+): AnalysisCleanupObservation => {
+  if (cause instanceof AnalysisError && cause.cleanup !== undefined)
+    return cause.cleanup;
+  // The cleanup owner keeps its concrete failure separately from generic guidance.
+  const reason =
+    cause instanceof ProviderCleanupError &&
+    typeof cause.diagnostics?.reason === "string"
+      ? cause.diagnostics.reason
+      : errorMessage(cause);
+  return {
+    reason,
+    resources:
+      cause instanceof AnalysisError && cause.cleanupResources.length > 0
+        ? cause.cleanupResources
+        : ["browser_transport"],
+  };
+};
 
 /** A bounded passive browser observation failed at its CDP boundary. */
 export class BrowserObservationError extends AnalysisError {

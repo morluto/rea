@@ -14,11 +14,17 @@ import {
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { AndroidAnalysisService } from "../../../src/application/android/AndroidAnalysisService.js";
+import { JADX_RELEASE } from "../../../src/android/JadxRelease.js";
 import type { AndroidAnalysisPort } from "../../../src/ports/android/AndroidAnalysisPort.js";
 import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
-import { inspectAndroidPackage } from "../../../src/application/android/AndroidPackageInspection.js";
-import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
-import { androidResultSchemas } from "../../../src/domain/android/androidAnalysis.js";
+import {
+  executeRetainedSummaryOperation,
+  inspectAnalysisView,
+} from "../../../src/application/analysisView/AnalysisViewService.js";
+import {
+  androidPackageInspectionInputSchema,
+  androidResultSchemas,
+} from "../../../src/domain/android/androidAnalysis.js";
 import {
   androidPackageSummaryViewResultSchema,
   androidManifestViewResultSchema,
@@ -41,10 +47,8 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
-import {
-  createJadxProtocolFixture,
-  verifyJadxFixtureCleanup,
-} from "../../fixtures/android/jadx.js";
+import { expectProviderLaunchCleanup } from "../../support/process/expectProviderLaunchCleanup.js";
+import { createJadxProtocolFixture } from "../../fixtures/android/jadx.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 async function assertAndroidPackageSelectedFacetContract(options: {
@@ -345,8 +349,15 @@ it.skipIf(process.platform === "win32")(
     expect(view.artifact.sha256).not.toBe(report.engine.artifact_sha256);
     expect(receipt.evidence_id).not.toBe(parent.evidence_id);
     expect(receipt.evidence_links).toEqual([parent.evidence_id]);
-    const { manifest, ...declarations } = report;
+    const { manifest, components, ...declarations } = report;
     expect(view.summary).toMatchObject(declarations);
+    // Component rows page through the components view; the summary counts them.
+    const { items, ...componentFacts } = components;
+    expect(view.summary.components).toMatchObject({
+      ...componentFacts,
+      matching_components: items.length,
+    });
+    expect(view.summary.components).not.toHaveProperty("items");
     expect(view.summary.manifest).toEqual({
       status: manifest.status,
       reported_total_bytes: manifest.reported_total_bytes,
@@ -423,7 +434,7 @@ it.skipIf(process.platform === "win32")(
     ).toEqual(parent);
     expect(launches).toHaveLength(1);
     await harness.close();
-    await verifyJadxFixtureCleanup(launches);
+    await expectProviderLaunchCleanup(launches);
   },
 );
 
@@ -454,7 +465,7 @@ it("preserves partial manifest text and Unicode while rejecting missing APK iden
       hasSubject
         ? { path: "/original.apk", sha256: "a".repeat(64), format: "apk" }
         : unknownTarget("not-observed"),
-      { id: "jadx", name: "JADX", version: "0.7.1" },
+      { id: "jadx", name: "JADX", version: JADX_RELEASE.version },
       {
         operation: "inspect_android_package",
         parameters: {},
@@ -521,8 +532,10 @@ it("rejects unavailable retention, invalid selectors and cancellation before pro
   const service = new AndroidAnalysisService(provider);
   const retention = { recordEvidence: undefined, evidenceById: undefined };
   expect(
-    await inspectAndroidPackage(
+    await executeRetainedSummaryOperation(
       service,
+      "inspect_android_package",
+      androidPackageInspectionInputSchema,
       { path: "/missing.apk", detail: "summary" },
       retention,
     ),
@@ -531,15 +544,19 @@ it("rejects unavailable retention, invalid selectors and cancellation before pro
     error: { _tag: "AnalysisCapabilityUnavailableError" },
   });
   expect(
-    await inspectAndroidPackage(
+    await executeRetainedSummaryOperation(
       service,
+      "inspect_android_package",
+      androidPackageInspectionInputSchema,
       { path: "/missing.apk", detail: "other" },
       retention,
     ),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
   const reason = { request: "cancel before Android admission" };
-  const cancelled = await inspectAndroidPackage(
+  const cancelled = await executeRetainedSummaryOperation(
     service,
+    "inspect_android_package",
+    androidPackageInspectionInputSchema,
     { path: "/missing.apk", detail: "summary" },
     retention,
     { signal: AbortSignal.abort(reason) },
@@ -549,8 +566,10 @@ it("rejects unavailable retention, invalid selectors and cancellation before pro
   expect(cancelled.error.cause).toBe(reason);
   for (const detail of [undefined, "complete"]) {
     expect(
-      await inspectAndroidPackage(
+      await executeRetainedSummaryOperation(
         service,
+        "inspect_android_package",
+        androidPackageInspectionInputSchema,
         {
           path: "/missing.apk",
           ...(detail === undefined ? {} : { detail }),
@@ -591,7 +610,7 @@ it("rejects unavailable retention, invalid selectors and cancellation before pro
 it("delivers the selected retained page in one analysis and reads it later without a provider or source APK", async () => {
   const parent = createEvidence(
     { path: "/never-reopened.apk", sha256: "a".repeat(64), format: "apk" },
-    { id: "jadx", name: "JADX", version: "0.7.1" },
+    { id: "jadx", name: "JADX", version: JADX_RELEASE.version },
     {
       operation: "inspect_android_package",
       parameters: { path: "/never-reopened.apk" },
@@ -673,8 +692,10 @@ it("delivers the selected retained page in one analysis and reads it later witho
     fields: ["name"],
     limit: 1,
   };
-  const selected = await inspectAndroidPackage(
+  const selected = await executeRetainedSummaryOperation(
     service,
+    "inspect_android_package",
+    androidPackageInspectionInputSchema,
     { path: "/never-reopened.apk", detail: "summary", view },
     {
       recordEvidence: session.recordEvidence.bind(session),

@@ -18,7 +18,7 @@ import {
 } from "../domain/webMcpDiscovery.js";
 import {
   browserCaptureComparisonSchema,
-  type BrowserCaptureComparisonInput,
+  type BrowserCaptureComparisonRequest,
 } from "../domain/browserCaptureComparison.js";
 import {
   webScreenshotSchema,
@@ -36,6 +36,12 @@ import { err, ok, type Result } from "../domain/result.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
 import { createBrowserEvidence } from "./BrowserEvidence.js";
+import {
+  admitBrowserCaptureComparison,
+  resolveBrowserCaptureComparison,
+  type ResolvedBrowserCaptureComparison,
+} from "./browserCaptureComparisonSources.js";
+import type { EvidenceLookup } from "./EvidenceInputResolver.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
   completeProviderEvidence,
@@ -180,13 +186,39 @@ export const discoverWebMcpTools = async (
     : discovered;
 };
 
-/** Compare two already-normalized web captures without external access. */
-export const compareWebCaptureEvidence = async (
+/**
+ * Compare two already-normalized web captures without external access. Each
+ * capture is inline or a retained Evidence reference from `lookup`; the
+ * comparison links the retained records it read.
+ */
+export const compareWebCaptureEvidence = (
   browser: BrowserObservationPort | undefined,
-  input: BrowserCaptureComparisonInput,
+  request: unknown,
+  lookup?: EvidenceLookup,
+): Promise<Result<Evidence, AnalysisError>> =>
+  compareResolvedWebCaptures(browser, () =>
+    admitBrowserCaptureComparison(request, lookup),
+  );
+
+/** Compare a request its adapter already parsed, reusing its inline captures. */
+export const compareParsedWebCaptureEvidence = (
+  browser: BrowserObservationPort | undefined,
+  request: BrowserCaptureComparisonRequest,
+  lookup?: EvidenceLookup,
+): Promise<Result<Evidence, AnalysisError>> =>
+  compareResolvedWebCaptures(browser, () =>
+    resolveBrowserCaptureComparison(request, lookup),
+  );
+
+const compareResolvedWebCaptures = async (
+  browser: BrowserObservationPort | undefined,
+  resolve: () => Result<ResolvedBrowserCaptureComparison, AnalysisError>,
 ): Promise<Result<Evidence, AnalysisError>> => {
   const ready = requireBrowser(browser, "compare_web_captures");
   if (!ready.ok) return ready;
+  const resolved = resolve();
+  if (!resolved.ok) return resolved;
+  const { input, sources } = resolved.value;
   const compared = await ready.value.compareCaptures(input);
   return compared.ok
     ? browserEvidence(
@@ -195,6 +227,7 @@ export const compareWebCaptureEvidence = async (
         compared.value,
         ready.value.identity(),
         {},
+        sources,
       )
     : compared;
 };
@@ -260,6 +293,7 @@ const browserEvidence = (
   result: Parameters<typeof createBrowserEvidence>[2]["facts"],
   provider: Parameters<typeof createBrowserEvidence>[3],
   options: ExecutionOptions,
+  evidenceLinks?: readonly string[],
 ): Result<Evidence, AnalysisError> => {
   const json = jsonValueSchema.safeParse(result);
   if (!json.success)
@@ -286,7 +320,11 @@ const browserEvidence = (
     createBrowserEvidence(
       operation,
       input,
-      { source: json.data, facts: report.data },
+      {
+        source: json.data,
+        facts: report.data,
+        ...(evidenceLinks === undefined ? {} : { evidenceLinks }),
+      },
       provider,
     ),
     options.signal,

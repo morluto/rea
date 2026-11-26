@@ -1,4 +1,4 @@
-import { BinaryReader } from "../domain/binaryContainer.js";
+import { createBinaryReaderCache } from "../domain/binaryContainer.js";
 import { Buffer } from "node:buffer";
 import { byteToHex } from "../kernel/byteToHex.js";
 import {
@@ -60,11 +60,10 @@ interface UnconfirmedFfsState {
   readonly rawState: number;
 }
 
-/**
- * Parse one FFS header at a local position; null when framing is unconfirmed.
- * Checksum findings are observations on the header,
- * not rejections — invalid files stay in the inventory with their notes.
- */
+const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
+const ffsFileReader = createBinaryReaderCache(true, "FFS file");
+
+/** Return null for unconfirmed framing and retain checksum findings on parsed headers. */
 export function parseFfsFileHeader(
   region: ScanRegion,
   localBase: number,
@@ -115,14 +114,14 @@ function observeFfsFileHeader(
   let headerLength: number = FFS_HEADER_LAYOUT.length;
   let declaredLength = declaredCompact;
   if (largeFile) {
-    const reader = new BinaryReader(region.buffer, true, "FFS file");
     if (!extended) return null;
+    const reader = ffsFileReader(region.buffer);
     headerLength = FFS_HEADER_LAYOUT.extendedLength;
     const size = reader.word(
       localBase + FFS_HEADER_LAYOUT.extendedSizeOffset,
       64,
     );
-    if (size > BigInt(Number.MAX_SAFE_INTEGER))
+    if (size > MAX_SAFE_INTEGER_BIGINT)
       return { kind: "unrepresentable", size, unusableState };
     declaredLength = Number(size);
     if (declaredCompact !== 0)
@@ -166,10 +165,7 @@ function observeFfsFileHeader(
         : null,
     bodyIssue: state === "header-valid" ? "data-not-valid" : null,
     extentIssue,
-    nameGuid: formatGuidLittleEndian(
-      region.buffer.subarray(localBase, localBase + 16),
-      0,
-    ),
+    nameGuid: formatGuidLittleEndian(region.buffer, localBase),
     typeCode: region.buffer[localBase + FFS_HEADER_LAYOUT.typeOffset] ?? 0,
     attributes,
     dataAlignment:
@@ -239,8 +235,9 @@ export function checkFfsFileIntegrity(
   const length = end - start;
   if (length === 0) return { verdict: "unchecked" } as const;
   let total = header.fileChecksumField;
-  for (const byte of region.buffer.subarray(start, end)) {
-    total = (total + byte) & 0xff;
+  const buffer = region.buffer;
+  for (let i = start; i < end; i += 1) {
+    total = (total + buffer[i]!) & 0xff;
   }
   return total === 0
     ? ({ verdict: "valid" } as const)

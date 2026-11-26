@@ -3,7 +3,7 @@ import { expect, it } from "vitest";
 import {
   androidOtaPayloadMetadataSchema,
   type AndroidOtaPayloadMetadata,
-} from "../artifactFormatMetadata.js";
+} from "../formatMetadata/androidAndSystemMetadata.js";
 import { androidOtaPayloadSummaryMetadataSchema } from "./androidOtaPayloadSummary.js";
 import { summaryRootMetadata } from "./espFlashImageSummary.js";
 

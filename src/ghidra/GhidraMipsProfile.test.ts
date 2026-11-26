@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ok } from "../domain/result.js";
@@ -207,8 +207,8 @@ describe("bounded Ghidra MIPS admission", () => {
       expect(resolved).toMatchObject({
         ok: false,
         error: {
-          _tag: "AnalysisUnsupportedTargetError",
-          reason: expect.stringContaining(reason),
+          _tag: "AnalysisTargetFailureError",
+          failure: { detail: expect.stringContaining(reason) },
         },
       });
     },
@@ -240,8 +240,8 @@ describe("recordless legacy MIPS admission", () => {
       expect(resolved).toMatchObject({
         ok: false,
         error: {
-          _tag: "AnalysisUnsupportedTargetError",
-          reason: expect.stringContaining("ET_EXEC"),
+          _tag: "AnalysisTargetFailureError",
+          failure: { detail: expect.stringContaining("ET_EXEC") },
         },
       });
     },
@@ -311,7 +311,34 @@ describe("recordless legacy MIPS admission", () => {
       {
         flags: 0x50000001,
         limitations: [
-          "MIPS section header table at file offset 96 extends beyond the captured file: examined 2 of 5 complete headers. ABI declarations in unavailable headers remain unknown.",
+          {
+            kind: "unexamined_declarations",
+            // Even if prose resembles a section-table truncation message, the
+            // typed discriminator governs admission — never string matching.
+            message:
+              "MIPS section header table at file offset 96 extends beyond the captured file: examined 2 of 5 complete headers. ABI declarations in unavailable headers remain unknown.",
+          },
+        ],
+      },
+      "complete ABI-record inspection",
+    ],
+    [
+      {
+        flags: 0x50000001,
+        limitations: [
+          {
+            kind: "truncated_section_table",
+            offset: 96,
+            examined: 2,
+            declared: 5,
+            message:
+              "MIPS section header table at file offset 96 extends beyond the captured file: examined 2 of 5 complete headers. ABI declarations in unavailable headers remain unknown.",
+          },
+          {
+            kind: "unexamined_declarations",
+            message:
+              "MIPS ABI record at file offset 4096 extends beyond the captured file",
+          },
         ],
       },
       "complete ABI-record inspection",
@@ -326,6 +353,63 @@ describe("recordless legacy MIPS admission", () => {
         status: "unsupported",
         reason: expect.stringContaining(reason),
       });
+    },
+  );
+
+  it("admits a recordless legacy MIPS32 ET_EXEC whose only limitation is a truncated section table and propagates it to session limitations", async () => {
+    const limitation = {
+      kind: "truncated_section_table" as const,
+      offset: 96,
+      examined: 2,
+      declared: 5,
+      message:
+        "MIPS section header table at file offset 96 extends beyond the captured file: examined 2 of 5 complete headers. ABI declarations in unavailable headers remain unknown.",
+    };
+    const carved = target({
+      flags: 0x50000001,
+      abiFlags: null,
+      limitations: [limitation],
+    });
+    const ghidra = new GhidraProvider(config, silentLogger, {}, host);
+    expect(ghidra.inspectTargetSupport(carved).status).toBe("supported");
+    const resolved = await ghidra.resolveAnalysisProfile(carved);
+    if (!resolved.ok) throw resolved.error;
+    expect(resolved.value.profile?.parameters).toMatchObject({
+      mips_support_lane: "elf32-exec-arch32-legacy-pinned",
+      mips_abi_basis: "inferred-o32-assumption",
+      language_id: "MIPS:LE:32:default",
+      mips_elf: {
+        abi_flags_limitations: [limitation],
+      },
+    });
+    const { client } = await session(carved, undefined);
+    const health = await client.execute("health", {});
+    if (!health.ok) throw health.error;
+    expect(health.value.limitations).toContain(limitation.message);
+  });
+
+  it.each([
+    ["declared-ABI ET_EXEC", { flags: 0x70001001 }],
+    ["recordless ET_REL", { flags: 0x50000001, type: 1, abiFlags: null }],
+    ["PSP Allegrex", { flags: 0x10a23001 }],
+  ] as const)(
+    "keeps %s fail-closed when the section header table is truncated",
+    (_label, change) => {
+      const ghidra = new GhidraProvider(config, silentLogger, {}, host);
+      const value = target({
+        ...change,
+        limitations: [
+          {
+            kind: "truncated_section_table",
+            offset: 96,
+            examined: 2,
+            declared: 5,
+            message:
+              "MIPS section header table at file offset 96 extends beyond the captured file: examined 2 of 5 complete headers.",
+          },
+        ],
+      });
+      expect(ghidra.inspectTargetSupport(value).status).toBe("unsupported");
     },
   );
 
@@ -450,11 +534,15 @@ const session = async (
   const resolved = await ghidra.resolveAnalysisProfile(profileFor);
   if (!resolved.ok || resolved.value.profile === null)
     throw new Error("expected a MIPS profile");
-  return {
-    counts,
-    profile: resolved.value.profile,
-    client: ghidra.createClient(value, resolved.value.profile),
-  };
+  const client = ghidra.createClient(value, resolved.value.profile);
+  onTestFinished(async () => {
+    try {
+      await client.close();
+    } finally {
+      await ghidra.closeOwnedResources();
+    }
+  });
+  return { counts, profile: resolved.value.profile, client };
 };
 
 describe("legacy profile bindings", () => {
@@ -596,7 +684,26 @@ describe("MIPS16 shared-image profile", () => {
   });
   it.each([
     { flags: 0x74001045 },
-    { limitations: ["Unexamined section declarations"] },
+    {
+      limitations: [
+        {
+          kind: "unexamined_declarations",
+          message: "Unexamined section declarations",
+        },
+      ],
+    },
+    {
+      limitations: [
+        {
+          kind: "truncated_section_table",
+          offset: 96,
+          examined: 0,
+          declared: 2,
+          message:
+            "MIPS section header table at file offset 96 extends beyond the captured file: examined 0 of 2 complete headers.",
+        },
+      ],
+    },
     {
       sharedLoad: {
         status: "complete",
@@ -913,13 +1020,23 @@ describe("MIPS32 shared-image profile", () => {
 });
 
 describe("soft-float MIPS storage", () => {
-  it("admits soft-float o32 and commits its storage policy only for it", async () => {
+  it("commits the soft-float o32 policy and reports its session outcome", async () => {
     const soft = target(softFloat);
     const ghidra = new GhidraProvider(config, silentLogger, {}, host);
     expect(ghidra.inspectTargetSupport(soft).status).toBe("supported");
-    const { profile } = await session(soft, report);
+    const { profile, client } = await session(soft, report);
     expect(profile.parameters.mips_soft_float_storage).toBe(
       "o32-soft-float-prototype-v1",
+    );
+    const health = await client.execute("health", {});
+    if (!health.ok) throw health.error;
+    expect(health.value.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("model hard-float o32 only"),
+        expect.stringContaining(
+          "5 functions and 1 function-pointer definitions use __rea_soft_float.",
+        ),
+      ]),
     );
     const hard = await session(target(), undefined);
     expect(hard.profile.parameters).not.toHaveProperty(
@@ -943,20 +1060,6 @@ describe("soft-float MIPS storage", () => {
       status: "unsupported",
       reason: expect.stringContaining("general flags"),
     });
-  });
-
-  it("reports the prototype outcome as session limitations", async () => {
-    const { client } = await session(target(softFloat), report);
-    const health = await client.execute("health", {});
-    if (!health.ok) throw health.error;
-    expect(health.value.limitations).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining("model hard-float o32 only"),
-        expect.stringContaining(
-          "5 functions and 1 function-pointer definitions use __rea_soft_float.",
-        ),
-      ]),
-    );
   });
 
   it("admits relocatable objects under their own lane with coordinate limitations", async () => {

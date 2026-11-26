@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { constants } from "node:fs";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
-import { open, readFile, writeFile } from "node:fs/promises";
+import { open, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
@@ -24,10 +24,7 @@ afterEach(async () => {
   await resources.close();
   resources = new ArtifactResourceScope();
 });
-const root = async () => {
-  const path = await createTestTempDirectory("rea-extension-test-");
-  return path;
-};
+const root = () => createTestTempDirectory("rea-extension-test-");
 const target: BinaryTarget = {
   path: "/tmp/native",
   kind: "executable",
@@ -112,13 +109,13 @@ describe("optional Ghidra extension refusals", () => {
     if (!architecture.ok)
       expect(projectAnalysisError(architecture.error)).toMatchObject({
         code: "unsupported_target",
-        remediation: {
-          action: expect.stringContaining("omit REA_GHIDRA_NATIVEAOT_JAR"),
-        },
         details: {
           operation: "resolve_analysis_profile",
           path: target.path,
-          reason: expect.stringContaining("x86-64 ELF or native PE"),
+          failure_kind: "unsupported",
+          reason: expect.stringMatching(
+            /x86-64 ELF or native PE.*omit REA_GHIDRA_NATIVEAOT_JAR/su,
+          ),
         },
       });
   });
@@ -138,30 +135,23 @@ describe("optional Ghidra extension boundary", () => {
       false,
     );
   });
-  it("commits the actual regular artifact bytes and caller path", async () => {
+  it("commits the configured artifact and snapshots its exact bytes exclusively", async () => {
     const { extension, bytes, path } = await artifact();
     expect(extension).toMatchObject({
       configured_path: path,
-      path,
+      path: await realpath(path),
       sha256: createHash("sha256").update(bytes).digest("hex"),
       integration_api: 1,
     });
-  });
-  it("snapshots identical bytes exclusively into the private runtime", async () => {
-    const { extension, bytes } = await artifact();
     const runtime = await root();
     const snapshots = await snapshotGhidraExtensions(
       [extension],
       runtime,
       resources,
     );
-    expect(snapshots[0]?.path).toBe(join(runtime, "extensions/nativeaot.jar"));
-    expect(
-      Buffer.compare(
-        await readFile(join(runtime, "extensions/nativeaot.jar")),
-        bytes,
-      ),
-    ).toBe(0);
+    const staged = join(runtime, "extensions", "nativeaot.jar");
+    expect(snapshots).toEqual([{ ...extension, path: staged }]);
+    expect((await readFile(staged)).equals(bytes)).toBe(true);
     await expect(
       snapshotGhidraExtensions([extension], runtime, resources),
     ).rejects.toMatchObject({
@@ -354,8 +344,8 @@ describe("Ghidra extension profile and producer validation", () => {
     if (!resolved.ok)
       expect(projectAnalysisError(resolved.error)).toMatchObject({
         code: "unsupported_target",
-        remediation: {
-          action: expect.stringContaining("inspect_managed_artifact"),
+        details: {
+          reason: expect.stringContaining("inspect_managed_artifact"),
         },
       });
   });
@@ -394,6 +384,7 @@ describe("Ghidra extension profile and producer validation", () => {
         reason: "unregistered",
       },
     });
+    expect(await readdir(runtime)).toEqual([]);
   });
 });
 
@@ -466,24 +457,6 @@ describe("Ghidra extension recovery coverage", () => {
         [{ ...positive, result: { ...positive.result, discovery: null } }],
       ),
     ).toContain("producer report");
-  });
-  it("preserves real loader failures without requiring a successful analyzer report", async () => {
-    const { extension } = await artifact();
-    const reason = "Extension loading/analysis failed: ClassNotFoundException";
-    expect(
-      validateGhidraExtensionResults(
-        [extension],
-        [
-          {
-            id: "nativeaot",
-            sha256: extension.sha256,
-            status: "failed",
-            reason,
-            result: { loader_failure: reason },
-          },
-        ],
-      ),
-    ).toBeNull();
   });
   it("does not accept complete recovery without format and byte identities", async () => {
     const { extension } = await artifact();

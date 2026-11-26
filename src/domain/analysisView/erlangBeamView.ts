@@ -1,13 +1,13 @@
 import { z } from "zod";
 import { erlangBeamSchema, type ErlangBeam } from "../erlang/beam.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ownedView,
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewMessages,
@@ -15,7 +15,7 @@ import {
   pageViewCoverage,
   unavailableViewCoverage,
 } from "./analysisViewCoverage.js";
-import { selectViewRows } from "./selectViewRows.js";
+import { selectIndexedViewRows, selectViewRows } from "./selectViewRows.js";
 
 const atom = erlangBeamSchema.shape.atoms.unwrap().element;
 const exported = erlangBeamSchema.shape.exports.unwrap().element;
@@ -142,20 +142,17 @@ const selectRows = (source: readonly Row[], view: BeamView) => {
         .map((row, i) => project(row, view.offset + i)),
       total: source.length,
     };
-  return selectViewRows(
-    source,
-    view,
-    (row, i) => {
-      const name = "name" in row ? row.name : row.function;
-      return (
-        (indices === undefined || indices.has(i)) &&
-        (names === undefined || (name !== null && names.has(name))) &&
-        (modules === undefined ||
-          ("module" in row && row.module !== null && modules.has(row.module)))
-      );
-    },
-    project,
-  );
+  const matches = (row: Row) => {
+    const name = "name" in row ? row.name : row.function;
+    return (
+      (names === undefined || (name !== null && names.has(name))) &&
+      (modules === undefined ||
+        ("module" in row && row.module !== null && modules.has(row.module)))
+    );
+  };
+  return indices !== undefined
+    ? selectIndexedViewRows(source, indices, view, matches, project)
+    : selectViewRows(source, view, matches, project);
 };
 
 /** Project retained BEAM facts without reopening files or reinterpreting chunks. */
@@ -167,14 +164,8 @@ export const projectErlangBeamView = (
     SummaryAnalysisView | z.output<typeof erlangBeamViewRequestSchema>
   >(admitted, "summary", "beam");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "BEAM Evidence supports summary and beam views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "BEAM Evidence supports summary and beam views.",
     );
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
