@@ -14,13 +14,13 @@ export async function generateExampleCode(seconds, digits = 6) {
       "Use a nonnegative integer time and six or eight digits.",
     );
   }
-  importedKey ??= crypto.subtle.importKey(
-    "raw",
-    testKey,
-    { name: "HMAC", hash: "SHA-1" },
-    false,
-    ["sign"],
-  );
+  // Share one import, but let a failed import be retried by the next call.
+  importedKey ??= crypto.subtle
+    .importKey("raw", testKey, { name: "HMAC", hash: "SHA-1" }, false, ["sign"])
+    .catch((cause) => {
+      importedKey = undefined;
+      throw cause;
+    });
   const key = await importedKey;
   const block = Math.floor(seconds / 30);
   const counter = new ArrayBuffer(8);

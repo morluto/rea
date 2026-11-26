@@ -1755,3 +1755,115 @@ it("keeps processor-specific symbol type 13 as an import outside SPARC", async (
   ]);
   expect(report.coverage.status).toBe("partial");
 });
+
+it("marks version tables unreadable and coverage partial when DT_VERNEEDNUM or DT_VERDEFNUM has no table", async () => {
+  const unversionedImports = [{ name: "abort", version: 1 }];
+  const missingVerneed = await parse(
+    elfDependencyFixture({
+      stripped: true,
+      omitVerneedTag: true,
+      verdef: [],
+      imports: unversionedImports,
+    }),
+  );
+  expect(missingVerneed.version_requirements).toEqual({
+    status: "unreadable",
+    location: null,
+    files: [],
+  });
+  expect(missingVerneed.version_definitions).toEqual({
+    status: "absent",
+    location: null,
+    names: [],
+  });
+  expect(missingVerneed.coverage.status).toBe("partial");
+  expect(missingVerneed.issues).toEqual([
+    expect.objectContaining({
+      code: "table_unavailable",
+      location: `0x${missingVerneed.dynamic.location!.offset.toString(16)}`,
+      message: expect.stringContaining("DT_VERNEEDNUM"),
+    }),
+  ]);
+
+  const missingVerdef = await parse(
+    elfDependencyFixture({
+      stripped: true,
+      omitVerdefTag: true,
+      verneed: [],
+      imports: unversionedImports,
+    }),
+  );
+  expect(missingVerdef.version_definitions).toEqual({
+    status: "unreadable",
+    location: null,
+    names: [],
+  });
+  expect(missingVerdef.version_requirements).toEqual({
+    status: "absent",
+    location: null,
+    files: [],
+  });
+  expect(missingVerdef.coverage.status).toBe("partial");
+  expect(missingVerdef.issues).toEqual([
+    expect.objectContaining({
+      code: "table_unavailable",
+      location: `0x${missingVerdef.dynamic.location!.offset.toString(16)}`,
+      message: expect.stringContaining("DT_VERDEFNUM"),
+    }),
+  ]);
+
+  const zeroCounts = await parse(
+    elfDependencyFixture({
+      stripped: true,
+      verneed: [],
+      verdef: [],
+      verneedCount: 0,
+      verdefCount: 0,
+      imports: unversionedImports,
+    }),
+  );
+  expect(zeroCounts.version_requirements.status).toBe("absent");
+  expect(zeroCounts.version_definitions.status).toBe("absent");
+  expect(zeroCounts.issues).toEqual([]);
+  expect(zeroCounts.coverage.status).toBe("complete");
+
+  const sectionBacked = await parse(
+    elfDependencyFixture({
+      stripped: false,
+      omitVerneedTag: true,
+      omitVerdefTag: true,
+      imports: unversionedImports,
+    }),
+  );
+  expect(sectionBacked.version_requirements.status).toBe("present");
+  expect(sectionBacked.version_definitions.status).toBe("present");
+  expect(sectionBacked.issues).toEqual([]);
+  expect(sectionBacked.coverage.status).toBe("complete");
+});
+
+it("marks coverage partial when a hash table declares dynamic symbols without DT_SYMTAB or SHT_DYNSYM", async () => {
+  for (const options of [
+    { stripped: true, omitSymtabTag: true },
+    { stripped: true, omitHash: true, gnuHash: true, omitSymtabTag: true },
+  ]) {
+    const report = await parse(
+      elfDependencyFixture({
+        ...options,
+        imports: [{ name: "abort", version: 1 }],
+      }),
+    );
+    expect(report.imports).toEqual([]);
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      examined_imports: 0,
+    });
+    expect(report.issues).toEqual([
+      expect.objectContaining({
+        code: "table_unavailable",
+        location: `0x${report.dynamic.location!.offset.toString(16)}`,
+        message:
+          "Dynamic symbol table could not be located from section headers or DT_SYMTAB",
+      }),
+    ]);
+  }
+});

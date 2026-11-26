@@ -181,6 +181,44 @@ const initializeRequest = (): Request =>
     }),
   });
 
+/** A post that already names a session, so it must not open one. */
+const sessionPost = (sessionId: string, body: unknown): Request =>
+  new Request("http://127.0.0.1/mcp", {
+    method: "POST",
+    headers: {
+      accept: "application/json, text/event-stream",
+      "content-type": "application/json",
+      "mcp-session-id": sessionId,
+    },
+    body: JSON.stringify(body),
+  });
+
+const echoCall = {
+  jsonrpc: "2.0",
+  id: 2,
+  method: "tools/call",
+  params: { name: "echo", arguments: { text: "kept" } },
+};
+
+/** The one JSON-RPC result in a completed initialize response. */
+const initializationResult = async (response: Response): Promise<unknown> => {
+  const body = await response.text();
+  const results = body.split(/\r?\n/u).flatMap((line) => {
+    if (!line.startsWith("data: ")) return [];
+    const payload = line.slice("data: ".length);
+    if (payload.length === 0) return [];
+    const message = JSON.parse(payload) as { result?: unknown };
+    return message.result === undefined ? [] : [message.result];
+  });
+  expect(results).toHaveLength(1);
+  return results[0];
+};
+
+const completedInitialization = {
+  protocolVersion: "2025-11-25",
+  serverInfo: { name: "echo-fixture", version: "1" },
+};
+
 it("closes a bound listener without announcing it when startup aborts during factory creation", async () => {
   const controller = new AbortController();
   const reason = new Error("startup cancelled");
@@ -258,18 +296,131 @@ it("keeps the instance's shutdown hook when two initialize requests race to repl
   );
   const opened = await slot.handle(initializeRequest());
   expect(opened.status).toBe(200);
-  // Both requests see the same open session and end it in lockstep.
+  await expect(initializationResult(opened)).resolves.toMatchObject(
+    completedInitialization,
+  );
+  // The second initialize waits until the first replacement has answered, then replaces that session.
   const raced = await Promise.all([
     slot.handle(initializeRequest()),
     slot.handle(initializeRequest()),
   ]);
-  expect(raced.map((response) => response.status).sort()).toEqual([200, 400]);
-  const winner = raced.find((response) => response.status === 200);
-  expect(winner?.headers.get("mcp-session-id")).toEqual(expect.any(String));
+  expect(raced.map((response) => response.status)).toEqual([200, 200]);
+  const ids = raced.map((response) => response.headers.get("mcp-session-id"));
+  expect(ids[0]).toEqual(expect.any(String));
+  expect(ids[1]).toEqual(expect.any(String));
+  expect(ids[0]).not.toBe(ids[1]);
+  for (const response of raced) {
+    await expect(initializationResult(response)).resolves.toMatchObject(
+      completedInitialization,
+    );
+  }
   expect(shutdownHooks).toBe(0);
   // Only the slot's own close is the shutdown the instance's hook waits for.
   await slot.close();
   expect(shutdownHooks).toBe(1);
+});
+
+it("refuses a session id that is not live and does not arm a transport", async () => {
+  let connections = 0;
+  const server = createEchoServer(() => undefined);
+  const connectServer = server.connect.bind(server);
+  const admitted = phaseGate();
+  server.connect = async (transport) => {
+    connections += 1;
+    await admitted.hold();
+    await connectServer(transport);
+  };
+  const slot = new McpSessionSlot(server, undefined);
+  let arming: Promise<Response> | undefined;
+  try {
+    const absent = await slot.handle(sessionPost("missing-session", echoCall));
+    expect(absent.status).toBe(404);
+    await expect(absent.json()).resolves.toMatchObject({
+      error: { message: "Session not found" },
+    });
+    expect(connections).toBe(0);
+
+    arming = slot.handle(initializeRequest());
+    await admitted.reached(arming, "transport connect");
+    const during = await slot.handle(sessionPost("missing-session", echoCall));
+    expect(during.status).toBe(404);
+    await expect(during.json()).resolves.toMatchObject({
+      error: { message: "Session not found" },
+    });
+    expect(connections).toBe(1);
+    admitted.release();
+    const opened = await arming;
+    expect(opened.status).toBe(200);
+    const sessionId = opened.headers.get("mcp-session-id");
+    expect(sessionId).toEqual(expect.any(String));
+
+    const wrong = await slot.handle(sessionPost("other-session", echoCall));
+    expect(wrong.status).toBe(404);
+    expect(connections).toBe(1);
+
+    const live = await slot.handle(sessionPost(sessionId ?? "", echoCall));
+    expect(live.status).toBe(200);
+    expect(await live.text()).toContain('"text":"kept"');
+    expect(connections).toBe(1);
+  } finally {
+    admitted.release();
+    await arming?.catch(() => undefined);
+    await slot.close();
+  }
+});
+
+it("refuses an unknown session id without waiting for a session drain", async () => {
+  const drainHold = phaseGate();
+  const server = createEchoServer(() => undefined);
+  const drain = server.drainRequests.bind(server);
+  server.drainRequests = async (timeoutMs) => {
+    await drainHold.hold();
+    return drain(timeoutMs);
+  };
+  const slot = new McpSessionSlot(server, undefined);
+  let replacement: Promise<Response> | undefined;
+  let matching: Promise<Response> | undefined;
+  try {
+    const opened = await slot.handle(initializeRequest());
+    const sessionId = opened.headers.get("mcp-session-id");
+    expect(sessionId).toEqual(expect.any(String));
+    await expect(initializationResult(opened)).resolves.toMatchObject(
+      completedInitialization,
+    );
+    let replaced = false;
+    replacement = slot.handle(initializeRequest()).then((response) => {
+      replaced = true;
+      return response;
+    });
+    await drainHold.reached(replacement, "session drain");
+    const stale = await slot.handle(sessionPost("missing-session", echoCall));
+    expect(stale.status).toBe(404);
+    await expect(stale.json()).resolves.toMatchObject({
+      error: { message: "Session not found" },
+    });
+    expect(replaced).toBe(false);
+    let matched = false;
+    matching = slot
+      .handle(sessionPost(sessionId ?? "", echoCall))
+      .then((response) => {
+        matched = true;
+        return response;
+      });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(matched).toBe(false);
+    drainHold.release();
+    expect((await matching).status).toBe(404);
+    const replacedResponse = await replacement;
+    expect(replacedResponse.status).toBe(200);
+    await expect(initializationResult(replacedResponse)).resolves.toMatchObject(
+      completedInitialization,
+    );
+    expect(replaced).toBe(true);
+  } finally {
+    drainHold.release();
+    await Promise.allSettled([replacement, matching]);
+    await slot.close();
+  }
 });
 
 it("serves plain routes beside the MCP endpoint and answers unknown paths with 404", async () => {
