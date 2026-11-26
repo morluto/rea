@@ -258,20 +258,6 @@ function* ubiEcHeaderOffsets(
 }
 
 /**
- * Aligned EC headers starting at `ubiPebSearchStart(first)`. A candidate that
- * divides the file stays provisional until its volume table, LEB constraints
- * (including any first-PEB VID extent), and passed-over candidate boundaries
- * agree; an undersized or tableless candidate lets the caller retry the next
- * candidate.
- */
-const ubiPebSizeCandidates = (
-  chunk: Uint8Array,
-  chunkOffset: number,
-  first: UbiEcHeader,
-): Generator<{ offset: number; header: UbiEcHeader }, void> =>
-  ubiEcHeaderOffsets(chunk, chunkOffset, ubiPebSearchStart(first), () => true);
-
-/**
  * A candidate that leaves a partial final PEB can still be the real size.
  * A matching EC and mapped VID whose declared data fits the candidate LEB
  * establish a block boundary unless a later dividing candidate is accepted and
@@ -383,28 +369,7 @@ const ubiCandidateGridOffsets = (
   return offsets;
 };
 
-/**
- * The first aligned offset in `chunk` holding a valid erase-counter header at
- * one of `candidates` inside a `pebSize` eraseblock, or null. Such a header
- * means eraseblocks between the first two headers were skipped and `pebSize`
- * is a multiple of the real size. Skipped eraseblocks leave a real size that
- * divides `pebSize`, so `candidates` is at most `ubiCandidateGridOffsets`; a
- * header at any other position no eraseblock could begin at, and is payload.
- * Once the LEBs are read, `candidates` narrows to the grids they still admit
- * (`ubiSmallerGridFit`).
- */
-const findUbiSpacingConflict = (
-  chunk: Uint8Array,
-  chunkOffset: number,
-  first: UbiEcHeader,
-  pebSize: number,
-  candidates: ReadonlySet<number>,
-): number | null =>
-  ubiEcHeaderOffsets(chunk, chunkOffset, ubiPebSearchStart(first), (offset) =>
-    candidates.has(offset % pebSize),
-  ).next().value?.offset ?? null;
-
-/** The file range searched by `findUbiSpacingConflict` for a measured size. */
+/** The file range searched by `findSpacingConflict` for a measured size. */
 const ubiSpacingCheckRange = (
   pebSize: number,
   fileSize: number,
@@ -533,27 +498,6 @@ const ubiSmallerGridPositionPlausible = (
     readVidHeader(vidBytes).state === "valid"
   );
 };
-
-/**
- * The first offset in `chunk` (read at `chunkOffset`) holding a valid
- * erase-counter header, whatever its layout, at one of `smallerGridOffsets`
- * inside a measured eraseblock, or null. Such a header begins an eraseblock
- * the measured size would merge into its neighbor's data.
- */
-const findUbiSmallerGridHeader = (
-  chunk: Uint8Array,
-  chunkOffset: number,
-  first: UbiEcHeader,
-  geometry: UbiGeometry,
-  smallerGridOffsets: ReadonlySet<number>,
-): number | null =>
-  findUbiSpacingConflict(
-    chunk,
-    chunkOffset,
-    first,
-    geometry.pebSize,
-    smallerGridOffsets,
-  );
 
 /**
  * Whether the image still reads as eraseblocks of `smallerPebSize`: a volume
@@ -1571,10 +1515,32 @@ interface UbiErasedRange {
 
 interface UbiParseContext {
   readonly fileSize: number;
+  readonly candidateScanEnd: number;
   staticPayloadCrcBytes: number;
   readonly payloadCrcs: Map<string, number | null>;
   erasedRanges: UbiErasedRange[];
   nonErasedOffsets: number[];
+  /**
+   * Next 512-byte-aligned offset not yet scanned for CRC-valid EC headers, or
+   * `fileSize` once the whole image has been scanned.
+   */
+  ecHeaderScanEnd: number;
+  /**
+   * Sorted 512-byte-aligned offsets in `[ubiPebSearchStart(first), ecHeaderScanEnd)`
+   * holding a CRC-valid EC header, whatever its layout.
+   */
+  readonly validEcHeaderOffsets: number[];
+  readonly validEcHeaderOffsetSet: Set<number>;
+  /**
+   * Parsed EC headers for offsets within `candidateScanEnd`, removed as the
+   * candidate loop advances past each offset.
+   */
+  readonly pendingCandidateHeaders: Map<number, UbiEcHeader>;
+  /**
+   * Cached `ubiSmallerGridPositionPlausible` results by file offset; depends
+   * only on `first.vidHeaderOffset`, so it is invariant across trials.
+   */
+  readonly smallerGridPositions: Map<number, boolean>;
   readonly first: UbiEcHeader;
   readonly read: UbiImageRead;
   readonly checkpoint:
@@ -1619,32 +1585,95 @@ type PendingCandidateFailure =
   | { readonly kind: "error"; readonly error: UbiImageParseError }
   | { readonly kind: "non-dividing"; readonly candidate: number };
 
-const findSpacingConflict = async (
+const scanNextEcHeaderChunk = async (
+  ctx: UbiParseContext,
+  limit: number,
+  yieldControl: boolean,
+): Promise<number> => {
+  const start = ctx.ecHeaderScanEnd;
+  const boundedLimit = Math.min(ctx.fileSize, limit);
+  const previousCount = ctx.validEcHeaderOffsets.length;
+  if (start >= boundedLimit) return previousCount;
+  await ctx.checkpoint?.(yieldControl);
+  const readEnd = Math.min(
+    ctx.fileSize,
+    Math.min(
+      start + SCAN_CHUNK_BYTES,
+      Math.max(boundedLimit, start + UBI_HEADER_BYTES),
+    ),
+  );
+  const length = readEnd - start;
+  if (length < UBI_HEADER_BYTES) {
+    ctx.ecHeaderScanEnd = ctx.fileSize;
+    return previousCount;
+  }
+  const chunk = await ctx.read(start, length);
+  for (const { offset, header } of ubiEcHeaderOffsets(
+    chunk,
+    start,
+    start,
+    () => true,
+  )) {
+    ctx.validEcHeaderOffsets.push(offset);
+    ctx.validEcHeaderOffsetSet.add(offset);
+    if (offset + UBI_HEADER_BYTES <= ctx.candidateScanEnd)
+      ctx.pendingCandidateHeaders.set(offset, header);
+  }
+  const lastChecked =
+    start +
+    Math.floor((length - UBI_HEADER_BYTES) / UBI_PEB_ALIGNMENT) *
+      UBI_PEB_ALIGNMENT;
+  ctx.ecHeaderScanEnd = Math.min(ctx.fileSize, lastChecked + UBI_PEB_ALIGNMENT);
+  return previousCount;
+};
+
+/**
+ * The first 512-byte-aligned offset in `[start, end)` holding a CRC-valid EC
+ * header that satisfies `admit`, reusing and incrementally extending the
+ * parse-wide EC header scan cache so retries never reread scanned ranges.
+ */
+const findCachedEcHeader = async (
+  ctx: UbiParseContext,
+  start: number,
+  end: number,
+  admit: (offset: number) => boolean,
+): Promise<number | null> => {
+  const boundedEnd = Math.min(ctx.fileSize, end);
+  if (start >= boundedEnd) return null;
+  for (const offset of ctx.validEcHeaderOffsets) {
+    if (offset >= boundedEnd) return null;
+    if (offset >= start && admit(offset)) return offset;
+  }
+  let chunks = 0;
+  while (ctx.ecHeaderScanEnd < boundedEnd) {
+    const fromIndex = await scanNextEcHeaderChunk(
+      ctx,
+      boundedEnd,
+      chunks % 16 === 0,
+    );
+    chunks += 1;
+    for (
+      let index = fromIndex;
+      index < ctx.validEcHeaderOffsets.length;
+      index += 1
+    ) {
+      const offset = ctx.validEcHeaderOffsets[index]!;
+      if (offset >= boundedEnd) return null;
+      if (offset >= start && admit(offset)) return offset;
+    }
+  }
+  return null;
+};
+
+const findSpacingConflict = (
   ctx: UbiParseContext,
   pebSize: number,
   candidates: ReadonlySet<number>,
 ): Promise<number | null> => {
   const { start, end } = ubiSpacingCheckRange(pebSize, ctx.fileSize);
-  let found: number | null = null;
-  for (
-    let offset = start;
-    found === null && offset < end;
-    offset += SCAN_CHUNK_BYTES
-  ) {
-    await ctx.checkpoint?.(false);
-    const chunk = await ctx.read(
-      offset,
-      Math.min(SCAN_CHUNK_BYTES + UBI_HEADER_BYTES, end - offset),
-    );
-    found = findUbiSpacingConflict(
-      chunk,
-      offset,
-      ctx.first,
-      pebSize,
-      candidates,
-    );
-  }
-  return found;
+  return findCachedEcHeader(ctx, start, end, (offset) =>
+    candidates.has(offset % pebSize),
+  );
 };
 
 const findPassedOverBoundary = async (
@@ -1662,6 +1691,10 @@ const findPassedOverBoundary = async (
       ctx.fileSize,
     )) {
       if (probe.knownHeader) return probe.offset;
+      if (probe.offset < ctx.ecHeaderScanEnd) {
+        if (ctx.validEcHeaderOffsetSet.has(probe.offset)) return probe.offset;
+        continue;
+      }
       await ctx.checkpoint?.(probes % 256 === 0);
       probes += 1;
       const bytes = await ctx.read(probe.offset, UBI_HEADER_BYTES);
@@ -1698,25 +1731,13 @@ const findSmallerGridError = async (
       plausibleOffsets.add(offset);
   // A valid header where an eraseblock of a smaller size would begin shows
   // the measured size skipped eraseblocks, wherever it lies in the image.
-  for (
-    let offset = 0, chunks = 0;
-    offset < ctx.fileSize;
-    offset += SCAN_CHUNK_BYTES, chunks += 1
-  ) {
-    await ctx.checkpoint?.(chunks % 16 === 0);
-    const header = findUbiSmallerGridHeader(
-      await ctx.read(
-        offset,
-        Math.min(SCAN_CHUNK_BYTES + UBI_HEADER_BYTES, ctx.fileSize - offset),
-      ),
-      offset,
-      ctx.first,
-      measured,
-      plausibleOffsets,
-    );
-    if (header !== null)
-      return ok(ubiSpacingConflict(measured.pebSize, header));
-  }
+  const header = await findCachedEcHeader(
+    ctx,
+    ubiPebSearchStart(ctx.first),
+    ctx.fileSize,
+    (offset) => plausibleOffsets.has(offset % measured.pebSize),
+  );
+  if (header !== null) return ok(ubiSpacingConflict(measured.pebSize, header));
   // Erased eraseblocks or damaged UBI headers between measured PEBs fit a
   // smaller size equally well; a non-header written byte at any off-grid
   // header position rules that smaller size out.
@@ -1730,10 +1751,16 @@ const findSmallerGridError = async (
     ) {
       if (offset % measured.pebSize === 0) continue;
       await ctx.checkpoint?.(probes % 256 === 0);
-      fits = ubiSmallerGridPositionPlausible(
-        await ctx.read(offset, measured.headerReadBytes),
-        measured,
-      );
+      const cached = ctx.smallerGridPositions.get(offset);
+      if (cached !== undefined) {
+        fits = cached;
+      } else {
+        fits = ubiSmallerGridPositionPlausible(
+          await ctx.read(offset, measured.headerReadBytes),
+          measured,
+        );
+        ctx.smallerGridPositions.set(offset, fits);
+      }
     }
     if (fits) return ok(ubiAmbiguousPebSize(measured, smaller));
   }
@@ -2088,75 +2115,74 @@ export const parseUbiImage = async (
     fileSize,
   );
   if (!first.ok) return first;
+  const candidateScanEnd = Math.min(
+    fileSize,
+    UBI_MAX_PEB_BYTES + UBI_HEADER_BYTES,
+  );
   const ctx: UbiParseContext = {
     fileSize,
+    candidateScanEnd,
     staticPayloadCrcBytes: 0,
     payloadCrcs: new Map(),
     erasedRanges: [],
     nonErasedOffsets: [],
+    ecHeaderScanEnd: Math.min(fileSize, ubiPebSearchStart(first.value)),
+    validEcHeaderOffsets: [],
+    validEcHeaderOffsetSet: new Set(),
+    pendingCandidateHeaders: new Map(),
+    smallerGridPositions: new Map(),
     first: first.value,
     read,
     checkpoint: options?.checkpoint,
     onErasedBodyVerification: options?.onErasedBodyVerification,
   };
-  const scanEnd = Math.min(fileSize, UBI_MAX_PEB_BYTES + UBI_HEADER_BYTES);
   let fallback: UbiImage | null = null;
   let anyNext: number | null = null;
   let firstFailure: PendingCandidateFailure | null = null;
   const passedOver: number[] = [];
-  let lastCandidate = 0;
-  for (
-    let offset = ubiPebSearchStart(first.value);
-    offset < scanEnd;
-    offset += SCAN_CHUNK_BYTES
-  ) {
-    await ctx.checkpoint?.(false);
-    const chunk = await read(
-      offset,
-      Math.min(SCAN_CHUNK_BYTES + UBI_HEADER_BYTES, scanEnd - offset),
-    );
-    for (const { offset: candidate, header } of ubiPebSizeCandidates(
-      chunk,
-      offset,
-      first.value,
-    )) {
-      if (candidate <= lastCandidate) continue;
-      lastCandidate = candidate;
-      anyNext ??= candidate;
-      if (fileSize % candidate === 0) {
-        const verdict = await evaluateUbiPebCandidate(
-          ctx,
-          candidate,
-          passedOver,
-        );
-        if (verdict.state === "limit") return err(verdict.error);
-        if (verdict.state === "accept") return ok(verdict.image);
-        if (verdict.state === "reject")
-          return fallback !== null
-            ? ok(fallback)
-            : err(
-                firstFailure === null
-                  ? verdict.error
-                  : await resolvePendingFailure(ctx, firstFailure),
-              );
-        fallback ??= verdict.fallback ?? null;
-        firstFailure ??= { kind: "error", error: verdict.error };
-        passedOver.push(candidate);
-        continue;
-      }
-      const candidateVid = candidate + first.value.vidHeaderOffset;
-      if (
-        candidateVid + UBI_HEADER_BYTES <= fileSize &&
-        ubiHasMappedSecondPeb(
-          await read(candidateVid, UBI_HEADER_BYTES),
-          first.value,
-          header,
-          candidate,
-        )
-      ) {
-        firstFailure ??= { kind: "non-dividing", candidate };
-        passedOver.push(candidate);
-      }
+  let candidateIndex = 0;
+  for (;;) {
+    if (candidateIndex >= ctx.validEcHeaderOffsets.length) {
+      if (ctx.ecHeaderScanEnd >= ctx.candidateScanEnd) break;
+      await scanNextEcHeaderChunk(ctx, ctx.candidateScanEnd, false);
+      continue;
+    }
+    const candidate = ctx.validEcHeaderOffsets[candidateIndex]!;
+    candidateIndex += 1;
+    if (candidate + UBI_HEADER_BYTES > ctx.candidateScanEnd) break;
+    const header = ctx.pendingCandidateHeaders.get(candidate);
+    ctx.pendingCandidateHeaders.delete(candidate);
+    anyNext ??= candidate;
+    if (fileSize % candidate === 0) {
+      const verdict = await evaluateUbiPebCandidate(ctx, candidate, passedOver);
+      if (verdict.state === "limit") return err(verdict.error);
+      if (verdict.state === "accept") return ok(verdict.image);
+      if (verdict.state === "reject")
+        return fallback !== null
+          ? ok(fallback)
+          : err(
+              firstFailure === null
+                ? verdict.error
+                : await resolvePendingFailure(ctx, firstFailure),
+            );
+      fallback ??= verdict.fallback ?? null;
+      firstFailure ??= { kind: "error", error: verdict.error };
+      passedOver.push(candidate);
+      continue;
+    }
+    const candidateVid = candidate + first.value.vidHeaderOffset;
+    if (
+      header !== undefined &&
+      candidateVid + UBI_HEADER_BYTES <= fileSize &&
+      ubiHasMappedSecondPeb(
+        await read(candidateVid, UBI_HEADER_BYTES),
+        first.value,
+        header,
+        candidate,
+      )
+    ) {
+      firstFailure ??= { kind: "non-dividing", candidate };
+      passedOver.push(candidate);
     }
   }
   return fallback !== null

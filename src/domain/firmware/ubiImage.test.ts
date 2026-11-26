@@ -2820,6 +2820,60 @@ it("reuses dynamic wear-leveling copy CRCs across PEB size candidates", async ()
   expect(bytesRead).toBeLessThanOrEqual(2 * probe.length);
 });
 
+it("reuses cached EC header locations across multi-trial oversized-VID retries", async () => {
+  // 3 * 5 * 7 * 32 KiB = 3,440,640 bytes with data_offset = 32 KiB admits
+  // three coprime-multiple trials (96 KiB, 160 KiB, 224 KiB) whose smaller
+  // plausible divisors (48 KiB, 80 KiB, 112 KiB) do not collide with the other
+  // trials' EC headers. An oversized VID triggers retries across all three
+  // trials; caching the EC header scan keeps total reads bounded near 1x-2x
+  // file size instead of rescanning the whole image per trial.
+  const unit = 32 * 1024;
+  const fileSize = 3 * 5 * 7 * unit;
+  const trials = [3 * unit, 5 * unit, 7 * unit] as const;
+  const smallerProbes = [48 * 1024, 80 * 1024, 112 * 1024] as const;
+  const probe = Buffer.alloc(fileSize, 0x55);
+  const layoutGeometry = { pebSize: trials[0], dataOffset: unit };
+  const [layout0] = ubiLayoutPebs(
+    [{ id: 0, name: "rootfs", type: "dynamic", reservedPebs: 1 }],
+    layoutGeometry,
+  );
+  ubiImage([layout0!], layoutGeometry).copy(probe, 0);
+  const oversizedHeader = ubiImage(
+    [
+      {
+        kind: "leb",
+        volId: 1,
+        lnum: 0,
+        data: Buffer.alloc(0),
+        dataSize: 512 * 1024,
+        sqnum: 2n,
+      },
+    ],
+    layoutGeometry,
+  ).subarray(0, 128);
+  for (const offset of trials) oversizedHeader.copy(probe, offset);
+
+  let bytesRead = 0;
+  const seenSmallerProbes = new Set<number>();
+  const parsed = await parseUbiImage(probe.length, (offset, length) => {
+    bytesRead += length;
+    if (length === 128 && (smallerProbes as readonly number[]).includes(offset))
+      seenSmallerProbes.add(offset);
+    return probe.subarray(offset, offset + length);
+  });
+  expect(parsed).toMatchObject({
+    ok: true,
+    value: {
+      geometry: { pebSize: trials[0], pebCount: fileSize / trials[0] },
+    },
+  });
+  // Confirm all three block-size trials ran findSmallerGridError.
+  expect([...seenSmallerProbes].sort((a, b) => a - b)).toEqual([
+    ...smallerProbes,
+  ]);
+  expect(bytesRead).toBeLessThanOrEqual(2 * probe.length);
+});
+
 describe("layout volume VID validation", () => {
   const slots = ubiVolumeTableSlots();
   const staleTable = ubiVolumeTable(
