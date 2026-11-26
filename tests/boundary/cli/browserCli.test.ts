@@ -134,6 +134,22 @@ cliTest(
 );
 
 cliTest(
+  "refuses a retained capture reference the one-shot CLI cannot resolve",
+  async ({ cli }) => {
+    const id = `ev_${"0".repeat(64)}`;
+    const side = JSON.stringify({
+      inspection: { kind: "retained-evidence", evidence_id: id },
+    });
+    const refused = await cli.run({
+      arguments: ["compare-web-captures", side, side, "--json"],
+      environment: process.env,
+    });
+    expect(refused.exitCode).not.toBe(0);
+    expect(refused.stdout + refused.stderr).toContain(id);
+  },
+);
+
+cliTest(
   "compares source-map declaration omissions through the public CLI",
   async ({ cli }) => {
     const cdn = "https://cdn.example.test";

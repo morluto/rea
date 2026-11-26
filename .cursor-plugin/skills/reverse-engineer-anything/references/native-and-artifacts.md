@@ -411,6 +411,21 @@ inventory and limitations. Encrypted members are listed and not extracted.
 Roles are folder conventions, not restore-time asset selection. See
 [NuGet packages](https://github.com/morluto/rea/blob/main/docs/guides/managed/nuget-nupkg.md).
 
+## OCI image layouts
+
+Use `inspect_oci_image_layout` for an explicit local OCI image-layout directory
+(`oci-layout`, `index.json`, `blobs/<alg>/<hex>`) when the question concerns
+layout version, index entries, image config, layers, or blob digest
+verification. No `open_binary`, registry access, layer decompression, or
+target execution is required. The CLI equivalent is
+`inspect-oci-image-layout PATH`. Preserve snapshot identity, descriptor digests,
+and Env names and values; set `include_env_values` to false to omit the values.
+Missing blobs, digest mismatches, size mismatches, unreferenced blobs, unknown
+media types, unsupported digest algorithms, and symlink blobs are findings.
+Child symbolic links are not followed. Directory form only; tar image layouts
+are not inspected. See
+[OCI image layouts](https://github.com/morluto/rea/blob/main/docs/guides/artifacts/oci-image-layout.md).
+
 ## SQLite snapshots
 
 Use `inspect_sqlite_database` with an explicit local database snapshot for its
@@ -985,12 +1000,59 @@ unavailable hashes, so extract other files by `occurrence_ids`. Rock Ridge,
 UDF, and El Torito boot images are not decoded. See
 [ISO 9660 disc images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/iso9660-images.md).
 
+uClinux bFLT flat executables (`bFLT` magic, any filename) use the same
+inspection and extraction workflows. The header does not name a CPU, so the
+root architecture stays unknown. Header facts are big-endian declarations;
+relocations are listed, not applied. `text.bin` (header included), `data.bin`
+and `relocations.bin` are extractable. gzip and gzdata bodies are inflated
+under `artifact_limits.expanded_bytes`; revision 2 bodies are read as stored.
+Open `text.bin` as a raw binary with a chosen architecture. See
+[uClinux bFLT flat executables](https://github.com/morluto/rea/blob/main/docs/bflt-executables.md).
+
+Nintendo DS ROMs (`nds`) are detected from the header (logo CRC `0xCF56`,
+unit code, ARM9 offset, and a matching logo or header CRC), not the filename,
+and use the same inspection and extraction workflows. `root_format_metadata`
+holds the cartridge header facts; members are `arm9.bin`, `arm7.bin`,
+`overlays/<cpu>/overlay_<id>.bin`, FNT-named `data/<path>` files, and
+unnamed `fat/<id>.bin` files. A CRC mismatch, a partial table, or a range past
+the file end leaves coverage `unknown`. Secure-area encryption, compressed
+overlays, and NitroARC archives are not decoded. See
+[Nintendo DS ROMs](https://github.com/morluto/rea/blob/main/docs/guides/firmware/nds-roms.md).
+
 Android A/B OTA `payload.bin` files (CrAU v2) use the same
 inspection/extraction workflows. Prefer a retained summary for header,
 partition table, dynamic groups and signature counts. Signatures are not
 verified. Reconstruct REPLACE, ZERO and REPLACE_ZSTD images only; delta
 operations stay inventoried with unavailable content. See
 [Android OTA update payloads](https://github.com/morluto/rea/blob/main/docs/guides/firmware/android-ota-payload.md).
+
+Standalone Android Verified Boot `vbmeta.img` files (`AVB0` at offset 0) use
+the same inspection and extraction workflows. The root records the header,
+rollback index, flags, release string, and each property, hashtree, hash,
+kernel command-line, and chain-partition descriptor. Unknown tags are
+retained. `public_key_sha256` is the auxiliary public key; a chain descriptor
+reports the SHA-256 of its own key bytes. Extract `authentication_block`,
+`public_key`, and `public_key_metadata` when those ranges are non-empty.
+Signatures and digests are recorded and not verified. An `AVBf` footer is not
+this image. See
+[Android Verified Boot vbmeta images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/android-vbmeta.md).
+
+Android sparse images (`system.img`, `vendor.img`, `super.img` with magic
+`0xED26FF3A`) expand to one `image.raw` child without `simg2img`. Header,
+chunk counts and stored checksums are root facts; checksums are not verified
+and DONT_CARE blocks are written as zeros. The expanded child is classified
+again. See
+[Android sparse images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/android-sparse-image.md).
+
+Nintendo Switch NSO modules (`NSO0`) and NRO executables (`NRO0` at `0x10`)
+use the same inspection and extraction workflows, without running or
+disassembling them. Root metadata holds the `module_id` build id and MOD0
+offset for matching crash logs. Entries are the text, rodata and data
+segments, plus NRO `ASET` icon, NACP and RomFS. Compressed NSO segments are
+LZ4-decoded within `artifact_limits.expanded_bytes` and their SHA-256 compared
+with the header (`hash_status`). Truncated or over-budget segments stay listed
+with unavailable content. See
+[Switch executables](https://github.com/morluto/rea/blob/main/docs/guides/firmware/switch-executables.md).
 
 ## ESP images
 

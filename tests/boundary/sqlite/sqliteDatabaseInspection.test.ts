@@ -361,6 +361,58 @@ it.each(["inventory", "selected_table", "database"] as const)(
   },
 );
 
+it.each(["inventory", "selected_table", "database"] as const)(
+  "reads the documented sqlite_master spelling in %s scope",
+  async (schema_scope) => {
+    // "Alternative Names" in the schema-table documentation: `sqlite_master` works anywhere,
+    // while the two `sqlite_temp_*` spellings only resolve for the TEMP database. PRAGMA
+    // inventory lists the catalog under its canonical spelling only, so the row source has to
+    // resolve the alias before its exact-name lookup.
+    const path = await createDatabase(
+      "CREATE TABLE records(id INTEGER); INSERT INTO records VALUES (1);",
+    );
+    const result = inspectSqliteDatabaseSnapshot(path, {
+      path,
+      table: "sqlite_master",
+      columns: ["name", "type"],
+      schema_scope,
+    });
+
+    expect(result.rows).toMatchObject({
+      table: "sqlite_master",
+      columns: ["name", "type"],
+      order: "rowid",
+      values: [
+        [
+          { type: "text", value: "records" },
+          { type: "text", value: "table" },
+        ],
+      ],
+    });
+    // The catalog still has no self-row: the alias does not invent a declaration.
+    expect(result.schema.tables).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "sqlite_master" }),
+      ]),
+    );
+  },
+);
+
+it.each(["sqlite_temp_schema", "sqlite_temp_master", "SQLITE_MASTER"] as const)(
+  "still refuses the spelling %s that does not resolve in this schema",
+  async (table) => {
+    // The TEMP-only spellings and a case variant are not the documented anywhere-alias.
+    const path = await createDatabase("CREATE TABLE records(id INTEGER);");
+    expect(() =>
+      inspectSqliteDatabaseSnapshot(path, { path, table }),
+    ).toThrowError(
+      expect.objectContaining({
+        message: expect.stringContaining("does not exist with that exact name"),
+      }),
+    );
+  },
+);
+
 it("rejects malformed schema bytes instead of returning replacement text", async () => {
   const path = await createDatabase(
     "CREATE TABLE records(value TEXT /*schema-marker*/)",

@@ -520,6 +520,14 @@ file for its address regions, declared start address and record facts, then
 portable and requires no external tool. See
 [Intel HEX and S-record images](../../hex-records.md).
 
+## Inspect uClinux bFLT flat executables
+
+`inspect-artifact` / `extract-artifact` recognize a uClinux flat executable by
+its `bFLT` magic and report the 64-byte header without running it or applying
+its relocations. Text, data and the relocation table are extractable; gzip and
+gzdata bodies are inflated under `artifact_limits.expanded_bytes`. The header
+does not name a CPU. See [uClinux bFLT flat executables](../../bflt-executables.md).
+
 ## Inspect U-Boot legacy uImages
 
 `inspect-artifact` / `extract-artifact` recognize a legacy uImage by its
@@ -542,6 +550,15 @@ verifying signatures. Full payloads can reconstruct REPLACE, ZERO and
 REPLACE_ZSTD partition images; delta operations stay inventoried and refuse
 extraction. See [Android OTA update payloads](android-ota-payload.md)
 for header facts, operation types, limits and verification scope.
+
+## Expand Android sparse images
+
+`inspect-artifact` / `extract-artifact` recognize an Android sparse image
+(`0xED26FF3A`) by magic, record its header and chunk counts, and expand it to
+one `image.raw` child offline. RAW chunks are copied, FILL chunks repeated and
+DONT_CARE chunks written as zeros; stored checksums are not verified. The
+expanded child is classified again, so a sparse-wrapped boot image continues
+to the Android boot image reader. See [Android sparse images](android-sparse-image.md).
 
 ## Inspect UF2 and DfuSe images
 
@@ -572,3 +589,13 @@ zstd are recorded from leading magic and left compressed. An AVB footer is
 reported with its sizes and is not verified. `ANDROID!` does not say whether
 the file was boot, init_boot, or recovery. Extract `dtb` and pass that file
 to `inspect-devicetree`. See [Android boot images](../../android-boot-image.md).
+
+## Inspect Android vbmeta images
+
+`inspect-artifact` / `extract-artifact` recognize a standalone `vbmeta.img`
+by the `AVB0` magic at offset 0. The root records the header, rollback index,
+flags, release string, and each property, hashtree, hash, kernel command-line,
+and chain-partition descriptor. Unknown descriptor tags are retained. The
+authentication block, public key, and public key metadata are extractable
+children. Signatures and digests are recorded and not verified. See
+[Android Verified Boot vbmeta images](android-vbmeta.md).

@@ -52,7 +52,7 @@ const artifactTarget = {
 const artifactFields = {
   artifact_limits: {
     description:
-      "JSON artifact producer admissions: bun, dotnet_bundle, node_sea, godot, and expanded_bytes. Omitted fields keep defaults; changes apply on the next call without restart. Independent of summary/paging and client delivery limits.",
+      "JSON artifact producer admissions: bun, dotnet_bundle, node_sea, godot, android_sparse_image, android_vbmeta, and expanded_bytes. Omitted fields keep defaults; changes apply on the next call without restart. Independent of summary/paging and client delivery limits.",
   },
   integrity_policy: {
     description: "Behavior when declared artifact integrity does not match",

@@ -5,6 +5,7 @@ import {
   artifactIntegrityClaimSchema,
   artifactSha256PairSchema,
   artifactMd5PairSchema,
+  signedAfterPackingExplanationSchema,
 } from "./artifactIntegrity.js";
 import { artifactFormatMetadataSchema } from "./artifactFormatMetadata.js";
 import { z } from "zod";
@@ -71,6 +72,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "pkg",
   "asar",
   "ines",
+  "nds",
   "godot-pck",
   "unityfs",
   "wxapkg",
@@ -80,8 +82,12 @@ export const ARTIFACT_FORMAT_IDS = [
   "ktx",
   "ktx2",
   "uimage",
+  "nso",
+  "nro",
   "android-boot-image",
   "android-ota-payload",
+  "android-vbmeta",
+  "android-sparse-image",
   "iso9660",
   "uefi",
   "javascript-bundle",
@@ -108,6 +114,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "esp-image",
   "uf2",
   "dfuse",
+  "bflt",
   "esp-flash-image",
   "fit",
   "ntfs-mft",
@@ -125,6 +132,7 @@ const artifactFormatSchema = z.enum(ARTIFACT_FORMAT_IDS);
 /** Formats established from bytes or a virtual directory tree, independent of path roles. */
 const artifactContentFormatSchema = artifactFormatSchema.extract([
   "ines",
+  "nds",
   "zip",
   "godot-pck",
   "unityfs",
@@ -135,8 +143,12 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "ktx",
   "ktx2",
   "uimage",
+  "nso",
+  "nro",
   "android-boot-image",
   "android-ota-payload",
+  "android-vbmeta",
+  "android-sparse-image",
   "iso9660",
   "uefi",
   "intel-hex",
@@ -144,6 +156,7 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "esp-image",
   "uf2",
   "dfuse",
+  "bflt",
   "fit",
   "ntfs-mft",
   "mach-o-universal",
@@ -242,7 +255,11 @@ const integrityContradictionBaseSchema = z.object({
 });
 
 export const integrityContradictionSchema = z.union([
-  integrityContradictionBaseSchema.extend(artifactSha256PairSchema.shape),
+  integrityContradictionBaseSchema.extend({
+    ...artifactSha256PairSchema.shape,
+    /** Present when PE Authenticode stripping restores the declared SHA-256. */
+    signing_explanation: signedAfterPackingExplanationSchema.exactOptional(),
+  }),
   integrityContradictionBaseSchema.extend(artifactMd5PairSchema.shape),
   integrityContradictionBaseSchema.extend(artifactDfuCrc32PairSchema.shape),
   integrityContradictionBaseSchema.extend(artifactCrc32PairSchema.shape),
@@ -320,6 +337,13 @@ const extractedArtifactSchema = z.object({
   sha256: sha256Schema,
   bytes_written: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
   created: z.boolean(),
+  limitations: z
+    .array(z.string())
+    .min(1)
+    .exactOptional()
+    .describe(
+      "The inventory occurrence's own limitations, such as a case-folding collision or a normalized member name; absent when it has none",
+    ),
 });
 
 /** Path-independent commitment to one selected extraction operation. */

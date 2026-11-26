@@ -101,8 +101,13 @@ export const runBuildController = async (
   options: { readonly timeoutS: number; readonly signal?: AbortSignal },
 ): Promise<Readonly<Record<string, unknown>>> => {
   const { timeoutS, signal } = options;
-  source ??= readFile(CONTROLLER, "utf8");
-  const script = await source;
+  const loading = (source ??= readFile(CONTROLLER, "utf8").catch(
+    (cause: unknown) => {
+      if (source === loading) source = undefined;
+      throw cause;
+    },
+  ));
+  const script = await loading;
   const scriptBytes = Buffer.byteLength(script);
   if (scriptBytes > LINUX_SINGLE_ARGUMENT_BYTES)
     throw new AnalysisResourceConstraintError(

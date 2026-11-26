@@ -6,8 +6,12 @@ import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirect
 import { AnalysisTargetFailureError } from "../../domain/analysisErrorCore.js";
 import {
   inspectPeUnwindRangesInputSchema,
+  PE_UNWIND_LIMITATIONS,
   type PeUnwindRanges,
 } from "../../domain/native/peUnwindRanges.js";
+import { PeUnwindRangesService } from "../../application/binaryDiagnostics/PeUnwindRangesService.js";
+import { PE_UNWIND_RANGES_PROVIDER } from "../../domain/investigationProviders.js";
+import { ok } from "../../domain/result.js";
 import {
   peUnwindImage,
   runtimeFunction,
@@ -190,16 +194,149 @@ describe("x64 PE exception directory", () => {
       directorySize: 2 * 12 + 5,
     });
     expect(value.coverage).toMatchObject({
+      status: "partial",
       total_entries: 2,
       chained_entries: 1,
+      unknown_entries: 0,
       trailing_bytes: 5,
     });
+    expect(value.limitations).toContain(PE_UNWIND_LIMITATIONS.trailing);
     expect(value.entries[1]).toMatchObject({
       kind: "chained",
       parent: { begin_rva: "0x1800", index: null },
       primary_index: null,
       issues: ["unsorted", "chain_parent_missing"],
     });
+  });
+
+  it("marks coverage partial when trailing bytes remain undecoded, through the service boundary", async () => {
+    const dir = await createTestTempDirectory("rea-pe-unwind-trailing-");
+    const service = createPeUnwindRangesService();
+    try {
+      for (const [
+        name,
+        options,
+        expectedStatus,
+        expectedUnknown,
+        expectedTrailing,
+      ] of [
+        [
+          "aligned.exe",
+          {
+            entries: [primary],
+            blobs: [{ rva: 0x2000, bytes: unwindInfo(0, 0) }],
+            directorySize: 12,
+          },
+          "complete",
+          0,
+          0,
+        ],
+        [
+          "trailing-only.exe",
+          { entries: [], directorySize: 5 },
+          "partial",
+          0,
+          5,
+        ],
+        [
+          "one-plus-trailing.exe",
+          {
+            entries: [primary],
+            blobs: [{ rva: 0x2000, bytes: unwindInfo(0, 0) }],
+            directorySize: 17,
+          },
+          "partial",
+          0,
+          5,
+        ],
+        [
+          "unknown-plus-trailing.exe",
+          {
+            entries: [{ begin: 0x1000, end: 0x1100, unwind: 0x9000 }],
+            blobs: [],
+            directorySize: 17,
+          },
+          "partial",
+          1,
+          5,
+        ],
+      ] as const) {
+        const path = join(dir, name);
+        await writeFile(path, peUnwindImage(options));
+        const evidence = await service.inspect({ path });
+        if (!evidence.ok) throw evidence.error;
+        const normalized = evidence.value.normalized_result as PeUnwindRanges;
+        expect(normalized.coverage).toMatchObject({
+          status: expectedStatus,
+          unknown_entries: expectedUnknown,
+          trailing_bytes: expectedTrailing,
+        });
+        expect(
+          normalized.limitations.includes(PE_UNWIND_LIMITATIONS.trailing),
+        ).toBe(expectedTrailing > 0);
+        expect(evidence.value.limitations).toEqual(normalized.limitations);
+      }
+
+      const stubPath = join(dir, "aligned.exe");
+      const aligned = await service.inspect({ path: stubPath });
+      if (!aligned.ok) throw aligned.error;
+      const baseReport = aligned.value.normalized_result as PeUnwindRanges;
+      for (const inconsistent of [
+        {
+          ...baseReport,
+          coverage: {
+            ...baseReport.coverage,
+            status: "complete" as const,
+            unknown_entries: 0,
+            trailing_bytes: 5,
+          },
+        },
+        {
+          ...baseReport,
+          coverage: {
+            ...baseReport.coverage,
+            status: "partial" as const,
+            unknown_entries: 0,
+            trailing_bytes: 0,
+          },
+        },
+        {
+          ...baseReport,
+          exception_directory: {
+            status: "absent" as const,
+            rva: null,
+            size: null,
+            file_offset: null,
+            section: null,
+          },
+          coverage: {
+            status: "complete" as const,
+            total_entries: 0,
+            primary_entries: 0,
+            chained_entries: 0,
+            unknown_entries: 0,
+            entries_with_issues: 0,
+            trailing_bytes: 5,
+          },
+          page: {
+            ...baseReport.page,
+            returned: 0,
+            total: 0,
+            next_offset: null,
+          },
+          entries: [],
+        },
+      ]) {
+        const validatingService = new PeUnwindRangesService({
+          identity: PE_UNWIND_RANGES_PROVIDER,
+          inspect: async () => ok(inconsistent),
+        });
+        const result = await validatingService.inspect({ path: stubPath });
+        expect(result.ok).toBe(false);
+      }
+    } finally {
+      await service.close();
+    }
   });
 });
 

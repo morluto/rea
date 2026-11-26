@@ -566,11 +566,20 @@ const installationCoordinates = async (
           platform,
         ),
       };
-    if (platform !== "darwin")
-      return {
-        source: "default",
-        command: platform === "win32" ? "java.exe" : "java",
-      };
+    if (platform === "win32") {
+      // The owned-process launcher admits only absolute executable paths, so a
+      // JDK that is on PATH without JAVA_HOME must resolve to its launcher here
+      // instead of passing a bare java.exe. Relative PATH entries stay out: the
+      // caller's working directory cannot select the runtime.
+      const search = windowsPathCandidates("java.exe", options.environment, {
+        relativeEntries: "skip",
+      });
+      for (const { path: javaOnPath } of search.ok ? search.value : [])
+        if (host.executable(javaOnPath))
+          return { source: "path", command: javaOnPath };
+      return { source: "default", command: "java.exe" };
+    }
+    if (platform !== "darwin") return { source: "default", command: "java" };
     // Check the caller's PATH, never a file named java in the working directory.
     for (const { path: javaOnPath } of posixPathCandidates(
       "java",

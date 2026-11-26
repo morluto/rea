@@ -320,14 +320,41 @@ const GLB_MIME_EXTENSIONS = new Map([
 
 const arrayOf = (value: unknown): readonly unknown[] =>
   Array.isArray(value) ? value : [];
-const recordOf = (value: unknown): Readonly<Record<string, unknown>> =>
+const asRecord = (
+  value: unknown,
+): Readonly<Record<string, unknown>> | undefined =>
   value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
-    : {};
+    : undefined;
 const indexOf = (value: unknown): number | undefined =>
   Number.isSafeInteger(value) && (value as number) >= 0
     ? (value as number)
     : undefined;
+
+const readGlbJsonChunk = async (
+  read: GpuAssetRead,
+  offset: number,
+  length: number,
+): Promise<{
+  readonly status: GlbMetadata["json_status"];
+  readonly json: Readonly<Record<string, unknown>>;
+}> => {
+  if (length > GLB_JSON_PARSE_BYTES) return { status: "limit", json: {} };
+  try {
+    // glTF JSON is UTF-8; counts follow the last of duplicate members,
+    // as JavaScript glTF loaders do. Only a JSON object is a glTF root.
+    const parsed = asRecord(
+      parseLastWinsJson(
+        decodeStrictUtf8(await read(offset, length), "strip-signature"),
+      ),
+    );
+    return parsed === undefined
+      ? { status: "invalid", json: {} }
+      : { status: "parsed", json: parsed };
+  } catch {
+    return { status: "invalid", json: {} };
+  }
+};
 
 /** GLB chunks, glTF collection counts and images stored in the BIN chunk. */
 export const glbLayout = async (
@@ -347,7 +374,7 @@ export const glbLayout = async (
   const regions: GpuAssetRegion[] = [];
   const end = Math.min(declaredLength, fileSize);
   let jsonStatus: GlbMetadata["json_status"] = "invalid";
-  let json: Record<string, unknown> = {};
+  let json: Readonly<Record<string, unknown>> = {};
   let binOffset: number | undefined;
   let binLength = 0;
   let regionsExamined: GpuAssetLayout<GlbMetadata>["regionsExamined"] =
@@ -395,20 +422,9 @@ export const glbLayout = async (
       length,
     });
     if (index === 0 && at + 8 + length <= fileSize) {
-      if (length > GLB_JSON_PARSE_BYTES) jsonStatus = "limit";
-      else
-        try {
-          // glTF JSON is UTF-8; counts follow the last of duplicate members,
-          // as JavaScript glTF loaders do.
-          json = recordOf(
-            parseLastWinsJson(
-              decodeStrictUtf8(await read(at + 8, length), "strip-signature"),
-            ),
-          );
-          jsonStatus = "parsed";
-        } catch {
-          jsonStatus = "invalid";
-        }
+      const parsed = await readGlbJsonChunk(read, at + 8, length);
+      jsonStatus = parsed.status;
+      json = parsed.json;
     }
     if (type === GLB_BIN && binOffset === undefined) {
       binOffset = at + 8;
@@ -433,6 +449,12 @@ export const glbLayout = async (
   for (const [key, value] of Object.entries(json))
     if (Array.isArray(value)) counts[key] = value.length;
   const bufferViews = arrayOf(json["bufferViews"]);
+  if (Object.hasOwn(json, "images") && !Array.isArray(json["images"])) {
+    regionsExamined = "unknown";
+    limitations.push(
+      "The GLB images member is not a JSON array; embedded images were not listed.",
+    );
+  }
   const images = boundedList(arrayOf(json["images"]), MAX_GLB_IMAGES);
   if (images.omitted > 0) regionsExamined = "unknown";
   let unresolvedImages = 0;
@@ -443,25 +465,36 @@ export const glbLayout = async (
       `The GLB declares ${String(images.omitted)} image(s) past the ${String(MAX_GLB_IMAGES)}-image listing allowance; their bytes stay inside the BIN chunk region.`,
     );
   images.items.forEach((image, index) => {
+    const imageRecord = asRecord(image);
+    if (imageRecord === undefined) {
+      unresolvedImages++;
+      return;
+    }
     // An image named by URI is outside the GLB, not one of its regions.
-    if (recordOf(image)["bufferView"] === undefined) {
+    if (imageRecord["bufferView"] === undefined) {
       // Only a URI string establishes an external source.
-      if (typeof recordOf(image)["uri"] === "string") externalImages++;
+      if (typeof imageRecord["uri"] === "string") externalImages++;
       else unresolvedImages++;
       return;
     }
-    const view = recordOf(
-      bufferViews[indexOf(recordOf(image)["bufferView"]) ?? -1],
-    );
+    const viewIndex = indexOf(imageRecord["bufferView"]);
+    const view =
+      viewIndex === undefined ? undefined : asRecord(bufferViews[viewIndex]);
+    if (view === undefined) {
+      unresolvedImages++;
+      return;
+    }
     const bufferIndex = indexOf(view["buffer"]);
-    const buffer = bufferIndex === undefined ? undefined : buffers[bufferIndex];
+    const buffer =
+      bufferIndex === undefined ? undefined : asRecord(buffers[bufferIndex]);
     // glTF 2.0 GLB: only buffers[0] without a uri is the BIN chunk. A buffer
     // with a uri is external, so its images are not GLB regions either.
-    if (buffer !== undefined && typeof recordOf(buffer)["uri"] === "string") {
+    if (buffer !== undefined && typeof buffer["uri"] === "string") {
       externalImages++;
       return;
     }
-    const start = indexOf(view["byteOffset"] ?? 0);
+    const start =
+      view["byteOffset"] === undefined ? 0 : indexOf(view["byteOffset"]);
     const length = indexOf(view["byteLength"]);
     if (
       binOffset === undefined ||
@@ -469,12 +502,13 @@ export const glbLayout = async (
       buffer === undefined ||
       start === undefined ||
       length === undefined ||
-      start + length > binLength
+      start > binLength ||
+      length > binLength - start
     ) {
       unresolvedImages++;
       return;
     }
-    const mime = recordOf(image)["mimeType"];
+    const mime = imageRecord["mimeType"];
     const extension =
       typeof mime === "string"
         ? (GLB_MIME_EXTENSIONS.get(mime) ?? "bin")
@@ -493,7 +527,7 @@ export const glbLayout = async (
       `${String(unresolvedImages)} GLB image(s) name no URI and no bufferView that resolves inside the BIN chunk; they were not listed.`,
     );
   }
-  const asset = recordOf(json["asset"]);
+  const asset = asRecord(json["asset"]);
   const fit = fitRegions("GLB", regions, fileSize, declaredLength);
   return {
     metadata: {
@@ -502,9 +536,9 @@ export const glbLayout = async (
       declared_length: declaredLength,
       chunks,
       asset_version:
-        typeof asset["version"] === "string" ? asset["version"] : null,
+        typeof asset?.["version"] === "string" ? asset["version"] : null,
       asset_generator:
-        typeof asset["generator"] === "string" ? asset["generator"] : null,
+        typeof asset?.["generator"] === "string" ? asset["generator"] : null,
       counts,
       extensions_used: arrayOf(json["extensionsUsed"]).filter(
         (value): value is string => typeof value === "string",
