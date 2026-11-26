@@ -640,18 +640,25 @@ export class PlaywrightScenarioStorage {
       "Storage.getStorageKey",
       { frameId },
     );
-    const sessionKey = JSON.stringify([target.topLevelTargetId, storageKey]);
+    // Chrome's Storage.getStorageKey for a first-party area is often
+    // `${origin}/`, while the init-script bridge keys on location.origin.
+    const localAreaKey =
+      storageKey === origin || storageKey === `${origin}/`
+        ? origin
+        : storageKey;
+    const sessionKey = JSON.stringify([target.topLevelTargetId, localAreaKey]);
     const sessionOriginKey = JSON.stringify([target.topLevelTargetId, origin]);
     const local =
       this.#initializedLocal.has(storageKey) ||
+      this.#initializedLocal.has(localAreaKey) ||
       this.#initializedLocalOrigins.has(storageKey) ||
+      this.#initializedLocalOrigins.has(localAreaKey) ||
       seed.local.length === 0
         ? []
         : seed.local;
     const session =
       this.#initializedSession.has(sessionKey) ||
-      (storageKey === origin &&
-        this.#initializedSession.has(sessionOriginKey)) ||
+      this.#initializedSession.has(sessionOriginKey) ||
       seed.session.length === 0
         ? []
         : seed.session;
@@ -678,11 +685,12 @@ export class PlaywrightScenarioStorage {
       );
     if (local.length > 0) {
       this.#initializedLocal.add(storageKey);
-      this.#initializedLocalOrigins.add(storageKey);
+      this.#initializedLocal.add(localAreaKey);
+      this.#initializedLocalOrigins.add(localAreaKey);
     }
     if (session.length > 0) {
       this.#initializedSession.add(sessionKey);
-      if (storageKey === origin) this.#initializedSession.add(sessionOriginKey);
+      this.#initializedSession.add(sessionOriginKey);
     }
   }
 
