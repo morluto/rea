@@ -1515,7 +1515,13 @@ const judgeUbiPebCandidate = async (
       state: "retry",
       error: ubiSpacingConflict(geometry.pebSize, passedOverHeaderOffset),
     };
-  const image = assembleUbiImage(geometry, pebs, table.value, verifiedCopies);
+  const verifiedPebs = await verifyErasedPebBodies(ctx, geometry, pebs);
+  const image = assembleUbiImage(
+    geometry,
+    verifiedPebs,
+    table.value,
+    verifiedCopies,
+  );
   if (undersized !== -1) {
     const peb = pebs[undersized];
     const needed = peb?.state === "corrupt" ? (peb.vidMinPebSize ?? 0) : 0;
@@ -1545,10 +1551,17 @@ export interface ParseUbiImageOptions {
   readonly checkpoint?: (yieldControl: boolean) => Promise<void> | void;
 }
 
+interface UbiErasedRange {
+  readonly start: number;
+  readonly end: number;
+}
+
 interface UbiParseContext {
   readonly fileSize: number;
   staticPayloadCrcBytes: number;
   readonly staticPayloadCrcs: Map<string, number | null>;
+  readonly erasedRanges: UbiErasedRange[];
+  readonly nonErasedOffsets: number[];
   readonly first: UbiEcHeader;
   readonly read: UbiImageRead;
   readonly checkpoint:
@@ -1713,24 +1726,108 @@ const findSmallerGridError = async (
   return ok(null);
 };
 
-const isPebRemainderErased = async (
-  ctx: UbiParseContext,
-  index: number,
-  geometry: UbiGeometry,
-): Promise<boolean> => {
-  const start = index * geometry.pebSize + geometry.headerReadBytes;
-  const end = (index + 1) * geometry.pebSize;
-  for (
-    let offset = start, chunks = 0;
-    offset < end;
-    offset += SCAN_CHUNK_BYTES, chunks += 1
+const firstNonErasedByte = (bytes: Uint8Array): number => {
+  for (let i = 0; i < bytes.length; i += 1) if (bytes[i] !== 0xff) return i;
+  return -1;
+};
+
+const recordErasedRange = (
+  ranges: UbiErasedRange[],
+  start: number,
+  end: number,
+): void => {
+  if (start >= end) return;
+  let insertAt = 0;
+  while (insertAt < ranges.length && ranges[insertAt]!.end < start)
+    insertAt += 1;
+  let mergedStart = start;
+  let mergedEnd = end;
+  let removeCount = 0;
+  while (
+    insertAt + removeCount < ranges.length &&
+    ranges[insertAt + removeCount]!.start <= mergedEnd
   ) {
-    await ctx.checkpoint?.(chunks % 16 === 0);
-    const length = Math.min(SCAN_CHUNK_BYTES, end - offset);
-    const chunk = await ctx.read(offset, length);
-    if (chunk.length < length || !isErased(chunk)) return false;
+    const existing = ranges[insertAt + removeCount]!;
+    mergedStart = Math.min(mergedStart, existing.start);
+    mergedEnd = Math.max(mergedEnd, existing.end);
+    removeCount += 1;
+  }
+  ranges.splice(insertAt, removeCount, { start: mergedStart, end: mergedEnd });
+};
+
+const unverifiedErasedGaps = (
+  ranges: readonly UbiErasedRange[],
+  start: number,
+  end: number,
+): UbiErasedRange[] => {
+  const gaps: UbiErasedRange[] = [];
+  let cursor = start;
+  for (const range of ranges) {
+    if (range.end <= cursor) continue;
+    if (range.start >= end) break;
+    if (range.start > cursor) gaps.push({ start: cursor, end: range.start });
+    cursor = Math.max(cursor, range.end);
+    if (cursor >= end) break;
+  }
+  if (cursor < end) gaps.push({ start: cursor, end });
+  return gaps;
+};
+
+const isRangeErased = async (
+  ctx: UbiParseContext,
+  start: number,
+  end: number,
+): Promise<boolean> => {
+  if (start >= end) return true;
+  if (ctx.nonErasedOffsets.some((offset) => offset >= start && offset < end))
+    return false;
+  let chunks = 0;
+  for (const gap of unverifiedErasedGaps(ctx.erasedRanges, start, end)) {
+    for (
+      let offset = gap.start;
+      offset < gap.end;
+      offset += SCAN_CHUNK_BYTES, chunks += 1
+    ) {
+      await ctx.checkpoint?.(chunks % 16 === 0);
+      const length = Math.min(SCAN_CHUNK_BYTES, gap.end - offset);
+      const chunk = await ctx.read(offset, length);
+      if (chunk.length < length) return false;
+      const nonErased = firstNonErasedByte(chunk);
+      if (nonErased !== -1) {
+        recordErasedRange(ctx.erasedRanges, offset, offset + nonErased);
+        ctx.nonErasedOffsets.push(offset + nonErased);
+        return false;
+      }
+      recordErasedRange(ctx.erasedRanges, offset, offset + length);
+    }
   }
   return true;
+};
+
+const verifyErasedPebBodies = async (
+  ctx: UbiParseContext,
+  geometry: UbiGeometry,
+  pebs: readonly UbiPeb[],
+): Promise<readonly UbiPeb[]> => {
+  let verified: UbiPeb[] | null = null;
+  for (let index = 0; index < pebs.length; index += 1) {
+    const peb = pebs[index]!;
+    if (peb.state !== "erased") continue;
+    const erased = await isRangeErased(
+      ctx,
+      index * geometry.pebSize + geometry.headerReadBytes,
+      (index + 1) * geometry.pebSize,
+    );
+    if (!erased) {
+      verified ??= [...pebs];
+      verified[index] = {
+        state: "corrupt",
+        reason: "erased headers before written eraseblock bytes",
+        ec: null,
+      };
+    }
+  }
+  return verified ?? pebs;
 };
 
 const readVerifiedUbiTableCopies = async (
@@ -1795,18 +1892,7 @@ const evaluateUbiPebCandidate = async (
       measured.value,
     );
     if (peb.ok) {
-      if (
-        peb.value.state === "erased" &&
-        !(await isPebRemainderErased(ctx, index, measured.value))
-      ) {
-        pebs.push({
-          state: "corrupt",
-          reason: "erased headers before written eraseblock bytes",
-          ec: null,
-        });
-      } else {
-        pebs.push(peb.value);
-      }
+      pebs.push(peb.value);
     } else {
       pebError ??= peb.error;
       pebs.push({ state: "corrupt", reason: peb.error.message, ec: null });
@@ -1912,6 +1998,8 @@ export const parseUbiImage = async (
     fileSize,
     staticPayloadCrcBytes: 0,
     staticPayloadCrcs: new Map(),
+    erasedRanges: [],
+    nonErasedOffsets: [],
     first: first.value,
     read,
     checkpoint: options?.checkpoint,

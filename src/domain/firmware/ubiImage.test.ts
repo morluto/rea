@@ -2639,6 +2639,34 @@ it("classifies a block with erased headers and written payload as corrupt instea
   });
 });
 
+it("keeps total read bytes bounded when many dividing EC headers appear in a mostly-erased file", async () => {
+  // 512 * 5040 = 2,580,480 bytes has 60 divisors; placing a valid EC header at
+  // offset 0 and every dividing offset exercises every trial block size without
+  // a valid volume table. Erased-body verification must be deferred past table
+  // validation so retries do not reread the file body for each divisor.
+  const unit = 512;
+  const units = 5040;
+  const probe = Buffer.alloc(unit * units, 0xff);
+  const ecHeader = ubiImage([{ kind: "free" }]).subarray(0, 64);
+  ecHeader.copy(probe, 0);
+  for (let d = 1; d < units; d += 1) {
+    if (units % d === 0) ecHeader.copy(probe, d * unit);
+  }
+  let bytesRead = 0;
+  const result = await parseUbiImage(probe.length, (offset, length) => {
+    bytesRead += length;
+    return probe.subarray(offset, offset + length);
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      kind: "malformed",
+      message: expect.stringContaining("no valid volume table"),
+    },
+  });
+  expect(bytesRead).toBeLessThanOrEqual(2 * probe.length);
+});
+
 describe("layout volume VID validation", () => {
   const slots = ubiVolumeTableSlots();
   const staleTable = ubiVolumeTable(
