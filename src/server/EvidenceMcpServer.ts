@@ -52,6 +52,7 @@ export class EvidenceMcpServer extends EvidenceMcpServerCore {
           advertisedToolFamilies,
         ),
       advertisedToolFamilies,
+      undefined,
       toolsListPageBudget,
     );
   }

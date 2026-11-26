@@ -2,7 +2,7 @@ import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { safeParseUtf8Json } from "../domain/safeJson.js";
 import {
   bindArtifactFileCleanup,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   completedStableArtifact,
   readStableArtifact,
   ArtifactReaderFailure,
@@ -22,10 +22,9 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   AnalysisInputError,
   AnalysisCapabilityUnavailableError,
+  AnalysisTargetFailureError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
-  cancelledBy,
-  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   sqliteDatabaseSchema,
@@ -47,6 +46,7 @@ import {
   SQLITE_WORKER_HEAP_BYTES,
 } from "./SqliteDatabaseLimits.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 
 const operation = "inspect_sqlite_database";
 const {
@@ -56,28 +56,30 @@ const {
   ...inspectionShape
 } = sqliteDatabaseSchema.shape;
 const inspectionSchema = z.strictObject(inspectionShape);
-const replySchema = z.union([
+const replySchema = z.discriminatedUnion("ok", [
   z.strictObject({ ok: z.literal(true), inspection: inspectionSchema }),
-  z.strictObject({
-    ok: z.literal(false),
-    reason: z
-      .enum(SQLITE_INSPECTION_REASONS)
-      .exclude(SQLITE_STRUCTURED_INSPECTION_REASONS),
-    message: z.string(),
-  }),
-  z.strictObject({
-    ok: z.literal(false),
-    reason: z.literal("column-evaluation"),
-    message: z.string(),
-    readable_columns: z.array(z.string()),
-  }),
-  z.strictObject({
-    ok: z.literal(false),
-    reason: z.literal("column-limit"),
-    message: z.string(),
-    selected_columns: z.int().positive(),
-    engine_column_limit: z.int().positive(),
-  }),
+  z.discriminatedUnion("reason", [
+    z.strictObject({
+      ok: z.literal(false),
+      reason: z
+        .enum(SQLITE_INSPECTION_REASONS)
+        .exclude(SQLITE_STRUCTURED_INSPECTION_REASONS),
+      message: z.string(),
+    }),
+    z.strictObject({
+      ok: z.literal(false),
+      reason: z.literal("column-evaluation"),
+      message: z.string(),
+      readable_columns: z.array(z.string()),
+    }),
+    z.strictObject({
+      ok: z.literal(false),
+      reason: z.literal("column-limit"),
+      message: z.string(),
+      selected_columns: z.int().positive(),
+      engine_column_limit: z.int().positive(),
+    }),
+  ]),
 ]);
 /** Replaceable launcher retains the shared owned-process supervision boundary. */
 export type SqliteWorkerLauncher = NonNullable<
@@ -92,7 +94,6 @@ interface SqliteWorkerInspection {
 
 // Each input rejection names the caller argument that requires correction.
 const rejectedArgument = {
-  format: "path",
   unsupported: "path",
   selection: "table",
   "column-selection": "columns",
@@ -165,9 +166,16 @@ const rejectedReply = (
       {
         capturedOutput,
         diagnostics: { selected_path: selectedPath },
-        retryable: false,
-        remediationAction:
-          "The SQLite value/record, SQL statement and worker JSON reply allowances are each fixed at 16 MiB; this refusal does not identify which was exceeded. worker_timeout_ms and client deadlines do not raise them. If it preserves the requested facts, select exact columns, reduce row_limit, or use schema_scope: inventory instead of database. This worker refusal leaves no completed Evidence to retrieve. Do not repeat the unchanged request or truncate required database bytes.",
+        ...fixedAllowanceOptions(
+          "The SQLite value/record, SQL statement and worker reply allowance",
+          "bytes",
+          {
+            limit: SQLITE_DATABASE_LIMITS.outputBytes,
+            unit: "bytes",
+            narrowing:
+              "This refusal does not identify which of the three allowances was exceeded, and worker_timeout_ms does not raise them; if it preserves the requested facts, select exact columns, reduce row_limit, or use schema_scope: inventory instead of database.",
+          },
+        ),
       },
     );
   if (reply.reason === "column-limit")
@@ -182,9 +190,25 @@ const rejectedReply = (
       {
         capturedOutput,
         diagnostics: { selected_path: selectedPath },
-        retryable: false,
-        remediationAction: `The selected database is readable; only the combined projection exceeded this connection's native result-column limit. Request at most ${String(reply.engine_column_limit)} columns per call, splitting wider facts across calls, or omit table to inspect stored declarations with schema_scope: database. The limit belongs to SQLite's connection, so worker_timeout_ms and client deadlines do not raise it. Do not repeat the unchanged request.`,
+        ...fixedAllowanceOptions(
+          "SQLite's result-column limit for this connection",
+          "count",
+          {
+            limit: reply.engine_column_limit,
+            unit: "columns",
+            narrowing: `The database is readable; request at most ${String(reply.engine_column_limit)} columns per call, splitting wider facts across calls, or omit table to inspect stored declarations with schema_scope: database.`,
+          },
+        ),
       },
+    );
+  // SQLite established that the selected snapshot's bytes are not a valid
+  // database: a target refusal at the caller's path, not a bad argument.
+  if (reply.reason === "malformed")
+    return new AnalysisTargetFailureError(
+      operation,
+      selectedPath,
+      { kind: "malformed", format: "sqlite", detail: reply.message },
+      { capturedOutput },
     );
   const argument = rejectedArgument[reply.reason];
   return new AnalysisInputError(operation, { capturedOutput }, [
@@ -330,11 +354,9 @@ const sqliteReplyCompletionFailure = (
   );
   bindArtifactFileCleanup(cause, cleanup);
   if (cause.reason !== "cancelled") return cleanup;
-  const cancellation = cancelledBy(
-    operation,
-    carriedReason(artifactFileCancellationCause(cause)),
-    { capturedOutput },
-  );
+  const cancellation = artifactFileCancellationError(operation, cause, {
+    capturedOutput,
+  });
   return analysisErrorWithCleanupDependencies(cancellation, cleanup, operation);
 };
 

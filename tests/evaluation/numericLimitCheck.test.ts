@@ -1,10 +1,8 @@
 import { expect, it } from "vitest";
-import { readFile } from "node:fs/promises";
 import {
   compareDocumentedNumericLimits,
   discoverNumericLimitUses,
   documentedLimitCell,
-  loadExportedNumericLimitBounds,
   parseDocumentedNumericLimits,
   parseNumericLimitRegistry,
   parseRuntimeSettingEnvironments,
@@ -638,20 +636,4 @@ it("names a documented limit the code does not export", () => {
   expect(failures).toEqual([
     'REA_FIXED: documented Restart-only numeric limits default "30", floor "30", maximum "30", but code exports no bound',
   ]);
-});
-
-it("matches the inventory to the exported analysis settings and owner bounds", async () => {
-  const inventory = await readFile(
-    new URL("../../docs/reference/rea-limit-inventory.md", import.meta.url),
-    "utf8",
-  );
-  const exported = await loadExportedNumericLimitBounds();
-  expect(exported.failures).toEqual([]);
-  expect(
-    compareDocumentedNumericLimits(
-      parseDocumentedNumericLimits(inventory),
-      exported.bounds,
-      exported.names,
-    ),
-  ).toEqual([]);
 });

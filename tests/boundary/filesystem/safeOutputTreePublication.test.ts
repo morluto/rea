@@ -2,22 +2,27 @@ import { createHash } from "node:crypto";
 import { access, chmod, readFile, readdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
-import { expect, it, vi } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const observation = vi.hoisted(() => ({
   synced: [] as string[],
   refuseSync: undefined as string | undefined,
+  forbiddenDirectories: new Set<string>(),
 }));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const filesystem = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...filesystem,
     open: async (...args: Parameters<typeof filesystem.open>) => {
+      const path = String(args[0]);
+      if (observation.forbiddenDirectories.has(path))
+        throw new Error(
+          "Directory descriptor operations are unavailable on Windows",
+        );
       const handle = await filesystem.open(...args);
       const sync = handle.sync.bind(handle);
       handle.sync = async () => {
-        const path = String(args[0]);
         if (path === observation.refuseSync)
           throw new Error("controlled nested directory sync failure");
         await sync();
@@ -60,6 +65,8 @@ it.skipIf(process.platform === "win32")(
             code: "ENOENT",
           });
         } else {
+          const payload = join(output, "a", "b", "payload.txt");
+          expect((await readFile(payload)).equals(bytes)).toBe(true);
           await tree.commit();
           expect(tree.published).toBe(true);
           expect(observation.synced).toEqual([
@@ -68,12 +75,8 @@ it.skipIf(process.platform === "win32")(
             output,
             dirname(output),
           ]);
-          expect(
-            Buffer.compare(
-              await readFile(join(output, "a", "b", "payload.txt")),
-              bytes,
-            ),
-          ).toBe(0);
+          expect(await tree.rollback()).toEqual({ status: "not-required" });
+          expect((await readFile(payload)).equals(bytes)).toBe(true);
         }
       } finally {
         observation.refuseSync = undefined;
@@ -82,6 +85,28 @@ it.skipIf(process.platform === "win32")(
     }
   },
 );
+
+it("keeps Windows output visible and sealed without opening directories", async () => {
+  const parent = await createTestTempDirectory("rea-windows-output-");
+  const output = join(parent, "published");
+  const nested = join(output, "nested");
+  const payload = join(nested, "payload.txt");
+  for (const directory of [parent, output, nested])
+    observation.forbiddenDirectories.add(directory);
+  onTestFinished(() => observation.forbiddenDirectories.clear());
+
+  const tree = await SafeOutputTree.create(output, "win32");
+  onTestFinished(() => tree.closeHandles());
+  const bytes = Buffer.from("Windows output");
+  await tree.write("nested/payload.txt", Readable.from([bytes]), {
+    bytes: bytes.length,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  });
+  expect((await readFile(payload)).equals(bytes)).toBe(true);
+  await tree.commit();
+  expect(await tree.rollback()).toEqual({ status: "not-required" });
+  expect((await readFile(payload)).equals(bytes)).toBe(true);
+});
 
 it
   .skipIf(process.platform === "win32" || process.getuid?.() === 0)

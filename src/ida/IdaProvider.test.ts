@@ -16,6 +16,7 @@ import {
 } from "../../tests/fixtures/idaMcp.js";
 import { inspectIdaRegistration } from "./IdaDoctor.js";
 import { IdaProvider } from "./IdaProvider.js";
+import { rawLoadAtEntry } from "../domain/rawBinary.fixture.js";
 
 it.each([
   { state: "unconfigured", selected: false, content: undefined },
@@ -232,8 +233,7 @@ describe("IDA provider target support", () => {
         format: "raw-binary",
         architecture: "arm",
         availableArchitectures: ["arm"],
-        entryPoint: "0x8000000",
-        entryPointSource: "0x8000000",
+        rawLoad: rawLoadAtEntry("0x8000000"),
       }),
     ).toMatchObject({
       status: "unsupported",
@@ -448,6 +448,13 @@ it("applies runtime regex budgets through a bound IDA client and recovers in the
     expect(failed).toMatchObject({
       ok: false,
       error: {
+        _tag: "AnalysisResourceConstraintError",
+        operation: "search_strings",
+        resource: "cpu",
+        reportedLimits: {
+          matching_deadline_ms: 100,
+          matching_deadline_source: "runtime",
+        },
         limit: {
           setting: "regex.matching_deadline_ms",
           effective_value: 100,

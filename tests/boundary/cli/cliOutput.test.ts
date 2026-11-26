@@ -13,7 +13,7 @@ import {
   renderCliDocument,
   renderVersionReport,
   parseCliOutputArguments,
-} from "../../../src/cliOutput.js";
+} from "../../../src/cli/cliOutput.js";
 
 describe("CLI output argument boundary", () => {
   it("requires an exact row selector and explicit columns for delimited formats", () => {
@@ -379,6 +379,54 @@ describe("CLI output filter slice validation", () => {
         },
       });
       expect(result.stderr).toBe("");
+    },
+  );
+
+  workspaceCliTest(
+    "rejects a nonnumeric slice bound instead of returning no rows",
+    async ({ cli }) => {
+      const result = await cli.run({
+        freshProcess: true,
+        arguments: [
+          "providers",
+          "--json",
+          "--filter-output",
+          "capabilities[0,2x].provider.id",
+        ],
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        ok: false,
+        error: {
+          code: "INVALID_OUTPUT_FILTER",
+          message: expect.stringContaining("nonnumeric slice bound"),
+        },
+      });
+    },
+  );
+
+  workspaceCliTest(
+    "preserves --filter-output selections on over-budget CLI Evidence instead of returning {}",
+    async ({ cli, workspace }) => {
+      const target = workspace.path("entropy-over-budget.bin");
+      await writeFile(target, Buffer.alloc(64 * 1024, 0x41));
+      const result = await cli.run({
+        delivery: "budgeted",
+        environment: { REA_AGENT_RESULT_BUDGET_BYTES: "4096" },
+        arguments: [
+          "inspect-byte-entropy",
+          target,
+          "--block-size",
+          "256",
+          "--json",
+          "--filter-output",
+          "normalized_result.file_entropy",
+        ],
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.json).toEqual({
+        normalized_result: { file_entropy: 0 },
+      });
     },
   );
 

@@ -6,6 +6,7 @@ import {
 } from "../analysisResourceLimits.js";
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 import {
+  DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
   JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT,
   javaScriptMemberMutationRefusal,
 } from "./javascriptSemanticWorkAllowance.js";
@@ -36,8 +37,25 @@ const refusalOf = (run: () => unknown): AnalysisResourceConstraintError => {
   throw new Error("Expected a work allowance refusal");
 };
 
-it("refuses member-mutation work beyond the default allowance and names its setting", () => {
-  const refusal = refusalOf(() => analyzeJavaScriptSemantics(selections(8)));
+it.each([8, 32])(
+  "answers %i self-selections conservatively instead of refusing the source",
+  (count) => {
+    // One write's alias histories outgrow its query budget; that query is
+    // answered by escaping whole objects and the source's facts remain.
+    const ir = analyzeJavaScriptSemantics(selections(count));
+    expect(ir.coverage).toMatchObject({
+      status: "partial",
+      resourceLimits: ["alias-selections"],
+    });
+    expect(ir.callables.map(({ name }) => name)).toContain("probe");
+  },
+);
+
+it("names its setting when work exceeds the default allowance", () => {
+  const refusal = javaScriptMemberMutationRefusal(
+    "analyze_javascript_semantics",
+    DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
+  );
   expect(refusal).toMatchObject({
     resource: "cpu",
     retryable: false,

@@ -1,15 +1,12 @@
 import { LC } from "./machoLoadCommandCodes.js";
 import {
-  malformedInput,
-  ParseFailureError,
-  unsupportedInput,
-} from "../parseFailure.js";
-import {
   machoDependencyCommand,
   readMachoDylibCommandFacts,
 } from "./machoDylibCommand.js";
 import { readMachoSegmentHeader } from "./machoSegmentHeader.js";
 import {
+  MACHO_COMMON_HEADER_BYTES,
+  MAX_LOAD_COMMAND_BYTES,
   MachoLoadCommandCursor,
   machoCommandTableIssue,
   machoWordReader,
@@ -41,19 +38,20 @@ import {
   readFatJvmIdentityLimitIssue,
   readFatSliceDeclarations,
   readMachoHeaderPrefixFacts,
-  validateFatSlice,
+  inspectFatSliceRange,
   validateFatSliceIdentity,
+  machoFailure,
   type FatContainerHeader,
   type FatSliceDeclaration,
-  type FatSliceRangeIssue,
+  type FatSliceRangeFailure,
+  type MachoReadFailure,
 } from "./machoContainer.js";
-import { strictUtf8Decoder } from "../strictUtf8.js";
+import { decodeStrictUtf8 } from "../strictUtf8.js";
 
 /** Read `length` bytes at `offset`; shorter results mean end of file. */
 export type ReadAt = (offset: number, length: number) => Promise<Uint8Array>;
 
-/** Load commands larger than this are refused instead of buffered. */
-export const MAX_LOAD_COMMAND_BYTES = 16 * 1024 * 1024;
+export { MAX_LOAD_COMMAND_BYTES };
 /**
  * Identical `LC_LAZY_LOAD_DYLIB_INFO` commands are 16 bytes, so the load-command
  * byte cap alone would retain about a million dependency results. Stop before
@@ -82,29 +80,21 @@ const DYLIB_USE_REEXPORT = 0x2;
 const DYLIB_USE_UPWARD = 0x4;
 const DYLIB_USE_DELAYED_INIT = 0x8;
 
-const MACHO_FORMAT = "mach-o";
+/**
+ * The failure this reader raised while decoding one image. It never leaves
+ * this module: {@link readMachoImage} returns it as the image's facts.
+ */
+class MachoReadError extends Error {
+  constructor(readonly failure: MachoReadFailure) {
+    super(failure.detail);
+    this.name = "MachoReadError";
+  }
+}
 
-/** Malformed or unsupported structure found while decoding one image. */
-const machoIssue = (
-  status: "malformed" | "unsupported",
-  reason: string,
-): ParseFailureError<"malformed"> | ParseFailureError<"unsupported"> =>
-  status === "malformed"
-    ? malformedInput(MACHO_FORMAT, reason)
-    : unsupportedInput(MACHO_FORMAT, reason);
-
-/** The issue this reader threw, or `undefined` for any other failure. */
-const machoIssueOf = (cause: unknown): MachoReadIssue | undefined =>
-  cause instanceof ParseFailureError &&
-  cause.failure.format === MACHO_FORMAT &&
-  (cause.kind === "malformed" || cause.kind === "unsupported")
-    ? { status: cause.kind, reason: cause.message }
-    : undefined;
-
-/** A structural defect, and whether it is malformed or merely unsupported. */
-export interface MachoReadIssue {
-  readonly status: "malformed" | "unsupported";
-  readonly reason: string;
+/** A structure this reader could not read, with the owner's failure. */
+export interface MachoReadFailed {
+  readonly status: "failed";
+  readonly failure: MachoReadFailure;
 }
 
 /**
@@ -113,7 +103,7 @@ export interface MachoReadIssue {
  */
 export type MachoContainer =
   | { readonly kind: "not-mach-o" }
-  | ({ readonly kind: "issue" } & MachoReadIssue)
+  | { readonly kind: "issue"; readonly failure: MachoReadFailure }
   | { readonly kind: "thin"; readonly size: number }
   | {
       readonly kind: "fat";
@@ -129,9 +119,9 @@ export type HiddenFatRow =
   | {
       readonly status: "declared";
       readonly declaration: FatSliceDeclaration;
-      readonly rangeIssue: string | null;
+      readonly rangeIssue: FatSliceRangeFailure | null;
     }
-  | MachoReadIssue;
+  | MachoReadFailed;
 
 type ParsedFatContainerHeader = Extract<
   FatContainerHeader,
@@ -145,12 +135,19 @@ export const readMachoContainer = async (
 ): Promise<MachoContainer> => {
   const head = await readAt(0, Math.min(size, 8));
   if (head.byteLength < 8)
-    // A recognized magic with no room for a header is a truncated image.
+    // A recognized magic with no room for a header is a truncated image,
+    // unless the file is longer and the read came up short.
     return hasMachoMagic(head)
       ? {
           kind: "issue",
-          status: "malformed",
-          reason: "Mach-O header is truncated",
+          failure:
+            size >= 8
+              ? machoFailure.changed(
+                  "Mach-O header read came up short of the measured file",
+                )
+              : machoFailure.truncated("Mach-O header is truncated", {
+                  extent: { availableBytes: size, requiredBytes: 8 },
+                }),
         }
       : { kind: "not-mach-o" };
   const mayBeJvmClass = hasJvmClassHeader(head);
@@ -164,20 +161,40 @@ export const readMachoContainer = async (
   } else header = readFatContainerHeader(head, size);
   if (header.state !== "not-fat") {
     if (header.state === "needs-data") {
-      header = readFatContainerHeader(
-        await readAt(0, header.requiredBytes),
-        size,
-      );
+      const { requiredBytes } = header;
+      const table = await readAt(0, requiredBytes);
+      // The measured size admits the table, so a short re-read means the file
+      // changed while it was read. Parsing the short bytes could call the
+      // file not FAT, so the length is checked first.
+      if (table.byteLength < requiredBytes)
+        return {
+          kind: "issue",
+          failure: machoFailure.changed(
+            "FAT table read came up short of the measured file",
+          ),
+        };
+      header = readFatContainerHeader(table, size);
     }
     if (header.state === "not-fat") return { kind: "not-mach-o" };
+    // A FAT header or table past the file's measured end is cut short.
+    if (header.state === "truncated")
+      return {
+        kind: "issue",
+        failure: machoFailure.truncated(header.reason, {
+          extent: header.extent,
+        }),
+      };
+    // The complete re-read declares a larger table than the first read did,
+    // so the header bytes changed between the two reads.
     if (header.state === "needs-data")
       return {
         kind: "issue",
-        status: "malformed",
-        reason: "FAT table is truncated",
+        failure: machoFailure.changed(
+          "FAT header changed between reads of the measured file",
+        ),
       };
     if (header.state === "malformed")
-      return { kind: "issue", status: "malformed", reason: header.reason };
+      return { kind: "issue", failure: machoFailure.malformed(header.reason) };
     let identity = classifyFatContainerIdentity(header, () => undefined);
     if (identity.state === "needs-slice-header") {
       const sliceHeaders = new Map<number, number | null>();
@@ -187,11 +204,16 @@ export const readMachoContainer = async (
         sliceHeaders.get(offset),
       );
     }
-    if (
-      identity.state === "not-mach-o" ||
-      identity.state === "needs-slice-header"
-    )
-      return { kind: "not-mach-o" };
+    if (identity.state === "not-mach-o") return { kind: "not-mach-o" };
+    // Every slice still missing its first word lies inside the measured file
+    // and was read, so a short slice-header read means the file changed.
+    if (identity.state === "needs-slice-header")
+      return {
+        kind: "issue",
+        failure: machoFailure.changed(
+          "FAT slice header read came up short of the measured file",
+        ),
+      };
     if (mayBeJvmClass && size > MAX_JVM_CLASS_IDENTITY_BYTES) {
       const limitIssue = await readFatJvmIdentityLimitIssue(
         header,
@@ -199,7 +221,7 @@ export const readMachoContainer = async (
         readAt,
       );
       if (limitIssue !== null)
-        return { kind: "issue", status: "unsupported", reason: limitIssue };
+        return { kind: "issue", failure: machoFailure.unsupported(limitIssue) };
     }
     // Aliased declarations are rejected at the declaration owner before any
     // slice payload is parsed. A declaration whose own range is already
@@ -208,8 +230,7 @@ export const readMachoContainer = async (
     if (overlap !== null)
       return {
         kind: "issue",
-        status: "malformed",
-        reason: fatSliceOverlapReason(overlap),
+        failure: machoFailure.malformed(fatSliceOverlapReason(overlap)),
       };
     // Identity is only malformed through a slice range issue, which the
     // returned rangeIssues retain.
@@ -224,8 +245,9 @@ export const readMachoContainer = async (
   if (thin !== null)
     return {
       kind: "issue",
-      status: "unsupported",
-      reason: "big-endian Mach-O images are not supported",
+      failure: machoFailure.unsupported(
+        "big-endian Mach-O images are not supported",
+      ),
     };
   return { kind: "not-mach-o" };
 };
@@ -248,15 +270,15 @@ export const readMachoImage = async (
     const container = await readMachoContainer(readAt, size);
     if (container.kind === "not-mach-o") return { status: "not-mach-o" };
     if (container.kind === "issue")
-      return { status: container.status, reason: container.reason };
+      return { status: "failed", failure: container.failure };
     if (container.kind === "thin")
       return { status: "parsed", slices: [await readSlice(readAt, 0, size)] };
     const { header } = container;
     const rangeIssue = header.rangeIssues.find(
-      (issue): issue is FatSliceRangeIssue => issue !== null,
+      (issue): issue is FatSliceRangeFailure => issue !== null,
     );
     if (rangeIssue !== undefined)
-      return { status: rangeIssue.category, reason: rangeIssue.reason };
+      return { status: "failed", failure: rangeIssue };
     const hiddenSlice = await readHiddenSlice(readAt, container.hidden);
     return {
       status: "parsed",
@@ -264,8 +286,8 @@ export const readMachoImage = async (
       ...(hiddenSlice === null ? {} : { hiddenSlices: [hiddenSlice] }),
     };
   } catch (cause: unknown) {
-    const issue = machoIssueOf(cause);
-    if (issue !== undefined) return issue;
+    if (cause instanceof MachoReadError)
+      return { status: "failed", failure: cause.failure };
     throw cause;
   }
 };
@@ -290,15 +312,21 @@ const readAppleHiddenArm64Row = async (
   const end = header.tableEnd + 20;
   if (end > fileSize || end > firstOffset) return null;
   const bytes = await readAt(header.tableEnd, 20);
+  // `end` lies inside the measured file, so a short read means it changed.
   if (bytes.byteLength < 20)
-    return { status: "malformed", reason: "Hidden ARM64 FAT row is truncated" };
+    return {
+      status: "failed",
+      failure: machoFailure.changed(
+        "Hidden ARM64 FAT row read came up short of the measured file",
+      ),
+    };
   const row = readFatSliceDeclarations(bytes, {
     count: 1,
     wide: false,
     littleEndian: header.littleEndian,
   });
   if (row.status !== "parsed")
-    return { status: "malformed", reason: row.reason };
+    return { status: "failed", failure: machoFailure.malformed(row.reason) };
   const declaration = { ...row.slices[0]!, index: header.count };
   if (declaration.cpuType !== CPU_TYPE_ARM64) return null;
   const overlap = findOverlappingFatSlices([
@@ -310,8 +338,8 @@ const readAppleHiddenArm64Row = async (
     declaration,
     rangeIssue:
       overlap === null
-        ? validateFatSlice(declaration, fileSize, end)
-        : fatSliceOverlapReason(overlap),
+        ? inspectFatSliceRange(declaration, fileSize, end)
+        : machoFailure.malformed(fatSliceOverlapReason(overlap)),
   };
 };
 
@@ -320,9 +348,9 @@ const readHiddenSlice = async (
   row: HiddenFatRow | null,
 ): Promise<MachoSlice | null> => {
   if (row === null) return null;
-  if (row.status !== "declared") throw machoIssue(row.status, row.reason);
+  if (row.status !== "declared") throw new MachoReadError(row.failure);
   const { declaration, rangeIssue } = row;
-  if (rangeIssue !== null) throw machoIssue("malformed", rangeIssue);
+  if (rangeIssue !== null) throw new MachoReadError(rangeIssue);
   const slice = await readSlice(readAt, declaration.offset, declaration.size, {
     fatCpuType: declaration.cpuType,
     fatCpuSubtype: declaration.cpuSubtype,
@@ -332,7 +360,8 @@ const readHiddenSlice = async (
     cpuType: slice.cpu_type,
     cpuSubtype: slice.cpu_subtype,
   });
-  if (identityIssue !== null) throw machoIssue("malformed", identityIssue);
+  if (identityIssue !== null)
+    throw new MachoReadError(machoFailure.malformed(identityIssue));
   return { ...slice, hidden: true };
 };
 
@@ -343,7 +372,7 @@ const readFatSlices = async (
   const slices: MachoSlice[] = [];
   // Keep validating after an unsupported slice so a later malformed slice is
   // reported as malformed whatever the slice order.
-  let unsupported: MachoReadIssue | undefined;
+  let unsupported: MachoReadFailure | undefined;
   for (const declaration of declarations) {
     const { offset, size: length, cpuType, cpuSubtype } = declaration;
     let slice: MachoSlice;
@@ -354,20 +383,23 @@ const readFatSlices = async (
         alignmentExponent: declaration.alignmentExponent,
       });
     } catch (cause: unknown) {
-      const issue = machoIssueOf(cause);
-      if (issue?.status !== "unsupported") throw cause;
-      unsupported ??= issue;
+      if (
+        !(cause instanceof MachoReadError) ||
+        cause.failure.kind !== "unsupported"
+      )
+        throw cause;
+      unsupported ??= cause.failure;
       continue;
     }
     const identityIssue = validateFatSliceIdentity(declaration, {
       cpuType: slice.cpu_type,
       cpuSubtype: slice.cpu_subtype,
     });
-    if (identityIssue !== null) throw machoIssue("malformed", identityIssue);
+    if (identityIssue !== null)
+      throw new MachoReadError(machoFailure.malformed(identityIssue));
     slices.push(slice);
   }
-  if (unsupported !== undefined)
-    throw machoIssue(unsupported.status, unsupported.reason);
+  if (unsupported !== undefined) throw new MachoReadError(unsupported);
   return slices;
 };
 
@@ -399,7 +431,7 @@ export type MachoSliceCommandTable =
       readonly header: MachoSliceHeader;
       readonly bytes: Uint8Array;
     }
-  | (MachoReadIssue & { readonly header: MachoSliceHeader | null });
+  | (MachoReadFailed & { readonly header: MachoSliceHeader | null });
 
 /** Read one slice's header and load-command bytes without framing them. */
 export const readSliceCommandTable = async (
@@ -407,20 +439,45 @@ export const readSliceCommandTable = async (
   base: number,
   length: number,
 ): Promise<MachoSliceCommandTable> => {
-  const headerBytes = await readAt(base, 28);
+  if (length < MACHO_COMMON_HEADER_BYTES)
+    return failed(
+      machoFailure.truncated("Mach-O header is truncated", {
+        offset: base,
+        extent: {
+          availableBytes: length,
+          requiredBytes: MACHO_COMMON_HEADER_BYTES,
+        },
+      }),
+      null,
+    );
+  const headerBytes = await readAt(base, MACHO_COMMON_HEADER_BYTES);
+  // The slice holds the whole header, so a short read means a changed file.
+  if (headerBytes.byteLength < MACHO_COMMON_HEADER_BYTES)
+    return failed(
+      machoFailure.changed(
+        "Mach-O header read came up short of the measured slice",
+        { offset: base },
+      ),
+      null,
+    );
   const parsed = readMachoHeaderDeclarations(headerBytes, length);
   if (!parsed.ok)
-    return failed("malformed", "Mach-O header is truncated", null);
+    return failed(
+      machoFailure.truncated("Mach-O header is truncated", { offset: base }),
+      null,
+    );
   if (parsed.value === null)
     return failed(
-      "malformed",
-      `slice at offset ${base} has no Mach-O header`,
+      machoFailure.malformed(`slice at offset ${base} has no Mach-O header`, {
+        offset: base,
+      }),
       null,
     );
   if (!parsed.value.littleEndian)
     return failed(
-      "unsupported",
-      "big-endian Mach-O slices are not supported",
+      machoFailure.unsupported("big-endian Mach-O slices are not supported", {
+        offset: base,
+      }),
       null,
     );
   const {
@@ -445,29 +502,40 @@ export const readSliceCommandTable = async (
   const issue = machoCommandTableIssue(parsed.value, length);
   if (issue !== null)
     return failed(
-      "malformed",
-      issue.kind === "extent"
-        ? "load commands extend beyond the Mach-O slice"
-        : issue.message,
+      machoFailure.malformed(
+        issue.kind === "extent"
+          ? "load commands extend beyond the Mach-O slice"
+          : issue.message,
+        { offset: base, field: "load_commands" },
+      ),
       header,
     );
   if (header.commandBytes > MAX_LOAD_COMMAND_BYTES)
     return failed(
-      "unsupported",
-      `load commands occupy ${header.commandBytes} bytes, above the ${MAX_LOAD_COMMAND_BYTES}-byte limit`,
+      machoFailure.unsupported(
+        `load commands occupy ${header.commandBytes} bytes, above the ${MAX_LOAD_COMMAND_BYTES}-byte limit`,
+        { offset: base, field: "load_commands" },
+      ),
       header,
     );
   const bytes = await readAt(base + header.headerSize, header.commandBytes);
+  // The commands were admitted inside the slice, so a short read means the
+  // file changed while it was read.
   if (bytes.byteLength < header.commandBytes)
-    return failed("malformed", "load commands is truncated", header);
+    return failed(
+      machoFailure.changed(
+        "load commands read came up short of the measured slice",
+        { offset: base, field: "load_commands" },
+      ),
+      header,
+    );
   return { status: "read", header, bytes };
 };
 
 const failed = (
-  status: MachoReadIssue["status"],
-  reason: string,
+  failure: MachoReadFailure,
   header: MachoSliceHeader | null,
-): MachoSliceCommandTable => ({ status, reason, header });
+): MachoSliceCommandTable => ({ status: "failed", failure, header });
 
 /**
  * Hand each load command to `visit` in order without retaining it. A framing
@@ -479,7 +547,7 @@ export const frameLoadCommands = (
     bytes,
   }: { readonly header: MachoSliceHeader; readonly bytes: Uint8Array },
   visit: (command: MachoLoadCommand) => void,
-): { readonly status: "framed" } | MachoReadIssue => {
+): { readonly status: "framed" } | MachoReadFailed => {
   const cursor = new MachoLoadCommandCursor({
     wide: header.wide,
     littleEndian: true,
@@ -490,7 +558,8 @@ export const frameLoadCommands = (
     const frame = cursor.read(
       bytes.subarray(cursor.nextOffset, cursor.nextOffset + 8),
     );
-    if (!frame.ok) return { status: "malformed", reason: frame.error };
+    if (!frame.ok)
+      return { status: "failed", failure: machoFailure.malformed(frame.error) };
     const { index, command, offset, size } = frame.value;
     visit({
       index,
@@ -500,7 +569,11 @@ export const frameLoadCommands = (
     });
   }
   const complete = cursor.finish();
-  if (!complete.ok) return { status: "malformed", reason: complete.error };
+  if (!complete.ok)
+    return {
+      status: "failed",
+      failure: machoFailure.malformed(complete.error),
+    };
   return { status: "framed" };
 };
 
@@ -515,7 +588,7 @@ const readSlice = async (
   } | null = null,
 ): Promise<MachoSlice> => {
   const table = await readSliceCommandTable(readAt, base, length);
-  if (table.status !== "read") throw machoIssue(table.status, table.reason);
+  if (table.status !== "read") throw new MachoReadError(table.failure);
   const { header } = table;
   const slice: MachoSlice = {
     architecture: machoArchitectureName(header.cpuType, header.cpuSubtype),
@@ -540,42 +613,40 @@ const readSlice = async (
     | { readonly kind: "parsed"; readonly value: MachoDependency }
     | LazyLoadDylibInfoCommand
   > = [];
-  const segments: SegmentSpan[] = [];
-  let unreadableSegment: number | undefined;
+  const segments: SegmentCommandRange[] = [];
   let lazyInfoCount = 0;
   // Each command decodes as it is framed, so a defect in an earlier command
-  // keeps precedence over a later framing defect.
-  const framed = frameLoadCommands(table, ({ command, body, index }) => {
-    if (command === LC.SEGMENT || command === LC.SEGMENT_64) {
-      const span = readSegmentSpan(body, command === LC.SEGMENT_64);
-      if (span === undefined) unreadableSegment ??= index;
-      else segments.push(span);
-    }
-    if (command === LC.LAZY_LOAD_DYLIB_INFO) {
-      lazyInfoCount += 1;
-      if (lazyInfoCount > MAX_LAZY_INFO_DEPENDENCIES)
-        throw machoIssue(
-          "unsupported",
-          `LC_LAZY_LOAD_DYLIB_INFO commands exceed the ${MAX_LAZY_INFO_DEPENDENCIES}-dependency limit`,
-        );
-    }
-    const decoded = decodeCommand(command, body, index, slice);
-    if (decoded !== undefined) dependencies.push(decoded);
-  });
-  if (framed.status !== "framed")
-    throw machoIssue(framed.status, framed.reason);
-  if (lazyInfoCount > 0 && unreadableSegment !== undefined)
-    throw machoIssue(
-      "malformed",
-      `load command ${unreadableSegment} is too short to establish the slice VM range for LC_LAZY_LOAD_DYLIB_INFO`,
-    );
+  // keeps precedence over a later framing defect. Only lazy info needs VM facts.
+  const framed = frameLoadCommands(
+    table,
+    ({ command, body, index, offset }) => {
+      if (command === LC.SEGMENT || command === LC.SEGMENT_64)
+        segments.push({ index, command, offset, size: body.byteLength });
+      if (command === LC.LAZY_LOAD_DYLIB_INFO) {
+        lazyInfoCount += 1;
+        if (lazyInfoCount > MAX_LAZY_INFO_DEPENDENCIES)
+          throw new MachoReadError(
+            machoFailure.unsupported(
+              `LC_LAZY_LOAD_DYLIB_INFO commands exceed the ${MAX_LAZY_INFO_DEPENDENCIES}-dependency limit`,
+            ),
+          );
+      }
+      const decoded = decodeCommand(command, body, index, slice);
+      if (decoded !== undefined) dependencies.push(decoded);
+    },
+  );
+  if (framed.status !== "framed") throw new MachoReadError(framed.failure);
+  const maxVmOffset =
+    lazyInfoCount === 0
+      ? LAZY_INFO_MIN_VM_OFFSET
+      : maximumVmOffset(table.bytes, segments);
   await appendDependencies(
     slice,
     dependencies,
     readAt,
     base,
     length,
-    maximumVmOffset(segments),
+    maxVmOffset,
   );
   const distinctPlatforms = [...new Set(slice.platforms)];
   slice.platform =
@@ -596,23 +667,41 @@ interface SegmentSpan {
   readonly vmsize: bigint;
 }
 
-/** Runtime end of the mapped image, excluding `__LINKEDIT`, floored at one page. */
-const maximumVmOffset = (segments: readonly SegmentSpan[]): bigint => {
-  let textVmAddr = 0n;
-  for (const segment of segments) {
-    if (segment.name === "__TEXT") {
-      textVmAddr = segment.vmaddr;
-      break;
-    }
-  }
-  let max = LAZY_INFO_MIN_VM_OFFSET;
-  for (const segment of segments) {
-    if (segment.name === "__LINKEDIT") continue;
-    const end = segment.vmaddr - textVmAddr + segment.vmsize;
-    if (end > max) max = end;
-  }
-  return max;
+type SegmentCommandRange = Omit<MachoLoadCommand, "body"> & {
+  readonly size: number;
 };
+
+/** Runtime end of the mapped image, excluding `__LINKEDIT`, floored at one page. */
+const maximumVmOffset = (
+  commands: Uint8Array,
+  segments: readonly SegmentCommandRange[],
+): bigint => {
+  let textVmAddr: bigint | undefined;
+  let lastEnd = 0n;
+  for (const { command, offset, size, index } of segments) {
+    const segment = readSegmentSpan(
+      commands.subarray(offset, offset + size),
+      command === LC.SEGMENT_64,
+    );
+    if (segment === undefined)
+      throw new MachoReadError(
+        machoFailure.malformed(
+          `load command ${index} is too short to establish the slice VM range for LC_LAZY_LOAD_DYLIB_INFO`,
+        ),
+      );
+    if (segment.name === "__TEXT") textVmAddr ??= segment.vmaddr;
+    if (segment.name === "__LINKEDIT") continue;
+    const end = segment.vmaddr + segment.vmsize;
+    if (end > lastEnd) lastEnd = end;
+  }
+  const max = lastEnd - (textVmAddr ?? 0n);
+  return max > LAZY_INFO_MIN_VM_OFFSET ? max : LAZY_INFO_MIN_VM_OFFSET;
+};
+
+const SEGMENT_NAME_DECODER = new TextDecoder("utf-8", {
+  fatal: false,
+  ignoreBOM: true,
+});
 
 const readSegmentSpan = (
   body: Uint8Array,
@@ -624,7 +713,7 @@ const readSegmentSpan = (
   const end = nameBytes.indexOf(0);
   return {
     // Segment names are fixed-width Mach-O data; a leading BOM is literal name bytes.
-    name: new TextDecoder("utf-8", { fatal: false, ignoreBOM: true }).decode(
+    name: SEGMENT_NAME_DECODER.decode(
       end < 0 ? nameBytes : nameBytes.subarray(0, end),
     ),
     vmaddr,
@@ -647,22 +736,15 @@ interface LazyPayloadWork {
   stringBytes: number;
   /** Symbol-string references. Repeats each count. */
   symbolReferences: number;
-  rangeChecks: number;
 }
 
 const containedPayload = (
   reads: readonly { fileOffset: number; bytes: Uint8Array }[],
   fileOffset: number,
   size: number,
-  work: LazyPayloadWork,
 ): Uint8Array | undefined => {
+  // The per-slice dependency limit bounds both stored ranges and lookups.
   for (const read of reads) {
-    work.rangeChecks += 1;
-    if (work.rangeChecks > MAX_LOAD_COMMAND_BYTES)
-      throw machoIssue(
-        "unsupported",
-        `LC_LAZY_LOAD_DYLIB_INFO payload range lookup exceeds the ${MAX_LOAD_COMMAND_BYTES}-check limit`,
-      );
     const start = fileOffset - read.fileOffset;
     if (
       start >= 0 &&
@@ -692,7 +774,6 @@ const appendDependencies = async (
     payloadBytes: 0,
     stringBytes: 0,
     symbolReferences: 0,
-    rangeChecks: 0,
   };
   for (const dependency of dependencies) {
     if (dependency.kind === "parsed") {
@@ -741,38 +822,42 @@ const decodeCommand = (
   }
   if (command === LC.CODE_SIGNATURE) {
     if (readMachoLinkeditDataCommand(LC.CODE_SIGNATURE, body, true) === null)
-      throw machoIssue(
-        "malformed",
-        `load command ${index} is too short for LC_CODE_SIGNATURE`,
+      throw new MachoReadError(
+        machoFailure.malformed(
+          `load command ${index} is too short for LC_CODE_SIGNATURE`,
+        ),
       );
     slice.code_signature_present = true;
     return;
   }
   if (command === LC.BUILD_VERSION) {
     if (body.byteLength < 24)
-      throw machoIssue(
-        "malformed",
-        `load command ${index} is too short for LC_BUILD_VERSION`,
+      throw new MachoReadError(
+        machoFailure.malformed(
+          `load command ${index} is too short for LC_BUILD_VERSION`,
+        ),
       );
-    const view = viewOf(body);
-    const toolCount = view.getUint32(20, true);
+    const reader = machoWordReader(body, true);
+    const toolCount = reader.u32(20);
     if (toolCount > Math.floor((body.byteLength - 24) / 8))
-      throw machoIssue(
-        "malformed",
-        `load command ${index} LC_BUILD_VERSION tool records exceed cmdsize`,
+      throw new MachoReadError(
+        machoFailure.malformed(
+          `load command ${index} LC_BUILD_VERSION tool records exceed cmdsize`,
+        ),
       );
-    const platform = view.getUint32(8, true);
+    const platform = reader.u32(8);
     slice.platforms.push(platform);
     return;
   }
   const versionMin = classifyMachoVersionMinCommand(command, body.byteLength);
   if (versionMin !== null) {
     if (versionMin.kind !== "exact")
-      throw machoIssue(
-        "malformed",
-        versionMin.kind === "truncated"
-          ? `load command ${index} is too short for a version-min command`
-          : `load command ${index} is too long for a version-min command`,
+      throw new MachoReadError(
+        machoFailure.malformed(
+          versionMin.kind === "truncated"
+            ? `load command ${index} is too short for a version-min command`
+            : `load command ${index} is too long for a version-min command`,
+        ),
       );
     slice.platforms.push(
       legacyMachoPlatform(versionMin.platform, slice.cpu_type),
@@ -804,20 +889,23 @@ const decodeLazyLoadDylibInfoCommand = (
     true,
   );
   if (data === null)
-    throw machoIssue(
-      "malformed",
-      `load command ${index} is too short for LC_LAZY_LOAD_DYLIB_INFO`,
+    throw new MachoReadError(
+      machoFailure.malformed(
+        `load command ${index} is too short for LC_LAZY_LOAD_DYLIB_INFO`,
+      ),
     );
   const { dataOffset, dataSize } = data;
   if (dataSize < LAZY_INFO_HEADER_BYTES)
-    throw machoIssue(
-      "malformed",
-      `load command ${index} LC_LAZY_LOAD_DYLIB_INFO payload is shorter than its 24-byte header`,
+    throw new MachoReadError(
+      machoFailure.malformed(
+        `load command ${index} LC_LAZY_LOAD_DYLIB_INFO payload is shorter than its 24-byte header`,
+      ),
     );
   if (dataSize > MAX_LOAD_COMMAND_BYTES)
-    throw machoIssue(
-      "unsupported",
-      `LC_LAZY_LOAD_DYLIB_INFO payload occupies ${dataSize} bytes, above the ${MAX_LOAD_COMMAND_BYTES}-byte limit`,
+    throw new MachoReadError(
+      machoFailure.unsupported(
+        `LC_LAZY_LOAD_DYLIB_INFO payload occupies ${dataSize} bytes, above the ${MAX_LOAD_COMMAND_BYTES}-byte limit`,
+      ),
     );
   return { kind: "lazy-info", index, dataOffset, dataSize };
 };
@@ -829,13 +917,14 @@ const readLazyPayloadBytes = async (
   index: number,
   work: LazyPayloadWork,
 ): Promise<Uint8Array> => {
-  const covered = containedPayload(work.reads, fileOffset, size, work);
+  const covered = containedPayload(work.reads, fileOffset, size);
   if (covered !== undefined) return covered;
   work.payloadBytes += size;
   if (work.payloadBytes > MAX_LOAD_COMMAND_BYTES)
-    throw machoIssue(
-      "unsupported",
-      `LC_LAZY_LOAD_DYLIB_INFO payloads occupy ${work.payloadBytes} bytes, above the ${MAX_LOAD_COMMAND_BYTES}-byte aggregate limit`,
+    throw new MachoReadError(
+      machoFailure.unsupported(
+        `LC_LAZY_LOAD_DYLIB_INFO payloads occupy ${work.payloadBytes} bytes, above the ${MAX_LOAD_COMMAND_BYTES}-byte aggregate limit`,
+      ),
     );
   const payload = await readExact(
     readAt,
@@ -859,15 +948,17 @@ const readLazyLoadDylibInfo = async (
     command.dataOffset > length ||
     command.dataSize > length - command.dataOffset
   )
-    throw machoIssue(
-      "malformed",
-      `load command ${command.index} LC_LAZY_LOAD_DYLIB_INFO payload extends beyond the Mach-O slice`,
+    throw new MachoReadError(
+      machoFailure.malformed(
+        `load command ${command.index} LC_LAZY_LOAD_DYLIB_INFO payload extends beyond the Mach-O slice`,
+      ),
     );
   const fileOffset = base + command.dataOffset;
   if (!Number.isSafeInteger(fileOffset))
-    throw machoIssue(
-      "malformed",
-      `load command ${command.index} LC_LAZY_LOAD_DYLIB_INFO payload offset is not a safe integer`,
+    throw new MachoReadError(
+      machoFailure.malformed(
+        `load command ${command.index} LC_LAZY_LOAD_DYLIB_INFO payload offset is not a safe integer`,
+      ),
     );
   const payload = await readLazyPayloadBytes(
     readAt,
@@ -900,27 +991,31 @@ const decodeLazyLoadDylibInfoPayload = (
   const symbolCount = reader.u32(16);
   const symbolArrayOffset = reader.u32(20);
   if (BigInt(flagImageOffset) > maxVmOffset)
-    throw machoIssue(
-      "malformed",
-      `load command ${index} LC_LAZY_LOAD_DYLIB_INFO flag image offset 0x${flagImageOffset.toString(16)} is beyond the slice VM range 0x${maxVmOffset.toString(16)}`,
+    throw new MachoReadError(
+      machoFailure.malformed(
+        `load command ${index} LC_LAZY_LOAD_DYLIB_INFO flag image offset 0x${flagImageOffset.toString(16)} is beyond the slice VM range 0x${maxVmOffset.toString(16)}`,
+      ),
     );
   if (BigInt(chainStartImageOffset) > maxVmOffset)
-    throw machoIssue(
-      "malformed",
-      `load command ${index} LC_LAZY_LOAD_DYLIB_INFO chain start image offset 0x${chainStartImageOffset.toString(16)} is beyond the slice VM range 0x${maxVmOffset.toString(16)}`,
+    throw new MachoReadError(
+      machoFailure.malformed(
+        `load command ${index} LC_LAZY_LOAD_DYLIB_INFO chain start image offset 0x${chainStartImageOffset.toString(16)} is beyond the slice VM range 0x${maxVmOffset.toString(16)}`,
+      ),
     );
   if ((flags & ~LAZY_INFO_MAY_BE_MISSING) !== 0)
-    throw machoIssue(
-      "unsupported",
-      `load command ${index} LC_LAZY_LOAD_DYLIB_INFO flags 0x${flags.toString(16)} include unrecognized bits`,
+    throw new MachoReadError(
+      machoFailure.unsupported(
+        `load command ${index} LC_LAZY_LOAD_DYLIB_INFO flags 0x${flags.toString(16)} include unrecognized bits`,
+      ),
     );
   if (
     symbolArrayOffset > payload.byteLength ||
     symbolCount > (payload.byteLength - symbolArrayOffset) / 4
   )
-    throw machoIssue(
-      "malformed",
-      `load command ${index} LC_LAZY_LOAD_DYLIB_INFO symbol table extends beyond the payload`,
+    throw new MachoReadError(
+      machoFailure.malformed(
+        `load command ${index} LC_LAZY_LOAD_DYLIB_INFO symbol table extends beyond the payload`,
+      ),
     );
   const installName = payloadString(
     payload,
@@ -933,9 +1028,10 @@ const decodeLazyLoadDylibInfoPayload = (
   );
   const symbolReferences = work.symbolReferences + symbolCount;
   if (symbolReferences > MAX_LAZY_INFO_SYMBOL_REFERENCES)
-    throw machoIssue(
-      "unsupported",
-      `LC_LAZY_LOAD_DYLIB_INFO symbol validation exceeds the ${MAX_LAZY_INFO_SYMBOL_REFERENCES}-reference limit`,
+    throw new MachoReadError(
+      machoFailure.unsupported(
+        `LC_LAZY_LOAD_DYLIB_INFO symbol validation exceeds the ${MAX_LAZY_INFO_SYMBOL_REFERENCES}-reference limit`,
+      ),
     );
   work.symbolReferences = symbolReferences;
   for (let symbol = 0; symbol < symbolCount; symbol += 1) {
@@ -966,9 +1062,10 @@ const decodeLazyLoadDylibInfoPayload = (
 const chargeLazyString = (work: LazyPayloadWork, examined: number): void => {
   const occupied = work.stringBytes + examined;
   if (occupied > MAX_LOAD_COMMAND_BYTES)
-    throw machoIssue(
-      "unsupported",
-      `LC_LAZY_LOAD_DYLIB_INFO string validation occupies ${occupied} bytes, above the ${MAX_LOAD_COMMAND_BYTES}-byte limit`,
+    throw new MachoReadError(
+      machoFailure.unsupported(
+        `LC_LAZY_LOAD_DYLIB_INFO string validation occupies ${occupied} bytes, above the ${MAX_LOAD_COMMAND_BYTES}-byte limit`,
+      ),
     );
   work.stringBytes = occupied;
 };
@@ -988,14 +1085,16 @@ const payloadString = (
   excludeFinalByte: boolean,
 ): string => {
   if (offset < LAZY_INFO_HEADER_BYTES)
-    throw machoIssue(
-      "malformed",
-      `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} offset ${offset} is inside the payload header`,
+    throw new MachoReadError(
+      machoFailure.malformed(
+        `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} offset ${offset} is inside the payload header`,
+      ),
     );
   if (offset >= payload.byteLength)
-    throw machoIssue(
-      "malformed",
-      `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} offset ${offset} is outside the payload`,
+    throw new MachoReadError(
+      machoFailure.malformed(
+        `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} offset ${offset} is outside the payload`,
+      ),
     );
   const absolute = Number.isSafeInteger(fileOffset + offset)
     ? fileOffset + offset
@@ -1008,40 +1107,45 @@ const payloadString = (
   if (cached !== undefined && absolute !== undefined) {
     const end = cached.end - fileOffset;
     if (end < offset || end >= terminatorLimit)
-      throw machoIssue(
-        "malformed",
-        `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} is unterminated`,
+      throw new MachoReadError(
+        machoFailure.malformed(
+          `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} is unterminated`,
+        ),
       );
     chargeLazyString(work, cached.end - absolute + 1);
     return cached.text;
   }
   if (offset >= terminatorLimit)
-    throw machoIssue(
-      "malformed",
-      `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} is unterminated`,
+    throw new MachoReadError(
+      machoFailure.malformed(
+        `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} is unterminated`,
+      ),
     );
   const remaining = MAX_LOAD_COMMAND_BYTES - work.stringBytes;
   const windowEnd = Math.min(terminatorLimit, offset + remaining);
   const end = payload.subarray(0, windowEnd).indexOf(0, offset);
   if (end < 0) {
     if (windowEnd < terminatorLimit)
-      throw machoIssue(
-        "unsupported",
-        `LC_LAZY_LOAD_DYLIB_INFO string validation occupies ${work.stringBytes + (windowEnd - offset) + 1} bytes, above the ${MAX_LOAD_COMMAND_BYTES}-byte limit`,
+      throw new MachoReadError(
+        machoFailure.unsupported(
+          `LC_LAZY_LOAD_DYLIB_INFO string validation occupies ${work.stringBytes + (windowEnd - offset) + 1} bytes, above the ${MAX_LOAD_COMMAND_BYTES}-byte limit`,
+        ),
       );
-    throw machoIssue(
-      "malformed",
-      `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} is unterminated`,
+    throw new MachoReadError(
+      machoFailure.malformed(
+        `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} is unterminated`,
+      ),
     );
   }
   chargeLazyString(work, end - offset + 1);
   let text: string;
   try {
-    text = strictUtf8Decoder("preserve").decode(payload.subarray(offset, end));
+    text = decodeStrictUtf8(payload.subarray(offset, end), "preserve");
   } catch {
-    throw machoIssue(
-      "malformed",
-      `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} is not UTF-8`,
+    throw new MachoReadError(
+      machoFailure.malformed(
+        `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} is not UTF-8`,
+      ),
     );
   }
   if (absolute !== undefined && Number.isSafeInteger(fileOffset + end))
@@ -1058,9 +1162,10 @@ const decodeDependency = (
   const parsed = readMachoDylibCommandFacts(body, code, true);
   if (!parsed.ok) {
     if (parsed.error._tag === "InvalidMachoDylibCommand")
-      throw machoIssue(
-        "malformed",
-        `load command ${index} is too short for a dylib command`,
+      throw new MachoReadError(
+        machoFailure.malformed(
+          `load command ${index} is too short for a dylib command`,
+        ),
       );
     return throwCommandStringIssue(parsed.error, index);
   }
@@ -1103,17 +1208,18 @@ const throwCommandStringIssue = (
       : failure.reason === "invalid-offset"
         ? `load command ${index} has string offset ${failure.offset} outside the command`
         : `load command ${index} has an unterminated string`;
-  throw machoIssue("malformed", reason);
+  throw new MachoReadError(machoFailure.malformed(reason));
 };
 
 const decodeCommandString = (bytes: Uint8Array, index: number): string => {
   try {
     // lc_str contains name/path data, so a leading U+FEFF is part of its identity.
-    return strictUtf8Decoder("preserve").decode(bytes);
+    return decodeStrictUtf8(bytes, "preserve");
   } catch {
-    throw machoIssue(
-      "malformed",
-      `load command ${index} has a string that is not UTF-8`,
+    throw new MachoReadError(
+      machoFailure.malformed(
+        `load command ${index} has a string that is not UTF-8`,
+      ),
     );
   }
 };
@@ -1125,8 +1231,17 @@ const readExact = async (
   label: string,
 ): Promise<Uint8Array> => {
   const bytes = await readAt(offset, length);
+  // Every caller has already placed this range inside the measured slice, so
+  // missing bytes mean the file changed after it was measured.
   if (bytes.byteLength < length)
-    throw machoIssue("malformed", `${label} is truncated`);
+    throw new MachoReadError(
+      machoFailure.changed(
+        `${label} read came up short of the measured slice`,
+        {
+          offset,
+        },
+      ),
+    );
   return bytes;
 };
 
@@ -1141,6 +1256,3 @@ const fileTypeName = (fileType: number): MachoSlice["file_type"] =>
 
 const version = (value: number): string =>
   `${value >>> 16}.${(value >>> 8) & 0xff}.${value & 0xff}`;
-
-const viewOf = (bytes: Uint8Array): DataView =>
-  new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);

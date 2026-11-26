@@ -14,6 +14,7 @@ import { promisify } from "node:util";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { completeEvidenceClient } from "../../lib/complete-evidence.mjs";
 
 const execute = promisify(execFile);
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -26,10 +27,12 @@ const root = rootFixture.path;
 const environment = {
   ...process.env,
 };
-const client = new Client({
-  name: "rea-inspector-conformance",
-  version: "1.0.0",
-});
+const client = completeEvidenceClient(
+  new Client({
+    name: "rea-inspector-conformance",
+    version: "1.0.0",
+  }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: ["scripts/rea.mjs", "mcp"],

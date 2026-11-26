@@ -110,8 +110,8 @@ export const createJebAnalysisProvider = () => ({
 `,
     );
     await writeFile(
-      join(root, "dist", "application", "jeb", "JebAnalysisService.js"),
-      `export class JebAnalysisService {
+      join(root, "dist", "application", "ProviderOperationServices.js"),
+      `export const createJebAnalysisService = () => ({
   async execute(operation) {
     ${primaryBody}
     const result = {
@@ -122,8 +122,8 @@ export const createJebAnalysisProvider = () => ({
     }[operation];
     if (result === undefined) throw new Error("Unexpected simulated operation: " + operation);
     return { ok: true, value: { normalized_result: result } };
-  }
-}
+  },
+});
 `,
     );
   }

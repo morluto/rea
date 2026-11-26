@@ -11,46 +11,27 @@ import {
 
 const makeArchive = (): Buffer => asarHeaderBytes(' \t\r\n{"files":{}} ');
 
-it("fills the fixed Pickle prefix across controlled short reads", async () => {
-  const archive = makeArchive();
-  const calls: Array<readonly [number, number, number]> = [];
-  const handle = {
-    stat: vi.fn(
-      async () =>
-        ({
-          isFile: () => true,
-          size: archive.length,
-        }) as Stats,
-    ),
-    read: vi.fn(
-      async (
-        target: Buffer,
-        offset: number,
-        length: number,
-        position: number,
-      ) => {
-        calls.push([offset, length, position]);
-        const bytesRead = Math.min(3, length, archive.length - position);
-        archive.copy(target, offset, position, position + bytesRead);
-        return { bytesRead, buffer: target };
-      },
-    ),
-  } as unknown as Parameters<typeof admitAsarHeader>[0];
-
-  await expect(admitAsarHeader(handle)).resolves.toEqual({
-    archiveBytes: archive.length,
-    headerBytes: archive.readUInt32LE(4),
-    jsonBytes: archive.readUInt32LE(12),
-  });
-  expect(calls).toEqual([
-    [0, 16, 0],
-    [3, 13, 3],
-    [6, 10, 6],
-    [9, 7, 9],
-    [12, 4, 12],
-    [15, 1, 15],
-  ]);
-});
+const positionalHeader = (archive: Buffer, maxRead = archive.length) => {
+  const read = vi.fn(
+    async (
+      target: Buffer,
+      offset: number,
+      length: number,
+      position: number,
+    ) => {
+      const bytesRead = Math.min(maxRead, length, archive.length - position);
+      archive.copy(target, offset, position, position + bytesRead);
+      return { bytesRead, buffer: target };
+    },
+  );
+  return {
+    read,
+    handle: {
+      read: read as unknown as FileHandle["read"],
+      stat: async () => ({ isFile: () => true, size: archive.length }) as Stats,
+    },
+  };
+};
 
 it("recognizes JSON whitespace before the object token and finalizes file extents", () => {
   const archive = makeArchive();
@@ -85,44 +66,39 @@ it("refuses a header that declares one member name twice", async () => {
   const archive = asarHeaderBytes(
     '{"files":{"a.js":{"size":10,"offset":"0"},"a.js":{"size":5,"offset":"10"}}}',
   );
-  const handle = {
-    stat: async () => ({ isFile: () => true, size: archive.length }) as Stats,
-    read: async (
-      target: Buffer,
-      offset: number,
-      length: number,
-      position: number,
-    ) => {
-      const bytesRead = Math.min(length, archive.length - position);
-      archive.copy(target, offset, position, position + bytesRead);
-      return { bytesRead, buffer: target };
-    },
-  } as unknown as Parameters<typeof admitAsarHeader>[0];
+  const { handle } = positionalHeader(archive);
   const extents = await admitAsarHeader(handle);
   await expect(readAsarHeader(handle, extents)).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringContaining('"a.js"'),
   });
 });
 
-it("decodes admitted JSON across short reads without consuming padding", async () => {
+it("admits the fixed prefix and decodes JSON across short reads without consuming padding", async () => {
   const archive = asarHeaderBytes('{"files":{"�":{}}}', {
     padding: Buffer.from([0xff]),
   });
-  const handle = {
-    stat: async () => ({ isFile: () => true, size: archive.length }) as Stats,
-    read: async (
-      target: Buffer,
-      offset: number,
-      length: number,
-      position: number,
-    ) => {
-      const bytesRead = Math.min(2, length, archive.length - position);
-      archive.copy(target, offset, position, position + bytesRead);
-      return { bytesRead, buffer: target };
-    },
-  } as unknown as Parameters<typeof admitAsarHeader>[0];
+  const { handle, read } = positionalHeader(archive, 3);
   const extents = await admitAsarHeader(handle);
+  expect(extents).toEqual({
+    archiveBytes: archive.length,
+    headerBytes: archive.readUInt32LE(4),
+    jsonBytes: archive.readUInt32LE(12),
+  });
+  expect(
+    read.mock.calls.map(([, offset, length, position]) => [
+      offset,
+      length,
+      position,
+    ]),
+  ).toEqual([
+    [0, 16, 0],
+    [3, 13, 3],
+    [6, 10, 6],
+    [9, 7, 9],
+    [12, 4, 12],
+    [15, 1, 15],
+  ]);
   await expect(readAsarHeader(handle, extents)).resolves.toEqual({
     files: { "�": {} },
   });
@@ -137,7 +113,9 @@ it("decodes admitted JSON across short reads without consuming padding", async (
       extents,
     ),
   ).rejects.toMatchObject({
-    reason: "format",
-    message: expect.stringMatching(/truncated.*header/iu),
+    // The extents were checked against the file size: a short read is a
+    // file that changed during the read, not a truncated archive.
+    reason: "integrity",
+    integrityCheck: "read-coverage",
   });
 });

@@ -53,7 +53,11 @@ import { createServer } from "../../../src/server/createServer.js";
 import { registerGuidedPrompts } from "../../../src/server/registerPrompts.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
-import { observed } from "../../fixtures/analysisExecution.js";
+import {
+  availableFixtureProvider,
+  supportedFixtureTarget,
+  observed,
+} from "../../fixtures/analysisExecution.js";
 import { serveStreamableHttp } from "../../../src/server/http/serveStreamableHttp.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
@@ -490,31 +494,34 @@ it("preserves caller-selected paths and verbatim crash signals", async () => {
 describe("guided prompt completion registry", () => {
   it("applies the MCP 100-value limit while reporting total and hasMore", async () => {
     const session = fixtureSession();
-    for (let index = 0; index < 150; index += 1)
-      expect(
-        session.recordEvidence(
-          createEvidence(unknownTarget("not-observed"), fixtureProvider, {
-            operation: `fixture-${String(index)}`,
-            parameters: { index },
-            result: index,
-            confidence: "derived",
-            authority: "analyst-inference",
-          }),
-        ).ok,
-      ).toBe(true);
+    const evidenceIds: string[] = [];
+    for (let index = 0; index < 150; index += 1) {
+      const evidence = createEvidence(
+        unknownTarget("not-observed"),
+        fixtureProvider,
+        {
+          operation: `fixture-${String(index)}`,
+          parameters: { index },
+          result: index,
+          confidence: "derived",
+          authority: "analyst-inference",
+        },
+      );
+      expect(session.recordEvidence(evidence).ok).toBe(true);
+      evidenceIds.push(evidence.evidence_id);
+    }
     const client = await connect(createServer({ kind: "session", session }));
     retainPromptResources(session);
 
     const result = await client.complete({
       ref: { type: "ref/prompt", name: "verify_reconstruction" },
-      argument: { name: "comparison_evidence_id", value: "ev_" },
+      argument: { name: "comparison_evidence_id", value: "ＥＶ_" },
     });
-    expect(result.completion.values).toHaveLength(100);
-    expect(result.completion.total).toBe(150);
-    expect(result.completion.hasMore).toBe(true);
-    expect(result.completion.values).toEqual(
-      [...result.completion.values].sort(),
-    );
+    expect(result.completion).toEqual({
+      values: evidenceIds.sort().slice(0, 100),
+      total: 150,
+      hasMore: true,
+    });
   });
 
   it("emits prompts/list_changed and scopes the updated prompt", async () => {
@@ -998,18 +1005,8 @@ const deepProvider = (
     promptCapability(identity, "list_documents"),
     promptCapability(identity, "list_procedures"),
   ],
-  inspectAvailability: () => ({
-    status: "available",
-    code: null,
-    reason: null,
-    diagnostics: {},
-  }),
-  inspectTargetSupport: () => ({
-    status: "supported",
-    code: null,
-    reason: null,
-    diagnostics: {},
-  }),
+  inspectAvailability: availableFixtureProvider,
+  inspectTargetSupport: supportedFixtureTarget,
   resolveAnalysisProfile: async () =>
     ok({ profile: createAnalysisProfile(identity, { fixture: true }) }),
   createClient: options.createClient,

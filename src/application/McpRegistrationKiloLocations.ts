@@ -1,4 +1,5 @@
 import { dirname, join, relative } from "node:path";
+import { err, ok, type Result } from "../domain/result.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   directoryFiles,
@@ -22,7 +23,7 @@ import {
   rootContext,
   present,
   type McpRegistrationLocationContext,
-  type McpRegistrationLocation,
+  type McpRegistrationLocationResult,
 } from "./McpRegistrationLocations.js";
 
 /** `rea mcp add` resolves configured paths against its working directory. */
@@ -33,16 +34,21 @@ const kiloContext = (
   path: (path) => selectedPath(path, context),
 });
 
-const ancestorsThrough = (directory: string, root: string): string[] => {
+const ancestorsThrough = (
+  directory: string,
+  root: string,
+): Result<string[], ConfigurationError> => {
   const directories: string[] = [];
   let current = directory;
   while (true) {
     directories.push(current);
-    if (current === root) return directories;
+    if (current === root) return ok(directories);
     const parent = dirname(current);
     if (parent === current)
-      throw new ConfigurationError(
-        "Kilo worktree boundary is not an ancestor; no project settings were written.",
+      return err(
+        new ConfigurationError(
+          "Kilo worktree boundary is not an ancestor; no project settings were written.",
+        ),
       );
     current = parent;
   }
@@ -50,36 +56,46 @@ const ancestorsThrough = (directory: string, root: string): string[] => {
 const projectDirectories = async (
   directories: readonly string[],
   authority: KiloFileLayer["authority"],
-): Promise<KiloConfigDirectory[]> => {
+): Promise<Result<KiloConfigDirectory[], ConfigurationError>> => {
   const found: KiloConfigDirectory[] = [];
   for (const directory of directories)
     for (const name of [".kilocode", ".kilo"]) {
       const path = join(directory, name);
-      if (await present(path)) found.push({ path, authority });
+      const exists = await present(path);
+      if (!exists.ok) return exists;
+      if (exists.value) found.push({ path, authority });
     }
-  return found;
+  return ok(found);
 };
 
 /** Native project read order, with global/primary authorities retained read-only. */
 export const kiloProjectLocation = async (
   context: McpRegistrationLocationContext,
-): Promise<McpRegistrationLocation> => {
+): Promise<McpRegistrationLocationResult> => {
   if (
     ["true", "1"].includes(
       context.environment.KILO_DISABLE_PROJECT_CONFIG?.toLowerCase() ?? "",
     )
   )
-    throw new ConfigurationError(
-      "KILO_DISABLE_PROJECT_CONFIG disables project configuration. Remove that selected override or register globally; no project settings were written.",
+    return err(
+      new ConfigurationError(
+        "KILO_DISABLE_PROJECT_CONFIG disables project configuration. Remove that selected override or register globally; no project settings were written.",
+      ),
     );
-  const worktree = await resolveKiloRegistrationWorktree(context);
+  const resolved = await resolveKiloRegistrationWorktree(context);
+  if (!resolved.ok) return resolved;
+  const worktree = resolved.value;
   const active = ancestorsThrough(worktree.activeDirectory, worktree.root);
+  if (!active.ok) return active;
   const kilo = kiloContext(context);
   const root = kiloRoot(kilo);
-  const layers = await observedFiles(root, KILO_GLOBAL_FILES, "readonly");
+  const global = await observedFiles(root, KILO_GLOBAL_FILES, "readonly");
+  if (!global.ok) return global;
+  const layers = global.value;
   const explicit = kiloExplicitFile(kilo);
   if (explicit !== undefined) {
-    await present(explicit);
+    const exists = await present(explicit);
+    if (!exists.ok) return exists;
     layers.push({
       path: explicit,
       authority: pathWithin(worktree.root, explicit) ? "project" : "readonly",
@@ -87,36 +103,41 @@ export const kiloProjectLocation = async (
   }
   // ConfigPaths.files reverses nearest-first [jsonc,json] matches, first Kilo then OpenCode.
   for (const name of ["kilo", "opencode"])
-    for (const directory of [...active].reverse())
-      layers.push(
-        ...(await observedFiles(
-          directory,
-          [`${name}.json`, `${name}.jsonc`],
-          "project",
-        )),
+    for (const directory of [...active.value].reverse()) {
+      const files = await observedFiles(
+        directory,
+        [`${name}.json`, `${name}.jsonc`],
+        "project",
       );
+      if (!files.ok) return files;
+      layers.push(...files.value);
+    }
   const primary: KiloConfigDirectory[] = [];
-  if (worktree.primaryRoot !== worktree.root) {
+  const { primaryRoot } = worktree;
+  if (primaryRoot !== undefined && primaryRoot !== worktree.root) {
     const mirrored = join(
-      worktree.primaryRoot,
+      primaryRoot,
       relative(worktree.root, worktree.activeDirectory),
     );
-    primary.push(
-      ...(await projectDirectories(
-        ancestorsThrough(mirrored, worktree.primaryRoot),
-        "readonly",
-      )),
+    const primaryAncestors = ancestorsThrough(mirrored, primaryRoot);
+    if (!primaryAncestors.ok) return primaryAncestors;
+    const observed = await projectDirectories(
+      primaryAncestors.value,
+      "readonly",
     );
+    if (!observed.ok) return observed;
+    primary.push(...observed.value);
   }
-  const nativeProject = await projectDirectories(active, "project");
+  const nativeProject = await projectDirectories(active.value, "project");
+  if (!nativeProject.ok) return nativeProject;
   const custom = kiloExplicitDirectory(kilo);
+  const homes = await kiloHomeDirectories(kilo);
+  if (!homes.ok) return homes;
   const directories: KiloConfigDirectory[] = [
     { path: root, authority: "readonly" },
     ...primary,
-    ...nativeProject,
-    ...(await kiloHomeDirectories(kilo).then((items) =>
-      items.map((item) => ({ ...item, authority: "readonly" as const })),
-    )),
+    ...nativeProject.value,
+    ...homes.value.map((item) => ({ ...item, authority: "readonly" as const })),
   ];
   if (custom !== undefined)
     directories.push({
@@ -124,7 +145,8 @@ export const kiloProjectLocation = async (
       authority: pathWithin(worktree.root, custom) ? "project" : "readonly",
     });
   const directoryLayers = await directoryFiles(directories, custom);
-  const writable = [...layers, ...directoryLayers].filter(
+  if (!directoryLayers.ok) return directoryLayers;
+  const writable = [...layers, ...directoryLayers.value].filter(
     (layer) => layer.authority === "project",
   );
   let configPath = writable.at(-1)?.path;
@@ -146,14 +168,20 @@ export const kiloProjectLocation = async (
       seen.add(directory.path);
       if (directory.path === planned)
         ordered.push({ path: configPath, authority: "project" });
-      else ordered.push(...(await directoryFiles([directory], custom)));
+      else {
+        const files = await directoryFiles([directory], custom);
+        if (!files.ok) return files;
+        ordered.push(...files.value);
+      }
     }
     layers.push(...ordered);
-  } else layers.push(...directoryLayers);
-  const inlineConfiguration = kiloInlineConfiguration(kilo.root);
-  return {
+  } else layers.push(...directoryLayers.value);
+  const inline = kiloInlineConfiguration(kilo.root);
+  if (!inline.ok) return inline;
+  const inlineConfiguration = inline.value;
+  return ok({
     configPath,
     configPaths: layers.map((layer) => layer.path),
     ...(inlineConfiguration === undefined ? {} : { inlineConfiguration }),
-  };
+  });
 };

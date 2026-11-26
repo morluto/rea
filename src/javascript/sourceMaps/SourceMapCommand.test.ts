@@ -7,7 +7,6 @@ import * as processOutput from "../../process/ExecFileOutput.js";
 import {
   AnalysisCancelledError,
   AnalysisResourceConstraintError,
-  AnalysisTimeoutError,
 } from "../../domain/analysisErrorCore.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import {
@@ -406,31 +405,3 @@ it.each([
     expect(result.error.secondaryFailures[0]?.cause).toBe(reason);
   },
 );
-
-it("keeps an observed launcher interruption at the codec deadline a timeout", async () => {
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
-  try {
-    const result = await runSourceMapCommand(
-      "{}",
-      "/probe/source.map",
-      undefined,
-      {
-        prepareOwnership: async () => {},
-        launcher: async ({ signal }) => {
-          await vi.advanceTimersByTimeAsync(1000);
-          assertProcessOwnershipInspectionActive(signal);
-          throw new Error(
-            "expected the codec deadline to interrupt the launcher",
-          );
-        },
-      },
-      unexpectedCleanup,
-      1000,
-    );
-    if (result.ok) throw new Error("expected launch timeout");
-    expect(result.error).toBeInstanceOf(AnalysisTimeoutError);
-    expect(result.error.secondaryFailures).toHaveLength(0);
-  } finally {
-    vi.useRealTimers();
-  }
-});

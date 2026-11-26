@@ -1,20 +1,13 @@
 import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
-import {
-  parseFailureAnalysisError,
-  parseLimitConstraint,
-} from "../../domain/parseFailureAnalysisError.js";
+import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import { lstat, open } from "node:fs/promises";
 import {
-  projectSelectedArtifactFileFailure,
-  projectOwnedArtifactIdentityFailure,
   projectStableArtifactFailure,
-  projectArtifactCloseFailure,
-  ArtifactReaderFailure,
+  closeArtifactResources,
   readStableArtifact,
   type StableArtifactFileSystem,
   type StableArtifactSnapshot,
   artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
   ArtifactResourceScope,
 } from "../../resources/index.js";
@@ -27,21 +20,19 @@ import {
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import {
-  MAX_INSPECT_WINDOWS_SHORTCUT_EXTRA_DATA_BLOCKS,
-  MAX_INSPECT_WINDOWS_SHORTCUT_FILE_BYTES,
-  MAX_INSPECT_WINDOWS_SHORTCUT_ID_LIST_ITEMS,
-  MAX_INSPECT_WINDOWS_SHORTCUT_STRING_BYTES,
+  windowsShortcutBudgetLimit,
   type InspectWindowsShortcutInput,
+  type WindowsShortcutBudget,
 } from "../../domain/native/windowsShortcut.js";
-import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { WINDOWS_SHORTCUT_PROVIDER } from "../../domain/investigationProviders.js";
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
+import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import {
   WindowsShortcutResourceFailure,
   type WindowsShortcutSelectedBoundary,
 } from "./WindowsShortcut.errors.js";
 import { parseWindowsShortcut } from "./WindowsShortcutParser.js";
-import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_windows_shortcut";
 
@@ -148,16 +139,12 @@ export class WindowsShortcutProvider implements WindowsShortcutPort {
     private readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
   ) {}
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        WINDOWS_SHORTCUT_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      WINDOWS_SHORTCUT_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(
@@ -231,113 +218,56 @@ export class WindowsShortcutProvider implements WindowsShortcutPort {
   }
 }
 
-const fileSizeRemediation = (input: InspectWindowsShortcutInput): string =>
-  input.max_file_bytes >= MAX_INSPECT_WINDOWS_SHORTCUT_FILE_BYTES
-    ? `The shortcut exceeds the ${String(MAX_INSPECT_WINDOWS_SHORTCUT_FILE_BYTES)}-byte input ceiling this operation accepts. This release has no runtime override. Select a smaller artifact.`
-    : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
-
+/** The schema field of each boundary the parser names. */
 const SELECTED_BUDGETS = {
-  id_list_items: {
-    argument: "max_id_list_items",
-    maximum: MAX_INSPECT_WINDOWS_SHORTCUT_ID_LIST_ITEMS,
-    unit: "entries",
-  },
-  extra_data_blocks: {
-    argument: "max_extra_data_blocks",
-    maximum: MAX_INSPECT_WINDOWS_SHORTCUT_EXTRA_DATA_BLOCKS,
-    unit: "entries",
-  },
-  string_bytes: {
-    argument: "max_string_bytes",
-    maximum: MAX_INSPECT_WINDOWS_SHORTCUT_STRING_BYTES,
-    unit: "bytes",
-  },
+  id_list_items: "max_id_list_items",
+  extra_data_blocks: "max_extra_data_blocks",
+  string_bytes: "max_string_bytes",
 } as const satisfies Record<
   WindowsShortcutSelectedBoundary,
-  {
-    readonly argument: keyof InspectWindowsShortcutInput;
-    readonly maximum: number;
-    readonly unit: string;
-  }
+  WindowsShortcutBudget
 >;
-
-const budgetRemediation = ({
-  name,
-  maximum: selected,
-}: WindowsShortcutResourceFailure["failure"]["limit"]): string => {
-  const { argument, maximum, unit } = SELECTED_BUDGETS[name];
-  const recovery =
-    selected >= maximum
-      ? `This release has no override above the ${String(maximum)} ${unit} ceiling; select a smaller shortcut.`
-      : `Raise ${argument} on the next call, up to ${String(maximum)} ${unit}, or select a smaller shortcut; no restart is required.`;
-  return `Effective ${argument} is ${String(selected)} ${unit}. ${recovery}`;
-};
-
-const windowsShortcutFailurePrimary = (
-  facts: ArtifactFilePrimaryFacts,
-  input: InspectWindowsShortcutInput,
-): AnalysisError => {
-  const { cause, origin } = facts;
-  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
-    return cause;
-  const identityFailure = projectOwnedArtifactIdentityFailure(
-    facts,
-    OPERATION,
-    input.path,
-  );
-  if (identityFailure !== undefined) return identityFailure;
-  if (cause instanceof WindowsShortcutResourceFailure)
-    return parseLimitConstraint(OPERATION, "capacity", cause, {
-      path: input.path,
-      retryable: false,
-      remediationAction: budgetRemediation(cause.failure.limit),
-    });
-  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
-  if (formatFailure !== undefined) return formatFailure;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "limit")
-      return new AnalysisResourceConstraintError(
-        OPERATION,
-        "file-size",
-        cause.message,
-        { max_file_bytes: input.max_file_bytes },
-        {
-          cause,
-          retryable: false,
-          remediationAction: fileSizeRemediation(input),
-        },
-      );
-    if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        { path: ["path"], reason: "invalid_format", message: cause.message },
-      ]);
-  }
-  const fileFailure = projectSelectedArtifactFileFailure(
-    cause,
-    OPERATION,
-    input.path,
-    "shortcut",
-  );
-  if (fileFailure !== undefined) return fileFailure;
-  return new ProviderAdapterError(WINDOWS_SHORTCUT_PROVIDER.id, OPERATION, {
-    cause,
-    diagnostics: {
-      path: input.path,
-      reason: errorMessage(cause),
-    },
-  });
-};
 
 const windowsShortcutFailure = (
   cause: unknown,
   input: InspectWindowsShortcutInput,
 ): AnalysisError => {
-  const primary = windowsShortcutFailurePrimary(
-    artifactFilePrimaryFacts(cause),
-    input,
+  const facts = artifactFilePrimaryFacts(cause);
+  const primary = classifyProviderFailure(
+    facts.cause,
+    offlineArtifactFailureDialect(facts, {
+      providerId: WINDOWS_SHORTCUT_PROVIDER.id,
+      operation: OPERATION,
+      path: input.path,
+      description: "shortcut",
+      recognise: (failure) => {
+        if (failure instanceof WindowsShortcutResourceFailure) {
+          const { name, maximum } = failure.failure.limit;
+          const argument = SELECTED_BUDGETS[name];
+          return parseLimitConstraint(OPERATION, "capacity", failure, {
+            path: input.path,
+            retryable: false,
+            limit: windowsShortcutBudgetLimit(argument, maximum),
+          });
+        }
+        return undefined;
+      },
+      fileSize: (failure) =>
+        new AnalysisResourceConstraintError(
+          OPERATION,
+          "file-size",
+          failure.message,
+          { max_file_bytes: input.max_file_bytes },
+          {
+            cause: failure,
+            retryable: false,
+            limit: windowsShortcutBudgetLimit(
+              "max_file_bytes",
+              input.max_file_bytes,
+            ),
+          },
+        ),
+    }),
   );
   return projectStableArtifactFailure(
     cause,

@@ -171,39 +171,42 @@ const checkNativeObservationIdentities = async ({
   reference,
   otherReference,
 }: WorkflowContext) => {
-  for (const side of [
-    "left_native_observations",
-    "right_native_observations",
-  ] as const) {
-    const input = {
-      left: application,
-      right: other,
-      [side]: [application, application],
-    };
-    const response = await call("compare_application_versions", {
-      ...input,
-      left: reference,
-      right: otherReference,
+  const input = {
+    left: application,
+    right: other,
+    left_native_observations: [application, application],
+    right_native_observations: [other, other],
+  };
+  const response = await call("compare_application_versions", {
+    ...input,
+    left: reference,
+    right: otherReference,
+  });
+  expect(response.isError).toBe(true);
+  const mcpError = parseMcpToolError(response).error;
+  const invalid = await runJson(
+    cli,
+    root,
+    "compare-application-versions",
+    input,
+  );
+  expect(invalid.exitCode).toBe(1);
+  const issues = ["left_native_observations", "right_native_observations"].map(
+    (side) =>
+      expect.objectContaining({
+        path: [side],
+        reason: "invalid_value",
+        message: expect.stringContaining("Native observations must be unique"),
+      }),
+  );
+  for (const error of [mcpError, invalid.json]) {
+    expect(error).toMatchObject({
+      code: "invalid_request",
+      details: { issues: expect.arrayContaining(issues) },
     });
-    expect(response.isError).toBe(true);
-    expectInputFailure(
-      parseMcpToolError(response).error,
-      side,
-      "Native observations must be unique",
-    );
-    const invalid = await runJson(
-      cli,
-      root,
-      "compare-application-versions",
-      input,
-    );
-    expect(invalid.exitCode).toBe(1);
-    expectInputFailure(
-      invalid.json,
-      side,
-      "Native observations must be unique",
-    );
+    expect(error).toHaveProperty("details.issues.length", issues.length);
   }
+
   const traceInput = {
     application,
     seed,
@@ -350,10 +353,12 @@ cliTest(
     );
     const { client, tools, call } = await connectMcp(root);
     const first = await call("analyze_javascript_application", {
+      detail: "complete",
       input_path: left,
       format: "directory",
     });
     const second = await call("analyze_javascript_application", {
+      detail: "complete",
       input_path: right,
       format: "directory",
     });

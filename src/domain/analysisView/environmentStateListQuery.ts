@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import type { JsonValue } from "../jsonValue.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
 import { literalSubstringPredicate } from "../analysisSearch.js";
@@ -215,7 +216,7 @@ const readCall = (
 
 /** Entities in the order a sort value names, ties in state order, and those whose place state order decides: all without a sort, else those tied with a neighbour; undefined when it names no field. */
 const sorted = (
-  matched: readonly StateEntity[],
+  matched: StateEntity[],
   entities: readonly StateEntity[],
   call: QueryCall,
 ):
@@ -226,28 +227,26 @@ const sorted = (
   | undefined => {
   // Nothing to order: an emptied collection answers no entities rather than a recording.
   if (call.sort === undefined || matched.length === 0)
-    return { entities: [...matched], positional: "all" };
-  const names = [
-    ...new Set(entities.flatMap((entity) => Object.keys(entity.fields))),
-  ];
-  const key = sortKey(call.sort, names);
+    return { entities: matched, positional: "all" };
+  const names = new Set<string>();
+  for (const entity of entities)
+    for (const name of Object.keys(entity.fields)) names.add(name);
+  const key = sortKey(call.sort, [...names]);
   if (key === undefined) return undefined;
   const sign = (
     call.direction === undefined ? key.descending : call.direction === "desc"
   )
     ? -1
     : 1;
-  const ordered = matched
-    .map((entity, index) => ({ entity, index }))
-    .sort(
-      (left, right) =>
-        sign *
-          ascending(
-            ownMember(left.entity.fields, key.field),
-            ownMember(right.entity.fields, key.field),
-          ) || left.index - right.index,
-    )
-    .map(({ entity }) => entity);
+  // The filter owns this array. Stable sort retains state order at ties.
+  matched.sort(
+    (left, right) =>
+      sign *
+      ascending(
+        ownMember(left.fields, key.field),
+        ownMember(right.fields, key.field),
+      ),
+  );
   const tied = (
     left: StateEntity | undefined,
     right: StateEntity | undefined,
@@ -259,10 +258,10 @@ const sorted = (
       ownMember(right.fields, key.field),
     ) === 0;
   return {
-    entities: ordered,
-    positional: ordered.filter(
+    entities: matched,
+    positional: matched.filter(
       (entity, index) =>
-        tied(ordered[index - 1], entity) || tied(entity, ordered[index + 1]),
+        tied(matched[index - 1], entity) || tied(entity, matched[index + 1]),
     ),
   };
 };
@@ -498,8 +497,9 @@ const mergeRoles = (
 ): Record<string, QueryParameter> => {
   const roles = new Map<string, QueryParameter[]>();
   for (const parameters of explained)
-    for (const [name, role] of Object.entries(parameters))
-      roles.set(name, [...(roles.get(name) ?? []), role]);
+    for (const [name, role] of Object.entries(parameters)) {
+      appendToMapList(roles, name, role);
+    }
   // Entries become own members even for names such as `__proto__`, which assignment would treat as the prototype.
   const merged: [string, QueryParameter][] = [];
   for (const [name, seen] of roles) {
@@ -538,7 +538,8 @@ const mergeRoles = (
         ]);
       continue;
     }
-    if (active.every((role) => JSON.stringify(role) === JSON.stringify(first)))
+    const firstJson = JSON.stringify(first);
+    if (active.every((role) => JSON.stringify(role) === firstJson))
       merged.push([name, first!]);
   }
   return Object.fromEntries(merged);

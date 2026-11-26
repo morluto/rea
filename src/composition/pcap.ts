@@ -1,4 +1,5 @@
-import type { PcapAnalysisPort } from "../application/pcap/PcapAnalysisPort.js";
+import type { RequestAnalysisPort } from "../ports/AnalysisProvider.js";
+import type { PcapRequest } from "../domain/pcap/pcapAnalysis.js";
 import { PcapProvider } from "../pcap/PcapProvider.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 
@@ -6,4 +7,5 @@ import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 export const createPcapAnalysisProvider = (
   environment: Readonly<Record<string, string | undefined>> = process.env,
   platform: NodeJS.Platform = HOST_PLATFORM.platform,
-): PcapAnalysisPort => new PcapProvider({ environment, platform });
+): RequestAnalysisPort<PcapRequest> =>
+  new PcapProvider({ environment, platform });

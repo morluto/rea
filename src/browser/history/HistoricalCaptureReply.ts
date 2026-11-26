@@ -8,15 +8,11 @@ import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import {
   ArtifactReaderFailure,
   type ArtifactResourceScope,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   completedStableArtifact,
   readStableArtifact,
 } from "../../resources/index.js";
-import {
-  AnalysisOutputError,
-  cancelledBy,
-  carriedReason,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { withCaptureReaderCleanup } from "./CaptureFailures.js";
 import { webNetworkCapturePayloadSchema } from "../../domain/webNetworkCapture.js";
@@ -33,7 +29,7 @@ const replySchema = z.discriminatedUnion("ok", [
     z.strictObject({
       ok: z.literal(false),
       reason: z.enum([
-        "format",
+        "malformed",
         "unsupported",
         "input-limit",
         "expanded-limit",
@@ -108,9 +104,9 @@ export const readHistoricalCaptureReply = async (
       { cause },
     );
     if (finalization?.reason === "cancelled") {
-      const cancellation = cancelledBy(
+      const cancellation = artifactFileCancellationError(
         "inspect_web_network_capture",
-        carriedReason(artifactFileCancellationCause(finalization)),
+        finalization,
       );
       error.retainSecondaryFailure(cancellation, {
         reply_finalization_error: projectAnalysisError(cancellation),

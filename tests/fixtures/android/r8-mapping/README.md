@@ -67,13 +67,13 @@ an explicitly labelled DEX-only `fixture.apk`; do not imply manifest coverage.
 
 `PrintDexInventory.java` reads one extracted DEX through dexlib2 without the REA
 mapping parser, bridge, provider or JADX aliases. The dependency classes are
-located in the existing checksum-pinned JADX MCP 0.7.1 JAR; its compilation and
+located in the existing checksum-pinned JADX MCP 0.8.0 JAR; its compilation and
 execution passed against the generated fixture. Its 16 MiB bound is for this small fixture only.
 It is independent of REA's name-resolution logic, not an independent dependency
 distribution or proof that a mapping belongs to a build.
 
 ```bash
-MAPPING_JADX_JAR=/home/yann/yann/rea/_reference/apk-integration/jadx-headless-mcp-0.7.1-all.jar
+MAPPING_JADX_JAR=/home/yann/yann/rea/_reference/apk-integration/jadx-headless-mcp-0.8.0-all.jar
 unzip -p "$MAPPING_RUN/dex.zip" classes.dex > "$MAPPING_RUN/classes.dex"
 "$MAPPING_JDK/bin/javac" -J-Xmx256m -encoding UTF-8 \
   -classpath "$MAPPING_JADX_JAR" -d "$MAPPING_RUN/oracle" \

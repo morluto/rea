@@ -120,7 +120,11 @@ export const registerFridaCommands = (
     },
     discover(
       listProcesses,
-      (input) => service.listProcesses(fridaDeviceSelection(input)),
+      (input) =>
+        service.listProcesses(fridaDeviceSelection(input), {
+          limit: input.limit,
+          offset: input.offset,
+        }),
       localUnlessSelected,
     ),
   );

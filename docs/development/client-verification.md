@@ -45,12 +45,11 @@ and [renderer usage notes](https://github.com/earendil-works/pi/blob/b45e0ebcc5a
 
 ## Cline
 
-The original contributor reported a run on 2026-11-11 on Linux (Fedora 45),
-using Cline CLI 3.0.74 and the integration based on REA `main` at `9924bf344`.
-That run checked client config listing and a direct registered-server MCP
-handshake that listed the complete catalog of that build. It predates the
-verifier lifecycle changes below and does not establish their real-client
-behavior.
+The last real-client run, on 2026-11-11 on Linux (Fedora 45) with Cline CLI
+3.0.74 and REA `main` at `9924bf344`, checked client config listing and a direct
+registered-server MCP handshake that listed the complete catalog of that build.
+It predates the current verifier lifecycle and does not establish its
+real-client behavior.
 
 `npm run verify:cline-client` creates its sandbox home before launching commands
 and removes inherited `CLINE_MCP_SETTINGS_PATH`, `CLINE_DATA_DIR` and `CLINE_DIR`.
@@ -63,10 +62,9 @@ completes SDK initialization and tool discovery through REA's owned stdio
 transport. Stdin stays open until discovery finishes. Command and transport
 cleanup completes before the verifier records lineage or reports success.
 
-The updated orchestration has recording-port coverage for delayed discovery,
-failed server identification and failed cleanup. These tests use the installed
-SDK and verifier lifecycle owner, but do not execute Cline or a real REA server.
-The updated real-client lane has not been rerun during this reconciliation.
+The orchestration has recording-port coverage for delayed discovery, failed
+server identification and failed cleanup. These tests use the installed SDK and
+verifier lifecycle owner, but do not execute Cline or a real REA server.
 
 Not covered by the lane: a model-driven tool call inside Cline. Cline's provider
 configuration (`providers.json`) is versioned and auth-shaped, and the CLI ignores
@@ -107,8 +105,10 @@ lanes require an installed native client. Select its executable with
 They configure disposable profiles through the public REA CLI, preserve caller
 settings and backups, and exercise real stdio MCP calls and skill loading. The
 `call` mode checks complete catalog discovery and actual JavaScript Evidence;
-pass `-- chat` to check plain chat with REA enabled. Qwen also reads the full
-result that its client offloads, and Pi exercises default codemode execution.
+pass `-- chat` to check plain chat with REA enabled. When Qwen saves the installed
+skill's tool output, the fixture uses native `read_file` pages and verifies the
+complete body and reported digest before analysis. It also reads offloaded REA
+Evidence. Pi exercises default codemode execution.
 Use `REA_VERIFY_RUNTIME_ROOT` to select a production-only installed REA package.
 Receipts retain client versions, result digests, host coverage and owned-process
 cleanup. These lanes use a deterministic loopback model and do not prove live
@@ -206,28 +206,16 @@ ID). Every actual HTTP request's model is checked and recorded separately.
 Both `HOME` and `USERPROFILE` point to the disposable account; native `skill add`
 still selects the installed skill directory explicitly.
 
-The same native client passed chat and analysis under REA's former full input
-profile with the actual wire model `gpt-4.1` under a distinct BYOK model ID:
-
-```bash
-REA_VERIFY_COPILOT_MODEL=rea-gpt-4.1 REA_VERIFY_COPILOT_WIRE_MODEL=gpt-4.1 npm run verify:copilot-client -- chat
-REA_VERIFY_COPILOT_MODEL=rea-gpt-4.1 REA_VERIFY_COPILOT_WIRE_MODEL=gpt-4.1 npm run verify:copilot-client -- call
-```
-
-Those runs used the fixture's requested one-million-token BYOK prompt setting;
-effective capacity and live API acceptance remain unknown. With the built-in
-`gpt-4.1` model ID, the verified client blocked the former full input-schema
-profile before HTTP with `compaction_static_context_blocked`. That profile was
-removed, so the verifier now compares the input schemas forwarded by Copilot
-with REA's compact advertisement:
+With the built-in `gpt-4.1` model ID, the verifier compares the input schemas
+forwarded by Copilot with REA's compact advertisement:
 
 ```bash
 REA_VERIFY_COPILOT_MODEL=gpt-4.1 npm run verify:copilot-client -- chat
 REA_VERIFY_COPILOT_MODEL=gpt-4.1 npm run verify:copilot-client -- call
 ```
 
-The recorded client results above remain scoped to their executed revisions;
-this verifier change is not a new client run. Compact native workflows passed
+Recorded client results remain scoped to their executed revisions. Compact
+native workflows passed
 with the complete tool inventory. Compact advertisements can reduce nested
 validation structure; the server still validates complete canonical inputs.
 Live model APIs, native Windows and default OS-home skill discovery remain
@@ -307,14 +295,23 @@ through the public CLI and checks that only caller patches remain. `HOME` and
 `USERPROFILE` point to the disposable account. The native default
 `~/.agents/skills` search path discovers
 the installed skill without a `DSH_AGENTS_HOME` override. A separate Git root prevents inherited project skills from
-masking a missing installation. The default `call` mode checks skill loading,
+masking a missing installation. SIGINT and SIGTERM cancel the active owned
+command and run cleanup before reporting failure. The receipt records the
+interruption and the kept artifacts include any captured headless output.
+The default `call` mode checks skill loading,
 complete catalog discovery, the actual forwarded input schemas and regexes,
 and full JavaScript Evidence for a Unicode path. Use `-- chat` for ordinary
 chat with REA enabled, or `REA_VERIFY_RUNTIME_ROOT` for an installed package.
 The fixture uses Harness's custom OpenAI adapter and the one-million-token
 context capacity declared by its default DeepSeek Flash model; it does not
 establish live DeepSeek API or native Windows coverage. Receipts include
-request artifacts, result digests and owned-process lineage.
+request artifacts, result digests and owned-process lineage. `finalSeen`
+records the model fixture's answer, and `clientFinalSeen` records the exact
+answer in the terminal headless JSON event. A passing receipt also requires
+successful client termination, uninstall, and verifier cleanup.
+
+Passing native verifier receipts require verified lineage with no live
+descendants.
 
 The DSH acceptance journey also exercises public setup, approval, doctor,
 generated-launcher MCP startup and uninstall without an installed Harness.

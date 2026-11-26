@@ -267,7 +267,7 @@ cliTest(
   },
 );
 
-cliTest("reports a wrong CLSID as invalid input", async ({ cli }) => {
+cliTest("reports a wrong CLSID as a malformed target", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-windows-shortcut-cli-bad-");
   const path = join(root, "broken.lnk");
   await writeFile(path, wrongClsidShortcut());
@@ -276,8 +276,12 @@ cliTest("reports a wrong CLSID as invalid input", async ({ cli }) => {
   });
   expect(result.exitCode).toBe(1);
   expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: { operation: "inspect_windows_shortcut" },
+    code: "unsupported_target",
+    details: {
+      operation: "inspect_windows_shortcut",
+      path,
+      failure_kind: "malformed",
+    },
   });
 });
 
