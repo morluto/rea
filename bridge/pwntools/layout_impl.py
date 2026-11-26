@@ -7,8 +7,6 @@ import base64
 import gc
 import importlib.metadata
 import io
-import json
-import os
 from pathlib import Path
 import sys
 

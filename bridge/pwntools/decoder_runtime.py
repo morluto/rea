@@ -3,7 +3,6 @@ import json
 import os
 from pathlib import Path
 import resource
-import sys
 
 def lower_resource_limits(policy):
     limits = {}
