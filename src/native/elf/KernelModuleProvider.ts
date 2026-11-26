@@ -1,7 +1,6 @@
-import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import {
   projectStableArtifactFailure,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   ArtifactReaderFailure,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
@@ -12,18 +11,16 @@ import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
-import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_KERNEL_MODULE_ENTRIES,
   MAX_INSPECT_KERNEL_MODULE_FILE_BYTES,
   type InspectKernelModuleInput,
+  type KernelModule,
 } from "../../domain/native/kernelModule.js";
 import { err, ok } from "../../domain/result.js";
 import { KERNEL_MODULE_PROVIDER } from "../../domain/investigationProviders.js";
-import {
-  BinaryResourceFailure,
-  binaryResourceCeiling,
-} from "../../domain/binaryContainer.js";
+import { isNativeStructureFailure } from "../../domain/binaryContainer.js";
+import { nativeStructureConstraint } from "../../domain/native/nativeStructureBudget.js";
 import { parseKernelModuleFromHandle } from "./KernelModuleParser.js";
 
 const OPERATION = "inspect_kernel_module";
@@ -34,25 +31,22 @@ export class KernelModuleProvider implements KernelModulePort {
   readonly identity = KERNEL_MODULE_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        KERNEL_MODULE_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      KERNEL_MODULE_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectKernelModuleInput, options?: ExecutionOptions) {
+    let completed: KernelModule | undefined;
     let observed:
       | { readonly sha256: string; readonly bytes: number }
       | undefined;
     try {
       return await this.#resources.run(async () => {
-        const result = await withStableArtifactHandle(
+        const result = await withStableArtifactHandle<KernelModule>(
           input.path,
           input.max_file_bytes,
           {
@@ -62,14 +56,13 @@ export class KernelModuleProvider implements KernelModulePort {
             onIdentity: (identity) => {
               observed = identity;
             },
+            onVerifiedResult: (report) => {
+              completed = report;
+            },
           },
           (handle) =>
             parseKernelModuleFromHandle(
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               {
                 path: input.path,
                 sha256: handle.sha256,
@@ -82,7 +75,7 @@ export class KernelModuleProvider implements KernelModulePort {
         return ok(result);
       });
     } catch (cause) {
-      return err(kernelModuleFailure(cause, input, observed));
+      return err(kernelModuleFailure(cause, input, observed, completed));
     }
   }
 }
@@ -102,7 +95,8 @@ const inputBudgetRemediation = (
 const kernelModuleFailure = (
   cause: unknown,
   input: InspectKernelModuleInput,
-  observed?: { readonly sha256: string; readonly bytes: number },
+  observed: { readonly sha256: string; readonly bytes: number } | undefined,
+  completed: KernelModule | undefined,
 ) => {
   const facts = artifactFilePrimaryFacts(cause);
   const primary = classifyProviderFailure(
@@ -114,17 +108,8 @@ const kernelModuleFailure = (
       description: "kernel module",
       fallbackMessage: "Kernel module inspection failed.",
       recognise: (failure, origin) => {
-        if (failure instanceof BinaryResourceFailure)
-          return parseLimitConstraint(
-            OPERATION,
-            "memory",
-            failure,
-            fixedAllowanceOptions(
-              "The ELF structural decoding allowance",
-              "parser",
-              binaryResourceCeiling(failure),
-            ),
-          );
+        if (isNativeStructureFailure(failure))
+          return nativeStructureConstraint(OPERATION, failure);
         if (
           origin === "owned-or-classified" &&
           failure instanceof ArtifactReaderFailure &&
@@ -166,6 +151,7 @@ const kernelModuleFailure = (
       },
     }),
   );
+  if (completed !== undefined) primary.retainPartialObservation(completed);
   return projectStableArtifactFailure(
     cause,
     primary,

@@ -1,3 +1,4 @@
+import { systemCodeFromError } from "../kernel/reportedSystemCode.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import type { Hash } from "node:crypto";
 import { constants } from "node:fs";
@@ -222,12 +223,7 @@ export const ghidraFileDialect = (
       primary instanceof GhidraAdmissionError ? primary : undefined;
     const reason = admission?.code ?? errorMessage(primary);
     const systemCode =
-      admission === undefined &&
-      primary instanceof Error &&
-      "code" in primary &&
-      typeof primary.code === "string"
-        ? primary.code
-        : undefined;
+      admission === undefined ? systemCodeFromError(primary) : undefined;
     return new ProviderAdapterError("ghidra", operation, {
       ...details,
       cause,

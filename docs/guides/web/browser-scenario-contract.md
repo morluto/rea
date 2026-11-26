@@ -107,8 +107,7 @@ rea capture-browser-scenario ./browser-scenario.json --json > browser-capture.js
 The default capture includes the final URL. Select DOM, screenshots, or events
 only when they help answer the question. REA launches and cleans up the browser
 profile for this request; it does not start your fixture server or install a
-browser. A schema-valid scenario does not prove that the executable or target
-is available on the host.
+browser.
 
 ## Interaction example: capture the visible result
 
@@ -762,7 +761,10 @@ and their completeness records are not rewritten.
 ## Scenario comparison
 
 `compare_web_captures` and `compare-web-captures` also accept two complete
-browser scenario captures. Steps align only by exact, unique `step_id`.
+browser scenario captures. Over MCP, each may instead be a retained Evidence
+reference to the capture or its summary; see
+[comparison input shapes](../../reference/mcp-contracts.md#comparison-input-shapes).
+Steps align only by exact, unique `step_id`.
 Duplicate IDs, missing counterparts, changed action kinds, and incompatible
 browser/origin capture context are returned as alignment failures. They prevent
 an unchanged claim; observed differences may still prove a changed result.

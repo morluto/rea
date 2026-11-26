@@ -318,7 +318,9 @@ it("ends an exhausted ELF name cache scope after one diagnostic", () => {
     issues: [
       {
         code: "version_unresolved",
-        message: expect.stringContaining("16 MiB cache allowance"),
+        message: expect.stringContaining(
+          "16777216-byte cache allowance (max_text_bytes)",
+        ),
       },
       {
         code: "version_unresolved",
@@ -362,6 +364,13 @@ const peExportNameAcrossSections = (overlapAtRva?: number): Buffer => {
   }
   return bytes;
 };
+
+/** PE rows without their stored RVA, which a separate test pins. */
+const withoutRva = (rows: readonly object[]) =>
+  rows.map((row) => {
+    const { rva: _rva, ...rest } = row as { readonly rva?: number };
+    return rest;
+  });
 
 describe("PE export name coverage", () => {
   it.each([
@@ -450,7 +459,7 @@ it.each([32, 64] as const)(
 );
 
 it.each([32, 64] as const)(
-  "requires the fixed PE%d export table to fit in its declared directory",
+  "reads the fixed PE%d export table at its RVA whatever the directory Size declares",
   (bits) => {
     const bytes = peExportImage({
       bits,
@@ -463,10 +472,25 @@ it.each([32, 64] as const)(
       export_directory: { size: 40 },
       exports: [{ name: "Kept", ordinal: 1 }],
       coverage: { status: "complete", examined_entries: 1, exports: 1 },
+      header_anomalies: [],
     });
 
-    bytes.writeUInt32LE(39, sizeOffset);
-    expect(refusal(bytes)).toMatchObject({ failure: { kind: "malformed" } });
+    // corkami dll.dll declares export Size 0. The loader reads the 40-byte
+    // table at its RVA and uses Size only to bound forwarder strings.
+    for (const size of [39, 0]) {
+      bytes.writeUInt32LE(size, sizeOffset);
+      expect(parse(bytes)).toMatchObject({
+        export_directory: { size },
+        exports: [{ name: "Kept", ordinal: 1, forwarder: null }],
+        coverage: { status: "complete", examined_entries: 1, exports: 1 },
+        header_anomalies: [
+          {
+            code: "directory_size_below_structure",
+            message: expect.stringContaining("Data directory 0 (export)"),
+          },
+        ],
+      });
+    }
   },
 );
 
@@ -520,7 +544,7 @@ describe("PE export directories", () => {
         },
         issues: [],
       });
-      expect(result.exports).toEqual([
+      expect(withoutRva(result.exports)).toEqual([
         {
           name: "Alias",
           ordinal: 5,
@@ -631,12 +655,12 @@ describe("PE export directories", () => {
         kind: "limit",
         limit: {
           name: "rows",
-          maximum: nativeExportContracts.MAX_NATIVE_EXPORT_ROWS,
+          maximum: nativeExportContracts.DEFAULT_NATIVE_EXPORT_ROWS,
         },
       },
       boundary: "structure",
-      maximum_bytes: nativeExportContracts.MAX_NATIVE_EXPORT_ROWS,
-      message: expect.stringContaining("262144-entry export inventory"),
+      maximum_bytes: nativeExportContracts.DEFAULT_NATIVE_EXPORT_ROWS,
+      message: expect.stringContaining("above max_entries (262144)"),
     });
   });
 });
@@ -1177,7 +1201,7 @@ describe("export inventory review regressions", () => {
       },
       boundary: "structure",
       maximum_bytes: 16_777_216,
-      message: expect.stringContaining("16777216-byte retained-text"),
+      message: expect.stringContaining("exceed max_text_bytes (16777216)"),
     });
   });
 
@@ -1682,4 +1706,30 @@ describe("positional native export parser", () => {
         .map(([, size]) => size),
     ).toEqual([4096]);
   });
+});
+
+it("reports each PE export's stored RVA, including a forwarder's string RVA", () => {
+  const result = parseNativeExports(
+    peExportImage({
+      ordinalBase: 5,
+      functions: [
+        { rva: 0x2000 },
+        { rva: 0x2010 },
+        null,
+        { forwarder: "OTHER.Target" },
+      ],
+      names: [
+        { name: "Primary", index: 0 },
+        { name: "Forwarded", index: 3 },
+      ],
+    }),
+    artifact,
+  );
+  if (result.format !== "pe") throw new Error("Expected PE exports");
+  // The fixture stores forwarder strings inside the export directory.
+  expect(result.exports.map(({ name, rva }) => [name, rva])).toEqual([
+    ["Primary", 0x2000],
+    [null, 0x2010],
+    ["Forwarded", 0x1100],
+  ]);
 });

@@ -17,14 +17,15 @@ import {
   BinaryResourceFailure,
 } from "../../domain/binaryContainer.js";
 import { peSubjectArchitecture } from "../../domain/peMachine.js";
+import { peImageBaseHex } from "../../domain/native/peAddressSpace.js";
 import type { PeDataDirectory } from "../../domain/peOptionalHeader.js";
 import {
   readPeImage,
   readPeImageFromReader,
   type PeImage,
 } from "../../domain/native/peImage.js";
-import type { NativeByteSource } from "../../domain/native/nativeSectionDirectory.js";
 import { parsePeLoadConfigFromReader } from "../pe/PeLoadConfigParser.js";
+import type { ByteSource } from "../../domain/byteSource.js";
 
 const IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA = 0x0020;
 const IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE = 0x0040;
@@ -76,7 +77,7 @@ export const readPeHardening = async (
 
 /** Same PE hardening read over a random-access handle without buffering the full image. */
 export const readPeHardeningFromHandle = async (
-  source: NativeByteSource,
+  source: ByteSource,
   artifact: PeLoadConfig["artifact"],
   signal?: AbortSignal,
 ): Promise<BinaryHardeningImage> => {
@@ -200,6 +201,7 @@ const readPeHardeningCore = async (
     bits: image.bits,
     byte_order: "little",
     machine: image.pe_machine,
+    image_base: peImageBaseHex(image.image_base),
     slice: null,
     rows,
   };

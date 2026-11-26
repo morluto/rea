@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { resolveGhidraAnalysisProfile } from "../dist/ghidra/GhidraAnalysisProfile.js";
 import { GhidraClient } from "../dist/ghidra/GhidraClient.js";
-import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { inspectVerifierGhidraFromEnvironment } from "./lib/ghidra-installation-inspection.mjs";
 import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraReleasePolicy.js";
 import { GhidraHeadlessLauncher } from "../dist/ghidra/GhidraLauncher.js";
 import { GHIDRA_PROVIDER_IDENTITY } from "../dist/ghidra/GhidraProviderMetadata.js";
@@ -60,13 +60,10 @@ if (installDir === undefined || !isAbsolute(installDir))
   throw new Error(
     `Set GHIDRA_INSTALL_DIR to the absolute root of an extracted Ghidra ${SUPPORTED_GHIDRA_VERSION} release.`,
   );
-const installation = await inspectVerifierGhidraInstallation({
-  environment: process.env,
+const installation = await inspectVerifierGhidraFromEnvironment(
+  process.env,
   installDir,
-  ...(process.env.JAVA_HOME === undefined
-    ? {}
-    : { javaHome: process.env.JAVA_HOME }),
-});
+);
 if (
   installation.status !== "available" ||
   installation.analyzeHeadlessPath === null

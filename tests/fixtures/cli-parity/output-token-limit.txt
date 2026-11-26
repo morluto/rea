@@ -2,7 +2,7 @@ $ rea inspect-byte-entropy <workspace>/sample.bin --filter-output normalized_res
 exit: 0
 --- stdout
 normalized_result:
-[truncated: showing tokens 0–5 of 42]
+[truncated: showing tokens 0–5 of 50]
 <end>
 --- stderr
 <end>

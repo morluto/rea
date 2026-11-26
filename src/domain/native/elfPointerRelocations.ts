@@ -24,12 +24,20 @@ import {
   BinaryReader,
   createFileMappingIndex,
   isZeroFilledSpan,
+  nativeStructureFailure,
   type ElfDynamicSegment,
 } from "../binaryContainer.js";
 import { ParseFailureError } from "../parseFailure.js";
 
 /** The ParseFailure format of ELF loader pointer interpretation. */
 export const ELF_POINTER_RELOCATION_FORMAT = "elf-pointer-relocations";
+
+/**
+ * Limit name of the caller-selected virtual pointer index allowance, so a
+ * consumer can name its own control for it. The loader's fixed allowances keep
+ * `native-index-capacity` as their limit name.
+ */
+export const ELF_VIRTUAL_POINTER_INDEX_LIMIT = "virtual-pointer-index-bytes";
 
 /**
  * Shared loader interpretation; language adapters choose their public errors.
@@ -53,6 +61,7 @@ export class ElfPointerRelocationFailure extends ParseFailureError<
     message: string,
     maximum: number,
     unit: "entries" | "bytes",
+    limitName?: typeof ELF_VIRTUAL_POINTER_INDEX_LIMIT,
   );
   constructor(
     readonly reason:
@@ -63,11 +72,12 @@ export class ElfPointerRelocationFailure extends ParseFailureError<
     message: string,
     maximum?: number,
     unit?: "entries" | "bytes",
+    limitName: string = reason,
   ) {
     const facts = { format: ELF_POINTER_RELOCATION_FORMAT, detail: message };
     super(
       maximum !== undefined
-        ? { ...facts, kind: "limit", limit: { name: reason, maximum } }
+        ? { ...facts, kind: "limit", limit: { name: limitName, maximum } }
         : reason === "malformed-container"
           ? { ...facts, kind: "malformed" }
           : {
@@ -129,6 +139,12 @@ export interface ElfPointerRelocationInput {
   >[];
   readonly mappings: readonly FileMapping[];
   readonly zeroFills: readonly ZeroFillMapping[];
+  /**
+   * The caller's `max_structure_bytes` for the dynamic directory. A caller
+   * that owns that control passes it and receives its failure; the IL2CPP
+   * and JNI loaders omit it and keep their native-index-capacity failure.
+   */
+  readonly structureBytes?: number | undefined;
 }
 
 // JNI sparse consumers retain per-write provenance; streaming materializers do not.
@@ -518,9 +534,20 @@ function* dynamicTags(
   const declaration = input.dynamicSegments[0];
   if (declaration === undefined)
     return { values: new Map(), ambiguous: new Set() };
-  const table = admitElfDynamicDirectory(bytes.length, declaration, input.bits);
+  const table = admitElfDynamicDirectory(
+    bytes.length,
+    declaration,
+    input.bits,
+    input.structureBytes,
+  );
   if (!table.ok) {
     if (table.error.kind === "malformed") return malformed(table.error.message);
+    if (input.structureBytes !== undefined)
+      throw nativeStructureFailure(
+        "The ELF dynamic directory",
+        table.error.size,
+        table.error.maximum,
+      );
     throw new ElfPointerRelocationFailure(
       "native-index-capacity",
       table.error.message,
@@ -1059,6 +1086,8 @@ class ElfVirtualWriteIndex {
     readonly word: 4 | 8,
     readonly little: boolean,
     readonly maximumBytes: number,
+    /** Set when the caller selected `maximumBytes` and names its own control. */
+    readonly selectedLimit?: typeof ELF_VIRTUAL_POINTER_INDEX_LIMIT,
   ) {}
   add({
     address,
@@ -1077,6 +1106,7 @@ class ElfVirtualWriteIndex {
           `ELF virtual pointer index exceeds ${this.maximumBytes} estimated representation bytes (${ELF_POINTER_INDEX_ENTRY_BYTES} reserved per virtual address, including lookup workspace)`,
           this.maximumBytes,
           "bytes",
+          this.selectedLimit,
         );
       this.#reservedBytes += ELF_POINTER_INDEX_ENTRY_BYTES;
     }
@@ -1299,6 +1329,8 @@ export function* readElfPointerRelocationsSteps(
 
 /** Value-only consumers keep input-bounded file-backed writes without per-record
  * provenance, with a separate allowance for unresolved and zero-fill state.
+ * `maximumIndexBytes` is the caller's selected allowance: its refusal carries
+ * `ELF_VIRTUAL_POINTER_INDEX_LIMIT` so the caller can name its control.
  */
 export function* readElfPointerValuesSteps(
   bytes: Buffer,
@@ -1310,6 +1342,7 @@ export function* readElfPointerValuesSteps(
     input.bits === 64 ? 8 : 4,
     input.little,
     maximumIndexBytes,
+    ELF_VIRTUAL_POINTER_INDEX_LIMIT,
   );
   const zeroFill = new Set<bigint>();
   const steps = readElfRelocationWritesSteps(bytes, input, {

@@ -1,6 +1,6 @@
+import { connectFixtureClient } from "../../support/mcp/mcpFixture.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
@@ -19,7 +19,6 @@ import { composeBinarySession } from "../../../src/application/binary/BinarySess
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { createBinarySessionTargets } from "../../fixtures/binarySession.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
-import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 interface Invocation {
   readonly name: string;
@@ -130,16 +129,11 @@ afterEach(async () => {
 
 const connect = async (analysis: AnalysisOperationPort) => {
   const server = createServer({ kind: "fixed", analysis });
-  const client = new Client(
+  return connectFixtureClient(
+    server,
     { name: "contract-test", version: "1.0.0" },
-    { jsonSchemaValidator: createMcpSchemaValidation() },
+    resources,
   );
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  return client;
 };
 
 describe("official tool input contracts", () => {

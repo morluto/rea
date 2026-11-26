@@ -12,7 +12,6 @@ import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorPro
 import { apkSignatureSummaryViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
-import { apkFixtureReader } from "../fixtures/apkSignature/randomAccess.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import {
   APK_SIGNATURE_V2_ID,
@@ -24,6 +23,7 @@ import {
   zipWith,
 } from "../fixtures/apkSignature/v1SignatureBlock.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { bufferByteSource } from "../../src/domain/byteSource.js";
 
 cliTest(
   "keeps fixed APK pair refusals nonretryable through CLI and MCP, then accepts a valid input",
@@ -59,7 +59,7 @@ cliTest(
       }
     }
     const bytes = await readFile(paths.get(4097)!);
-    const reader = apkFixtureReader(bytes);
+    const reader = bufferByteSource(bytes, 4);
     const tail = await parseZipTailFromReader(reader);
     if (!tail.ok) throw new Error("Expected a framed ZIP tail");
     const parsed = await locateApkSigningBlockFromReader(

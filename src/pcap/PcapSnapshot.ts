@@ -12,8 +12,12 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import {
+  PCAP_PRODUCER_LIMITS,
+  pcapProducerLimit,
+} from "../domain/pcap/pcapAnalysis.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { withSecondaryCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
   assertRegularFileActive,
@@ -30,7 +34,6 @@ import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_pcap_capture";
-const MAX_CAPTURE_BYTES = 2 * 1024 ** 3;
 
 /** An owned capture copy and every descriptor needed to release it safely. */
 export class PcapSnapshot {
@@ -100,16 +103,16 @@ export class PcapSnapshot {
           resources: [this.path],
         },
       });
-      cancelled
-        .retainSecondaryFailure(cleanup)
-        .bindCleanupDependencies([cleanup]);
+      withSecondaryCleanupFailure(cancelled, cleanup);
       throw cancelled;
     }
   }
 
+  /** `maximumBytes` is the caller's `producer_limits.input_bytes`. */
   async capture(
     path: string,
     signal?: AbortSignal,
+    maximumBytes: number = PCAP_PRODUCER_LIMITS.input_bytes,
   ): Promise<{ bytes: number; sha256: string }> {
     const sourceRead = async <T>(read: () => Promise<T>): Promise<T> => {
       try {
@@ -156,17 +159,20 @@ export class PcapSnapshot {
       const before = await sourceRead(() =>
         source.handle.stat({ bigint: true }),
       );
-      if (before.size > BigInt(MAX_CAPTURE_BYTES))
+      if (before.size > BigInt(maximumBytes))
         throw new AnalysisResourceConstraintError(
           OPERATION,
           "file-size",
-          "Capture exceeds the owned-snapshot disk budget",
-          { max_capture_bytes: MAX_CAPTURE_BYTES },
-          fixedAllowanceOptions(
-            "the owned capture snapshot allowance",
-            "input",
-            { limit: MAX_CAPTURE_BYTES, unit: "bytes" },
-          ),
+          "Capture exceeds the producer_limits.input_bytes snapshot budget",
+          { max_capture_bytes: maximumBytes },
+          {
+            retryable: false,
+            limit: pcapProducerLimit(
+              "input_bytes",
+              maximumBytes,
+              Number(before.size),
+            ),
+          },
         );
       const destination = this.own(
         new OwnedFileHandle(await open(this.path, "wx", 0o600)),

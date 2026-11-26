@@ -4,9 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 import { RuntimeControlUnavailableError } from "../domain/runtimeControlUnavailableError.js";
 import type { WindowsNativeAuthority } from "./WindowsNativeLoader.js";
 import {
+  isWindowsExecutableLaunchFailure,
   quoteWindowsProcessArgument,
   WindowsNativeControlUnavailableError,
   WindowsNativeSpawnControlError,
+  windowsNativeSpawnControlError,
   WindowsOwnedProcess,
 } from "./WindowsOwnedProcess.js";
 
@@ -380,6 +382,45 @@ describe("Windows process_spawn control vs executable classification", () => {
     }
     expect(caughtExecutable).toBe(executableFailure);
     expect(caughtExecutable).not.toBeInstanceOf(RuntimeControlUnavailableError);
+  });
+
+  it("fails closed to host-control when structured constraint is absent or unrecognized", () => {
+    const { native } = authority();
+    const proseOnlyExecutableError = Object.assign(
+      new Error(
+        "Create process atomically inside owned Job Object failed [C:\\runtime\\bun.exe] (Win32 2): The system cannot find the file specified.",
+      ),
+      { code: "ENOENT", win32Code: 2 },
+    );
+    expect(isWindowsExecutableLaunchFailure(proseOnlyExecutableError)).toBe(
+      false,
+    );
+    const proseOnlyAuthority: WindowsNativeAuthority = {
+      ...native,
+      call: (operation) => {
+        if (operation === "process_spawn") throw proseOnlyExecutableError;
+        throw new Error(`Unmodeled native operation ${operation}`);
+      },
+    };
+    expect(() => launch(proseOnlyAuthority)).toThrow(
+      WindowsNativeSpawnControlError,
+    );
+
+    const unclassifiedNativeError = Object.assign(
+      new Error("Unexpected native failure"),
+      { code: "ERR_REA_WINDOWS_NATIVE" },
+    );
+    expect(isWindowsExecutableLaunchFailure(unclassifiedNativeError)).toBe(
+      false,
+    );
+    expect(
+      windowsNativeSpawnControlError(unclassifiedNativeError),
+    ).toBeInstanceOf(WindowsNativeSpawnControlError);
+
+    const posixSpawnError = Object.assign(new Error("spawn /bin/tool ENOENT"), {
+      code: "ENOENT",
+    });
+    expect(windowsNativeSpawnControlError(posixSpawnError)).toBeUndefined();
   });
 });
 

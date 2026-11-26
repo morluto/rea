@@ -1,3 +1,4 @@
+import { analysisViewPageFields } from "./analysisViewPageFields.js";
 import { z } from "zod";
 import { literalFeatureMatchSchema } from "../native/literalFeatureMatch.js";
 import {
@@ -5,8 +6,8 @@ import {
   literalFeatureTraceSchema,
 } from "../native/literalFeatureTrace.js";
 import { jsonValueSchema } from "../jsonValue.js";
-import { err, ok } from "../result.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { ok } from "../result.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { selectViewRows } from "./selectViewRows.js";
 import {
   createAnalysisViewResultReader,
@@ -23,11 +24,7 @@ import {
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 
-const page = {
-  kind: z.literal("native-feature-trace"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
-};
+const page = analysisViewPageFields("native-feature-trace");
 export const nativeFeatureTraceRequests = {
   matches: z.strictObject({
     ...page,
@@ -96,15 +93,8 @@ export const projectNativeFeatureTraceView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "summary" && view.kind !== "native-feature-trace")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Native feature traces support summary and native-feature-trace views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Native feature traces support summary and native-feature-trace views.",
     );
   assertOwnedView<
     SummaryAnalysisView | z.output<typeof nativeFeatureTraceViewRequestSchema>

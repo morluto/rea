@@ -1,3 +1,4 @@
+import { isSuccessfulHttpStatus } from "../httpResponseStatus.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { jsonValueType, parseJsonObject } from "../jsonShape.js";
 import { ok, type Result } from "../result.js";
@@ -108,8 +109,7 @@ const manifestResponseIsEmpty = (record: WebNetworkCaptureRecord): boolean => {
 };
 /** A write group every response of which had no body, at least one of them a success. */
 const answeredEmpty = (group: GroupState): boolean =>
-  group.bodiless &&
-  [...group.statuses].some((status) => status >= 200 && status < 300);
+  group.bodiless && [...group.statuses].some(isSuccessfulHttpStatus);
 const ASSET_ESSENCES = new Set([
   "text/html",
   "application/xhtml+xml",

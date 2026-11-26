@@ -1,3 +1,8 @@
+import {
+  u16,
+  u32,
+  u64,
+} from "../../../tests/fixtures/apkSignature/integers.js";
 import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
@@ -8,7 +13,7 @@ import {
   type HashFactory,
 } from "./apkContentDigest.js";
 import { parseZipTailFromReader } from "./apkSigningBlock.js";
-import { apkFixtureReader } from "../../../tests/fixtures/apkSignature/randomAccess.js";
+import { bufferByteSource } from "../byteSource.js";
 
 const nodeHash: HashFactory = (algorithm) => {
   const hash = createHash(algorithm);
@@ -19,15 +24,6 @@ const nodeHash: HashFactory = (algorithm) => {
     digest: () => new Uint8Array(hash.digest()),
   };
 };
-
-const u16 = (v: number): number[] => [v & 0xff, (v >> 8) & 0xff];
-const u32 = (v: number): number[] => [
-  v & 0xff,
-  (v >> 8) & 0xff,
-  (v >> 16) & 0xff,
-  (v >>> 24) & 0xff,
-];
-const u64 = (v: number): number[] => [...u32(v), ...u32(0)];
 
 const eocd = (cdSize: number, cdOffset: number): number[] => [
   ...u32(0x06054b50),
@@ -84,7 +80,7 @@ const digestOf = async (
   blockStart: number,
   algorithm: "sha256" | "sha512" = "sha256",
 ): Promise<Uint8Array | null> => {
-  const tail = await parseZipTailFromReader(apkFixtureReader(bytes));
+  const tail = await parseZipTailFromReader(bufferByteSource(bytes, 4));
   if (!tail.ok) throw new Error("bad fixture");
   return computeApkContentDigest(
     bytes,
@@ -141,7 +137,7 @@ describe("computeApkContentDigest", () => {
 
   it("reports not-computed for a layout with a gap before the EOCD", async () => {
     const bytes = withBlock();
-    const tail = await parseZipTailFromReader(apkFixtureReader(bytes));
+    const tail = await parseZipTailFromReader(bufferByteSource(bytes, 4));
     if (!tail.ok) throw new Error("bad fixture");
     const gapped = { ...tail.value.tail, centralDirectorySize: 3 }; // CD no longer abuts EOCD
     expect(
@@ -155,7 +151,7 @@ describe("computeApkContentDigest", () => {
 
   it("matches computeApkContentDigestStreaming across multiple 1 MiB chunks without buffering the file", async () => {
     const bytes = withBlock();
-    const tail = await parseZipTailFromReader(apkFixtureReader(bytes));
+    const tail = await parseZipTailFromReader(bufferByteSource(bytes, 4));
     if (!tail.ok) throw new Error("bad fixture");
     for (const algorithm of ["sha256", "sha512"] as const) {
       let maxReadLength = 0;

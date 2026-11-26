@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import {
   assertFeatureTrace,
   findMappedNonFunction,
@@ -12,7 +13,6 @@ import {
 import { withVerifierResourceOwner } from "./lib/verifier-file-resources.mjs";
 
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { access, readdir, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
@@ -21,6 +21,10 @@ import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { createOwnedMcpStdioTransport } from "./lib/owned-mcp-stdio.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 const { values } = parseArgs({
   options: {
@@ -133,11 +137,6 @@ let phase = "target admission";
 const workspaces = new Set();
 let targetIsDatabase = false;
 const databases = new Set();
-const digest = async () => {
-  const hash = createHash("sha256");
-  for await (const chunk of createReadStream(target)) hash.update(chunk);
-  return hash.digest("hex");
-};
 const observe = (input) => {
   const evidence = evidenceSchema.parse(input);
   assert.equal(evidence.provider.id, "ida");
@@ -194,17 +193,19 @@ const cli = async () => {
   phase = "production CLI function analysis";
   const commands = await createVerifierCommands();
   const { stdout } = await withVerifierCleanup(
-    () =>
+    async () =>
       commands.exec(
         process.execPath,
         [
           entry,
-          "function",
-          target,
-          values.procedure,
-          "--provider",
-          "ida",
-          "--json",
+          ...(await completeEvidenceCliArguments([
+            "function",
+            target,
+            values.procedure,
+            "--provider",
+            "ida",
+            "--json",
+          ])),
         ],
         {
           env: environment,
@@ -291,7 +292,9 @@ const verifyPeerCleanup = async (analysis, closeWithPeer, retryClose) => {
 };
 
 const mcp = async (cliDossier) => {
-  const client = new Client({ name: "rea-real-ida-verifier", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "rea-real-ida-verifier", version: "1" }),
+  );
   const transport = await createOwnedMcpStdioTransport({
     command: process.execPath,
     arguments: [entry, "mcp"],
@@ -404,7 +407,12 @@ const mcp = async (cliDossier) => {
         "list_documents reported the private workspace copy.",
       );
       const resolveAt = async (address) =>
-        observe(await call("resolve_containing_procedure", { address }));
+        observe(
+          await call("resolve_containing_procedure", {
+            detail: "complete",
+            address,
+          }),
+        );
       const instructionAddresses = dossier.assembly
         .map((line) => /^(0x[0-9a-f]+)/iu.exec(line)?.[1])
         .filter((address) => address !== undefined);
@@ -421,7 +429,9 @@ const mcp = async (cliDossier) => {
       const unmapped = await resolveAt("0xffffffffffffff00");
       assert.equal(unmapped.found, false);
       assert.equal(unmapped.reason, "outside_segments");
-      const strings = observe(await call("list_strings", {}));
+      const strings = observe(
+        await call("list_strings", { detail: "complete" }),
+      );
       const mappedString = await findMappedNonFunction(strings, resolveAt);
       if (mappedString === undefined)
         report.unverified.push(
@@ -441,7 +451,7 @@ const mcp = async (cliDossier) => {
       );
       const traced = await client.callTool({
         name: "trace_feature",
-        arguments: { query: dossier.procedure.name },
+        arguments: { detail: "complete", query: dossier.procedure.name },
       });
       assert.notEqual(traced.isError, true);
       const trace = traced.structuredContent.normalized_result;
@@ -466,12 +476,14 @@ const mcp = async (cliDossier) => {
     if (values["second-procedure"] !== undefined) {
       const secondAddress = observe(
         await call("procedure_address", {
+          detail: "complete",
           procedure: values["second-procedure"],
         }),
       );
       assert.notEqual(secondAddress, dossier.procedure.address);
       const secondCode = observe(
         await call("procedure_pseudo_code", {
+          detail: "complete",
           procedure: values["second-procedure"],
         }),
       );
@@ -487,6 +499,7 @@ const mcp = async (cliDossier) => {
       );
       const restored = observe(
         await call("procedure_pseudo_code", {
+          detail: "complete",
           procedure: dossier.procedure.address,
         }),
       );
@@ -547,7 +560,7 @@ const cleanup = async () => {
     await upstream.connect();
     if (config.mode === "attached") {
       const metadata = await upstream.readResource("ida://idb/metadata");
-      assert.equal(metadata.sha256.toLowerCase(), await digest());
+      assert.equal(metadata.sha256.toLowerCase(), await sha256File(target));
       report.checks.push(
         "existing GUI target remains open with the original input identity",
       );
@@ -583,13 +596,13 @@ const cleanup = async () => {
   }
 };
 try {
-  const before = await digest();
+  const before = await sha256File(target);
   for await (const head of createReadStream(target, { end: 3 }))
     targetIsDatabase = hasIdaDatabaseSignature(head);
   const siblings = (await readdir(dirname(target))).sort();
   await mcp(await cli());
   await cleanup();
-  assert.equal(await digest(), before);
+  assert.equal(await sha256File(target), before);
   // Engines write databases beside their input; only the private copy may get one.
   assert.deepEqual((await readdir(dirname(target))).sort(), siblings);
   report.checks.push(

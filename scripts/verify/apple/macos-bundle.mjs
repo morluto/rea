@@ -122,7 +122,25 @@ await withVerifierCleanup(async () => {
       input,
     );
     const projection = evidence.normalized_result;
-    assert.equal(evidence.subject?.identity.format, format);
+    const identity = evidence.subject?.identity;
+    // A selected .app directory is named by its complete tree digest;
+    // archives keep their file digest and format.
+    if (format === "directory")
+      assert.deepEqual(
+        {
+          kind: identity?.kind,
+          algorithm: identity?.algorithm,
+          version: identity?.version,
+          sha256: identity?.sha256,
+        },
+        {
+          kind: "directory",
+          algorithm: "rea-directory-tree",
+          version: 1,
+          sha256: inventory.subject?.identity.sha256,
+        },
+      );
+    else assert.equal(identity?.format, format);
     assert.equal(projection.root_format, format);
     assert.deepEqual(projection.platforms, ["macos"]);
     assert.deepEqual(projection.application_roots, [applicationRoot]);

@@ -97,7 +97,7 @@ export const createSemanticElectronAppPathChangeQuery = (
       // Close the finite source graph after the precise context budget is
       // exhausted. Widening alone is never evidence of an Electron origin.
       if (!widened && scheduled >= state.precision.alias_selections) {
-        state.valueResourceLimits.add("alias-selections");
+        state.observations.valueResourceLimits.add("alias-selections");
         widened = true;
       }
       if (widened)

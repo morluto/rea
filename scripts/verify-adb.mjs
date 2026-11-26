@@ -1,9 +1,9 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { join, posix } from "node:path";
 import { promisify } from "node:util";
 
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { AdbDeviceAnalysisService } from "../dist/application/adb/AdbDeviceAnalysisService.js";
 import { createAdbDeviceAnalysisProvider } from "../dist/composition/adb.js";
 import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
@@ -306,9 +306,7 @@ try {
             const bytes = await stat(artifact.local_path).then(
               (info) => info.size,
             );
-            const digest = createHash("sha256")
-              .update(await readFile(artifact.local_path))
-              .digest("hex");
+            const digest = await sha256File(artifact.local_path);
             check(
               `artifact digest matches on disk: ${artifact.file_name}`,
               bytes === artifact.bytes && digest === artifact.sha256,

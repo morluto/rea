@@ -20,6 +20,7 @@ import {
   isAborted,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { withDelegatedCleanupOwner } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
@@ -256,24 +257,25 @@ const idaAttribution = (
       diagnostics: cause.diagnostics,
     });
   if (cause instanceof AnalysisCancelledError)
-    return cancelledBy(
-      operation,
-      carriedReason(
-        cause.cause === undefined ? options?.signal?.reason : cause.cause,
+    return withDelegatedCleanupOwner(
+      cancelledBy(
+        operation,
+        carriedReason(
+          cause.cause === undefined ? options?.signal?.reason : cause.cause,
+        ),
+        {
+          capturedOutput: cause.capturedOutput,
+          diagnostics: { ...cause.diagnostics, ...endpoint },
+          partialObservation: cause.partialObservation,
+          cleanup:
+            cause.cleanup ??
+            (cause.cleanupIncomplete
+              ? { reason: cause.message, resources: cause.cleanupResources }
+              : undefined),
+        },
       ),
-      {
-        capturedOutput: cause.capturedOutput,
-        diagnostics: { ...cause.diagnostics, ...endpoint },
-        partialObservation: cause.partialObservation,
-        cleanup:
-          cause.cleanup ??
-          (cause.cleanupIncomplete
-            ? { reason: cause.message, resources: cause.cleanupResources }
-            : undefined),
-      },
-    )
-      .bindCleanupDependencies([cause])
-      .bindCleanupResourceOwner(cause);
+      cause,
+    );
   if (
     cause instanceof AnalysisTimeoutError ||
     cause instanceof AnalysisResourceConstraintError

@@ -21,8 +21,8 @@ import {
   executeRetainedSummaryOperation,
   inspectAnalysisView,
   summarizeRetainedAnalysis,
-  type AnalysisViewRetention,
 } from "../application/analysisView/AnalysisViewService.js";
+import type { AnalysisViewRetention } from "../application/analysisView/AnalysisViewRetention.js";
 import { z } from "zod";
 import { analysisViewSourceSchema } from "../domain/analysisView/analysisViewRequest.js";
 import type { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
@@ -243,14 +243,16 @@ const SERVICE_TOOL_BINDINGS = {
       "extract_firmware",
     ])) satisfies Bind<FirmwareAnalysisService>,
   uefiAnalysis: ((service) => ({
-    ...contractServiceBindings(service, [
-      "extract_uefi_firmware",
-      "inspect_uefi_nvram",
-    ]),
+    ...contractServiceBindings(service, ["inspect_uefi_nvram"]),
     inspect_uefi_firmware: {
       admission: "application",
       summary: (input, options) =>
         service.execute("inspect_uefi_firmware", input, options),
+    },
+    extract_uefi_firmware: {
+      admission: "application",
+      summary: (input, options) =>
+        service.execute("extract_uefi_firmware", input, options),
     },
   })) satisfies Bind<UefiAnalysisService>,
   pcapAnalysis: ((service) => ({
@@ -405,7 +407,7 @@ const SERVICE_TOOL_BINDINGS = {
               ),
             );
           const { detail, ...input } = parsed.data;
-          const parameters = { detail };
+          const parameters = detail === undefined ? {} : { detail };
           const ready = delivery.preflight(parameters);
           if (!ready.ok) return ready;
           const inspected = await service.inspect(input, options);
@@ -419,7 +421,7 @@ const SERVICE_TOOL_BINDINGS = {
   webRuntime: ((service) => ({
     observe_web_execution: {
       admission: "sdk",
-      run: (input, options) => service.observe(input, options),
+      summary: (input, options) => service.observe(input, options),
     },
     inspect_web_event_listeners: {
       admission: "sdk",
@@ -751,7 +753,7 @@ const SERVICE_TOOL_BINDINGS = {
               ),
             );
           const { detail, ...input } = parsed.data;
-          const parameters = { detail };
+          const parameters = detail === undefined ? {} : { detail };
           const ready = delivery.preflight(parameters);
           if (!ready.ok) return ready;
           const inspected = await service.inspect(input, options);
