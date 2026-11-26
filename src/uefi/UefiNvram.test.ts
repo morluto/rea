@@ -1,9 +1,85 @@
 import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
+import { scanEdk2VariableStores } from "./UefiEdk2Nvram.js";
 import { scanAmiNvramStores } from "./UefiNvram.js";
 
 const NVAR_MAGIC = Buffer.from("NVAR", "ascii");
+
+const uuidLe = (hex: string): Buffer => {
+  const [a, b, c, d, e] = hex.split("-");
+  if (
+    a === undefined ||
+    b === undefined ||
+    c === undefined ||
+    d === undefined ||
+    e === undefined
+  )
+    throw new Error(`invalid GUID ${hex}`);
+  const out = Buffer.alloc(16);
+  out.writeUInt32LE(Number.parseInt(a, 16), 0);
+  out.writeUInt16LE(Number.parseInt(b, 16), 4);
+  out.writeUInt16LE(Number.parseInt(c, 16), 6);
+  Buffer.from(`${d}${e}`, "hex").copy(out, 8);
+  return out;
+};
+
+/** Minimal EDK2 authenticated store from issue #13229 (FV header + BootOrder). */
+const buildSyntheticEdk2Vars = (): Buffer => {
+  const buf = Buffer.alloc(0x1000, 0xff);
+  buf.fill(0x00, 0, 0x48);
+  uuidLe("fff12b8d-7696-4c8b-a985-2747075b4f50").copy(buf, 16);
+  buf.writeBigUInt64LE(0x1000n, 32);
+  buf.write("_FVH", 40, "ascii");
+  buf.writeUInt32LE(0x0004feff, 44);
+  buf.writeUInt16LE(0x0048, 48);
+  buf.writeUInt8(2, 55);
+  buf.writeUInt32LE(1, 56);
+  buf.writeUInt32LE(0x1000, 60);
+  let sum16 = 0;
+  for (let i = 0; i < 0x48; i += 2)
+    sum16 = (sum16 + buf.readUInt16LE(i)) & 0xffff;
+  buf.writeUInt16LE((0x10000 - sum16) & 0xffff, 50);
+
+  let off = 0x48;
+  uuidLe("aaf32c78-947b-439a-a180-2e144ec37792").copy(buf, off);
+  buf.writeUInt32LE(0x1000 - off, off + 16);
+  buf.writeUInt8(0x5a, off + 20);
+  buf.writeUInt8(0xfe, off + 21);
+  off += 28;
+
+  const writeAuthVar = (
+    name: string,
+    state: number,
+    guid: string,
+    data: Buffer,
+  ): void => {
+    const nameBuf = Buffer.from(`${name}\0`, "utf16le");
+    buf.writeUInt16LE(0x55aa, off);
+    buf.writeUInt8(state, off + 2);
+    buf.writeUInt32LE(0x00000007, off + 4);
+    buf.writeUInt32LE(nameBuf.length, off + 36);
+    buf.writeUInt32LE(data.length, off + 40);
+    uuidLe(guid).copy(buf, off + 44);
+    let cursor = off + 60;
+    nameBuf.copy(buf, cursor);
+    cursor += nameBuf.length;
+    data.copy(buf, cursor);
+    cursor += data.length;
+    off = (cursor + 3) & ~3;
+  };
+
+  const efiGlobal = "8be4df61-93ca-11d2-aa0d-00e098032b8c";
+  writeAuthVar("BootOrder", 0x3d, efiGlobal, Buffer.from([0x00, 0x00]));
+  writeAuthVar(
+    "BootOrder",
+    0x3f,
+    efiGlobal,
+    Buffer.from([0x01, 0x00, 0x00, 0x00]),
+  );
+  return buf;
+};
 
 const encodeEntry = (name: string, data: Buffer, guidIndex: number): Buffer => {
   const nameBytes = Buffer.from(name, "ascii");
@@ -275,4 +351,95 @@ it("does not spend a second discovery slot on an already examined invalid succes
     `NVAR record at 0x${firstEnd.toString(16)} has an incomplete or invalid extent.`,
     `Structural record limit ${UEFI_FIRMWARE_LIMITS.scanRecords} reached at NVAR candidate 0x${tailOffset.toString(16)}.`,
   ]);
+});
+
+it("maps EDK2 authenticated BootOrder added and deleted entries from a synthetic VARS image", () => {
+  const image = buildSyntheticEdk2Vars();
+  expect(scanAmiNvramStores(image, 64, 2).stores).toEqual([]);
+
+  const scan = scanEdk2VariableStores(image, 64);
+  expect(scan.coverage).toBe("complete");
+  expect(scan.stores).toHaveLength(1);
+  const store = scan.stores[0];
+  if (store === undefined) throw new Error("expected one EDK2 store");
+  expect(store).toMatchObject({
+    offset: 0x48,
+    storeGuid: "aaf32c78-947b-439a-a180-2e144ec37792",
+    size: 0x1000 - 0x48,
+    storeFormat: 0x5a,
+    storeState: 0xfe,
+    authenticated: true,
+  });
+  expect(
+    store.variables.map(({ name, state, stateRaw, dataLength, attributes }) => [
+      name,
+      state,
+      stateRaw,
+      dataLength,
+      attributes,
+    ]),
+  ).toEqual([
+    ["BootOrder", "deleted", 0x3d, 2, 0x7],
+    ["BootOrder", "added", 0x3f, 4, 0x7],
+  ]);
+  expect(store.variables[0]?.vendorGuid).toBe(
+    "8be4df61-93ca-11d2-aa0d-00e098032b8c",
+  );
+  const active = store.variables[1];
+  if (active === undefined) throw new Error("expected active BootOrder");
+  expect(active.dataOffset).toBeGreaterThan(active.offset);
+  expect(
+    image
+      .subarray(active.dataOffset, active.dataOffset + active.dataLength)
+      .equals(Buffer.from([0x01, 0x00, 0x00, 0x00])),
+  ).toBe(true);
+  expect(createHash("sha256").update(image).digest("hex")).toHaveLength(64);
+});
+
+it("maps a non-authenticated gEfiVariableGuid store and in-deleted-transition state", () => {
+  const buf = Buffer.alloc(0x200, 0xff);
+  uuidLe("ddcf3616-3275-4164-98b6-fe85707ffe7d").copy(buf, 0);
+  buf.writeUInt32LE(0x200, 16);
+  buf.writeUInt8(0x5a, 20);
+  buf.writeUInt8(0xfe, 21);
+
+  let off = 28;
+  const nameBuf = Buffer.from("SecureBoot\0", "utf16le");
+  const data = Buffer.from([0x01]);
+  buf.writeUInt16LE(0x55aa, off);
+  buf.writeUInt8(0x3e, off + 2);
+  buf.writeUInt32LE(0x00000007, off + 4);
+  buf.writeUInt32LE(nameBuf.length, off + 8);
+  buf.writeUInt32LE(data.length, off + 12);
+  uuidLe("8be4df61-93ca-11d2-aa0d-00e098032b8c").copy(buf, off + 16);
+  nameBuf.copy(buf, off + 32);
+  data.copy(buf, off + 32 + nameBuf.length);
+
+  const scan = scanEdk2VariableStores(buf, 8);
+  expect(scan.coverage).toBe("complete");
+  expect(scan.stores).toMatchObject([
+    {
+      offset: 0,
+      authenticated: false,
+      storeGuid: "ddcf3616-3275-4164-98b6-fe85707ffe7d",
+      variables: [
+        {
+          name: "SecureBoot",
+          state: "in-deleted-transition",
+          stateRaw: 0x3e,
+          dataLength: 1,
+        },
+      ],
+    },
+  ]);
+});
+
+it("stops after max_stores EDK2 regions without disturbing AMI emptiness messages", () => {
+  const one = buildSyntheticEdk2Vars();
+  const two = buildSyntheticEdk2Vars();
+  const image = Buffer.concat([one, two]);
+  const limited = scanEdk2VariableStores(image, 1);
+  expect(limited.stores).toHaveLength(1);
+  expect(limited.coverage).toBe("partial");
+  expect(limited.limitations.join(" ")).toContain("Stopped after 1 EDK2");
 });

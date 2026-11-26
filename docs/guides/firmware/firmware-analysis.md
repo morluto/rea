@@ -27,11 +27,13 @@ MCP, summary delivery and selected supporting facts. Its real-data verification
 covers a pair of OpenWrt FIT releases; it does not establish comparison of
 decoded root filesystems or arbitrary firmware formats.
 
-## UEFI flash images and AMI NVRAM
+## UEFI flash images and NVRAM variable stores
 
 The bundled UEFI tools map PI firmware volumes, FFS files and sections in local
 flash images. They also report plausible AMD PSP directory tables and scan for
-AMI NVAR chains such as `StdDefaults`. They run independently of Binwalk and
+AMI NVAR chains such as `StdDefaults`, plus TianoCore EDK2 / OVMF
+`VARIABLE_STORE_HEADER` regions (`gEfiVariableGuid` /
+`gEfiAuthenticatedVariableGuid`). They run independently of Binwalk and
 Unblob. FFS file and section discovery applies to FFS2 and FFS3 volumes.
 Volumes with other file-system GUIDs retain their header and extent, with the
 body reported as unparsed. REA checks the volume header and block map against
