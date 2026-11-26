@@ -588,10 +588,9 @@ export const adbDeviceObservationSchema = z.strictObject({
    * that column for a transport registered without one (`client/usb_linux.cpp`
    * keeps an empty serial during early bringup, http://b/20883914). That text is a
    * display placeholder, not an identity: it names no device, so it is not repeated
-   * here as one.
+   * here as one; `transport_identity` still distinguishes such transports.
    */
   serial: z.string().min(1).nullable(),
-  serial_status: z.enum(["reported", "not_reported"]),
   state: adbDeviceStateSchema,
   transport: z.enum(["usb", "tcp", "unknown"]),
   product: z.string().nullable(),

@@ -23,7 +23,6 @@ describe("parseAdbDevicesOutput", () => {
     expect(devices).toEqual([
       {
         serial: "emulator-5554",
-        serial_status: "reported",
         state: "device",
         transport: "tcp",
         product: "sdk_gphone64_x86_64",
@@ -41,7 +40,6 @@ describe("parseAdbDevicesOutput", () => {
       },
       {
         serial: "07ef9c2a",
-        serial_status: "reported",
         state: "device",
         transport: "usb",
         product: "raven",
@@ -59,7 +57,6 @@ describe("parseAdbDevicesOutput", () => {
       },
       {
         serial: "192.168.1.42:5555",
-        serial_status: "reported",
         state: "device",
         transport: "tcp",
         product: "mock",
@@ -90,9 +87,8 @@ describe("parseAdbDevicesOutput", () => {
     const { devices, unparsedLines } = parseAdbDevicesOutput(output);
     expect(unparsedLines).toEqual({ sample: [], total: 0 });
     expect(
-      devices.map(({ serial, serial_status, transport, kind, kind_basis }) => ({
+      devices.map(({ serial, transport, kind, kind_basis }) => ({
         serial,
-        serial_status,
         transport,
         kind,
         kind_basis,
@@ -100,28 +96,24 @@ describe("parseAdbDevicesOutput", () => {
     ).toEqual([
       {
         serial: "adb-8c4f2a1b4e5d6f70-AbCdEf._adb-tls-connect._tcp",
-        serial_status: "reported",
         transport: "tcp",
         kind: "unknown",
         kind_basis: "none",
       },
       {
         serial: "phone._adb._tcp",
-        serial_status: "reported",
         transport: "tcp",
         kind: "unknown",
         kind_basis: "none",
       },
       {
         serial: "not-a-service._tcp",
-        serial_status: "reported",
         transport: "unknown",
         kind: "unknown",
         kind_basis: "none",
       },
       {
         serial: "adb-wired._adb-tls-connect._tcp",
-        serial_status: "reported",
         transport: "usb",
         kind: "physical",
         kind_basis: "usb_transport",
@@ -509,7 +501,6 @@ it.each([
   );
   expect(devices[0]).toMatchObject({
     serial: "serial",
-    serial_status: "reported",
     model: "Pixel",
     transport_identity: {
       status,
@@ -548,9 +539,8 @@ it("parses the placeholder adb prints for a transport with no serial", () => {
   const { devices, unparsedLines } = parseAdbDevicesOutput(output);
   expect(unparsedLines).toEqual({ sample: [], total: 0 });
   expect(
-    devices.map(({ serial, serial_status, state, transport, kind }) => ({
+    devices.map(({ serial, state, transport, kind }) => ({
       serial,
-      serial_status,
       state,
       transport,
       kind,
@@ -558,14 +548,12 @@ it("parses the placeholder adb prints for a transport with no serial", () => {
   ).toEqual([
     {
       serial: null,
-      serial_status: "not_reported",
       state: "device",
       transport: "usb",
       kind: "physical",
     },
     {
       serial: null,
-      serial_status: "not_reported",
       state: "offline",
       transport: "usb",
       kind: "physical",
@@ -608,7 +596,6 @@ it("parses the placeholder in the short listing too", () => {
   expect(unparsedLines.total).toBe(0);
   expect(devices[0]).toMatchObject({
     serial: null,
-    serial_status: "not_reported",
     state: "device",
   });
 });

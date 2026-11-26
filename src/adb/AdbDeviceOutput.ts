@@ -148,7 +148,6 @@ export const parseAdbDevicesOutput = (
         : ("unknown" as const);
     devices.push({
       serial,
-      serial_status: placeholder ? "not_reported" : "reported",
       state,
       transport:
         usb !== null
