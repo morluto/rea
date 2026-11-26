@@ -1,4 +1,4 @@
-import { serializeCanonicalValue } from "../domain/canonicalDigest.js";
+import { canonicalJsonSerializer } from "../domain/canonicalDigest.js";
 
 import type { InspectWebPageInput } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
@@ -454,12 +454,11 @@ const STORAGE_ENTRY_PAGE_SIZE = 1_000;
 
 const digest = (value: unknown): string => sha256Hex(encodedValue(value));
 
-const encodedValue = (value: unknown): Uint8Array | string => {
-  if (value instanceof Uint8Array) return value;
-  const encoded = serializeCanonicalValue(stableValue(value));
-  if (encoded === undefined) throw new TypeError("Expected canonical JSON");
-  return encoded;
-};
+const serializeStorageJson = canonicalJsonSerializer("Expected canonical JSON");
+const encodedValue = (value: unknown): Uint8Array | string =>
+  value instanceof Uint8Array
+    ? value
+    : serializeStorageJson(stableValue(value));
 
 const stableValue = (value: unknown): unknown => {
   if (

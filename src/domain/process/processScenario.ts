@@ -1,4 +1,4 @@
-import { serializeCanonicalValue } from "../canonicalDigest.js";
+import { canonicalJsonSerializer } from "../canonicalDigest.js";
 import { z } from "zod";
 import { jsonRecordSchema } from "../jsonRecord.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
@@ -104,13 +104,13 @@ export const normalizationSchema = z.object({
   ),
 });
 
+const serializeCommitment = canonicalJsonSerializer(
+  "Process capture commitment is not canonical JSON",
+);
+
 /** Compute a canonical SHA-256 commitment independent of object key order. */
-export const digestProcessCommitment = (value: unknown): string => {
-  const serialized = serializeCanonicalValue(value);
-  if (serialized === undefined)
-    throw new TypeError("Process capture commitment is not canonical JSON");
-  return sha256Hex(serialized);
-};
+export const digestProcessCommitment = (value: unknown): string =>
+  sha256Hex(serializeCommitment(value));
 
 /** Explicit private-input facts contain no textual marker that can collide with a value. */
 export const sensitiveProcessInputProjection = (data: string) => ({
