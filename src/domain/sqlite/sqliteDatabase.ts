@@ -24,7 +24,7 @@ export const SQLITE_SCHEMA_TABLE_ALIAS = "sqlite_master";
 export const sqliteCatalogSpelling = (name: string): string =>
   name === SQLITE_SCHEMA_TABLE_ALIAS ? SQLITE_SCHEMA_TABLE_NAME : name;
 export const sqliteSchemaHasObjectDeclaration = (name: string): boolean =>
-  name !== SQLITE_SCHEMA_TABLE_NAME && name !== SQLITE_SCHEMA_TABLE_ALIAS;
+  sqliteCatalogSpelling(name) !== SQLITE_SCHEMA_TABLE_NAME;
 
 /** Default ordinary-table sample size when the caller selects a table. */
 export const SQLITE_ROW_LIMIT_DEFAULT = 20;
