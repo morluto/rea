@@ -392,3 +392,30 @@ export const parsePaxRecords = (
 /** Number of whole blocks that hold `size` data bytes. */
 export const tarPaddedSize = (size: number): number =>
   Math.ceil(size / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
+
+/** A directory header, including an old regular header whose name ends in `/`. */
+export const isTarDirectoryHeader = (flag: number, name: string): boolean =>
+  flag === TAR_TYPEFLAGS.directory || (flag === 0 && name.endsWith("/"));
+
+/** Typeflags POSIX ustar records without data blocks, besides directories. */
+const HEADER_ONLY_TYPEFLAGS: ReadonlySet<number> = new Set([
+  TAR_TYPEFLAGS.symlink,
+  TAR_TYPEFLAGS.characterDevice,
+  TAR_TYPEFLAGS.blockDevice,
+  TAR_TYPEFLAGS.fifo,
+]);
+
+/**
+ * Data bytes stored after a member header. POSIX ustar stores none for
+ * symbolic links, devices, directories and FIFOs, whose size field may still
+ * be nonzero, so the next header follows at once. Hard links keep their size:
+ * pax interchange archives may store a body for them.
+ */
+export const tarStoredDataBytes = (
+  flag: number,
+  name: string,
+  size: number,
+): number =>
+  isTarDirectoryHeader(flag, name) || HEADER_ONLY_TYPEFLAGS.has(flag)
+    ? 0
+    : size;

@@ -8,6 +8,7 @@ import {
 import type { JsonValue } from "../domain/jsonValue.js";
 import { redactRecordedTransportUrl } from "../domain/recordedTransportUrl.js";
 import {
+  isTarDirectoryHeader,
   isZeroBlock,
   parseTarNumber,
   TAR_BLOCK_BYTES,
@@ -15,6 +16,7 @@ import {
   tarHeaderChecksumMatches,
   tarHeaderDialect,
   tarPaddedSize,
+  tarStoredDataBytes,
   walkPaxRecords,
 } from "../domain/tarFormat.js";
 import { constants, zstdDecompressSync } from "node:zlib";
@@ -22,6 +24,7 @@ import { constants, zstdDecompressSync } from "node:zlib";
 import { gunzip, isGzip } from "../domain/desktop/gzipDocument.js";
 import { deb822Paragraphs } from "../domain/desktop/aptRepositories.js";
 import {
+  countDebianRelationshipItems,
   DEB_AR_HEADER_BYTES,
   DEB_AR_MAGIC,
   DEB_CONTROL_RELATIONSHIP_NAMES,
@@ -29,6 +32,7 @@ import {
   DEB_RELATIONSHIP_FIELDS,
   debArchiveCompressionFromName,
   debArMemberRole,
+  MAX_DEB_RELATIONSHIP_ALTERNATIVES,
   parseDebianRelationshipField,
   parseDebianVersion,
   type DebArMember,
@@ -228,12 +232,6 @@ export const undecodableTarNamesLimitation = (count: number): string =>
  * archives use at most a few; a longer run is refused before it costs work.
  */
 const MAX_TAR_EXTENSION_HEADERS = 8;
-/**
- * Fixed allowance for relationship alternatives across a control file. Each
- * `|` or `,` can become a report object, so a two-byte separator grows into
- * far more report; real packages list at most a few hundred.
- */
-const MAX_RELATIONSHIP_ALTERNATIVES = 65_536;
 
 /** The PAX record keys this reader applies to the following entry. */
 const PAX_KEYS = [
@@ -543,18 +541,6 @@ const parseTar = (
           `tar size field is unreadable in ${memberName} at offset ${String(offset)}.`,
         ),
       };
-    const dataStart = offset + TAR_BLOCK_BYTES;
-    if (dataStart + size > bytes.length)
-      return {
-        entries,
-        files,
-        undecodableNames,
-        error: new DebPackageFormatFailure(
-          "truncated",
-          `tar member in ${memberName} extends past the end of the archive.`,
-        ),
-      };
-    const payload = bytes.subarray(dataStart, dataStart + size);
     // Only POSIX ustar headers carry a path prefix at 345. GNU headers
     // ("ustar  \0") keep atime, ctime and sparse data there instead.
     const prefix =
@@ -564,6 +550,22 @@ const parseTar = (
     const rawName = tarText(header.subarray(0, 100));
     const headerName =
       prefix.text.length > 0 ? `${prefix.text}/${rawName.text}` : rawName.text;
+    const rawPath = pax.path ?? globalPax.path ?? longname ?? headerName;
+    const storedSize = extension
+      ? size
+      : tarStoredDataBytes(typeFlag, rawPath, size);
+    const dataStart = offset + TAR_BLOCK_BYTES;
+    if (dataStart + storedSize > bytes.length)
+      return {
+        entries,
+        files,
+        undecodableNames,
+        error: new DebPackageFormatFailure(
+          "truncated",
+          `tar member in ${memberName} extends past the end of the archive.`,
+        ),
+      };
+    const payload = bytes.subarray(dataStart, dataStart + storedSize);
     if (extension) {
       extensionHeaders += 1;
       if (extensionHeaders > MAX_TAR_EXTENSION_HEADERS)
@@ -724,13 +726,15 @@ const parseTar = (
     const group = nonempty(
       fileFields.gname ?? trimField(ascii(header.subarray(297, 329))),
     );
-    const type = tarType(typeFlag);
+    const type = isTarDirectoryHeader(typeFlag, rawPath)
+      ? "directory"
+      : tarType(typeFlag);
     entries.push({
       path: path.length === 0 ? "." : path,
       type,
       // An unreadable mode stays unknown rather than reading as 0000.
       mode: mode === null ? null : mode.toString(8).padStart(4, "0"),
-      size,
+      size: storedSize,
       uid,
       gid,
       user,
@@ -745,7 +749,7 @@ const parseTar = (
     for (const key of PAX_KEYS) delete pax[key];
     extensionHeaders = 0;
     paxUndecodable.clear();
-    offset = dataStart + tarPaddedSize(size);
+    offset = dataStart + tarPaddedSize(storedSize);
   }
   // Without an end-of-archive block the stream must stop exactly on a block
   // boundary; a partial header or missing member padding means it was cut off.
@@ -949,24 +953,24 @@ const parseControl = (
   const description = textField("description");
   const description_summary =
     description === null ? null : (description.split("\n")[0]?.trim() ?? "");
-  // Count alternatives before building any, so the separators alone cannot
-  // expand the report past its allowance.
+  // Count alternatives and nested architecture/profile list items before
+  // splitting any, so separators or bracketed tokens cannot expand the report
+  // past its allowance.
   let alternatives = 0;
   for (const field of DEB_RELATIONSHIP_FIELDS) {
     const raw = fields?.get(
       DEB_CONTROL_RELATIONSHIP_NAMES[field].toLowerCase(),
     );
     if (raw === undefined) continue;
-    alternatives += 1;
-    for (let index = 0; index < raw.length; index += 1) {
-      const code = raw.charCodeAt(index);
-      if (code === 0x2c || code === 0x7c) alternatives += 1;
-    }
-    if (alternatives > MAX_RELATIONSHIP_ALTERNATIVES)
+    alternatives += countDebianRelationshipItems(
+      raw,
+      MAX_DEB_RELATIONSHIP_ALTERNATIVES - alternatives,
+    );
+    if (alternatives > MAX_DEB_RELATIONSHIP_ALTERNATIVES)
       throw new DebPackageAllowanceFailure(
         "relationship_alternatives",
-        MAX_RELATIONSHIP_ALTERNATIVES,
-        `control relationship fields declare more than ${String(MAX_RELATIONSHIP_ALTERNATIVES)} alternatives.`,
+        MAX_DEB_RELATIONSHIP_ALTERNATIVES,
+        `control relationship fields declare more than ${String(MAX_DEB_RELATIONSHIP_ALTERNATIVES)} alternatives or restriction items.`,
       );
   }
   const relationships = Object.fromEntries(

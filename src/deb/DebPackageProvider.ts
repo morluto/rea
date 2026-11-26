@@ -155,17 +155,15 @@ export class DebPackageProvider implements DebPackagePort {
   async inspect(input: InspectDebPackageInput, options?: ExecutionOptions) {
     let snapshot: StableArtifactSnapshot | undefined;
     try {
-      snapshot = await this.#resources.run(() =>
-        readStableArtifact(
+      const report = await this.#resources.run(async () => {
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
           undefined,
           this.#resources,
-        ),
-      );
-      return ok(
-        await parseDebPackage(
+        );
+        return parseDebPackage(
           snapshot.bytes,
           {
             path: input.path,
@@ -174,8 +172,9 @@ export class DebPackageProvider implements DebPackagePort {
           },
           input,
           options?.signal,
-        ),
-      );
+        );
+      });
+      return ok(report);
     } catch (cause) {
       const failure = classifyProviderFailure(cause, failureDialect(input));
       // The read already completed; its byte identity stays on the parser refusal.

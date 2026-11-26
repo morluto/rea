@@ -274,9 +274,91 @@ export const parseDebianVersion = (
 
 const OPERATOR_PATTERN = /^(<<|<=|=|>=|>>)/u;
 
+/**
+ * Fixed allowance for relationship items (alternatives plus nested
+ * architecture/profile list items) across a control file. Each separator or
+ * bracketed token can become a report element, so counting before splitting
+ * prevents small control text from expanding into millions of items.
+ */
+export const MAX_DEB_RELATIONSHIP_ALTERNATIVES = 65_536;
+
+const isWhitespaceCode = (code: number, text: string, index: number): boolean =>
+  code === 0x20 ||
+  (code >= 0x09 && code <= 0x0d) ||
+  (code >= 0x80 && /\s/u.test(text[index]!));
+
+const countWhitespaceTokens = (text: string, limit: number): number => {
+  let count = 0;
+  let inToken = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (isWhitespaceCode(code, text, index)) {
+      inToken = false;
+    } else if (!inToken) {
+      inToken = true;
+      count += 1;
+      if (count > limit) return count;
+    }
+  }
+  return count;
+};
+
+/**
+ * Count relationship alternatives plus nested architecture `[...]` and build
+ * profile `<...>` list items before splitting. Stops early once past `limit`.
+ */
+export const countDebianRelationshipItems = (
+  value: string,
+  limit?: number,
+): number => {
+  if (value.length === 0) return 0;
+  let items = 1;
+  if (limit !== undefined && items > limit) return items;
+  let delimiter = 0;
+  let inToken = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (delimiter === 0x29) {
+      if (code === 0x29) {
+        delimiter = 0;
+      } else if (code === 0x2c || code === 0x7c) {
+        delimiter = 0;
+        items += 1;
+      }
+    } else if (delimiter !== 0) {
+      if (code === delimiter) {
+        delimiter = 0;
+        inToken = false;
+      } else if (code === 0x2c || code === 0x7c) {
+        delimiter = 0;
+        inToken = false;
+        items += 1;
+      } else if (isWhitespaceCode(code, value, index)) {
+        inToken = false;
+      } else if (!inToken) {
+        inToken = true;
+        items += 1;
+      }
+    } else if (code === 0x2c || code === 0x7c) {
+      items += 1;
+    } else if (code === 0x28) {
+      delimiter = 0x29;
+    } else if (code === 0x5b) {
+      delimiter = 0x5d;
+      inToken = false;
+    } else if (code === 0x3c) {
+      delimiter = 0x3e;
+      inToken = false;
+    }
+    if (limit !== undefined && items > limit) return items;
+  }
+  return items;
+};
+
 /** One relationship alternative: package name, optional arch qualifier, operator, and arch restriction. */
 export const parseDebianDependency = (
   spec: string,
+  maxArchitectureItems: number = MAX_DEB_RELATIONSHIP_ALTERNATIVES,
 ): {
   readonly name: string;
   readonly arch_qualifier: string | null;
@@ -316,8 +398,12 @@ export const parseDebianDependency = (
   if (rest.startsWith("[")) {
     const close = rest.indexOf("]");
     if (close === -1) return null;
-    const tokens = rest
-      .slice(1, close)
+    const inner = rest.slice(1, close);
+    if (
+      countWhitespaceTokens(inner, maxArchitectureItems) > maxArchitectureItems
+    )
+      return null;
+    const tokens = inner
       .trim()
       .split(/\s+/u)
       .filter((token) => token.length > 0);

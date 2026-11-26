@@ -198,3 +198,56 @@ it("reports typed cancellation and preserves partial control facts during XZ dat
     },
   });
 });
+
+it("waits for an in-flight async XZ parse before close resolves", async () => {
+  const root = await createTestTempDirectory("rea-deb-xz-close-");
+  const path = join(root, "hello-xz.deb");
+  const fixture = debPackageFixture({
+    controlCompression: "gzip",
+    dataCompression: "xz",
+  });
+  await writeFile(path, fixture);
+
+  let enteredXzDecode!: () => void;
+  const xzStarted = new Promise<void>((resolve) => {
+    enteredXzDecode = resolve;
+  });
+  let finishXzDecode!: () => void;
+  const xzGate = new Promise<void>((resolve) => {
+    finishXzDecode = resolve;
+  });
+
+  replaceXzBindingForTests({
+    status: "ready",
+    api: {
+      compressSync: (input) =>
+        compressXz(typeof input === "string" ? Buffer.from(input) : input),
+      decompressStream: () =>
+        new ReadableStream<Buffer>({
+          async pull(controller) {
+            enteredXzDecode();
+            await xzGate;
+            controller.enqueue(Buffer.alloc(1024));
+            controller.close();
+          },
+        }),
+    },
+  });
+
+  const service = createDebPackageService();
+  const inspectPromise = service.inspect({ path });
+  await xzStarted;
+
+  let closeResolved = false;
+  const closePromise = service.close().then(() => {
+    closeResolved = true;
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  expect(closeResolved).toBe(false);
+
+  finishXzDecode();
+  const [inspectResult] = await Promise.all([inspectPromise, closePromise]);
+  expect(closeResolved).toBe(true);
+  expect(inspectResult.ok).toBe(true);
+});

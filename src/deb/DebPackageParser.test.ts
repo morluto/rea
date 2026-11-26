@@ -1514,3 +1514,77 @@ it("redacts transport userinfo from Homepage while preserving non-credential URL
     "Transport credentials were redacted from the Homepage URL.",
   );
 });
+
+it.for([
+  ["architecture list", `aa [${Array(65_536).fill("a").join(" ")}]`],
+  ["build profile list", `aa <${Array(65_536).fill("a").join(" ")}>`],
+] as const)(
+  "refuses an oversized nested %s under the relationship alternatives allowance before splitting",
+  async ([, spec]) => {
+    const error = await expectFailure(
+      () =>
+        parse(
+          debPackageFixture({
+            controlText: `${DEFAULT_CONTROL_TEXT}Depends: ${spec}\n`,
+          }),
+        ),
+      DebPackageAllowanceFailure,
+    );
+    expect(error.failure).toMatchObject({
+      kind: "limit",
+      limit: { name: "relationship_alternatives", maximum: 65_536 },
+    });
+    expect(error.partial?.ar.format_version).toBe("2.0");
+  },
+);
+
+it("does not skip following files when a directory or header-only tar entry declares a nonzero size", async () => {
+  // Directory header declaring 1024 bytes (octal 00000002000\0) with no body,
+  // followed immediately by a regular file and a symlink declaring 4096 bytes
+  // right before the end-of-archive blocks.
+  const dirWithSize = withHeaderField(
+    tarMember({ name: "./usr/", type: "5", mode: 0o755, content: "" }),
+    124,
+    Array.from(Buffer.from("00000002000\0", "ascii")),
+  );
+  const regularFile = tarMember({
+    name: "./usr/bin/after-dir",
+    content: "hello-after-dir\n",
+    mode: 0o755,
+  });
+  const symlinkWithSize = withHeaderField(
+    tarMember({
+      name: "./usr/bin/link-after-dir",
+      type: "2",
+      linkname: "after-dir",
+    }),
+    124,
+    Array.from(Buffer.from("00000010000\0", "ascii")),
+  );
+  const dataTar = Buffer.concat([
+    dirWithSize,
+    regularFile,
+    symlinkWithSize,
+    Buffer.alloc(1024),
+  ]);
+  const report = await parse(
+    arArchive([
+      { name: "debian-binary", data: Buffer.from("2.0\n", "utf8") },
+      {
+        name: "control.tar.gz",
+        data: gzipSync(
+          tarArchive([{ name: "./control", content: DEFAULT_CONTROL_TEXT }]),
+        ),
+      },
+      { name: "data.tar.gz", data: gzipSync(dataTar) },
+    ]),
+  );
+  expect(report.coverage.status).toBe("complete");
+  expect(
+    report.data_entries.map((entry) => [entry.path, entry.type, entry.size]),
+  ).toEqual([
+    ["usr", "directory", 0],
+    ["usr/bin/after-dir", "file", 16],
+    ["usr/bin/link-after-dir", "symlink", 0],
+  ]);
+});

@@ -1,9 +1,11 @@
 import { expect, it } from "vitest";
 
 import {
+  countDebianRelationshipItems,
   debArMemberRole,
   debArchiveCompressionFromName,
   inspectDebPackageInputSchema,
+  MAX_DEB_RELATIONSHIP_ALTERNATIVES,
   parseDebianDependency,
   parseDebianRelationshipField,
   parseDebianVersion,
@@ -155,4 +157,47 @@ it("returns relationship alternatives it cannot read, as written", () => {
     unreadCount: 1,
     firstUnread: "libbar (2.0)",
   });
+});
+
+it("counts nested architecture and build profile list items under the relationship budget before splitting", () => {
+  expect(
+    countDebianRelationshipItems(
+      "libc6 (<< 2.35), foo [amd64 i386] <nocheck nodoc> | bar (>= 1.0)",
+    ),
+  ).toBe(7);
+
+  const oversizedArchs = `aa [${Array(MAX_DEB_RELATIONSHIP_ALTERNATIVES).fill("a").join(" ")}]`;
+  expect(
+    countDebianRelationshipItems(
+      oversizedArchs,
+      MAX_DEB_RELATIONSHIP_ALTERNATIVES,
+    ),
+  ).toBe(MAX_DEB_RELATIONSHIP_ALTERNATIVES + 1);
+
+  const oversizedProfiles = `aa <${Array(MAX_DEB_RELATIONSHIP_ALTERNATIVES).fill("a").join(" ")}>`;
+  expect(
+    countDebianRelationshipItems(
+      oversizedProfiles,
+      MAX_DEB_RELATIONSHIP_ALTERNATIVES,
+    ),
+  ).toBe(MAX_DEB_RELATIONSHIP_ALTERNATIVES + 1);
+
+  expect(parseDebianDependency("aa [amd64 i386]", 2)).toEqual({
+    name: "aa",
+    arch_qualifier: null,
+    operator: null,
+    version: null,
+    arch_restriction: {
+      negated: false,
+      architectures: ["amd64", "i386"],
+    },
+  });
+  expect(parseDebianDependency("aa [amd64 i386 arm64]", 2)).toBeNull();
+  expect(
+    parseDebianDependency(
+      `aa [${Array(MAX_DEB_RELATIONSHIP_ALTERNATIVES + 1)
+        .fill("a")
+        .join(" ")}]`,
+    ),
+  ).toBeNull();
 });
