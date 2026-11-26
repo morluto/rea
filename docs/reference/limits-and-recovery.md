@@ -113,7 +113,10 @@ decoded records are allocated. A refusal is a `memory` resource constraint
 whose `details.limit` names `max_structure_bytes`, its effective value, range
 and default; `details.reported_limits.boundary` is `max_structure_bytes`.
 `max_file_bytes` does not raise it. `inspect_elf_debug_link` still counts
-decoded section names against `max_file_bytes` as well.
+decoded section names against `max_file_bytes` as well. For `inspect_binary_hardening` it
+covers the ELF header tables, section names and dynamic table; Mach-O load
+commands keep the Mach-O command reader's own limit, and the PE headers it reads
+are bounded by the PE format.
 
 The Go, Rust and IL2CPP readers and `inspect_native_exports` read the same
 tables with the 16 MiB default and report it as a fixed allowance.

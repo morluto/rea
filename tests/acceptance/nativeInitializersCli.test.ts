@@ -263,7 +263,9 @@ cliTest(
         "--json",
       ],
     });
-    expect(result.json).not.toMatchObject({ code: "resource_constraint" });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = contract.outputSchema.parse(result.json);
+    expect(evidence.normalized_result.entries.length).toBeGreaterThan(0);
   },
 );
 

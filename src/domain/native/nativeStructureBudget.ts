@@ -29,7 +29,7 @@ export const maxStructureBytesSchema = z
   .max(NATIVE_STRUCTURE_BYTES.maximum)
   .optional()
   .describe(
-    "Maximum bytes of one native header, section, symbol or load-command table, and of the section names decoded from it (default 16 MiB)",
+    "Maximum bytes of one native header, section or load-command table this reader decodes, and of the section names decoded from it (default 16 MiB)",
   );
 
 /** Caller-selected native directory budgets; omitted fields keep their defaults. */
