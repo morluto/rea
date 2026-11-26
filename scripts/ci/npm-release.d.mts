@@ -3,6 +3,7 @@ import type { NpmReleaseState } from "./npm-release-state.mjs";
 export function readNpmRelease(
   version: string,
   request?: (url: string, init: RequestInit) => Promise<Response>,
+  signal?: AbortSignal,
 ): Promise<NpmReleaseState>;
 export function stableUpdateVersion(
   version: string,
@@ -10,6 +11,7 @@ export function stableUpdateVersion(
 ): string;
 export function waitForNpmRelease(
   version: string,
-  lookup?: (version: string) => Promise<NpmReleaseState>,
-  pause?: (milliseconds: number) => Promise<unknown>,
+  lookup?: (version: string, signal: AbortSignal) => Promise<NpmReleaseState>,
+  pause?: (milliseconds: number, signal: AbortSignal) => Promise<unknown>,
+  signal?: AbortSignal,
 ): Promise<Extract<NpmReleaseState, { status: "published" }>>;

@@ -11,6 +11,7 @@ export function readQualifiedNpmRelease(
   version: string,
   tag: "latest" | "next",
   request?: (url: string, init: RequestInit) => Promise<Response>,
+  signal?: AbortSignal,
 ): Promise<NpmReleaseState>;
 export function requireMatchingNpmRelease(
   tarball: string,

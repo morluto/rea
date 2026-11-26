@@ -1,15 +1,21 @@
 import { verifyPublishedPackageIntegrity } from "./qualified-package-envelope.mjs";
 
 /** Parse fresh registry state using the channel already owned by qualification. */
-export async function readQualifiedNpmRelease(version, tag, request = fetch) {
+export async function readQualifiedNpmRelease(
+  version,
+  tag,
+  request = fetch,
+  signal,
+) {
   if (!["latest", "next"].includes(tag))
     throw new Error("Invalid qualified npm channel");
+  const requestTimeout = AbortSignal.timeout(30_000);
   const response = await request("https://registry.npmjs.org/rea-agents", {
     headers: {
       Accept: "application/vnd.npm.install-v1+json",
       "Cache-Control": "no-cache",
     },
-    signal: AbortSignal.timeout(30_000),
+    signal: signal ? AbortSignal.any([signal, requestTimeout]) : requestTimeout,
   });
   if (response.status === 404) return { status: "absent" };
   if (!response.ok)
