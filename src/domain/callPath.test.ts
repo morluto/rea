@@ -192,14 +192,6 @@ describe("call path reconstruction", () => {
       callPathResultSchema.safeParse({ ...result, paths: [] }).success,
     ).toBe(false);
     expect(
-      callPathResultSchema.safeParse({
-        ...result,
-        paths: [],
-        paths_truncated: true,
-        paths_limited_by_bytes: true,
-      }).success,
-    ).toBe(true);
-    expect(
       result.paths.map((path) => path.nodes.map(({ address }) => address)),
     ).toEqual([["0x1000", "0x2000", "0x4000"]]);
     expect(result.paths[0]?.edges).toHaveLength(2);
@@ -405,11 +397,16 @@ describe("call path topology and capacity", () => {
       goal: { address: address(length + 1) },
     });
     expect(result).toMatchObject({ status: "found", shortest_hops: length });
-    expect(result.paths).toEqual([]);
-    expect(result.paths_limited_by_bytes).toBe(true);
-    expect(Buffer.byteLength(JSON.stringify(result.paths))).toBeLessThanOrEqual(
-      CALL_PATH_REPRESENTATION_BUDGET_BYTES,
-    );
+    // The sole path is linear in the supplied Evidence, so it is returned
+    // even though it is larger than the budget for additional paths.
+    expect(result.paths).toHaveLength(1);
+    expect(result.paths[0]?.nodes).toHaveLength(length + 1);
+    expect(result.paths[0]?.edges).toHaveLength(length);
+    expect(result.paths[0]?.nodes.at(-1)?.address).toBe(address(length + 1));
+    expect(result).toMatchObject({
+      paths_truncated: false,
+      paths_limited_by_bytes: false,
+    });
   });
 
   it("returns the sole shortest path alongside a deep merging dead-end graph", () => {
@@ -1111,55 +1108,32 @@ describe("call path representation budget", () => {
     );
   });
 
-  it("charges each cited path its serialized size instead of an upper bound", () => {
-    // A name with a quote, a backslash, a non-ASCII character, a C0 control and
-    // an astral pair: every JSON escaping class the size rule has to survive.
-    const name = 'q"b\\c \u00e9 \u0001 \u{1d49c}';
-    const functions = [
-      observe("0x1000", ["0x2000"], "rea-workflow", { name }),
-      observe("0x2000", [], "rea-workflow", { name }),
-    ];
-    const one = buildCallPath({
-      functions,
-      start: { address: "0x1000" },
-      goal: { address: "0x2000" },
-      max_paths: 1,
-    });
-    const two = buildCallPath({
-      functions,
-      start: { address: "0x1000" },
-      goal: { address: "0x2000" },
-      max_paths: 2,
-    });
-    expect(one.paths).toHaveLength(1);
-    expect(two.paths).toHaveLength(1);
-    const serialized = Buffer.byteLength(JSON.stringify(one.paths));
-    expect(serialized).toBeLessThanOrEqual(
-      CALL_PATH_REPRESENTATION_BUDGET_BYTES,
-    );
-    // The accounting is exact, so the reported budget is the real one: a path
-    // whose serialized size fits is never refused as over the limit.
-    expect(two.paths_limited_by_bytes).toBe(false);
-    expect(one.paths_limited_by_bytes).toBe(false);
-  });
-
-  it("reports a known shortest path when even its first representation cannot fit", () => {
+  it("returns the first shortest path and bounds the paths after it", () => {
+    // Two shortest paths, each larger than the whole budget: the first is
+    // returned, and the budget stops the second.
     const oversizedName = "n".repeat(CALL_PATH_REPRESENTATION_BUDGET_BYTES);
     const functions = [
-      observe("0x1000", ["0x2000"], "rea-workflow", {
+      observe("0x1000", ["0x2000", "0x3000"], "rea-workflow", {
         name: oversizedName,
       }),
+      observe("0x2000", ["0x4000"]),
+      observe("0x3000", ["0x4000"]),
+      observe("0x4000", []),
     ];
     const result = buildCallPath({
       functions,
       start: { address: "0x1000" },
-      goal: { address: "0x2000" },
-      max_paths: 1,
+      goal: { address: "0x4000" },
     });
-    expect(result.status).toBe("found");
-    expect(result.shortest_hops).toBe(1);
-    expect(result.paths).toEqual([]);
-    expect(result.paths_truncated).toBe(true);
-    expect(result.paths_limited_by_bytes).toBe(true);
+    expect(result).toMatchObject({
+      status: "found",
+      shortest_hops: 2,
+      total_shortest_paths: 2,
+      paths_truncated: true,
+      paths_limited_by_bytes: true,
+    });
+    expect(
+      result.paths.map(({ nodes }) => nodes.map(({ address }) => address)),
+    ).toEqual([["0x1000", "0x2000", "0x4000"]]);
   });
 });

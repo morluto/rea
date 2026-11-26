@@ -463,7 +463,7 @@ const enumeratePaths = ({
   const output: OutputCallPath[] = [];
   // The `paths` array's brackets frame every cited path: one before the first
   // and one after the last. Both are reserved here because
-  // estimatedPathRepresentationBytes measures one cited path, not the array.
+  // each measured cited path excludes the array around it.
   let retainedBytes = 2;
   let limitedByBytes = false;
   const path = [start];
@@ -489,17 +489,24 @@ const enumeratePaths = ({
     const current = pending.at(-1);
     if (current === undefined) break;
     if (path.at(-1) === goal) {
-      const estimatedBytes = estimatedPathRepresentationBytes(path, snapshots);
+      // Measure the cited path itself, so the budget follows its owner's
+      // representation. The first shortest path is linear in the supplied
+      // Evidence and is always returned; the budget bounds the paths after it.
+      const cited = citePath(path, snapshots);
+      const citedBytes = Buffer.byteLength(JSON.stringify(cited));
       const separatorBytes = output.length === 0 ? 0 : 1;
       // `retainedBytes` holds the opening bracket and every cited path, so the
       // budget left for this path and its separator also has to keep room for the
       // closing bracket that follows the last path.
-      if (estimatedBytes + separatorBytes > byteBudget - retainedBytes) {
+      if (
+        output.length > 0 &&
+        citedBytes + separatorBytes > byteBudget - retainedBytes
+      ) {
         limitedByBytes = true;
         break;
       }
-      output.push(citePath(path, snapshots));
-      retainedBytes += estimatedBytes + separatorBytes;
+      output.push(cited);
+      retainedBytes += citedBytes + separatorBytes;
       pending.pop();
       path.pop();
       // Count capacity is a caller preference. Serialized representation size
@@ -518,103 +525,6 @@ const enumeratePaths = ({
     pending.push(frame(neighbor));
   }
   return { paths: output, limitedByBytes };
-};
-
-/**
- * Exact UTF-8 size of one JSON string, quotes included, without allocating it.
- * An upper bound of six bytes per code unit charges an ASCII address or
- * Evidence id six times what it serializes to, which stopped enumeration while
- * the budget still had room; this measures what `JSON.stringify` writes:
- * two-byte escapes for the five short forms, `\uXXXX` for other control
- * characters, raw UTF-8 for everything else, and a surrogate pair as its
- * encoded code point.
- */
-const jsonStringBytes = (value: string): number => {
-  let bytes = 2;
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code === 0x22 || code === 0x5c) bytes += 2;
-    else if (code >= 0x20 && code <= 0x7e) bytes += 1;
-    else if (
-      code === 0x08 ||
-      code === 0x09 ||
-      code === 0x0a ||
-      code === 0x0c ||
-      code === 0x0d
-    )
-      bytes += 2;
-    else if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) bytes += 6;
-    else if (code >= 0xd800 && code <= 0xdfff) {
-      const low = value.charCodeAt(index + 1);
-      if (code <= 0xdbff && low >= 0xdc00 && low <= 0xdfff) {
-        bytes += 4;
-        index += 1;
-      } else bytes += 6;
-    } else bytes += Buffer.byteLength(value[index] ?? "");
-  }
-  return bytes;
-};
-
-/**
- * Serialized size of the cited path, measured exactly rather than bounded:
- * fixed structure uses the actual skeleton sizes, and every string uses its
- * JSON size. `evidence_links` on a node repeats the link already counted on the
- * path, so the shared array is charged once per element, matching how
- * {@link citePath} deduplicates it.
- */
-const estimatedPathRepresentationBytes = (
-  addresses: readonly string[],
-  snapshots: ReadonlyMap<string, FunctionSnapshot>,
-): number => {
-  const nodeSkeletonBytes = Buffer.byteLength(
-    '{"address":"","name":null,"evidence_links":[""]}',
-  );
-  const edgeSkeletonBytes = Buffer.byteLength(
-    '{"source":"","target":"","evidence_links":[""]}',
-  );
-  let bytes =
-    Buffer.byteLength('{"hops":0,"nodes":[],"edges":[],"evidence_links":[]}') +
-    String(Math.max(0, addresses.length - 1)).length -
-    1;
-  for (let index = 0; index < addresses.length; index += 1) {
-    const address = addresses[index] ?? "";
-    const snapshot =
-      snapshots.get(address) ??
-      (index > 0 ? snapshots.get(addresses[index - 1] ?? "") : undefined);
-    const name = snapshots.get(address)?.dossier.procedure.name ?? null;
-    const evidence = snapshotLinks(snapshot)[0] ?? "";
-    bytes +=
-      nodeSkeletonBytes +
-      jsonStringBytes(address) -
-      2 +
-      (name === null ? 0 : jsonStringBytes(name) - 4) +
-      jsonStringBytes(evidence) -
-      2;
-    if (index > 0) bytes += 1;
-  }
-  for (let index = 0; index < addresses.length - 1; index += 1) {
-    const source = addresses[index] ?? "";
-    const target = addresses[index + 1] ?? "";
-    const evidence = snapshotLinks(snapshots.get(source))[0] ?? "";
-    bytes +=
-      edgeSkeletonBytes +
-      jsonStringBytes(source) -
-      2 +
-      jsonStringBytes(target) -
-      2 +
-      jsonStringBytes(evidence) -
-      2;
-    if (index > 0) bytes += 1;
-  }
-  for (let index = 0; index < addresses.length; index += 1) {
-    const address = addresses[index] ?? "";
-    const snapshot =
-      snapshots.get(address) ??
-      (index > 0 ? snapshots.get(addresses[index - 1] ?? "") : undefined);
-    bytes += jsonStringBytes(snapshotLinks(snapshot)[0] ?? "");
-    if (index > 0) bytes += 1;
-  }
-  return bytes;
 };
 
 interface EnumerationFrame {

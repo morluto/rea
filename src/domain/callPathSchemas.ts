@@ -13,7 +13,7 @@ const evidenceIdSchema = prefixedDigestSchema("ev");
 /** Default number of shortest paths to return when the caller omits a capacity. */
 export const DEFAULT_CALL_PATH_MAX_PATHS = 64;
 
-/** Bound the serialized `paths` field, including its per-path citations. */
+/** Bound the serialized `paths` field after its first cited path, which is always returned. */
 export const CALL_PATH_REPRESENTATION_BUDGET_BYTES = 2 * 1024 * 1024;
 
 /** Strict input for explicit call-path reconstruction from complete dossiers. */
@@ -117,9 +117,7 @@ export const callPathResultSchema = z
         exhaustive: z.boolean(),
         observed_status: z.literal("found"),
       }),
-      // A found path whose representation cannot fit the byte budget reports an
-      // empty list with paths_limited_by_bytes, so the found arm admits it.
-      paths: z.array(pathSchema),
+      paths: z.array(pathSchema).min(1),
     }),
     z.object({
       ...resultContextShape,
@@ -154,25 +152,16 @@ export const callPathResultSchema = z
     }),
   ])
   .superRefine((result, context) => {
-    // The byte budget and the caller's capacity are separate limits, so a found
-    // result keeps them distinguishable: a byte-limited prefix is also
-    // truncated, and a found result with no inline path must say the budget
-    // stopped it rather than looking like an empty complete set.
-    if (result.status !== "found") return;
-    if (result.paths_limited_by_bytes && !result.paths_truncated)
-      context.addIssue({
-        code: "custom",
-        message: "A byte-limited shortest-path list must be marked truncated",
-      });
+    // The byte budget and the caller's capacity are separate limits; a
+    // byte-limited prefix is also truncated.
     if (
-      result.total_shortest_paths > 0 &&
-      result.paths.length === 0 &&
-      !result.paths_limited_by_bytes
+      result.status === "found" &&
+      result.paths_limited_by_bytes &&
+      !result.paths_truncated
     )
       context.addIssue({
         code: "custom",
-        message:
-          "A found result without inline paths must report byte-budget truncation",
+        message: "A byte-limited shortest-path list must be marked truncated",
       });
   });
 
