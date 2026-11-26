@@ -36,7 +36,11 @@ const browserScenarioBaseUrlSchema = z
     } catch (cause: unknown) {
       // Invalid input is reported through the zod issue.
       void cause;
-      context.addIssue({ code: "custom", message: "Invalid browser URL" });
+      context.addIssue({
+        code: "custom",
+        message:
+          "Browser URLs must be absolute HTTP(S) URLs, such as https://app.example.test/",
+      });
       return z.NEVER;
     }
     if (
