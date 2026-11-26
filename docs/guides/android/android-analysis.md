@@ -582,9 +582,17 @@ JADX package, class, method, and reference operations also admit a ZIP root
 whose name does not already select another package family when the central
 directory lists a root `AndroidManifest.xml` or `classes*.dex` entry
 (`classes.dex`, `classes2.dex`, and further numbered members). The probe reads
-at most 8 MiB of that directory. A generic ZIP with neither entry, or whose
-matching entry lies past that prefix, stays `zip` and these operations refuse
-it. The caller's path is kept; renaming the file to `.apk` is not required.
+at most 8 MiB across all candidate central directories, in addition to the
+ZIP format's bounded end-record tail. It checks each candidate's fixed header
+before reading its directory prefix. A completely examined directory with
+neither entry stays `zip`. Unsupported, malformed, unreadable, or unexamined
+directory data leaves Android classification unknown and also keeps `zip`;
+this does not establish that Android entries are absent. Android operations
+then refuse that ZIP. Inspect its archive inventory, and use an `.apk` path
+only when it is independently known to be a standalone Android package.
+The caller's path is kept when content classification succeeds; renaming the
+file to `.apk` is not required. A selected `.aab` path stays a ZIP even when
+it is an alias to an extensionless file.
 Existing artifact inventory/extraction tools can supply archive evidence.
 Inventory records an APK root only for ZIP bytes whose name ends in `.apk`.
 The projection adds a limitation when no root `AndroidManifest.xml` was

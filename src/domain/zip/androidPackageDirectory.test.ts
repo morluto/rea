@@ -90,17 +90,17 @@ it("finds classes.dex when leading bytes leave the declared directory offset una
 it("rejects a directory offset past the bytes that abut the end record", async () => {
   const record = centralRecord("classes.dex");
   const file = archiveWith([record], { directoryOffset: record.length + 8 });
-  expect(await declares(file)).toBe(false);
+  expect(await declares(file)).toBeUndefined();
 });
 
-it("does not declare an Android package for an empty or Zip64-sentinel directory", async () => {
+it("leaves empty or Zip64-sentinel directories unclassified", async () => {
   const empty = Buffer.alloc(22);
   empty.writeUInt32LE(0x06054b50, 0);
-  expect(await declares(empty)).toBe(false);
+  expect(await declares(empty)).toBeUndefined();
   const sentinel = archiveWith([centralRecord("classes.dex")]);
   const end = sentinel.length - 22;
   sentinel.writeUInt32LE(0xffffffff, end + 16);
-  expect(await declares(sentinel)).toBe(false);
+  expect(await declares(sentinel)).toBeUndefined();
 });
 
 it("stops at the central-directory probe when the Android entry is past it", async () => {
@@ -119,12 +119,44 @@ it("stops at the central-directory probe when the Android entry is past it", asy
     past.push(pad);
     used += pad.length;
   }
-  expect(await declares(archiveWith([...past, dex]))).toBe(false);
+  expect(await declares(archiveWith([...past, dex]))).toBeUndefined();
 });
 
-it("returns false when the end-of-central-directory tail cannot be read", async () => {
+it("leaves the declaration unknown when the end-of-central-directory tail cannot be read", async () => {
   const file = archiveWith([centralRecord("classes.dex")]);
   expect(
     await zipDeclaresAndroidPackage(file.length, async () => Buffer.alloc(0)),
-  ).toBe(false);
+  ).toBeUndefined();
+});
+
+it("shares the directory read allowance across comment decoys before finding the real directory", async () => {
+  const zip = archiveWith([centralRecord("classes.dex")], {
+    preamble: Buffer.alloc(ANDROID_ZIP_DIRECTORY_PROBE_BYTES),
+  });
+  const comment = Buffer.alloc(128 * 22);
+  for (let at = 0; at < comment.length; at += 22) {
+    comment.writeUInt32LE(0x06054b50, at);
+    comment.writeUInt16LE(1, at + 8);
+    comment.writeUInt16LE(1, at + 10);
+    comment.writeUInt32LE(ANDROID_ZIP_DIRECTORY_PROBE_BYTES, at + 12);
+    comment.writeUInt16LE(comment.length - at - 22, at + 20);
+  }
+  zip.writeUInt16LE(comment.length, zip.length - 2);
+  const file = Buffer.concat([zip, comment]);
+  let reads = 0;
+  let directoryBytes = 0;
+  const declared = await zipDeclaresAndroidPackage(
+    file.length,
+    async (position, length) => {
+      if (reads++ > 0) {
+        directoryBytes += length;
+        expect(directoryBytes).toBeLessThanOrEqual(
+          ANDROID_ZIP_DIRECTORY_PROBE_BYTES,
+        );
+      }
+      return file.subarray(position, position + length);
+    },
+  );
+  expect(declared).toBe(true);
+  expect(reads).toBeGreaterThan(128);
 });

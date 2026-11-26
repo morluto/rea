@@ -137,6 +137,7 @@ export const zipPackageFormatForPath = (
   if (lower.endsWith(".zip")) return "zip";
   if (lower.endsWith(".ipa")) return "ipa";
   // An Android App Bundle is a ZIP archive, not a standalone APK.
+  if (lower.endsWith(".aab")) return "zip";
   if (lower.endsWith(".apk")) return "apk";
   if (lower.endsWith(".msix") || lower.endsWith(".msixbundle")) return "msix";
   if (lower.endsWith(".appx") || lower.endsWith(".appxbundle")) return "appx";

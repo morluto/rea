@@ -723,7 +723,7 @@ const zipRootFormatByContent = async (
 ) => {
   const named = zipRootPackageFormat(path);
   if (named !== "zip" || path.toLowerCase().endsWith(".aab")) return named;
-  return (await zipDeclaresAndroidPackage(size, read)) ? "apk" : named;
+  return (await zipDeclaresAndroidPackage(size, read)) === true ? "apk" : named;
 };
 
 const detectArtifactFormat = async (

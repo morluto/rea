@@ -11,8 +11,8 @@ import {
 import { ZIP_CENTRAL_HEADER } from "./zipCentralHeader.js";
 
 /**
- * Central-directory prefix read when a generic ZIP may be a standalone APK.
- * A later `classes*.dex` or `AndroidManifest.xml` stays unclassified.
+ * Total central-directory bytes read across candidate end records when a
+ * generic ZIP may be a standalone APK. An unexamined entry stays unknown.
  */
 export const ANDROID_ZIP_DIRECTORY_PROBE_BYTES = 8 * 1024 * 1024;
 
@@ -56,8 +56,8 @@ const isRootAndroidPackageEntryName = (name: Uint8Array): boolean => {
 
 /**
  * `true` when this end record's directory lists an Android package entry,
- * `false` when that directory was read far enough to decide it does not, and
- * `undefined` when the record is not a usable single-volume directory.
+ * `false` when the complete directory contains no such entry, and `undefined`
+ * when the record is unusable or the directory was not completely examined.
  */
 const directoryDeclaresAndroidPackage = async (
   tailStart: number,
@@ -85,17 +85,29 @@ const directoryDeclaresAndroidPackage = async (
   // later candidate decide; a genuinely empty archive has no other record.
   if (entriesOnDisk === 0 || directorySize < ZIP_CENTRAL_HEADER.bytes)
     return undefined;
-  const examined = Math.min(directorySize, ANDROID_ZIP_DIRECTORY_PROBE_BYTES);
-  const bytes = Buffer.from(await read(directory, examined));
-  if (bytes.length !== examined) return undefined;
-  const reader = new BinaryReader(bytes, true, "zip");
   const headerBytes = ZIP_CENTRAL_HEADER.bytes;
+  // Reject comment decoys before allocating or reading a full directory prefix.
+  const header = Buffer.from(await read(directory, headerBytes));
+  if (
+    header.length !== headerBytes ||
+    new BinaryReader(header, true, "zip").u32(0) !== ZIP_CENTRAL_HEADER.signature
+  )
+    return undefined;
+  const remainder =
+    directorySize === headerBytes
+      ? Buffer.alloc(0)
+      : Buffer.from(
+          await read(directory + headerBytes, directorySize - headerBytes),
+        );
+  const bytes = Buffer.concat([header, remainder]);
+  const reader = new BinaryReader(bytes, true, "zip");
   let at = 0;
   let seen = 0;
   while (at < directorySize) {
-    if (at + headerBytes > bytes.length) return false;
+    if (at + headerBytes > bytes.length || seen >= entriesOnDisk)
+      return undefined;
     if (reader.u32(at) !== ZIP_CENTRAL_HEADER.signature)
-      return seen === 0 ? undefined : false;
+      return undefined;
     const nameLength = reader.u16(at + ZIP_CENTRAL_HEADER.nameBytesOffset);
     const extraLength = reader.u16(at + ZIP_CENTRAL_HEADER.extraBytesOffset);
     const commentLength = reader.u16(
@@ -103,7 +115,7 @@ const directoryDeclaresAndroidPackage = async (
     );
     const next = at + headerBytes + nameLength + extraLength + commentLength;
     if (!Number.isSafeInteger(next) || next < at || next > directorySize)
-      return seen === 0 ? undefined : false;
+      return undefined;
     const nameEnd = at + headerBytes + nameLength;
     if (
       nameEnd <= bytes.length &&
@@ -111,36 +123,43 @@ const directoryDeclaresAndroidPackage = async (
     )
       return true;
     // The examined prefix ends inside this record, so later entries are unseen.
-    if (next > bytes.length) return false;
+    if (next > bytes.length) return undefined;
     seen += 1;
     at = next;
-    if (seen > entriesOnDisk) return false;
   }
-  return false;
+  return seen === entriesOnDisk ? false : undefined;
 };
 
 /**
  * Whether a verified ZIP lists a root `AndroidManifest.xml` or `classes*.dex`
  * entry in its central directory. The name field is compared as stored bytes.
- * A missing, split, Zip64-sentinel, malformed, or over-budget directory does
- * not declare an Android package; callers keep the path classification.
+ * `false` requires a completely examined directory. A missing, split,
+ * Zip64-sentinel, malformed, or over-budget directory is `undefined`; callers
+ * keep the path classification without claiming that Android entries are absent.
  */
 export const zipDeclaresAndroidPackage = async (
   size: number,
   read: PositionalRead,
-): Promise<boolean> => {
-  if (!Number.isSafeInteger(size) || size < ZIP_EOCD_BYTES) return false;
+): Promise<boolean | undefined> => {
+  if (!Number.isSafeInteger(size) || size < ZIP_EOCD_BYTES) return undefined;
   const tailLength = Math.min(size, ZIP_EOCD_BYTES + ZIP_MAX_COMMENT_BYTES);
   const tailStart = size - tailLength;
   const tail = Buffer.from(await read(tailStart, tailLength));
-  if (tail.length !== tailLength) return false;
+  if (tail.length !== tailLength) return undefined;
+  let remaining = ANDROID_ZIP_DIRECTORY_PROBE_BYTES;
+  const readDirectory: PositionalRead = async (position, length) => {
+    const admitted = Math.min(length, remaining);
+    remaining -= admitted;
+    return admitted === 0 ? Buffer.alloc(0) : read(position, admitted);
+  };
   for (const candidate of zipEndOfCentralDirectoryCandidates(tail)) {
+    if (remaining < ZIP_CENTRAL_HEADER.bytes) return undefined;
     const declared = await directoryDeclaresAndroidPackage(
       tailStart,
       candidate,
-      read,
+      readDirectory,
     );
     if (declared !== undefined) return declared;
   }
-  return false;
+  return undefined;
 };
