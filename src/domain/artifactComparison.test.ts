@@ -650,6 +650,30 @@ it("compares NDS overlay RAM addresses with identical member content and ignores
   ).toMatchObject({ status: "unchanged", changes: [] });
 });
 
+it("does not emit a declaration for NDS filesystem files compared against extracted files", () => {
+  const fileEntry = {
+    kind: "nds-entry",
+    role: "file",
+    file_id: 2,
+    ram_address: null,
+    entry_address: null,
+    overlay: null,
+  } as const satisfies FormatMetadata;
+  const extractedFile = observation({ hash_status: "verified" });
+
+  for (const [left, right] of [
+    [declared(fileEntry), extractedFile],
+    [extractedFile, declared(fileEntry)],
+    [declared(fileEntry), declared({ ...fileEntry, file_id: 5 })],
+  ] as const) {
+    expect(compareArtifacts(left, right)).toMatchObject({
+      status: "unchanged",
+      changes: [],
+      limitations: [],
+    });
+  }
+});
+
 const espImageSegment: FormatMetadata = {
   kind: "esp-image-segment",
   index: 1,
