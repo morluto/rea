@@ -208,6 +208,7 @@
 * **ci:** check the MCP SDK validator option in its constructor slot ([#13266](https://github.com/morluto/rea/issues/13266)) ([411e78e](https://github.com/morluto/rea/commit/411e78ea64355320c034f40ea0fda6c089255b28))
 * **ci:** close static-check cache gaps and prune stale settings ([#14017](https://github.com/morluto/rea/issues/14017)) ([5817ebb](https://github.com/morluto/rea/commit/5817ebb288612f5aa364398ec1d5e70006888203))
 * **ci:** fall back to Ubuntu Azure archive in recorded-crash container ([#14061](https://github.com/morluto/rea/issues/14061)) ([d02be92](https://github.com/morluto/rea/commit/d02be9207e3060c882273b526a5d7acb2522c781))
+* **ci:** include the cache retention helper dependency ([#14689](https://github.com/morluto/rea/issues/14689)) ([8d302d2](https://github.com/morluto/rea/commit/8d302d2dade726f720520fa1addaaabfda6212e5))
 * **ci:** keep equal-duration shard allocation from leaving jobs empty ([#14257](https://github.com/morluto/rea/issues/14257)) ([5aef49a](https://github.com/morluto/rea/commit/5aef49a421bf6ccefc5f55dbf1b032c77dba49a8))
 * **ci:** keep static diagnostics for each workflow attempt ([#14360](https://github.com/morluto/rea/issues/14360)) ([d15068e](https://github.com/morluto/rea/commit/d15068e2b441354291ea45b6a7fe4fa574e736f0))
 * **ci:** make Windows native artifact uploads retryable ([#14362](https://github.com/morluto/rea/issues/14362)) ([3015c13](https://github.com/morluto/rea/commit/3015c13bcd0794e31e546d76cbfacafabb9bef9e))
