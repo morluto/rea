@@ -273,7 +273,7 @@ export const inspectDwarfUnitsInputSchema = z.strictObject({
   max_decompressed_bytes: parameterBudgetSchema(
     DWARF_DECOMPRESSED_BUDGET,
   ).describe(
-    "Maximum decompressed DWARF section bytes retained for one image (default 256 MiB)",
+    "Maximum DWARF section decompression budget in bytes for one image, charging the larger of declared uncompressed size and compressed payload bytes per section including failed attempts (default 256 MiB)",
   ),
   max_file_bytes: parameterBudgetSchema(DWARF_UNITS_FILE_BYTES).describe(
     "Maximum stable artifact bytes to read (default 64 MiB)",

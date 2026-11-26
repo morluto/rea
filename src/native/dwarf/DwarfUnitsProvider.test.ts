@@ -203,18 +203,38 @@ it("refuses a decompression bomb before inflation and reads zlib, zstd, and GNU 
       "limit" in bomb.error ? bomb.error.limit : undefined,
     ).not.toHaveProperty("required_value");
   }
-  const small = await inspect(
-    elfDebugImage(
-      { info: elfCompressedBody(named.info, "zlib"), abbrev: named.abbrev },
-      { infoFlags: 0x800n },
-    ),
-    { max_decompressed_bytes: 1 },
+  const compressedImage = elfDebugImage(
+    { info: elfCompressedBody(named.info, "zlib"), abbrev: named.abbrev },
+    { infoFlags: 0x800n },
   );
+  const small = await inspect(compressedImage, { max_decompressed_bytes: 1 });
   expect(small.ok).toBe(false);
   if (!small.ok)
     expect(small.error).toMatchObject({
       limit: { parameter: "max_decompressed_bytes", effective_value: 1 },
     });
+  const raised = await inspect(compressedImage, {
+    max_decompressed_bytes: Math.max(
+      named.info.length,
+      elfCompressedBody(named.info, "zlib").length,
+    ),
+  });
+  if (!raised.ok) throw raised.error;
+  expect(raised.value.units[0]).toMatchObject({
+    name: { state: "present", value: "compressed.c" },
+  });
+  expect(
+    inspectDwarfUnitsInputSchema.safeParse({
+      path: "/tmp/example.elf",
+      max_decompressed_bytes: 0,
+    }).success,
+  ).toBe(false);
+  expect(
+    inspectDwarfUnitsInputSchema.safeParse({
+      path: "/tmp/example.elf",
+      max_decompressed_bytes: 1_073_741_825,
+    }).success,
+  ).toBe(false);
   for (const [compression, body] of [
     ["zlib", elfCompressedBody(named.info, "zlib")],
     ["zstd", elfCompressedBody(named.info, "zstd")],
