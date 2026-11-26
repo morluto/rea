@@ -879,6 +879,7 @@
 * **managed:** share method and field graph registration ([#14471](https://github.com/morluto/rea/issues/14471)) ([9ea3af4](https://github.com/morluto/rea/commit/9ea3af4bb8554c8141ae7af2f4fc454a64001d2c))
 * **managed:** share unmatched member comparison facts ([#14484](https://github.com/morluto/rea/issues/14484)) ([cca35e9](https://github.com/morluto/rea/commit/cca35e94f74cf3f2210c11b8228fc55312d72ee8))
 * **manifest:** share ordered sibling group traversal ([#14571](https://github.com/morluto/rea/issues/14571)) ([0dd8789](https://github.com/morluto/rea/commit/0dd878946a29c7fb0dff0964235e53522600304b))
+* **mcp:** share retained evidence link eligibility ([#14639](https://github.com/morluto/rea/issues/14639)) ([d436d42](https://github.com/morluto/rea/commit/d436d42781220c3e86fbfb944e153ef490c6fd81))
 * **mobile:** share application inventory coverage and bridge projection ([#14527](https://github.com/morluto/rea/issues/14527)) ([8337fdf](https://github.com/morluto/rea/commit/8337fdf26ccf7059a7d2fa690ec532c0bd480ece))
 * **native:** compose LLDB resolver cleanup through the shared owner ([3af56cc](https://github.com/morluto/rea/commit/3af56cc7d50a5f41ea4753d2d0570082611ee0a4)), refs [#11859](https://github.com/morluto/rea/issues/11859)
 * **native:** extract NativeAotPeImage from nativeAotPe ([#13998](https://github.com/morluto/rea/issues/13998)) ([4d5b059](https://github.com/morluto/rea/commit/4d5b059c640aa5b690116bdffefba4085a1c3ebd))
