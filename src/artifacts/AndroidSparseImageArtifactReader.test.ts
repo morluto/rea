@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
@@ -16,7 +16,7 @@ import {
 import { zipArchive } from "../domain/desktop/zipArchive.fixture.js";
 import { buildBootImage } from "../../tests/fixtures/androidBootImage.js";
 import { classifyArtifactBytesAtPath } from "../../tests/fixtures/artifactClassification.js";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 
 type Snapshot = Awaited<ReturnType<typeof scanCanonicalArtifactInventory>>;
@@ -30,11 +30,8 @@ const nodeAt = (snapshot: Snapshot, logicalPath: string) => {
   );
 };
 
-const writeCarrier = async (name: string, bytes: Buffer): Promise<string> => {
-  const path = join(await createTestTempDirectory("rea-android-sparse-"), name);
-  await writeFile(path, bytes);
-  return path;
-};
+const writeCarrier = (name: string, bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-android-sparse-", name, bytes);
 
 it("classifies sparse image bytes as a container by magic, not by suffix", () => {
   expect(

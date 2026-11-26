@@ -2,6 +2,7 @@ import { expect, it, onTestFinished } from "vitest";
 import { WebRuntimeService } from "../../../src/application/WebRuntimeService.js";
 import { CdpWebRuntimeProvider } from "../../../src/browser/execution/CdpWebRuntimeProvider.js";
 import { webExecutionPageViewResultSchema } from "../../../src/domain/analysisView/summarySchemas/webExecutionSummarySchemas.js";
+import { webExecutionCollections } from "../../../src/domain/analysisView/webExecutionView.js";
 import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
@@ -166,6 +167,24 @@ it("summarizes a large execution observation and pages functions and source text
     check([], true);
     for (const sample of samples)
       check(sample.items, sample.collection === page.view.collection);
+    if (page.view.collection === "sources") {
+      const captured = webExecutionCollections.sources.items
+        .parse(page.items)
+        .find((row) => row.source.state === "captured");
+      if (captured === undefined) throw new Error("Expected a captured source");
+      check([{ ...captured, source: { ...captured.source, text: "" } }], false);
+      for (const sha256 of ["abc", "A".repeat(64)])
+        check([{ ...captured, source: { ...captured.source, sha256 } }], false);
+      for (const state of ["unavailable", "excluded"]) {
+        check(
+          [{ ...captured, source: { state, reason: "not captured" } }],
+          true,
+        );
+        check([{ ...captured, source: { state, reason: "" } }], false);
+      }
+    }
+    if (page.view.collection === "source-text")
+      check([{ ...page.items[0], script_id: "" }], false);
   }
 });
 
