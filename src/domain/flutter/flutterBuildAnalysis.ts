@@ -107,7 +107,7 @@ export const flutterApkLimitRecovery = (
     ? `Pass a larger apk_limits.${field} (up to ${String(FLUTTER_APK_LIMIT_BOUNDS[field].maximum)}) on the next call for the same APK; no restart is required.`
     : `apk_limits.${field} is at its maximum of ${String(limits[field])}; the APK cannot be admitted by raising it.`;
 
-const APK_LIMITS_DESCRIPTION = `APK admission for this call; omitted fields use ${JSON.stringify(Object.fromEntries(Object.entries(FLUTTER_APK_LIMIT_BOUNDS).map(([field, bounds]) => [field, bounds.default_value])))}. apk_bytes bounds the private snapshot copy, metadata_read_bytes the ZIP directory reads, library_bytes each libapp.so/libflutter.so, extraction_bytes their total, abi_count and library_path_bytes the library inventory, and snapshot_hash_candidates distinct Dart snapshot hashes retained per libapp.so. A refusal reports the field in details.limit.`;
+const APK_LIMITS_DESCRIPTION = `APK admission for this call; omitted fields use ${JSON.stringify(flutterApkLimits())}. apk_bytes bounds the private snapshot copy, metadata_read_bytes the ZIP directory reads, library_bytes each libapp.so/libflutter.so, extraction_bytes their total, abi_count and library_path_bytes the library inventory, and snapshot_hash_candidates distinct Dart snapshot hashes retained per libapp.so. A refusal reports the field in details.limit.`;
 
 /** Retained GNU build-ID descriptor budget, in bytes. */
 export const MAX_FLUTTER_BUILD_ID_BYTES = 64;
