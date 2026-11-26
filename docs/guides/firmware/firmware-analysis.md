@@ -589,3 +589,24 @@ zstd are recorded from leading magic and left compressed. An AVB footer is
 reported with its sizes and is not verified. `ANDROID!` does not say whether
 the file was boot, init_boot, or recovery. Extract `dtb` and pass that file
 to `inspect-devicetree`. See [Android boot images](../../android-boot-image.md).
+
+## Inspect Android vbmeta images
+
+`inspect-artifact` / `extract-artifact` recognize a standalone `vbmeta.img`
+by the `AVB0` magic at offset 0. The root records the header, rollback index,
+flags, release string, and each property, hashtree, hash, kernel command-line,
+and chain-partition descriptor. Unknown descriptor tags are retained. The
+authentication block, public key, and public key metadata are extractable
+children. Signatures and digests are recorded and not verified. See
+[Android Verified Boot vbmeta images](android-vbmeta.md).
+
+## Inspect Qualcomm MBN images
+
+`inspect-artifact` / `extract-artifact` recognize a legacy Qualcomm MBN boot
+image by its header and payload sizes, with pointer checks for version 3.
+The headers are 40 bytes for v3 and v5, and 48 for v6. Inventory lists the
+header, code, signature, certificate-chain and v6 metadata regions. An ELF image whose program
+headers declare a Qualcomm hash segment is inventoried as `qualcomm-mbn` with its hash
+table and per program header hash offsets, while binary target resolution
+still reads it as ELF. Signatures and certificates are located, not verified,
+and hashes are not recomputed. See [Qualcomm MBN images](qualcomm-mbn-images.md).

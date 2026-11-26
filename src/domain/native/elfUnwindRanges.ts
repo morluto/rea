@@ -136,10 +136,12 @@ export const ELF_UNWIND_BUDGETS = {
     default_value: 8192,
     unit: "count",
   },
+  // Matches inspect_pe_unwind_ranges: 64 rows of a C++ library's unwind
+  // ranges are about 20 KB, within the default agent result budget.
   limit: {
     minimum: 1,
     maximum: MAX_INSPECT_ELF_UNWIND_PAGE,
-    default_value: 256,
+    default_value: 64,
     unit: "count",
   },
 } as const satisfies Record<string, ParameterBudget>;

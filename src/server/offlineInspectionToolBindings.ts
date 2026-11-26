@@ -18,6 +18,7 @@ import type { PeCertificatesService } from "../application/binaryDiagnostics/PeC
 import type { PeImportsService } from "../application/binaryDiagnostics/PeImportsService.js";
 import type { PeLoadConfigService } from "../application/binaryDiagnostics/PeLoadConfigService.js";
 import type { PeUnwindRangesService } from "../application/binaryDiagnostics/PeUnwindRangesService.js";
+import type { PeOverlayService } from "../application/binaryDiagnostics/PeOverlayService.js";
 import type { PeResourcesService } from "../application/binaryDiagnostics/PeResourcesService.js";
 import type { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
 import type { WindowsShortcutService } from "../application/binaryDiagnostics/WindowsShortcutService.js";
@@ -30,11 +31,13 @@ import { retainAnalysisResultSources } from "../application/investigation/record
 import type { MavenGradleMetadataService } from "../application/java/MavenGradleMetadataService.js";
 import type { ModelArtifactService } from "../application/model/ModelArtifactService.js";
 import type { NugetNupkgService } from "../application/nuget/NugetNupkgService.js";
+import type { OciImageLayoutService } from "../application/oci/OciImageLayoutService.js";
 import type { PythonPycService } from "../application/python/PythonPycService.js";
 import type { ReleaseExposureService } from "../application/releaseExposure/ReleaseExposureService.js";
 import type { RustBinaryService } from "../application/rust/RustBinaryService.js";
 import type { SqliteDatabaseService } from "../application/sqlite/SqliteDatabaseService.js";
 import type { V8CodeCacheService } from "../application/v8CodeCache/V8CodeCacheService.js";
+import type { VsixPackageService } from "../application/vsix/VsixPackageService.js";
 import type { WasmArtifactService } from "../application/wasm/WasmArtifactService.js";
 import { compareWasmInterfaces } from "../application/wasm/WasmInterfaceComparisonService.js";
 import { ok } from "../domain/result.js";
@@ -128,6 +131,12 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
       run: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<PeUnwindRangesService>,
+  peOverlay: ((service) => ({
+    inspect_pe_overlay: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<PeOverlayService>,
   releaseExposure: ((service) => ({
     audit_release_exposure: {
       admission: "sdk",
@@ -212,6 +221,18 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
       summary: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<NugetNupkgService>,
+  vsixPackage: ((service) => ({
+    inspect_vsix_package: {
+      admission: "application",
+      summary: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<VsixPackageService>,
+  ociImageLayout: ((service) => ({
+    inspect_oci_image_layout: {
+      admission: "application",
+      summary: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<OciImageLayoutService>,
   pythonPyc: ((service) => ({
     inspect_python_pyc: {
       admission: "application",

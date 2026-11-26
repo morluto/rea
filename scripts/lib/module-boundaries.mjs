@@ -15,6 +15,8 @@ const MIGRATED_PROVIDER_ROOTS = new Set([
   "gpu",
   "python",
   "nuget",
+  "vsix",
+  "oci",
   "rust",
   "wasm",
   "captures",

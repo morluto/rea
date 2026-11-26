@@ -43,6 +43,7 @@ import {
 } from "../../../tests/fixtures/espImage.js";
 import { devicetreeFixture } from "../../domain/firmware/devicetree.fixture.js";
 import { fitFixture } from "../fit/FitImage.fixture.js";
+import { sampleAndroidVbmeta } from "../../domain/firmware/androidVbmeta.fixture.js";
 
 it("joins only observed PE signature bytes across stream chunks", () => {
   const bytes = pe(0x8664, 8190);
@@ -584,6 +585,19 @@ it("classifies nested HEX and S-record content as containers by bytes", () => {
       Buffer.from(":0300300002337A1F\n"),
     ),
   ).toEqual({ kind: "resource", format: "file" });
+});
+
+it("classifies a standalone vbmeta image by AVB0 magic", () => {
+  expect(
+    classifyArtifactBytesAtPath("vbmeta.img", sampleAndroidVbmeta()),
+  ).toEqual({
+    kind: "container",
+    format: "android-vbmeta",
+  });
+  expect(classifyArtifactBytesAtPath("boot.img", Buffer.from("AVBf"))).toEqual({
+    kind: "resource",
+    format: "file",
+  });
 });
 
 it("classifies nested ESP images as containers by bytes", () => {

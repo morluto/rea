@@ -18,9 +18,11 @@ import {
 import { validateElfSectionTableFields } from "../../domain/elfDeclaredRanges.js";
 import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
 import {
+  elfHashEntryLayout,
   readElfGnuHashSymbolCountSteps,
   readElfHashSymbolCountSteps,
   type ElfHashCountSteps,
+  type ElfHashEntryLayout,
 } from "../../domain/elfHashSymbolCount.js";
 import {
   admitElfLoadSegment,
@@ -1236,6 +1238,7 @@ const parseElfDependenciesCore = function* (
     gnuHashSection,
     addresses,
     bits,
+    elfHashEntryLayout({ machine: header.machine, bits, little }),
     symbolEntrySize,
     issues,
   );
@@ -1496,6 +1499,7 @@ const locateSymbolCount = function* (
   gnuHash: SectionFacts | undefined,
   tags: ReadonlyMap<bigint, bigint>,
   bits: 32 | 64,
+  hashEntry: ElfHashEntryLayout,
   entrySize: number,
   issues: ElfDependencyIssue[],
 ): ElfDependencySteps<number | null> {
@@ -1505,7 +1509,7 @@ const locateSymbolCount = function* (
   ): ElfDependencySteps<number | null> {
     if (hashAddress === undefined) return null;
     return yield* readHashCount(
-      readElfHashSymbolCountSteps(),
+      readElfHashSymbolCountSteps(undefined, hashEntry),
       mappedHashWordsStep(window, mappings, hashAddress, coverage),
     );
   };
@@ -1530,7 +1534,7 @@ const locateSymbolCount = function* (
   const sectionHash =
     hashSectionInFile(hash, window.fileSize, ".hash", issues) && hash.size >= 8
       ? yield* readHashCount(
-          readElfHashSymbolCountSteps(),
+          readElfHashSymbolCountSteps(undefined, hashEntry),
           hashWordsStep(window, hash.offset, hash.offset + hash.size),
         )
       : null;

@@ -8,15 +8,20 @@ import { detectHexRecordEncoding } from "./firmware/hexRecords.js";
 import { hasUf2Block } from "./firmware/uf2.js";
 import { hasGodotPckHeader } from "./godotPckFormat.js";
 import { nesContainerFormat, parseInesLayout } from "./inesContainer.js";
+import { hasNdsHeader } from "./ndsRom.js";
 import {
   hasIso9660Signature,
   ISO9660_DESCRIPTOR_OFFSET,
   ISO9660_RECOGNITION_BYTES,
 } from "./iso9660/iso9660Structures.js";
 import { recognizeAndroidOtaPayload } from "./firmware/androidOtaPayload.js";
+import { hasAndroidVbmetaMagic } from "./firmware/androidVbmeta.js";
 import { recognizeAndroidSparseImage } from "./firmware/androidSparseImage.js";
+import { claimsExecutableHeader } from "./binaryTarget.js";
+import { hasQualcommMbnHeader } from "./qualcommMbnImage.js";
 import { hasUImageMagic } from "./uimageFormat.js";
 import { hasBfltMagic } from "./bfltExecutable.js";
+import { hasNroMagic, hasNsoMagic } from "./switchExecutable.js";
 import { hasUnityFsHeader } from "./unityfsFormat.js";
 import { hasCompoundFileSignature } from "./windows/compoundFile.js";
 import { hasMftFileRecordHeader } from "./windows/ntfsMft.js";
@@ -42,6 +47,7 @@ import { hasZipSignature } from "./zipPackageFormat.js";
 export type RecognizedArtifactFormat = Extract<
   ArtifactFormatId,
   | "ines"
+  | "nds"
   | "zip"
   | "godot-pck"
   | "unityfs"
@@ -52,8 +58,11 @@ export type RecognizedArtifactFormat = Extract<
   | "ktx"
   | "ktx2"
   | "uimage"
+  | "nso"
+  | "nro"
   | "android-boot-image"
   | "android-ota-payload"
+  | "android-vbmeta"
   | "android-sparse-image"
   | "iso9660"
   | "intel-hex"
@@ -65,6 +74,7 @@ export type RecognizedArtifactFormat = Extract<
   | "esp-image"
   | "fit"
   | "compound-file"
+  | "qualcomm-mbn"
   | "ntfs-mft"
   | "plist"
   | StandaloneArtifactFormat
@@ -176,7 +186,10 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     when("ktx", hasKtx1Identifier),
     when("ktx2", hasKtx2Identifier),
     when("uimage", hasUImageMagic),
+    when("nso", hasNsoMagic),
+    when("nro", hasNroMagic),
     when("android-boot-image", hasAndroidBootImageMagic),
+    when("android-vbmeta", hasAndroidVbmetaMagic),
     ({ prefix }) => {
       const ota = recognizeAndroidOtaPayload(prefix);
       if (ota === undefined) return undefined;
@@ -273,6 +286,18 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     },
     // Binary plists, including keyed archives, often use other extensions.
     when("plist", hasBinaryPlistSignature),
+    // No magic: the stored logo CRC and a matching checksum claim it, after
+    // every format with a leading signature.
+    when("nds", hasNdsHeader),
+    // A legacy MBN header has no magic; the version word, sizes and pointer
+    // arithmetic must agree, so it runs after every signature format and yields
+    // to native executable headers (ELF, PE/DOS MZ, Mach-O, FAT). An ELF MBN is
+    // ELF here; root inventory reads it as MBN for its hash segment.
+    ({ prefix, fileSize }) =>
+      !claimsExecutableHeader(prefix, fileSize) &&
+      hasQualcommMbnHeader(prefix, fileSize)
+        ? { state: "recognized", format: "qualcomm-mbn" }
+        : undefined,
   ];
 
 /**
@@ -288,6 +313,33 @@ export const recognizeArtifactFormat = (
     if (recognition !== undefined) return { ...recognition, index };
   }
   return undefined;
+};
+
+/**
+ * Recognize content from a bounded prefix and optional suffix without extra
+ * reads. A refused claim falls through: a header-only iNES region, for
+ * example, has the signature but not the declared cartridge extent. A claim
+ * that needs more bytes falls through too: a bounded prefix and trailer
+ * cannot locate an ESP flash partition table. The caller's bounded XML
+ * signature probe decides plist last.
+ */
+export const recognizeBoundedArtifactFormat = (
+  input: Omit<ArtifactRecognitionInput, "espFlashLayout"> & {
+    readonly xmlPlistSignature: boolean;
+  },
+): Exclude<RecognizedArtifactFormat, "esp-flash-image"> | undefined => {
+  for (
+    let recognition = recognizeArtifactFormat(input);
+    recognition !== undefined;
+    recognition = recognizeArtifactFormat(input, recognition.index + 1)
+  ) {
+    if (
+      recognition.state === "recognized" &&
+      recognition.format !== "esp-flash-image"
+    )
+      return recognition.format;
+  }
+  return input.xmlPlistSignature ? "plist" : undefined;
 };
 
 /**
