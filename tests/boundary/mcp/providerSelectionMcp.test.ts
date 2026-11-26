@@ -1,4 +1,8 @@
 import {
+  supportedFixtureTarget,
+  fixtureAddressNameCapability as capability,
+} from "../../fixtures/analysisExecution.js";
+import {
   canonicalOutputSchema,
   withCanonicalOutputSchema,
 } from "../../fixtures/canonicalOutputSchema.js";
@@ -23,7 +27,6 @@ import {
   createAnalysisExecution,
   type AnalysisProviderCandidate,
   type AnalysisProviderInspectionOptions,
-  type CapabilityDescriptor,
   type ProviderIdentity,
 } from "../../../src/ports/AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
@@ -1333,12 +1336,7 @@ const candidate = (
             remediation: "Repair the fixture provider.",
             diagnostics: {},
           },
-    inspectTargetSupport: () => ({
-      status: "supported",
-      code: null,
-      reason: null,
-      diagnostics: {},
-    }),
+    inspectTargetSupport: supportedFixtureTarget,
     resolveAnalysisProfile: () =>
       Promise.resolve(
         ok({
@@ -1365,23 +1363,6 @@ const candidate = (
     },
   };
 };
-
-const capability = (provider: ProviderIdentity): CapabilityDescriptor => ({
-  provider,
-  operation: "address_name",
-  available: true,
-  reason: null,
-  effects: {
-    mutatesArtifact: false,
-    launchesProcess: true,
-    mayShowUi: false,
-    mayAccessNetwork: false,
-    mayWriteFilesystem: false,
-    changesPermissions: false,
-    requiresRoot: false,
-  },
-  limitations: [],
-});
 
 const structured = (result: CallToolResult): Record<string, unknown> =>
   result.isError === true

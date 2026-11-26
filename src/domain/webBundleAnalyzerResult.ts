@@ -1,3 +1,4 @@
+import { CoverageAccumulator } from "./coverageAccumulator.js";
 import { buildJavaScriptRouteInventorySteps } from "./javascript/javascriptRouteInventory.js";
 import { completeSemanticSteps } from "./javascript/javascriptSemanticTraversal.js";
 import { RETURNED_REFERENCE_WIDENING_LIMITATION } from "./javascript/javascriptSemanticCoverage.js";
@@ -549,12 +550,16 @@ interface CompletenessInput {
 
 const buildCompleteness = (
   input: CompletenessInput,
-): WebBundleAnalysis["completeness"] => ({
-  status: input.partial ? "partial" : "complete",
-  parsed_scripts: input.parsedScripts,
-  parse_failures: input.parseFailures,
-  visited_ast_nodes: input.visitedNodes,
-});
+): WebBundleAnalysis["completeness"] => {
+  const coverage = new CoverageAccumulator().recordComplete();
+  if (input.partial) coverage.recordOmission("web bundle analysis is partial");
+  return {
+    status: coverage.finalizeKnown(),
+    parsed_scripts: input.parsedScripts,
+    parse_failures: input.parseFailures,
+    visited_ast_nodes: input.visitedNodes,
+  };
+};
 
 /**
  * Reported when findings are merged across scripts. Wording may change, but

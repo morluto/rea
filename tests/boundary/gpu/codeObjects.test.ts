@@ -1719,14 +1719,14 @@ it("does not recognize a CCOB signature after its first byte is corrupted", asyn
   const result = await inspect(bytes);
   expect(result).toMatchObject({
     ok: false,
-    error: { _tag: "AnalysisUnsupportedTargetError" },
+    error: { _tag: "AnalysisTargetFailureError" },
   });
 });
 it("requires the PTX version directive before any module content", async () => {
   const result = await inspect(Buffer.from(`unexpected-prefix ${ptxFixture}`));
   expect(result).toMatchObject({
     ok: false,
-    error: { _tag: "AnalysisUnsupportedTargetError" },
+    error: { _tag: "AnalysisTargetFailureError" },
   });
 });
 it("retains an embedded CCOB with a corrupted signature as unsupported", async () => {
@@ -1780,7 +1780,7 @@ it("does not dispatch a high-bit-corrupted DOS signature to the PE parser", asyn
   const result = await inspect(bytes);
   expect(result).toMatchObject({
     ok: false,
-    error: { _tag: "AnalysisUnsupportedTargetError" },
+    error: { _tag: "AnalysisTargetFailureError" },
   });
 });
 it("preserves the PE layout refusal at the GPU provider boundary", async () => {
@@ -1788,7 +1788,7 @@ it("preserves the PE layout refusal at the GPU provider boundary", async () => {
   expect(result).toMatchObject({
     ok: false,
     error: {
-      _tag: "AnalysisUnsupportedTargetError",
+      _tag: "AnalysisTargetFailureError",
       message: expect.stringContaining("overlapping PE header"),
     },
   });

@@ -94,26 +94,38 @@ export class ProgressiveToolCatalog {
   }
 
   private rankMatches(query: string | undefined): readonly string[] {
-    const words = (query ?? "").toLowerCase().split(/\s+/u).filter(Boolean);
-    const ranked: { readonly name: string; readonly score: number }[] = [];
+    const words = [
+      ...new Set(
+        (query ?? "").trim().toLowerCase().split(/\s+/u).filter(Boolean),
+      ),
+    ];
+    if (words.length === 0) {
+      return [...this.tools.keys()].sort((left, right) =>
+        left < right ? -1 : left > right ? 1 : 0,
+      );
+    }
+    const ranked: {
+      readonly name: string;
+      readonly matchedWords: number;
+      readonly nameMatches: number;
+    }[] = [];
     for (const [name, tool] of this.tools) {
-      let matchesAll = true;
+      let matchedWords = 0;
+      let nameMatches = 0;
       for (let i = 0; i < words.length; i++) {
-        if (!tool.search.includes(words[i]!)) {
-          matchesAll = false;
-          break;
+        const word = words[i]!;
+        if (tool.search.includes(word)) {
+          matchedWords += 1;
+          if (name.includes(word)) nameMatches += 1;
         }
       }
-      if (!matchesAll) continue;
-      let score = 0;
-      for (let i = 0; i < words.length; i++) {
-        if (name.includes(words[i]!)) score += 1;
-      }
-      ranked.push({ name, score });
+      if (matchedWords === 0) continue;
+      ranked.push({ name, matchedWords, nameMatches });
     }
     ranked.sort(
       (left, right) =>
-        right.score - left.score ||
+        right.matchedWords - left.matchedWords ||
+        right.nameMatches - left.nameMatches ||
         (left.name < right.name ? -1 : left.name > right.name ? 1 : 0),
     );
     return ranked.map((entry) => entry.name);

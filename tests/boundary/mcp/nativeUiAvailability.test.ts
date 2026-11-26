@@ -30,6 +30,7 @@ import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { err, ok, type Result } from "../../../src/domain/result.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { createFixtureProviderIdentity } from "../../fixtures/analysisExecution.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createSessionMcpHarness } from "./sessionMcpHarness.js";
@@ -55,11 +56,7 @@ afterEach(async () => {
   await Promise.all(resources.splice(0).map((resource) => resource.close()));
 });
 
-const identity = {
-  id: "fixture",
-  name: "Fixture analysis provider",
-  version: "1",
-};
+const identity = createFixtureProviderIdentity();
 const controllerName = "BuildViewController";
 const selector = "buildTapped:";
 const handlerAddress = "0x1000";

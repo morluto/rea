@@ -1,7 +1,6 @@
 import {
   createGdbFixtureOwner,
   expectNoUnmodeledGdbCommands,
-  FAKE_GDB_SESSION_REPLIES,
   fakeGdbModeledReplies,
   fakeGdbStartupPreamble,
 } from "./gdbTestHelpers.js";

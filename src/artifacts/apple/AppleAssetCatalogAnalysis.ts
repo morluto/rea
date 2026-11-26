@@ -7,6 +7,7 @@ import {
   AnalysisOutputError,
   AnalysisCapabilityUnavailableError,
   OwnerCancellation,
+  AnalysisTargetFailureError,
 } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -20,6 +21,7 @@ import {
   type ArtifactReaderTraversal,
   DirectoryArtifactReader,
   translateArtifactFailure,
+  translateArtifactOperationFailure,
 } from "../../resources/index.js";
 import { InternalInvariantError } from "../../domain/internalInvariant.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -29,7 +31,6 @@ import {
   ArtifactTraversalObservation,
   declaredArtifactEntries,
 } from "../ArtifactTraversalObservation.js";
-import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
 import { parseJsonWithDuplicatePolicy } from "../../domain/jsonDuplicateMember.js";
 import {
@@ -154,9 +155,14 @@ export const analyzeAppleAssetCatalogs = async (input: {
               "inspect_asset_catalog",
               { cause },
             )
-          : translateArtifactFailure("inspect_asset_catalog", cause);
+          : translateArtifactFailure(
+              "inspect_asset_catalog",
+              input.bundlePath,
+              cause,
+            );
       const cleanup = translateArtifactFailure(
         "inspect_asset_catalog",
+        input.bundlePath,
         joined.error,
       );
       throw analysisErrorWithCleanupDependencies(
@@ -308,7 +314,7 @@ const collectAssetCatalogs = async (input: {
   });
   if (released.kind === "failed") {
     if (outcome.kind === "failed" && outcome.cause instanceof AnalysisError) {
-      const cleanup = translateArtifactFailure(
+      const cleanup = translateArtifactOperationFailure(
         "inspect_asset_catalog",
         input.resources.cleanupFailure({ kind: "completed" }, [released]),
       );
@@ -599,19 +605,15 @@ const assetUtilOutcomeContext = (
       outcome.output?.truncated === false &&
       rejectsCatalog
     )
-      return new ArtifactOperationError(
+      return new AnalysisTargetFailureError(
         OPERATION,
-        "malformed",
-        undefined,
-        `assetutil rejected ${entry.path} as an invalid asset catalog`,
+        entry.adapterKey,
         {
-          ...details,
-          parseFailure: {
-            kind: "malformed",
-            format: "asset-catalog",
-            detail: `assetutil rejected ${entry.path} as an invalid asset catalog`,
-          },
+          kind: "malformed",
+          format: "asset-catalog",
+          detail: `assetutil rejected ${entry.path} as an invalid asset catalog`,
         },
+        details,
       );
     return new AnalysisOutputError(
       OPERATION,

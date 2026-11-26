@@ -1,13 +1,8 @@
-import { describe, it } from "vitest";
 import { fileURLToPath } from "node:url";
-import { RuleTester } from "oxlint/plugins-dev";
+import { createRuleTester } from "../support/createRuleTester.js";
 import rule from "../../scripts/lint/rules/project-wait-deadline.mjs";
 
-RuleTester.describe = describe;
-RuleTester.it = it;
-const tester = new RuleTester({
-  languageOptions: { parserOptions: { lang: "ts" } },
-});
+const tester = createRuleTester();
 const filename = fileURLToPath(
   new URL("../boundary/ruleControl.test.ts", import.meta.url),
 );

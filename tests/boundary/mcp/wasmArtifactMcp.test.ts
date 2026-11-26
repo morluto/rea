@@ -16,7 +16,7 @@ import { wasmArtifactSummaryViewResultSchema } from "../../../src/domain/analysi
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { createServer } from "../../../src/server/createServer.js";
-import { err, ok } from "../../../src/domain/result.js";
+import { ok } from "../../../src/domain/result.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";

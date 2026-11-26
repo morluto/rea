@@ -378,7 +378,7 @@ const inspectHopperMachOImage = async (
   for (const slice of parsed.slices) {
     if (signal?.aborted) return err(cancelledBy("open_binary", signal));
     const boundsIssue = inspectFatSliceBounds(slice, size, tableEnd);
-    if (boundsIssue !== null) return invalid(boundsIssue.reason);
+    if (boundsIssue !== null) return invalid(boundsIssue.detail);
     if (slice.offset === admitted.offset && slice.size === admitted.size)
       matches.push(slice);
   }

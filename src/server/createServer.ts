@@ -12,7 +12,10 @@ import { SCOPED_NO_TARGET_RECOVERY } from "./recoveryInstructions.js";
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { parseMcpInputBudget } from "../config/mcpInputBudget.js";
 import { serverInstructions } from "./serverInstructions.js";
-import { registerServiceTools } from "./serviceToolBindings.js";
+import {
+  registerServiceTools,
+  type ToolServices,
+} from "./serviceToolBindings.js";
 import {
   artifactAnalysisForAdmission,
   artifactExecutionParameters,
@@ -316,6 +319,8 @@ export const createServer = (
     recordEvidence,
     recordEvidenceWithUnknown,
   } = createSessionRecorders(server, session);
+  // Over-budget summaries link the complete record they replaced.
+  if (evidenceById !== undefined) server.serveRetainedEvidence(evidenceById);
   const analysisAdmission = withAdmittedAnalysis(source);
   server.withAdmittedAnalysis = analysisAdmission;
   server.registerTransportCloseHook(() => {
@@ -339,48 +344,35 @@ export const createServer = (
     withAdmittedAnalysis: analysisAdmission,
     evidenceById,
   };
+  const registerServices = (services: Partial<ToolServices>): void =>
+    registerServiceTools(server, services, contractTools);
   const javascriptRecoveryService = new JavaScriptRecoveryService(
     javascriptRecovery,
   );
   registerToolFamilies({
     direct: () =>
-      registerServiceTools(
-        server,
-        {
-          providerOperations: {
-            contracts: OFFICIAL_TOOL_CONTRACTS,
-            activeTarget,
-            ...(session === undefined
-              ? {}
-              : {
-                  admitRecovery: session.admitRecoveryObservation.bind(session),
-                }),
-          },
+      registerServices({
+        providerOperations: {
+          contracts: OFFICIAL_TOOL_CONTRACTS,
+          activeTarget,
+          ...(session === undefined
+            ? {}
+            : {
+                admitRecovery: session.admitRecoveryObservation.bind(session),
+              }),
         },
-        contractTools,
-      ),
-    enhanced: () =>
-      registerServiceTools(
-        server,
-        { enhancedWorkflows: { session } },
-        contractTools,
-      ),
+      }),
+    enhanced: () => registerServices({ enhancedWorkflows: { session } }),
     native: () => {
-      registerServiceTools(
-        server,
-        {
-          providerOperations: {
-            contracts: NATIVE_TOOL_CONTRACTS,
-            activeTarget,
-          },
+      registerServices({
+        providerOperations: {
+          contracts: NATIVE_TOOL_CONTRACTS,
+          activeTarget,
         },
-        contractTools,
-      );
-      registerServiceTools(
-        server,
-        { reverseEngineering: { service: reverseEngineering, session } },
-        contractTools,
-      );
+      });
+      registerServices({
+        reverseEngineering: { service: reverseEngineering, session },
+      });
       registerServiceTools(
         server,
         {
@@ -390,125 +382,94 @@ export const createServer = (
         },
         { logger: toolLogger, recordEvidence, evidenceById },
       );
-      registerServiceTools(
-        server,
-        {
-          binaryLayout,
-          byteEntropy: createByteEntropyService(artifactResources),
-          peResources,
-          nativeExports,
-          devicetree,
-          elfNotes,
-          elfDebugLink,
-          nativeInitializers,
-          elfUnwindRanges,
-          appleIps,
-          kernelModule,
-          kernelBuildConfig,
-          peLoadConfig,
-          peUnwindRanges,
-          releaseExposure,
-          binaryHardening,
-          peCertificates,
-          peImports,
-          windowsShortcut,
-          recordedCrash,
-          dwarfUnits,
-          elfDependencies,
-        },
-        contractTools,
-      );
+      registerServices({
+        binaryLayout,
+        byteEntropy: createByteEntropyService(artifactResources),
+        peResources,
+        nativeExports,
+        devicetree,
+        elfNotes,
+        elfDebugLink,
+        nativeInitializers,
+        elfUnwindRanges,
+        appleIps,
+        kernelModule,
+        kernelBuildConfig,
+        peLoadConfig,
+        peUnwindRanges,
+        releaseExposure,
+        binaryHardening,
+        peCertificates,
+        peImports,
+        windowsShortcut,
+        recordedCrash,
+        dwarfUnits,
+        elfDependencies,
+      });
     },
     artifact: () => {
-      registerServiceTools(
-        server,
-        {
-          providerOperations: {
-            contracts: ARTIFACT_TOOL_CONTRACTS,
-            activeTarget,
-            parametersForExecution: artifactExecutionParameters,
-            analysisForAdmission: artifactAnalysisForAdmission(
-              capabilities.createArtifactPathInspection,
-            ),
-          },
+      registerServices({
+        providerOperations: {
+          contracts: ARTIFACT_TOOL_CONTRACTS,
+          activeTarget,
+          parametersForExecution: artifactExecutionParameters,
+          analysisForAdmission: artifactAnalysisForAdmission(
+            capabilities.createArtifactPathInspection,
+          ),
         },
-        contractTools,
-      );
-      registerServiceTools(
-        server,
-        {
-          desktopApplication,
-          modelArtifact,
-          gpuCodeObjects,
-          evmInterface,
-          goBinary,
-          il2cppMetadata,
-          rustBinary,
-          nugetNupkg,
-          pythonPyc,
-          erlangBeam,
-          v8CodeCache,
-          wasmArtifact,
-          apkSignature,
-          sqliteDatabase,
-          packetCapture,
-          signalRecording,
-          mavenGradleMetadata,
-        },
-        contractTools,
-      );
+      });
+      registerServices({
+        desktopApplication,
+        modelArtifact,
+        gpuCodeObjects,
+        evmInterface,
+        goBinary,
+        il2cppMetadata,
+        rustBinary,
+        nugetNupkg,
+        pythonPyc,
+        erlangBeam,
+        v8CodeCache,
+        wasmArtifact,
+        apkSignature,
+        sqliteDatabase,
+        packetCapture,
+        signalRecording,
+        mavenGradleMetadata,
+      });
     },
     managed: () => {
-      registerServiceTools(
-        server,
-        {
-          providerOperations: {
-            contracts: MANAGED_TOOL_CONTRACTS,
+      registerServices({
+        providerOperations: {
+          contracts: MANAGED_TOOL_CONTRACTS,
+          activeTarget,
+          analysisForAdmission: managedAnalysisForAdmission(
             activeTarget,
-            analysisForAdmission: managedAnalysisForAdmission(
-              activeTarget,
-              options.createManagedBinarySession ??
-                (session === undefined
-                  ? capabilities.createManagedBinarySession
-                  : () =>
-                      session.createManagedBinarySession?.() ??
-                      capabilities.createManagedBinarySession()),
-            ),
-          },
+            options.createManagedBinarySession ??
+              (session === undefined
+                ? capabilities.createManagedBinarySession
+                : () =>
+                    session.createManagedBinarySession?.() ??
+                    capabilities.createManagedBinarySession()),
+          ),
         },
-        contractTools,
-      );
+      });
       if (session !== undefined)
-        registerServiceTools(
-          server,
-          { managedWorkflows: session },
-          contractTools,
-        );
+        registerServices({ managedWorkflows: session });
     },
-    firmware: () =>
-      registerServiceTools(server, { firmwareAnalysis }, contractTools),
-    uefi: () => registerServiceTools(server, { uefiAnalysis }, contractTools),
+    firmware: () => registerServices({ firmwareAnalysis }),
+    uefi: () => registerServices({ uefiAnalysis }),
     android: () =>
-      registerServiceTools(
-        server,
-        {
-          androidAnalysis: new AndroidAnalysisService(android, recordEvidence),
-        },
-        contractTools,
-      ),
+      registerServices({
+        androidAnalysis: new AndroidAnalysisService(android, recordEvidence),
+      }),
     pcap: () => {
-      registerServiceTools(
-        server,
-        { pcapAnalysis: createPcapAnalysisService(pcap) },
-        contractTools,
-      );
+      registerServices({ pcapAnalysis: createPcapAnalysisService(pcap) });
     },
     flutter: () => {
-      registerServiceTools(
-        server,
-        { flutterAnalysis: createFlutterBuildAnalysisService(flutter) },
-        contractTools,
-      );
+      registerServices({
+        flutterAnalysis: createFlutterBuildAnalysisService(flutter),
+      });
     },
     frida: () =>
       // Frida instruments a live process the caller selects, outside
@@ -519,106 +480,73 @@ export const createServer = (
         { logger: toolLogger, recordEvidence, evidenceById },
       ),
     apktool: () =>
-      registerServiceTools(
-        server,
-        { apktoolAnalysis: createApktoolResourceAnalysisService(apktool) },
-        contractTools,
-      ),
-    jeb: () =>
-      registerServiceTools(
-        server,
-        { jebAnalysis: createJebAnalysisService(jeb) },
-        contractTools,
-      ),
+      registerServices({
+        apktoolAnalysis: createApktoolResourceAnalysisService(apktool),
+      }),
+    jeb: () => registerServices({ jebAnalysis: createJebAnalysisService(jeb) }),
     adb: () =>
-      registerServiceTools(
-        server,
-        { adbDeviceAnalysis: new AdbDeviceAnalysisService(adbDevice) },
-        contractTools,
-      ),
+      registerServices({
+        adbDeviceAnalysis: new AdbDeviceAnalysisService(adbDevice),
+      }),
     browser: () => {
-      registerServiceTools(
-        server,
-        {
-          browserObservation: {
-            browser: options.browserObservation,
-            loadFailure:
-              options.optionalProviderLoadFailures?.browserObservation,
-          },
+      registerServices({
+        browserObservation: {
+          browser: options.browserObservation,
+          loadFailure: options.optionalProviderLoadFailures?.browserObservation,
         },
-        contractTools,
-      );
-      registerServiceTools(
-        server,
-        {
-          browserScenario: {
-            provider: options.browserScenarioCapture,
-            loadFailure:
-              options.optionalProviderLoadFailures?.browserScenarioCapture,
-          },
-          webRuntime,
-          webNetworkCapture,
+      });
+      registerServices({
+        browserScenario: {
+          provider: options.browserScenarioCapture,
+          loadFailure:
+            options.optionalProviderLoadFailures?.browserScenarioCapture,
         },
-        contractTools,
-      );
+        webRuntime,
+        webNetworkCapture,
+      });
     },
     electron: () =>
-      registerServiceTools(
-        server,
-        {
-          electronFuses,
-          electronObservation: {
-            provider: options.electronObservation,
-            loadFailure:
-              options.optionalProviderLoadFailures?.electronObservation,
-          },
-          electronScenario: {
-            provider: options.electronActiveObservation,
-            loadFailure:
-              options.optionalProviderLoadFailures?.electronActiveObservation,
-          },
-          javascriptApplication: {
-            resources: artifactResources,
-            environment,
-            settings: analysisSettings.read,
-          },
+      registerServices({
+        electronFuses,
+        electronObservation: {
+          provider: options.electronObservation,
+          loadFailure:
+            options.optionalProviderLoadFailures?.electronObservation,
         },
-        contractTools,
-      ),
+        electronScenario: {
+          provider: options.electronActiveObservation,
+          loadFailure:
+            options.optionalProviderLoadFailures?.electronActiveObservation,
+        },
+        javascriptApplication: {
+          resources: artifactResources,
+          environment,
+          settings: analysisSettings.read,
+        },
+      }),
     "javascript-runtime": () =>
-      registerServiceTools(
-        server,
-        {
-          javascriptRuntime: {
-            runtime: options.javascriptRuntimeObservation,
-            loadFailure:
-              options.optionalProviderLoadFailures
-                ?.javascriptRuntimeObservation,
-          },
+      registerServices({
+        javascriptRuntime: {
+          runtime: options.javascriptRuntimeObservation,
+          loadFailure:
+            options.optionalProviderLoadFailures?.javascriptRuntimeObservation,
         },
-        contractTools,
-      ),
+      }),
     application: () => {
-      registerServiceTools(
-        server,
-        {
-          analysisSettings: {
-            settings: analysisSettings,
-            delivery: server.delivery,
-          },
-          analysisView: { resources: artifactResources },
-          webScripts: artifactResources,
-          guidance: artifactResources,
-          webModuleTrace,
-          webSourceLocation,
-          javascriptRecovery: javascriptRecoveryService,
-          applicationWorkflows: { resources: artifactResources },
-          guidedWorkflows: promptsForToolFamilies(
-            server.advertisedToolFamilies,
-          ),
+      registerServices({
+        analysisSettings: {
+          settings: analysisSettings,
+          delivery: server.delivery,
         },
-        contractTools,
-      );
+        analysisView: { resources: artifactResources },
+        webScripts: artifactResources,
+        guidance: artifactResources,
+        webModuleTrace,
+        webSourceLocation,
+        javascriptRecovery: javascriptRecoveryService,
+        applicationWorkflows: { resources: artifactResources },
+        guidedWorkflows: promptsForToolFamilies(server.advertisedToolFamilies),
+      });
       // Build tool responses are redacted as a whole; they record nothing.
       registerServiceTools(
         server,
@@ -655,7 +583,7 @@ const selectToolResultDelivery = (
     environment.REA_MCP_MAX_RESPONSE_BYTES,
   );
   if (!configured.ok) throw configured.error;
-  return createToolResultDelivery(configured.value);
+  return createToolResultDelivery(configured.value, environment);
 };
 
 const outputSchemaProfile = (

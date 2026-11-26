@@ -53,7 +53,11 @@ import { createServer } from "../../../src/server/createServer.js";
 import { registerGuidedPrompts } from "../../../src/server/registerPrompts.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
-import { observed } from "../../fixtures/analysisExecution.js";
+import {
+  availableFixtureProvider,
+  supportedFixtureTarget,
+  observed,
+} from "../../fixtures/analysisExecution.js";
 import { serveStreamableHttp } from "../../../src/server/http/serveStreamableHttp.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
@@ -1001,18 +1005,8 @@ const deepProvider = (
     promptCapability(identity, "list_documents"),
     promptCapability(identity, "list_procedures"),
   ],
-  inspectAvailability: () => ({
-    status: "available",
-    code: null,
-    reason: null,
-    diagnostics: {},
-  }),
-  inspectTargetSupport: () => ({
-    status: "supported",
-    code: null,
-    reason: null,
-    diagnostics: {},
-  }),
+  inspectAvailability: availableFixtureProvider,
+  inspectTargetSupport: supportedFixtureTarget,
   resolveAnalysisProfile: async () =>
     ok({ profile: createAnalysisProfile(identity, { fixture: true }) }),
   createClient: options.createClient,

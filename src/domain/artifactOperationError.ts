@@ -8,8 +8,7 @@ import {
 } from "./analysisErrorBase.js";
 import type { ArtifactReaderLimitFact } from "./artifactReaderLimits.js";
 import type { FixedAllowance } from "./fixedAllowanceRemediation.js";
-import type { LimitRef, ParseFailureKind } from "./parseFailure.js";
-import type { MalformedTargetFailure } from "./targetFailure.js";
+import type { LimitRef } from "./parseFailure.js";
 
 /** The resource class that refused an artifact operation. */
 export type ArtifactLimitBoundary = "file-size" | "capacity" | "memory";
@@ -92,7 +91,11 @@ export const integrityCheckMeansChanged = (
   check: ArtifactIntegrityCheck | undefined,
 ): boolean => check !== undefined && INTEGRITY_CHECK_MEANS_CHANGED[check];
 
-/** Artifact inventory or extraction failed a typed safety boundary. */
+/**
+ * Artifact inventory or extraction failed a typed safety boundary. A target
+ * whose bytes its format owner refuses is an `AnalysisTargetFailureError`
+ * instead, so this error never classifies the target itself.
+ */
 export class ArtifactOperationError extends AnalysisError {
   readonly _tag = "ArtifactOperationError";
   override readonly userMessage: string | undefined;
@@ -105,42 +108,12 @@ export class ArtifactOperationError extends AnalysisError {
   readonly fixedAllowance: FixedAllowance | undefined;
   /** For an `integrity` reason, the check the producing reader named. */
   readonly integrityCheck: ArtifactIntegrityCheck | undefined;
-  /** For a `malformed` or `truncated` reason, the format owner's parsed facts. */
-  readonly parseFailure: MalformedTargetFailure | undefined;
 
   constructor(
-    readonly operation:
-      | "inventory_artifact"
-      | "inspect_artifact"
-      | "inspect_desktop_application"
-      | "inspect_pe_resources"
-      | "inspect_pe_certificates"
-      | "inspect_elf_notes"
-      | "inspect_dwarf_units"
-      | "inspect_elf_debug_link"
-      | "inspect_elf_unwind_ranges"
-      | "inspect_devicetree"
-      | "inspect_ntfs_journal"
-      | "inspect_api_contract"
-      | "inspect_playwright_trace"
-      | "inspect_kernel_module"
-      | "inspect_elf_dependencies"
-      | "inspect_kernel_build_config"
-      | "inspect_erlang_beam"
-      | "inspect_nuget_nupkg"
-      | "inspect_v8_code_cache"
-      | "inspect_maven_gradle_metadata"
-      | "extract_artifact"
-      | "decode_interface_builder"
-      | "inspect_asset_catalog"
-      | "inspect_keyed_archive"
-      | "trace_dylib_resolution"
-      | "export_web_scripts"
-      | "trace_web_module_imports"
-      | "trace_web_source_location"
-      | "analyze_javascript_application",
+    /** The public operation whose artifact read or write failed. */
+    readonly operation: string,
     readonly reason:
-      | ParseFailureKind
+      | "limit"
       | "cancelled"
       | "integrity"
       | "path"
@@ -158,7 +131,6 @@ export class ArtifactOperationError extends AnalysisError {
       readonly parserLimit?: LimitRef;
       readonly fixedAllowance?: FixedAllowance;
       readonly integrityCheck?: ArtifactIntegrityCheck;
-      readonly parseFailure?: MalformedTargetFailure;
     },
   ) {
     super(
@@ -173,7 +145,6 @@ export class ArtifactOperationError extends AnalysisError {
     this.parserLimit = options?.parserLimit;
     this.fixedAllowance = options?.fixedAllowance;
     this.integrityCheck = options?.integrityCheck;
-    this.parseFailure = options?.parseFailure;
     this.remediationAction = options?.remediationAction;
     this.userMessage =
       options?.userMessage ??

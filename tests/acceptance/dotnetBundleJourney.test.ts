@@ -192,7 +192,7 @@ for (const format of ["dotnet-bundle", "pyinstaller"] as const) {
       expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
       const observed = await client.callTool({
         name: "inspect_artifact",
-        arguments: {},
+        arguments: { detail: "complete" },
       });
       expect(observed.isError, JSON.stringify(observed)).not.toBe(true);
       expect(

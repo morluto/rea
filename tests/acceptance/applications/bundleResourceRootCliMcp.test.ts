@@ -23,11 +23,7 @@ const resourceOperations = [
 
 const expectUnsupportedArtifactOperations = (content: unknown) => {
   const parsed = toolContract("binary_session").outputSchema.parse(content);
-  for (const name of [
-    "inspect_artifact",
-    "extract_artifact",
-    "trace_dylib_resolution",
-  ])
+  for (const name of ["extract_artifact", "trace_dylib_resolution"])
     expect(
       parsed.result.tool_availability.groups.find((group) =>
         group.names.includes(name),
@@ -50,7 +46,9 @@ const expectIndependentResourceWorkflows = async (
     const parsed = toolContract("binary_session").outputSchema.parse(
       status.structuredContent,
     );
-    for (const name of ["inspect_desktop_application"])
+    // inspect_artifact inventories a caller-selected path without the open
+    // target, so a resource-only session still admits it.
+    for (const name of ["inspect_desktop_application", "inspect_artifact"])
       expect(
         parsed.result.tool_availability.groups.find((group) =>
           group.names.includes(name),
@@ -79,6 +77,11 @@ const expectIndependentResourceWorkflows = async (
     path: firstBundle,
   });
   expect(desktop.isError, JSON.stringify(desktop)).not.toBe(true);
+  const inventory = await call("inspect_artifact", {
+    path: firstBundle,
+    detail: "summary",
+  });
+  expect(inventory.isError, JSON.stringify(inventory)).not.toBe(true);
   if (!capability.available) return;
   const databasePath = join(root, "fixture.sqlite");
   const { DatabaseSync } = await import("node:sqlite");

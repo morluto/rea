@@ -33,7 +33,6 @@ import {
   KernelBuildConfigBudgetFailure,
   parseKernelBuildConfigFromHandle,
 } from "./KernelBuildConfig.js";
-import type { ByteSource } from "../../domain/byteSource.js";
 import { bufferByteSource } from "../../domain/byteSource.js";
 
 const artifactPath = "/artifacts/vmlinux";

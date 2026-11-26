@@ -391,7 +391,7 @@ it
   .runIf(!unsupportedHost)
   .each([
     "success",
-    "format",
+    "malformed",
     "unsupported",
     "output-limit",
     "wrong-version",
@@ -426,16 +426,17 @@ it
         const bytes = Buffer.from(hex, "hex");
         const encodedReplies: Partial<Record<string, string | Buffer>> = {
           "invalid-utf8": Buffer.concat([
-            Buffer.from('{"ok":false,"reason":"format","message":"'),
+            Buffer.from('{"ok":false,"reason":"malformed","message":"'),
             Buffer.from([0xff]),
             Buffer.from('"}'),
           ]),
           "literal-replacement": JSON.stringify({
             ok: false,
-            reason: "format",
+            reason: "malformed",
             message: "valid �",
           }),
-          "bom-reply": '\uFEFF{"ok":false,"reason":"format","message":"valid"}',
+          "bom-reply":
+            '\uFEFF{"ok":false,"reason":"malformed","message":"valid"}',
         };
         const encodedReply = encodedReplies[scenario];
         if (encodedReply !== undefined)
@@ -446,7 +447,9 @@ it
             scenario === "broken-reply"
               ? "broken"
               : JSON.stringify(
-                  ["format", "unsupported", "output-limit"].includes(scenario)
+                  ["malformed", "unsupported", "output-limit"].includes(
+                    scenario,
+                  )
                     ? {
                         ok: false,
                         reason: scenario,
@@ -510,10 +513,10 @@ it
         ok: false,
         error: {
           _tag:
-            scenario === "format" || scenario === "literal-replacement"
+            scenario === "malformed" || scenario === "literal-replacement"
               ? "AnalysisTargetFailureError"
               : scenario === "unsupported"
-                ? "AnalysisUnsupportedTargetError"
+                ? "AnalysisTargetFailureError"
                 : scenario === "output-limit"
                   ? "AnalysisResourceConstraintError"
                   : "AnalysisOutputError",
@@ -798,7 +801,7 @@ it.runIf(!unsupportedHost)(
           request.reply_path,
           JSON.stringify({
             ok: false,
-            reason: "format",
+            reason: "malformed",
             message: "Odd selected hex.",
           }),
         );

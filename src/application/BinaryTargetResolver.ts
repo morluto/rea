@@ -1,8 +1,5 @@
 import { probeUefiFlashImage } from "../uefi/UefiFormatProbe.js";
-import {
-  BINARY_TARGET_FORMAT_KINDS,
-  type TargetFormatHint,
-} from "../domain/targetFormats.js";
+import { BINARY_TARGET_FORMAT_KINDS } from "../domain/targetFormats.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   artifactNameForClassification,
@@ -34,7 +31,7 @@ import {
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { childFailureDiagnostics } from "../domain/analysisErrorProjection.js";
-import { constants, type Stats } from "node:fs";
+import { constants } from "node:fs";
 import { access, realpath, stat, type FileHandle } from "node:fs/promises";
 import { extname } from "node:path";
 
@@ -104,7 +101,6 @@ import {
 import { claimsExecutableHeader } from "../domain/binaryTarget.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { localPathStringSchema } from "../domain/localPath.js";
-import type { JsonValue } from "../domain/jsonValue.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
 const XML_PLIST_PROBE_CHUNK_BYTES = 64 * 1024;

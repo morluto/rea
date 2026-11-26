@@ -351,8 +351,10 @@ it("preserves sensitive-parent refusal when query names are selected", () => {
   ).toMatchObject({
     ok: false,
     error: {
-      _tag: "AnalysisUnsupportedTargetError",
-      reason: "sensitive_values_unretained",
+      _tag: "AnalysisTargetFailureError",
+      failure: {
+        detail: expect.stringContaining("sensitive_values_unretained"),
+      },
     },
   });
 });
@@ -422,7 +424,7 @@ it("rejects native captures and malformed parents with typed errors", () => {
     capture.format = format;
     expect(project(capture)).toMatchObject({
       ok: false,
-      error: { _tag: "AnalysisUnsupportedTargetError" },
+      error: { _tag: "AnalysisTargetFailureError" },
     });
   }
   expect(
@@ -553,11 +555,13 @@ it("refuses parents whose sensitive declarations it cannot check", () => {
     const result = project(analysisViewCaptureFixture(), 0, 50, parameters);
     expect(result).toMatchObject({
       ok: false,
-      error: { _tag: "AnalysisUnsupportedTargetError" },
+      error: { _tag: "AnalysisTargetFailureError" },
     });
     if (result.ok) continue;
     expect(result.error).toMatchObject({
-      reason: "sensitive_values_unretained",
+      failure: {
+        detail: expect.stringContaining("sensitive_values_unretained"),
+      },
     });
     expect(result.error.message).not.toContain("path templates");
   }

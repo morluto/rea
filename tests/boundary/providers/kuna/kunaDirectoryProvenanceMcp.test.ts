@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256 as digest } from "../../../support/sha256.js";
 import { appendFile, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it as test } from "vitest";
@@ -74,8 +74,6 @@ it("retains each written function's producer across an export resume", async () 
   });
   if (first?.relative_path === undefined)
     throw new Error("missing initial file");
-  const digest = (value: Uint8Array) =>
-    createHash("sha256").update(value).digest("hex");
   const before = digest(await readFile(join(output, first.relative_path)));
   // Simulate an interrupted append after the committed failed observation.
   await appendFile(join(output, "decompile-journal.jsonl"), '{"kind":"func');

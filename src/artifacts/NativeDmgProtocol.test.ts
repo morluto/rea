@@ -141,7 +141,13 @@ it("retains malformed successful hdiutil inventory output as a typed producer pa
   if (!(failure instanceof Error))
     throw new Error("Expected inventory failure");
   expect(
-    projectAnalysisError(translateArtifactFailure("inspect_artifact", failure)),
+    projectAnalysisError(
+      translateArtifactFailure(
+        "inspect_artifact",
+        "/selected/artifact",
+        failure,
+      ),
+    ),
   ).toMatchObject({
     details: { reason: "io", detail: failure.message },
   });
@@ -213,7 +219,11 @@ it("reports an hdiutil retained while the reader closes, after its own cleanup c
         /* consume */
       }
     })(),
-  ).rejects.toMatchObject({ reason: "unsupported" });
+  ).rejects.toMatchObject({
+    reason: "unsupported",
+    // hdiutil's verdict carries its facts, so it projects as a target failure.
+    parseFailure: { kind: "unsupported", format: "dmg" },
+  });
   const refused = await reader.close().catch((cause: unknown) => cause);
   expect(refused).toBeInstanceOf(ArtifactReaderFailure);
   expect((refused as ArtifactReaderFailure).cleanup?.resources).toEqual([

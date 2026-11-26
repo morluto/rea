@@ -16,7 +16,7 @@ import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
   bindArtifactFileCleanup,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   completedStableArtifact,
   readStableArtifact,
   ArtifactResourceScope,
@@ -45,13 +45,12 @@ import type {
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisUnsupportedTargetError,
-  AnalysisInputError,
   AnalysisTargetFailureError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   cancelledBy,
   carriedReason,
+  unsupportedTarget,
 } from "../../domain/analysisErrorCore.js";
 import {
   projectAnalysisError,
@@ -322,7 +321,7 @@ export class PwntoolsDecoder<
       z.strictObject({
         ok: z.literal(false),
         reason: z.enum([
-          "format",
+          "malformed",
           "truncated",
           "unsupported",
           "unsupported-target",
@@ -519,11 +518,9 @@ export class PwntoolsDecoder<
           if (cleanup !== undefined) bindArtifactFileCleanup(cause, cleanup);
           const primary =
             cause.reason === "cancelled"
-              ? cancelledBy(
-                  OPERATION,
-                  carriedReason(artifactFileCancellationCause(cause)),
-                  { capturedOutput },
-                )
+              ? artifactFileCancellationError(OPERATION, cause, {
+                  capturedOutput,
+                })
               : (cleanup ??
                 new AnalysisOutputError(OPERATION, cause.message, {
                   cause,
@@ -546,17 +543,13 @@ export class PwntoolsDecoder<
           cause instanceof ArtifactReaderFailure &&
           cause.reason === "cancelled"
         ) {
-          const error = cancelledBy(
-            OPERATION,
-            carriedReason(artifactFileCancellationCause(cause)),
-            {
-              capturedOutput,
-              ...(cause instanceof ArtifactReaderFailure &&
-              cause.cleanup !== undefined
-                ? { cleanup: cause.cleanup }
-                : {}),
-            },
-          );
+          const error = artifactFileCancellationError(OPERATION, cause, {
+            capturedOutput,
+            ...(cause instanceof ArtifactReaderFailure &&
+            cause.cleanup !== undefined
+              ? { cleanup: cause.cleanup }
+              : {}),
+          });
           bindArtifactFileCleanup(cause, error);
           throw error;
         }
@@ -580,9 +573,10 @@ export class PwntoolsDecoder<
       }
       if (!reply.ok) {
         if (reply.reason === "unsupported-target")
-          throw new AnalysisUnsupportedTargetError(
+          throw unsupportedTarget(
             OPERATION,
             input.path,
+            this.profile.targetFormat,
             reply.message,
             { capturedOutput },
           );
@@ -597,25 +591,14 @@ export class PwntoolsDecoder<
               remediationAction: `Review reported limits and available host memory; allocation failure alone does not prove exhaustion. ${pwntoolsBudgetRecovery(producerLimits)}`,
             },
           );
-        // The worker's ELF owner measured the end inside a declared header.
-        if (reply.reason === "truncated")
+        // The worker's ELF owner raised the kind: bytes that break the
+        // format, or end inside a header it measured.
+        if (reply.reason === "malformed" || reply.reason === "truncated")
           throw new AnalysisTargetFailureError(
             OPERATION,
             input.path,
             {
-              kind: "truncated",
-              format: this.profile.targetFormat,
-              detail: reply.message,
-            },
-            { capturedOutput },
-          );
-        // The worker's ELF owner rejected the selected file's bytes.
-        if (reply.reason === "format")
-          throw new AnalysisTargetFailureError(
-            OPERATION,
-            input.path,
-            {
-              kind: "malformed",
+              kind: reply.reason,
               format: this.profile.targetFormat,
               detail: reply.message,
             },
