@@ -17,7 +17,7 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { elf, fat, thinMach } from "../domain/binaryTarget.fixture.js";
@@ -577,7 +577,7 @@ describe("Ghidra Windows installation commitment", () => {
     await writeFile(join(relativeBin, "java.exe"), "");
     // The search resolves relative entries against the working directory, so
     // this path is exactly what a working-directory lookup would offer.
-    const launcherUnderCwd = join(relativeBin, "java.exe");
+    const launcherUnderCwd = win32.resolve(root, "jdk-25", "bin", "java.exe");
     const cwd = vi.spyOn(process, "cwd").mockReturnValue(root);
     const probed: string[] = [];
     try {
