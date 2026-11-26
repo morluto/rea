@@ -1,17 +1,18 @@
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { logicalPathNfc } from "../domain/artifactIdentity.js";
-import { err, ok, type Result } from "../domain/result.js";
+import type { Result } from "../domain/result.js";
 import {
   ANDROID_BOOT_MAGIC,
   VENDOR_BOOT_MAGIC,
 } from "../domain/androidBootImageFormat.js";
 import {
+  captureParseFailure,
   decodeLimit,
   malformedInput,
-  ParseFailureError,
   truncatedInput,
   unsupportedInput,
   type LimitRef,
+  type ParseFailureError,
 } from "../domain/parseFailure.js";
 import { createBinaryReaderCache } from "../domain/binaryContainer.js";
 
@@ -171,15 +172,6 @@ export const ANDROID_BOOT_FIXED_LIMITS: ReadonlyMap<
   [VENDOR_RAMDISK_COUNT_LIMIT.name, VENDOR_RAMDISK_COUNT_LIMIT],
   [VENDOR_RAMDISK_ENTRY_SIZE_LIMIT.name, VENDOR_RAMDISK_ENTRY_SIZE_LIMIT],
 ]);
-
-const parsed = <T>(read: () => T): Result<T, ParseFailureError> => {
-  try {
-    return ok(read());
-  } catch (cause) {
-    if (!(cause instanceof ParseFailureError)) throw cause;
-    return err(cause);
-  }
-};
 
 const requireBytes = (buffer: Buffer, length: number, what: string): void => {
   if (buffer.length < length)
@@ -951,7 +943,7 @@ export const parseAndroidBootHeader = (
   prefix: Buffer,
   fileSize: number,
 ): Result<AndroidBootParse, ParseFailureError> =>
-  parsed(() => {
+  captureParseFailure(() => {
     if (!Number.isSafeInteger(fileSize) || fileSize < 0)
       formatError("file size is not a safe nonnegative integer");
     requireBytes(prefix, 8, "header");
@@ -1117,7 +1109,7 @@ export const parseVendorRamdiskTable = (
   table: Buffer,
   input: VendorRamdiskTableLayout,
 ): Result<VendorRamdiskTableParse, ParseFailureError> =>
-  parsed(() => readVendorRamdiskTable(table, input));
+  captureParseFailure(() => readVendorRamdiskTable(table, input));
 
 export const absentAvbFooter = (
   limitations: readonly string[] = [],
@@ -1238,4 +1230,4 @@ const readAvbFooter = (input: AvbFooterInput): AvbFooterFacts => {
 export const inspectAvbFooter = (
   input: AvbFooterInput,
 ): Result<AvbFooterFacts, ParseFailureError> =>
-  parsed(() => readAvbFooter(input));
+  captureParseFailure(() => readAvbFooter(input));
