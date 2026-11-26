@@ -226,6 +226,7 @@ These parameters report that limit:
 | Operation                                     | Parameter                         | Default    | Floor |                              Maximum | Owner                                     |
 | --------------------------------------------- | --------------------------------- | ---------- | ----: | -----------------------------------: | ----------------------------------------- |
 | `inspect_il2cpp_metadata`                     | `max_native_index_bytes`          | 1073741824 |     1 |            `Number.MAX_SAFE_INTEGER` | `src/domain/il2cpp/il2cppMetadata.ts`     |
+| `inspect_binary_hardening`                    | `max_table_entries`               | 65536      |     1 |                              1048576 | `src/domain/native/binaryHardening.ts`    |
 | `inspect_elf_notes`, `inspect_elf_debug_link` | `max_file_bytes`                  | 67108864   |    64 |                            536870912 | `src/domain/native/elfReadBudgets.ts`     |
 | `inspect_elf_notes`, `inspect_elf_debug_link` | `max_entries`                     | 128        |     1 |                                  256 | `src/domain/native/elfReadBudgets.ts`     |
 | `inspect_rust_binary`                         | `max_compressed_dependency_bytes` | 1048576    |     1 |        `buffer.constants.MAX_LENGTH` | `src/domain/rust/rustDependencyBudget.ts` |

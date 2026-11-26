@@ -105,19 +105,32 @@ type SliceRef = {
   } | null;
 };
 
+const normalizeTableEntryBudget = (maxTableEntries?: number): number =>
+  maxTableEntries === undefined
+    ? MAX_BINARY_HARDENING_TABLE_ENTRIES
+    : Number.isSafeInteger(maxTableEntries) && maxTableEntries >= 1
+      ? maxTableEntries
+      : 0;
+
 /** Read Mach-O hardening per slice. One slice's defect leaves the others intact. */
 export const readMachoHardening = async (
   bytes: Buffer,
   signal?: AbortSignal,
+  maxTableEntries?: number,
 ): Promise<BinaryHardeningImage[]> => {
   assertArtifactReadActive(signal);
-  return readMachoHardeningFromHandle(bufferByteSource(bytes), signal);
+  return readMachoHardeningFromHandle(
+    bufferByteSource(bytes),
+    signal,
+    maxTableEntries,
+  );
 };
 
 /** Same Mach-O hardening read over a random-access handle without buffering the full image. */
 export const readMachoHardeningFromHandle = async (
   source: ByteSource,
   signal?: AbortSignal,
+  maxTableEntries?: number,
 ): Promise<BinaryHardeningImage[]> => {
   assertArtifactReadActive(signal);
   const readAt: ReadAt = async (offset, length) => {
@@ -163,7 +176,15 @@ export const readMachoHardeningFromHandle = async (
     )
       malformed("Mach-O encryption slice order disagrees with the container");
     assertArtifactReadActive(signal);
-    images.push(await readSliceImage(readAt, fileSize, ref, encrypted));
+    images.push(
+      await readSliceImage(
+        readAt,
+        fileSize,
+        ref,
+        encrypted,
+        normalizeTableEntryBudget(maxTableEntries),
+      ),
+    );
   }
   return images;
 };
@@ -262,6 +283,7 @@ const readSliceImage = async (
   fileSize: number,
   ref: SliceRef,
   encrypted: MachoSliceEncryption,
+  maxTableEntries: number,
 ): Promise<BinaryHardeningImage> => {
   if (ref.rangeIssue !== null)
     return failedImage(ref, ref.rangeIssue.status, ref.rangeIssue.reason);
@@ -303,6 +325,7 @@ const readSliceImage = async (
       header,
       facts,
       encrypted,
+      maxTableEntries,
     );
     return {
       format: "mach-o",
@@ -408,6 +431,7 @@ const buildRows = async (
   header: MachoSliceHeader,
   { restrict, restrictSegment, signature, symtab }: CommandFacts,
   encrypted: MachoSliceEncryption,
+  maxTableEntries: number,
 ): Promise<BinaryHardeningRow[]> => {
   const flagLocation = {
     offset: ref.offset + MACHO_HEADER_FLAGS_OFFSET,
@@ -492,7 +516,7 @@ const buildRows = async (
         ),
     encryptionRow(encrypted),
     arm64Row(header.cpuType, header.cpuSubtype, ref.offset),
-    await stackRow(readAt, fileSize, ref, header.wide, symtab),
+    await stackRow(readAt, fileSize, ref, header.wide, symtab, maxTableEntries),
     row(
       "hardened_runtime",
       "unknown",
@@ -625,6 +649,7 @@ const stackRow = async (
   ref: SliceRef,
   wide: boolean,
   symtab: MachoLoadCommand | null,
+  maxTableEntries: number,
 ): Promise<BinaryHardeningRow> => {
   if (symtab === null)
     return row(
@@ -644,7 +669,10 @@ const stackRow = async (
   if (symbolsEnd > fileSize - ref.offset || stringsEnd > fileSize - ref.offset)
     malformed("Mach-O symbol or string table extends outside the file");
   // Keep header rows and sibling slices when the backed table exceeds the scan limit.
-  if (nsyms > MAX_BINARY_HARDENING_TABLE_ENTRIES) return unknownStackBudget();
+  if (!(nsyms <= maxTableEntries))
+    return unknownStackBudget(
+      `Mach-O LC_SYMTAB has ${String(nsyms)} symbols, above the ${String(maxTableEntries)}-entry max_table_entries budget, so this import sign is unknown.`,
+    );
   const stringAt = ref.offset + stroff;
   const stringSize = stringsEnd - stroff;
   const stringEnd = stringAt + stringSize;
