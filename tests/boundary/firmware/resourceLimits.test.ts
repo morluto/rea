@@ -3,7 +3,7 @@ import { expect, it } from "vitest";
 import { firmwareResultSchemas } from "../../../src/domain/firmware/firmwareAnalysis.js";
 import { FIRMWARE_LIMITS } from "../../../src/firmware/FirmwareRelease.js";
 import { firmwareFileSizeService } from "../../fixtures/firmware/fileSizeProducer.js";
-import { assertFirmwareCleanup } from "../../fixtures/firmware/provider.js";
+import { expectProviderLaunchCleanup } from "../../support/process/expectProviderLaunchCleanup.js";
 
 const linux = it.skipIf(process.platform !== "linux");
 const budget = 16 * 1024 * 1024;
@@ -29,7 +29,7 @@ linux("publishes a staged file of exactly the staging budget", async () => {
   expect(result.files).toEqual([
     expect.objectContaining({ relative_path: "rootfs/config", size: budget }),
   ]);
-  await assertFirmwareCleanup(fixture.launches);
+  await expectProviderLaunchCleanup(fixture.launches);
 });
 
 linux(
@@ -55,6 +55,6 @@ linux(
     await expect(access(fixture.output)).rejects.toMatchObject({
       code: "ENOENT",
     });
-    await assertFirmwareCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   },
 );

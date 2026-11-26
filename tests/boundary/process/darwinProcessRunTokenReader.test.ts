@@ -10,7 +10,6 @@ import {
   access,
   chmod,
   mkdir,
-  mkdtemp,
   readFile,
   readdir,
   rm,
@@ -25,6 +24,7 @@ import { _electron as electron } from "playwright-core";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { waitForPosixObservation } from "../../support/process/observePosixProcess.js";
 import { z } from "zod";
+import { stopProviderProcessFixture } from "../../fixtures/providerProcess.js";
 import { writeFakeXcrun } from "../../fixtures/darwinHelperToolchain.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -1611,7 +1611,9 @@ it.skipIf(!onDarwin)(
       expect(identities?.get(titleMutated.pid)?.state).toBe("readable");
     } finally {
       try {
-        await Promise.all(children.map(({ child }) => stopNodeChild(child)));
+        await Promise.all(
+          children.map(({ child }) => stopProviderProcessFixture(child)),
+        );
       } finally {
         await host.close?.();
       }
@@ -1684,7 +1686,7 @@ it.skipIf(!onDarwin)(
       }
     } finally {
       try {
-        await Promise.all(children.map(stopNodeChild));
+        await Promise.all(children.map(stopProviderProcessFixture));
       } finally {
         await host.close?.();
       }
@@ -1734,7 +1736,7 @@ it.skipIf(!onDarwin)(
         { state: "readable" },
       ]);
     } finally {
-      for (const { child } of children) await stopNodeChild(child);
+      for (const { child } of children) await stopProviderProcessFixture(child);
       await host.close?.();
     }
   },
@@ -1758,15 +1760,6 @@ const startNodeChild = async (
     child.once("error", reject);
   });
   return { child, pid: child.pid };
-};
-
-const stopNodeChild = async (child: ChildProcess) => {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  const exited = new Promise<void>((resolve) =>
-    child.once("exit", () => resolve()),
-  );
-  child.kill("SIGKILL");
-  await exited;
 };
 
 const waitForChildReadiness = async (
@@ -1799,7 +1792,7 @@ it("stops a child that never acknowledges readiness", async () => {
       "title-mutating child readiness was not acknowledged before the gate deadline",
     );
   } finally {
-    await stopNodeChild(child);
+    await stopProviderProcessFixture(child);
   }
   expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
 });

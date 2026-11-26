@@ -12,17 +12,11 @@ import {
 import type { PeImportsPort } from "../../ports/binaryDiagnostics/PeImportsPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import type { ResourceConstraintRecovery } from "../../domain/analysisErrorCore.js";
 import {
-  fixedAllowanceOptions,
-  type FixedCeilingFacts,
-} from "../../domain/fixedAllowanceRemediation.js";
-import {
-  MAX_INSPECT_PE_IMPORT_DLLS,
   MAX_INSPECT_PE_IMPORT_FILE_BYTES,
-  MAX_INSPECT_PE_IMPORT_FUNCTIONS,
-  MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES,
+  peImportBudgetLimit,
   type InspectPeImportsInput,
+  type PeImportBudget,
 } from "../../domain/native/peImports.js";
 import { err, ok } from "../../domain/result.js";
 import { PE_IMPORTS_PROVIDER } from "../../domain/investigationProviders.js";
@@ -72,11 +66,7 @@ export class PeImportsProvider implements PeImportsPort {
           async (handle) => {
             assertArtifactReadActive(options?.signal);
             const parsed = await parsePeImportsFromHandle(
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               {
                 path: input.path,
                 sha256: handle.sha256,
@@ -97,44 +87,12 @@ export class PeImportsProvider implements PeImportsPort {
   }
 }
 
-const dllRemediation = (input: InspectPeImportsInput): string =>
-  input.max_dlls >= MAX_INSPECT_PE_IMPORT_DLLS
-    ? `The image exceeds the ${String(MAX_INSPECT_PE_IMPORT_DLLS)}-entry import-descriptor ceiling this operation accepts; select a smaller artifact.`
-    : `Raise max_dlls above ${String(input.max_dlls)} or select a smaller artifact; the limit is the caller-selected DLL budget.`;
-
-const functionRemediation = (input: InspectPeImportsInput): string =>
-  input.max_functions >= MAX_INSPECT_PE_IMPORT_FUNCTIONS
-    ? `The image exceeds the ${String(MAX_INSPECT_PE_IMPORT_FUNCTIONS)}-entry imported-function ceiling this operation accepts; select a smaller artifact.`
-    : `Raise max_functions above ${String(input.max_functions)} or select a smaller artifact; the limit is the caller-selected function budget.`;
-
-/** Recovery for one exhausted allowance, chosen from the parser's structured tag. */
-const limitRecovery = (
-  limit: PeImportLimit | null,
-  input: InspectPeImportsInput,
-  ceiling: FixedCeilingFacts,
-): ResourceConstraintRecovery => {
-  switch (limit) {
-    case "dlls":
-      return { retryable: false, remediationAction: dllRemediation(input) };
-    case "functions":
-      return {
-        retryable: false,
-        remediationAction: functionRemediation(input),
-      };
-    case "retained_text":
-      return fixedAllowanceOptions(
-        "The PE import retained-text allowance (max_file_bytes, max_dlls and max_functions do not raise it)",
-        "bytes",
-        { limit: MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES, unit: "bytes" },
-      );
-    case null:
-      return fixedAllowanceOptions(
-        "The PE structural decoding allowance",
-        "parser",
-        ceiling,
-      );
-  }
-};
+/** The control of each parser allowance; running counts know only the budget. */
+const IMPORT_CONTROLS = {
+  dlls: "max_dlls",
+  functions: "max_functions",
+  retained_text: "max_text_bytes",
+} as const satisfies Record<PeImportLimit, PeImportBudget>;
 
 const peImportsFailure = (
   cause: unknown,
@@ -152,7 +110,13 @@ const peImportsFailure = (
         bytes: PE_FILE_CEILING_BYTES,
       },
       limits: PE_IMPORT_LIMITS,
-      limitRecovery: (limit, ceiling) => limitRecovery(limit, input, ceiling),
+      limitRecovery: (limit, failure) => ({
+        retryable: false,
+        limit: peImportBudgetLimit(
+          IMPORT_CONTROLS[limit],
+          failure.maximum_bytes,
+        ),
+      }),
     },
     observed,
   );

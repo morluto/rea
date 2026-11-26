@@ -9,6 +9,7 @@ import {
   managedPeFixtureTarget,
 } from "../../../../src/dotnet/ManagedPe.fixture.js";
 import { createHash } from "node:crypto";
+import { sha256 as hash } from "../../../support/sha256.js";
 
 import { describe, expect, it } from "vitest";
 
@@ -3764,6 +3765,3 @@ const inspect = (bytes: Buffer, path: string, typeNames?: string[]) => {
     evidenceId: `ev_${hash(Buffer.from(path))}`,
   };
 };
-
-const hash = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");

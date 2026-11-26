@@ -1,8 +1,7 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, writeFile, rm, readFile } from "node:fs/promises";
+import { writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it } from "vitest";
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";

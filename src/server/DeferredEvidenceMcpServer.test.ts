@@ -9,6 +9,11 @@ import { COMPACT_OUTPUT_SCHEMA_PRESENTATION } from "../contracts/mcpSchemaPresen
 import { isRecord } from "../kernel/isRecord.js";
 import type { RecordedMcpCatalog } from "../recordedMcpCatalog.js";
 import { DeferredEvidenceMcpServer } from "./DeferredEvidenceMcpServer.js";
+import {
+  DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
+  parseMcpToolsListPageBudget,
+  type McpToolsListPageBudget,
+} from "../config/mcpToolsListPageBudget.js";
 import { ToolResultDelivery } from "./ToolResultDelivery.js";
 import { promptArgumentsSchema } from "./promptArguments.js";
 import {
@@ -83,6 +88,7 @@ const fixture = async (
     readonly invalidOutput?: boolean;
     readonly failAfterTool?: boolean;
     readonly maximumInputElements?: number;
+    readonly toolsListPageBudget?: McpToolsListPageBudget;
     readonly evidenceReferenceAlternative?: boolean;
     readonly progressive?: boolean;
     readonly unionOutput?: boolean;
@@ -165,6 +171,7 @@ const fixture = async (
     },
     {
       maximumInputElements: options.maximumInputElements,
+      toolsListPageBudget: options.toolsListPageBudget,
       ...(options.outputProfile === undefined
         ? {}
         : { outputProfile: options.outputProfile }),
@@ -196,6 +203,8 @@ const fixture = async (
 };
 
 it("compacts live discovery output and serves the recorded compact schema", async () => {
+  const budget = parseMcpToolsListPageBudget("524288");
+  if (!budget.ok) throw budget.error;
   const recordedOutput = {
     type: "object",
     properties: {
@@ -213,7 +222,9 @@ it("compacts live discovery output and serves the recorded compact schema", asyn
     progressive: true,
     outputProfile: "compact",
     compactOutputSchema: recordedOutput,
+    toolsListPageBudget: budget.value,
   });
+  expect(f.server.toolsListPageBudget.bytes).toBe(524288);
   const discovery = (await f.client.listTools()).tools.find(
     (tool) => tool.name === "discover_tools",
   );
@@ -274,6 +285,18 @@ it("loads cold definitions without initializing analysis and preserves canonical
   expect(
     (await independent.client.listTools()).tools.map(({ name }) => name),
   ).toEqual(["discover_tools"]);
+});
+
+it("honors a selected tools/list page budget instead of the default", async () => {
+  const parsed = parseMcpToolsListPageBudget("524288");
+  if (!parsed.ok) throw parsed.error;
+  const selected = await fixture({ toolsListPageBudget: parsed.value });
+  expect(selected.server.toolsListPageBudget.bytes).toBe(524288);
+  expect(selected.server.toolsListPageBudget.source).toBe("setting");
+  const baseline = await fixture();
+  expect(baseline.server.toolsListPageBudget).toEqual(
+    DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
+  );
 });
 
 it("refuses excess input before loading a deferred runtime, then admits a valid call", async () => {
@@ -615,4 +638,18 @@ it("keeps one accepted settings snapshot through a deferred handler while the ne
   expect((await pending).isError).not.toBe(true);
   await f.client.callTool({ name: "fixture", arguments: {} });
   expect(seen).toEqual([undefined, 33554432]);
+});
+
+it("suggests advertised deferred tools for an unknown tool call without loading the runtime", async () => {
+  const f = await fixture();
+  let message = "";
+  try {
+    await f.client.callTool({ name: "fixture-call", arguments: {} });
+  } catch (error) {
+    expect(error).toMatchObject({ code: -32602 });
+    message = error instanceof Error ? error.message : String(error);
+  }
+  expect(message).toContain("Closest advertised tool: fixture.");
+  expect(f.loads()).toBe(0);
+  expect(f.calls).not.toHaveBeenCalled();
 });

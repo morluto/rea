@@ -13,10 +13,7 @@ import {
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import type { FirmwareRequest } from "../domain/firmware/firmwareAnalysis.js";
-import {
-  MAX_FIRMWARE_STAGING_BYTES,
-  MAX_FIRMWARE_STAGING_ENTRIES,
-} from "../domain/firmware/firmwareAnalysis.js";
+import { firmwareStagingBudgetLimit } from "../domain/firmware/firmwareAnalysis.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { readLinuxResourceLimits } from "../process/LinuxResourceLimits.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
@@ -514,27 +511,6 @@ export const inventoryFirmwareOutput = async (
   );
 };
 
-/**
- * Recovery for one staging budget refusal. At the schema ceiling a larger
- * selection is impossible, so that case must not recommend raising the value.
- */
-export const firmwareStagingBudgetRemediation = (
-  budget: "max_output_files" | "max_output_bytes",
-  selectedLimit: number,
-): string => {
-  const maximum =
-    budget === "max_output_files"
-      ? MAX_FIRMWARE_STAGING_ENTRIES
-      : MAX_FIRMWARE_STAGING_BYTES;
-  const description =
-    budget === "max_output_files"
-      ? "staging entry budget, which counts extracted directories and links"
-      : "staging file-byte budget, checked during extraction";
-  if (selectedLimit < maximum)
-    return `The ${description} was exceeded (${budget}=${String(selectedLimit)}; supported maximum ${String(maximum)}). Increase ${budget} up to ${String(maximum)} if the larger extraction is required, or select a materially narrower firmware byte range. analysis_timeout_ms does not raise this staging allowance.`;
-  return `The ${description} reached its supported maximum (${budget}=${String(selectedLimit)}; maximum ${String(maximum)}). Raising ${budget} further is not supported. Select a smaller firmware byte range or analyze a smaller image. analysis_timeout_ms does not raise this staging allowance.`;
-};
-
 /** The same selected aggregate budget is enforced during and after extraction. */
 export const firmwareStagingLimit = (
   operation: string,
@@ -548,7 +524,7 @@ export const firmwareStagingLimit = (
     { [field]: maximum },
     {
       retryable: false,
-      remediationAction: firmwareStagingBudgetRemediation(field, maximum),
+      limit: firmwareStagingBudgetLimit(field, maximum),
     },
   );
 
@@ -568,6 +544,7 @@ export const firmwareFileSizeLimitReached = (
     { file_size_bytes: fileSizeBytes },
     {
       retryable: false,
+      measuredExhaustion: true,
       remediationAction: `REA inherited a ${String(fileSizeBytes)}-byte file-size limit (RLIMIT_FSIZE), so it could not keep one byte of headroom above max_output_bytes and the report and diagnostic allowances. A staged file that reaches the limit cannot be told apart from one the kernel cut short. Raise the file-size limit REA inherits (for example ulimit -f in the launching shell or service) above the largest file the extraction needs. analysis_timeout_ms does not raise it, and repeating the unchanged request fails the same way.`,
     },
   );

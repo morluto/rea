@@ -1,3 +1,4 @@
+import { appendToMapList } from "../../domain/appendToMapList.js";
 import { javascriptSourceRangeKey } from "../../domain/javascript/javascriptSourceCoordinates.js";
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
 import { IPC_COVERAGE_LIMITED_PAIRING_BASIS } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
@@ -247,9 +248,7 @@ const indexProjectedPaths = (
       byChannel = new Map();
       indexed[entryKind].set(entry.file.path, byChannel);
     }
-    const bucket = byChannel.get(channel);
-    if (bucket === undefined) byChannel.set(channel, [entry]);
-    else bucket.push(entry);
+    appendToMapList(byChannel, channel, entry);
   }
   return indexed;
 };

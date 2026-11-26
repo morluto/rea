@@ -25,7 +25,10 @@ import {
   cells,
   devicetreeFixture,
 } from "../domain/firmware/devicetree.fixture.js";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import {
+  createTestTempDirectory,
+  createTestTempFile,
+} from "../../tests/fixtures/temporaryDirectory.js";
 import { renameOpenParent } from "../../tests/fixtures/renameOpenParent.js";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
@@ -33,12 +36,8 @@ import { ArtifactFileSource } from "../resources/index.js";
 
 const MIB = 1024 * 1024;
 
-const writeFit = async (name: string, bytes: Buffer): Promise<string> => {
-  const directory = await createTestTempDirectory("rea-fit-");
-  const path = join(directory, name);
-  await writeFile(path, bytes);
-  return path;
-};
+const writeFit = (name: string, bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-fit-", name, bytes);
 
 const withTotalsize = (bytes: Buffer, totalsize: number): Buffer => {
   const copy = Buffer.from(bytes);
@@ -395,9 +394,7 @@ it("isolates returned declaration arrays from saved FIT facts", async () => {
       reason: "integrity",
     });
     const stream = await reader.open(fresh);
-    const chunks: Buffer[] = [];
-    for await (const chunk of stream) chunks.push(chunk as Buffer);
-    expect(Buffer.concat(chunks).equals(FIT_KERNEL)).toBe(true);
+    expect((await buffer(stream)).equals(FIT_KERNEL)).toBe(true);
   } finally {
     await reader.close();
   }

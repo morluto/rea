@@ -6,6 +6,7 @@ import {
   elfAppendedBunPayload,
   locateBunGraphFixture,
   BUN_FIXTURE_TRAILER,
+  observeBunFixtureReads,
 } from "../../../src/artifacts/bun/BunStandalone.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -41,22 +42,14 @@ it("keeps scattered tiny metadata reads proportional to the graph instead of cac
   );
   await writeFile(path, bytes);
   const handle = await open(path, "r");
-  const read = handle.read.bind(handle);
   let bytesRead = 0;
   const guard = bytes.length * 2;
-  const counted = new Proxy(handle, {
-    get: (target, key) =>
-      key === "read"
-        ? async (...args: Parameters<typeof read>) => {
-            const result = await read(...args);
-            bytesRead += result.bytesRead;
-            if (bytesRead > guard)
-              throw new Error(
-                "Metadata read amplification crossed the owned test guard",
-              );
-            return result;
-          }
-        : Reflect.get(target, key),
+  const counted = observeBunFixtureReads(handle, (count) => {
+    bytesRead += count;
+    if (bytesRead > guard)
+      throw new Error(
+        "Metadata read amplification crossed the owned test guard",
+      );
   });
   try {
     const located = await locateBunGraphFixture(counted, bytes.length);

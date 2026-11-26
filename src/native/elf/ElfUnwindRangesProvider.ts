@@ -12,21 +12,18 @@ import {
 import type { ElfUnwindRangesPort } from "../../ports/binaryDiagnostics/ElfUnwindRangesPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
-import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
-  MAX_INSPECT_ELF_UNWIND_FILE_BYTES,
-  MAX_INSPECT_ELF_UNWIND_RANGES,
+  elfUnwindBudgetLimit,
   type ElfUnwindRanges,
   type InspectElfUnwindRangesInput,
 } from "../../domain/native/elfUnwindRanges.js";
 import { err, ok } from "../../domain/result.js";
 import { ELF_UNWIND_RANGES_PROVIDER } from "../../domain/investigationProviders.js";
-import {
-  BinaryResourceFailure,
-  binaryResourceCeiling,
-} from "../../domain/binaryContainer.js";
+import { isNativeStructureFailure } from "../../domain/binaryContainer.js";
+import { nativeStructureConstraint } from "../../domain/native/nativeStructureBudget.js";
 import {
   ELF_UNWIND_FORMAT,
   ELF_UNWIND_RECORD_LIMIT,
@@ -76,11 +73,7 @@ export class ElfUnwindRangesProvider implements ElfUnwindRangesPort {
           },
           (handle) =>
             parseElfUnwindRangesFromHandle(
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               { path: input.path, sha256: handle.sha256, bytes: handle.size },
               input,
               signal,
@@ -93,16 +86,6 @@ export class ElfUnwindRangesProvider implements ElfUnwindRangesPort {
     }
   }
 }
-
-const fileBudgetRemediation = (maximum: number): string =>
-  maximum >= MAX_INSPECT_ELF_UNWIND_FILE_BYTES
-    ? `The image exceeds the ${String(MAX_INSPECT_ELF_UNWIND_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller artifact.`
-    : `Raise max_file_bytes above ${String(maximum)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
-
-const recordBudgetRemediation = (maximum: number): string =>
-  maximum >= MAX_INSPECT_ELF_UNWIND_RANGES
-    ? `The image exceeds the ${String(MAX_INSPECT_ELF_UNWIND_RANGES)}-record unwind ceiling this operation accepts; select a smaller artifact.`
-    : `Raise max_ranges above ${String(maximum)} or select a smaller artifact; the limit is the caller-selected unwind record budget.`;
 
 const elfUnwindFailure = (
   cause: unknown,
@@ -128,23 +111,24 @@ const elfUnwindFailure = (
             reportedLimitContext: records
               ? { max_file_bytes: input.max_file_bytes }
               : { limit: input.limit },
-            retryable: false,
-            remediationAction: records
-              ? recordBudgetRemediation(limit.maximum)
-              : `Request a smaller limit than ${String(input.limit)}, or page with offset; the ${String(limit.maximum)}-byte symbol-name text allowance is fixed, and max_ranges and max_file_bytes do not raise it.`,
+            ...(records
+              ? {
+                  retryable: false,
+                  limit: elfUnwindBudgetLimit("max_ranges", limit.maximum),
+                }
+              : fixedAllowanceOptions(
+                  "The ELF unwind symbol-name text allowance",
+                  "parser",
+                  {
+                    limit: limit.maximum,
+                    unit: "bytes",
+                    narrowing: `Request a smaller limit than ${String(input.limit)}, or page with offset; max_ranges and max_file_bytes do not raise it.`,
+                  },
+                )),
           });
         }
-        if (failure instanceof BinaryResourceFailure)
-          return parseLimitConstraint(
-            OPERATION,
-            "memory",
-            failure,
-            fixedAllowanceOptions(
-              "The ELF structural decoding allowance",
-              "parser",
-              binaryResourceCeiling(failure),
-            ),
-          );
+        if (isNativeStructureFailure(failure))
+          return nativeStructureConstraint(OPERATION, failure);
         return undefined;
       },
       fileSize: (failure) =>
@@ -159,7 +143,7 @@ const elfUnwindFailure = (
           {
             cause: failure,
             retryable: false,
-            remediationAction: fileBudgetRemediation(input.max_file_bytes),
+            limit: elfUnwindBudgetLimit("max_file_bytes", input.max_file_bytes),
           },
         ),
     }),

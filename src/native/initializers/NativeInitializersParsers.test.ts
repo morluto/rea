@@ -1447,6 +1447,23 @@ describe("ELF COPY relocations and writes without file bytes", () => {
     );
   });
 
+  it("keeps stored words unresolved when a COPY symbol index exceeds DT_HASH nchain", async () => {
+    const bytes = elf64PieInitializers();
+    bytes.writeBigUInt64LE(0x700n, 0x480);
+    // Symbol index 3 is past DT_HASH nchain (2); mapped st_size bytes at 0x578 are zero.
+    bytes.writeBigUInt64LE((3n << 32n) | 5n, 0x488);
+    const report = await read(bytes);
+    expect(report.entries[0]).toMatchObject({
+      kind: "preinit_array",
+      value_va: null,
+      resolution: "unresolved",
+    });
+    expect(report.status).toBe("incomplete");
+    expect(report.limitations).toContain(
+      "ELF COPY relocation write size is not established",
+    );
+  });
+
   it.each([
     ["an 8-byte write that runs into the slot", 1n, "unresolved", "incomplete"],
     ["a 4-byte write that ends at the slot", 10n, "raw", "parsed"],

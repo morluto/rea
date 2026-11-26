@@ -25,12 +25,9 @@ import {
   analysisViewCoverageSchema,
   nullableCollectionViewCoverageSchema,
 } from "./analysisViewCoverage.js";
-import {
-  artifactSchema,
-  summaryViewResultBase,
-  viewResultBaseFields,
-} from "./analysisViewBase.js";
+import { artifactSchema, viewResultBaseFields } from "./analysisViewBase.js";
 import { recordedArrayViewSchema } from "./analysisViewRequest.js";
+import { evidenceJsonViewRequestSchema } from "./evidenceJsonView.js";
 import {
   facetViewSchema,
   itemViewSchema,
@@ -43,7 +40,6 @@ import {
   artifactInventoryViewRequestSchema,
 } from "./artifactInventoryView.js";
 import {
-  batchDecompileSummarySchema,
   batchDecompileViewCollections,
   batchDecompileViewContextSchema,
 } from "./batchDecompileView.js";
@@ -195,6 +191,7 @@ import {
 } from "./webNetworkCaptureView.js";
 
 import {
+  androidClassPageViewResultSchema,
   androidClassSummaryViewResultSchema,
   androidComponentSummaryViewResultSchema,
   androidComponentsViewResultSchema,
@@ -203,6 +200,8 @@ import {
   androidManifestViewResultSchema,
   androidMethodSummaryViewResultSchema,
   androidPackageSummaryViewResultSchema,
+  androidReferencesPageViewResultSchema,
+  androidReferencesSummaryViewResultSchema,
 } from "./summarySchemas/androidSummarySchemas.js";
 import {
   apiContractPageViewResultSchema,
@@ -217,7 +216,10 @@ import { artifactInventorySummaryViewResultSchema } from "./summarySchemas/artif
 import { batchDecompileSummaryViewResultSchema } from "./summarySchemas/batchDecompileSummarySchema.js";
 import { binaryLayoutSummaryViewResultSchema } from "./summarySchemas/binaryLayoutSummarySchema.js";
 import { browserScenarioSummaryViewResultSchema } from "./summarySchemas/browserScenarioSummarySchema.js";
-import { byteEntropySummaryViewResultSchema } from "./summarySchemas/byteEntropySummarySchema.js";
+import {
+  byteEntropyPageViewResultSchema,
+  byteEntropySummaryViewResultSchema,
+} from "./summarySchemas/byteEntropySummarySchema.js";
 import { dartAotSummaryViewResultSchema } from "./summarySchemas/dartAotSummarySchema.js";
 import { desktopApplicationSummaryViewResultSchema } from "./summarySchemas/desktopApplicationSummarySchema.js";
 import { devicetreeSummaryViewResultSchema } from "./summarySchemas/devicetreeSummarySchema.js";
@@ -302,6 +304,14 @@ import {
   webPagePageViewResultSchema,
   webPageSummaryViewResultSchema,
 } from "./summarySchemas/webPageSummarySchemas.js";
+import {
+  webExecutionPageViewResultSchema,
+  webExecutionSummaryViewResultSchema,
+} from "./summarySchemas/webExecutionSummarySchemas.js";
+import {
+  apktoolResourcesPageViewResultSchema,
+  apktoolResourcesSummaryViewResultSchema,
+} from "./summarySchemas/apktoolResourcesSummarySchemas.js";
 import { webNetworkCaptureSummaryViewResultSchema } from "./summarySchemas/webNetworkCaptureSummarySchema.js";
 import {
   webSourceLocationMatchesViewResultSchema,
@@ -310,6 +320,7 @@ import {
 } from "./summarySchemas/webSourceLocationSummarySchemas.js";
 
 export {
+  androidClassPageViewResultSchema,
   androidClassSummaryViewResultSchema,
   androidComponentSummaryViewResultSchema,
   androidComponentsViewResultSchema,
@@ -318,6 +329,8 @@ export {
   androidManifestViewResultSchema,
   androidMethodSummaryViewResultSchema,
   androidPackageSummaryViewResultSchema,
+  androidReferencesPageViewResultSchema,
+  androidReferencesSummaryViewResultSchema,
   apiContractPageViewResultSchema,
   apiContractSummaryViewResultSchema,
   apkSignaturePageViewResultSchema,
@@ -326,6 +339,7 @@ export {
   batchDecompileSummaryViewResultSchema,
   binaryLayoutSummaryViewResultSchema,
   browserScenarioSummaryViewResultSchema,
+  byteEntropyPageViewResultSchema,
   byteEntropySummaryViewResultSchema,
   dartAotSummaryViewResultSchema,
   desktopApplicationSummaryViewResultSchema,
@@ -384,6 +398,10 @@ export {
   webBundleSummaryViewResultSchema,
   webPagePageViewResultSchema,
   webPageSummaryViewResultSchema,
+  webExecutionPageViewResultSchema,
+  webExecutionSummaryViewResultSchema,
+  apktoolResourcesPageViewResultSchema,
+  apktoolResourcesSummaryViewResultSchema,
   webNetworkCaptureSummaryViewResultSchema,
   webSourceLocationMatchesViewResultSchema,
   webSourceLocationSummaryViewResultSchema,
@@ -663,6 +681,18 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: recordedArrayViewSchema,
     rows: z.array(jsonValueSchema),
   }),
+  z.strictObject({
+    ...viewResultBaseFields,
+    parent_operation: z.string(),
+    artifact: artifactSchema.nullable(),
+    kind: z.literal("evidence-json"),
+    view: evidenceJsonViewRequestSchema,
+    text: z
+      .string()
+      .describe(
+        "This page of the parent Evidence JSON text; join pages in offset order.",
+      ),
+  }),
   playwrightTracePageViewResultSchema,
   z.strictObject({
     ...viewResultBase,
@@ -681,6 +711,8 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   javaScriptRoutesViewResultSchema,
   webBundlePageViewResultSchema,
   webPagePageViewResultSchema,
+  webExecutionPageViewResultSchema,
+  apktoolResourcesPageViewResultSchema,
   sourceToBundlePageViewResultSchema,
   endpointComparisonPageViewResultSchema,
   apiContractPageViewResultSchema,
@@ -792,6 +824,9 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     batchDecompileSummaryViewResultSchema,
     webBundleSummaryViewResultSchema,
     webPageSummaryViewResultSchema,
+    webExecutionSummaryViewResultSchema,
+    apktoolResourcesSummaryViewResultSchema,
+    androidReferencesSummaryViewResultSchema,
     nugetNupkgSummaryViewResultSchema,
     ociImageLayoutSummaryViewResultSchema,
   ]),
@@ -805,6 +840,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   }),
   uefiFirmwarePageViewResultSchema,
   uefiExtractionPageViewResultSchema,
+  byteEntropyPageViewResultSchema,
   webSourceLocationMatchesViewResultSchema,
   webSourceLocationTextViewResultSchema,
   erlangBeamTableViewResultSchema,
@@ -976,6 +1012,8 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   }),
   androidPackageViewResultSchema,
   androidJniPageViewResultSchema,
+  androidReferencesPageViewResultSchema,
+  androidClassPageViewResultSchema,
   z.strictObject({
     kind: z.literal("dart-aot"),
     view: dartAotViewRequestSchema,
