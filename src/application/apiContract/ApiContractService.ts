@@ -50,6 +50,7 @@ const decodeDocument = (
           available_heap_bytes: available,
         },
         {
+          measuredExhaustion: true,
           remediationAction:
             "Select a smaller complete document or free parser memory; paging a reply does not reduce JSON parsing work.",
         },
