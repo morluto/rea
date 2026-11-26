@@ -1,5 +1,6 @@
 import type { FixedCeilingFacts } from "./fixedAllowanceRemediation.js";
 import {
+  lastAtOrBelow,
   resolveMappedFileOffset,
   spansOverlap,
   type FileMapping,
@@ -95,16 +96,52 @@ export class BinaryResourceFailure extends ParseFailureError<"limit"> {
     message: string,
     allowance: string = boundary,
     readonly unit?: "bytes" | "entries",
+    required?: number | bigint,
   ) {
     super({
       kind: "limit",
       format: "native-binary",
       detail: message,
-      limit: { name: allowance, maximum: maximum_bytes },
+      limit: {
+        name: allowance,
+        maximum: maximum_bytes,
+        ...(required === undefined ? {} : { required }),
+      },
     });
     this.name = "BinaryResourceFailure";
   }
 }
+
+/**
+ * `max_structure_bytes` when omitted: the bytes of one native directory or
+ * load-command table read, and of the section names decoded from it.
+ */
+export const DEFAULT_NATIVE_STRUCTURE_BYTES = 16 * 1024 * 1024;
+
+/** Limit name a `BinaryResourceFailure` carries for `max_structure_bytes`. */
+export const NATIVE_STRUCTURE_LIMIT = "max_structure_bytes";
+
+/** A native table read or decoded section-name set above `max_structure_bytes`. */
+export const nativeStructureFailure = (
+  what: string,
+  requiredBytes: bigint | number,
+  maximumBytes: number,
+): BinaryResourceFailure =>
+  new BinaryResourceFailure(
+    "structure",
+    maximumBytes,
+    `${what} requires ${String(requiredBytes)} bytes, above max_structure_bytes (${String(maximumBytes)})`,
+    NATIVE_STRUCTURE_LIMIT,
+    "bytes",
+    requiredBytes,
+  );
+
+/** Whether a resource failure stopped at `max_structure_bytes`. */
+export const isNativeStructureFailure = (
+  cause: unknown,
+): cause is BinaryResourceFailure =>
+  cause instanceof BinaryResourceFailure &&
+  cause.failure.limit.name === NATIVE_STRUCTURE_LIMIT;
 
 /** The exceeded maximum as fixed-ceiling facts; the unit only when its producer named it. */
 export const binaryResourceCeiling = (
@@ -458,24 +495,44 @@ export class BinaryReader {
     return result;
   }
 
-  table(offset: bigint, count: number, width: number, label: string): number {
+  table(
+    offset: bigint,
+    count: number,
+    width: number,
+    label: string,
+    structureBytes: number = DEFAULT_NATIVE_STRUCTURE_BYTES,
+  ): number {
     const size = BigInt(count) * BigInt(width);
     const range = this.fileRange(offset, size, label);
-    requireBinaryTableBudget(size, label);
+    requireBinaryTableBudget(size, label, structureBytes);
     return range.offset;
   }
 }
 
-/** Reject oversized structural tables before reading their bytes. */
-export const requireBinaryTableBudget = (size: bigint, label: string): void => {
-  if (size > 16n * 1024n * 1024n)
-    throw new BinaryResourceFailure(
-      "structure",
-      16 * 1024 * 1024,
-      `${label} exceeds the 16 MiB structural decoding budget`,
-      "structure",
-      "bytes",
-    );
+/** Reuse a reader for the same byte view, byte order, and diagnostic format. */
+export const createBinaryReaderCache = (little: boolean, format: string) => {
+  const readers = new WeakMap<Uint8Array, BinaryReader>();
+  return (bytes: Uint8Array): BinaryReader => {
+    let reader = readers.get(bytes);
+    if (reader === undefined) {
+      const buffer = Buffer.isBuffer(bytes)
+        ? bytes
+        : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      reader = new BinaryReader(buffer, little, format);
+      readers.set(bytes, reader);
+    }
+    return reader;
+  };
+};
+
+/** Reject a structural table above `max_structure_bytes` before reading its bytes. */
+export const requireBinaryTableBudget = (
+  size: bigint,
+  label: string,
+  structureBytes: number = DEFAULT_NATIVE_STRUCTURE_BYTES,
+): void => {
+  if (size > BigInt(structureBytes))
+    throw nativeStructureFailure(label, size, structureBytes);
 };
 
 /** Admit a declared file span, or mark it unbacked when it leaves the file. */
@@ -517,18 +574,6 @@ export const mappedFileOffset = (
   if (reason === "invalid-size")
     throw new BinaryFormatFailure("malformed", message);
   throw new BinaryMappingFailure(reason, message);
-};
-
-/** Index of the last sorted value at or below `value`, or -1. */
-const lastAtOrBelow = (sorted: readonly bigint[], value: bigint): number => {
-  let low = 0;
-  let high = sorted.length;
-  while (low < high) {
-    const middle = (low + high) >>> 1;
-    if ((sorted[middle] as bigint) <= value) low = middle + 1;
-    else high = middle;
-  }
-  return low - 1;
 };
 
 /** Sorted starts with the furthest end reached by any span starting at or before each. */
@@ -719,13 +764,12 @@ export const createFileMappingIndex = (
   };
   const access: MappedStringAccess = {
     offset,
-    mappingAt: (address) => {
+    rangeAt: (address, maximum) => {
       const start = offset(address, 1);
       const interval = lastAtOrBelow(boundaries, address);
       return {
-        address,
         offset: start,
-        size: Number((runEnd[interval] as bigint) - address),
+        size: Math.min(maximum, Number((runEnd[interval] as bigint) - address)),
       };
     },
   };
@@ -764,34 +808,12 @@ export interface FileMappingIndex {
 }
 
 interface MappedStringAccess {
-  readonly mappingAt: (address: bigint) => FileMapping | undefined;
+  readonly rangeAt: (
+    address: bigint,
+    maximum: number,
+  ) => Pick<FileMapping, "offset" | "size">;
   readonly offset: (address: bigint, size: number) => number;
 }
-
-/** Read a bounded NUL-terminated string while retaining mapping/alias semantics. */
-export const readMappedCString = (
-  bytes: Buffer,
-  mappings: readonly FileMapping[],
-  address: bigint,
-  maximumBytes: number,
-  zeroFills: readonly ZeroFillMapping[],
-): Buffer => {
-  return readMappedString(
-    bytes,
-    {
-      mappingAt: (cursor) =>
-        mappings.find(
-          (range) =>
-            range.address <= cursor &&
-            cursor < range.address + BigInt(range.size),
-        ),
-      offset: (cursor, size) =>
-        mappedFileOffset(mappings, cursor, size, zeroFills),
-    },
-    address,
-    maximumBytes,
-  );
-};
 
 const readMappedString = (
   bytes: Buffer,
@@ -803,19 +825,7 @@ const readMappedString = (
   let length = 0;
   while (length <= maximumBytes) {
     const cursor = address + BigInt(length);
-    const mapping = access.mappingAt(cursor);
-    if (mapping === undefined) {
-      access.offset(cursor, 1);
-      throw new BinaryMappingFailure(
-        "unmapped",
-        "String range is not file mapped",
-      );
-    }
-    const size = Math.min(
-      maximumBytes + 1 - length,
-      Number(mapping.address + BigInt(mapping.size) - cursor),
-    );
-    const offset = mapping.offset + Number(cursor - mapping.address);
+    const { offset, size } = access.rangeAt(cursor, maximumBytes + 1 - length);
     const chunk = bytes.subarray(offset, offset + size);
     const terminator = chunk.indexOf(0);
     const consumed = terminator < 0 ? size : terminator + 1;
@@ -842,19 +852,7 @@ const readMappedStringFromReader = async (
   let length = 0;
   while (length <= maximumBytes) {
     const cursor = address + BigInt(length);
-    const mapping = access.mappingAt(cursor);
-    if (mapping === undefined) {
-      access.offset(cursor, 1);
-      throw new BinaryMappingFailure(
-        "unmapped",
-        "String range is not file mapped",
-      );
-    }
-    const size = Math.min(
-      maximumBytes + 1 - length,
-      Number(mapping.address + BigInt(mapping.size) - cursor),
-    );
-    const offset = mapping.offset + Number(cursor - mapping.address);
+    const { offset, size } = access.rangeAt(cursor, maximumBytes + 1 - length);
     const chunk = await readPrefix(offset, size);
     if (chunk.length === 0 || chunk.length > size)
       throw new BinaryFormatFailure(

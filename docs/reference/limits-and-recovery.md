@@ -101,6 +101,52 @@ accepts `max_native_index_bytes` (default 1 GiB) for the estimated ELF pointer
 index of `binary_path`; its refusal reports the same kind of limit. See
 [IL2CPP metadata](../il2cpp-metadata.md#native-method-addresses).
 
+`inspect_devicetree`, `inspect_windows_shortcut`, `inspect_kernel_build_config`,
+`extract_firmware` and `inspect_byte_entropy` report the same parameter limit for
+their per-call budgets (`max_file_bytes`, entry, depth and decoded-byte budgets,
+`max_output_bytes`/`max_output_files`, and `block_size` or `length`).
+`inspect_devicetree` bounds its estimated decoded representation with
+`max_decoded_bytes` (default 32 MiB, at most 256 MiB).
+`inspect_elf_dependencies`, `inspect_elf_unwind_ranges`, `inspect_apple_ips`,
+`inspect_dwarf_units`, `inspect_native_initializers`, `inspect_pe_resources`
+(`max_entries`) and `inspect_erlang_beam` report it too. The per-page symbol-name text allowance of `inspect_elf_unwind_ranges` is a fixed allowance (`details.refusal.kind` `fixed_ceiling`); its `narrowing` asks for a smaller page `limit` or paging with `offset`. `inspect_erlang_beam` accepts `max_table_rows` (export,
+import and lambda rows combined; default 65,536, at most 1,048,576).
+
+### Native table structure budget
+
+`inspect_elf_unwind_ranges`, `inspect_kernel_module`, `inspect_elf_debug_link`,
+`inspect_dwarf_units`, `inspect_binary_hardening`, `inspect_native_initializers`
+and `inspect_native_exports` accept `max_structure_bytes` (CLI
+`--max-structure-bytes`, 64 bytes to 512 MiB, default 16 MiB). It bounds one
+header, section, load-command or ELF dynamic-directory table read, and,
+separately, the section names decoded from the section-name table, before the
+decoded records are allocated. A refusal is a `memory` resource constraint
+whose `details.limit` names `max_structure_bytes`, its effective value, range
+and default; `details.reported_limits.boundary` is `max_structure_bytes`.
+`max_file_bytes` does not raise it. `inspect_elf_debug_link` still counts
+decoded section names against `max_file_bytes` as well. For `inspect_binary_hardening` it
+covers the ELF header tables, section names and dynamic table; Mach-O load
+commands keep the Mach-O command reader's own limit, and the PE headers it reads
+are bounded by the PE format.
+
+For `inspect_native_exports` it also bounds the ELF dynamic, symbol and version
+tables located through PT_DYNAMIC.
+
+`inspect_go_binary` and `inspect_rust_binary` accept it for their ELF directory
+and Mach-O load commands. The IL2CPP reader reads the same tables with the 16
+MiB default and reports it as a fixed allowance.
+
+`inspect_rust_binary` also accepts `max_wasm_sections` (WebAssembly sections
+walked; default 65,536, at most 16,777,216). The walk stops at the first excess,
+so the refusal reports no `required_value`.
+
+`inspect_native_exports` also accepts `max_entries` (export rows and declared
+symbol counts; default 262,144, at most 4,194,304) and `max_text_bytes` (name and
+version text retained across rows; default 16 MiB, at most 256 MiB). A table
+whose declared count exceeds `max_entries` reports that count as
+`required_value`; the text budget stops at the first excess and reports no
+`required_value`.
+
 ### Static reader read allowance
 
 `inspect_pe_imports`, `inspect_pe_resources`, `inspect_pe_load_config`,
@@ -115,11 +161,21 @@ An exhausted allowance is a `capacity` refusal. `details.limit` has
 `control_kind: "parameter"`, `parameter: "max_file_bytes"`, the effective
 value, the bounds, the default and `applies_at: "next_call"`, and
 `details.reported_limits.required_read_bytes` holds the reads needed so far.
-Raise `max_file_bytes` and retry; `update_analysis_settings` does not change it.
+It is a lower bound, since later reads depend on structures not yet decoded, so
+the limit reports no `required_value`. Raise `max_file_bytes` and retry;
+`update_analysis_settings` does not change it.
 The identity pass has a fixed whole-file ceiling: 4 GiB minus one byte for the
 PE-only readers, whose file offsets are 32-bit, and 512 MiB for hardening and
 exports. A file above it is a `file-size` refusal naming that fixed allowance,
 which `max_file_bytes` does not raise.
+
+The PE readers also report `details.limit` for their per-call inventory budgets:
+`inspect_pe_imports` `max_dlls`, `max_functions` and `max_text_bytes` (decoded
+names, default 16 MiB, at most 256 MiB); `inspect_pe_load_config`
+`max_callbacks`; `inspect_pe_unwind_ranges` `max_entries` (default 2,097,152, at
+most 16,777,216; the declared count is its `required_value`); and
+`inspect_pe_resources` `max_entries` and `max_metadata_bytes` (the complete
+result, default 8 MiB, at most 256 MiB).
 
 ### Producer limits
 
@@ -148,14 +204,50 @@ rejected.
 | `inspect_signal_decoders`                                    | No `input_bytes`; `output_bytes` 4 MiB, `command_timeout_ms` 30000, `address_space_bytes` 1 GiB, `file_bytes` 64 MiB, `cpu_seconds` 30                                                        |
 | `inspect_binary_layout`, `inspect_recorded_crash` (pwntools) | `input_bytes` 32 MiB (or `REA_PWNTOOLS_MAX_INPUT_BYTES`), `output_bytes` 64 MiB, `diagnostic_bytes` 1 MiB, `address_space_bytes` 3 GiB, `file_bytes` follows `output_bytes`, `cpu_seconds` 30 |
 | `inspect_evm_interface`                                      | `input_bytes` 4 MiB, `output_bytes` 16 MiB, `diagnostic_bytes` 1 MiB, `address_space_bytes` 3 GiB, `file_bytes` follows `output_bytes` (16 MiB), `cpu_seconds` 30                             |
-| `inspect_rust_binary`                                        | `input_bytes` 256 MiB, `output_bytes` 8 MiB                                                                                                                                                   |
+| `inspect_rust_binary`                                        | `input_bytes` 256 MiB, `output_bytes` 8 MiB. Dependency JSON uses `max_compressed_dependency_bytes` (1 MiB), `max_inflated_dependency_bytes` (8 MiB) and `max_dependency_inflate_ratio` (64)  |
+| `inspect_sqlite_database`                                    | `input_bytes` 256 MiB (the database and WAL copied to the private snapshot)                                                                                                                   |
 | `inspect_pcap_capture`                                       | `input_bytes` 2 GiB (the streamed capture snapshot), `output_bytes` 8 MiB of combined stdout and stderr per TShark JSON pass, at most 128 MiB (the fixed decoded-JSON allowance)              |
+| `decode_android_resources`                                   | `output_bytes` 4 MiB of retained `apktool d` stdout and stderr, at most the JavaScript string limit                                                                                           |
+| `inspect_asset_catalog`                                      | `output_bytes` 64 MiB for each assetutil stream and the JSON retained across all catalogs, at most 128 MiB (the in-process decode bound)                                                      |
+
+#### Session default for producer output
+
+`inspect_packet_capture`, `decode_signal_recording` and
+`inspect_signal_decoders` share one session-adjustable default for
+`producer_limits.output_bytes`: the registered setting `producer.output_bytes`
+(launch seed `REA_PRODUCER_OUTPUT_BYTES`, default 4 MiB, range
+1..9007199254740991 bytes). Change it with `update_analysis_settings`, for
+example `{"changes":[{"setting":"producer.output_bytes","action":"set","value":16777216}]}`;
+it applies to the next operation without restart. An explicit
+`producer_limits.output_bytes` on a call wins over the setting, then the runtime
+override, then the launch seed, then the default. An output refusal reports the
+setting's limit with `parameter: "producer_limits.output_bytes"` and the
+`source` of the value in force, so its recovery names both the per-call field
+and the setting. `inspect_packet_fields` keeps its own 32 MiB glossary default
+and is not covered by the setting. `decode_android_resources` and
+`inspect_asset_catalog` use the same setting. While it is unset they keep
+their own defaults (4 MiB and 64 MiB). An explicit runtime value or
+`REA_PRODUCER_OUTPUT_BYTES` supplies the omitted field and is clamped to each
+producer's maximum (the JavaScript string limit, and 128 MiB). A per-call
+`producer_limits.output_bytes` still wins and is rejected above that maximum.
+
+`inspect_rust_binary` bounds cargo-auditable dependency JSON with three
+per-call parameters (CLI `--max-compressed-dependency-bytes`,
+`--max-inflated-dependency-bytes`, `--max-dependency-inflate-ratio`). The
+admitted inflated length is the smaller of `max_inflated_dependency_bytes` and
+`max_dependency_inflate_ratio` times the consumed compressed length. Allocation
+starts before that length is known, so it uses the stored extent, including PE
+file-alignment padding. A refusal is an `adjustable_budget` whose
+`details.limit` names the parameter that stopped the parse. `required_value` is
+the measured section length, inflated length, or ratio when that measurement
+finished; an allocation that stops first omits it. `producer_limits` does not
+raise these parameters. Omitted fields keep the defaults above.
 
 The pwntools and EVM operations take their wall-clock deadline from a separate
 argument (`pwntools_timeout_ms`, `timeout_ms`) instead of `command_timeout_ms`.
 Packet and signal results report the effective values as `limits`, where an
-inherited OS ceiling can appear as `0`. When pwntools, Rust or pcap work exhausts a
-budget, `details.limit` carries `control_kind: "parameter"`,
+inherited OS ceiling can appear as `0`. When packet, signal, pwntools, Rust,
+pcap, SQLite, Apktool or assetutil work exhausts a budget, `details.limit` carries `control_kind: "parameter"`,
 `parameter: "producer_limits.<field>"`, `minimum: 1` and
 `applies_at: "next_call"`, as described under [failure and retry](#failure-and-retry);
 the other producers name the field to raise in their remediation. A pwntools
@@ -221,10 +313,13 @@ A deadline controlled by something other than a registered setting reports
 `details.limit` with `control_kind` instead of `setting`.
 `control_kind: "parameter"` names the per-call contract field in `parameter`
 (`native_command_timeout_ms`, `native_ui_deadline_ms`,
-`pwntools_timeout_ms`) and applies on the next call. Services and their
-remediation text name only that field. A CLI command adds `cli_flag`, the
-option that sets the field on that command, from its own field-to-flag
-binding; MCP results do not carry it.
+`pwntools_timeout_ms`) and applies on the next call. It carries its
+`effective_value`, `unit`, `minimum`, `maximum` and `default_value`, and
+`required_value` when the producer measured the smallest value that admits the
+refused request. Services and their remediation text name only that field. A
+CLI command adds `cli_flag`, the option that sets the field on that command,
+from its own field-to-flag binding, and its recovery names that option and
+command in place of the field and tool; MCP results do not carry it.
 A completed or partial result can record the same reference, for example a
 `limit` in a web bundle `unknowns` entry for a script that reached its
 `analysis_timeout_ms` deadline. That reference is part of the result and its
@@ -296,6 +391,121 @@ same effective setting so readiness changes along with repair and reset.
 `REA_NATIVE_MATCHING_REPRESENTATION_BYTES` is validated the same way, by
 `match_native_functions` alone.
 
+## Agent result budget
+
+`delivery.agent_result_budget_bytes` is a delivery budget, not an admission
+limit. It defaults to 32,768 compact JSON bytes. Claude Code moves MCP
+results above 25,000 tokens out of context, and dense JSON (addresses,
+digests, identifiers) measured about 2.9 bytes per token there, so the
+default is about 11,000 tokens: under half the cap, with room for the
+delivery facts. Token figures in delivery facts use an estimate of 3 bytes
+per token, not a tokenizer measurement. The budget applies to tools with a
+`detail` selector when the caller omits `detail`, on MCP and the CLI; it is
+the only size that chooses between complete and summary delivery. An MCP
+session summarizes only when it retains Evidence and advertises
+`inspect_analysis_view`, which pages the summary; otherwise it delivers the
+complete Evidence. Its launch seed, `REA_AGENT_RESULT_BUDGET_BYTES`, also
+sets it for one-shot CLI invocations; an invalid seed leaves delivery
+unbudgeted (complete, as before) rather than falling back to the default,
+and settings inspection reports it. The stdio frame limit,
+`REA_MCP_MAX_RESPONSE_BYTES`, stays a separate transport safety net.
+
+When complete Evidence fits, it is delivered inline as before. When it does
+not, the work is never refused or truncated:
+
+- MCP retains the complete Evidence in the session and returns the
+  operation's summary view, the same record `detail: "summary"` returns, so
+  its identity holds wherever a summary is accepted. The delivery facts
+  travel beside it, in a second text block `{"delivery": …}` and in
+  `_meta["rea/agent-budget-delivery"]`: `budget_bytes`, `budget_source`, the
+  range, `complete_bytes`, `estimated_complete_tokens`, `evidence_id`,
+  `retained`, `next` (the exact `inspect_analysis_view` call that pages the
+  complete record) and a `note` with the recovery.
+- `inspect_analysis_view` with view
+  `{kind: "evidence-json", offset, limit}` pages the exact JSON text of the
+  retained record in UTF-16 code units. It is the recovery every client can
+  follow. Joining every page in offset order
+  reproduces it exactly, and no page splits a surrogate pair. With `limit`
+  omitted a page holds at most 24,576 bytes of escaped UTF-8 text, so with
+  its view Evidence it fits the default budget for any characters; an explicit `limit` counts code units,
+  up to 1,048,576. The producer's own views (`managed-members`, `inventory`
+  and so on) select facts more cheaply.
+- For clients that read MCP resources, the summary also carries a
+  `resource_link` to `rea://evidence/<evidence_id>`, named
+  `complete-evidence`, whose `size` is the complete record's UTF-8 JSON
+  bytes. `resources/read` returns the record's exact JSON in one read, the
+  same text the cursor pages. The `rea://evidence/{evidence_id}` template
+  appears in `resources/templates/list`, not `resources/list`, and reads any
+  record the session retains. An ID the session does not retain (unknown,
+  from another session, or cleared by `reset_investigation`) is refused with
+  `-32602`. A record whose escaped read is too large for one response on
+  the connection (`REA_MCP_MAX_RESPONSE_BYTES`, or REA's single-string
+  limit) gets no link, and a read of it is refused with `-32600` and
+  `data.next`, the cursor. The link and the read use the same check. Claude Code 2.1 shows the link
+  to the model as one line, about 70 tokens, and never reads it by itself;
+  when the model reads it, Claude Code saves a large read to a file and
+  shows a preview.
+- The CLI with `--evidence_output` prints
+  `{"summary", "evidence_bundle", "delivery"}`, whose `delivery.next` names
+  the bundle as an `evidence-file` source.
+- Without `--evidence_output`, the one-shot CLI keeps the complete Evidence
+  in its private retained-Evidence cache and prints the same three fields,
+  with `retained: "cache-file"`. `evidence_bundle` gives the bundle file's path
+  and size, and `record_sha256`, the digest of the complete record it holds
+  (the file is the bundle around that record, so its own digest differs). `delivery.next` pages it with
+  `rea inspect-analysis-view`, so the analysis never has to run again.
+  Composed commands keep the source records the bundle needs, as they do
+  for `--evidence_output`.
+  - **Location:** `rea/evidence` under the user cache directory
+    (`~/Library/Caches` on macOS, `XDG_CACHE_HOME` or `~/.cache` elsewhere).
+    The directory is created `0700` and must be a real directory the user
+    owns, never a symbolic link; files are created exclusively as `0600` by
+    the Evidence bundle writer.
+  - **Key and lifetime:** each file is named by the SHA-256 of the complete
+    record's exact JSON, so it covers every input and caller choice the
+    record holds, including caller paths the Evidence ID leaves out. A
+    repeat run reuses the file and never rewrites it. A repeat run, or a
+    `rea inspect-analysis-view` read of the file, renews its age. Each
+    retention removes records unused for 7 days, then the least recently
+    used until the cache fits `delivery.cli_retained_evidence_bytes`
+    (default 268,435,456 bytes, launch seed
+    `REA_CLI_RETAINED_EVIDENCE_BYTES`), skipping any record used since it
+    was listed. A record or bundle larger than the cache is not kept.
+  - **Opt out:** `--no-retain` for one run, or
+    `REA_CLI_RETAINED_EVIDENCE_BYTES=0` for every run that environment
+    reaches. An invalid seed also retains nothing, and settings inspection
+    reports it. The MCP server ignores this setting: its session retains
+    over-budget Evidence instead.
+  - **Fallback:** when nothing is kept (opted out, too large, a cache path
+    that holds a value marked sensitive, or the save failed), the CLI writes
+    nothing and prints `{"summary", "delivery"}`
+    with `retained: "not-retained"`. `delivery.retention_failure` says why a
+    save failed, and `delivery.rerun` gives the arguments to add to the
+    original command as argv arrays: `complete` (`["--detail", "complete"]`)
+    and `retained` (`["--evidence_output", "<new-bundle-path>"]`). The
+    analysis never fails because of retention. A save that published the
+    file but then failed (staging cleanup or cancellation) reports that
+    failure and its cleanup state, as `--evidence_output` does. Caller inputs are never
+    echoed, since they can carry access credentials; the note names both.
+
+A failure's own facts (code, `failure_kind`, retry, recovery and limits)
+are never budgeted. Its `details.partial_observation`, the complete Evidence
+of work that finished before the failure, gets the same decision with the
+budget the rest of the failure leaves. When it fits, it is delivered as
+before: inline, or on MCP as a `retained-evidence` reference when the
+session retained it. When it does not fit, it is replaced by its summary
+view, and `details.partial_observation_delivery` carries the same delivery
+facts as a successful result. On MCP the session retains the complete
+partial Evidence, `next` pages it, and a `resource_link` to it follows
+the error text when one read can deliver it. On the CLI, `--evidence_output`
+publishes it and `next` names the bundle. Without `--evidence_output`,
+nothing is written and `rerun` names the arguments to add.
+
+Recovery: pass `detail: "complete"` (CLI `--detail complete`) for everything
+inline on one call, or raise the setting for the runtime with
+`update_analysis_settings`. An operation without a summary view, or with no
+retained session, keeps complete delivery.
+
 ## Keep a fixed ceiling honest
 
 A fixed ceiling is the exception. Keep one only for a stated format, protocol,
@@ -342,18 +552,49 @@ recovery to the resource kind. The domain owner is
 It has three variants. Each one projects under `details.refusal` with the
 `operation` the error is attributed to:
 
-| Variant              | Producer fact                                                                                                                            | Projected fields                                                                    |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `fixed_ceiling`      | `fixedAllowanceOptions(name, kind, { limit, unit, narrowing })`, or an artifact reader's `artifactFixedLimitFailure(allowance, outcome)` | `allowance`, `allowance_kind`, `limit`, `unit`, `narrowing`                         |
-| `adjustable_budget`  | an `AnalysisSettingLimit` bound as `limit`                                                                                               | `control`, `setting`, `effective_value`, `unit`, `range`, optional `required_value` |
-| `ambiguous_selector` | `AnalysisInputError` option `ambiguousSelector: { field, candidates }`                                                                   | `field`, `candidates`                                                               |
+| Variant              | Producer fact                                                                                                                            | Projected fields                                                                                                                                    |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fixed_ceiling`      | `fixedAllowanceOptions(name, kind, { limit, unit, narrowing })`, or an artifact reader's `artifactFixedLimitFailure(allowance, outcome)` | `allowance`, `allowance_kind`, `limit`, `unit`, `narrowing`                                                                                         |
+| `adjustable_budget`  | an `AnalysisSettingLimit`, or a `control_kind: "parameter"` limit, bound as `limit`                                                      | `control`, `setting` and `source` (settings only), `effective_value`, `unit`, `range`, `default_value` (parameters only), optional `required_value` |
+| `ambiguous_selector` | `AnalysisInputError` option `ambiguousSelector: { field, candidates }`                                                                   | `field`, `candidates`                                                                                                                               |
 
-Presentation is total over these variants. Authored remediation still wins.
-Without it, the variant names the recovery: fixed ceilings and their narrowing
-step, the budget's control and range for the caller's lifetime, or the selector
-field and its candidates. A resource refusal never falls back to text about
-worker limits, the MCP transport, or doctor. An ambiguous selector conforms to
-the input contract, so it does not ask the caller to inspect the schema.
+Presentation is total over these variants. Authored remediation still wins,
+so a producer that binds a parameter or setting limit omits it unless it adds
+something the facts cannot say. Without it, the variant names the recovery:
+fixed ceilings and their narrowing step, the budget's control and range for the
+caller's lifetime, or the selector field and its candidates. A resource refusal
+never falls back to text about worker limits, the MCP transport, or doctor. An
+ambiguous selector conforms to the input contract, so it does not ask the
+caller to inspect the schema.
+
+### Adjustable budget recovery
+
+The recovery is generated from the refusal's facts only, never from earlier
+calls. `required_value` is the smallest value that admits the refused request;
+the refusal reports it, in `details.limit` and `details.refusal`, whenever the
+producer measured it. A producer that knows only a lower bound, such as the
+reads counted before a refusal, omits it and reports the bound in
+`details.reported_limits`.
+
+- A per-call control reads "Pass a larger `<parameter>` on the next
+  `<operation>` call (at least `<required_value>`; range
+  `<minimum>..<maximum>`), then retry."
+- A per-call control backed by a registered setting is reported as that
+  setting's limit with `parameter` and `source` (see
+  [precedence](#precedence-and-lifetime)). Its recovery names both routes:
+  the per-call argument for one large input, then the setting for repeated
+  work, "To raise it for this session, set `<setting>` with
+  update_analysis_settings." A one-invocation caller (the CLI) gets the
+  setting's launch environment variable instead, or only the per-call route
+  when the setting has none.
+- A per-call control without a backing setting has only the per-call route.
+- When the control is already at its maximum, or `required_value` is above it,
+  the recovery asks for a narrower request instead.
+- On the CLI, the per-call step names the command's flag and command; MCP
+  names the contract field and tool.
+
+An environment control is not an adjustable budget. REA never raises a limit
+on its own or retries a refused request automatically.
 
 A measured exhaustion or occupied admission is not a refusal. It declares
 `measuredExhaustion: true` and keeps the resource kind's recovery. The
@@ -385,7 +626,10 @@ whether live repair is possible.
 Use `details.limit` for a direct runtime update when it names an editable
 setting with `scope: "rea-runtime"`. For `scope: "rea-invocation"`, set its
 `environment` or `parameter` for a new invocation instead.
-Follow `remediation.action` for per-call, fixed and external controls.
+For a per-call control, pass at least `required_value` (when present) for
+`parameter` on the next call; raise its backing setting instead when the same
+limit keeps refusing work in this session. Follow `remediation.action` for
+fixed and external controls.
 Inspect settings only when bounds or application details are missing. Restart only when it says the value is
 read at startup. A sentence that a control does not raise the limit is not a
 request to change it.
@@ -489,18 +733,34 @@ editable setting or active worker telemetry.
 
 ## Artifact reader admission
 
-`inspect_artifact` and `extract_artifact` accept `dotnet_bundle`, `node_sea`
-and `godot` groups in `artifact_limits`. Their controls apply when recognition
+`inspect_artifact` and `extract_artifact` accept `bun`, `dotnet_bundle`,
+`node_sea`, `godot`, `iso9660`, `deno`, `wxapkg` and `tar` groups in
+`artifact_limits`. Their controls apply when recognition
 or inventory encounters that format; supplying
 a policy does not assert the format is present. Unsupported keys are rejected.
 Each group follows one domain-owned default policy. See [.NET bundles](../dotnet-bundles.md),
 [Node SEA](../node-sea.md), [Godot PCK](../godot-pck.md) and
-[Bun standalone](../bun-standalone.md) for format semantics.
+[Bun standalone](../bun-standalone.md), [Deno compile](../deno-standalone.md),
+[wxapkg](../wxapkg.md) and [tar](../tar-archives.md) for format semantics.
 
 `artifact_limits.expanded_bytes` selects aggregate plaintext work for ZIP, Bun,
-SEA and PCK readers, including repeated readable logical occurrences. Omission
+SEA, PCK, ISO 9660, Deno, wxapkg and tar readers, including repeated readable logical occurrences. Omission
 retains each archive's encoded-size-derived default. The .NET bundle group's
 own `expanded_bytes` controls its independently enforced bundle expansion.
+
+`artifact.member_count` (launch seed `REA_ARTIFACT_MEMBER_COUNT`, default
+100,000, range 1 to 2,147,483,647) is the session default for the per-call
+member counts `bun.module_count`, `dotnet_bundle.entry_count`,
+`node_sea.asset_count` and `deno.vfs_entries`. An explicit `artifact_limits`
+field wins for that call; otherwise the runtime override, then the launch
+seed, then the default applies (see [precedence](#precedence-and-lifetime)).
+A refusal at one of those fields also reports `details.limit` as that
+setting's limit, with the field as `parameter` and the value's `source`, so the
+recovery names both routes: the field for one large artifact, then
+`update_analysis_settings` (or the launch seed for a CLI invocation) for
+repeated work. When a non-default session value applies, inventory and
+extraction report the resolved `effective_limits` even if the call selected no
+`artifact_limits`. Other reader fields are per-call only.
 
 Failures preserve `details.reader_limit` with the exact parameter, effective
 value, units, supported range, required value when known, next-call scope and

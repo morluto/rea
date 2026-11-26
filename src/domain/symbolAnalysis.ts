@@ -1,3 +1,4 @@
+import { appendToMapList } from "./appendToMapList.js";
 import { objcClassSymbol, objcSymbolLeaf } from "./objcClassSymbol.js";
 import type { JsonValue } from "./jsonValue.js";
 import type { AddressedName } from "./native/nativeInventory.js";
@@ -188,9 +189,7 @@ const swiftAliasesByAddress = (symbols: readonly AddressedName[]) => {
   const aliases = new Map<string, string[]>();
   for (const { address, name } of symbols) {
     if (!isSwiftSymbolName(name)) continue;
-    const existing = aliases.get(address);
-    if (existing === undefined) aliases.set(address, [name]);
-    else existing.push(name);
+    appendToMapList(aliases, address, name);
   }
   return aliases;
 };

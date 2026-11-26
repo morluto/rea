@@ -1,3 +1,4 @@
+import { analysisViewPageFields } from "../analysisView/analysisViewPageFields.js";
 import { z } from "zod";
 import {
   graphqlTypeSchema,
@@ -8,11 +9,7 @@ import {
   graphqlDiagnosticSchema,
 } from "./graphqlContract.js";
 
-const page = {
-  kind: z.literal("graphql-contract"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
-};
+const page = analysisViewPageFields("graphql-contract");
 export const graphqlContractViewRequestSchema = z.discriminatedUnion(
   "collection",
   [

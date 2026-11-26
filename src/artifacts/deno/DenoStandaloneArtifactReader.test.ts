@@ -1,8 +1,7 @@
 import { createHash } from "node:crypto";
 import { buffer } from "node:stream/consumers";
 import type { FileHandle } from "node:fs/promises";
-import { open, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { open } from "node:fs/promises";
 
 import { expect, it, vi } from "vitest";
 import { phaseGate } from "../../../tests/support/lifecycleHarness.js";
@@ -18,7 +17,7 @@ import {
 } from "../../domain/native/elfNotes.js";
 import { MAX_INSPECT_PE_FILE_BYTES } from "../../domain/native/peResources.js";
 import { peResourceFixture } from "../../domain/pe/peResources.fixture.js";
-import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../../tests/fixtures/artifactInventory.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
 import {
@@ -77,12 +76,8 @@ it("keeps a confirmed Deno inventory when another pack recognizer is limited", a
 
 const secret = "super-secret-value";
 
-const writeCarrier = async (name: string, bytes: Buffer): Promise<string> => {
-  const root = await createTestTempDirectory("rea-deno-reader-");
-  const path = join(root, name);
-  await writeFile(path, bytes);
-  return path;
-};
+const writeCarrier = (name: string, bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-deno-reader-", name, bytes);
 
 const sectionFor = (
   contents: Buffer,

@@ -32,8 +32,6 @@ import {
   type GoStringLiterals,
   type InspectGoBinaryInput,
 } from "../domain/go/goBinary.js";
-import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   readGoBinaryImageFromHandle,
@@ -42,40 +40,33 @@ import {
 import { requireSelectedNativeImageFromReader } from "../domain/apple/machoSliceSelection.js";
 import {
   BinaryResourceFailure,
-  binaryResourceCeiling,
+  isNativeStructureFailure,
 } from "../domain/binaryContainer.js";
-import { errorMessage } from "../kernel/errorMessage.js";
+import {
+  NATIVE_STRUCTURE_BYTES,
+  nativeStructureConstraint,
+} from "../domain/native/nativeStructureBudget.js";
 
 const OPERATION = "inspect_go_binary";
 const HEADER_PREFIX_BYTES = 4096;
-
-const budgetRecovery = (
-  parameter: keyof GoAnalysisBudgets,
-  value: number,
-): string =>
-  value < GO_ANALYSIS_BUDGET_MAXIMA[parameter]
-    ? `Increase ${parameter} above ${String(value)} (maximum ${String(GO_ANALYSIS_BUDGET_MAXIMA[parameter])}) on the next inspect_go_binary request; no restart is required.`
-    : `${parameter} is at its runtime representation maximum ${String(value)}; no larger value is supported. Preserve the complete selected artifact and report this boundary rather than repeating the unchanged request.`;
 
 /** The per-call control of an exhausted budget, while a larger value is selectable. */
 const budgetLimit = (
   parameter: keyof GoAnalysisBudgets,
   value: number,
-): { readonly limit?: AnalysisControlLimit } =>
-  value < GO_ANALYSIS_BUDGET_MAXIMA[parameter]
-    ? {
-        limit: {
-          control_kind: "parameter",
-          parameter,
-          effective_value: value,
-          unit: parameter.endsWith("_bytes") ? "bytes" : "count",
-          minimum: 1,
-          maximum: GO_ANALYSIS_BUDGET_MAXIMA[parameter],
-          default_value: GO_ANALYSIS_BUDGET_DEFAULTS[parameter],
-          applies_at: "next_call",
-        },
-      }
-    : {};
+): { readonly limit: AnalysisControlLimit } => ({
+  // At its maximum the generated recovery asks for a narrower request.
+  limit: {
+    control_kind: "parameter",
+    parameter,
+    effective_value: value,
+    unit: parameter.endsWith("_bytes") ? "bytes" : "count",
+    minimum: 1,
+    maximum: GO_ANALYSIS_BUDGET_MAXIMA[parameter],
+    default_value: GO_ANALYSIS_BUDGET_DEFAULTS[parameter],
+    applies_at: "next_call",
+  },
+});
 
 const failureFor = (
   cause: unknown,
@@ -93,6 +84,8 @@ const failureFor = (
       path,
       description: "artifact",
       recognise: (failure, origin) => {
+        if (isNativeStructureFailure(failure))
+          return nativeStructureConstraint(OPERATION, failure, path);
         if (failure instanceof BinaryResourceFailure) {
           const parameter =
             failure.boundary === "search"
@@ -100,23 +93,17 @@ const failureFor = (
               : failure.boundary === "build-info"
                 ? "max_build_info_bytes"
                 : undefined;
+          // Only the container's tables (max_structure_bytes, above) and these
+          // two Go budgets raise a resource failure here.
+          if (parameter === undefined) return undefined;
           return parseLimitConstraint(
             OPERATION,
             failure.boundary === "search" ? "cpu" : "memory",
             failure,
             {
               path,
-              ...(parameter === undefined
-                ? fixedAllowanceOptions(
-                    "The Go structural decoding allowance",
-                    "parser",
-                    binaryResourceCeiling(failure),
-                  )
-                : {
-                    retryable: false,
-                    remediationAction: `${failure.boundary === "search" ? "The Go build-info header-search allowance" : "The Go build-info string allowance"} is ${String(budgets[parameter])} bytes. ${budgetRecovery(parameter, budgets[parameter])} Other byte and report budgets are independent. Repeating the unchanged request cannot raise this allowance.`,
-                    ...budgetLimit(parameter, budgets[parameter]),
-                  }),
+              retryable: false,
+              ...budgetLimit(parameter, budgets[parameter]),
             },
           );
         }
@@ -137,20 +124,11 @@ const failureFor = (
             {
               cause: failure,
               retryable: false,
-              remediationAction: `${budgetRecovery("max_input_bytes", budgets.max_input_bytes)} Report, build-info and structural allowances remain independent. Preserve the complete artifact; do not truncate required bytes.`,
               ...budgetLimit("max_input_bytes", budgets.max_input_bytes),
             },
           );
         return undefined;
       },
-      unclassified: (failure) =>
-        new ProviderAdapterError(GO_BINARY_PROVIDER_IDENTITY.id, OPERATION, {
-          cause: failure,
-          diagnostics: {
-            path,
-            reason: errorMessage(failure),
-          },
-        }),
     }),
   );
   if (completed !== undefined) primary.retainPartialObservation(completed);
@@ -176,7 +154,6 @@ const outputLimit = (path: string, maximumBytes: number) =>
     },
     {
       retryable: false,
-      remediationAction: `The Go complete-report allowance is ${String(maximumBytes)} bytes. ${budgetRecovery("max_report_bytes", maximumBytes)} This did not produce complete Evidence to page. MCP delivery limits remain independent.`,
       ...budgetLimit("max_report_bytes", maximumBytes),
     },
   );
@@ -186,6 +163,7 @@ const limitationsFor = (
   image: GoBinaryImage,
   stringLiterals: GoStringLiterals | undefined,
   budgets: GoAnalysisBudgets,
+  structureBytes: number,
 ): string[] => {
   const {
     build_info: info,
@@ -197,7 +175,7 @@ const limitationsFor = (
     stringLiterals === undefined
       ? "Only Go build information is inspected; function names, source mappings, type metadata and decompiled code are not recovered."
       : "Only Go build information and inferred static (ptr, len) string-header candidates are inspected; function names, source mappings, type metadata and decompiled code are not recovered.",
-    `Resource guards use max_input_bytes=${String(budgets.max_input_bytes)}, max_header_search_bytes=${String(budgets.max_header_search_bytes)}, max_build_info_bytes=${String(budgets.max_build_info_bytes)} and max_report_bytes=${String(budgets.max_report_bytes)}; increase the named per-call budget for the next inspection when needed. Native structural table decoding retains its separate 16 MiB bound. These are not operating-system memory or CPU limits.`,
+    `Resource guards use max_input_bytes=${String(budgets.max_input_bytes)}, max_header_search_bytes=${String(budgets.max_header_search_bytes)}, max_build_info_bytes=${String(budgets.max_build_info_bytes)} and max_report_bytes=${String(budgets.max_report_bytes)}; increase the named per-call budget for the next inspection when needed. Native structural table decoding uses max_structure_bytes=${String(structureBytes)}. These are not operating-system memory or CPU limits.`,
     ...(info !== null && (info.go_version === null || info.module_text === null)
       ? [
           "Some embedded Go strings contain non-UTF8 bytes; undecodable text is null and exact source bytes are preserved as base64.",
@@ -298,6 +276,8 @@ export class GoBinaryProvider implements GoBinaryPort {
       | { readonly sha256: string; readonly bytes: number }
       | undefined;
     const budgets = goAnalysisBudgets(input);
+    const structureBytes =
+      input.max_structure_bytes ?? NATIVE_STRUCTURE_BYTES.default_value;
     try {
       return await this.#resources.run(async () => {
         const parsedData = await withStableArtifactHandle<GoBinary>(
@@ -319,16 +299,13 @@ export class GoBinaryProvider implements GoBinaryPort {
             const selected = await requireSelectedNativeImageFromReader(
               OPERATION,
               input.path,
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               input.architecture,
             );
             const imageOptions = {
               includeStringLiterals: input.include_string_literals === true,
               budgets,
+              structureBytes,
               checkActive: () => assertArtifactReadActive(options?.signal),
             };
             const image = await readGoBinaryImageFromHandle(
@@ -363,7 +340,12 @@ export class GoBinaryProvider implements GoBinaryPort {
                 ? {}
                 : { string_literals: stringLiterals }),
               limitations: [
-                ...limitationsFor(image, stringLiterals, budgets),
+                ...limitationsFor(
+                  image,
+                  stringLiterals,
+                  budgets,
+                  structureBytes,
+                ),
                 ...selected.limitations,
               ],
             };

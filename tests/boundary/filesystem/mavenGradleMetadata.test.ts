@@ -135,6 +135,13 @@ describe("Maven POM and Gradle module metadata stable filesystem boundary", () =
       const tooSmall = await service.inspect({ path, max_file_bytes: 16 });
       if (tooSmall.ok) throw new Error("Expected resource budget failure");
       expect(tooSmall.error._tag).toBe("AnalysisResourceConstraintError");
+      expect(tooSmall.error.limit).toMatchObject({
+        control_kind: "parameter",
+        parameter: "max_file_bytes",
+        effective_value: 16,
+        maximum: 16 * 1024 * 1024,
+        default_value: 1024 * 1024,
+      });
       const cancelled = await service.inspect(
         { path },
         { signal: AbortSignal.abort() },

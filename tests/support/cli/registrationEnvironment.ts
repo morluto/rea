@@ -5,6 +5,26 @@ import { pathToFileURL } from "node:url";
 export const REGISTRATION_GUARD_NODE_OPTIONS_ENV =
   "REA_TEST_REGISTRATION_GUARD_NODE_OPTIONS";
 
+/** Select the host process paths and fixture home used by registration subprocess tests. */
+export const registrationChildEnvironment = (
+  home: string,
+): NodeJS.ProcessEnv => ({
+  PATH: process.env.PATH,
+  SystemRoot: process.env.SystemRoot,
+  WINDIR: process.env.WINDIR,
+  TMPDIR: process.env.TMPDIR,
+  TMP: process.env.TMP,
+  TEMP: process.env.TEMP,
+  HOME: home,
+  USERPROFILE: home,
+  XDG_CONFIG_HOME: join(home, "config"),
+  XDG_DATA_HOME: join(home, "data"),
+  XDG_CACHE_HOME: join(home, "cache"),
+  XDG_STATE_HOME: join(home, "state"),
+  APPDATA: join(home, "appdata"),
+  LOCALAPPDATA: join(home, "localappdata"),
+});
+
 /** Isolate every registration writer before the official Node entrypoint imports it. */
 export const registrationEnvironment = async (
   home: string,

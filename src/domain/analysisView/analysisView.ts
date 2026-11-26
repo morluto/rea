@@ -2,6 +2,7 @@ import { projectWebSourceLocationView } from "./webSourceLocationView.js";
 import { projectNativeProcedureReferencesView } from "./nativeProcedureReferencesView.js";
 import { projectPlaywrightTraceView } from "./playwrightTraceView.js";
 import { projectWebPageView } from "./webPageView.js";
+import { projectWebExecutionView } from "./webExecutionView.js";
 import { projectApiContractView } from "./apiContractView.js";
 import {
   isNativeObservationOperation,
@@ -9,6 +10,7 @@ import {
 } from "../native/nativeObservation.js";
 import { projectNativeObservationView } from "./nativeObservationView.js";
 import { projectRecordedArrayView } from "./recordedArrayView.js";
+import { projectEvidenceJsonView } from "./evidenceJsonView.js";
 import { projectNativeInstructionReferencesView } from "./nativeInstructionReferencesView.js";
 import { projectNativeValueTraceView } from "./nativeValueTraceView.js";
 import { projectDevicetreeView } from "./devicetreeView.js";
@@ -246,6 +248,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inventory_artifact", projectArtifactInventoryView),
   retain("analyze_web_bundle", projectWebBundleView),
   retain("inspect_web_page", projectWebPageView),
+  retain("observe_web_execution", projectWebExecutionView),
   retain("trace_web_source_location", projectWebSourceLocationView),
 ]);
 
@@ -370,6 +373,8 @@ export const projectAnalysisView = (
   if (view.kind === "recorded-array") {
     return sealProjected(projectRecordedArrayView(parent, view));
   }
+  if (view.kind === "evidence-json")
+    return sealProjected(projectEvidenceJsonView(parent, view));
   if (view.kind === "javascript-routes") {
     const projected = projectJavaScriptRoutesView(parent, view);
     return sealProjected(projected);

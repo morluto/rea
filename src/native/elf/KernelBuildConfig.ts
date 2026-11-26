@@ -1,3 +1,4 @@
+import { systemCodeFromError } from "../../kernel/reportedSystemCode.js";
 import { createHash } from "node:crypto";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { crc32, inflateRaw } from "node:zlib";
@@ -17,23 +18,12 @@ import {
 import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
 import { hasElfMagic, BinaryReader } from "../../domain/binaryContainer.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
-import type { ByteSource } from "../../domain/byteSource.js";
+import { bufferByteSource, type ByteSource } from "../../domain/byteSource.js";
 
 interface ByteSpan {
   readonly size: number;
   readonly readRange: (offset: number, length: number) => Promise<Buffer>;
 }
-
-const bufferSpan = (bytes: Buffer): ByteSpan => ({
-  size: bytes.length,
-  readRange: (offset, length) => {
-    if (offset < 0 || length <= 0 || offset >= bytes.length)
-      return Promise.resolve(Buffer.alloc(0));
-    return Promise.resolve(
-      bytes.subarray(offset, Math.min(bytes.length, offset + length)),
-    );
-  },
-});
 
 const sourceSpan = (source: ByteSource): ByteSpan => ({
   size: source.size,
@@ -76,11 +66,6 @@ const CONFIG_SEARCH_BUDGET_FACTOR = 4;
 /** Bytes scanned between event-loop turns, so a live abort can be delivered. */
 const TURN_STRIDE = 0x100000;
 const UNTRUSTED = "target-derived-untrusted" as const;
-
-const codeOf = (error: unknown): string | null =>
-  error instanceof Error && "code" in error && typeof error.code === "string"
-    ? error.code
-    : null;
 
 /**
  * Let pending signals and requests run, then honor an abort they raised. The
@@ -267,7 +252,7 @@ const inflateGzipMember = async (
     consumed = inflated.engine.bytesWritten;
   } catch (error) {
     assertArtifactReadActive(signal);
-    const code = codeOf(error);
+    const code = systemCodeFromError(error);
     if (code === "ERR_BUFFER_TOO_LARGE") return { kind: "limit" };
     return code === "Z_BUF_ERROR"
       ? { kind: "truncated", spent: maxOutput }
@@ -1075,7 +1060,7 @@ const bzImageReport = async (
     "file",
     input,
     {
-      span: bufferSpan(member.output),
+      span: bufferByteSource(member.output),
       space: "inflated_payload",
       payload: {
         ...base,

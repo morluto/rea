@@ -101,19 +101,20 @@ well-formed document that is not a Maven project or Gradle module metadata file
 is `unsupported_target` with `details.failure_kind` set to `unsupported`. Document type declarations are
 unsupported. External entities are not resolved.
 
-A POM is counted as a stream before its document tree is built, and one with
-more than 1,048,576 XML nodes (elements, attributes, text, CDATA, comments and
-processing instructions) is refused as a resource limit, as is a report above
-65,536 dependency and constraint rows, 4,096 Gradle variants, or 65,536
-dependency exclusions summed over every row. Each collection is counted before
-its report records are built.
-Unresolved property-reference and coordinate-gap records share a 65,536-record
-allowance. Repeated references within one field are deduplicated in source
-order; the same spelling in different fields or rows remains separate evidence.
-Variant names repeated across dependency and constraint rows are also limited
-to 4,194,304 UTF-16 code units. These fixed parser and report allowances are
-separate from the selected file-read budget; raising `max_file_bytes` does not
-raise them.
+A POM is counted as a stream before its document tree is built. Report
+expansion is bounded by `report_limits` fields (CLI `--report-limits` JSON),
+each counted before its report records are built: `xml_nodes` (1,048,576 XML
+nodes: elements, attributes, text, CDATA, comments and processing
+instructions), `dependency_rows` (65,536 dependency and constraint rows),
+`variants` (4,096 Gradle variants), `exclusions` (65,536 dependency exclusions
+summed over every row), `unresolved_records` (65,536 property-reference and
+coordinate-gap records) and `repeated_variant_name_chars` (4,194,304 UTF-16
+code units of variant names repeated across dependency and constraint rows).
+A refusal reports the field, its effective value and range in `details.limit`;
+raise it on the next call. Repeated references within one field are
+deduplicated in source order; the same spelling in different fields or rows
+remains separate evidence. These report allowances are separate from the
+selected file-read budget; raising `max_file_bytes` does not raise them.
 
 POM profiles, when present, stay unread and unactivated. Declared repositories
 stay unread and are not contacted. Packaging is not defaulted to `jar` when

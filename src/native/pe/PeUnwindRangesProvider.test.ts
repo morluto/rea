@@ -68,6 +68,26 @@ const CHAINED_IMAGE: PeUnwindFixtureOptions = {
 };
 
 describe("x64 PE exception directory", () => {
+  it("names max_entries with the declared entry count", async () => {
+    const refused = await inspect(CHAINED_IMAGE, { max_entries: 2 });
+    if (refused.ok) throw new Error("Expected a max_entries refusal");
+    expect(refused.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_entries",
+        effective_value: 2,
+        default_value: 2_097_152,
+        required_value: 6,
+      },
+    });
+    expect(
+      (await report(CHAINED_IMAGE, { max_entries: 6 })).coverage,
+    ).toMatchObject({
+      total_entries: 6,
+    });
+  });
+
   it("separates primary function entries from chained fragments", async () => {
     const value = await report(CHAINED_IMAGE);
     expect(value.exception_directory).toEqual({

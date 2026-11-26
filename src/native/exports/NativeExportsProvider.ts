@@ -13,31 +13,30 @@ import {
 } from "../../resources/index.js";
 import type { NativeExportsPort } from "../../ports/binaryDiagnostics/NativeExportsPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
-import type { ResourceConstraintRecovery } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
-import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   DEFAULT_NATIVE_EXPORTS_READ_BYTES,
   MAX_INSPECT_NATIVE_EXPORTS_FILE_BYTES,
+  nativeExportBudgetLimit,
   type InspectNativeExportsInput,
 } from "../../domain/native/nativeExports.js";
-import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { NATIVE_EXPORTS_PROVIDER } from "../../domain/investigationProviders.js";
 import {
   BinaryResourceFailure,
-  binaryResourceCeiling,
   binaryResourceAllowance,
+  DEFAULT_NATIVE_STRUCTURE_BYTES,
+  isNativeStructureFailure,
 } from "../../domain/binaryContainer.js";
+import { nativeStructureConstraint } from "../../domain/native/nativeStructureBudget.js";
 import {
   NATIVE_EXPORT_LIMITS,
   type NativeExportLimit,
   parseNativeExportsFromHandle,
 } from "../../domain/native/nativeExportParser.js";
-import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_native_exports";
 const HEADER_PREFIX_BYTES = 4096;
@@ -80,13 +79,15 @@ export class NativeExportsProvider implements NativeExportsPort {
           },
           (handle) =>
             parseNativeExportsFromHandle(
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               { path: input.path, sha256: handle.sha256, bytes: handle.size },
               () => yieldArtifactRead(signal),
+              {
+                rows: input.max_entries,
+                textBytes: input.max_text_bytes,
+                structureBytes:
+                  input.max_structure_bytes ?? DEFAULT_NATIVE_STRUCTURE_BYTES,
+              },
             ),
         );
         assertArtifactReadActive(signal);
@@ -98,32 +99,33 @@ export class NativeExportsProvider implements NativeExportsPort {
   }
 }
 
-/** Recovery for one exhausted allowance, chosen from the parser's structured tag. */
-const limitRecovery = (
-  limit: NativeExportLimit | null,
+/** The control a parser inventory limit names; a declared table count is the complete need. */
+const inventoryLimit = (
+  limit: NativeExportLimit,
   cause: BinaryResourceFailure,
-): ResourceConstraintRecovery => {
-  const maximum = cause.maximum_bytes;
-  switch (limit) {
-    case "rows":
-      return fixedAllowanceOptions(
-        "The native export inventory allowance",
-        "count",
-        { limit: maximum, unit: "entries" },
-      );
-    case "retained_text":
-      return fixedAllowanceOptions(
-        "The native export retained-text allowance",
-        "bytes",
-        { limit: maximum, unit: "bytes" },
-      );
-    case null:
-      return fixedAllowanceOptions(
-        "The native export structural decoding allowance",
-        "parser",
-        binaryResourceCeiling(cause),
-      );
-  }
+) => {
+  const { required } = cause.failure.limit;
+  return {
+    ...nativeExportBudgetLimit(
+      limit === "rows" ? "max_entries" : "max_text_bytes",
+      cause.maximum_bytes,
+    ),
+    ...(typeof required === "number" ? { required_value: required } : {}),
+  };
+};
+
+const exportInventoryConstraint = (
+  failure: BinaryResourceFailure,
+  path: string,
+): AnalysisResourceConstraintError | undefined => {
+  const limit = binaryResourceAllowance(failure, NATIVE_EXPORT_LIMITS);
+  return limit === null
+    ? undefined
+    : parseLimitConstraint(OPERATION, "capacity", failure, {
+        path,
+        retryable: false,
+        limit: inventoryLimit(limit, failure),
+      });
 };
 
 const nativeExportsFailure = (
@@ -143,15 +145,11 @@ const nativeExportsFailure = (
         artifactReadBudgetConstraint(OPERATION, failure, {
           max_file_bytes: input.max_file_bytes,
         }) ??
-        (failure instanceof BinaryResourceFailure
-          ? parseLimitConstraint(OPERATION, "capacity", failure, {
-              path: input.path,
-              ...limitRecovery(
-                binaryResourceAllowance(failure, NATIVE_EXPORT_LIMITS),
-                failure,
-              ),
-            })
-          : undefined),
+        (isNativeStructureFailure(failure)
+          ? nativeStructureConstraint(OPERATION, failure, input.path)
+          : failure instanceof BinaryResourceFailure
+            ? exportInventoryConstraint(failure, input.path)
+            : undefined),
       fileSize: (failure) =>
         artifactFileCeilingConstraint(
           OPERATION,
@@ -164,14 +162,6 @@ const nativeExportsFailure = (
             max_file_bytes: input.max_file_bytes,
           },
         ),
-      unclassified: (failure) =>
-        new ProviderAdapterError(NATIVE_EXPORTS_PROVIDER.id, OPERATION, {
-          cause: failure,
-          diagnostics: {
-            path: input.path,
-            reason: errorMessage(failure),
-          },
-        }),
     }),
   );
   return projectStableArtifactFailure(

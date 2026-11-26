@@ -68,8 +68,8 @@ extraction never writes outside its fresh output root.
 
 - Gzip decompression, including the preparation pass, is charged to the archive plaintext-work allowance `artifact_limits.expanded_bytes`. Its default is the larger of 256 MiB and 500 times the file size.
 - Members opened in archive order share one forward decompression. A member opened out of order starts a new decompression, which is charged again.
-- A pax or GNU long-name record is limited to 1 MiB.
-- Retained member metadata is limited to 64 MiB: a fixed 512 bytes per member plus its path and link bytes.
+- `artifact_limits.tar.extended_header_bytes` (default 1 MiB) bounds one pax or GNU long-name record.
+- `artifact_limits.tar.metadata_bytes` (default 64 MiB) bounds retained member metadata: a fixed 512 bytes per member plus its path and link bytes. A refusal reports either field in `details.reader_limit`.
 - A reader serves at most four member streams at once.
 
 ## CLI

@@ -7,7 +7,7 @@ import {
   AnalysisCleanupLeaseGroup,
   type AnalysisCleanupLease,
   type ArtifactResourceScope,
-  bindArtifactFileCleanup,
+  withArtifactCleanupFailure,
   artifactOperationReason,
   artifactReaderTargetFailure,
 } from "../resources/index.js";
@@ -196,19 +196,7 @@ const mapExportFailure = (
             cause.message,
             { cause, partialObservation: cause.partialObservation },
           ));
-    if (cause.cleanup === undefined) return primary;
-    const error = analysisErrorWithCleanupFailure(
-      primary,
-      new ProviderCleanupError(
-        PROVIDER.id,
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        { cause, operation: OPERATION },
-      ),
-      OPERATION,
-    );
-    bindArtifactFileCleanup(cause, error);
-    return error;
+    return withArtifactCleanupFailure(cause, primary, PROVIDER.id, OPERATION);
   }
   if (cause instanceof z.ZodError)
     return new AnalysisOutputError(OPERATION, cause.message, { cause });

@@ -761,7 +761,10 @@ and their completeness records are not rewritten.
 ## Scenario comparison
 
 `compare_web_captures` and `compare-web-captures` also accept two complete
-browser scenario captures. Steps align only by exact, unique `step_id`.
+browser scenario captures. Over MCP, each may instead be a retained Evidence
+reference to the capture or its summary; see
+[comparison input shapes](../../reference/mcp-contracts.md#comparison-input-shapes).
+Steps align only by exact, unique `step_id`.
 Duplicate IDs, missing counterparts, changed action kinds, and incompatible
 browser/origin capture context are returned as alignment failures. They prevent
 an unchanged claim; observed differences may still prove a changed result.

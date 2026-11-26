@@ -24,7 +24,7 @@ import {
   v8mBaselineFixture,
   v8mMsplimFixture,
 } from "../tests/conformance/ghidra/cortexM.fixture.mjs";
-import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { inspectVerifierGhidraFromEnvironment } from "./lib/ghidra-installation-inspection.mjs";
 import { llvmThumbMnemonics } from "./lib/llvm-thumb-oracle.mjs";
 import {
   requireMcpLifecycleResult,
@@ -36,6 +36,10 @@ import {
   completeVerifierRun,
   createVerifierRun,
 } from "./lib/verifier-run.mjs";
+import {
+  completeEvidenceClient,
+  completeEvidenceCliArguments,
+} from "./lib/complete-evidence.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
@@ -49,13 +53,7 @@ if (process.env.GHIDRA_INSTALL_DIR === undefined)
   throw new Error(
     "Set GHIDRA_INSTALL_DIR to a bring-your-own Ghidra installation.",
   );
-const installation = await inspectVerifierGhidraInstallation({
-  environment: process.env,
-  installDir: process.env.GHIDRA_INSTALL_DIR,
-  ...(process.env.JAVA_HOME === undefined
-    ? {}
-    : { javaHome: process.env.JAVA_HOME }),
-});
+const installation = await inspectVerifierGhidraFromEnvironment(process.env);
 assert.equal(installation.status, "available", JSON.stringify(installation));
 const run = createVerifierRun();
 // Every LLVM and CLI command runs as an owned process tree with a deadline.
@@ -97,7 +95,9 @@ const transport = new StdioClientTransport({
   env,
   stderr: "pipe",
 });
-const client = new Client({ name: "rea-real-cortex-m-proof", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "rea-real-cortex-m-proof", version: "1" }),
+);
 let stderr = "";
 transport.stderr?.on("data", (chunk) => {
   stderr = (stderr + chunk.toString()).slice(-65536);
@@ -506,20 +506,22 @@ async function verifyOddEntryAndCli(fixture, selection, image, path) {
           process.execPath,
           [
             entrypoint,
-            "inspect-native-load-image",
-            path,
-            "--target-format",
-            "raw-binary",
-            "--architecture",
-            "arm",
-            "--architecture-variant",
-            fixture.variant,
-            "--base-address",
-            hex(fixture.base),
-            ...(prefix === 0 ? [] : ["--vector-table-address", address(0)]),
-            "--provider",
-            "ghidra",
-            "--json",
+            ...(await completeEvidenceCliArguments([
+              "inspect-native-load-image",
+              path,
+              "--target-format",
+              "raw-binary",
+              "--architecture",
+              "arm",
+              "--architecture-variant",
+              fixture.variant,
+              "--base-address",
+              hex(fixture.base),
+              ...(prefix === 0 ? [] : ["--vector-table-address", address(0)]),
+              "--provider",
+              "ghidra",
+              "--json",
+            ])),
           ],
           { env, timeout: 240_000, maxBuffer: 16 * 1024 * 1024 },
         )

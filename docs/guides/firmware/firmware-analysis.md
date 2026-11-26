@@ -428,7 +428,8 @@ tree semantics, vulnerability scanning, emulation or hardware runtime capture.
 - Default staging budget: **256 MiB** and **10,000 entries**, configurable using
   `max_output_bytes` / `max_output_files` (CLI `--max-output-bytes` /
   `--max-output-files`). Exceeding either selected staging budget returns a
-  nonretryable resource constraint naming the selected limit. Depth defaults to
+  nonretryable resource constraint whose `details.limit` names the field, its
+  effective value, range and default. Depth defaults to
   3, allowed range 1–10.
 
 Staging budgets are polled and rechecked after exit; short-lived overshoot is

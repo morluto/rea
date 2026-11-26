@@ -19,6 +19,7 @@ import { elfDependenciesViewRequestSchema } from "./elfDependenciesView.js";
 import { javaScriptRoutesViewRequestSchema } from "./javascriptRoutesView.js";
 import { webBundleViewRequestSchema } from "./webBundleView.js";
 import { webPageViewRequestSchema } from "./webPageView.js";
+import { webExecutionViewRequestSchema } from "./webExecutionView.js";
 import { sourceToBundleViewRequestSchema } from "./sourceToBundleView.js";
 import { endpointComparisonViewRequestSchema } from "./endpointComparisonView.js";
 import { featureTraceViewRequestSchema } from "./featureTraceView.js";
@@ -32,6 +33,8 @@ import { cycloneDxViewRequestSchema } from "./cyclonedxView.js";
 import { nativeFunctionMatchingViewRequestSchema } from "./nativeFunctionMatchingView.js";
 import { protobufViewRequestSchema } from "./protobufCaptureView.js";
 import { nativeInventoryViewRequestSchema } from "./nativeInventoryView.js";
+import { evidenceJsonViewRequestSchema } from "./evidenceJsonView.js";
+import { byteEntropyViewRequestSchema } from "./byteEntropyView.js";
 
 import {
   evidenceFileReferenceSchema,
@@ -90,6 +93,8 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   nativeObservationViewRequestSchema,
   nativeContextViewRequestSchema,
   recordedArrayViewSchema,
+  evidenceJsonViewRequestSchema,
+  byteEntropyViewRequestSchema,
   devicetreeViewRequestSchema,
   uefiFirmwareViewRequestSchema,
   uefiExtractionViewRequestSchema,
@@ -100,6 +105,7 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   javaScriptRoutesViewRequestSchema,
   webBundleViewRequestSchema,
   webPageViewRequestSchema,
+  webExecutionViewRequestSchema,
   nativeFunctionMatchingViewRequestSchema,
   sourceToBundleViewRequestSchema,
   endpointComparisonViewRequestSchema,

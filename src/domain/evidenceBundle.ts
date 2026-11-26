@@ -10,7 +10,7 @@ import { err, ok, type Result } from "./result.js";
 import { describeValidationFailure } from "./validationFailure.js";
 import { equalJsonText } from "./jsonSerialization.js";
 import { z } from "zod";
-import { serializeCanonicalValue } from "./canonicalDigest.js";
+import { canonicalJsonSerializer } from "./canonicalDigest.js";
 
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 
@@ -731,14 +731,10 @@ const rejectDependencyCycles = (
 };
 
 /** Encode an already-authenticated bundle as byte-stable RFC 8785 canonical JSON. */
-export const serializeValidatedEvidenceBundle = (
-  bundle: EvidenceBundle,
-): string => {
-  const serialized = serializeCanonicalValue(bundle);
-  if (serialized === undefined)
-    throw new TypeError("Evidence bundle canonicalization failed");
-  return serialized;
-};
+export const serializeValidatedEvidenceBundle =
+  canonicalJsonSerializer<EvidenceBundle>(
+    "Evidence bundle canonicalization failed",
+  );
 
 /** Encode a validated bundle as byte-stable RFC 8785 canonical JSON. */
 export const serializeEvidenceBundle = (bundle: EvidenceBundle): string =>

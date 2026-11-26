@@ -6,8 +6,10 @@ import { localPathStringSchema } from "../domain/localPath.js";
 export const analysisEvidenceDeliveryOptions = {
   detail: z
     .enum(["complete", "summary"])
-    .default("complete")
-    .describe("Deliver complete Evidence, or a summary with --evidence_output"),
+    .optional()
+    .describe(
+      "Omit for complete Evidence when it fits the agent result budget (32768 compact JSON bytes by default, about 11k tokens) and its summary otherwise; complete always delivers everything; summary needs --evidence_output",
+    ),
   evidence_output: localPathStringSchema
     .optional()
     .describe(
@@ -16,11 +18,17 @@ export const analysisEvidenceDeliveryOptions = {
 };
 
 /**
+ * The caller's `--detail`; undefined leaves delivery to the agent result
+ * budget: complete Evidence when it fits, its summary otherwise.
+ */
+export type CliDeliveryDetail = "complete" | "summary" | undefined;
+
+/**
  * Refuse a delivery that cannot keep complete source Evidence available: a
  * summary needs a bundle, and a selected page is cut from a retained summary.
  */
 export const cliEvidenceDeliveryInputError = (input: {
-  readonly detail: "complete" | "summary";
+  readonly detail: CliDeliveryDetail;
   readonly evidenceOutput: string | undefined;
   readonly operation: string;
   readonly view?: AnalysisViewRequest | undefined;
