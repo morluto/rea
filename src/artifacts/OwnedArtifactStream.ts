@@ -92,6 +92,7 @@ export const ownArtifactStream = (
   }
   let producerComplete = false;
   let sourceRetired = false;
+  const upstream: Readable = decode ?? source;
   const cancelRetiredSourceDecode = (): boolean => {
     // Once the source retires its abort listener is gone, while a decoder
     // paused by a slow consumer can still hold undelivered output. It has
@@ -107,18 +108,26 @@ export const ownArtifactStream = (
     decode.destroy(cancellationFailure(signal.reason));
     return true;
   };
+  const canRetireOnAbort = (): boolean =>
+    producerComplete ||
+    (upstream.readableEnded && !upstream.errored && output.writableLength > 0);
   const onAbort = (): void => {
     if (cancelRetiredSourceDecode()) return;
     // Active I/O and validation own failure precedence; cancellation also
-    // retires buffered output after production completes.
-    if (!producerComplete || output.destroyed) return;
+    // retires buffered output after production completes or when upstream
+    // has ended and output is stalled on readable backpressure before flush.
+    if (!canRetireOnAbort() || output.destroyed) return;
     output.destroy(cancellationFailure(signal?.reason));
+  };
+  const onUpstreamEnd = (): void => {
+    if (signal?.aborted) onAbort();
   };
   const retired = new Promise<void>((resolve) => {
     output.once("close", () => {
       streams?.delete(output);
       if (decode !== undefined) streams?.delete(decode);
       signal?.removeEventListener("abort", onAbort);
+      upstream.removeListener("end", onUpstreamEnd);
       resolve();
     });
   });
@@ -128,6 +137,7 @@ export const ownArtifactStream = (
       cancelRetiredSourceDecode();
     });
   signal?.addEventListener("abort", onAbort, { once: true });
+  upstream.once("end", onUpstreamEnd);
   if (signal?.aborted) onAbort();
   output.once("finish", () => {
     // A successful writable finish follows the transform's final validation.

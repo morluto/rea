@@ -9,6 +9,11 @@ const fixture = () => ({
     dependencies: { runtime: "1.0.0" },
     devDependencies: { builder: "1.0.0" },
     overrides: { builder: { nested: "2.0.0" } },
+    scripts: {
+      prepare: "node scripts/prepare.mjs",
+      prepack: "node scripts/prepack.mjs",
+      start: "node scripts/rea.mjs mcp",
+    },
   },
   lock: {
     name: "rea-agents",
@@ -41,10 +46,17 @@ it("preserves locked runtime facts and optional dependencies without mutating so
   const before = structuredClone(source);
   const packed = pluginPackageMetadata(source.manifest, source.lock);
   expect(source).toEqual(before);
+  // @ts-expect-error The projected manifest declares no prepare script.
+  expect(packed.packageJson.scripts?.prepare).toBeUndefined();
+  // An installed package never runs prepare, so npm need not ask to allow it.
   expect(packed.packageJson).toEqual({
     name: "rea-agents",
     version: "6.8.0",
     dependencies: { runtime: "1.0.0" },
+    scripts: {
+      prepack: "node scripts/prepack.mjs",
+      start: "node scripts/rea.mjs mcp",
+    },
     bundleDependencies: ["runtime"],
   });
   expect(packed.shrinkwrap.packages).toEqual({
