@@ -481,7 +481,7 @@ interface DecodeMethodContext {
   readonly memberRefKinds: ReadonlyMap<string, "field" | "method">;
   readonly parameterDefaults: (
     methodRow: number,
-  ) => ManagedMethod["parameter_defaults"];
+  ) => NonNullable<ManagedMethod["parameter_defaults"]> | null;
   readonly selected: SelectedTypeTokens;
   readonly methodOffset: number;
   readonly methodLimit: number;

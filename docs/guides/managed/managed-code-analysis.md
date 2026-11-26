@@ -66,6 +66,10 @@ default: no `ParamPtr` row lists it, or its list position precedes every
 method's run. Such a default could belong to any method. Methods keep their
 other facts and coverage is partial.
 
+Member Evidence saved before REA reported parameter defaults has no
+`parameter_defaults` field. It still loads and pages as before, and its methods
+carry no parameter-default facts; inspect the artifact again to read them.
+
 Boolean, character, signed/unsigned integers, floating-point, UTF-16 strings
 and class-null declarations are supported. `i8` and `u8` values are decimal
 strings to avoid JSON integer precision loss. Floating-point negative zero,

@@ -601,14 +601,19 @@ it("projects parameter defaults from retained method rows", () => {
   });
 });
 
-it("refuses member Evidence that omits parameter defaults", () => {
+it("loads member Evidence saved before parameter defaults were reported", () => {
   const result = inspect(configure(0x1010, []));
+  // Current inspections always report the field.
+  expect(result.methods[0]).toHaveProperty("parameter_defaults");
+  // Evidence from an earlier version has method records without the field.
   const methods = result.methods.map(
     ({ parameter_defaults: _defaults, ...method }) => method,
   );
-  expect(
-    managedMemberInspectionSchema.safeParse({ ...result, methods }).success,
-  ).toBe(false);
+  const saved = managedMemberInspectionSchema.parse({ ...result, methods });
+  expect(saved.methods[0]).not.toHaveProperty("parameter_defaults");
+  expect(comparisonLimitations(saved, saved)).not.toContain(
+    "Parameter Constant-table defaults are not compared; method matching and change detection do not examine them.",
+  );
 });
 
 it("discloses that member comparison does not examine parameter defaults", () => {

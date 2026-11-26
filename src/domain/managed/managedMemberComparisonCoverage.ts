@@ -304,7 +304,7 @@ export const comparisonLimitations = (
     [left, right].some((report) =>
       report.methods.some(
         ({ parameter_defaults: defaults }) =>
-          defaults === null || defaults.length > 0,
+          defaults === null || (defaults !== undefined && defaults.length > 0),
       ),
     )
   )
