@@ -461,7 +461,7 @@ rea inspect-artifact ./main.nso --json
 rea extract-artifact ./main.nso --json
 ```
 
-See [Switch executables](../switch-executables.md) for header facts, segment
+See [Switch executables](../guides/firmware/switch-executables.md) for header facts, segment
 hashes, LZ4 decompression limits and NRO assets.
 
 Inspect local model declarations without loading weights:

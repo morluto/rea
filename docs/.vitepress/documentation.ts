@@ -530,7 +530,7 @@ export const documentationSections = [
       },
       {
         text: "Nintendo Switch NSO and NRO executables",
-        source: "switch-executables.md",
+        source: "guides/firmware/switch-executables.md",
         route: "/switch-executables",
       },
       {

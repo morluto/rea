@@ -1000,7 +1000,7 @@ segments, plus NRO `ASET` icon, NACP and RomFS. Compressed NSO segments are
 LZ4-decoded within `artifact_limits.expanded_bytes` and their SHA-256 compared
 with the header (`hash_status`). Truncated or over-budget segments stay listed
 with unavailable content. See
-[Switch executables](https://github.com/morluto/rea/blob/main/docs/switch-executables.md).
+[Switch executables](https://github.com/morluto/rea/blob/main/docs/guides/firmware/switch-executables.md).
 
 ## ESP images
 
