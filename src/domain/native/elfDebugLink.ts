@@ -101,7 +101,7 @@ export const ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION =
 export const DEFAULT_ELF_DEBUG_CANDIDATE_BYTES = 0xffffffff;
 
 /** Per-call candidate whole-file streaming budget shared by schema and refusals. */
-export const ELF_DEBUG_LINK_CANDIDATE_BUDGET: ParameterBudget = {
+const ELF_DEBUG_LINK_CANDIDATE_BUDGET: ParameterBudget = {
   minimum: 1,
   maximum: Number.MAX_SAFE_INTEGER,
   default_value: DEFAULT_ELF_DEBUG_CANDIDATE_BYTES,
