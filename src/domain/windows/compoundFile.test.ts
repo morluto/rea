@@ -531,6 +531,9 @@ it("keeps a FAT sector at its declared slot ordinal across a free DIFAT slot", (
   // The directory chain still resolves from block 0, so the gap did not move
   // the block that names it.
   expect(image.value.metadata.directory_entry_count).toBe(4);
+  // One FAT sector is listed; the free slot occupies a block ordinal but is
+  // not a sector, so the count must not gain one the file does not hold.
+  expect(image.value.metadata.fat_sector_count).toBe(1);
   expect(image.value.limitations).toContainEqual(
     expect.stringMatching(/free slot\(s\) before a listed FAT sector/u),
   );
@@ -568,6 +571,26 @@ it("caps FAT cells at the blocks that can describe a sector", () => {
   expect(image.value.limitations).toContainEqual(
     expect.stringMatching(/beyond the 1 block\(s\) that can describe/u),
   );
+});
+
+it("counts listed FAT sectors, not the block span a free DIFAT slot leaves", () => {
+  // A 300-sector file admits 3 FAT blocks. DIFAT slots [0, FREE, 3] fill two of
+  // them; the free slot only holds block 1's ordinal open so block 2 is not
+  // read as block 1. Counting the span would report 3 sectors where the file
+  // holds 2, which is the header's own declaration in the reported case.
+  const entriesPerSector = SECTOR / 4;
+  const blockLimit = Math.ceil(300 / entriesPerSector);
+  const bytes = compoundFile({
+    entries: root(undefined, []),
+    totalSectors: 300,
+  });
+  bytes.writeUInt32LE(0, 0x4c);
+  bytes.writeUInt32LE(FREE, 0x50);
+  bytes.writeUInt32LE(3, 0x54);
+  const image = parseCompoundFile(bytes);
+  if (!image.ok) throw new Error(image.error.message);
+  expect(blockLimit).toBe(3);
+  expect(image.value.metadata.fat_sector_count).toBe(2);
 });
 
 it("refuses a directory whose root storage is not entry 0", () => {

@@ -580,6 +580,11 @@ export const parseCompoundFile = (
   // every id would allocate a cell per listed block and let a near-ceiling
   // malformed file reserve hundreds of MiB for cells no chain can reach.
   const fatBlockLimit = Math.ceil(sectorCount / entriesPerSector);
+  // A block ordinal span and the sectors that fill it are different facts: a
+  // free DIFAT slot keeps its block in place so chains resolve against the
+  // right cells, but it contributes no FAT sector and must not be counted as
+  // one in `fat_sector_count`.
+  const fatBlocksUsed = Math.min(new Set(fatBlockOrdinals).size, fatBlockLimit);
   const excessFatBlocks = Math.max(0, fatSectorIds.length - fatBlockLimit);
   // DIFAT order defines which FAT indexes each sector supplies, so a block is
   // kept at the ordinal its DIFAT slot declares: skipping a free slot would
@@ -1120,7 +1125,7 @@ export const parseCompoundFile = (
     major_version: majorVersion,
     sector_bytes: sectorBytes,
     mini_sector_bytes: miniSectorBytes,
-    fat_sector_count: table.length / entriesPerSector,
+    fat_sector_count: fatBlocksUsed,
     difat_sector_count: difatSectors.length,
     directory_entry_count: entries.length,
     stream_count: streamCount,
