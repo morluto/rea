@@ -12,14 +12,24 @@ no-overwrite CLI delivery. It checks the target and project files for changes.
 - `../c/riscv.c` and `riscv-probe.S` produce source-owned RV32/RV64 ELF images
   with double-float ABI declarations and an independently known instruction.
   `../c/riscv-float-abi.c`, `riscv-probe.S` and `riscv-isa-probe.S` produce
-  typed and stripped RV32 ilp32 images whose calls cover every rule of the ilp32
-  policy; `riscv-checks.mjs` holds that policy's expected storage and the
-  call-site oracle. `npm run verify:ghidra:riscv` exercises real CLI/MCP
+  typed and stripped RV32 ilp32 and ilp32f images whose calls cover every rule
+  of the ilp32 and ilp32f policies, and an ilp32f image the bridge must refuse;
+  `riscv-checks.mjs` holds each policy's expected storage and the call-site
+  oracle. `npm run verify:ghidra:riscv` exercises real CLI/MCP
   discovery, decompilation, argument storage, output schemas, profile and
   snapshot identity, admission and refusal diagnostics, immutable source bytes,
-  and owned cleanup. It requires BYO Ghidra 12.1.4/JDK 21+ and RISC-V
+  and owned cleanup. It requires BYO Ghidra 12.2/JDK 25+ and RISC-V
   Clang/LLD/LLVM readelf/LLVM objdump; `REA_RISCV_CLANG`, `REA_RISCV_LLD`,
   `REA_RISCV_READELF` and `REA_RISCV_OBJDUMP` select existing tool commands.
+
+- `../c/ppc64.c` and `ppc64-probe.S` produce source-owned ELFv2 PPC64
+  executables in both byte orders, with TOC-using functions that have separate
+  global and local entries and a VSX instruction only Power ISA languages
+  decode. `npm run verify:ghidra:ppc64` exercises real CLI/MCP discovery,
+  decompilation, the bound language, instruction bytes in file byte order,
+  ELFv2 entry thunks, snapshot identity and shared-object refusal. It requires
+  BYO Ghidra 12.2/JDK 25+, PowerPC Clang/LLD and GNU readelf;
+  `REA_PPC_CLANG` and `REA_PPC_READELF` select existing tool commands.
 
 - `ReaInstructionContextProbe.java` inspects source-owned ARM, Thumb, MIPS32
   and MIPS16 instructions through the production bridge in an ephemeral,
@@ -70,7 +80,15 @@ no-overwrite CLI delivery. It checks the target and project files for changes.
   that `analyze_function` still returns that function's assembly, callers,
   callees, references and basic blocks unchanged, marks pseudocode, native API
   and p-code value flow unavailable with the decompiler's reason, and that
-  cancellation still ends the request. Run `npm run build:cached`, then
+  cancellation still ends the request. It also injects a read-ahead window
+  whose carrying function times out beside a sibling that never finishes, and
+  checks that the request reports that timeout without decompiling again,
+  waits only within its own deadline, leaves the cancelled sibling uncached,
+  uses REA's own thread pool, and clamps a longer hint to one window. It
+  checks that a read without decompiler options keeps the configured payload
+  limit and completed decompiles while an explicit `null` restores the Ghidra
+  default, and that a repeated decompile of code outside every function keeps
+  the body Ghidra widened. Run `npm run build:cached`, then
   `node scripts/verify-real-ghidra-decompiler-failure.mjs` on Linux or macOS
   x64/arm64. The lane also parses the degraded dossier with REA's Ghidra output
   contract and checks the healthy provider path through the real read-only TCP bridge.
@@ -106,9 +124,9 @@ no-overwrite CLI delivery. It checks the target and project files for changes.
 
 `scripts/verify-real-ghidra.mjs` uses `cc`, `clang`, and `lld-link` by default;
 `REA_CC`, `REA_CLANG`, and `REA_LLD_LINK` can select alternate commands. The
-verifier requires the verified bring-your-own Ghidra 12.1.4 installation through
+verifier requires the verified bring-your-own Ghidra 12.2 installation through
 `GHIDRA_INSTALL_DIR` and validates header classification before starting the
-provider. Provider admission accepts newer 12.x (>=12.1) builds with an unverified-build limitation; this lane does
+provider. Provider admission accepts other 12.x (>=12.2) builds with an unverified-build limitation; this lane does
 not.
 
 Conformance compares semantic facts: provider/profile identity, function

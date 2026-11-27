@@ -43,7 +43,7 @@ describe("Webpack and Rspack runtime adapters", () => {
       bundler: "webpack",
       runtime_require_name: "__webpack_require__",
       runtime_module_cache_status: "not-observed",
-      entry_module_keys: ["10"],
+      entry_module_keys: ["10", "missing"],
       async_chunk_keys: ["lazy", "missing"],
       unknown_async_chunk_keys: 1,
     });
@@ -106,16 +106,27 @@ describe("Webpack and Rspack runtime adapters", () => {
       }),
     });
 
-    expect(
-      graph.nodes.find((node) =>
-        node.observations.some(
-          ({ properties }) =>
-            properties.semantic_role === "bundler-chunk-reference" &&
-            properties.chunk_key === "missing" &&
-            properties.resolution_status === "not-found",
-        ),
-      ),
-    ).toBeDefined();
+    for (const [kind, relation] of [
+      ["module", "loads"],
+      ["chunk", "imports"],
+    ] as const) {
+      const missing = graph.nodes.find(
+        (node) =>
+          node.kind === `javascript-${kind}` &&
+          node.observations.some(
+            ({ properties }) =>
+              properties.semantic_role === `bundler-${kind}-reference` &&
+              properties[`${kind}_key`] === "missing" &&
+              properties.resolution_status === "not-found",
+          ),
+      );
+      expect(
+        findGraphEdge(graph, webpackEntry, missing, relation),
+      ).toMatchObject({
+        evidence: { confidence: "low" },
+        properties: { resolution_status: "not-found" },
+      });
+    }
     expect(
       graph.edges.some(
         ({ relation, properties }) =>
@@ -195,6 +206,7 @@ const bundlerFixture = async (): Promise<string> => {
         },
         (__webpack_require__) => {
           __webpack_require__.O(0, ["main"], () => __webpack_require__(10));
+          __webpack_require__("missing");
         }
       ]);
       (globalThis["webpackChunkcustomPortal"] = globalThis["webpackChunkcustomPortal"] || []).push([

@@ -150,7 +150,9 @@ CLI supplies this object as JSON with `--producer-limits`, for example
 `--producer-limits '{"input_bytes":67108864,"output_bytes":8388608,"cpu_seconds":60}'`.
 Values apply to the next call without restarting REA. Effective native ceilings
 still preserve any tighter inherited soft and hard limit. Errors identify the
-exhausted producer control and retain partial output and cleanup status; follow
+exhausted producer control in `details.limit` (`parameter:
+"producer_limits.<field>"`, with its effective value and default) and retain
+partial output and cleanup status; follow
 that repair after cleanup settles. Raising producer budgets does not raise
 separate parser representations, transport buffers or external client deadlines.
 Never truncate the selected artifact to fit an input budget.
@@ -172,8 +174,7 @@ The real-tool lane requires Linux and TShark 4.x. A separate kernel-limit
 regression checks the inherited soft/hard limits and verifies an oversized
 allocation is refused before it can consume memory. The Ubuntu workflow uses
 its distribution package; check its outcome before claiming that build verified.
-The earlier macOS check does not establish the current bounded integration,
-which deliberately refuses unsupported hosts. Other formats (including PCAPNG),
+Other formats (including PCAPNG),
 USB, BLE ATT and actual physical capture are not established by these fixtures.
 
 Each provider admits one inspection at a time, including acquisition and cleanup.
@@ -196,10 +197,11 @@ rea inspect-packet-fields --kind fields --protocol udp --all
 selects an exact protocol abbreviation (the protocol itself or its child fields).
 `query` is a case-insensitive literal substring in name, abbreviation or field
 description. `offset` skips matching records; `limit` defaults to 50. MCP
-`limit: null` or CLI `--all` requests all remaining matches within the resource
-budget. `--all` and `--limit` conflict. The window reports examined records of
-the selected kind before filters, matching records, returned records and
-`has_more`; it never counts capture packets.
+`limit: null` or CLI `--all` requests all remaining matches, up to one page
+record budget. `--all` and `--limit` conflict. The window reports examined
+records of the selected kind before filters, matching records, returned
+records, `has_more` and `record_budget_reached`; it never counts capture
+packets.
 
 Returned records preserve field type, parent protocol, display base, bitmask,
 description and original glossary line number. Empty producer strings remain
@@ -215,10 +217,13 @@ can change either request budget. Parsing walks lines once and
 constructs objects only for the selected page. Returned strings are copied so
 retained pages do not retain the complete glossary string. Before constructing a selected
 record it charges six times the source UTF-8 bytes plus 512 bytes against an
-**8 MiB** representation budget, covering JSON escaping and record bookkeeping.
-If that budget would be exceeded, narrow the query or page size; results are not
-silently truncated. This is a conservative admission budget, not measured heap
-usage. Parent pipe buffers and producer per-process limits remain distinct.
+**8 MiB** page record budget, covering JSON escaping and record bookkeeping.
+A page whose next record would exceed it ends there with `has_more: true` and
+`record_budget_reached: true`; continue with `offset` set to the previous
+`offset` plus `returned`. The first record of a page is always returned, since
+it is bounded by the admitted output. This is a conservative estimate, not
+measured heap usage. Parent pipe buffers and producer per-process limits remain
+distinct.
 
 Tool/limiter identity, version, stderr and selected arguments are retained in
 Evidence. No capture, interface or device is opened. Discovery shares capture

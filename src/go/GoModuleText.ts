@@ -38,10 +38,16 @@ const quoted = (input: string): { value: string; end: number } | null => {
     }
     if (character === "\n") return null;
     if (character !== "\\") {
-      const point = input.codePointAt(index);
-      if (point === undefined) return null;
-      length += output.write(String.fromCodePoint(point), length, "utf8");
-      index += point > 0xffff ? 2 : 1;
+      const start = index;
+      do {
+        index += 1;
+      } while (
+        index < input.length &&
+        input[index] !== '"' &&
+        input[index] !== "\n" &&
+        input[index] !== "\\"
+      );
+      length += output.write(input.slice(start, index), length, "utf8");
       continue;
     }
     const escaped = input[index + 1];

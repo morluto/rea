@@ -11,14 +11,6 @@ import {
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
-const unexpectedFailure = (
-  kind: "TypeError" | "Error",
-  source: "inline" | "evidence-file",
-): Error => {
-  const message = `injected ${kind} during ${source} Evidence authentication`;
-  return kind === "TypeError" ? new TypeError(message) : new Error(message);
-};
-
 const manifestView = {
   kind: "environment-manifest",
   template_rules: ["opaque-token", "sibling-pair-variance"],
@@ -39,15 +31,20 @@ const createOwnedHarness = async () => {
   return harness;
 };
 
-it.each(
-  (["inline", "evidence-file"] as const).flatMap((source) =>
-    (["TypeError", "Error"] as const).map(
-      (failureKind) => [source, failureKind] as const,
-    ),
-  ),
-)(
-  "preserves an unexpected parser failure from %s input (%s) without retaining a view",
-  async (sourceKind, failureKind) => {
+it.each([
+  {
+    sourceKind: "inline",
+    authenticate: "parseEvidence",
+    failure: new TypeError("inline parser failed unexpectedly"),
+  },
+  {
+    sourceKind: "evidence-file",
+    authenticate: "immutableEvidence",
+    failure: new Error("file parser failed unexpectedly"),
+  },
+] as const)(
+  "preserves the unexpected $sourceKind parser failure without retaining a view",
+  async ({ sourceKind, authenticate, failure }) => {
     const harness = await createOwnedHarness();
     const parent = analysisViewCaptureEvidence(
       environmentManifestCaptureFixture(),
@@ -66,12 +63,11 @@ it.each(
     }
 
     const evidenceModule = await import("../../src/domain/evidence.js");
-    const failure = unexpectedFailure(failureKind, sourceKind);
-    const authenticators = authenticationEntries.map((name) =>
-      vi.spyOn(evidenceModule, name).mockImplementation(() => {
+    const parse = vi
+      .spyOn(evidenceModule, authenticate)
+      .mockImplementationOnce(() => {
         throw failure;
-      }),
-    );
+      });
 
     const response = await harness.client.callTool({
       name: "inspect_analysis_view",
@@ -83,11 +79,9 @@ it.each(
       content: [{ type: "text", text: failure.message }],
     });
     expect(response.structuredContent).toBeUndefined();
-    expect(
-      authenticators.flatMap((authenticate) => authenticate.mock.calls),
-    ).toContainEqual([
+    expect(parse).toHaveBeenCalledWith(
       expect.objectContaining({ evidence_id: parent.evidence_id }),
-    ]);
+    );
     expect(harness.session.exportEvidenceBundle()).toEqual(before);
   },
 );

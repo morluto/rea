@@ -7,6 +7,11 @@ import {
 import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionOperations.js";
 import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryOperations.js";
 import { GHIDRA_MUTATING_OPERATIONS } from "./GhidraSessionValues.js";
+import {
+  DEFAULT_GHIDRA_CANCEL_GRACE_MS,
+  GHIDRA_CANCEL_GRACE_SETTING,
+  type GhidraCancelGrace,
+} from "../config/ghidraCancelGrace.js";
 import { ghidraLoadImageVerificationNote } from "./GhidraVerifiedLoadImageFormats.js";
 import {
   EXISTING_PROJECT_WINDOWS_REMEDIATION,
@@ -28,12 +33,23 @@ const providerOperations = Object.freeze([
   ...GHIDRA_FUNCTION_OPERATIONS,
 ]);
 
-/** Health limitations shared by every Ghidra-backed capability. */
-export const healthLimitations = Object.freeze([
+/**
+ * The grace one session applies; without a session, the control and its
+ * default, since a launch value is only read when a session is created.
+ */
+const cancelGraceClause = (cancelGrace: GhidraCancelGrace | undefined) =>
+  cancelGrace === undefined
+    ? `within the cancel grace, as a decompilation does (${GHIDRA_CANCEL_GRACE_SETTING}, default ${String(DEFAULT_GHIDRA_CANCEL_GRACE_MS)} ms; a session's limitations state the value it applies)`
+    : `within ${String(cancelGrace.graceMs)} ms, as a decompilation does (${GHIDRA_CANCEL_GRACE_SETTING}, ${cancelGrace.source === "setting" ? "set at launch" : "default"})`;
+
+/** Health limitations shared by every fresh-import Ghidra capability. */
+const healthLimitations = (
+  cancelGrace: GhidraCancelGrace | undefined,
+): readonly string[] => [
   "The session serves operations only after Ghidra reports default auto-analysis complete; incomplete analysis does not expose partial results.",
   "Ghidra Program checkpoint mode is disabled: closing discards metadata edits; original executable bytes are unchanged. For stock ELF/PE/Mach-O on Linux/macOS, set REA_GHIDRA_CHECKPOINT_DIR to a private absolute directory before starting REA (restart MCP after changing its startup environment).",
-  "Cancelling an active Ghidra request terminates its ephemeral database and discards session annotations. The selected target remains open; the next provider query imports the original artifact again.",
-]);
+  `Cancelling an active Ghidra read request stops only that request when Ghidra answers it ${cancelGraceClause(cancelGrace)}. Cancelling an active edit (${[...GHIDRA_MUTATING_OPERATIONS].join(", ")}), or a read Ghidra does not answer in time, terminates the ephemeral database and discards session annotations; the selected target remains open and the next provider query imports the original artifact again.`,
+];
 
 /** Additional limitations applied to the experimental Windows x64 P0 boundary. */
 export const windowsP0Limitations = Object.freeze([
@@ -47,9 +63,14 @@ export type GhidraSessionSource =
   | "existing-project"
   | "owned-checkpoint";
 
-/** Existing databases have their own unknown analysis history; reopening does not complete it. */
+/**
+ * Existing databases have their own unknown analysis history; reopening does
+ * not complete it. `cancelGrace` is the grace a session applies; capability
+ * descriptors, which no session owns, omit it.
+ */
 export const ghidraHealthLimitations = (
   source: GhidraSessionSource = "fresh-import",
+  cancelGrace?: GhidraCancelGrace,
 ): readonly string[] =>
   source === "existing-project"
     ? [
@@ -60,10 +81,10 @@ export const ghidraHealthLimitations = (
     : source === "owned-checkpoint"
       ? [
           "Ghidra Program checkpoint mode is enabled (REA_GHIDRA_CHECKPOINT_DIR). Opening the same target/profile automatically restores saved analysis, names, comments and types; no separate save or restore tool is needed. Restored analysis is retained state, not a fresh discovery.",
-          "REA saves initial completed analysis and metadata changes on normal close (close_binary in MCP). A failed save retains the live session for close retry. Cancellation or process failure can lose changes after the last successful save; unfinished initial auto-analysis is not resumable.",
+          "REA saves initial completed analysis and metadata changes on normal close (close_binary in MCP). A failed save retains the live session for close retry. Sessions can share a target; a save is refused when another session saved first, and its edits must be reapplied after reopening. Cancellation or process failure can lose changes after the last successful save; unfinished initial auto-analysis is not resumable.",
           "The live project is a temporary working copy. Checkpoints persist in REA_GHIDRA_CHECKPOINT_DIR; source executables and caller-selected source projects are not modified.",
         ]
-      : healthLimitations;
+      : healthLimitations(cancelGrace);
 
 const stringInventoryLimitation =
   "Only Ghidra-defined string Data is observed; packed or undefined string bytes may be absent. Completeness applies to that inventory, and an empty search does not establish that text is absent from the artifact. If an address is known, use read_bytes and xrefs to inspect bytes and references.";
@@ -123,36 +144,69 @@ export const ghidraNotInProcedureLimitation = (
 ): string =>
   `Ghidra has no function at or containing this address in this session. This reflects the current function inventory, not proof that the address holds no code. ${ghidraFunctionSeedRecovery(source)}`;
 
+/**
+ * Attached to a not-in-listing instruction: Ghidra attempted no decode, so the
+ * answer does not show the bytes are data. Names the `code` seed recovery.
+ */
+export const ghidraNotInListingLimitation = (
+  source: GhidraSessionSource,
+): string =>
+  `Ghidra's listing has no instruction or defined data at this address in this session, so no decode was attempted; this is not proof that the bytes are not code. If they are initialized code that auto-analysis did not reach, declare the address as a \`code\` seed, or a \`function\` seed for an entry point, in REA_GHIDRA_SEED_FILE for a new REA process${seedSessionRestriction[source]}; that session's seed outcome limitation counts decoded, failed and unmapped seeds.`;
+
+/**
+ * Facts every operation in one Ghidra session shares. They describe the
+ * session, not the call, so the session owner can state them once.
+ */
+export const ghidraSessionCommonLimitations = (
+  source: GhidraSessionSource = "fresh-import",
+  cancelGrace?: GhidraCancelGrace,
+): readonly string[] => [
+  ...ghidraHealthLimitations(source, cancelGrace),
+  "Default-space addresses use lowercase 0x-prefixed hexadecimal; other address spaces use <percent-encoded-space>:0x<hex>.",
+];
+
 /** Limitation text for one admitted operation, including the common base. */
 export const limitationsFor = (
   operation: string,
   source: GhidraSessionSource = "fresh-import",
+): readonly string[] => [
+  ...ghidraSessionCommonLimitations(source),
+  ...ghidraOperationLimitations(operation, source),
+];
+
+/** Limitation text that belongs to one operation, without the session base. */
+export const ghidraOperationLimitations = (
+  operation: string,
+  source: GhidraSessionSource = "fresh-import",
 ): readonly string[] => {
-  const common = [
-    ...ghidraHealthLimitations(source),
-    "Default-space addresses use lowercase 0x-prefixed hexadecimal; other address spaces use <percent-encoded-space>:0x<hex>.",
-  ];
   switch (operation) {
     case "read_binary_inventory_summary":
       return [
-        ...common,
         stringInventoryLimitation,
         "Counts use the complete defined-string inventory and the same local/external function inventory as list_strings and list_procedures. They do not establish discovery of undefined strings or unidentified functions.",
         "Memory-block end addresses are exclusive; segment lengths use those observed address coordinates.",
       ];
     case "annotate_native_function":
       return [
-        ...common,
         "Names use Ghidra USER_DEFINED source. Name writes accept a leaf name or a fully qualified name within the existing namespace; readback uses the fully qualified name and can be reused without adding namespace prefixes. Edits retain the current namespace; other namespace-like text remains literal leaf-name text. Regular comments map to PRE and inline comments to EOL at the exact function entry. Changes commit together after readback and refreshed analysis; failure rolls them all back.",
+        "A signature is one C prototype, parsed by Ghidra's C parser against the database's types and applied with USER_DEFINED source and Ghidra-assigned parameter storage; annotations.signature_source reports that source. The prototype's function name is not applied. When the function has no calling convention and the prototype names none, the compiler specification's default convention, which Ghidra uses to assign that storage, is recorded; annotations.calling_convention reports the result. const, volatile, restrict, __unaligned and __w64 have no Ghidra representation and are not recorded; dropped_qualifiers lists each one with its line, column and parameter. _Noreturn is applied.",
+        "Refused with nothing applied: a thunk; an undefined type; a type name the database holds as different types; attributes, __declspec, _Alignas and asm labels; __ptr32, __ptr64, __near and __far; storage-class and inline specifiers; preprocessor directives; string and character literals; a function body, default argument or second declaration; function-pointer parameters; a repeated parameter name; a prototype Ghidra would apply differently (an array parameter, a parameter name another symbol holds, a calling convention the compiler specification lacks); and a prototype Ghidra's parser reports a diagnostic for. An undefined type name without struct, union or enum is reported as a syntax error at the next token. Ghidra's C parser cannot be cancelled: signature_max_utf16 (default 2048, range 16..4096) bounds the prototype's length and parenthesis_max_depth (default 8, range 1..12) its nesting.",
         "Annotation text rejects NUL and unpaired Unicode surrogates before mutation, with the field and UTF-16 index in the error. Supported Unicode and line endings are preserved.",
         source === "owned-checkpoint"
           ? "Metadata edits invalidate immutable analysis snapshots. Normal close saves edits to the owned checkpoint; cancellation or process failure can lose edits after the last successful save. CLI returns the updated dossier before cleanup."
           : "Metadata edits invalidate immutable analysis snapshots and are discarded on close. CLI returns the updated dossier before session cleanup; this is not a saved Ghidra project.",
       ];
+    case "define_native_data_types":
+      return [
+        "Definitions are parsed by Ghidra's C parser and stored in category /rea_caller_defined; inspect_native_data_type reports them with source caller-defined. They are the caller's assertions about layout, not observations of the target. Layout follows the program's data organization. Applied as written: #pragma pack (including push and pop), bit-fields, flexible and zero-length array members (stored with size 0), enum values, several typedef declarators, and function-pointer members and typedefs of the form ret (*name)(parameters), including (**name) and (*name[N]) and a calling convention written before the parenthesis. Each function-pointer type is stored as owner.member, or typedef.target for a typedef, and inspect_native_data_type reports its prototype as function_definition. const, volatile, restrict, __unaligned and __w64 have no Ghidra representation and are not recorded; dropped_qualifiers lists each one with its line and column.",
+        "Refused with nothing stored: a type name the database already holds in any category, unless it is an equivalent caller-defined type, which reports unchanged; a member type name the database holds as different types; attributes (including packed, aligned and [[...]]), __declspec, __readableTo, _Alignas and asm labels; __ptr32, __ptr64, __near and __far; __pragma, _Static_assert and Objective-C @ blocks; storage-class specifiers; variable declarations and any statement that is not a struct, union, enum or typedef definition; preprocessor directives other than #pragma pack in a form Ghidra applies; string and character literals; function declarations and function types; in a function pointer, an empty parameter list (write (void)), a calling convention inside the parenthesis, _Noreturn, a parameter without a known type and a nested function-pointer parameter (typedef it instead); structs, unions or enums without members, including the empty enum Ghidra invents for an undefined tag; repeated member names; unnamed struct, union or enum definitions other than a typedef of an unnamed struct or union; an enum value, array size or bit-field width other than one decimal or hex integer literal within int, optionally negated (Ghidra evaluates expressions differently from C; write the computed value); a type chained more than 256 levels deep; and text Ghidra's parser reports a diagnostic for, such as a repeated enumerator name. Ghidra's C parser cannot be cancelled: declarations_max_utf16 (default 4096, range 16..8192) bounds the text's length, and a parenthesis outside a function-pointer declarator is refused, since Ghidra stores no other parenthesized form in a definition as written; split larger sets across calls.",
+        source === "owned-checkpoint"
+          ? "Metadata edits invalidate immutable analysis snapshots. Normal close saves edits to the owned checkpoint; cancellation or process failure can lose edits after the last successful save."
+          : "Metadata edits invalidate immutable analysis snapshots and are discarded on close; this is not a saved Ghidra project.",
+      ];
     case "set_address_name":
     case "set_addresses_names":
       return [
-        ...common,
         "Names use Ghidra USER_DEFINED source. A local function entry renames that function; any other mapped address receives a new or renamed primary label. Existing symbols retain their namespace and accept leaf names or qualified names within that namespace; qualified readback can be reused without adding namespace prefixes. Readback compares the primary symbol name.",
         operation === "set_address_name"
           ? "A name held by another address in the destination namespace is not moved; a false result reports its reason in raw_result.failures."
@@ -162,94 +216,80 @@ export const limitationsFor = (
           : "Metadata edits invalidate immutable analysis snapshots and are discarded on close; this is not a saved Ghidra project.",
       ];
     case "inspect_native_load_image":
-      return [...common, ghidraLoadImageVerificationNote()];
+      return [ghidraLoadImageVerificationNote()];
     case "read_bytes":
       return [
-        ...common,
         "Bytes reflect Ghidra's initialized memory, including loader fixups. Reads stop at an unmapped or uninitialized byte and report completeness explicitly.",
       ];
     case "search_bytes":
       return [
-        ...common,
-        "Searches contiguous eligible initialized loader-adjusted memory in provider address order, including across adjacent blocks. Bounds and page coverage ends are inclusive. Unbounded searches separately list skipped unloaded blocks and loaded overlays; use an overlay address-space bound to search it. Uninitialized blocks are listed separately and break search runs. Overlapping matches are included. A cursor resumes the same target, profile and query. Cancellation discards the active search and returns no successful partial page.",
+        "Searches contiguous eligible initialized loader-adjusted memory in provider address order, including across adjacent blocks. Bounds and page coverage ends are inclusive. Unbounded searches separately list skipped unloaded blocks and loaded overlays; use an overlay address-space bound to search it. Uninitialized blocks are listed separately and break search runs. Overlapping matches are included. A cursor resumes the same target, profile and query; it does not pin match metadata. Procedure names and other match metadata are read live on each page, so a rename in this session between pages appears on later pages. Cancellation discards the active search and returns no successful partial page.",
       ];
     case "address_to_file_offset":
       return [
-        ...common,
         "Offsets come from Ghidra source-byte mappings, not virtual-address arithmetic. Uninitialized memory, missing mappings and ambiguous mappings fail explicitly.",
       ];
     case "list_documents":
       return [
-        ...common,
         "A headless Ghidra session contains exactly one imported Program, unlike Hopper's multi-document GUI session.",
       ];
     case "list_names":
       return [
-        ...common,
         "The symbol inventory includes memory and external symbols, including dynamic symbols, but excludes variable and no-address namespace records.",
       ];
     case "list_procedures":
     case "procedure_address":
       return [
-        ...common,
         "External functions and local thunks are distinct; procedure metadata identifies both and preserves a thunk target when Ghidra resolves one.",
+        "The inventory lists Ghidra functions. Code Ghidra disassembled without creating a function, such as main in a stripped ELF, is absent: list_names reports it as a label, and procedure_pseudo_code decompiles it by address.",
       ];
     case "list_strings":
       return [
-        ...common,
         stringInventoryLimitation,
         "Charset is reported, while a non-missing terminator cannot distinguish a present terminator from a fixed or Pascal layout.",
       ];
     case "resolve_containing_procedure":
       return [
-        ...common,
         "An exact external entry resolves to its observed function identity even when its body is empty. This does not establish mapped executable bytes or containment of nearby external addresses.",
       ];
     case "list_segments":
       return [
-        ...common,
         "Memory-block end addresses are exclusive; permissions come from Ghidra MemoryBlock flags rather than inference from section names.",
       ];
     case "search_procedures":
-      return [...common, searchLimitation];
+      return [searchLimitation];
     case "search_strings":
-      return [...common, stringInventoryLimitation, searchLimitation];
+      return [stringInventoryLimitation, searchLimitation];
     case "procedure_pseudo_code":
       return [
-        ...common,
         "Pseudocode is Ghidra decompiler output, not original source and not text-equivalent to Hopper output.",
         "External functions and functions without an analyzable body return null; other decompiler failures remain explicit.",
       ];
     case "read_function_instructions":
       return [
-        ...common,
         "This fast path reads only the requested function and does not invoke the decompiler or whole-program string/name inventories.",
         "Instruction text is Ghidra-specific and does not claim textual equivalence with Hopper output.",
       ];
     case "procedure_assembly":
       return [
-        ...common,
         "Assembly is Ghidra Listing text and does not claim textual equivalence with Hopper output.",
       ];
     case "procedure_callers":
     case "procedure_callees":
-      return common;
+      return [];
     case "xrefs":
       return [
-        ...common,
         "The direct address list projects exact Ghidra references to one address but does not expose their kinds; procedure_references and analyze_function preserve available kind metadata.",
         "Synthetic Ghidra entry-point references without actionable memory sources are omitted.",
       ];
     case "procedure_references":
       return [
-        ...common,
         "References cover the complete Ghidra function-body AddressSet and exact entry, including instruction-interior destinations and embedded-data sources; an enclosing address span does not establish function ownership.",
         "Reference kinds are direct Ghidra ReferenceManager observations; unresolved computed flows without a target are absent and remain unknown.",
         "Synthetic Ghidra entry-point references without actionable memory sources are omitted.",
       ];
     case "analyze_function":
       return [
-        ...common,
         "References cover the complete Ghidra function-body AddressSet and exact entry. Dossier incoming edges omit sources owned by that function; procedure_references also retains those internal edges.",
         "The dossier combines Ghidra FunctionManager, Listing, ReferenceManager, BasicBlockModel, and decompiler observations; provider-specific pseudocode and assembly are not cross-provider text invariants.",
         "Resolved reference metadata identifies computed, indirect, external, call, jump, and data edges; unresolved targetless flows remain unknown, and function classifications distinguish thunks and externals.",
@@ -257,7 +297,7 @@ export const limitationsFor = (
         "The Java bridge serializes one function request per Program. Decompilation runs until completion or caller cancellation unless REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS sets a per-function limit. That limit stops the requested decompile without requesting session closure; caller cancellation requests session closure.",
       ];
     default:
-      return common;
+      return [];
   }
 };
 
@@ -274,7 +314,8 @@ export const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
       reason: null,
       // Dossier projections consume runtime budgets. Reobserve even an imported
       // snapshot so a raised or lowered budget cannot replay stale flow coverage.
-      // Ghidra retains its own native decompiler cache.
+      // The Java bridge keeps completed decompilations of the current Program
+      // state, so reobserving does not run the native decompiler again.
       ...(GHIDRA_MUTATING_OPERATIONS.has(operation) ||
       operation === "list_documents"
         ? {}

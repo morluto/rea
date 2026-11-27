@@ -19,15 +19,7 @@ import type {
 } from "../../../../src/hopper/BridgeLauncher.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import { waitFor } from "../../../support/testWait.js";
-
-const stop = async (child: ChildProcess): Promise<void> => {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  const exited = new Promise<void>((resolve) =>
-    child.once("exit", () => resolve()),
-  );
-  child.kill("SIGKILL");
-  await exited;
-};
+import { stopProviderProcessFixture } from "../../../fixtures/providerProcess.js";
 
 // The GUI is a sibling owned by the test, never a descendant owned by REA's helper.
 class ExternalBridgeLauncher implements BridgeLauncher {
@@ -87,7 +79,9 @@ const setup = (
   onTestFinished(async () => {
     await client.close();
     await Promise.all(
-      [...launcher.helpers, ...launcher.fixture.processes].map(stop),
+      [...launcher.helpers, ...launcher.fixture.processes].map(
+        stopProviderProcessFixture,
+      ),
     );
     await Promise.all(
       launcher.sessions.map(({ directory }) =>
@@ -127,7 +121,7 @@ it.each(["missing", "not-listening"] as const)(
     onTestFinished(async () => {
       await Promise.all(
         [...(helper === undefined ? [] : [helper]), ...fixture.processes].map(
-          stop,
+          stopProviderProcessFixture,
         ),
       );
       if (session !== undefined)

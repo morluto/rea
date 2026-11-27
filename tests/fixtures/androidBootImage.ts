@@ -391,19 +391,6 @@ export const truncateImage = (image: Buffer): Buffer => {
   return Buffer.from(image.subarray(0, Math.max(0, end - 1)));
 };
 
-/**
- * Rewrite a v4 vendor table count. `entry_size` stays 108 and `table_size`
- * becomes `count * 108`.
- */
-export const declareVendorRamdiskCount = (
-  image: Buffer,
-  count: number,
-): Buffer => {
-  const copy = Buffer.from(image);
-  writeU32(copy, VENDOR_V3, count * VENDOR_ENTRY);
-  writeU32(copy, VENDOR_V3 + 4, count);
-  return copy;
-};
 /** Small byte-format refusals for the public artifact adapters. */
 export const androidBootImageRefusals = () => {
   const unsupportedBoot = buildBootImage({ version: 0 });
@@ -419,6 +406,7 @@ export const androidBootImageRefusals = () => {
       kind: "unsupported",
       code: "unsupported_target",
       category: "unsupported_target",
+      format: "android-boot-image",
     },
     {
       name: "vendor-version",
@@ -426,20 +414,23 @@ export const androidBootImageRefusals = () => {
       kind: "unsupported",
       code: "unsupported_target",
       category: "unsupported_target",
+      format: "android-boot-image",
     },
     {
       name: "short-image",
       bytes: truncateImage(buildBootImage({ version: 0 })),
       kind: "truncated",
-      code: "truncated",
-      category: "truncated",
+      code: "unsupported_target",
+      category: "unsupported_target",
+      format: "android-boot-image",
     },
     {
       name: "bad-page",
       bytes: malformed,
       kind: "malformed",
-      code: "invalid_request",
-      category: "invalid_input",
+      code: "unsupported_target",
+      category: "unsupported_target",
+      format: "android-boot-image",
     },
   ] as const;
 };

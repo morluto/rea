@@ -46,15 +46,26 @@ export interface GhidraWireOptions {
 export class GhidraWire {
   readonly #options: GhidraWireOptions;
   #replyLimit: BridgeMaxReplyBytes = DEFAULT_BRIDGE_MAX_REPLY;
+  /** Reply ceilings of written requests whose replies have not settled. */
+  readonly #inFlightReplyLimits = new Map<number, BridgeMaxReplyBytes>();
   #sessionLimits: GhidraAdmittedLimits | undefined;
 
   constructor(options: GhidraWireOptions) {
     this.#options = options;
   }
 
-  /** Reply ceiling of the request last written; the default before any. */
+  /**
+   * The ceiling for the next reply line. The stream measures a line before it
+   * can read the reply's id, so while requests overlap (a shutdown written
+   * beside an active request) the largest in-flight ceiling applies. With
+   * none in flight it is the ceiling of the request last written.
+   */
   replyLimit(): BridgeMaxReplyBytes {
-    return this.#replyLimit;
+    let selected: BridgeMaxReplyBytes | undefined;
+    for (const limit of this.#inFlightReplyLimits.values())
+      if (selected === undefined || limit.maximumBytes > selected.maximumBytes)
+        selected = limit;
+    return selected ?? this.#replyLimit;
   }
 
   /**
@@ -93,7 +104,9 @@ export class GhidraWire {
   }
 
   #refused(cause: ConfigurationError): GhidraSessionError {
-    return this.#options.failure("admission", cause.message, cause);
+    return this.#options.failure("admission", cause.message, cause, {
+      configurationFailure: cause,
+    });
   }
 
   /** Write one authenticated request and return its correlated reply. */
@@ -135,19 +148,25 @@ export class GhidraWire {
       ...(options.decompileMaxPayloadMiB === undefined
         ? {}
         : { decompile_max_payload_mib: options.decompileMaxPayloadMiB }),
+      ...(options.decompileReadAhead === undefined
+        ? {}
+        : { decompile_read_ahead: [...options.decompileReadAhead] }),
     };
     const limits =
       options.limits === undefined ? this.admitLimits() : ok(options.limits);
     if (!limits.ok) return limits;
     const { requestLimit, replyLimit } = limits.value;
-    const payloadBytes = jsonValueByteLength(payloadValue);
+    const payloadBytes = jsonValueByteLength(
+      payloadValue,
+      requestLimit.maximumBytes,
+    );
     // Refuse before registering the operation and before any socket write, so
     // an oversized request never reaches the bridge or occupies a pending key.
     if (payloadBytes > requestLimit.maximumBytes) {
       const oversize = bridgeRequestOversizeError(
         method,
         requestLimit,
-        payloadBytes,
+        { bytesAtLeast: payloadBytes },
         "Ghidra",
       );
       return err(
@@ -158,6 +177,7 @@ export class GhidraWire {
     // Only the request being written owns the next reply's ceiling; a
     // refused or still-queued request never changes it.
     this.#replyLimit = replyLimit;
+    this.#inFlightReplyLimits.set(id, replyLimit);
     const response = this.#options.pending.wait(id, {
       ...(timeoutMs === undefined
         ? {}
@@ -176,6 +196,20 @@ export class GhidraWire {
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       cancelledValue: () => err(this.#cancelled(options.signal)),
     });
+    // A cancel is a request frame with its own id and no reply: the reply of
+    // the request it names is the acknowledgement.
+    const onInterrupt = (): void => {
+      if (!this.#options.pending.has(id) || socket.destroyed) return;
+      socket.write(
+        `${JSON.stringify({
+          id: this.#options.nextId(),
+          token,
+          method: "cancel",
+          params: { request_id: id },
+        })}\n`,
+      );
+    };
+    options.interrupt?.addEventListener("abort", onInterrupt, { once: true });
     socket.write(`${payload}\n`, (cause) => {
       if (cause !== undefined && cause !== null)
         this.#options.pending.settle(
@@ -189,7 +223,10 @@ export class GhidraWire {
           ),
         );
     });
-    const result = await response;
+    const result = await response.finally(() => {
+      options.interrupt?.removeEventListener("abort", onInterrupt);
+      this.#inFlightReplyLimits.delete(id);
+    });
     this.#options.logger[result.ok ? "debug" : "warn"](
       { method, status: result.ok ? "ok" : "error" },
       "Ghidra bridge request completed",

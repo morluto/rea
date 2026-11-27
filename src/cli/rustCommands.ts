@@ -3,10 +3,8 @@ import type { Logger } from "pino";
 import { createRustBinaryService } from "../composition/rust.js";
 import { RUST_TOOL_CONTRACTS } from "../contracts/rust/rustToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
-import {
-  deliverWithService,
-  registerContractCommand,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { deliverWithService } from "./contractCommandRunners.js";
 import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
 import type { CliInstance } from "./types.js";
 
@@ -33,12 +31,13 @@ export const registerRustCommands = (
       },
       fields: {
         path: {
-          description: "Local ELF, PE, thin Mach-O or universal Mach-O image",
+          description:
+            "Local ELF, PE, thin or universal Mach-O, or WebAssembly core-module image",
         },
         producer_limits: { description: PRODUCER_LIMITS_HELP },
         architecture: {
           description:
-            "Slice to read from a universal Mach-O, by CPU family; when several slices share a family, arm64 (arm64 or arm64v8), arm64e (arm64e or arm64e.x1) or x86_64 names the subtype, and a value matching several slices is refused; required for universal files",
+            "Slice to read from a universal Mach-O, by CPU family; arm64e and arm64e.x1 read only a slice of that subtype, as lipo -thin does; when several slices share a family, arm64 (arm64 or arm64v8) or x86_64 names the subtype, and a value matching several slices is refused; required for universal files",
         },
         detail: {
           description:

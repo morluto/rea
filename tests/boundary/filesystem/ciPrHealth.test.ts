@@ -401,6 +401,46 @@ it("keeps the result unknown when the head changes between API snapshots", async
   });
 });
 
+it.each([
+  { change: { state: "closed" }, hasRun: false },
+  { change: { draft: true }, hasRun: false },
+  { change: { state: "closed" }, hasRun: true },
+  { change: { draft: true }, hasRun: true },
+])(
+  "does not diagnose missing CI after a pull request becomes ineligible: %j",
+  async ({ change, hasRun }) => {
+    const report = await collectPrCiHealth({
+      repository: "owner/rea",
+      repositoryId: 11,
+      defaultBranch: "main",
+      now: observedAt,
+      apiRequest: async (_method, endpoint) => {
+        if (endpoint.includes("/pulls?")) return [rawPull(63)];
+        if (endpoint.includes("/actions/workflows/ci.yml/runs?"))
+          return {
+            workflow_runs: hasRun ? [run({ head_branch: "feature-63" })] : [],
+          };
+        return rawPull(63, { mergeable: true, ...change });
+      },
+    });
+    expect(report.pullRequests[0]).toMatchObject({
+      eligibilityChangedDuringScan: true,
+      ci: {
+        category: "unknown",
+        reason: "pull_request_eligibility_changed_during_scan",
+        runs: hasRun
+          ? [expect.objectContaining({ id: 77, conclusion: "success" })]
+          : [],
+      },
+    });
+    expect(report.counts.missing).toBe(0);
+    expect(report.scan).toMatchObject({
+      status: "partial",
+      errors: ["pull_request_eligibility_changed_during_scan"],
+    });
+  },
+);
+
 it("public CLI uses only GET and produces a report from fixture GitHub responses", async () => {
   const fixture = await createFixture();
   const ghCalls = join(fixture.directory, "gh-calls.jsonl");
@@ -542,6 +582,48 @@ it.each([
     });
     expect(result.category).toBe(category);
     expect(result.runs).toHaveLength(2);
+  },
+);
+
+it.each([
+  ["2026-10-13T01:00:00Z", "completed_failure"],
+  ["2026-10-12T23:30:00Z", "completed_success"],
+  ["2026-10-13T00:00:00Z", "unknown"],
+  ["2026-10-12T23:00:00Z", "unknown"],
+  ["invalid", "unknown"],
+  ["2026-10-13T01:00:00Z", "queued_pending_executing", "in_progress"],
+  ["2026-10-13T01:00:00Z", "unknown", "queued"],
+])(
+  "uses the attempt start %s to order a retry and a separate run",
+  (startedAt, category, status = "completed") => {
+    const retried = run({
+      id: 78,
+      run_attempt: 2,
+      created_at: "2026-10-12T23:00:00Z",
+      run_started_at: startedAt,
+      status,
+      conclusion: "failure",
+    });
+    const fresh = run({ run_attempt: 1 });
+    for (const candidates of [
+      [fresh, retried],
+      [retried, fresh],
+    ]) {
+      const report = classifyPrCi({
+        pull: validPull(),
+        runs: candidates.map((run) => ({
+          run,
+          basis: "event_pr_number_and_head_sha",
+        })),
+        ambiguousRuns: [],
+        runsComplete: true,
+        pullRequestInventoryComplete: true,
+      });
+      expect(report.category).toBe(category);
+      expect(report.runs.find(({ id }) => id === 78)?.startedAt).toBe(
+        startedAt,
+      );
+    }
   },
 );
 

@@ -1,4 +1,5 @@
 import { tokenize } from "./source-tokens.mjs";
+import { completeEvidenceClient } from "../lib/complete-evidence.mjs";
 
 // CI runs the architecture guards before installing dependencies, so this
 // reads the call from scripts/verify/source-tokens.mjs tokens rather than a
@@ -33,25 +34,25 @@ const keyName = (source, token) =>
 const isPunct = (token, text) => token?.kind === "punct" && token.text === text;
 
 /**
- * Whether the arguments of the call whose `(` is at `open` include an object
- * literal that is itself a whole argument (it starts after the call's `(` or
- * a top-level `,` and ends before `,` or `)`) and names `jsonSchemaValidator`
- * as one of its own keys (`jsonSchemaValidator: …` or shorthand). An option
- * object inside parentheses, a conditional or any other expression is not
- * read, so the client counts as using the default.
+ * Read the SDK constructor's second argument. Its whole expression must
+ * be an object literal naming its own jsonSchemaValidator option.
  */
 const callNamesValidator = (source, tokens, open) => {
   const closers = [];
-  // Whether the open top-level object is a whole argument, and whether it
-  // has named the validator so far.
+  let inOptions = false;
   let argumentObject = false;
   let named = false;
   for (let index = open; index < tokens.length; index += 1) {
     const token = tokens[index];
+    if (closers.length === 1 && isPunct(token, ",")) {
+      if (inOptions) return false;
+      inOptions = true;
+      continue;
+    }
     if (token.kind === "punct" && OPENERS.has(token.text)) {
       if (closers.length === 1 && token.text === "{") {
         const before = tokens[index - 1];
-        argumentObject = index - 1 === open || isPunct(before, ",");
+        argumentObject = inOptions && isPunct(before, ",");
         named = false;
       }
       closers.push(OPENERS.get(token.text));
@@ -84,10 +85,10 @@ const callNamesValidator = (source, tokens, open) => {
 };
 
 /**
- * Number of `new Client(...)` calls in `content` whose own arguments do not
+ * Number of `completeEvidenceClient(new Client(...))` calls in `content` whose own arguments do not
  * pass a `jsonSchemaValidator` property. The source is tokenized, so the
- * option is read from the call's object-literal arguments: comments, string
- * literals, client names and neighbouring calls do not stand in for it.
+ * option is read from the second argument's own object literal. Comments,
+ * client metadata and neighbouring calls cannot stand in for options.
  */
 export const countDefaultValidationClients = (content) => {
   if (!MENTIONS_CLIENT.test(content)) return 0;

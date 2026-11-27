@@ -45,18 +45,8 @@ import {
   buildManagedPeFixture,
   managedPeFixtureTarget,
 } from "./ManagedPe.fixture.js";
-import { readManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
+import { readManagedFixtureMetadataLayout } from "./ManagedPeMetadata.fixture.js";
 import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
-
-const metadataLayoutFor = (bytes: Buffer) => {
-  const pe = readManagedPeLayout(bytes);
-  if (pe.cli === null) throw new Error("fixture omitted CLI metadata");
-  return readManagedMetadataLayout(
-    bytes,
-    pe.rvaToOffset(pe.cli.metadata.rva, pe.cli.metadata.size, "cli.metadata"),
-    pe.cli.metadata.size,
-  );
-};
 
 const resizedOptionalHeader = (
   size: number,
@@ -231,6 +221,42 @@ describe("managed CLI directory availability", () => {
   });
 });
 
+it.each(["before the section table", "past the file"])(
+  "reports partial coverage when SizeOfHeaders ends %s",
+  (extent) => {
+    const bytes = buildManagedPeFixture();
+    const optional = bytes.readUInt32LE(0x3c) + 24;
+    bytes.writeUInt32LE(
+      extent === "before the section table" ? 0x100 : bytes.length + 1,
+      optional + 60,
+    );
+
+    expect(
+      inspectManagedArtifactBytes(bytes, managedPeFixtureTarget(bytes)),
+    ).toMatchObject({
+      pe: {
+        machine: 0x014c,
+        optional_header: "pe32",
+        section_count: 1,
+        cli: null,
+      },
+      classification: { status: "malformed" },
+      metadata: { status: "malformed" },
+      coverage: {
+        state: "partial",
+        issues: [
+          {
+            code: "invalid-directory",
+            scope: "pe.optional-header",
+            detail: expect.stringContaining("SizeOfHeaders"),
+            offset: optional + 60,
+          },
+        ],
+      },
+    });
+  },
+);
+
 describe("managed artifact inventory", () => {
   it.each([
     { moduleRowCount: 0, assemblyRowCount: 1, scope: "metadata.Module" },
@@ -289,6 +315,7 @@ describe("managed artifact inventory", () => {
     fixture.copy(bytes, 0, 0, 0x0200);
     fixture.copy(bytes, sectionDataOffset, 0x0200, 0x1000);
     bytes.writeUInt16LE(97, coffOffset + 2);
+    bytes.writeUInt32LE(sectionDataOffset, coffOffset + 20 + 60);
     bytes.writeUInt32LE(sectionDataOffset, sectionOffset + 20);
 
     const result = inspectManagedArtifactBytes(
@@ -485,7 +512,7 @@ describe("managed artifact coded indexes", () => {
         }),
       ],
     });
-    const layout = metadataLayoutFor(bytes);
+    const layout = readManagedFixtureMetadataLayout(bytes);
     expect(result.coverage.issues[0]?.offset).toBe(
       (result.resources[0]?.row_offset ?? 0) + 8 + layout.stringIndexSize,
     );
@@ -558,7 +585,7 @@ describe("managed artifact coded indexes", () => {
       extendsRaw: 9,
       customAttributeTypeRaw: 0,
     });
-    const layout = metadataLayoutFor(bytes);
+    const layout = readManagedFixtureMetadataLayout(bytes);
     const artifact = inspectManagedArtifactBytes(
       bytes,
       managedPeFixtureTarget(bytes),
@@ -621,7 +648,7 @@ it.each([false, true])(
   "resolves an attribute type without reading malformed constructor heaps (bad name %s)",
   (badName) => {
     const bytes = buildManagedPeFixture();
-    const layout = metadataLayoutFor(bytes);
+    const layout = readManagedFixtureMetadataLayout(bytes);
     const row = layout.table(10)!;
     const nameColumn = row.offset + layout.codedIndexSize("MemberRefParent");
     const signatureColumn = nameColumn + layout.stringIndexSize;

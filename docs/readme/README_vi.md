@@ -9,20 +9,19 @@
 
 **Thấy một tính năng bạn thích? Hiểu cách nó hoạt động, đến tận mức mã nhị phân.**
 
-[![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
-[![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../reference/mcp-contracts.md#generated-catalog)
-[![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#current-status)
-[![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
+[![GitHub stars](https://img.shields.io/github/stars/morluto/rea?style=flat-square&logo=github)](https://github.com/morluto/rea/stargazers)
+[![Monthly npm downloads](https://img.shields.io/npm/dm/rea-agents?style=flat-square&label=npm%20downloads)](https://www.npmjs.com/package/rea-agents)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](../../LICENSE)
-[![Discord](https://img.shields.io/discord/1556595354999332884?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/GkcryMnJDM)
-
-<a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
+[![Join the REA Discord](https://img.shields.io/badge/Discord-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/GkcryMnJDM)
+[![Follow REA on X](https://img.shields.io/badge/X-000000?style=flat-square&logo=x&logoColor=white)](https://x.com/reatools)
+[![Supported platforms: macOS, Windows, and Linux](https://img.shields.io/badge/macOS%20%7C%20Windows%20%7C%20Linux-4493F8?style=flat-square)](../getting-started/installation.md)
+[![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
 
 **[Trang web](https://rea.tools/vi/) · [Hướng dẫn](https://rea.tools/vi/guides/) · [Các nghiên cứu điển hình](https://rea.tools/vi/showcase/)**
 
 <a href="https://discord.com/invite/GkcryMnJDM"><img alt="Tham gia cộng đồng REA trên Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
 
-[Bắt đầu nhanh](#bắt-đầu-nhanh) · [Cách REA hoạt động](#cách-rea-hoạt-động) · [Những gì bạn có thể phân tích](#những-gì-bạn-có-thể-phân-tích) · [Các nghiên cứu điển hình](#các-nghiên-cứu-điển-hình) · [Xây dựng môi trường RL](#build-rl-environments) · [Câu hỏi thường gặp](#câu-hỏi-thường-gặp) · [Tài liệu](#tài-liệu)
+[Bắt đầu nhanh](#bắt-đầu-nhanh) · [Các nghiên cứu điển hình](#các-nghiên-cứu-điển-hình) · [Cách REA hoạt động](#cách-rea-hoạt-động) · [Những gì bạn có thể phân tích](#những-gì-bạn-có-thể-phân-tích) · [Xây dựng môi trường RL](#build-rl-environments) · [Câu hỏi thường gặp](#câu-hỏi-thường-gặp) · [Tài liệu](#tài-liệu)
 
 <code>npx rea-agents setup</code>
 
@@ -64,15 +63,13 @@ REA kết nối tác nhân của bạn với các công cụ kiểm tra tệp nh
 
 Thiết lập đăng ký REA với tác nhân và cài hướng dẫn công việc tương ứng. Phân tích native dùng Hopper, Ghidra, IDA hoặc Kuna có sẵn; có thể cài Hopper sau khi bạn chấp thuận. Phân tích tĩnh JavaScript không cần công cụ phân tích native.
 
-> **[Truy cập trang web REA](https://rea.tools/vi/)** để xem cách thiết lập, hướng dẫn có hình minh họa và các nghiên cứu điển hình thực tế.
-
 ## Bắt đầu nhanh
 
-Trên Linux, khởi chạy Ghidra, JADX và công cụ firmware cùng phân tích tĩnh JavaScript/Electron cần `ps` tương thích procps trong `PATH` của REA để kiểm tra quyền sở hữu tiến trình. Xem điều kiện Linux.
+**[Bắt đầu nhanh · rea.tools](https://rea.tools/vi/get-started/)**
 
-### Thiết lập tác nhân
+### Thiết lập tác nhân (MCP)
 
-Sau khi cài Node.js và npm, chạy:
+Sau khi cài [Node.js và npm](../reference/supported-targets.md), chạy lệnh sau từ một thư mục đáng tin cậy bên ngoài dự án cần phân tích.
 
 ```bash
 npx rea-agents setup
@@ -80,15 +77,9 @@ npx rea-agents setup
 
 Chọn các tác nhân, xem lại những thay đổi được đề xuất và chấp thuận. Quá trình thiết lập thêm máy chủ MCP của REA cùng hướng dẫn quy trình tương ứng, đồng thời sao lưu cấu hình hiện có. Sau đó khởi động lại tác nhân.
 
-Quá trình thiết lập hỗ trợ Claude Code, Codex, Cursor, Gemini CLI, Grok Build và [các tác nhân khác](../getting-started/installation.md#supported-agents). Xem [cài đặt và thiết lập](../getting-started/installation.md) để cấu hình trình phân tích và đăng ký MCP thủ công.
+[cài đặt và thiết lập](../getting-started/installation.md)
 
-MCP mặc định dùng schema đầu vào gọn. Hướng dẫn mà schema gọn lược bỏ được nối sau mô tả công cụ. Toàn bộ công cụ và xác thực chuẩn ở máy chủ không thay đổi; xem hướng dẫn hợp đồng MCP.
-
-Thiết lập đăng ký trực tiếp runtime đã chọn và script khởi chạy REA. Khi dùng trình chạy gói, hãy giữ mục cache và runtime đó; tải gói từ một thư mục đáng tin cậy bên ngoài dự án đích. Xem hướng dẫn cài đặt.
-
-Theo mặc định, schema đầu ra được lược khỏi `tools/list`: không API mô hình nào đọc chúng, và REA tự xác thực mọi kết quả. Đặt `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` trong cấu hình MCP để công bố từng schema đầu ra trong giới hạn 4096 byte. Với mọi thiết lập, xác thực phía server và kết quả có cấu trúc vẫn đầy đủ. Xem mục “Output schemas” trong hướng dẫn hợp đồng MCP.
-
-### Hỏi tác nhân
+Hỏi tác nhân:
 
 ```text
 Tìm hiểu cách tính năng tìm kiếm trong ứng dụng Notes hoạt động, cho tôi xem bằng chứng và xây dựng tính năng tương tự cho dự án của tôi.
@@ -96,7 +87,7 @@ Tìm hiểu cách tính năng tìm kiếm trong ứng dụng Notes hoạt độn
 
 Thay Notes bằng ứng dụng mục tiêu và chỉ rõ tính năng bạn muốn hiểu.
 
-### Sử dụng terminal
+### Sử dụng terminal (CLI)
 
 Kiểm tra thư mục ứng dụng JavaScript/Electron đã giải nén hoặc tệp ASAR:
 
@@ -115,9 +106,9 @@ rea --help
 
 Để phân tích mã máy, trước tiên hãy cấu hình trình phân tích. Xem [hướng dẫn CLI và Evidence](../getting-started/cli.md) về các lệnh phân tích mã máy, lựa chọn trình phân tích, ảnh chụp trạng thái và sử dụng trong script.
 
-### Cập nhật REA
+[Yêu cầu trên Linux](../getting-started/installation.md#linux-owned-process-prerequisite)
 
-REA thay đổi nhanh và các bản phát hành mới thường xuyên có bản sửa lỗi. Hãy giữ bản cài đặt của bạn được cập nhật.
+### Cập nhật REA
 
 Với CLI được cài bằng `npm install --global` / `bun add --global`:
 
@@ -125,21 +116,44 @@ Với CLI được cài bằng `npm install --global` / `bun add --global`:
 rea update
 ```
 
-`rea --update` là bí danh của `rea update`, nhận cùng tùy chọn đầu ra toàn cục. Lệnh cập nhật giữ tối đa tổng cộng 4 MiB stdout/stderr. Siêu dữ liệu quá lớn bị từ chối sau khi lệnh kết thúc; cài đặt chi tiết giữ chẩn đoán có giới hạn. Tiến độ tuân theo backpressure của terminal và chờ các lần ghi đã gửi hoàn tất.
-
-Cập nhật Bun toàn cục cần Bun 1.2.17 trở lên. Nâng cấp Bun cũ theo cách thủ công trước khi chạy `rea update`.
-
-Để cập nhật đăng ký tác nhân và skill, chạy lệnh thiết lập được in ra sau khi cập nhật.
-
 Nếu dùng `npx`, cập nhật thiết lập tác nhân bằng:
 
 ```bash
 npx rea-agents@latest setup
 ```
 
-Xem lại thay đổi cấu hình và khởi động lại tác nhân. Với lệnh CLI dùng một lần, dùng `npx rea-agents@latest` rồi thêm lệnh cần chạy.
+[Cập nhật và gỡ cài đặt](../getting-started/installation.md#diagnose-update-and-remove)
 
-Với Bun, dùng `bunx rea-agents@latest` thay cho `npx rea-agents@latest`.
+## Các nghiên cứu điển hình
+
+<a href="https://rea.tools/vi/showcase/">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../assets/rea-showcases-dark.svg" />
+    <img alt="Minh họa các ví dụ về cân bằng âm thanh DX-Ball, cầu nối bảng nhớ tạm Notion và vòng đạn TH04" src="../assets/rea-showcases.svg" />
+  </picture>
+</a>
+
+<table>
+<tbody>
+<tr><td>
+<h3>DX-Ball: tái tạo phép tính phân bố âm thanh trái phải</h3>
+<p>Lần theo lời gọi âm thanh đến hàm hỗ trợ chuyển vị trí thành giá trị phân bố âm thanh, kiểm tra các lệnh và chuyển mã giả chưa đầy đủ sang C. Bản tái tạo vượt qua 3.205 trường hợp kiểm thử với x86 gốc và tái tạo đủ 63 byte của hàm đã biên dịch.</p>
+<p><a href="https://rea.tools/vi/showcase/dx-ball/">Đọc nghiên cứu điển hình</a> · <a href="https://github.com/N0zoM1z0/dx-ball">Kho mã tái tạo</a></p>
+</td></tr>
+<tr><td>
+<h3>Notion: lần theo cầu nối clipboard của Electron</h3>
+<p>Tìm API clipboard trong tiến trình kết xuất, lần theo qua preload và IPC đến tiến trình chính, rồi kiểm tra định dạng clipboard có dữ liệu định dạng phong phú.</p>
+<p><a href="https://rea.tools/vi/showcase/notion/">Đọc nghiên cứu điển hình</a></p>
+</td></tr>
+<tr><td>
+<h3>TH04: khôi phục phép tính vòng đạn trong DOS</h3>
+<p>Kiểm tra các lệnh 16 bit của trò chơi PC-98 gốc, khôi phục phép tính góc cố định và góc nhắm mục tiêu, rồi so sánh C++ được tái tạo với đầu ra của trình biên dịch thời đó.</p>
+<p><a href="https://rea.tools/vi/showcase/th04/">Đọc nghiên cứu điển hình</a> · <a href="https://github.com/N0zoM1z0/th04">Kho mã tái tạo</a></p>
+</td></tr>
+</tbody>
+</table>
+
+Nếu bạn dùng REA cho một mục tiêu thú vị, chúng tôi muốn biết. Chia sẻ trường hợp của bạn qua [issue](https://github.com/morluto/rea/issues) hoặc [pull request](https://github.com/morluto/rea/pulls), nêu mục tiêu, câu hỏi, cách REA giúp bạn và những gì tìm được.
 
 ## Cách REA hoạt động
 
@@ -153,140 +167,21 @@ Tác nhân gọi REA qua MCP để kiểm tra mục tiêu và lần theo mã li�
 
 ## Những gì bạn có thể phân tích
 
-REA yêu cầu Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) hoặc 26+ (>=26.12.1), cùng với npm. Công cụ bổ sung và nền tảng chạy REA được hỗ trợ tùy thuộc vào mục tiêu:
+Tệp nhị phân mã máy · JavaScript / Electron · Trang web · Assembly .NET · APK Android · Phần sụn · Hành vi tiến trình
 
-| Mục tiêu                          | REA trả về gì                                                                                                   | Yêu cầu và hướng dẫn                                                                                                                                                     |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Tệp nhị phân mã máy               | Mã giả, hợp ngữ, chuỗi, ký hiệu, lời gọi và tham chiếu                                                          | Hopper, Ghidra, IDA hoặc Kuna; [phân tích mã máy](../guides/native/native-investigation.md)                                                                              |
-| Bố cục ELF ngoại tuyến            | Các section, segment, ký hiệu/thông tin tái định vị gốc và các biện pháp giảm thiểu có thể có từ phân tích tĩnh | pwntools do bên gọi cung cấp trên Linux x64; [chẩn đoán tệp nhị phân](../guides/native/binary-diagnostics.md)                                                            |
-| Bytecode EVM                      | Bộ chọn điều phối, độ lệch byte, tham số suy luận và khả năng thay đổi trạng thái                               | Đầu vào cục bộ chứa byte thô hoặc dạng thập lục phân trên Linux x64; [hướng dẫn EVM ngoại tuyến](../guides/evm/evm-bytecode.md)                                          |
-| Rust binaries                     | Embedded cargo-auditable dependency list                                                                        | [Rust binaries](../rust-binaries.md)                                                                                                                                     |
-| PE certificates                   | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                                    | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                                  |
-| PE imports                        | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                                      | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                            |
-| Windows shortcuts                 | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts                                    | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                                |
-| ELF notes                         | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                                 | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                             |
-| DWARF compile units               | Compile-unit name, directory, producer, language, and dwo_name                                                  | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../guides/native/dwarf-units.md)                                                                   |
-| ELF dependencies                  | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports                                           | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                                                               |
-| Binary hardening                  | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                                             | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                            |
-| Linux kernel modules              | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                                     | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                                   |
-| Erlang BEAM                       | IFF chunks, atoms, exports, and tables                                                                          | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                                        |
-| Apple IPS crashes                 | .ips metadata, threads, images, registers and crash classes                                                     | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                                            |
-| Sự cố Linux đã ghi lại            | Bản ghi note thô, thanh ghi/tín hiệu của mọi luồng được ghi lại và các ứng viên ánh xạ tùy chọn                 | pwntools do bên gọi cung cấp trên Linux x64; GDB/pwndbg tùy chọn; [sự cố đã ghi lại](../guides/native/recorded-crashes.md)                                               |
-| Thư mục cài đặt ứng dụng máy tính | Các runtime có khả năng được dùng, tệp bằng chứng, dấu hiệu thành phần và bước tiếp theo                        | Kiểm tra thư mục và phần đầu tệp có giới hạn；[Ứng dụng máy tính](../desktop-applications.md)                                                                            |
-| JavaScript / Electron             | Mô-đun, các khai báo import, source map, tuyến, IPC và quan hệ với tiện ích mở rộng mã máy                      | Node.js và npm; [phân tích ứng dụng](../guides/javascript/javascript-application-workflows.md); Linux: procps `ps`                                                       |
-| Trang web                         | Cấu trúc trang, script, quan sát mạng và ảnh chụp màn hình được yêu cầu                                         | Trình duyệt thuộc họ Chrome; [phân tích trình duyệt](../guides/web/browser-observation.md)                                                                               |
-| Bản ghi lưu lượng mạng đã lưu     | Yêu cầu, phản hồi, payload có thể truy cập và vị trí nguồn                                                      | HAR / Fiddler Everywhere SAZ; mitmdump trên Linux cho bản ghi định dạng gốc của mitmproxy; [hướng dẫn bản ghi mạng](../guides/web/web-network-captures.md)               |
-| Bắt gói tin                       | Điểm cuối, DNS, TLS SNI, phân bố giao thức và yêu cầu HTTP                                                      | tshark và capinfos do nơi gọi cung cấp (đã xác minh trên Linux); [hướng dẫn pcap](../guides/data/pcap-analysis.md)                                                       |
-| Assembly .NET                     | Siêu dữ liệu, lệnh CIL, các phụ thuộc mã máy được khai báo và so sánh bản dựng                                  | Kiểm tra tĩnh; [hướng dẫn mã được quản lý](../guides/managed/managed-code-analysis.md)                                                                                   |
-| APK Android                       | Khai báo manifest, lớp, phương thức được dịch ngược và tham chiếu                                               | JADX không giao diện đồ họa và JDK đầy đủ trên Linux/macOS/Windows x64; [hướng dẫn Android](../guides/android/android-analysis.md)                                       |
-| Thiết bị Android                  | Thiết bị, gói, tiến trình, nhật ký, dump, ảnh chụp màn hình và truyền APK/tệp                                   | adb do nơi gọi cung cấp (trình giả lập hoặc thiết bị); [hướng dẫn ADB](../guides/android/adb-device-analysis.md)                                                         |
-| Dự án JEB                         | Đơn vị dự án từ engine, hash của artifact và mã giả của kiểu/phương thức                                        | Một ứng dụng JEB do nơi gọi khởi động, phục vụ MCP, chọn bằng REA_JEB_MCP_URL; [hướng dẫn JEB](../providers/jeb-analysis.md)                                             |
-| Tài nguyên Android                | Manifest đã giải mã, bảng chuỗi, ngôn ngữ và thông tin phiên bản                                                | Trình khởi chạy Apktool do nơi gọi cung cấp; [hướng dẫn tài nguyên](../guides/android/apktool-resource-analysis.md)                                                      |
-| Ứng dụng Flutter                  | Băm snapshot Dart, hash thư viện theo ABI và nguồn gốc build engine                                             | Không cần (phân tích APK tĩnh); [hướng dẫn Flutter](../guides/android/flutter-analysis.md)                                                                               |
-| Phần sụn                          | Các vùng, kết quả trích xuất và dữ liệu chuyển sang phân tích mã máy                                            | Binwalk / Unblob trên Linux; [hướng dẫn phần sụn](../guides/firmware/firmware-analysis.md)                                                                               |
-| Gói tin đã ghi                    | Trường được chọn, giá trị lặp, bộ lọc và quy tắc giải mã                                                        | Linux: TShark 4.x + prlimit; [hướng dẫn bản ghi gói tin](../guides/data/packet-captures.md)                                                                              |
-| Tín hiệu logic đã ghi             | Chú thích bộ giải mã, phạm vi mẫu và chẩn đoán                                                                  | Linux: sigrok-cli 0.7.2 + prlimit; [hướng dẫn tín hiệu](../guides/signals/signal-recordings.md)                                                                          |
-| Gói và tài nguyên                 | Danh sách tệp, giá trị băm, plist, cấu trúc bundle Apple và tài nguyên được trích xuất                          | [Hướng dẫn hiện vật phần mềm và JavaScript](../guides/javascript/javascript-artifact-reconstruction.md), [ứng dụng Apple](../guides/apple/apple-application-analysis.md) |
-| Hành vi tiến trình                | Đầu ra terminal, tương tác, quan sát khi thoát và hệ thống tệp, cùng so sánh các lần chạy                       | Linux/macOS có PTY gốc; [ghi lại tiến trình](../guides/runtime/process-capture.md)                                                                                       |
-| PyInstaller                       | CArchive, PYZ, Python bytecode                                                                                  | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                                    |
-| Deno compile binaries             | Virtual files, entry point, recorded options, npm snapshot length                                               | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                                     |
-| Tệp nhị phân Go                   | Phiên bản trình biên dịch nhúng, mô-đun, thay thế và thiết lập build                                            | Kiểm tra tĩnh tích hợp ELF/PE/thin Mach-O; Không cần cài Go                                                                                                              |
-| Cơ sở dữ liệu SQLite              | Bảng, cột, chỉ mục, view, trigger và hàng được chọn từ bảng thông thường                                        | Ảnh chụp cơ sở dữ liệu/WAL cục bộ; Node.js 24.x >=24.15 hoặc 26+ có giới hạn SQLite native                                                                               |
-| Đối tượng mã GPU                  | Đích CUDA/HIP, tham số và tài nguyên kernel được chọn, văn bản PTX được giữ lại                                 | Kiểm tra tĩnh tích hợp ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                                                                            |
-| Tệp mô hình                       | Siêu dữ liệu GGUF / safetensors, khai báo tensor và tổng suy ra                                                 | Kiểm tra header; tùy chọn băm toàn bộ tệp; [GGUF / safetensors](../model-artifacts.md)                                                                                   |
-| Siêu dữ liệu IL2CPP               | Ảnh assembly Unity global-metadata.dat, tên kiểu/phương thức và phạm vi chỉ mục                                 | Giải mã tĩnh phiên bản 24, 27, 29, 31, 39; không cần Unity                                                                                                               |
-| Godot PCK                         | Danh mục và trích xuất, header/thư mục gốc và định danh nội dung được chọn                                      | Định dạng tĩnh 2, 3, 4; không cần Godot                                                                                                                                  |
-| Gói NuGet                         | Định danh gói, nhóm phụ thuộc, giấy phép, kho mã và nội dung ZIP                                                | Kiểm tra tĩnh .nupkg tích hợp sẵn; [Gói NuGet](../guides/managed/nuget-nupkg.md)                                                                                         |
-| Hiện vật WASM                     | Xác thực, section, dạng WAT import/export chính xác và WAT đã giải mã                                           | Do người gọi cung cấp WABT 1.0.42; `inspect_wasm_artifact`                                                                                                               |
-| Chữ ký APK                        | Bên ký v1/v2/v3/v3.1, dấu vân tay chứng chỉ, xoay vòng khóa và tính nhất quán nội bộ của digest                 | Kiểm tra tĩnh tích hợp; `inspect_apk_signature`                                                                                                                          |
-
-Kiểm tra tĩnh JavaScript và .NET đọc các tệp được cung cấp mà không chạy ứng dụng. Ghi lại khi chạy sẽ khởi chạy hoặc tương tác với mục tiêu đã chọn bằng quyền người dùng của bạn; từng hướng dẫn mô tả tác động của nó.
-
-Để kiểm tra tệp nhị phân native ngoại tuyến, REA cũng hỗ trợ GNU objdump và Rizin do bạn tự cung cấp. [Hướng dẫn công cụ dịch ngược](../reverse-engineering-tools.md) trình bày cách thiết lập nhà cung cấp, các lệnh CLI và giới hạn của Evidence. REA không cài đặt hoặc cập nhật hai nhà cung cấp này.
+[Định dạng được hỗ trợ và yêu cầu](../reference/supported-targets.md)
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-Với tệp nhị phân lớn, tăng hạn khởi động bằng `REA_GHIDRA_STARTUP_TIMEOUT_MS` hoặc `REA_HOPPER_STARTUP_TIMEOUT_MS`.
-
-Định dạng mã máy và nền tảng chạy REA được hỗ trợ khác nhau tùy trình phân tích. Xem [thiết lập Hopper và Ghidra](../getting-started/installation.md#hopper), [hướng dẫn IDA](../providers/ida-provider.md), [Kuna](../kuna-provider.md) và [hỗ trợ Ghidra thử nghiệm trên Windows](../providers/windows-ghidra-p0.md). Ghidra cũng hỗ trợ [phân tích DOS 16 bit](../providers/ghidra-dos.md). Để chọn trình phân tích, xem [hướng dẫn CLI](../getting-started/cli.md#choose-a-provider). Kiểm tra [khả năng sử dụng theo bản phát hành](../getting-started/installation.md#released-package-and-main) đối với tính năng được bổ sung sau phiên bản npm mới nhất.
-
-## Các nghiên cứu điển hình
-
-<a href="https://rea.tools/vi/showcase/">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="../assets/rea-showcases-dark.svg" />
-    <img alt="Minh họa các ví dụ về cân bằng âm thanh DX-Ball, cầu nối bảng nhớ tạm Notion và vòng đạn TH04" src="../assets/rea-showcases.svg" />
-  </picture>
-</a>
-
-### DX-Ball: tái tạo phép tính phân bố âm thanh trái phải
-
-Lần theo lời gọi âm thanh đến hàm hỗ trợ chuyển vị trí thành giá trị phân bố âm thanh, kiểm tra các lệnh và chuyển mã giả chưa đầy đủ sang C. Bản tái tạo vượt qua 3.205 trường hợp kiểm thử với x86 gốc và tái tạo đủ 63 byte của hàm đã biên dịch.
-
-[Đọc nghiên cứu điển hình](https://rea.tools/vi/showcase/dx-ball/) · [Kho mã tái tạo](https://github.com/N0zoM1z0/dx-ball)
-
-### Notion: lần theo cầu nối clipboard của Electron
-
-Tìm API clipboard trong tiến trình kết xuất, lần theo qua preload và IPC đến tiến trình chính, rồi kiểm tra định dạng clipboard có dữ liệu định dạng phong phú.
-
-[Đọc nghiên cứu điển hình](https://rea.tools/vi/showcase/notion/)
-
-### TH04: khôi phục phép tính vòng đạn trong DOS
-
-Kiểm tra các lệnh 16 bit của trò chơi PC-98 gốc, khôi phục phép tính góc cố định và góc nhắm mục tiêu, rồi so sánh C++ được tái tạo với đầu ra của trình biên dịch thời đó.
-
-[Đọc nghiên cứu điển hình](https://rea.tools/vi/showcase/th04/) · [Kho mã tái tạo](https://github.com/N0zoM1z0/th04)
-
-### Xây dựng môi trường RL bằng REA
-
-Ghi phiên ứng dụng web, chuyển API thành công cụ và xuất môi trường mà tác tử AI có thể dùng. Chạy bằng AgentEnv, rồi thêm tác vụ và kiểm tra phần thưởng để huấn luyện RL hoặc đánh giá.
-
-[Hướng dẫn xây dựng môi trường](https://rea.tools/guides/rl-environments/) ·
-[Xem bản demo trên X](https://x.com/reatools/status/2112574822584918075?s=20)
-
-Nếu bạn dùng REA cho một mục tiêu thú vị, chúng tôi muốn biết. Chia sẻ trường hợp của bạn qua [issue](https://github.com/morluto/rea/issues) hoặc [pull request](https://github.com/morluto/rea/pulls), nêu mục tiêu, câu hỏi, cách REA giúp bạn và những gì tìm được.
+[Chọn công cụ phân tích](../reference/supported-targets.md#choosing-a-deep-analysis-provider)
 
 <a id="build-rl-environments"></a>
 
 ## Xây dựng môi trường RL
 
-Tạo môi trường cục bộ để tác tử AI luyện các tác vụ như tìm issue hoặc tạo thư mục mà không cần chạy ứng dụng gốc. Dùng môi trường này cho học tăng cường (RL) hoặc để kiểm tra khả năng hoàn thành tác vụ của tác tử.
+Tạo môi trường cục bộ từ phiên web đã ghi hoặc ứng dụng máy tính Linux để tác tử thực hành một nhiệm vụ và kiểm tra kết quả.
 
-REA biến các yêu cầu và phản hồi API đã ghi thành công cụ mà tác tử có thể gọi. Môi trường dùng dữ liệu đã ghi và chỉ hỗ trợ thay đổi khi bản ghi xác nhận tác động của thay đổi đó.
-
-Sau khi thiết lập REA trong tác tử, thay URL và các tác vụ thư mục bên dưới bằng thông tin của bạn:
-
-```text
-Dùng REA xây dựng môi trường RL từ ứng dụng web thử nghiệm của tôi tại
-http://127.0.0.1:3000.
-Bao gồm liệt kê, tạo, đổi tên và xóa thư mục. Có thể tạo và xóa
-thư mục thử nghiệm nhưng không thay đổi dữ liệu có sẵn.
-Lưu vào thư mục my-env, kiểm tra thao tác nào hoạt động và cho tôi biết cách chạy.
-```
-
-<details>
-<summary>Dùng dòng lệnh</summary>
-
-Dùng các lệnh này nếu đã có tệp ghi lại yêu cầu và phản hồi của ứng dụng trong trình duyệt. Để chạy môi trường tạo ra, bạn cũng cần AgentEnv và Docker.
-
-```sh
-rea environment-build ./session.har ./my-env --name my-env --json
-agent-env run ./my-env
-```
-
-</details>
-
-REA xuất môi trường chạy được cùng bài kiểm tra cơ bản để xác nhận môi trường khởi động và phản hồi. Kết nối với framework RL để đặt mục tiêu tác vụ, thêm kiểm tra phần thưởng và chạy huấn luyện.
-
-[Hướng dẫn xây dựng môi trường](https://rea.tools/guides/rl-environments/) ·
-[Tài liệu tham chiếu môi trường](../agent-environments.md) ·
-[Xem bản demo trên X](https://x.com/reatools/status/2112574822584918075?s=20)
-
-### Môi trường ứng dụng desktop
-
-REA cũng có thể xây dựng môi trường cho một ứng dụng desktop Linux mà tác tử dùng qua ảnh chụp màn hình, chuột và bàn phím. Từ một yêu cầu một dòng, chẳng hạn "Tạo cho tôi một môi trường Gnote trong đó tác tử thêm dầu ô liu vào ghi chú danh sách mua sắm", tác tử của bạn cài ứng dụng trên một máy tính dựng cục bộ, viết tác vụ, xuất môi trường và kiểm tra tác vụ trên một máy tính mới. Máy dựng môi trường cần Linux trên amd64 hoặc arm64, Docker và phiên bản framework agentenv mà hướng dẫn chỉ định.
-
-[Thiết lập môi trường ứng dụng desktop](../desktop-build-computer.md)
+[Xây dựng môi trường RL](https://rea.tools/guides/rl-environments/)
 
 ## Câu hỏi thường gặp
 
@@ -362,15 +257,24 @@ Bắt đầu với [hướng dẫn thực hành](https://rea.tools/vi/guides/) t
 - [CLI và Evidence](../getting-started/cli.md): lệnh, lựa chọn trình phân tích, ảnh chụp trạng thái, nhập/xuất và trạng thái thoát.
 - [Hợp đồng MCP](../reference/mcp-contracts.md) và [prompt cho tác nhân](../getting-started/mcp-prompts.md): kết quả công cụ, phiên làm việc và điều tra có hướng dẫn.
 - [Danh mục công cụ](../reference/mcp-contracts.md#generated-catalog): danh sách công cụ, trình phân tích và lệnh CLI được tạo khi dựng dự án.
-- [Lộ trình](../development/roadmap.md): công việc dự kiến và theo dõi các khả năng.
 
 Báo cáo lỗ hổng theo [SECURITY.md](../../SECURITY.md).
+
+## Cộng đồng và hỗ trợ
+
+- **Discord** — Hãy đặt câu hỏi và chia sẻ những gì bạn đang tìm hiểu với cộng đồng hơn 50.000 người đam mê kỹ thuật đảo ngược và xây dựng các dự án mới! [![Discord](https://img.shields.io/badge/Join%20Discord-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/GkcryMnJDM)
+- **Twitter / X** — Theo dõi [@reatools](https://x.com/reatools) để nhận tin mới.
+- **Góp ý và ý tưởng** — Bạn muốn thêm tính năng hoặc hỗ trợ một định dạng tệp? Hãy cho chúng tôi biết qua [GitHub](https://github.com/morluto/rea/issues) hoặc [Discord](https://discord.gg/GkcryMnJDM).
 
 ## Lịch sử sao
 
 🎉 **400.000 sao trên GitHub — xin cảm ơn!**
 
 Cảm ơn mọi người đã sử dụng REA, báo lỗi, đề xuất tính năng, kiểm thử bản dựng và đóng góp bản sửa lỗi.
+
+<a href="https://rea.tools/vi/contributors/">
+  <img src="../../website/public/contributors/avatars.png" alt="Những người đóng góp cho REA" />
+</a>
 
 <a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date">
   <picture>
@@ -379,6 +283,12 @@ Cảm ơn mọi người đã sử dụng REA, báo lỗi, đề xuất tính n�
     <img alt="Lịch sử sao GitHub của REA" src="https://api.star-history.com/chart?repos=morluto/rea&amp;type=date" />
   </picture>
 </a>
+
+## Đóng góp
+
+Chúng tôi hoan nghênh bạn giúp phát triển REA! [Mở issue](https://github.com/morluto/rea/issues) để báo lỗi hoặc đề xuất tính năng, hoặc [gửi pull request](https://github.com/morluto/rea/pulls) để cải thiện mã hay tài liệu.
+
+Xem [CONTRIBUTING.md](../../CONTRIBUTING.md) về thiết lập môi trường phát triển và các bước kiểm tra, [hướng dẫn kiểm thử](../development/testing.md) về các luồng xác minh.
 
 ## Miễn trừ trách nhiệm
 
@@ -389,12 +299,6 @@ REA dành cho nghiên cứu, giáo dục, khả năng tương tác, bảo tồn 
 The project's position on illegal or unauthorized use covers all REA
 versions, distribution channels, and platforms; each copy retains its
 applicable licenses.
-
-## Đóng góp
-
-Chúng tôi hoan nghênh bạn giúp phát triển REA! [Mở issue](https://github.com/morluto/rea/issues) để báo lỗi hoặc đề xuất tính năng, hoặc [gửi pull request](https://github.com/morluto/rea/pulls) để cải thiện mã hay tài liệu.
-
-Xem [CONTRIBUTING.md](../../CONTRIBUTING.md) về thiết lập môi trường phát triển và các bước kiểm tra, [hướng dẫn kiểm thử](../development/testing.md) về các luồng xác minh và [sơ đồ kiến trúc](../architecture/architecture.mermaid) về cấu trúc dự án.
 
 ## Giấy phép
 

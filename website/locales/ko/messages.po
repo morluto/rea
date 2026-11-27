@@ -3397,10 +3397,8 @@ msgctxt "page:get-started/index.html"
 msgid ""
 "Windows x64 has experimental, read-only support for native x86 and x64 PE "
 "applications and DLLs on fixed local NTFS/ReFS drives. Use an existing "
-"Ghidra 12.1.x installation and a 64-bit JDK 21 or newer:"
+"Ghidra 12.2 installation and a 64-bit JDK 25 or newer:"
 msgstr ""
-"Windows x64에서는 고정 로컬 NTFS/ReFS 드라이브의 네이티브 x86 및 x64 PE 앱과 DLL을 실험적으로 읽기 전용 "
-"분석할 수 있습니다. 기존 Ghidra 12.1.x 설치와 64비트 JDK 21 이상을 사용하세요."
 
 #: website/public/get-started/index.html:1182
 msgctxt "page:get-started/index.html"
@@ -4855,10 +4853,8 @@ msgstr "REA로 네이티브 프로그램을 읽으려면 다음 중 하나가 �
 msgctxt "page:guides/native/index.html"
 msgid ""
 "{ph0}Ghidra{ph1} (macOS or Linux; experimental on Windows): free, but needs "
-"an existing Ghidra 12.1.x installation and a 64-bit JDK 21 or newer."
+"an existing Ghidra 12.2 installation and a 64-bit JDK 25 or newer."
 msgstr ""
-"{ph0}Ghidra{ph1} (macOS 또는 Linux, Windows에서는 실험적 지원): 무료이지만 기존 Ghidra 12.1.x"
-" 설치와 64비트 JDK 21 이상이 필요합니다."
 
 #. {ph0}: <a href="../../get-started/#native">
 #. {ph1}: </a>
@@ -5338,6 +5334,11 @@ msgstr "“이 경로는 다른 입력값을 곱하네. 그러니 + 다음의 {p
 msgctxt "page:index.html"
 msgid "Name the operands and check both operator paths."
 msgstr "피연산자에 이름을 붙이고 두 연산자의 경로를 모두 확인합니다."
+
+#: website/public/index.html:524
+msgctxt "page:index.html"
+msgid "An analyst thinking at a computer"
+msgstr "컴퓨터 앞에서 생각하는 분석가"
 
 #: website/public/index.html:520 website/public/index.html:447
 msgctxt "page:index.html"
@@ -12897,20 +12898,18 @@ msgstr "Ghidra · 무료 분석 도구와 Java 설치하기"
 #: website/public/get-started/index.html:1111
 msgctxt "page:get-started/index.html"
 msgid ""
-"Install a 64-bit JDK 21 or newer, including the Java compiler. Choose the "
+"Install a 64-bit JDK 25 or newer, including the Java compiler. Choose the "
 "package matching your computer's architecture."
-msgstr "Java 컴파일러를 포함하는 64비트 JDK 21 이상을 설치하세요. 컴퓨터 아키텍처에 맞는 패키지를 선택하세요."
+msgstr ""
 
 #. {ph0}: <code>ghidra_…_PUBLIC_….zip</code>
 #: website/public/get-started/index.html:1116
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
-"Download Ghidra 12.1.4 from the release's Assets list and extract the {ph0} "
+"Download Ghidra 12.2 from the release's Assets list and extract the {ph0} "
 "archive. Choose the release archive, not “Source code”."
 msgstr ""
-"릴리스의 Assets 목록에서 Ghidra 12.1.4를 다운로드하고 {ph0} 압축 파일을 푸세요. ‘Source code’가 아닌 "
-"릴리스 압축 파일을 선택하세요."
 
 #. {ph0}: <code>ghidraRun</code>
 #. {ph1}: <code>ghidraRun.bat</code>
@@ -12923,17 +12922,17 @@ msgid ""
 "{ph2}."
 msgstr "압축을 푼 폴더 중 {ph0} 또는 {ph1}가 들어 있는 폴더를 찾으세요. 그 폴더를 {ph2}로 지정하세요."
 
-#. {ph0}: <a href="https://adoptium.net/temurin/releases/?version=21" >
+#. {ph0}: <a href="https://adoptium.net/temurin/releases/?version=25" >
 #. {ph1}: </a >
 #. {ph2}: <a
-#. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.1.4_build"
+#. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.2_build"
 #. >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:1127
 #, python-brace-format
 msgctxt "page:get-started/index.html"
-msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.1.4{ph3}"
-msgstr "{ph0}JDK 다운로드{ph1} · {ph2}Ghidra 12.1.4 다운로드{ph3}"
+msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.2{ph3}"
+msgstr ""
 
 #. {ph0}: <code>java.home</code>
 #. {ph1}: <code>JAVA_HOME</code>
@@ -13488,7 +13487,7 @@ msgid "{ph0}macOS · Apple Silicon{ph1}"
 msgstr "{ph0}macOS · Apple Silicon{ph1}"
 
 #. {ph0}: <a
-#. href="https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.1.4_build/GhidraDocs/GettingStarted.md#building-
+#. href="https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.2_build/GhidraDocs/GettingStarted.md#building-
 #. native-components" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1228
@@ -13992,15 +13991,6 @@ msgctxt "page:contributors/index.html"
 msgid "Find a contributor"
 msgstr "기여자 찾기"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/graphs/contributors">
-#. {ph1}: </a>
-#. {ph2}: <time datetime="2026-10-15" translate="no">2026-10-15</time>
-#: website/public/contributors/index.html:1114
-#, python-brace-format
-msgctxt "page:contributors/index.html"
-msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
-msgstr "{ph0}GitHub 기여자 목록{ph1} 기준 · 업데이트: {ph2}."
-
 #: website/public/contributors/index.html:1119
 msgctxt "page:contributors/index.html"
 msgid "No matching contributors. Try another username."
@@ -14074,6 +14064,47 @@ msgstr "평가"
 msgctxt "page:guides/index.html"
 msgid "Build an RL environment"
 msgstr "환경 만들기 가이드"
+
+#. {ph0}: <a href="#desktop">
+#. {ph1}: </a>
+#: website/public/guides/rl-environments/index.html:228
+#, python-brace-format
+msgctxt "page:guides/rl-environments/index.html"
+msgid "{ph0}Build a desktop app environment{ph1}"
+msgstr "{ph0}데스크톱 앱 환경 만들기{ph1}"
+
+#: website/public/guides/rl-environments/index.html:492
+msgctxt "page:guides/rl-environments/index.html"
+msgid "Build a desktop app environment"
+msgstr "데스크톱 앱 환경 만들기"
+
+#: website/public/guides/rl-environments/index.html:493
+msgctxt "page:guides/rl-environments/index.html"
+msgid ""
+"For a Linux desktop app, describe the task you want an agent to practice. "
+"For example, ask it to build a Gnote environment where the agent adds olive "
+"oil to a shopping list. The agent installs the app on a local build "
+"computer, writes the task, exports the environment, and checks it on a fresh"
+" computer using screenshots, the mouse, and the keyboard."
+msgstr ""
+"Linux 데스크톱 앱에서 에이전트가 연습할 작업을 설명하세요. 예를 들어 쇼핑 목록에 올리브유를 추가하는 Gnote 환경을 만들어 "
+"달라고 요청할 수 있습니다. 에이전트는 로컬 빌드 컴퓨터에 앱을 설치하고 작업을 작성한 뒤 환경을 내보냅니다. 그런 다음 새 컴퓨터에서 "
+"스크린샷과 마우스, 키보드를 사용해 검증합니다."
+
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
+#. build-
+#. computer.md#set-up-a-build-host">
+#. {ph1}: </a>
+#: website/public/guides/rl-environments/index.html:501
+#, python-brace-format
+msgctxt "page:guides/rl-environments/index.html"
+msgid ""
+"The build host needs Linux on amd64 or arm64, Docker, and the pinned "
+"AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
+"installation and readiness checks."
+msgstr ""
+"빌드 호스트에는 amd64 또는 arm64 Linux, Docker, 지정된 버전의 AgentEnv가 필요합니다. 설치와 준비 상태 "
+"확인은 {ph0}데스크톱 빌드 설정 가이드{ph1}를 따르세요."
 
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"
@@ -14664,46 +14695,22 @@ msgctxt "page:index.html"
 msgid "Methods and reconstruction notes."
 msgstr "방법론과 소프트웨어 재구성 기록."
 
-#: website/public/blog/index.html:83 website/public/blog/index.html:96
-#: website/public/blog/reverse-engineering-models/index.html:83
-#: website/public/blog/reverse-engineering-models/index.html:96
-#: website/public/blog/touhou-reconstruction/index.html:83
-#: website/public/blog/touhou-reconstruction/index.html:96
-#: website/public/contributors/index.html:83
-#: website/public/contributors/index.html:96
-#: website/public/examples/dino-lab/index.html:83
-#: website/public/examples/dino-lab/index.html:96
-#: website/public/faq/index.html:83 website/public/faq/index.html:96
-#: website/public/first-investigation/index.html:83
-#: website/public/first-investigation/index.html:96
-#: website/public/get-started/index.html:83
-#: website/public/get-started/index.html:96
-#: website/public/guides/browser/index.html:83
-#: website/public/guides/browser/index.html:96
-#: website/public/guides/index.html:83 website/public/guides/index.html:96
-#: website/public/guides/javascript/index.html:83
-#: website/public/guides/javascript/index.html:96
-#: website/public/guides/native/index.html:83
-#: website/public/guides/native/index.html:96
-#: website/public/guides/rl-environments/index.html:83
-#: website/public/guides/rl-environments/index.html:96
-#: website/public/index.html:83 website/public/index.html:96
-#: website/public/showcase/aegis/index.html:83
-#: website/public/showcase/aegis/index.html:96
-#: website/public/showcase/ctf/index.html:83
-#: website/public/showcase/ctf/index.html:96
-#: website/public/showcase/dx-ball/index.html:83
-#: website/public/showcase/dx-ball/index.html:96
-#: website/public/showcase/index.html:83 website/public/showcase/index.html:96
-#: website/public/showcase/notion/index.html:83
-#: website/public/showcase/notion/index.html:96
-#: website/public/showcase/th04/index.html:83
-#: website/public/showcase/th04/index.html:96
+#: website/public/blog/index.html:105 website/public/blog/index.html:118
+#: website/public/blog/reverse-engineering-models/index.html:105
+#: website/public/blog/reverse-engineering-models/index.html:118
+#: website/public/contributors/index.html:105
+#: website/public/contributors/index.html:118
+#: website/public/examples/dino-lab/index.html:105
+#: website/public/examples/dino-lab/index.html:118
+#: website/public/faq/index.html:105 website/public/faq/index.html:118
+#: website/public/first-investigation/index.html:105
+#: website/public/first-investigation/index.html:118
+#: website/public/get-started/index.html:105
+#: website/public/get-started/index.html:118 website/public/index.html:105
+#: website/public/index.html:118
 msgctxt "shared"
-msgid ""
-"REA: Find out how software works. Reverse engineering with your coding "
-"agent."
-msgstr "REA: 소프트웨어의 작동 원리를 알아보세요. 코딩 에이전트와 함께하는 리버스 엔지니어링."
+msgid "Blue REA lettering beside disassembly, hex data and an agent workflow."
+msgstr "파란색 REA 글자 옆에 디스어셈블리 코드, 16진수 데이터, 에이전트 작업 흐름이 보인다."
 
 #: website/public/index.html:357
 msgctxt "page:index.html"
@@ -16423,3 +16430,14 @@ msgstr ""
 #~ msgstr ""
 #~ "Windows x64에서는 고정 로컬 NTFS 드라이브의 네이티브 x86 및 x64 PE 앱과 DLL을 실험적으로 읽기 전용 분석할 수 "
 #~ "있습니다. 기존 Ghidra 12.1.x 설치와 64비트 JDK 21 이상을 사용하세요."
+
+#, python-brace-format
+#~ msgctxt "page:contributors/index.html"
+#~ msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
+#~ msgstr "{ph0}GitHub 기여자 목록{ph1} 기준 · 업데이트: {ph2}."
+
+#~ msgctxt "shared"
+#~ msgid ""
+#~ "REA: Find out how software works. Reverse engineering with your coding "
+#~ "agent."
+#~ msgstr "REA: 소프트웨어의 작동 원리를 알아보세요. 코딩 에이전트와 함께하는 리버스 엔지니어링."

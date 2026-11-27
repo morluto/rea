@@ -10,6 +10,12 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
+import { DEFAULT_BROWSER_TIMELINE_RETAINED_BYTES } from "../domain/analysisResourceLimits.js";
+import {
+  analysisSettingLimit,
+  selectedAnalysisSetting,
+} from "../domain/analysisSettingDefinitions.js";
+import { currentAnalysisSettingOverride } from "../domain/analysisOperationSnapshot.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import { CdpConnection, type CdpTransportEvent } from "./CdpConnection.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
@@ -23,6 +29,7 @@ import {
 import { classifyCdpFrameUrl } from "./CdpCaptureDocuments.js";
 import { selectCdpFrameIdentity } from "./CdpFrameIdentity.js";
 import { CdpTargetDocument } from "./CdpTargetDocument.js";
+import { cdpRootDocument } from "./CdpTargetSession.js";
 import type { CdpCommandResult } from "./protocol/CdpCommands.js";
 import { observedFrameUrl, reportedFrameUrl } from "./protocol/CdpFrameTree.js";
 import {
@@ -75,19 +82,24 @@ export const observeCdpSession = async (
     allowedOrigins,
     operation: "observe_web_session",
   });
-  const initialUrl = observedFrameUrl(initial.root.url) ?? "";
-  const mainFrameId = initial.root.facts.frameId;
-  if (mainFrameId === null)
-    throw new BrowserObservationError("inspect_web_page", "protocol_error");
-  const document = CdpTargetDocument.watch(context, {
-    frameId: mainFrameId,
-    loaderId: initial.root.facts.loaderId,
-    url: observedFrameUrl(initial.root.url),
-  });
-  const capture = new TimelineCapture(allowedOrigins, document, initialUrl);
+  const selected = cdpRootDocument(initial);
+  if (selected === undefined)
+    throw new BrowserObservationError("observe_web_session", "protocol_error");
+  const initialUrl = selected.url ?? "";
+  const document = CdpTargetDocument.watch(context, selected);
+  const capture = new TimelineCapture(
+    allowedOrigins,
+    document,
+    initialUrl,
+    selectedAnalysisSetting(
+      context.input.timeline_retained_bytes,
+      currentAnalysisSettingOverride("browser.timeline_retained_bytes"),
+      DEFAULT_BROWSER_TIMELINE_RETAINED_BYTES,
+    ),
+  );
   let removeListener = (): void => {};
   const removeDisconnectListener = context.connection.onDisconnect(() =>
-    capture.transportDisconnected(),
+    capture.recordTermination("transport_disconnected"),
   );
   try {
     await context.connection.send(
@@ -95,6 +107,14 @@ export const observeCdpSession = async (
       {},
       context.sessionId,
       context.signal,
+    );
+    // Page.enable can replay earlier Page history. Observe subsequent events
+    // before enabling Network so preparation retains new navigation and the
+    // request identities needed for failures inside the armed window.
+    removeListener = onCdpTargetEvent(
+      context.connection,
+      context.sessionId,
+      (event) => capture.ingest(event),
     );
     await context.connection.send(
       "Network.enable",
@@ -107,11 +127,6 @@ export const observeCdpSession = async (
       { timeDomain: "timeTicks" },
       context.sessionId,
       context.signal,
-    );
-    removeListener = onCdpTargetEvent(
-      context.connection,
-      context.sessionId,
-      (event) => capture.ingest(event),
     );
     // Host wall time marks command dispatch. The returned browser monotonic
     // timestamp is the authoritative cutoff for timestamped lifecycle facts.
@@ -127,12 +142,16 @@ export const observeCdpSession = async (
     capture.assertPreArmBufferWithinLimit();
     capture.arm(armTimestamp);
     capture.assertRequestOwnershipWithinLimit();
-    await context.connection.send(
-      "Page.setLifecycleEventsEnabled",
-      { enabled: true },
-      context.sessionId,
-      context.signal,
-    );
+    capture.assertTimelineWithinLimit();
+    // A capture that ended before arming observes nothing more; do not turn
+    // lifecycle reporting on for a target it no longer follows.
+    if (!capture.stopped)
+      await context.connection.send(
+        "Page.setLifecycleEventsEnabled",
+        { enabled: true },
+        context.sessionId,
+        context.signal,
+      );
     if (!capture.stopped)
       await context.progress?.report({
         phase: "browser_observation",
@@ -148,9 +167,11 @@ export const observeCdpSession = async (
       context.signal,
     );
     capture.assertRequestOwnershipWithinLimit();
+    capture.assertTimelineWithinLimit();
     if (endReason === "window_elapsed")
       endReason = await captureFinalUrl(context, capture, allowedOrigins);
     capture.assertRequestOwnershipWithinLimit();
+    capture.assertTimelineWithinLimit();
     await context.progress?.report({
       phase: "browser_observation",
       completed: 2,
@@ -160,7 +181,12 @@ export const observeCdpSession = async (
     });
     // Terminal progress is awaited and may admit more protocol events.
     capture.assertRequestOwnershipWithinLimit();
+    capture.assertTimelineWithinLimit();
     if (capture.scopeExcluded) endReason = "target_left_scope";
+    // A termination observed after the window, while the final state was
+    // read, means that state belongs to a target that no longer exists.
+    else if (endReason === "window_elapsed" && capture.endReason !== undefined)
+      endReason = capture.endReason;
     return {
       browser: context.discovery.version,
       target: {
@@ -214,6 +240,8 @@ class TimelineCapture {
   >();
   #documentRequestBytes = 0;
   #requestOwnershipFailure: BrowserObservationError | undefined;
+  #timelineBytes = 0;
+  #timelineBudgetFailure: BrowserObservationError | undefined;
   readonly #listeners = new Set<(reason: EndReason) => void>();
 
   constructor(
@@ -221,6 +249,9 @@ class TimelineCapture {
     /** The target session's page generation; its root frame scopes main-frame rows. */
     private readonly document: CdpTargetDocument,
     initialUrl: string,
+    private readonly timelineAllowance: ReturnType<
+      typeof selectedAnalysisSetting
+    >,
   ) {
     this.#mainFrameId = document.current.frameId;
     this.finalUrl =
@@ -274,10 +305,10 @@ class TimelineCapture {
         this.#lifecycle(registered.payload);
         return;
       case "Target.detachedFromTarget":
-        this.sessionDetached();
+        this.recordTermination("session_detached");
         return;
       case "Inspector.targetCrashed":
-        this.targetTerminated();
+        this.recordTermination("target_terminated");
         return;
       default:
         return;
@@ -327,6 +358,11 @@ class TimelineCapture {
     return this.#endReason !== undefined || this.#scopeExcluded;
   }
 
+  /** The first end the capture itself recorded, if any. */
+  get endReason(): EndReason | undefined {
+    return this.#endReason;
+  }
+
   onEnd(listener: (reason: EndReason) => void): () => void {
     if (this.#endReason !== undefined) listener(this.#endReason);
     else this.#listeners.add(listener);
@@ -340,40 +376,18 @@ class TimelineCapture {
     this.#listeners.clear();
   }
 
-  targetTerminated(): void {
+  recordTermination(
+    reason: "target_terminated" | "session_detached" | "transport_disconnected",
+  ): void {
     if (this.#endReason !== undefined) return;
     this.#add({
-      type: "target_terminated",
+      type: reason,
       timestamp: null,
       rawUrl: null,
       requestId: null,
-      detail: "target_terminated",
+      detail: reason,
     });
-    this.end("target_terminated");
-  }
-
-  sessionDetached(): void {
-    if (this.#endReason !== undefined) return;
-    this.#add({
-      type: "session_detached",
-      timestamp: null,
-      rawUrl: null,
-      requestId: null,
-      detail: "session_detached",
-    });
-    this.end("session_detached");
-  }
-
-  transportDisconnected(): void {
-    if (this.#endReason !== undefined) return;
-    this.#add({
-      type: "transport_disconnected",
-      timestamp: null,
-      rawUrl: null,
-      requestId: null,
-      detail: "transport_disconnected",
-    });
-    this.end("transport_disconnected");
+    this.end(reason);
   }
 
   setFinalUrl(rawUrl: string): void {
@@ -421,7 +435,7 @@ class TimelineCapture {
   }
 
   #navigationCommitted(
-    { facts, url: observation, transitionType }: CdpFrameEvent,
+    { facts, url: observation, navigationType }: CdpFrameEvent,
     contextOnly: boolean,
   ): void {
     const identity = selectCdpFrameIdentity(facts, this.#mainFrameId);
@@ -451,7 +465,7 @@ class TimelineCapture {
       destinationScope:
         destination.scope === "unknown" ? null : destination.scope,
       requestId: null,
-      detail: safeDetail(transitionType),
+      detail: safeDetail(navigationType),
     });
     if (observation.kind !== "observed") this.invalidateFinalUrl();
     if (this.#stopIfOutOfScope(destination)) return;
@@ -601,6 +615,11 @@ class TimelineCapture {
       throw this.#requestOwnershipFailure;
   }
 
+  assertTimelineWithinLimit(): void {
+    if (this.#timelineBudgetFailure !== undefined)
+      throw this.#timelineBudgetFailure;
+  }
+
   #loadingFailed(
     facts: CdpEventPayload<"Network.loadingFailed">,
     bufferedBeforeArm: boolean,
@@ -685,9 +704,9 @@ class TimelineCapture {
     if (timestamp !== null && timestamp !== undefined && timestamp < 0) {
       this.completeness.exclude("timeline", "invalid_protocol_value");
     }
-    this.#sequence += 1;
-    this.timeline.push({
-      sequence: this.#sequence,
+    if (this.#timelineBudgetFailure !== undefined) return;
+    const entry: TimelineEvent = {
+      sequence: this.#sequence + 1,
       type,
       timestamp:
         timestamp === undefined || (timestamp !== null && timestamp < 0)
@@ -702,9 +721,58 @@ class TimelineCapture {
       ...(options.redirectResponse === undefined
         ? {}
         : { redirect_response: options.redirectResponse }),
-    });
+    };
+    // Numbers stay inside the fixed overhead. The strings are the part that
+    // can grow with the page, so admission measures those before the row is kept.
+    const bytes = timelineRowBytes(entry);
+    const allowance = this.timelineAllowance.value;
+    if (bytes > allowance - this.#timelineBytes) {
+      this.#timelineBudgetFailure = new BrowserObservationError(
+        "observe_web_session",
+        "payload_limit",
+        {
+          detail: `Armed timeline rows exceeded the ${String(allowance)}-byte timeline allowance. Request identities keep a separate counter.`,
+          // Later rows in this window are not measured, so this sum is a
+          // lower bound and must not be reported as required_value.
+          reportedLimits: {
+            measured_timeline_bytes: this.#timelineBytes + bytes,
+          },
+          limit: analysisSettingLimit(
+            "browser.timeline_retained_bytes",
+            allowance,
+            this.timelineAllowance.source,
+          ),
+        },
+      );
+      this.end("window_elapsed");
+      return;
+    }
+    this.#sequence += 1;
+    this.#timelineBytes += bytes;
+    this.timeline.push(entry);
   }
 }
+
+const TIMELINE_ROW_OVERHEAD_BYTES = 64;
+
+const retainedTextBytes = (value: string | null | undefined): number =>
+  value == null ? 0 : Buffer.byteLength(value);
+
+const timelineRowBytes = (entry: TimelineEvent): number => {
+  const redirect = entry.redirect_response;
+  return (
+    TIMELINE_ROW_OVERHEAD_BYTES +
+    Buffer.byteLength(entry.type) +
+    retainedTextBytes(entry.frame_id) +
+    retainedTextBytes(entry.loader_id) +
+    retainedTextBytes(entry.request_id) +
+    retainedTextBytes(entry.url) +
+    retainedTextBytes(entry.destination_scope) +
+    retainedTextBytes(entry.detail) +
+    retainedTextBytes(redirect?.url) +
+    retainedTextBytes(redirect?.scope)
+  );
+};
 
 const performanceTimestamp = ({
   metrics,
@@ -777,6 +845,10 @@ const captureFinalUrl = async (
     context.signal,
   );
   if (capture.scopeExcluded) return "target_left_scope";
+  if (cdpRootDocument(tree) === undefined) {
+    capture.invalidateFinalUrl();
+    return "window_elapsed";
+  }
   const observation = tree.root.url;
   const facts = classifyCdpFrameUrl(observation, allowedOrigins);
   if (observation.kind !== "observed") capture.invalidateFinalUrl();

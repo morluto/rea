@@ -1,3 +1,4 @@
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { canonicalInputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -13,7 +14,10 @@ import { batchDecompileResultSchema } from "../../../src/domain/native/batchDeco
 import { ENHANCED_TOOL_CONTRACTS } from "../../../src/contracts/enhancedToolContracts.js";
 import type { RelationshipCoverage } from "../../../src/domain/relationshipCoverage.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
-import { MAX_ENHANCED_RECORDS } from "../../../src/contracts/enhancedInputs.js";
+import {
+  enhancedInputSchemas,
+  MAX_ENHANCED_RECORDS,
+} from "../../../src/contracts/enhancedInputs.js";
 
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
@@ -21,7 +25,10 @@ import {
   connect,
   jsonResult,
 } from "./enhancedToolsHarness.js";
-import { observed as ok } from "../../fixtures/analysisExecution.js";
+import {
+  createFixtureProviderIdentity,
+  observed as ok,
+} from "../../fixtures/analysisExecution.js";
 
 afterEach(closeEnhancedToolResources);
 
@@ -31,14 +38,10 @@ const relationshipExecution = (
   relationshipCoverage?: RelationshipCoverage,
 ) =>
   resultOk(
-    createAnalysisExecution(
-      result,
-      { id: "fixture", name: "Fixture analysis provider", version: "1" },
-      {
-        limitations,
-        ...(relationshipCoverage === undefined ? {} : { relationshipCoverage }),
-      },
-    ),
+    createAnalysisExecution(result, createFixtureProviderIdentity(), {
+      limitations,
+      ...(relationshipCoverage === undefined ? {} : { relationshipCoverage }),
+    }),
   );
 
 describe("enhanced MCP relationship limitations", () => {
@@ -54,7 +57,11 @@ describe("enhanced MCP relationship limitations", () => {
           arguments_.procedure === "0x1" ? ["0x2"] : [],
           arguments_.procedure === "0x1" ? [limitation] : [],
           arguments_.procedure === "0x1"
-            ? { status: "partial", limitations: [limitation] }
+            ? {
+                status: "partial",
+                limitations: [limitation],
+                limited_directions: ["callees"],
+              }
             : { status: "complete" },
         );
       },
@@ -280,6 +287,7 @@ describe("trace_call_path MCP outcome semantics", () => {
         return relationshipExecution([], [], {
           status: "partial",
           limitations: ["one or more callees may be missing"],
+          limited_directions: ["callees"],
         });
       },
     });
@@ -473,17 +481,29 @@ it("advertises and enforces the batch input budget before provider calls", async
   );
   const { tools } = await client.listTools();
   expect(tools.some(({ name }) => name === "batch_decompile")).toBe(true);
-  // The budget is a canonical input constraint; the server enforces it
-  // whatever the compact advertisement retains.
-  expect(canonicalInputSchema("batch_decompile")).toMatchObject({
-    properties: { addresses: { maxItems: MAX_ENHANCED_RECORDS } },
+  // The compact wire presentation may widen the canonical array bound.
+  const canonical = canonicalInputSchema("batch_decompile");
+  expect(canonical).toMatchObject({
+    properties: {
+      addresses: { type: "array", maxItems: MAX_ENHANCED_RECORDS },
+    },
   });
+
+  const addresses = Array.from({ length: MAX_ENHANCED_RECORDS }, () => "0x0");
+  const overLimit = { addresses: [...addresses, "0x1"] };
+  expect(
+    enhancedInputSchemas.batch_decompile.safeParse({ addresses }).success,
+  ).toBe(true);
+  const validate = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+  }).compile(canonical);
+  expect(validate({ addresses })).toBe(true);
+  expect(validate(overLimit)).toBe(false);
 
   const result = await client.callTool({
     name: "batch_decompile",
-    arguments: {
-      addresses: Array.from({ length: MAX_ENHANCED_RECORDS + 1 }, () => "0x0"),
-    },
+    arguments: overLimit,
   });
 
   expect(result.isError).toBe(true);
@@ -675,7 +695,7 @@ describe("enhanced MCP batch answers without pseudocode", () => {
         return resultOk(
           createAnalysisExecution(
             answer.result,
-            { id: "fixture", name: "Fixture analysis provider", version: "1" },
+            createFixtureProviderIdentity(),
             { limitations: answer.limitations },
           ),
         );

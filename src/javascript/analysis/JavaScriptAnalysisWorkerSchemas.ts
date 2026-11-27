@@ -94,6 +94,7 @@ const ipcChannel = <Shape extends z.ZodRawShape>(shape: Shape) =>
       ...shape,
       channel: z.string(),
       channel_expression: z.null(),
+      channel_basis: z.literal("static-value").exactOptional(),
     }),
     z.strictObject({
       ...electronFindingContext,
@@ -477,6 +478,7 @@ export const javaScriptWorkerStaticAnalysisSchema = z
     ),
     vendors: strings,
     electron,
+    loaderCondition: z.string().min(1).exactOptional(),
     limitations: strings,
   })
   .transform((analysis) => ({

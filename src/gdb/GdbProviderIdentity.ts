@@ -7,6 +7,12 @@ export const GDB_PROVIDER_IDENTITY = {
   version: null,
 } as const;
 
+/**
+ * GDB observations come from a session REA runs and whose target it names, so
+ * every retention path claims the same controlled replay.
+ */
+export const GDB_OBSERVATION_AUTHORITY = "controlled-replay" as const;
+
 /** Provider identity with the version this GDB reported, or null when unknown. */
 export interface GdbProviderIdentity {
   readonly id: typeof GDB_PROVIDER_IDENTITY.id;

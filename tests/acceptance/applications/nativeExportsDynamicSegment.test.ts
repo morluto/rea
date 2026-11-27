@@ -101,15 +101,10 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         error = parseMcpToolError(response).error;
       }
       expect(error).toMatchObject({
-        code: "invalid_request",
+        code: "unsupported_target",
         details: {
-          issues: [
-            {
-              path: ["path"],
-              reason: "invalid_format",
-              message: expect.stringContaining("null entry"),
-            },
-          ],
+          failure_kind: "malformed",
+          reason: expect.stringContaining("null entry"),
         },
       });
       expect(Buffer.compare(await readFile(path), bytes)).toBe(0);

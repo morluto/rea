@@ -45,7 +45,7 @@ import {
   type IdaConfiguration,
 } from "./IdaConfiguration.js";
 import {
-  jsonObjectSchema,
+  ownedJsonObjectSchema,
   jsonValueSchema,
   type JsonValue,
 } from "../domain/jsonValue.js";
@@ -62,6 +62,9 @@ import {
   McpHttpUtf8Error,
   validateMcpHttpResponse,
 } from "../providers/Utf8McpResponse.js";
+
+/** A completed upstream tool reply that reported failure, as opposed to an unreadable or missing reply. */
+export class IdaToolRejection extends AnalysisProtocolError {}
 
 /** Injectable MCP boundary used by the provider and transport conformance tests. */
 export interface IdaMcpConnection {
@@ -200,14 +203,14 @@ const parseIdaTextReply = (text: string): JsonValue => {
  */
 export const decodeIdaToolResult = (
   input: unknown,
-  protocol?: "native",
+  protocol?: "native" | "hexrays",
   diagnostic: IdaDiagnosticRedactor = createIdaDiagnosticRedactor(),
 ): JsonValue => {
   const result = toolResultSchema.parse(input);
   const blocks = mcpTextBlocks(result.content);
   if (result.isError === true) {
     const reason = diagnostic.blocks(blocks);
-    throw new AnalysisProtocolError(
+    throw new IdaToolRejection(
       diagnostic.message("IDA MCP tool failed: ", reason),
       {
         diagnostics: { reason },
@@ -235,7 +238,7 @@ export const decodeIdaToolResult = (
     return parseIdaTextReply(text);
   }
   if (result.structuredContent !== undefined) {
-    const value = jsonObjectSchema.parse(result.structuredContent);
+    const value = ownedJsonObjectSchema.parse(result.structuredContent);
     return Object.keys(value).length === 1 && Object.hasOwn(value, "result")
       ? value.result!
       : value;
@@ -274,17 +277,18 @@ const httpQuotedOctet = (code: number): boolean =>
   (code >= 33 && code <= 126) ||
   (code >= 128 && code <= 255);
 
+const HTTP_TOKEN_PATTERN = /[!#$%&'*+.^_`|~0-9A-Za-z-]+/y;
+
 /** Consume one complete RFC 9110 media type; never discard a malformed parameter. */
 const parseIdaContentType = (
   text: string,
 ): Result<IdaContentType, "malformed" | "ambiguous"> => {
   let cursor = 0;
-  const token = new RegExp("[!#$%&'*+.^_`|~0-9A-Za-z-]+", "y");
   const readToken = (): string | undefined => {
-    token.lastIndex = cursor;
-    const match = token.exec(text);
+    HTTP_TOKEN_PATTERN.lastIndex = cursor;
+    const match = HTTP_TOKEN_PATTERN.exec(text);
     if (match === null) return undefined;
-    cursor = token.lastIndex;
+    cursor = HTTP_TOKEN_PATTERN.lastIndex;
     return match[0];
   };
   const readOws = (): void => {
@@ -647,10 +651,25 @@ export const createIdaMcpConnection = (
   const retainStderr = (chunk: unknown): void => {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
     stderrBytes += bytes.length;
-    const combined = Buffer.concat([stderr, bytes]);
-    stderr = Buffer.from(
-      combined.subarray(Math.max(0, combined.length - IDA_STDERR_TAIL_BYTES)),
-    );
+    if (bytes.length >= IDA_STDERR_TAIL_BYTES) {
+      stderr = Buffer.from(
+        bytes.subarray(bytes.length - IDA_STDERR_TAIL_BYTES),
+      );
+      return;
+    }
+    const total = stderr.length + bytes.length;
+    if (total <= IDA_STDERR_TAIL_BYTES) {
+      stderr =
+        stderr.length === 0
+          ? Buffer.from(bytes)
+          : Buffer.concat([stderr, bytes], total);
+      return;
+    }
+    const keepFromStderr = IDA_STDERR_TAIL_BYTES - bytes.length;
+    const next = Buffer.allocUnsafe(IDA_STDERR_TAIL_BYTES);
+    stderr.copy(next, 0, stderr.length - keepFromStderr);
+    bytes.copy(next, keepFromStderr);
+    stderr = next;
   };
   const transport: OwnedMcpStdioTransport | StreamableHTTPClientTransport =
     "command" in config

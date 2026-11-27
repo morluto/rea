@@ -1,9 +1,11 @@
-import { machoSliceFamily } from "../../domain/apple/machoTargetSelection.js";
+import {
+  machoSelectionAnswersArchitecture,
+  machoSliceFamily,
+  metadataReportSubjectFormat,
+} from "../../domain/apple/machoTargetSelection.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { DwarfUnitsPort } from "../../ports/binaryDiagnostics/DwarfUnitsPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
-import { metadataReportSubjectFormat } from "../../domain/apple/machoTargetSelection.js";
 import { binaryMetadataArchitecture } from "../../domain/binaryMetadataArchitecture.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
@@ -12,12 +14,9 @@ import {
   type DwarfUnitsReport,
   type InspectDwarfUnitsInput,
 } from "../../domain/native/dwarfUnits.js";
-import { err, type Result } from "../../domain/result.js";
-import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import {
-  callerAnalysisParameters,
-  parseAnalysisInput,
-} from "../AnalysisInput.js";
+import type { Result } from "../../domain/result.js";
+import { callerAnalysisParameters } from "../AnalysisInput.js";
+import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_dwarf_units";
 
@@ -29,80 +28,73 @@ export class DwarfUnitsService {
     return this.provider.close?.() ?? Promise.resolve();
   }
 
-  async inspect(
+  inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    const input = parseAnalysisInput(
-      OPERATION,
-      rawInput,
-      inspectDwarfUnitsInputSchema,
-      options?.signal,
-    );
-    if (!input.ok) return input;
-    const result = await this.provider.inspect(input.value, options);
-    if (!result.ok) return result;
-    const report = dwarfUnitsSchema.safeParse(result.value);
-    if (
-      !report.success ||
-      report.data.artifact.path !== input.value.path ||
-      !validReport(report.data, input.value)
-    )
-      return err(
-        new AnalysisOutputError(
-          OPERATION,
+    return executeArtifactInspection(
+      {
+        operation: OPERATION,
+        inputSchema: inspectDwarfUnitsInputSchema,
+        outputSchema: dwarfUnitsSchema,
+        provider: this.provider,
+        invalidOutputMessage:
           "DWARF compile-unit provider returned malformed output or changed artifact identity.",
-        ),
-      );
-    const value = report.data;
-    const architecture =
-      value.architecture === null
-        ? undefined
-        : binaryMetadataArchitecture(value.architecture);
-    const locations = [
-      { kind: "artifact-path" as const, path: value.artifact.path },
-      ...value.sections.flatMap((section) =>
-        section.size === 0
-          ? []
-          : [
-              {
-                kind: "file-offset-range" as const,
-                start: section.offset,
-                end: section.offset + section.size,
-              },
-            ],
-      ),
-      ...value.units.flatMap((unit) =>
-        unit.file_offset === null
-          ? []
-          : [
-              {
-                kind: "file-offset-range" as const,
-                start: unit.file_offset,
-                end: unit.file_offset + unit.length,
-              },
-            ],
-      ),
-    ];
-    return completeProviderEvidence(
-      createEvidence(
-        {
-          path: value.artifact.path,
-          format: metadataReportSubjectFormat(value),
-          sha256: value.artifact.sha256,
-          ...(architecture === undefined ? {} : { architecture }),
+        toParameters: (input) => input,
+        validateReport: (report, parameters) =>
+          report.artifact.path === parameters.path &&
+          validReport(report, parameters),
+        buildEvidence: (value, identity, parameters) => {
+          const architecture =
+            value.architecture === null
+              ? undefined
+              : binaryMetadataArchitecture(value.architecture);
+          const locations = [
+            { kind: "artifact-path" as const, path: value.artifact.path },
+            ...value.sections.flatMap((section) =>
+              section.size === 0
+                ? []
+                : [
+                    {
+                      kind: "file-offset-range" as const,
+                      start: section.offset,
+                      end: section.offset + section.size,
+                    },
+                  ],
+            ),
+            ...value.units.flatMap((unit) =>
+              unit.file_offset === null
+                ? []
+                : [
+                    {
+                      kind: "file-offset-range" as const,
+                      start: unit.file_offset,
+                      end: unit.file_offset + unit.length,
+                    },
+                  ],
+            ),
+          ];
+          return createEvidence(
+            {
+              path: value.artifact.path,
+              format: metadataReportSubjectFormat(value),
+              sha256: value.artifact.sha256,
+              ...(architecture === undefined ? {} : { architecture }),
+            },
+            identity,
+            {
+              operation: OPERATION,
+              parameters: callerAnalysisParameters(rawInput)(parameters),
+              result: value,
+              confidence: "observed",
+              limitations: value.limitations,
+              locations,
+            },
+          );
         },
-        this.provider.identity,
-        {
-          operation: OPERATION,
-          parameters: callerAnalysisParameters(rawInput)(input.value),
-          result: value,
-          confidence: "observed",
-          limitations: value.limitations,
-          locations,
-        },
-      ),
-      options?.signal,
+      },
+      rawInput,
+      options,
     );
   }
 }
@@ -115,9 +107,9 @@ const validReport = (
   if (report.page.offset !== input.offset || report.page.limit !== input.limit)
     return false;
   const requested = input.architecture;
-  const slice = report.selected_slice;
-  if ((requested === undefined) !== (slice === undefined)) return false;
-  // Reports name the CPU family; arm64e selects an arm64 slice.
+  if (!machoSelectionAnswersArchitecture(report.selected_slice, requested))
+    return false;
+  // Reports name the CPU family; arm64e and arm64e.x1 select arm64 slices.
   return (
     requested === undefined ||
     report.architecture === machoSliceFamily(requested)

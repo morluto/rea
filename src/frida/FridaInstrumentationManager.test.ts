@@ -394,6 +394,62 @@ describe("FridaInstrumentationManager", () => {
     await manager.closeAll();
   });
 
+  it.each(["attach", "spawn"] as const)(
+    "names the refused ptrace seize request when %s injection cannot start",
+    async (mode) => {
+      const bindings = new FakeDeviceManager();
+      const reason = "Unable to perform ptrace seize: Operation not supported";
+      bindings.device.attach = async () => {
+        throw new Error(reason);
+      };
+      const manager = new FridaInstrumentationManager({
+        deviceManager: bindings,
+      });
+      const started = await manager.startSession(
+        mode === "attach"
+          ? { mode, deviceId: "local", pid: 512 }
+          : { mode, deviceId: "local", program: "/bin/echo" },
+      );
+      expect(started.ok).toBe(false);
+      if (started.ok) return;
+      const projected = projectAnalysisError(started.error);
+      expect(projected).toMatchObject({
+        code: "capability_unavailable",
+        details: { reason, provider_id: "frida" },
+      });
+      expect(projected.remediation.action).toContain("PTRACE_SEIZE");
+      expect(projected.remediation.action).toContain("PRoot");
+      expect(projected.remediation.action).toContain("this target alone");
+      expect(projected.remediation.action).not.toContain("whatever the target");
+      expect(projected.remediation.action).not.toContain(
+        "Choose another analysis or target",
+      );
+      expect(projected.message).toContain("ptrace seize");
+      await manager.closeAll();
+    },
+  );
+
+  it("keeps the generic remediation for other Frida startup refusals", async () => {
+    const bindings = new FakeDeviceManager();
+    bindings.device.attach = async () => {
+      throw new Error("Unable to access process with pid 512");
+    };
+    const manager = new FridaInstrumentationManager({
+      deviceManager: bindings,
+    });
+    const started = await manager.startSession({
+      mode: "attach",
+      deviceId: "local",
+      pid: 512,
+    });
+    expect(started.ok).toBe(false);
+    if (started.ok) return;
+    expect(
+      projectAnalysisError(started.error).remediation.action,
+    ).not.toContain("PTRACE_SEIZE");
+    await manager.closeAll();
+  });
+
   it("retains a failed startup's spawn and remote lease until cleanup succeeds", async () => {
     const bindings = new FakeDeviceManager();
     bindings.device.attach = async () => {
@@ -873,6 +929,45 @@ describe("FridaInstrumentationManager", () => {
     expect(retry.ok).toBe(true);
     expect(bindings.device.resumed).toEqual([512]);
     expect(manager.status(started.value.sessionId)).toBeUndefined();
+  });
+
+  it("resumes a spawn on retry when detach succeeded but a script stayed retained", async () => {
+    const bindings = new FakeDeviceManager();
+    const manager = new FridaInstrumentationManager({
+      deviceManager: bindings,
+    });
+    const started = await manager.startSession({
+      mode: "spawn",
+      deviceId: "local",
+      program: "/tmp/fixture",
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    const loaded = await manager.loadScript(started.value.sessionId, {
+      sourceKind: "inline",
+      source: "send('ready');",
+    });
+    expect(loaded.ok).toBe(true);
+    expect(bindings.device.session.scripts).toHaveLength(1);
+    const script = bindings.device.session.scripts.at(-1);
+    if (script === undefined) throw new Error("missing fixture script");
+    // Both release passes of the first close fail to disconnect, so the script stays
+    // retained after the session itself detached.
+    const disconnect = script.message.disconnect;
+    let disconnectFailures = 2;
+    script.message.disconnect = (handler) => {
+      if (disconnectFailures-- > 0) throw new Error("disconnect failed");
+      disconnect(handler);
+    };
+
+    const firstClose = await manager.closeSession(started.value.sessionId);
+    expect(firstClose.ok).toBe(false);
+    expect(bindings.device.session.isDetached()).toBe(true);
+    expect(bindings.device.resumed).toEqual([]);
+
+    const retry = await manager.closeSession(started.value.sessionId);
+    expect(retry.ok).toBe(true);
+    expect(bindings.device.resumed).toEqual([512]);
   });
 
   it("keeps a remote device while a spawned target resume is pending", async () => {
@@ -1997,3 +2092,173 @@ it.each([{}, { session_bytes: 12345 }, { session_bytes: -1 }])(
     );
   },
 );
+
+it("accounts exact JSON byte charges across unicode, surrogates, control chars, and binary data", async () => {
+  const token = "secret-tok";
+  const bindings = new FakeDeviceManager();
+  const manager = new FridaInstrumentationManager({ deviceManager: bindings });
+  onTestFinished(() => manager.closeAll());
+  const started = await manager.startSession({
+    mode: "attach",
+    remote: { address: "127.0.0.1:27042", token },
+    pid: 512,
+  });
+  if (!started.ok) throw started.error;
+  const loaded = await manager.loadScript(started.value.sessionId, {
+    sourceKind: "inline",
+    source: "send('probe');",
+  });
+  if (!loaded.ok) throw loaded.error;
+  const script = bindings.device.session.scripts[0]!;
+  // Emit a rich message exercising 0x7f (DEL, 1 JSON byte), control chars,
+  // 2/3-byte UTF-8, surrogate pair (😀), lone surrogate, secret redaction,
+  // nested arrays/objects, line/column numbers, and base64 binary data.
+  const richPayload = {
+    del: "\x7f",
+    ctrl: '\x00\n"\\',
+    utf8: "é中😀\ud800",
+    list: [1, true, null, { [token]: "keep" }],
+    secretText: `before-${token}-after`,
+  };
+  script.message.emit(
+    {
+      type: "error",
+      payload: richPayload,
+      description: `err ${token} \x7f 😀`,
+      stack: "stack line 1",
+      fileName: "hook.js",
+      lineNumber: 42,
+      columnNumber: 7,
+    },
+    Buffer.from([1, 2, 3, 4]),
+  );
+  const loadedObserved = manager.status(started.value.sessionId)?.messages[0];
+  const loadedCharge = Buffer.byteLength(JSON.stringify(loadedObserved));
+  const firstObserved = manager.status(started.value.sessionId)
+    ?.messages[1] as Record<string, unknown>;
+  expect(firstObserved.payload).toEqual({
+    del: "\x7f",
+    ctrl: '\x00\n"\\',
+    utf8: "é中😀\ud800",
+    list: [1, true, null, { "[redacted]": "keep" }],
+    secretText: "before-[redacted]-after",
+  });
+  expect(firstObserved.description).toBe("err [redacted] \x7f 😀");
+  expect(firstObserved.data_base64).toBe(
+    Buffer.from([1, 2, 3, 4]).toString("base64"),
+  );
+
+  // Verify exact byte-for-byte charge parity above MAX_MESSAGE_METADATA_BYTES (128 KiB):
+  // emit 9 copies of a 20 KiB message (~185 KiB total, each < remaining per-message budget)
+  // so at `exactFit`, all messages stay untruncated; at `exactFit - 1`, the first is evicted.
+  const paddedPayload = { ...richPayload, pad: "x".repeat(20_000) };
+  script.message.emit(
+    {
+      type: "error",
+      payload: paddedPayload,
+      description: `err ${token} \x7f 😀`,
+      stack: "stack line 1",
+      fileName: "hook.js",
+      lineNumber: 42,
+      columnNumber: 7,
+    },
+    Buffer.from([1, 2, 3, 4]),
+  );
+  const paddedObserved = manager.status(started.value.sessionId)?.messages[2];
+  const paddedCharge = Buffer.byteLength(JSON.stringify(paddedObserved));
+  const secondMessageCharge = Buffer.byteLength(
+    JSON.stringify({
+      script_id: loaded.value.scriptId,
+      type: "send",
+      payload: "ok",
+    }),
+  );
+  const copies = 9;
+  const exactFit = loadedCharge + copies * paddedCharge + secondMessageCharge;
+
+  for (const [sessionBytes, expectedCount, expectedTruncated] of [
+    [exactFit, copies + 2, false],
+    [exactFit - 1, copies + 1, true],
+  ] as const) {
+    const tightBindings = new FakeDeviceManager();
+    const tightManager = new FridaInstrumentationManager({
+      deviceManager: tightBindings,
+    });
+    onTestFinished(() => tightManager.closeAll());
+    const tightSession = await tightManager.startSession({
+      mode: "attach",
+      remote: { address: "127.0.0.1:27042", token },
+      pid: 512,
+      captureLimits: { session_bytes: sessionBytes },
+    });
+    if (!tightSession.ok) throw tightSession.error;
+    const tightLoad = await tightManager.loadScript(
+      tightSession.value.sessionId,
+      {
+        sourceKind: "inline",
+        source: "send('probe');",
+      },
+    );
+    if (!tightLoad.ok) throw tightLoad.error;
+    const tightScript = tightBindings.device.session.scripts[0]!;
+    for (let i = 0; i < copies; i += 1) {
+      tightScript.message.emit(
+        {
+          type: "error",
+          payload: paddedPayload,
+          description: `err ${token} \x7f 😀`,
+          stack: "stack line 1",
+          fileName: "hook.js",
+          lineNumber: 42,
+          columnNumber: 7,
+        },
+        Buffer.from([1, 2, 3, 4]),
+      );
+    }
+    tightScript.message.emit({ type: "send", payload: "ok" }, null);
+    const tightStatus = tightManager.status(tightSession.value.sessionId)!;
+    expect(tightStatus.messages).toHaveLength(expectedCount);
+    expect(tightStatus.messagesTruncated).toBe(expectedTruncated);
+  }
+});
+
+it("evicts at exact session_bytes charge parity with Buffer.byteLength(JSON.stringify)", async () => {
+  const bindings = new FakeDeviceManager();
+  const manager = new FridaInstrumentationManager({ deviceManager: bindings });
+  onTestFinished(() => manager.closeAll());
+  const started = await manager.startSession({
+    mode: "attach",
+    pid: 512,
+    captureLimits: { session_bytes: 65_536 },
+  });
+  if (!started.ok) throw started.error;
+  const loaded = await manager.loadScript(started.value.sessionId, {
+    sourceKind: "inline",
+    source: "send('base');",
+  });
+  if (!loaded.ok) throw loaded.error;
+  const script = bindings.device.session.scripts[0]!;
+  // Fill budget with messages containing non-ASCII, DEL, surrogates, and binary data.
+  for (let i = 0; i < 40; i += 1) {
+    script.message.emit(
+      {
+        type: "error",
+        description: `d_${i}_\x7f_é_😀`,
+        stack: "s".repeat(1200),
+        fileName: "a.js",
+        lineNumber: i,
+        columnNumber: 1,
+        payload: { i, text: "p".repeat(1200) },
+      },
+      Buffer.alloc(256, i),
+    );
+  }
+  const status = manager.status(started.value.sessionId)!;
+  expect(status.messagesTruncated).toBe(true);
+  const totalJsonBytes = status.messages.reduce<number>(
+    (sum, msg) => sum + Buffer.byteLength(JSON.stringify(msg)),
+    0,
+  );
+  expect(totalJsonBytes).toBeLessThanOrEqual(65_536);
+  expect(totalJsonBytes).toBeGreaterThan(60_000);
+});

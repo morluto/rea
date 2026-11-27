@@ -227,9 +227,22 @@ export const RECONSTRUCTION_PROVIDER = {
   version: "1",
 } as const;
 
+export const PE_UNWIND_RANGES_PROVIDER = Object.freeze({
+  id: "rea-pe-unwind-ranges",
+  name: "REA PE x64 exception-directory parser",
+  version: "1",
+} as const);
+
 export const PE_LOAD_CONFIG_PROVIDER = Object.freeze({
   id: "rea-pe-load-config",
   name: "REA PE TLS/load-config parser",
+  version: "1",
+} as const);
+
+/** Provider identity for bytes appended after a PE image. */
+export const PE_OVERLAY_PROVIDER = Object.freeze({
+  id: "rea-pe-overlay",
+  name: "REA PE overlay parser",
   version: "1",
 } as const);
 

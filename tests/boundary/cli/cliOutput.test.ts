@@ -13,7 +13,7 @@ import {
   renderCliDocument,
   renderVersionReport,
   parseCliOutputArguments,
-} from "../../../src/cliOutput.js";
+} from "../../../src/cli/cliOutput.js";
 
 describe("CLI output argument boundary", () => {
   it("requires an exact row selector and explicit columns for delimited formats", () => {
@@ -286,7 +286,7 @@ describe("CLI output flag value forms", () => {
   });
 });
 
-describe("unclosed CLI output filter slices", () => {
+describe("CLI output filter slice validation", () => {
   it.each([
     "providers[",
     "providers[0,1].name[",
@@ -354,6 +354,78 @@ describe("unclosed CLI output filter slices", () => {
       expect(splitPath.json).toMatchObject({
         ok: false,
         error: { code: "INVALID_OUTPUT_FILTER" },
+      });
+    },
+  );
+
+  workspaceCliTest(
+    "refuses extra slice bounds instead of returning a partial selection",
+    async ({ cli }) => {
+      const result = await cli.run({
+        freshProcess: true,
+        arguments: [
+          "providers",
+          "--json",
+          "--filter-output",
+          "capabilities[0,1,2].provider.id",
+        ],
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        ok: false,
+        error: {
+          code: "INVALID_OUTPUT_FILTER",
+          message: expect.stringContaining("Use [start,end]."),
+        },
+      });
+      expect(result.stderr).toBe("");
+    },
+  );
+
+  workspaceCliTest(
+    "rejects a nonnumeric slice bound instead of returning no rows",
+    async ({ cli }) => {
+      const result = await cli.run({
+        freshProcess: true,
+        arguments: [
+          "providers",
+          "--json",
+          "--filter-output",
+          "capabilities[0,2x].provider.id",
+        ],
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        ok: false,
+        error: {
+          code: "INVALID_OUTPUT_FILTER",
+          message: expect.stringContaining("nonnumeric slice bound"),
+        },
+      });
+    },
+  );
+
+  workspaceCliTest(
+    "preserves --filter-output selections on over-budget CLI Evidence instead of returning {}",
+    async ({ cli, workspace }) => {
+      const target = workspace.path("entropy-over-budget.bin");
+      await writeFile(target, Buffer.alloc(64 * 1024, 0x41));
+      const result = await cli.run({
+        delivery: "budgeted",
+        environment: { REA_AGENT_RESULT_BUDGET_BYTES: "4096" },
+        arguments: [
+          "inspect-byte-entropy",
+          target,
+          "--block-size",
+          "256",
+          "--json",
+          "--filter-output",
+          "normalized_result.file_entropy",
+        ],
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.json).toEqual({
+        normalized_result: { file_entropy: 0 },
       });
     },
   );
@@ -716,6 +788,8 @@ describe("CLI update root alias", () => {
 describe("version report requests", () => {
   it.each([
     [["--version", "--format=toon"], "toon"],
+    [["--version", "--json", "--", "--no-timings"], undefined],
+    [["--version", "--json", "--filter-output", "--no-timings"], undefined],
     // A command keeps its own --version option.
     [["providers", "--version", "--json"], undefined],
     [["--version", "1", "--json"], undefined],

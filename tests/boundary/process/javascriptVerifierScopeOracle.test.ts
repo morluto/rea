@@ -32,7 +32,7 @@ const report = z
     JSON.parse(
       await readFile(
         new URL(
-          "../../../docs/verification/javascript-interruption-applicability-2026-10-15.json",
+          "../../fixtures/javascript/interruption-applicability-2026-10-15.json",
           import.meta.url,
         ),
         "utf8",

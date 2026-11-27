@@ -5,7 +5,6 @@ import { digestSchema } from "../digests.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { err, ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import type { JsonValue } from "../jsonValue.js";
 import { jsonValueByteLength } from "../jsonValueByteLength.js";
 import {
@@ -22,13 +21,15 @@ import {
 } from "../javascript/javascriptRouteInventory.js";
 import { javaScriptRouteMechanismSchema } from "../javascript/javascriptRouteFacts.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { filterSet } from "./selectViewRows.js";
 import { assertOwnedView, type AdmittedView } from "./analysisViewShape.js";
 import {
-  ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
+  ANALYSIS_VIEW_PAGE_BYTES as PAGE_BYTES,
+  analysisViewPageTooLarge,
   analysisViewInputError,
 } from "./analysisViewErrors.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -124,10 +125,10 @@ export const javaScriptRoutesSummaryDeliveryShape = {
 };
 export const webRoutesSummaryDeliveryShape = {
   detail: z.literal("summary"),
-  view: z.union([
-    javaScriptRoutesViewRequestSchema,
-    webBundleViewRequestSchema,
-  ]),
+  // Omitted, the summary view of the retained analysis is returned.
+  view: z
+    .union([javaScriptRoutesViewRequestSchema, webBundleViewRequestSchema])
+    .exactOptional(),
 };
 export const javaScriptRouteProvenanceSchema = z.strictObject({
   source_id: javaScriptRouteInventorySourceSchema.shape.id,
@@ -268,16 +269,16 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
 const candidates = <T extends { id: string }>(
   rows: Table<T>,
   selected: readonly string[] | undefined,
-): readonly T[] =>
-  selected === undefined
-    ? rows.rows
-    : [...new Set(selected)]
-        .flatMap((id) => {
-          const entry = rows.byId.get(id);
-          return entry === undefined ? [] : [entry];
-        })
-        .sort((a, b) => a.index - b.index)
-        .map((entry) => entry.row);
+): readonly T[] => {
+  if (selected === undefined) return rows.rows;
+  const entries: { row: T; index: number }[] = [];
+  for (const id of new Set(selected)) {
+    const entry = rows.byId.get(id);
+    if (entry !== undefined) entries.push(entry);
+  }
+  entries.sort((a, b) => a.index - b.index);
+  return entries.map((entry) => entry.row);
+};
 const choose = (
   row: Record<string, JsonValue>,
   fields: readonly string[],
@@ -291,10 +292,7 @@ const matches = (
   values: ReadonlySet<string> | undefined,
   value: string | null,
 ): boolean => values === undefined || (value !== null && values.has(value));
-const selectedSet = (values: readonly string[] | undefined) =>
-  values === undefined ? undefined : new Set(values);
 const ranks = { low: 0, medium: 1, high: 2 };
-const PAGE_BYTES = 1024 * 1024;
 // Sealing appends this field to a nonempty JSON object after projection.
 const DIGEST_BYTES = jsonValueByteLength({ view_digest: "0".repeat(64) }) - 1;
 const PROJECTION_BYTES = PAGE_BYTES - DIGEST_BYTES;
@@ -376,11 +374,7 @@ export const projectJavaScriptRoutesView = (
     source_coverage: { ...inventory.coverage },
     inventory_capacity:
       inventory.capacity === null ? null : { ...inventory.capacity },
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...inventory.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, inventory.limitations),
     unknowns: [
       "The complete application route set, reachability and runtime permissions remain unknown.",
       ...(inventory.coverage.candidate_enumeration === "partial"
@@ -391,18 +385,10 @@ export const projectJavaScriptRoutesView = (
     ],
   };
   const tooLarge = (): Result<never, AnalysisError> =>
-    err(
-      new AnalysisResourceConstraintError(
-        "inspect_analysis_view",
-        "transport",
-        "The requested route page cannot fit the analysis-view byte budget; select fewer fields or a smaller selection. The complete parent is retained.",
-        {
-          parent_evidence_id: parent.evidenceId,
-          limit_bytes: PAGE_BYTES,
-          collection: view.collection,
-        },
-        ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
-      ),
+    analysisViewPageTooLarge(
+      parent.evidenceId,
+      "The requested route page cannot fit the analysis-view byte budget; select fewer fields or a smaller selection. The complete parent is retained.",
+      { collection: view.collection },
     );
   if (view.collection === "summary") {
     const summary = {
@@ -444,7 +430,7 @@ export const projectJavaScriptRoutesView = (
       sources: readonly string[];
     },
   ) => {
-    const rows = candidates(source, ids).filter(predicate),
+    const rows = candidates(source, ids),
       items: Record<string, JsonValue>[] = [],
       refs = new Map<string, JavaScriptRouteInventorySource>();
     // Count the fixed envelope once. Counter widths and status text reserve the
@@ -470,12 +456,17 @@ export const projectJavaScriptRoutesView = (
         ),
       byte_limited = false;
     if (bytes > PAGE_BYTES) return tooLarge();
-    for (
-      let index = page.offset;
-      index < rows.length && items.length < page.limit;
-      index++
-    ) {
-      const projected = project(rows[index]!),
+    let total = 0;
+    for (const row of rows) {
+      if (!predicate(row)) continue;
+      const matchedIndex = total++;
+      if (
+        matchedIndex < page.offset ||
+        items.length >= page.limit ||
+        byte_limited
+      )
+        continue;
+      const projected = project(row),
         additions: JavaScriptRouteInventorySource[] = [];
       let addedBytes =
         jsonValueByteLength(projected.item, PAGE_BYTES - bytes) +
@@ -495,11 +486,11 @@ export const projectJavaScriptRoutesView = (
       if (bytes + addedBytes > PAGE_BYTES) {
         if (items.length === 0) return tooLarge();
         byte_limited = true;
-        break;
+        continue;
       }
       bytes += addedBytes;
       items.push(projected.item);
-      for (const row of additions) refs.set(row.id, row);
+      for (const sourceRow of additions) refs.set(sourceRow.id, sourceRow);
     }
     const result = {
       ...shared,
@@ -507,7 +498,7 @@ export const projectJavaScriptRoutesView = (
       sources: [...refs.values()],
       summary: null,
       byte_limited,
-      coverage: pageViewCoverage(page.offset, items.length, rows.length),
+      coverage: pageViewCoverage(page.offset, items.length, total),
     };
     return jsonValueByteLength({ ...result, items }, PROJECTION_BYTES) >
       PROJECTION_BYTES
@@ -517,9 +508,9 @@ export const projectJavaScriptRoutesView = (
   if (page.collection === "routes") {
     const where = page.where,
       filters = {
-        paths: selectedSet(where.paths),
-        classifications: selectedSet(where.classifications),
-        mechanisms: selectedSet(where.mechanisms),
+        paths: filterSet(where.paths),
+        classifications: filterSet(where.classifications),
+        mechanisms: filterSet(where.mechanisms),
       },
       fields = page.fields ?? [
         "path",
@@ -562,9 +553,9 @@ export const projectJavaScriptRoutesView = (
   if (page.collection === "occurrences") {
     const where = page.where,
       filters = {
-        route_ids: selectedSet(where.route_ids),
-        source_ids: selectedSet(where.source_ids),
-        mechanisms: selectedSet(where.mechanisms),
+        route_ids: filterSet(where.route_ids),
+        source_ids: filterSet(where.source_ids),
+        mechanisms: filterSet(where.mechanisms),
       },
       fields = page.fields ?? [
         "mechanism",
@@ -597,8 +588,8 @@ export const projectJavaScriptRoutesView = (
   if (page.collection === "sources") {
     const where = page.where,
       filters = {
-        keys: selectedSet(where.keys),
-        statuses: selectedSet(where.statuses),
+        keys: filterSet(where.keys),
+        statuses: filterSet(where.statuses),
       },
       fields = page.fields ?? [
         "path",
@@ -627,8 +618,8 @@ export const projectJavaScriptRoutesView = (
   }
   const where = page.where,
     filters = {
-      source_ids: selectedSet(where.source_ids),
-      kinds: selectedSet(where.kinds),
+      source_ids: filterSet(where.source_ids),
+      kinds: filterSet(where.kinds),
     },
     fields = page.fields ?? ["source_range", "reason"];
   return deliver(

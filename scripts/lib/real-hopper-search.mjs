@@ -16,6 +16,7 @@ export async function verifyHopperSearch(call, invalid, procedure) {
   }
   assert.deepEqual(
     await call("search_procedures", {
+      detail: "complete",
       pattern: original,
       mode: "literal",
       case_sensitive: true,
@@ -39,21 +40,30 @@ async function verifySymbolNames(call, invalid, address) {
   for (const name of ["REA_a.b[0]", unicode, ...extentNames]) {
     assert.equal(await call("set_address_name", { address, name }), true);
     assert.equal(await call("address_name", { address }), name);
-    assert.deepEqual(await call("list_names", { address }), [
-      { address, value: name },
-    ]);
+    assert.deepEqual(
+      await call("list_names", { detail: "complete", address }),
+      [{ address, value: name }],
+    );
     assert.deepEqual(
       await call("search_procedures", {
+        detail: "complete",
         pattern: name,
         mode: "literal",
         case_sensitive: true,
       }),
       [{ address, value: name }],
     );
-    assert.equal(await call("procedure_address", { procedure: name }), address);
+    assert.equal(
+      await call("procedure_address", { detail: "complete", procedure: name }),
+      address,
+    );
   }
   assert.deepEqual(
-    await call("search_procedures", { pattern: unicode, mode: "literal" }),
+    await call("search_procedures", {
+      detail: "complete",
+      pattern: unicode,
+      mode: "literal",
+    }),
     [],
   );
   const other = (await call("list_procedures")).find(
@@ -83,6 +93,7 @@ async function verifySearchModes(call, address) {
   await call("set_address_name", { address, name: "REA_Search_Upper" });
   assert.deepEqual(
     await call("search_procedures", {
+      detail: "complete",
       pattern: "rea_search_upper",
       mode: "literal",
       case_sensitive: false,
@@ -91,6 +102,7 @@ async function verifySearchModes(call, address) {
   );
   assert.deepEqual(
     await call("search_procedures", {
+      detail: "complete",
       pattern: "rea_search_upper",
       mode: "literal",
       case_sensitive: true,
@@ -99,6 +111,7 @@ async function verifySearchModes(call, address) {
   );
   assert.deepEqual(
     await call("search_procedures", {
+      detail: "complete",
       pattern: "^REA_Search_(?:Upper|Lower)$",
       mode: "regex",
       case_sensitive: true,
@@ -148,6 +161,7 @@ async function verifySearchModes(call, address) {
 
   assert.deepEqual(
     await call("search_strings", {
+      detail: "complete",
       pattern: "fragment_tail",
       mode: "literal",
       case_sensitive: true,
@@ -160,6 +174,7 @@ async function verifySearchModes(call, address) {
   assert.equal(expected.length, 2);
   assert.deepEqual(
     await call("search_strings", {
+      detail: "complete",
       pattern: "^REA_C_(?:ENTRY|LEAF)$",
       mode: "regex",
       case_sensitive: true,
@@ -340,11 +355,13 @@ export async function verifyHopperStringObjects(
       }));
     assert.equal(bytes.complete, true);
     assert.equal(bytes.bytes_hex, expectedBytes.toString("hex"));
-    assert.deepEqual(await call("list_strings", { address: item.address }), [
-      item,
-    ]);
+    assert.deepEqual(
+      await call("list_strings", { detail: "complete", address: item.address }),
+      [item],
+    );
     assert.deepEqual(
       await call("search_strings", {
+        detail: "complete",
         pattern: value,
         mode: "literal",
         case_sensitive: true,
@@ -353,7 +370,11 @@ export async function verifyHopperStringObjects(
     );
   }
   assert.deepEqual(
-    await call("search_strings", { pattern: "\\xC3\\xA9", mode: "literal" }),
+    await call("search_strings", {
+      detail: "complete",
+      pattern: "\\xC3\\xA9",
+      mode: "literal",
+    }),
     [],
   );
   return {
@@ -377,7 +398,12 @@ export async function verifyHopperRegexIsolation(
     const reply = await client.callTool(
       {
         name: "search_procedures",
-        arguments: { pattern: "(a+)+$", mode: "regex", case_sensitive: true },
+        arguments: {
+          detail: "complete",
+          pattern: "(a+)+$",
+          mode: "regex",
+          case_sensitive: true,
+        },
       },
       options,
     );
@@ -391,7 +417,12 @@ export async function verifyHopperRegexIsolation(
     const pending = client.callTool(
       {
         name: "search_procedures",
-        arguments: { pattern: "(a+)+$", mode: "regex", case_sensitive: true },
+        arguments: {
+          detail: "complete",
+          pattern: "(a+)+$",
+          mode: "regex",
+          case_sensitive: true,
+        },
       },
       { ...options, signal: controller.signal },
     );
@@ -404,6 +435,7 @@ export async function verifyHopperRegexIsolation(
     assert.equal(await call("address_name", { address }), pathological);
     assert.deepEqual(
       await call("search_procedures", {
+        detail: "complete",
         pattern: pathological,
         mode: "literal",
         case_sensitive: true,

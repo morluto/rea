@@ -102,3 +102,36 @@ it("preserves explicit undefined normalization without freezing or caching non-J
   expect(source).toEqual({});
   expect(Object.hasOwn(source, "optional")).toBe(false);
 });
+
+it("caches and returns the frozen normalized snapshot when borrowing is rejected", () => {
+  const shared = { tag: "x" };
+  const source = freezeOwnedJsonTreeSnapshot({
+    first: shared,
+    second: shared,
+  });
+  let parseCount = 0;
+  const schema = z.strictObject({
+    first: z.strictObject({ tag: z.string() }),
+    second: z.strictObject({ tag: z.string() }),
+    added: z.string().default("normalized"),
+  });
+  const read = createAnalysisViewResultReader({
+    safeParse: (input) => {
+      parseCount += 1;
+      return schema.safeParse(input);
+    },
+  });
+  const first = read(parent(source));
+  const second = read({ ...parent(source) });
+  expect(parseCount).toBe(1);
+  if (!first.ok || !second.ok) throw new Error("Expected ok results");
+  expect(first.value).not.toBe(source);
+  expect(second.value).toBe(first.value);
+  expect(Object.isFrozen(first.value)).toBe(true);
+  expect(isImmutableJsonSnapshot(first.value)).toBe(true);
+  expect(first.value).toEqual({
+    first: { tag: "x" },
+    second: { tag: "x" },
+    added: "normalized",
+  });
+});

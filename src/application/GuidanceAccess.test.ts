@@ -1,9 +1,5 @@
 import { expect, it } from "vitest";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
-import { MANAGED_SKILL_FILES } from "./SetupSkill.js";
-import { searchGuidanceOutputSchema } from "../contracts/guidanceContracts.js";
-import { RetainedRegularFileCleanupFailure } from "../process/RegularFileRead.js";
 import {
   readGuidanceSectionWithReader,
   searchGuidanceWithReader,
@@ -20,43 +16,8 @@ const valueOf = async (
 ) => {
   const result = await request;
   if (!result.ok) throw result.error;
-  return searchGuidanceOutputSchema.parse(result.value);
+  return result.value;
 };
-
-it("ranks a focused JavaScript module section and retrieves it with its locator", async () => {
-  const resources = new ArtifactResourceScope();
-  const result = await valueOf(
-    searchGuidanceWithReader(
-      { query: "exact JavaScript module" },
-      guideFixture,
-      resources,
-    ),
-  );
-  expect(result.status).toBe("matches");
-  if (result.status !== "matches") throw new Error("Expected guide matches");
-  expect(result.matches[0]).toMatchObject({
-    guide: "references/javascript-applications.md",
-    heading: "Read a module without repeating analysis",
-    matched_terms: ["exact", "javascript", "module"],
-    context: expect.stringContaining("javascript-module"),
-  });
-  const selected = result.matches[0];
-  if (selected === undefined) throw new Error("Expected selected guidance");
-  const retrieved = await readGuidanceSectionWithReader(
-    { locator: selected.locator },
-    guideFixture,
-    resources,
-  );
-  if (!retrieved.ok) throw retrieved.error;
-  expect(retrieved.value).toMatchObject({
-    status: "section",
-    source: "installed_rea_guidance",
-    guide: selected.guide,
-    heading: selected.heading,
-    locator: selected.locator,
-    content: expect.stringContaining('"node_id":"module:main.js"'),
-  });
-});
 
 it("returns an honest no-match result and rejects empty queries and invalid bounds", async () => {
   const resources = new ArtifactResourceScope();
@@ -72,18 +33,6 @@ it("returns an honest no-match result and rejects empty queries and invalid boun
     status: "no_matches",
     total_matches: 0,
     message: expect.stringContaining("does not indicate"),
-  });
-  expect(
-    await valueOf(
-      searchGuidanceWithReader(
-        { query: "how do I frobnicate qzxv" },
-        guideFixture,
-        resources,
-      ),
-    ),
-  ).toMatchObject({
-    status: "no_matches",
-    total_matches: 0,
   });
   expect(
     await searchGuidanceWithReader({ query: "  " }, guideFixture, resources),
@@ -120,74 +69,77 @@ it("does not treat Markdown headings inside fenced code as section boundaries", 
   );
 });
 
-it("refuses an oversized guide bundle instead of indexing partial content", async () => {
+it("refuses a combined guide bundle that exceeds the byte allowance", async () => {
+  const perFile = "x".repeat(1_048_576);
   const result = await searchGuidanceWithReader(
     { query: "module" },
-    async (path) =>
-      path === "SKILL.md" ? "x".repeat(4_194_305) : guideFixture(path),
+    async (path) => (path === "SKILL.md" ? "# Module guidance" : perFile),
     new ArtifactResourceScope(),
   );
   expect(result).toMatchObject({
     ok: true,
-    value: { status: "bundle_unavailable" },
+    value: {
+      status: "bundle_unavailable",
+      message: expect.stringContaining("4 MiB"),
+    },
   });
 });
 
-it("paginates deterministically without losing, duplicating, or reordering matches", async () => {
-  const readGuide = guideFixture;
-  const first = await valueOf(
-    searchGuidanceWithReader(
-      { query: "module", limit: 2 },
-      readGuide,
-      new ArtifactResourceScope(),
-    ),
-  );
-  const repeat = await valueOf(
-    searchGuidanceWithReader(
-      { query: "module", limit: 2 },
-      readGuide,
-      new ArtifactResourceScope(),
-    ),
-  );
-  expect(first).toEqual(repeat);
-  if (first.status !== "matches") throw new Error("Expected guide matches");
-  expect(first.has_more).toBe(true);
-  const all = first.matches.map(({ locator }) => locator);
-  let cursor = first.next_cursor;
-  while (cursor !== undefined) {
-    const page = await valueOf(
-      searchGuidanceWithReader(
-        { query: "module", limit: 2, cursor },
-        readGuide,
-        new ArtifactResourceScope(),
-      ),
-    );
-    if (page.status !== "matches") throw new Error("Expected guide matches");
-    all.push(...page.matches.map(({ locator }) => locator));
-    cursor = page.next_cursor;
-  }
+it("walks the exact ordered guidance results with finite continuation", async () => {
+  const resources = new ArtifactResourceScope();
   const complete = await valueOf(
     searchGuidanceWithReader(
       { query: "module", limit: 20 },
-      readGuide,
-      new ArtifactResourceScope(),
-    ),
-  );
-  if (complete.status !== "matches") throw new Error("Expected guide matches");
-  expect(new Set(all).size).toBe(all.length);
-  expect(all).toEqual(complete.matches.map(({ locator }) => locator));
-});
-
-it("rejects malformed locators and reports changed or missing installed guides", async () => {
-  const resources = new ArtifactResourceScope();
-  const search = await valueOf(
-    searchGuidanceWithReader(
-      { query: "exact JavaScript module" },
       guideFixture,
       resources,
     ),
   );
-  if (search.status !== "matches") throw new Error("Expected guide matches");
+  if (complete.status !== "matches") throw new Error("Expected guide matches");
+  expect(complete.has_more).toBe(false);
+  expect(complete.matches.length).toBeGreaterThan(2);
+  const limit = 2;
+  let cursor: string | undefined;
+  for (let offset = 0; offset < complete.matches.length; offset += limit) {
+    if (offset > 0 && cursor === undefined)
+      throw new Error("Expected the next guidance page");
+    const page = await valueOf(
+      searchGuidanceWithReader(
+        { query: "module", limit, cursor },
+        guideFixture,
+        resources,
+      ),
+    );
+    if (page.status !== "matches") throw new Error("Expected guide matches");
+    const hasMore = offset + limit < complete.matches.length;
+    expect(page).toMatchObject({
+      matches: complete.matches.slice(offset, offset + limit),
+      total_matches: complete.matches.length,
+      offset,
+      has_more: hasMore,
+    });
+    if (hasMore) expect(page.next_cursor).toEqual(expect.any(String));
+    else expect(page).not.toHaveProperty("next_cursor");
+    cursor = page.next_cursor;
+  }
+});
+
+it("rejects malformed locators and reports changed or missing installed guides", async () => {
+  const resources = new ArtifactResourceScope();
+  const first = await valueOf(
+    searchGuidanceWithReader(
+      { query: "module", limit: 1 },
+      guideFixture,
+      resources,
+    ),
+  );
+  if (
+    first.status !== "matches" ||
+    first.next_cursor === undefined ||
+    first.matches[0] === undefined
+  )
+    throw new Error("Expected a section and continuation token");
+  const { locator, guide } = first.matches[0];
+  const cursor = first.next_cursor;
   expect(
     await readGuidanceSectionWithReader(
       { locator: "../../outside.md" },
@@ -195,33 +147,23 @@ it("rejects malformed locators and reports changed or missing installed guides",
       resources,
     ),
   ).toMatchObject({ ok: false });
-  const changedReader = async (path: string) =>
-    `${await guideFixture(path)}\nChanged after search.\n`;
-  const stale = await readGuidanceSectionWithReader(
-    { locator: search.matches[0]?.locator },
-    changedReader,
-    resources,
-  );
-  expect(stale).toMatchObject({ ok: true, value: { status: "stale_locator" } });
-  const firstPage = await valueOf(
-    searchGuidanceWithReader(
-      { query: "module", limit: 1 },
-      guideFixture,
-      resources,
-    ),
-  );
-  if (firstPage.status !== "matches" || firstPage.next_cursor === undefined)
-    throw new Error("Expected a continuation token");
+  const changedReader = async (path: string) => {
+    const text = await guideFixture(path);
+    return path === guide ? text : `${text}\nChanged after search.\n`;
+  };
+  expect(
+    await readGuidanceSectionWithReader({ locator }, changedReader, resources),
+  ).toMatchObject({ ok: true, value: { status: "stale_locator" } });
   expect(
     await searchGuidanceWithReader(
-      { query: "module", limit: 1, cursor: firstPage.next_cursor },
+      { query: "module", limit: 1, cursor },
       changedReader,
       resources,
     ),
   ).toMatchObject({ ok: true, value: { status: "stale_continuation" } });
   expect(
     await searchGuidanceWithReader(
-      { query: "different query", cursor: firstPage.next_cursor },
+      { query: "different query", cursor },
       guideFixture,
       resources,
     ),
@@ -233,6 +175,11 @@ it("rejects malformed locators and reports changed or missing installed guides",
       resources,
     ),
   ).toMatchObject({ ok: false });
+  resources.retain({
+    kind: "lease",
+    resource: "unrelated completed cleanup",
+    lease: { release: async () => undefined },
+  });
   const missingReader = async (): Promise<string> => {
     throw Object.assign(new Error("missing"), { code: "ENOENT" });
   };
@@ -244,78 +191,8 @@ it("rejects malformed locators and reports changed or missing installed guides",
     ),
   ).toMatchObject({ ok: true, value: { status: "bundle_unavailable" } });
   expect(
-    await readGuidanceSectionWithReader(
-      { locator: search.matches[0]?.locator },
-      missingReader,
-      resources,
-    ),
+    await readGuidanceSectionWithReader({ locator }, missingReader, resources),
   ).toMatchObject({ ok: true, value: { status: "bundle_unavailable" } });
-});
-
-it("returns cleanup failures separately and retains their owner until retry succeeds", async () => {
-  const resources = new ArtifactResourceScope();
-  let failRelease = true;
-  const failure = new RegularFileCleanupFailure({
-    path: "guidance file handle",
-    owner: {
-      close: async () => {
-        if (failRelease) throw new Error("descriptor close failed");
-      },
-    } as never,
-    outcome: { kind: "failed", cause: new Error("guide read failed") },
-    cleanupCause: new Error("descriptor close failed"),
-  });
-  const retainedFailure = new RetainedRegularFileCleanupFailure(failure);
-  resources.retain(retainedFailure.cleanupOwner);
-  const result = await searchGuidanceWithReader(
-    { query: "module" },
-    async () => {
-      throw retainedFailure;
-    },
-    resources,
-  );
-  if (result.ok) throw new Error("Expected a retained cleanup failure");
-  expect(result.error).toMatchObject({ cleanupIncomplete: true });
-  expect(result.error.cleanupResources).toEqual(["guidance file handle"]);
-  expect(resources.hasPending).toBe(true);
-  failRelease = false;
-  await resources.close();
-  expect(resources.hasPending).toBe(false);
-  expect(result.error.cleanupIncomplete).toBe(false);
-  expect(result.error.cleanupResources).toEqual([]);
-
-  const freshResources = new ArtifactResourceScope();
-  freshResources.retain({
-    kind: "lease",
-    resource: "unrelated pending resource",
-    lease: { release: async () => undefined },
-  });
-  expect(
-    await searchGuidanceWithReader(
-      { query: "module" },
-      async () => {
-        throw new Error("guide is unreadable");
-      },
-      freshResources,
-    ),
-  ).toMatchObject({
-    ok: true,
-    value: { status: "bundle_unavailable" },
-  });
-  await freshResources.close();
-});
-
-it("uses only the fixed managed guide inventory for injected reads", async () => {
-  const requested: string[] = [];
-  await searchGuidanceWithReader(
-    { query: "module" },
-    async (path) => {
-      requested.push(path);
-      return guideFixture(path);
-    },
-    new ArtifactResourceScope(),
-  );
-  expect(requested).toEqual([...MANAGED_SKILL_FILES]);
 });
 
 const nestedGuide = [

@@ -20,6 +20,21 @@ const CAPTURE_SHARED_INPUTS = [
   "src/process/LinuxResourceLimits*",
   "scripts/ci/require-provider-tests.mjs",
 ];
+const GHIDRA_PROJECT_COVERAGE_INPUTS = [
+  "scripts/verify-real-ghidra-project-coverage.mjs",
+  "tests/conformance/ghidra/selected-project-coverage.c",
+  "tests/conformance/ghidra/ReaSelectedProjectSeeds.java",
+];
+const UBUNTU_ARCHIVE_ACTION =
+  ".github/actions/ubuntu-archive/action.{yml,yaml}";
+
+const CLI_LAUNCHER_INPUTS = [
+  "scripts/rea.mjs",
+  "scripts/lib/cli-compiled-runtime.mjs",
+  "scripts/lib/cli-process-environment.mjs",
+  "scripts/lib/runtime-admission.mjs",
+  "scripts/lib/runtime-admission.d.mts",
+];
 
 // Ownership of the native-host, real-provider and website verification lanes.
 // Shared build inputs are classified once in plan.mjs rather than repeated in
@@ -31,6 +46,8 @@ const PATH_SCOPES = {
     "scripts/run-python-tests.py",
   ],
   packet_capture: [
+    UBUNTU_ARCHIVE_ACTION,
+    ".github/actions/host-apt-packages/action.{yml,yaml}",
     "tests/boundary/captures/**",
     "tests/boundary/cli/captureCleanup.test.ts",
     "tests/boundary/mcp/packetCaptureMcp.test.ts",
@@ -68,6 +85,8 @@ const PATH_SCOPES = {
     ...CAPTURE_SHARED_INPUTS,
     "scripts/verify-signal-recording.mjs",
     ".github/workflows/real-signal-recording.yml",
+    UBUNTU_ARCHIVE_ACTION,
+    ".github/actions/host-apt-packages/action.{yml,yaml}",
   ],
   readiness: [
     "tests/conformance/readiness/**",
@@ -87,7 +106,7 @@ const PATH_SCOPES = {
     "src/rizin/**",
     "src/contracts/*ToolContracts.ts",
     "src/server/externalMutationAdmission.ts",
-    "src/server/providerEnvironment.ts",
+    "src/server/createServer.ts",
     "src/process/ExecFileOutput.ts",
     "src/process/ExecFileOutput.test.ts",
     "tests/composition/analysis-sessions/binarySession.test.ts",
@@ -96,6 +115,7 @@ const PATH_SCOPES = {
     "tests/boundary/filesystem/mutationWorkflow.test.ts",
     "src/server/externalMutationToolHandler.ts",
     "src/server/serviceToolBindings.ts",
+    "src/server/debuggerToolBindings.ts",
     "tests/boundary/mcp/rizin*.test.ts",
     "tests/boundary/mcp/debuggerExternalMutationLifecycleMcp.test.ts",
     "tests/fixtures/debuggerMcp.ts",
@@ -104,7 +124,6 @@ const PATH_SCOPES = {
     "tests/boundary/providers/GdbSession*.test.ts",
     "tests/boundary/providers/GdbCommandQueue.test.ts",
     "tests/boundary/providers/gdbTestHelpers.ts",
-    "tests/boundary/providers/RizinDebugSessionCoverage.part*.test.ts",
     "tests/boundary/providers/RizinDebugSession*.test.ts",
     "tests/boundary/providers/RizinInferiorTty.test.ts",
     "tests/boundary/providers/RizinDecoderInputs.test.ts",
@@ -115,7 +134,6 @@ const PATH_SCOPES = {
     "tests/boundary/cli/reverseEngineeringCommands.test.ts",
     "tests/boundary/mcp/cutter*.test.ts",
     "tests/boundary/mcp/gdb*.test.ts",
-    "tests/boundary/mcp/debuggerCancellationMcp.test.ts",
     "tests/boundary/mcp/rizinDebuggerCancellationMcp.test.ts",
     "tests/boundary/mcp/rizinPendingOutput.test.ts",
     "tests/boundary/mcp/reverseEngineeringPartialMcp.test.ts",
@@ -142,6 +160,8 @@ const PATH_SCOPES = {
     "tests/acceptance/inesContainer.test.ts",
     "tests/boundary/filesystem/inesArtifact.test.ts",
     "tests/boundary/filesystem/inesCancellation.test.ts",
+    "src/artifacts/NdsRomArtifactReader*.ts",
+    "src/domain/ndsRom*.ts",
     "src/hopper/BridgeLauncher.ts",
     "src/hopper/HopperErrors.ts",
     "tests/boundary/providers/hopper/hopperMacLaunchArguments.test.ts",
@@ -158,6 +178,9 @@ const PATH_SCOPES = {
     "bridge/native/**",
     "bridge/process/**",
     "scripts/verify/apple/**",
+    "scripts/ci/darwin-gated-tests.mjs",
+    "scripts/ci/darwin-gate-candidates.mjs",
+    "tests/boundary/filesystem/ciDarwinGatedTests.test.ts",
     "tests/acceptance/artifactDmgAttachmentRecoveryCli.test.ts",
     "tests/boundary/providers/native/nativeDmgArtifactReader.test.ts",
     "tests/process-global/dmgCancellationReason.test.ts",
@@ -180,6 +203,7 @@ const PATH_SCOPES = {
     "tests/boundary/cli/nativeMachoArm64_32Cli.test.ts",
     "tests/boundary/cli/nativeMachoEncryptionCli.test.ts",
     "tests/boundary/mcp/nativeSignatureTargetBindingMcp.test.ts",
+    "tests/boundary/cli/nativeBundleExecutableProvenanceCliMcp.test.ts",
     "src/process/capture/FilesystemSnapshot.test.ts",
     "tests/process-global/filesystemSnapshotFallbackCancellation.test.ts",
     "tests/boundary/process/darwinProcessRunTokenReader.test.ts",
@@ -208,7 +232,9 @@ const PATH_SCOPES = {
     ".github/actions/publish-mcp/**",
     ".github/actions/prepare-release-package/**",
     ".github/workflows/release-recovery.yml",
+    ".github/workflows/release-abandon.yml",
     "scripts/ci/release-recovery.mjs",
+    "scripts/ci/release-attempt.*",
     "scripts/ci/verified-package.mjs",
     "scripts/ci/qualified-package-envelope.mjs",
     "scripts/ci/prepare-npm-publication.mjs",
@@ -220,6 +246,7 @@ const PATH_SCOPES = {
     "tests/boundary/mcp/packageCatalogVerification.test.ts",
     "scripts/verify-published-package.mjs",
     "tests/boundary/filesystem/releaseRecovery.test.ts",
+    "tests/boundary/filesystem/releaseAttempt.test.ts",
     "tests/boundary/filesystem/mcpRegistryPublication.test.ts",
     "tests/boundary/filesystem/npmRelease.test.ts",
     "tests/boundary/process/releaseArtifactCanary.test.ts",
@@ -236,6 +263,8 @@ const PATH_SCOPES = {
     "scripts/run-exclusive-command.mjs",
     "tests/process-global/runnerCancellation.test.ts",
     "tests/process-global/windowsOwnedCommand.test.ts",
+    "tests/process-global/curatedWindowsLane.test.ts",
+    "src/desktop/AgentEnvBridgeSources.ts",
     "src/ghidra/GhidraBridgeSources.ts",
     "native/windows/**",
     "src/process/capture/FilesystemSnapshot.ts",
@@ -247,20 +276,18 @@ const PATH_SCOPES = {
     "scripts/verify-package-*",
     "scripts/verify-packed-bridge.*",
     "scripts/verify-windows-*.mjs",
-    ".github/actions/windows-cross-compiler/action.yml",
-    ".github/actions/ubuntu-archive/action.yml",
+    ".github/actions/windows-cross-compiler/action.{yml,yaml}",
+    UBUNTU_ARCHIVE_ACTION,
+    ".github/actions/host-apt-packages/action.{yml,yaml}",
     "scripts/build-windows-native.mjs",
     "scripts/windows-capabilities.mjs",
     "scripts/prepack.mjs",
     "scripts/prepare.mjs",
     "scripts/lib/release-proposal.*",
     "scripts/lib/release-pull-request.mjs",
-    "patches/release-please+17.3.0.patch",
+    "patches/release-please+17.11.2.patch",
     "tests/boundary/filesystem/releaseProposal.test.ts",
-    "scripts/rea.mjs",
-    "scripts/lib/cli-process-environment.mjs",
-    "scripts/lib/runtime-admission.mjs",
-    "scripts/lib/runtime-admission.d.mts",
+    ...CLI_LAUNCHER_INPUTS,
     "install.sh",
     "src/config/**",
     "src/hopperPaths/**",
@@ -295,6 +322,7 @@ const PATH_SCOPES = {
     // Live advertisement, independent of the POSIX-generated catalog.
     "tests/boundary/mcp/toolSchemaValidity.test.ts",
     "tests/boundary/filesystem/safeOutputTree.test.ts",
+    "tests/boundary/filesystem/safeOutputTreePublication.test.ts",
     "tests/boundary/providers/native/artifactProvider.archiveSafety.test.ts",
     "tests/boundary/providers/native/artifactProvider.extractionCompleteness.test.ts",
     "tests/boundary/filesystem/setupUnavailableProvider.test.ts",
@@ -427,9 +455,10 @@ const PATH_SCOPES = {
     "src/application/WebScriptExportService.ts",
     "src/contracts/webScriptToolContracts.ts",
     "src/server/serviceToolBindings.ts",
+    "src/server/browserToolBindings.ts",
     "src/server/createServer.ts",
     "src/cli/webModuleCommands.ts",
-    "src/cliBrowserScenarioCommands.ts",
+    "src/cli/browserScenarioCommands.ts",
     "src/cli/environmentCommands.ts",
     "src/cli.ts",
     "src/contracts/cliCommandNames.ts",
@@ -438,7 +467,8 @@ const PATH_SCOPES = {
   ],
   binary_layout: [
     ".github/workflows/real-binary-layout.yml",
-    ".github/actions/ubuntu-archive/action.yml",
+    UBUNTU_ARCHIVE_ACTION,
+    ".github/actions/host-apt-packages/action.{yml,yaml}",
     "bridge/pwntools/**",
     "src/native/pwntools/**",
     "src/config/pwntoolsInputLimit*.ts",
@@ -446,7 +476,7 @@ const PATH_SCOPES = {
     "src/application/binaryDiagnostics/**",
     "src/ports/binaryDiagnostics/**",
     "src/contracts/native/binaryDiagnosticsToolContracts.ts",
-    "src/composition/binaryDiagnostics.ts",
+    "src/composition/binaryDiagnostics/**",
     "src/server/serviceToolBindings.ts",
     "src/server/createServer.ts",
     "src/cli/binaryDiagnosticsCommands.ts",
@@ -530,10 +560,7 @@ const PATH_SCOPES = {
     "src/contracts/cliCommandNames.ts",
     "src/contracts/toolContracts.ts",
     "src/contracts/toolEffects.ts",
-    "scripts/rea.mjs",
-    "scripts/lib/cli-process-environment.mjs",
-    "scripts/lib/runtime-admission.mjs",
-    "scripts/lib/runtime-admission.d.mts",
+    ...CLI_LAUNCHER_INPUTS,
     "src/process/**",
     "src/resources/SafeOutputTree.ts",
     "scripts/verify/javascript/recovery.mjs",
@@ -553,7 +580,7 @@ const PATH_SCOPES = {
     "src/contracts/native/binaryDiagnosticsToolContracts.ts",
     "src/contracts/toolEffects.ts",
     "src/contracts/toolOutputSchemaGroups.ts",
-    "src/composition/binaryDiagnostics.ts",
+    "src/composition/binaryDiagnostics/**",
     "src/server/createServer.ts",
     "src/server/sessionAvailabilityPolicy.ts",
     "src/cli/binaryDiagnosticsCommands.ts",
@@ -620,6 +647,7 @@ const PATH_SCOPES = {
     "src/contracts/webRuntimeToolContracts.ts",
     "src/contracts/toolEffects.ts",
     "src/server/serviceToolBindings.ts",
+    "src/server/browserToolBindings.ts",
     "src/server/createServer.ts",
     "src/cli/webRuntimeCommands.ts",
     "src/cli/commandCancellation.ts",
@@ -672,17 +700,20 @@ const PATH_SCOPES = {
     ".github/workflows/nativeaot-fixtures.yml",
   ],
   ghidra_bridge: [
+    ...GHIDRA_PROJECT_COVERAGE_INPUTS,
     "bridge/ghidra/**",
     "src/ghidra/GhidraBridgeSources.ts",
     "src/ghidra/GhidraJavaProperties.ts",
     "src/ghidra/GhidraReleasePolicy.ts",
     "scripts/verify-ghidra-bridge-sources.mjs",
+    "scripts/verify-ghidra-prototype-conflicts.mjs",
     "tests/conformance/ghidra/ReaInstructionContextProbe.java",
     "tests/conformance/ghidra/ReaComputedCallCoverageProbe.java",
     "tests/conformance/ghidra/ReaDecodeProbe.java",
     "scripts/verify-ghidra-loader-relocation.mjs",
     "tests/conformance/ghidra/ReaLoaderRelocationProbe.java",
     "tests/conformance/ghidra/loader-relocation*.c",
+    "tests/conformance/ghidra/ReaPrototypeConflictProbe.java",
     ".github/workflows/ghidra-bridge-sources.yml",
   ],
   go_binary: [
@@ -713,12 +744,21 @@ const PATH_SCOPES = {
   website: [
     "website/**",
     "scripts/*website*.py",
+    "scripts/read-authored-skill-manifest.mjs",
     "README*.md",
     "docs/readme/README*.md",
     ".github/workflows/website-check.yml",
     ".github/workflows/website-pages.yml",
   ],
 };
+
+// Only the broad PR matrix waits for static checks. Shared qualification and
+// selected PR tests can start as soon as their runtime artifact is available.
+export function testShardJob(event, tier, mode) {
+  return event === "pull_request" && tier === "fast" && mode === "full"
+    ? "test-shard-broad"
+    : "test-shard";
+}
 
 // Each lane owns its path inputs, selection policy, and required jobs. The
 // workflow stays explicit; contract tests bind it to this registry.
@@ -731,11 +771,11 @@ export const CI_LANES = {
   code: {
     paths: [],
     required: {
-      fast: ["build", "test-shard", "test-source"],
-      full: ["build", "test-shard"],
+      fast: ["build", "test-shard", "test-source", "test"],
+      full: ["build", "test-shard", "test"],
     },
     // A selected PR subset runs its source tests in the test-shard groups.
-    selectedTests: ["build", "test-shard"],
+    selectedTests: ["build", "test-shard", "test"],
   },
   runtime: sameJobs([], ["windows-native-build", "package-e2e"]),
   package: sameJobs(PATH_SCOPES.package, ["windows-curated"], {
@@ -781,7 +821,9 @@ export const CI_LANES = {
   web_source_map: sameJobs(PATH_SCOPES.web_source_map, ["web_source_map"]),
   agentenv: sameJobs(PATH_SCOPES.agentenv, ["agentenv"]),
   nativeaot: sameJobs(PATH_SCOPES.nativeaot, ["nativeaot"]),
-  ghidra_bridge: sameJobs(PATH_SCOPES.ghidra_bridge, ["ghidra_bridge"]),
+  ghidra_bridge: sameJobs(PATH_SCOPES.ghidra_bridge, ["ghidra_bridge"], {
+    earlyInputs: GHIDRA_PROJECT_COVERAGE_INPUTS,
+  }),
   go_binary: sameJobs(PATH_SCOPES.go_binary, ["go_binary"]),
   android_metadata: sameJobs(
     PATH_SCOPES.android_metadata,
@@ -789,7 +831,17 @@ export const CI_LANES = {
     { testInputs: true },
   ),
   website: sameJobs(PATH_SCOPES.website, ["website"], {
-    earlyInputs: [".agents/skills/reverse-engineer-anything/**"],
+    earlyInputs: [
+      ".agents/skills/reverse-engineer-anything/**",
+      "scripts/lib/verifier-source-loader.mjs",
+      "src/domain/skillManifest.ts",
+      "src/domain/result.ts",
+      "src/domain/strictUtf8.ts",
+      "package.json",
+      "package-lock.json",
+      ".nvmrc",
+      ".npmrc",
+    ],
   }),
 };
 // An input owner omitted from the registry must never silently lose a lane.
@@ -799,8 +851,8 @@ for (const [name, paths] of Object.entries(PATH_SCOPES))
 export const CI_FLAGS = Object.keys(CI_LANES);
 
 // Verifier entrypoints that only manual, licensed, or self-hosted workflows
-// run. No selected CI lane executes them, so their edits need only the static
-// checks and the source-test suite. Shared helpers under scripts/lib remain
+// run unless an explicit lane earlyInput owns one. Other edits need only the
+// static checks and the source-test suite. Shared helpers under scripts/lib remain
 // broad inputs.
 export const MANUAL_VERIFIERS = [
   "scripts/verify-real-electron.mjs",

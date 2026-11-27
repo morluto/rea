@@ -1,3 +1,4 @@
+import { listFixtureFiles } from "../../support/workspace/listFixtureFiles.js";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { createHash } from "node:crypto";
@@ -100,17 +101,6 @@ cliTest.for(["different-content", "wrong-role", "matching"] as const)(
   },
 );
 
-const listFiles = async (root: string): Promise<string[]> =>
-  (await readdir(root, { recursive: true, withFileTypes: true }))
-    .filter((entry) => entry.isFile())
-    .map((entry) =>
-      join(entry.parentPath, entry.name)
-        .slice(root.length + 1)
-        .split(sep)
-        .join("/"),
-    )
-    .sort();
-
 cliTest(
   "attributes invalid capture JSON to the capture argument",
   async ({ cli }) => {
@@ -187,25 +177,29 @@ cliTest(
     expect(projected.exitCode, projected.stderr).toBe(0);
     const manifest = join(root, "manifest.json");
     await writeFile(manifest, projected.stdout);
-    for (const command of [
-      "environment-build",
-      "environment-export",
-    ] as const) {
-      const parent = join(root, `${command}-refused`);
-      await mkdir(parent);
-      // Do not use join for the last segment: the caller's spelling matters.
-      const destination = `${join(parent, "a", "b", "c")}${sep}..`;
-      const args =
-        command === "environment-build"
-          ? [command, har, destination, "--json"]
-          : [command, manifest, "--evidence", capture, destination, "--json"];
-      const refused = await cli.run({ arguments: args });
-      expect(refused.exitCode, refused.stderr).toBe(1);
-      expect(refused.json).toMatchObject({
-        code: "invalid_request",
-        details: { issues: [{ path: ["directory"] }] },
-      });
-      expect(await readdir(parent)).toEqual([]);
+    // POSIX resolves the final dot-dot only after traversing the preceding components.
+    if (process.platform !== "win32") {
+      for (const command of [
+        "environment-build",
+        "environment-export",
+      ] as const) {
+        const parent = join(root, `${command}-refused`);
+        // Do not use join for the last segment: the caller's spelling matters.
+        const destination = `${join(parent, "a", "b", "c")}${sep}..`;
+        const args =
+          command === "environment-build"
+            ? [command, har, destination, "--json"]
+            : [command, manifest, "--evidence", capture, destination, "--json"];
+        const refused = await cli.run({ arguments: args });
+        expect(refused.exitCode, refused.stderr).toBe(1);
+        expect(refused.json).toMatchObject({
+          code: "invalid_request",
+          details: {
+            issues: [{ path: ["directory"], reason: "invalid_value" }],
+          },
+        });
+        await expect(readdir(parent)).rejects.toMatchObject({ code: "ENOENT" });
+      }
     }
     const exported = await cli.run({
       arguments: [
@@ -219,8 +213,8 @@ cliTest(
     });
     expect(exported.exitCode, exported.stderr).toBe(0);
 
-    const files = await listFiles(join(root, "built"));
-    expect(files).toEqual(await listFiles(join(root, "three-step")));
+    const files = await listFixtureFiles(join(root, "built"));
+    expect(files).toEqual(await listFixtureFiles(join(root, "three-step")));
     expect(files).toHaveLength(7);
     for (const file of files)
       expect(

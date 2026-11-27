@@ -1,7 +1,9 @@
+import type { RetainedResourceScope } from "../resources/index.js";
 import type { AnalysisWorkScope } from "./AnalysisWorkScope.js";
 import type { AnalysisObservation } from "../domain/analysisObservation.js";
 import type { ProviderInspectionScope } from "./ProviderInspectionScope.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import type { BundleExecutableProvenance } from "../domain/apple/bundleExecutableProvenance.js";
 import type { TargetApplicability } from "../domain/targetApplicability.js";
 import type { OfficialToolName } from "../contracts/officialToolContracts.js";
 import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
@@ -13,8 +15,10 @@ import type { AnalysisCapabilityUnavailableError } from "../domain/analysisError
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
+import type { EngineCloseReport } from "../domain/engineCloseReport.js";
 import type {
   Evidence,
+  EvidenceAuthority,
   EvidenceLocation,
   EvidenceSubjectTarget,
 } from "../domain/evidence.js";
@@ -40,9 +44,22 @@ import {
 export interface ExecutionOptions {
   /** Ephemeral state shared only by one composed workflow. */
   readonly workScope?: AnalysisWorkScope;
-  /** A single CLI answer bound to its isolated target, not a persistent default document. */
-  readonly snapshotContext?: "one-shot-target";
+  /**
+   * A caller's own read of the bound target, not a workflow-internal read:
+   * `one-shot-target` is a single CLI answer bound to its isolated target, and
+   * `session-target` is a direct tool call on the session's active target.
+   * Neither names a persistent default document.
+   */
+  readonly snapshotContext?: "one-shot-target" | "session-target";
   readonly signal?: AbortSignal;
+  /**
+   * Procedures a composed workflow will decompile next, this request's own
+   * first. Advisory: a provider may prepare them together, and every later
+   * request still returns its own result or failure.
+   */
+  readonly upcomingDecompiles?: readonly string[];
+  /** Bundle facts from the current target admission, even when a client is reused. */
+  readonly bundleExecutableProvenance?: BundleExecutableProvenance | null;
   readonly progress?: ProgressReporter;
   /** The composed workflow will cite this observation and needs its Evidence. */
   readonly retainEvidence?: true;
@@ -85,13 +102,20 @@ export interface AnalysisExecution extends AnalysisObservation {
   readonly sourceDescriptor?: AnalysisSourceDescriptor;
   /** Session-issued identity of the committed record consumed by this execution. */
   readonly evidenceId?: string;
+  /**
+   * The entries of `limitations` that describe the provider session rather
+   * than this call. `limitations` still holds them, so a consumer that
+   * ignores this field keeps the full text. A session owner may state them
+   * once and reference a retained session-context record afterwards.
+   */
+  readonly sessionLimitations?: readonly string[];
   /** Result-specific veto of snapshot replay; Evidence remains retainable. */
   readonly cachePolicy?: "live";
   /**
    * Whether the provider capped an `xrefs` read: true when it reported a
    * truncation, false when it explicitly reported none. Absent when it reports
-   * nothing, which is not a completeness claim. Never part of Evidence or tool
-   * output.
+   * nothing, which is not a completeness claim. The direct xrefs result stays
+   * address-only; composed workflows may use this fact to describe coverage.
    */
   readonly referencesTruncated?: boolean;
   /** The producer needs this observation retained as source Evidence for composed workflows. */
@@ -117,13 +141,15 @@ export interface AnalysisExecution extends AnalysisObservation {
   readonly siblingUnavailability?: AnalysisCapabilityUnavailableError;
 }
 
-interface CreateAnalysisExecutionOptions {
+export interface CreateAnalysisExecutionOptions {
   readonly rawResult?: unknown;
   readonly pseudocodeAbsence?: PseudocodeAbsence;
   readonly sourceDescriptor?: AnalysisSourceDescriptor;
   readonly analysisProfile?: AnalysisProfileCommitment;
   readonly cachePolicy?: "live";
   readonly limitations?: readonly string[];
+  /** Entries of `limitations` that describe the session, not this call. */
+  readonly sessionLimitations?: readonly string[];
   readonly relationshipCoverage?: RelationshipCoverage;
   readonly referencesTruncated?: boolean;
   readonly requiresSourceEvidence?: true;
@@ -133,6 +159,7 @@ interface CreateAnalysisExecutionOptions {
   readonly locations?: readonly EvidenceLocation[];
   readonly sourceEvidence?: readonly Evidence[];
   readonly subject?: EvidenceSubjectTarget | null;
+  readonly authority?: EvidenceAuthority;
 }
 
 /**
@@ -185,6 +212,9 @@ export function createAnalysisExecution(
       ? {}
       : { analysisProfile: structuredClone(options.analysisProfile) }),
     limitations: [...(options.limitations ?? [])],
+    ...(options.sessionLimitations === undefined
+      ? {}
+      : { sessionLimitations: [...options.sessionLimitations] }),
     ...(options.relationshipCoverage === undefined
       ? {}
       : {
@@ -212,6 +242,9 @@ export function createAnalysisExecution(
       ? {}
       : { sourceEvidence: Object.freeze([...options.sourceEvidence]) }),
     ...(options.subject === undefined ? {} : { subject: options.subject }),
+    ...(options.authority === undefined
+      ? {}
+      : { authority: options.authority }),
   };
 }
 
@@ -224,6 +257,19 @@ export interface AnalysisOperationPort {
     parameters: Readonly<Record<string, JsonValue>>,
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>>;
+  /** Look up a snapshot-replayed observation for an exact query without running the provider. */
+  lookupCachedExecution?(
+    operation: AnalysisOperation,
+    parameters: Readonly<Record<string, JsonValue>>,
+    options?: Pick<ExecutionOptions, "snapshotContext">,
+  ): AnalysisExecution | undefined;
+  /** Retain Evidence and snapshot replay for an execution answered under a resolved selector. */
+  retainResolvedExecution?(
+    operation: AnalysisOperation,
+    parameters: Readonly<Record<string, JsonValue>>,
+    execution: AnalysisExecution,
+    options?: Pick<ExecutionOptions, "snapshotContext">,
+  ): Result<AnalysisExecution, AnalysisError>;
 }
 
 /** Retained provider-process observation attributed to its producing provider. */
@@ -260,14 +306,22 @@ export interface AnalysisClient extends AnalysisOperationPort {
   reuseReadiness?(): "ready" | "blocked" | "unknown";
   /** Current operational health for the active provider bridge. */
   operationHealthSnapshot?(): ProviderOperationHealth | undefined;
-  /** Close owned resources and retain failed cleanup for a later retry. */
+  /**
+   * What closing now would report as engine state released unsaved, without
+   * closing. Only a close reports it, so other transitions refuse to release it.
+   */
+  unsavedCloseReport?(): EngineCloseReport | null;
+  /**
+   * Close owned resources and retain failed cleanup for a later retry. A
+   * report names engine state the close released without persisting it.
+   */
   close(
     options?: Pick<ExecutionOptions, "progress"> & {
       readonly retainDocument?: boolean;
       /** Report each owned cleanup failure as soon as its owner observes it. */
       readonly onCleanupFailure?: (failure: AnalysisError) => void;
     },
-  ): Promise<Result<null, AnalysisError>>;
+  ): Promise<Result<EngineCloseReport | null, AnalysisError>>;
 }
 
 /** Per-client identity allocated before any provider side effect starts. */
@@ -275,18 +329,7 @@ export interface AnalysisClientContext {
   readonly runId: string;
 }
 
-/** One lifecycle owner for retained resources and abortable inspection work. */
-export interface RetainedResourceScope {
-  retain(
-    owner: {
-      close(): Promise<void>;
-      /** Complete labels authored by this exact owner; the display label is only a fallback. */
-      readonly cleanupResources?: readonly string[] | undefined;
-    },
-    resource: string,
-  ): void;
-  run<T>(operation: () => Promise<T>): Promise<T>;
-}
+export type { RetainedResourceScope };
 
 export interface ProviderIdentity {
   readonly id: string;
@@ -363,6 +406,8 @@ export type CapabilityDescriptor = CapabilityAvailability & {
    */
   readonly cachePolicy?: "snapshot" | "live";
   readonly independentDecompile?: true;
+  /** Standalone decompilation of an evidenced exact direct-call destination. */
+  readonly callDestinationDecompile?: true;
   /** Exact source profile for an operation implemented by a versioned local reader. */
   readonly analysisProfile?: AnalysisProfileCommitment;
   readonly provider: ProviderIdentity;
@@ -470,4 +515,14 @@ export interface AnalysisProviderCandidate extends AnalysisProvider {
   hasPendingOwnedResources?(): boolean;
   /** Release candidate resources that are independent of any active client. */
   closeOwnedResources?(): Promise<Result<null, AnalysisError>>;
+}
+
+/** Request-dispatched provider boundary with availability probing and cleanup. */
+export interface RequestAnalysisPort<TRequest> {
+  inspectAvailability(signal?: AbortSignal): Promise<ProviderAvailability>;
+  close(): Promise<void>;
+  execute(
+    request: TRequest,
+    options?: ExecutionOptions,
+  ): Promise<Result<AnalysisExecution, AnalysisError>>;
 }

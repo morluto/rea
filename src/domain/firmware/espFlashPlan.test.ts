@@ -339,6 +339,48 @@ describe("ESP flash layout coverage", () => {
     );
     expect(finishEspFlashLayout(later, reads(later)).coverage).toBe("unknown");
   });
+
+  it.each([
+    ["before", 0x0, 0x1000],
+    ["at", 0x1000, 0x1000],
+  ] as const)(
+    "marks coverage unknown when the partition table lies %s the bootloader and omits bootloader.bin",
+    (_relation, tableAddress, bootloaderAddress) => {
+      const plan = planEspFlashLayout(
+        input({
+          fileSize: 0x1_0000,
+          tableAddress,
+          tableMethod: "caller",
+          bootloader: {
+            flashAddress: bootloaderAddress,
+            fileOffset: bootloaderAddress,
+            chip: espChipForId(0x0000)!,
+          },
+          table: table([
+            {
+              label: "data",
+              type: 0x01,
+              subtype: 0x82,
+              offset: 0x1000,
+              size: 0x3000,
+            },
+          ]),
+        }),
+      );
+      expect(plan.regions.some(({ role }) => role === "bootloader")).toBe(
+        false,
+      );
+      expect(plan.limitations).toContain(
+        `The partition table at 0x${tableAddress.toString(16)} does not follow the bootloader at 0x${bootloaderAddress.toString(16)}; the bootloader region is not described.`,
+      );
+      const facts = finishEspFlashLayout(plan, {
+        otadataRecords: [],
+        gapFirstUnerased: erasedGaps(plan.gaps.length),
+      });
+      expect(facts.undescribed).toEqual([]);
+      expect(facts.coverage).toBe("unknown");
+    },
+  );
 });
 
 describe("ESP flash layout otadata", () => {

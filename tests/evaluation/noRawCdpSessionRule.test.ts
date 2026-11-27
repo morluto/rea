@@ -1,43 +1,36 @@
-import { describe, expect, it } from "vitest";
+import { expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { RuleTester } from "oxlint/plugins-dev";
+import { createRuleTester } from "../support/createRuleTester.js";
 import rule from "../../scripts/lint/rules/no-raw-cdp-session.mjs";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { writeRepositoryOxlintConfiguration } from "../fixtures/oxlintConfiguration.js";
 
-RuleTester.describe = describe;
-RuleTester.it = it;
-
-new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } }).run(
-  "no-raw-cdp-session",
-  rule,
-  {
-    valid: [
-      "newPlaywrightCdpSession(context, page, operation)",
-      'const name = "newCDPSession";',
-    ],
-    invalid: [
-      {
-        code: "context.newCDPSession(page)",
-        errors: [{ messageId: "raw" }],
-      },
-      {
-        code: 'context["newCDPSession"](page)',
-        errors: [{ messageId: "raw" }],
-      },
-      {
-        code: "browser.newBrowserCDPSession()",
-        errors: [{ messageId: "raw" }],
-      },
-      {
-        code: "const open = context.newCDPSession;",
-        errors: [{ messageId: "raw" }],
-      },
-    ],
-  },
-);
+createRuleTester().run("no-raw-cdp-session", rule, {
+  valid: [
+    "newPlaywrightCdpSession(context, page, operation)",
+    'const name = "newCDPSession";',
+  ],
+  invalid: [
+    {
+      code: "context.newCDPSession(page)",
+      errors: [{ messageId: "raw" }],
+    },
+    {
+      code: 'context["newCDPSession"](page)',
+      errors: [{ messageId: "raw" }],
+    },
+    {
+      code: "browser.newBrowserCDPSession()",
+      errors: [{ messageId: "raw" }],
+    },
+    {
+      code: "const open = context.newCDPSession;",
+      errors: [{ messageId: "raw" }],
+    },
+  ],
+});
 
 it("allows raw Playwright CDP sessions only in their owner and tests, including browser verifier scripts", async () => {
   const root = await createTestTempDirectory("rea-cdp-session-lint-");
@@ -61,6 +54,7 @@ it("allows raw Playwright CDP sessions only in their owner and tests, including 
     process.execPath,
     [
       resolve("node_modules/oxlint/bin/oxlint"),
+      "--threads=1",
       "-c",
       config,
       "--format",

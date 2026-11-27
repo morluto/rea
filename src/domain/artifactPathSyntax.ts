@@ -51,7 +51,11 @@ export const htmlUrlText = (value: string): string => {
 };
 
 const UTF8 = strictUtf8Decoder("preserve");
-const UTF8_ENCODER = new TextEncoder();
+const hexNibble = (byte: number): number => {
+  if (byte >= 0x30 && byte <= 0x39) return byte - 0x30;
+  const lower = byte | 0x20;
+  return lower >= 0x61 && lower <= 0x66 ? lower - 0x61 + 10 : -1;
+};
 
 /**
  * Percent-decode a URL path as the URL standard does: valid `%XX` sequences
@@ -61,20 +65,25 @@ const UTF8_ENCODER = new TextEncoder();
  */
 export const percentDecodeUrlPath = (value: string): string | null => {
   if (!/%[0-9a-f]{2}/iu.test(value)) return value;
-  const bytes: number[] = [];
-  for (let index = 0; index < value.length;) {
-    const escape = value.slice(index, index + 3);
-    if (/^%[0-9a-f]{2}$/iu.test(escape)) {
-      bytes.push(Number.parseInt(escape.slice(1), 16));
-      index += 3;
-      continue;
+  // Percent escapes are ASCII, so their markers cannot be confused with a
+  // UTF-8 code unit. Compact the encoded path into its own byte buffer.
+  const bytes = Buffer.from(value, "utf8");
+  let written = 0;
+  for (let read = 0; read < bytes.length; read++) {
+    const byte = bytes[read]!;
+    if (byte === 0x25 && read + 2 < bytes.length) {
+      const high = hexNibble(bytes[read + 1]!);
+      const low = hexNibble(bytes[read + 2]!);
+      if (high >= 0 && low >= 0) {
+        bytes[written++] = (high << 4) | low;
+        read += 2;
+        continue;
+      }
     }
-    const character = String.fromCodePoint(value.codePointAt(index) ?? 0);
-    bytes.push(...UTF8_ENCODER.encode(character));
-    index += character.length;
+    bytes[written++] = byte;
   }
   try {
-    const decoded = UTF8.decode(new Uint8Array(bytes));
+    const decoded = UTF8.decode(bytes.subarray(0, written));
     return decoded.includes("\0") ? null : decoded;
   } catch (cause: unknown) {
     // Invalid UTF-8 cannot name an inventoried path.

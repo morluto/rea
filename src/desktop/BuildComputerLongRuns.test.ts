@@ -129,10 +129,15 @@ it("retains cancellation arriving during failed final cleanup alongside the orig
     .catch((error: unknown) => error);
   if (!(failure instanceof ProviderCleanupError))
     throw new Error("expected retained cleanup");
-  expect(failure.cleanupPrimary).toBeInstanceOf(AnalysisCancelledError);
-  expect(failure.cleanupPrimary?.secondaryFailures[0]?.userMessage).toContain(
-    "connection failed",
-  );
+  // The command failure was established before the late cancellation, so it
+  // stays primary and the cancellation is retained beside it.
+  expect(failure.cleanupPrimary).not.toBeInstanceOf(AnalysisCancelledError);
+  expect(failure.cleanupPrimary?.userMessage).toContain("connection failed");
+  expect(
+    failure.cleanupPrimary?.secondaryFailures.some(
+      (secondary) => secondary instanceof AnalysisCancelledError,
+    ),
+  ).toBe(true);
   expect(await owner.release()).toMatchObject({ verified: true });
 });
 

@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { zipEndOfCentralDirectoryCandidates } from "./zipEndOfCentralDirectory.js";
 
 // Wire sizes for the fixture and its expectations are independent of the reader.
@@ -32,6 +32,14 @@ it("preserves raw disk/count/Zip64 sentinel declarations from a nonzero byte win
   view.setUint32(16, 0xffffffff, true);
   const before = Buffer.from(backing);
   const candidates = [...zipEndOfCentralDirectoryCandidates(window)];
+  const uint8Window = new Uint8Array(
+    backing.buffer,
+    backing.byteOffset + 7,
+    37,
+  );
+  expect([...zipEndOfCentralDirectoryCandidates(uint8Window)]).toEqual(
+    candidates,
+  );
   expect(backing.equals(before)).toBe(true);
   backing.fill(0);
   expect(candidates).toEqual([
@@ -49,12 +57,14 @@ it("preserves raw disk/count/Zip64 sentinel declarations from a nonzero byte win
 });
 
 it("observes every exact-ending candidate latest first without resolving ambiguity", () => {
-  const bytes = Buffer.alloc(CLASSIC_END_RECORD_BYTES * 2);
-  record(bytes, 0, CLASSIC_END_RECORD_BYTES);
-  record(bytes, CLASSIC_END_RECORD_BYTES, 0);
+  const bytes = Buffer.alloc(CLASSIC_END_RECORD_BYTES * 3);
+  record(bytes, 0, CLASSIC_END_RECORD_BYTES * 2);
+  // Decoy EOCD signature inside the outer comment whose declared comment does not end the archive.
+  record(bytes, CLASSIC_END_RECORD_BYTES, 1);
+  record(bytes, CLASSIC_END_RECORD_BYTES * 2, 0);
   expect(
     [...zipEndOfCentralDirectoryCandidates(bytes)].map(({ offset }) => offset),
-  ).toEqual([CLASSIC_END_RECORD_BYTES, 0]);
+  ).toEqual([CLASSIC_END_RECORD_BYTES * 2, 0]);
 });
 
 it("includes the oldest candidate permitted by the maximum ZIP comment", () => {
@@ -62,6 +72,9 @@ it("includes the oldest candidate permitted by the maximum ZIP comment", () => {
     CLASSIC_END_RECORD_BYTES + MAXIMUM_COMMENT_BYTES + 9,
     0xa5,
   );
+  record(bytes, 8, MAXIMUM_COMMENT_BYTES);
+  expect([...zipEndOfCentralDirectoryCandidates(bytes)]).toEqual([]);
+  bytes.fill(0xa5);
   record(bytes, 9, MAXIMUM_COMMENT_BYTES);
   expect(
     [...zipEndOfCentralDirectoryCandidates(bytes)].map(
@@ -84,4 +97,42 @@ it("does not promote short records or non-ending EOCD-like bytes to candidates",
       bytes.subarray(0, CLASSIC_END_RECORD_BYTES),
     ),
   ]).toEqual([]);
+  bytes[0] = 0x50;
+  bytes[1] = 0;
+  expect([
+    ...zipEndOfCentralDirectoryCandidates(
+      bytes.subarray(0, CLASSIC_END_RECORD_BYTES),
+    ),
+  ]).toEqual([]);
+  const withoutSignature = Buffer.alloc(CLASSIC_END_RECORD_BYTES);
+  withoutSignature.writeUInt16LE(1, 19);
+  expect([...zipEndOfCentralDirectoryCandidates(withoutSignature)]).toEqual([]);
+});
+
+it("restricts reverse signature search to the maximum EOCD tail window", () => {
+  const prefixBytes = 100_000;
+  const bytes = Buffer.alloc(
+    prefixBytes + CLASSIC_END_RECORD_BYTES + MAXIMUM_COMMENT_BYTES,
+    0xa5,
+  );
+  record(bytes, 16, MAXIMUM_COMMENT_BYTES);
+  record(bytes, bytes.length - CLASSIC_END_RECORD_BYTES, 0);
+
+  const spy = vi.spyOn(Buffer.prototype, "lastIndexOf");
+  try {
+    const candidates = [...zipEndOfCentralDirectoryCandidates(bytes)];
+    expect(candidates.map(({ offset }) => offset)).toEqual([
+      bytes.length - CLASSIC_END_RECORD_BYTES,
+    ]);
+    expect(spy).toHaveBeenCalled();
+    for (const receiver of spy.mock.contexts) {
+      const searched = receiver as Buffer;
+      expect(searched.byteOffset).toBe(bytes.byteOffset + prefixBytes);
+      expect(searched.length).toBe(
+        CLASSIC_END_RECORD_BYTES + MAXIMUM_COMMENT_BYTES,
+      );
+    }
+  } finally {
+    spy.mockRestore();
+  }
 });

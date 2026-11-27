@@ -32,10 +32,8 @@ import { registerCliCommand } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
 import { registerNativeCallCommands } from "./nativeCallCommands.js";
 import { NATIVE_TOOL_CONTRACTS } from "../contracts/native/nativeToolContracts.js";
-import {
-  registerContractCommand,
-  runOnSessionTarget,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { runOnSessionTarget } from "./contractCommandRunners.js";
 
 export const registerUtilityCommands = (
   cli: CliInstance,
@@ -164,7 +162,7 @@ const registerNativeCommands = (
         path: {
           name: "relativePath",
           description:
-            "Plist path relative to the app root, or an absolute path (default: the bundle's Info.plist)",
+            "Plist path relative to the app root, or an absolute path within the opened bundle (default: its Info.plist)",
         },
       },
     },

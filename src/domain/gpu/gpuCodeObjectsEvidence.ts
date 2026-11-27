@@ -20,6 +20,30 @@ const gpuParameters = (parameters: GpuCodeObjectsInput) => ({
   ...(parameters.expected_sha256 === undefined
     ? {}
     : { expected_sha256: parameters.expected_sha256 }),
+  ...(parameters.max_object_bytes === undefined
+    ? {}
+    : { max_object_bytes: parameters.max_object_bytes }),
+  ...(parameters.max_work_bytes === undefined
+    ? {}
+    : { max_work_bytes: parameters.max_work_bytes }),
+  ...(parameters.max_report_bytes === undefined
+    ? {}
+    : { max_report_bytes: parameters.max_report_bytes }),
+  ...(parameters.max_metadata_bytes === undefined
+    ? {}
+    : { max_metadata_bytes: parameters.max_metadata_bytes }),
+  ...(parameters.max_structure_bytes === undefined
+    ? {}
+    : { max_structure_bytes: parameters.max_structure_bytes }),
+  ...(parameters.max_parser_entries === undefined
+    ? {}
+    : { max_parser_entries: parameters.max_parser_entries }),
+  ...(parameters.max_parser_visits === undefined
+    ? {}
+    : { max_parser_visits: parameters.max_parser_visits }),
+  ...(parameters.max_token_bytes === undefined
+    ? {}
+    : { max_token_bytes: parameters.max_token_bytes }),
 });
 
 /** One Evidence interpretation for success and observations retained by file finalization failures. */

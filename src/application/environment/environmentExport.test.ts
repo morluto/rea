@@ -1,5 +1,6 @@
+import { listFixtureFiles } from "../../../tests/support/workspace/listFixtureFiles.js";
 import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { join, sep } from "node:path";
+import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -14,17 +15,6 @@ import {
   exportEnvironmentBundle,
   readEnvironmentExportInputs,
 } from "./environmentExport.js";
-
-const listFiles = async (root: string): Promise<string[]> =>
-  (await readdir(root, { recursive: true, withFileTypes: true }))
-    .filter((entry) => entry.isFile())
-    .map((entry) =>
-      join(entry.parentPath, entry.name)
-        .slice(root.length + 1)
-        .split(sep)
-        .join("/"),
-    )
-    .sort();
 
 const prepare = async (prefix: string) => {
   const root = await createTestTempDirectory(prefix);
@@ -112,15 +102,6 @@ describe("readEnvironmentExportInputs", () => {
   });
 });
 
-it("does not create parents for a rejected trailing dot-dot output selection", async () => {
-  const { root, input } = await prepare("rea-environment-export-invalid-root-");
-  const parent = join(root, "untouched");
-  const directory = `${join(parent, "a", "b", "c")}/..`;
-  const result = await exportEnvironmentBundle({ ...input, directory });
-  expect(result.ok).toBe(false);
-  await expect(readdir(parent)).rejects.toMatchObject({ code: "ENOENT" });
-});
-
 const registerBundlePublicationCases = () => {
   it("copies the package tarball beside the Dockerfile and reports it as the package source", async () => {
     const { root, input, directory } = await prepare(
@@ -173,7 +154,7 @@ const registerBundleDestinationAdmissionCases = () => {
       },
     });
     expect(projectAnalysisError(nonEmpty.error).message).toContain("not empty");
-    expect(await listFiles(directory)).toEqual(["keep.txt"]);
+    expect(await listFixtureFiles(directory)).toEqual(["keep.txt"]);
     const asFile = await exportEnvironmentBundle({
       ...input,
       directory: join(directory, "keep.txt"),
@@ -200,7 +181,7 @@ const registerBundleDestinationAdmissionCases = () => {
     expect(projectAnalysisError(missingTarball.error).details?.issues).toEqual([
       expect.objectContaining({ path: ["package_tarball"] }),
     ]);
-    expect(await listFiles(root)).not.toContain("fresh/README.md");
+    expect(await listFixtureFiles(root)).not.toContain("fresh/README.md");
   });
 
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(

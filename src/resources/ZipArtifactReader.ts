@@ -1,8 +1,10 @@
 import { OwnerCancellation } from "../domain/analysisErrorCore.js";
 import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import {
+  ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
   copyArtifactEntry,
+  malformedArtifact,
   sameArtifactEntry,
   type ArtifactEntry,
   type ArtifactFixedLimit,
@@ -12,8 +14,12 @@ import {
 } from "./ArtifactReader.js";
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
+import {
+  currentDirectoryPrefixLimitation,
+  withoutCurrentDirectoryPrefix,
+} from "./ArtifactPaths.js";
 import type { FileHandle } from "node:fs/promises";
-import { Duplex, PassThrough, type Readable } from "node:stream";
+import { compose, Duplex, PassThrough, type Readable } from "node:stream";
 import { once } from "node:events";
 import { constants, createZstdDecompress } from "node:zlib";
 
@@ -56,6 +62,10 @@ import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { decodeZipCp437 } from "../domain/zip/zipEntryText.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
+import {
+  ZstandardFramingError,
+  zstandardFrameChunks,
+} from "../domain/compression/zstandardFrameChunks.js";
 
 const ZIP_UTF8_DECODER = strictUtf8Decoder("preserve");
 
@@ -83,13 +93,16 @@ class ZipZstandardDecompressionStream {
 
   constructor(_format: string, options?: DecompressionStreamOptions) {
     const stream = Duplex.toWeb(
-      createZstdDecompress({
-        chunkSize: options?.chunkSize,
-        // Match the existing ELF/GPU Zstandard decoder's 128 MiB window cap.
-        params: {
-          [constants.ZSTD_d_windowLogMax]: ZIP_ZSTANDARD_WINDOW_LOG_MAX,
-        },
-      }),
+      compose(
+        new PassThrough(),
+        zstandardFrameChunks,
+        createZstdDecompress({
+          chunkSize: options?.chunkSize,
+          params: {
+            [constants.ZSTD_d_windowLogMax]: ZIP_ZSTANDARD_WINDOW_LOG_MAX,
+          },
+        }),
+      ),
     );
     this.readable = stream.readable;
     this.writable = stream.writable;
@@ -157,9 +170,10 @@ class NodeFileReader extends Reader<string> {
     // A central-directory offset can point past EOF. Type that malformed ZIP
     // read before a negative size reaches Buffer.alloc and becomes an I/O error.
     if (readBytes < 0)
-      throw new ArtifactReaderFailure(
-        "format",
+      throw malformedArtifact(
+        "zip",
         `ZIP archive is malformed: read at ${index} extends beyond the ${this.size}-byte archive`,
+        { offset: index },
       );
     if (
       this.maximumReadBytes !== undefined &&
@@ -247,6 +261,7 @@ export class ZipArtifactReader implements ArtifactReader {
     let index = 0;
     // A traversal owns its accounting, including overlapping or repeated passes.
     let declaredFileBytes = 0n;
+    let prefixedMembers = 0;
     // Every directory record, listed or not, claims its local entry's bytes.
     const records: ZipLocalRecord[] = [];
     const enumeration = typedZipFailures(
@@ -269,6 +284,7 @@ export class ZipArtifactReader implements ArtifactReader {
         // Logical path uniqueness belongs to the artifact inventory boundary.
         const metadata = projectZipEntry(entry, index++);
         if (metadata === undefined) continue;
+        if (metadata.sourcePath !== undefined) prefixedMembers += 1;
         // zip.js enforces each member's declared output size, so this sum bounds streamed work.
         if (
           metadata.kind === "file" &&
@@ -321,7 +337,7 @@ export class ZipArtifactReader implements ArtifactReader {
       this.#assertOpen(signal);
       await this.#source.verify();
       this.#assertOpen(signal);
-      options?.onCoverage?.(zipListingCoverage(account));
+      options?.onCoverage?.(zipListingCoverage(account, prefixedMembers));
     } finally {
       this.#enumerations.delete(enumeration);
       await enumeration.return();
@@ -345,7 +361,7 @@ export class ZipArtifactReader implements ArtifactReader {
     const source = stored.source;
     if (source.directory || source.symlink)
       return Promise.reject(
-        new ArtifactReaderFailure("format", "ZIP entry is not a regular file"),
+        new ArtifactReaderFailure("path", "ZIP entry is not a regular file"),
       );
     if (source.encrypted)
       return Promise.reject(
@@ -423,15 +439,23 @@ export class ZipArtifactReader implements ArtifactReader {
 /** Coverage of a central-directory listing, given the member region's byte account. */
 export const zipListingCoverage = (
   account: ZipMemberRegionAccount | undefined,
+  /** Listed members whose leading `./` the logical path omits. */
+  prefixedMembers = 0,
 ): ArtifactReaderTraversal => {
+  const prefixed =
+    prefixedMembers === 0
+      ? []
+      : [currentDirectoryPrefixLimitation("ZIP", prefixedMembers)];
   if (account === undefined)
     return {
       status: "unknown",
       limitations: [
         "ZIP central directory offset was not established; bytes outside the listed members were not accounted for.",
+        ...prefixed,
       ],
     };
-  const limitations = [
+  // Coverage follows the byte account alone; a normalized name is not a gap.
+  const gaps = [
     ...(account.unaccountedRanges === 0
       ? []
       : [
@@ -442,10 +466,15 @@ export const zipListingCoverage = (
       : [
           `${String(account.unlocatedHeaders)} ZIP central directory record(s) point at no local file header; the bytes they claim were not accounted for.`,
         ]),
+    ...(account.unverifiedExtents === 0
+      ? []
+      : [
+          `${String(account.unverifiedExtents)} ZIP central directory record(s) have payload extents that conflict with or cannot be established from their local headers or required data descriptors; those claims were not used to establish complete coverage.`,
+        ]),
   ];
   return {
-    status: limitations.length === 0 ? "complete" : "unknown",
-    limitations,
+    status: gaps.length === 0 ? "complete" : "unknown",
+    limitations: [...gaps, ...prefixed],
   };
 };
 
@@ -459,7 +488,7 @@ const projectZipEntry = (
       ? "directory"
       : "file";
   const sourcePath = zipEntryPath(entry);
-  const path = sourcePath.replace(/^(?:\.\/)+/u, "");
+  const path = withoutCurrentDirectoryPrefix(sourcePath);
   // Root directory markers carry no inventory occurrence. A file with this
   // spelling is still passed to the shared path validator and rejected there.
   if (kind === "directory" && (path === "" || path === ".")) return undefined;
@@ -476,11 +505,6 @@ const projectZipEntry = (
     unpacked: false,
     limitations: [
       ...(kind === "symlink" ? ["Archive symlink target was not read."] : []),
-      ...(path === sourcePath
-        ? []
-        : [
-            `ZIP member name ${JSON.stringify(sourcePath)} has a leading current-directory prefix omitted from its logical path.`,
-          ]),
       ...zipEntryNameLimitations(entry),
     ],
     adapterKey: `zip-entry:${index}`,
@@ -527,7 +551,7 @@ const decodeStrictZipUtf8 = (bytes: Uint8Array, message: string): string => {
     // a leading U+FEFF is part of a member name, not a transport signature.
     return ZIP_UTF8_DECODER.decode(bytes);
   } catch (cause: unknown) {
-    throw new ArtifactReaderFailure("format", message, { cause });
+    throw malformedArtifact("zip", message, { cause, field: "name" });
   }
 };
 
@@ -561,14 +585,12 @@ const extractStream = (
   const writable = new WritableStream<Uint8Array>({
     write: async (chunk) => {
       assertArtifactReadActive(signal);
+      // The stream owns this copy for as long as downstream retains it.
       if (!output.write(Buffer.from(chunk)))
         await once(output, "drain", { signal: controller.signal });
     },
-    close: async () => {
-      await verifySource();
-      assertArtifactReadActive(signal);
-      output.end();
-    },
+    // Sink closure can precede getData's final validation or rejection.
+    // The producer's successful settlement owns consumer-visible EOF below.
     abort: (reason) => {
       output.destroy(toError(typedZipFailure(reason, entry.compressionMethod)));
     },
@@ -582,19 +604,19 @@ const extractStream = (
         onprogress: () => assertArtifactReadActive(signal),
       }),
     )
-    .then(
-      () => undefined,
-      (cause: unknown) => {
-        output.destroy(
-          toError(typedZipFailure(cause, entry.compressionMethod)),
-        );
-      },
-    );
+    .then(async () => {
+      await verifySource();
+      assertArtifactReadActive(signal);
+      output.end();
+    })
+    .catch((cause: unknown) => {
+      output.destroy(toError(typedZipFailure(cause, entry.compressionMethod)));
+    });
   return { output, completion };
 };
 
 /** zip.js reports archive faults as plain errors identified by message. */
-const ZIP_FAILURE_REASONS: ReadonlyMap<string, "format" | "unavailable"> =
+const ZIP_FAILURE_REASONS: ReadonlyMap<string, "malformed" | "unavailable"> =
   new Map([
     ...[
       ERR_AMBIGUOUS_ARCHIVE,
@@ -610,7 +632,7 @@ const ZIP_FAILURE_REASONS: ReadonlyMap<string, "format" | "unavailable"> =
       ERR_LOCAL_FILE_HEADER_NOT_FOUND,
       ERR_OVERLAPPING_ENTRY,
       ERR_UNSUPPORTED_UINT64,
-    ].map((message) => [message, "format"] as const),
+    ].map((message) => [message, "malformed"] as const),
     ...[
       ERR_ENCRYPTED_CENTRAL_DIRECTORY,
       ERR_SPLIT_ZIP_FILE,
@@ -626,27 +648,47 @@ export const typedZipFailure = (
 ): unknown => {
   if (!(cause instanceof Error) || cause instanceof ArtifactReaderFailure)
     return cause;
+  // zip.js refuses a member's method before reading its data, so only that
+  // member's content is unreadable. The central directory still lists every
+  // entry, so entry coverage is unchanged, as for an encrypted member; the
+  // occurrence limitation carries the content gap.
+  if (
+    compressionMethod !== undefined &&
+    cause.message === ERR_UNSUPPORTED_COMPRESSION
+  )
+    return new ArtifactEntryContentUnavailable(
+      `ZIP archive uses an unsupported feature: ${cause.message} (method ${String(compressionMethod)})`,
+      `ZIP member compression method ${String(compressionMethod)} is unsupported; no content hash or child artifact was produced.`,
+      { cause },
+    );
   // Only method 93 uses Node's native Zstandard decoder. Do not classify
   // cancellation or an unrelated codec/runtime error as malformed ZIP data.
-  const code = "code" in cause ? cause.code : undefined;
+  const codecCause =
+    compressionMethod === 93 &&
+    cause.message === ERR_INVALID_COMPRESSED_DATA &&
+    cause.cause instanceof Error
+      ? cause.cause
+      : cause;
+  const code = "code" in codecCause ? codecCause.code : undefined;
   if (compressionMethod === 93 && code === "ZSTD_error_dictionary_wrong")
     return new ArtifactReaderFailure(
       "unavailable",
       "ZIP archive uses an unsupported Zstandard dictionary",
-      { cause },
+      { cause: codecCause },
     );
   if (
     compressionMethod === 93 &&
     code === "ZSTD_error_frameParameter_windowTooLarge"
   )
     return new ArtifactReaderFailure("limit", ZIP_ZSTANDARD_WINDOW_LIMIT, {
-      cause,
+      cause: codecCause,
       boundary: "memory",
       fixedAllowance: ZIP_ZSTANDARD_WINDOW_CEILING,
     });
   const invalidZstandard =
     compressionMethod === 93 &&
-    (code === "ZSTD_error_prefix_unknown" ||
+    (codecCause instanceof ZstandardFramingError ||
+      code === "ZSTD_error_prefix_unknown" ||
       code === "ZSTD_error_checksum_wrong" ||
       code === "ZSTD_error_corruption_detected" ||
       code === "ZSTD_error_dictionary_corrupted" ||
@@ -654,15 +696,20 @@ export const typedZipFailure = (
       code === "Z_BUF_ERROR");
   const reason =
     ZIP_FAILURE_REASONS.get(cause.message) ??
-    (invalidZstandard ? "format" : undefined);
+    (invalidZstandard ? "malformed" : undefined);
   if (reason === undefined) return cause;
-  return new ArtifactReaderFailure(
-    reason,
-    reason === "format"
-      ? `ZIP archive is malformed: ${invalidZstandard ? ERR_INVALID_COMPRESSED_DATA : cause.message}`
-      : `ZIP archive uses an unsupported feature: ${cause.message}`,
-    { cause },
-  );
+  const failureCause = invalidZstandard ? codecCause : cause;
+  return reason === "malformed"
+    ? malformedArtifact(
+        "zip",
+        `ZIP archive is malformed: ${invalidZstandard ? ERR_INVALID_COMPRESSED_DATA : cause.message}`,
+        { cause: failureCause },
+      )
+    : new ArtifactReaderFailure(
+        reason,
+        `ZIP archive uses an unsupported feature: ${cause.message}`,
+        { cause: failureCause },
+      );
 };
 
 async function* typedZipFailures<T>(

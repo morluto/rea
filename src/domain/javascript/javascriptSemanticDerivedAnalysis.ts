@@ -11,7 +11,6 @@ import type {
   JavaScriptSemanticReference,
 } from "./javascriptSemanticIr.js";
 import { collectJavaScriptSemanticPromises } from "./javascriptSemanticPromises.js";
-import { collectJavaScriptSemanticObjects } from "./javascriptSemanticObjects.js";
 import { collectJavaScriptSemanticResources } from "./javascriptSemanticResources.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 
@@ -22,6 +21,10 @@ import {
   readExactJavaScriptLiteral,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
+import {
+  isIntrinsicGlobalReference,
+  unwrapPureSemanticSequenceExpression,
+} from "./javascriptSemanticGlobalReference.js";
 import { semanticPrimitiveSet } from "./javascriptSemanticPrimitives.js";
 import { JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS } from "./javascriptAnalysisResourceControls.js";
 
@@ -44,7 +47,6 @@ type DerivedSemanticAnalysis = Pick<
   | "eventOperations"
   | "frontiers"
   | "functionFingerprints"
-  | "objectOperations"
   | "promiseOperations"
   | "requestOperations"
   | "resourceOperations"
@@ -96,12 +98,6 @@ export function* collectJavaScriptDerivedSemanticsSteps(
     callables,
   );
   yield;
-  const objectOperations = collectJavaScriptSemanticObjects(
-    program,
-    state,
-    callables,
-  );
-  yield;
   const assignmentFlows = yield* collectAssignmentFlowsSteps(
     program,
     state,
@@ -140,7 +136,6 @@ export function* collectJavaScriptDerivedSemanticsSteps(
     ...childProcesses,
     ...dataEffects,
     resourceOperations,
-    objectOperations,
     functionFingerprints,
   };
 }
@@ -172,11 +167,13 @@ function* collectExpressionFlowsSteps(
   const initializers: JavaScriptSemanticIr["initializerFlows"][number][] = [];
   const literalReturns: JavaScriptSemanticIr["literalReturns"][number][] = [];
   const candidates: { node: t.Node; ownerCallableId: string | null }[] = [];
+  const discardedPureExpressions = new WeakSet<t.Node>();
   let truncated = false;
   const stack = createSemanticCallableIdStack(
     new Set(callables.map((item) => item.callableId)),
   );
   yield* traverseJavaScriptValueAstSteps(program, state.erasedSyntaxNodes, {
+    skip: (node) => discardedPureExpressions.has(node),
     enter: (node, parent) => {
       stack.enter(node, parent);
       const returnValue = t.isReturnStatement(node)
@@ -185,7 +182,10 @@ function* collectExpressionFlowsSteps(
           ? node.body
           : null;
       if (returnValue != null) {
-        const expression = unwrapJavaScriptExpression(returnValue).node;
+        const expression = unwrapPureSemanticSequenceExpression(
+          returnValue,
+          state,
+        );
         const exact = readExactJavaScriptLiteral(expression);
         if (exact.found) {
           const value = semanticPrimitiveSet([exact.value], state.precision);
@@ -199,7 +199,7 @@ function* collectExpressionFlowsSteps(
             value.status === "unknown" &&
             value.resourceLimit === "primitive-bytes"
           )
-            state.valueResourceLimits.add("primitive-bytes");
+            state.observations.valueResourceLimits.add("primitive-bytes");
         }
       }
       if (
@@ -207,12 +207,24 @@ function* collectExpressionFlowsSteps(
         t.isIdentifier(node.id) &&
         node.init != null
       ) {
-        const init = unwrapJavaScriptExpression(node.init).node;
-        if (isInfluenceExpression(init)) {
+        const init = unwrapPureSemanticSequenceExpression(node.init, state);
+        if (
+          isInfluenceExpression(init) ||
+          (t.isIdentifier(init) &&
+            !isIntrinsicGlobalReference(init, state, "undefined"))
+        ) {
           if (initializers.length < budget)
             initializers.push({ target: range(node.id), source: range(init) });
           else truncated = true;
         }
+      }
+      if (
+        t.isSequenceExpression(node) &&
+        unwrapPureSemanticSequenceExpression(node, state) !== node
+      ) {
+        for (const leading of node.expressions.slice(0, -1))
+          discardedPureExpressions.add(leading);
+        return;
       }
       if (
         isInfluenceExpression(node) &&
@@ -268,7 +280,7 @@ function* collectExpressionFlowsSteps(
         (t.isUnaryExpression(node) &&
           (node.operator === "void" || node.operator === "delete")) ||
         (t.isSequenceExpression(node) && index !== values.length - 1);
-      const operand = unwrapJavaScriptExpression(value).node;
+      const operand = unwrapPureSemanticSequenceExpression(value, state);
       const exact = readExactJavaScriptLiteral(operand);
       const literal = exact.found
         ? semanticPrimitiveSet([exact.value], state.precision)
@@ -277,7 +289,7 @@ function* collectExpressionFlowsSteps(
         literal?.status === "unknown" &&
         literal.resourceLimit === "primitive-bytes"
       )
-        state.valueResourceLimits.add("primitive-bytes");
+        state.observations.valueResourceLimits.add("primitive-bytes");
       operands.push({
         location: range(operand),
         conditional,
@@ -322,7 +334,7 @@ function* collectAssignmentFlowsSteps(
       const target = unwrapJavaScriptExpression(node.left).node;
       // Destructuring has its own property-selection owner.
       if (!t.isIdentifier(target) && !t.isMemberExpression(target)) return;
-      const source = unwrapJavaScriptExpression(node.right).node;
+      const source = unwrapPureSemanticSequenceExpression(node.right, state);
       flows.push({
         target: range(target),
         source: range(source),

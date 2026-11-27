@@ -1,64 +1,53 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { expect, it } from "vitest";
+import { expect, onTestFinished } from "vitest";
 
-import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
-import { createServer } from "../../../src/server/createServer.js";
+import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph.js";
+import { inventoryEvidence } from "../../fixtures/artifactComparisonMcp.js";
 import { nestedAsarHeader } from "../../fixtures/asarHeader.js";
-import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { openArtifactTarget } from "../../support/mcp/artifactSession.js";
+import { mcpTest } from "../../support/mcp/mcpFixture.js";
 
-it("reports expanded ASAR admission failure through MCP and permits a valid retry", async () => {
-  const root = await createTestTempDirectory("rea-asar-listing-mcp-");
-  const path = join(root, "app.asar");
-  const bytes = nestedAsarHeader(64, "d".repeat(256), 4000);
-  await writeFile(path, bytes);
-  const session = createTestBinarySession(new ArtifactProvider(process.env));
-  const server = createServer({ kind: "session", session });
-  const client = new Client(
-    { name: "asar-listing-test", version: "1" },
-    { jsonSchemaValidator: createMcpSchemaValidation() },
-  );
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-    expect(
-      (await client.callTool({ name: "open_binary", arguments: { path } }))
-        .isError,
-    ).not.toBe(true);
-    const result = await client.callTool({
-      name: "inspect_artifact",
-      arguments: {},
-    });
-    expect(result.isError).toBe(true);
-    expect(parseMcpToolError(result)).toMatchObject({
-      error: {
-        code: "truncated",
-        category: "truncated",
+mcpTest(
+  "reports expanded ASAR admission failure and inspects a valid replacement target",
+  async ({ mcp }) => {
+    const root = await createTestTempDirectory("rea-asar-listing-mcp-");
+    const path = join(root, "app.asar");
+    const bytes = nestedAsarHeader(64, "d".repeat(256), 4000);
+    await writeFile(path, bytes);
+    const client = await openArtifactTarget(mcp, onTestFinished, path);
+    const inspect = () =>
+      client.callTool({ name: "inspect_artifact", arguments: {} });
+    const refused = await inspect();
+    expect(parseMcpToolError(refused).error).toMatchObject({
+      code: "partial",
+      category: "partial",
+      details: {
+        admission: "asar-listing",
+        limit: { setting: "asar.max_listing_bytes", unit: "bytes" },
       },
     });
-    expect(result.structuredContent).toBeUndefined();
-    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+    expect(refused.structuredContent).toBeUndefined();
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+
     const valid = join(root, "valid.asar");
     await writeFile(valid, nestedAsarHeader(1, "lib", 1));
+    const opened = await client.callTool({
+      name: "open_binary",
+      arguments: { path: valid },
+    });
+    expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
+    const accepted = await inspect();
+    expect(accepted.isError, JSON.stringify(accepted.content)).not.toBe(true);
+    const evidence = inventoryEvidence(accepted.structuredContent);
+    expect(evidence.subject?.local_path).toBe(valid);
+    const inventory = artifactInventoryResultSchema.parse(
+      evidence.normalized_result,
+    );
     expect(
-      (
-        await client.callTool({
-          name: "open_binary",
-          arguments: { path: valid },
-        })
-      ).isError,
-    ).not.toBe(true);
-    expect(
-      (await client.callTool({ name: "inspect_artifact", arguments: {} }))
-        .isError,
-    ).not.toBe(true);
-  } finally {
-    await Promise.allSettled([client.close(), server.close(), session.close()]);
-  }
-});
+      inventory.occurrences.map(({ logical_path }) => logical_path),
+    ).toEqual([".", "lib", "lib/f0"]);
+  },
+);
