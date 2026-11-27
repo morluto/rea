@@ -40,6 +40,7 @@ cliTest(
           view: {
             kind: "inventory",
             collection: "format_record_headers",
+            path: journal,
             offset,
             limit: 64,
           },

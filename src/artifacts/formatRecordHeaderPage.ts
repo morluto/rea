@@ -1,5 +1,6 @@
 import type { ArtifactFormatId } from "../domain/artifactGraph.js";
 import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
+import type { AnalysisPartialObservation } from "../domain/analysisErrorBase.js";
 import {
   ArtifactReaderFailure,
   ArtifactResourceScope,
@@ -46,6 +47,13 @@ const RECORD_HEADER_WINDOWS: Readonly<
  */
 export const readFormatRecordHeaderPage = async (
   request: FormatRecordHeaderPageRequest,
+  /**
+   * The caller's completed observation of a read page, kept on a cleanup
+   * failure so finished work survives a reader that fails to close.
+   */
+  observe?: (
+    items: readonly FormatRecordHeader[],
+  ) => AnalysisPartialObservation | undefined,
 ): Promise<readonly FormatRecordHeader[]> => {
   const window =
     RECORD_HEADER_WINDOWS[request.format as ArtifactFormatId] ?? undefined;
@@ -92,7 +100,11 @@ export const readFormatRecordHeaderPage = async (
   }
   const closed = await resources.release(owner);
   if (closed.kind === "failed")
-    throw resources.cleanupFailure(outcome, [closed]);
+    throw resources.cleanupFailure(
+      outcome.kind === "completed" ? { kind: "completed" } : outcome,
+      [closed],
+      outcome.kind === "completed" ? observe?.(outcome.value) : undefined,
+    );
   if (outcome.kind === "failed") throw outcome.cause;
   return outcome.value;
 };

@@ -124,40 +124,52 @@ const inspectFormatRecordPage = async (
   const parent = resolved.value;
   const target = formatRecordPageSource(analysisViewParentOf(parent));
   if (!target.ok) return target;
-  const artifact = viewArtifact(parent);
   const view = input.view;
-  if (
-    artifact === null ||
-    view.kind !== "inventory" ||
-    view.collection !== "format_record_headers"
-  )
+  if (view.kind !== "inventory" || view.collection !== "format_record_headers")
     return projectResolvedAnalysisView(input, projection, parent);
-  let items: Awaited<ReturnType<typeof readFormatRecordHeaderPage>>;
-  try {
-    items = await readFormatRecordHeaderPage({
-      path: artifact.path,
-      format: target.value.format,
-      sha256: target.value.sha256,
-      start: view.offset,
-      limit: view.limit,
-      signal,
-      resources,
+  // The caller names the file; Evidence's subject path is display metadata
+  // and never selects what is opened. The digest binds the two.
+  const project = (
+    items: Awaited<ReturnType<typeof readFormatRecordHeaderPage>>,
+  ) =>
+    projectResolvedAnalysisView(input, projection, parent, undefined, {
+      items,
+      total: target.value.total,
     });
+  let projected: Result<Evidence, AnalysisError> | undefined;
+  try {
+    const items = await readFormatRecordHeaderPage(
+      {
+        path: view.path,
+        format: target.value.format,
+        sha256: target.value.sha256,
+        start: view.offset,
+        limit: view.limit,
+        signal,
+        resources,
+      },
+      (completed) => {
+        projected = project(completed);
+        return projected.ok ? projected.value : undefined;
+      },
+    );
+    projected = project(items);
   } catch (cause: unknown) {
     return err(
       translateArtifactFailure(
         INSPECT_ANALYSIS_VIEW_OPERATION,
-        artifact.path,
+        view.path,
         cause,
       ),
     );
   }
-  if (signal?.aborted)
-    return err(cancelledBy(INSPECT_ANALYSIS_VIEW_OPERATION, signal));
-  return projectResolvedAnalysisView(input, projection, parent, undefined, {
-    items,
-    total: target.value.total,
-  });
+  if (!projected.ok || !signal?.aborted) return projected;
+  // Cancellation after the page completed keeps that page.
+  return err(
+    cancelledBy(INSPECT_ANALYSIS_VIEW_OPERATION, signal, {
+      partialObservation: projected.value,
+    }),
+  );
 };
 
 /**

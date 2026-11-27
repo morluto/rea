@@ -959,9 +959,10 @@ and ties keep inventory order. The container's own `.` row has a size, so add
 These selectors do not reopen the artifact or resolve filesystem paths.
 The exception is `format_record_headers`, which pages the per-record headers a
 root artifact retains only a window of inline, such as a systemd journal's
-object headers past the first 32. Each page re-reads the root file named by the
-parent Evidence through its format reader, starting at `offset`, after binding
-the file to the inventory's root digest. A changed file fails with
+object headers past the first 32. The caller names the root file in the view's
+required absolute `path`; Evidence's subject path is display metadata and never
+selects what is opened. Each page re-reads that file through its format reader,
+starting at `offset`, after binding it to the inventory's root digest. A changed file fails with
 `artifact_integrity_mismatch` (`integrity_check: "container-identity"`) instead
 of returning shifted rows, and an Evidence bundle source cannot reopen it. A
 page holds at most one window; `coverage.next_offset` continues it, and memory

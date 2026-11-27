@@ -14,6 +14,7 @@ import {
   type ArtifactFormatMetadata,
 } from "../artifactFormatMetadata.js";
 import { prefixedDigestSchema } from "../digests.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 import type { ArtifactOccurrence } from "../artifactGraph.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { z } from "zod";
@@ -112,8 +113,11 @@ export const artifactInventoryViewRequestSchema = z.discriminatedUnion(
       collection: z
         .literal("format_record_headers")
         .describe(
-          "Per-record headers of the root artifact past its inline window (systemd journal object headers). Each page re-reads the root file, which must be unchanged.",
+          "Per-record headers of the root artifact past its inline window (systemd journal object headers).",
         ),
+      path: absoluteLocalPathStringSchema.describe(
+        "Absolute local path of the inventoried root file to re-read for this page; it must still match the inventory's root digest. Evidence never selects the file.",
+      ),
     }),
   ],
 );

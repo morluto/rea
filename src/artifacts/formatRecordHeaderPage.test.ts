@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { readFormatRecordHeaderPage } from "./formatRecordHeaderPage.js";
+import { SystemdJournalArtifactReader } from "./SystemdJournalArtifactReader.js";
 import {
   HEADER_BYTES,
   journalBytes,
@@ -70,6 +71,47 @@ it("stops a page cancelled mid-read and releases its reader", async () => {
     expect(resources.hasPending).toBe(false);
   } finally {
     spy.mockRestore();
+  }
+});
+
+it("keeps a completed page when its reader fails to close", async () => {
+  const { path, sha256 } = await journal();
+  const close = vi
+    .spyOn(SystemdJournalArtifactReader.prototype, "close")
+    .mockRejectedValueOnce(new Error("descriptor close failed"));
+  const resources = new ArtifactResourceScope();
+  const observed: unknown[] = [];
+  try {
+    await expect(
+      readFormatRecordHeaderPage(
+        {
+          path,
+          format: "systemd-journal",
+          sha256,
+          start: 38,
+          limit: 8,
+          resources,
+        },
+        (items) => {
+          observed.push(items);
+          return undefined;
+        },
+      ),
+    ).rejects.toMatchObject({
+      cleanup: { reason: "descriptor close failed", resources: [path] },
+    });
+    // The finished page reached the caller's observation before the failure.
+    expect(observed).toEqual([
+      [
+        expect.objectContaining({ offset: HEADER_BYTES + 38 * 32 }),
+        expect.objectContaining({ offset: HEADER_BYTES + 39 * 32 }),
+      ],
+    ]);
+    // The reader stays retained for a cleanup retry.
+    expect(resources.hasPending).toBe(true);
+  } finally {
+    close.mockRestore();
+    await resources.retryCleanup().catch(() => undefined);
   }
 });
 

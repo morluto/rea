@@ -28,6 +28,7 @@ const objectOffset = (index: number): number => HEADER_BYTES + index * 32;
 const readPage = async (
   client: Client,
   parent: string,
+  path: string,
   offset: number,
   limit = 64,
 ) =>
@@ -38,6 +39,7 @@ const readPage = async (
       view: {
         kind: "inventory",
         collection: "format_record_headers",
+        path,
         offset,
         limit,
       },
@@ -79,13 +81,13 @@ mcpTest(
   "pages journal object headers past the inline window by re-reading the file",
   async ({ mcp, onTestFinished }) => {
     const objects = Array.from({ length: 40 }, () => ({ type: 1, size: 32 }));
-    const { client, parent } = await inventoryJournal(
+    const { client, path, parent } = await inventoryJournal(
       mcp,
       onTestFinished,
       journalBytes({ objects }),
     );
     // Past the 32-header inline window: headers 32..39 are retrievable.
-    const later = pageResult(await readPage(client, parent, 32));
+    const later = pageResult(await readPage(client, parent, path, 32));
     expect(later.items).toHaveLength(8);
     expect(later.items[0]).toMatchObject({
       offset: objectOffset(32),
@@ -99,15 +101,15 @@ mcpTest(
       exhausted: true,
     });
     // A page larger than one window stops at the window and names the next.
-    const first = pageResult(await readPage(client, parent, 0, 64));
+    const first = pageResult(await readPage(client, parent, path, 0, 64));
     expect(first.items).toHaveLength(32);
     expect(first.coverage).toMatchObject({ next_offset: 32, total: 40 });
     // The last page holds exactly the final header; past it the page is empty.
-    const last = pageResult(await readPage(client, parent, 39, 5));
+    const last = pageResult(await readPage(client, parent, path, 39, 5));
     expect(last.items).toEqual([
       expect.objectContaining({ offset: objectOffset(39) }),
     ]);
-    const empty = pageResult(await readPage(client, parent, 40));
+    const empty = pageResult(await readPage(client, parent, path, 40));
     expect(empty.items).toEqual([]);
     expect(empty.coverage).toMatchObject({ status: "empty", total: 40 });
   },
@@ -122,13 +124,13 @@ mcpTest(
       // that ends the chain, reported at its own offset.
       { type: 3, size: 8 },
     ];
-    const { client, parent } = await inventoryJournal(
+    const { client, path, parent } = await inventoryJournal(
       mcp,
       onTestFinished,
       // The undersized object's 16-byte header must be readable in full.
       journalBytes({ objects, tailBytes: 16 }),
     );
-    const page = pageResult(await readPage(client, parent, 32));
+    const page = pageResult(await readPage(client, parent, path, 32));
     expect(page.items.map((item) => (item as { size: number }).size)).toEqual([
       32, 32, 32, 8,
     ]);
@@ -150,38 +152,40 @@ mcpTest(
       onTestFinished,
       bytes,
     );
-    pageResult(await readPage(client, parent, 32));
+    pageResult(await readPage(client, parent, path, 32));
     // The same length with one object retyped: shifted rows are impossible to
     // detect from the page alone, so the digest must refuse it.
     const changed = Buffer.from(bytes);
     changed.writeUInt8(3, objectOffset(33));
     await writeFile(path, changed);
     // The page binds the file to the inventory's root digest first.
-    expect(parseMcpToolError(await readPage(client, parent, 32))).toMatchObject(
-      {
-        error: {
-          code: "artifact_integrity_mismatch",
-          details: {
-            integrity_check: "container-identity",
-            declared_sha256: expect.any(String),
-            calculated_sha256: expect.any(String),
-          },
+    expect(
+      parseMcpToolError(await readPage(client, parent, path, 32)),
+    ).toMatchObject({
+      error: {
+        code: "artifact_integrity_mismatch",
+        details: {
+          integrity_check: "container-identity",
+          declared_sha256: expect.any(String),
+          calculated_sha256: expect.any(String),
         },
       },
-    );
+    });
   },
 );
 
 mcpTest(
   "refuses record pages for a format without a record window",
   async ({ mcp, onTestFinished }) => {
-    const { client, parent } = await inventoryJournal(
+    const { client, path, parent } = await inventoryJournal(
       mcp,
       onTestFinished,
       await zipBytes(),
       "bundle.zip",
     );
-    expect(parseMcpToolError(await readPage(client, parent, 0))).toMatchObject({
+    expect(
+      parseMcpToolError(await readPage(client, parent, path, 0)),
+    ).toMatchObject({
       error: {
         code: "invalid_request",
         details: {
@@ -194,5 +198,34 @@ mcpTest(
         },
       },
     });
+  },
+);
+
+mcpTest(
+  "opens only the file the caller names, never Evidence's display path",
+  async ({ mcp, onTestFinished }) => {
+    const objects = Array.from({ length: 40 }, () => ({ type: 1, size: 32 }));
+    const bytes = journalBytes({ objects });
+    const { client, path, parent } = await inventoryJournal(
+      mcp,
+      onTestFinished,
+      bytes,
+    );
+    // A byte-identical copy elsewhere pages under the same digest, while the
+    // Evidence's own subject path is never opened.
+    const copy = join(await createTestTempDirectory("rea-journal-copy-"), "c");
+    await writeFile(copy, bytes);
+    await writeFile(path, "replaced\n");
+    const page = pageResult(await readPage(client, parent, copy, 32));
+    expect(page.items).toHaveLength(8);
+    // The view requires the explicit selection.
+    const missing = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: { kind: "retained-evidence", evidence_id: parent },
+        view: { kind: "inventory", collection: "format_record_headers" },
+      },
+    });
+    expect(missing.isError).toBe(true);
   },
 );
