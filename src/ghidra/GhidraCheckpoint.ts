@@ -625,17 +625,36 @@ export class GhidraCheckpoint {
         break;
       }
     }
-    await this.#lease?.release();
-    this.#lease = undefined;
+    let release: { readonly cause: unknown } | undefined;
+    try {
+      await this.#lease?.release();
+      this.#lease = undefined;
+    } catch (cause: unknown) {
+      // The lease stays owned for retry; a lone release failure keeps its
+      // own error, and one alongside a removal failure is reported with it.
+      if (removal === undefined) throw cause;
+      release = { cause };
+    }
     if (removal !== undefined) {
       const error = new ProviderCleanupError(
         "ghidra",
-        [...this.#pendingRemoval],
+        this.cleanupResources,
         {
-          reason: `Checkpoint file cleanup failed: ${errorMessage(removal)}`,
+          reason:
+            release === undefined
+              ? `Checkpoint file cleanup failed: ${errorMessage(removal)}`
+              : `Checkpoint file cleanup failed: ${errorMessage(removal)}; releasing the checkpoint lease also failed: ${errorMessage(release.cause)}`,
           checkpoint: this.observation,
         },
-        { cause: removal },
+        {
+          cause:
+            release === undefined
+              ? removal
+              : new AggregateError(
+                  [removal, release.cause],
+                  "Checkpoint file removal and lease release failed",
+                ),
+        },
       );
       throw this.#cleanupRelease.bind(error);
     }

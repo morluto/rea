@@ -19,6 +19,7 @@ import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import { acquireOwnedLease } from "../process/OwnedLease.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   GhidraCheckpoint,
   GhidraCheckpointBusyError,
@@ -744,6 +745,62 @@ it.skipIf(process.platform === "win32")(
     expect(
       await readFile(join(f.selection.directory, "current.json"), "utf8"),
     ).toEqual(peerManifest);
+    await f.owner.retryCleanup();
+    expect(f.owner.hasResources).toBe(false);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "reports both a failed old-file removal and a failed lease release, keeping both owned",
+  async () => {
+    const f = await fixture();
+    await f.owner.admit("first");
+    await f.owner.publish(f.packed);
+    const old = join(f.selection.directory, f.owner.observation.source!.file);
+    const next = join(f.root, "next.gzf");
+    await writeFile(next, "changed");
+    const leases = await vi.importActual<
+      typeof import("../process/OwnedLease.js")
+    >("../process/OwnedLease.js");
+    vi.mocked(acquireOwnedLease).mockImplementationOnce(async (input) => {
+      const result = await leases.acquireOwnedLease(input);
+      if (!result.acquired) return result;
+      let failed = false;
+      return {
+        acquired: true,
+        lease: {
+          ...result.lease,
+          release: async () => {
+            if (!failed) {
+              failed = true;
+              throw new Error("controlled lease release failure");
+            }
+            await result.lease.release();
+          },
+        },
+      };
+    });
+    const files =
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      );
+    vi.mocked(rm).mockImplementation(async (path, options) => {
+      if (path === old) throw new Error("controlled removal failure");
+      await files.rm(path, options);
+    });
+    const failure = await f.owner.publish(next).then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+    expect(failure).toBeInstanceOf(ProviderCleanupError);
+    const cleanup = failure as ProviderCleanupError;
+    expect(cleanup.diagnostics?.reason).toMatch(
+      /controlled removal failure.*controlled lease release failure/,
+    );
+    expect(cleanup.cleanupResources).toContain(old);
+    expect(cleanup.cleanupResources).toHaveLength(2);
+    expect(f.owner.hasResources).toBe(true);
+    vi.mocked(rm).mockImplementation(files.rm);
     await f.owner.retryCleanup();
     expect(f.owner.hasResources).toBe(false);
   },
