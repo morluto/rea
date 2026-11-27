@@ -122,7 +122,17 @@ it("retains a complete pseudocode observation once and pages its exact text thro
     expect(
       contract.outputSchema.safeParse(complete.structuredContent).success,
     ).toBe(true);
-    expect(parseEvidence(complete.structuredContent)).toEqual(parent);
+    const replay = parseEvidence(complete.structuredContent);
+    expect(replay).toMatchObject({
+      normalized_result: parent.normalized_result,
+      raw_result: parent.raw_result,
+      parameters: parent.parameters,
+      evidence_links: [parent.evidence_id],
+      limitations: expect.arrayContaining([
+        expect.stringMatching(/snapshot.*did not re.run the provider/iu),
+      ]),
+    });
+    expect(calls).toEqual(executions);
   }
 });
 

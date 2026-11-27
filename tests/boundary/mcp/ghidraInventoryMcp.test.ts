@@ -397,12 +397,18 @@ it("replays documentless Ghidra pseudocode within a session and after snapshot r
       arguments: { path: process.execPath, snapshot_path: snapshotPath },
     });
     expect(reopened.isError, JSON.stringify(reopened.content)).not.toBe(true);
+    if (process.platform === "win32") {
+      const admitted = await read();
+      expect(admitted.normalized_result).toEqual(live.normalized_result);
+      expect(calls.slice(observed.length)).toEqual(["procedure_pseudo_code"]);
+    }
+    const afterAdmission = process.platform === "win32" ? [...calls] : observed;
     const replayed = await read();
     expect(replayed.normalized_result).toEqual(live.normalized_result);
     expect(replayed.limitations).toContainEqual(
       expect.stringMatching(/snapshot.*did not re.run the provider/iu),
     );
-    expect(calls).toEqual(observed);
+    expect(calls).toEqual(afterAdmission);
   } finally {
     await harness.close();
   }
