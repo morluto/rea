@@ -99,7 +99,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Initialize production analysis
-        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
+        uses: github/codeql-action/init@915412ff23e8b7659517e607487dbeae018f2934 # v4.39.5
         with:
           languages: ${{ matrix.language }}
           build-mode: none
@@ -107,7 +107,7 @@ jobs:
           threads: 2
           ram: 4096
       - name: Analyze production code
-        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
+        uses: github/codeql-action/analyze@915412ff23e8b7659517e607487dbeae018f2934 # v4.39.5
         with:
           category: /language:${{ matrix.language }}
           output: ${{ runner.temp }}/codeql-production-results
