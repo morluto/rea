@@ -9,6 +9,7 @@ import { readEvidencePayload } from "./evidenceValidation.js";
 import { functionComparisonFindingLinks } from "./functionComparisonResults.js";
 import {
   functionComparisonResultSchema,
+  sameMaskingCounts,
   type FunctionComparisonResult,
 } from "./functionComparisonSchemas.js";
 import {
@@ -69,44 +70,8 @@ export function readComparisonResult(
     if (!parsed.ok) return parsed;
     const optIn = validateNormalizedViewOptIn(evidence, parsed.value);
     if (!optIn.ok) return optIn;
-    if (parsed.value.function_match.method === "same-evidence") {
-      try {
-        const { left, right } = comparisonSourceEvidenceSides(evidence);
-        const sourceId = left[0];
-        // optional-fact-default: the opt-in check above admits absent views only when none were requested.
-        const views = parsed.value.normalized_views?.views ?? [];
-        // Normalized views project the same source, so they share its invariants.
-        const conclusions = [...parsed.value.dimensions, ...views];
-        const sameSource =
-          left.length === 1 &&
-          right.length === 1 &&
-          sourceId === right[0] &&
-          sourceId !== undefined &&
-          evidence.evidence_links.includes(sourceId) &&
-          conclusions.every(({ evidence_links }) =>
-            evidence_links.every((id) => id === sourceId),
-          );
-        const impossibleChange =
-          parsed.value.left_subject_sha256 !==
-            parsed.value.right_subject_sha256 ||
-          conclusions.some(
-            (dimension) =>
-              dimension.status === "changed" ||
-              (dimension.status === "unchanged" &&
-                dimension.left_digest !== dimension.right_digest),
-          ) ||
-          views.some((view) => !sameProjectedFacts(view));
-        if (!sameSource || impossibleChange)
-          return err(
-            new EvidenceIntegrityError(
-              "Same-Evidence function comparison must cite the same source on both sides",
-            ),
-          );
-      } catch (cause) {
-        if (cause instanceof EvidenceIntegrityError) return err(cause);
-        throw cause;
-      }
-    }
+    const self = validateSelfComparison(evidence, parsed.value);
+    if (!self.ok) return self;
     const links = validateFindingLinks(
       evidence,
       functionComparisonFindingLinks(parsed.value),
@@ -183,16 +148,61 @@ const sameProjectedFacts = (view: NormalizedView): boolean =>
   view.left_digest === view.right_digest &&
   view.left_count === view.right_count &&
   (view.masking === null ||
-    (
-      [
-        "address_derived_identifiers",
-        "unmasked_address_derived_identifiers",
-        "corroborated_addresses",
-        "visible_addresses",
-      ] as const
-    ).every(
-      (count) => view.masking?.left[count] === view.masking?.right[count],
-    ));
+    sameMaskingCounts(view.masking.left, view.masking.right));
+
+/**
+ * A comparison whose sides select one Evidence record has nothing to report as
+ * changed, whatever match method it records: with known coordinates the shared
+ * entry matches (`same-entry`) before the record identity (`same-evidence`).
+ * The selected sources decide, as they decide the producer's endpoint handling.
+ */
+const validateSelfComparison = (
+  evidence: Evidence,
+  result: FunctionComparisonResult,
+): Result<void, EvidenceIntegrityError> => {
+  const recordedSame = result.function_match.method === "same-evidence";
+  let sides: ReturnType<typeof comparisonSourceEvidenceSides>;
+  try {
+    sides = comparisonSourceEvidenceSides(evidence);
+  } catch (cause) {
+    if (!(cause instanceof EvidenceIntegrityError)) throw cause;
+    // Without readable sides only a recorded same-Evidence match makes the claim;
+    // the views' own source check still reports an unreadable selection.
+    return recordedSame ? err(cause) : ok(undefined);
+  }
+  const { left, right } = sides;
+  const sourceId =
+    left.length === 1 && right.length === 1 && left[0] === right[0]
+      ? left[0]
+      : undefined;
+  if (!recordedSame && sourceId === undefined) return ok(undefined);
+  // optional-fact-default: the opt-in check admits absent views only when none were requested.
+  const views = result.normalized_views?.views ?? [];
+  // Normalized views project the same source, so they share its invariants.
+  const conclusions = [...result.dimensions, ...views];
+  const sameSource =
+    sourceId !== undefined &&
+    evidence.evidence_links.includes(sourceId) &&
+    conclusions.every(({ evidence_links }) =>
+      evidence_links.every((id) => id === sourceId),
+    );
+  const impossibleChange =
+    result.left_subject_sha256 !== result.right_subject_sha256 ||
+    conclusions.some(
+      (dimension) =>
+        dimension.status === "changed" ||
+        (dimension.status === "unchanged" &&
+          dimension.left_digest !== dimension.right_digest),
+    ) ||
+    views.some((view) => !sameProjectedFacts(view));
+  return !sameSource || impossibleChange
+    ? err(
+        new EvidenceIntegrityError(
+          "Same-Evidence function comparison must cite the same source on both sides",
+        ),
+      )
+    : ok(undefined);
+};
 
 /** Each normalized view must cite every recorded source selection, in either form. */
 const validateNormalizedViewSources = (

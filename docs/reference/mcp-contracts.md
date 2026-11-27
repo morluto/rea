@@ -2551,9 +2551,11 @@ visible. An `unchanged` result means the masked text matches; it
 does not establish callee identity or call order. A view is `unknown` when the
 exact calls dimension is unknown and its text masks a listed caller or callee,
 when its text masks an incoming call source, or a call, tail-jump or thunk
-target, that the calls dimension does not compare, or when the bounded line
-diff gives up; it then keeps both digests and its masking record, without a
-text delta. The thunk target of a listed caller or callee, or of a referenced
+target, that the calls dimension does not compare, when the texts are equal
+but the two sides masked or left visible different numbers of address uses (a
+placeholder then matches literal text on the other side), or when the bounded
+line diff gives up; it then keeps both digests and its masking record, without
+a text delta. The thunk target of a listed caller or callee, or of a referenced
 procedure, counts as uncompared even when it is also a listed endpoint, and a
 comparison of one Evidence record with itself skips both endpoint conditions
 because its two projections are identical. Recognizing named symbols written

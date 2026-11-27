@@ -351,6 +351,15 @@ export type NormalizedViewDimension = z.infer<
 >;
 export type NormalizedTextView = z.infer<typeof normalizedTextViewSchema>;
 export type MaskingCounts = z.infer<typeof maskingCountsSchema>;
+
+/** Whether both sides masked, and left visible, as many of each kind of use. */
+export const sameMaskingCounts = (
+  left: MaskingCounts,
+  right: MaskingCounts,
+): boolean =>
+  maskingCountsSchema
+    .keyof()
+    .options.every((count) => left[count] === right[count]);
 export type FunctionNormalizedViews = z.infer<
   typeof functionNormalizedViewsSchema
 >;

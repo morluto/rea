@@ -19,7 +19,10 @@ import type {
   NormalizedTextView,
   NormalizedViewDimension,
 } from "./functionComparisonSchemas.js";
-import { NORMALIZED_VIEW_DIMENSIONS } from "./functionComparisonSchemas.js";
+import {
+  NORMALIZED_VIEW_DIMENSIONS,
+  sameMaskingCounts,
+} from "./functionComparisonSchemas.js";
 import { functionFacetLimitations } from "./functionComparisonDimensions.js";
 
 /** Masking policy identifier reported with every normalized view. */
@@ -311,6 +314,15 @@ export const normalizedViews = (
         }),
         { added_lines: 0, removed_lines: 0, hunks: 0 },
       );
+      // Equal texts from unequal masking mean a placeholder is spelled like
+      // literal text on the other side, so the projection cannot tell them apart.
+      if (
+        delta.hunks === 0 &&
+        !sameMaskingCounts(leftText.counts, rightText.counts)
+      )
+        return unresolved(
+          "Projected texts are equal, but the two sides masked or left visible different numbers of address uses, so a placeholder matches literal text on the other side; normalized equality cannot be established.",
+        );
       // One Evidence record on both sides cannot hide an endpoint difference.
       const endpointUncertain = delta.hunks === 0 && !options.sameEvidence;
       if (

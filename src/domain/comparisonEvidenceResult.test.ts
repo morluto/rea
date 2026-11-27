@@ -302,3 +302,69 @@ it("locates a comparison payload failure within its Evidence record", () => {
   if (parsed.ok) throw new Error("Expected a status contradiction");
   expect(parsed.error.issuePath).toEqual(["normalized_result", "status"]);
 });
+
+describe("self-comparison admission under a same-entry match", () => {
+  // A known architecture matches the shared entry before the record identity.
+  const sameEntry = <Result extends ReturnType<typeof baseline>>(
+    result: Result,
+  ) => ({
+    ...result,
+    function_match: {
+      status: "matched" as const,
+      method: "same-entry" as const,
+      entry_address: "0x401000",
+      left_name: "main",
+      right_name: "main",
+    },
+  });
+  const changedView = () => ({
+    ...pseudocode(),
+    status: "changed" as const,
+    right_digest: other,
+    text_delta: { added_lines: 1, removed_lines: 1, hunks: 1 },
+  });
+
+  it("accepts a consistent comparison of one source", () => {
+    const candidate = sameEntry(withViews([pseudocode(), assembly()]));
+    expect(functionComparisonResultSchema.safeParse(candidate).success).toBe(
+      true,
+    );
+    expect(
+      readComparisonResult(evidence(candidate), "compare_functions").ok,
+    ).toBe(true);
+  });
+
+  it.each([
+    ["a changed view", () => sameEntry(withViews([changedView(), assembly()]))],
+    [
+      "unequal subject hashes",
+      () => ({ ...sameEntry(baseline()), right_subject_sha256: other }),
+    ],
+  ])("rejects %s for one source", (_name, candidate) => {
+    expect(functionComparisonResultSchema.safeParse(candidate()).success).toBe(
+      true,
+    );
+    expect(
+      readComparisonResult(evidence(candidate()), "compare_functions").ok,
+    ).toBe(false);
+  });
+
+  it("decides from the selected sources, not the match method", () => {
+    const right = `ev_${"e".repeat(64)}`;
+    const candidate = sameEntry(
+      withViews([
+        { ...changedView(), evidence_links: [source, right] },
+        { ...assembly(), evidence_links: [source, right] },
+      ]),
+    );
+    const twoSources = {
+      ...evidence(candidate, [source, right]),
+      parameters: {
+        left_evidence_id: source,
+        right_evidence_id: right,
+        include_normalized_views: true,
+      },
+    } as unknown as Evidence;
+    expect(readComparisonResult(twoSources, "compare_functions").ok).toBe(true);
+  });
+});

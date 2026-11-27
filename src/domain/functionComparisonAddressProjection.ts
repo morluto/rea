@@ -157,28 +157,21 @@ export const createFunctionAddressProjection = (
         contains(extent.ranges, address)
       )
         return observedAddress(address);
-      const siteTargets =
+      const referencedOperands =
         location.instructionAddress === null
           ? undefined
-          : targetsBySite.get(location.instructionAddress);
+          : targetsBySite.get(location.instructionAddress)?.get(address);
       if (
         location.operandIndex !== null &&
         location.operandAddressOccurrences === 1 &&
-        siteTargets?.some(
-          (reference) =>
-            reference.target === address &&
-            reference.operandIndex === location.operandIndex,
-        ) === true
+        referencedOperands?.has(location.operandIndex) === true
       )
         return observedAddress(address);
       if (
         location.operandIndex !== null &&
         location.operandAddressOccurrences === 1 &&
         location.instructionAddressOccurrences === 1 &&
-        siteTargets?.some(
-          (reference) =>
-            reference.target === address && reference.operandIndex === null,
-        ) === true
+        referencedOperands?.has(null) === true
       )
         return observedAddress(address);
       if (location.isControlFlowTarget && calleeAddresses.has(address))
@@ -188,10 +181,11 @@ export const createFunctionAddressProjection = (
   };
 };
 
-interface ReferenceTarget {
-  readonly target: bigint;
-  readonly operandIndex: number | null;
-}
+/**
+ * The operands that reference each target from one source site; `null` stands
+ * for a reference that names no operand, so it never matches a numeric index.
+ */
+type SiteTargets = Map<bigint, Set<number | null>>;
 
 /** Read the observed body extent without expanding an address into a lookup table. */
 const bodyExtent = (snapshot: FunctionSnapshot): BodyExtent | null => {
@@ -426,15 +420,24 @@ const namedSymbolNames = (snapshot: FunctionSnapshot): Set<string> => {
 /** Reference facts are matched by source site and operand, never by value alone. */
 const referenceTargetsBySite = (
   snapshot: FunctionSnapshot,
-): Map<bigint, ReferenceTarget[]> => {
-  const targets = new Map<bigint, ReferenceTarget[]>();
+): Map<bigint, SiteTargets> => {
+  // Indexed once, so each numeric use is a lookup rather than a scan of the site.
+  const targets = new Map<bigint, SiteTargets>();
   const add = (source: string, target: string, operandIndex: number | null) => {
     const sourceAddress = parseAddress(source.toLowerCase());
     const targetAddress = parseAddress(target.toLowerCase());
     if (sourceAddress === null || targetAddress === null) return;
-    const siteTargets = targets.get(sourceAddress) ?? [];
-    siteTargets.push({ target: targetAddress, operandIndex });
-    targets.set(sourceAddress, siteTargets);
+    let siteTargets = targets.get(sourceAddress);
+    if (siteTargets === undefined) {
+      siteTargets = new Map();
+      targets.set(sourceAddress, siteTargets);
+    }
+    let operands = siteTargets.get(targetAddress);
+    if (operands === undefined) {
+      operands = new Set();
+      siteTargets.set(targetAddress, operands);
+    }
+    operands.add(operandIndex);
   };
   const { dossier } = snapshot;
   for (const edge of dossier.outgoing_references)

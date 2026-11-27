@@ -710,6 +710,100 @@ describe("normalized view long assembly lines", () => {
   );
 });
 
+describe("normalized view references at one site", () => {
+  it.each([
+    // The instruction's own address is masked too.
+    ["every reference on the operand", undefined, "unchanged", 2_001],
+    ["one reference on another operand", 0, "changed", 2_000],
+  ] as const)(
+    "matches many references at one instruction by target and operand (%s)",
+    (_name, strayOperand, status, masked) => {
+      const make = (base: string, region: bigint) => {
+        const targets = Array.from(
+          { length: 2_000 },
+          (_, index) => `0x${(region + BigInt(index) * 8n).toString(16)}`,
+        );
+        return syntheticDossier({
+          base,
+          name: `FUN_${BigInt(base).toString(16)}`,
+          pseudocode: "void f(void) {}",
+          assembly: [`${base}: MOV EAX, [${targets.join(" + ")}]`],
+          outgoingReferences: targets.map((target, index) => ({
+            source: base,
+            target,
+            operandIndex: index === 0 ? (strayOperand ?? 1) : 1,
+          })),
+        });
+      };
+      const [left, right] = syntheticPair(
+        make("0x411700", 0x900000n),
+        make("0x511700", 0xa00000n),
+      );
+      expect(
+        view(
+          compareFunctions(left, right, { includeNormalizedViews: true }),
+          "assembly_normalized",
+        ),
+      ).toMatchObject({
+        status,
+        masking: { left: { corroborated_addresses: masked } },
+      });
+    },
+  );
+});
+
+describe("normalized view placeholder collisions", () => {
+  // The left operand is a referenced address; the right spells its placeholder.
+  const compare = (
+    leftOperand: string,
+    rightOperand: string,
+    masked: boolean,
+  ) =>
+    view(
+      compareFunctions(
+        ...syntheticPair(
+          syntheticDossier({
+            base: "0x401000",
+            name: "FUN_00401000",
+            pseudocode: "void f(void) {}",
+            assembly: [`0x401000: MOV EAX, ${leftOperand}`],
+            outgoingReferences: [
+              { source: "0x401000", target: leftOperand, operandIndex: 1 },
+            ],
+          }),
+          syntheticDossier({
+            base: "0x501000",
+            name: "FUN_00501000",
+            pseudocode: "void f(void) {}",
+            assembly: [`0x501000: MOV EAX, ${rightOperand}`],
+            outgoingReferences: masked
+              ? [{ source: "0x501000", target: rightOperand, operandIndex: 1 }]
+              : [],
+          }),
+        ),
+        { includeNormalizedViews: true },
+      ),
+      "assembly_normalized",
+    );
+
+  it.each([
+    ["an entry-relative offset", "0x401010", "+0x10"],
+    ["an external ordinal", "0x9000", "<addr:1>"],
+  ])("keeps %s that matches literal text unknown", (_name, left, right) => {
+    const result = compare(left, right, false);
+    expect(result).toMatchObject({ status: "unknown", text_delta: null });
+    expect(result?.left_digest).toBe(result?.right_digest);
+    expect(result?.left_digest).not.toBeNull();
+    expect(result?.masking?.left).not.toStrictEqual(result?.masking?.right);
+  });
+
+  it("still reports equal masking of corresponding references as unchanged", () => {
+    expect(compare("0x401010", "0x501010", true)).toMatchObject({
+      status: "unchanged",
+    });
+  });
+});
+
 describe("normalized view address projection", () => {
   it("keeps distinct in-body branch offsets distinct", () => {
     const [left, right] = syntheticPair(
