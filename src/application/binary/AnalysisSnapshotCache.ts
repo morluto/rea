@@ -162,6 +162,20 @@ export const isSourceEvidenceRetainable = (
     descriptor.effects.mayWriteFilesystem === false) &&
   descriptor.effects.changesPermissions === false;
 
+/**
+ * A session's own read without a document selector is recorded, so a saved
+ * snapshot carries it, but it replays only in a session the caller opened from
+ * a snapshot. Without one, the same call still asks the live engine, whose own
+ * caches make a repeat cheap.
+ */
+export const replaysOnlyFromImportedSnapshot = (
+  operation: AnalysisOperation,
+  parameters: Readonly<Record<string, JsonValue>>,
+  context: ExecutionOptions["snapshotContext"],
+): boolean =>
+  context === "session-target" &&
+  !replayDocumentSelected(operation, parameters);
+
 /** Explicit standalone decompiles must run even if a snapshot has a matching entry. */
 export const requestsStandaloneDecompile = (
   operation: string,
@@ -262,6 +276,12 @@ export class AnalysisSnapshotCache {
   readonly #workflowEntries = new Map<string, AnalysisSnapshotWorkflowEntry>();
   #target: AnalysisSnapshotTarget | undefined;
   #binding: AnalysisSnapshotBinding | undefined;
+  #imported = false;
+
+  /** Whether the caller staged a snapshot into the current entries. */
+  get holdsImportedSnapshot(): boolean {
+    return this.#imported;
+  }
 
   /** Whether staged entries belong to the supplied target and profile. */
   matches(
@@ -535,7 +555,10 @@ export class AnalysisSnapshotCache {
         );
     }
     const importedEvidence = mergeEvidence(validated.evidence_bundle);
-    return importedEvidence.ok ? ok(this.stage(validated)) : importedEvidence;
+    if (!importedEvidence.ok) return importedEvidence;
+    const staged = this.stage(validated);
+    this.#imported = true;
+    return ok(staged);
   }
 
   /** Return canonical entries for persistence. */
@@ -775,6 +798,7 @@ export class AnalysisSnapshotCache {
     this.#entries.clear();
     this.#replayBindings.clear();
     this.#workflowEntries.clear();
+    this.#imported = false;
   }
 
   #hasCapacity(): boolean {
