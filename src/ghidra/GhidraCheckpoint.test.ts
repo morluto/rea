@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { waitFor } from "../../tests/support/testWait.js";
@@ -8,13 +8,16 @@ import {
   mkdir,
   readFile,
   readdir,
+  realpath,
   writeFile,
   rm,
   rename,
   symlink,
   type FileHandle,
 } from "node:fs/promises";
+import { createServer } from "node:net";
 import { join } from "node:path";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import { acquireOwnedLease } from "../process/OwnedLease.js";
@@ -549,11 +552,16 @@ it.skipIf(process.platform === "win32")(
 
 it.skipIf(process.platform === "win32").each([
   // Past the 30 s default, a longer launch value keeps polling.
-  { waitMs: 120_000, clock: [0, 60_000, 119_999, 120_000], attempts: 3 },
+  // Each probe reads the clock to bound the owner response, then again after the refusal.
+  {
+    waitMs: 120_000,
+    clock: [0, 0, 60_000, 60_000, 119_999, 119_999, 120_000],
+    attempts: 3,
+  },
   // A shorter launch value reports busy where the default would still wait.
-  { waitMs: 50, clock: [0, 50], attempts: 1 },
+  { waitMs: 50, clock: [0, 0, 50], attempts: 1 },
   // Unset: the default bound.
-  { waitMs: undefined, clock: [0, 29_999, 30_000], attempts: 2 },
+  { waitMs: undefined, clock: [0, 0, 29_999, 29_999, 30_000], attempts: 2 },
 ])(
   "holds a held lease for a save wait of $waitMs ms and names that bound when busy",
   async ({ waitMs, clock, attempts }) => {
@@ -571,7 +579,8 @@ it.skipIf(process.platform === "win32").each([
         acquired: false,
         owner: { runId: "publisher", processId: 4242 },
       });
-    // The deadline reads the clock once to start and once after each refusal.
+    // The deadline reads the clock to start, then once to bound each owner
+    // probe and once after each refusal.
     const now = vi.spyOn(performance, "now");
     for (const reading of clock.slice(0, -1)) now.mockReturnValueOnce(reading);
     now.mockReturnValue(clock.at(-1) ?? 0);
@@ -990,5 +999,79 @@ it.skipIf(process.platform === "win32")(
     );
     expect(identities).toHaveLength(2);
     expect(identities[1]).toEqual(identities[0]);
+  },
+);
+
+/** A peer that accepts the lease socket and never sends its identity. */
+const silentLeaseHolder = async (
+  directory: string,
+): Promise<() => Promise<void>> => {
+  const canonical = await realpath(directory);
+  const key = sha256Hex(
+    JSON.stringify({
+      kind: "ghidra-checkpoint-v1",
+      directory: canonical,
+    }),
+  ).slice(0, 32);
+  const leaseDirectory = join(
+    "/tmp",
+    `rea-ghidra-checkpoint-leases-${process.getuid?.() ?? "user"}`,
+  );
+  await mkdir(leaseDirectory, { recursive: true, mode: 0o700 });
+  const socketPath = join(leaseDirectory, `${key}.sock`);
+  await rm(socketPath, { force: true });
+  const server = createServer((socket) => {
+    socket.resume();
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, () => resolve());
+  });
+  return () =>
+    new Promise((resolve) => {
+      server.close(() => resolve());
+    });
+};
+
+it.skipIf(process.platform === "win32")(
+  "reports a save wait that ends during an unanswered owner probe as busy",
+  async () => {
+    const f = await fixture();
+    const session = new GhidraCheckpoint(f.selection, f.resources, {
+      waitMs: 50,
+      source: "setting",
+    });
+    owners.push(session);
+    await session.admit("waiter");
+    const release = await silentLeaseHolder(f.selection.directory);
+    onTestFinished(release);
+    const started = performance.now();
+    const busy = await session
+      .publish(f.packed)
+      .catch((cause: unknown) => cause);
+    expect(performance.now() - started).toBeLessThan(220);
+    expect(busy).toBeInstanceOf(GhidraCheckpointBusyError);
+    expect(busy).toMatchObject({
+      owner: undefined,
+      wait: { waitMs: 50, source: "setting" },
+    });
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "stops an unanswered owner probe when the save is cancelled",
+  async () => {
+    const f = await fixture();
+    const session = new GhidraCheckpoint(f.selection, f.resources);
+    owners.push(session);
+    await session.admit("waiter");
+    const release = await silentLeaseHolder(f.selection.directory);
+    onTestFinished(release);
+    const controller = new AbortController();
+    const started = performance.now();
+    const pending = session.publish(f.packed, controller.signal);
+    setTimeout(() => controller.abort({ caller: "stop the probe" }), 30);
+    await expect(pending).rejects.toBeInstanceOf(AnalysisCancelledError);
+    expect(performance.now() - started).toBeLessThan(220);
   },
 );

@@ -26,6 +26,8 @@ import {
 } from "../filesystem/RegularFile.js";
 import {
   acquireOwnedLease,
+  LEASE_OWNER_RESPONSE_TIMEOUT_MS,
+  LEASE_OWNER_RESPONSE_TIMED_OUT,
   type LeaseAcquisition,
   type OwnedLease,
 } from "../process/OwnedLease.js";
@@ -115,11 +117,17 @@ export class GhidraCheckpointBusyError extends Error {
   cleanupFailure: AnalysisError | undefined;
   constructor(
     readonly directory: string,
-    readonly owner: { readonly runId: string; readonly processId: number },
+    readonly owner:
+      | { readonly runId: string; readonly processId: number }
+      | undefined,
     readonly wait: GhidraCheckpointSaveWait,
   ) {
+    const holder =
+      owner === undefined
+        ? "another REA session"
+        : `another REA session (run ${owner.runId}, process ${String(owner.processId)})`;
     super(
-      `Ghidra checkpoint at ${JSON.stringify(directory)} is being saved by another REA session (run ${owner.runId}, process ${String(owner.processId)}), and that save did not finish within this session's save wait: ${ghidraCheckpointSaveWaitFacts(wait)}`,
+      `Ghidra checkpoint at ${JSON.stringify(directory)} is being saved by ${holder}, and that save did not finish within this session's save wait: ${ghidraCheckpointSaveWaitFacts(wait)}`,
     );
     this.name = "GhidraCheckpointBusyError";
   }
@@ -431,7 +439,11 @@ export class GhidraCheckpoint {
     // An owner that releases while a probe reads its identity, or another
     // waiter recovering the released socket, ends within the wait; any other
     // lease failure, or one that outlasts the wait, is reported unchanged.
+    // The owner-identity probe itself stops at the remaining wait or when
+    // this save is cancelled. A probe cut off by that wait is the busy
+    // refusal: the socket was accepted and no identity arrived in time.
     const handoff = new WeakSet<Error>();
+    const probeTimedOut = new WeakSet<Error>();
     for (;;) {
       assertArtifactReadActive(signal);
       let acquired: LeaseAcquisition | undefined;
@@ -447,6 +459,13 @@ export class GhidraCheckpoint {
             `rea-ghidra-checkpoint-leases-${process.getuid?.() ?? "user"}`,
           ),
           resources: this.resources,
+          probe: {
+            ...(signal === undefined ? {} : { signal }),
+            timeoutMs: Math.min(
+              LEASE_OWNER_RESPONSE_TIMEOUT_MS,
+              deadline.remainingMs(),
+            ),
+          },
           failure: (reason, cause) => {
             const error = failure(
               admission.directory,
@@ -458,10 +477,26 @@ export class GhidraCheckpoint {
               reason.kind === "recovery_busy"
             )
               handoff.add(error);
+            if (
+              reason.kind === "owner_unverified" &&
+              reason.reason === LEASE_OWNER_RESPONSE_TIMED_OUT
+            )
+              probeTimedOut.add(error);
             return error;
           },
         });
       } catch (cause: unknown) {
+        assertArtifactReadActive(signal);
+        if (
+          cause instanceof Error &&
+          probeTimedOut.has(cause) &&
+          deadline.expired()
+        )
+          throw new GhidraCheckpointBusyError(
+            admission.directory,
+            undefined,
+            this.saveWait,
+          );
         if (
           !(cause instanceof Error && handoff.has(cause)) ||
           deadline.expired()
