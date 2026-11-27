@@ -68,7 +68,21 @@ export const reassembleNvsV2Blobs = async (
     sortedByNsKey.set(nsIndex, sortedByKey);
   }
 
-  const usedChunkRefs = new Set<RawBlobChunk>();
+  const claimedChunks = new Map<number, Map<string, Set<number>>>();
+  const markChunkClaimed = (ch: RawBlobChunk): void => {
+    let byKey = claimedChunks.get(ch.nsIndex);
+    if (byKey === undefined) {
+      byKey = new Map<string, Set<number>>();
+      claimedChunks.set(ch.nsIndex, byKey);
+    }
+    let indicesSet = byKey.get(ch.keyId);
+    if (indicesSet === undefined) {
+      indicesSet = new Set<number>([ch.chunkIndex]);
+      byKey.set(ch.keyId, indicesSet);
+    } else {
+      indicesSet.add(ch.chunkIndex);
+    }
+  };
   const reassemblyCache = new Map<
     number,
     Map<string, Map<number, ReassembledBlobSummary>>
@@ -118,7 +132,7 @@ export const reassembleNvsV2Blobs = async (
         for (const ch of seriesChunks) {
           if (ch.chunkIndex < idx.chunkStart) continue;
           if (ch.chunkIndex >= endChunk) break;
-          usedChunkRefs.add(ch);
+          markChunkClaimed(ch);
           matchedCount += 1;
           if (!ch.crcValid) chunksCrcValid = false;
           joinedLength += ch.payload.length;
@@ -175,7 +189,10 @@ export const reassembleNvsV2Blobs = async (
       onCheckpoint?.();
     }
     const ch = chunks[i]!;
-    if (usedChunkRefs.has(ch)) continue;
+    if (
+      claimedChunks.get(ch.nsIndex)?.get(ch.keyId)?.has(ch.chunkIndex) === true
+    )
+      continue;
     out.push({
       page_index: ch.pageIndex,
       entry_index: ch.entryIndex,

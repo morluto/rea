@@ -815,4 +815,143 @@ describe("parseEspNvsPartition", () => {
     badReserved.writeUInt32LE(espIdfCrc32(badReserved.subarray(4, 28)), 28);
     expect(hasEspNvsHeader(badReserved, 4096)).toBe(false);
   });
+
+  it("keeps intact earlier settings active when a newer rewrite is damaged, skips unsupported page versions, handles copied BLOB_DATA chunks, and preserves -0 floats", async () => {
+    // Page 0 (seq 1): namespace "cfg"=1, intact string "host"="good", float "-0" and "+0", and BLOB_DATA chunk 0 copy
+    const p0 = initActivePage(1, 0xfe);
+    writeNamespaceSlot(p0, 0, "cfg", 1);
+    const spanGood = writeVarSlot({
+      page: p0,
+      slotIdx: 1,
+      nsId: 1,
+      typeCode: 0x21,
+      chunkIndex: 0xff,
+      key: "host",
+      payload: Buffer.from("good\0", "utf8"),
+    });
+    // Float -0.0 (0x80000000) and Double -0.0
+    const fNegSlotOff = 64 + (1 + spanGood) * 32;
+    const fNeg = p0.subarray(fNegSlotOff, fNegSlotOff + 32);
+    fNeg.fill(0xff);
+    fNeg[0] = 1;
+    fNeg[1] = 0x24; // FLOAT
+    fNeg[2] = 1;
+    fNeg[3] = 0xff;
+    writeKey(fNeg, "f_neg_zero");
+    fNeg.writeFloatLE(-0, 24);
+    fNeg.writeUInt32LE(computeNvsItemHeaderCrc(fNeg), 4);
+    setBitmapWritten(p0, 1 + spanGood, 1);
+
+    const dNegSlotOff = fNegSlotOff + 32;
+    const dNeg = p0.subarray(dNegSlotOff, dNegSlotOff + 32);
+    dNeg.fill(0xff);
+    dNeg[0] = 1;
+    dNeg[1] = 0x28; // DOUBLE
+    dNeg[2] = 1;
+    dNeg[3] = 0xff;
+    writeKey(dNeg, "d_neg_zero");
+    dNeg.writeDoubleLE(-0, 24);
+    dNeg.writeUInt32LE(computeNvsItemHeaderCrc(dNeg), 4);
+    setBitmapWritten(p0, 2 + spanGood, 1);
+
+    const blobChunkPayload = Buffer.from("copied-chunk-bytes", "utf8");
+    writeVarSlot({
+      page: p0,
+      slotIdx: 3 + spanGood,
+      nsId: 1,
+      typeCode: 0x42, // BLOB_DATA (older page-move copy)
+      chunkIndex: 0,
+      key: "moved_blob",
+      payload: blobChunkPayload,
+    });
+
+    // Page 1 (seq 2): copied BLOB_DATA chunk 0 + matching BLOB_IDX (complete page move before freeing p0)
+    const p1 = initActivePage(2, 0xfe);
+    const cSpan = writeVarSlot({
+      page: p1,
+      slotIdx: 0,
+      nsId: 1,
+      typeCode: 0x42,
+      chunkIndex: 0,
+      key: "moved_blob",
+      payload: blobChunkPayload,
+    });
+    const idxOff = 64 + cSpan * 32;
+    const idxSlot = p1.subarray(idxOff, idxOff + 32);
+    idxSlot.fill(0xff);
+    idxSlot[0] = 1;
+    idxSlot[1] = 0x48; // BLOB_IDX
+    idxSlot[2] = 1;
+    idxSlot[3] = 0xff;
+    writeKey(idxSlot, "moved_blob");
+    idxSlot.writeUInt32LE(blobChunkPayload.length, 24);
+    idxSlot[28] = 1; // chunkCount
+    idxSlot[29] = 0; // chunkStart
+    idxSlot.writeUInt32LE(computeNvsItemHeaderCrc(idxSlot), 4);
+    setBitmapWritten(p1, cSpan, 1);
+
+    // Check 1: [p0, p1] alone has complete coverage and zero orphan chunks despite duplicate BLOB_DATA
+    const cleanMove = await parseEspNvsPartition({
+      artifact: { path: "/tmp/move.bin", sha256: "a".repeat(64), bytes: 8192 },
+      partitionOffset: 0,
+      sliceBytes: Buffer.concat([p0, p1]),
+    });
+    expect(cleanMove.ok).toBe(true);
+    if (!cleanMove.ok) return;
+    expect(cleanMove.value.coverage.status).toBe("complete");
+    expect(
+      cleanMove.value.entries.filter((e) => e.data_type === "blob_data_orphan"),
+    ).toHaveLength(0);
+    expect(
+      cleanMove.value.entries.find((e) => e.key === "f_neg_zero")?.value_float,
+    ).toBe("-0");
+    expect(
+      cleanMove.value.entries.find((e) => e.key === "d_neg_zero")?.value_float,
+    ).toBe("-0");
+
+    // Page 2 (seq 3): damaged string rewrite of "host" (corrupted payload byte -> crc_mismatch)
+    const p2 = initActivePage(3, 0xfe);
+    writeVarSlot({
+      page: p2,
+      slotIdx: 0,
+      nsId: 1,
+      typeCode: 0x21,
+      chunkIndex: 0xff,
+      key: "host",
+      payload: Buffer.from("corrupt\0", "utf8"),
+    });
+    p2[64 + 32] = p2[64 + 32]! ^ 0xff; // corrupt string payload byte
+
+    // Page 3 (seq 4): unsupported formatVersion 0xfd with valid header CRC
+    const p3 = initActivePage(4, 0xfd);
+
+    const full = await parseEspNvsPartition({
+      artifact: {
+        path: "/tmp/mixed.bin",
+        sha256: "b".repeat(64),
+        bytes: 16384,
+      },
+      partitionOffset: 0,
+      sliceBytes: Buffer.concat([p0, p1, p2, p3]),
+    });
+    expect(full.ok).toBe(true);
+    if (!full.ok) return;
+    expect(espNvsReportSchema.safeParse(full.value).success).toBe(true);
+    expect(full.value.coverage.status).toBe("partial");
+    expect(full.value.pages[3]?.format_version).toBe("unknown");
+    expect(full.value.pages[3]?.entries_decoded).toBe(false);
+    expect(full.value.undecoded_page_count).toBe(1);
+
+    const hostEntries = full.value.entries.filter((e) => e.key === "host");
+    expect(hostEntries).toHaveLength(2);
+    expect(hostEntries[0]).toMatchObject({
+      value_text: "good",
+      completeness: "complete",
+      superseded: false,
+    });
+    expect(hostEntries[1]).toMatchObject({
+      completeness: "crc_mismatch",
+      superseded: false,
+    });
+  });
 });

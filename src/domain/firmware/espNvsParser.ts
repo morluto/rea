@@ -1,4 +1,5 @@
 import { setImmediate } from "node:timers/promises";
+import { byteToHex } from "../../kernel/byteToHex.js";
 import { BinaryReader, readUint32At } from "../binaryContainer.js";
 import { CoverageAccumulator } from "../coverageAccumulator.js";
 import { malformedInput, type ParseFailureError } from "../parseFailure.js";
@@ -96,9 +97,12 @@ interface PageWalkAccumulator {
 const undecodedReason = (
   state: EspNvsPageState,
   headerCrcValid: boolean,
+  versionByte: number,
 ): string => {
   if (!headerCrcValid)
     return "its header failed CRC32, which whole-flash encryption or damage produces; NVS encryption leaves page headers in plaintext";
+  if (READABLE_PAGE_STATES.has(state))
+    return `its format version byte 0x${byteToHex(versionByte)} is not ESP-IDF v1 (0xff) or v2 (0xfe)`;
   if (state === "corrupt") return "firmware marked it CORRUPT (0xfffffff0)";
   if (state === "invalid") return "its state is INVALID (0)";
   return "its state is not an ESP-IDF page state";
@@ -204,7 +208,10 @@ const decodeSinglePage = (
     readUint32At(pageBytes, 28, true);
   const formatVersion: EspNvsPageSummary["format_version"] =
     versionByte === 0xfe ? "v2" : versionByte === 0xff ? "v1" : "unknown";
-  const entriesDecoded = headerCrcValid && READABLE_PAGE_STATES.has(state);
+  const entriesDecoded =
+    headerCrcValid &&
+    READABLE_PAGE_STATES.has(state) &&
+    formatVersion !== "unknown";
 
   if (tallies.illegal > 0)
     acc.anomalies.push(
@@ -213,7 +220,7 @@ const decodeSinglePage = (
   if (!entriesDecoded) {
     acc.undecodedPageCount += 1;
     acc.anomalies.push(
-      `Page ${String(pageIndex)} at offset 0x${pageFileOffset.toString(16)} (state ${hex32(rawState)}) was not decoded: ${undecodedReason(state, headerCrcValid)}.`,
+      `Page ${String(pageIndex)} at offset 0x${pageFileOffset.toString(16)} (state ${hex32(rawState)}) was not decoded: ${undecodedReason(state, headerCrcValid, versionByte)}.`,
     );
   }
 
@@ -272,7 +279,11 @@ const markSuperseded = (
   const identity = (entry: PendingNvsEntry): string =>
     `${String(entry.namespace_id)}\u0000${entry.keyId}\u0000${lookupClass(entry)}`;
   for (const entry of entries) {
-    if (entry.data_type === "blob_data_orphan") continue;
+    if (
+      entry.data_type === "blob_data_orphan" ||
+      entry.completeness !== "complete"
+    )
+      continue;
     const id = identity(entry);
     const current = newest.get(id);
     if (current === undefined) {
@@ -284,12 +295,16 @@ const markSuperseded = (
     if (seq > currentSeq || (seq === currentSeq && slot > currentSlot))
       newest.set(id, entry);
   }
-  return entries.map((entry) =>
-    entry.data_type === "blob_data_orphan" ||
-    newest.get(identity(entry)) === entry
-      ? entry
-      : { ...entry, superseded: true },
-  );
+  return entries.map((entry) => {
+    if (entry.data_type === "blob_data_orphan") return entry;
+    const winner = newest.get(identity(entry));
+    if (winner === undefined || winner === entry) return entry;
+    const [seq, slot] = order(entry);
+    const [winnerSeq, winnerSlot] = order(winner);
+    return winnerSeq > seq || (winnerSeq === seq && winnerSlot > slot)
+      ? { ...entry, superseded: true }
+      : entry;
+  });
 };
 
 export interface ParseEspNvsOptions {

@@ -136,6 +136,9 @@ const integer = (
     integerText: String(read(reader, offset)),
   }),
 });
+const formatFloat = (value: number): string =>
+  Object.is(value, -0) ? "-0" : String(value);
+
 const float = (
   dataType: EspNvsDataType,
   read: (reader: BinaryReader, offset: number) => number,
@@ -143,7 +146,7 @@ const float = (
   dataType,
   read: (reader: BinaryReader, offset: number): PrimitiveValue => ({
     dataType,
-    floatText: String(read(reader, offset)),
+    floatText: formatFloat(read(reader, offset)),
   }),
 });
 
