@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it, onTestFinished } from "vitest";
@@ -177,6 +177,265 @@ describe("inspect_firmware_vector_table CLI and MCP parity", () => {
           issues: [{ path: ["svd_xml"], reason: "invalid_format" }],
         },
       },
+    });
+
+    // MCP summary delivery + inspect_analysis_view pagination
+    const mcpSummaryRes = await client.callTool({
+      name: "inspect_firmware_vector_table",
+      arguments: {
+        path: fwPath,
+        architecture: "armv7-m",
+        base_address: "0x08000000",
+        max_entries: 20,
+        svd_xml: svdXml,
+        detail: "summary",
+      },
+    });
+    expect(mcpSummaryRes.isError).not.toBe(true);
+    const summaryRecord = mcpSummaryRes.structuredContent as {
+      normalized_result: {
+        kind: string;
+        parent_evidence_id: string;
+        parent_operation: string;
+        summary: {
+          arm_entry_count: number;
+          active_arm_entry_count: number;
+          shared_handler_group_count: number;
+          initial_stack_pointer: string;
+          reset_code_address: string;
+        };
+      };
+    };
+    expect(summaryRecord.normalized_result).toMatchObject({
+      kind: "summary",
+      parent_operation: "inspect_firmware_vector_table",
+      summary: {
+        arm_entry_count: 20,
+        active_arm_entry_count: 4,
+        shared_handler_group_count: 1,
+        initial_stack_pointer: "0x20020000",
+        reset_code_address: "0x8000080",
+      },
+    });
+
+    const pageRes = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: {
+          kind: "retained-evidence",
+          evidence_id: summaryRecord.normalized_result.parent_evidence_id,
+        },
+        view: {
+          kind: "firmware-vector-table",
+          collection: "arm_entries",
+          offset: 16,
+          limit: 2,
+        },
+      },
+    });
+    expect(pageRes.isError).not.toBe(true);
+    const pageStructured = pageRes.structuredContent as {
+      normalized_result: {
+        kind: string;
+        items: {
+          slot_index: number;
+          irq_number: number | null;
+          name: string | null;
+          source_index: number;
+        }[];
+        coverage: {
+          total: number;
+          examined: number;
+          next_offset: number | null;
+        };
+      };
+    };
+    expect(pageStructured.normalized_result.kind).toBe("firmware-vector-table");
+    expect(pageStructured.normalized_result.coverage).toMatchObject({
+      total: 20,
+      examined: 2,
+      next_offset: 18,
+    });
+    expect(pageStructured.normalized_result.items[0]).toMatchObject({
+      slot_index: 16,
+      irq_number: 0,
+      name: "WWDG_IRQ",
+      source_index: 16,
+    });
+
+    // CLI --detail summary --evidence_output writes complete bundle and prints summary
+    const bundlePath = join(dir, "vt-bundle.json");
+    let cliSummaryStdout = "";
+    let cliSummaryExit = 0;
+    await createCli({}).serve(
+      [
+        "inspect-firmware-vector-table",
+        fwPath,
+        "--architecture",
+        "armv7-m",
+        "--base-address",
+        "0x08000000",
+        "--max-entries",
+        "20",
+        "--detail",
+        "summary",
+        "--evidence_output",
+        bundlePath,
+        "--format",
+        "json",
+      ],
+      {
+        env: {},
+        exit: (code) => {
+          cliSummaryExit = code;
+        },
+        stdout: (chunk) => {
+          cliSummaryStdout += chunk;
+        },
+      },
+    );
+    expect(cliSummaryExit).toBe(0);
+    const cliSummaryParsed = JSON.parse(cliSummaryStdout) as {
+      summary: {
+        operation: string;
+        normalized_result: {
+          kind: string;
+          parent_evidence_id: string;
+          parent_operation: string;
+          summary: { arm_entry_count: number; active_arm_entry_count: number };
+        };
+      };
+    };
+    expect(cliSummaryParsed.summary.operation).toBe("inspect_analysis_view");
+    expect(cliSummaryParsed.summary.normalized_result).toMatchObject({
+      kind: "summary",
+      parent_operation: "inspect_firmware_vector_table",
+      summary: {
+        arm_entry_count: 20,
+        active_arm_entry_count: 4,
+      },
+    });
+    const parentId =
+      cliSummaryParsed.summary.normalized_result.parent_evidence_id;
+    const savedBundle = JSON.parse(await readFile(bundlePath, "utf8")) as {
+      records: { evidence_id: string }[];
+    };
+    expect(
+      savedBundle.records.some((record) => record.evidence_id === parentId),
+    ).toBe(true);
+
+    let cliViewStdout = "";
+    let cliViewExit = 0;
+    await createCli({}).serve(
+      [
+        "inspect-analysis-view",
+        JSON.stringify({
+          source: {
+            kind: "retained-evidence",
+            evidence_id: parentId,
+          },
+          view: {
+            kind: "firmware-vector-table",
+            collection: "shared_handler_groups",
+            offset: 0,
+            limit: 10,
+          },
+        }),
+        "--evidence-bundle",
+        bundlePath,
+        "--format",
+        "json",
+      ],
+      {
+        env: {},
+        exit: (code) => {
+          cliViewExit = code;
+        },
+        stdout: (chunk) => {
+          cliViewStdout += chunk;
+        },
+      },
+    );
+    expect(cliViewExit).toBe(0);
+    const cliViewParsed = JSON.parse(cliViewStdout) as {
+      normalized_result: {
+        kind: string;
+        items: {
+          target_code_address: string;
+          slot_count: number;
+          source_index: number;
+        }[];
+      };
+    };
+    expect(cliViewParsed.normalized_result.kind).toBe("firmware-vector-table");
+    expect(cliViewParsed.normalized_result.items).toEqual([
+      {
+        target_code_address: "0x8000090",
+        slot_count: 2,
+        slot_indices: [2, 3],
+        source_index: 0,
+      },
+    ]);
+  });
+
+  it("automatically delivers a retained summary when omitted detail exceeds the agent response budget", async () => {
+    const dir = await createTestTempDirectory("rea-fw-vt-budget-");
+    const fwPath = join(dir, "large-vt.bin");
+    const img = Buffer.alloc(256 * 4, 0);
+    img.writeUInt32LE(0x20020000, 0);
+    for (let i = 1; i < 256; i += 1) {
+      img.writeUInt32LE(0x08001001 + i * 4, i * 4);
+    }
+    await writeFile(fwPath, img);
+
+    const session = createTestBinarySession(() => {
+      throw new Error("No deep provider should start");
+    });
+    const server = createServer(
+      { kind: "session", session },
+      {
+        environment: { REA_AGENT_RESULT_MAX_BYTES: "4096" },
+        logger: silentLogger,
+      },
+    );
+    const client = new Client(
+      { name: "fw-vt-budget-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
+    onTestFinished(async () => {
+      await client.close();
+      await server.close();
+      await session.close();
+    });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const autoSummaryRes = await client.callTool({
+      name: "inspect_firmware_vector_table",
+      arguments: {
+        path: fwPath,
+        architecture: "armv7-m",
+        base_address: "0x08000000",
+        max_entries: 256,
+      },
+    });
+    expect(autoSummaryRes.isError).not.toBe(true);
+    const autoStructured = autoSummaryRes.structuredContent as {
+      operation: string;
+      normalized_result: {
+        kind: string;
+        parent_evidence_id: string;
+        parent_operation: string;
+        summary: { arm_entry_count: number };
+      };
+    };
+    expect(autoStructured.operation).toBe("inspect_analysis_view");
+    expect(autoStructured.normalized_result).toMatchObject({
+      kind: "summary",
+      parent_operation: "inspect_firmware_vector_table",
+      summary: { arm_entry_count: 256 },
     });
   });
 });

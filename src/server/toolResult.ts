@@ -111,8 +111,22 @@ const ownerFirstPage = (evidence: Evidence): JsonValue | undefined =>
                   offset: 0,
                   limit: 64,
                 }
-              : isNativeInventoryOperation(evidence.operation)
-                ? { kind: "native-inventory", offset: 0, limit: 64 }
-                : isNativeObservationOperation(evidence.operation)
-                  ? { kind: "native-observation", offset: 0, limit: 64 }
-                  : undefined;
+              : evidence.operation === "inspect_firmware_vector_table"
+                ? {
+                    kind: "firmware-vector-table",
+                    collection:
+                      (
+                        evidence.normalized_result as {
+                          architecture?: unknown;
+                        } | null
+                      )?.architecture === "riscv"
+                        ? "riscv_slots"
+                        : "arm_entries",
+                    offset: 0,
+                    limit: 64,
+                  }
+                : isNativeInventoryOperation(evidence.operation)
+                  ? { kind: "native-inventory", offset: 0, limit: 64 }
+                  : isNativeObservationOperation(evidence.operation)
+                    ? { kind: "native-observation", offset: 0, limit: 64 }
+                    : undefined;

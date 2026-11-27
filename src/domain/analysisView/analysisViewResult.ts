@@ -72,6 +72,11 @@ import {
   espNvsViewRequestSchema,
 } from "./espNvsView.js";
 import {
+  firmwareVectorTablePageContextSchema,
+  firmwareVectorTableViewItemsSchema,
+  firmwareVectorTableViewRequestSchema,
+} from "./firmwareVectorTableView.js";
+import {
   elfDependenciesSummarySchema,
   elfDependenciesViewItemsSchema,
   elfDependenciesViewRequestSchema,
@@ -229,6 +234,7 @@ import { dartAotSummaryViewResultSchema } from "./summarySchemas/dartAotSummaryS
 import { desktopApplicationSummaryViewResultSchema } from "./summarySchemas/desktopApplicationSummarySchema.js";
 import { devicetreeSummaryViewResultSchema } from "./summarySchemas/devicetreeSummarySchema.js";
 import { espNvsSummaryViewResultSchema } from "./summarySchemas/espNvsSummarySchema.js";
+import { firmwareVectorTableSummaryViewResultSchema } from "./summarySchemas/firmwareVectorTableSummarySchema.js";
 import {
   uefiExtractionPageViewResultSchema,
   uefiExtractionSummaryViewResultSchema,
@@ -358,6 +364,7 @@ export {
   desktopApplicationSummaryViewResultSchema,
   devicetreeSummaryViewResultSchema,
   espNvsSummaryViewResultSchema,
+  firmwareVectorTableSummaryViewResultSchema,
   elfDependenciesSummaryViewResultSchema,
   endpointComparisonPageViewResultSchema,
   endpointComparisonSummaryViewResultSchema,
@@ -437,6 +444,7 @@ const viewResultBase = {
     "inspect_erlang_beam",
     "inspect_devicetree",
     "inspect_esp_nvs",
+    "inspect_firmware_vector_table",
     "inspect_byte_entropy",
     "inspect_native_exports",
     "inspect_elf_dependencies",
@@ -799,6 +807,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     erlangBeamSummaryViewResultSchema,
     devicetreeSummaryViewResultSchema,
     espNvsSummaryViewResultSchema,
+    firmwareVectorTableSummaryViewResultSchema,
     uefiFirmwareSummaryViewResultSchema,
     uefiExtractionSummaryViewResultSchema,
     pythonPycSummaryViewResultSchema,
@@ -870,6 +879,14 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: espNvsViewRequestSchema,
     nvs: espNvsPageContextSchema,
     items: espNvsViewItemsSchema,
+  }),
+  z.strictObject({
+    ...viewResultBase,
+    kind: z.literal("firmware-vector-table"),
+    parent_operation: z.literal("inspect_firmware_vector_table"),
+    view: firmwareVectorTableViewRequestSchema,
+    vector_table: firmwareVectorTablePageContextSchema,
+    items: firmwareVectorTableViewItemsSchema,
   }),
   uefiFirmwarePageViewResultSchema,
   uefiExtractionPageViewResultSchema,

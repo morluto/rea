@@ -43,11 +43,24 @@ rea inspect-firmware-vector-table firmware.bin \
   --base-address 0x08000000 \
   --vector-table-offset 0 \
   --max-entries 128
+
+# Emit a bounded summary receipt while saving complete Evidence to a bundle
+rea inspect-firmware-vector-table firmware.bin \
+  --architecture armv7-m \
+  --base-address 0x08000000 \
+  --detail summary \
+  --evidence_output vector-table.evidence.json
 ```
 
 In MCP, call `inspect_firmware_vector_table` with `path`, `architecture`, and
 `base_address`, plus optional `vector_table_offset`, `max_entries`, `svd_xml`,
-`max_svd_xml_nodes`, `max_svd_expanded_chars`, and `max_file_bytes`.
+`max_svd_xml_nodes`, `max_svd_expanded_chars`, `max_file_bytes`, and `detail`
+(`"complete"` or `"summary"`). When `detail: "summary"` is selected (or when
+omitted `detail` exceeds the agent response budget), complete Evidence is
+retained and individual slots, shared-handler groups, and anomalies can be paged
+with `inspect_analysis_view` (`kind: "firmware-vector-table"`, collections
+`arm_entries`, `riscv_slots`, `shared_handler_groups`, and `anomalies`, or
+`kind: "evidence-json"`).
 
 ## Provenance and limitations
 

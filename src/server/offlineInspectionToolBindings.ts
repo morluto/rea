@@ -335,7 +335,7 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
   firmwareVectorTable: ((service) => ({
     inspect_firmware_vector_table: {
       admission: "application",
-      run: (input, options) => service.inspect(input, options),
+      summary: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<FirmwareVectorTableService>,
 } as const;
