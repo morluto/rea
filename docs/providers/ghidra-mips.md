@@ -22,6 +22,14 @@ lane. MIPS16 and plain MIPS32 shared images have the separate bounded profiles
 below; other shared or compressed images remain unsupported. Their family may be identified, but provider selection returns the
 specific unsupported constraint rather than guessing a compatible profile.
 
+For MIPS32 release 1, Ghidra also accepts ELF32 `ET_EXEC` files that declare
+o32, including the `0x50001007` flags reported for router firmware. Only
+`NOREORDER`, `PIC` and `CPIC` may accompany the ISA and ABI fields. REA pins the
+endian-matched 32-bit language and requires complete inspection of ABI declarations.
+This lane requires an inspected absence of the ABI flags record. The
+profile still identifies o32 as declared, but Evidence does not attest to
+floating-point argument or return storage. This does not admit declared-o32 MIPS-I.
+
 A second admission covers recordless legacy firmware images
 ([#1620](https://github.com/morluto/rea/issues/1620)): ELF32 `ET_EXEC` headers
 declaring `EF_MIPS_ARCH_1` (MIPS-I, a zero ISA field), `EF_MIPS_ARCH_32` or
@@ -37,15 +45,13 @@ through a `provider-pinned` profile selection and checks the
 bridge-reported `language_id` after import. A caller-selected
 `REA_GHIDRA_LANGUAGE_ID`/`REA_GHIDRA_COMPILER_SPEC_ID` still wins over the
 pin; combining the pinned profile with an environment override is a typed
-refusal. A header that declares an ABI field but carries no record is still
-refused. Two further boundaries apply: an inspection that could not examine
+refusal. An inspection that could not examine
 every ABI declaration source does not establish the recordless admission
 (target opening refuses a carved ELF whose section table extends past the
 captured bytes, except for the recordless legacy `ET_EXEC` carve described
-below), and an `EF_MIPS_ARCH_1` or `EF_MIPS_ARCH_32` header that _declares_ an
-ABI is refused rather than relabeled, because the declared-ABI lane is verified
-for `EF_MIPS_ARCH_32R2` headers only. One carved shape is the exception to the
-first boundary: when a recordless legacy `ET_EXEC` ELF's only limitation is a
+below). An `EF_MIPS_ARCH_1` header that declares o32 is still refused: the
+generic MIPS32 decoder does not establish MIPS-I load-delay behavior.
+When a recordless legacy `ET_EXEC` ELF's only limitation is a
 section header table that extends past the captured bytes, and the complete
 program header table carries no `PT_MIPS_ABIFLAGS` record, the file is admitted
 on this recordless lane. The unread section headers (including any uncaptured
@@ -101,14 +107,14 @@ declaration.
 The field layout follows
 [`Elf_MIPS_ABIFlags_v0`](https://github.com/bminor/glibc/blob/master/elf/elf.h).
 
-Provider admission on the declared-ABI lane above requires record version 0,
+Provider admission on the MIPS32r2 declared-ABI lane requires record version 0,
 MIPS32r2, 32-bit GPRs, no CPR2, no ISA extension, ASE or unknown general
 flags, and one of two floating-point declarations: 32-bit CPR1 with a
 double-precision or FPXX ABI, or no CPR1 with the soft-float ABI. Other
 combinations, including single-float, FP64 and unspecified ABIs, are refused.
-Missing records remain unknown rather than defaulting to a compatible ABI, and
-the declared-ABI lane refuses them; the recordless legacy admission above is
-the only path that admits a recordless image. Unknown record
+The declared-o32 MIPS32r2 standard-instruction lane requires this record;
+the MIPS32 release 1 executable and recordless legacy cases above do not infer
+floating-point storage from its absence. Unknown record
 values are retained for diagnosis but do not gain provider support. These checks
 bind the declared interpretation; the fixtures do not establish full
 floating-point behavioral conformance.

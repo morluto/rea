@@ -200,20 +200,25 @@ export function parseMipsReadelf(
 }
 
 /** Independent reader is a bounded test prerequisite, never an REA provider. */
-export async function inspectMipsReadelf(path, byteOrder, floatAbi = "hard") {
+export async function inspectMipsReadelf(
+  path,
+  byteOrder,
+  floatAbi = "hard",
+  run = execute,
+) {
   const command = fixtureCommand(FIXTURE_TOOLS.mipsReadelf);
   const options = {
     env: { ...process.env, LC_ALL: "C" },
     timeout: 10000,
     maxBuffer: 1024 * 1024,
   };
-  const version = await execute(command, ["--version"], options);
+  const version = await run(command, ["--version"], options);
   assert.match(
     version.stdout,
     /^GNU readelf\b/u,
     "This lane requires GNU readelf",
   );
-  const result = await execute(
+  const result = await run(
     command,
     ["-h", "-A", "-S", "-s", "-W", path],
     options,
@@ -232,20 +237,25 @@ export async function inspectMipsReadelf(path, byteOrder, floatAbi = "hard") {
 }
 
 /** Independent GNU readelf interpretation for the recordless legacy fixture. */
-export async function inspectLegacyMipsReadelf(path, byteOrder) {
+export async function inspectLegacyMipsReadelf(
+  path,
+  byteOrder,
+  recordlessAbi,
+  run,
+) {
   const command = fixtureCommand(FIXTURE_TOOLS.mipsReadelf);
   const options = {
     env: { ...process.env, LC_ALL: "C" },
     timeout: 10000,
     maxBuffer: 1024 * 1024,
   };
-  const version = await execute(command, ["--version"], options);
+  const version = await run(command, ["--version"], options);
   assert.match(
     version.stdout,
     /^GNU readelf\b/u,
     "This lane requires GNU readelf",
   );
-  const header = await execute(command, ["-h", "-W", path], options);
+  const header = await run(command, ["-h", "-W", path], options);
   assert.equal(
     header.stderr.trim(),
     "",
@@ -266,10 +276,10 @@ export async function inspectLegacyMipsReadelf(path, byteOrder) {
   const flags = field(/^\s*Flags:\s*(0x[\da-f]+)\b.*$/gmu, "flags");
   assert.equal(
     Number(flags),
-    0x50000001,
-    "Legacy fixture must carry EF_MIPS_ARCH_32 with an unspecified ABI field",
+    recordlessAbi === "unspecified" ? 0x50000001 : 0x50001007,
+    "Recordless fixture must carry EF_MIPS_ARCH_32 and the requested ABI field",
   );
-  const abi = await execute(command, ["-A", path], options);
+  const abi = await run(command, ["-A", path], options);
   assert.equal(abi.stderr.trim(), "", `readelf diagnostics: ${abi.stderr}`);
   // -A also prints unrelated MIPS facts such as the static GOT; only the ABI
   // flags declaration itself must be gone from the recordless fixture.
@@ -278,14 +288,14 @@ export async function inspectLegacyMipsReadelf(path, byteOrder) {
     /MIPS ABI Flags Version/u,
     "GNU readelf still observes an ABI flags declaration in the legacy fixture",
   );
-  const symbols = await execute(command, ["-s", "-W", path], options);
+  const symbols = await run(command, ["-s", "-W", path], options);
   assert.equal(
     symbols.stderr.trim(),
     "",
     `readelf diagnostics: ${symbols.stderr}`,
   );
   const parsed = {};
-  for (const name of ["rea_mips_entry", "rea_mips_probe"]) {
+  for (const name of ["rea_mips_entry", "rea_mips_probe", "rea_mips_leaf"]) {
     const matches = [
       ...symbols.stdout.matchAll(
         new RegExp(
