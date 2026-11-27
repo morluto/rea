@@ -23,6 +23,7 @@ import {
   YARA_SETTING_BOUNDS,
   yaraMatchesSchema,
 } from "../../../src/domain/yara/yaraMatches.js";
+import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import {
@@ -1145,6 +1146,147 @@ describe("inspect_yara_matches with a yara stand-in", () => {
       sha256: createHash("sha256").update(SAMPLE).digest("hex"),
       bytes: SAMPLE.length,
     });
+  });
+
+  it("retains completed rule identity when rule source handle close fails", async () => {
+    const { root, command, sample, rule } = await fixture("match");
+    const secondText = "rule Second { condition: true }\n";
+    const second = join(root, "second.yar");
+    await writeFile(second, secondText);
+    const secondStat = await stat(second, { bigint: true });
+    let closeAttempts = 0;
+    const nativeClose = OwnedFileHandle.prototype.close;
+    const closeSpy = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        if (this.handle.fd >= 0) {
+          const current = await this.handle.stat({ bigint: true });
+          if (
+            current.dev === secondStat.dev &&
+            current.ino === secondStat.ino
+          ) {
+            closeAttempts += 1;
+            if (closeAttempts === 1)
+              throw new Error("injected rule source handle close failure");
+          }
+        }
+        return nativeClose.call(this);
+      });
+    const service = stubService(command, {
+      ...process.env,
+      YARA_STUB_MODE: "match",
+    });
+    try {
+      const result = await service.inspect({
+        path: sample,
+        rule_paths: [rule, second],
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.cleanupIncomplete).toBe(true);
+      const expectedSecondObservation = {
+        kind: "file-snapshot-hash",
+        path: second,
+        sha256: createHash("sha256").update(secondText).digest("hex"),
+        bytes: Buffer.byteLength(secondText),
+      };
+      const expectedFirstRuleObservation = {
+        argument: "rule_paths[0]",
+        observation: {
+          kind: "file-snapshot-hash",
+          path: rule,
+          sha256: createHash("sha256").update(RULE).digest("hex"),
+          bytes: Buffer.byteLength(RULE),
+        },
+      };
+      expect(result.error.partialObservation).toEqual(
+        expectedSecondObservation,
+      );
+      expect(result.error.argumentObservations).toEqual([
+        expectedFirstRuleObservation,
+      ]);
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        details: {
+          partial_observation: expectedSecondObservation,
+          argument_observations: [expectedFirstRuleObservation],
+        },
+      });
+      await expect(service.close()).resolves.toBeUndefined();
+      expect(closeAttempts).toBe(2);
+      expect(result.error.cleanupIncomplete).toBe(false);
+    } finally {
+      closeSpy.mockRestore();
+      await service.close();
+    }
+  });
+
+  it("retains completed target identity when target source handle close fails", async () => {
+    const { command, sample, rule } = await fixture("match");
+    const sampleStat = await stat(sample, { bigint: true });
+    let closeAttempts = 0;
+    const nativeClose = OwnedFileHandle.prototype.close;
+    const closeSpy = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        if (this.handle.fd >= 0) {
+          const current = await this.handle.stat({ bigint: true });
+          if (
+            current.dev === sampleStat.dev &&
+            current.ino === sampleStat.ino
+          ) {
+            closeAttempts += 1;
+            if (closeAttempts === 1)
+              throw new Error("injected target source handle close failure");
+          }
+        }
+        return nativeClose.call(this);
+      });
+    const service = stubService(command, {
+      ...process.env,
+      YARA_STUB_MODE: "match",
+    });
+    try {
+      const result = await service.inspect({
+        path: sample,
+        rule_paths: [rule],
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.cleanupIncomplete).toBe(true);
+      const expectedTargetObservation = {
+        kind: "file-snapshot-hash",
+        path: sample,
+        sha256: createHash("sha256").update(SAMPLE).digest("hex"),
+        bytes: SAMPLE.length,
+      };
+      const expectedRuleObservation = {
+        argument: "rule_paths[0]",
+        observation: {
+          kind: "file-snapshot-hash",
+          path: rule,
+          sha256: createHash("sha256").update(RULE).digest("hex"),
+          bytes: Buffer.byteLength(RULE),
+        },
+      };
+      expect(result.error.partialObservation).toEqual(
+        expectedTargetObservation,
+      );
+      expect(result.error.argumentObservations).toEqual([
+        expectedRuleObservation,
+      ]);
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        details: {
+          partial_observation: expectedTargetObservation,
+          argument_observations: [expectedRuleObservation],
+        },
+      });
+      await expect(service.close()).resolves.toBeUndefined();
+      expect(closeAttempts).toBe(2);
+      expect(result.error.cleanupIncomplete).toBe(false);
+    } finally {
+      closeSpy.mockRestore();
+      await service.close();
+    }
   });
 
   it("reports a missing yara command as unavailable with remediation", async () => {

@@ -29,6 +29,7 @@ import {
   assertStableArtifactState,
   closeArtifactResources,
   completedStableArtifactObservation,
+  completedStableArtifactStream,
   projectStableArtifactFailure,
   streamStableArtifact,
   withArtifactFileHandle,
@@ -773,16 +774,28 @@ export class YaraMatchesProvider implements YaraMatchesPort {
             );
           }
         };
-        const streamed = await streamStableArtifact(sourcePath, maxFileBytes, {
-          retainBytes: () => 0,
-          signal,
-          resourceScope: snapshot.files,
-          onChunk: async (chunk) => {
-            await writeChunk(
-              transform === undefined ? chunk : transform.push(chunk),
-            );
-          },
-        });
+        let streamed;
+        try {
+          streamed = await streamStableArtifact(sourcePath, maxFileBytes, {
+            retainBytes: () => 0,
+            signal,
+            resourceScope: snapshot.files,
+            onChunk: async (chunk) => {
+              await writeChunk(
+                transform === undefined ? chunk : transform.push(chunk),
+              );
+            },
+          });
+        } catch (cause: unknown) {
+          const completed = completedStableArtifactStream(cause);
+          if (completed !== undefined)
+            onIdentity?.({
+              path: sourcePath,
+              sha256: completed.sha256,
+              bytes: completed.size,
+            });
+          throw cause;
+        }
         onIdentity?.({
           path: sourcePath,
           sha256: streamed.sha256,
