@@ -880,10 +880,39 @@ export class YaraMatchesProvider implements YaraMatchesPort {
         );
       }
     };
+    const retainVerifiedScan = async (
+      cause: unknown,
+      completed: CompletedScan | undefined,
+    ): Promise<void> => {
+      if (
+        completed === undefined ||
+        !(
+          cause instanceof AnalysisError ||
+          (cause instanceof ArtifactReaderFailure &&
+            cause.reason === "cancelled")
+        )
+      )
+        return;
+      try {
+        await verifySnapshots(undefined, false);
+        cause.retainPartialObservation(
+          buildYaraMatchesReport(
+            input,
+            staged,
+            settings,
+            maxFileBytes,
+            completed,
+          ),
+        );
+      } catch {
+        // Keep file checks before presenting matches as a verified report:
+        // if a snapshot changed or could not be re-verified, leave only the
+        // scanned file's snapshot hash on the primary failure.
+      }
+    };
     let observedScan: CompletedScan | undefined;
-    let scan: CompletedScan;
     try {
-      scan = await this.#scan(
+      const scan = await this.#scan(
         command,
         staged,
         settings,
@@ -893,30 +922,20 @@ export class YaraMatchesProvider implements YaraMatchesPort {
           observedScan = completed;
         },
       );
+      observedScan = scan;
+      await verifySnapshots(signal, true);
+      assertArtifactReadActive(signal);
+      return buildYaraMatchesReport(
+        input,
+        staged,
+        settings,
+        maxFileBytes,
+        scan,
+      );
     } catch (cause: unknown) {
-      if (observedScan !== undefined && cause instanceof AnalysisError) {
-        try {
-          await verifySnapshots(undefined, false);
-          cause.retainPartialObservation(
-            buildYaraMatchesReport(
-              input,
-              staged,
-              settings,
-              maxFileBytes,
-              observedScan,
-            ),
-          );
-        } catch {
-          // Keep file checks before presenting matches as a verified report:
-          // if a snapshot changed or could not be re-verified, leave only the
-          // scanned file's snapshot hash on the primary failure.
-        }
-      }
+      await retainVerifiedScan(cause, observedScan);
       throw cause;
     }
-    await verifySnapshots(signal, true);
-    assertArtifactReadActive(signal);
-    return buildYaraMatchesReport(input, staged, settings, maxFileBytes, scan);
   }
 
   async #scan(

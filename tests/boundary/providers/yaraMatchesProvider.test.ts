@@ -890,6 +890,111 @@ describe("inspect_yara_matches with a yara stand-in", () => {
     });
   });
 
+  const abortDuringFinalSnapshotVerification = (
+    controller: AbortController,
+    onAbort: () => void,
+  ) => {
+    return async (path: string) => {
+      const handle = await open(path, "wx", 0o600);
+      if (!path.endsWith("target.bin")) return handle;
+      return new Proxy(handle, {
+        get(target, property, receiver) {
+          if (property === "stat") {
+            return async (options?: Parameters<typeof target.stat>[0]) => {
+              const stats = await target.stat(options);
+              return new Proxy(stats, {
+                get(statsTarget, statsProperty, statsReceiver) {
+                  if (statsProperty === "dev" && !controller.signal.aborted) {
+                    onAbort();
+                    controller.abort(
+                      "cancelled during final snapshot verification",
+                    );
+                  }
+                  const value = Reflect.get(
+                    statsTarget,
+                    statsProperty,
+                    statsReceiver,
+                  );
+                  return typeof value === "function"
+                    ? value.bind(statsTarget)
+                    : value;
+                },
+              });
+            };
+          }
+          const value = Reflect.get(target, property, receiver);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    };
+  };
+
+  it("retains completed Evidence when cancelled during final snapshot verification", async () => {
+    const { command, sample, rule } = await fixture("match");
+    const controller = new AbortController();
+    let abortedDuringVerification = false;
+    const provider = new YaraMatchesProvider({
+      environment: { ...process.env, YARA_STUB_MODE: "match" },
+      selectCommand: () => ok(command),
+      launcher: interpreterLauncher,
+      openSnapshotFile: abortDuringFinalSnapshotVerification(controller, () => {
+        abortedDuringVerification = true;
+      }),
+    });
+    const service = new YaraMatchesService(provider, process.env);
+    const result = await service.inspect(
+      { path: sample, rule_paths: [rule] },
+      { signal: controller.signal },
+    );
+    expect(abortedDuringVerification).toBe(true);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cleanupIncomplete).toBe(false);
+    const partialEvidence = result.error.partialObservation as {
+      normalized_result?: unknown;
+      operation?: string;
+    };
+    expect(partialEvidence?.operation).toBe("inspect_yara_matches");
+    const retainedReport = yaraMatchesSchema.parse(
+      partialEvidence?.normalized_result,
+    );
+    expect(retainedReport.matches.map((match) => match.rule)).toEqual([
+      "Packed",
+      "Plain",
+    ]);
+  });
+
+  it("does not retain unverified matches when cancelled during final snapshot verification after a rule snapshot changed", async () => {
+    const { command, sample, rule } = await fixture("mutate-rule");
+    const controller = new AbortController();
+    let abortedDuringVerification = false;
+    const provider = new YaraMatchesProvider({
+      environment: { ...process.env, YARA_STUB_MODE: "mutate-rule" },
+      selectCommand: () => ok(command),
+      launcher: interpreterLauncher,
+      openSnapshotFile: abortDuringFinalSnapshotVerification(controller, () => {
+        abortedDuringVerification = true;
+      }),
+    });
+    const service = new YaraMatchesService(provider, process.env);
+    const result = await service.inspect(
+      { path: sample, rule_paths: [rule] },
+      { signal: controller.signal },
+    );
+    expect(abortedDuringVerification).toBe(true);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.partialObservation).toEqual({
+      kind: "file-snapshot-hash",
+      path: sample,
+      sha256: createHash("sha256").update(SAMPLE).digest("hex"),
+      bytes: SAMPLE.length,
+    });
+  });
+
   it("closes staged file handles before removing the snapshot root and retries in order", async () => {
     const { command, sample, rule } = await fixture("match");
     const events: string[] = [];
