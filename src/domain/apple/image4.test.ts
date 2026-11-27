@@ -1057,3 +1057,71 @@ it("keeps IMG4 manifest and restore slots after an unsupported payload value", a
   ]);
   expect(result.limitations.join("\n")).toContain("Unknown Image4 tag 0x02");
 });
+
+it("never reports names from inside a restore property value", async () => {
+  const secret = sequence(ia5("secret-value"), octet(SAMPLE_NONCE));
+  const cases = [
+    // An INTEGER where the PRIVATE property's name belongs: unknown entry.
+    { entry: privateTagged("BNCN", sequence(integer(1), secret)), names: [] },
+    // A property that names itself IM4R is one ordinary property.
+    {
+      entry: privateTagged("IM4R", sequence(ia5("IM4R"), secret)),
+      names: ["IM4R"],
+    },
+    // An unnamed SEQUENCE that is not the property SET: unknown entry.
+    { entry: sequence(integer(1), secret), names: [] },
+  ];
+  for (const { entry, names } of cases) {
+    const result = await image4(
+      img4(im4p(), im4m(), sequence(ia5("IM4R"), derSet(entry))),
+    );
+    expect(result.facts.restore_info?.properties_present).toEqual(names);
+    expect(JSON.stringify(result)).not.toContain("secret-value");
+    if (names.length === 0)
+      expect(result.limitations.length).toBeGreaterThan(0);
+  }
+});
+
+it("reads small fields after the retained budget is used", async () => {
+  // Exhaust the retained budget completely: large children use most of it,
+  // then smaller and smaller ones drain what is left below the size of the
+  // two-byte value that ends the padding, so nothing later can be retained.
+  const child = (encoded: number): Buffer =>
+    encoded === 2
+      ? sequence()
+      : sequence(octet(Buffer.alloc(encoded - (encoded > 128 ? 8 : 4))));
+  const padding = [
+    ...Array.from(
+      { length: Math.ceil(IMAGE4_MAX_RETAINED_BYTES / 65_536) + 2 },
+      () => child(65_536),
+    ),
+    ...Array.from({ length: 70 }, () => child(1024)),
+    ...Array.from({ length: 20 }, () => child(64)),
+    ...Array.from({ length: 10 }, () => child(8)),
+    ...Array.from({ length: 5 }, () => child(2)),
+  ];
+  const result = await image4(
+    img4(im4p(), manifestWithCertificates(sequence(...padding)), im4r()),
+  );
+  expect(result.facts.restore_info?.properties_present).toEqual(["BNCN"]);
+  expect(result.entries.map((entry) => entry.path)).toEqual([
+    "payload",
+    "manifest.der",
+    "restore-info.der",
+  ]);
+});
+
+it("explains a declared uncompressed size it cannot keep", async () => {
+  for (const [size, text] of [
+    [-1n, "is negative"],
+    [2n ** 60n, "exceeds the largest exact integer"],
+  ] as const) {
+    const result = await image4(
+      im4p({
+        compression: sequence(integer(LZFSE_ALGORITHM), integer(size)),
+      }),
+    );
+    expect(result.facts.payload?.uncompressed_size).toBeNull();
+    expect(result.limitations.join("\n")).toContain(text);
+  }
+});

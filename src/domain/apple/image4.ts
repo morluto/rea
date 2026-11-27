@@ -550,7 +550,11 @@ class Walk {
       !header.constructed &&
       header.contentEnd - header.contentStart >
         IMAGE4_MAX_DECODED_PRIMITIVE_BYTES;
-    if (encoded <= IMAGE4_MAX_NESTED_BYTES && !opaque && this.#retain(encoded))
+    // A small primitive is always loaded: the element allowance bounds how
+    // many there are, and reading names and scalars must not depend on how
+    // much of the retained budget earlier opaque structure used.
+    const loadable = !header.constructed || this.#retain(encoded);
+    if (encoded <= IMAGE4_MAX_NESTED_BYTES && !opaque && loadable)
       return this.adopt(
         await readExact(this.source, offset, encoded),
         offset,
@@ -1166,10 +1170,24 @@ const asCompression = async (
     return undefined;
   const algorithm = uint32Integer(algorithmValue);
   const decoded = decodeInteger(sizeValue, notes);
-  if (decoded.type !== "integer" || !UNSIGNED_DECIMAL.test(decoded.decimal))
+  const offset = fileOffset(sizeValue);
+  // decodeInteger already notes an omitted value; a decoded one that is not a
+  // usable size is noted here so the unknown size is explained.
+  if (decoded.type !== "integer") return { algorithm, size: null };
+  if (!UNSIGNED_DECIMAL.test(decoded.decimal)) {
+    notes.add(
+      `Image4 uncompressed size at offset ${offset} is negative (${decoded.decimal}); the size is unknown.`,
+    );
     return { algorithm, size: null };
+  }
   const size = Number(decoded.decimal);
-  return { algorithm, size: Number.isSafeInteger(size) ? size : null };
+  if (!Number.isSafeInteger(size)) {
+    notes.add(
+      `Image4 uncompressed size at offset ${offset} (${decoded.decimal}) exceeds the largest exact integer; the size is unknown.`,
+    );
+    return { algorithm, size: null };
+  }
+  return { algorithm, size };
 };
 
 const startsWith = (bytes: Uint8Array, text: string): boolean => {
@@ -1563,12 +1581,24 @@ const collectRestoreNames = async (
     unknownTag(value, walk.notes);
     return;
   }
+  // A PRIVATE-tagged value is one restore property. Its boundary is kept
+  // whatever it holds: only its name may be reported, and its value is never
+  // walked for further names, even when the name is unreadable or is IM4R.
   if (isPrivateTagged(value)) {
     const inner = await unwrapPrivate(value, walk, depth, walk.notes);
-    if (inner !== value) {
-      await collectRestoreNames(inner, walk, depth + 1, counter, names);
+    const kids = inner === value ? [] : await walk.childrenOf(inner, depth + 1);
+    const named = entryName(kids, walk.notes);
+    if (named.kind !== "named" || named.name.length === 0 || kids.length < 2) {
+      unreadableEntry(value, walk.notes);
       return;
     }
+    if (kids.length > 2)
+      walk.notes.add(
+        `Image4 restore entry at offset ${fileOffset(value)} has ${kids.length - 2} fields after its value that were not decoded.`,
+      );
+    counter.charge();
+    names.push(named.name);
+    return;
   }
   const kids = await walk.childrenOf(value, depth);
   const named = entryName(kids, walk.notes);
@@ -1578,8 +1608,11 @@ const collectRestoreNames = async (
     unreadableEntry(value, walk.notes);
     return;
   }
+  // IM4R holds its properties in one SET (img4tool). Only a SET is walked as
+  // a container: any other unnamed value is reported and its contents, which
+  // may be restore values, are never searched for names.
   if (named.kind === "container") {
-    if (isSequence(value) || isSet(value)) {
+    if (isSet(value)) {
       for (const kid of kids)
         await collectRestoreNames(kid, walk, depth + 1, counter, names);
       return;
@@ -1587,12 +1620,9 @@ const collectRestoreNames = async (
     unknownTag(value, walk.notes);
     return;
   }
+  // IM4R is the magic of the top-level restore SEQUENCE only (parseRestore);
+  // a nested value that names itself IM4R is an ordinary entry.
   const { name } = named;
-  if (name === "IM4R") {
-    for (const kid of kids.slice(1))
-      await collectRestoreNames(kid, walk, depth + 1, counter, names);
-    return;
-  }
   if (name.length > 0 && kids.length >= 2 && isSequence(value)) {
     // Only the name is reported; restore values stay redacted. Fields after
     // the value are noted by position without exposing them.
