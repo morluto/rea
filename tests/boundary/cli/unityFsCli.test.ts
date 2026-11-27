@@ -154,23 +154,24 @@ cliTest(
         blockCompression: 1,
       }),
     );
-    const unavailable = await cli.run({
+    const lzma = await cli.run({
       arguments: ["inspect-artifact", path, "--json"],
     });
-    expect(unavailable.exitCode, unavailable.stderr).toBe(0);
-    const partial = artifactInspectionResultSchema.parse(
-      parseEvidence(unavailable.json).normalized_result,
+    expect(lzma.exitCode, lzma.stderr).toBe(0);
+    const lzmaInventory = artifactInspectionResultSchema.parse(
+      parseEvidence(lzma.json).normalized_result,
     ).substeps[0]!.evidence.normalized_result;
-    expect(partial.coverage).toMatchObject({ status: "unknown" });
-    expect(partial.occurrences).toContainEqual(
+    expect(lzmaInventory.coverage).toMatchObject({ status: "complete" });
+    expect(lzmaInventory.occurrences).toContainEqual(
       expect.objectContaining({
         logical_path: "CAB-lzma",
-        hash_status: "unavailable",
-        artifact_id: null,
+        hash_status: "verified",
       }),
     );
-    expect(partial.limitations.join(" ")).toContain(
-      "compression 1 is unsupported",
+    expect(lzmaInventory.nodes).toContainEqual(
+      expect.objectContaining({
+        sha256: createHash("sha256").update(payload).digest("hex"),
+      }),
     );
   },
 );

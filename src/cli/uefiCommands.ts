@@ -61,7 +61,7 @@ export const registerUefiCommands = (
     contractNamed(UEFI_TOOL_CONTRACTS, "inspect_uefi_nvram"),
     {
       description:
-        "Map AMI NVRAM variable stores (for example StdDefaults) of a flash image",
+        "Map AMI NVAR and EDK2 / OVMF variable stores of a flash image",
       positionals: ["path"],
       callerPaths: ["path"],
       fields: { path: FLASH_PATH },

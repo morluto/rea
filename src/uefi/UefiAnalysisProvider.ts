@@ -28,6 +28,7 @@ import { jsonValueSchema, ownedJsonValueSchema } from "../domain/jsonValue.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Result } from "../domain/result.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
+import { Budget } from "../domain/budget.js";
 import {
   uefiResultSchemas,
   type UefiExtractResult,
@@ -41,7 +42,11 @@ import type {
   UefiPayload,
 } from "./UefiScanContext.js";
 import { scanUefiImage } from "./UefiImageScan.js";
-import { scanAmiNvramStores } from "./UefiNvram.js";
+import {
+  scanEdk2VariableStores,
+  type Edk2NvramStore,
+} from "./UefiEdk2Nvram.js";
+import { scanAmiNvramStores, type AmiNvramStore } from "./UefiNvram.js";
 import { uefiFailureDialect } from "./UefiFailures.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import {
@@ -54,6 +59,100 @@ import { UEFI_PROVIDER_IDENTITY } from "./UefiProviderIdentity.js";
 const inflateBounded = promisify(inflate);
 
 const hex = (value: number): string => `0x${value.toString(16)}`;
+
+const dataDigest = (
+  image: Buffer,
+  offset: number,
+  length: number,
+  checkpoint: () => void,
+): string => {
+  checkpoint();
+  return sha256Hex(image.subarray(offset, offset + length));
+};
+
+const mapAmiNvramStores = (
+  stores: readonly AmiNvramStore[],
+  image: Buffer,
+  checkpoint: () => void,
+): UefiNvramInspectResult["stores"] =>
+  stores.map((store) => ({
+    offset: store.offset,
+    name: store.name,
+    variables: store.variables.map((variable) => ({
+      offset: variable.offset,
+      name: variable.name,
+      attributes: variable.attributes,
+      next: variable.next,
+      guid_index: variable.guidIndex,
+      guid: variable.guid,
+      depth: variable.depth,
+      parent_offset: variable.parentOffset,
+      data_offset: variable.dataOffset,
+      data_length: variable.dataLength,
+      data_sha256: dataDigest(
+        image,
+        variable.dataOffset,
+        variable.dataLength,
+        checkpoint,
+      ),
+    })),
+    trailing_padding: store.trailingPadding,
+  }));
+
+const mapEdk2NvramStores = (
+  stores: readonly Edk2NvramStore[],
+  image: Buffer,
+  checkpoint: () => void,
+): NonNullable<UefiNvramInspectResult["edk2_stores"]> =>
+  stores.map((store) => ({
+    offset: store.offset,
+    store_guid: store.storeGuid,
+    size: store.size,
+    store_format: store.storeFormat,
+    store_state: store.storeState,
+    authenticated: store.authenticated,
+    variables: store.variables.map((variable) => ({
+      offset: variable.offset,
+      name: variable.name,
+      state: variable.state,
+      state_raw: variable.stateRaw,
+      attributes: variable.attributes,
+      vendor_guid: variable.vendorGuid,
+      data_offset: variable.dataOffset,
+      data_length: variable.dataLength,
+      data_sha256: dataDigest(
+        image,
+        variable.dataOffset,
+        variable.dataLength,
+        checkpoint,
+      ),
+    })),
+  }));
+
+const AMI_NVRAM_ABSENT =
+  "No AMI NVRAM variable stores (NVAR chains) were found in the image.";
+const EDK2_NVRAM_ABSENT =
+  "No EDK2 variable stores (gEfiVariableGuid / gEfiAuthenticatedVariableGuid) were found in the image.";
+const EDK2_NVRAM_UNESTABLISHED =
+  "No formatted EDK2 variable store was found; the store signatures listed above were examined and rejected, so the image may still hold a damaged store.";
+const EDK2_NVRAM_UNCHECKED =
+  "EDK2 variable-store search did not finish; whether the image holds a store remains unknown.";
+
+const nvramLimitations = (
+  ami: ReturnType<typeof scanAmiNvramStores>,
+  edk2: ReturnType<typeof scanEdk2VariableStores>,
+): string[] => {
+  const limitations = [...ami.limitations, ...edk2.limitations];
+  if (ami.stores.length === 0 && edk2.stores.length === 0) {
+    if (ami.absent) limitations.push(AMI_NVRAM_ABSENT);
+    if (edk2.absent) limitations.push(EDK2_NVRAM_ABSENT);
+    else if (edk2.rejectedSignatures > 0)
+      limitations.push(EDK2_NVRAM_UNESTABLISHED);
+    else if (edk2.coverage === "partial")
+      limitations.push(EDK2_NVRAM_UNCHECKED);
+  }
+  return limitations;
+};
 
 const targetInputError = (message: string): AnalysisInputError =>
   new AnalysisInputError("extract_uefi_firmware", { cause: undefined }, [
@@ -510,52 +609,41 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     });
   }
 
-  /** AMI NVRAM stores are parsed from the raw image; no firmware-volume walk needed. */
+  /** AMI NVAR and EDK2 variable stores are parsed from the raw image. */
   #inspectNvram(
     request: Extract<UefiRequest, { operation: "inspect_uefi_nvram" }>,
     imageSha256: string,
     image: Buffer,
     checkpoint: () => void,
   ): AnalysisExecution {
-    const scan = scanAmiNvramStores(
+    // One structural record ceiling covers the whole inspection.
+    const records = new Budget(UEFI_FIRMWARE_LIMITS.scanRecords);
+    const ami = scanAmiNvramStores(
       image,
       request.input.max_stores,
       request.input.max_depth,
       checkpoint,
+      records,
     );
+    const edk2 = scanEdk2VariableStores(
+      image,
+      request.input.max_stores,
+      checkpoint,
+      records,
+    );
+    const limitations = nvramLimitations(ami, edk2);
     const result: UefiNvramInspectResult =
       uefiResultSchemas.inspect_uefi_nvram.parse({
         parser: { name: "rea-uefi", version: UEFI_PROVIDER_IDENTITY.version },
         input_size: image.length,
         image_sha256: imageSha256,
-        stores: scan.stores.map((store) => ({
-          offset: store.offset,
-          name: store.name,
-          variables: store.variables.map((variable) => {
-            checkpoint();
-            return {
-              offset: variable.offset,
-              name: variable.name,
-              attributes: variable.attributes,
-              next: variable.next,
-              guid_index: variable.guidIndex,
-              guid: variable.guid,
-              depth: variable.depth,
-              parent_offset: variable.parentOffset,
-              data_offset: variable.dataOffset,
-              data_length: variable.dataLength,
-              data_sha256: sha256Hex(
-                image.subarray(
-                  variable.dataOffset,
-                  variable.dataOffset + variable.dataLength,
-                ),
-              ),
-            };
-          }),
-          trailing_padding: store.trailingPadding,
-        })),
-        coverage: scan.coverage,
-        limitations: [...scan.limitations],
+        stores: mapAmiNvramStores(ami.stores, image, checkpoint),
+        edk2_stores: mapEdk2NvramStores(edk2.stores, image, checkpoint),
+        coverage:
+          ami.coverage === "partial" || edk2.coverage === "partial"
+            ? "partial"
+            : "complete",
+        limitations,
       });
     return createAnalysisExecution(result, UEFI_PROVIDER_IDENTITY, {
       subject: {
@@ -565,8 +653,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       },
       locations: [{ kind: "artifact-path", path: request.input.path }],
       limitations: [
-        ...scan.limitations,
-        "Static AMI NVRAM parsing only; variable bytes are reported, never interpreted or executed.",
+        ...limitations,
+        "Static AMI NVAR and EDK2 variable-store parsing only; variable bytes are reported, never interpreted or executed.",
       ],
     });
   }
@@ -793,7 +881,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           ? scan.limitations
           : gaps
               .filter(({ kind }) => kind !== "pad-file")
-              .slice(0, 512)
+              .slice(0, UEFI_FIRMWARE_LIMITS.limitationLines)
               .map(({ detail }) => detail),
     });
   }

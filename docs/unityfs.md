@@ -30,10 +30,17 @@ streams before releasing its descriptor.
 
 ## Compression, encryption and malformed input
 
-Data blocks compressed with none, LZ4 or LZ4HC are supported. LZMA-compressed
-blocks and blocks-info tables are reported as unsupported coverage or an
-`unavailable` member read; the directory and readable members are still
-retained ([#14176](https://github.com/morluto/rea/issues/14176)).
+Data blocks and blocks-info tables compressed with none, LZMA, LZ4 or LZ4HC are
+supported. Other compression values keep the directory when possible and report
+unsupported coverage or an `unavailable` member read.
+
+UnityFS writers emit one LZMA block for a whole data stream, so a large LZMA
+bundle is often one block. A block above the per-decode budget below keeps the
+directory: only members inside that block report an `unavailable` read naming
+the budget, which this release cannot raise. An LZMA dictionary sizes only
+the decoder window, which is bounded by the block's declared output, so a large
+dictionary on a small block decodes. A stream may end at its declared size or
+with an end marker; any other trailing bytes are malformed.
 
 Bundles declaring asset-bundle encryption keep their header facts but report
 unknown directory coverage; no decryption is attempted. The reused 0x200
@@ -55,7 +62,7 @@ These are resource policies, not format maxima.
 | ----------------------------------------------- | -------------------------------------------------------------------------------------- |
 | Encoded and decoded directory buffers           | 16 MiB each                                                                            |
 | Buffers, parsed rows, entries, path projections | 64 MiB shared admission, reserved before allocation                                    |
-| One LZ4 decode                                  | 64 MiB output plus its bounded encoded input; plain blocks stream without it           |
+| One LZ4 or LZMA decode                          | 64 MiB output and LZMA window, plus its bounded encoded input; plain blocks stream     |
 | Active member streams per reader                | 4                                                                                      |
 | Archive plaintext work                          | Larger of 256 MiB and 500 × declared bundle size                                       |
 | Member I/O operations                           | 4 × the larger of 1,024 and nonempty blocks + directory nodes + readable 64 KiB chunks |
@@ -87,7 +94,7 @@ containers.
 
 Synthetic fixtures cover format 6–8 layouts, padding independent of header
 alignment, directories, malformed tables, allocation admission, overlapping
-members, unsupported LZMA, cancellation inside decoding, paused iteration,
+members, LZMA blocks and malformed LZMA, cancellation inside decoding, paused iteration,
 close during I/O, cleanup retry, empty blocks with unsupported codecs, cache
 freshness and independent output buffers. Compiled CLI and full/compact MCP
 tests cover inventory and extraction.
@@ -101,10 +108,10 @@ UnityPy 1.24.2 raw member bytes:
 | `atlas_test`       | 2018.4.11f1, format 6 | Members match (SHA-256 `61ee5afb5f5c64f0a4f65f039d09b2509198363e713423289c895067ac215177`) |
 | `banner_1`         | 2018.4.4f1            | Members match                                                                              |
 | `char_118_yuki.ab` | 5.6.7f1               | Members match                                                                              |
-| `xinzexi_2_n_tex`  | 2017.4.37f1, LZMA     | Names and sizes retained; hashes unavailable, coverage unknown                             |
+| `xinzexi_2_n_tex`  | 2017.4.37f1, LZMA     | Unverified for this change (sample not rerun); synthetic LZMA round-trips only             |
 
 UnityPy-produced repacks additionally verify format 7/8, padded and unpadded
-front tables, end tables, and unsupported LZMA directories. They are
-library-produced, not Unity engine executions, and synthetic fixtures alone do
-not establish real Unity version coverage. SerializedFile objects, textures and
-runtime behavior are outside this reader's verification scope.
+front tables, end tables, and LZMA directories. They are library-produced, not
+Unity engine executions, and synthetic fixtures alone do not establish real
+Unity version coverage. SerializedFile objects, textures and runtime behavior
+are outside this reader's verification scope.

@@ -475,6 +475,23 @@ Child symbolic links are not followed. Directory form only; tar image layouts
 are not inspected. See
 [OCI image layouts](https://github.com/morluto/rea/blob/main/docs/guides/artifacts/oci-image-layout.md).
 
+## YARA rule matches
+
+Use `inspect_yara_matches` when the caller supplies YARA rule files and asks
+which rules match one explicit local file. It runs the installed `yara` command
+(`REA_YARA_COMMAND` or `yara` on `PATH`) with an argument list, never a shell,
+and needs no `open_binary`. REA ships no rules and downloads nothing; do not
+write or fetch rules unless asked. The CLI equivalent is
+`inspect-yara-matches PATH --rule_paths RULE`. Cite the file SHA-256 and each
+rule file SHA-256 with the matched rules, tags, meta, and string offsets.
+`data` is yara's display text; read `length` bytes at `file_offset` for exact
+bytes. `coverage.status: "partial"` means string matches beyond `max_matches`
+are counted but unlisted; raise `max_matches` to list them. A compile error is
+`invalid_request` naming the rule file; fix the rule rather than retrying. A
+missing command is `capability_unavailable`. Absent rules did not match; that
+says nothing about why. See
+[YARA rule matches](https://github.com/morluto/rea/blob/main/docs/guides/native/yara-matches.md).
+
 ## SQLite snapshots
 
 Use `inspect_sqlite_database` with an explicit local database snapshot for its
@@ -1082,6 +1099,20 @@ unnamed `fat/<id>.bin` files. A CRC mismatch, a partial table, or a range past
 the file end leaves coverage `unknown`. Secure-area encryption, compressed
 overlays, and NitroARC archives are not decoded. See
 [Nintendo DS ROMs](https://github.com/morluto/rea/blob/main/docs/guides/firmware/nds-roms.md).
+
+Nintendo 64 ROMs (`n64-rom`) are detected from the first word in z64
+(`80 37 12 40`), v64 (`37 80 40 12`) or n64 (`40 12 37 80`) order, plus a
+plausible boot address, and use the same inspection and extraction workflows.
+`root_format_metadata` holds the cartridge header, the IPL3/CIC variant and
+the CRC pair when that variant is known. Members are `header.bin`, `ipl3.bin`
+and `program.z64`. v64 and n64 dumps serve those members in big-endian order
+through a decoder; `decoded` records that swap. A CRC mismatch, an unknown
+CIC, a short checksum window or reserved header bytes leave coverage
+`unknown`. Nothing is executed or patched. `program.z64` is the big-endian
+image. `boot_address` is the address IPL3 jumps to, not the address of file
+offset 0. The MIPS lane admits ELF, and `raw-binary` does not admit
+big-endian MIPS, so REA does not open this image as MIPS. See
+[Nintendo 64 ROMs](https://github.com/morluto/rea/blob/main/docs/guides/firmware/n64-roms.md).
 
 Legacy Qualcomm MBN boot images (`sbl1.mbn`, `aboot.mbn`, `tz.mbn`) use the
 same inspection and extraction workflows. The header has no magic; REA claims

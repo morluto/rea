@@ -2243,4 +2243,40 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     },
   },
+  "yara.command": {
+    ownership: "process",
+    stages: {
+      launch: covered(
+        test(
+          "tests/boundary/providers/yaraMatchesProvider.test.ts",
+          "reports a missing yara command as unavailable with remediation",
+        ),
+      ),
+      handshake: ONE_SHOT,
+      operation: covered(
+        test(
+          "tests/boundary/providers/yaraMatchesProvider.test.ts",
+          "binds matches to the file and rule digests and passes argv without a shell",
+        ),
+      ),
+      cancel: covered(
+        test(
+          "tests/boundary/providers/yaraMatchesProvider.test.ts",
+          "cancels a running scan and leaves nothing to clean up",
+        ),
+      ),
+      cleanup: covered(
+        test(
+          "tests/boundary/providers/yaraMatchesProvider.test.ts",
+          "retains a failed process cleanup and retries it before the next scan",
+        ),
+      ),
+      retry: covered(
+        test(
+          "tests/boundary/providers/yaraMatchesProvider.test.ts",
+          "retains a failed process cleanup and retries it before the next scan",
+        ),
+      ),
+    },
+  },
 };
