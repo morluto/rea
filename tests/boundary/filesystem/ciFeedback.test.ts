@@ -298,7 +298,7 @@ it("starts source feedback before build and requires both groups without waiving
     (step) => step.run === "npm run ci:static-context",
   );
   const checkIndex = deepSteps.findIndex(
-    (step) => step.run === "npm run check:ci:deep",
+    (step) => step.run === "npm run check:ci:deep:job",
   );
   const uploadIndex = deepSteps.findIndex(
     (step) => step.name === "Upload complete deep static diagnostics",
