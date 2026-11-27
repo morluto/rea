@@ -155,9 +155,14 @@ Ghidra regex searches use Java Pattern semantics. If compiling or matching a
 pattern exhausts the engine's stack, REA returns a resource constraint and
 preserves the active database and annotations. Retry in literal mode or simplify
 the regex; successful literal searches retain complete matching strings.
-Cancelling an active request terminates the ephemeral database and discards its
-annotations. REA retains the selected target and imports the original artifact
-again on the next Ghidra query.
+Cancelling an active read, such as a decompilation, stops that request and
+keeps the database, its annotations and the requests queued behind it, provided
+Ghidra answers the request within the cancel grace (2,000 ms by default; see
+[active request cancellation](../../providers/ghidra-provider.md#active-request-cancellation)
+for `REA_GHIDRA_CANCEL_GRACE_MS`). Cancelling an active edit, or a
+read Ghidra does not answer in time, terminates the ephemeral database and
+discards its annotations. REA then retains the selected target and imports the
+original artifact again on the next Ghidra query.
 
 Opening the same target and profile again retains the live database, including
 annotations. It does not make those edits eligible for an immutable snapshot.
@@ -352,7 +357,30 @@ a known body. `--layout dwarf`
 reports that compilation-unit paths are unavailable and still names files by
 address. Filters are a case-sensitive name substring, a case-sensitive name
 prefix, an inclusive address range (including uppercase hexadecimal input), and a positive safe-integer attempt limit. The limit does not allocate space in proportion to its value. Cancellation leaves
-files already written in place. One run at a time holds an output directory,
+files already written in place and first commits the functions already decompiled. Function files and their journal records are committed in groups of
+up to eight: each file's bytes are synced before the file gets its final name, and a
+group's records are appended and synced together only after its files are
+published. A group is also committed by the first function that settles one
+second or more after the previous commit, so a slow provider is committed
+function by function. A process or host that stops between commits leaves at most eight
+decompiled functions unrecorded. A resume decompiles those again; when a file is
+already in place and the new bytes match it, the function is counted as skipped
+and recorded with `provider_source.reason: "existing_file_origin_unknown"`
+rather than as a conflict. While one provider request for a function, reading its body
+or decompiling it, stays pending, the export reports a `decompile_all` progress
+update every five seconds naming that request, the function's name and
+address, its position among the selected functions, and the elapsed wait;
+requests that settle sooner report nothing. The export's own journal and file
+writes are not timed, so a slow output volume is never reported as a provider
+wait. MCP delivers
+these as progress notifications when the request carries a progress token, and
+the CLI writes each as a `rea_progress` JSON line on stderr, leaving stdout for
+the manifest. Ghidra bounds one function with its decompile deadline. Hopper
+has no per-function deadline and REA cannot interrupt a decompilation Hopper
+has started, so a pathological function holds the serial bridge until Hopper
+finishes or is quit. Cancelling such an export from the CLI ends the command
+with `cleanup_incomplete` while Hopper keeps working; the remediation then
+describes the steps available in Hopper itself. One run at a time holds an output directory,
 identified by its device and inode, through export finalization and any retained cleanup retry; another
 run on the same directory is refused with the holder's process ID, and a
 crashed run can be recovered by the next run. Failed descriptor or staging cleanup remains owned by the session; close the target to retry it. Initialization cleanup preserves unexpected entries rather than recursively removing the directory. Resume hashes existing files in bounded chunks, and index generation reuses committed journal facts already held by the export owner. After five consecutive functions whose files
@@ -1475,6 +1503,143 @@ unpaired Unicode surrogate; a rejection identifies the field and UTF-16 index
 and leaves every annotation unchanged. CRLF, supplementary Unicode characters,
 and combining characters are preserved. Windows P0 remains read-only. Ghidra has no
 GUI authority, and REA never falls back automatically to Hopper.
+
+For a target without debug information, set a function's prototype and the
+types it needs so later pseudocode uses field and parameter names instead of
+offsets. Define the types, then pass `signature` to
+`annotate_native_function`:
+
+```javascript
+await call("define_native_data_types", {
+  declarations:
+    "struct session { int id; char name[32]; unsigned flags; double score; struct session *next; };",
+});
+await call("annotate_native_function", {
+  procedure: "0x1001800",
+  name: "session_total",
+  signature: "double total(const struct session *s, unsigned mask)",
+});
+```
+
+`signature` is one C prototype over types the database already holds. Its
+function name is a placeholder; `name` renames the function. The prototype is
+applied in the same transaction as the name and comments with Ghidra's
+`USER_DEFINED` source and Ghidra-assigned parameter storage.
+`annotations.signature` is the applied prototype, which `signature` accepts
+back when its function and type names are C identifiers,
+`annotations.signature_source` is `user_defined` for a caller-authored
+prototype rather than `default`, `analysis` or `imported`, and
+`annotations.calling_convention` is the convention that storage follows. When
+the function has no calling convention and the prototype names none, REA
+records the compiler specification's default convention, which is the one
+Ghidra already uses to assign the storage; without it the decompiler prefixes
+the pseudocode with `Unknown calling convention -- yet parameter storage is
+locked`. Name a convention in the prototype (for example `__stdcall`) to
+assert another one.
+
+`define_native_data_types` accepts C struct, union, enum and typedef
+definitions and stores all of them or none in the category
+`/rea_caller_defined`. `inspect_native_data_type` reports those types with
+`source: "caller-defined"`; they are the caller's assertions about layout, not
+observations of the target. A name the database already holds in any category
+is refused and never replaced; repeating an equivalent caller definition
+reports `unchanged`. Ghidra fills an existing empty composite in place while
+parsing, and that replacement is rolled back with the rest of a refused call. Ghidra keeps a struct, union or enum tag in a different
+map from a typedef and stores one type per name. When the declarations give
+that name to definitions that are not equivalent, such as
+`struct item { int x; }; typedef int item;`, the call is refused with
+`details.diagnostics.remote_code` `conflicting_type_definitions` and stores
+nothing. `typedef struct s { ... } s;` is one struct and is stored.
+
+Ghidra's C parser accepts several constructs and records nothing for them. REA
+refuses those before parsing, names the construct and its line and column, and
+changes nothing:
+
+| Construct                                                                                                                                                                      | `signature`        | `declarations`                                                                                                                                                          |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `__attribute__`, `__declspec`, `__readableTo`, `_Alignas`, `packed`, `[[...]]`, asm labels, `__extension__`                                                                    | refused            | refused; use `#pragma pack` to pack                                                                                                                                     |
+| `__ptr32`, `__ptr64` (Ghidra stores a native-width pointer), `__near`, `__far`                                                                                                 | refused            | refused                                                                                                                                                                 |
+| `__pragma`, `_Pragma`, `_Static_assert`, Objective-C `@` blocks, backslashes, `#` apart from its name                                                                          | refused            | refused                                                                                                                                                                 |
+| `static`, `extern`, `inline`, `__forceinline`, `register`, `auto`, `_Thread_local`                                                                                             | refused            | refused                                                                                                                                                                 |
+| Variable declarations and other non-type statements                                                                                                                            | refused            | refused                                                                                                                                                                 |
+| Preprocessor directives                                                                                                                                                        | refused            | refused except `#pragma pack` in a form Ghidra applies: decimal values from 0 through 2147483647, a `push` with a value or label, a `pop` that matches an admitted push |
+| String and character literals                                                                                                                                                  | refused            | refused                                                                                                                                                                 |
+| Function body, default argument, second declaration                                                                                                                            | refused            | not applicable                                                                                                                                                          |
+| Function pointers `ret (*name)(parameters)`, `(**name)`, `(*name[N])` as members or typedefs                                                                                   | refused            | applied; see below                                                                                                                                                      |
+| In a function pointer: `()` (Ghidra stores `(void)`), a calling convention inside the parenthesis, `_Noreturn`, a nested function-pointer parameter, an untyped parameter      | not applicable     | refused                                                                                                                                                                 |
+| Any other parenthesis in a definition, such as a grouped declarator or a function type (Ghidra stores none of them as written)                                                 | not applicable     | refused                                                                                                                                                                 |
+| Unnamed enum; unnamed struct or union other than `typedef struct { } name`                                                                                                     | refused            | refused                                                                                                                                                                 |
+| Repeated parameter or member name; struct, union or enum without members (Ghidra invents one for an undefined tag)                                                             | refused            | refused                                                                                                                                                                 |
+| Array parameter (Ghidra stores a pointer)                                                                                                                                      | refused            | not applicable                                                                                                                                                          |
+| A type name the database holds as different types                                                                                                                              | refused            | refused                                                                                                                                                                 |
+| Anything Ghidra's parser reports a diagnostic for, such as a repeated enumerator name                                                                                          | refused            | refused                                                                                                                                                                 |
+| An enum value, array size or bit-field width other than one decimal or hex integer literal, optionally negated, without suffixes; a value or implicit enumerator outside `int` | not applicable     | refused                                                                                                                                                                 |
+| `#pragma pack`, bit-fields, flexible and zero-length arrays, enum values, several typedef declarators                                                                          | not applicable     | applied; the stored layout shows them                                                                                                                                   |
+| `_Noreturn`, a calling convention the compiler specification defines                                                                                                           | applied            | not applicable                                                                                                                                                          |
+| `const`, `volatile`, `restrict`, `__unaligned`, `__w64`                                                                                                                        | accepted, reported | accepted, reported                                                                                                                                                      |
+
+A function-pointer member or typedef, including one after a comma as in
+`int (*open)(int), (*close)(int);`, is stored as a pointer to a function
+type in `/rea_caller_defined`, named `owner.member` for a member (for example
+`/rea_caller_defined/ops.open`) and `typedef.target` for a typedef. Ghidra's
+parser names these types by a counter that restarts with every call, so REA
+names them by declarator: repeating an equivalent definition reports
+`unchanged`, and a differing one is refused. `inspect_native_data_type`
+reports such a type with `kind: "function"` and its `function_definition`:
+return type, parameters with their names, `varargs` and `calling_convention`.
+A calling convention written before the parenthesis, as in
+`int __stdcall (*name)(int)`, is stored by name as written, whether or not the
+program's compiler specification defines it; inside the parenthesis Ghidra
+drops it, so REA refuses that spelling. `()` is refused because Ghidra stores
+it as `(void)`; write `(void)`. A parameter that is itself a function pointer
+gets a function type named after the parameter, so REA refuses it: define a
+typedef for the inner function pointer and use its name. In a signature or
+a function pointer, a repeated parameter name is refused, and so is a
+parameter written as a bare name that is not a type, such as a K&R identifier
+list, which Ghidra would store as `undefined`.
+
+These qualifiers have no representation in Ghidra's type system and no
+effect on layout or storage, so the stored type and the readback omit them.
+The bridge recognizes every spelling Ghidra 12.2's C grammar accepts, such as
+`__const` or `_restrict`, and reports the qualifier by its plain name.
+The result's `dropped_qualifiers` lists each one with its line and column, and
+for a signature its zero-based `parameter_index` (`null` for the return type),
+so the omission is visible without comparing the text with the readback.
+Ghidra evaluates enum values, array sizes and bit-field widths with its own
+rules, which differ from C: it does not evaluate names such as an earlier
+enumerator (`MASK = FIRST << 4` would be stored as the next implicit value),
+it truncates values outside `int`, and comparisons and unsigned arithmetic
+give other results (`~0U >> 1` is -1). REA therefore admits each one only as a
+single decimal or hex integer literal within `int`, optionally negated,
+without suffixes, and refuses anything else at its position: write the
+computed value. Ghidra's parser can report a diagnostic, such as a repeated enumerator it
+drops, and still succeed; REA refuses such text with Ghidra's message, which
+names the nearest type but has no line or column. Parsing runs inside the
+edit's own transaction, because Ghidra's parser fills an existing empty
+composite of the same name in place, so a refusal leaves even such a type
+unchanged. A
+type name that exists in several categories is accepted only when every type
+of that name is equivalent; otherwise the refusal lists their category paths,
+because C text cannot select one.
+
+Ghidra's C parser cannot be cancelled, so REA bounds the text it parses. Each
+bound has a per-call parameter, and a refusal names it with its effective
+value, range and the measured need:
+
+| Parameter                                             | Default | Range    | Bounds                              |
+| ----------------------------------------------------- | ------: | -------- | ----------------------------------- |
+| `signature_max_utf16` (`annotate_native_function`)    |    2048 | 16..4096 | UTF-16 code units of `signature`    |
+| `declarations_max_utf16` (`define_native_data_types`) |    4096 | 16..8192 | UTF-16 code units of `declarations` |
+| `parenthesis_max_depth` (`annotate_native_function`)  |       8 | 1..12    | Parenthesis nesting in `signature`  |
+
+The maxima follow measured parse times on Ghidra 12.2: the slowest admitted
+text at the maxima took about 7 seconds (a single chain of 8192 pointer
+declarators); twice the length took 100 seconds. Each level of parentheses
+doubles the time (12 levels took 2.2 seconds). Split a larger set
+of definitions across calls. Both edits invalidate immutable analysis
+snapshots and persist exactly as names and comments do: saved on normal close
+in checkpoint mode, discarded otherwise. Cancelling an active edit stops the
+Ghidra process without saving it.
 For a before-and-after `compare_functions` in MCP, call `analyze_function`
 before and after the edit while the session remains open; the annotation Evidence
 itself is not an `analyze_function` input. If comparing after close, export the

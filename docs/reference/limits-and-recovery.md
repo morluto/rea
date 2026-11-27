@@ -90,6 +90,20 @@ Frida process discovery applies `limit` and `offset` after enumerating the
 selected device. It reports `total_processes` and `truncated`. Moving to another
 page runs a fresh discovery on that device.
 
+`inspect_gpu_code_objects` accepts per-call budgets `max_object_bytes` (default
+and maximum 128 MiB), `max_work_bytes` (default and maximum 512 MiB, covering
+payload input, decoded output, native-section reads, and AMDGPU note/structure
+reads), `max_report_bytes` (default and maximum 16 MiB), `max_metadata_bytes`
+(default and maximum 8 MiB), `max_structure_bytes` (default 16 MiB, up to
+512 MiB), `max_parser_entries` (default and maximum 65,536),
+`max_parser_visits` (default and maximum 262,144), and `max_token_bytes`
+(default and maximum 65,536). Top-level refusals report `details.limit`
+(`control_kind: "parameter"`), per-object payload/metadata/visit limits retain
+sibling observations with `inspection: "capacity"` naming the budget, and
+recursive container/AMDGPU MessagePack nesting caps and the 128-token PTX
+single-parameter syntax limit remain fixed ceilings; see
+[GPU code objects](../gpu-code-objects.md#work-and-limits).
+
 Graph tools accept per-call traversal bounds (`max_depth` and `max_nodes` on
 `get_call_graph` and `trace_call_path`).
 
@@ -119,8 +133,8 @@ import and lambda rows combined; default 65,536, at most 1,048,576).
 ### Native table structure budget
 
 `inspect_elf_unwind_ranges`, `inspect_kernel_module`, `inspect_elf_debug_link`,
-`inspect_dwarf_units`, `inspect_binary_hardening`, `inspect_native_initializers`
-and `inspect_native_exports` accept `max_structure_bytes` (CLI
+`inspect_dwarf_units`, `inspect_binary_hardening`, `inspect_native_initializers`,
+`inspect_gpu_code_objects` and `inspect_native_exports` accept `max_structure_bytes` (CLI
 `--max-structure-bytes`, 64 bytes to 512 MiB, default 16 MiB). It bounds one
 header, section, load-command or ELF dynamic-directory table read, and,
 separately, the section names decoded from the section-name table, before the

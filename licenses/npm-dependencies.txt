@@ -3120,11 +3120,11 @@ kind-of@6.0.3 | development | MIT
   Package: https://www.npmjs.com/package/kind-of/v/6.0.3
   Archive: https://registry.npmjs.org/kind-of/-/kind-of-6.0.3.tgz
   Integrity: sha512-dcS1ul+9tmeD95T+x28/ehLgd9mENa3LsvDTtzm3vyBEO7RPptvAD+t44WVXaUjTBRcrpFeFlC8WCruUR456hw==
-knip@6.46.1 | development | ISC
+knip@6.47.0 | development | ISC
   Lockfile path: node_modules/knip
-  Package: https://www.npmjs.com/package/knip/v/6.46.1
-  Archive: https://registry.npmjs.org/knip/-/knip-6.46.1.tgz
-  Integrity: sha512-5/ajqjZfmuv8O74+McrKBOSArKG6tsUgy6yJird36VZh9HiUq75qY4U39uqf9wjchEUOLrStuOZpFP057CZFRw==
+  Package: https://www.npmjs.com/package/knip/v/6.47.0
+  Archive: https://registry.npmjs.org/knip/-/knip-6.47.0.tgz
+  Integrity: sha512-nYmQnk0YqDXIJrYViJz88c8xw3tBDkpuAmofo58EkVPnKr6DnRKYtf6oIqcGVHZvXDE+gtmFuYx277/QsWng+A==
 lightningcss@1.33.0 | development | MPL-2.0
   Lockfile path: node_modules/lightningcss
   Package: https://www.npmjs.com/package/lightningcss/v/1.33.0
