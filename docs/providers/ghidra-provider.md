@@ -216,12 +216,15 @@ discards them.
 and the bridge decompiles each such window with up to eight native decompiler
 processes before answering them one by one. Results, per-function failures,
 the journal and file order are the same as a serial export. The gain depends on
-the target: one very large function still bounds its window. A function that
-fails or reaches the decompile deadline inside a window is attempted again by
-its own request, so its failure is reported as in a serial export and a
-configured deadline can elapse twice for that function. The pooled decompiler
-processes are separate from the session's own and stay until a Program edit, a
-payload-limit change or shutdown.
+the target: one very large function still bounds its window. The request that
+carries a window waits for it only within its own decompile deadline and
+reports the window's outcome for its function, including a failure or timeout,
+without decompiling it again. Functions still running when that deadline has
+passed are cancelled and decompiled by their own requests, which report any
+failure as a serial export does. Selectors beyond one window are ignored. The
+pooled decompiler processes run on REA's own threads, separate from the
+session's decompiler and Ghidra's shared pools, and are released after 30
+seconds without a window, a Program edit, a payload-limit change or shutdown.
 
 If an offset maps to loaded target bytes but no procedure starts at or contains
 the mapped address, the failure preserves both the original file offset and
