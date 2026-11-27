@@ -19,6 +19,11 @@ import {
 } from "./artifactIdentity.js";
 import { createEvidence } from "./evidence.js";
 import { parseArtifactInventoryEvidence } from "./artifactInventoryEvidence.js";
+import {
+  artifactInventorySummarySchema,
+  projectArtifactInventoryView,
+} from "./analysisView/artifactInventoryView.js";
+import { resolveArtifactReaderLimits } from "./artifactReaderLimits.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 
 const inventoryCarrier = (inventory: ArtifactInventoryResult) =>
@@ -1179,6 +1184,62 @@ it("reports stored directory filename spelling changes on symlinks and unavailab
         logical_path: nfc,
         classification: "changed",
         dimensions: ["metadata", "availability"],
+      }),
+    ],
+  });
+});
+
+it("reads, projects, and compares saved inventories whose effective_limits omit android_dtbo", () => {
+  // Every current group except the later android_dtbo policy.
+  const { android_dtbo: _dtbo, ...historicalLimits } =
+    resolveArtifactReaderLimits();
+  const makeHistoricalEvidence = (secondContent: string) => {
+    const base = relationInventory(secondContent);
+    const inventory = artifactInventoryResultSchema.parse({
+      ...base.inventory,
+      effective_limits: historicalLimits,
+    });
+    return commit(inventory);
+  };
+
+  const left = makeHistoricalEvidence("2");
+  const right = makeHistoricalEvidence("3");
+
+  const parsedLeft = parseArtifactInventoryEvidence(left);
+  expect(parsedLeft.inventory.effectiveLimits).toEqual(historicalLimits);
+  expect(
+    Object.hasOwn(parsedLeft.inventory.effectiveLimits!, "android_dtbo"),
+  ).toBe(false);
+
+  const summaryView = projectArtifactInventoryView(
+    {
+      predicateType: left.predicate_type,
+      evidenceId: left.evidence_id,
+      operation: "inventory_artifact",
+      subject: left.subject,
+      normalizedResult: left.normalized_result,
+      limitations: left.limitations,
+    },
+    { kind: "summary" },
+  );
+  expect(summaryView.ok).toBe(true);
+  if (summaryView.ok && summaryView.value.kind === "summary") {
+    const summary = artifactInventorySummarySchema.parse(
+      summaryView.value.summary,
+    );
+    expect(summary.effective_limits).toEqual(historicalLimits);
+    expect(Object.hasOwn(summary.effective_limits!, "android_dtbo")).toBe(
+      false,
+    );
+  }
+
+  const compared = compareArtifacts(left, right);
+  expect(compared).toMatchObject({
+    status: "changed",
+    changes: [
+      expect.objectContaining({
+        logical_path: "two.js",
+        classification: "changed",
       }),
     ],
   });

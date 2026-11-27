@@ -269,6 +269,7 @@ export interface ArtifactReader {
     | "nso"
     | "nro"
     | "android-boot-image"
+    | "android-dtbo"
     | "android-ota-payload"
     | "android-vbmeta"
     | "android-sparse-image"

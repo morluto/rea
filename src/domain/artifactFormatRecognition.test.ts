@@ -207,6 +207,14 @@ it("recognizes Android boot and vendor boot image prefixes", () => {
     });
 });
 
+it("recognizes Android DTBO partition table magic prefixes", () => {
+  expect(recognize(Buffer.from([0xd7, 0xb7, 0xab, 0x1e]))).toMatchObject({
+    state: "recognized",
+    format: "android-dtbo",
+  });
+  expect(recognize(Buffer.from([0xd7, 0xb7, 0xab]))).toBeUndefined();
+});
+
 it("recognizes a standalone AVB0 vbmeta image and leaves an AVBf footer", () => {
   expect(recognize(sampleAndroidVbmeta())).toMatchObject({
     state: "recognized",

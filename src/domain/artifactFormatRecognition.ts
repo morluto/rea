@@ -1,5 +1,6 @@
 import type { ArtifactFormatId } from "./artifactGraph.js";
 import { hasAndroidBootImageMagic } from "./androidBootImageFormat.js";
+import { hasAndroidDtboMagic } from "./firmware/androidDtboFormat.js";
 import { hasBinaryPlistSignature } from "./apple/appleArchiveFormat.js";
 import { hasDfuSePrefix, isDfuSeFile } from "./firmware/dfuse.js";
 import { ESP8266_REFUSAL, recognizeEspImage } from "./firmware/espImage.js";
@@ -75,6 +76,7 @@ export type RecognizedArtifactFormat = Extract<
   | "nso"
   | "nro"
   | "android-boot-image"
+  | "android-dtbo"
   | "android-ota-payload"
   | "android-vbmeta"
   | "android-sparse-image"
@@ -216,6 +218,7 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     when("nso", hasNsoMagic),
     when("nro", hasNroMagic),
     when("android-boot-image", hasAndroidBootImageMagic),
+    when("android-dtbo", hasAndroidDtboMagic),
     when("android-vbmeta", hasAndroidVbmetaMagic),
     ({ prefix }) => {
       const ota = recognizeAndroidOtaPayload(prefix);

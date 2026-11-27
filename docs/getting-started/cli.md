@@ -489,6 +489,9 @@ See [Android Verified Boot vbmeta images](../guides/firmware/android-vbmeta.md)
 for the header, descriptors, stored public key, and the fact that nothing is
 verified.
 
+Standalone `dtbo.img` partition tables (`0xd7b7ab1e`) can also be inspected
+and extracted with `inspect-artifact` and `extract-artifact`; see [Android DTBO partition images](../android-dtbo.md).
+
 Inventory and extract an ISO 9660 disc image without mounting it:
 
 ```sh
