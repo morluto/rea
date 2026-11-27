@@ -2,7 +2,7 @@ import { once } from "node:events";
 import { afterEach, expect, it, vi } from "vitest";
 import { waitFor } from "../../../support/testWait.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { access, readFile, readdir, rm, writeFile } from "node:fs/promises";
 
 import { join } from "node:path";
@@ -22,11 +22,30 @@ import {
   type GhidraLauncher,
 } from "../../../../src/ghidra/GhidraLauncher.js";
 import { GhidraFixtureLauncher } from "./ghidraClient.fixture.js";
+import type { GhidraCheckpointSaveWait } from "../../../../src/config/ghidraCheckpointSaveWait.js";
+import { acquireOwnedLease } from "../../../../src/process/OwnedLease.js";
+import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
+import { projectSessionError } from "../../../../src/ghidra/GhidraSessionErrorProjection.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return { ...actual, rm: vi.fn(actual.rm) };
 });
+vi.mock("../../../../src/process/OwnedLease.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("../../../../src/process/OwnedLease.js")
+    >();
+  return { ...actual, acquireOwnedLease: vi.fn(actual.acquireOwnedLease) };
+});
+const restoreLeases = async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../../src/process/OwnedLease.js")
+  >("../../../../src/process/OwnedLease.js");
+  vi.mocked(acquireOwnedLease)
+    .mockReset()
+    .mockImplementation(actual.acquireOwnedLease);
+};
 
 const clients: GhidraClient[] = [],
   launchers: GhidraFixtureLauncher[] = [];
@@ -36,6 +55,7 @@ afterEach(async () => {
       "node:fs/promises",
     );
   vi.mocked(rm).mockReset().mockImplementation(actual.rm);
+  await restoreLeases();
   for (const launcher of launchers.splice(0))
     for (const child of launcher.processes)
       if (child.connected) child.send("release_checkpoint");
@@ -110,6 +130,7 @@ async function fixture(
 async function peer(
   f: Awaited<ReturnType<typeof fixture>>,
   launcher: GhidraLauncher = fixtureLauncher(),
+  checkpointSaveWait?: GhidraCheckpointSaveWait,
 ) {
   const selection = await resolveGhidraCheckpoint(
     f.root,
@@ -125,10 +146,16 @@ async function peer(
     profileDigest: profile.digest,
     checkpoint: selection,
     startupTimeoutMs: 10_000,
+    ...(checkpointSaveWait === undefined ? {} : { checkpointSaveWait }),
   });
   clients.push(client);
   return { client, selection };
 }
+const packed = async (root: string, contents: string) => {
+  const path = join(root, `${randomUUID()}.gzf`);
+  await writeFile(path, contents);
+  return path;
+};
 function fixtureLauncher() {
   const launcher = new GhidraFixtureLauncher("checkpoint");
   launchers.push(launcher);
@@ -361,6 +388,93 @@ it.skipIf(process.platform === "win32")(
     const reopened = await peer(f);
     expect(reopened.selection.state.kind).toBe("retained");
     expect((await reopened.client.start()).ok).toBe(true);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "reports an initial analysis superseded by another session's edits as a reopen, not as lost edits",
+  async () => {
+    const f = await fixture();
+    // Another session publishes an initial checkpoint and then edits while
+    // this session is still analyzing the unseen target.
+    const analyzing = fixtureLauncher();
+    const launcher: GhidraLauncher = {
+      launch: async (session) => {
+        const writer = new GhidraCheckpoint(
+          f.selection,
+          new ArtifactResourceScope(),
+        );
+        await writer.admit("writer");
+        await writer.publish(
+          await packed(f.root, "initial by another session"),
+        );
+        await writer.publish(await packed(f.root, "edited by another session"));
+        return analyzing.launch(session);
+      },
+    };
+    const late = await peer(f, launcher);
+    const started = await late.client.start();
+    if (started.ok) throw new Error("the superseded initial save succeeded");
+    expect(started.error.cause).toBeInstanceOf(GhidraCheckpointSupersededError);
+    expect(started.error.cause).toMatchObject({ stage: "restore" });
+    const projected = projectAnalysisError(
+      projectSessionError("list_documents", started.error, {
+        limits: { ghidraStartupTimeoutMs: 10_000 },
+        programName: undefined,
+        source: "owned-checkpoint",
+      }),
+    );
+    expect(projected).toMatchObject({
+      code: "capability_unavailable",
+      retryable: false,
+    });
+    expect(projected.message).toMatch(/reopen the target/);
+    expect(projected.message).not.toMatch(
+      /edits were not saved|again discards/,
+    );
+    const reopened = await peer(f);
+    expect((await reopened.client.start()).ok).toBe(true);
+    expect(reopened.client.checkpointRestore()?.sha256).toBe(
+      createHash("sha256").update("edited by another session").digest("hex"),
+    );
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "reports a close that waited out another session's publication with its save-wait limit",
+  async () => {
+    const f = await fixture();
+    const wait = { waitMs: 100, source: "setting" } as const;
+    const writer = await peer(f, fixtureLauncher(), wait);
+    expect((await writer.client.start()).ok).toBe(true);
+    expect((await rename(writer.client)).ok).toBe(true);
+    vi.mocked(acquireOwnedLease).mockResolvedValue({
+      acquired: false,
+      owner: { runId: "publisher", processId: 4242 },
+    });
+    const busy = await writer.client.close();
+    await restoreLeases();
+    if (busy.ok) throw new Error("the close did not wait for the lease");
+    expect(projectAnalysisError(busy.error)).toMatchObject({
+      code: "cleanup_incomplete",
+      remediation: {
+        action: expect.stringMatching(/^Wait for that session's save/),
+      },
+      details: {
+        limit: {
+          control_kind: "environment",
+          environment: "REA_GHIDRA_CHECKPOINT_SAVE_WAIT_MS",
+          effective_value: 100,
+        },
+      },
+    });
+    // Contention is retryable: the next close saves the edits.
+    expect((await writer.client.close()).ok).toBe(true);
+    expect(
+      JSON.parse(
+        await readFile(join(f.selection.directory, "current.json"), "utf8"),
+      ),
+    ).toMatchObject({ source: { kind: "retained" } });
   },
 );
 

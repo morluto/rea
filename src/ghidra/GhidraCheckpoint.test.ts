@@ -291,8 +291,15 @@ it.skipIf(process.platform === "win32").each(["restored", "analyzed"] as const)(
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const refused = await stale.publish(staged).catch((cause) => cause);
       expect(refused).toBeInstanceOf(GhidraCheckpointSupersededError);
-      expect(refused).toMatchObject({ stage: "save" });
-      expect(refused.message).toMatch(/were not saved/);
+      // A session that only analyzed has no edits to lose; it reopens.
+      expect(refused).toMatchObject({
+        stage: start === "analyzed" ? "restore" : "save",
+      });
+      expect(refused.message).toMatch(
+        start === "analyzed" ? /reopen the target/ : /were not saved/,
+      );
+      if (start === "analyzed")
+        expect(refused.message).not.toMatch(/edits were not saved/);
       expect(await readFile(manifest, "utf8")).toBe(committed);
       expect((await readdir(f.selection.directory)).sort()).toEqual(files);
       expect(stale.hasResources).toBe(false);
@@ -373,6 +380,53 @@ it.skipIf(process.platform === "win32")(
     await waiting;
     expect(other.observation.source).toEqual(f.owner.observation.source);
     expect(await programs(f.selection.directory)).toHaveLength(1);
+  },
+);
+
+it.skipIf(process.platform === "win32").each([
+  {
+    kind: "owner_unverified",
+    reason: "owner closed without a complete response",
+  },
+  { kind: "recovery_busy", path: "/tmp/lease.sock.recovery" },
+] as const)(
+  "keeps waiting when a lease probe races the owner's release ($kind)",
+  async (race) => {
+    const f = await fixture();
+    await f.owner.admit("first");
+    const leases = await vi.importActual<
+      typeof import("../process/OwnedLease.js")
+    >("../process/OwnedLease.js");
+    // The owner released while this probe read its identity, or another
+    // waiter was recovering the released socket: both end within the wait.
+    vi.mocked(acquireOwnedLease).mockImplementationOnce(async (input) => {
+      throw input.failure(race);
+    });
+    await f.owner.publish(f.packed);
+    expect(f.owner.observation.state).toEqual({ kind: "initial-analysis" });
+    expect(vi.mocked(acquireOwnedLease)).toHaveBeenCalledTimes(2);
+    // The same failure still surfaces once the wait is exhausted.
+    const session = new GhidraCheckpoint(
+      await resolveGhidraCheckpoint(f.root, target, profile, f.resources),
+      f.resources,
+      { waitMs: 50, source: "setting" },
+    );
+    owners.push(session);
+    await session.admit("second");
+    vi.mocked(acquireOwnedLease).mockImplementation(async (input) => {
+      throw input.failure(race);
+    });
+    await expect(
+      session.publish(await edit(f, "edited")),
+    ).rejects.toMatchObject({
+      settings: [
+        {
+          setting: "REA_GHIDRA_CHECKPOINT_DIR",
+          constraint: expect.stringContaining(`lease ${race.kind}`),
+        },
+      ],
+    });
+    vi.mocked(acquireOwnedLease).mockImplementation(leases.acquireOwnedLease);
   },
 );
 
@@ -664,11 +718,32 @@ it.skipIf(process.platform === "win32")(
         message: "controlled cleanup failure",
       }),
     });
+    // The retained file is not a publication: the lease is released, so
+    // another session's save does not wait on this cleanup.
+    expect(f.owner.cleanupResources).toEqual([
+      join(f.selection.directory, old.file),
+    ]);
+    const peer = new GhidraCheckpoint(
+      await resolveGhidraCheckpoint(f.root, target, profile, f.resources),
+      f.resources,
+      { waitMs: 50, source: "setting" },
+    );
+    owners.push(peer);
+    await peer.admit("peer");
+    vi.mocked(acquireOwnedLease).mockClear();
+    await peer.publish(await edit(f, "peer-edited"));
+    expect(vi.mocked(acquireOwnedLease)).toHaveBeenCalledTimes(1);
+    const peerManifest = await readFile(
+      join(f.selection.directory, "current.json"),
+      "utf8",
+    );
+    expect(peerManifest).not.toEqual(committed);
     vi.mocked(rm).mockImplementation(actual.rm);
+    // The owner's retry finishes its cleanup without saving `next` again.
     await f.owner.publish(next);
     expect(
       await readFile(join(f.selection.directory, "current.json"), "utf8"),
-    ).toEqual(committed);
+    ).toEqual(peerManifest);
     await f.owner.retryCleanup();
     expect(f.owner.hasResources).toBe(false);
   },

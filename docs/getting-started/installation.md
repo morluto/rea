@@ -1689,10 +1689,13 @@ one session at a time.
 
 Two related refusals are not configuration faults and leave the checkpoint
 intact. A session whose selected checkpoint was replaced before its Ghidra
-process restored it reports `capability_unavailable` with `retryable: false`;
-reopen the target. A save that waits its whole save wait for another session's
-publication reports a retryable `capability_unavailable` naming that session;
-repeat the call.
+process restored it, or whose initial analysis was overtaken by another
+session's saved edits, reports `capability_unavailable` with
+`retryable: false`; reopen the target. A save that waits its whole save wait
+for another session's publication names that session. During startup it
+reports a retryable `capability_unavailable`; during `close_binary` it reports
+`cleanup_incomplete` with `recovery.kind=retry_cleanup` and keeps the session
+and its edits. Repeat the call.
 
 The save wait is 30,000 ms by default. Set
 `REA_GHIDRA_CHECKPOINT_SAVE_WAIT_MS` to an integer from 50 to 600,000

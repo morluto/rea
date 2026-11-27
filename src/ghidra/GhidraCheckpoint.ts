@@ -23,7 +23,11 @@ import {
   sameRegularFileState,
   RegularFileChangedError,
 } from "../filesystem/RegularFile.js";
-import { acquireOwnedLease, type OwnedLease } from "../process/OwnedLease.js";
+import {
+  acquireOwnedLease,
+  type LeaseAcquisition,
+  type OwnedLease,
+} from "../process/OwnedLease.js";
 import {
   DEFAULT_GHIDRA_CHECKPOINT_SAVE_WAIT,
   GHIDRA_CHECKPOINT_SAVE_POLL_MS,
@@ -412,28 +416,48 @@ export class GhidraCheckpoint {
     signal?: AbortSignal,
   ): Promise<OwnedLease> {
     const deadline = Deadline.after(this.saveWait.waitMs);
+    // An owner that releases while a probe reads its identity, or another
+    // waiter recovering the released socket, ends within the wait; any other
+    // lease failure, or one that outlasts the wait, is reported unchanged.
+    const handoff = new WeakSet<Error>();
     for (;;) {
       assertArtifactReadActive(signal);
-      const acquired = await acquireOwnedLease({
-        identity: {
-          kind: "ghidra-checkpoint-v1",
-          directory: admission.directory,
-        },
-        runId: admission.runId,
-        directory: join(
-          "/tmp",
-          `rea-ghidra-checkpoint-leases-${process.getuid?.() ?? "user"}`,
-        ),
-        resources: this.resources,
-        failure: (reason, cause) =>
-          failure(
-            admission.directory,
-            `lease ${reason.kind}${cause instanceof Error ? `: ${cause.message}` : ""}`,
-            cause,
+      let acquired: LeaseAcquisition | undefined;
+      try {
+        acquired = await acquireOwnedLease({
+          identity: {
+            kind: "ghidra-checkpoint-v1",
+            directory: admission.directory,
+          },
+          runId: admission.runId,
+          directory: join(
+            "/tmp",
+            `rea-ghidra-checkpoint-leases-${process.getuid?.() ?? "user"}`,
           ),
-      });
-      if (acquired.acquired) return acquired.lease;
-      if (deadline.expired())
+          resources: this.resources,
+          failure: (reason, cause) => {
+            const error = failure(
+              admission.directory,
+              `lease ${reason.kind}${cause instanceof Error ? `: ${cause.message}` : ""}`,
+              cause,
+            );
+            if (
+              reason.kind === "owner_unverified" ||
+              reason.kind === "recovery_busy"
+            )
+              handoff.add(error);
+            return error;
+          },
+        });
+      } catch (cause: unknown) {
+        if (
+          !(cause instanceof Error && handoff.has(cause)) ||
+          deadline.expired()
+        )
+          throw cause;
+      }
+      if (acquired?.acquired === true) return acquired.lease;
+      if (acquired !== undefined && deadline.expired())
         throw new GhidraCheckpointBusyError(
           admission.directory,
           acquired.owner,
@@ -487,8 +511,13 @@ export class GhidraCheckpoint {
         this.#publishedInput = path;
       } else if (sameSource(current, previous))
         await this.#replace(path, previous, signal);
+      // A session that never published holds only its initial analysis and no
+      // edits, so it is a superseded selection that a reopen restores.
       else
-        throw new GhidraCheckpointSupersededError(admission.directory, "save");
+        throw new GhidraCheckpointSupersededError(
+          admission.directory,
+          previous === null ? "restore" : "save",
+        );
     } catch (cause: unknown) {
       primary = cause;
       failed = true;
@@ -570,27 +599,37 @@ export class GhidraCheckpoint {
       );
   }
 
-  /** Remove owned staging and superseded files, then release the publication lease. */
+  /**
+   * Remove owned staging and superseded files and release the publication
+   * lease. The manifest names none of these files and the lease serializes
+   * only publication, so a failed removal is retained without holding the
+   * lease that other sessions' saves wait on.
+   */
   async retryCleanup(): Promise<void> {
+    let removal: unknown;
     for (const path of this.#pendingRemoval) {
       try {
         await rm(path, { force: true });
         this.#pendingRemoval.delete(path);
       } catch (cause: unknown) {
-        const error = new ProviderCleanupError(
-          "ghidra",
-          [...this.#pendingRemoval],
-          {
-            reason: `Checkpoint file cleanup failed: ${errorMessage(cause)}`,
-            checkpoint: this.observation,
-          },
-          { cause },
-        );
-        throw this.#cleanupRelease.bind(error);
+        removal = cause;
+        break;
       }
     }
     await this.#lease?.release();
     this.#lease = undefined;
+    if (removal !== undefined) {
+      const error = new ProviderCleanupError(
+        "ghidra",
+        [...this.#pendingRemoval],
+        {
+          reason: `Checkpoint file cleanup failed: ${errorMessage(removal)}`,
+          checkpoint: this.observation,
+        },
+        { cause: removal },
+      );
+      throw this.#cleanupRelease.bind(error);
+    }
     this.#cleanupRelease.confirm();
     this.#cleanupRelease = new AnalysisCleanupRelease();
   }

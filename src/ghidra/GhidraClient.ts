@@ -145,7 +145,10 @@ import {
   GhidraCheckpointSupersededError,
   type GhidraPackedProgram,
 } from "./GhidraCheckpoint.js";
-import { ghidraCheckpointSaveWaitRecovery } from "../config/ghidraCheckpointSaveWait.js";
+import {
+  ghidraCheckpointSaveWaitLimit,
+  ghidraCheckpointSaveWaitRecovery,
+} from "../config/ghidraCheckpointSaveWait.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
@@ -989,6 +992,7 @@ export class GhidraClient {
           : cause instanceof GhidraCheckpointBusyError
             ? {
                 remediationAction: ghidraCheckpointSaveWaitRecovery(cause.wait),
+                limit: ghidraCheckpointSaveWaitLimit(cause.wait),
               }
             : {}),
       },

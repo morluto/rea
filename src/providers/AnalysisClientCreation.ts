@@ -291,10 +291,14 @@ export class AnalysisClientCreation {
           cause,
           operation: "create_analysis_client",
           // The client knows what its retained close needs; keep that advice
-          // on the failure the caller reads.
+          // and the control that stopped the close on the failure the caller
+          // reads.
           ...(cause instanceof ProviderAdapterError &&
           cause.remediationAction !== undefined
             ? { remediationAction: cause.remediationAction }
+            : {}),
+          ...(cause instanceof AnalysisError && cause.limit !== undefined
+            ? { limit: cause.limit }
             : {}),
         },
       );
