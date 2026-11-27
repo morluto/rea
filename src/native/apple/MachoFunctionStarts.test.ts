@@ -871,6 +871,21 @@ it("reads data-in-code offsets as header-relative addresses, not file offsets", 
     vmaddr: "0x204",
   });
   expect(object.data_in_code_entries[0]!.issues).not.toContain("unmapped");
+  // clang places an object's link-edit data after its sections, outside any
+  // segment, so the table is not in __LINKEDIT and that is not an issue.
+  expect(object.data_in_code).toMatchObject({ in_linkedit: false });
+  expect(object.coverage.outside_linkedit).toBe(0);
+  expect(object.limitations).not.toContain(TEXT.outsideData);
+  // A linked image still reports a table outside its __LINKEDIT.
+  const linkedOutside = await parse(
+    machoFunctionStartsImage({
+      data: {
+        entries: [{ offset: 0x1080, length: 4, kind: 1 }],
+        offset: 0x100,
+      },
+    }),
+  );
+  expect(linkedOutside.coverage.outside_linkedit).toBe(1);
 });
 
 it("keeps an empty section name instead of rejecting the report", async () => {
