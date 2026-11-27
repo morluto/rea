@@ -1276,6 +1276,7 @@
 * **artifacts:** share entry collection in ZIP reader tests ([#14821](https://github.com/morluto/rea/issues/14821)) ([0cc5907](https://github.com/morluto/rea/commit/0cc5907e702340a653af5b31498bc84fc1f022e8))
 * **artifacts:** share inventory occurrence lookup across comparisons ([#14602](https://github.com/morluto/rea/issues/14602)) ([5e33cf3](https://github.com/morluto/rea/commit/5e33cf33e39870a56e8d8b03e7901e7112a8b478))
 * **artifacts:** share inventory view and reader fixtures ([#14380](https://github.com/morluto/rea/issues/14380)) ([4255a96](https://github.com/morluto/rea/commit/4255a96e0fb227ff41314d860421e2f590135dcc))
+* **artifacts:** share macOS package reader fixtures ([#14853](https://github.com/morluto/rea/issues/14853)) ([52e5b41](https://github.com/morluto/rea/commit/52e5b416b1ce59c9899636e53162b898af387549))
 * **artifacts:** share temporary fixture file writes ([#14540](https://github.com/morluto/rea/issues/14540)) ([7e12b4f](https://github.com/morluto/rea/commit/7e12b4f32d172ef6ff993461d54506a278743de4))
 * **artifacts:** share thin Mach-O section fixtures ([#14480](https://github.com/morluto/rea/issues/14480)) ([2e1cc32](https://github.com/morluto/rea/commit/2e1cc32586c60ae59c0bea66ddd091be7f49df9b))
 * **artifacts:** share UBI reader fixture helpers ([#14809](https://github.com/morluto/rea/issues/14809)) ([26b4154](https://github.com/morluto/rea/commit/26b415462fbe9b3740d5e250771efd2fc89a47d1))
