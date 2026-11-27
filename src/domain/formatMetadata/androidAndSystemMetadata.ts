@@ -322,6 +322,13 @@ export type AndroidBootImageEntryMetadata = z.infer<
   typeof androidBootImageEntryMetadataSchema
 >;
 
+/** Raw source bytes of an auditd token that is not valid UTF-8. */
+const auditdHex = z.string().regex(/^(?:[0-9a-f]{2})+$/u);
+const auditdTypeCount = z.strictObject({
+  type: z.string(),
+  type_hex: auditdHex.exactOptional(),
+  count: offset,
+});
 /** auditd text-log facts: record and event totals plus a sampled event window. */
 export const auditdLogMetadataSchema = z.strictObject({
   kind: z.literal("auditd-log"),
@@ -339,9 +346,7 @@ export const auditdLogMetadataSchema = z.strictObject({
   event_count_lower_bound: z.boolean(),
   /** True when a tail identity was dropped, so no bound can be stated. */
   event_count_identity_omitted: z.boolean(),
-  event_type_counts: z.array(
-    z.strictObject({ type: z.string(), count: offset }),
-  ),
+  event_type_counts: z.array(auditdTypeCount),
   malformed_line_count: offset,
   malformed_lines: z
     .array(
@@ -349,6 +354,7 @@ export const auditdLogMetadataSchema = z.strictObject({
         line: offset,
         reason: z.string(),
         excerpt: z.string(),
+        excerpt_hex: auditdHex.exactOptional(),
       }),
     )
     .max(AUDITD_INLINE_DIAGNOSTIC_LIMIT),
@@ -361,14 +367,16 @@ export const auditdLogMetadataSchema = z.strictObject({
       z.strictObject({
         event_id: z.string(),
         node: z.string().nullable(),
+        node_hex: auditdHex.exactOptional(),
         event_seconds: offset,
         event_millis: offset,
         serial: offset,
         record_count: offset,
         record_types: z
-          .array(z.strictObject({ type: z.string(), count: offset }))
+          .array(auditdTypeCount)
           .max(AUDITD_INLINE_EVENT_TYPE_LIMIT),
         record_types_omitted: offset,
+        record_types_omitted_exact: z.boolean(),
         first_line: offset,
         last_line: offset,
         duplicate_record_count: offset,

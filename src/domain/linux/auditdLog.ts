@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { boundedList } from "../boundedList.js";
 import { ok, err, type Result } from "../result.js";
+import { decodeUtf8PreservingBomOrNull } from "../strictUtf8.js";
 import type {
   RegionDecodeFailure,
   RegionDecoder,
@@ -54,6 +55,12 @@ export const AUDITD_ORDERING_NODE_LIMIT = 256;
  * counts are exact for the types it lists and omit any first seen past the cap.
  */
 export const AUDITD_RETAINED_EVENT_TYPE_LIMIT = 64;
+/**
+ * Distinct labels past the per-event type cap whose identity is retained so a
+ * repeat counts once. Past it the omitted-label count is a lower bound and the
+ * event says so, instead of a set that grows with the file.
+ */
+export const AUDITD_RETAINED_OMITTED_TYPE_LIMIT = 64;
 
 /** `type=... msg=audit(<sec>.<millis>:<serial>): <body>` — the auditd record header. */
 // The body is opaque bytes: a literal CR, U+2028 or U+2029 can reach it through
@@ -69,18 +76,32 @@ export interface AuditRecordDiagnostic {
   readonly reason: string;
   /** Bounded excerpt of the offending text, never the whole record. */
   readonly excerpt: string;
+  /** The excerpt's raw bytes, present only when they are not valid UTF-8. */
+  readonly excerpt_hex?: string;
 }
 
 export interface AuditEventTypeCount {
+  /** The label as UTF-8 text; lossy only when `type_hex` is present. */
   readonly type: string;
+  /** The label's raw bytes, present only when they are not valid UTF-8. */
+  readonly type_hex?: string;
   readonly count: number;
 }
 
 export interface AuditEventSummary {
-  /** `<node> <seconds>.<millis>:<serial>`, the identity records are joined on. */
+  /**
+   * `<node> <seconds>.<millis>:<serial>`, the identity records are joined on.
+   * The node part is the node's bytes with `%` and every byte outside printable
+   * ASCII percent-encoded, so distinct raw nodes never share an identity.
+   */
   readonly event_id: string;
-  /** The `node=` host the event's records name, or `null` when unqualified. */
+  /**
+   * The `node=` host as UTF-8 text, or `null` when unqualified. Lossy only when
+   * `node_hex` is present.
+   */
   readonly node: string | null;
+  /** The node's raw bytes, present only when they are not valid UTF-8. */
+  readonly node_hex?: string;
   readonly event_seconds: number;
   readonly event_millis: number;
   readonly serial: number;
@@ -92,6 +113,11 @@ export interface AuditEventSummary {
    * records are still counted in `record_count`.
    */
   readonly record_types_omitted: number;
+  /**
+   * False when more distinct labels passed the per-event cap than were retained,
+   * so `record_types_omitted` is a lower bound.
+   */
+  readonly record_types_omitted_exact: boolean;
   readonly first_line: number;
   readonly last_line: number;
   /** Record types the event repeats with the same `item=` index. */
@@ -165,6 +191,8 @@ interface PendingEvent {
    * two; its size is the omitted distinct-label count.
    */
   readonly omittedTypeLabels: Set<string>;
+  /** A label past the cap could not be retained, so the omitted count is a floor. */
+  omittedTypeLabelsSaturated: boolean;
   /** Whether this event is already in the affected-event tally. */
   typeOmissionCounted: boolean;
   /** Record digests already seen in this event, bounded by the record limit. */
@@ -176,14 +204,14 @@ interface PendingEvent {
 }
 
 const eventId = (event: PendingEvent): string =>
-  `${event.node === undefined ? "" : `${event.node} `}${String(event.seconds)}.${event.millisText.padStart(3, "0")}:${String(event.serial)}`;
+  `${event.node === undefined ? "" : `${identityNode(event.node)} `}${String(event.seconds)}.${event.millisText.padStart(3, "0")}:${String(event.serial)}`;
 
+// Ordered by the byte-faithful label, so the order is the source bytes' order
+// and a lossy display label cannot make two entries compare equal.
 const sortedCounts = (counts: Map<string, number>): AuditEventTypeCount[] =>
   [...counts]
-    .map(([type, count]) => ({ type, count }))
-    .sort((left, right) =>
-      left.type < right.type ? -1 : left.type > right.type ? 1 : 0,
-    );
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .map(([type, count]) => typeCount(type, count));
 
 /**
  * Decode a record line so distinct raw bytes stay distinct. A lossy UTF-8
@@ -193,10 +221,53 @@ const sortedCounts = (counts: Map<string, number>): AuditEventTypeCount[] =>
  * private block above U+00FF), so the mapping is one-to-one, `\S` still matches
  * every byte a token can hold, and no two inputs collide.
  */
-const decodeHeaderBytes = (bytes: Buffer): string => {
+const decodeHeaderBytes = (bytes: Uint8Array): string => {
   const codePoints: number[] = [];
   for (const byte of bytes) codePoints.push(byte < 0x80 ? byte : 0x100 + byte);
   return String.fromCodePoint(...codePoints);
+};
+
+/** The raw bytes a `decodeHeaderBytes` string stands for. */
+const headerBytes = (text: string): Buffer =>
+  Buffer.from(
+    Array.from(text, (character) => {
+      const code = character.codePointAt(0)!;
+      return code < 0x80 ? code : code - 0x100;
+    }),
+  );
+
+/**
+ * Project byte-faithful header text for the caller. Valid UTF-8 is returned as
+ * written; otherwise the text is a lossy decode and `hex` carries the source
+ * bytes, so the inventory never reports a value the record does not hold.
+ */
+const sourceText = (
+  text: string,
+): { readonly text: string; readonly hex?: string } => {
+  const bytes = headerBytes(text);
+  // A leading BOM is source text here, not a signature to strip.
+  const decoded = decodeUtf8PreservingBomOrNull(bytes);
+  return decoded === null
+    ? { text: bytes.toString("utf8"), hex: bytes.toString("hex") }
+    : { text: decoded };
+};
+
+/** Percent-encode a node for the join identity: injective and printable. */
+const identityNode = (text: string): string => {
+  let encoded = "";
+  for (const byte of headerBytes(text))
+    encoded +=
+      byte > 0x20 && byte < 0x7f && byte !== 0x25
+        ? String.fromCharCode(byte)
+        : `%${byte.toString(16).toUpperCase().padStart(2, "0")}`;
+  return encoded;
+};
+
+const typeCount = (type: string, count: number): AuditEventTypeCount => {
+  const label = sourceText(type);
+  return label.hex === undefined
+    ? { type: label.text, count }
+    : { type: label.text, type_hex: label.hex, count };
 };
 
 const failure = (message: string): RegionDecodeFailure => ({
@@ -246,6 +317,8 @@ class AuditdLogScanner {
   #typeSampleLimitedEventCount = 0;
   /** Events whose record types exceeded AUDITD_RETAINED_EVENT_TYPE_LIMIT. */
   #eventTypeOmittedEventCount = 0;
+  /** Events whose omitted labels exceeded AUDITD_RETAINED_OMITTED_TYPE_LIMIT. */
+  #omittedLabelSaturatedEventCount = 0;
   /** Every retained event seen out of sequence, not just the sampled ones. */
   #interleavedEventCount = 0;
   /** Records whose event already held its full digest quota, so not checked. */
@@ -319,51 +392,7 @@ class AuditdLogScanner {
         ),
       );
 
-    const limitations: string[] = [];
-    if (this.#malformedCount > 0)
-      limitations.push(
-        `${String(this.#malformedCount)} line(s) are not auditd records or name an unparseable event identity; their text is not represented`,
-      );
-    if (this.#outOfOrderCount > 0)
-      limitations.push(
-        `${String(this.#outOfOrderCount)} record(s) belong to an event that had already been superseded by a later event on the same node, so the file's own ordering is preserved rather than reordered`,
-      );
-    if (this.#orderingNodeOmitted)
-      limitations.push(
-        `ordering is tracked for at most ${String(AUDITD_ORDERING_NODE_LIMIT)} hosts; records of hosts past that cap are not compared with their own earlier events, so out_of_order_record_count is a lower bound`,
-      );
-    if (this.#duplicateCount > 0)
-      limitations.push(
-        `${String(this.#duplicateCount)} record(s) repeat a record already seen in the same event, byte for byte; each occurrence is counted and only the first name is retained`,
-      );
-    if (this.#beyondWindowEventCount > 0 || this.#skippedRecordCount > 0)
-      limitations.push(
-        `per-record identity is retained for the most recent ${String(AUDITD_RETAINED_EVENT_LIMIT)} events; ${String(this.#beyondWindowEventCount)} further event start(s) and ${String(this.#skippedRecordCount)} record(s) past that window are counted in the totals, but their duplicate, interleaving and event-start status is not established, so event_count can be an upper bound when the tail interleaves events`,
-      );
-    if (this.#tailIdentityOmitted)
-      limitations.push(
-        `the tail met more event identities than it retained past ${String(AUDITD_RETAINED_EVENT_LIMIT)}; past that point a repeated run may be an event already counted, so event_count is neither an upper nor a lower bound and no bound flag is set`,
-      );
-    else if (this.#tailOverCount)
-      limitations.push(
-        "the tail repeated an event across a noncontiguous run, so it was counted once per run; event_count is an upper bound, not an exact count",
-      );
-    if (this.#identityLimitedEventCount > 0)
-      limitations.push(
-        `duplicate detection retains at most ${String(AUDITD_RETAINED_RECORD_LIMIT)} record digests per event; ${String(this.#identityLimitedEventCount)} record(s) past that limit are counted and tallied by type but no longer checked for repetition, so duplicate_record_count is a lower bound`,
-      );
-    if (this.#eventTypeOmittedEventCount > 0)
-      limitations.push(
-        `a retained event's per-type counts stop at ${String(AUDITD_RETAINED_EVENT_TYPE_LIMIT)} distinct types; ${String(this.#eventTypeOmittedEventCount)} event(s) hold types past that, so their record_types omits those labels and record_types_omitted counts the omitted labels while record_count counts every record`,
-      );
-    if (this.#omittedTypeCount > 0)
-      limitations.push(
-        `${String(this.#omittedTypeCount)} record(s) past the retained window name a type beyond the ${String(AUDITD_RETAINED_TYPE_LIMIT)} distinct types whose totals are kept, so event_type_counts omits those types although record_count counts every record`,
-      );
-    limitations.push(
-      "records are inventoried by header and record type: key-value fields, hex/escaped values, argument ordering and decoded syscall or permission meanings are not interpreted",
-    );
-
+    const limitations = this.#limitations();
     const events = this.#sampleOrder.map((key) =>
       this.#summarize(this.#events.get(key)!),
     );
@@ -403,6 +432,60 @@ class AuditdLogScanner {
       },
       limitations,
     });
+  }
+
+  /** What the scan could not establish, in a fixed order. */
+  #limitations(): string[] {
+    const limitations: string[] = [];
+    if (this.#malformedCount > 0)
+      limitations.push(
+        `${String(this.#malformedCount)} line(s) are not auditd records or name an unparseable event identity; their text is not represented`,
+      );
+    if (this.#outOfOrderCount > 0)
+      limitations.push(
+        `${String(this.#outOfOrderCount)} record(s) belong to an event that had already been superseded by a later event on the same node, so the file's own ordering is preserved rather than reordered`,
+      );
+    if (this.#orderingNodeOmitted)
+      limitations.push(
+        `ordering is tracked for at most ${String(AUDITD_ORDERING_NODE_LIMIT)} hosts; records of hosts past that cap are not compared with their own earlier events, so out_of_order_record_count is a lower bound`,
+      );
+    if (this.#duplicateCount > 0)
+      limitations.push(
+        `${String(this.#duplicateCount)} record(s) repeat a record already seen in the same event, byte for byte; each occurrence is counted and only the first name is retained`,
+      );
+    if (this.#beyondWindowEventCount > 0 || this.#skippedRecordCount > 0)
+      limitations.push(
+        `per-record identity is retained for the most recent ${String(AUDITD_RETAINED_EVENT_LIMIT)} events; ${String(this.#beyondWindowEventCount)} further event start(s) and ${String(this.#skippedRecordCount)} record(s) past that window are counted in the totals, but their duplicate, interleaving and event-start status is not established, so event_count can be an upper bound when the tail interleaves events`,
+      );
+    if (this.#tailIdentityOmitted)
+      limitations.push(
+        `the tail met more event identities than it retained past ${String(AUDITD_RETAINED_EVENT_LIMIT)}; past that point a repeated run may be an event already counted, so event_count is neither an upper nor a lower bound and no bound flag is set`,
+      );
+    else if (this.#tailOverCount)
+      limitations.push(
+        "the tail repeated an event across a noncontiguous run, so it was counted once per run; event_count is an upper bound, not an exact count",
+      );
+    if (this.#identityLimitedEventCount > 0)
+      limitations.push(
+        `duplicate detection retains at most ${String(AUDITD_RETAINED_RECORD_LIMIT)} record digests per event; ${String(this.#identityLimitedEventCount)} record(s) past that limit are counted and tallied by type but no longer checked for repetition, so duplicate_record_count is a lower bound`,
+      );
+    if (this.#eventTypeOmittedEventCount > 0)
+      limitations.push(
+        `a retained event's per-type counts stop at ${String(AUDITD_RETAINED_EVENT_TYPE_LIMIT)} distinct types; ${String(this.#eventTypeOmittedEventCount)} event(s) hold types past that, so their record_types omits those labels and record_types_omitted counts the omitted labels while record_count counts every record`,
+      );
+    if (this.#omittedLabelSaturatedEventCount > 0)
+      limitations.push(
+        `distinct labels past a retained event's type cap are retained for repetition checks only up to ${String(AUDITD_RETAINED_OMITTED_TYPE_LIMIT)}; ${String(this.#omittedLabelSaturatedEventCount)} event(s) named more, so their record_types_omitted is a lower bound and record_types_omitted_exact is false`,
+      );
+    if (this.#omittedTypeCount > 0)
+      limitations.push(
+        `${String(this.#omittedTypeCount)} record(s) past the retained window name a type beyond the ${String(AUDITD_RETAINED_TYPE_LIMIT)} distinct types whose totals are kept, so event_type_counts omits those types although record_count counts every record`,
+      );
+    limitations.push(
+      "records are inventoried by header and record type: key-value fields, hex/escaped values, argument ordering and decoded syscall or permission meanings are not interpreted",
+    );
+
+    return limitations;
   }
 
   #acceptSegment(segment: Buffer): void {
@@ -545,6 +628,7 @@ class AuditdLogScanner {
         typeCounts: new Map(),
         typeOmissionCounted: false,
         omittedTypeLabels: new Set(),
+        omittedTypeLabelsSaturated: false,
         seenRecords: new Set(),
         firstLine: this.#lineNumber,
         lastLine: this.#lineNumber,
@@ -583,31 +667,55 @@ class AuditdLogScanner {
     // limit is still tallied under its type, so a listed count is exact rather
     // than stopping where duplicate detection did. A duplicate is the only
     // record not tallied, because it repeats one already counted here.
-    if (!duplicate) {
-      const typeCount = event.typeCounts.get(type);
-      if (typeCount !== undefined) event.typeCounts.set(type, typeCount + 1);
-      else if (event.typeCounts.size < AUDITD_RETAINED_EVENT_TYPE_LIMIT)
-        event.typeCounts.set(type, 1);
-      else {
-        // The cap is on distinct labels: a label past it is one omitted name
-        // however many records carry it, and the set makes a repeat cheap. The
-        // event is tallied once because the limitation counts affected events,
-        // not labels or records.
-        event.omittedTypeLabels.add(type);
-        if (!event.typeOmissionCounted) {
-          event.typeOmissionCounted = true;
-          this.#eventTypeOmittedEventCount += 1;
-        }
-      }
-    }
+    if (!duplicate) this.#tallyEventType(event, type);
     event.recordCount += 1;
     event.lastLine = this.#lineNumber;
+  }
+
+  /**
+   * Tally one non-duplicate record under its event's type. The per-event map
+   * and the omitted-label set are both bounded, so neither grows with the file.
+   */
+  #tallyEventType(event: PendingEvent, type: string): void {
+    const typeCount = event.typeCounts.get(type);
+    if (typeCount !== undefined) event.typeCounts.set(type, typeCount + 1);
+    else if (event.typeCounts.size < AUDITD_RETAINED_EVENT_TYPE_LIMIT)
+      event.typeCounts.set(type, 1);
+    else {
+      // The cap is on distinct labels: a label past it is one omitted name
+      // however many records carry it, and the set makes a repeat cheap. The
+      // event is tallied once because the limitation counts affected events,
+      // not labels or records.
+      // Past AUDITD_RETAINED_OMITTED_TYPE_LIMIT a new label is not retained, so
+      // the omitted count becomes a floor and the event says so.
+      const known = event.omittedTypeLabels.has(type);
+      if (
+        !known &&
+        event.omittedTypeLabels.size < AUDITD_RETAINED_OMITTED_TYPE_LIMIT
+      )
+        event.omittedTypeLabels.add(type);
+      else if (!known && !event.omittedTypeLabelsSaturated) {
+        event.omittedTypeLabelsSaturated = true;
+        this.#omittedLabelSaturatedEventCount += 1;
+      }
+      if (!event.typeOmissionCounted) {
+        event.typeOmissionCounted = true;
+        this.#eventTypeOmittedEventCount += 1;
+      }
+    }
   }
 
   #diagnose(line: number, reason: string, excerpt: string): void {
     this.#malformedCount += 1;
     if (this.#malformed.length >= AUDITD_INLINE_DIAGNOSTIC_LIMIT) return;
-    this.#malformed.push({ line, reason, excerpt: excerpt.slice(0, 200) });
+    // The excerpt is cut on source bytes (one character per byte here), then
+    // projected, so it never splits an encoding and reports what the line held.
+    const projected = sourceText(excerpt.slice(0, 200));
+    this.#malformed.push(
+      projected.hex === undefined
+        ? { line, reason, excerpt: projected.text }
+        : { line, reason, excerpt: projected.text, excerpt_hex: projected.hex },
+    );
   }
 
   #summarize(event: PendingEvent): AuditEventSummary {
@@ -621,15 +729,18 @@ class AuditdLogScanner {
       AUDITD_INLINE_EVENT_TYPE_LIMIT,
       event.omittedTypeLabels.size,
     );
+    const node = event.node === undefined ? undefined : sourceText(event.node);
     return {
       event_id: eventId(event),
-      node: event.node ?? null,
+      node: node?.text ?? null,
+      ...(node?.hex === undefined ? {} : { node_hex: node.hex }),
       event_seconds: event.seconds,
       event_millis: event.millis,
       serial: event.serial,
       record_count: event.recordCount,
       record_types: listed.items,
       record_types_omitted: listed.omitted,
+      record_types_omitted_exact: !event.omittedTypeLabelsSaturated,
       first_line: event.firstLine,
       last_line: event.lastLine,
       duplicate_record_count: event.duplicateCount,
@@ -653,14 +764,13 @@ const occurrenceKey = (
  */
 export const hasAuditdLogRecord = (prefix: Uint8Array): boolean => {
   if (prefix.length === 0) return false;
-  const firstLine = Buffer.from(
-    prefix.buffer,
-    prefix.byteOffset,
-    prefix.byteLength,
-  )
-    .toString("utf8")
-    .split("\n", 1)[0];
-  return firstLine !== undefined && RECORD_HEADER.test(firstLine);
+  // Read the first line through the same byte-faithful decoding the scanner
+  // uses, so recognition and inspection accept the same headers.
+  const newline = prefix.indexOf(0x0a);
+  const firstLine = decodeHeaderBytes(
+    newline < 0 ? prefix : prefix.subarray(0, newline),
+  );
+  return RECORD_HEADER.test(firstLine);
 };
 
 export const createAuditdLogDecoder = (

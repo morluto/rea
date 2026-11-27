@@ -6,6 +6,7 @@ import { expect, it } from "vitest";
 import { AuditdLogArtifactReader } from "./AuditdLogArtifactReader.js";
 import {
   AUDITD_RETAINED_EVENT_TYPE_LIMIT,
+  AUDITD_RETAINED_OMITTED_TYPE_LIMIT,
   AUDITD_RETAINED_RECORD_LIMIT,
   AUDITD_RETAINED_TYPE_LIMIT,
 } from "../domain/linux/auditdLog.js";
@@ -455,6 +456,83 @@ it("keeps headers that differ only in invalid bytes as distinct events", async (
     expect(metadata.malformed_line_count).toBe(0);
     // Two raw node values must stay two events; a lossy decode merges them.
     expect(metadata.event_count).toBe(2);
+  } finally {
+    await reader.close();
+  }
+});
+
+it("bounds the omitted-label set of one event and reports a lower bound", async () => {
+  // The per-event cap fills, then the same event names far more distinct labels
+  // than are retained past it. The set must stop growing, and the count must be
+  // reported as a lower bound rather than as an exact total.
+  const lines = Array.from(
+    {
+      length:
+        AUDITD_RETAINED_EVENT_TYPE_LIMIT +
+        AUDITD_RETAINED_OMITTED_TYPE_LIMIT +
+        500,
+    },
+    (_unused, index) =>
+      record(
+        `T${String(index).padStart(5, "0")}`,
+        1700000000,
+        100,
+        1000,
+        "x=1",
+      ),
+  );
+  const metadata = await metadataOf(`${lines.join("\n")}\n`);
+  const event = metadata.events[0]!;
+  expect(event.record_count).toBe(lines.length);
+  expect(event.record_types_omitted_exact).toBe(false);
+  // Listed display omissions plus the retained labels past the cap; the 500
+  // further labels are not retained, so the reported count is a floor.
+  expect(event.record_types_omitted).toBe(
+    AUDITD_RETAINED_EVENT_TYPE_LIMIT - 16 + AUDITD_RETAINED_OMITTED_TYPE_LIMIT,
+  );
+  expect(metadata.limitations.join(" ")).toContain(
+    "record_types_omitted is a lower bound",
+  );
+});
+
+it("reports UTF-8 header text as written and raw bytes when it is not UTF-8", async () => {
+  const directory = await createTestTempDirectory("rea-auditd-text-");
+  const path = join(directory, "audit.log");
+  await writeFile(
+    path,
+    Buffer.concat([
+      Buffer.from(
+        "node=hôte type=SYSCALL msg=audit(1700000000.100:1000): x=1\n",
+        "utf8",
+      ),
+      Buffer.from("node=h"),
+      Buffer.from([0xff]),
+      Buffer.from(" type=SYSCALL msg=audit(1700000000.101:1001): x=1\n"),
+      Buffer.from("échec sans en-tête\n", "utf8"),
+    ]),
+  );
+  const reader = new AuditdLogArtifactReader(path);
+  try {
+    for await (const _entry of reader.entries()) {
+      // No members.
+    }
+    const metadata = reader.formatMetadata();
+    if (metadata?.kind !== "auditd-log")
+      throw new Error("Expected auditd-log metadata");
+    const [utf8, invalid] = metadata.events;
+    expect(utf8).toMatchObject({
+      node: "hôte",
+      event_id: "h%C3%B4te 1700000000.100:1000",
+    });
+    expect(utf8).not.toHaveProperty("node_hex");
+    expect(invalid).toMatchObject({
+      node_hex: "68ff",
+      event_id: "h%FF 1700000000.101:1001",
+    });
+    expect(metadata.malformed_lines[0]).toMatchObject({
+      excerpt: "échec sans en-tête",
+    });
+    expect(metadata.malformed_lines[0]).not.toHaveProperty("excerpt_hex");
   } finally {
     await reader.close();
   }
