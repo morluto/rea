@@ -12,6 +12,7 @@ it("keeps declaration discovery and client creation lazy and independently owned
     "native-macos",
     "rea-artifact-graph",
     "rea-dotnet-static",
+    "unicorn",
   ]);
   for (const declaration of declarations) {
     let loads = 0;

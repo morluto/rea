@@ -31,6 +31,7 @@ import { retainedDebuggerDiagnostics } from "../process/ownedDebuggerCleanupErro
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { createByteEntropyService } from "../composition/binaryDiagnostics/byteEntropy.js";
 import { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
+import { UnicornEmulationService } from "../application/unicorn/UnicornEmulationService.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { catalogIdentityForToolFamilies } from "../contracts/catalog/catalogIdentity.js";
 import { parseMcpToolFamilies } from "../config/mcpToolFamilies.js";
@@ -417,6 +418,13 @@ export const createServer = (
         dwarfUnits,
         elfDependencies,
       });
+      // Unicorn runs caller-supplied bytes in isolation, so it registers
+      // without session admission (no binary needs to be open).
+      registerServiceTools(
+        server,
+        { unicorn: new UnicornEmulationService(environment, host) },
+        { logger: toolLogger, recordEvidence, evidenceById },
+      );
     },
     artifact: () => {
       registerServices({

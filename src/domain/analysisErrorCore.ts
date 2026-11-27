@@ -227,6 +227,26 @@ export const fixedCeilingConstraint = (
     fixedAllowance: ceiling,
   });
 
+/**
+ * Refuse at an observed runtime exhaustion with no fixed ceiling: host
+ * capacity, worker memory, or another occupied resource the producer
+ * measured (not a named allowance). Recovery follows the resource kind;
+ * retrying after freeing the resource may succeed.
+ */
+export const measuredExhaustionConstraint = (
+  operation: string,
+  resource: (typeof ANALYSIS_RESOURCE_KINDS)[number],
+  reason: string,
+  options?: AnalysisErrorOptions & {
+    readonly remediationAction?: string;
+    readonly retryable?: boolean;
+  },
+): AnalysisResourceConstraintError =>
+  new AnalysisResourceConstraintError(operation, resource, reason, null, {
+    ...options,
+    measuredExhaustion: true,
+  });
+
 /** Carry one refusal's recovery to an error re-attributed or redacted elsewhere. */
 export const resourceConstraintRecovery = (
   error: AnalysisResourceConstraintError,

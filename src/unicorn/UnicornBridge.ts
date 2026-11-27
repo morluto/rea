@@ -1,0 +1,477 @@
+import { randomUUID } from "node:crypto";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { z } from "zod";
+
+import { UNICORN_LIMITS } from "../contracts/unicorn/unicornToolContracts.js";
+import type {
+  AnalysisCleanupObservation,
+  AnalysisError,
+  AnalysisCapturedOutput,
+} from "../domain/analysisErrorBase.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisInputError,
+  AnalysisOutputError,
+  AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
+  fixedCeilingConstraint,
+  isAborted,
+  measuredExhaustionConstraint,
+} from "../domain/analysisErrorCore.js";
+import { err, ok, type Result } from "../domain/result.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
+import {
+  OwnedCommandFailure,
+  runOwnedCommand,
+} from "../process/OwnedCommand.js";
+import type {
+  OwnedProviderProcessSpawnOptions,
+  ProviderProcessSnapshot,
+  ProviderProcessSupervisor,
+} from "../process/ProviderProcess.js";
+import { UNICORN_PYTHON_ENV_VAR } from "./UnicornRelease.js";
+
+export const UNICORN_OPERATION = "emulate_function";
+
+/** A 64-bit value as a 0x-prefixed hex string: JSON numbers lose precision above 2^53-1. */
+const hexUint64Schema = z
+  .string()
+  .regex(
+    /^0x[0-9a-fA-F]{1,16}$/u,
+    "Must be a 0x-prefixed hex integer below 2^64.",
+  );
+
+/** Wire reply for a completed run, as produced by bridge/unicorn/. */
+export const unicornBridgeSuccessReplySchema = z.strictObject({
+  ok: z.literal(true),
+  stop_reason: z.enum([
+    "returned",
+    "unmapped_access",
+    "unsupported_instruction",
+    "stubbed_call",
+    "instruction_budget_exhausted",
+    "timeout",
+    "escaped_code_region",
+  ]),
+  return_value: hexUint64Schema.nullable(),
+  registers: z.record(z.string(), hexUint64Schema),
+  memory_writes: z.array(
+    z.strictObject({
+      address: hexUint64Schema,
+      before: z.string(),
+      after: z.string(),
+    }),
+  ),
+  memory_diff_truncated: z.boolean(),
+  calls_hit: z.array(
+    z.strictObject({
+      kind: z.enum(["import", "syscall"]),
+      address: hexUint64Schema.nullable(),
+      number: z.number().int().nullable(),
+      arguments: z.record(
+        z.string(),
+        z.union([hexUint64Schema, z.array(hexUint64Schema)]),
+      ),
+      stubbed: z.literal(true),
+      returned: hexUint64Schema,
+    }),
+  ),
+  calls_truncated: z.boolean(),
+  instructions_executed: z.number().int().nonnegative(),
+  engine: z.strictObject({
+    name: z.literal("unicorn"),
+    version: z.literal("2.1.2"),
+  }),
+});
+
+export type UnicornBridgeSuccessReply = z.output<
+  typeof unicornBridgeSuccessReplySchema
+>;
+
+const unicornBridgeProbeReplySchema = z.strictObject({
+  ok: z.literal(true),
+  probe: z.strictObject({
+    engine: z.strictObject({
+      name: z.literal("unicorn"),
+      version: z.literal("2.1.2"),
+    }),
+  }),
+});
+
+const unicornBridgeFailureReplySchema = z.strictObject({
+  ok: z.literal(false),
+  reason: z.enum(["malformed", "unavailable", "decoder", "version_mismatch"]),
+  message: z.string(),
+});
+
+const unicornBridgeReplySchema = z.union([
+  unicornBridgeSuccessReplySchema,
+  unicornBridgeProbeReplySchema,
+  unicornBridgeFailureReplySchema,
+]);
+
+type UnicornBridgeReply = z.output<typeof unicornBridgeReplySchema>;
+
+/** Injectable process launch, mirroring the pwntools launcher seam. */
+export type UnicornBridgeLauncher = (
+  spawn: OwnedProviderProcessSpawnOptions,
+  timeoutMs: number,
+  signal: AbortSignal | undefined,
+) => Promise<ProviderProcessSnapshot>;
+
+const defaultLauncher: UnicornBridgeLauncher = (spawn, timeoutMs, signal) =>
+  runOwnedCommand(
+    spawn,
+    {
+      diagnosticBytes: UNICORN_LIMITS.diagnosticBytes,
+      timeoutMs,
+      // The bridge protocol treats a completed nonzero exit as data:
+      // 75/76 are resource errors, anything else an output error. Without
+      // this flag runOwnedCommand throws first and those branches are dead.
+      acceptNonZeroExit: true,
+    },
+    { signal },
+  );
+
+export interface UnicornBridgeRunOptions {
+  readonly pythonPath: string;
+  readonly bridgePath: string;
+  /** Request fields; reply_path is added by the runner. */
+  readonly request: Readonly<Record<string, unknown>>;
+  /**
+   * Outer deadline for the launcher, including bridge startup and the reply
+   * round-trip. The worker enforces the emulation budget itself; see
+   * budgetMs for the user-facing value.
+   */
+  readonly timeoutMs: number;
+  /**
+   * Emulation budget named in timeout errors. Defaults to timeoutMs when
+   * the caller inflates the deadline with a startup allowance.
+   */
+  readonly budgetMs?: number;
+  readonly signal?: AbortSignal;
+  readonly launcher?: UnicornBridgeLauncher;
+  /** Test hook: parent directory for the per-run directory. */
+  readonly runtimeDirBase?: string;
+  /**
+   * Receives a supervisor whose stop stayed incomplete, so the owning
+   * close path can retry it instead of the run dropping the owner.
+   */
+  readonly onRetainedCleanup?: (owner: ProviderProcessSupervisor) => void;
+}
+
+const mapFailureReply = (
+  reply: z.output<typeof unicornBridgeFailureReplySchema>,
+  capturedOutput?: AnalysisCapturedOutput,
+): AnalysisError => {
+  switch (reply.reason) {
+    case "version_mismatch":
+      return new AnalysisCapabilityUnavailableError(
+        "unicorn",
+        UNICORN_OPERATION,
+        reply.message,
+        {
+          userMessage: reply.message,
+          remediationAction:
+            "Use a caller-supplied Python with unicorn 2.1.2 in the pwntools profile.",
+          capturedOutput,
+        },
+      );
+    case "malformed":
+      return new AnalysisInputError(UNICORN_OPERATION, { capturedOutput }, [
+        {
+          path: [],
+          reason: "invalid_format",
+          message: reply.message,
+        },
+      ]);
+    case "unavailable":
+      return new AnalysisCapabilityUnavailableError(
+        "unicorn",
+        UNICORN_OPERATION,
+        reply.message,
+        {
+          userMessage: reply.message,
+          remediationAction: `Set ${UNICORN_PYTHON_ENV_VAR} to an absolute caller-supplied Python executable with pwntools 4.15.0, pyelftools 0.33 and Unicorn 2.1.2; REA never installs Python or packages.`,
+          capturedOutput,
+        },
+      );
+    case "decoder":
+      return new AnalysisOutputError(UNICORN_OPERATION, reply.message, {
+        capturedOutput,
+      });
+  }
+};
+
+/**
+ * Run one bridge invocation in its own directory and return the parsed
+ * reply. The directory is removed afterwards, including on bridge crash,
+ * timeout, and cancellation. Bridge resource exits 75/76 map to resource
+ * constraint errors; any other nonzero exit without a reply is an output
+ * error carrying the bounded captured output.
+ *
+ * The run directory has one owner: the outcome is computed first, the
+ * directory is removed best-effort (a removal failure never replaces the
+ * outcome), and the signal is checked after that last cleanup step, so a
+ * cancellation during final cleanup still cancels a success.
+ */
+export const runUnicornBridge = async (
+  options: UnicornBridgeRunOptions,
+): Promise<Result<UnicornBridgeReply, AnalysisError>> => {
+  if (isAborted(options.signal))
+    return err(cancelledBy(UNICORN_OPERATION, options.signal));
+  // Setup failures are typed errors, not throws: a caller that probes the
+  // bridge (notably the doctor) must be able to degrade, not abort.
+  let runDir: string;
+  try {
+    runDir = await mkdtemp(
+      join(options.runtimeDirBase ?? tmpdir(), "rea-unicorn-"),
+    );
+  } catch (error) {
+    return err(
+      measuredExhaustionConstraint(
+        UNICORN_OPERATION,
+        "capacity",
+        `Unicorn bridge could not create its run directory: ${errorMessage(error)}`,
+        {
+          remediationAction:
+            "Check disk space and write permission for the temporary directory and retry.",
+          retryable: true,
+        },
+      ),
+    );
+  }
+  return runInDirectory(runDir, options);
+};
+
+const runInDirectory = async (
+  runDir: string,
+  options: UnicornBridgeRunOptions,
+): Promise<Result<UnicornBridgeReply, AnalysisError>> => {
+  // The success is only reported after the run directory is removed: a
+  // cancellation during the final read/parse or removal still cancels it,
+  // and a removal failure never replaces the run's outcome.
+  let completed: UnicornBridgeReply | undefined;
+  const requestPath = join(runDir, "request.json");
+  const replyPath = join(runDir, "reply.json");
+  const failureMarkerPath = join(runDir, "failure.marker");
+  try {
+    try {
+      await writeFile(
+        requestPath,
+        JSON.stringify({ ...options.request, reply_path: replyPath }),
+        { flag: "wx", mode: 0o600 },
+      );
+    } catch (error) {
+      return err(
+        measuredExhaustionConstraint(
+          UNICORN_OPERATION,
+          "capacity",
+          `Unicorn bridge could not write its request file: ${errorMessage(error)}`,
+          {
+            remediationAction:
+              "Check disk space and write permission for the temporary directory and retry.",
+            retryable: true,
+          },
+        ),
+      );
+    }
+    const launcher = options.launcher ?? defaultLauncher;
+    let snapshot: ProviderProcessSnapshot;
+    try {
+      snapshot = await launcher(
+        {
+          command: options.pythonPath,
+          arguments: ["-I", options.bridgePath, failureMarkerPath, requestPath],
+          runId: randomUUID(),
+        },
+        options.timeoutMs,
+        options.signal,
+      );
+    } catch (error) {
+      if (error instanceof OwnedCommandFailure) {
+        // A stop that stays incomplete retains its owner: the owning
+        // close path retries it, and the primary error carries the
+        // cleanup observation so the failure is reported, not dropped.
+        // A secondary failure must not replace the primary bridge error.
+        let incompleteCleanup: AnalysisCleanupObservation | undefined;
+        if (error.cleanupOwner !== undefined) {
+          try {
+            const stopped = await error.cleanupOwner.stop();
+            if (stopped.status === "incomplete") {
+              incompleteCleanup = {
+                reason: stopped.reason,
+                resources: error.resources,
+              };
+              options.onRetainedCleanup?.(error.cleanupOwner);
+            }
+          } catch {
+            // The primary bridge error below stays the reported outcome.
+          }
+        }
+        if (error.reason === "cancelled")
+          return err(
+            cancelledBy(
+              UNICORN_OPERATION,
+              error.cancellation === undefined
+                ? options.signal === undefined
+                  ? carriedReason(undefined)
+                  : options.signal
+                : carriedReason(error.cancellation.reason),
+              { cleanup: incompleteCleanup },
+            ),
+          );
+        if (error.reason === "timeout")
+          return err(
+            new AnalysisTimeoutError(
+              UNICORN_OPERATION,
+              options.budgetMs ?? options.timeoutMs,
+              {
+                userMessage: `Unicorn emulation exceeded its ${String(options.budgetMs ?? options.timeoutMs)} ms budget.`,
+                cleanup: incompleteCleanup,
+              },
+            ),
+          );
+        return err(
+          new AnalysisOutputError(
+            UNICORN_OPERATION,
+            `Unicorn bridge failed: ${error.message}`,
+            {
+              capturedOutput:
+                error.snapshot === null
+                  ? undefined
+                  : capturedProviderOutput(error.snapshot),
+              cleanup: incompleteCleanup,
+            },
+          ),
+        );
+      }
+      throw error;
+    }
+    const output = capturedProviderOutput(snapshot);
+    if (snapshot.exitCode === 75)
+      return err(
+        measuredExhaustionConstraint(
+          UNICORN_OPERATION,
+          "memory",
+          "Unicorn bridge ran out of memory (exit 75).",
+          {
+            capturedOutput: output,
+            remediationAction:
+              "Reduce the function size, memory image, or stack size and retry.",
+            retryable: true,
+          },
+        ),
+      );
+    if (snapshot.exitCode === 76)
+      return err(
+        fixedCeilingConstraint(
+          UNICORN_OPERATION,
+          "file-size",
+          "Unicorn bridge exceeded its output size (exit 76).",
+          {
+            name: "The Unicorn bridge reply budget",
+            kind: "bytes",
+            limit: UNICORN_LIMITS.outputBytes,
+            unit: "bytes",
+            narrowing:
+              "Reduce the function size, memory image, or stack size and retry.",
+          },
+          { capturedOutput: output },
+        ),
+      );
+    if (snapshot.exitCode !== 0)
+      return err(
+        new AnalysisOutputError(
+          UNICORN_OPERATION,
+          `Unicorn bridge exited ${String(snapshot.exitCode)} without writing a reply.`,
+          { capturedOutput: output },
+        ),
+      );
+    let replyStat;
+    try {
+      replyStat = await stat(replyPath);
+    } catch {
+      return err(
+        new AnalysisOutputError(
+          UNICORN_OPERATION,
+          "Unicorn bridge exited 0 without writing a reply.",
+          { capturedOutput: output },
+        ),
+      );
+    }
+    // Defense in depth: the bridge refuses oversize replies itself, but a
+    // reply is only trusted after its size is checked, not read blind.
+    if (replyStat.size > UNICORN_LIMITS.outputBytes)
+      return err(
+        fixedCeilingConstraint(
+          UNICORN_OPERATION,
+          "file-size",
+          "Unicorn bridge reply exceeded its output size.",
+          {
+            name: "The Unicorn bridge reply budget",
+            kind: "bytes",
+            limit: UNICORN_LIMITS.outputBytes,
+            unit: "bytes",
+            narrowing:
+              "Reduce the function size, memory image, or stack size and retry.",
+          },
+          { capturedOutput: output },
+        ),
+      );
+    let replyText: string;
+    try {
+      replyText = await readFile(replyPath, "utf8");
+    } catch {
+      return err(
+        new AnalysisOutputError(
+          UNICORN_OPERATION,
+          "Unicorn bridge exited 0 without writing a reply.",
+          { capturedOutput: output },
+        ),
+      );
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(replyText);
+    } catch {
+      return err(
+        new AnalysisOutputError(
+          UNICORN_OPERATION,
+          "Unicorn bridge did not write a valid JSON reply.",
+          { capturedOutput: output },
+        ),
+      );
+    }
+    const reply = unicornBridgeReplySchema.safeParse(parsed);
+    if (!reply.success)
+      return err(
+        new AnalysisOutputError(
+          UNICORN_OPERATION,
+          "Unicorn bridge reply failed schema validation.",
+          { capturedOutput: output },
+        ),
+      );
+    if (reply.data.ok === false)
+      return err(mapFailureReply(reply.data, output));
+    completed = reply.data;
+  } finally {
+    try {
+      await rm(runDir, { recursive: true, force: true });
+    } catch {
+      // Removing the run directory is best effort: a failure here must
+      // not replace the run's outcome.
+    }
+  }
+  if (completed === undefined)
+    throw new Error("Unicorn bridge finished without a reply or an error.");
+  // The success is decided here, after cleanup: a cancellation that
+  // landed during the final read/parse or removal still cancels it.
+  if (isAborted(options.signal))
+    return err(cancelledBy(UNICORN_OPERATION, options.signal));
+  return ok(completed);
+};

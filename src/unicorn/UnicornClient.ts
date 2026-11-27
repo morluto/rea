@@ -1,0 +1,280 @@
+import { fileURLToPath } from "node:url";
+
+import type {
+  AnalysisClient,
+  AnalysisExecution,
+  AnalysisOperation,
+  ExecutionOptions,
+} from "../ports/AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisInputError,
+  AnalysisOutputError,
+  cancelledBy,
+  isAborted,
+} from "../domain/analysisErrorCore.js";
+import type { JsonValue } from "../domain/jsonValue.js";
+import { err, ok, type Result } from "../domain/result.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
+import {
+  emulateFunctionInputSchema,
+  UNICORN_LIMITS,
+  type EmulateFunctionOutput,
+} from "../contracts/unicorn/unicornToolContracts.js";
+import type {
+  ProviderProcessStopResult,
+  ProviderProcessSupervisor,
+} from "../process/ProviderProcess.js";
+import {
+  runUnicornBridge,
+  UNICORN_OPERATION,
+  type UnicornBridgeLauncher,
+} from "./UnicornBridge.js";
+import { validateEmulationHarness } from "./UnicornHarness.js";
+import {
+  inspectUnicornAvailability,
+  UNICORN_BASELINE_LIMITATIONS,
+  UNICORN_PROVIDER_IDENTITY,
+} from "./UnicornProviderMetadata.js";
+import { UNICORN_PYTHON_ENV_VAR } from "./UnicornRelease.js";
+
+/**
+ * Startup allowance added to the emulation budget for the outer bridge
+ * deadline. The worker's own timer enforces budgets.timeout_ms from when it
+ * starts; this covers Python/pwntools import, request handling, and the
+ * reply round-trip so the parent does not expire first and discard the
+ * worker's own timeout report. Timeout errors still name the budget.
+ */
+const BRIDGE_STARTUP_ALLOWANCE_MS = 30_000;
+
+export interface UnicornClientOptions {
+  readonly bridgePath?: string;
+  readonly launcher?: UnicornBridgeLauncher;
+  /** Test hook: parent directory for per-run directories. */
+  readonly runtimeDirBase?: string;
+  /**
+   * Host the client reports in its environment descriptor. Defaults to
+   * the running host; composition passes the host it already holds.
+   */
+  readonly host?: HostPlatform;
+}
+
+/**
+ * Target-agnostic Phase 1 client: the harness carries raw function bytes, so
+ * the bound target (if any) is not consulted. Bound-target inventory
+ * resolution is later work; the optional function_sha256 input binds a run
+ * to caller-supplied bytes when the caller wants that check.
+ */
+export class UnicornClient implements AnalysisClient {
+  readonly #environment: Readonly<NodeJS.ProcessEnv>;
+  readonly #bridgePath: string;
+  readonly #launcher: UnicornBridgeLauncher | undefined;
+  readonly #runtimeDirBase: string | undefined;
+  readonly #host: HostPlatform;
+  #retainedCleanup: ProviderProcessSupervisor[] = [];
+
+  constructor(
+    environment: Readonly<NodeJS.ProcessEnv>,
+    options: UnicornClientOptions = {},
+  ) {
+    this.#environment = environment;
+    this.#bridgePath =
+      options.bridgePath ??
+      fileURLToPath(
+        new URL("../../bridge/unicorn/emulate_function.py", import.meta.url),
+      );
+    this.#launcher = options.launcher;
+    this.#runtimeDirBase = options.runtimeDirBase;
+    this.#host = options.host ?? HOST_PLATFORM;
+  }
+
+  async execute(
+    operation: AnalysisOperation,
+    parameters: Readonly<Record<string, JsonValue>>,
+    options?: ExecutionOptions,
+  ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    if (operation === "health")
+      return ok(createAnalysisExecution(null, UNICORN_PROVIDER_IDENTITY));
+    if (operation !== UNICORN_OPERATION)
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          UNICORN_PROVIDER_IDENTITY.id,
+          operation,
+          `Unicorn provider does not implement ${operation}.`,
+        ),
+      );
+    const parsed = emulateFunctionInputSchema.safeParse(parameters);
+    if (!parsed.success)
+      return err(
+        new AnalysisInputError(
+          UNICORN_OPERATION,
+          {},
+          parsed.error.issues.map((issue) => ({
+            path: issue.path.filter(
+              (segment): segment is string | number =>
+                typeof segment === "string" || typeof segment === "number",
+            ),
+            reason:
+              issue.code === "invalid_type"
+                ? "invalid_type"
+                : issue.code === "too_small" || issue.code === "too_big"
+                  ? "out_of_range"
+                  : "invalid_value",
+            message: issue.message,
+          })),
+        ),
+      );
+    const input = parsed.data;
+    const harnessIssues = validateEmulationHarness(input);
+    if (harnessIssues.length > 0)
+      return err(new AnalysisInputError(UNICORN_OPERATION, {}, harnessIssues));
+
+    // Cancellation outranks the setup check: an already-aborted caller
+    // gets a cancelled error without spawning or probing the host.
+    const signal = options?.signal;
+    if (isAborted(signal)) return err(cancelledBy(UNICORN_OPERATION, signal));
+
+    // Tool calls run the same setup inspection as the provider's own
+    // availability check: an unset, relative, or missing Python must be
+    // reported as unavailable, not as a bridge crash.
+    const availability = await inspectUnicornAvailability(
+      this.#environment,
+      this.#host.platform,
+      this.#host.architecture,
+    );
+    if (availability.status === "unavailable")
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          UNICORN_PROVIDER_IDENTITY.id,
+          UNICORN_OPERATION,
+          availability.reason,
+          {
+            userMessage: availability.reason,
+            remediationAction: availability.remediation,
+          },
+        ),
+      );
+
+    const pythonPath = this.#environment[UNICORN_PYTHON_ENV_VAR] ?? "";
+    const result = await runUnicornBridge({
+      pythonPath,
+      bridgePath: this.#bridgePath,
+      request: {
+        architecture: input.architecture,
+        function_bytes: input.function_bytes,
+        entry_offset: input.entry_offset,
+        code_address: input.code_address,
+        registers: input.registers,
+        memory: input.memory,
+        stack_address: input.stack_address,
+        stack_size: input.stack_size,
+        stubs: input.stubs,
+        stub_policy: input.stub_policy,
+        budgets: input.budgets,
+      },
+      timeoutMs: input.budgets.timeout_ms + BRIDGE_STARTUP_ALLOWANCE_MS,
+      budgetMs: input.budgets.timeout_ms,
+      ...(signal === undefined ? {} : { signal }),
+      ...(this.#launcher === undefined ? {} : { launcher: this.#launcher }),
+      ...(this.#runtimeDirBase === undefined
+        ? {}
+        : { runtimeDirBase: this.#runtimeDirBase }),
+      onRetainedCleanup: (owner) => {
+        this.#retainedCleanup.push(owner);
+      },
+    });
+    if (!result.ok) return err(result.error);
+    const reply = result.value;
+    if (reply.ok !== true || "probe" in reply)
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          UNICORN_PROVIDER_IDENTITY.id,
+          UNICORN_OPERATION,
+          "Unicorn bridge returned an unexpected reply shape.",
+        ),
+      );
+    const output: EmulateFunctionOutput = {
+      stop_reason: reply.stop_reason,
+      return_value: reply.return_value,
+      registers: reply.registers,
+      memory_writes: reply.memory_writes,
+      memory_diff_truncated: reply.memory_diff_truncated,
+      calls_hit: reply.calls_hit,
+      calls_truncated: reply.calls_truncated,
+      instructions_executed: reply.instructions_executed,
+      engine: reply.engine,
+    };
+    const limitations = [...UNICORN_BASELINE_LIMITATIONS];
+    if (reply.stop_reason !== "returned")
+      limitations.push(
+        `Run stopped early: ${reply.stop_reason}; effects after the stop are unobserved.`,
+      );
+    if (reply.memory_diff_truncated)
+      limitations.push(
+        `Memory-write diff was truncated at the ${String(UNICORN_LIMITS.maxMemoryDiffBytes)}-byte budget; later writes are unreported.`,
+      );
+    if (reply.calls_truncated)
+      limitations.push(
+        "Call records were truncated at the retained-record budget; later stubbed calls are unreported.",
+      );
+    if (reply.calls_hit.length > 0)
+      limitations.push(
+        `${String(reply.calls_hit.length)} import/syscall call(s) were stubbed and recorded, never executed on the host.`,
+      );
+    return ok(
+      createAnalysisExecution(output, UNICORN_PROVIDER_IDENTITY, {
+        limitations,
+        // The run's source is the caller-supplied bytes, not any open
+        // binary: name no file subject and record the controlled replay
+        // as the authority.
+        subject: null,
+        authority: "controlled-replay",
+        environment: {
+          id: "unicorn-2.1.2",
+          platform: this.#host.platform,
+          architecture: input.architecture,
+          isolation: "process",
+        },
+        subjectUnavailableReason:
+          "Target-free Unicorn run: function bytes are caller-supplied, not an opened artifact.",
+      }),
+    );
+  }
+
+  async close(): Promise<Result<null, AnalysisError>> {
+    // Retry supervisors whose earlier stop stayed incomplete; a close
+    // that still cannot prove the stop keeps reporting it and keeps the
+    // owner for the next close. Every run still owns and removes its own
+    // directory, and the bridge subprocess is supervised per run.
+    const pending = this.#retainedCleanup;
+    this.#retainedCleanup = [];
+    for (let index = 0; index < pending.length; index += 1) {
+      const owner = pending[index]!;
+      let stopped: ProviderProcessStopResult;
+      try {
+        stopped = await owner.stop();
+      } catch (error) {
+        this.#retainedCleanup.push(...pending.slice(index));
+        return err(
+          new AnalysisOutputError(
+            UNICORN_OPERATION,
+            `Unicorn bridge cleanup failed: ${errorMessage(error)}.`,
+          ),
+        );
+      }
+      if (stopped.status === "incomplete") {
+        this.#retainedCleanup.push(...pending.slice(index));
+        return err(
+          new AnalysisOutputError(
+            UNICORN_OPERATION,
+            `Unicorn bridge cleanup incomplete: ${stopped.reason}.`,
+          ),
+        );
+      }
+    }
+    return ok(null);
+  }
+}

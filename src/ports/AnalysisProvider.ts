@@ -10,6 +10,7 @@ import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
 import type { NativeToolName } from "../contracts/native/nativeToolContracts.js";
 import type { ArtifactAnalysisOperation } from "../contracts/artifactToolContracts.js";
 import type { ManagedToolName } from "../contracts/managed/managedToolContracts.js";
+import type { UnicornToolName } from "../contracts/unicorn/unicornToolContracts.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
@@ -21,6 +22,7 @@ import type {
   EvidenceAuthority,
   EvidenceLocation,
   EvidenceSubjectTarget,
+  ExecutionEnvironment,
 } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
@@ -84,6 +86,7 @@ export type AnalysisOperation =
   | NativeToolName
   | ArtifactAnalysisOperation
   | ManagedToolName
+  | UnicornToolName
   // Provider aggregate and composed public overview have distinct Evidence and
   // snapshot identities. This capability does not add a CLI/MCP tool.
   | "read_binary_inventory_summary"
@@ -160,6 +163,8 @@ export interface CreateAnalysisExecutionOptions {
   readonly sourceEvidence?: readonly Evidence[];
   readonly subject?: EvidenceSubjectTarget | null;
   readonly authority?: EvidenceAuthority;
+  readonly environment?: ExecutionEnvironment | null;
+  readonly subjectUnavailableReason?: string;
 }
 
 /**
@@ -245,6 +250,12 @@ export function createAnalysisExecution(
     ...(options.authority === undefined
       ? {}
       : { authority: options.authority }),
+    ...(options.environment === undefined
+      ? {}
+      : { environment: options.environment }),
+    ...(options.subjectUnavailableReason === undefined
+      ? {}
+      : { subjectUnavailableReason: options.subjectUnavailableReason }),
   };
 }
 
