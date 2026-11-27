@@ -1679,6 +1679,7 @@
 * **providers:** share placeholder Hopper project files ([#14813](https://github.com/morluto/rea/issues/14813)) ([a1749f1](https://github.com/morluto/rea/commit/a1749f1b6552240923c5c1921a3b976a1252d4e7))
 * **providers:** share process group and workspace cleanup assertions ([#14487](https://github.com/morluto/rea/issues/14487)) ([da1ba03](https://github.com/morluto/rea/commit/da1ba036c9133795d6ad0b8329e53e587bdd31b5))
 * prune redundant and superseded tests ([#14271](https://github.com/morluto/rea/issues/14271)) ([5c3ed5d](https://github.com/morluto/rea/commit/5c3ed5d028378eeed09f4b4c471882f9ee9b11f6))
+* **pyinstaller:** reuse archive reader fixtures ([#14879](https://github.com/morluto/rea/issues/14879)) ([e70ca8d](https://github.com/morluto/rea/commit/e70ca8d02b50bd4139673be10c02cbd4785fa339))
 * **python:** consolidate pyc parser and CLI coverage ([#13566](https://github.com/morluto/rea/issues/13566)) ([917ab7f](https://github.com/morluto/rea/commit/917ab7f5fd8b25c3c9512ded08b3b7ebb903bf3b))
 * **python:** distinguish malformed marshal lengths from capacity failures ([#12801](https://github.com/morluto/rea/issues/12801)) ([db01712](https://github.com/morluto/rea/commit/db0171297d14c71127b39915f2063561ae1b8a84))
 * **python:** verify malformed signed marshal count defects ([db01712](https://github.com/morluto/rea/commit/db0171297d14c71127b39915f2063561ae1b8a84))
