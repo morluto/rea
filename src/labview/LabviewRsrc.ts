@@ -298,6 +298,18 @@ export const parseLabviewRsrc = (
         "RSRC data section overlaps the fixed header",
         { offset: 24, field: "data offset" },
       );
+    // The data and info sections are separate regions (pylabview writes the
+    // info section, which begins with its own header copy, after the data);
+    // an intersection would read list metadata as section data.
+    if (
+      dataBytes > 0 &&
+      dataOffset < infoOffset + infoBytes &&
+      infoOffset < dataOffset + dataBytes
+    )
+      throw malformedInput(FORMAT, "RSRC data and info sections overlap", {
+        offset: 24,
+        field: "data offset",
+      });
     if (
       infoBytes < HEADER_BYTES + LIST_HEADER_BYTES ||
       infoOffset < HEADER_BYTES

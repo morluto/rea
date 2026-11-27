@@ -4,7 +4,7 @@ import { createLabviewArtifactService } from "../composition/labview.js";
 import { LABVIEW_TOOL_CONTRACTS } from "../contracts/labview/labviewToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
 import { registerContractCommand } from "./contractCommand.js";
-import { inspectWithService } from "./contractCommandRunners.js";
+import { deliverWithService } from "./contractCommandRunners.js";
 import type { CliInstance } from "./types.js";
 
 /** CLI and MCP share inspection; the reader never starts a process. */
@@ -21,12 +21,13 @@ export const registerLabviewCommands = (
         "Inspect a LabVIEW RSRC container (VI/CTL/LLB or LabVIEW-built PE) without executing it",
       positionals: ["path"],
       callerPaths: ["path"],
+      evidenceDelivery: true,
       fields: {
         path: {
           description: "Local LabVIEW .vi/.ctl/.llb file or LabVIEW-built PE",
         },
       },
     },
-    inspectWithService(createLabviewArtifactService, "rea-labview-rsrc"),
+    deliverWithService(createLabviewArtifactService, "rea-labview-rsrc"),
   );
 };

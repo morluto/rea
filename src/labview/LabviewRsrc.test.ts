@@ -673,6 +673,23 @@ describe("LabviewArtifactProvider", () => {
     });
   });
 
+  it("rejects data and info sections that overlap", () => {
+    const container = buildLabviewRsrc([
+      { ident: "DFDS", sections: [Buffer.from("123456789")] },
+    ]);
+    // Point the data range at the info range, as the review probe did.
+    container.writeUInt32BE(container.readUInt32BE(16), 24);
+    container.writeUInt32BE(container.readUInt32BE(20), 28);
+    const parsed = parseLabviewRsrc(container);
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.failure.failure).toMatchObject({
+      kind: "malformed",
+      offset: 24,
+    });
+    expect(parsed.failure.message).toContain("data and info sections overlap");
+  });
+
   it("keeps the completed file identity on a later parse failure", async () => {
     const root = await createTestTempDirectory("rea-labview-identity-");
     const path = join(root, "fixture.vi");

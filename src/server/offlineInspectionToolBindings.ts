@@ -73,7 +73,7 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
   labviewArtifact: ((service) => ({
     inspect_labview_artifact: {
       admission: "application",
-      run: (input, options) => service.inspect(input, options),
+      summary: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<LabviewArtifactService>,
   nativeExports: ((service) => ({

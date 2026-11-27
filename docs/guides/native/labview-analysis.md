@@ -53,6 +53,17 @@ is reported. The outer container of a built executable usually holds a `FLAG`
 block and one `LVzp` block (the embedded program tree) rather than the per-VI
 blocks a source `.vi` carries.
 
+## Delivery
+
+`detail: "complete"` returns the whole block inventory inline. With
+`detail: "summary"`, or with `detail` omitted when the complete result would
+exceed the agent result budget, the reply carries the container, version and
+heap facts with block and section counts. The complete inventory stays in
+retained Evidence. Page it with `inspect_analysis_view` kind
+`labview-artifact`, collection `blocks` or `sections` (optionally filtered to one
+four-character `block`), or read it whole with kind `evidence-json`. The CLI
+takes `--detail` and `--evidence_output` the same way.
+
 ## Coding and decoding
 
 A section is reported with one coding:
