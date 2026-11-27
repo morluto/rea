@@ -130,6 +130,48 @@ it("lists a root storage's streams and storages as occurrences", async () => {
   ).toEqual(["DestList", "Nested", "Nested/inner"]);
 });
 
+it("publishes each entry's directory facts as format metadata", async () => {
+  const path = await write(
+    "facts.automaticDestinations-ms",
+    compoundFile({
+      entries: rootWith(1, [
+        { name: "Nested", type: 1, start: 0, size: 0, child: 2 },
+        // Two mini-stream-sized members: the format keeps their declared start
+        // and size, which the inventory entry has no other place to carry.
+        { name: "inner", type: 2, start: 3, size: 3, right: 3 },
+        { name: "other", type: 2, start: 4, size: 4 },
+      ]),
+    }),
+  );
+  const inventory = await scanCanonicalArtifactInventory(path);
+  const facts = (logicalPath: string) =>
+    inventory.occurrences.find((row) => row.logical_path === logicalPath)
+      ?.format_metadata;
+  expect(facts("Nested")).toMatchObject({
+    kind: "compound-file-entry",
+    index: 1,
+    role: "storage",
+    parent_index: 0,
+    child: 2,
+    starting_sector: null,
+    stream_size: null,
+    storage: null,
+  });
+  // A mini stream has no byte range in the inventory, so its declared
+  // allocation is the only surviving statement of where its bytes are.
+  expect(facts("Nested/inner")).toMatchObject({
+    kind: "compound-file-entry",
+    index: 2,
+    role: "stream",
+    parent_index: 1,
+    right_sibling: 3,
+    starting_sector: 3,
+    stream_size: 3,
+    storage: "mini",
+  });
+  expect(facts("Nested/inner")?.contiguous).toBeNull();
+});
+
 it("names an entry outside the root tree as an orphan with no path", async () => {
   const path = await write(
     "orphan.automaticDestinations-ms",

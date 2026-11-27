@@ -1,7 +1,10 @@
 import { once } from "node:events";
 import { PassThrough, Readable } from "node:stream";
 
-import type { CompoundFileMetadata } from "../domain/formatMetadata/androidAndSystemMetadata.js";
+import type {
+  CompoundFileEntryMetadata,
+  CompoundFileMetadata,
+} from "../domain/formatMetadata/androidAndSystemMetadata.js";
 import type { RegionDecodeFailure } from "../domain/firmware/regionDecoder.js";
 import {
   createCompoundFileDecoder,
@@ -363,6 +366,37 @@ const chainProblemLimitation = (problem: CompoundFileChainProblem): string => {
   return "This stream's FAT chain ends before the declared size — it is cyclic or leaves the file — so it has no byte range in this step.";
 };
 
+/**
+ * The directory facts the parse knows about an entry, published per entry so
+ * `inspect_artifact` can answer where a member is listed and how its bytes are
+ * allocated even when no byte range resolved. A storage's own start and size
+ * fields are stale in the format and are published as `null` rather than as
+ * facts the directory does not declare.
+ */
+const entryMetadata = (
+  entry: CompoundFileDirectoryEntry,
+): CompoundFileEntryMetadata => {
+  const stream = entry.type === "stream";
+  return {
+    kind: "compound-file-entry",
+    index: entry.index,
+    role:
+      entry.type === "stream"
+        ? "stream"
+        : entry.type === "storage"
+          ? "storage"
+          : "undefined-type",
+    parent_index: entry.parentIndex,
+    left_sibling: entry.leftSibling,
+    right_sibling: entry.rightSibling,
+    child: entry.child,
+    starting_sector: stream ? entry.startingSector : null,
+    stream_size: stream ? entry.streamSize : null,
+    storage: stream || entry.type === "root-storage" ? entry.storage : null,
+    contiguous: stream ? entry.contiguous : null,
+  };
+};
+
 const toArtifactEntry = (
   entry: CompoundFileDirectoryEntry,
 ): ArtifactEntry | null => {
@@ -393,6 +427,7 @@ const toArtifactEntry = (
       ...(entry.name === null || entry.name === path
         ? {}
         : { sourcePath: entry.name }),
+      formatMetadata: entryMetadata(entry),
       adapterKey: `compound-file/${String(entry.index)}`,
     };
   if (entry.type !== "storage" && entry.type !== "stream") return null;
@@ -428,6 +463,7 @@ const toArtifactEntry = (
       unpacked: false,
       limitations: limitation(),
       ...sourceName,
+      formatMetadata: entryMetadata(entry),
       adapterKey: `compound-file/${String(entry.index)}`,
     };
   }
@@ -483,6 +519,7 @@ const toArtifactEntry = (
     unpacked: false,
     limitations,
     ...sourceName,
+    formatMetadata: entryMetadata(entry),
     adapterKey: `compound-file/${String(entry.index)}`,
   };
 };

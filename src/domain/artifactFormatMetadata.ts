@@ -49,6 +49,7 @@ import {
   androidVbmetaDescriptorEntryMetadataSchema,
   androidVbmetaMetadataSchema,
   androidSparseImageMetadataSchema,
+  compoundFileEntryMetadataSchema,
   compoundFileMetadataSchema,
   iso9660EntryMetadataSchema,
   iso9660MetadataSchema,
@@ -97,6 +98,7 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   uf2RegionMetadataSchema,
   ntfsMftMetadataSchema,
   compoundFileMetadataSchema,
+  compoundFileEntryMetadataSchema,
   dfuSeMetadataSchema,
   dfuSeElementMetadataSchema,
   bfltMetadataSchema,
@@ -335,6 +337,10 @@ const declarationsByKind: {
   "compound-file": {
     notCompared:
       "Its counts and offsets come from the file's own header, allocation tables and directory entries, which content comparison covers.",
+  },
+  "compound-file-entry": {
+    notCompared:
+      "index, parent_index, the tree links and starting_sector are layout, and storage, contiguous and the declared size come from the file's own directory stream and allocation tables, which its content comparison covers.",
   },
   dfuse: {
     notCompared:

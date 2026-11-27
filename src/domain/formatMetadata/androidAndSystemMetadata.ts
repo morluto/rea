@@ -535,6 +535,31 @@ export const compoundFileMetadataSchema = z.strictObject({
 export type CompoundFileMetadata = z.infer<typeof compoundFileMetadataSchema>;
 
 /**
+ * One compound file directory entry, with the facts the directory stream
+ * declares about it. `index`, `parent_index`, the tree links, `starting_sector`
+ * and `stream_size` are observed declarations; `storage` and `contiguous` are
+ * derived from the allocation tables and are only meaningful for a stream. A
+ * storage's own start and size fields are stale in the format, so they are
+ * `null` there rather than published as facts.
+ */
+export const compoundFileEntryMetadataSchema = z.strictObject({
+  kind: z.literal("compound-file-entry"),
+  index: offset,
+  role: z.enum(["storage", "stream", "undefined-type"]),
+  parent_index: offset.nullable(),
+  left_sibling: offset.nullable(),
+  right_sibling: offset.nullable(),
+  child: offset.nullable(),
+  starting_sector: offset.nullable(),
+  stream_size: offset.nullable(),
+  storage: z.enum(["fat", "mini", "empty"]).nullable(),
+  contiguous: z.boolean().nullable(),
+});
+export type CompoundFileEntryMetadata = z.infer<
+  typeof compoundFileEntryMetadataSchema
+>;
+
+/**
  * ISO 9660 primary volume descriptor facts, with what the rest of the
  * descriptor set declares. The identifiers, sizes, set and sequence numbers,
  * dates, `root_directory_extent` and `boot_catalog_sector` are observed
