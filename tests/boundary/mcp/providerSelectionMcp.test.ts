@@ -8,7 +8,7 @@ import {
 } from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { realpath, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
@@ -20,6 +20,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { sha256Hex } from "../../../src/kernel/sha256Hex.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createStubHopperProject } from "../../fixtures/hopperProjectFile.js";
 import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 
@@ -343,7 +344,6 @@ it.skipIf(process.platform === "win32")(
 const expectUnknownProviderKeepsBinding = async (
   mcp: Client,
   session: ReturnType<typeof composeBinarySession>,
-  workspace: string,
   target: string,
   opened: Awaited<ReturnType<Client["callTool"]>>,
 ): Promise<void> => {
@@ -372,14 +372,7 @@ const expectUnknownProviderKeepsBinding = async (
   ).toMatchObject({
     analysis_provider_binding: { provider: { id: "beta" } },
   });
-  await checkQueuedSwitchReceipt(
-    mcp,
-    session,
-    target,
-    workspace,
-    opened,
-    refusal,
-  );
+  await checkQueuedSwitchReceipt(mcp, session, target, opened, refusal);
 };
 
 const expectRefreshedExplicitBinding = async (mcp: Client): Promise<void> => {
@@ -410,9 +403,7 @@ const expectRefreshedExplicitBinding = async (mcp: Client): Promise<void> => {
 
 describe("provider selection over MCP", () => {
   it("keeps open_binary and binary_session binding semantics exact", async () => {
-    const directory = await createTestTempDirectory("rea-provider-mcp-");
-    const target = join(directory, "fixture.hop");
-    await writeFile(target, "fixture");
+    const target = await createStubHopperProject("rea-provider-mcp-");
     const starts: string[] = [];
     const session = composeBinarySession(
       new AnalysisProviderRegistry([
@@ -553,20 +544,12 @@ describe("provider selection over MCP", () => {
     await expectRefreshedExplicitBinding(mcp);
     expect(starts).toEqual(["beta"]);
 
-    await expectUnknownProviderKeepsBinding(
-      mcp,
-      session,
-      directory,
-      target,
-      opened,
-    );
+    await expectUnknownProviderKeepsBinding(mcp, session, target, opened);
   });
 });
 
 it("offers admitted providers and retains unconfigured rejections", async () => {
-  const directory = await createTestTempDirectory("rea-provider-mcp-mixed-");
-  const target = join(directory, "fixture.hop");
-  await writeFile(target, "fixture");
+  const target = await createStubHopperProject("rea-provider-mcp-mixed-");
   const starts: string[] = [];
   const session = composeBinarySession(
     new AnalysisProviderRegistry([
@@ -813,9 +796,7 @@ const expectDetailSchemas = (
 
 describe("binary_session detail over MCP", () => {
   it("defaults to a summary that keeps every decision fact and names what complete detail adds", async () => {
-    const directory = await createTestTempDirectory("rea-session-detail-mcp-");
-    const target = join(directory, "fixture.hop");
-    await writeFile(target, "fixture");
+    const target = await createStubHopperProject("rea-session-detail-mcp-");
     const starts: string[] = [];
     const alpha = candidate("alpha", starts);
     const inspectAvailability = vi.fn(alpha.inspectAvailability);
@@ -1140,9 +1121,7 @@ it("reports confirmed snapshot binding differences and keeps the active session"
 it.each([true, false])(
   "offers an entry-comment handoff only when the selected provider admits it (%s)",
   async (entryCommentAvailable) => {
-    const directory = await createTestTempDirectory("rea-comment-recovery-");
-    const target = join(directory, "fixture.hop");
-    await writeFile(target, "fixture");
+    const target = await createStubHopperProject("rea-comment-recovery-");
     const starts: string[] = [];
     const selected = candidate("beta", starts);
     const identity = selected.identity();
@@ -1221,11 +1200,7 @@ it.each([true, false])(
 );
 
 it("keeps containing-function recovery for undeclared comment facets", async () => {
-  const directory = await createTestTempDirectory(
-    "rea-undeclared-comment-facet-",
-  );
-  const target = join(directory, "fixture.hop");
-  await writeFile(target, "fixture");
+  const target = await createStubHopperProject("rea-undeclared-comment-facet-");
   const starts: string[] = [];
   const selected = candidate("beta", starts);
   const identity = selected.identity();
@@ -1372,11 +1347,7 @@ const structured = (result: CallToolResult): Record<string, unknown> =>
 it.each(["compact"] as const)(
   "keeps provider-owned release verification bound to the selected session (%s)",
   async (profile) => {
-    const directory = await createTestTempDirectory(
-      "rea-provider-verification-",
-    );
-    const target = join(directory, "fixture.hop");
-    await writeFile(target, "fixture");
+    const target = await createStubHopperProject("rea-provider-verification-");
     const starts: string[] = [];
     const alpha = candidate("alpha", starts);
     const verification = {
@@ -1467,11 +1438,10 @@ const checkQueuedSwitchReceipt = async (
   mcp: Client,
   session: ReturnType<typeof composeBinarySession>,
   target: string,
-  directory: string,
   opened: CallToolResult,
   refusal: Record<string, unknown>,
 ): Promise<void> => {
-  const other = join(directory, "other.hop");
+  const other = join(dirname(target), "other.hop");
   await writeFile(other, "other fixture");
   const failedOpenReceipt = phaseGate();
   const open = session.open.bind(session);
@@ -1515,9 +1485,7 @@ const checkQueuedSwitchReceipt = async (
 };
 
 it("preserves a selected Ghidra project's read-only guidance when an edit is requested", async () => {
-  const directory = await createTestTempDirectory("rea-project-refusal-mcp-");
-  const target = join(directory, "fixture.hop");
-  await writeFile(target, "fixture");
+  const target = await createStubHopperProject("rea-project-refusal-mcp-");
   const starts: string[] = [];
   const base = candidate("ghidra", starts);
   const projectCapabilities = existingProjectCapabilities("linux");
@@ -1582,9 +1550,7 @@ it("preserves a selected Ghidra project's read-only guidance when an edit is req
 });
 
 it("labels unbound provider observations as selection-time after a repair", async () => {
-  const directory = await createTestTempDirectory("rea-candidate-observation-");
-  const target = join(directory, "fixture.hop");
-  await writeFile(target, "fixture");
+  const target = await createStubHopperProject("rea-candidate-observation-");
   let available = false;
   const base = candidate("alpha", []);
   const session = composeBinarySession(
@@ -1676,11 +1642,7 @@ it("labels unbound provider observations as selection-time after a repair", asyn
 });
 
 it("preserves the bound client when a candidate refresh is cancelled during finalization", async () => {
-  const directory = await createTestTempDirectory(
-    "rea-candidate-refresh-cancel-",
-  );
-  const target = join(directory, "fixture.hop");
-  await writeFile(target, "fixture");
+  const target = await createStubHopperProject("rea-candidate-refresh-cancel-");
   const starts: string[] = [];
   const base = candidate("alpha", starts);
   let hold = false;
@@ -1767,11 +1729,7 @@ it("preserves the bound client when a candidate refresh is cancelled during fina
 });
 
 it("orders a provider switch after an in-flight candidate refresh", async () => {
-  const directory = await createTestTempDirectory(
-    "rea-candidate-refresh-switch-",
-  );
-  const target = join(directory, "fixture.hop");
-  await writeFile(target, "fixture");
+  const target = await createStubHopperProject("rea-candidate-refresh-switch-");
   const starts: string[] = [];
   const alpha = candidate("alpha", starts);
   let hold = false;
@@ -1855,9 +1813,7 @@ it("orders a provider switch after an in-flight candidate refresh", async () => 
 });
 
 it("does not cancel an already admitted prompt lookup for a candidate refresh", async () => {
-  const directory = await createTestTempDirectory("rea-refresh-prompt-");
-  const target = join(directory, "fixture.hop");
-  await writeFile(target, "fixture");
+  const target = await createStubHopperProject("rea-refresh-prompt-");
   const base = candidate("alpha", []);
   const promptLookup = phaseGate();
   const session = composeBinarySession(
@@ -1924,11 +1880,9 @@ it("does not cancel an already admitted prompt lookup for a candidate refresh", 
 });
 
 it("retains failed candidate-refresh cleanup while preserving the selected binding", async () => {
-  const directory = await createTestTempDirectory(
+  const target = await createStubHopperProject(
     "rea-candidate-refresh-cleanup-",
   );
-  const target = join(directory, "fixture.hop");
-  await writeFile(target, "fixture");
   const starts: string[] = [];
   const beta = candidate("beta", starts);
   let fail = false;
@@ -2006,11 +1960,7 @@ it("retains failed candidate-refresh cleanup while preserving the selected bindi
 });
 
 it("retains attributed mixed profile cleanup through registered MCP calls and partial retry", async () => {
-  const directory = await createTestTempDirectory(
-    "rea-profile-completion-mcp-",
-  );
-  const path = join(directory, "fixture.hop");
-  await writeFile(path, "fixture");
+  const path = await createStubHopperProject("rea-profile-completion-mcp-");
   const starts: string[] = [];
   const released = new Set<string>();
   const failures = {

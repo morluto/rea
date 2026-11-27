@@ -16,6 +16,10 @@ import {
 import { dotnetBundleFixture } from "../../src/artifacts/dotnet/DotnetBundle.fixture.js";
 import { tarFixture } from "../../src/artifacts/tar/tar.fixture.js";
 import { nodeSeaElf } from "../../src/artifacts/nodeSea/NodeSea.fixture.js";
+import {
+  ANDROID_VBMETA_OVERFLOW_DESCRIPTORS,
+  androidVbmetaDescriptorCountOverflow,
+} from "../../src/domain/firmware/androidVbmeta.fixture.js";
 import type { ArtifactReaderLimitsInput } from "../../src/domain/artifactReaderLimits.js";
 import {
   artifactExtractionResultSchema,
@@ -295,6 +299,46 @@ test("admits the same SEA carrier above the legacy 4096-argument ceiling", async
     root_format: "node-sea",
     root_sha256: digest(bytes),
   });
+});
+
+test("admits the same vbmeta image above the default 4096-descriptor admission", async ({
+  cli,
+  workspace,
+}) => {
+  const path = workspace.path("vbmeta.img");
+  const bytes = androidVbmetaDescriptorCountOverflow();
+  await writeFile(path, bytes);
+  const command = ["inspect-artifact", path, "--json"];
+  const refused = await cli.run({ arguments: command });
+  expect(refused.exitCode).toBe(1);
+  expect(refused.json).toMatchObject({
+    code: "partial",
+    retryable: true,
+    details: {
+      reader_limit: {
+        parameter: "artifact_limits.android_vbmeta.descriptor_count",
+        effective_value: 4096,
+        required_value: ANDROID_VBMETA_OVERFLOW_DESCRIPTORS,
+        can_increase: true,
+        update_mode: "parameter",
+      },
+    },
+  });
+  const selected = {
+    android_vbmeta: { descriptor_count: ANDROID_VBMETA_OVERFLOW_DESCRIPTORS },
+  };
+  const recovered = await cli.run({
+    arguments: [...command, "--artifact-limits", JSON.stringify(selected)],
+  });
+  expect(recovered.exitCode, recovered.stderr).toBe(0);
+  const { inventory } = readInspection(recovered.json);
+  expect(inventory.effective_limits).toMatchObject(selected);
+  expect(inventory.coverage.status).toBe("complete");
+  expect(inventory.manifest).toMatchObject({
+    root_format: "android-vbmeta",
+    root_sha256: digest(bytes),
+  });
+  expect(digest(await readFile(path))).toBe(digest(bytes));
 });
 
 test("applies the selected reader budget before extraction and preserves its output", async ({

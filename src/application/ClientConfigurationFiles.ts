@@ -27,7 +27,7 @@ import { lstat, realpath } from "node:fs/promises";
 import { posix, win32 } from "node:path";
 import { isQualifiedCallerPath } from "../filesystem/callerPath.js";
 import { canonicalCallerPath } from "../filesystem/canonicalCallerPath.js";
-import { isAbsentClientConfigPath } from "./ClientConfigPath.js";
+import { isAbsentClientConfigPath, isEnoentError } from "./ClientConfigPath.js";
 
 export type ClientRegistrationScope = "user" | "project";
 
@@ -152,8 +152,7 @@ export const readConfigurationText = async (
       ),
     );
   } catch (cause: unknown) {
-    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
-      return ok(undefined);
+    if (isEnoentError(cause)) return ok(undefined);
     return err({
       kind: "unreadable",
       path,

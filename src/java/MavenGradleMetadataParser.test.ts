@@ -603,6 +603,113 @@ it.each([
   expectFailure(source, "unsupported");
 });
 
+it.each(["4.0.0", "4.1.0"])(
+  "reads a POM in the Maven %s model namespace",
+  (model) => {
+    const report = parse(`<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/${model}">
+  <modelVersion>${model}</modelVersion>
+  <groupId>g</groupId><artifactId>a</artifactId><version>1</version>
+  <dependencies><dependency><groupId>x</groupId><artifactId>y</artifactId><version>2</version></dependency></dependencies>
+</project>
+`);
+    expect(report.format).toBe("maven-pom");
+    expect(report.coordinates).toEqual({
+      group_id: "g",
+      artifact_id: "a",
+      version: "1",
+      packaging: null,
+    });
+    expect(report.dependencies).toEqual([
+      expect.objectContaining({
+        group_id: "x",
+        artifact_id: "y",
+        version: "2",
+        origin: "dependencies",
+      }),
+    ]);
+    expect(report.unresolved).toEqual([]);
+    expect(
+      report.limitations.some((limitation) =>
+        limitation.startsWith("Maven 4 can infer omitted parent coordinates"),
+      ),
+    ).toBe(model === "4.1.0");
+  },
+);
+
+it.each([
+  { namespace: "4.1.0", modelVersion: "4.1.0", bom_import: true },
+  { namespace: "4.1.0", modelVersion: null, bom_import: true },
+  { namespace: "4.0.0", modelVersion: "4.1.0", bom_import: true },
+  { namespace: "4.0.0", modelVersion: "4.0.0", bom_import: false },
+  { namespace: "4.1.0", modelVersion: "4.0.0", bom_import: false },
+])(
+  "imports a managed bom type only from a 4.1.0 model: namespace $namespace, modelVersion $modelVersion",
+  ({ namespace, modelVersion, bom_import }) => {
+    const report =
+      parse(`<project xmlns="http://maven.apache.org/POM/${namespace}">
+  ${modelVersion === null ? "" : `<modelVersion>${modelVersion}</modelVersion>`}
+  <artifactId>demo</artifactId>
+  <dependencyManagement><dependencies>
+    <dependency><groupId>com.example</groupId><artifactId>platform</artifactId><version>3</version><type>bom</type></dependency>
+  </dependencies></dependencyManagement>
+  <dependencies>
+    <dependency><groupId>com.example</groupId><artifactId>lib</artifactId><version>3</version><type>bom</type></dependency>
+  </dependencies>
+</project>`);
+    expect(report.dependency_management).toEqual([
+      expect.objectContaining({ type: "bom", scope: null, bom_import }),
+    ]);
+    expect(report.dependencies).toEqual([
+      expect.objectContaining({ type: "bom", bom_import: false }),
+    ]);
+  },
+);
+
+it("refuses a Maven POM model namespace that this reader does not cover", () => {
+  const source = `<project xmlns="http://maven.apache.org/POM/4.2.0">
+  <modelVersion>4.2.0</modelVersion>
+  <artifactId>demo</artifactId>
+</project>`;
+  expectFailure(source, "unsupported");
+  expect(() => parse(source)).toThrow(
+    /model namespace this reader does not support; it reads the 4\.0\.0 and 4\.1\.0 POM models/u,
+  );
+});
+
+it.each(["4.0.0", "4.1.0"])(
+  "refuses a POM in the Maven %s model namespace that declares another modelVersion",
+  (namespace) => {
+    const source = `<project xmlns="http://maven.apache.org/POM/${namespace}">
+  <modelVersion>4.2.0</modelVersion>
+  <artifactId>demo</artifactId>
+</project>`;
+    expectFailure(source, "unsupported");
+    expect(() => parse(source)).toThrow(
+      /declares a modelVersion this reader does not support; it reads the 4\.0\.0 and 4\.1\.0 POM models/u,
+    );
+  },
+);
+
+it("reads a namespace-free POM that declares another modelVersion with the 4.0.0 rules", () => {
+  const report = parse(`<project>
+  <modelVersion>4.2.0</modelVersion>
+  <artifactId>demo</artifactId>
+  <dependencyManagement><dependencies>
+    <dependency><groupId>com.example</groupId><artifactId>platform</artifactId><version>3</version><type>bom</type></dependency>
+  </dependencies></dependencyManagement>
+</project>`);
+  expect(report.coordinates.artifact_id).toBe("demo");
+  expect(report.dependency_management).toEqual([
+    expect.objectContaining({ type: "bom", bom_import: false }),
+  ]);
+  expect(
+    report.limitations.some((limitation) =>
+      limitation.startsWith("Maven 4 can infer"),
+    ),
+  ).toBe(false);
+});
+
 it("refuses a POM with two top-level dependencies blocks", () => {
   expectFailure(
     `<project>
@@ -663,6 +770,17 @@ it("refuses a POM dependency with two version children", () => {
       <version>2.0.0</version>
     </dependency>
   </dependencies>
+</project>`,
+    "malformed",
+  );
+});
+
+it("refuses a POM with two modelVersion children", () => {
+  expectFailure(
+    `<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <modelVersion>4.1.0</modelVersion>
+  <artifactId>demo</artifactId>
 </project>`,
     "malformed",
   );

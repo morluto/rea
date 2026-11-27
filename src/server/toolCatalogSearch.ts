@@ -8,6 +8,8 @@ export interface AdvertisedToolDescriptor {
 export interface AdvertisedToolCatalog {
   readonly tools: readonly AdvertisedToolDescriptor[];
   readonly discoveryAvailable: boolean;
+  /** In-scope tools discover_tools can load but this connection has not loaded. */
+  readonly unloadedTools?: ReadonlySet<string>;
 }
 
 /** Pre-normalized tool search text shared by discover_tools and unknown-tool hints. */
@@ -131,6 +133,14 @@ export const suggestAdvertisedTools = (
   if (words.length <= 1) return [];
   return rankCatalogToolMatches(searchable, words, "any", true).slice(0, limit);
 };
+
+/**
+ * Build the JSON-RPC -32602 error message for an in-scope tool that a dynamic
+ * catalog has not loaded on this connection. The caller named a real tool, so
+ * the recovery is the one call that loads it, not a search.
+ */
+export const formatUnloadedMcpToolMessage = (requested: string): string =>
+  `MCP tool ${requested} is in scope but not loaded on this connection. Call discover_tools with names: [${JSON.stringify(requested)}] to load it and read its input schema, then call it again.`;
 
 /** Build the JSON-RPC -32602 error message for an unadvertised MCP tool name. */
 export const formatUnknownMcpToolMessage = (

@@ -97,3 +97,20 @@ it.each([
 ])("keeps the literal across %s", (_, source) => {
   expect(returned(source)).toEqual({ status: "literal", value: 1 });
 });
+
+it.each([
+  [
+    "a leading getter inside a sequence call target",
+    `export function observe() { const state = { v: 1, get trigger() { this.v = 2; return 0; } }; const fn = () => {}; (state.trigger, fn)(); return state.v; }`,
+  ],
+  [
+    "a trailing member getter inside a pure sequence call target",
+    `export function observe() { const state = { v: 1, get method() { this.v = 2; return () => {}; } }; (0, state.method)(); return state.v; }`,
+  ],
+  [
+    "a leading call inside a sequence call target",
+    `export function observe() { const state = { v: 1 }; const touch = (o) => { o.v = 2; }; const fn = () => {}; (touch(state), fn)(); return state.v; }`,
+  ],
+])("does not hide side effects across %s", (_, source) => {
+  expect(returned(source)?.status).toBe("unknown");
+});

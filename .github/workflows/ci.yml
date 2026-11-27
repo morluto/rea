@@ -334,7 +334,7 @@ jobs:
           CI_STATIC_CONTEXT_SCRIPT: check:ci:deep:tasks
         run: npm run ci:static-context
       - name: Run deep static checks
-        run: npm run check:ci:deep
+        run: npm run check:ci:deep:job
       - name: Save validated deep static task cache
         if: >-
           success() && steps.npm-cache.outputs.can-save == 'true' &&

@@ -34,9 +34,13 @@ import { err, ok, type Result } from "../../domain/result.js";
 import type {
   AnalysisExecution,
   AnalysisOperation,
+  ExecutionOptions,
   RetainedResourceScope,
 } from "../../ports/AnalysisProvider.js";
-import { AnalysisSnapshotCache } from "./AnalysisSnapshotCache.js";
+import {
+  AnalysisSnapshotCache,
+  replaysOnlyFromImportedSnapshot,
+} from "./AnalysisSnapshotCache.js";
 import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import {
   ArtifactResourceScope,
@@ -346,8 +350,14 @@ export abstract class BinarySessionRecords {
     parameters: Readonly<
       Record<string, import("../../domain/jsonValue.js").JsonValue>
     >,
+    context?: ExecutionOptions["snapshotContext"],
   ): AnalysisExecution | undefined {
     if (this.#snapshotInvalidated) return undefined;
+    if (
+      !this.#snapshot.holdsImportedSnapshot &&
+      replaysOnlyFromImportedSnapshot(operation, parameters, context)
+    )
+      return undefined;
     const replay = this.#snapshot.lookup(
       target,
       profile,
