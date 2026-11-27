@@ -1,10 +1,7 @@
 import { z } from "zod";
 
 import { androidResultSchemas } from "../android/androidAnalysis.js";
-import {
-  androidReferenceFieldSchema,
-  androidReferencesViewSchema,
-} from "../android/androidReferencesQuery.js";
+import { androidReferencesViewSchema } from "../android/androidReferencesQuery.js";
 import { evidenceSubjectTarget } from "../evidence.js";
 import { boundedList } from "../boundedList.js";
 import type { JsonValue } from "../jsonValue.js";
@@ -14,6 +11,7 @@ import {
   selectByteBoundedViewRows,
   type ByteBoundedPageOwner,
 } from "./byteBoundedViewRows.js";
+import { pickFields } from "./selectViewRows.js";
 import {
   analysisViewInputError,
   invalidAnalysisViewSubject,
@@ -192,16 +190,6 @@ const groupCount = (
   return count;
 };
 
-const pick = (
-  row: Reference,
-  fields: ReadonlySet<z.output<typeof androidReferenceFieldSchema>> | undefined,
-): Partial<Reference> => {
-  if (fields === undefined) return row;
-  const picked: Partial<Record<keyof Reference, unknown>> = {};
-  for (const field of fields) if (field in row) picked[field] = row[field];
-  return picked as Partial<Reference>;
-};
-
 /** One page of distinct top classes, counted by the selected kinds. */
 const topClassesPage = (
   trace: Trace,
@@ -254,7 +242,7 @@ const referencesPage = (
       matches: matcher(view),
       project: (row, index): z.output<typeof androidReferenceRowSchema> => ({
         index,
-        ...pick(row, fields),
+        ...(fields === undefined ? row : pickFields(row, fields)),
       }),
     },
     owner,

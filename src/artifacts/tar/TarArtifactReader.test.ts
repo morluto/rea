@@ -136,8 +136,18 @@ describe.each([
       uname: "builder",
     });
     expect(result.entries[1]?.sourcePath).toBe("./app/run.x86_64");
+    expect(result.entries[1]?.limitations).toEqual([]);
     expect(result.contents.get("app/data.pck")).toBe("GDPC-not-really");
-    expect(result.coverage).toEqual([{ status: "complete", limitations: [] }]);
+    expect(result.coverage).toEqual([
+      {
+        status: "complete",
+        limitations: [
+          expect.stringMatching(
+            /^\d+ tar member name\(s\) have a leading current-directory prefix/u,
+          ),
+        ],
+      },
+    ]);
     expect(result.metadata).toMatchObject({
       kind: "tar",
       compression,

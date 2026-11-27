@@ -193,3 +193,44 @@ it("preserves missing Linux ps capability and recovery through source-map tracin
   expect(createRuntime).not.toHaveBeenCalled();
   expect(launcher).not.toHaveBeenCalled();
 });
+
+it("reports details.limit without cli_flag for MCP source_map_limits refusals", async () => {
+  const data = webSourceLocationFixture();
+  const decoder = new SourceMapDecoder();
+  const harness = await createApplicationMcpHarness({
+    serverOptions: {
+      webSourceLocation: new WebSourceLocationService(
+        { load: async () => ok(data) },
+        decoder,
+      ),
+    },
+  });
+  onTestFinished(async () => {
+    await harness.close();
+    await decoder.close();
+  });
+  const response = await harness.client.callTool({
+    name: "trace_web_source_location",
+    arguments: { ...args, source_map_limits: { output_bytes: 16 } },
+  });
+  const { error } = parseMcpToolError(response);
+  expect(error).toMatchObject({
+    code: "partial",
+    retryable: false,
+    details: {
+      limit: {
+        control_kind: "parameter",
+        parameter: "source_map_limits.output_bytes",
+        effective_value: 16,
+        unit: "bytes",
+        minimum: 1,
+        maximum: 536_870_887,
+        default_value: 33_554_432,
+        applies_at: "next_call",
+      },
+    },
+  });
+  expect(
+    (error.details as { limit?: Record<string, unknown> } | undefined)?.limit,
+  ).not.toHaveProperty("cli_flag");
+});

@@ -1,3 +1,4 @@
+import { isEnoentError } from "./ClientConfigPath.js";
 import type { ClientRegistrationProfile } from "./ClientRegistrationProfile.js";
 import type {
   ClientConfigurationFormat,
@@ -324,7 +325,7 @@ const lmStudioLocation = ({
   try {
     directory = readFileSync(pointerPath, "utf8").trim();
   } catch (cause: unknown) {
-    if (!(cause instanceof Error && "code" in cause && cause.code === "ENOENT"))
+    if (!isEnoentError(cause))
       return err({
         path: pointerPath,
         message: `${pointerPath} could not be read, so REA cannot establish which LM Studio home holds mcp.json: ${errorMessage(cause)}. Repair access to that file, then rerun.`,

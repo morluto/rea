@@ -245,6 +245,35 @@ it.skipIf(process.platform === "win32").each([
   },
 );
 
+it("uses bounded APT provisioning before verifying packet captures", async () => {
+  const job = (await workflow("real-packet-capture.yml")).jobs.tshark;
+  const steps = z
+    .array(
+      z.object({
+        uses: z.string().optional(),
+        run: z.string().optional(),
+        with: z.record(z.string(), z.unknown()).optional(),
+      }),
+    )
+    .parse(job?.steps);
+  const archive = steps.findIndex(
+    (step) => step.uses === "./.github/actions/ubuntu-archive",
+  );
+  expect(archive).toBeGreaterThanOrEqual(0);
+  expect(steps[archive + 1]).toEqual({
+    uses: "./.github/actions/host-apt-packages",
+    with: { packages: "tshark util-linux python3" },
+  });
+  const focused = steps.findIndex(({ run }) =>
+    run?.includes("require-provider-tests.mjs packet"),
+  );
+  const verifier = steps.findIndex(({ run }) =>
+    run?.includes("node scripts/verify-packet-capture.mjs"),
+  );
+  expect(focused).toBeGreaterThan(archive + 1);
+  expect(verifier).toBeGreaterThan(focused);
+});
+
 it("keeps every SQLite runtime selector inside the published package engine range", async () => {
   const { engines } = z
     .object({ engines: z.object({ node: z.string() }) })
@@ -496,13 +525,13 @@ it("holds broad PR shards and native checks behind static validation", async () 
   expect(
     staticRuns.some(
       (step) =>
-        step.run === "npm run check:ci:deep" ||
+        step.run?.startsWith("npm run check:ci:deep") ||
         step.run === "npm run test:python",
     ),
   ).toBe(false);
-  expect(deepRuns.some((step) => step.run === "npm run check:ci:deep")).toBe(
-    true,
-  );
+  expect(
+    deepRuns.some((step) => step.run === "npm run check:ci:deep:job"),
+  ).toBe(true);
   for (const [name, job] of Object.entries(jobs)) {
     if (
       name === "required" ||
@@ -1367,7 +1396,9 @@ it.skipIf(process.platform === "win32").each([
         () =>
           `timeout --kill-after=5s ${seconds}s apt-get -o Acquire::Retries=2 --download-only ${install}`,
       ),
-      ...(last === "0" ? [`apt-get --no-download ${install}`] : []),
+      ...(last === "0"
+        ? [`DEBIAN_FRONTEND=noninteractive apt-get --no-download ${install}`]
+        : []),
     ]);
     if (last !== "0")
       expect(result.stdout).toContain(
