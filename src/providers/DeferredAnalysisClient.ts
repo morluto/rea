@@ -61,6 +61,17 @@ export class DeferredAnalysisClient implements AnalysisClient {
     }
   };
 
+  /** Load the client as a request would, then let it begin its own startup. */
+  prepare(): void {
+    void this.#creation.acquire("health", undefined).then(
+      (loaded) => {
+        if (loaded.ok && this.#creation.readyClient === loaded.value)
+          loaded.value.prepare?.();
+      },
+      () => undefined,
+    );
+  }
+
   runtimeLineageSnapshots(): readonly ProviderRuntimeLineageSnapshot[] {
     return this.#creation.ownedClient?.runtimeLineageSnapshots?.() ?? [];
   }

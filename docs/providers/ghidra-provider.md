@@ -5,6 +5,13 @@ read-only analysis and atomic function-name/entry-comment edits; Windows P0 is
 read-only. GUI controls and writes to caller-selected source databases are unavailable.
 Executable bytes remain unchanged.
 
+Over MCP, a successful `open_binary` that binds Ghidra starts the import and
+auto-analysis in the background, so the time before the first query is not
+lost. That query joins the same startup and reports its outcome; `close_binary`
+during startup stops it. An open that loads `snapshot_path` does not start
+Ghidra, because its queries may replay without the engine. One-shot CLI
+commands start Ghidra with their own query as before.
+
 An opt-in [owned Program checkpoint](../getting-started/installation.md#automatically-checkpoint-an-owned-ghidra-program)
 retains analysis across Linux/macOS processes. It saves initial completed analysis
 and normal-close metadata changes to `REA_GHIDRA_CHECKPOINT_DIR`; cancellation

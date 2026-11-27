@@ -226,6 +226,14 @@ export class CompositeProvider implements AnalysisProvider {
       return closeClients(options);
     };
     return {
+      prepare: () => {
+        // The profiled provider is the engine the caller's queries will
+        // start; auxiliary providers stay lazy.
+        if (closed || profile === undefined) return;
+        for (const provider of new Set(this.#providerByOperation.values()))
+          if (provider.identity().id === profile.provider.id)
+            clientFor(provider).prepare?.();
+      },
       executeIfReady: (operation, parameters, options) => {
         const provider = this.#providerByOperation.get(operation);
         const client =

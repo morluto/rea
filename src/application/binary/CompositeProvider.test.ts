@@ -16,6 +16,7 @@ import { err, ok } from "../../domain/result.js";
 import { CompositeProvider } from "./CompositeProvider.js";
 import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 
 const identity = (id: string): ProviderIdentity => ({
   id,
@@ -430,3 +431,44 @@ it.each([1, 2])(
     for (const child of children) expect(child.close).toHaveBeenCalledTimes(3);
   },
 );
+
+it("prepares only the profiled provider and nothing after close", async () => {
+  const prepared: string[] = [];
+  const preparing = (
+    id: string,
+    operation: Exclude<AnalysisOperation, "health">,
+  ): AnalysisProvider => {
+    const providerIdentity = identity(id);
+    return {
+      identity: () => providerIdentity,
+      capabilities: () => [operationCapability(providerIdentity, operation)],
+      createClient: (): AnalysisClient => ({
+        execute: () =>
+          Promise.resolve(ok(createAnalysisExecution(null, providerIdentity))),
+        prepare: () => {
+          prepared.push(id);
+        },
+        close: () => Promise.resolve(ok(null)),
+      }),
+    };
+  };
+  const engine = preparing("engine", "list_procedures");
+  const auxiliary = preparing("auxiliary", "address_name");
+  const composite = new CompositeProvider([engine, auxiliary]);
+  const profile = createAnalysisProfile(
+    { id: "engine", name: "engine", version: "1" },
+    {},
+  );
+
+  const client = composite.createClient(executableTarget, profile);
+  client.prepare?.();
+  expect(prepared).toEqual(["engine"]);
+
+  // Without a committed profile no provider is the caller's engine.
+  composite.createClient(executableTarget).prepare?.();
+  expect(prepared).toEqual(["engine"]);
+
+  await client.close();
+  client.prepare?.();
+  expect(prepared).toEqual(["engine"]);
+});

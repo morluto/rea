@@ -286,6 +286,12 @@ export interface AnalysisClient extends AnalysisOperationPort {
     parameters: Readonly<Record<string, JsonValue>>,
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError> | undefined>;
+  /**
+   * Begin provider startup without waiting for it. The next request joins the
+   * same startup and reports its outcome, so a failure here is not lost and
+   * nothing is reported twice. A provider with no startup cost omits this.
+   */
+  prepare?(): void;
   /** Retained token-verified process snapshots for dynamic providers this client started. */
   runtimeLineageSnapshots?(): readonly ProviderRuntimeLineageSnapshot[];
   /** Current provider work that may outlive a timed-out or cancelled caller. */

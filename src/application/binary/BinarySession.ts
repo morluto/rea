@@ -763,6 +763,16 @@ export class BinarySession
     return ok(target);
   }
 
+  /**
+   * Let the bound provider begin its startup before the first query. Only a
+   * caller that expects queries to follow should ask: a replay from an
+   * imported snapshot may never need the provider at all.
+   */
+  prepareProvider(): void {
+    if (this.#shutdownStarted) return;
+    this.#active?.client.prepare?.();
+  }
+
   /** Serialize an external mutation and retire the potentially stale analysis. */
   withAdmittedExternalMutation<Value>(
     _path: string | undefined,

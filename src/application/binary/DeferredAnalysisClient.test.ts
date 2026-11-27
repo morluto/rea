@@ -620,3 +620,32 @@ it("settles deferred client close failure when the underlying owned resource lea
   expect(closed.error.cleanupIncomplete).toBe(false);
   expect(closed.error.cleanupResources).toEqual([]);
 });
+
+it("prepares the loaded client once and never after close", async () => {
+  let prepared = 0;
+  const loaded: AnalysisClient = {
+    execute: () => Promise.resolve(ok(createAnalysisExecution(null, identity))),
+    prepare: () => {
+      prepared += 1;
+    },
+    close: () => Promise.resolve(ok(null)),
+  };
+  const client = new DeferredAnalysisClient(
+    () => Promise.resolve(loaded),
+    identity.id,
+  );
+  client.prepare();
+  // The next request joins the same load, by which time the client began.
+  expect((await client.execute("health", {})).ok).toBe(true);
+  expect(prepared).toBe(1);
+  await client.close();
+
+  const closedEarly = new DeferredAnalysisClient(
+    () => Promise.resolve(loaded),
+    identity.id,
+  );
+  closedEarly.prepare();
+  await closedEarly.close();
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(prepared).toBe(1);
+});

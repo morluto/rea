@@ -597,6 +597,10 @@ const SERVICE_TOOL_BINDINGS = {
                   session.readAnalysisSnapshot(snapshotPath, signal),
               }),
         });
+        // An agent's first query follows an open by seconds. Without a
+        // snapshot to replay from, use that time for provider startup.
+        if (opened.ok && snapshotPath === undefined)
+          session.prepareProvider?.();
         return opened.ok
           ? ok(binaryTargetSummary(opened.value))
           : err(

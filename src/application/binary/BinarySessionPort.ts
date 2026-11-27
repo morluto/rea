@@ -148,6 +148,8 @@ export interface BinarySessionPort
   createManagedBinarySession?():
     | ManagedBinarySessionPort
     | Promise<ManagedBinarySessionPort>;
+  /** Let the bound provider begin startup before the first query, if it can. */
+  prepareProvider?(): void;
   /** Read a snapshot with failed descriptors retained for session cleanup retry. */
   readAnalysisSnapshot(
     path: string,

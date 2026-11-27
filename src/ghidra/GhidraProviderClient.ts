@@ -1362,6 +1362,14 @@ export const createGhidraProviderClient = (input: {
         ? []
         : [{ provider: committedProfile.provider, observation }];
     },
+    prepare: () => {
+      // Import and auto-analysis take tens of seconds. Start them while the
+      // caller decides its first query; that query joins this attempt.
+      void client.start().then(
+        () => undefined,
+        () => undefined,
+      );
+    },
     close: async () => {
       await nativeAotOwner?.close();
       const closed = await client.close();
