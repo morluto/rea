@@ -160,7 +160,10 @@ the whole text. The recovery names the larger value to pass, or asks for
 shorter or flatter text, or several calls, when the need is above the maximum.
 A type chained more than 256 levels deep through pointers, arrays, typedefs
 or members, counting existing database types, is refused with
-`details.refusal.kind: "fixed_ceiling"`. Ghidra 12.2 stores, names and
+`details.refusal.kind: "fixed_ceiling"` and the measured depth of the whole
+chain. Because the depth counts through typedefs and existing types, naming
+intermediate types or splitting definitions across calls does not reduce it;
+only fewer nested levels do. Ghidra 12.2 stores, names and
 compares types recursively: 1024 levels resolved and 2048 exhausted the stack
 inside `addDataType` while its database lock was held, leaving the Program
 unable to save. No caller value raises that stack, so the bound is fixed. If

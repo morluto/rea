@@ -436,10 +436,8 @@ struct rea_natural { char a; int b; }; // after pop
 struct rea_flexible { int n; char data[]; };
 struct rea_bits { unsigned low:3; unsigned high:5; };
 typedef struct rea_node { struct rea_node *next; const int v; } rea_node, *rea_node_ptr;
-enum rea_flags { REA_NONE, REA_EIGHT = 1 << 3, REA_MASK = (0x30 | 07) & ~2, REA_NEG = -(4 * 3) % 5, REA_NEXT };
-struct rea_deep { char d[${"(".repeat(10)}1${")".repeat(10)}]; };
+enum rea_flags { REA_NONE, REA_EIGHT = 8, REA_MASK = 0x35, REA_NEG = -2, REA_NEXT };
 typedef struct { volatile int k; } rea_unnamed_t;`,
-          parenthesis_max_depth: 10,
         });
         assert.deepEqual(
           applied.types.map(({ name, kind, size_bytes }) => [
@@ -449,7 +447,6 @@ typedef struct { volatile int k; } rea_unnamed_t;`,
           ]),
           [
             ["rea_bits", "struct", 4],
-            ["rea_deep", "struct", 1],
             ["rea_flags", "enum", 4],
             ["rea_flexible", "struct", 4],
             ["rea_natural", "struct", 8],
@@ -462,7 +459,7 @@ typedef struct { volatile int k; } rea_unnamed_t;`,
         // Both qualifiers' lines and columns in the declarations text above.
         assert.deepEqual(applied.dropped_qualifiers, [
           { qualifier: "const", line: 8, column: 50 },
-          { qualifier: "volatile", line: 11, column: 18 },
+          { qualifier: "volatile", line: 10, column: 18 },
         ]);
         const inspect = (name) =>
           first.call("inspect_native_data_type", {
@@ -470,6 +467,25 @@ typedef struct { volatile int k; } rea_unnamed_t;`,
           });
         const packed = await inspect("rea_packed");
         assert.equal(packed.alignment_bytes, 1);
+        // Ghidra's generic pointer has no pointed-to type; the dependency and
+        // depth walks must skip that absent child rather than fail.
+        const generic = await first.call("define_native_data_types", {
+          declarations: "struct rea_generic { pointer p; int x; };",
+        });
+        assert.deepEqual(
+          generic.types.map(({ name, size_bytes }) => [name, size_bytes]),
+          [["rea_generic", 16]],
+        );
+        assert.deepEqual(
+          (await inspect("rea_generic")).fields.map(({ name, type_id }) => [
+            name,
+            type_id,
+          ]),
+          [
+            ["p", "/pointer"],
+            ["x", "/int"],
+          ],
+        );
         // Pure qualifiers are reported; a labelled pack push and pop applies.
         const qualified = `struct rea_quals { int __w64 a; int __unaligned *b; int * __restrict c; };
 #pragma pack(push, rea, 1)
@@ -531,7 +547,7 @@ struct rea_after { char c; int i; };`;
             ["high", 5, 3],
           ],
         );
-        // Values implicit numbering cannot produce: Ghidra evaluated each expression.
+        // Values implicit numbering cannot produce, each from one literal.
         assert.deepEqual((await inspect("rea_flags")).members, [
           { name: "REA_EIGHT", value: "8" },
           { name: "REA_MASK", value: "53" },
@@ -570,6 +586,23 @@ struct rea_after { char c; int i; };`;
         );
         assert.match(builtin.message, /uint \(existing \/uint\)/u);
         // Each is accepted by Ghidra's parser and dropped or stored differently.
+        // Declarator parentheses: refused at the default bound; a raised bound
+        // passes them to Ghidra, which reports a diagnostic and stores nothing.
+        const parenthesized = `struct rea_kept { char ${"(".repeat(10)}x${")".repeat(10)}; };`;
+        await first.overNesting(
+          "define_native_data_types",
+          { declarations: parenthesized },
+          10,
+        );
+        const raised = await first.refused(
+          "define_native_data_types",
+          { declarations: parenthesized, parenthesis_max_depth: 10 },
+          "declarations",
+        );
+        assert.match(
+          raised.message,
+          /Ghidra's C parser reported declarations/u,
+        );
         for (const [declarations, reason] of [
           [
             "struct rea_user { struct rea_missing *p; };",
@@ -686,28 +719,34 @@ struct rea_after { char c; int i; };`;
             "# pragma pack(1)\nstruct rea_kept { char c; int i; };",
             /# separated from its directive name/u,
           ],
-          // Ghidra leaves these unevaluated or truncated and stores another value.
+          // Enum values, array sizes and bit-field widths are one plain literal.
           [
             "enum rea_bad { FIRST = 1, MASK = FIRST << 4 };",
-            /the name FIRST in a constant expression .* at line 1, column 34/u,
+            /the constant expression token FIRST .*write the computed value.* at line 1, column 34/u,
           ],
-          ["struct rea_kept { char a[sizeof(int)]; };", /the name sizeof/u],
-          ["struct rea_kept { char a[(char)300]; };", /the name char/u],
+          ...[
+            ["struct rea_kept { char a[sizeof(int)]; };", "sizeof"],
+            ["struct rea_kept { char a[(char)300]; };", "\\("],
+            ["enum rea_bad { A = 65536 * 65536 };", "\\*"],
+            ["enum rea_bad { A = 0b11 };", "0b11"],
+            ["enum rea_bad { A = 1.5 };", "\\."],
+            ["enum rea_bad { A = 1 ? 2 : 3 };", "\\?"],
+            ["enum rea_bad { A = ~0U >> 1 };", "~"],
+            ["enum rea_bad { A = 1 < 2 };", "<"],
+            ["enum rea_bad { A = 16u };", "16u"],
+            ["enum rea_bad { A = 07 };", "07"],
+            ["struct rea_kept { unsigned a : 1 << 4; };", "<"],
+          ].map(([declarations, token]) => [
+            declarations,
+            new RegExp(`the constant expression token ${token} `, "u"),
+          ]),
           [
             "enum rea_bad { A = 0x80000000 };",
-            /literal 0x80000000 .*above int/u,
+            /literal 0x80000000, outside int/u,
           ],
-          ["enum rea_bad { A = 65536 * 65536 };", /value leaves int/u],
-          ["enum rea_bad { A = 0b11 };", /literal 0b11/u],
-          ["enum rea_bad { A = 1.5 };", /the token \./u],
-          ["enum rea_bad { A = 1 ? 2 : 3 };", /the token \?/u],
           [
             "enum rea_bad { A = 2147483647, B };",
             /enumerator B, whose implicit value leaves int/u,
-          ],
-          [
-            "struct rea_kept { unsigned a : 1 << 40; };",
-            /shift C leaves undefined/u,
           ],
           // Ghidra ignores a bare push, so pop would restore nothing.
           ...[
@@ -741,7 +780,7 @@ struct rea_after { char c; int i; };`;
           ],
           [
             'struct rea_kept { char a[sizeof("abc")]; };',
-            /string or character literal/u,
+            /constant expression token sizeof/u,
           ],
           [
             "struct rea_kept { int f; int f; };",
@@ -961,7 +1000,7 @@ struct rea_after { char c; int i; };`;
         assert.equal(fitted.dropped_qualifiers, undefined);
         // Text within the lowered bound is still applied.
         const within = await bounded.call("define_native_data_types", {
-          declarations: "struct rea_small { int a[(2)]; };",
+          declarations: "struct rea_small { int a[2]; };",
           declarations_max_utf16: 48,
         });
         assert.deepEqual(
@@ -997,7 +1036,7 @@ struct rea_after { char c; int i; };`;
           [
             "define_native_data_types",
             {
-              declarations: `struct rea_flood { int a[${"(".repeat(max - 30)}`,
+              declarations: `struct rea_flood { char ${"(".repeat(max - 30)}`,
               declarations_max_utf16: max,
             },
           ],
@@ -1045,11 +1084,26 @@ struct rea_after { char c; int i; };`;
           ],
         ];
         const outcomes = [];
+        const errors = [];
         for (const [name, args] of floods) {
           // Each is refused with a typed result, never a lost connection.
           const error = requireMcpToolError(await flood.raw(name, args));
           outcomes.push(error.code);
+          errors.push(error);
         }
+        // The whole chain is measured: the struct, max - 40 pointers, then int.
+        assert.match(
+          errors[3].message,
+          new RegExp(
+            `defines rea_flood, chained ${String(max - 40 + 2)} levels deep .*, above the 256-level limit`,
+            "u",
+          ),
+        );
+        assert.equal(errors[3].details.refusal.kind, "fixed_ceiling");
+        assert.match(
+          errors[3].remediation.action,
+          /only fewer nested pointer, array, typedef or member levels does/u,
+        );
         // Pointer, array and typedef chains are refused before Ghidra walks them.
         assert.deepEqual(outcomes, [
           "invalid_request",

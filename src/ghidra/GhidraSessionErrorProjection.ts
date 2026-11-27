@@ -851,7 +851,7 @@ const ghidraCParserLimitRefusal = (
       "memory",
       decodeLimit(
         "c-declarations",
-        `${failure.message}; at most ${String(GHIDRA_C_MAX_TYPE_DEPTH)} levels are admitted. Nothing in this call was applied`,
+        `${failure.message}, above the ${String(GHIDRA_C_MAX_TYPE_DEPTH)}-level limit. Nothing in this call was applied`,
         {
           name: "Ghidra C type depth",
           maximum: GHIDRA_C_MAX_TYPE_DEPTH,
@@ -864,8 +864,7 @@ const ghidraCParserLimitRefusal = (
         ...fixedAllowanceOptions("The Ghidra C type depth allowance", "count", {
           limit: GHIDRA_C_MAX_TYPE_DEPTH,
           unit: "levels",
-          narrowing:
-            "Split the chain with named intermediate types defined in separate calls, or shorten it.",
+          narrowing: `Ghidra stores and compares types recursively and exhausts its stack on deeper chains, so the limit is fixed. The depth counts through typedefs, members and existing database types, so naming intermediate types or splitting the definitions across calls does not reduce it; only fewer nested pointer, array, typedef or member levels does.`,
         }),
       },
     );

@@ -546,7 +546,7 @@ it.each([
 
 it("reports a type chained deeper than Ghidra's stack admits as a fixed ceiling", async () => {
   const message =
-    "declarations defines a type chained 300 levels deep through pointers, arrays, typedefs or members";
+    "declarations defines rea_chain, chained 300 levels deep through pointers, arrays, typedefs, members or existing database types";
   const harness = await connectGhidraMcp(
     "ghidra-type-depth",
     (requested, input) =>
@@ -584,7 +584,11 @@ it("reports a type chained deeper than Ghidra's stack admits as a fixed ceiling"
       },
     });
     expect(error.details).not.toHaveProperty("limit");
-    expect(error.message).toContain(message);
+    expect(error.message).toContain(`${message}, above the 256-level limit`);
+    expect(error.remediation.action).toMatch(
+      /only fewer nested pointer, array, typedef or member levels does/u,
+    );
+    expect(error.remediation.action).not.toMatch(/Split the chain/u);
     // The refusal leaves the session usable.
     const next = await harness.mcp.callTool({
       name: "procedure_info",
