@@ -74,10 +74,13 @@ const rawUInt32LE = (bytes: Buffer, offset: number): number =>
 interface AddressLaneFilter {
   readonly lo32: ReadonlySet<number>;
   readonly singleHi32: number | null;
+  /** Pointer slot width; a 4-byte slot has no high lane to compare. */
+  readonly width: 4 | 8;
 }
 
 const createAddressLaneFilter = (
   addresses: Iterable<bigint>,
+  width: 4 | 8 = 8,
 ): AddressLaneFilter => {
   const lo32 = new Set<number>();
   let singleHi32: number | null = null;
@@ -91,7 +94,7 @@ const createAddressLaneFilter = (
       else if (singleHi32 !== hi) multipleHi = true;
     }
   }
-  return { lo32, singleHi32: multipleHi ? null : singleHi32 };
+  return { lo32, singleHi32: multipleHi ? null : singleHi32, width };
 };
 
 const matchesAddressLane = (
@@ -100,6 +103,7 @@ const matchesAddressLane = (
   offset: number,
 ): boolean => {
   if (
+    filter.width === 8 &&
     filter.singleHi32 !== null &&
     rawUInt32LE(bytes, offset + 4) !== filter.singleHi32
   )
@@ -301,36 +305,42 @@ export function* findModules(
   const unresolvedName = unresolvedPointerMatcher(image, names.keys(), (name) =>
     (names.get(name) ?? []).map((index) => counts[index]!),
   );
+  // Il2CppCodeGenModule: moduleName pointer, methodPointerCount and the
+  // methodPointers array, each in one pointer-sized slot.
+  const width = image.pointerSize;
+  const step = BigInt(width);
+  const wordBits = width === 8 ? 64 : 32;
   const rawBytes = image.stored.bytes;
   const legacyFixups = hasLegacyMachoFixups(image);
-  const nameFilter = createAddressLaneFilter(names.keys());
+  const nameFilter = createAddressLaneFilter(names.keys(), width);
   for (const mapping of image.container.mappings) {
-    const start = Number((8n - (mapping.address % 8n)) % 8n);
+    const start = Number((step - (mapping.address % step)) % step);
     const fastRaw = createFastRawOverlay(
       image,
       mapping,
       legacyFixups,
       rawBytes.length,
     );
-    for (let at = start; at + 24 <= mapping.size; at += 8) {
-      if ((at & 0xffff) < 8) yield;
+    for (let at = start; at + 3 * width <= mapping.size; at += width) {
+      if ((at & 0xffff) < width) yield;
       const offset = mapping.offset + at;
       if (
         fastRaw !== null &&
-        !fastRaw.hasWrite(at, 8) &&
+        !fastRaw.hasWrite(at, width) &&
         !matchesAddressLane(nameFilter, rawBytes, offset)
       )
         continue;
       const address = mapping.address + BigInt(at);
-      const raw = image.stored.word(offset, 64);
+      const raw = image.stored.word(offset, wordBits);
       const elfSlot =
         image.elfPointerOverlay === undefined
           ? undefined
           : readSlot(image, address);
       const unresolvedLegacy =
-        image.machoPointerFixups?.hasUnresolvedLegacyBytes(address, 8) === true;
+        image.machoPointerFixups?.hasUnresolvedLegacyBytes(address, width) ===
+        true;
       if (elfSlot === "unknown" || unresolvedLegacy) {
-        const count = readUInt32(image, address + 8n);
+        const count = readUInt32(image, address + step);
         let plausibleCount =
           count === "unknown"
             ? minimumCount
@@ -349,7 +359,7 @@ export function* findModules(
               : (matched ?? plausibleCount);
         }
         if (Number.isFinite(plausibleCount)) {
-          const pointers = readSlot(image, address + 16n);
+          const pointers = readSlot(image, address + 2n * step);
           if (
             pointers === "unknown" ||
             (typeof pointers === "bigint" &&
@@ -376,7 +386,7 @@ export function* findModules(
       if (indices === undefined) continue;
       let recordOffset: number;
       try {
-        recordOffset = image.fileMappings.offset(address, 24);
+        recordOffset = image.fileMappings.offset(address, 3 * width);
       } catch (cause) {
         if (cause instanceof BinaryFormatFailure)
           throw new Il2cppBinaryFormatFailure(
@@ -393,9 +403,9 @@ export function* findModules(
       let work = 0;
       for (const index of indices) {
         if (++work % 256 === 0) yield;
-        const count = readUInt32(image, address + 8n);
+        const count = readUInt32(image, address + step);
         if (count !== "unknown" && count !== counts[index]) continue;
-        const pointers = readSlot(image, address + 16n);
+        const pointers = readSlot(image, address + 2n * step);
         if (pointers === "unknown")
           throw new Il2cppBinaryFormatFailure(
             "code-gen-modules-not-found",
@@ -456,41 +466,43 @@ export function* findCodeRegistration(
   const rawBytes = image.stored.bytes;
   const legacyFixups = hasLegacyMachoFixups(image);
   const expectedCount = modules.length;
+  const width = image.pointerSize;
+  const step = BigInt(width);
   for (const mapping of image.container.mappings) {
-    const start = Number((8n - (mapping.address % 8n)) % 8n);
+    const start = Number((step - (mapping.address % step)) % step);
     const fastRaw = createFastRawOverlay(
       image,
       mapping,
       legacyFixups,
       rawBytes.length,
     );
-    for (let at = start; at + 16 <= mapping.size; at += 8) {
-      if ((at & 0xffff) < 8) yield;
+    for (let at = start; at + 2 * width <= mapping.size; at += width) {
+      if ((at & 0xffff) < width) yield;
       if (
         fastRaw !== null &&
         !fastRaw.hasWrite(at, 4) &&
         rawUInt32LE(rawBytes, mapping.offset + at) !== expectedCount
       )
         continue;
-      // The count owns four bytes; the following four only align its pointer.
+      // The count owns four bytes; on 64-bit images the next four only align its pointer.
       const field = mapping.address + BigInt(at);
       const count = readUInt32(image, field);
       if (count !== "unknown" && count !== modules.length) continue;
-      const arraySlot = readSlot(image, field + 8n);
+      const arraySlot = readSlot(image, field + step);
       if (arraySlot === "unknown")
         throw new Il2cppBinaryFormatFailure(
           "code-registration-not-found",
           "A possible CodeRegistration has an unresolved module array",
         );
       const array = arraySlot;
-      if (array === null || !isMapped(image, array, modules.length * 8))
+      if (array === null || !isMapped(image, array, modules.length * width))
         continue;
       const seen = new Set<bigint>();
       let uncertain = count === "unknown";
       let viable = true;
       for (let slot = 0; slot < modules.length; slot++) {
         if (slot % 256 === 0) yield;
-        const pointer = readSlot(image, array + BigInt(slot * 8));
+        const pointer = readSlot(image, array + BigInt(slot * width));
         if (pointer === "unknown") {
           uncertain = true;
           continue;
@@ -816,7 +828,7 @@ function* arm64PageReferences(
  * Find MetadataRegistration by its two TypeDefinitionIndex-sized counts:
  * fieldOffsetsCount and typeDefinitionsSizesCount (words 10 and 12) both equal
  * the metadata type-definition count and are followed by mapped pointers.
- * typesCount and types are words 6 and 7. Counts are int32 in 8-byte slots.
+ * typesCount and types are words 6 and 7. Counts are int32 in pointer-sized slots.
  * Linking reads only the type table, so when no static registration matches on
  * x86-64 or arm64 the table is inferred from code instead (field null).
  */
@@ -839,38 +851,47 @@ export function* findMetadataRegistration(
   let countsMatched = false;
   const rawBytes = image.stored.bytes;
   const legacyFixups = hasLegacyMachoFixups(image);
+  // Every MetadataRegistration field is one pointer-sized slot; counts sit in
+  // the low four bytes of theirs.
+  const width = image.pointerSize;
+  const step = BigInt(width);
+  const slot = (index: number) => index * width;
   for (const mapping of image.container.mappings) {
-    const start = Number((8n - (mapping.address % 8n)) % 8n);
+    const start = Number((step - (mapping.address % step)) % step);
     const fastRaw = createFastRawOverlay(
       image,
       mapping,
       legacyFixups,
       rawBytes.length,
     );
-    // The fields used below end at byte 112. The full 128-byte registration
+    // The fields used below end at slot 14. The full 16-slot registration
     // must still have loader coverage, including any declared zero-fill tail.
-    for (let at = start; at + 112 <= mapping.size; at += 8) {
-      if ((at & 0xffff) < 8) yield;
-      if (fastRaw !== null && !fastRaw.hasWrite(at + 80, 20)) {
+    for (let at = start; at + slot(14) <= mapping.size; at += width) {
+      if ((at & 0xffff) < width) yield;
+      if (
+        fastRaw !== null &&
+        !fastRaw.hasWrite(at + slot(10), slot(12) + 4 - slot(10))
+      ) {
         const off = mapping.offset + at;
         if (
-          rawUInt32LE(rawBytes, off + 80) !== typeDefinitions ||
-          rawUInt32LE(rawBytes, off + 96) !== typeDefinitions
+          rawUInt32LE(rawBytes, off + slot(10)) !== typeDefinitions ||
+          rawUInt32LE(rawBytes, off + slot(12)) !== typeDefinitions
         )
           continue;
       }
       const address = mapping.address + BigInt(at);
-      const fieldCount = readUInt32(image, address + 80n);
+      const field = (index: number) => address + BigInt(slot(index));
+      const fieldCount = readUInt32(image, field(10));
       if (fieldCount !== "unknown" && fieldCount !== typeDefinitions) continue;
-      const sizeCount = readUInt32(image, address + 96n);
+      const sizeCount = readUInt32(image, field(12));
       if (sizeCount !== "unknown" && sizeCount !== typeDefinitions) continue;
       if (!hasPointerArrayCoverage(image, address, 16)) continue;
       if (fieldCount !== "unknown" && sizeCount !== "unknown")
         countsMatched = true;
-      const count = readUInt32(image, address + 48n);
-      const types = readSlot(image, address + 56n);
-      const fieldOffsets = readSlot(image, address + 88n);
-      const typeSizes = readSlot(image, address + 104n);
+      const count = readUInt32(image, field(6));
+      const types = readSlot(image, field(7));
+      const fieldOffsets = readSlot(image, field(11));
+      const typeSizes = readSlot(image, field(13));
       if (
         count === null ||
         (typeof count === "number" && (count === 0 || count > 0x7fffffff)) ||
@@ -878,10 +899,14 @@ export function* findMetadataRegistration(
         fieldOffsets === null ||
         typeSizes === null ||
         (typeof fieldOffsets === "bigint" &&
-          !isMapped(image, fieldOffsets, 8)) ||
-        (typeof typeSizes === "bigint" && !isMapped(image, typeSizes, 8)) ||
+          !isMapped(image, fieldOffsets, width)) ||
+        (typeof typeSizes === "bigint" && !isMapped(image, typeSizes, width)) ||
         (typeof types === "bigint" &&
-          !isMapped(image, types, typeof count === "number" ? count * 8 : 8))
+          !isMapped(
+            image,
+            types,
+            typeof count === "number" ? count * width : width,
+          ))
       )
         continue;
       if (
@@ -896,17 +921,17 @@ export function* findMetadataRegistration(
           "metadata-registration-not-found",
           "A possible MetadataRegistration has unresolved candidate fields",
         );
-      const field = mapping.address + BigInt(at + 48);
+      const typesCountField = field(6);
       // Exact load aliases can visit one virtual registration field twice.
-      if (matchedFields.has(field)) continue;
-      matchedFields.add(field);
+      if (matchedFields.has(typesCountField)) continue;
+      matchedFields.add(typesCountField);
       if (matches.length !== 0)
         throw new Il2cppBinaryFormatFailure(
           "metadata-registration-not-found",
           "multiple MetadataRegistration candidates match",
         );
       matches.push({
-        field,
+        field: typesCountField,
         count,
         types,
       });

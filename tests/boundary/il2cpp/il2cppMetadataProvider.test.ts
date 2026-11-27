@@ -4,6 +4,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { zstdCompressSync } from "node:zlib";
 import { afterEach, expect, it, vi } from "vitest";
+import { WASM_MODULE_LIMITS } from "../../../src/wasm/WasmModuleImage.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import {
   AnalysisCancelledError,
@@ -12,6 +13,7 @@ import {
   AnalysisTargetFailureError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { fixedAllowanceRemediation } from "../../../src/domain/fixedAllowanceRemediation.js";
 import { Il2cppMetadataProvider } from "../../../src/il2cpp/Il2cppMetadataProvider.js";
 import { inspectIl2cppMetadataV108 } from "../../../src/il2cpp/Il2cppMetadataV108.js";
 import { Il2cppGhidraSeedWriter } from "../../../src/il2cpp/Il2cppGhidraSeedWriter.js";
@@ -26,6 +28,7 @@ import {
   createIl2cppBinaryFixture,
   FIXTURE_GENERIC_INSTANCES,
   FIXTURE_METHOD_ADDRESSES,
+  createWasmFixture,
 } from "../../fixtures/il2cpp/binary.js";
 import {
   createIl2cppMetadataFixture,
@@ -39,6 +42,17 @@ afterEach(() => {
 });
 
 /** One-shot inspections keep the real reader's cleanup at one test boundary. */
+const wasmLeb128 = (value: number): number[] => {
+  const out: number[] = [];
+  do {
+    let byte = value & 0x7f;
+    value >>>= 7;
+    if (value !== 0) byte |= 0x80;
+    out.push(byte);
+  } while (value !== 0);
+  return out;
+};
+
 const inspectMetadata = async (path: string, limit?: number) => {
   const provider = new Il2cppMetadataProvider(limit);
   try {
@@ -1238,6 +1252,56 @@ it("refuses generic rows that exceed the report budget and keeps the requested p
   }
 });
 
+it("names the wasm32 module parser allowance when a wasm module passes a count cap", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-wasm-cap-");
+  const path = join(root, "global-metadata.dat");
+  const binaryPath = join(root, "build.wasm");
+  const count = WASM_MODULE_LIMITS.dataSegments + 1;
+  // Complete records: each passive data segment is flag 1 and size 0.
+  const data = [
+    ...wasmLeb128(count),
+    ...Array.from({ length: count }, () => [1, 0]).flat(),
+  ];
+  await writeFile(path, createLinkedIl2cppMetadataFixture().bytes);
+  await writeFile(
+    binaryPath,
+    Buffer.from([
+      0x00,
+      0x61,
+      0x73,
+      0x6d,
+      1,
+      0,
+      0,
+      0,
+      11,
+      ...wasmLeb128(data.length),
+      ...data,
+    ]),
+  );
+  const provider = new Il2cppMetadataProvider();
+  try {
+    const result = await provider.inspect({ path, binary_path: binaryPath });
+    if (result.ok) throw new Error("expected a capacity refusal");
+    const allowance = "The wasm32 module parser allowance";
+    expect(result.error).toMatchObject({
+      fixedAllowance: { name: allowance, kind: "count" },
+      retryable: false,
+    });
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      message: expect.stringMatching(/^wasm-module-capacity: /),
+      remediation: {
+        action: `${fixedAllowanceRemediation(allowance, "count")} The allowance is ${WASM_MODULE_LIMITS.dataSegments} entries; this release has no runtime override.`,
+      },
+      details: { resource: "capacity" },
+    });
+  } finally {
+    await provider.close();
+  }
+});
+
 it("bounds the ELF pointer index by the caller's max_native_index_bytes", async () => {
   const root = await createTestTempDirectory("rea-il2cpp-index-budget-");
   const path = join(root, "global-metadata.dat");
@@ -1337,6 +1401,50 @@ it("reports the exceeded native-link maximum in the public refusal", async () =>
       },
       fixedAllowance: { limit: 64, unit: "entries" },
     });
+  } finally {
+    await provider.close();
+  }
+});
+
+it("returns schema-valid wasm32 rows with table and function indices and no addresses", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-wasm-");
+  const path = join(root, "global-metadata.dat");
+  const binaryPath = join(root, "build.wasm");
+  await writeFile(path, createLinkedIl2cppMetadataFixture().bytes);
+  await writeFile(binaryPath, createWasmFixture());
+  const provider = new Il2cppMetadataProvider();
+  try {
+    const result = await provider.inspect({ path, binary_path: binaryPath });
+    if (!result.ok) throw result.error;
+    const report = il2cppMetadataSchema.parse(result.value);
+    expect(report.binary).toMatchObject({ format: "wasm", image_base: "0x0" });
+    expect(report.method_addresses?.[0]).toEqual({
+      state: "code",
+      address: null,
+      rva: null,
+      table_index: 1,
+      function_index: 10,
+    });
+    // Imported functions are unknown for a wasm-specific reason, not a relocation.
+    expect(
+      report.limitations.some(
+        (line) =>
+          line.includes("imported function") &&
+          !line.includes("unresolved relocation"),
+      ),
+    ).toBe(true);
+    // A native report may not carry wasm rows, nor a wasm report addresses.
+    const native = { ...report, binary: { ...report.binary!, format: "elf" } };
+    expect(il2cppMetadataSchema.safeParse(native).success).toBe(false);
+    const addressed = {
+      ...report,
+      method_addresses: report.method_addresses!.map(() => ({
+        state: "code",
+        address: "0x1",
+        rva: "0x1",
+      })),
+    };
+    expect(il2cppMetadataSchema.safeParse(addressed).success).toBe(false);
   } finally {
     await provider.close();
   }
