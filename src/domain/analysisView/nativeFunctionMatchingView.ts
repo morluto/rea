@@ -13,7 +13,7 @@ import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { filterSet } from "./selectViewRows.js";
 import { invalidAnalysisView } from "./analysisViewErrors.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -150,10 +150,9 @@ const sharedContext = (
   parent_operation: "match_native_functions" as const,
   parent_digest: parent.evidenceId.slice(3),
   artifact: null,
-  limitations: boundedViewMessages(
-    [...parent.limitations, ...report.limitations],
-    parent.evidenceId,
-    "limitations",
+  limitations: boundedViewLimitations(
+    parent,
+    report.limitations,
     report.byte_sources_count ? [nativeFunctionByteSourceGuidance] : [],
   ),
   unknowns: [

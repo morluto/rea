@@ -20,6 +20,7 @@ import type {
 } from "./analysisViewShape.js";
 import { assertOwnedView } from "./analysisViewShape.js";
 import {
+  boundedViewLimitations,
   boundedViewMessages,
   completeWithinViewCoverage as completeCoverage,
   pageViewCoverage as pageCoverage,
@@ -165,11 +166,7 @@ const parentFields = (parent: AnalysisViewParent, layout: BinaryLayout) => ({
     path: layout.artifact.path,
     sha256: layout.artifact.sha256,
   },
-  limitations: boundedViewMessages(
-    [...parent.limitations, ...layout.limitations],
-    parent.evidenceId,
-    "limitations",
-  ),
+  limitations: boundedViewLimitations(parent, layout.limitations),
   unknowns: boundedViewMessages(
     layoutUnknowns(layout),
     parent.evidenceId,

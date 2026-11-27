@@ -17,6 +17,7 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import {
+  boundedViewLimitations,
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
@@ -215,11 +216,7 @@ export const projectGoBinaryView = (
             ? ("truncated" as const)
             : ("complete" as const),
     },
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...report.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, report.limitations),
     unknowns: boundedViewMessages(
       unknowns.values,
       parent.evidenceId,

@@ -19,6 +19,7 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import {
+  boundedViewLimitations,
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
@@ -233,11 +234,7 @@ export const projectAndroidPackageView = (
     ...shared,
     source_status: report.components.status,
     source_components: rows.length,
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...report.components.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, report.components.limitations),
     unknowns: boundedViewMessages(
       [
         ...shared.unknowns,

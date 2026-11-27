@@ -16,6 +16,7 @@ import {
 import { analysisErrorProjectionSchema } from "../analysisErrorProjectionSchema.js";
 import { err, ok } from "../result.js";
 import {
+  boundedViewLimitations,
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
@@ -334,11 +335,7 @@ export const projectBatchDecompileView = (
     parent_operation: OPERATION,
     parent_digest: parent.evidenceId.slice(3),
     artifact: parent.artifact ?? null,
-    limitations: boundedViewMessages(
-      parent.limitations,
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent),
     unknowns: boundedViewMessages(
       [],
       parent.evidenceId,
