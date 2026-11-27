@@ -1,3 +1,4 @@
+import { filterSet } from "./selectViewRows.js";
 import { analysisViewPageFields } from "./analysisViewPageFields.js";
 import { z } from "zod";
 import {
@@ -188,8 +189,7 @@ type PageRequest = z.output<typeof nativeLoadImageViewRequestSchema>;
 /** Exact source indices need no inventory scan or persistent lookup index. */
 const selectRows = (source: readonly (Row | string)[], view: PageRequest) => {
   const selectedFields = view.fields ?? defaultFields[view.collection];
-  const fields =
-    selectedFields === undefined ? undefined : new Set<string>(selectedFields);
+  const fields = filterSet<string>(selectedFields);
   const project = (value: Row | string, source_index: number) => {
     const record = typeof value === "string" ? { address: value } : value;
     return {
