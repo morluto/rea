@@ -337,8 +337,9 @@ public class ReaDecompilerFailureProbe extends GhidraScript {
                 requestMonitor.set(bridge, previousMonitor);
             }
 
-            // The carrying request has returned and no later decompile is in
-            // flight. Abandoning read-ahead still stops the workers.
+            // The handler is blocked on a task it already took. The reader
+            // cancels that task and returns; it does not wait out the stop
+            // bound, so the cancel frame behind it is still read.
             dispose.invoke(bridge);
             pooled.clear();
             foreground.clear();
@@ -347,9 +348,42 @@ public class ReaDecompilerFailureProbe extends GhidraScript {
             handleRequest.invoke(bridge, requestConstructor.newInstance(15, "procedure_pseudo_code",
                 pseudocodeFor(pseudocodeQuery, own), null, null, flowLimits, window), null);
             require("read_ahead_running_before_abandon", await(() -> pooled.contains(second.getName()), 5000));
-            handleRequest.invoke(bridge, requestConstructor.newInstance(16, "abandon_decompile_read_ahead",
-                new JsonObject(), null, null, flowLimits, List.of()), null);
-            require("read_ahead_abandoned_between_requests", liveWorkers.getAsInt() == 0);
+            TaskMonitor waiting = new ghidra.util.task.TaskMonitorAdapter(true);
+            requestMonitor.set(bridge, waiting);
+            java.util.concurrent.atomic.AtomicReference<Throwable> handlerFailure =
+                new java.util.concurrent.atomic.AtomicReference<>();
+            Thread handler = new Thread(() -> {
+                try {
+                    handleRequest.invoke(bridge, requestConstructor.newInstance(16, "procedure_pseudo_code",
+                        pseudocodeFor(pseudocodeQuery, second), null, null, flowLimits, List.of()), null);
+                    handlerFailure.set(new IllegalStateException("read-ahead wait succeeded"));
+                } catch (InvocationTargetException failure) {
+                    handlerFailure.set(failure.getCause());
+                } catch (Throwable failure) {
+                    handlerFailure.set(failure);
+                }
+            });
+            handler.start();
+            Thread.sleep(200);
+            Method cancelAhead = bridge.getClass().getDeclaredMethod("cancelDecompileAhead");
+            cancelAhead.setAccessible(true);
+            long abandonStarted = System.nanoTime();
+            try {
+                cancelAhead.invoke(bridge);
+                long cancelMillis = (System.nanoTime() - abandonStarted) / 1_000_000;
+                waiting.cancel();
+                handler.join(2000);
+                long waitedMillis = (System.nanoTime() - abandonStarted) / 1_000_000;
+                Throwable cause = handlerFailure.get();
+                require("read_ahead_abandoned_while_handler_waits",
+                    cancelMillis < 1000 && !handler.isAlive() && waitedMillis < 2000 &&
+                    cause != null && failureCode(cause).equals("decompile_cancelled") &&
+                    await(() -> liveWorkers.getAsInt() == 0, 2000));
+            } finally {
+                waiting.cancel();
+                handler.join(2000);
+                requestMonitor.set(bridge, previousMonitor);
+            }
 
             // A changed decompile deadline reuses a completed result but not
             // a timeout produced under the earlier deadline.
