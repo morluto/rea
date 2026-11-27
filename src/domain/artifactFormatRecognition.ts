@@ -1,5 +1,6 @@
 import type { ArtifactFormatId } from "./artifactGraph.js";
 import { hasAndroidBootImageMagic } from "./androidBootImageFormat.js";
+import { hasAndroidDtboMagic } from "./firmware/androidDtboFormat.js";
 import { hasBinaryPlistSignature } from "./apple/appleArchiveFormat.js";
 import { hasDfuSePrefix, isDfuSeFile } from "./firmware/dfuse.js";
 import { ESP8266_REFUSAL, recognizeEspImage } from "./firmware/espImage.js";
@@ -26,6 +27,7 @@ import { hasBfltMagic } from "./bfltExecutable.js";
 import { hasNroMagic, hasNsoMagic } from "./switchExecutable.js";
 import { hasUnityFsHeader } from "./unityfsFormat.js";
 import { hasMftFileRecordHeader } from "./windows/ntfsMft.js";
+import { hasSystemdJournalHeader } from "./linux/systemdJournal.js";
 import { hasAuditdLogRecord } from "./linux/auditdLog.js";
 import { hasWindowsShortcutHeader } from "./windows/windowsShortcutHeader.js";
 import { BinaryFormatFailure } from "./binaryContainer.js";
@@ -33,6 +35,7 @@ import {
   hasDevicetreeMagic,
   readDevicetreeHeader,
 } from "./firmware/devicetreeHeader.js";
+import { hasEspNvsHeader } from "./firmware/espNvsParser.js";
 import { hasDebPackageHeader } from "./deb/debPackage.js";
 import { observePythonBytecodePrefix } from "./python/pythonBytecodeIdentity.js";
 import { hasSqliteHeader } from "./sqliteFormat.js";
@@ -43,6 +46,12 @@ import {
   hasKtx1Identifier,
   hasKtx2Identifier,
 } from "./gpuAssetFormats.js";
+import {
+  hasBink2Header,
+  hasOggOpusHeader,
+  hasRiffXma2Header,
+  hasVulkanPipelineCacheHeader,
+} from "./mediaAssetFormats.js";
 import { hasWxapkgEncryptedMagic, hasWxapkgHeader } from "./wxapkgFormat.js";
 import { hasZipSignature } from "./zipPackageFormat.js";
 
@@ -61,10 +70,15 @@ export type RecognizedArtifactFormat = Extract<
   | "glb"
   | "ktx"
   | "ktx2"
+  | "ogg-opus"
+  | "riff-xma2"
+  | "bink2"
+  | "vulkan-pipeline-cache"
   | "uimage"
   | "nso"
   | "nro"
   | "android-boot-image"
+  | "android-dtbo"
   | "android-ota-payload"
   | "android-vbmeta"
   | "android-sparse-image"
@@ -80,6 +94,7 @@ export type RecognizedArtifactFormat = Extract<
   | "fit"
   | "qualcomm-mbn"
   | "ntfs-mft"
+  | "systemd-journal"
   | "auditd-log"
   | "plist"
   | StandaloneArtifactFormat
@@ -94,6 +109,7 @@ export const STANDALONE_ARTIFACT_FORMATS = [
   "windows-shortcut",
   "python-pyc",
   "devicetree",
+  "esp-nvs",
   "deb",
 ] as const;
 
@@ -198,10 +214,15 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     when("glb", hasGlbHeader),
     when("ktx", hasKtx1Identifier),
     when("ktx2", hasKtx2Identifier),
+    when("ogg-opus", hasOggOpusHeader),
+    when("riff-xma2", hasRiffXma2Header),
+    when("bink2", hasBink2Header),
+    when("vulkan-pipeline-cache", hasVulkanPipelineCacheHeader),
     when("uimage", hasUImageMagic),
     when("nso", hasNsoMagic),
     when("nro", hasNroMagic),
     when("android-boot-image", hasAndroidBootImageMagic),
+    when("android-dtbo", hasAndroidDtboMagic),
     when("android-vbmeta", hasAndroidVbmetaMagic),
     ({ prefix }) => {
       const ota = recognizeAndroidOtaPayload(prefix);
@@ -279,10 +300,15 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     },
     when("fit", hasFitImagesNode),
     when("ntfs-mft", hasMftFileRecordHeader),
+    when("systemd-journal", hasSystemdJournalHeader),
     when("auditd-log", hasAuditdLogRecord),
     when("sqlite", hasSqliteHeader),
     when("windows-shortcut", hasWindowsShortcutHeader),
     when("deb", hasDebPackageHeader),
+    ({ prefix, fileSize }) =>
+      hasEspNvsHeader(prefix, fileSize)
+        ? { state: "recognized", format: "esp-nvs" }
+        : undefined,
     // Only a pinned CPython magic claims the format; a CR LF trailer alone
     // is too weak a signature for arbitrary bytes.
     when("python-pyc", (prefix) => {

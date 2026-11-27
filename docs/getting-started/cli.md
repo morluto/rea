@@ -489,6 +489,9 @@ See [Android Verified Boot vbmeta images](../guides/firmware/android-vbmeta.md)
 for the header, descriptors, stored public key, and the fact that nothing is
 verified.
 
+Standalone `dtbo.img` partition tables (`0xd7b7ab1e`) can also be inspected
+and extracted with `inspect-artifact` and `extract-artifact`; see [Android DTBO partition images](../android-dtbo.md).
+
 Inventory and extract an ISO 9660 disc image without mounting it:
 
 ```sh
@@ -701,6 +704,18 @@ counts ranges that match a symbol, ranges without a symbol, and whether the
 reported present, absent, or incomplete and is not decoded. A missing unwind table is
 observed absence of those declarations. See
 [ELF unwind function ranges](../guides/native/elf-unwind-ranges.md).
+
+List Mach-O function starts and data-in-code entries without executing the
+image:
+
+```bash
+rea inspect-macho-function-starts /absolute/path/to/program --json
+```
+
+The workflow reports `LC_FUNCTION_STARTS` VM addresses and `LC_DATA_IN_CODE`
+entries (offset, length, kind, and the owning start). Universal Mach-O files
+need `--architecture`. Counts cover every entry. See
+[Mach-O function starts and data in code](../guides/native/macho-function-starts.md).
 
 Inspect an Apple `.ips` crash report without executing a target:
 
