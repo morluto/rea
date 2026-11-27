@@ -486,6 +486,7 @@
 * **maven:** read Maven 4.1.0 model POMs ([#14089](https://github.com/morluto/rea/issues/14089)) ([0c59c2e](https://github.com/morluto/rea/commit/0c59c2ed4e46ff52c69cb9f216c069e7b703f658))
 * **mcp:** accept discover_tools in exact-name discovery batches ([#13288](https://github.com/morluto/rea/issues/13288)) ([fd40fd9](https://github.com/morluto/rea/commit/fd40fd9ab2a0238529e2c2bc55264af778b439a3))
 * **mcp:** keep doctor launches target-free on Windows ([#13250](https://github.com/morluto/rea/issues/13250)) ([0209d3e](https://github.com/morluto/rea/commit/0209d3e1b580d83497a7b04bc274001670311bd6))
+* **mcp:** name the discover_tools call for an unloaded hot-cold tool ([#14845](https://github.com/morluto/rea/issues/14845)) ([427c660](https://github.com/morluto/rea/commit/427c66018e54012ab4d9705bdfaa3317ade48b74))
 * **mcp:** name the HTTP option that requires --http ([2fbcec8](https://github.com/morluto/rea/commit/2fbcec84eb5054c7f014729021172173df1742c8))
 * **mcp:** paginate tools/list under the FastMCP SSE limit ([#9142](https://github.com/morluto/rea/issues/9142)) ([a00511e](https://github.com/morluto/rea/commit/a00511e88e1008d233c89b8911dddb6d493a1cbd))
 * **mcp:** rank multi-word discover_tools queries by matched terms ([#14584](https://github.com/morluto/rea/issues/14584)) ([c58de7f](https://github.com/morluto/rea/commit/c58de7f77efc738b414376fa7b7a1e98b1499c99))
