@@ -31,6 +31,7 @@ import {
   decodeSourceStampCertificate,
   PROOF_OF_ROTATION_ATTR_ID,
   type ApkLineageNode,
+  type ApkSchemeCountBudget,
   type ApkSchemeError,
   type ApkSchemeVersion,
   type ApkSigner,
@@ -182,17 +183,13 @@ interface DecodedScheme {
 const lineageOf = (
   signer: ApkSigner,
   version: Exclude<ApkSchemeVersion, "v2">,
-  maxLineageNodes: number,
+  lineageBudget: ApkSchemeCountBudget,
 ): Result<DecodedSigner["rotation"], ApkSchemeError> => {
   const attribute = signer.attributes.find(
     (a) => a.id === PROOF_OF_ROTATION_ATTR_ID,
   );
   if (attribute === undefined) return ok({ present: false });
-  const nodes = decodeRotationLineage(
-    attribute.value,
-    version,
-    maxLineageNodes,
-  );
+  const nodes = decodeRotationLineage(attribute.value, version, lineageBudget);
   if (nodes.ok) return ok({ present: true, nodes: nodes.value });
   // A malformed lineage is reported, not dropped; an over-cap lineage is refused.
   return nodes.error.kind === "malformed-signer"
@@ -485,21 +482,36 @@ export class ApkSignatureProvider implements ApkSignaturePort {
             tail.centralDirectoryOffset,
             tail.centralDirectorySize,
           );
+    const allocationCeiling = Math.max(
+      limits.maxOutputBytes,
+      APK_SIGNATURE_BUDGETS.max_output_bytes.default_value,
+    );
     const v1Read = await readV1(
       handle,
       centralDirectory,
       tail,
       block.value,
       limits,
+      allocationCeiling,
     );
     if (!v1Read.ok) return v1Read;
     const { v1, decoded: v1Decoded, duplicates } = v1Read.value;
 
+    const elementBudget: ApkSchemeCountBudget = {
+      used: 0,
+      limit: limits.maxSignerElements,
+    };
+    const lineageBudget: ApkSchemeCountBudget = {
+      used: 0,
+      limit: limits.maxLineageNodes,
+    };
     const v2 = decodeScheme(
       block.value,
       APK_BLOCK_ID.signatureV2,
       "v2",
       limits,
+      elementBudget,
+      lineageBudget,
     );
     if (!v2.ok) return v2;
     const v3 = decodeScheme(
@@ -507,6 +519,8 @@ export class ApkSignatureProvider implements ApkSignaturePort {
       APK_BLOCK_ID.signatureV3,
       "v3",
       limits,
+      elementBudget,
+      lineageBudget,
     );
     if (!v3.ok) return v3;
     const v31 = decodeScheme(
@@ -514,6 +528,8 @@ export class ApkSignatureProvider implements ApkSignaturePort {
       APK_BLOCK_ID.signatureV31,
       "v3.1",
       limits,
+      elementBudget,
+      lineageBudget,
     );
     if (!v31.ok) return v31;
 
@@ -527,10 +543,6 @@ export class ApkSignatureProvider implements ApkSignaturePort {
       v1,
       v1Decoded,
       sourceStampPair(block.value)?.value,
-    );
-    const allocationCeiling = Math.max(
-      limits.maxOutputBytes,
-      APK_SIGNATURE_BUDGETS.max_output_bytes.default_value,
     );
     if (projected > allocationCeiling)
       return err(apkOutputBudgetError(projected, limits.maxOutputBytes, false));
@@ -647,6 +659,7 @@ const readV1 = async (
   tail: ZipTail,
   block: ApkSigningBlock | null,
   limits: EffectiveApkSignatureLimits,
+  allocationCeiling: number,
 ): Promise<
   Result<
     {
@@ -672,9 +685,23 @@ const readV1 = async (
     return err(v1SignerCapacityError(limits.maxSigners));
   // Entry data lies before the signing block, or the directory without one.
   const entriesEnd = block?.blockStart ?? tail.centralDirectoryOffset;
+  let projectedV1 = 4096;
+  for (const name of [...v1.signatureFiles, ...v1.blockFiles])
+    projectedV1 += 1 + jsonStringBytes(name);
   const decoded: DecodedV1Signer[] = [];
-  for (const signer of v1.signers)
-    decoded.push(await decodeV1SignerFromReader(handle, signer, entriesEnd));
+  for (const signer of v1.signers) {
+    const decodedSigner = await decodeV1SignerFromReader(
+      handle,
+      signer,
+      entriesEnd,
+    );
+    projectedV1 += projectedV1SignerBytes(decodedSigner);
+    if (projectedV1 > allocationCeiling)
+      return err(
+        apkOutputBudgetError(projectedV1, limits.maxOutputBytes, false),
+      );
+    decoded.push(decodedSigner);
+  }
   return ok({
     v1,
     duplicates: entries.value.duplicates,
@@ -713,13 +740,15 @@ const decodeScheme = (
   id: number,
   version: ApkSchemeVersion,
   limits: EffectiveApkSignatureLimits,
+  elementBudget: ApkSchemeCountBudget,
+  lineageBudget: ApkSchemeCountBudget,
 ): Result<DecodedScheme, AnalysisError> => {
   const pair = block?.pairs.find((p) => p.id === id);
   if (pair === undefined)
     return ok({ present: false, signers: [], uninterpretedBytes: 0 });
   const signers = decodeSigners(pair.value, version, {
     maxSigners: limits.maxSigners,
-    maxElements: limits.maxSignerElements,
+    elementBudget,
   });
   if (!signers.ok) return err(mapApkSchemeError(signers.error, version));
   const decoded: DecodedSigner[] = [];
@@ -727,7 +756,7 @@ const decodeScheme = (
     const rotation =
       version === "v2"
         ? ok({ present: false } as const)
-        : lineageOf(signer, version, limits.maxLineageNodes);
+        : lineageOf(signer, version, lineageBudget);
     if (!rotation.ok) return err(mapApkSchemeError(rotation.error, version));
     decoded.push({ signer, rotation: rotation.value });
   }

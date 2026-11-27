@@ -901,13 +901,128 @@ describe("ApkSignatureProvider output budget", () => {
         },
       });
     }
+    const elementsTooSmall = await provider.inspect({
+      path: v2Path,
+      max_signer_elements: 3,
+    });
+    expect(elementsTooSmall.ok).toBe(false);
+    if (!elementsTooSmall.ok) {
+      expect(projectAnalysisError(elementsTooSmall.error)).toMatchObject({
+        code: "resource_constraint",
+        details: {
+          limit: {
+            control_kind: "parameter",
+            parameter: "max_signer_elements",
+            effective_value: 3,
+            maximum: 65536,
+          },
+        },
+      });
+    }
     const elementsOk = await provider.inspect({
       path: v2Path,
-      max_signer_elements: 2,
+      max_signer_elements: 4,
     });
     expect(elementsOk.ok, elementsOk.ok ? "" : elementsOk.error.message).toBe(
       true,
     );
+  });
+
+  it("caps retained signer elements across signers and schemes before output projection", async () => {
+    // 16 signers * 100 empty certificates = 1,600 certificate views; each signer's
+    // projected output is tiny (first certificate only), so without a shared
+    // element allowance across signers this bypasses projectedOutputBytes.
+    const emptyCerts = Array.from({ length: 100 }, () => []);
+    const oneSigner = apkSchemeValue(
+      Uint8Array.from([...seq([]), ...seq(emptyCerts), ...seq([])]),
+    ).subarray(4);
+    const v2ManyEmptyCerts = Buffer.concat([
+      Buffer.from(u32(oneSigner.length * 16)),
+      ...Array.from({ length: 16 }, () => oneSigner),
+    ]);
+    const path = await write(
+      "v2-multi-signer-empty-certs.apk",
+      syntheticSigned([{ id: V2, value: v2ManyEmptyCerts }]),
+    );
+    const refused = await provider.inspect({
+      path,
+      max_signers: 16,
+      max_signer_elements: 250,
+    });
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) {
+      expect(projectAnalysisError(refused.error)).toMatchObject({
+        code: "resource_constraint",
+        details: {
+          limit: {
+            control_kind: "parameter",
+            parameter: "max_signer_elements",
+            effective_value: 250,
+            maximum: 65536,
+          },
+        },
+      });
+    }
+    // Each signer holds 100 empty certificates plus 1 signature from apkSchemeValue (1,616 total).
+    const justBelow = await provider.inspect({
+      path,
+      max_signers: 16,
+      max_signer_elements: 1615,
+    });
+    expect(justBelow.ok).toBe(false);
+    const admitted = await provider.inspect({
+      path,
+      max_signers: 16,
+      max_signer_elements: 1616,
+    });
+    expect(admitted.ok, admitted.ok ? "" : admitted.error.message).toBe(true);
+
+    // Lineage nodes also share one budget across v3 and v3.1 schemes.
+    const lineageNode = lp([
+      ...lp([...lp([1]), ...u32(0x0103)]),
+      ...u32(0),
+      ...u32(0x0103),
+      ...lp([]),
+    ]);
+    const twoNodeAttr = [
+      ...u32(0x3ba06f8c),
+      ...u32(1),
+      ...lineageNode,
+      ...lineageNode,
+    ];
+    const multiSchemePath = await write(
+      "v3-v31-shared-lineage.apk",
+      syntheticSigned([
+        { id: APK_SIGNATURE_V3_ID, value: v3Value([twoNodeAttr]) },
+        { id: V31, value: v3Value([twoNodeAttr]) },
+      ]),
+    );
+    const lineageRefused = await provider.inspect({
+      path: multiSchemePath,
+      max_lineage_nodes: 3,
+    });
+    expect(lineageRefused.ok).toBe(false);
+    if (!lineageRefused.ok) {
+      expect(projectAnalysisError(lineageRefused.error)).toMatchObject({
+        code: "resource_constraint",
+        details: {
+          limit: {
+            control_kind: "parameter",
+            parameter: "max_lineage_nodes",
+            effective_value: 3,
+            maximum: 1024,
+          },
+        },
+      });
+    }
+    const lineageAdmitted = await provider.inspect({
+      path: multiSchemePath,
+      max_lineage_nodes: 4,
+    });
+    expect(
+      lineageAdmitted.ok,
+      lineageAdmitted.ok ? "" : lineageAdmitted.error.message,
+    ).toBe(true);
   });
 });
 

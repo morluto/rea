@@ -162,12 +162,12 @@ export const inspectApkSignatureInputSchema = z
     max_lineage_nodes: parameterBudgetSchema(
       APK_SIGNATURE_BUDGETS.max_lineage_nodes,
     ).describe(
-      "Maximum v3/v3.1 proof-of-rotation lineage nodes per signer (default 32, maximum 1024)",
+      "Maximum v3/v3.1 proof-of-rotation lineage nodes decoded across signers (default 32, maximum 1024)",
     ),
     max_signer_elements: parameterBudgetSchema(
       APK_SIGNATURE_BUDGETS.max_signer_elements,
     ).describe(
-      "Maximum digests, certificates, signatures, or attributes per v2/v3/v3.1 signer (default 4096, maximum 65536)",
+      "Maximum digests, certificates, signatures, and attributes decoded across v2/v3/v3.1 signers (default 4096, maximum 65536)",
     ),
     max_v1_signature_entries: parameterBudgetSchema(
       APK_SIGNATURE_BUDGETS.max_v1_signature_entries,

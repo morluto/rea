@@ -239,9 +239,10 @@ instances; pending scans retain no APK bytes and can be cancelled with their
 original reason. Further requests receive a capacity error. The active slot
 is held through parsing and cleanup. Signers per scheme (v1, v2, v3, and v3.1)
 default to 32 (`max_signers` / `--max-signers`, 1 to 1,024; apksig separately
-accepts at most 10 v1 signers), and v3/v3.1 lineage nodes default to 32
-(`max_lineage_nodes` / `--max-lineage-nodes`, 1 to 1,024); per-signer digests,
-certificates, signatures, and attributes default to 4,096
+accepts at most 10 v1 signers); v3/v3.1 lineage nodes decoded across signers
+default to 32 (`max_lineage_nodes` / `--max-lineage-nodes`, 1 to 1,024); and
+digests, certificates, signatures, and attributes decoded across v2/v3/v3.1
+signers share one total allowance defaulting to 4,096
 (`max_signer_elements` / `--max-signer-elements`, 1 to 65,536). Each v1 block is
 inflated to at most 1 MiB, and its BER is read within 32 levels of nesting and
 65,536 elements, with at most 32 certificates and 32 `SignerInfo`s; BER
