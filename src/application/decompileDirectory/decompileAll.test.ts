@@ -3084,6 +3084,123 @@ describe("decompile_all grouped commits", () => {
     await lease.release();
     expect(result.error.cleanupIncomplete).toBe(false);
   });
+
+  it("keeps a later provider's cleanup attached when an earlier write failure stops the group", async () => {
+    const procedures = numbered(COMMIT_GROUP_SIZE);
+    const seeded = await run(harness({ procedures }).tools, directory(), {
+      limit: 1,
+    });
+    expect(seeded.ok).toBe(true);
+    const blocked = addresses(procedures.slice(1, 1 + OUTPUT_IO_STREAK_LIMIT));
+    for (const address of blocked) await mkdir(fileOf(address));
+    const cleanupOwner = procedures[1 + OUTPUT_IO_STREAK_LIMIT]?.address;
+    const providerFailure = new AnalysisOutputError(
+      "procedure_pseudo_code",
+      "provider cleanup failed",
+      {
+        cleanup: {
+          reason: "provider close denied",
+          resources: ["provider descriptor"],
+        },
+      },
+    );
+    const lease = new AnalysisCleanupLease(
+      async () => undefined,
+      ["provider descriptor"],
+    );
+    lease.bindCleanupError(providerFailure);
+    const { port } = harness({ procedures });
+    const failing: AnalysisOperationPort = {
+      execute: (operation, parameters, options) =>
+        operation === "procedure_pseudo_code" &&
+        parameters.procedure === cleanupOwner
+          ? Promise.resolve(err(providerFailure))
+          : port.execute(operation, parameters, options),
+    };
+    const stopped = await run(new EnhancedTools(failing), directory(), {
+      resume: true,
+    });
+    if (stopped.ok) throw new Error("Expected the export to stop");
+    // The write failures stopped the group first, so they stay primary.
+    expect(projectAnalysisError(stopped.error).message).toContain(
+      "Stopped after 5 function files in a row",
+    );
+    expect(stopped.error.cleanupPrimary?.secondaryFailures).toContain(
+      providerFailure,
+    );
+    expect(stopped.error.cleanupResources).toEqual(["provider descriptor"]);
+    expect(stopped.error.cleanupIncomplete).toBe(true);
+    await lease.release();
+    expect(stopped.error.cleanupIncomplete).toBe(false);
+  });
+
+  it("keeps a failed commit primary over a provider throw that followed it", async () => {
+    const procedures = numbered(COMMIT_GROUP_SIZE);
+    const { port } = harness({ procedures });
+    const journalFailure = new AnalysisOutputError(
+      "decompile_all",
+      "decompile journal could not be updated",
+    );
+    vi.spyOn(DecompileExport.prototype, "append").mockImplementation(
+      (records) =>
+        Promise.resolve(
+          records.length > 0 ? err(journalFailure) : ok(undefined),
+        ),
+    );
+    const throwing: AnalysisOperationPort = {
+      execute: (operation, parameters, execution) =>
+        operation === "procedure_pseudo_code" &&
+        parameters.procedure === procedures[3]?.address
+          ? Promise.reject(new Error("provider adapter threw"))
+          : port.execute(operation, parameters, execution),
+    };
+    const result = await run(new EnhancedTools(throwing), directory());
+    if (result.ok) throw new Error("Expected the journal failure");
+    expect(result.error).toBe(journalFailure);
+    expect(result.error.diagnostics).toMatchObject({
+      later_unexpected_throw: "Error: provider adapter threw",
+    });
+  });
+
+  it("journals the initial failure when an independent retry throws", async () => {
+    const procedures = [{ address: "0x1000", name: "main" }];
+    const { port } = harness({ procedures });
+    const thrown = new Error("independent retry threw");
+    const throwing: AnalysisOperationPort = {
+      execute: (operation, parameters, execution) => {
+        if (operation !== "procedure_pseudo_code")
+          return port.execute(operation, parameters, execution);
+        if (parameters.analysis === "independent_fresh")
+          return Promise.reject(thrown);
+        return Promise.resolve(
+          ok(
+            createAnalysisExecution(null, provider, {
+              analysisProfile: profile,
+              pseudocodeAbsence: {
+                kind: "provider-failure",
+                reason: "initial provider failure",
+              },
+            }),
+          ),
+        );
+      },
+    };
+    await expect(
+      run(new EnhancedTools(throwing), directory(), {
+        retry_failed: "independent_fresh",
+      }),
+    ).rejects.toBe(thrown);
+    expect(await journalRecords()).toMatchObject([
+      {
+        address: "0x1000",
+        status: "failed",
+        pseudocode_absence: {
+          kind: "provider-failure",
+          reason: "initial provider failure",
+        },
+      },
+    ]);
+  });
 });
 
 describe("directory export selection order", () => {

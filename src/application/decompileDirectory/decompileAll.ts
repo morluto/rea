@@ -32,7 +32,7 @@ import {
   isAborted,
   cancelledBy,
 } from "../../domain/analysisErrorCore.js";
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { procedureInfoSchema } from "../../domain/native/procedureInfo.js";
@@ -472,8 +472,6 @@ type AttemptOutcome =
   | { readonly kind: "stopped"; readonly error: AnalysisError };
 
 interface Attempt {
-  /** The provider failure an independent retry followed, recorded first. */
-  readonly superseded?: DecompileDirectoryFunctionRecord;
   readonly outcome: AttemptOutcome;
   readonly bodySupport: "unknown" | "unavailable";
 }
@@ -486,6 +484,14 @@ type Pending =
       readonly reappend: DecompileDirectoryFunctionRecord | undefined;
     }
   | { readonly kind: "retained_external" }
+  /**
+   * The provider failure an independent retry followed. It joins the group
+   * before the retry is requested, so a retry that throws cannot lose it.
+   */
+  | {
+      readonly kind: "superseded";
+      readonly record: DecompileDirectoryFunctionRecord;
+    }
   | {
       readonly kind: "attempt";
       readonly procedure: SelectedProcedure;
@@ -503,8 +509,21 @@ const publishSelected = async (
     // An unexpected throw, for example from a provider adapter, is not a
     // reason to drop the functions already decompiled. A throw from the
     // commit itself left the group empty, so nothing is settled twice.
-    await commitGroup(input, group);
-    throw cause;
+    const committed = await commitGroup(input, group);
+    if (committed.ok) throw cause;
+    // The commit failed on functions before the throw. Before grouping, that
+    // failure stopped the export before the call that threw, so it stays
+    // primary and the throw is retained with it.
+    return err(
+      cause instanceof AnalysisError
+        ? followedBy(committed.error, cause)
+        : committed.error.retainDiagnostics({
+            later_unexpected_throw:
+              cause instanceof Error
+                ? `${cause.name}: ${cause.message}`
+                : String(cause),
+          }),
+    );
   }
 };
 
@@ -557,7 +576,13 @@ const publishGroups = async (
     } else {
       if (input.limit !== undefined && admitted >= input.limit) continue;
       admitted += 1;
-      const attempt = await attemptOne(input, procedure, existing, bodySupport);
+      const attempt = await attemptOne(
+        input,
+        procedure,
+        existing,
+        bodySupport,
+        (record) => group.push({ kind: "superseded", record }),
+      );
       bodySupport = attempt.bodySupport;
       group.push({ kind: "attempt", procedure, attempt });
       if (attempt.outcome.kind === "stopped") return commitGroup(input, group);
@@ -597,24 +622,42 @@ const commitGroup = async (
     if (stopped !== undefined) break;
   }
   // The export stopped before these functions, so they leave no file, record
-  // or count, as if they had not been visited.
-  for (const pending of entries.slice(settled))
+  // or count, as if they had not been visited. A later function's provider
+  // failure was already observed, though, and may still own cleanup: it is
+  // retained behind the earlier stop.
+  for (const pending of entries.slice(settled)) {
     if (pending.kind === "attempt" && pending.attempt.outcome.kind === "file")
       await input.session.discardStaged(await pending.attempt.outcome.staged);
+    const later =
+      pending.kind === "stopped"
+        ? pending.error
+        : pending.kind === "attempt" &&
+            pending.attempt.outcome.kind === "stopped"
+          ? pending.attempt.outcome.error
+          : undefined;
+    if (stopped !== undefined && later !== undefined)
+      stopped = followedBy(stopped, later);
+  }
   const appended = await input.session.append(records);
   if (stopped === undefined) return appended;
   if (appended.ok) return err(stopped);
   // The journal failed on functions before the stop, so it is the failure the
-  // caller needs. A stop that still owns provider cleanup stays attached.
-  if (!stopped.cleanupIncomplete) return appended;
-  appended.error.retainSecondaryFailure(stopped);
-  return err(
-    analysisErrorWithCleanupDependencies(
-      appended.error,
-      stopped,
-      "decompile_all",
-    ),
-  );
+  // caller needs.
+  return err(followedBy(appended.error, stopped));
+};
+
+/**
+ * Keep `primary` and retain a later failure behind it. A later failure that
+ * still owns cleanup keeps the composite incomplete until that owner releases.
+ */
+const followedBy = (
+  primary: AnalysisError,
+  later: AnalysisError,
+): AnalysisError => {
+  primary.retainSecondaryFailure(later);
+  return later.cleanupIncomplete
+    ? analysisErrorWithCleanupDependencies(primary, later, "decompile_all")
+    : primary;
 };
 
 /**
@@ -632,6 +675,10 @@ const settle = async (
     state.skipped += 1;
     return undefined;
   }
+  if (pending.kind === "superseded") {
+    records.push(pending.record);
+    return undefined;
+  }
   if (pending.kind === "verified") {
     state.skipped += 1;
     // A file that reads back and verifies shows the directory works.
@@ -642,7 +689,6 @@ const settle = async (
   const { procedure, attempt } = pending;
   const { outcome } = attempt;
   state.attempted += 1;
-  if (attempt.superseded !== undefined) records.push(attempt.superseded);
   if (outcome.kind === "stopped") return outcome.error;
   if (outcome.kind === "external") {
     // An external function writes no file, so it says nothing about the
@@ -722,9 +768,10 @@ const attemptOne = async (
   procedure: SelectedProcedure,
   existing: "write" | "conflict" | "io",
   bodySupport: "unknown" | "unavailable",
+  retainSuperseded: (record: DecompileDirectoryFunctionRecord) => void,
 ): Promise<Attempt> => {
   if (existing === "write")
-    return observeOne({ ...input, procedure, bodySupport });
+    return observeOne({ ...input, procedure, bodySupport, retainSuperseded });
   const reason =
     existing === "conflict"
       ? {
@@ -759,6 +806,7 @@ const observeOne = async (input: {
   readonly signal: AbortSignal | undefined;
   readonly bodySupport: "unknown" | "unavailable";
   readonly retryFailed: DecompileDirectoryInput["retry_failed"];
+  readonly retainSuperseded: (record: DecompileDirectoryFunctionRecord) => void;
 }): Promise<Attempt> => {
   const body = await readBody(
     input.analysis,
@@ -772,9 +820,8 @@ const observeOne = async (input: {
       outcome: { kind: "stopped", error: body.error },
       bodySupport: input.bodySupport,
     };
-  let superseded: DecompileDirectoryFunctionRecord | undefined;
+  let superseded = false;
   const attempt = (outcome: AttemptOutcome): Attempt => ({
-    ...(superseded === undefined ? {} : { superseded }),
     outcome,
     bodySupport: body.support,
   });
@@ -825,16 +872,14 @@ const observeOne = async (input: {
       original.sourceDescriptor === undefined
         ? { status: "unknown", reason: "source_not_available" }
         : { status: "reported", source: original.sourceDescriptor };
-    superseded = failureRecord(
-      input.procedure,
-      body.fact,
-      pseudocodeFailure(null),
-      {
+    input.retainSuperseded(
+      failureRecord(input.procedure, body.fact, pseudocodeFailure(null), {
         limitations: [...new Set([...infoCaveats, ...original.limitations])],
         providerSource: originalSource,
         pseudocodeAbsence: original.pseudocodeAbsence,
-      },
+      }),
     );
+    superseded = true;
     if (isAborted(input.signal))
       return attempt({
         kind: "stopped",
@@ -867,7 +912,7 @@ const observeOne = async (input: {
       ...infoCaveats,
       ...decompiled.value.limitations,
       ...(input.retryFailed === "independent_fresh" &&
-      superseded === undefined &&
+      !superseded &&
       decompiled.value.result === null &&
       decompiled.value.pseudocodeAbsence?.kind !== "provider-failure"
         ? [
