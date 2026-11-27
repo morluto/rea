@@ -51,6 +51,10 @@ const DEVICE_LETTERS = new Set([
 
 const REGION_LETTERS = new Set(["J", "U", "E", "A", "B"]);
 
+/** Mega Drive 64 KiB 68000 work-RAM address window. */
+const WORK_RAM_START = 0x00ff_0000;
+const WORK_RAM_END = 0x00ff_ffff;
+
 const EXTERNAL_RAM_TYPES: Readonly<
   Record<
     number,
@@ -490,6 +494,10 @@ const parseMegaDriveImage = (
   if (ramEnd < ramStart)
     note(
       `Declared RAM end 0x${ramEnd.toString(16)} is before RAM start 0x${ramStart.toString(16)}.`,
+    );
+  else if (ramStart < WORK_RAM_START || ramEnd > WORK_RAM_END)
+    note(
+      `Declared RAM range 0x${ramStart.toString(16)}-0x${ramEnd.toString(16)} is outside the 64 KiB work-RAM window 0x${WORK_RAM_START.toString(16)}-0x${WORK_RAM_END.toString(16)}.`,
     );
 
   const externalRaw = image.subarray(0x1b0, 0x1bc);

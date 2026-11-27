@@ -176,6 +176,19 @@ it("flags ROM and RAM ranges that disagree with the image", () => {
 
   const ram = decoded(megaDriveRom({ ramStart: 0xff, ramEnd: 0x10 }));
   expect(ram.limitations.join("\n")).toContain("before RAM start");
+  expect(ram.limitations.join("\n")).not.toContain("work-RAM window");
+
+  const oversizedRam = decoded(
+    megaDriveRom({ ramStart: 0, ramEnd: 0xffff_ffff }),
+  );
+  expect(oversizedRam.complete).toBe(false);
+  expect(oversizedRam.limitations.join("\n")).toContain("work-RAM window");
+  expect(oversizedRam.metadata.ram).toEqual({ start: 0, end: 0xffff_ffff });
+
+  const wrongRam = decoded(megaDriveRom({ ramStart: 0, ramEnd: 0xffff }));
+  expect(wrongRam.complete).toBe(false);
+  expect(wrongRam.limitations.join("\n")).toContain("work-RAM window");
+  expect(wrongRam.metadata.ram).toEqual({ start: 0, end: 0xffff });
 
   const trailing = decoded(megaDriveRom({ romEnd: 0x2ff }));
   expect(trailing.metadata.checksum.matches).toBe(true);
