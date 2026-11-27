@@ -290,6 +290,14 @@ export const parseLabviewRsrc = (
       throw truncatedInput(FORMAT, "RSRC data or info range exceeds the file", {
         offset: infoOffset,
       });
+    // Section data follows the fixed 32-byte header; a data range that
+    // starts inside it would read header words as section lengths.
+    if (dataOffset < HEADER_BYTES)
+      throw malformedInput(
+        FORMAT,
+        "RSRC data section overlaps the fixed header",
+        { offset: 24, field: "data offset" },
+      );
     if (
       infoBytes < HEADER_BYTES + LIST_HEADER_BYTES ||
       infoOffset < HEADER_BYTES

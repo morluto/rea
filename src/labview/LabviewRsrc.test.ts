@@ -649,6 +649,22 @@ describe("LabviewArtifactProvider", () => {
     });
   });
 
+  it("rejects a data section that starts inside the fixed header", () => {
+    const container = buildLabviewRsrc([
+      { ident: "DFDS", sections: [Buffer.from("123456789")] },
+    ]);
+    // Header +24 is the data offset, +28 the data length.
+    container.writeUInt32BE(0, 24);
+    container.writeUInt32BE(32 + container.readUInt32BE(28), 28);
+    const parsed = parseLabviewRsrc(container);
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.failure.failure).toMatchObject({
+      kind: "malformed",
+      offset: 24,
+    });
+  });
+
   it("keeps the completed file identity on a later parse failure", async () => {
     const root = await createTestTempDirectory("rea-labview-identity-");
     const path = join(root, "fixture.vi");
