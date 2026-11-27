@@ -1,3 +1,7 @@
+/** An omitted filter admits every value; an empty filter admits none. */
+export const filterSet = <Value>(values: readonly Value[] | undefined) =>
+  values === undefined ? undefined : new Set(values);
+
 /** Preserve original indices and count every match while projecting only the requested page. */
 export const selectViewRows = <Source, Row>(
   rows: readonly Source[],

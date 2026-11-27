@@ -44,6 +44,10 @@ import {
 } from "../domain/providerOperationHealth.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import {
+  GhidraCheckpointBusyError,
+  GhidraCheckpointSupersededError,
+} from "./GhidraCheckpoint.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import type { AnalysisErrorOptions } from "../domain/analysisErrorBase.js";
 import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
@@ -56,6 +60,7 @@ import {
   isGhidraInputFailureCode,
   isGhidraTypeEditRefusalCode,
   isGhidraCParserLimitCode,
+  isGhidraRemoteCancellation,
   type GhidraTypeEditRefusalCode,
   type GhidraSessionError,
 } from "./GhidraSessionError.js";
@@ -134,6 +139,34 @@ const projectPrimarySessionError = (
   if (failure.configurationFailure !== undefined)
     return failure.configurationFailure;
   if (failure.kind === "checkpoint") {
+    if (failure.cause instanceof GhidraCheckpointBusyError)
+      return new AnalysisCapabilityUnavailableError(
+        "ghidra",
+        operation,
+        failure.cause.message,
+        {
+          ...context,
+          retryable: true,
+          userMessage: `${failure.cause.message}. One session at a time opens a target through a checkpoint directory.`,
+          remediationAction:
+            "Wait for that session to close the target, or close it, then repeat this call unchanged. If that session saved Program edits when it closed, the repeated call reports that the checkpoint changed; then reopen the target to restore the saved checkpoint. To analyze the same target concurrently, start this process without REA_GHIDRA_CHECKPOINT_DIR; it then uses a private ephemeral import.",
+        },
+      );
+    // The session's committed profile names the generation it selected, so
+    // the unchanged call cannot succeed; reopening selects the current one.
+    if (failure.cause instanceof GhidraCheckpointSupersededError)
+      return new AnalysisCapabilityUnavailableError(
+        "ghidra",
+        operation,
+        failure.cause.message,
+        {
+          ...context,
+          retryable: false,
+          userMessage: `${failure.cause.message}.`,
+          remediationAction:
+            "Reopen the target: call open_binary again for this path, or rerun the CLI command. The current checkpoint is intact and REA_GHIDRA_CHECKPOINT_DIR needs no change.",
+        },
+      );
     if (failure.cause instanceof AnalysisError)
       return analysisClientFailureForOperation(
         failure.cause,
@@ -346,10 +379,7 @@ const projectPrimarySessionError = (
       ],
     );
   }
-  if (
-    failure.kind === "cancelled" ||
-    (failure.kind === "remote" && failure.remoteCode === "decompile_cancelled")
-  ) {
+  if (failure.kind === "cancelled" || isGhidraRemoteCancellation(failure)) {
     const { cause: _failure, ...cancellationContext } = context;
     return cancelledBy(
       operation,
@@ -934,7 +964,7 @@ const ghidraDecompileTimeoutRecovery = (
       : `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS is already at its maximum of ${String(seconds)} seconds; unset it to leave decompilation unbounded`
   } in the environment of a new REA invocation, then rerun the command. That invocation starts a new Ghidra session and ${ghidraSessionRestart(source)}. Use analyze_function for this procedure's listing facts without pseudocode.`,
   continuingRemediationAction:
-    "Use analyze_function for listing facts. Call update_analysis_settings with setting ghidra.decompile_timeout_seconds and action set to raise the per-function deadline for the next operation on this Program. For CLI or future REA processes, set REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS. Set the MCP tool-call deadline to cover startup and the full call; earlier cancellation closes the session. `rea setup` estimates deadlines for new Codex/Kimi registrations and preserves existing positive values; edit existing deadlines yourself.",
+    "Use analyze_function for listing facts. Call update_analysis_settings with setting ghidra.decompile_timeout_seconds and action set to raise the per-function deadline for the next operation on this Program. For CLI or future REA processes, set REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS. Set the MCP tool-call deadline to cover startup and the full call; earlier cancellation stops the call, and closes the session when Ghidra does not confirm the stop. `rea setup` estimates deadlines for new Codex/Kimi registrations and preserves existing positive values; edit existing deadlines yourself.",
 });
 
 /**

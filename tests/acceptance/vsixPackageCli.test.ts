@@ -25,6 +25,64 @@ const completeVsixEvidenceSchema = vsixContract.outputSchema.safeExtend({
 });
 
 cliTest(
+  "reports the exact VS Code web extension host entry point",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-vsix-browser-entry-");
+    const path = join(root, "web.vsix");
+    for (const { browser, members, expected, present } of [
+      {
+        browser: "web",
+        members: ["web", "web.js"],
+        expected: "web.js",
+        present: true,
+      },
+      { browser: "web", members: ["web"], expected: "web", present: false },
+      {
+        browser: "web.mjs",
+        members: ["web.mjs.js"],
+        expected: "web.mjs",
+        present: false,
+      },
+      {
+        browser: "web.mjs",
+        members: ["web.mjs"],
+        expected: "web.mjs",
+        present: true,
+      },
+    ]) {
+      await writeFile(
+        path,
+        await vsixPackageFixture({
+          packageJson: JSON.stringify({
+            name: "hello",
+            publisher: "demo",
+            version: "1.2.3",
+            browser: `./out/${browser}`,
+          }),
+          extraMembers: Object.fromEntries(
+            members.map((member) => [
+              `extension/out/${member}`,
+              "/* fixture */",
+            ]),
+          ),
+        }),
+      );
+      const result = await cli.run({
+        arguments: ["inspect-vsix-package", path, "--json"],
+      });
+      expect(result.exitCode, result.stdout + result.stderr).toBe(0);
+      const evidence = completeVsixEvidenceSchema.parse(
+        parseEvidence(result.json),
+      );
+      expect(evidence.normalized_result.entry_points.browser).toEqual({
+        path: `extension/out/${expected}`,
+        present,
+      });
+    }
+  },
+);
+
+cliTest(
   "reports VS Code extension identity and activation through the public CLI",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-vsix-cli-");

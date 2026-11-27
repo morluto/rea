@@ -49,6 +49,8 @@ type FixtureMode =
   | "invalid_shutdown_ack"
   | "hang_after_start"
   | "hang_tools"
+  | "interruptible_tools"
+  | "interruptible_tools_reply_success"
   | "exit_tools"
   | "silent"
   | "exit"

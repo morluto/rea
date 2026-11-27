@@ -155,9 +155,14 @@ Ghidra regex searches use Java Pattern semantics. If compiling or matching a
 pattern exhausts the engine's stack, REA returns a resource constraint and
 preserves the active database and annotations. Retry in literal mode or simplify
 the regex; successful literal searches retain complete matching strings.
-Cancelling an active request terminates the ephemeral database and discards its
-annotations. REA retains the selected target and imports the original artifact
-again on the next Ghidra query.
+Cancelling an active read, such as a decompilation, stops that request and
+keeps the database, its annotations and the requests queued behind it, provided
+Ghidra answers the request within the cancel grace (2,000 ms by default; see
+[active request cancellation](../../providers/ghidra-provider.md#active-request-cancellation)
+for `REA_GHIDRA_CANCEL_GRACE_MS`). Cancelling an active edit, or a
+read Ghidra does not answer in time, terminates the ephemeral database and
+discards its annotations. REA then retains the selected target and imports the
+original artifact again on the next Ghidra query.
 
 Opening the same target and profile again retains the live database, including
 annotations. It does not make those edits eligible for an immutable snapshot.
@@ -352,7 +357,30 @@ a known body. `--layout dwarf`
 reports that compilation-unit paths are unavailable and still names files by
 address. Filters are a case-sensitive name substring, a case-sensitive name
 prefix, an inclusive address range (including uppercase hexadecimal input), and a positive safe-integer attempt limit. The limit does not allocate space in proportion to its value. Cancellation leaves
-files already written in place. One run at a time holds an output directory,
+files already written in place and first commits the functions already decompiled. Function files and their journal records are committed in groups of
+up to eight: each file's bytes are synced before the file gets its final name, and a
+group's records are appended and synced together only after its files are
+published. A group is also committed by the first function that settles one
+second or more after the previous commit, so a slow provider is committed
+function by function. A process or host that stops between commits leaves at most eight
+decompiled functions unrecorded. A resume decompiles those again; when a file is
+already in place and the new bytes match it, the function is counted as skipped
+and recorded with `provider_source.reason: "existing_file_origin_unknown"`
+rather than as a conflict. While one provider request for a function, reading its body
+or decompiling it, stays pending, the export reports a `decompile_all` progress
+update every five seconds naming that request, the function's name and
+address, its position among the selected functions, and the elapsed wait;
+requests that settle sooner report nothing. The export's own journal and file
+writes are not timed, so a slow output volume is never reported as a provider
+wait. MCP delivers
+these as progress notifications when the request carries a progress token, and
+the CLI writes each as a `rea_progress` JSON line on stderr, leaving stdout for
+the manifest. Ghidra bounds one function with its decompile deadline. Hopper
+has no per-function deadline and REA cannot interrupt a decompilation Hopper
+has started, so a pathological function holds the serial bridge until Hopper
+finishes or is quit. Cancelling such an export from the CLI ends the command
+with `cleanup_incomplete` while Hopper keeps working; the remediation then
+describes the steps available in Hopper itself. One run at a time holds an output directory,
 identified by its device and inode, through export finalization and any retained cleanup retry; another
 run on the same directory is refused with the holder's process ID, and a
 crashed run can be recovered by the next run. Failed descriptor or staging cleanup remains owned by the session; close the target to retry it. Initialization cleanup preserves unexpected entries rather than recursively removing the directory. Resume hashes existing files in bounded chunks, and index generation reuses committed journal facts already held by the export owner. After five consecutive functions whose files

@@ -505,6 +505,34 @@ it("inventories a package with no vsixmanifest and leaves vsix identity unknown"
   expect(report.extension_pack.disagreement).toBe(false);
 });
 
+it("keeps custom XML elements separate from VSIX metadata and assets", async () => {
+  const bytes = await vsixPackageFixture({
+    vsixmanifest: `<m:PackageManifest xmlns:m="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:x="urn:catalog">
+      <x:Metadata/><m:Metadata>
+        <x:Identity Id="catalog.record"/><m:Identity Id="demo.hello" Version="1.2.3" Publisher="demo"/>
+        <x:DisplayName>Catalog name</x:DisplayName><m:DisplayName>Hello Demo</m:DisplayName>
+        <x:Description>Catalog description</x:Description>
+        <x:Properties/><m:Properties>
+          <x:Property Id="Microsoft.VisualStudio.Code.Engine" Value="catalog"/>
+          <m:Property Id="Microsoft.VisualStudio.Code.Engine" Value="^1.74.0"/>
+        </m:Properties>
+      </m:Metadata>
+      <x:Assets/><m:Assets><x:Asset Path="catalog.txt"/><m:Asset Path="extension/package.json"/></m:Assets>
+    </m:PackageManifest>`,
+  });
+  const report = await parseVsixPackage(bytes, artifactOf(bytes), defaults);
+  expect(report.vsix_identity).toMatchObject({
+    id: "demo.hello",
+    display_name: "Hello Demo",
+    description: null,
+  });
+  expect(report.identity_disagreements).toEqual([]);
+  expect(report.engine.vsixmanifest).toBe("^1.74.0");
+  expect(report.assets).toEqual([
+    { type: null, path: "extension/package.json", present: true },
+  ]);
+});
+
 it("inventories a package whose vsixmanifest is not well-formed XML", async () => {
   const bytes = await vsixPackageMalformedManifestFixture();
   const report = vsixPackageSchema.parse(

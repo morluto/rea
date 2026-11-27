@@ -91,3 +91,111 @@ fileInspectionTest(
     });
   },
 );
+
+fileInspectionTest(
+  "reports details.limit for max_file_bytes refusals and succeeds when raised to required_value",
+  async ({ client }) => {
+    const root = await createTestTempDirectory("rea-v8-mcp-limit-");
+    const path = join(root, "module.jsc");
+    const bytes = v8CodeCacheFixture("function m(){ return 2; } m();");
+    await writeFile(path, bytes);
+
+    const refused = await client.callTool({
+      name: "inspect_v8_code_cache",
+      arguments: { path, max_file_bytes: 36 },
+    });
+    expect(refused.isError).toBe(true);
+    const parsed = parseMcpToolError(refused).error;
+    expect(parsed).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        operation: "inspect_v8_code_cache",
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 36,
+          unit: "bytes",
+          minimum: 36,
+          maximum: 67_108_864,
+          default_value: 33_554_432,
+          applies_at: "next_call",
+          required_value: bytes.length,
+        },
+        refusal: {
+          kind: "adjustable_budget",
+          operation: "inspect_v8_code_cache",
+          control: "max_file_bytes",
+          effective_value: 36,
+          unit: "bytes",
+          range: { minimum: 36, maximum: 67_108_864 },
+          default_value: 33_554_432,
+          required_value: bytes.length,
+        },
+      },
+    });
+    expect(parsed.details?.limit).not.toHaveProperty("cli_flag");
+    expect(parsed.remediation?.action).toContain("max_file_bytes");
+    expect(parsed.remediation?.action).toContain(
+      `at least ${String(bytes.length)} bytes`,
+    );
+
+    const admitted = await client.callTool({
+      name: "inspect_v8_code_cache",
+      arguments: { path, max_file_bytes: bytes.length },
+    });
+    expect(admitted.isError, JSON.stringify(admitted.content)).not.toBe(true);
+    const evidence = completeEvidenceSchema.parse(admitted.structuredContent);
+    expect(evidence.normalized_result.artifact.bytes).toBe(bytes.length);
+  },
+);
+
+fileInspectionTest(
+  "reports details.limit without required_value for max_strings refusals",
+  async ({ client }) => {
+    const root = await createTestTempDirectory("rea-v8-mcp-strings-");
+    const path = join(root, "synthetic.jsc");
+    const payload = Buffer.from("aaaa\0bbbb");
+    const bytes = Buffer.concat([
+      v8CodeCacheFixture().subarray(0, 32),
+      payload,
+    ]);
+    bytes.writeUInt32LE(payload.length, 20);
+    await writeFile(path, bytes);
+
+    const refused = await client.callTool({
+      name: "inspect_v8_code_cache",
+      arguments: { path, max_strings: 1, min_string_bytes: 4 },
+    });
+    expect(refused.isError).toBe(true);
+    const parsed = parseMcpToolError(refused).error;
+    expect(parsed).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        operation: "inspect_v8_code_cache",
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_strings",
+          effective_value: 1,
+          unit: "count",
+          minimum: 1,
+          maximum: 65_536,
+          default_value: 4096,
+          applies_at: "next_call",
+        },
+        refusal: {
+          kind: "adjustable_budget",
+          operation: "inspect_v8_code_cache",
+          control: "max_strings",
+          effective_value: 1,
+          unit: "count",
+          range: { minimum: 1, maximum: 65_536 },
+          default_value: 4096,
+        },
+      },
+    });
+    expect(parsed.details?.limit).not.toHaveProperty("required_value");
+    expect(parsed.details?.limit).not.toHaveProperty("cli_flag");
+  },
+);
