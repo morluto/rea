@@ -51,6 +51,8 @@ import {
 import {
   androidBootImageEntryMetadataSchema,
   androidBootImageMetadataSchema,
+  androidDtboEntryMetadataSchema,
+  androidDtboMetadataSchema,
   androidOtaPartitionMetadataSchema,
   androidOtaPayloadMetadataSchema,
   androidVbmetaEntryMetadataSchema,
@@ -63,6 +65,7 @@ import {
   iso9660EntryMetadataSchema,
   iso9660MetadataSchema,
   ntfsMftMetadataSchema,
+  systemdJournalMetadataSchema,
 } from "./formatMetadata/androidAndSystemMetadata.js";
 import {
   ddsMetadataSchema,
@@ -71,6 +74,13 @@ import {
   ktx2MetadataSchema,
   ktxMetadataSchema,
 } from "./formatMetadata/gpuAssetMetadata.js";
+import {
+  bink2MetadataSchema,
+  mediaAssetRegionMetadataSchema,
+  oggOpusMetadataSchema,
+  riffXma2MetadataSchema,
+  vulkanPipelineCacheMetadataSchema,
+} from "./formatMetadata/mediaAssetMetadata.js";
 import { ndsEntryMetadataSchema, ndsMetadataSchema } from "./ndsRom.js";
 
 export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
@@ -112,6 +122,7 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   ntfsMftMetadataSchema,
   compoundFileMetadataSchema,
   compoundFileEntryMetadataSchema,
+  systemdJournalMetadataSchema,
   auditdLogMetadataSchema,
   dfuSeMetadataSchema,
   dfuSeElementMetadataSchema,
@@ -124,6 +135,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   qualcommMbnMetadataSchema,
   androidBootImageMetadataSchema,
   androidBootImageEntryMetadataSchema,
+  androidDtboMetadataSchema,
+  androidDtboEntryMetadataSchema,
   androidVbmetaMetadataSchema,
   androidVbmetaEntryMetadataSchema,
   androidVbmetaDescriptorEntryMetadataSchema,
@@ -134,6 +147,11 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   ktxMetadataSchema,
   ktx2MetadataSchema,
   gpuAssetRegionMetadataSchema,
+  oggOpusMetadataSchema,
+  riffXma2MetadataSchema,
+  bink2MetadataSchema,
+  vulkanPipelineCacheMetadataSchema,
+  mediaAssetRegionMetadataSchema,
   ndsMetadataSchema,
   ndsEntryMetadataSchema,
   n64RomMetadataSchema,
@@ -288,6 +306,14 @@ const declarationsByKind: {
     notCompared:
       "role and index restate the entry's path, compression is observed from its bytes, and load addresses, names and board IDs come from the image header or vendor ramdisk table, which the image's content comparison covers.",
   },
+  "android-dtbo": {
+    notCompared:
+      "Its header facts come from the image's own bytes, which content comparison covers.",
+  },
+  "android-dtbo-entry": {
+    notCompared:
+      "index, offset, size, id, rev, flags, custom words, compression, and FDT magic observation come from the container's table and stored entry bytes, which container and entry content comparison cover.",
+  },
   "android-vbmeta": {
     notCompared:
       "Its header and descriptor facts come from the image's own bytes, which content comparison covers. Signatures and digests are recorded and not verified.",
@@ -386,6 +412,10 @@ const declarationsByKind: {
     notCompared:
       "index, parent_index, the tree links and starting_sector are layout, and storage, contiguous and the declared size come from the file's own directory stream and allocation tables, which its content comparison covers.",
   },
+  "systemd-journal": {
+    notCompared:
+      "Its fields come from the file's own header and object headers, which content comparison covers.",
+  },
   "auditd-log": {
     notCompared:
       "Its fields come from the file's own record headers, which content comparison covers.",
@@ -447,6 +477,26 @@ const declarationsByKind: {
       "Its header and index facts come from the texture's own bytes, which content comparison covers.",
   },
   "gpu-asset-region": {
+    notCompared:
+      "role and index restate the region's path; its stored bytes are compared by content.",
+  },
+  "ogg-opus": {
+    notCompared:
+      "Its header facts come from the stream's own bytes, which content comparison covers.",
+  },
+  "riff-xma2": {
+    notCompared:
+      "Its chunk and fmt facts come from the WAVE's own bytes, which content comparison covers.",
+  },
+  bink2: {
+    notCompared:
+      "Its header facts come from the video's own bytes, which content comparison covers.",
+  },
+  "vulkan-pipeline-cache": {
+    notCompared:
+      "Its header facts come from the cache's own bytes, which content comparison covers.",
+  },
+  "media-asset-region": {
     notCompared:
       "role and index restate the region's path; its stored bytes are compared by content.",
   },

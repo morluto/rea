@@ -104,8 +104,15 @@ const ownerFirstPage = (evidence: Evidence): JsonValue | undefined =>
                 offset: 0,
                 limit: 64,
               }
-            : isNativeInventoryOperation(evidence.operation)
-              ? { kind: "native-inventory", offset: 0, limit: 64 }
-              : isNativeObservationOperation(evidence.operation)
-                ? { kind: "native-observation", offset: 0, limit: 64 }
-                : undefined;
+            : evidence.operation === "inspect_esp_nvs"
+              ? {
+                  kind: "esp-nvs",
+                  collection: "entries",
+                  offset: 0,
+                  limit: 64,
+                }
+              : isNativeInventoryOperation(evidence.operation)
+                ? { kind: "native-inventory", offset: 0, limit: 64 }
+                : isNativeObservationOperation(evidence.operation)
+                  ? { kind: "native-observation", offset: 0, limit: 64 }
+                  : undefined;

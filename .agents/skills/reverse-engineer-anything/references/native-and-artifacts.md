@@ -220,6 +220,21 @@ separate functions. Leaf functions have no entry, so a missing entry is not
 absence. Compare provider addresses minus `image_base` with the RVAs. See
 [PE x64 exception-directory function ranges](https://github.com/morluto/rea/blob/main/docs/guides/native/pe-unwind-ranges.md).
 
+## Mach-O function starts and data in code
+
+Use `inspect_macho_function_starts` for an explicit local thin Mach-O, or one
+slice of a universal Mach-O, when the question is which addresses the linker
+recorded as function starts, or which bytes inside code are jump tables or
+literal data. Pass `architecture` for a universal file. The CLI equivalent is
+`inspect-macho-function-starts PATH`. Starts are absolute VM addresses from
+`LC_FUNCTION_STARTS` (ULEB128 deltas from the `__TEXT` vmaddr). Data-in-code
+entries name offset, length, kind (`DICE_KIND_DATA`, `JUMP_TABLE8`,
+`JUMP_TABLE16`, `JUMP_TABLE32`, `ABS_JUMP_TABLE32`, or the numeric kind), and
+the function start that owns the address. Page with `offset` and `limit`.
+Counts cover every entry. A stripped image can still carry these tables. The
+reader does not disassemble. See
+[Mach-O function starts and data in code](https://github.com/morluto/rea/blob/main/docs/guides/native/macho-function-starts.md).
+
 ## PE overlay
 
 Use `inspect_pe_overlay` for an explicit local PE32/PE32+ image when the
@@ -933,6 +948,11 @@ ComLoader rejects records `loader: "BinaryLoader"`, `load_address: "1000:0100"`
 analysis. PSP contents, stack, and device state remain unmodeled. See [DOS guide](https://github.com/morluto/rea/blob/main/docs/providers/ghidra-dos.md).
 
 Use `inspect_byte_entropy` to triage high- and low-entropy ranges before extraction.
+For ESP32/ESP8266 flash dumps or carved `partitions/nvs.bin` files (`esp-nvs`), use
+`inspect_esp_nvs` (`rea inspect-esp-nvs PATH [--partition-offset N] [--partition-bytes N]`)
+to decode ESP-IDF v1/v2 Non-Volatile Storage pages, CRC32 checksums, namespaces,
+strings, integers, floats, and multi-chunk v2 blobs, marking older copies of a
+key `superseded`; encrypted NVS entries are not decrypted. See [ESP-IDF NVS partitions](https://github.com/morluto/rea/blob/main/docs/guides/firmware/esp-nvs.md).
 
 For other headerless images (embedded firmware without ELF/Mach-O/PE/MZ
 headers), open with `format: "raw-binary"`, `architecture` (`x86`, `x86_64`,
@@ -1064,6 +1084,15 @@ Command lines and names are target-derived. gzip, lz4, and zstd payloads stay
 stored. The v4 signature and any AVB footer are reported with sizes and are
 not verified. Extract `dtb` and pass that file to `inspect_devicetree`. See
 [Android boot images](https://github.com/morluto/rea/blob/main/docs/android-boot-image.md).
+
+Android DTBO partition table images (`0xd7b7ab1e`, table versions `0` and `1`)
+expose child `dtbo-<index>.dtbo` blobs with `id`, `rev`, version-1 compression
+flags (`none`, `zlib`, `gzip`, `unknown`), `custom` words, and leading
+`0xd00dfeed` FDT magic checks. Compressed entries remain stored with explicit
+limitations; extract uncompressed `0xd00dfeed` entries and pass them to
+`inspect_devicetree`. Entry count and entry-table bytes are bounded via
+`artifact_limits.android_dtbo`. See
+[Android DTBO partition images](https://github.com/morluto/rea/blob/main/docs/android-dtbo.md).
 
 ISO 9660 disc images (`CD001` at sector 16, any filename, even `.hop`) use
 the same inspection and extraction workflows on every host, without mounting.

@@ -46,6 +46,17 @@ it.each([
   },
 );
 
+it("retains later arguments when a recovered .call omits its receiver", () => {
+  expect(invocationKinds('Object.keys.call(, "kept")')).toEqual([
+    expect.objectContaining({
+      path: ["intrinsic", "Object", "keys"],
+      arguments: [
+        expect.objectContaining({ type: "StringLiteral", value: "kept" }),
+      ],
+    }),
+  ]);
+});
+
 it("keeps a comma-expression intrinsic call unknown when its receiver is erased", () => {
   expect(
     invocationKinds(
