@@ -529,6 +529,17 @@ rea extract-artifact ./game.nds --json
 See [Nintendo DS ROMs](../guides/firmware/nds-roms.md) for header detection, member paths,
 checksum and range limitations, and what is not decoded.
 
+Inventory and extract a Nintendo 64 ROM. z64, v64 and n64 dumps all yield a
+big-endian `program.z64`:
+
+```sh
+rea inspect-artifact ./game.z64 --detail summary --json
+rea extract-artifact ./game.z64 --json
+```
+
+See [Nintendo 64 ROMs](../guides/firmware/n64-roms.md) for byte order, the
+cartridge header, the CIC variant, the CRC pair and the fixed 64 MiB ceiling.
+
 Inventory and extract a Qualcomm MBN boot image or an ELF image with a hash segment:
 
 ```sh

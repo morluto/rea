@@ -73,6 +73,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "asar",
   "ines",
   "nds",
+  "n64-rom",
   "godot-pck",
   "unityfs",
   "wxapkg",
@@ -137,6 +138,7 @@ const artifactFormatSchema = z.enum(ARTIFACT_FORMAT_IDS);
 const artifactContentFormatSchema = artifactFormatSchema.extract([
   "ines",
   "nds",
+  "n64-rom",
   "zip",
   "godot-pck",
   "unityfs",

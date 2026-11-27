@@ -569,6 +569,11 @@ export const documentationSections = [
         route: "/nds-roms",
       },
       {
+        text: "Nintendo 64 ROMs",
+        source: "guides/firmware/n64-roms.md",
+        route: "/n64-roms",
+      },
+      {
         text: "WeChat mini-program wxapkg archives",
         source: "wxapkg.md",
         route: "/wxapkg",
