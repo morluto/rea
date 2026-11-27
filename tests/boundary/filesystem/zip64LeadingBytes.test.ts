@@ -116,6 +116,17 @@ describe("Zip64 trailing directory refusals", () => {
     },
   );
 
+  it("leaves an unadjusted record with an extensible sector unrecognized", async () => {
+    // Neither the shifted declared pointer nor the fixed-size fallback
+    // locates a record that is followed by its own extensible data sector.
+    const { bytes } = await zip64LeadingBytes({ extensionBytes: 8 });
+    expect(
+      await hasTrailingZipArchive(bytes.length, async (at, length) =>
+        bytes.subarray(at, at + length),
+      ),
+    ).toBe(false);
+  });
+
   it.each(["missing", "outside"] as const)(
     "refuses a %s wide local offset",
     async (shape) => {
