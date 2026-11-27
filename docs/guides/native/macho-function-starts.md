@@ -19,7 +19,9 @@ paths must be absolute.
 
 - `function_starts` and `data_in_code` give each command's `dataoff`,
   `datasize`, container `file_offset`, and whether that range sits in
-  `__LINKEDIT`. `status` is `present` or `absent`.
+  `__LINKEDIT`. `status` is `present` or `absent`. A relocatable object
+  (`MH_OBJECT`) has no `__LINKEDIT` segment, so its tables report
+  `in_linkedit: false` without counting as misplaced.
 - Start addresses are absolute VM addresses. The first delta is added to the
   `vmaddr` of the first declared `__TEXT` segment, which need not have file
   bytes, as `llvm-objdump --function-starts` does. A zero delta ends the list.

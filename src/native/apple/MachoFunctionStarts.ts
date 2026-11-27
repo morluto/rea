@@ -217,6 +217,8 @@ const loadTable = async (
   tally: LinkeditCommandTally,
   sliceFileOffset: number,
   linkedit: LinkeditRange | undefined,
+  /** Whether this file type places link-edit data in a __LINKEDIT segment. */
+  expectsLinkedit: boolean,
 ): Promise<LoadedTable> => {
   if (tally.count === 0)
     return {
@@ -235,7 +237,7 @@ const loadTable = async (
   let pastFile = 0;
   for (const [dataOffset, dataSize] of tally.ranges()) {
     const blob = declaredBlob(source.size, dataOffset, dataSize);
-    if (!insideLinkedit(linkedit, blob)) outside += 1;
+    if (expectsLinkedit && !insideLinkedit(linkedit, blob)) outside += 1;
     if (blobPastSlice(source.size, blob)) pastFile += 1;
   }
   if (first === null)
@@ -633,17 +635,24 @@ export const parseMachoFunctionStartsFromHandle = async (
       size: segment.memory_size,
     })),
   );
+  // A relocatable object has no __LINKEDIT segment: its link-edit data
+  // follows the sections outside any segment. `in_linkedit: false` stays an
+  // observation there, but only file types that have the segment count a
+  // table outside it as a placement issue.
+  const expectsLinkedit = image.macho_file_type !== MH_OBJECT;
   const startsTable = await loadTable(
     source,
     startsCommands,
     selected.fileOffset,
     linkedit,
+    expectsLinkedit,
   );
   const dataTable = await loadTable(
     source,
     dataCommands,
     selected.fileOffset,
     linkedit,
+    expectsLinkedit,
   );
   const sections: SectionSpan[] = [];
   for (const section of image.sections) {
