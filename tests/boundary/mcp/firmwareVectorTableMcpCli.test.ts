@@ -4,6 +4,14 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { createCli } from "../../../src/cli.js";
 import { silentLogger } from "../../../src/logger.js";
+import { AGENT_RESULT_BUDGET_ENVIRONMENT } from "../../../src/domain/agentResultBudget.js";
+import { analysisRefusalRemediation } from "../../../src/domain/analysisRefusal.js";
+import type { AdjustableBudget } from "../../../src/domain/analysisRefusal.js";
+import {
+  DEFAULT_AGENT_RESULT_BUDGET_BYTES,
+  MINIMUM_AGENT_RESULT_BUDGET_BYTES,
+} from "../../../src/domain/analysisResourceLimits.js";
+import { AGENT_BUDGET_DELIVERY_META } from "../../../src/server/ToolResultDelivery.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
@@ -101,13 +109,26 @@ describe("inspect_firmware_vector_table CLI and MCP parity", () => {
     const oversizedError = JSON.parse(
       (oversizedRes.content[0] as { type: "text"; text: string }).text,
     ) as Record<string, unknown>;
+    const oversizedDetails = (
+      oversizedError as { error: { details: { limit: AdjustableBudget } } }
+    ).error.details;
     expect(oversizedError).toMatchObject({
       error: {
+        // The recovery is the shared refusal formatter over the reported limit.
         remediation: {
-          action:
-            "inspect_firmware_vector_table reached its max_file_bytes budget of 16 bytes. Pass a larger max_file_bytes on the next inspect_firmware_vector_table call (at least 128 bytes; range 4..67108864 bytes), then retry.",
+          action: analysisRefusalRemediation({
+            kind: "adjustable_budget",
+            operation: "inspect_firmware_vector_table",
+            budget: oversizedDetails.limit,
+          }),
         },
         details: {
+          limit: {
+            control_kind: "parameter",
+            parameter: "max_file_bytes",
+            effective_value: 16,
+            required_value: 128,
+          },
           refusal: {
             kind: "adjustable_budget",
             control: "max_file_bytes",
@@ -378,64 +399,84 @@ describe("inspect_firmware_vector_table CLI and MCP parity", () => {
     ]);
   });
 
-  it("automatically delivers a retained summary when omitted detail exceeds the agent response budget", async () => {
+  it("delivers a retained summary only when the complete result exceeds the selected agent result budget", async () => {
     const dir = await createTestTempDirectory("rea-fw-vt-budget-");
-    const fwPath = join(dir, "large-vt.bin");
-    const img = Buffer.alloc(256 * 4, 0);
+    const fwPath = join(dir, "vt.bin");
+    // 48 slots: a complete report between the 4096-byte minimum budget and
+    // the 32768-byte default, so only the selected budget summarizes it.
+    const img = Buffer.alloc(48 * 4, 0);
     img.writeUInt32LE(0x20020000, 0);
-    for (let i = 1; i < 256; i += 1) {
+    for (let i = 1; i < 48; i += 1)
       img.writeUInt32LE(0x08001001 + i * 4, i * 4);
-    }
     await writeFile(fwPath, img);
 
-    const session = createTestBinarySession(() => {
-      throw new Error("No deep provider should start");
-    });
-    const server = createServer(
-      { kind: "session", session },
-      {
-        environment: { REA_AGENT_RESULT_MAX_BYTES: "4096" },
-        logger: silentLogger,
-      },
-    );
-    const client = new Client(
-      { name: "fw-vt-budget-test", version: "1" },
-      { jsonSchemaValidator: createMcpSchemaValidation() },
-    );
-    onTestFinished(async () => {
-      await client.close();
-      await server.close();
-      await session.close();
-    });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-
-    const autoSummaryRes = await client.callTool({
-      name: "inspect_firmware_vector_table",
-      arguments: {
-        path: fwPath,
-        architecture: "armv7-m",
-        base_address: "0x08000000",
-        max_entries: 256,
-      },
-    });
-    expect(autoSummaryRes.isError).not.toBe(true);
-    const autoStructured = autoSummaryRes.structuredContent as {
-      operation: string;
-      normalized_result: {
-        kind: string;
-        parent_evidence_id: string;
-        parent_operation: string;
-        summary: { arm_entry_count: number };
-      };
+    const inspectWith = async (environment: NodeJS.ProcessEnv) => {
+      const session = createTestBinarySession(() => {
+        throw new Error("No deep provider should start");
+      });
+      const server = createServer(
+        { kind: "session", session },
+        { environment, logger: silentLogger },
+      );
+      const client = new Client(
+        { name: "fw-vt-budget-test", version: "1" },
+        { jsonSchemaValidator: createMcpSchemaValidation() },
+      );
+      onTestFinished(async () => {
+        await client.close();
+        await server.close();
+        await session.close();
+      });
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      return client.callTool({
+        name: "inspect_firmware_vector_table",
+        arguments: {
+          path: fwPath,
+          architecture: "armv7-m",
+          base_address: "0x08000000",
+          max_entries: 48,
+        },
+      });
     };
-    expect(autoStructured.operation).toBe("inspect_analysis_view");
-    expect(autoStructured.normalized_result).toMatchObject({
-      kind: "summary",
-      parent_operation: "inspect_firmware_vector_table",
-      summary: { arm_entry_count: 256 },
+    // The test environment seeds a complete-delivery budget; drop it.
+    const { [AGENT_RESULT_BUDGET_ENVIRONMENT]: _seed, ...defaults } =
+      process.env;
+
+    const summarized = await inspectWith({
+      ...defaults,
+      [AGENT_RESULT_BUDGET_ENVIRONMENT]: String(
+        MINIMUM_AGENT_RESULT_BUDGET_BYTES,
+      ),
+    });
+    expect(summarized.isError).not.toBe(true);
+    const delivery = summarized._meta?.[AGENT_BUDGET_DELIVERY_META] as {
+      readonly budget_bytes: number;
+      readonly complete_bytes: number;
+    };
+    expect(delivery.budget_bytes).toBe(MINIMUM_AGENT_RESULT_BUDGET_BYTES);
+    expect(delivery.complete_bytes).toBeGreaterThan(
+      MINIMUM_AGENT_RESULT_BUDGET_BYTES,
+    );
+    expect(delivery.complete_bytes).toBeLessThanOrEqual(
+      DEFAULT_AGENT_RESULT_BUDGET_BYTES,
+    );
+    expect(summarized.structuredContent).toMatchObject({
+      operation: "inspect_analysis_view",
+      normalized_result: {
+        kind: "summary",
+        parent_operation: "inspect_firmware_vector_table",
+        summary: { arm_entry_count: 48 },
+      },
+    });
+
+    const complete = await inspectWith(defaults);
+    expect(complete.isError).not.toBe(true);
+    expect(complete._meta?.[AGENT_BUDGET_DELIVERY_META]).toBeUndefined();
+    expect(complete.structuredContent).toMatchObject({
+      operation: "inspect_firmware_vector_table",
     });
   });
 });

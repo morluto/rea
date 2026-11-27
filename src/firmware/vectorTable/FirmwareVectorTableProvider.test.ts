@@ -13,6 +13,18 @@ import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { inspectFirmwareVectorTableInputSchema } from "../../domain/firmware/firmwareVectorTable.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { FirmwareVectorTableProvider } from "./FirmwareVectorTableProvider.js";
+import {
+  analysisRefusalRemediation,
+  type AdjustableBudget,
+} from "../../domain/analysisRefusal.js";
+
+/** The delivered recovery is the shared refusal formatter applied to the reported limit. */
+const formattedRecovery = (projected: { readonly details?: unknown }): string =>
+  analysisRefusalRemediation({
+    kind: "adjustable_budget",
+    operation: "inspect_firmware_vector_table",
+    budget: (projected.details as { readonly limit: AdjustableBudget }).limit,
+  });
 
 describe("FirmwareVectorTableProvider", () => {
   it("streams whole-file SHA-256 and reads only the bounded vector-table slice at non-zero offsets", async () => {
@@ -108,7 +120,7 @@ describe("FirmwareVectorTableProvider", () => {
     expect(tooSmall.error.remediationAction).toBeUndefined();
     const projectedTooSmall = projectAnalysisError(tooSmall.error);
     expect(projectedTooSmall.remediation.action).toBe(
-      "inspect_firmware_vector_table reached its max_file_bytes budget of 32 bytes. Pass a larger max_file_bytes on the next inspect_firmware_vector_table call (at least 128 bytes; range 4..67108864 bytes), then retry.",
+      formattedRecovery(projectedTooSmall),
     );
     expect(projectedTooSmall.details).toMatchObject({
       limit: {
@@ -147,7 +159,7 @@ describe("FirmwareVectorTableProvider", () => {
     expect(tooManyNodes.error.remediationAction).toBeUndefined();
     const projectedNodes = projectAnalysisError(tooManyNodes.error);
     expect(projectedNodes.remediation.action).toBe(
-      "inspect_firmware_vector_table reached its max_svd_xml_nodes budget of 3. Pass a larger max_svd_xml_nodes on the next inspect_firmware_vector_table call (range 1..1000000), then retry.",
+      formattedRecovery(projectedNodes),
     );
     expect(projectedNodes.details).toMatchObject({
       limit: {
@@ -188,7 +200,7 @@ describe("FirmwareVectorTableProvider", () => {
       expect(expandedRefusal.error.remediationAction).toBeUndefined();
       const projectedExpanded = projectAnalysisError(expandedRefusal.error);
       expect(projectedExpanded.remediation.action).toBe(
-        "inspect_firmware_vector_table reached its max_svd_expanded_chars budget of 64. Pass a larger max_svd_expanded_chars on the next inspect_firmware_vector_table call (range 64..8388608), then retry.",
+        formattedRecovery(projectedExpanded),
       );
       expect(projectedExpanded.details).toMatchObject({
         limit: {

@@ -99,6 +99,17 @@ export const firmwareVectorTablePageContextSchema =
 
 const readReport = createAnalysisViewResultReader(firmwareVectorTableSchema);
 
+/** Count matching rows without allocating a filtered copy. */
+const countWhere = <Item>(
+  items: readonly Item[],
+  matches: (item: Item) => boolean,
+): number => {
+  // not-an-allowance: tally of matching rows
+  let count = 0;
+  for (const item of items) if (matches(item)) count += 1;
+  return count;
+};
+
 export const projectFirmwareVectorTableView = (
   parent: AnalysisViewParent,
   view: AdmittedView,
@@ -129,13 +140,15 @@ export const projectFirmwareVectorTableView = (
     riscv_table_shape: r.riscv_table_shape,
     svd_interrupts: r.svd_interrupts,
     arm_entry_count: r.arm_entries.length,
-    active_arm_entry_count: r.arm_entries.filter(
+    active_arm_entry_count: countWhere(
+      r.arm_entries,
       (entry) => entry.status === "active",
-    ).length,
+    ),
     riscv_slot_count: r.riscv_slots.length,
-    recognized_riscv_slot_count: r.riscv_slots.filter(
+    recognized_riscv_slot_count: countWhere(
+      r.riscv_slots,
       (slot) => slot.target_code_address !== null,
-    ).length,
+    ),
     shared_handler_group_count: r.shared_handler_groups.length,
     anomaly_count: r.anomalies.length,
   };
