@@ -129,6 +129,18 @@ export const lzma1WindowBytes = (
 ): number =>
   Math.max(MIN_DICTIONARY_BYTES, Math.min(dictionaryBytes, outputBound));
 
+/**
+ * lzma-purejs 0.9.3 reports a stream it cannot decode by throwing one of these
+ * string literals (`Util.decompressFile`); they are its only verdicts.
+ */
+const CODEC_VERDICTS: ReadonlySet<string> = new Set([
+  "Error in data stream",
+  "Incorrect stream properties",
+]);
+
+const isCodecVerdict = (cause: unknown): cause is string =>
+  typeof cause === "string" && CODEC_VERDICTS.has(cause);
+
 /** Thrown inside the decoder callbacks to stop it with a verdict. */
 class Lzma1Stop {
   readonly refusal: Lzma1Refusal;
@@ -253,12 +265,10 @@ export const decodeLzma1Alone = (
     );
   } catch (cause: unknown) {
     if (cause instanceof Lzma1Stop) return cause.refusal;
-    // lzma-purejs reports a corrupt stream ("Error in data stream",
-    // "Incorrect stream properties") by throwing; that is its verdict.
-    return refusal(
-      "malformed",
-      cause instanceof Error ? cause.message : "LZMA stream does not decode.",
-    );
+    if (isCodecVerdict(cause)) return refusal("malformed", `${cause}.`);
+    // Anything else (an allocation failure, a codec defect) is a fault in
+    // the decoding host, not a fact about the stream; its host classifies it.
+    throw cause;
   }
   if (declared !== null && BigInt(output.used) !== declared)
     return refusal(
