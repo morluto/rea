@@ -5131,7 +5131,15 @@ describe("the cancel grace launch control", () => {
     const result = await ghidra
       .createClient(target, profile.value.profile)
       .execute("health", {});
-    return { received, result };
+    const capabilityNotes = new Set(
+      ghidra
+        .capabilities()
+        .flatMap((capability) => capability.limitations)
+        .filter((note) =>
+          note.startsWith("Cancelling an active Ghidra read request"),
+        ),
+    );
+    return { received, result, capabilityNotes };
   };
   const cancellationNote = (result: Awaited<ReturnType<typeof open>>) => {
     if (!result.result.ok) throw result.result.error;
@@ -5153,6 +5161,14 @@ describe("the cancel grace launch control", () => {
     expect(cancellationNote(unset)).toContain(
       "within 2000 ms, as a decompilation does (REA_GHIDRA_CANCEL_GRACE_MS, default)",
     );
+    // Capabilities belong to no session, so they name the control and its
+    // default rather than claim a value the launch environment may override.
+    for (const { capabilityNotes } of [selected, unset])
+      expect([...capabilityNotes]).toEqual([
+        expect.stringContaining(
+          "within the cancel grace, as a decompilation does (REA_GHIDRA_CANCEL_GRACE_MS, default 2000 ms; a session's limitations state the value it applies)",
+        ),
+      ]);
   });
 
   it("refuses a Ghidra session on an invalid value instead of using the default", async () => {
