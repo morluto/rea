@@ -1,9 +1,10 @@
-import { writeFile } from "node:fs/promises";
+import { truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { SystemdJournalArtifactReader } from "./SystemdJournalArtifactReader.js";
+import { ArtifactFileSource } from "../resources/ArtifactFileSource.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 
@@ -409,4 +410,109 @@ it("clamps an inline object window without changing the walked chain", async () 
   expect(metadata.object_headers).toHaveLength(32);
   expect(metadata.omitted_object_headers).toBe(8);
   expect(metadata.next_object_header_index).toBe(32);
+});
+
+it("continues the object-header window from next_object_header_index", async () => {
+  const objects = Array.from({ length: 40 }, () => ({ type: 1, size: 32 }));
+  const path = await writeJournal(
+    "windowed.journal",
+    journalBytes({ objects }),
+  );
+  const reader = new SystemdJournalArtifactReader(path, undefined, {
+    objectHeaderStart: 32,
+  });
+  try {
+    for await (const _entry of reader.entries()) {
+      // No members.
+    }
+    const metadata = reader.formatMetadata() as {
+      object_count: number;
+      object_headers: { offset: number }[];
+      object_header_start_index: number;
+      next_object_header_index: number | null;
+    };
+    // The whole chain is still walked and counted; only the window moves.
+    expect(metadata.object_count).toBe(40);
+    expect(metadata.object_header_start_index).toBe(32);
+    expect(metadata.object_headers).toHaveLength(8);
+    expect(metadata.object_headers[0]?.offset).toBe(HEADER_BYTES + 32 * 32);
+    expect(metadata.next_object_header_index).toBeNull();
+  } finally {
+    await reader.close();
+  }
+});
+
+it("keeps the observed state of a header that cannot anchor its objects", async () => {
+  const inventory = await scanCanonicalArtifactInventory(
+    await writeJournal(
+      "unanchored-state.journal",
+      journalBytes({
+        headerSize: 276,
+        state: 2,
+        objects: [{ type: 1, size: 64 }],
+      }),
+    ),
+  );
+  expect(inventory.occurrences[0]?.format_metadata).toMatchObject({
+    header: { header_size: 276, state: "archived" },
+  });
+});
+
+it("treats a zero arena size as an empty arena, not an absent one", async () => {
+  const bytes = journalBytes({ objects: [{ type: 1, size: 64 }] });
+  bytes.writeBigUInt64LE(0n, 96);
+  const inventory = await scanCanonicalArtifactInventory(
+    await writeJournal("zero-arena.journal", bytes),
+  );
+  expect(inventory.occurrences[0]?.format_metadata).toMatchObject({
+    header: { arena_size: 0 },
+    object_count: 1,
+    valid_object_count: 0,
+  });
+  expect(inventory.limitations.join(" ")).toMatch(
+    /past the end of the arena the header declares/u,
+  );
+});
+
+it("reports declared arena bytes the file does not hold", async () => {
+  const bytes = journalBytes({ objects: [{ type: 1, size: 64 }] });
+  // The objects and counts agree, but the arena claims 4 KiB more than exists.
+  bytes.writeBigUInt64LE(BigInt(bytes.length - HEADER_BYTES + 4096), 96);
+  const inventory = await scanCanonicalArtifactInventory(
+    await writeJournal("short-arena.journal", bytes),
+  );
+  expect(inventory.occurrences[0]?.format_metadata).toMatchObject({
+    valid_object_count: 1,
+  });
+  expect(inventory.limitations.join(" ")).toMatch(
+    /4096 declared arena byte\(s\) are absent/u,
+  );
+});
+
+it("reports a journal that shrinks while it is read as changed, not truncated", async () => {
+  const path = await writeJournal(
+    "shrinking.journal",
+    journalBytes({ objects: [{ type: 1, size: 64 }] }),
+  );
+  const reader = new SystemdJournalArtifactReader(path);
+  const read = ArtifactFileSource.prototype.read;
+  const spy = vi
+    .spyOn(ArtifactFileSource.prototype, "read")
+    .mockImplementationOnce(async function (this: ArtifactFileSource, signal) {
+      const admitted = await read.call(this, signal);
+      // The decoder now meets EOF inside the header it was admitted for.
+      await truncate(path, 40);
+      return admitted;
+    });
+  try {
+    await expect(
+      reader.entries()[Symbol.asyncIterator]().next(),
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "container-identity",
+    });
+  } finally {
+    spy.mockRestore();
+    await reader.close();
+  }
 });

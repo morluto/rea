@@ -20,11 +20,11 @@ const JOURNAL_HEADER_SIZE_PROBE_BYTES = 96;
 /** Objects start at the header's end and are 8-byte aligned. */
 const JOURNAL_OBJECT_ALIGNMENT = 8;
 const JOURNAL_OBJECT_HEADER_BYTES = 16;
-/** `ENTRY_SIZE_MAX`, so a single entry can never exceed this even on a huge journal. */
-export const JOURNAL_MAX_FILE_BYTES = 1024 * 1024 * 1024 * 4;
-/** Inline object headers are a sample; the whole object chain is still walked. */
+/**
+ * Object headers retained per window. The whole chain is still walked and
+ * counted; a caller selects later windows with `objectHeaderStart`.
+ */
 export const JOURNAL_INLINE_OBJECT_LIMIT = 32;
-const JOURNAL_MAX_INLINE_OBJECTS = JOURNAL_INLINE_OBJECT_LIMIT;
 
 /** Header flag bits that change how the object area must be read. */
 const INCOMPATIBLE_FLAGS = new Map<number, string>([
@@ -39,9 +39,11 @@ const INCOMPATIBLE_FLAGS_KNOWN = [...INCOMPATIBLE_FLAGS.keys()].reduce(
   (known, bit) => known | bit,
   0,
 );
+/** `HEADER_COMPATIBLE_TAIL_ENTRY_BOOT_ID` in systemd's `journal-def.h`. */
+const COMPATIBLE_TAIL_ENTRY_BOOT_ID = 1 << 1;
 const COMPATIBLE_FLAGS = new Map<number, string>([
   [1 << 0, "sealed"],
-  [1 << 1, "tail-entry-boot-id"],
+  [COMPATIBLE_TAIL_ENTRY_BOOT_ID, "tail-entry-boot-id"],
   [1 << 2, "sealed-continuous"],
 ]);
 /** Object flags share their bit values with the compression algorithms. */
@@ -233,15 +235,6 @@ const unsupported = (message: string): RegionDecodeFailure => ({
   message,
 });
 
-const limit = (
-  message: string,
-  boundary?: RegionDecodeFailure["boundary"],
-): RegionDecodeFailure => ({
-  kind: "limit",
-  message,
-  ...(boundary === undefined ? {} : { boundary }),
-});
-
 /** A 16-byte hexadecimal spelling of a 128-bit id; zeros stay distinguishable from all-ones. */
 const formatId128 = (bytes: Uint8Array): string =>
   Buffer.from(bytes).toString("hex");
@@ -298,6 +291,11 @@ const readUint64 = (
   return Number(value);
 };
 
+/** One reading of the state byte, whether or not the object area is anchored. */
+const readState = (view: BinaryReader): string =>
+  JOURNAL_STATES.get(view.bytes[HEADER.state]!) ??
+  `unknown-${String(view.bytes[HEADER.state]!)}`;
+
 const readFlagFacts = (view: BinaryReader) => {
   const compatibleFlags = view.u32(HEADER.compatibleFlags);
   const incompatibleFlags = view.u32(HEADER.incompatibleFlags);
@@ -317,13 +315,13 @@ const readIdFacts = (bytes: Uint8Array, compatibleFlags: number) => ({
   // Bytes 56-71 are the legacy boot id unless `tail-entry-boot-id` is set.
   // Both readings keep the source value; only which name it carries changes.
   tail_entry_boot_id:
-    (compatibleFlags & (1 << 1)) !== 0
+    (compatibleFlags & COMPATIBLE_TAIL_ENTRY_BOOT_ID) !== 0
       ? formatId128(
           bytes.subarray(HEADER.tailEntryBootId, HEADER.tailEntryBootId + 16),
         )
       : null,
   boot_id:
-    (compatibleFlags & (1 << 1)) !== 0
+    (compatibleFlags & COMPATIBLE_TAIL_ENTRY_BOOT_ID) !== 0
       ? null
       : formatId128(
           bytes.subarray(HEADER.tailEntryBootId, HEADER.tailEntryBootId + 16),
@@ -339,7 +337,8 @@ const unanchoredHeader = (
 ): JournalHeaderFacts => ({
   ...readFlagFacts(view),
   ...readIdFacts(bytes, view.u32(HEADER.compatibleFlags)),
-  state: "unknown",
+  // The state byte sits inside the probe, so it is observed even here.
+  state: readState(view),
   header_size: declaredHeaderSize,
   arena_size: 0,
   data_hash_table_offset: 0,
@@ -388,9 +387,7 @@ const readHeaderFacts = (
   return {
     ...flags,
     ...readIdFacts(bytes, flags.compatible_flags),
-    state:
-      JOURNAL_STATES.get(view.bytes[HEADER.state]!) ??
-      `unknown-${String(view.bytes[HEADER.state]!)}`,
+    state: readState(view),
     header_size: declaredHeaderSize,
     arena_size: u64(HEADER.arenaSize, "arena_size"),
     data_hash_table_offset: u64(
@@ -463,6 +460,8 @@ type ScanPhase = "header" | "objects" | "skipping" | "closed";
  */
 class JournalScanner {
   readonly #fileBytes: number;
+  /** Index of the first object header this window retains. */
+  readonly #objectHeaderStart: number;
   readonly #headerBytes = new Uint8Array(JOURNAL_HEADER_BYTES);
   /** How many header bytes this reader consumes; the rest are discarded unread. */
   #headerTarget = JOURNAL_HEADER_SIZE_PROBE_BYTES;
@@ -501,12 +500,11 @@ class JournalScanner {
   #lastObjectEnd = 0;
   /** Absolute offset the declared arena ends at, or null when unread. */
   #arenaEnd: number | null = null;
-  /** Absolute offset the declared header ends at. */
-  #headerStart = 0;
   #tailObjectOffset: bigint | null = null;
 
-  constructor(fileBytes: number) {
+  constructor(fileBytes: number, objectHeaderStart: number) {
     this.#fileBytes = fileBytes;
+    this.#objectHeaderStart = objectHeaderStart;
     this.#lastObjectEnd = 0;
   }
 
@@ -629,9 +627,11 @@ class JournalScanner {
       declared,
     );
     this.#header = header;
-    this.#headerStart = declared;
+    // Zero is a known arena size (an empty arena), not an absent one, so every
+    // read header bounds its objects; an overflowed size is not exact.
     this.#arenaEnd =
-      header.unread_fields.length === 0 && header.arena_size > 0
+      header.unread_fields.length === 0 &&
+      !header.overflowed_fields.includes("arena_size")
         ? declared + header.arena_size
         : null;
     this.#offset = declared;
@@ -720,9 +720,11 @@ class JournalScanner {
     if (!OBJECT_TYPES.has(rawType & OBJECT_TYPE_MASK))
       this.#unknownTypeCount += 1;
     if (object.compressed) this.#compressedCount += 1;
-    if (this.#objectHeaders.length < JOURNAL_MAX_INLINE_OBJECTS)
-      this.#objectHeaders.push(object);
-    else this.#nextObjectHeaderIndex ??= index;
+    if (index >= this.#objectHeaderStart) {
+      if (this.#objectHeaders.length < JOURNAL_INLINE_OBJECT_LIMIT)
+        this.#objectHeaders.push(object);
+      else this.#nextObjectHeaderIndex ??= index;
+    }
 
     // A declared size below the 16-byte header is a self-contradictory
     // declaration, not a file cut short: no bytes are missing. Counting it as
@@ -737,14 +739,11 @@ class JournalScanner {
       this.#phase = "closed";
       return;
     }
-    // The arena is the object area the header declares. An object that starts
-    // inside it but ends past its end describes bytes outside the arena, which
-    // the physical file alone cannot detect when the arena is short. A header
-    // whose arena starts before the object area (an arena_size below the
-    // declared header size) leaves nothing to check.
+    // The arena is the object area the header declares. An object that ends
+    // past its end describes bytes outside the arena, which the physical file
+    // alone cannot detect when the arena is short.
     if (
       this.#arenaEnd !== null &&
-      this.#arenaEnd > this.#headerStart &&
       offset + Number(declaredSize) > this.#arenaEnd
     ) {
       this.#outsideArenaCount += 1;
@@ -811,6 +810,13 @@ class JournalScanner {
         this.#limitations.push(
           `${String(this.#overflowedObjectCount)} object(s) declare a size above 2^53-1 and are reported with that ceiling and \`size_overflowed: true\``,
         );
+      // `header_size + arena_size` is the used extent the writer declares; a
+      // file shorter than that is missing arena bytes even when every readable
+      // object and count agrees.
+      if (this.#arenaEnd !== null && this.#arenaEnd > this.#fileBytes)
+        this.#limitations.push(
+          `the header declares an arena ending at ${String(this.#arenaEnd)}, past the ${String(this.#fileBytes)}-byte file; ${String(this.#arenaEnd - this.#fileBytes)} declared arena byte(s) are absent`,
+        );
       if (this.#outsideArenaCount > 0)
         this.#limitations.push(
           `${String(this.#outsideArenaCount)} object(s) declare an extent past the end of the arena the header declares; the object chain stops there`,
@@ -853,7 +859,7 @@ class JournalScanner {
           0,
           this.#objectCount - this.#objectHeaders.length,
         ),
-        object_header_start_index: 0,
+        object_header_start_index: this.#objectHeaderStart,
         next_object_header_index: this.#nextObjectHeaderIndex,
         trailing_bytes: Math.max(
           0,
@@ -871,16 +877,23 @@ const objectPayloadLimitations = (limitations: readonly string[]) => [
   "object payloads are inventoried by header only: fields, entries, entry arrays and hash tables are not decoded, entry times and boot/session filters are not available",
 ];
 
+/**
+ * The scan streams and retains a bounded window, so no whole-file ceiling is
+ * needed: memory is one chunk plus `JOURNAL_INLINE_OBJECT_LIMIT` headers
+ * whatever the file size. `objectHeaderStart` selects the window, so a later
+ * call reaches headers past the first one through `next_object_header_index`.
+ */
 export const createJournalDecoder = (
   fileBytes: number,
+  objectHeaderStart = 0,
 ): Result<RegionDecoder<JournalInventory>, RegionDecodeFailure> =>
   Number.isSafeInteger(fileBytes) &&
   fileBytes >= 0 &&
-  fileBytes <= JOURNAL_MAX_FILE_BYTES
-    ? ok(new JournalScanner(fileBytes))
+  Number.isSafeInteger(objectHeaderStart) &&
+  objectHeaderStart >= 0
+    ? ok(new JournalScanner(fileBytes, objectHeaderStart))
     : err(
-        limit(
-          `file is ${String(fileBytes)} bytes, exceeding the fixed ${String(JOURNAL_MAX_FILE_BYTES)}-byte (4 GiB) ceiling`,
-          "file-size",
+        failure(
+          `file size ${String(fileBytes)} and object header start ${String(objectHeaderStart)} must be non-negative safe integers`,
         ),
       );

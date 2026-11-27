@@ -44,13 +44,24 @@ export class SystemdJournalArtifactReader implements ArtifactReader {
   #metadata: ArtifactFormatMetadata | undefined;
   #limitations: readonly string[] = [];
   #closing = false;
+  /** First object header the inventory window retains. */
+  readonly #objectHeaderStart: number;
 
-  constructor(path: string, admitted?: StableRegularFileDescriptor) {
+  /**
+   * `objectHeaderStart` selects the object-header window, so a caller can
+   * continue from a previous inventory's `next_object_header_index`.
+   */
+  constructor(
+    path: string,
+    admitted?: StableRegularFileDescriptor,
+    options: { readonly objectHeaderStart?: number } = {},
+  ) {
     this.#source = new ArtifactFileSource(
       path,
       "systemd journal file",
       admitted,
     );
+    this.#objectHeaderStart = options.objectHeaderStart ?? 0;
   }
 
   formatMetadata(): ArtifactFormatMetadata | undefined {
@@ -135,7 +146,7 @@ export class SystemdJournalArtifactReader implements ArtifactReader {
             assertArtifactReadActive(signal),
           ),
     );
-    const decoder = createJournalDecoder(initial.size);
+    const decoder = createJournalDecoder(initial.size, this.#objectHeaderStart);
     if (!decoder.ok) throw this.#failure(decoder.error);
     if (initial.size > 0)
       for await (const chunk of readFileHandleChunks(handle, {
@@ -153,20 +164,27 @@ export class SystemdJournalArtifactReader implements ArtifactReader {
         // chunk's work is bounded and cancellation is never blocked on a
         // whole-file buffer.
         const written = decoder.value.write(chunk);
-        if (!written.ok) throw this.#failure(written.error);
+        if (!written.ok) throw await this.#stableFailure(written.error, signal);
       }
     const image = decoder.value.finish();
-    if (!image.ok) throw this.#failure(image.error);
+    if (!image.ok) throw await this.#stableFailure(image.error, signal);
     return image.value;
   }
 
+  /**
+   * A decoder failure blames the bytes only once the source is shown to be
+   * unchanged: a file that shrank or changed mid-read reports that identity
+   * failure from the re-read instead of damage to a stable capture.
+   */
+  async #stableFailure(
+    failure: RegionDecodeFailure,
+    signal: AbortSignal | undefined,
+  ): Promise<ArtifactReaderFailure> {
+    await this.#source.read(signal);
+    return this.#failure(failure);
+  }
+
   #failure(failure: RegionDecodeFailure): ArtifactReaderFailure {
-    if (failure.kind === "limit")
-      return new ArtifactReaderFailure(
-        "limit",
-        `systemd journal file exceeds a fixed limit: ${failure.message}`,
-        failure.boundary === undefined ? {} : { boundary: failure.boundary },
-      );
     // The signature established the format and the header names a layout this
     // reader does not implement, so the file is complete and a fresh copy
     // cannot help: truncated stays reserved for short structures.
