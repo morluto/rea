@@ -9,6 +9,7 @@ import { encodeToolResult } from "./toolResultEncoding.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import {
   DISCOVER_TOOLS,
+  DISCOVERY_REFRESH_GUIDANCE,
   HOT_TOOL_NAMES,
   progressiveCatalogIdentity,
   type CatalogIdentity,
@@ -84,6 +85,14 @@ export class ProgressiveToolCatalog {
           registered.disable();
       }
     });
+  }
+
+  /** In-scope tools this connection could load through discovery. */
+  unloadedTools(): ReadonlySet<string> {
+    const unloaded = new Set<string>();
+    for (const [name, { registered }] of this.tools)
+      if (!registered.enabled) unloaded.add(name);
+    return unloaded;
   }
 
   private inputSchemaFor(registered: RegisteredTool): Record<string, unknown> {
@@ -168,7 +177,7 @@ export class ProgressiveToolCatalog {
           ? matches.length === 0
             ? "No matches. Try fewer or different task keywords, or browse without query."
             : "No remaining matches at this offset. Use offset 0 to restart this query, or select an earlier offset."
-          : "Call the returned tool by its original name using input_schema. Your client must refresh tools/list first; if it cannot, reconnect with REA_MCP_TOOL_CATALOG_PROFILE=full.",
+          : `Call the returned tool by its original name using input_schema. ${DISCOVERY_REFRESH_GUIDANCE}`,
     };
     // This reply borrows read-only SDK schema projections for synchronous
     // encoding; validate the new reply without copying their complete trees.

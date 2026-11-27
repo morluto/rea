@@ -34,7 +34,7 @@ runs:
         for attempt in 1 2 3; do
           if sudo timeout --kill-after=5s "${REA_APT_DOWNLOAD_TIMEOUT}s" \
             apt-get -o Acquire::Retries=2 --download-only install "${options[@]}" -- "${packages[@]}"; then
-            sudo apt-get --no-download install "${options[@]}" -- "${packages[@]}"
+            sudo DEBIAN_FRONTEND=noninteractive apt-get --no-download install "${options[@]}" -- "${packages[@]}"
             exit 0
           else
             status=$?

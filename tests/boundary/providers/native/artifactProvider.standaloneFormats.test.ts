@@ -10,6 +10,10 @@ import { createSqliteDatabaseFixture } from "../../../fixtures/sqlite/database.j
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { buildFv } from "../../../fixtures/uefiImage.js";
 import { createDirectAnalysis } from "../../../../src/composition/directAnalysis.js";
+import {
+  arArchive,
+  debPackageFixture,
+} from "../../../../src/deb/DebPackage.fixture.js";
 import { artifactInspectionResultSchema } from "../../../../src/domain/artifactInspection.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
 
@@ -123,6 +127,12 @@ it.each([
     format: "sqlite",
     operation: "inspect_sqlite_database",
   },
+  {
+    name: "a Debian package",
+    create: writeBytes("hello.deb", () => debPackageFixture()),
+    format: "deb",
+    operation: "inspect_deb_package",
+  },
 ])(
   "inventories $name and routes it to $operation",
   async ({ create, format, operation }) => {
@@ -142,6 +152,21 @@ it("keeps bytes that only resemble a pyc frame unsupported", async () => {
   const path = join(directory, "data.pyc");
   // CR LF framing with a magic no pinned CPython release uses.
   await writeFile(path, Buffer.from([0x01, 0x00, 0x0d, 0x0a, 0, 0, 0, 0]));
+
+  await expect(
+    runProviderAnalysis(path, "inspect_artifact", {}).then(
+      projectCliAnalysisResult,
+    ),
+  ).resolves.toMatchObject({ code: "target_unavailable" });
+});
+
+it("keeps a plain ar archive that is not a Debian package unsupported", async () => {
+  const directory = await createTestTempDirectory("rea-standalone-format-");
+  const path = join(directory, "libhello.a");
+  await writeFile(
+    path,
+    arArchive([{ name: "hello.o", data: Buffer.from("object") }]),
+  );
 
   await expect(
     runProviderAnalysis(path, "inspect_artifact", {}).then(
