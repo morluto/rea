@@ -192,6 +192,46 @@ export const tarReaderLimitsSchema = z.strictObject({
 export type TarReaderLimits = z.output<typeof tarReaderLimitsSchema>;
 
 /** Input selections preserve omission; only the producing operation resolves defaults. */
+export const DEFAULT_AXML_READER_LIMITS = {
+  file_bytes: 64 * 1024 * 1024,
+  strings: 0x40000,
+  string_bytes: 16 * 1024 * 1024,
+  elements: 0x40000,
+  attributes: 0x100000,
+  namespaces: 0x8000,
+  depth: 4096,
+  output_bytes: 32 * 1024 * 1024,
+};
+export const axmlReaderLimitsSchema = z.strictObject({
+  file_bytes: bytes,
+  strings: count,
+  string_bytes: representedBytes,
+  elements: count,
+  attributes: count,
+  namespaces: count,
+  depth: count,
+  output_bytes: representedBytes,
+});
+export type AxmlReaderLimits = z.output<typeof axmlReaderLimitsSchema>;
+
+export const DEFAULT_ARSC_READER_LIMITS = {
+  file_bytes: 64 * 1024 * 1024,
+  packages: 4096,
+  strings: 0x100000,
+  string_bytes: 64 * 1024 * 1024,
+  entries: 0x100000,
+  output_bytes: 96 * 1024 * 1024,
+};
+export const arscReaderLimitsSchema = z.strictObject({
+  file_bytes: bytes,
+  packages: count,
+  strings: count,
+  string_bytes: representedBytes,
+  entries: count,
+  output_bytes: representedBytes,
+});
+export type ArscReaderLimits = z.output<typeof arscReaderLimitsSchema>;
+
 export const artifactReaderLimitsInputSchema = z.strictObject({
   bun: z
     .strictObject({
@@ -275,6 +315,34 @@ export const artifactReaderLimitsInputSchema = z.strictObject({
     .exactOptional()
     .describe(
       `Android vbmeta admission; omitted fields use ${JSON.stringify(DEFAULT_ANDROID_VBMETA_READER_LIMITS)}. Header-declared block and descriptor-table sizes are admitted before the image is read; the descriptor count bounds the descriptor walk.`,
+    ),
+  axml: z
+    .strictObject({
+      file_bytes: axmlReaderLimitsSchema.shape.file_bytes.exactOptional(),
+      strings: axmlReaderLimitsSchema.shape.strings.exactOptional(),
+      string_bytes: axmlReaderLimitsSchema.shape.string_bytes.exactOptional(),
+      elements: axmlReaderLimitsSchema.shape.elements.exactOptional(),
+      attributes: axmlReaderLimitsSchema.shape.attributes.exactOptional(),
+      namespaces: axmlReaderLimitsSchema.shape.namespaces.exactOptional(),
+      depth: axmlReaderLimitsSchema.shape.depth.exactOptional(),
+      output_bytes: axmlReaderLimitsSchema.shape.output_bytes.exactOptional(),
+    })
+    .exactOptional()
+    .describe(
+      `AXML admission; omitted fields use ${JSON.stringify(DEFAULT_AXML_READER_LIMITS)}. String bytes apply per pool; output bytes bound the decoded document text.`,
+    ),
+  arsc: z
+    .strictObject({
+      file_bytes: arscReaderLimitsSchema.shape.file_bytes.exactOptional(),
+      packages: arscReaderLimitsSchema.shape.packages.exactOptional(),
+      strings: arscReaderLimitsSchema.shape.strings.exactOptional(),
+      string_bytes: arscReaderLimitsSchema.shape.string_bytes.exactOptional(),
+      entries: arscReaderLimitsSchema.shape.entries.exactOptional(),
+      output_bytes: arscReaderLimitsSchema.shape.output_bytes.exactOptional(),
+    })
+    .exactOptional()
+    .describe(
+      `ARSC admission; omitted fields use ${JSON.stringify(DEFAULT_ARSC_READER_LIMITS)}. String bytes apply per pool; output bytes bound the projected XML.`,
     ),
   android_sparse_image: z
     .strictObject({
@@ -365,6 +433,8 @@ const readerLimitGroups = {
   deno: denoReaderLimitsSchema,
   wxapkg: wxapkgReaderLimitsSchema,
   tar: tarReaderLimitsSchema,
+  axml: axmlReaderLimitsSchema,
+  arsc: arscReaderLimitsSchema,
 } as const;
 
 const resolvedArtifactReaderLimitsSchema = z.strictObject({
@@ -380,6 +450,8 @@ export const artifactReaderLimitsSchema =
   resolvedArtifactReaderLimitsSchema.extend({
     android_vbmeta: androidVbmetaReaderLimitsSchema.exactOptional(),
     android_sparse_image: androidSparseImageReaderLimitsSchema.exactOptional(),
+    axml: axmlReaderLimitsSchema.exactOptional(),
+    arsc: arscReaderLimitsSchema.exactOptional(),
   });
 
 /**
@@ -421,6 +493,8 @@ export const resolveArtifactReaderLimits = (
     ...DEFAULT_ANDROID_SPARSE_IMAGE_READER_LIMITS,
     ...selected?.android_sparse_image,
   },
+  axml: { ...DEFAULT_AXML_READER_LIMITS, ...selected?.axml },
+  arsc: { ...DEFAULT_ARSC_READER_LIMITS, ...selected?.arsc },
   iso9660: { ...DEFAULT_ISO9660_READER_LIMITS, ...selected?.iso9660 },
   deno: {
     ...DEFAULT_DENO_READER_LIMITS,

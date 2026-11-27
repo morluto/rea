@@ -61,6 +61,30 @@ const ARSC_MAX_STRING_BYTES = 64 * 1024 * 1024;
 const ARSC_MAX_ENTRIES = 0x100000;
 const ARSC_MAX_OUTPUT_BYTES = 96 * 1024 * 1024;
 
+/** Resource admission for one decode; every bound is caller-adjustable. */
+export interface ArscDecodeLimits {
+  readonly fileBytes: number;
+  readonly packages: number;
+  readonly strings: number;
+  readonly stringBytes: number;
+  readonly entries: number;
+  readonly outputBytes: number;
+}
+
+/** Built-in admission applied when neither caller nor configuration acts. */
+export const DEFAULT_ARSC_DECODE_LIMITS: ArscDecodeLimits = {
+  fileBytes: ARSC_MAX_FILE_BYTES,
+  packages: ARSC_MAX_PACKAGES,
+  strings: ARSC_MAX_STRINGS,
+  stringBytes: ARSC_MAX_STRING_BYTES,
+  entries: ARSC_MAX_ENTRIES,
+  outputBytes: ARSC_MAX_OUTPUT_BYTES,
+};
+
+/** Recovery instructions naming the adjustable control for one limit. */
+const arscRecovery = (parameter: string): string =>
+  `Raise it through artifact_limits.arsc.${parameter} on the next call.`;
+
 export interface ArscDocumentImage {
   readonly metadata: {
     readonly package_count: number;
@@ -243,15 +267,22 @@ const renderConfig = (
 
 class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
   #chunks: Uint8Array[] = [];
-  #inputBudget = new Budget(ARSC_MAX_FILE_BYTES);
+  #inputBudget: Budget;
 
-  constructor(private readonly fileBytes: number) {}
+  constructor(
+    private readonly fileBytes: number,
+    private readonly limits: ArscDecodeLimits,
+  ) {
+    this.#inputBudget = new Budget(limits.fileBytes);
+  }
 
   write(chunk: Uint8Array): Result<void, RegionDecodeFailure> {
     if (!this.#inputBudget.tryCharge(chunk.length))
       return err({
         kind: "limit",
-        message: `arsc input exceeds the ${ARSC_MAX_FILE_BYTES}-byte bound`,
+        message:
+          `arsc input exceeds the ${this.limits.fileBytes}-byte bound. ` +
+          arscRecovery("file_bytes"),
         boundary: "capacity",
       });
     this.#chunks.push(chunk.slice());
@@ -266,6 +297,7 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
       at += part.length;
     }
     this.#chunks = [];
+    const limits = this.limits;
     if (bytes.length < ARSC_HEADER_BYTES)
       return formatFailure("arsc table is shorter than the 12-byte header");
     const reader = new BinaryReader(
@@ -286,9 +318,10 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
       return formatFailure(
         `declared size ${declaredSize} is below the table header`,
       );
-    if (declaredPackages > ARSC_MAX_PACKAGES)
+    if (declaredPackages > limits.packages)
       return limitFailure(
-        `table declares ${declaredPackages} packages above the ${ARSC_MAX_PACKAGES} bound`,
+        `table declares ${declaredPackages} packages above the ${limits.packages} bound. ` +
+          arscRecovery("packages"),
       );
     const limitations: string[] = [];
     let documentEnd = declaredSize;
@@ -320,7 +353,7 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
     };
 
     const out: Uint8Array[] = [];
-    const outputBudget = new Budget(ARSC_MAX_OUTPUT_BYTES);
+    const outputBudget = new Budget(limits.outputBytes);
     const encoder = new TextEncoder();
     const emit = (text: string): boolean => {
       const encoded = encoder.encode(text);
@@ -334,7 +367,8 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
       emit(text)
         ? undefined
         : limitFailure(
-            `projected output exceeds the ${ARSC_MAX_OUTPUT_BYTES}-byte bound`,
+            `projected output exceeds the ${limits.outputBytes}-byte bound. ` +
+              arscRecovery("output_bytes"),
           );
     /**
      * Emit a line assembled from static fragments and escaped attribute
@@ -352,7 +386,8 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
             : escapedAttrByteLength(part.attr);
       if (!outputBudget.tryCharge(bytes))
         return limitFailure(
-          `projected output exceeds the ${ARSC_MAX_OUTPUT_BYTES}-byte bound`,
+          `projected output exceeds the ${limits.outputBytes}-byte bound. ` +
+            arscRecovery("output_bytes"),
         );
       let text = "";
       for (const part of parts)
@@ -415,9 +450,10 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
         return formatFailure(
           `type ${typeId} declares ${count} entry offsets past the table end`,
         );
-      if (count > ARSC_MAX_ENTRIES)
+      if (count > limits.entries)
         return limitFailure(
-          `type ${typeId} declares ${count} entries above the ${ARSC_MAX_ENTRIES} bound`,
+          `type ${typeId} declares ${count} entries above the ${limits.entries} bound. ` +
+            arscRecovery("entries"),
         );
       // Resource IDs pack type and entry into 8/16-bit fields; wider values
       // collide distinct resources onto one exported ID.
@@ -503,9 +539,10 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
           }
           parts.push("/>\n");
           entryCount += 1;
-          if (entryCount > ARSC_MAX_ENTRIES)
+          if (entryCount > limits.entries)
             return limitFailure(
-              `table projects more than the ${ARSC_MAX_ENTRIES}-entry bound`,
+              `table projects more than the ${limits.entries}-entry bound. ` +
+                arscRecovery("entries"),
             );
           const inner = emitXml(parts);
           if (inner !== undefined) return inner;
@@ -540,9 +577,10 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
         if ((specFlags?.[index] ?? 0) & SPEC_PUBLIC)
           parts.push(' public="true"');
         entryCount += 1;
-        if (entryCount > ARSC_MAX_ENTRIES)
+        if (entryCount > limits.entries)
           return limitFailure(
-            `table projects more than the ${ARSC_MAX_ENTRIES}-entry bound`,
+            `table projects more than the ${limits.entries}-entry bound. ` +
+              arscRecovery("entries"),
           );
         if ((entryFlags & ENTRY_COMPLEX) === 0) {
           // The Res_value record sits after the variable-size entry header.
@@ -631,7 +669,8 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
     // The table is a global string pool followed by package chunks.
     if (!emit("<resources>\n"))
       return limitFailure(
-        `projected output exceeds the ${ARSC_MAX_OUTPUT_BYTES}-byte bound`,
+        `projected output exceeds the ${limits.outputBytes}-byte bound. ` +
+          arscRecovery("output_bytes"),
       );
     let cursor = headerSize;
     while (cursor < documentEnd) {
@@ -644,8 +683,8 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
             `unexpected string pool at ${cursor} inside the table body`,
           );
         const pool = StringPool.parse(reader, cursor, h, documentEnd, {
-          maxStrings: ARSC_MAX_STRINGS,
-          maxStringBytes: ARSC_MAX_STRING_BYTES,
+          maxStrings: limits.strings,
+          maxStringBytes: limits.stringBytes,
           requireXmlChars: true,
         });
         if (!pool.ok) return pool;
@@ -698,8 +737,8 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
           typePoolHeader.value,
           packageEnd,
           {
-            maxStrings: ARSC_MAX_STRINGS,
-            maxStringBytes: ARSC_MAX_STRING_BYTES,
+            maxStrings: limits.strings,
+            maxStringBytes: limits.stringBytes,
             requireXmlChars: true,
           },
         );
@@ -710,8 +749,8 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
           keyPoolHeader.value,
           packageEnd,
           {
-            maxStrings: ARSC_MAX_STRINGS,
-            maxStringBytes: ARSC_MAX_STRING_BYTES,
+            maxStrings: limits.strings,
+            maxStringBytes: limits.stringBytes,
             requireXmlChars: true,
           },
         );
@@ -749,9 +788,10 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
               );
             const specId = reader.bytes[inner + 8]!;
             const specCount = reader.u32(inner + 12);
-            if (specCount > ARSC_MAX_ENTRIES)
+            if (specCount > limits.entries)
               return limitFailure(
-                `type spec ${specId} declares ${specCount} flags above the ${ARSC_MAX_ENTRIES} bound`,
+                `type spec ${specId} declares ${specCount} flags above the ${limits.entries} bound. ` +
+                  arscRecovery("entries"),
               );
             if (s.headerSize + specCount * 4 > s.size)
               return formatFailure(
@@ -790,9 +830,10 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
         const closePackage = emitOrLimit("  </package>\n");
         if (closePackage !== undefined) return closePackage;
         packageCount += 1;
-        if (packageCount > ARSC_MAX_PACKAGES)
+        if (packageCount > limits.packages)
           return limitFailure(
-            `table walks more than the ${ARSC_MAX_PACKAGES}-package bound`,
+            `table walks more than the ${limits.packages}-package bound. ` +
+              arscRecovery("packages"),
           );
       } else {
         return formatFailure(
@@ -828,7 +869,8 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
 
     if (!emit("</resources>\n"))
       return limitFailure(
-        `projected output exceeds the ${ARSC_MAX_OUTPUT_BYTES}-byte bound`,
+        `projected output exceeds the ${limits.outputBytes}-byte bound. ` +
+          arscRecovery("output_bytes"),
       );
     const xml = new Uint8Array(outputBudget.used);
     let offset = 0;
@@ -857,14 +899,17 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
  */
 export const createArscDecoder = (
   fileBytes: number,
+  limits: ArscDecodeLimits = DEFAULT_ARSC_DECODE_LIMITS,
 ): Result<RegionDecoder<ArscDocumentImage>, RegionDecodeFailure> => {
   if (!Number.isSafeInteger(fileBytes) || fileBytes < 0)
     return err({ kind: "malformed", message: "invalid file size" });
-  if (fileBytes > ARSC_MAX_FILE_BYTES)
+  if (fileBytes > limits.fileBytes)
     return err({
       kind: "limit",
-      message: `arsc file ${fileBytes} exceeds the ${ARSC_MAX_FILE_BYTES}-byte bound`,
+      message:
+        `arsc file ${fileBytes} exceeds the ${limits.fileBytes}-byte bound. ` +
+        arscRecovery("file_bytes"),
       boundary: "file-size",
     });
-  return ok(new BufferedArscDecoder(fileBytes));
+  return ok(new BufferedArscDecoder(fileBytes, limits));
 };
