@@ -35,6 +35,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [ELF separate debug files](guides/native/elf-debug-link.md)
 - [ELF and Mach-O initializer functions](guides/native/native-initializers.md)
 - [ELF unwind function ranges](guides/native/elf-unwind-ranges.md)
+- [Mach-O function starts and data in code](guides/native/macho-function-starts.md)
 - [Linux kernel build config](guides/native/kernel-build-config.md)
 - [Recorded crash evidence](guides/native/recorded-crashes.md)
 - [Windows Shell Link shortcuts](guides/native/windows-shortcut.md)

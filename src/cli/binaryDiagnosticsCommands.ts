@@ -166,6 +166,33 @@ export const registerBinaryDiagnosticsCommands = (
   registerContractCommand(
     cli,
     logger,
+    contract("inspect_macho_function_starts"),
+    {
+      description:
+        "List Mach-O function starts and data-in-code entries without executing the image",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: {
+        path: {
+          description: "Local thin Mach-O or universal Mach-O image",
+        },
+        architecture: {
+          description:
+            "Slice to read from a universal Mach-O, by CPU family; required for universal files and rejected for any other file",
+        },
+      },
+    },
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/machoFunctionStarts.js")
+        ).createMachoFunctionStartsService(),
+      "rea-macho-function-starts",
+    ),
+  );
+  registerContractCommand(
+    cli,
+    logger,
     contract("inspect_apple_ips"),
     {
       description:

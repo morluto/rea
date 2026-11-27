@@ -1,0 +1,77 @@
+# Mach-O function starts and data in code
+
+Use `inspect_macho_function_starts` to read `LC_FUNCTION_STARTS` and
+`LC_DATA_IN_CODE` from one thin Mach-O, or from one slice of a universal file.
+`LC_FUNCTION_STARTS` is the linker's ULEB128 delta list of function starts.
+Images that carry `LC_DATA_IN_CODE` mark jump tables and literal data inside
+`__TEXT`. The reader does not disassemble and does not execute the image.
+
+```sh
+rea inspect-macho-function-starts /absolute/path/to/program --limit 0 --json
+rea inspect-macho-function-starts /absolute/path/to/program --architecture arm64 --kind starts --json
+```
+
+MCP accepts `{ "path": "/absolute/path/to/program" }`. A universal file also
+needs `architecture`. CLI paths may be relative to the current directory; MCP
+paths must be absolute.
+
+## What it reports
+
+- `function_starts` and `data_in_code` give each command's `dataoff`,
+  `datasize`, container `file_offset`, and whether that range sits in
+  `__LINKEDIT`. `status` is `present` or `absent`.
+- Start addresses are absolute VM addresses. The first delta is added to the
+  `__TEXT` segment `vmaddr`. A zero delta ends the list. Zero bytes after that
+  terminator are padding.
+- Each start names the section that contains it, such as `__text`.
+- Each data-in-code entry has the `data_in_code_entry` file `offset` from the
+  slice `mach_header`, its VM address, `length`, and `kind`:
+  - `DICE_KIND_DATA`
+  - `JUMP_TABLE8`
+  - `JUMP_TABLE16`
+  - `JUMP_TABLE32`
+  - `ABS_JUMP_TABLE32`
+  - Any other kind stays the numeric `uint16`.
+- `owner` is the greatest decoded start at or before that VM address, with
+  that start's index.
+- `coverage` counts every start and every complete 8-byte data entry. It also
+  counts duplicate commands, commands whose `cmdsize` is not 16, tables outside
+  `__LINKEDIT`, commands that extend past the file, truncated or overflowing
+  ULEB128, wrapped addresses, addresses outside every executable segment, a
+  missing `__TEXT` anchor, nonzero bytes after the terminator, a data tail
+  shorter than 8 bytes, entries that leave their section, offsets that are not
+  strictly increasing, offsets outside every segment, and zero lengths. Any of
+  those counters makes `coverage.status` `partial`.
+- `page` records `kind` (`all`, `starts`, or `data`), `offset`, `limit`, and
+  the next offset of each selected table. The same offset and limit apply to
+  each selected table. `limit: 0` returns counts only.
+
+## Reading the result
+
+The starts are the addresses the linker recorded. A stripped image can still
+carry the list. A missing command is `absent`, and the standing limitations
+say what that absence leaves unknown. Compare a provider procedure address
+with `starts[].vmaddr`. A data-in-code entry names the start that owns its
+address, so a jump table or literal pool inside a function stays attached to
+that start.
+
+When a command is declared more than once, the first one is decoded. Decoding
+stops at the first wrapped or out-of-text start, and that address stays in
+the list.
+
+## Failures
+
+A file that is not Mach-O, or a universal slice that cannot be read, is a
+target failure. `architecture` on a thin image is refused. A universal file
+without `architecture` is refused.
+
+`max_entries` (default 2,097,152, at most 16,777,216; CLI `--max-entries`)
+bounds decoded starts plus complete data-in-code entries. A larger pair of
+tables is refused with `details.limit`. `required_value` is that combined
+count, and the call returns no partial report.
+
+The default [read allowance](../../reference/limits-and-recovery.md#static-reader-read-allowance)
+is 64 MiB (`max_file_bytes`, floor 64 bytes, ceiling 512 MiB). The identity
+pass stops at 4 GiB minus one byte, because `dataoff` and FAT32 slice offsets
+are 32-bit. `max_file_bytes` does not raise that ceiling.
+`max_structure_bytes` bounds the load-command table read.

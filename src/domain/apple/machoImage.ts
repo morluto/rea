@@ -35,10 +35,23 @@ export const readMachoImage = (
 ): Extract<BinaryContainer, { format: "macho" }> =>
   readMachoImageCore(bytes, bytes.length, structureBytes);
 
-/** Same thin Mach-O header and section read over a random-access source without buffering the full image. */
+/** One framed load command handed to a reader's visitor during the shared walk. */
+export interface MachoLoadCommandVisit {
+  readonly command: number;
+  readonly size: number;
+  /** The whole command, `cmdsize` bytes from its `cmd` field. */
+  readonly body: Buffer;
+}
+
+/**
+ * Same thin Mach-O header and section read over a random-access source without
+ * buffering the full image. `visit` sees every framed load command during the
+ * one shared walk, so a consumer needing other commands does not walk again.
+ */
 export const readMachoImageFromReader = async (
   source: ByteSource,
   structureBytes: number = DEFAULT_NATIVE_STRUCTURE_BYTES,
+  visit?: (command: MachoLoadCommandVisit) => void,
 ): Promise<Extract<BinaryContainer, { format: "macho" }>> => {
   const headerPrefix = await readByteSourceSlice(
     source,
@@ -71,13 +84,14 @@ export const readMachoImageFromReader = async (
     0,
     table.headerSize + table.commandBytes,
   );
-  return readMachoImageCore(tableBytes, source.size, structureBytes);
+  return readMachoImageCore(tableBytes, source.size, structureBytes, visit);
 };
 
 const readMachoImageCore = (
   bytes: Buffer,
   fileBytes: number,
   structureBytes: number,
+  visit?: (command: MachoLoadCommandVisit) => void,
 ): Extract<BinaryContainer, { format: "macho" }> => {
   const parsed = readMachoLoadCommandDeclarations(bytes, fileBytes);
   if (!parsed.ok) throw new BinaryFormatFailure("malformed", parsed.error);
@@ -117,6 +131,7 @@ const readMachoImageCore = (
     const frame = commands.read(bytes.subarray(offset, offset + 8));
     if (!frame.ok) throw new BinaryFormatFailure("malformed", frame.error);
     const { command, size } = frame.value;
+    visit?.({ command, size, body: bytes.subarray(offset, offset + size) });
     if (command === LC.DYLD_CHAINED_FIXUPS) chainedFixups = true;
     if (command === LC.SEGMENT || command === LC.SEGMENT_64) {
       const wide = command === LC.SEGMENT_64;
@@ -179,6 +194,7 @@ const readMachoImageCore = (
             current: protection,
             maximum: maxProtection,
           },
+          macho_segment: { name, address: parsedSegment.value.address },
         });
         if ((protection & 4) !== 0) executableMappings.push(mapping);
       }

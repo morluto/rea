@@ -201,6 +201,11 @@ export interface LoadRegion {
     readonly current: number;
     readonly maximum: number;
   };
+  /** Mach-O segment name and declared vmaddr; other formats omit it. */
+  readonly macho_segment?: {
+    readonly name: string;
+    readonly address: bigint;
+  };
 }
 
 /** Parsed section facts; consumer metadata validity is separate from native structure. */

@@ -83,6 +83,7 @@ import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHo
 import { pcapCaptureHostSupported } from "../domain/pcap/pcapAnalysis.js";
 import { createPeLoadConfigService } from "./binaryDiagnostics/peLoadConfig.js";
 import { createPeUnwindRangesService } from "./binaryDiagnostics/peUnwindRanges.js";
+import { createMachoFunctionStartsService } from "./binaryDiagnostics/machoFunctionStarts.js";
 import { createPeOverlayService } from "./binaryDiagnostics/peOverlay.js";
 import { createBinaryHardeningService } from "./binaryDiagnostics/binaryHardening.js";
 import { createPeCertificatesService } from "./binaryDiagnostics/peCertificates.js";
@@ -419,6 +420,7 @@ const modules = {
   peLoadConfig: service(() => createPeLoadConfigService()),
   peOverlay: service(() => createPeOverlayService()),
   peUnwindRanges: service(() => createPeUnwindRangesService()),
+  machoFunctionStarts: service(() => createMachoFunctionStartsService()),
   binaryHardening: service(() => createBinaryHardeningService()),
   peCertificates: service(() => createPeCertificatesService()),
   peImports: service(() => createPeImportsService()),
