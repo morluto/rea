@@ -352,7 +352,16 @@ a known body. `--layout dwarf`
 reports that compilation-unit paths are unavailable and still names files by
 address. Filters are a case-sensitive name substring, a case-sensitive name
 prefix, an inclusive address range (including uppercase hexadecimal input), and a positive safe-integer attempt limit. The limit does not allocate space in proportion to its value. Cancellation leaves
-files already written in place. While one provider request for a function, reading its body
+files already written in place and first commits the functions already decompiled. Function files and their journal records are committed in groups of
+up to eight: each file's bytes are synced before the file gets its final name, and a
+group's records are appended and synced together only after its files are
+published. A group is also committed by the first function that settles one
+second or more after the previous commit, so a slow provider is committed
+function by function. A process or host that stops between commits leaves at most eight
+decompiled functions unrecorded. A resume decompiles those again; when a file is
+already in place and the new bytes match it, the function is counted as skipped
+and recorded with `provider_source.reason: "existing_file_origin_unknown"`
+rather than as a conflict. While one provider request for a function, reading its body
 or decompiling it, stays pending, the export reports a `decompile_all` progress
 update every five seconds naming that request, the function's name and
 address, its position among the selected functions, and the elapsed wait;
