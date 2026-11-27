@@ -1,3 +1,4 @@
+import { DEFAULT_IL2CPP_NATIVE_TYPE_TEXT_BYTES } from "../domain/il2cpp/il2cppMetadata.js";
 import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
 import {
   readSlot,
@@ -48,9 +49,6 @@ const DUMPER_PRIMITIVES = new Map([
   [0x19, "UIntPtr"],
 ]);
 
-// Cached rendered text has its own workspace bound; the report owner separately
-// charges each returned occurrence and JSON expansion. No live-state cache.
-const TYPE_TEXT_BYTES = 64 * 1024 * 1024;
 const TYPE_DEPTH = 64;
 
 type Text = Generator<void, string>;
@@ -74,6 +72,7 @@ const createTypeRenderer = (
   image: NativeImage,
   facts: Il2cppMetadataLinkFacts,
   beforeText: ((bytes: number) => void) | undefined,
+  maxTypeTextBytes: number,
   style: (tools: RenderTools) => TypeStyle,
 ) => {
   const fail = (message: string): never => {
@@ -102,11 +101,11 @@ const createTypeRenderer = (
   let cachedBytes = 0;
   let work = 0;
   const guard = (bytes: number) => {
-    if (bytes > TYPE_TEXT_BYTES - cachedBytes)
+    if (bytes > maxTypeTextBytes - cachedBytes)
       throw new Il2cppBinaryFormatFailure(
         "native-type-text-capacity",
-        `rendered type text workspace exceeds ${TYPE_TEXT_BYTES} UTF-8 bytes`,
-        TYPE_TEXT_BYTES,
+        `rendered type text workspace exceeds ${maxTypeTextBytes} UTF-8 bytes`,
+        maxTypeTextBytes,
         "bytes",
       );
     beforeText?.(bytes);
@@ -324,37 +323,44 @@ export const createTypeNamer = (
   facts: Il2cppMetadataLinkFacts,
   version: number,
   beforeText?: (bytes: number) => void,
+  maxTypeTextBytes: number = DEFAULT_IL2CPP_NATIVE_TYPE_TEXT_BYTES,
 ) => {
-  const renderer = createTypeRenderer(image, facts, beforeText, (tools) => {
-    function* definitionName(index: number): Text {
-      const { parts, namespace } = yield* declaringChain(
-        metadata,
-        tools,
-        index,
-      );
-      const name = tools.join(parts, "+");
-      return namespace === "" ? name : tools.join([namespace, name], ".");
-    }
-    return {
-      primitives: PRIMITIVES,
-      byrefBit: version >= 29 ? 29 : 30,
-      definition: definitionName,
-      *genericClass(data, depth) {
-        const definition = genericClassDefinition(tools, data, version);
-        const args = yield* renderer.instanceArgumentList(
-          tools.pointer(data + 8n, "generic class instance"),
-          depth,
-        );
-        return yield* genericDefinitionName(
+  const renderer = createTypeRenderer(
+    image,
+    facts,
+    beforeText,
+    maxTypeTextBytes,
+    (tools) => {
+      function* definitionName(index: number): Text {
+        const { parts, namespace } = yield* declaringChain(
           metadata,
-          facts,
           tools,
-          definition,
-          args,
+          index,
         );
-      },
-    };
-  });
+        const name = tools.join(parts, "+");
+        return namespace === "" ? name : tools.join([namespace, name], ".");
+      }
+      return {
+        primitives: PRIMITIVES,
+        byrefBit: version >= 29 ? 29 : 30,
+        definition: definitionName,
+        *genericClass(data, depth) {
+          const definition = genericClassDefinition(tools, data, version);
+          const args = yield* renderer.instanceArgumentList(
+            tools.pointer(data + 8n, "generic class instance"),
+            depth,
+          );
+          return yield* genericDefinitionName(
+            metadata,
+            facts,
+            tools,
+            definition,
+            args,
+          );
+        },
+      };
+    },
+  );
   return renderer.name;
 };
 
@@ -371,6 +377,7 @@ export const createMethodSpecNamer = (
   facts: Il2cppMetadataLinkFacts,
   version: number,
   beforeText?: (bytes: number) => void,
+  maxTypeTextBytes: number = DEFAULT_IL2CPP_NATIVE_TYPE_TEXT_BYTES,
 ) => {
   const cut = (text: string) => {
     const at = text.indexOf("`");
@@ -424,26 +431,32 @@ export const createMethodSpecNamer = (
     }
     return tools.join(["<", tools.join(names, ", "), ">"]);
   }
-  const renderer = createTypeRenderer(image, facts, beforeText, (tools) => ({
-    primitives: DUMPER_PRIMITIVES,
-    byrefBit: null,
-    *definition(index) {
-      return tools.join([
-        yield* nestedName(tools, index, false),
-        yield* containerParameters(tools, index),
-      ]);
-    },
-    *genericClass(data, depth) {
-      const owner = genericClassDefinition(tools, data, version);
-      return tools.join([
-        yield* nestedName(tools, owner, false),
-        yield* renderer.instanceArguments(
-          tools.pointer(data + 8n, "generic class instance"),
-          depth,
-        ),
-      ]);
-    },
-  }));
+  const renderer = createTypeRenderer(
+    image,
+    facts,
+    beforeText,
+    maxTypeTextBytes,
+    (tools) => ({
+      primitives: DUMPER_PRIMITIVES,
+      byrefBit: null,
+      *definition(index) {
+        return tools.join([
+          yield* nestedName(tools, index, false),
+          yield* containerParameters(tools, index),
+        ]);
+      },
+      *genericClass(data, depth) {
+        const owner = genericClassDefinition(tools, data, version);
+        return tools.join([
+          yield* nestedName(tools, owner, false),
+          yield* renderer.instanceArguments(
+            tools.pointer(data + 8n, "generic class instance"),
+            depth,
+          ),
+        ]);
+      },
+    }),
+  );
   const { tools } = renderer;
   /**
    * `Namespace.Type<ClassArgs>$$Method<MethodArgs>`: the declaring type keeps

@@ -192,7 +192,7 @@ export class Il2cppMetadataService {
             Object.entries(providerInput).filter(
               ([, value]) => value !== undefined,
             ),
-          ) as Record<string, string | boolean>),
+          ) as Record<string, string | boolean | number>),
           ...(output === undefined
             ? {}
             : {

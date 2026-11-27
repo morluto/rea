@@ -61,7 +61,7 @@ export class ElfPointerRelocationFailure extends ParseFailureError<
     message: string,
     maximum: number,
     unit: "entries" | "bytes",
-    limitName?: typeof ELF_VIRTUAL_POINTER_INDEX_LIMIT,
+    limitName?: string,
   );
   constructor(
     readonly reason:
@@ -141,8 +141,8 @@ export interface ElfPointerRelocationInput {
   readonly zeroFills: readonly ZeroFillMapping[];
   /**
    * The caller's `max_structure_bytes` for the dynamic directory and Android
-   * packed relocation tables. A caller that owns that control passes it and
-   * receives its failure; the IL2CPP and JNI loaders omit it and keep their
+   * packed relocation tables. Callers that own that control pass it and
+   * receive its failure; the JNI loader omits it and keeps its
    * native-index-capacity failure.
    */
   readonly structureBytes?: number | undefined;
@@ -1356,8 +1356,13 @@ export function* readElfPointerValuesSteps(
   bytes: Buffer,
   input: ElfPointerRelocationInput,
   maximumIndexBytes: number,
-  options: Pick<RelocationOptions, "symbolResolution"> = {},
+  options: Pick<RelocationOptions, "symbolResolution"> & {
+    readonly maxUnresolvedOverlayEntries?: number | undefined;
+    readonly unresolvedOverlayLimitName?: string | undefined;
+  } = {},
 ): Generator<void, ElfVirtualPointerWrites> {
+  const maxOverlayEntries =
+    options.maxUnresolvedOverlayEntries ?? MAX_RELOCATION_RECORDS;
   const index = new ElfVirtualWriteIndex(
     input.bits === 64 ? 8 : 4,
     input.little,
@@ -1367,7 +1372,9 @@ export function* readElfPointerValuesSteps(
   const zeroFill = new Set<bigint>();
   const steps = readElfRelocationWritesSteps(bytes, input, {
     requireDynamic: true,
-    ...options,
+    ...(options.symbolResolution === undefined
+      ? {}
+      : { symbolResolution: options.symbolResolution }),
   });
   let next = steps.next();
   while (!next.done) {
@@ -1377,12 +1384,13 @@ export function* readElfPointerValuesSteps(
       index.add(write);
       if (write.value !== null && write.file_offset === null)
         zeroFill.add(write.address);
-      if (index.unresolvedSize + zeroFill.size > MAX_RELOCATION_RECORDS)
+      if (index.unresolvedSize + zeroFill.size > maxOverlayEntries)
         throw new ElfPointerRelocationFailure(
           "native-index-capacity",
-          `ELF unresolved and zero-fill overlay exceeds ${MAX_RELOCATION_RECORDS} entries`,
-          MAX_RELOCATION_RECORDS,
+          `ELF unresolved and zero-fill overlay exceeds ${String(maxOverlayEntries)} entries`,
+          maxOverlayEntries,
           "entries",
+          options.unresolvedOverlayLimitName,
         );
     }
     next = steps.next();

@@ -97,8 +97,14 @@ Graph tools accept per-call traversal bounds (`max_depth` and `max_nodes` on
 `max_file_bytes`, a decoded section-name table above it, or more notes than
 `max_entries` with `details.limit` naming that field
 (`control_kind: "parameter"`), its effective value, default and range. `inspect_il2cpp_metadata`
-accepts `max_native_index_bytes` (default 1 GiB) for the estimated ELF pointer
-index of `binary_path`; its refusal reports the same kind of limit. See
+accepts `max_file_bytes` (default 256 MiB, up to 1 GiB), `max_output_bytes`
+(default 64 MiB, up to 512 MiB), and with `binary_path`: `max_binary_bytes`
+(default 1 GiB, up to 2 GiB), `max_structure_bytes` (default 16
+MiB, up to 512 MiB), `max_native_index_bytes` (default 1 GiB),
+`max_native_type_text_bytes` (default 64 MiB, up to 512 MiB),
+`max_native_candidates` (default 65,536, up to 1,048,576), and
+`max_module_array_candidates` (default 64, up to 65,536); each refusal reports
+the same kind of limit. See
 [IL2CPP metadata](../il2cpp-metadata.md#native-method-addresses).
 
 `inspect_devicetree`, `inspect_windows_shortcut`, `inspect_kernel_build_config`,
@@ -138,9 +144,9 @@ tables located through PT_DYNAMIC. For `inspect_native_initializers` it also
 bounds Android APS2 packed relocation tables (both compressed input bytes and
 equivalent unpacked REL/RELA work).
 
-`inspect_go_binary` and `inspect_rust_binary` accept it for their ELF directory
-and Mach-O load commands. The IL2CPP reader reads the same tables with the 16
-MiB default and reports it as a fixed allowance.
+`inspect_go_binary`, `inspect_rust_binary` and `inspect_il2cpp_metadata` accept
+it for their ELF directory and Mach-O load commands (`inspect_il2cpp_metadata`
+requires `binary_path`).
 
 `inspect_rust_binary` also accepts `max_wasm_sections` (WebAssembly sections
 walked; default 65,536, at most 16,777,216). The walk stops at the first excess,

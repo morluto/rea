@@ -23,7 +23,8 @@ for (const { command, limit, recovery, cliFlag } of [
   {
     command: "inspect-il2cpp-metadata",
     limit: 256 * 1024 * 1024,
-    recovery: "within the fixed IL2CPP input allowance",
+    recovery: "max_file_bytes",
+    cliFlag: "--max-file-bytes",
   },
   {
     command: "inspect-wasm-artifact",
@@ -85,7 +86,10 @@ exit 1
         expect(output.json).toMatchObject({
           details: { limit: { parameter: recovery, cli_flag: cliFlag } },
         });
-        if (command === "inspect-go-binary") {
+        if (
+          command === "inspect-go-binary" ||
+          command === "inspect-il2cpp-metadata"
+        ) {
           expect(refusal.remediation.action).toContain(cliFlag);
           expect(refusal.remediation.action).toContain(`rea ${command}`);
         } else {

@@ -3,7 +3,10 @@ import { binaryMetadataArchitecture } from "../domain/binaryMetadataArchitecture
 import {
   IL2CPP_SLICE_SELECTORS,
   type Il2cppBinaryArchitecture,
+  DEFAULT_IL2CPP_NATIVE_CANDIDATES,
+  DEFAULT_IL2CPP_NATIVE_INDEX_BYTES,
 } from "../domain/il2cpp/il2cppMetadata.js";
+import { NATIVE_STRUCTURE_BYTES } from "../domain/native/nativeStructureBudget.js";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
@@ -34,8 +37,10 @@ import {
   ElfPointerRelocationFailure,
   type ElfVirtualPointerWrites,
 } from "../domain/native/elfPointerRelocations.js";
-import { DEFAULT_IL2CPP_NATIVE_INDEX_BYTES } from "../domain/il2cpp/il2cppMetadata.js";
-import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
+import {
+  IL2CPP_NATIVE_CANDIDATES_LIMIT,
+  Il2cppBinaryFormatFailure,
+} from "./Il2cppBinaryFormat.js";
 
 /** Selection failures name the binary's architecture input and IL2CPP's public spellings. */
 const IL2CPP_SLICE_SELECTION_INPUT: SliceSelectionInput = {
@@ -94,6 +99,7 @@ const rejectContainer = (cause: unknown): never => {
       cause.message,
       cause.failure.limit.maximum,
       "bytes",
+      cause.failure.limit.name,
     );
   if (cause instanceof BinaryFormatFailure)
     throw new Il2cppBinaryFormatFailure(
@@ -105,9 +111,12 @@ const rejectContainer = (cause: unknown): never => {
   throw cause;
 };
 
-const readContainer = (image: Buffer): BinaryContainer => {
+const readContainer = (
+  image: Buffer,
+  structureBytes?: number,
+): BinaryContainer => {
   try {
-    return readBinaryContainer(image, OPERATION);
+    return readBinaryContainer(image, OPERATION, structureBytes);
   } catch (cause) {
     return rejectContainer(cause);
   }
@@ -116,9 +125,15 @@ const readContainer = (image: Buffer): BinaryContainer => {
 export const readIl2cppBinaryContainerCooperative = async (
   image: Buffer,
   pause: () => Promise<void>,
+  structureBytes?: number,
 ): Promise<BinaryContainer> => {
   try {
-    return await readBinaryContainerCooperative(image, OPERATION, pause);
+    return await readBinaryContainerCooperative(
+      image,
+      OPERATION,
+      pause,
+      structureBytes,
+    );
   } catch (cause) {
     return rejectContainer(cause);
   }
@@ -132,8 +147,10 @@ export function* openImageSteps(
   image: Buffer,
   preparedContainer?: BinaryContainer,
   maximumIndexBytes: number = DEFAULT_IL2CPP_NATIVE_INDEX_BYTES,
+  structureBytes?: number,
+  maxNativeCandidates: number = DEFAULT_IL2CPP_NATIVE_CANDIDATES,
 ): Generator<void, NativeImage> {
-  const container = preparedContainer ?? readContainer(image);
+  const container = preparedContainer ?? readContainer(image, structureBytes);
   if (container.bits !== 64 || container.byte_order !== "little")
     throw new Il2cppBinaryFormatFailure(
       "unsupported-container",
@@ -151,9 +168,15 @@ export function* openImageSteps(
           dynamicSegments: container.elf.dynamicSegments,
           mappings: container.mappings,
           zeroFills: container.zero_fills,
+          structureBytes:
+            structureBytes ?? NATIVE_STRUCTURE_BYTES.default_value,
         },
         maximumIndexBytes,
-        { symbolResolution: "image-definitions" },
+        {
+          symbolResolution: "image-definitions",
+          maxUnresolvedOverlayEntries: maxNativeCandidates,
+          unresolvedOverlayLimitName: IL2CPP_NATIVE_CANDIDATES_LIMIT,
+        },
       );
   } catch (cause) {
     if (cause instanceof ElfPointerRelocationFailure) {
@@ -168,6 +191,7 @@ export function* openImageSteps(
       if (cause.reason !== "native-index-capacity")
         throw new Il2cppBinaryFormatFailure(cause.reason, cause.message);
     }
+    if (cause instanceof BinaryResourceFailure) return rejectContainer(cause);
     if (cause instanceof BinaryFormatFailure)
       throw new Il2cppBinaryFormatFailure("malformed-container", cause.message);
     throw cause;

@@ -1821,3 +1821,131 @@ cliTest(
     }
   },
 );
+
+cliTest(
+  "projects per-call IL2CPP budget refusals with adapter flags and recovers on retry through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-il2cpp-budget-cli-mcp-");
+    const path = join(root, "global-metadata.dat");
+    const { bytes } = createIl2cppMetadataFixture();
+    await writeFile(path, bytes);
+
+    const fileRefused = await cli.run({
+      arguments: [
+        "inspect-il2cpp-metadata",
+        path,
+        "--max-file-bytes",
+        "16",
+        "--json",
+      ],
+    });
+    expect(fileRefused.exitCode).toBe(1);
+    expect(fileRefused.json).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          cli_flag: "--max-file-bytes",
+          effective_value: 16,
+          required_value: bytes.length,
+          unit: "bytes",
+          minimum: 1,
+          maximum: 1024 * 1024 * 1024,
+          default_value: 256 * 1024 * 1024,
+          applies_at: "next_call",
+        },
+        refusal: {
+          kind: "adjustable_budget",
+          operation: "inspect_il2cpp_metadata",
+          control: "max_file_bytes",
+        },
+      },
+      remediation: {
+        action: expect.stringContaining("--max-file-bytes"),
+      },
+    });
+
+    const outputRefused = await cli.run({
+      arguments: [
+        "inspect-il2cpp-metadata",
+        path,
+        "--max-output-bytes",
+        "256",
+        "--json",
+      ],
+    });
+    expect(outputRefused.exitCode).toBe(1);
+    expect(outputRefused.json).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_output_bytes",
+          cli_flag: "--max-output-bytes",
+          effective_value: 256,
+          unit: "bytes",
+          minimum: 1,
+          maximum: 512 * 1024 * 1024,
+          default_value: 64 * 1024 * 1024,
+          applies_at: "next_call",
+        },
+        refusal: {
+          kind: "adjustable_budget",
+          operation: "inspect_il2cpp_metadata",
+          control: "max_output_bytes",
+        },
+      },
+      remediation: {
+        action: expect.stringContaining("--max-output-bytes"),
+      },
+    });
+
+    const { call } = await sharedMcp();
+    const mcpRefused = await call("inspect_il2cpp_metadata", {
+      path,
+      detail: "complete",
+      max_file_bytes: 16,
+    });
+    expect(mcpRefused.isError).toBe(true);
+    const mcpError = parseMcpToolError(mcpRefused).error;
+    expect(mcpError).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 16,
+          required_value: bytes.length,
+          unit: "bytes",
+          applies_at: "next_call",
+        },
+        refusal: {
+          kind: "adjustable_budget",
+          operation: "inspect_il2cpp_metadata",
+          control: "max_file_bytes",
+        },
+      },
+    });
+    expect(
+      (mcpError.details as { limit?: Record<string, unknown> } | undefined)
+        ?.limit,
+    ).not.toHaveProperty("cli_flag");
+
+    const mcpRecovered = await call("inspect_il2cpp_metadata", {
+      path,
+      detail: "complete",
+      max_file_bytes: bytes.length,
+    });
+    expect(mcpRecovered.isError, JSON.stringify(mcpRecovered.content)).not.toBe(
+      true,
+    );
+    expect(parseEvidence(mcpRecovered.structuredContent).parameters).toEqual({
+      path,
+      max_file_bytes: bytes.length,
+    });
+  },
+);
