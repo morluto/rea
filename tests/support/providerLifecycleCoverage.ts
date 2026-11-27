@@ -1361,6 +1361,20 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
     typedFailures("tests/boundary/filesystem/erlangBeam.test.ts"),
   ),
+  "rea-esp-nvs": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/espNvsMcpCli.test.ts",
+        "decodes an NVS slice inside a flash dump with CLI and advertised MCP parity",
+      ),
+    ),
+    covered(
+      test(
+        "src/application/binaryDiagnostics/EspNvsService.test.ts",
+        "honors cancellation before reading and retains completed Evidence on late cancellation",
+      ),
+    ),
+  ),
   "rea-firmware-vector-table": inProcess(
     covered(
       test(
@@ -1584,6 +1598,15 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     ),
     typedFailures("src/native/pe/PeUnwindRangesProvider.test.ts"),
+  ),
+  "rea-macho-function-starts": inProcess(
+    covered(
+      test(
+        "tests/acceptance/machoFunctionStartsCli.test.ts",
+        "reads Mach-O function starts identically over CLI and MCP",
+      ),
+    ),
+    typedFailures("src/native/apple/MachoFunctionStartsProvider.test.ts"),
   ),
   "rea-playwright-browser-scenario": {
     ownership: "process",

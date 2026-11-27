@@ -129,6 +129,11 @@ export const documentationSections = [
         route: "/elf-unwind-ranges",
       },
       {
+        text: "Mach-O function starts",
+        source: "guides/native/macho-function-starts.md",
+        route: "/macho-function-starts",
+      },
+      {
         text: "Linux kernel build config",
         source: "guides/native/kernel-build-config.md",
         route: "/kernel-build-config",
@@ -359,6 +364,11 @@ export const documentationSections = [
         route: "/android-boot-image",
       },
       {
+        text: "Android DTBO partition images",
+        source: "android-dtbo.md",
+        route: "/android-dtbo",
+      },
+      {
         text: "APK signature schemes",
         source: "apk-signature.md",
         route: "/apk-signature",
@@ -452,6 +462,11 @@ export const documentationSections = [
         text: "ESP flash images",
         source: "esp-flash-image.md",
         route: "/esp-flash-image",
+      },
+      {
+        text: "ESP-IDF NVS partitions",
+        source: "guides/firmware/esp-nvs.md",
+        route: "/esp-nvs",
       },
       {
         text: "ESP images",

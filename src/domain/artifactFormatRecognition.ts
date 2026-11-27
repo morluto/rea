@@ -1,5 +1,6 @@
 import type { ArtifactFormatId } from "./artifactGraph.js";
 import { hasAndroidBootImageMagic } from "./androidBootImageFormat.js";
+import { hasAndroidDtboMagic } from "./firmware/androidDtboFormat.js";
 import { hasBinaryPlistSignature } from "./apple/appleArchiveFormat.js";
 import { hasDfuSePrefix, isDfuSeFile } from "./firmware/dfuse.js";
 import { ESP8266_REFUSAL, recognizeEspImage } from "./firmware/espImage.js";
@@ -33,6 +34,7 @@ import {
   hasDevicetreeMagic,
   readDevicetreeHeader,
 } from "./firmware/devicetreeHeader.js";
+import { hasEspNvsHeader } from "./firmware/espNvsParser.js";
 import { hasDebPackageHeader } from "./deb/debPackage.js";
 import { observePythonBytecodePrefix } from "./python/pythonBytecodeIdentity.js";
 import { hasSqliteHeader } from "./sqliteFormat.js";
@@ -65,6 +67,7 @@ export type RecognizedArtifactFormat = Extract<
   | "nso"
   | "nro"
   | "android-boot-image"
+  | "android-dtbo"
   | "android-ota-payload"
   | "android-vbmeta"
   | "android-sparse-image"
@@ -94,6 +97,7 @@ export const STANDALONE_ARTIFACT_FORMATS = [
   "windows-shortcut",
   "python-pyc",
   "devicetree",
+  "esp-nvs",
   "deb",
 ] as const;
 
@@ -202,6 +206,7 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     when("nso", hasNsoMagic),
     when("nro", hasNroMagic),
     when("android-boot-image", hasAndroidBootImageMagic),
+    when("android-dtbo", hasAndroidDtboMagic),
     when("android-vbmeta", hasAndroidVbmetaMagic),
     ({ prefix }) => {
       const ota = recognizeAndroidOtaPayload(prefix);
@@ -283,6 +288,10 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     when("sqlite", hasSqliteHeader),
     when("windows-shortcut", hasWindowsShortcutHeader),
     when("deb", hasDebPackageHeader),
+    ({ prefix, fileSize }) =>
+      hasEspNvsHeader(prefix, fileSize)
+        ? { state: "recognized", format: "esp-nvs" }
+        : undefined,
     // Only a pinned CPython magic claims the format; a CR LF trailer alone
     // is too weak a signature for arbitrary bytes.
     when("python-pyc", (prefix) => {

@@ -43,6 +43,7 @@ import {
   JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
   KERNEL_BUILD_CONFIG_PROVIDER,
   KERNEL_MODULE_PROVIDER,
+  MACHO_FUNCTION_STARTS_PROVIDER,
   MANAGED_STATIC_PROVIDER,
   MANAGED_WORKFLOW_PROVIDER,
   NATIVE_EXPORTS_PROVIDER,
@@ -54,6 +55,7 @@ import {
   PE_OVERLAY_PROVIDER,
   PE_RESOURCES_PROVIDER,
   RELEASE_EXPOSURE_PROVIDER,
+  ESP_NVS_PROVIDER,
   FIRMWARE_VECTOR_TABLE_PROVIDER,
   WEB_SCRIPT_EXPORT_PROVIDER,
   WINDOWS_SHORTCUT_PROVIDER,
@@ -324,6 +326,9 @@ export const CAPABILITY_DECLARATIONS = {
       providerBinding(UNBLOB_PROVIDER_IDENTITY, ["extract_firmware"]),
     ],
   },
+  espNvs: {
+    providers: [providerBinding(ESP_NVS_PROVIDER, ["inspect_esp_nvs"])],
+  },
   firmwareVectorTable: {
     providers: [
       providerBinding(FIRMWARE_VECTOR_TABLE_PROVIDER, [
@@ -439,6 +444,13 @@ export const CAPABILITY_DECLARATIONS = {
   },
   kuna: {
     providers: [providerBinding(KUNA_PROVIDER_IDENTITY, KUNA_OPERATIONS)],
+  },
+  machoFunctionStarts: {
+    providers: [
+      providerBinding(MACHO_FUNCTION_STARTS_PROVIDER, [
+        "inspect_macho_function_starts",
+      ]),
+    ],
   },
   managedStatic: {
     providers: [

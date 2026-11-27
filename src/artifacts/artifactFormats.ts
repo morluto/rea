@@ -21,6 +21,7 @@ import {
 } from "../resources/index.js";
 import type { ArtifactReaderAdmission } from "./ArtifactReaderAdmission.js";
 import { AndroidBootImageArtifactReader } from "./AndroidBootImageArtifactReader.js";
+import { AndroidDtboArtifactReader } from "./AndroidDtboArtifactReader.js";
 import { AndroidVbmetaArtifactReader } from "./AndroidVbmetaArtifactReader.js";
 import {
   AsarArtifactReader,
@@ -505,6 +506,21 @@ const NON_ZIP_FORMATS = {
     createReader: (path, options) =>
       new AndroidBootImageArtifactReader(path, sourceOf(options)),
   }),
+  "android-dtbo": container("android-dtbo", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Android DTBO inventory establishes dt_table_header and dt_table_entry table facts, verifies leading 0xd00dfeed FDT magic on uncompressed entries, and bounds stored entry bytes. Compressed payloads are not decompressed, device trees are not overlaid, and images are not executed.",
+    createReader: (path, options) =>
+      new AndroidDtboArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.android_dtbo,
+        options.readerLimits?.expanded_bytes,
+      ),
+  }),
   "android-ota-payload": container("android-ota-payload", {
     roleContainer: true,
     retainClassifiedSource: true,
@@ -604,6 +620,7 @@ const NON_ZIP_FORMATS = {
   "windows-shortcut": described("windows-shortcut", plain),
   "python-pyc": described("python-pyc", plain),
   devicetree: described("devicetree", plain),
+  "esp-nvs": described("esp-nvs", plain),
   deb: described("deb", plain),
   entitlements: described("entitlements", plain),
   directory: container("directory", {

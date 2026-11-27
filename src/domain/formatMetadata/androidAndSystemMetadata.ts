@@ -322,6 +322,47 @@ export type AndroidBootImageEntryMetadata = z.infer<
   typeof androidBootImageEntryMetadataSchema
 >;
 
+export const ANDROID_DTBO_COMPRESSION_MODES = [
+  "none",
+  "zlib",
+  "gzip",
+  "unknown",
+] as const;
+
+export type AndroidDtboCompressionMode =
+  (typeof ANDROID_DTBO_COMPRESSION_MODES)[number];
+
+export const androidDtboMetadataSchema = z.strictObject({
+  kind: z.literal("android-dtbo"),
+  magic: z.number().int().min(0).max(0xffff_ffff),
+  total_size: z.number().int().nonnegative(),
+  header_size: z.number().int().nonnegative(),
+  dt_entry_size: z.number().int().nonnegative(),
+  dt_entry_count: z.number().int().nonnegative(),
+  dt_entries_offset: z.number().int().nonnegative(),
+  page_size: z.number().int().nonnegative(),
+  version: z.number().int().nonnegative(),
+  emitted_entry_count: z.number().int().nonnegative(),
+});
+export type AndroidDtboMetadata = z.infer<typeof androidDtboMetadataSchema>;
+
+export const androidDtboEntryMetadataSchema = z.strictObject({
+  kind: z.literal("android-dtbo-entry"),
+  index: z.number().int().nonnegative(),
+  dt_size: z.number().int().nonnegative(),
+  dt_offset: z.number().int().nonnegative(),
+  id: z.number().int().min(0).max(0xffff_ffff),
+  rev: z.number().int().min(0).max(0xffff_ffff),
+  flags: z.number().int().min(0).max(0xffff_ffff).nullable(),
+  compression: z.enum(ANDROID_DTBO_COMPRESSION_MODES).nullable(),
+  custom: z.array(z.number().int().min(0).max(0xffff_ffff)),
+  /** Null for a compressed payload, whose inner magic was not examined. */
+  fdt_magic_valid: z.boolean().nullable(),
+});
+export type AndroidDtboEntryMetadata = z.infer<
+  typeof androidDtboEntryMetadataSchema
+>;
+
 /** Raw source bytes of an auditd token that is not valid UTF-8. */
 const auditdHex = z.string().regex(/^(?:[0-9a-f]{2})+$/u);
 const auditdTypeCount = z.strictObject({
@@ -387,6 +428,7 @@ export const auditdLogMetadataSchema = z.strictObject({
   omitted_events: offset,
   trailing_bytes: offset,
 });
+
 const vbmetaHex = z.string().regex(/^[0-9a-f]*$/u);
 /** An unsigned 64-bit value that is metadata only, as a decimal string. */
 const vbmetaU64Decimal = z.string().regex(/^(?:0|[1-9][0-9]*)$/u);
