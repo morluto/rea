@@ -129,7 +129,13 @@ export class CompoundFileArtifactReader implements ArtifactReader {
         );
       // A zero-byte stream has no sector range and opens as an empty stream;
       // requiring a byte offset here would make every empty file unreadable.
-      if (stored.declaredSize === 0) return Readable.from([]);
+      // The carrier is verified first so a source rewritten after the
+      // inventory is not accepted here while every non-empty member rejects it.
+      if (stored.declaredSize === 0) {
+        await this.#source.read(signal);
+        this.#assertOpen(signal);
+        return Readable.from([]);
+      }
       if (stored.byteOffset === null || stored.declaredSize === null)
         throw malformedArtifact(
           "compound-file",
@@ -154,7 +160,21 @@ export class CompoundFileArtifactReader implements ArtifactReader {
       // so the pump would wait on a `drain` that never comes and the scope
       // could never settle. Destroy every live output before the scope drains.
       this.#liveOutputs.add(output);
-      output.once("close", () => this.#liveOutputs.delete(output));
+      // A parked pump waits on the consumer, not on the source, so a
+      // cancellation that arrives while it waits would otherwise stay
+      // unreported until the consumer reads again or the reader is closed.
+      const destroyOnCancel = (): void => {
+        output.destroy(
+          new ArtifactReaderFailure("cancelled", `${label} read cancelled`, {
+            cause: signal?.reason,
+          }),
+        );
+      };
+      signal?.addEventListener("abort", destroyOnCancel, { once: true });
+      output.once("close", () => {
+        this.#liveOutputs.delete(output);
+        signal?.removeEventListener("abort", destroyOnCancel);
+      });
       let delivered = 0;
       // A carrier truncated or rewritten after the pre-read would otherwise
       // publish whatever bytes happened to arrive, so the delivered length and
@@ -232,21 +252,29 @@ export class CompoundFileArtifactReader implements ArtifactReader {
 
   async #prepare(signal?: AbortSignal): Promise<void> {
     const image = await this.#decode(signal);
-    this.#metadata = image.metadata;
-    this.#limitations = image.limitations;
     // Directory entries are keyed by their source ordinal, not by path: a
     // damaged tree can hold two entries with the same logical path, and one
     // must not silently replace the other.
     const claimed = new Set<string>();
+    const entries = new Map<string, ArtifactEntry>();
+    const byPath = new Map<string, string>();
     for (const entry of image.entries) {
       const artifact = toArtifactEntry(entry);
       if (artifact === null) continue;
       const key = String(entry.index);
       const placed = claimPath(artifact, claimed, entry.index);
-      this.#entries.set(key, placed);
-      this.#byPath.set(placed.path, key);
+      entries.set(key, placed);
+      byPath.set(placed.path, key);
     }
+    // The final check can still reject a carrier rewritten during the read, so
+    // nothing is published until it succeeds: `formatMetadata()` must not
+    // describe an image whose traversal failed.
     await this.#source.read(signal);
+    this.#assertOpen(signal);
+    this.#metadata = image.metadata;
+    this.#limitations = image.limitations;
+    for (const [key, entry] of entries) this.#entries.set(key, entry);
+    for (const [path, key] of byPath) this.#byPath.set(path, key);
   }
 
   async #decode(signal?: AbortSignal): Promise<CompoundFileImage> {

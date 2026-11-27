@@ -168,8 +168,8 @@ it("publishes each entry's directory facts as format metadata", async () => {
     starting_sector: 3,
     stream_size: 3,
     storage: "mini",
+    contiguous: null,
   });
-  expect(facts("Nested/inner")?.contiguous).toBeNull();
 });
 
 it("names an entry outside the root tree as an orphan with no path", async () => {
@@ -471,6 +471,30 @@ it("retries a shared preparation cancelled by another traversal", async () => {
   } finally {
     controller.abort();
     spy.mockRestore();
+    await reader.close();
+  }
+});
+
+it("verifies the carrier before returning an empty stream", async () => {
+  const path = await write(
+    "empty-rewritten.automaticDestinations-ms",
+    compoundFile({
+      entries: rootWith(1, [{ name: "Empty", type: 2, start: END, size: 0 }]),
+    }),
+  );
+  const reader = new CompoundFileArtifactReader(path);
+  try {
+    let entry: Parameters<typeof reader.open>[0] | undefined;
+    for await (const member of reader.entries())
+      if (member.path === "Empty") entry = member;
+    if (entry === undefined) throw new Error("Missing Empty entry");
+    // An empty member has no range to read, so the carrier check is the only
+    // thing that can tell a rewritten source from the inventoried one.
+    await writeFile(path, Buffer.alloc(0));
+    await expect(reader.open(entry)).rejects.toMatchObject({
+      reason: "integrity",
+    });
+  } finally {
     await reader.close();
   }
 });
