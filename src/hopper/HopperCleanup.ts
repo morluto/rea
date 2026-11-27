@@ -544,7 +544,7 @@ const retainedDocumentRemediation = (
 ): string =>
   activeRequest === null
     ? "Hopper may still hold the document REA opened, running initial analysis or waiting on a dialog. Let it finish or complete the dialog, then close that document in Hopper, or quit Hopper if it has no other work. This command has ended, so no REA connection remains to close the document."
-    : `Hopper is still running ${activeRequest.operation} on the document REA opened (see active_request in details), and REA cannot interrupt it. Let Hopper finish and then close that document in Hopper, or quit Hopper to stop the work now. This command has ended, so no REA connection remains to close the document.`;
+    : `Hopper is still running ${activeRequest.operation} on the document REA opened (see active_request in details), and REA cannot interrupt it. Let Hopper finish and then close that document in Hopper, or quit Hopper to stop the work now if it has no other work. This command has ended, so no REA connection remains to close the document.`;
 
 const cleanupIssueDetails = (issues: readonly CleanupIssue[]): JsonValue =>
   issues.map((issue) => ({

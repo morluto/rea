@@ -501,7 +501,10 @@ it("tells an ended invocation that Hopper is still working, and a continuing cal
   expect(invocation.remediation.action).toContain(
     "Hopper is still running procedure_pseudo_code",
   );
-  expect(invocation.remediation.action).toContain("quit Hopper");
+  // Hopper is the user's application and may hold other documents.
+  expect(invocation.remediation.action).toContain(
+    "quit Hopper to stop the work now if it has no other work",
+  );
   expect(invocation.remediation.action).not.toMatch(
     /close_binary|MCP|this connection/u,
   );
