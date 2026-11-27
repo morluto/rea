@@ -119,6 +119,7 @@ const preflight = (
       payload = width!;
     }
     const start = take(payload);
+    if (code === 0xca || code === 0xcb) return undefined;
     if (code >= 0xcc && code <= 0xcf)
       return code === 0xcf
         ? BigInt.asUintN(64, reader.i64(start))

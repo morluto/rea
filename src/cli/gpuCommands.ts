@@ -57,7 +57,7 @@ export const registerGpuCommands = (cli: CliInstance, logger: Logger): void => {
         },
         max_work_bytes: {
           description:
-            "Maximum aggregate payload input, decoded output, and AMDGPU note bytes per inspection (default 536870912, up to 1073741824)",
+            "Maximum aggregate payload input, decoded output, and AMDGPU note bytes per inspection (default and maximum 536870912)",
         },
         max_report_bytes: {
           description:

@@ -178,14 +178,19 @@ export class GpuInventory {
           GPU_OBJECT_BYTES_LIMIT,
           "bytes",
         );
-      if (size > maxWorkBytes - workBytes)
+      if (size > maxWorkBytes - workBytes) {
+        const workLabel =
+          maxWorkBytes % (1024 * 1024) === 0
+            ? `${String(maxWorkBytes / (1024 * 1024))} MiB`
+            : `${String(maxWorkBytes)} bytes`;
         throw new BinaryResourceFailure(
           "structure",
           maxWorkBytes,
-          `GPU reads/decoding exceed ${formatGpuByteBudget(maxWorkBytes)} per inspection`,
+          `GPU reads/decoding exceed ${workLabel} per inspection`,
           GPU_WORK_BYTES_LIMIT,
           "bytes",
         );
+      }
       workBytes += Number(size);
     }
     this.#workBytes = workBytes;
@@ -857,7 +862,9 @@ export class GpuInventory {
               });
             };
             let refilled = false;
-            let completed = await decodeGpuPayloadStream(
+            let completed:
+              | { buffer: Buffer; consumedBytes: number }
+              | undefined = await decodeGpuPayloadStream(
               encoded,
               compression,
               decoded,
@@ -885,6 +892,7 @@ export class GpuInventory {
             // instead of throwing truncation. Check for an incomplete window before
             // publishing the short extent.
             const cutAtFrameBoundary = (): boolean =>
+              completed !== undefined &&
               compression === "zstd" &&
               completed.buffer.length < decoded &&
               encoded !== undefined &&
@@ -894,6 +902,8 @@ export class GpuInventory {
               );
             if (cutAtFrameBoundary()) {
               if (!refilled && cached && available < inputSize) {
+                // Release the partial decode output before allocating a refilled window.
+                completed = undefined;
                 refilled = true;
                 completed = await decodeRefilledWindow();
               }
