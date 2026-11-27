@@ -44,6 +44,48 @@ export const N64_MAX_ROM_BYTES = 64 * 1024 * 1024;
 /** Named limit {@link n64RomSizeFailure} raises above {@link N64_MAX_ROM_BYTES}. */
 export const N64_ROM_BYTES_LIMIT = "n64.rom_bytes";
 
+/**
+ * First-word magic of each dump order: the big-endian PI DOM1 configuration
+ * word `80 37 12 40` as each order stores it (mupen64plus-core `is_valid_rom`).
+ */
+export const N64_MAGIC: Readonly<Record<N64ByteOrder, number>> = {
+  z64: 0x8037_1240,
+  v64: 0x3780_4012,
+  n64: 0x4012_3780,
+};
+
+/**
+ * Header field offsets in the big-endian image. Ranges are `[start, end)`.
+ * Sources: mupen64plus-core `m64p_rom_header` (`src/api/m64p_types.h`) for
+ * the words, title, cartridge ID, destination and version; libdragon
+ * `tools/n64tool.c` (`CATEGORY_OFFSET`) for the media category at 0x3B.
+ */
+export const N64_HEADER_FIELD = {
+  piDom1Config: 0x00,
+  clockRate: 0x04,
+  bootAddress: 0x08,
+  libultraRelease: 0x0c,
+  crc1: 0x10,
+  crc2: 0x14,
+  reservedLow: [0x18, 0x20],
+  title: [0x20, 0x34],
+  reservedHigh: [0x34, 0x3b],
+  media: 0x3b,
+  cartridgeId: [0x3c, 0x3e],
+  destination: 0x3e,
+  version: 0x3f,
+} as const;
+
+/**
+ * File offset of the 256-byte boot-code table CIC 6105/7105 mixes into its
+ * checksum: IPL3 offset 0x710 (Project64 `CalculateRomCrc`, n64crc).
+ */
+export const N64_CIC_6105_TABLE_OFFSET = 0x750;
+
+/** KSEG0 and KSEG1 together: the unmapped segments IPL3 can jump to. */
+const N64_KSEG0_START = 0x8000_0000;
+const N64_KSEG1_END = 0xbfff_ffff;
+
 export const N64_HEADER_ENTRY = "header.bin";
 export const N64_IPL3_ENTRY = "ipl3.bin";
 export const N64_PROGRAM_ENTRY = "program.z64";
@@ -148,11 +190,10 @@ const readBe = (bytes: Uint8Array, offset: number): number => {
 
 /** First-word byte order, or undefined when the word is not an N64 magic. */
 export const n64ByteOrder = (prefix: Uint8Array): N64ByteOrder | undefined => {
-  const word = readBe(prefix, 0);
   if (prefix.length < 4) return undefined;
-  if (word === 0x8037_1240) return "z64";
-  if (word === 0x3780_4012) return "v64";
-  if (word === 0x4012_3780) return "n64";
+  const word = readBe(prefix, N64_HEADER_FIELD.piDom1Config);
+  for (const order of ["z64", "v64", "n64"] as const)
+    if (word === N64_MAGIC[order]) return order;
   return undefined;
 };
 
@@ -250,7 +291,7 @@ export const n64CartridgeCrc = (
     t5 = (t5 + rotated) >>> 0;
     t2 = t2 > data ? (t2 ^ rotated) >>> 0 : (t2 ^ t6 ^ data) >>> 0;
     const mix = variant.usesLut
-      ? readBe(normalized, N64_IPL3_OFFSET + 0x710 + (offset & 0xff))
+      ? readBe(normalized, N64_CIC_6105_TABLE_OFFSET + (offset & 0xff))
       : t5;
     t1 = (t1 + ((mix ^ data) >>> 0)) >>> 0;
   }
@@ -273,11 +314,24 @@ export const n64CartridgeCrc = (
 /** KSEG0/KSEG1 and 4-byte aligned: the boot address IPL3 jumps to. */
 export const n64BootAddressPlausible = (bootAddress: number): boolean =>
   (bootAddress & 3) === 0 &&
-  bootAddress >= 0x8000_0000 &&
-  bootAddress <= 0xbfff_ffff;
+  bootAddress >= N64_KSEG0_START &&
+  bootAddress <= N64_KSEG1_END;
 
-const bootAddressDetail = (bootAddress: number): string =>
-  `Boot address ${hex32(bootAddress)} lies outside KSEG0/KSEG1 or is not 4-byte aligned.`;
+/**
+ * The one boot-address decision recognition and parsing share, read from a
+ * big-endian header.
+ */
+const bootAddressFailure = (
+  header: Uint8Array,
+): ParseFailureError<"malformed"> | undefined => {
+  const bootAddress = readBe(header, N64_HEADER_FIELD.bootAddress);
+  if (n64BootAddressPlausible(bootAddress)) return undefined;
+  return malformedInput(
+    N64_FORMAT,
+    `Boot address ${hex32(bootAddress)} lies outside KSEG0/KSEG1 or is not 4-byte aligned.`,
+    { offset: N64_HEADER_FIELD.bootAddress, field: "boot_address" },
+  );
+};
 
 /**
  * Structural size check. A file above 64 MiB is a named limit. A short header
@@ -349,12 +403,11 @@ export const n64RomRecognition = (
   const size = n64RomSizeFailure(fileSize, order);
   if (size !== undefined && size.kind !== "limit")
     return { state: "refused", reason: refusalReason(size.message) };
-  const boot = readBe(
+  const boot = bootAddressFailure(
     swapN64Bytes(prefix.subarray(0, N64_HEADER_BYTES), order),
-    8,
   );
-  if (!n64BootAddressPlausible(boot))
-    return { state: "refused", reason: refusalReason(bootAddressDetail(boot)) };
+  if (boot !== undefined)
+    return { state: "refused", reason: refusalReason(boot.message) };
   return { state: "recognized" };
 };
 
@@ -399,9 +452,14 @@ const renderBytes = (bytes: Uint8Array, blank: string): string => {
 const hexBytes = (bytes: Uint8Array): string =>
   Array.from(bytes, (byte) => byteToHex(byte)).join("");
 
+const fieldBytes = (
+  header: Uint8Array,
+  [start, end]: readonly [number, number],
+): Uint8Array => header.subarray(start, end);
+
 const reservedLimitation = (header: Uint8Array): string | undefined => {
-  const low = header.subarray(0x18, 0x20);
-  const high = header.subarray(0x34, 0x3b);
+  const low = fieldBytes(header, N64_HEADER_FIELD.reservedLow);
+  const high = fieldBytes(header, N64_HEADER_FIELD.reservedHigh);
   const blank = (bytes: Uint8Array): boolean =>
     bytes.every((byte) => byte === 0);
   if (blank(low) && blank(high)) return undefined;
@@ -493,12 +551,9 @@ export const parseN64Rom = (
       { offset: 0, field: "crc" },
     );
   const normalized = swapN64Bytes(bytes.subarray(0, covered), order);
-  const bootAddress = readBe(normalized, 8);
-  if (!n64BootAddressPlausible(bootAddress))
-    throw malformedInput(N64_FORMAT, bootAddressDetail(bootAddress), {
-      offset: 8,
-      field: "boot_address",
-    });
+  const bootFailure = bootAddressFailure(normalized);
+  if (bootFailure !== undefined) throw bootFailure;
+  const bootAddress = readBe(normalized, N64_HEADER_FIELD.bootAddress);
   const limitations: string[] = [];
   const reserved = reservedLimitation(normalized);
   if (reserved !== undefined) limitations.push(reserved);
@@ -517,8 +572,8 @@ export const parseN64Rom = (
       `IPL3 CRC32 ${hex32(ipl3Crc32 ?? 0)} matches none of the known CIC variants 6101, 6102/7101, 6103/7103, 6105/7105 and 6106/7106. The cartridge CRC pair stays unchecked.`,
     );
 
-  const declaredCrc1 = readBe(normalized, 0x10);
-  const declaredCrc2 = readBe(normalized, 0x14);
+  const declaredCrc1 = readBe(normalized, N64_HEADER_FIELD.crc1);
+  const declaredCrc2 = readBe(normalized, N64_HEADER_FIELD.crc2);
   let crc: N64RomMetadata["crc"] = {
     status: "not-checked",
     declared_crc1: declaredCrc1,
@@ -547,18 +602,18 @@ export const parseN64Rom = (
       );
   }
 
-  const title = normalized.subarray(0x20, 0x34);
-  const cartridge = normalized.subarray(0x3c, 0x3e);
-  const mediaByte = normalized[0x3b] ?? 0;
-  const destinationByte = normalized[0x3e] ?? 0;
+  const title = fieldBytes(normalized, N64_HEADER_FIELD.title);
+  const cartridge = fieldBytes(normalized, N64_HEADER_FIELD.cartridgeId);
+  const mediaByte = normalized[N64_HEADER_FIELD.media] ?? 0;
+  const destinationByte = normalized[N64_HEADER_FIELD.destination] ?? 0;
   const metadata = {
     kind: "n64-rom",
     source_order: order,
     rom_bytes: fileSize,
-    pi_dom1_config: readBe(normalized, 0),
-    clock_rate: readBe(normalized, 4),
+    pi_dom1_config: readBe(normalized, N64_HEADER_FIELD.piDom1Config),
+    clock_rate: readBe(normalized, N64_HEADER_FIELD.clockRate),
     boot_address: bootAddress,
-    libultra_release: readBe(normalized, 0x0c),
+    libultra_release: readBe(normalized, N64_HEADER_FIELD.libultraRelease),
     crc,
     ipl3_crc32: ipl3Crc32,
     cic: variant?.id ?? "unknown",
@@ -571,7 +626,7 @@ export const parseN64Rom = (
     destination_byte: destinationByte,
     destination_code: renderBytes(Uint8Array.of(destinationByte), "?"),
     destination_name: DESTINATION_NAMES[destinationByte] ?? null,
-    version: normalized[0x3f] ?? 0,
+    version: normalized[N64_HEADER_FIELD.version] ?? 0,
   } satisfies N64RomMetadata;
 
   return { metadata, limitations, entries: n64RomRegions(fileSize, order) };

@@ -2,6 +2,7 @@ import { crc32 } from "node:zlib";
 
 import {
   N64_CHECKSUM_END,
+  N64_CIC_6105_TABLE_OFFSET,
   N64_CIC_VARIANTS,
   N64_IPL3_END,
   N64_IPL3_OFFSET,
@@ -26,9 +27,10 @@ const ipl3Stub = (seedByte: number, lut: boolean): Buffer => {
   for (let index = 0; index < bytes.length; index++)
     bytes[index] = (seedByte + index) & 0xff;
   if (lut) {
-    // File offset 0x750 is IPL3 offset 0x710. CIC 6105 reads this table.
+    // CIC 6105 reads this table; the stub starts at the IPL3 offset.
+    const table = N64_CIC_6105_TABLE_OFFSET - N64_IPL3_OFFSET;
     for (let index = 0; index < 0x100; index += 4)
-      bytes.writeUInt32BE((0x0101_0101 * (index / 4 + 1)) >>> 0, 0x710 + index);
+      bytes.writeUInt32BE((0x0101_0101 * (index / 4 + 1)) >>> 0, table + index);
   }
   return bytes;
 };

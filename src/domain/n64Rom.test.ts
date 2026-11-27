@@ -240,6 +240,30 @@ describe("Nintendo 64 ROM domain", () => {
     });
   });
 
+  it("matches the checksum's closed form on an all-zero window", () => {
+    // Derived by hand from the IPL3 checksum routine (Project64
+    // CalculateRomCrc, n64crc), not from n64CartridgeCrc: with every word 0
+    // no accumulator changes except t1, which adds t5 (the seed) on each of
+    // the 0x40000 words, so t1 ends at seed * 0x40001. A zero 6105 table
+    // leaves t1 at the seed.
+    const window = new Uint8Array(N64_CHECKSUM_END);
+    const times = (a: number, b: number): number => Math.imul(a, b) >>> 0;
+    for (const variant of N64_CIC_VARIANTS) {
+      const seed = variant.seed;
+      const t1 = variant.usesLut ? seed : times(seed, 0x4_0001);
+      const expected =
+        variant.id === "6103/7103"
+          ? { crc1: seed, crc2: t1 }
+          : variant.id === "6106/7106"
+            ? {
+                crc1: (times(seed, seed) + seed) >>> 0,
+                crc2: (times(seed, seed) + t1) >>> 0,
+              }
+            : { crc1: seed, crc2: t1 };
+      expect(n64CartridgeCrc(window, variant), variant.id).toEqual(expected);
+    }
+  });
+
   it("checks a full checksum window and reports a CRC mismatch", () => {
     const match = parsed({ fullWindow: true });
     expect(match.metadata.crc.status).toBe("match");
