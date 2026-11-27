@@ -226,9 +226,13 @@ describe("JSON client configuration transaction: writing configuration through s
     },
   );
 
-  it.skipIf(typeof process.getuid === "function")(
-    "resolves a config file symlink when POSIX UID checks are unavailable",
-    async () => {
+  it("resolves a config file symlink when POSIX UID checks are unavailable", async () => {
+    const originalGetuid = Object.getOwnPropertyDescriptor(process, "getuid");
+    Object.defineProperty(process, "getuid", {
+      value: undefined,
+      configurable: true,
+    });
+    try {
       let statCalls = 0;
       expect(
         await resolveClientConfigTransactionPath(
@@ -246,8 +250,14 @@ describe("JSON client configuration transaction: writing configuration through s
           },
         ),
       ).toBe("C:\\Users\\test\\dotfiles\\config.json");
-    },
-  );
+    } finally {
+      if (originalGetuid === undefined) {
+        delete (process as { getuid?: unknown }).getuid;
+      } else {
+        Object.defineProperty(process, "getuid", originalGetuid);
+      }
+    }
+  });
 
   it.skipIf(process.platform === "win32")(
     "resolves a directory symlink and its real directory to one transaction path",
