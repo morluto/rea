@@ -220,6 +220,7 @@
 * **artifacts:** read the next tar header after header-only members ([#14500](https://github.com/morluto/rea/issues/14500)) ([e314337](https://github.com/morluto/rea/commit/e3143371298a27fd96620614a8aac94313a53008))
 * **artifacts:** recognize standalone formats and route them to their readers ([#14192](https://github.com/morluto/rea/issues/14192)) ([6904da4](https://github.com/morluto/rea/commit/6904da4927685a864f164badfff02582fd18a9a5))
 * **artifacts:** reject non-object GLB JSON roots and non-array images ([#14297](https://github.com/morluto/rea/issues/14297)) ([b9a5855](https://github.com/morluto/rea/commit/b9a58556f2edcb2c3547d318cff6c0d5abd4073b))
+* **artifacts:** report incomplete Android sparse coverage ([#14883](https://github.com/morluto/rea/issues/14883)) ([54f2d5a](https://github.com/morluto/rea/commit/54f2d5a4e3bd07e97dada8996459e078e862eb85))
 * **artifacts:** report S-record data after the final count ([#14260](https://github.com/morluto/rea/issues/14260)) ([90d774f](https://github.com/morluto/rea/commit/90d774ffed385edb783cfb7dbd08db8bbe86aef5))
 * **artifacts:** report supported NES container layouts accurately ([#13499](https://github.com/morluto/rea/issues/13499)) ([321387c](https://github.com/morluto/rea/commit/321387c4319f5df167e488a827e38f3bed77eb36))
 * **artifacts:** route native images to static readers and name their architecture ([#14189](https://github.com/morluto/rea/issues/14189)) ([8ed8195](https://github.com/morluto/rea/commit/8ed819573bb3a4c8ef7a373f896c52554dd8acdf))
