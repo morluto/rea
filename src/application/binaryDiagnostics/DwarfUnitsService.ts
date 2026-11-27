@@ -1,8 +1,10 @@
-import { machoSliceFamily } from "../../domain/apple/machoTargetSelection.js";
+import {
+  machoSliceFamily,
+  metadataReportSubjectFormat,
+} from "../../domain/apple/machoTargetSelection.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { DwarfUnitsPort } from "../../ports/binaryDiagnostics/DwarfUnitsPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { metadataReportSubjectFormat } from "../../domain/apple/machoTargetSelection.js";
 import { binaryMetadataArchitecture } from "../../domain/binaryMetadataArchitecture.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
@@ -106,7 +108,7 @@ const validReport = (
   const requested = input.architecture;
   const slice = report.selected_slice;
   if ((requested === undefined) !== (slice === undefined)) return false;
-  // Reports name the CPU family; arm64e selects an arm64 slice.
+  // Reports name the CPU family; arm64e and arm64e.x1 select arm64 slices.
   return (
     requested === undefined ||
     report.architecture === machoSliceFamily(requested)
