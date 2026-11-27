@@ -27,8 +27,10 @@ A second admission covers recordless legacy firmware images
 declaring `EF_MIPS_ARCH_1` (MIPS-I, a zero ISA field), `EF_MIPS_ARCH_32` or
 `EF_MIPS_ARCH_32R2` with an unspecified ABI
 field, `EF_MIPS_ABI2` clear, and an _inspected_ absence of any ABI flags
-record (a target whose record was merely not observed stays refused). For
-these images o32 is an analysis assumption derived from the ELF32/ET_EXEC
+record (a target whose record was merely not observed stays refused).
+This lane refuses undefined ELF header `e_flags` bits and accepts the defined
+`NOREORDER`, `PIC`, `CPIC`, `XGOT`, `UCODE`, and `OPTIONS_FIRST` bits.
+For these images o32 is an analysis assumption derived from the ELF32/ET_EXEC
 structure, recorded as `mips_abi_basis` in the profile and stated as a
 limitation in Evidence, never a declared fact; floating-point ABI semantics
 stay unverified. Ghidra's own header auto-selection picks a 64-bit language
