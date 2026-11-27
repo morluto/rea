@@ -10,14 +10,16 @@ import {
 /**
  * REA's argv parser for one command: binds tokens to the command's
  * positionals and options, then validates them with the command's schemas.
- * Option keys are camelCase; each is spelled `--kebab-case` on the command
- * line and also accepted as `--camelCase`. A boolean option is set by its
+ * Option keys are camelCase; each is spelled only `--kebab-case` on the
+ * command line. The schema key spelling (`--camelCase`) is refused with the
+ * documented flag as its suggestion. A boolean option is set by its
  * bare flag and cleared by `--no-<flag>`; `--flag=value` and `--flag value`
- * both bind a value; an array option collects every occurrence; a short
- * alias may be stacked (`-ab`) when all but the last are booleans or
- * counts; a count option adds one per occurrence (`-vvv`). `--` is
- * not a separator here: after the command it is an unknown flag. The
- * messages and field errors match what REA has always printed (#11654).
+ * both bind a value. An invalid boolean or number literal stays bound when
+ * a later occurrence would replace it. An array option collects every
+ * occurrence; a short alias may be stacked (`-ab`) when all but the last
+ * are booleans or counts; a count option adds one per occurrence (`-vvv`).
+ * `--` is not a separator here: after the command it is an unknown flag.
+ * The messages and field errors match what REA has always printed (#11654).
  */
 
 /** One field that failed validation, as REA prints it. */
@@ -38,6 +40,15 @@ export interface CliFieldError {
  */
 export type CliArgvFailure =
   | { readonly kind: "parse"; readonly message: string }
+  | {
+      /** An option's schema key spelling, which argv does not accept. */
+      readonly kind: "flag_spelling";
+      readonly message: string;
+      /** The refused token's flag, such as `--maxRows` or `--no-dryRun`. */
+      readonly flag: string;
+      /** The documented spelling of the same flag, such as `--max-rows`. */
+      readonly documented: string;
+    }
   | { readonly kind: "surplus"; readonly message: string }
   | { readonly kind: "dry_run"; readonly message: string }
   | {
@@ -90,14 +101,47 @@ const isArray = (schema: z.ZodObject | undefined, name: string): boolean => {
   return field !== undefined && declaredOptionType(field) instanceof z.ZodArray;
 };
 
-/** Number and boolean options arrive as text; the schema validates the result. */
+/**
+ * Number and boolean options arrive as text; the schema validates the result.
+ * Text that is not a literal of the declared type stays text, so the schema
+ * reports it instead of it silently becoming `false` or `0`.
+ */
 const coerce = (value: unknown, schema: z.ZodObject, name: string): unknown => {
   const field = fieldOf(schema, name);
   if (field === undefined || typeof value !== "string") return value;
   const type = declaredOptionType(field);
-  if (type instanceof z.ZodNumber) return Number(value);
-  if (type instanceof z.ZodBoolean) return value === "true";
+  if (type instanceof z.ZodNumber)
+    return value.trim() === "" ? value : Number(value);
+  if (type instanceof z.ZodBoolean)
+    return value === "true" ? true : value === "false" ? false : value;
   return value;
+};
+
+/** Decimal options are a union of a number and a token pipe, not a bare number. */
+const isNumericOptionType = (type: z.ZodType): boolean => {
+  if (type instanceof z.ZodNumber) return true;
+  if (!(type instanceof z.ZodUnion)) return false;
+  return type.options.some(
+    (option) => option instanceof z.ZodType && isNumericOptionType(option),
+  );
+};
+
+/**
+ * Boolean and number text is a schema fact. A literal the field rejects must
+ * stay bound: a later valid occurrence would otherwise replace it before
+ * validation, and the caller's text would never be reported.
+ */
+const rejectedScalarLiteral = (
+  schema: z.ZodObject,
+  name: string,
+  value: string,
+): boolean => {
+  const field = fieldOf(schema, name);
+  if (field === undefined) return false;
+  const type = declaredOptionType(field);
+  if (!(type instanceof z.ZodBoolean) && !isNumericOptionType(type))
+    return false;
+  return !field.safeParse(coerce(value, schema, name)).success;
 };
 
 /** Whether the raw input holds the issue's whole path. */
@@ -139,6 +183,23 @@ export const validateCliInputs = (
 const stringField = (issue: object, key: string): string =>
   (Reflect.get(issue, key) as string | undefined) ?? "";
 
+/** Refuse an unknown flag, naming the documented one for a schema key. */
+const unknownFlagFailure = (
+  known: ReadonlySet<string>,
+  prefix: "--" | "--no-",
+  raw: string,
+): Result<never, CliArgvFailure> => {
+  const flag = `${prefix}${raw}`;
+  if (!known.has(raw)) return parseFailure(`Unknown flag: ${flag}`);
+  const documented = `${prefix}${optionFlagName(raw)}`;
+  return err({
+    kind: "flag_spelling",
+    message: `Unknown flag: ${flag}. Did you mean ${documented}?`,
+    flag,
+    documented,
+  });
+};
+
 /** Bind and validate one command's argv. */
 export const parseCliArgv = (
   argv: readonly string[],
@@ -148,57 +209,68 @@ export const parseCliArgv = (
   const known = new Set(
     optionsSchema === undefined ? [] : Object.keys(optionsSchema.shape),
   );
-  const camelOf = new Map(
-    [...known].flatMap((name) =>
-      optionFlagName(name) === name
-        ? []
-        : [[optionFlagName(name), name] as const],
-    ),
-  );
-  const optionName = (raw: string): string | undefined => {
-    const name = camelOf.get(raw) ?? raw;
-    return known.has(name) ? name : undefined;
-  };
+  /** The documented `--flag` name for each option key. */
+  const keyOf = new Map([...known].map((name) => [optionFlagName(name), name]));
+  const optionName = (raw: string): string | undefined => keyOf.get(raw);
+  const unknownFlag = (prefix: "--" | "--no-", raw: string) =>
+    unknownFlagFailure(known, prefix, raw);
   const aliasName = new Map(
     Object.entries(alias ?? {}).map(([name, short]) => [short, name] as const),
   );
   const positionals: string[] = [];
   const options: Record<string, unknown> = {};
   let invalidDryRun = false;
+  /** Names whose rejected literal must survive a later occurrence. */
+  const retainedInvalidLiteral = new Set<string>();
+  const assignScalar = (name: string, value: unknown): void => {
+    if (retainedInvalidLiteral.has(name)) return;
+    options[name] = value;
+  };
   const set = (name: string, value: string): void => {
     if (name === "dryRun" && isBoolean(optionsSchema, name))
       invalidDryRun ||= value !== "true" && value !== "false";
-    if (!isArray(optionsSchema, name)) {
+    if (isArray(optionsSchema, name)) {
+      const existing = options[name];
+      if (Array.isArray(existing)) existing.push(value);
+      else options[name] = [value];
+      return;
+    }
+    if (retainedInvalidLiteral.has(name)) return;
+    if (
+      optionsSchema !== undefined &&
+      rejectedScalarLiteral(optionsSchema, name, value)
+    ) {
+      retainedInvalidLiteral.add(name);
       options[name] = value;
       return;
     }
-    const existing = options[name];
-    if (Array.isArray(existing)) existing.push(value);
-    else options[name] = [value];
+    options[name] = value;
   };
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index]!;
     if (token.startsWith("--no-") && token.length > 5) {
-      const name = optionName(token.slice(5));
-      if (name === undefined) return parseFailure(`Unknown flag: ${token}`);
-      options[name] = false;
+      const raw = token.slice(5);
+      const name = optionName(raw);
+      if (name === undefined) return unknownFlag("--no-", raw);
+      assignScalar(name, false);
     } else if (token.startsWith("--")) {
       const equals = token.indexOf("=");
       if (equals !== -1) {
         const raw = token.slice(2, equals);
         const name = optionName(raw);
-        if (name === undefined) return parseFailure(`Unknown flag: --${raw}`);
+        if (name === undefined) return unknownFlag("--", raw);
         set(name, token.slice(equals + 1));
         continue;
       }
       const name = optionName(token.slice(2));
-      if (name === undefined) return parseFailure(`Unknown flag: ${token}`);
+      if (name === undefined) return unknownFlag("--", token.slice(2));
       if (isCount(optionsSchema, name)) {
-        options[name] = ((options[name] as number | undefined) ?? 0) + 1;
+        if (!retainedInvalidLiteral.has(name))
+          options[name] = ((options[name] as number | undefined) ?? 0) + 1;
         continue;
       }
       if (isBoolean(optionsSchema, name)) {
-        options[name] = true;
+        assignScalar(name, true);
         continue;
       }
       const value = argv[index + 1];
@@ -212,11 +284,12 @@ export const parseCliArgv = (
         const name = aliasName.get(short);
         if (name === undefined) return parseFailure(`Unknown flag: -${short}`);
         if (isCount(optionsSchema, name)) {
-          options[name] = ((options[name] as number | undefined) ?? 0) + 1;
+          if (!retainedInvalidLiteral.has(name))
+            options[name] = ((options[name] as number | undefined) ?? 0) + 1;
           continue;
         }
         if (isBoolean(optionsSchema, name)) {
-          options[name] = true;
+          assignScalar(name, true);
           continue;
         }
         if (position !== shorts.length - 1)
@@ -233,8 +306,8 @@ export const parseCliArgv = (
       positionals.push(token);
     }
   }
-  // Check retained token facts before defaults or transforms can run. A later
-  // valid occurrence must not hide an earlier invalid dry-run literal.
+  // `--dry-run` has its own error, reported before defaults or transforms.
+  // Other rejected boolean and number literals stay bound at assignment.
   if (invalidDryRun)
     return err({
       kind: "dry_run",

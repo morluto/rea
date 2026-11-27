@@ -6,6 +6,8 @@
   --soft: #f4f6f8;
   --accent: #294f82;
   --page: #ffffff;
+  /* Article body text; components inside an article keep their own color. */
+  --article-text: #414b55;
   --font-latin: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial;
   --font-code: "SFMono-Regular", Consolas, "Liberation Mono";
   --font-sans: var(--font-latin), sans-serif;
@@ -118,7 +120,7 @@ section[id] {
 }
 .skip-link {
   position: absolute;
-  left: 1rem;
+  inset-inline-start: 1rem;
   top: -5rem;
   padding: 0.6rem 1rem;
   background: var(--ink);
@@ -130,7 +132,7 @@ section[id] {
 }
 .back-to-top {
   position: fixed;
-  right: calc(1.5rem + env(safe-area-inset-right, 0px));
+  inset-inline-end: calc(1.5rem + env(safe-area-inset-right, 0px));
   bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px));
   z-index: 5;
   display: inline-flex;
@@ -437,19 +439,8 @@ section[id] {
   font-size: 0.95rem;
   font-weight: 500;
 }
-.hero-command {
-  max-width: 680px;
-  margin-top: 2.25rem;
-}
 .home-hero {
   padding-block: 5rem 3rem;
-}
-.home-calculation {
-  margin: 0;
-}
-.home-code-comparison pre {
-  font-size: 0.85rem;
-  line-height: 1.9;
 }
 .code-key {
   color: var(--accent);
@@ -458,99 +449,8 @@ section[id] {
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
-.pan-examples {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 2.5rem;
-  margin-top: 1.8rem;
-  padding: 1.4rem 1.6rem;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-}
-.pan-example {
-  min-width: 0;
-  text-align: center;
-}
-.pan-label,
-.pan-value,
-.pan-meaning {
-  display: block;
-}
-.pan-label {
-  color: var(--ink);
-  font-size: 0.9rem;
-  font-weight: 600;
-}
-.pan-position {
-  position: relative;
-  height: 2rem;
-  margin-block: 0.6rem;
-}
-.pan-position::before {
-  content: "";
-  position: absolute;
-  top: calc(50% - 1px);
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: var(--line);
-}
-.pan-position i {
-  position: absolute;
-  top: calc(50% - 5px);
-  left: calc(5px + (100% - 10px) * var(--position));
-  width: 10px;
-  height: 10px;
-  transform: translateX(-50%);
-  border-radius: 50%;
-  background: var(--accent);
-}
-.pan-value {
-  font-size: 0.9rem;
-}
-.pan-meaning {
-  margin-top: 0.25rem;
-  color: var(--muted);
-  font-size: 0.8rem;
-}
-.home-calculation figcaption {
-  margin-top: 0.8rem;
-  color: var(--muted);
-  font-size: 0.8rem;
-}
-.home-analysis-work {
-  max-width: 760px;
-  margin: 1.5rem 0 0;
-  color: var(--muted);
-}
-.home-agent-grid,
-.home-try-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.65fr);
-  gap: 3.5rem;
-  align-items: start;
-}
-.home-reassurance h2 {
-  font-size: clamp(1.75rem, 3vw, 2.2rem);
-}
-.home-no {
-  margin: 1.2rem 0;
-  font-size: clamp(4.5rem, 8vw, 6.5rem);
-  font-weight: 650;
-  letter-spacing: -0.06em;
-  line-height: 1;
-}
-.home-reassurance > :last-child,
-.home-try-grid p {
-  color: var(--muted);
-}
 .agent-terminal.home-analysis-terminal {
   margin-block: 1rem;
-}
-.terminal-target {
-  margin: 1rem 1.4rem 0;
-  color: #bdc8d4;
-  font-size: 0.75rem;
 }
 .agent-reply {
   padding: 1.4rem;
@@ -564,18 +464,6 @@ section[id] {
 }
 .agent-reply > :last-child {
   margin-bottom: 0;
-}
-.home-evidence {
-  margin-block: 2rem 1.2rem;
-}
-.home-check {
-  max-width: 800px;
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.875rem;
-}
-.home-try-grid {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
 }
 .home-setup .agent-terminal {
   margin-block: 1rem;
@@ -654,19 +542,6 @@ pre code {
 .section-heading p {
   color: var(--muted);
 }
-.feature-case {
-  display: grid;
-  grid-template-columns: 1.55fr 1fr;
-  gap: 4.5rem;
-  align-items: start;
-}
-.feature-case p {
-  max-width: 630px;
-  color: var(--muted);
-}
-.case-note {
-  font-size: 0.875rem;
-}
 .stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -683,19 +558,6 @@ pre code {
   color: var(--muted);
   font-size: 0.875rem;
   line-height: 1.5;
-}
-.case-stats {
-  grid-template-columns: 1fr;
-  margin: 0;
-  padding-left: 2rem;
-  border-left: 1px solid var(--line);
-}
-.case-stats > div + div {
-  border-top: 1px solid var(--line);
-  padding-top: 1.1rem;
-}
-.case-stats dt {
-  font-size: 1.7rem;
 }
 .workflows {
   display: grid;
@@ -895,9 +757,8 @@ pre code {
 .article-section h2 {
   font-size: 1.8rem;
 }
-.article p,
-.article li {
-  color: #414b55;
+.article :where(p, li) {
+  color: var(--article-text);
 }
 .article .stats {
   margin: 0 0 1.6rem;
@@ -911,8 +772,8 @@ pre code {
 .blog-takeaway {
   max-width: 730px;
   margin-top: 1.8rem;
-  padding-left: 1.25rem;
-  border-left: 2px solid var(--accent);
+  padding-inline-start: 1.25rem;
+  border-inline-start: 2px solid var(--accent);
 }
 .blog-takeaway .eyebrow {
   color: var(--accent);
@@ -922,7 +783,7 @@ pre code {
 }
 .blog-takeaway ul {
   margin: 0;
-  padding-left: 1.15rem;
+  padding-inline-start: 1.15rem;
 }
 .blog-takeaway li + li {
   margin-top: 0.75rem;
@@ -1094,8 +955,8 @@ pre code {
 }
 .blog-article blockquote {
   margin: 1.6rem 0;
-  padding-left: 1.25rem;
-  border-left: 2px solid var(--line);
+  padding-inline-start: 1.25rem;
+  border-inline-start: 2px solid var(--line);
   font-size: 1.05rem;
 }
 .blog-article blockquote p {
@@ -1200,7 +1061,7 @@ pre code {
 }
 .step-selector button span {
   font-size: 0.75rem;
-  margin-right: 0.3rem;
+  margin-inline-end: 0.3rem;
   font-variant-numeric: tabular-nums;
 }
 .step-selector button[aria-pressed="true"] {
@@ -1242,8 +1103,8 @@ pre code {
 }
 .step-detail {
   margin-block: 1.1rem;
-  padding-left: 1rem;
-  border-left: 2px solid var(--accent);
+  padding-inline-start: 1rem;
+  border-inline-start: 2px solid var(--accent);
 }
 .step-detail p {
   margin: 0;
@@ -1265,8 +1126,8 @@ pre code {
   font-size: 1.1rem;
 }
 .evidence-details[open]::details-content {
-  padding-left: 1rem;
-  border-left: 1px solid var(--line);
+  padding-inline-start: 1rem;
+  border-inline-start: 1px solid var(--line);
 }
 .evidence-table-wrap {
   overflow-x: auto;
@@ -1278,13 +1139,13 @@ pre code {
   font-size: 0.875rem;
 }
 .evidence-table caption {
-  text-align: left;
+  text-align: start;
   color: var(--muted);
   margin-bottom: 0.6rem;
 }
 .evidence-table th,
 .evidence-table td {
-  text-align: left;
+  text-align: start;
   padding: 0.6rem 0.7rem;
   border-bottom: 1px solid var(--line);
 }
@@ -1296,7 +1157,8 @@ pre code {
 }
 .rea-queries li {
   position: relative;
-  padding: 1.2rem 0 1.2rem 2.4rem;
+  padding-block: 1.2rem;
+  padding-inline: 2.4rem 0;
   border-top: 1px solid var(--line);
   counter-increment: query;
 }
@@ -1307,7 +1169,7 @@ pre code {
   content: counter(query, decimal-leading-zero);
   position: absolute;
   top: 1.2rem;
-  left: 0;
+  inset-inline-start: 0;
   color: var(--muted);
   font-size: 0.875rem;
 }
@@ -1317,11 +1179,6 @@ pre code {
   font-size: 1.05rem;
   font-weight: 600;
   line-height: 1.4;
-}
-.rea-queries .query-call {
-  margin-bottom: 0.8rem;
-  color: var(--muted);
-  font-size: 0.875rem;
 }
 .rea-query-pair {
   display: grid;
@@ -1347,32 +1204,6 @@ pre code {
 .rea-queries p:last-child {
   margin: 0;
   font-size: 0.9rem;
-}
-.numbered-notes {
-  list-style: none;
-  padding: 0;
-  margin: 1.75rem 0 0;
-  counter-reset: note;
-}
-.numbered-notes li {
-  position: relative;
-  padding-left: 2.4rem;
-  counter-increment: note;
-}
-.numbered-notes li + li {
-  margin-top: 1.7rem;
-}
-.numbered-notes li::before {
-  content: counter(note, decimal-leading-zero);
-  position: absolute;
-  left: 0;
-  top: 0;
-  color: var(--muted);
-  font-size: 0.875rem;
-  font-variant-numeric: tabular-nums;
-}
-.numbered-notes h3 {
-  color: var(--ink);
 }
 .verification {
   display: grid;
@@ -1411,13 +1242,10 @@ pre code {
   margin: 1.2rem 0;
   padding: 1rem 1.2rem;
   background: var(--soft);
-  border-left: 2px solid #97a6b7;
+  border-inline-start: 2px solid #97a6b7;
 }
 .prompt p {
   margin: 0;
-}
-.provider-list {
-  margin-top: 1.5rem;
 }
 .provider {
   display: grid;
@@ -1490,13 +1318,13 @@ pre code {
 }
 .prompt-symbol {
   color: #9bbfe5;
-  margin-right: 0.65rem;
+  margin-inline-end: 0.65rem;
 }
 .terminal-cursor {
   display: inline-block;
   width: 0.5em;
   height: 1em;
-  margin-left: 0.4em;
+  margin-inline-start: 0.4em;
   vertical-align: -0.12em;
   background: #9bbfe5;
   animation: terminal-blink 1s step-end infinite;
@@ -1566,7 +1394,7 @@ pre code {
 .flow-result {
   margin: 1.3rem 0 0;
   padding: 0.9rem 1rem;
-  border-left: 2px solid var(--accent);
+  border-inline-start: 2px solid var(--accent);
   background: #edf2f8;
   color: var(--ink);
   font-size: 0.9rem;
@@ -1583,11 +1411,6 @@ pre code {
 .th04-ring-figure img,
 .ctf-mask-figure img {
   min-width: 680px;
-}
-.th04-preview img {
-  display: block;
-  width: 100%;
-  height: auto;
 }
 .notion-channel {
   color: var(--accent);
@@ -1632,14 +1455,6 @@ pre code {
   position: absolute;
   inset-inline-end: -1.3rem;
   color: #8191a2;
-}
-.case-preview {
-  margin: 0;
-}
-.case-preview pre {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-size: 0.8rem;
 }
 .workflow-figure figcaption {
   margin-top: 1rem;
@@ -1751,7 +1566,7 @@ pre code {
   display: none;
 }
 .home-nav-current {
-  margin-left: auto;
+  margin-inline-start: auto;
   color: var(--muted);
   font-weight: 400;
 }
@@ -1786,7 +1601,7 @@ pre code {
   align-items: center;
   min-height: 44px;
   padding: 0.5rem 0.65rem;
-  border-left: 2px solid transparent;
+  border-inline-start: 2px solid transparent;
   color: var(--muted);
   font-size: 0.825rem;
   line-height: 1.5;
@@ -1797,7 +1612,7 @@ pre code {
   background: var(--soft);
 }
 .home-nav-links a[aria-current="location"] {
-  border-left-color: var(--accent);
+  border-inline-start-color: var(--accent);
   background: #f1f5fa;
   color: var(--accent);
   font-weight: 600;
@@ -1820,14 +1635,18 @@ pre code {
   .home-page-nav {
     position: fixed;
     top: 7.5rem;
-    right: max(1.5rem, calc((100vw - var(--content-width)) / 2 - 208px));
+    inset-inline-end: max(
+      1.5rem,
+      calc((100vw - var(--content-width)) / 2 - 208px)
+    );
     width: 160px;
     max-height: calc(100svh - 9rem);
     overflow-y: auto;
     border: 0;
     z-index: 2;
   }
-  .home-page-nav > summary {
+  /* Without the script the sidebar starts closed; its summary opens it. */
+  .home-page-nav[open] > summary {
     display: none;
   }
   .home-nav-links {
@@ -1843,17 +1662,17 @@ pre code {
   .home-nav-title {
     display: block;
     margin-bottom: 0.7rem;
-    padding-left: 0.75rem;
+    padding-inline-start: 0.75rem;
     color: var(--muted);
     font-size: 0.75rem;
     font-weight: 600;
   }
   .home-nav-links ul {
     display: block;
-    border-left: 1px solid var(--line);
+    border-inline-start: 1px solid var(--line);
   }
   .home-nav-links a {
-    margin-left: -1px;
+    margin-inline-start: -1px;
     font-size: 0.78rem;
   }
   .home-page section[id],
@@ -1937,14 +1756,6 @@ pre code {
   margin-top: 0.65rem;
   color: var(--muted);
   font-size: 0.85rem;
-}
-.home-question {
-  margin-block: 0 1.8rem;
-  color: var(--muted);
-}
-.home-question strong {
-  color: var(--ink);
-  font-weight: 500;
 }
 .prose-highlight {
   padding: 0.08em 0.35em;
@@ -2195,7 +2006,7 @@ pre code {
   color: var(--ink);
 }
 .agent-percent-rule > span {
-  margin-left: 0.4rem;
+  margin-inline-start: 0.4rem;
   color: var(--muted);
 }
 .agent-percent-rule strong {
@@ -2216,10 +2027,6 @@ pre code {
   margin: 0;
   color: var(--muted);
   font-size: 0.9rem;
-}
-.agent-investigation-note {
-  color: var(--muted);
-  font-size: 0.875rem;
 }
 .home-role-comparison figcaption {
   order: 3;
@@ -2348,7 +2155,7 @@ pre code {
   cursor: default;
 }
 .percent-controls .percent-reset {
-  margin-left: auto;
+  margin-inline-start: auto;
   border-color: transparent;
   color: var(--muted);
 }
@@ -2492,7 +2299,7 @@ pre code {
 }
 .speed-check-table td:last-child,
 .speed-check-table th:last-child {
-  text-align: right;
+  text-align: end;
 }
 .speed-check-table {
   width: 100%;
@@ -2593,17 +2400,6 @@ pre code {
 }
 
 @media (max-width: 850px) {
-  .home-agent-grid,
-  .home-try-grid {
-    grid-template-columns: 1fr;
-    gap: 2rem;
-  }
-  .home-reassurance {
-    max-width: 600px;
-  }
-  .feature-case {
-    gap: 2.4rem;
-  }
   .workflows {
     gap: 1.8rem;
   }
@@ -2631,29 +2427,8 @@ pre code {
 }
 
 @media (max-width: 640px) {
-  .pan-examples {
-    grid-template-columns: 1fr;
-    gap: 1.3rem;
-    padding: 1.2rem;
-  }
-  .pan-example {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
-    column-gap: 1rem;
-    text-align: left;
-  }
-  .pan-position {
-    grid-column: 2;
-    grid-row: 1;
-    margin: 0;
-    height: 1.6rem;
-  }
-  .pan-value,
-  .pan-meaning {
-    grid-column: 1 / -1;
-  }
   .back-to-top {
-    right: calc(1rem + env(safe-area-inset-right, 0px));
+    inset-inline-end: calc(1rem + env(safe-area-inset-right, 0px));
     bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
   }
   .site-footer {
@@ -2689,21 +2464,9 @@ pre code {
   .section {
     padding-block: 2.6rem;
   }
-  .feature-case,
   .workflows,
   .verification {
     grid-template-columns: 1fr;
-  }
-  .case-stats {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    border-left: 0;
-    padding: 1.5rem 0 0;
-    border-top: 1px solid var(--line);
-    gap: 1rem;
-  }
-  .case-stats > div + div {
-    border: 0;
-    padding-top: 0;
   }
   .stats dt {
     font-size: 1.65rem;
@@ -2751,7 +2514,7 @@ pre code {
     gap: 0.25rem;
   }
   .evidence-details[open]::details-content {
-    padding-left: 0.65rem;
+    padding-inline-start: 0.65rem;
   }
   .guide-entry {
     grid-template-columns: 1fr;
@@ -2800,6 +2563,7 @@ pre code {
   --soft: #181825;
   --accent: #89b4fa;
   --page: #1e1e2e;
+  --article-text: #bac2de;
 }
 :where(:root[data-theme="dark"]) ::selection {
   background: #45475a;
@@ -2846,13 +2610,11 @@ pre code {
   background: #313244;
   color: #b4befe;
 }
-:where(:root[data-theme="dark"]) .article p,
-:where(:root[data-theme="dark"]) .article li,
 :where(:root[data-theme="dark"]) .guide-route span {
   color: #bac2de;
 }
 :where(:root[data-theme="dark"]) .prompt {
-  border-left-color: #585b70;
+  border-inline-start-color: #585b70;
 }
 :where(:root[data-theme="dark"]) .agent-terminal {
   border-color: var(--line);
@@ -2880,8 +2642,7 @@ pre code {
 }
 
 @media (max-width: 360px) {
-  .stats,
-  .case-stats {
+  .stats {
     grid-template-columns: 1fr;
   }
 }

@@ -19,18 +19,10 @@ import { acquireHopperTargetLease } from "../../../src/hopper/HopperLease.js";
 import { createSystemProcessOwnershipHost } from "../../../src/process/ProcessOwnershipObservation.js";
 import { waitFor } from "../../support/testWait.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { stopProviderProcessFixture } from "../../fixtures/providerProcess.js";
 
 const statusSchema = z.object({ result: z.object({ open: z.boolean() }) });
 const test = workspaceCliTest.skipIf(process.platform !== "darwin");
-
-const stopChild = async (child: ChildProcess) => {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  const exited = new Promise<void>((resolveExit) =>
-    child.once("exit", () => resolveExit()),
-  );
-  child.kill("SIGKILL");
-  await exited;
-};
 
 const closeWithLateBridge = async (
   mcp: Client,
@@ -317,7 +309,7 @@ test.for(["handoff", "not-found"] as const)(
     let runtime: string | undefined;
     onTestFinished(async () => {
       await closeVerifierResources([
-        ...children.map((child) => () => stopChild(child)),
+        ...children.map((child) => () => stopProviderProcessFixture(child)),
         () => mcp.close(),
         () => transport.close(),
       ]);
@@ -436,7 +428,7 @@ test.for(["handoff", "not-found"] as const)(
       );
       expect(wrong.exitCode).toBeNull();
       await access(runtime);
-      await stopChild(wrong);
+      await stopProviderProcessFixture(wrong);
       await rm(socket, { force: true });
     }
     const owned = await closeWithLateBridge(mcp, () => lateBridge(runId));

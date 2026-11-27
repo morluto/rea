@@ -33,154 +33,104 @@ import { ApkSignatureProvider } from "../../../src/apkSignature/ApkSignatureProv
 import { peResourceFixture } from "../../../src/domain/pe/peResources.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
+const inspectionFactory =
+  <Input, Inspection>(
+    Provider: new () => {
+      inspect: (input: Input, options: { signal: AbortSignal }) => Inspection;
+      close(): Promise<void>;
+    },
+    schema: { parse(value: { path: string }): Input },
+  ) =>
+  () => {
+    const provider = new Provider();
+    return {
+      inspect: (path: string, signal: AbortSignal) =>
+        provider.inspect(schema.parse({ path }), { signal }),
+      close: () => provider.close(),
+    };
+  };
+
 const cases = [
   {
     name: "PE resources",
-    make: () => {
-      const provider = new PeResourcesProvider();
-      return {
-        inspect: (path: string, signal: AbortSignal) =>
-          provider.inspect(inspectPeResourcesInputSchema.parse({ path }), {
-            signal,
-          }),
-        close: () => provider.close(),
-      };
-    },
+    make: inspectionFactory(PeResourcesProvider, inspectPeResourcesInputSchema),
   },
   {
     name: "PE certificates",
-    make: () => {
-      const provider = new PeCertificatesProvider();
-      return {
-        inspect: (path: string, signal: AbortSignal) =>
-          provider.inspect(inspectPeCertificatesInputSchema.parse({ path }), {
-            signal,
-          }),
-        close: () => provider.close(),
-      };
-    },
+    make: inspectionFactory(
+      PeCertificatesProvider,
+      inspectPeCertificatesInputSchema,
+    ),
   },
   {
     name: "PE imports",
-    make: () => {
-      const provider = new PeImportsProvider();
-      return {
-        inspect: (path: string, signal: AbortSignal) =>
-          provider.inspect(inspectPeImportsInputSchema.parse({ path }), {
-            signal,
-          }),
-        close: () => provider.close(),
-      };
-    },
+    make: inspectionFactory(PeImportsProvider, inspectPeImportsInputSchema),
   },
   {
     name: "ELF notes",
     fixture: elfNoteFixture,
-    make: () => {
-      const provider = new ElfNotesProvider();
-      return {
-        inspect: (path: string, signal: AbortSignal) =>
-          provider.inspect(inspectElfNotesInputSchema.parse({ path }), {
-            signal,
-          }),
-        close: () => provider.close(),
-      };
+    report: {
+      entries: expect.arrayContaining([
+        expect.objectContaining({ type_name: "gnu_build_id" }),
+      ]),
     },
+    make: inspectionFactory(ElfNotesProvider, inspectElfNotesInputSchema),
   },
   {
     name: "kernel build config",
     fixture: kernelBuildConfigFixture,
-    make: () => {
-      const provider = new KernelBuildConfigProvider();
-      return {
-        inspect: (path: string, signal: AbortSignal) =>
-          provider.inspect(
-            inspectKernelBuildConfigInputSchema.parse({ path }),
-            { signal },
-          ),
-        close: () => provider.close(),
-      };
-    },
+    report: { config: { status: "present", option_count: 9 } },
+    make: inspectionFactory(
+      KernelBuildConfigProvider,
+      inspectKernelBuildConfigInputSchema,
+    ),
   },
   {
     name: "kernel modules",
     fixture: kernelModuleFixture,
-    make: () => {
-      const provider = new KernelModuleProvider();
-      return {
-        inspect: (path: string, signal: AbortSignal) =>
-          provider.inspect(inspectKernelModuleInputSchema.parse({ path }), {
-            signal,
-          }),
-        close: () => provider.close(),
-      };
-    },
+    report: { applicability: "applicable", signature: { status: "present" } },
+    make: inspectionFactory(
+      KernelModuleProvider,
+      inspectKernelModuleInputSchema,
+    ),
   },
   {
     name: "ELF dependencies",
     fixture: elfDependencyFixture,
-    make: () => {
-      const provider = new ElfDependenciesProvider();
-      return {
-        inspect: (path: string, signal: AbortSignal) =>
-          provider.inspect(inspectElfDependenciesInputSchema.parse({ path }), {
-            signal,
-          }),
-        close: () => provider.close(),
-      };
+    report: {
+      needed: expect.arrayContaining([
+        expect.objectContaining({ name: "libc.so.6" }),
+      ]),
     },
+    make: inspectionFactory(
+      ElfDependenciesProvider,
+      inspectElfDependenciesInputSchema,
+    ),
   },
   {
     name: "native exports",
-    make: () => {
-      const provider = new NativeExportsProvider();
-      return {
-        inspect: (path: string, signal: AbortSignal) =>
-          provider.inspect(inspectNativeExportsInputSchema.parse({ path }), {
-            signal,
-          }),
-        close: () => provider.close(),
-      };
-    },
+    make: inspectionFactory(
+      NativeExportsProvider,
+      inspectNativeExportsInputSchema,
+    ),
   },
   {
     name: "Apple IPS",
-    make: () => {
-      const provider = new AppleIpsProvider();
-      return {
-        inspect: (path: string, signal: AbortSignal) =>
-          provider.inspect(inspectAppleIpsInputSchema.parse({ path }), {
-            signal,
-          }),
-        close: () => provider.close(),
-      };
-    },
+    make: inspectionFactory(AppleIpsProvider, inspectAppleIpsInputSchema),
   },
   {
     name: "Windows shortcut",
-    make: () => {
-      const provider = new WindowsShortcutProvider();
-      return {
-        inspect: (path: string, signal: AbortSignal) =>
-          provider.inspect(inspectWindowsShortcutInputSchema.parse({ path }), {
-            signal,
-          }),
-        close: () => provider.close(),
-      };
-    },
+    make: inspectionFactory(
+      WindowsShortcutProvider,
+      inspectWindowsShortcutInputSchema,
+    ),
   },
   {
     name: "APK signatures",
-    make: () => {
-      const provider = new ApkSignatureProvider();
-      return {
-        inspect: (path: string, signal: AbortSignal) =>
-          provider.inspect(inspectApkSignatureInputSchema.parse({ path }), {
-            signal,
-          }),
-        close: () => provider.close(),
-      };
-    },
+    make: inspectionFactory(
+      ApkSignatureProvider,
+      inspectApkSignatureInputSchema,
+    ),
   },
 ] as const;
 
@@ -221,16 +171,22 @@ it.each(cases.flatMap((entry) => modes.map((mode) => ({ ...entry, mode }))))(
     try {
       const result = await provider.inspect(path, controller.signal);
       if (result.ok) throw new Error("Expected finalization failure");
-      const acquired = {
-        kind: "file-snapshot-hash",
+      const artifact = {
         path,
         sha256: createHash("sha256").update(bytes).digest("hex"),
         bytes: bytes.length,
       };
-      expect(result.error.partialObservation).toEqual(acquired);
+      const observation = result.error.partialObservation;
+      if ("report" in entry)
+        expect(observation).toMatchObject({ artifact, ...entry.report });
+      else
+        expect(observation).toEqual({
+          kind: "file-snapshot-hash",
+          ...artifact,
+        });
       expect(
         projectAnalysisError(result.error).details?.partial_observation,
-      ).toEqual(acquired);
+      ).toEqual(observation);
       const failedClose = mode === "close-failure" || mode === "close-both";
       expect(result.error.cleanupIncomplete).toBe(failedClose);
       if (failedClose) expect(owner?.handle.fd).toBeGreaterThanOrEqual(0);

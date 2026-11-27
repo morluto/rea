@@ -1,4 +1,10 @@
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { analysisViewPageFields } from "./analysisViewPageFields.js";
+import { appendToMapList } from "../appendToMapList.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisViewSubject,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { z } from "zod";
 import { pcapResultSchemas } from "../pcap/pcapAnalysis.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
@@ -20,11 +26,7 @@ import { evidenceFileTarget } from "../evidence.js";
 
 const captureSchema = pcapResultSchemas.inspect_pcap_capture;
 const fields = captureSchema.shape;
-const pageShape = {
-  kind: z.literal("pcap"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
-};
+const pageShape = analysisViewPageFields("pcap");
 export const pcapViewRequestSchema = z.discriminatedUnion("facet", [
   z.strictObject({
     ...pageShape,
@@ -133,14 +135,8 @@ const parseParent = (
   if (!parsed.ok) return parsed;
   const subject = evidenceFileTarget(parent);
   if (subject == null || subject.sha256 !== parsed.value.target.sha256)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message: "Packet parent subject must identify the report's SHA-256.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "Packet parent subject must identify the report's SHA-256.",
     );
   return ok(parsed.value);
 };
@@ -194,9 +190,7 @@ const indexedDnsQueries = (
   if (byName !== undefined) return byName;
   const grouped = new Map<string, DnsQuery[]>();
   for (const entry of capture.dns_queries) {
-    const existing = grouped.get(entry.query);
-    if (existing === undefined) grouped.set(entry.query, [entry]);
-    else existing.push(entry);
+    appendToMapList(grouped, entry.query, entry);
   }
   byName = grouped;
   dnsQueriesByName.set(capture, byName);
@@ -320,15 +314,8 @@ export const projectPcapCaptureView = (
     SummaryAnalysisView | z.output<typeof pcapViewRequestSchema>
   >(admitted, "summary", "pcap");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Packet summary parents support summary and pcap fact pages.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Packet summary parents support summary and pcap fact pages.",
     );
   const parsed = parseParent(parent);
   if (!parsed.ok) return parsed;

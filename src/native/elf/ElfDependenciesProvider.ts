@@ -5,30 +5,23 @@ import {
 } from "../../domain/parseFailureAnalysisError.js";
 import { decodeLimit } from "../../domain/parseFailure.js";
 import {
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   projectStableArtifactFailure,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
   ArtifactResourceScope,
   assertArtifactReadActive,
-  imageFileSizeRemediation,
 } from "../../resources/index.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
-  MAX_INSPECT_ELF_DEPENDENCY_FILE_BYTES,
-  MAX_INSPECT_ELF_DEPENDENCY_IMPORTS,
-  MAX_INSPECT_ELF_DEPENDENCY_NEEDED,
-  MAX_INSPECT_ELF_DEPENDENCY_VERSIONS,
+  elfDependencyBudgetLimit,
+  type ElfDependencies,
   type InspectElfDependenciesInput,
 } from "../../domain/native/elfDependencies.js";
 import { err, ok } from "../../domain/result.js";
 import { ELF_DEPENDENCIES_PROVIDER } from "../../domain/investigationProviders.js";
-import {
-  BinaryResourceFailure,
-  binaryResourceCeiling,
-} from "../../domain/binaryContainer.js";
 import { parseElfDependenciesFromHandle } from "./ElfDependencyParser.js";
 
 const OPERATION = "inspect_elf_dependencies";
@@ -43,28 +36,25 @@ export class ElfDependenciesProvider {
   readonly identity = ELF_DEPENDENCIES_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        ELF_DEPENDENCIES_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      ELF_DEPENDENCIES_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(
     input: InspectElfDependenciesInput,
     options?: { readonly signal?: AbortSignal },
   ) {
+    let completed: ElfDependencies | undefined;
     let observed:
       | { readonly sha256: string; readonly bytes: number }
       | undefined;
     try {
       return await this.#resources.run(async () => {
-        const result = await withStableArtifactHandle(
+        const result = await withStableArtifactHandle<ElfDependencies>(
           input.path,
           input.max_file_bytes,
           {
@@ -74,15 +64,14 @@ export class ElfDependenciesProvider {
             onIdentity: (identity) => {
               observed = identity;
             },
+            onVerifiedResult: (value) => {
+              completed = value;
+            },
           },
           async (handle) => {
             assertArtifactReadActive(options?.signal);
             const parsed = await parseElfDependenciesFromHandle(
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               {
                 path: input.path,
                 sha256: handle.sha256,
@@ -101,21 +90,19 @@ export class ElfDependenciesProvider {
         return ok(result);
       });
     } catch (cause) {
-      return err(elfDependenciesFailure(cause, input, observed));
+      return err(elfDependenciesFailure(cause, input, observed, completed));
     }
   }
 }
 
-const COUNT_CEILINGS = {
-  max_needed: MAX_INSPECT_ELF_DEPENDENCY_NEEDED,
-  max_versions: MAX_INSPECT_ELF_DEPENDENCY_VERSIONS,
-  max_imports: MAX_INSPECT_ELF_DEPENDENCY_IMPORTS,
-} as const;
+/** The count budgets the parser names in its limit. */
+const COUNT_BUDGETS = ["max_needed", "max_versions", "max_imports"] as const;
 
 const elfDependenciesFailure = (
   cause: unknown,
   input: InspectElfDependenciesInput,
   observed: { readonly sha256: string; readonly bytes: number } | undefined,
+  completed?: ElfDependencies,
 ) => {
   const facts = artifactFilePrimaryFacts(cause);
   const primary = classifyProviderFailure(
@@ -127,27 +114,14 @@ const elfDependenciesFailure = (
       description: "ELF image",
       fallbackMessage: "ELF dependency inspection failed.",
       recognise: (failure) => {
-        if (failure instanceof BinaryResourceFailure)
-          return parseLimitConstraint(
-            OPERATION,
-            "memory",
-            failure,
-            fixedAllowanceOptions(
-              "The ELF structural decoding allowance",
-              "parser",
-              binaryResourceCeiling(failure),
-            ),
-          );
         if (isParseLimit(failure, "elf-dependencies")) {
           const limit = failure.failure.limit;
-          const parameter = (
-            Object.keys(COUNT_CEILINGS) as (keyof typeof COUNT_CEILINGS)[]
-          ).find((name) => name === limit.name);
+          const parameter = COUNT_BUDGETS.find((name) => name === limit.name);
           if (parameter !== undefined)
             return parseLimitConstraint(OPERATION, "capacity", failure, {
               path: input.path,
               retryable: false,
-              remediationAction: `Raise ${parameter} above ${String(limit.maximum)}, up to ${String(COUNT_CEILINGS[parameter])}, or select a smaller artifact.`,
+              limit: elfDependencyBudgetLimit(parameter, limit.maximum),
             });
           const text =
             limit.name === "scanned_text_bytes" ||
@@ -184,14 +158,15 @@ const elfDependenciesFailure = (
           {
             path: input.path,
             retryable: false,
-            remediationAction: imageFileSizeRemediation(
+            limit: elfDependencyBudgetLimit(
+              "max_file_bytes",
               input.max_file_bytes,
-              MAX_INSPECT_ELF_DEPENDENCY_FILE_BYTES,
             ),
           },
         ),
     }),
   );
+  if (completed !== undefined) primary.retainPartialObservation(completed);
   return projectStableArtifactFailure(
     cause,
     primary,

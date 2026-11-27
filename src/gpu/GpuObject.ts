@@ -19,6 +19,7 @@ export const recordDeclaredGpuDecodedSize = (
 export type GpuPayloadTarget = {
   readonly value: string | null;
   readonly amdMetadata?: GpuObject["amd_target_metadata"];
+  readonly amdPal?: GpuObject["amd_pal_metadata"];
   readonly cudaHeader?: GpuObject["cuda_target_header"];
   readonly limitation?: string;
 } & (
@@ -55,6 +56,7 @@ export const gpuObject = (
     payload_target: null,
     cuda_target_header: null,
     amd_target_metadata: null,
+    amd_pal_metadata: null,
     target_consistency: "unexamined",
     bundle_id: null,
     compression: "none",

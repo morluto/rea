@@ -11,6 +11,7 @@ import {
   createImmutableEvidenceBundle,
   parseEvidenceBundle,
 } from "../../domain/evidenceBundle.js";
+import { rawLoadAtEntry } from "../../domain/rawBinary.fixture.js";
 import type {
   BINARY_TARGET_FORMAT_KINDS,
   TargetFormat,
@@ -86,8 +87,7 @@ const TARGETS: TargetFixtures = {
     format: "raw-binary",
     architecture: "m68k",
     availableArchitectures: ["m68k"],
-    entryPoint: "0x1000",
-    entryPointSource: "0x1000",
+    rawLoad: rawLoadAtEntry("0x1000"),
   },
   "gamecube-dol": {
     ...identity,
@@ -123,14 +123,28 @@ const TARGETS: TargetFixtures = {
   "app-pack": { ...archive, format: "app-pack" },
   asar: { ...archive, format: "asar" },
   ines: { ...archive, format: "ines" },
+  nds: { ...archive, format: "nds" },
   "godot-pck": { ...archive, format: "godot-pck" },
   unityfs: { ...archive, format: "unityfs" },
   wxapkg: { ...archive, format: "wxapkg" },
+  tar: { ...archive, format: "tar" },
+  dds: { ...archive, format: "dds" },
+  glb: { ...archive, format: "glb" },
+  ktx: { ...archive, format: "ktx" },
+  ktx2: { ...archive, format: "ktx2" },
   uimage: { ...archive, format: "uimage" },
+  nso: { ...archive, format: "nso" },
+  nro: { ...archive, format: "nro" },
   "android-boot-image": { ...archive, format: "android-boot-image" },
+  iso9660: { ...archive, format: "iso9660" },
+  "qualcomm-mbn": { ...archive, format: "qualcomm-mbn" },
   "android-ota-payload": { ...archive, format: "android-ota-payload" },
+  "android-vbmeta": { ...archive, format: "android-vbmeta" },
+  "android-sparse-image": { ...archive, format: "android-sparse-image" },
+  "ubi-image": { ...archive, format: "ubi-image" },
   uf2: { ...archive, format: "uf2" },
   dfuse: { ...archive, format: "dfuse" },
+  bflt: { ...archive, format: "bflt" },
   dmg: { ...archive, format: "dmg" },
   pkg: { ...archive, format: "pkg" },
   "intel-hex": { ...archive, format: "intel-hex" },
@@ -147,6 +161,11 @@ const TARGETS: TargetFixtures = {
   javascript: { ...artifact, format: "javascript" },
   "source-map": { ...artifact, format: "source-map" },
   uefi: { ...artifact, format: "uefi" },
+  sqlite: { ...artifact, format: "sqlite" },
+  "windows-shortcut": { ...artifact, format: "windows-shortcut" },
+  "python-pyc": { ...artifact, format: "python-pyc" },
+  devicetree: { ...artifact, format: "devicetree" },
+  deb: { ...artifact, format: "deb" },
 };
 
 const provider = { id: "fixture", name: "Fixture", version: "1" } as const;

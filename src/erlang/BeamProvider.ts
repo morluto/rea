@@ -1,7 +1,7 @@
 import { ERLANG_BEAM_PROVIDER_IDENTITY } from "./ErlangBeamProviderIdentity.js";
 import {
   projectStableArtifactFailure,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   ArtifactReaderFailure,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
@@ -9,19 +9,13 @@ import {
 } from "../resources/index.js";
 import type { BeamPort } from "../ports/erlang/BeamPort.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
-  AnalysisResourceConstraintError,
-  type ResourceConstraintRecovery,
-} from "../domain/analysisErrorCore.js";
-import {
-  MAX_INSPECT_ERLANG_BEAM_ATOMS,
-  MAX_INSPECT_ERLANG_BEAM_CHUNKS,
-  MAX_INSPECT_ERLANG_BEAM_FILE_BYTES,
+  erlangBeamBudgetLimit,
+  type ErlangBeam,
   type InspectErlangBeamInput,
 } from "../domain/erlang/beam.js";
 import { err, ok } from "../domain/result.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
-import type { LimitRef } from "../domain/parseFailure.js";
 import {
   isParseLimit,
   parseLimitConstraint,
@@ -37,25 +31,22 @@ export class BeamProvider implements BeamPort {
   readonly identity = ERLANG_BEAM_PROVIDER_IDENTITY;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        ERLANG_BEAM_PROVIDER_IDENTITY.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      ERLANG_BEAM_PROVIDER_IDENTITY,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectErlangBeamInput, options?: ExecutionOptions) {
+    let completed: ErlangBeam | undefined;
     let observed:
       | { readonly sha256: string; readonly bytes: number }
       | undefined;
     try {
-      return await this.#resources.run(async () =>
-        withStableArtifactHandle(
+      return await this.#resources.run(async () => {
+        const report = await withStableArtifactHandle<ErlangBeam>(
           input.path,
           input.max_file_bytes,
           {
@@ -65,56 +56,44 @@ export class BeamProvider implements BeamPort {
             onIdentity: (identity) => {
               observed = identity;
             },
+            onVerifiedResult: (value) => {
+              completed = value;
+            },
           },
-          async (handle) =>
-            ok(
-              await parseErlangBeamFromHandle(
-                handle,
-                {
-                  path: input.path,
-                  sha256: handle.sha256,
-                  bytes: handle.size,
-                },
-                input,
-              ),
+          (handle) =>
+            parseErlangBeamFromHandle(
+              handle,
+              { path: input.path, sha256: handle.sha256, bytes: handle.size },
+              input,
             ),
-        ),
-      );
+        );
+        return ok(report);
+      });
     } catch (cause) {
-      return err(beamFailure(cause, input, observed));
+      return err(beamFailure(cause, input, observed, completed));
     }
   }
 }
 
-const fileBudgetRemediation = (maximum: number): string =>
-  maximum >= MAX_INSPECT_ERLANG_BEAM_FILE_BYTES
-    ? `The file exceeds the ${String(MAX_INSPECT_ERLANG_BEAM_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller artifact.`
-    : `Raise max_file_bytes above ${String(maximum)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
-
-const parserBudgetRemediation = ({ name, maximum }: LimitRef) => {
-  switch (name) {
-    case "max_atoms":
-      return maximum >= MAX_INSPECT_ERLANG_BEAM_ATOMS
-        ? `The file exceeds the ${String(MAX_INSPECT_ERLANG_BEAM_ATOMS)}-atom ceiling this operation accepts; select a smaller artifact.`
-        : `Raise max_atoms above ${String(maximum)} or select a smaller artifact; the limit is the caller-selected atom budget.`;
-    case "max_chunks":
-      return maximum >= MAX_INSPECT_ERLANG_BEAM_CHUNKS
-        ? `The file exceeds the ${String(MAX_INSPECT_ERLANG_BEAM_CHUNKS)}-chunk ceiling this operation accepts; select a smaller artifact.`
-        : `Raise max_chunks above ${String(maximum)} or select a smaller artifact; the limit is the caller-selected chunk budget.`;
-  }
-  return undefined;
-};
+/** The per-call count budgets the parser names in its limit. */
+const BEAM_COUNT_BUDGETS = [
+  "max_chunks",
+  "max_atoms",
+  "max_table_rows",
+] as const;
 
 const beamFailure = (
   cause: unknown,
   input: InspectErlangBeamInput,
-  observed?: { readonly sha256: string; readonly bytes: number },
+  observed: { readonly sha256: string; readonly bytes: number } | undefined,
+  completed: ErlangBeam | undefined,
 ) => {
   const facts = artifactFilePrimaryFacts(cause);
   const reportedLimits = {
     max_file_bytes: input.max_file_bytes,
     max_chunks: input.max_chunks,
     max_atoms: input.max_atoms,
+    max_table_rows: input.max_table_rows,
   };
   const primary = classifyProviderFailure(
     facts.cause,
@@ -127,21 +106,23 @@ const beamFailure = (
       recognise: (failure, origin) => {
         if (origin === "owned-or-classified" && isParseLimit(failure, "beam")) {
           const { limit } = failure.failure;
-          const remediationAction = parserBudgetRemediation(limit);
-          const recovery: ResourceConstraintRecovery =
-            limit.name === "max_table_rows"
-              ? fixedAllowanceOptions("BEAM table row ceiling", "parser", {
-                  limit: limit.maximum,
-                  unit: "rows",
-                })
-              : remediationAction === undefined
-                ? {}
-                : { remediationAction };
+          const parameter = BEAM_COUNT_BUDGETS.find(
+            (name) => name === limit.name,
+          );
           return parseLimitConstraint(OPERATION, "capacity", failure, {
             reportedLimitContext: reportedLimits,
             legacyMaximumKey: limit.name,
             retryable: false,
-            ...recovery,
+            ...(parameter === undefined
+              ? {}
+              : {
+                  limit: {
+                    ...erlangBeamBudgetLimit(parameter, limit.maximum),
+                    ...(typeof limit.required === "number"
+                      ? { required_value: limit.required }
+                      : {}),
+                  },
+                }),
           });
         }
         if (
@@ -159,7 +140,8 @@ const beamFailure = (
               ...(failure.boundary === "file-size"
                 ? {
                     retryable: false,
-                    remediationAction: fileBudgetRemediation(
+                    limit: erlangBeamBudgetLimit(
+                      "max_file_bytes",
                       input.max_file_bytes,
                     ),
                   }
@@ -170,6 +152,7 @@ const beamFailure = (
       },
     }),
   );
+  if (completed !== undefined) primary.retainPartialObservation(completed);
   return projectStableArtifactFailure(
     cause,
     primary,

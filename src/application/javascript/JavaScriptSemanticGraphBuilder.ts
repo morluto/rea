@@ -1,3 +1,4 @@
+import { appendToMapList } from "../../domain/appendToMapList.js";
 import type { AnalysisParameterLimit } from "../../domain/analysisSettings.js";
 import {
   createJavaScriptSemanticGraph,
@@ -1021,6 +1022,8 @@ const projectCalls = (context: FileContext): void => {
           candidate_node_ids: [],
           evidence: unknownSemanticEvidence(context.file, argument.location),
         });
+      const valueLocation =
+        argument.valueExpressionLocation ?? argument.location;
       const references =
         argument.valueExpressionLocation !== null &&
         expressions.has(
@@ -1028,7 +1031,7 @@ const projectCalls = (context: FileContext): void => {
         )
           ? []
           : context
-              .referenceNodesWithin(argument.location)
+              .referenceNodesWithin(valueLocation)
               .filter(
                 (reference) =>
                   reference.function_node_id === callNode.function_node_id,
@@ -1040,7 +1043,7 @@ const projectCalls = (context: FileContext): void => {
           relation: "aliases",
           resolution:
             references.length === 1 &&
-            rangesEqual(reference.identity.source_range, argument.location)
+            rangesEqual(reference.identity.source_range, valueLocation)
               ? "resolved"
               : "candidate",
         });
@@ -1072,10 +1075,7 @@ const projectCalls = (context: FileContext): void => {
     JavaScriptSemanticCallReturnFlow[]
   >();
   for (const flow of context.ir.callReturnFlows) {
-    const grouped = returnFlowsByCallSite.get(flow.callSiteId);
-    if (grouped === undefined)
-      returnFlowsByCallSite.set(flow.callSiteId, [flow]);
-    else grouped.push(flow);
+    appendToMapList(returnFlowsByCallSite, flow.callSiteId, flow);
     addRelation(context.state, {
       source: context.returnSiteNodes.get(flow.returnSiteId),
       target: context.callSiteNodes.get(flow.callSiteId),

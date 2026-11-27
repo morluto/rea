@@ -93,6 +93,9 @@ const parameters = (
   ...(input.semantic_precision === undefined
     ? {}
     : { semantic_precision: input.semantic_precision }),
+  ...(input.semantic_analysis === undefined
+    ? {}
+    : { semantic_analysis: input.semantic_analysis }),
   format: input.format,
   integrity_policy: input.integrity_policy,
   ...(input.max_semantic_nodes === undefined

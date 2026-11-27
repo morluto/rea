@@ -15,25 +15,23 @@ import {
   createFileMappingIndex,
   imageFileMappings,
 } from "../../domain/binaryContainer.js";
-import {
-  readPeImage,
-  readPeImageFromReader,
-  type PeImage,
-} from "../../domain/native/peImage.js";
-import {
-  MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES,
-  type InspectPeImportsInput,
-  type PeDelayImportDll,
-  type PeImportDll,
-  type PeImportFunction,
-  type PeImportIssue,
-  type PeImports,
+import { readPeImageFromReader } from "../../domain/native/peImage.js";
+import type {
+  InspectPeImportsInput,
+  PeDelayImportDll,
+  PeImportDll,
+  PeImportFunction,
+  PeImportIssue,
+  PeImports,
 } from "../../domain/native/peImports.js";
 import {
   IMPORT_DESCRIPTOR_BYTES,
   PEFILE_MAX_IMPORT_SYMBOLS,
   pefileImphash,
 } from "./pefileImphash.js";
+import type { PrefixedByteSource } from "../../domain/byteSource.js";
+import type { PeHeaderAnomaly } from "../../domain/native/peHeaderAnomalies.js";
+import { peImageBaseHex, peVa } from "../../domain/native/peAddressSpace.js";
 
 type Artifact = PeImports["artifact"];
 
@@ -91,15 +89,15 @@ const functionBudget = (count: number, max: number): void => {
     );
 };
 
-const createRetention = () => {
+const createRetention = (maximum: number) => {
   let text = 0;
   return (value: string): void => {
     text += value.length;
-    if (text > MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES)
+    if (text > maximum)
       throw peImportLimit(
         "retained_text",
-        MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES,
-        `Import names exceed the fixed ${String(MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES)}-byte retained-text allowance`,
+        maximum,
+        `Import names exceed max_text_bytes (${String(maximum)})`,
       );
   };
 };
@@ -135,15 +133,7 @@ const WINDOW_READ_BYTES = 4096;
 // The lookup table, address table, and names can occupy different file ranges.
 const RETAINED_WINDOWS = 3;
 
-/** Random-access source for streaming PE import inspection without buffering the whole image. */
-export interface PeImportByteSource {
-  readonly size: number;
-  readonly prefix: Buffer;
-  readRange(offset: number, length: number): Promise<Buffer>;
-}
-
 interface PeImportReader {
-  readonly fileSize: number;
   readRange(offset: number, length: number): Promise<Buffer>;
   readPrefix(offset: number, maximum: number): Promise<Buffer>;
   u16(offset: number): Promise<number>;
@@ -151,22 +141,8 @@ interface PeImportReader {
   word(offset: number, bits: 32 | 64): Promise<bigint>;
 }
 
-const createBufferPeImportReader = (bytes: Buffer): PeImportReader => {
-  const reader = new BinaryReader(bytes, true, "pe");
-  return {
-    fileSize: bytes.length,
-    readRange: async (offset, length) =>
-      bytes.subarray(offset, offset + length),
-    readPrefix: async (offset, maximum) =>
-      bytes.subarray(offset, offset + maximum),
-    u16: async (offset) => reader.u16(offset),
-    u32: async (offset) => reader.u32(offset),
-    word: async (offset, bits) => reader.word(offset, bits),
-  };
-};
-
 const createHandlePeImportReader = (
-  source: PeImportByteSource,
+  source: PrefixedByteSource,
 ): PeImportReader => {
   const prefix = new BinaryReader(source.prefix, true, "pe");
   const windows: Array<{
@@ -208,7 +184,6 @@ const createHandlePeImportReader = (
   };
 
   return {
-    fileSize: source.size,
     async readRange(offset, length) {
       if (length === 0) return Buffer.alloc(0);
       const window = await windowFor(offset, length);
@@ -235,20 +210,28 @@ const createHandlePeImportReader = (
   };
 };
 
-const parsePeImportsCore = async (
-  image: PeImage,
-  reader: PeImportReader,
+/** Read import and delay-load directories positionally, yielding between batches of entries. */
+export const parsePeImportsFromHandle = async (
+  source: PrefixedByteSource,
   artifact: Artifact,
   input: InspectPeImportsInput,
   signal?: AbortSignal,
 ): Promise<PeImports> => {
+  assertArtifactReadActive(signal);
+  const fileSize = source.size;
+  const reader = createHandlePeImportReader(source);
+  const image = await readPeImageFromReader({
+    size: fileSize,
+    prefix: source.prefix,
+    readRange: reader.readRange,
+  });
   const bits = image.bits;
   const base = image.image_base;
   const lookup = createFileMappingIndex(
     imageFileMappings(image),
     image.zero_fills,
   );
-  const compatibleRead = createPefileReadCompatibility(image, reader.fileSize);
+  const compatibleRead = createPefileReadCompatibility(image, fileSize);
   let mappingCompatibility = true;
   const map = (rva: number, size: number): number => {
     requireRva(rva, size);
@@ -263,6 +246,7 @@ const parsePeImportsCore = async (
     machine: image.pe_machine,
     bits,
     architecture: image.architecture,
+    image_base: peImageBaseHex(image.image_base),
   };
   const issues: PeImportIssue[] = [];
   const admitRva = (rva: number, size: number, label: string): boolean => {
@@ -292,7 +276,7 @@ const parsePeImportsCore = async (
       return null;
     }
   };
-  const retain = createRetention();
+  const retain = createRetention(input.max_text_bytes);
   let examinedDlls = 0;
   let examinedFunctions = 0;
   let entries = 0;
@@ -381,6 +365,7 @@ const parsePeImportsCore = async (
           ordinal: Number(thunk & 0xffffn),
           ilt_rva: nameTableRva === addressTableRva ? null : nameRva,
           iat_rva: iatRva,
+          iat_va: peVa(image.image_base, iatRva),
           thunk_hex: thunkHex,
         });
         continue;
@@ -408,6 +393,7 @@ const parsePeImportsCore = async (
           ordinal: null,
           ilt_rva: nameTableRva === addressTableRva ? null : nameRva,
           iat_rva: iatRva,
+          iat_va: peVa(image.image_base, iatRva),
           thunk_hex: thunkHex,
         });
       } catch (cause) {
@@ -484,6 +470,8 @@ const parsePeImportsCore = async (
 
   const importDirectory = image.pe_data_directories?.[PE_IMPORT_DIRECTORY];
   const delayDirectory = image.pe_data_directories?.[PE_DELAY_IMPORT_DIRECTORY];
+  const headerAnomalies: PeHeaderAnomaly[] = [...image.pe_header_anomalies];
+  const sizeExceeded = new Set<object>();
   const imports: PeImportDll[] = [];
   let importDirectoryResult: PeImports["import_directory"] = null;
   if (importDirectory !== undefined && importDirectory.address !== 0) {
@@ -492,17 +480,18 @@ const parsePeImportsCore = async (
       if (++entries % ENTRIES_PER_YIELD === 0) await checkpoint();
       const descriptorRva =
         importDirectory.address + index * IMPORT_DESCRIPTOR_BYTES;
+      // The loader walks descriptors to the null terminator without
+      // consulting Size, so neither does this walk.
       if (
         index * IMPORT_DESCRIPTOR_BYTES + IMPORT_DESCRIPTOR_BYTES >
-        importDirectory.size
+          importDirectory.size &&
+        !sizeExceeded.has(importDirectory)
       ) {
-        issues.push({
-          code: "malformed_entry",
-          location: hex(descriptorRva),
-          message:
-            "Import directory ends before a null descriptor; its declared size does not cover the complete descriptor slot",
+        sizeExceeded.add(importDirectory);
+        headerAnomalies.push({
+          code: "directory_size_below_structure",
+          message: `Data directory ${String(importDirectory === importDirectory ? PE_IMPORT_DIRECTORY : PE_DELAY_IMPORT_DIRECTORY)} (import) declares Size ${String(importDirectory.size)}, which ends before descriptor ${String(index)}; the loader ignores this Size and reads descriptors to the null terminator, and so did this read.`,
         });
-        break;
       }
       const descriptor = mapDescriptor(
         descriptorRva,
@@ -578,17 +567,18 @@ const parsePeImportsCore = async (
       if (++entries % ENTRIES_PER_YIELD === 0) await checkpoint();
       const descriptorRva =
         delayDirectory.address + index * DELAY_DESCRIPTOR_BYTES;
+      // The loader walks descriptors to the null terminator without
+      // consulting Size, so neither does this walk.
       if (
         index * DELAY_DESCRIPTOR_BYTES + DELAY_DESCRIPTOR_BYTES >
-        delayDirectory.size
+          delayDirectory.size &&
+        !sizeExceeded.has(delayDirectory)
       ) {
-        issues.push({
-          code: "malformed_entry",
-          location: hex(descriptorRva),
-          message:
-            "Delay-load directory ends before a null descriptor; its declared size does not cover the complete descriptor slot",
+        sizeExceeded.add(delayDirectory);
+        headerAnomalies.push({
+          code: "directory_size_below_structure",
+          message: `Data directory ${String(delayDirectory === importDirectory ? PE_IMPORT_DIRECTORY : PE_DELAY_IMPORT_DIRECTORY)} (delay-load import) declares Size ${String(delayDirectory.size)}, which ends before descriptor ${String(index)}; the loader ignores this Size and reads descriptors to the null terminator, and so did this read.`,
         });
-        break;
       }
       const descriptor = mapDescriptor(
         descriptorRva,
@@ -681,7 +671,7 @@ const parsePeImportsCore = async (
       truncatedDescriptor: pefileTruncatedDescriptor,
       bits,
       directoryRva: importDirectory?.address ?? 0,
-      fileBytes: reader.fileSize,
+      fileBytes: fileSize,
     }),
     coverage: coverage(
       issues,
@@ -690,44 +680,7 @@ const parsePeImportsCore = async (
       delayImports.reduce((count, dll) => count + dll.functions.length, 0),
     ),
     issues,
+    header_anomalies: headerAnomalies,
     limitations,
   };
-};
-
-/**
- * Read PE import and delay-load directories without executing the image.
- * Yields to the event loop and honors cancellation every
- * `ENTRIES_PER_YIELD` descriptors or thunks.
- */
-export const parsePeImports = async (
-  bytes: Buffer,
-  artifact: Artifact,
-  input: InspectPeImportsInput,
-  signal?: AbortSignal,
-): Promise<PeImports> => {
-  assertArtifactReadActive(signal);
-  return parsePeImportsCore(
-    readPeImage(bytes),
-    createBufferPeImportReader(bytes),
-    artifact,
-    input,
-    signal,
-  );
-};
-
-/** Read PE import and delay-load directories positionally over a bounded file handle. */
-export const parsePeImportsFromHandle = async (
-  source: PeImportByteSource,
-  artifact: Artifact,
-  input: InspectPeImportsInput,
-  signal?: AbortSignal,
-): Promise<PeImports> => {
-  assertArtifactReadActive(signal);
-  const reader = createHandlePeImportReader(source);
-  const image = await readPeImageFromReader({
-    size: source.size,
-    prefix: source.prefix,
-    readRange: (offset, length) => reader.readRange(offset, length),
-  });
-  return parsePeImportsCore(image, reader, artifact, input, signal);
 };

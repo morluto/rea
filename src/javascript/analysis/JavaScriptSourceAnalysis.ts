@@ -4,7 +4,10 @@ import type {
   JavaScriptSourceAnalysisLimits,
   JavaScriptSourceAnalysisPort,
 } from "../../domain/javascript/javascriptSourceAnalysis.js";
-import { JavaScriptAnalysisWorker } from "./JavaScriptAnalysisWorker.js";
+import {
+  isRecoverableJavaScriptWorkerFailure,
+  JavaScriptAnalysisWorker,
+} from "./JavaScriptAnalysisWorker.js";
 import type { spawnOwnedProviderProcess } from "../../process/ProviderProcess.js";
 import { WorkerCleanupRegistry } from "../../process/OwnedWorkerRuntime.js";
 import { ArtifactResourceScope } from "../../resources/index.js";
@@ -179,8 +182,14 @@ class ScopeJavaScriptSourceAnalysis implements JavaScriptSourceAnalysisPort {
   analyze(
     ...args: Parameters<JavaScriptSourceAnalysisPort["analyze"]>
   ): ReturnType<JavaScriptSourceAnalysisPort["analyze"]> {
+    const purpose = args[5];
     return this.worker.analyze(...args).then((result) => {
-      if (!result.ok) this.#failed = true;
+      // canReuse still checks the process before parking.
+      if (
+        !result.ok &&
+        !isRecoverableJavaScriptWorkerFailure(purpose ?? "analysis", result)
+      )
+        this.#failed = true;
       return result;
     });
   }
@@ -198,8 +207,14 @@ class ScopeJavaScriptSourceAnalysis implements JavaScriptSourceAnalysisPort {
         current.busy = false;
         return;
       }
-      if (current?.worker === this.worker) retained.delete(this.scope);
+      // Release the scope's ownership only after the process stopped; a
+      // failed close stays owned by the scope's close hook.
       await this.worker.close();
+      if (
+        current?.worker === this.worker &&
+        retained.get(this.scope) === current
+      )
+        retained.delete(this.scope);
     } catch (cause) {
       this.#closed = false;
       throw cause;

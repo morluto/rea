@@ -7,17 +7,14 @@ import {
 import { EnhancedTools } from "../../../src/application/EnhancedTools.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { ok } from "../../../src/domain/result.js";
+import { createFixtureProviderIdentity } from "../../fixtures/analysisExecution.js";
 import {
   createBinarySessionTargets,
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 import { expect, it } from "vitest";
 
-const identity = {
-  id: "fixture",
-  name: "Fixture analysis provider",
-  version: "1",
-} as const;
+const identity = createFixtureProviderIdentity();
 
 const effects = {
   mutatesArtifact: false,

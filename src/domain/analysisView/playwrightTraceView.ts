@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import {
   analysisTextPage,
   analysisTextPageItemSchema,
@@ -26,13 +27,16 @@ import {
 } from "./analysisViewShape.js";
 import {
   analysisViewCoverageSchema,
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
-import { pickFields, selectViewRows } from "./selectViewRows.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { pickFields, selectViewRows, filterSet } from "./selectViewRows.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 
 export const playwrightTraceViewContextSchema = playwrightTraceSchema
   .omit({
@@ -104,8 +108,6 @@ export const playwrightTraceViewItemsSchema = z.union([
   ),
 ]);
 const readReport = createAnalysisViewResultReader(playwrightTraceSchema);
-const values = (selected: readonly string[] | undefined) =>
-  selected === undefined ? undefined : new Set(selected);
 const allows = (
   selection: ReadonlySet<string> | undefined,
   value: string | null,
@@ -161,7 +163,7 @@ const candidateIndices = <Row extends object>(
   rows: readonly Row[],
   key: keyof Row & string,
   filter: ReadonlySet<string>,
-): number[] | undefined => {
+): readonly number[] | undefined => {
   if (!isImmutableJsonSnapshot(report)) return undefined;
   if (filter.size === 0) return [];
   let indexes = traceIndexes.get(rows);
@@ -175,9 +177,7 @@ const candidateIndices = <Row extends object>(
     for (let i = 0; i < rows.length; i += 1) {
       const value = rows[i]?.[key];
       if (typeof value !== "string") continue;
-      const bucket = built.get(value);
-      if (bucket === undefined) built.set(value, [i]);
-      else bucket.push(i);
+      appendToMapList(built, value, i);
     }
     index = built;
     indexes.set(key, index);
@@ -188,11 +188,11 @@ const candidateIndices = <Row extends object>(
 const collectCandidateIndices = (
   indexMap: ReadonlyMap<string, readonly number[]>,
   filter: ReadonlySet<string>,
-): number[] => {
+): readonly number[] => {
   if (filter.size === 1) {
     const only = filter.values().next().value;
     const list = only === undefined ? undefined : indexMap.get(only);
-    return list === undefined ? [] : [...list];
+    return list ?? [];
   }
   const seen = new Set<number>();
   for (const key of filter) {
@@ -207,20 +207,16 @@ const selectCandidateRows = <Source, Row>(
   rows: readonly Source[],
   candidateIndices: readonly number[],
   view: { readonly offset: number; readonly limit: number },
-  matches: (row: Source, index: number) => boolean,
+  matches: ((row: Source, index: number) => boolean) | undefined,
   project: (row: Source, index: number) => Row,
 ): { rows: Row[]; total: number } => {
-  const selected: Row[] = [];
-  let total = 0;
-  for (let i = 0; i < candidateIndices.length; i += 1) {
-    const index = candidateIndices[i]!;
-    const row = rows[index]!;
-    if (!matches(row, index)) continue;
-    if (total >= view.offset && selected.length < view.limit)
-      selected.push(project(row, index));
-    total++;
-  }
-  return { rows: selected, total };
+  // Exact index hits already supply the total unless another filter applies.
+  return selectViewRows(
+    candidateIndices,
+    view,
+    matches === undefined ? undefined : (index) => matches(rows[index]!, index),
+    (index) => project(rows[index]!, index),
+  );
 };
 
 const selectRows = (
@@ -228,22 +224,20 @@ const selectRows = (
   view: Exclude<View, { collection: "event-text" }>,
 ) => {
   if (view.collection === "events") {
-    const ids = values(view.event_ids),
-      streams = values(view.stream_ids),
-      kinds = values(view.kinds),
-      calls = values(view.call_ids);
-    const filtered =
-      ids !== undefined ||
-      streams !== undefined ||
-      kinds !== undefined ||
-      calls !== undefined;
+    const ids = filterSet(view.event_ids),
+      streams = filterSet(view.stream_ids),
+      kinds = filterSet(view.kinds),
+      calls = filterSet(view.call_ids);
+    const activeFilters = [ids, streams, kinds, calls].filter(
+      (selection) => selection !== undefined,
+    );
     const matchEvent = (row: PlaywrightTrace["events"][number]): boolean =>
       allows(ids, row.event_id) &&
       allows(streams, row.stream_id) &&
       allows(kinds, row.kind) &&
       allows(calls, row.call_id);
     const projectEvent = createEventProjector(view);
-    if (filtered) {
+    if (activeFilters.length > 0) {
       const candidates =
         ids !== undefined
           ? candidateIndices(report, report.events, "event_id", ids)
@@ -257,7 +251,7 @@ const selectRows = (
           report.events,
           candidates,
           view,
-          matchEvent,
+          activeFilters.length > 1 ? matchEvent : undefined,
           projectEvent,
         );
       }
@@ -266,8 +260,8 @@ const selectRows = (
     return selectViewRows(report.events, view, undefined, projectEvent);
   }
   if (view.collection === "members") {
-    const ids = values(view.member_ids),
-      paths = values(view.paths);
+    const ids = filterSet(view.member_ids),
+      paths = filterSet(view.paths);
     const filtered = ids !== undefined || paths !== undefined;
     const matchMember = (row: PlaywrightTrace["members"][number]): boolean =>
       allows(ids, row.member_id) && allows(paths, row.path);
@@ -295,7 +289,7 @@ const selectRows = (
           report.members,
           candidates,
           view,
-          matchMember,
+          ids !== undefined && paths !== undefined ? matchMember : undefined,
           projectMember,
         );
       }
@@ -304,7 +298,7 @@ const selectRows = (
     return selectViewRows(report.members, view, undefined, projectMember);
   }
   if (view.collection === "streams") {
-    const ids = values(view.stream_ids);
+    const ids = filterSet(view.stream_ids);
     const matchStream = (row: PlaywrightTrace["streams"][number]): boolean =>
       allows(ids, row.stream_id);
     const streamFields = view.fields ?? [
@@ -332,14 +326,14 @@ const selectRows = (
           report.streams,
           candidates,
           view,
-          matchStream,
+          undefined,
           projectStream,
         );
       return selectViewRows(report.streams, view, matchStream, projectStream);
     }
     return selectViewRows(report.streams, view, undefined, projectStream);
   }
-  const codes = values(view.codes);
+  const codes = filterSet(view.codes);
   const matchDiagnostic = (
     row: PlaywrightTrace["diagnostics"][number],
   ): boolean => allows(codes, row.code);
@@ -363,7 +357,7 @@ const selectRows = (
         report.diagnostics,
         candidates,
         view,
-        matchDiagnostic,
+        undefined,
         projectDiagnostic,
       );
     return selectViewRows(
@@ -428,15 +422,8 @@ export const projectPlaywrightTraceView = (
     "playwright-trace",
   );
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Playwright trace inventories support summary and playwright-trace pages.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Playwright trace inventories support summary and playwright-trace pages.",
     );
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
@@ -460,11 +447,7 @@ export const projectPlaywrightTraceView = (
     parent_evidence_id: parent.evidenceId,
     parent_operation: PLAYWRIGHT_TRACE_OPERATION,
     parent_digest: parent.evidenceId.slice(3),
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, limitations),
     unknowns: [
       "Recording completeness and cross-stream ordering remain unknown. Resource contents are not decoded.",
     ],

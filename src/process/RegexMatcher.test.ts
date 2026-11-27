@@ -547,6 +547,48 @@ it.each([
   },
 );
 
+it("returns the structured deadline when a real worker pattern does not finish, then matches again", async () => {
+  const first = await matchRegexValues({
+    operation: "search_strings",
+    pattern: "storage",
+    caseSensitive: true,
+    values: ["storage/read", "other"],
+  });
+  expect(first).toEqual({ ok: true, value: [0] });
+  const stuck = await matchRegexValues({
+    operation: "search_strings",
+    pattern: "^(a+)+$",
+    caseSensitive: true,
+    values: [`${"a".repeat(40)}b`],
+    deadline: { deadlineMs: 50, source: "runtime" },
+  });
+  if (stuck.ok) throw new Error("expected the real worker to hit its deadline");
+  expect(projectAnalysisError(stuck.error)).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      operation: "search_strings",
+      resource: "cpu",
+      reported_limits: {
+        matching_deadline_ms: 50,
+        matching_deadline_source: "runtime",
+      },
+      limit: {
+        setting: "regex.matching_deadline_ms",
+        effective_value: 50,
+        source: "runtime",
+        unit: "ms",
+      },
+    },
+  });
+  const after = await matchRegexValues({
+    operation: "search_strings",
+    pattern: "storage",
+    caseSensitive: true,
+    values: ["storage/read"],
+  });
+  expect(after).toEqual({ ok: true, value: [0] });
+});
+
 it("validates patterns even when the worker has no candidate values", async () => {
   const invalid = await matchRegexValues({
     operation: "search_procedures",

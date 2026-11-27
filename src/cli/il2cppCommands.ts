@@ -83,6 +83,10 @@ export const registerIl2cppCommands = (
           description:
             "Also link generic method instances (Type<Args>$$Method<Args>) and include them in --ghidra-seeds; needs --binary",
         },
+        max_native_index_bytes: {
+          description:
+            "Estimated bytes for an ELF --binary's relocated-pointer index (default 1073741824); raise when linking stops at this allowance; needs --binary",
+        },
       },
       cliOptions: {
         ghidraSeeds: localPathStringSchema

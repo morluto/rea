@@ -28,7 +28,7 @@ import {
 } from "./GdbProviderIdentity.js";
 import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
-import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
+import { waitForCommandTurn } from "../process/AbortablePromise.js";
 import {
   describeLaunchFailure,
   launcherFailureOf,
@@ -288,6 +288,8 @@ interface GdbSession {
   cleanupStarted: boolean;
   /** close_gdb_session started cleanup, so a successful retry releases the ID. */
   closeRequested: boolean;
+  /** One close may queue past the command bound, so release is never refused. */
+  closeQueued: boolean;
   readonly pending: Map<number, PendingCommand>;
   readonly lines: string[];
   readonly bufferChunks: Buffer[];
@@ -668,6 +670,7 @@ export class GdbSessionManager {
       noInferiorVerified: true,
       cleanupStarted: false,
       closeRequested: false,
+      closeQueued: false,
       pending: new Map(),
       lines: [],
       bufferChunks: [],
@@ -917,10 +920,6 @@ export class GdbSessionManager {
                 ...startupEvidencePayload,
                 records: [...startupEvidencePayload.records],
               },
-              rawResult: {
-                ...startupEvidencePayload,
-                records: [...startupEvidencePayload.records],
-              },
               limitations: [
                 "No usable debugger session became ready during GDB startup.",
                 "GDB startup failed before a usable session could be established; captured startup records are incomplete.",
@@ -1130,22 +1129,6 @@ export class GdbSessionManager {
                   : {}),
                 completion_status: result.completion_status,
               },
-              rawResult: {
-                command,
-                mi: result.mi,
-                records: [...result.records],
-                console: result.console,
-                target: result.target,
-                log: result.log,
-                output_truncated: result.output_truncated,
-                ...(result.output_limits === undefined
-                  ? {}
-                  : { output_limits: result.output_limits }),
-                ...(result.output_invalid_utf8
-                  ? { output_invalid_utf8: true as const }
-                  : {}),
-                completion_status: result.completion_status,
-              },
               limitations: [
                 "The active GDB inferior identity is not established by the debugger session identifier.",
                 ...(result.mi.length === 0
@@ -1185,7 +1168,6 @@ export class GdbSessionManager {
                 operation: "gdb_console",
                 parameters: { session_id: sessionId, command },
                 result: { ...result, records: [...result.records] },
-                rawResult: { ...result, records: [...result.records] },
                 limitations: [
                   "The active GDB inferior identity is not established by the debugger session identifier.",
                   "GDB exited before returning a correlated MI result record; only records retained for the active command are returned raw.",
@@ -1405,6 +1387,11 @@ export class GdbSessionManager {
           } catch {
             // If MI synchronization is lost, stop only the owned debugger process.
           }
+          // Every path here stops the debugger; mark the session as closing
+          // first so an incomplete stop is retried as owned cleanup rather
+          // than kept as a live, ready session.
+          session.cleanupStarted = true;
+          session.closeRequested = true;
           const stopped = await this.#stopDebuggerOnly(session);
           if (stopped.status === "incomplete")
             return err(
@@ -1501,7 +1488,14 @@ export class GdbSessionManager {
     signal?: AbortSignal,
     operationName: "gdb_console" | "close_gdb_session" = "gdb_console",
   ): Promise<Value> {
-    if (session.pendingCommandCount >= this.#maxPendingCommands.value)
+    // Release must stay admissible behind stuck commands; one queued close is
+    // enough, so repeated closes still respect the bound.
+    const closeAdmission =
+      operationName === "close_gdb_session" && !session.closeQueued;
+    if (
+      !closeAdmission &&
+      session.pendingCommandCount >= this.#maxPendingCommands.value
+    )
       throw debuggerResourceConstraintError(
         operationName,
         "transport",
@@ -1513,6 +1507,7 @@ export class GdbSessionManager {
           active_or_queued_commands: session.pendingCommandCount,
         },
       );
+    if (closeAdmission) session.closeQueued = true;
     session.pendingCommandCount += 1;
     const previous = session.commandTail;
     let release: (() => void) | undefined;
@@ -1521,10 +1516,11 @@ export class GdbSessionManager {
       release = resolve;
     });
     try {
-      await waitForGdbCommandTurn(previous, signal);
+      await waitForCommandTurn(previous, signal, "gdb_console");
       acquired = true;
       return await operation();
     } finally {
+      if (closeAdmission) session.closeQueued = false;
       if (acquired) {
         session.pendingCommandCount -= 1;
         release?.();
@@ -1823,7 +1819,6 @@ export class GdbSessionManager {
               command: partial.command,
             },
             result: { ...partial, records: [...partial.records] },
-            rawResult: { ...partial, records: [...partial.records] },
             limitations: [
               "The active GDB inferior identity is not established by the debugger session identifier.",
               "The GDB MI protocol failed; retained records are partial and command completion is unknown.",
@@ -2073,7 +2068,6 @@ export class GdbSessionManager {
             command: pending.evidenceCommand,
           },
           result: { ...partial, records: [...partial.records] },
-          rawResult: { ...partial, records: [...partial.records] },
           limitations: [
             "The active GDB inferior identity is not established by the debugger session identifier.",
             `The GDB command exceeded its ${String(acceptedDeadline.value)} ms deadline (deadlineExpired). ${debuggerAdmissionRecovery(acceptedDeadline)} Retained MI and stream records are partial and command completion is unknown.`,
@@ -2165,7 +2159,6 @@ export class GdbSessionManager {
             command: pending.evidenceCommand,
           },
           result: { ...partial, records: [...partial.records] },
-          rawResult: { ...partial, records: [...partial.records] },
           limitations: [
             "The active GDB inferior identity is not established by the debugger session identifier.",
             "The GDB command was cancelled; retained MI records are partial and command completion is unknown.",
@@ -2243,15 +2236,3 @@ export class GdbSessionManager {
     }
   }
 }
-
-/** Await a serialized command turn, preserving the caller's cancellation reason. */
-const waitForGdbCommandTurn = (
-  previous: Promise<void>,
-  signal?: AbortSignal,
-): Promise<void> => {
-  if (signal === undefined) return previous;
-  return waitForAbortable(previous, signal).then((outcome) => {
-    if (outcome instanceof AbortedWait)
-      throw cancelledBy("gdb_console", outcome);
-  });
-};

@@ -5,6 +5,7 @@ import type {
   ProviderRequestActivitySnapshot,
 } from "../ports/AnalysisProvider.js";
 import type { ProviderOperationHealth } from "../domain/providerOperationHealth.js";
+import type { EngineCloseReport } from "../domain/engineCloseReport.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   closedAnalysisClientError,
@@ -77,6 +78,10 @@ export class DeferredAnalysisClient implements AnalysisClient {
 
   operationHealthSnapshot(): ProviderOperationHealth | undefined {
     return this.#creation.ownedClient?.operationHealthSnapshot?.();
+  }
+
+  unsavedCloseReport(): EngineCloseReport | null {
+    return this.#creation.ownedClient?.unsavedCloseReport?.() ?? null;
   }
 
   close: AnalysisClient["close"] = (options) => this.#creation.close(options);

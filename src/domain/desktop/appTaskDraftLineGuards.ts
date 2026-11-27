@@ -1,3 +1,4 @@
+import { countValues } from "../valueCounts.js";
 import { xmlAttributeQuoteRanges } from "../xmlDocument.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import {
@@ -47,13 +48,6 @@ const kindOf = (lines: readonly string[], index: number) => {
         : `keyword\u0000${keyword}`;
 };
 
-/** How many times each line occurs. */
-const tally = (lines: readonly string[]) => {
-  const counts = new Map<string, number>();
-  for (const line of lines) counts.set(line, (counts.get(line) ?? 0) + 1);
-  return counts;
-};
-
 /**
  * A `lines_present` guard of a text file's unchanged lines beside the first
  * line an edit added, for an author to add by choice: the nearest lines of
@@ -71,7 +65,7 @@ export const lineGuards = (
   before: readonly string[],
   after: readonly string[],
 ): DesktopTaskCheckInput[] => {
-  const [seed, end] = [tally(before), tally(after)];
+  const [seed, end] = [countValues(before), countValues(after)];
   const at = after.findIndex((line) => !seed.has(line));
   if (at < 0) return [];
   const kind = kindOf(after, at);

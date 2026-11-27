@@ -1,9 +1,6 @@
 import { uniqueSorted } from "../domain/canonicalOrdering.js";
 import { blocksProcessStart } from "../config/processStart.js";
-import type {
-  ClientRegistrationStatus,
-  UnhealthyClientRegistrationStatus,
-} from "./ClientRegistrationStatus.js";
+import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
 import { manualRegistrationRemediation } from "./SupportedClients.js";
 import { isDesktopBuildInformationalCheck } from "./DesktopBuildDoctor.js";
 import {
@@ -70,12 +67,14 @@ export const scopeDoctorChecks = (
     ({ name }) =>
       name === "node" || (input.scope.target !== null && name === "target"),
   );
-  const clientChecks = input.scope.clients.map((client) =>
-    selectedRegistrationCheck(
-      client,
-      input.registrations.find((candidate) => candidate.client === client),
-    ),
-  );
+  const clientChecks = input.scope.clients.map((client) => {
+    const status = input.registrations.find(
+      (candidate) => candidate.client === client,
+    );
+    return status === undefined
+      ? undetectedRegistrationCheck(client)
+      : clientRegistrationCheck(status);
+  });
   const environmentChecks = input.checks.filter((check) =>
     registrationEnvironmentInScope(check, input.scope),
   );
@@ -212,50 +211,40 @@ const requiredDesktopBuildChecks = (
       ];
 };
 
-const selectedRegistrationCheck = (
-  client: string,
-  status: ClientRegistrationStatus | undefined,
-): DoctorCheck => {
+const undetectedRegistrationCheck = (client: string): DoctorCheck => {
   const manual = manualRegistrationRemediation(client);
-  if (status === undefined && manual !== undefined)
-    return {
-      name: `registration:${client}`,
-      ok: false,
-      classification: "config_drift",
-      detail: `${client} is not registered through a local configuration file.`,
-      remediation: manual,
-    };
-  return status === undefined
-    ? {
-        name: `registration:${client}`,
-        ok: false,
-        classification: "config_drift",
-        detail: `Requested client ${client} was not detected.`,
-        remediation: `Install or select ${client}, then run rea setup --client ${client}.`,
-      }
-    : status.state === "aligned"
-      ? {
-          name: `registration:${client}`,
-          ok: true,
-          classification: "healthy",
-          detail: status.config_path,
-          ...(status.scope === undefined
-            ? {}
-            : { details: { scope: status.scope } }),
-        }
-      : registrationCheck(status);
+  return {
+    name: `registration:${client}`,
+    ok: false,
+    classification: "config_drift",
+    detail:
+      manual === undefined
+        ? `Requested client ${client} was not detected.`
+        : `${client} is not registered through a local configuration file.`,
+    remediation:
+      manual ??
+      `Install or select ${client}, then run rea setup --client ${client}.`,
+  };
 };
 
-const registrationCheck = (
-  status: UnhealthyClientRegistrationStatus,
-): DoctorCheck => ({
-  name: `registration:${status.client}`,
-  ok: false,
-  classification: status.state === "unknown" ? "unknown" : "config_drift",
-  detail: status.config_path,
-  ...(status.scope === undefined ? {} : { details: { scope: status.scope } }),
-  remediation: status.remediation,
-});
+/** Project a detected registration for either an explicit client check or an audit. */
+export const clientRegistrationCheck = (
+  status: ClientRegistrationStatus,
+): DoctorCheck => {
+  const aligned = status.state === "aligned";
+  return {
+    name: `registration:${status.client}`,
+    ok: aligned,
+    classification: aligned
+      ? "healthy"
+      : status.state === "unknown"
+        ? "unknown"
+        : "config_drift",
+    detail: status.config_path,
+    ...(status.scope === undefined ? {} : { details: { scope: status.scope } }),
+    ...(aligned ? {} : { remediation: status.remediation }),
+  };
+};
 
 const selectedSkillCheck = (
   state: DoctorScopeInput["skillState"],

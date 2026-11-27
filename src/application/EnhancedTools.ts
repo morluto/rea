@@ -1,4 +1,5 @@
 import { boundedList } from "../domain/boundedList.js";
+import { withRequiredLimitedDirections } from "../domain/relationshipCoverage.js";
 import { permitsCapabilityFallback } from "./CapabilityFallback.js";
 import { withOverviewInventoryCoverage } from "../domain/native/inventoryCoverage.js";
 import type { NativeCallGraph } from "../domain/native/nativeCallGraph.js";
@@ -77,12 +78,13 @@ import {
 import type { DirectEnhancedToolName } from "./oneShotOperationInput.js";
 import { resolveAnalysisDocument } from "./AnalysisDocument.js";
 import { traceCallPath } from "./CallPathTracing.js";
-import { resolveXrefsName } from "./XrefsAddressResolution.js";
+import { resolveNativeSymbol } from "./NativeSymbolSelection.js";
 import {
   parseProcedureAddress,
   resolveProcedureAddress,
 } from "./ProcedureAddressResolution.js";
 import { traceLiteralFeature } from "./EnhancedLiteralTracing.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import { projectNativeApiInspection } from "./native/NativeApiInspection.js";
 
 type BatchResolution = {
@@ -129,6 +131,7 @@ export class EnhancedTools {
     name: DirectEnhancedToolName,
     input: unknown,
     signal?: AbortSignal,
+    progress?: ProgressReporter,
   ): EnhancedResult {
     switch (name) {
       case "binary_overview": {
@@ -175,7 +178,11 @@ export class EnhancedTools {
       case "decompile_all": {
         const parsed = enhancedInputSchemas.decompile_all.safeParse(input);
         return parsed.success
-          ? this.executeValidated({ name, input: parsed.data }, signal)
+          ? this.executeValidated(
+              { name, input: parsed.data },
+              signal,
+              progress,
+            )
           : invalidEnhancedInput(name, parsed.error, input);
       }
     }
@@ -185,6 +192,7 @@ export class EnhancedTools {
   executeValidated(
     call: ValidatedEnhancedCall,
     signal?: AbortSignal,
+    progress?: ProgressReporter,
   ): EnhancedResult {
     switch (call.name) {
       case "inspect_native_dispatch_metadata":
@@ -202,7 +210,7 @@ export class EnhancedTools {
       case "batch_decompile":
         return this.#batchDecompile(call.input.addresses, signal);
       case "decompile_all":
-        return decompileAll(this.analysis, call.input, signal);
+        return decompileAll(this.analysis, call.input, signal, progress);
       case "get_call_graph":
         return this.#callGraph(call.input, signal);
       case "analyze_swift_types":
@@ -596,10 +604,16 @@ export class EnhancedTools {
       for (const limitation of execution.limitations)
         limitations.add(limitation);
       const reportedCoverage = execution.relationshipCoverage;
-      const coverage = reportedCoverage ?? {
-        status: "unknown" as const,
-        reason: "Provider did not report relationship coverage.",
-      };
+      const directionFallback: ["callers"] | ["callees"] =
+        input.direction === "backward" ? ["callers"] : ["callees"];
+      const coverage =
+        reportedCoverage === undefined
+          ? {
+              status: "unknown" as const,
+              reason: "Provider did not report relationship coverage.",
+              limited_directions: directionFallback,
+            }
+          : withRequiredLimitedDirections(reportedCoverage, directionFallback);
       const relationshipLimitations =
         reportedCoverage === undefined
           ? [
@@ -687,19 +701,28 @@ export class EnhancedTools {
     signal?: AbortSignal,
   ): EnhancedResult {
     const { name, limit, offset } = input;
-    const resolved = await resolveXrefsName(
+    const resolved = await resolveNativeSymbol(
       this.analysis,
       name,
-      signal,
       "find_xrefs_to_name",
+      signal,
+      { procedureLookup: true },
     );
     if (!resolved.ok) return resolved;
-    if (resolved.value === null)
-      return ok({ status: "unresolved", name, reason: "name_not_found" });
+    const resolution = resolved.value;
+    if (resolution.status === "unresolved")
+      return ok({
+        status: "unresolved",
+        name,
+        reason: "name_not_found",
+        ...(resolution.candidates.length === 0
+          ? {}
+          : { candidates: resolution.candidates.map((item) => ({ ...item })) }),
+      });
 
     const observed = await this.#observe(
       "xrefs",
-      { address: resolved.value },
+      { address: resolution.address },
       signal,
     );
     if (!observed.ok) return observed;
@@ -719,7 +742,8 @@ export class EnhancedTools {
     return ok({
       status: "resolved",
       name,
-      address: resolved.value,
+      ...(resolution.name === name ? {} : { resolved_name: resolution.name }),
+      address: resolution.address,
       xrefs: page,
       ...(hasPaging
         ? {

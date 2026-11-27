@@ -48,7 +48,10 @@ import { readAnalysisSnapshot } from "../../src/application/binary/AnalysisSnaps
 import { EvidenceFileError } from "../../src/domain/evidenceErrors.js";
 import { err, ok } from "../../src/domain/result.js";
 import { isCliOperationFailure } from "../../src/cliLogging.js";
-import { observed } from "../fixtures/analysisExecution.js";
+import {
+  createFixtureProviderIdentity,
+  observed,
+} from "../fixtures/analysisExecution.js";
 import {
   createBinarySessionTargets,
   createTestBinarySession,
@@ -330,14 +333,9 @@ it("preserves the caller path on an authenticated record refused by the ledger",
       {
         resolveAnalysisProfile: async () =>
           ok({
-            profile: createAnalysisProfile(
-              {
-                id: "fixture",
-                name: "Fixture analysis provider",
-                version: "1",
-              },
-              { fixture: true },
-            ),
+            profile: createAnalysisProfile(createFixtureProviderIdentity(), {
+              fixture: true,
+            }),
           }),
       },
     ),
@@ -489,10 +487,9 @@ describe("snapshot publication finalization", () => {
       const [path] = await createBinarySessionTargets();
       const snapshotPath = join(dirname(path), "snapshot.json");
       const controller = new AbortController();
-      const profile = createAnalysisProfile(
-        { id: "fixture", name: "Fixture analysis provider", version: "1" },
-        { fixture: true },
-      );
+      const profile = createAnalysisProfile(createFixtureProviderIdentity(), {
+        fixture: true,
+      });
       const cancelled = mode.includes("cancel");
       const { dependencies, session } = factories({
         profile,
@@ -558,10 +555,9 @@ describe("snapshot publication finalization", () => {
   it("preserves a snapshot write failure over later cancellation without a publication receipt", async () => {
     const [path] = await createBinarySessionTargets();
     const controller = new AbortController();
-    const profile = createAnalysisProfile(
-      { id: "fixture", name: "Fixture analysis provider", version: "1" },
-      { fixture: true },
-    );
+    const profile = createAnalysisProfile(createFixtureProviderIdentity(), {
+      fixture: true,
+    });
     const { dependencies, session } = factories({
       profile,
       onClose: () => controller.abort({ later: true }),

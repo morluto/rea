@@ -26,6 +26,7 @@ import {
   VerifierFixture,
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 const run = createVerifierRun();
 const mode = process.argv[2] ?? "symbols";
 if (
@@ -91,10 +92,6 @@ const workspaceFixture = await VerifierFixture.open({
   prefix: "rea-nativeaot-proof-",
 });
 const workspace = workspaceFixture.path;
-const retainWorkspace = (message, options) => {
-  workspaceFixture.retain(message);
-  return new Error(message, options);
-};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const packageRoot = process.env.REA_NATIVEAOT_PROOF_PACKAGE_ROOT;
@@ -162,7 +159,9 @@ const transport = new StdioClientTransport({
   env,
   stderr: "pipe",
 });
-const client = new Client({ name: "rea-nativeaot-proof", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "rea-nativeaot-proof", version: "1" }),
+);
 let stderr = "";
 transport.stderr?.on("data", (chunk) => {
   stderr = (stderr + chunk.toString()).slice(-65536);
@@ -211,7 +210,10 @@ await withVerifierFixture(workspaceFixture, async () => {
       if (failure.isError !== true) {
         opened = true;
         failure = await client.callTool(
-          { name: "inspect_native_load_image", arguments: {} },
+          {
+            name: "inspect_native_load_image",
+            arguments: { detail: "complete" },
+          },
           { timeout: 360000, signal: commandInterruption.signal },
         );
       }
@@ -357,7 +359,12 @@ await withVerifierFixture(workspaceFixture, async () => {
         assert.ok(dispatch.pseudocode.trim());
         for (const literal of oracle.expected_strings)
           assert.ok(
-            (await call("search_strings", { pattern: literal })).length > 0,
+            (
+              await call("search_strings", {
+                detail: "complete",
+                pattern: literal,
+              })
+            ).length > 0,
             `Frozen string missing: ${literal}`,
           );
         const observed = await call("read_bytes", {
@@ -420,7 +427,7 @@ await withVerifierFixture(workspaceFixture, async () => {
     cleanupFailure = cause;
   }
   if (cleanupFailure !== undefined || primaryFailure !== undefined)
-    throw retainWorkspace(
+    throw workspaceFixture.retainedError(
       `NativeAOT verification failed; retained diagnostic workspace: ${workspace}`,
       {
         cause:
@@ -436,7 +443,7 @@ await withVerifierFixture(workspaceFixture, async () => {
     );
   const interrupted = commandInterruption.reason();
   if (interrupted !== undefined)
-    throw retainWorkspace(
+    throw workspaceFixture.retainedError(
       `NativeAOT verification interrupted; retained diagnostic workspace: ${workspace}`,
       { cause: interrupted },
     );

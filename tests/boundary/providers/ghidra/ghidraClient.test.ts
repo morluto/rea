@@ -1,5 +1,6 @@
 import { parseConfig } from "../../../../src/config/parseConfig.js";
 import type { BridgeMaxReplyBytes } from "../../../../src/config/bridgeMaxReplyBytes.js";
+import type { GhidraCancelGrace } from "../../../../src/config/ghidraCancelGrace.js";
 import { GhidraProvider } from "../../../../src/ghidra/GhidraProvider.js";
 import { fixtureDosLoadImage } from "../../../../src/ghidra/GhidraLoadImage.fixture.js";
 import { jsonValueSchema } from "../../../../src/domain/jsonValue.js";
@@ -10,6 +11,7 @@ import {
 } from "../../../../src/domain/analysisErrorCore.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
+import { sha256 as digest } from "../../../support/sha256.js";
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import {
@@ -120,10 +122,17 @@ const preExitedProcessLauncher = (options: {
 };
 
 const clients: GhidraClient[] = [];
+/**
+ * The `hang_tools` bridge never answers a cancel, so these cases only wait
+ * out the grace before the fallback; the floor keeps that wait short.
+ */
+const UNANSWERED_GRACE: GhidraCancelGrace = { graceMs: 100, source: "setting" };
+
 const clientFor = (
   launcher: GhidraLauncher,
   options: {
     readonly startupTimeoutMs?: number;
+    readonly readStartupTimeoutMs?: () => number;
     readonly onDiagnostic?: (event: GhidraDiagnostic) => void;
     readonly transport?: GhidraTransportKind;
     readonly runId?: string;
@@ -131,6 +140,7 @@ const clientFor = (
     readonly targetPath?: string;
     readonly targetSha256?: string;
     readonly bridgeMaxReplyBytes?: BridgeMaxReplyBytes;
+    readonly cancelGrace?: GhidraCancelGrace;
   } = {},
 ): GhidraClient => {
   const client = new GhidraClient({
@@ -141,8 +151,14 @@ const clientFor = (
     providerVersion: PROVIDER_VERSION,
     profileDigest: PROFILE_DIGEST,
     startupTimeoutMs: options.startupTimeoutMs ?? 1_000,
+    ...(options.readStartupTimeoutMs === undefined
+      ? {}
+      : { readStartupTimeoutMs: options.readStartupTimeoutMs }),
     ...(options.runId === undefined ? {} : { runId: options.runId }),
     ...(options.logger === undefined ? {} : { logger: options.logger }),
+    ...(options.cancelGrace === undefined
+      ? {}
+      : { cancelGrace: options.cancelGrace }),
     ...(options.bridgeMaxReplyBytes === undefined
       ? {}
       : { bridgeMaxReplyBytes: options.bridgeMaxReplyBytes }),
@@ -458,8 +474,6 @@ it("hashes snapshot section ranges in the same pass as the whole-file digest", a
     await client.close();
   });
   const bytes = readFileSync(fixturePath);
-  const digest = (chunk: Buffer): string =>
-    createHash("sha256").update(chunk).digest("hex");
   const result = await client.hashTargetSnapshotRanges([
     { start: 0, end: 4 },
     { start: 4, end: bytes.length },
@@ -1543,6 +1557,87 @@ it("applies one startup deadline and removes the private runtime", async () => {
   await expect(waitForExit(child)).resolves.toBe(true);
 });
 
+it("returns an elapsed startup again until its deadline changes or the client closes", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  let deadlineMs = 30;
+  const launcher = new FixtureLauncher("silent");
+  const client = clientFor(launcher, {
+    startupTimeoutMs: 30,
+    readStartupTimeoutMs: () => deadlineMs,
+  });
+  const elapse = async () => {
+    const pending = client.start();
+    await vi.advanceTimersByTimeAsync(deadlineMs);
+    return waitFor(() => pending);
+  };
+
+  const first = await elapse();
+  expect(first).toMatchObject({
+    ok: false,
+    error: { kind: "timeout", timeoutMs: 30 },
+  });
+  // The same target, profile and deadline would run it out again.
+  const repeated = await client.start();
+  expect(launcher.runtimeRoots).toHaveLength(1);
+  expect(repeated).toEqual(first);
+
+  deadlineMs = 40;
+  await expect(elapse()).resolves.toMatchObject({
+    ok: false,
+    error: { kind: "timeout", timeoutMs: 40 },
+  });
+  expect(launcher.runtimeRoots).toHaveLength(2);
+
+  await client.close();
+  await expect(elapse()).resolves.toMatchObject({
+    ok: false,
+    error: { kind: "timeout", timeoutMs: 40 },
+  });
+  vi.useRealTimers();
+  expect(launcher.runtimeRoots).toHaveLength(3);
+});
+
+it("forgets an elapsed startup that a close interrupted during its cleanup", async () => {
+  const fixture = new FixtureLauncher("silent");
+  const elapsedCleanup = phaseGate();
+  let launches = 0;
+  const launcher: GhidraLauncher = {
+    launch: async (session) => {
+      const launched = await fixture.launch(session);
+      if (!launched.ok) return launched;
+      const held = ++launches === 1;
+      return ok({
+        ...launched.value,
+        cleanup: async () => {
+          if (held) await elapsedCleanup.hold();
+          const child = launched.value.process;
+          if (child.exitCode === null && child.signalCode === null)
+            child.kill("SIGKILL");
+          await waitForChildExit(child, 5_000);
+          return { cleaned: true as const, signaled: true };
+        },
+      });
+    },
+  };
+  const client = clientFor(launcher, { startupTimeoutMs: 200 });
+  const pending = client.start();
+  await elapsedCleanup.reached(pending, "elapsed startup cleanup");
+  // The deadline already decided this startup; close lands during cleanup.
+  const closing = client.close();
+  elapsedCleanup.release();
+  const elapsed = await pending;
+  expect(elapsed).toMatchObject({ ok: false, error: { kind: "timeout" } });
+  await expect(closing).resolves.toEqual({ ok: true, value: null });
+
+  // The close is the caller's retry: the next start launches again instead
+  // of returning the failure the interrupted cleanup could have recorded.
+  const retry = await client.start();
+  if (elapsed.ok || retry.ok) throw new Error("Expected startup failures");
+  expect(retry.error).not.toBe(elapsed.error);
+  expect(retry.error.kind).toBe("timeout");
+  expect(fixture.runtimeRoots).toHaveLength(2);
+});
+
 it("cancels startup promptly and leaves no project or process", async () => {
   const launcher = new FixtureLauncher("silent");
   const client = clientFor(launcher, { startupTimeoutMs: 10_000 });
@@ -1594,7 +1689,7 @@ describe("GhidraClient runtime removal failures", () => {
       const launcher = new FixtureLauncher(
         stage === "active cancellation" ? "hang_tools" : "success",
       );
-      const client = clientFor(launcher);
+      const client = clientFor(launcher, { cancelGrace: UNANSWERED_GRACE });
       await expect(client.start()).resolves.toMatchObject({ ok: true });
       const runtimeRoot = launcher.runtimeRoots[0] ?? "";
       // Without write permission its entries cannot be removed.
@@ -2362,7 +2457,7 @@ it.each([null, "caller stopped", new Error("caller stopped")])(
   "retains cancellation reasons before admission, in the queue, and on the wire (%j)",
   async (reason) => {
     const launcher = new FixtureLauncher("hang_tools");
-    const client = clientFor(launcher);
+    const client = clientFor(launcher, { cancelGrace: UNANSWERED_GRACE });
     await expect(client.start()).resolves.toMatchObject({ ok: true });
     const activeController = new AbortController();
     const active = client.callTool(
@@ -2404,9 +2499,17 @@ it.each([null, "caller stopped", new Error("caller stopped")])(
     expect(result.error.cancellation?.reason).toBe(reason);
     await expect(waiting).resolves.toMatchObject({
       ok: false,
-      error: { kind: "process" },
+      error: {
+        kind: "process",
+        message: expect.stringContaining(
+          "REA_GHIDRA_CANCEL_GRACE_MS is 100 ms (source launch environment",
+        ),
+      },
     });
     expect(launcher.requests).not.toContain("list_procedures");
+    // The bridge was asked to stop the decompile and never answered, so the
+    // session closed once the grace period elapsed.
+    expect(launcher.requests).toContain("cancel");
     expect(await waitForExit(launcher.processes[0])).toBe(true);
     await expect(access(launcher.runtimeRoots[0] ?? "")).rejects.toMatchObject({
       code: "ENOENT",
@@ -2783,7 +2886,7 @@ describe("GhidraClient operation progress heartbeats", () => {
     expect(fastUpdates).toEqual([]);
 
     const launcher = new FixtureLauncher("hang_tools");
-    const client = clientFor(launcher);
+    const client = clientFor(launcher, { cancelGrace: UNANSWERED_GRACE });
     await expect(client.start()).resolves.toMatchObject({ ok: true });
 
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
@@ -2826,5 +2929,74 @@ describe("GhidraClient operation progress heartbeats", () => {
     });
     await vi.advanceTimersByTimeAsync(15_000);
     expect(updates).toHaveLength(2);
+  });
+});
+
+describe("GhidraClient active request interruption", () => {
+  it.each([
+    "interruptible_tools",
+    "interruptible_tools_reply_success",
+  ] as const)(
+    "keeps the session and queued requests when the bridge answers the cancel (%s)",
+    async (mode) => {
+      const launcher = new FixtureLauncher(mode);
+      const client = clientFor(launcher);
+      await expect(client.start()).resolves.toMatchObject({ ok: true });
+      const controller = new AbortController();
+      const reason = new Error("caller stopped");
+      const active = client.callTool(
+        "procedure_pseudo_code",
+        { document: null, procedure: "fixture_main" },
+        { signal: controller.signal },
+      );
+      await waitFor(() =>
+        expect(launcher.requests).toContain("procedure_pseudo_code"),
+      );
+      const queued = client.callTool("list_segments", {});
+      controller.abort(reason);
+
+      const result = await active;
+      if (result.ok) throw new Error("Expected active cancellation");
+      expect(result.error.kind).toBe("cancelled");
+      expect(result.error.cancellation?.reason).toBe(reason);
+      expect(result.error.cleanupFailure).toBeUndefined();
+      await expect(queued).resolves.toMatchObject({ ok: true });
+      // The fixture answers the cancelled request twice; the late copy is
+      // ignored and the same process serves the next request.
+      await expect(client.callTool("list_segments", {})).resolves.toMatchObject(
+        { ok: true },
+      );
+      expect(launcher.requests.filter((method) => method === "cancel")).toEqual(
+        ["cancel"],
+      );
+      expect(launcher.processes).toHaveLength(1);
+      expect(exited(launcher.processes[0])).toBe(false);
+      expect(client.isReady()).toBe(true);
+      await expect(client.close()).resolves.toEqual({ ok: true, value: null });
+      expect(await waitForExit(launcher.processes[0])).toBe(true);
+    },
+  );
+
+  it("closes the session without a cancel frame for an operation that is not interruptible", async () => {
+    const launcher = new FixtureLauncher("hang_tools");
+    const client = clientFor(launcher);
+    await expect(client.start()).resolves.toMatchObject({ ok: true });
+    const controller = new AbortController();
+    const active = client.callTool(
+      "set_address_name",
+      { document: null, address: "0x1000", name: "renamed" },
+      { signal: controller.signal },
+    );
+    await waitFor(() =>
+      expect(launcher.requests).toContain("set_address_name"),
+    );
+    controller.abort("caller stopped");
+    await expect(active).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "cancelled" },
+    });
+    expect(launcher.requests).not.toContain("cancel");
+    expect(await waitForExit(launcher.processes[0])).toBe(true);
+    expect(client.isReady()).toBe(false);
   });
 });

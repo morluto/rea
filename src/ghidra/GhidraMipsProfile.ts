@@ -1,8 +1,11 @@
 import { isDeepStrictEqual } from "node:util";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
-import type {
-  BinaryTarget,
-  MipsElfMetadata,
+import {
+  isRecordlessLegacyMipsExecHeader,
+  mipsLimitationMessages,
+  type BinaryTarget,
+  type MipsElfLimitation,
+  type MipsElfMetadata,
 } from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 
@@ -50,6 +53,20 @@ export const ghidraMipsLanguageOverride = (
     : undefined;
 
 /**
+ * Whether every recorded inspection limitation is a truncated section header
+ * table. Recordless legacy ELF32 MIPS ET_EXEC images may omit trailing section
+ * tables when carved from firmware; any other incomplete declaration stays
+ * fail-closed.
+ */
+const isOnlyTruncatedSectionTable = (
+  limitations?: readonly MipsElfLimitation[],
+): boolean =>
+  limitations === undefined ||
+  limitations.every(
+    (limitation) => limitation.kind === "truncated_section_table",
+  );
+
+/**
  * Recordless legacy ELF32 MIPS admission: the header declares no ABI field and
  * carries no ABI flags record, so o32 is an analysis assumption derived from
  * ELF32/ET_EXEC structure, never a declared fact. MIPS-I (`EF_MIPS_ARCH_1`),
@@ -65,27 +82,15 @@ const hasLegacyMipsHeaderShape = (target: BinaryTarget): boolean => {
     target.mips === undefined
   )
     return false;
-  const { flags, abiFlags, limitations } = target.mips;
-  const arch = flags & 0xf0000000;
   return (
     // The lane and its verification cover executable firmware images only;
     // recordless relocatable objects stay outside the inferred-o32 assumption.
-    target.mips.elfClass === 32 &&
-    target.mips.type === MIPS_ET_EXEC &&
-    (arch === MIPS_ARCH_1 ||
-      arch === MIPS_ARCH_32 ||
-      arch === MIPS_ARCH_32R2) &&
-    (flags & 0x0000f000) === 0 &&
-    (flags & 0x20) === 0 &&
-    // EF_MIPS_ABI_ON32 (bit 0x40) declares the old n32 ABI; it is not an
-    // unspecified-ABI header and must not inherit the o32 assumption.
-    (flags & 0x40) === 0 &&
-    (flags & 0x100) === 0 &&
+    isRecordlessLegacyMipsExecHeader(target.mips) &&
     // Undefined means the record was not inspected; only an inspected
-    // absence establishes the recordless legacy admission. An inspection
-    // that could not examine every declaration source stays unknown.
-    abiFlags === null &&
-    (limitations === undefined || limitations.length === 0)
+    // absence establishes the recordless legacy admission. Only a truncated
+    // section header table may remain unexamined in this legacy lane.
+    target.mips.abiFlags === null &&
+    isOnlyTruncatedSectionTable(target.mips.limitations)
   );
 };
 
@@ -100,7 +105,7 @@ export const ghidraMipsIncompleteDeclarationsReason = (
   (metadata.limitations?.length ?? 0) > 0
     ? [
         "MIPS ABI declaration inspection is incomplete; unsupported attributes or conflicting declaration sources may remain unknown.",
-        ...(metadata.limitations ?? []),
+        ...mipsLimitationMessages(metadata.limitations),
       ].join(" ")
     : null;
 
@@ -183,7 +188,7 @@ export const ghidraMipsUnsupportedReason = (
     // recordless admission is not established for this header.
     return [
       "This recordless legacy admission requires a complete ABI-record inspection; ABI declarations in unavailable headers remain unknown.",
-      ...(metadata.limitations ?? []),
+      ...mipsLimitationMessages(metadata.limitations),
     ].join(" ");
   }
   if (
@@ -229,7 +234,7 @@ export const ghidraMipsUnsupportedReason = (
   if (abi === undefined || abi === null)
     return [
       "This Ghidra MIPS lane requires an inspected ABI flags record; header flags alone do not establish the floating-point ABI.",
-      ...(metadata.limitations ?? []),
+      ...mipsLimitationMessages(metadata.limitations),
     ].join(" ");
   if (abi.version !== 0)
     return "This Ghidra MIPS lane requires ABI flags version 0; newer record semantics are unsupported.";
@@ -446,7 +451,11 @@ export const ghidraMipsProfileParameters = (
       flags: target.mips.flags,
       ...(target.mips.limitations === undefined
         ? {}
-        : { abi_flags_limitations: [...target.mips.limitations] }),
+        : {
+            abi_flags_limitations: target.mips.limitations.map(
+              (limitation) => ({ ...limitation }),
+            ),
+          }),
       abi_flags:
         abi === undefined || abi === null
           ? null

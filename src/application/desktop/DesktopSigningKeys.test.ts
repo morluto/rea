@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { sha256 as digest } from "../../../tests/support/sha256.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -107,8 +108,6 @@ describe("retainSigningKeys before an export", () => {
   it("leaves out the program's package when only the repository whose key was dropped supplied it", async () => {
     const large = Buffer.alloc(64, 1);
     const small = Buffer.alloc(16, 2);
-    const digest = (bytes: Buffer) =>
-      createHash("sha256").update(bytes).digest("hex");
     const signed = (
       host: string,
       bytes: Buffer,
