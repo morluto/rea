@@ -1,3 +1,4 @@
+import { AnalysisTargetFailureError } from "../domain/analysisErrorCore.js";
 import { deflateSync } from "node:zlib";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -497,6 +498,43 @@ describe("LabviewArtifactProvider", () => {
     if (parsed.ok) return;
     expect(parsed.failure.failure.kind).toBe("malformed");
     expect(parsed.failure.message).toContain("overlaps the block headers");
+  });
+
+  it("reports an embedded container's parse failure in file coordinates", async () => {
+    // Point the first block's section-start table at the count word, a
+    // malformed table reported at that block header's table-offset field.
+    const container = labviewContainer();
+    const info = container.readUInt32BE(16);
+    const blockInfo = info + container.readUInt32BE(info + 44);
+    const fieldAt = blockInfo + 4 + 8;
+    container.writeUInt32BE(0, fieldAt);
+    const direct = parseLabviewRsrc(container);
+    expect(direct.ok).toBe(false);
+    if (direct.ok) return;
+    expect(direct.failure.failure.offset).toBe(fieldAt);
+
+    const fixture = peResourceFixture(true, [
+      { type: 10, name: 1, language: 1033, payload: container },
+    ]);
+    const origin = fixture.bytes.indexOf(container);
+    expect(origin).toBeGreaterThan(0);
+    const root = await createTestTempDirectory("rea-labview-embedded-fail-");
+    const path = join(root, "fixture.exe");
+    await writeFile(path, fixture.bytes);
+    const provider = new LabviewArtifactProvider();
+    try {
+      const result = await provider.inspect({ path });
+      if (result.ok) throw new Error("expected a parse refusal");
+      expect(result.error).toBeInstanceOf(AnalysisTargetFailureError);
+      if (!(result.error instanceof AnalysisTargetFailureError))
+        throw result.error;
+      expect(result.error.failure).toMatchObject({
+        kind: "malformed",
+        offset: origin + fieldAt,
+      });
+    } finally {
+      await provider.close();
+    }
   });
 
   it("keeps the completed file identity on a later parse failure", async () => {

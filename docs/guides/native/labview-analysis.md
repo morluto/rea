@@ -27,7 +27,9 @@ SHA-256, then reports:
 - the RSRC header: format version, four-character file type and creator, and the
   data and info ranges. Those offsets are relative to the container; add
   `container.file_offset` — where the container starts in the selected file, 0
-  for a direct RSRC file — to map them onto the artifact;
+  for a direct RSRC file — to map them onto the artifact. A container that
+  fails to parse returns no result, so its failure offset is already given in
+  the selected file's coordinates;
 - the LabVIEW version recorded by the container's `vers` block, decoded from
   the packed four-byte field at the start of that record (two decimal major
   digits, then the minor digit), with `version_coverage` saying whether it was

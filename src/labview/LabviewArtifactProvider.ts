@@ -250,7 +250,7 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
     const chosen = containers.reduce((largest, candidate) =>
       candidate.bytes.length > largest.bytes.length ? candidate : largest,
     );
-    const parsed = parseLabviewRsrc(chosen.bytes);
+    const parsed = parseLabviewRsrc(chosen.bytes, chosen.offset);
     if (!parsed.ok) {
       const limit = limitCause(parsed.failure);
       if (limit !== undefined) return err(withIdentity(limitFailure(limit)));

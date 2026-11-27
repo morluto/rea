@@ -258,8 +258,16 @@ const versionOf = (sections: readonly Uint8Array[]): string | null => {
  * not merely the file, and every allocation is bounded before it happens. A
  * truncated or malformed container fails with its parse facts rather than
  * returning a partial block list.
+ *
+ * `origin` is where the container starts in the selected file (0 for a direct
+ * RSRC file). A successful result keeps container-relative ranges, which the
+ * caller maps with `container.file_offset`; a failure has no such result, so
+ * its offset is reported in the selected file's coordinates.
  */
-export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
+export const parseLabviewRsrc = (
+  bytes: Buffer,
+  origin = 0,
+): LabviewParseResult => {
   const reader = new BinaryReader(bytes, false, FORMAT);
   try {
     if (
@@ -495,7 +503,20 @@ export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
     };
   } catch (cause) {
     if (cause instanceof ParseFailureError)
-      return { ok: false, failure: cause };
+      return { ok: false, failure: inSelectedFile(cause, origin) };
     throw cause;
   }
+};
+
+/** Move a container-relative failure offset into the selected file. */
+const inSelectedFile = (
+  cause: ParseFailureError,
+  origin: number,
+): ParseFailureError => {
+  const { offset } = cause.failure;
+  if (origin === 0 || offset === undefined) return cause;
+  return new ParseFailureError(
+    { ...cause.failure, offset: origin + offset },
+    { cause },
+  );
 };
