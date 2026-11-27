@@ -380,18 +380,25 @@ export function traceAffectedTests({ files, snapshot }) {
     isTest(path) ||
     path.startsWith("scripts/") ||
     path.startsWith("tests/fixtures/");
+  const mentionsPath = (source, path) => source.includes(path);
+  // A possible mention can select extra tests. Only a complete path literal
+  // or a traced import establishes coverage for an individual input.
+  const quotesPath = (source, path) =>
+    ["'", '"', "`"].some((quote) => source.includes(quote + path + quote));
+  const names = (file, paths, matches = mentionsPath) =>
+    paths.some((path) => matches(sources.get(file) ?? "", path));
+
   // A seed and every helper that imports or names it, directly or through another.
-  const throughHelpers = (seed) => {
+  const throughHelpers = (seed, matches = mentionsPath) => {
     const reached = new Set(seed);
     for (let grew = true; grew;) {
       grew = false;
       const namedReached = [...reached].filter(isNamedTarget);
       for (const helper of helpers) {
         if (reached.has(helper)) continue;
-        const source = sources.get(helper) ?? "";
         if (
           imports.get(helper).some((target) => reached.has(target)) ||
-          namedReached.some((target) => source.includes(target))
+          names(helper, namedReached, matches)
         ) {
           reached.add(helper);
           grew = true;
@@ -415,38 +422,25 @@ export function traceAffectedTests({ files, snapshot }) {
   const named = (reached) => [
     ...new Set([...files, ...[...reached].filter(isNamedTarget)]),
   ];
-  const names = (test, paths) =>
-    paths.some((path) => (sources.get(test) ?? "").includes(path));
 
-  // A fixture without a traced import or literal path may be loaded through
-  // a computed locator. Other selected files do not establish fixture coverage.
-  for (const fixture of files.filter(isTraceableFixture)) {
-    const reached = throughHelpers([fixture]);
-    const paths = [fixture, ...[...reached].filter(isNamedTarget)];
-    if (
-      !tests.some(
-        (test) =>
-          imports.get(test).some((target) => reached.has(target)) ||
-          names(test, paths),
-      )
-    )
-      untraced.push(`Input is not traced to tests: ${fixture}`);
-  }
-
-  // A changed shared module that no test reaches has no coverage in a
-  // selection, even when other changes select tests.
-  for (const library of changedModules.filter(isScriptLibrary)) {
-    const reached = throughHelpers([library]);
+  const hasTestConsumer = (path) => {
+    const reached = throughHelpers([path], quotesPath);
     const paths = [...reached].filter(isNamedTarget);
-    if (
-      !tests.some(
-        (test) =>
-          imports.get(test).some((target) => reached.has(target)) ||
-          names(test, paths),
-      )
-    )
+    return tests.some(
+      (test) =>
+        imports.get(test).some((target) => reached.has(target)) ||
+        names(test, paths, quotesPath),
+    );
+  };
+
+  // Check each input independently: another change can select tests without
+  // exercising this fixture or library.
+  for (const fixture of files.filter(isTraceableFixture))
+    if (!hasTestConsumer(fixture))
+      untraced.push(`Input is not traced to tests: ${fixture}`);
+  for (const library of changedModules.filter(isScriptLibrary))
+    if (!hasTestConsumer(library))
       untraced.push(`No test reaches shared script module: ${library}`);
-  }
 
   // A shared script module that another script, configuration file, hook or
   // workflow imports or names as a standalone file name can shape every run.
