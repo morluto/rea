@@ -1,4 +1,5 @@
 import { BinaryReader } from "../binaryContainer.js";
+import { ZIP_EXTRA_FIELD } from "./zipExtraFields.js";
 import {
   ZIP_LOCAL_HEADER_BYTES,
   zipLocalDataOffset,
@@ -34,7 +35,6 @@ export interface ZipMemberRegionAccount {
 
 const DATA_DESCRIPTOR_SIGNATURE = 0x08074b50;
 const DATA_DESCRIPTOR_FLAG = 0x8;
-const ZIP64_EXTRA = 0x1;
 const ZIP64_SIZE_SENTINEL = 0xffffffff;
 /** The APK Signature Scheme v2+ block sits between the last member and the directory. */
 const APK_SIGNING_BLOCK_MAGIC = "APK Sig Block 42";
@@ -209,7 +209,7 @@ const localCompressedSize = async (
   for (let at = 0; at + 4 <= length;) {
     const bytes = extra.u16(at + 2);
     const next = at + 4 + bytes;
-    if (extra.u16(at) === ZIP64_EXTRA) {
+    if (extra.u16(at) === ZIP_EXTRA_FIELD.zip64) {
       // Fields are present only for their corresponding 32-bit sentinel.
       const compressedAt =
         at + 4 + (header.u32(22) === ZIP64_SIZE_SENTINEL ? 8 : 0);

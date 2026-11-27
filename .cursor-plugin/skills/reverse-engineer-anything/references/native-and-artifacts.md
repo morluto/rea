@@ -220,6 +220,21 @@ separate functions. Leaf functions have no entry, so a missing entry is not
 absence. Compare provider addresses minus `image_base` with the RVAs. See
 [PE x64 exception-directory function ranges](https://github.com/morluto/rea/blob/main/docs/guides/native/pe-unwind-ranges.md).
 
+## Mach-O function starts and data in code
+
+Use `inspect_macho_function_starts` for an explicit local thin Mach-O, or one
+slice of a universal Mach-O, when the question is which addresses the linker
+recorded as function starts, or which bytes inside code are jump tables or
+literal data. Pass `architecture` for a universal file. The CLI equivalent is
+`inspect-macho-function-starts PATH`. Starts are absolute VM addresses from
+`LC_FUNCTION_STARTS` (ULEB128 deltas from the `__TEXT` vmaddr). Data-in-code
+entries name offset, length, kind (`DICE_KIND_DATA`, `JUMP_TABLE8`,
+`JUMP_TABLE16`, `JUMP_TABLE32`, `ABS_JUMP_TABLE32`, or the numeric kind), and
+the function start that owns the address. Page with `offset` and `limit`.
+Counts cover every entry. A stripped image can still carry these tables. The
+reader does not disassemble. See
+[Mach-O function starts and data in code](https://github.com/morluto/rea/blob/main/docs/guides/native/macho-function-starts.md).
+
 ## PE overlay
 
 Use `inspect_pe_overlay` for an explicit local PE32/PE32+ image when the
@@ -474,6 +489,23 @@ media types, unsupported digest algorithms, and symlink blobs are findings.
 Child symbolic links are not followed. Directory form only; tar image layouts
 are not inspected. See
 [OCI image layouts](https://github.com/morluto/rea/blob/main/docs/guides/artifacts/oci-image-layout.md).
+
+## YARA rule matches
+
+Use `inspect_yara_matches` when the caller supplies YARA rule files and asks
+which rules match one explicit local file. It runs the installed `yara` command
+(`REA_YARA_COMMAND` or `yara` on `PATH`) with an argument list, never a shell,
+and needs no `open_binary`. REA ships no rules and downloads nothing; do not
+write or fetch rules unless asked. The CLI equivalent is
+`inspect-yara-matches PATH --rule_paths RULE`. Cite the file SHA-256 and each
+rule file SHA-256 with the matched rules, tags, meta, and string offsets.
+`data` is yara's display text; read `length` bytes at `file_offset` for exact
+bytes. `coverage.status: "partial"` means string matches beyond `max_matches`
+are counted but unlisted; raise `max_matches` to list them. A compile error is
+`invalid_request` naming the rule file; fix the rule rather than retrying. A
+missing command is `capability_unavailable`. Absent rules did not match; that
+says nothing about why. See
+[YARA rule matches](https://github.com/morluto/rea/blob/main/docs/guides/native/yara-matches.md).
 
 ## SQLite snapshots
 
@@ -916,6 +948,11 @@ ComLoader rejects records `loader: "BinaryLoader"`, `load_address: "1000:0100"`
 analysis. PSP contents, stack, and device state remain unmodeled. See [DOS guide](https://github.com/morluto/rea/blob/main/docs/providers/ghidra-dos.md).
 
 Use `inspect_byte_entropy` to triage high- and low-entropy ranges before extraction.
+For ESP32/ESP8266 flash dumps or carved `partitions/nvs.bin` files (`esp-nvs`), use
+`inspect_esp_nvs` (`rea inspect-esp-nvs PATH [--partition-offset N] [--partition-bytes N]`)
+to decode ESP-IDF v1/v2 Non-Volatile Storage pages, CRC32 checksums, namespaces,
+strings, integers, floats, and multi-chunk v2 blobs, marking older copies of a
+key `superseded`; encrypted NVS entries are not decrypted. See [ESP-IDF NVS partitions](https://github.com/morluto/rea/blob/main/docs/guides/firmware/esp-nvs.md).
 
 For other headerless images (embedded firmware without ELF/Mach-O/PE/MZ
 headers), open with `format: "raw-binary"`, `architecture` (`x86`, `x86_64`,
@@ -947,7 +984,7 @@ numbering gaps leave coverage unknown; a DfuSe suffix CRC mismatch follows
 ### Function annotations in Ghidra
 
 Fresh-import sessions admit annotations; existing-project reuse is read-only.
-Use `annotate_native_function` for one function name and/or entry comments, with at least one explicit change. Review its annotation readback and refreshed dossier inline. Changes are atomic; empty comments clear them, omitted fields preserve them. Later MCP calls observe edits. Normal close saves them when owned Program checkpoint mode is enabled; ephemeral mode discards them. CLI `annotate-native-function` follows the same setting when closing after its updated result. Select the [checkpoint workflow](#continue-editable-ghidra-analysis-across-processes) before edits that must survive a later process. Original executable bytes are unchanged; edits invalidate immutable snapshots. Windows P0 does not admit database mutations. For naming only, `set_address_name` / `set_addresses_names` also work with Ghidra: they name function entries or data addresses (primary labels) and return compact per-address success booleans instead of a dossier. Ghidra rejects batch addresses that request the same name or a name another selected address holds; `raw_result.failures` gives each failure's reason.
+Use `annotate_native_function` for one function name, C prototype (`signature`) and/or entry comments, with at least one explicit change. When pseudocode for a target without debug information reads fixed offsets from one pointer, assert the layout with `define_native_data_types` and set the prototype; treat the resulting field names as your hypothesis (`signature_source: user_defined`, type `source: caller-defined`), not as recovered facts, and confirm each offset against the instructions. Review its annotation readback and refreshed dossier inline. Changes are atomic; empty comments clear them, omitted fields preserve them. Later MCP calls observe edits. Normal close saves them when owned Program checkpoint mode is enabled; ephemeral mode discards them. CLI `annotate-native-function` follows the same setting when closing after its updated result. Select the [checkpoint workflow](#continue-editable-ghidra-analysis-across-processes) before edits that must survive a later process. Original executable bytes are unchanged; edits invalidate immutable snapshots. Windows P0 does not admit database mutations. For naming only, `set_address_name` / `set_addresses_names` also work with Ghidra: they name function entries or data addresses (primary labels) and return compact per-address success booleans instead of a dossier. Ghidra rejects batch addresses that request the same name or a name another selected address holds; `raw_result.failures` gives each failure's reason.
 
 A provider switch or different target can retire the active Ghidra database and discard
 its edits, even if the new provider fails on a later call. Same-target,
@@ -1048,6 +1085,15 @@ stored. The v4 signature and any AVB footer are reported with sizes and are
 not verified. Extract `dtb` and pass that file to `inspect_devicetree`. See
 [Android boot images](https://github.com/morluto/rea/blob/main/docs/android-boot-image.md).
 
+Android DTBO partition table images (`0xd7b7ab1e`, table versions `0` and `1`)
+expose child `dtbo-<index>.dtbo` blobs with `id`, `rev`, version-1 compression
+flags (`none`, `zlib`, `gzip`, `unknown`), `custom` words, and leading
+`0xd00dfeed` FDT magic checks. Compressed entries remain stored with explicit
+limitations; extract uncompressed `0xd00dfeed` entries and pass them to
+`inspect_devicetree`. Entry count and entry-table bytes are bounded via
+`artifact_limits.android_dtbo`. See
+[Android DTBO partition images](https://github.com/morluto/rea/blob/main/docs/android-dtbo.md).
+
 ISO 9660 disc images (`CD001` at sector 16, any filename, even `.hop`) use
 the same inspection and extraction workflows on every host, without mounting.
 Volume identifiers and dates are target-derived. One tree is walked: an
@@ -1077,6 +1123,20 @@ unnamed `fat/<id>.bin` files. A CRC mismatch, a partial table, or a range past
 the file end leaves coverage `unknown`. Secure-area encryption, compressed
 overlays, and NitroARC archives are not decoded. See
 [Nintendo DS ROMs](https://github.com/morluto/rea/blob/main/docs/guides/firmware/nds-roms.md).
+
+Nintendo 64 ROMs (`n64-rom`) are detected from the first word in z64
+(`80 37 12 40`), v64 (`37 80 40 12`) or n64 (`40 12 37 80`) order, plus a
+plausible boot address, and use the same inspection and extraction workflows.
+`root_format_metadata` holds the cartridge header, the IPL3/CIC variant and
+the CRC pair when that variant is known. Members are `header.bin`, `ipl3.bin`
+and `program.z64`. v64 and n64 dumps serve those members in big-endian order
+through a decoder; `decoded` records that swap. A CRC mismatch, an unknown
+CIC, a short checksum window or reserved header bytes leave coverage
+`unknown`. Nothing is executed or patched. `program.z64` is the big-endian
+image. `boot_address` is the address IPL3 jumps to, not the address of file
+offset 0. The MIPS lane admits ELF, and `raw-binary` does not admit
+big-endian MIPS, so REA does not open this image as MIPS. See
+[Nintendo 64 ROMs](https://github.com/morluto/rea/blob/main/docs/guides/firmware/n64-roms.md).
 
 Legacy Qualcomm MBN boot images (`sbl1.mbn`, `aboot.mbn`, `tz.mbn`) use the
 same inspection and extraction workflows. The header has no magic; REA claims

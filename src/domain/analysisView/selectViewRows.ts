@@ -1,10 +1,23 @@
+/** An omitted filter admits every value; an empty filter admits none. */
+export const filterSet = <Value>(values: readonly Value[] | undefined) =>
+  values === undefined ? undefined : new Set(values);
+
 /** Preserve original indices and count every match while projecting only the requested page. */
 export const selectViewRows = <Source, Row>(
   rows: readonly Source[],
   view: { readonly offset: number; readonly limit: number },
   matches: ((row: Source, index: number) => boolean) | undefined,
   project: (row: Source, index: number) => Row,
+  candidateIndices?: ReadonlySet<number>,
 ): { rows: Row[]; total: number } => {
+  if (candidateIndices !== undefined)
+    return selectIndexedViewRows(
+      rows,
+      candidateIndices,
+      view,
+      matches,
+      project,
+    );
   if (matches === undefined) {
     const start = Math.max(0, view.offset);
     const end = Math.min(rows.length, start + Math.max(0, view.limit));
@@ -26,7 +39,7 @@ export const selectViewRows = <Source, Row>(
 };
 
 /** Select only from an explicit set of candidate indices in ascending order. */
-export const selectIndexedViewRows = <Source, Row>(
+const selectIndexedViewRows = <Source, Row>(
   rows: readonly Source[],
   candidateIndices: ReadonlySet<number>,
   view: { readonly offset: number; readonly limit: number },

@@ -15,11 +15,12 @@ import {
 } from "./CallRelationshipTraversal.js";
 import { z } from "zod";
 
-import type {
-  AnalysisExecution,
-  AnalysisOperation,
-  AnalysisOperationPort,
-  ExecutionOptions,
+import {
+  UPCOMING_DECOMPILES_WINDOW,
+  type AnalysisExecution,
+  type AnalysisOperation,
+  type AnalysisOperationPort,
+  type ExecutionOptions,
 } from "../ports/AnalysisProvider.js";
 import {
   enhancedInputSchemas,
@@ -84,6 +85,7 @@ import {
   resolveProcedureAddress,
 } from "./ProcedureAddressResolution.js";
 import { traceLiteralFeature } from "./EnhancedLiteralTracing.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import { projectNativeApiInspection } from "./native/NativeApiInspection.js";
 
 type BatchResolution = {
@@ -130,6 +132,7 @@ export class EnhancedTools {
     name: DirectEnhancedToolName,
     input: unknown,
     signal?: AbortSignal,
+    progress?: ProgressReporter,
   ): EnhancedResult {
     switch (name) {
       case "binary_overview": {
@@ -176,7 +179,11 @@ export class EnhancedTools {
       case "decompile_all": {
         const parsed = enhancedInputSchemas.decompile_all.safeParse(input);
         return parsed.success
-          ? this.executeValidated({ name, input: parsed.data }, signal)
+          ? this.executeValidated(
+              { name, input: parsed.data },
+              signal,
+              progress,
+            )
           : invalidEnhancedInput(name, parsed.error, input);
       }
     }
@@ -186,6 +193,7 @@ export class EnhancedTools {
   executeValidated(
     call: ValidatedEnhancedCall,
     signal?: AbortSignal,
+    progress?: ProgressReporter,
   ): EnhancedResult {
     switch (call.name) {
       case "inspect_native_dispatch_metadata":
@@ -203,7 +211,7 @@ export class EnhancedTools {
       case "batch_decompile":
         return this.#batchDecompile(call.input.addresses, signal);
       case "decompile_all":
-        return decompileAll(this.analysis, call.input, signal);
+        return decompileAll(this.analysis, call.input, signal, progress);
       case "get_call_graph":
         return this.#callGraph(call.input, signal);
       case "analyze_swift_types":
@@ -433,12 +441,30 @@ export class EnhancedTools {
     signal?: AbortSignal,
   ): EnhancedResult {
     const items: BatchDecompileItem[] = [];
-    for (const { address, procedure, providerProcedure } of ready) {
+    // Index after the last item a read-ahead window already named.
+    let namedUntil = 0;
+    for (const [
+      index,
+      { address, procedure, providerProcedure },
+    ] of ready.entries()) {
+      // Every item sends its own request, so a window planned here always
+      // starts with the function this request carries. Each item is named in
+      // one window only; later items in it are served from the provider's
+      // prepared results, or decompiled by their own request if not.
+      let upcomingDecompiles: readonly string[] | undefined;
+      if (index >= namedUntil) {
+        const window = ready
+          .slice(index, index + UPCOMING_DECOMPILES_WINDOW)
+          .map((item) => item.providerProcedure);
+        namedUntil = index + window.length;
+        if (window.length > 1) upcomingDecompiles = window;
+      }
       const observed = await this.#observe(
         "procedure_pseudo_code",
         { procedure: providerProcedure },
         signal,
         procedure.status === "resolved" ? "provider" : undefined,
+        upcomingDecompiles,
       );
       if (!observed.ok) {
         if (stopsTraversal(observed.error))
@@ -833,11 +859,13 @@ export class EnhancedTools {
     arguments_: Readonly<Record<string, JsonValue>>,
     signal?: AbortSignal,
     selectorOrigin?: ExecutionOptions["selectorOrigin"],
+    upcomingDecompiles?: ExecutionOptions["upcomingDecompiles"],
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     if (isAborted(signal)) return err(cancelledBy(name, signal));
     const execution = await this.analysis.execute(name, arguments_, {
       ...(signal === undefined ? {} : { signal }),
       ...(selectorOrigin === undefined ? {} : { selectorOrigin }),
+      ...(upcomingDecompiles === undefined ? {} : { upcomingDecompiles }),
     });
     if (!execution.ok) return execution;
     if (isAborted(signal)) return err(cancelledBy(name, signal));

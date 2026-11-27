@@ -821,3 +821,23 @@ it("preserves path-selected inventory roles for XML content", () => {
     format: "file",
   });
 });
+
+it("keeps an auditd log a resource rather than an executable", () => {
+  const bytes = Buffer.from(
+    "type=SYSCALL msg=audit(1700000000.123:1000): success=yes\n",
+  );
+  const probe = createArtifactClassificationProbe();
+  probe.write(bytes);
+  expect(
+    classifyArtifactContent(
+      "/var/log/audit/audit.log",
+      probe.finish(bytes.length),
+      bytes.length,
+    ),
+  ).toEqual({
+    kind: "resource",
+    format: "auditd-log",
+    contentFormat: "auditd-log",
+    contentArchitecture: null,
+  });
+});
