@@ -540,6 +540,7 @@
 * **native:** admit the missing-UUID dyld_info refusal when it exits 0 ([0e8f9d0](https://github.com/morluto/rea/commit/0e8f9d05864028da3ef5d0099463d63daca96f01))
 * **native:** bound Android packed relocations with max_structure_bytes ([#14788](https://github.com/morluto/rea/issues/14788)) ([47875ba](https://github.com/morluto/rea/commit/47875ba073c5c6049e5cce67ff72aeb5a8f876b5))
 * **native:** decode Objective-C categories that Swift lists in __objc_catlist2 ([#14025](https://github.com/morluto/rea/issues/14025)) ([94c1c6a](https://github.com/morluto/rea/commit/94c1c6aec0b65fc34c6e0516a7330ac24f38a11f))
+* **native:** do not count an object file's LINKEDIT tables as misplaced ([#14933](https://github.com/morluto/rea/issues/14933)) ([1adba0f](https://github.com/morluto/rea/commit/1adba0f4172fb037caeb0285866c9a8f1bed5b7c))
 * **native:** label XML plists that file calls data as xml ([#12910](https://github.com/morluto/rea/issues/12910)) ([f03cce9](https://github.com/morluto/rea/commit/f03cce9c01d184ffade34dcb36fd05c0c0350a5e))
 * **native:** preserve Apple tool diagnostics across macOS versions ([a9d1031](https://github.com/morluto/rea/commit/a9d103167484234027415cf7816f4bd8335bf8a7))
 * **native:** preserve bundle provenance in partial reports ([9ffaca5](https://github.com/morluto/rea/commit/9ffaca54477d33c0f41f7042688b8e11f08d25b0))
