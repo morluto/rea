@@ -717,6 +717,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
             case "procedure_callees" -> procedureCalls(request.params, false);
             case "procedure_callers" -> procedureCalls(request.params, true);
             case "procedure_info" -> procedureInfo(request.params);
+            case "abandon_decompile_read_ahead" -> {
+                // The carrying request has already returned. The workflow
+                // stopped while committing, journaling, or between reads, so
+                // no procedure_pseudo_code monitor is left to cancel.
+                requireKeys(request.params, Set.of());
+                disposeDecompileAhead();
+                JsonObject abandoned = new JsonObject();
+                abandoned.addProperty("abandoned", true);
+                yield abandoned;
+            }
             case "procedure_pseudo_code" -> {
                 try {
                     decompileAhead(request.decompileReadAhead());
@@ -725,6 +735,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 finally {
                     // Read-ahead is speculative work for this workflow; a
                     // cancelled request abandons it rather than leaving it running.
+                    // After this reply, the client sends abandon_decompile_read_ahead
+                    // if the same workflow stops before its next request.
                     if (monitor.isCancelled()) disposeDecompileAhead();
                 }
             }
@@ -5960,14 +5972,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
             }
             // Finished results nobody requested, for example after a workflow
             // stopped early, are dropped oldest first beyond two windows.
-            Iterator<AheadTask> retained = decompileAheadTasks.values().iterator();
-            int excess = decompileAheadTasks.size() - 2 * DECOMPILE_AHEAD_WINDOW;
-            while (excess > 0 && retained.hasNext()) {
-                if (retained.next().done.isDone()) {
-                    retained.remove();
-                    excess--;
-                }
-            }
+            // Completion trims again: tasks that were still running here can
+            // finish after the last hint and would otherwise stay retained.
+            trimFinishedDecompileAhead();
             // A single queued function is cheaper to decompile when its own
             // request arrives than to start a decompiler process for it.
             if (decompileAheadQueue.size() < 2 && decompileAheadLiveWorkers == 0) return;
@@ -5986,6 +5993,30 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 }
             }
             decompileAheadLock.notifyAll();
+        }
+    }
+
+    /**
+     * Publish one worker outcome, then drop finished results nobody took
+     * beyond two windows. The hint path can trim only what is already
+     * finished; a result that completes after the last hint is trimmed here.
+     */
+    private void completeDecompileAhead(AheadTask task, DecompileResults results) {
+        task.done.complete(results);
+        synchronized (decompileAheadLock) {
+            trimFinishedDecompileAhead();
+        }
+    }
+
+    /** Caller holds decompileAheadLock. Oldest finished tasks are dropped first. */
+    private void trimFinishedDecompileAhead() {
+        int excess = decompileAheadTasks.size() - 2 * DECOMPILE_AHEAD_WINDOW;
+        if (excess <= 0) return;
+        Iterator<AheadTask> retained = decompileAheadTasks.values().iterator();
+        while (excess > 0 && retained.hasNext()) {
+            if (!retained.next().done.isDone()) continue;
+            retained.remove();
+            excess--;
         }
     }
 
@@ -6019,7 +6050,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 } catch (RuntimeException failure) {
                     results = null;
                 }
-                task.done.complete(results);
+                completeDecompileAhead(task, results);
                 task = null;
             }
         } catch (InterruptedException stopped) {
@@ -6027,7 +6058,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         } catch (RuntimeException failure) {
             // A worker that cannot open or run leaves its functions to their requests.
         } finally {
-            if (task != null) task.done.complete(null);
+            if (task != null) completeDecompileAhead(task, null);
             if (worker != null) worker.dispose();
             synchronized (decompileAheadLock) {
                 decompileAheadLiveWorkers--;

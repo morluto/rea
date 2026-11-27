@@ -81,6 +81,7 @@ import {
   type GhidraDiagnosticsScope,
 } from "./GhidraDiagnostics.js";
 import { GhidraLaunchError, type GhidraLaunch } from "./GhidraLauncher.js";
+import { GhidraReadAheadCancellation } from "./GhidraReadAheadCancellation.js";
 import { GhidraRequestQueue } from "./GhidraRequestQueue.js";
 import { DEFAULT_GHIDRA_CANCEL_GRACE } from "../config/ghidraCancelGrace.js";
 import {
@@ -223,6 +224,7 @@ export class GhidraClient {
   );
   readonly #wire: GhidraWire;
   readonly #requestQueue: GhidraRequestQueue;
+  readonly #readAheadCancellation: GhidraReadAheadCancellation;
   readonly #replies = new JsonLineBridgeReader<
     GhidraBridgeResponse,
     GhidraRemoteError
@@ -329,6 +331,9 @@ export class GhidraClient {
         interruptible: (method) => !GHIDRA_MUTATING_OPERATIONS.has(method),
         grace: options.cancelGrace ?? DEFAULT_GHIDRA_CANCEL_GRACE,
       },
+    );
+    this.#readAheadCancellation = new GhidraReadAheadCancellation(() =>
+      this.#abandonDecompileReadAhead(),
     );
   }
 
@@ -560,6 +565,10 @@ export class GhidraClient {
       readonly valueFlowLimits?: NativeValueFlowLimits;
     },
   ): Promise<Result<JsonValue, GhidraSessionError>> {
+    // The signal still owns read-ahead started by an earlier request. A
+    // different signal is a different workflow and must not be cancelled
+    // by the previous one.
+    this.#readAheadCancellation.noteRequest(options.signal);
     const pattern =
       (operation === "search_procedures" || operation === "search_strings") &&
       parameters.mode === "literal" &&
@@ -600,18 +609,50 @@ export class GhidraClient {
           : { decompileReadAhead: options.decompileReadAhead }),
       },
     );
-    if (options.progress === undefined) return pending;
-    return this.#withProgressHeartbeat(pending, {
-      intervalMs: 5_000,
-      signal: options.signal,
-      progress: options.progress,
-      createUpdate: (elapsedSeconds) => ({
-        phase: "ghidra_operation",
-        completed: 0,
-        total: null,
-        message: `Waiting for Ghidra ${operation} (${String(elapsedSeconds)}s elapsed); bridge analysis may still be pending`,
-      }),
-    });
+    const settled =
+      options.progress === undefined
+        ? pending
+        : this.#withProgressHeartbeat(pending, {
+            intervalMs: 5_000,
+            signal: options.signal,
+            progress: options.progress,
+            createUpdate: (elapsedSeconds) => ({
+              phase: "ghidra_operation",
+              completed: 0,
+              total: null,
+              message: `Waiting for Ghidra ${operation} (${String(elapsedSeconds)}s elapsed); bridge analysis may still be pending`,
+            }),
+          });
+    try {
+      return await settled;
+    } finally {
+      // Workers keep running after this reply. Abort during the caller's
+      // own commit, journal, or next read still abandons them.
+      if (options.decompileReadAhead !== undefined)
+        this.#readAheadCancellation.watch(options.signal);
+    }
+  }
+
+  /**
+   * Stop read-ahead whose carrying request has already returned. Sent without
+   * the caller's signal: that signal is already aborted, and the queue would
+   * otherwise refuse the cleanup.
+   */
+  async #abandonDecompileReadAhead(): Promise<void> {
+    if (!this.isReady()) return;
+    const abandoned = await this.#enqueue(
+      "abandon_decompile_read_ahead",
+      {},
+      {},
+    );
+    if (!abandoned.ok)
+      this.#logger.warn(
+        {
+          method: "abandon_decompile_read_ahead",
+          kind: abandoned.error.kind,
+        },
+        "Ghidra read-ahead abandonment failed",
+      );
   }
 
   /** Read the private immutable source for format parsers that require captured bytes. */
@@ -1547,6 +1588,7 @@ export class GhidraClient {
 
   async #cleanup(forceStop = false): Promise<void> {
     this.#closing = true;
+    this.#readAheadCancellation.stop();
     let forcedStopFailure: { readonly cause: unknown } | undefined;
     try {
       this.#requestQueue.failQueued(
@@ -1767,6 +1809,7 @@ export class GhidraClient {
   }
 
   #abortProtocol(message: string, cause?: Error): void {
+    this.#readAheadCancellation.stop();
     const failure = this.#failure("protocol", message, cause);
     this.#requestQueue.failQueued(failure);
     this.#failAll(failure);

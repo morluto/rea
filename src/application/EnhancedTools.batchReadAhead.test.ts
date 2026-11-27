@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
+  isAborted,
 } from "../domain/analysisErrorCore.js";
 import { err, ok } from "../domain/result.js";
 import {
@@ -37,8 +39,8 @@ const recordingPort = (onPseudocode?: (procedure: string) => void) => {
           upcoming: options?.upcomingDecompiles,
         });
         onPseudocode?.(selector);
-        if (options?.signal?.aborted === true)
-          return err(new AnalysisCancelledError(operation));
+        const signal = options?.signal;
+        if (isAborted(signal)) return err(cancelledBy(operation, signal));
         return ok(createAnalysisExecution(`code ${selector}`, provider));
       }
       throw new Error(`Unexpected operation: ${operation}`);
@@ -126,6 +128,9 @@ describe("batch_decompile read-ahead", () => {
     expect(result.ok, "the cancelled batch is not reported complete").toBe(
       false,
     );
+    if (result.ok) return;
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(controller.signal.reason);
     expect(
       requests.map((request) => request.procedure),
       "only the window's carrying request reached the provider",

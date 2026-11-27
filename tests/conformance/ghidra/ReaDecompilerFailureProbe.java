@@ -29,6 +29,7 @@ import java.util.Collections;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Future;
 
 /**
  * Replaces the bridge decompiler after real import and analysis so one procedure's
@@ -152,6 +153,33 @@ public class ReaDecompilerFailureProbe extends GhidraScript {
     }
 
     /**
+     * How many workers the bridge starts for {@code queued} functions. The
+     * cap is the bridge's own, so a one-CPU host expects one worker.
+     */
+    private static int readAheadWorkers(Object bridge, int queued) throws Exception {
+        Field cap = bridge.getClass().getDeclaredField("DECOMPILE_AHEAD_WORKERS");
+        cap.setAccessible(true);
+        int limit = Math.max(1, Math.min(Runtime.getRuntime().availableProcessors(), cap.getInt(null)));
+        return Math.min(limit, queued);
+    }
+
+    /** True once every retained read-ahead task has published its outcome. */
+    private static boolean decompileAheadSettled(Field tasks, Object bridge) {
+        try {
+            Map<?, ?> retained = (Map<?, ?>) tasks.get(bridge);
+            if (retained.isEmpty()) return false;
+            for (Object task : retained.values()) {
+                Field done = task.getClass().getDeclaredField("done");
+                done.setAccessible(true);
+                if (!((Future<?>) done.get(task)).isDone()) return false;
+            }
+            return true;
+        } catch (ReflectiveOperationException failed) {
+            throw new IllegalStateException(failed);
+        }
+    }
+
+    /**
      * Read-ahead runs beside the carrying request: that request decompiles its
      * own function on the session decompiler without waiting for workers to
      * start. A later request takes a finished result, waits for a running one
@@ -168,6 +196,8 @@ public class ReaDecompilerFailureProbe extends GhidraScript {
         threads.setAccessible(true);
         Field retained = bridge.getClass().getDeclaredField("decompileResults");
         retained.setAccessible(true);
+        Field aheadTasks = bridge.getClass().getDeclaredField("decompileAheadTasks");
+        aheadTasks.setAccessible(true);
         Field requestMonitor = ghidra.program.flatapi.FlatProgramAPI.class.getDeclaredField("monitor");
         requestMonitor.setAccessible(true);
         Method dispose = bridge.getClass().getDeclaredMethod("disposeDecompileAhead");
@@ -201,12 +231,17 @@ public class ReaDecompilerFailureProbe extends GhidraScript {
                 throw new IllegalStateException(unreadable);
             }
         };
+        int queuedWorkers = readAheadWorkers(bridge, 2);
+        // Released in finally so a failed check cannot leave workers blocked
+        // in the opener while disposal waits out its stop bound.
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch opening = new java.util.concurrent.CountDownLatch(1);
+        Thread opened = null;
         try {
             decompiler.set(bridge, recording);
 
             // Startup never delays the carrying request, and queued work that
             // no worker has started is decompiled by its own request at once.
-            java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
             opener.set(bridge, (java.util.function.Function<Integer, DecompInterface>) payload -> {
                 try {
                     release.await();
@@ -222,7 +257,7 @@ public class ReaDecompilerFailureProbe extends GhidraScript {
             long carriedMillis = (System.nanoTime() - started) / 1_000_000;
             require("read_ahead_carrying_request_does_not_wait_for_startup",
                 carriedMillis < 2000 && foreground.equals(List.of(own.getName())));
-            require("read_ahead_workers_match_queued_work", liveWorkers.getAsInt() == 2);
+            require("read_ahead_workers_match_queued_work", liveWorkers.getAsInt() == queuedWorkers);
             handleRequest.invoke(bridge, requestConstructor.newInstance(3, "procedure_pseudo_code",
                 pseudocodeFor(pseudocodeQuery, second), null, null, flowLimits, List.of()), null);
             require("read_ahead_queued_function_taken_back",
@@ -243,7 +278,7 @@ public class ReaDecompilerFailureProbe extends GhidraScript {
             require("read_ahead_failure_uncached", ((Map<?, ?>) retained.get(bridge)).size() == 2);
             dispose.invoke(bridge);
             require("read_ahead_idle_workers_disposed",
-                liveWorkers.getAsInt() == 0 && disposed.size() == 2);
+                liveWorkers.getAsInt() == 0 && disposed.size() == queuedWorkers);
 
             // A running read-ahead is waited for rather than started again.
             pooled.clear();
@@ -302,6 +337,20 @@ public class ReaDecompilerFailureProbe extends GhidraScript {
                 requestMonitor.set(bridge, previousMonitor);
             }
 
+            // The carrying request has returned and no later decompile is in
+            // flight. Abandoning read-ahead still stops the workers.
+            dispose.invoke(bridge);
+            pooled.clear();
+            foreground.clear();
+            opener.set(bridge, (java.util.function.Function<Integer, DecompInterface>) payload ->
+                injectedWorker(pooled, disposed, 60_000));
+            handleRequest.invoke(bridge, requestConstructor.newInstance(15, "procedure_pseudo_code",
+                pseudocodeFor(pseudocodeQuery, own), null, null, flowLimits, window), null);
+            require("read_ahead_running_before_abandon", await(() -> pooled.contains(second.getName()), 5000));
+            handleRequest.invoke(bridge, requestConstructor.newInstance(16, "abandon_decompile_read_ahead",
+                new JsonObject(), null, null, flowLimits, List.of()), null);
+            require("read_ahead_abandoned_between_requests", liveWorkers.getAsInt() == 0);
+
             // A changed decompile deadline reuses a completed result but not
             // a timeout produced under the earlier deadline.
             dispose.invoke(bridge);
@@ -326,7 +375,8 @@ public class ReaDecompilerFailureProbe extends GhidraScript {
             handleRequest.invoke(bridge, requestConstructor.newInstance(11, "procedure_pseudo_code",
                 pseudocodeFor(pseudocodeQuery, own), null, null, flowLimits, window), null);
             require("read_ahead_completed_under_old_deadline",
-                await(() -> pooled.contains(second.getName()) && pooled.contains(third.getName()), 10000));
+                await(() -> pooled.contains(second.getName()) && pooled.contains(third.getName()) &&
+                    decompileAheadSettled(aheadTasks, bridge), 10000));
             limit.setInt(bridge, 5);
             handleRequest.invoke(bridge, requestConstructor.newInstance(12, "procedure_pseudo_code",
                 pseudocodeFor(pseudocodeQuery, third), null, null, flowLimits, List.of()), null);
@@ -360,7 +410,6 @@ public class ReaDecompilerFailureProbe extends GhidraScript {
             pooled.clear();
             disposed.clear();
             ((Map<?, ?>) retained.get(bridge)).clear();
-            java.util.concurrent.CountDownLatch opening = new java.util.concurrent.CountDownLatch(1);
             opener.set(bridge, (java.util.function.Function<Integer, DecompInterface>) payload -> {
                 try {
                     opening.await();
@@ -371,7 +420,7 @@ public class ReaDecompilerFailureProbe extends GhidraScript {
             });
             handleRequest.invoke(bridge, requestConstructor.newInstance(10, "procedure_pseudo_code",
                 pseudocodeFor(pseudocodeQuery, own), null, null, flowLimits, window), null);
-            Thread opened = new Thread(() -> {
+            opened = new Thread(() -> {
                 try {
                     Thread.sleep(200);
                 } catch (InterruptedException stop) {
@@ -383,7 +432,7 @@ public class ReaDecompilerFailureProbe extends GhidraScript {
             dispose.invoke(bridge);
             opened.join();
             require("read_ahead_opening_workers_disposed",
-                liveWorkers.getAsInt() == 0 && pooled.isEmpty() && disposed.size() == 2);
+                liveWorkers.getAsInt() == 0 && pooled.isEmpty() && disposed.size() == queuedWorkers);
 
             // Real decompiler processes open the Program concurrently.
             opener.set(bridge, defaultOpener);
@@ -415,11 +464,20 @@ public class ReaDecompilerFailureProbe extends GhidraScript {
             require("read_ahead_private_thread_pool",
                 threads.get(bridge) instanceof java.util.concurrent.ExecutorService);
         } finally {
-            limit.setInt(bridge, 0);
-            opener.set(bridge, defaultOpener);
-            requestMonitor.set(bridge, previousMonitor);
-            decompiler.set(bridge, previous);
-            dispose.invoke(bridge);
+            release.countDown();
+            opening.countDown();
+            try {
+                if (opened != null) opened.join();
+            } finally {
+                try {
+                    dispose.invoke(bridge);
+                } finally {
+                    limit.setInt(bridge, 0);
+                    opener.set(bridge, defaultOpener);
+                    requestMonitor.set(bridge, previousMonitor);
+                    decompiler.set(bridge, previous);
+                }
+            }
         }
 
         // The hint is advisory: a longer one is clamped to one window, never refused.
