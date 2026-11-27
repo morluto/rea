@@ -13,7 +13,7 @@ import {
 import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -79,11 +79,7 @@ export const projectPythonPycView = (
       path: identity.artifact.path,
       sha256: identity.artifact.sha256,
     },
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, limitations),
     unknowns: [],
   };
   if (view.kind === "summary")

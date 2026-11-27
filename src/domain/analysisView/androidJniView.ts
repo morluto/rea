@@ -27,6 +27,7 @@ import {
 } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
+  boundedViewLimitations,
   boundedViewMessages,
   pageViewCoverage,
   analysisViewCoverageSchema,
@@ -186,11 +187,7 @@ export const projectAndroidJniView = (
     parent_evidence_id: parent.evidenceId,
     parent_digest: parent.evidenceId.slice(3),
     artifact: report.apk,
-    limitations: boundedViewMessages(
-      parent.limitations,
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent),
     unknowns: boundedViewMessages(
       report.unknowns,
       parent.evidenceId,

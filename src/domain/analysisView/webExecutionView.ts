@@ -12,7 +12,7 @@ import {
   type AnalysisViewParent,
 } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -301,11 +301,7 @@ export const projectWebExecutionView = (
     parent_digest: parent.evidenceId.slice(3),
     artifact: parent.artifact ?? null,
     target_url: report.target.initial_url,
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...report.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, report.limitations),
     unknowns: [
       "Execution outside the armed window, in workers, or caused by UI actions remains unknown.",
     ],

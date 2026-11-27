@@ -20,6 +20,7 @@ import {
 } from "./analysisViewShape.js";
 import { rustBinaryViewRequestSchema } from "../rust/rustBinaryQuery.js";
 import {
+  boundedViewLimitations,
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
@@ -173,11 +174,7 @@ export const projectRustBinaryView = (
         metadata === null ? ("unknown" as const) : ("complete" as const),
       runtime_dependencies: "unknown" as const,
     },
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...report.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, report.limitations),
     unknowns: boundedViewMessages(
       unknowns.values,
       parent.evidenceId,

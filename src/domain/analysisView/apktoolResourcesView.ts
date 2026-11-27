@@ -20,7 +20,7 @@ import {
   type AnalysisViewParent,
 } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -222,11 +222,7 @@ export const projectApktoolResourcesView = (
     parent_operation: DECODE_ANDROID_RESOURCES_OPERATION,
     parent_digest: parent.evidenceId.slice(3),
     artifact: { path: report.target.path, sha256: report.target.sha256 },
-    limitations: boundedViewMessages(
-      [...parent.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent),
     unknowns: [
       "Decoded resources are static declarations; they do not establish which strings or components the app uses at runtime.",
     ],

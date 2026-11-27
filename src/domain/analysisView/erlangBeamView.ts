@@ -10,7 +10,7 @@ import {
 import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
   unavailableViewCoverage,
@@ -184,11 +184,7 @@ export const projectErlangBeamView = (
       path: identity.artifact.path,
       sha256: identity.artifact.sha256,
     },
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, limitations),
     unknowns: (["atoms", "exports", "imports", "lambdas"] as const)
       .filter((key) => summary.counts[key] === null)
       .map(

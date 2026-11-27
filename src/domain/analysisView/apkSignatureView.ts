@@ -28,6 +28,7 @@ import {
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import {
+  boundedViewLimitations,
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
@@ -277,11 +278,7 @@ export const projectApkSignatureView = (
     parent_operation: "inspect_apk_signature" as const,
     parent_digest: parent.evidenceId.slice(3),
     artifact: { path: report.artifact.path, sha256: report.artifact.sha256 },
-    limitations: boundedViewMessages(
-      parent.limitations,
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent),
     unknowns: boundedViewMessages(
       parsed.value.unknowns,
       parent.evidenceId,

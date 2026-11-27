@@ -28,6 +28,7 @@ import {
 } from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
+  boundedViewLimitations,
   boundedViewMessages,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -206,11 +207,7 @@ export const projectModelArtifactView = (
     parent_operation: "inspect_model_artifact" as const,
     parent_digest: parent.evidenceId.slice(3),
     artifact: { path: report.artifact.path, sha256: report.artifact.sha256 },
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...report.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, report.limitations),
     unknowns: [
       "Tensor values, runtime execution and inference quality were not inspected.",
       ...(report.artifact.sha256 === null

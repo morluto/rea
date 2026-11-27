@@ -18,7 +18,7 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -245,11 +245,7 @@ export const projectGraphqlContractView = (
     parent_evidence_id: parent.evidenceId,
     parent_operation: "inspect_api_contract" as const,
     parent_digest: parent.evidenceId.slice(3),
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, limitations),
     unknowns:
       context.source_coverage.status === "partial"
         ? [
