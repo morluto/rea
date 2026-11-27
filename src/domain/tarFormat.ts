@@ -208,6 +208,16 @@ const GZIP_TAR_PROBE_INPUT_BYTES = 2048;
 const GZIP_TAR_PROBE_OUTPUT_BYTES = 4 * 1024 * 1024;
 
 /**
+ * Prefix needed for a gzip member with an RFC 1952 FEXTRA field. XLEN is a
+ * 16-bit byte count, so readers can extend acquisition only for this framing
+ * without raising their ordinary format probe limit.
+ */
+export const gzipTarExtraFieldProbeBytes = (prefix: Uint8Array): number =>
+  prefix.length >= 12 && hasGzipMagic(prefix) && (prefix[3]! & 0x4) !== 0
+    ? 12 + (prefix[10]! | (prefix[11]! << 8)) + GZIP_TAR_PROBE_INPUT_BYTES + 8
+    : 0;
+
+/**
  * Bytes of an RFC 1952 member header, including FEXTRA, FNAME, FCOMMENT and
  * FHCRC, or `undefined` when the prefix ends inside it.
  */

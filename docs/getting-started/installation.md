@@ -1669,7 +1669,12 @@ enabling checkpoint mode requires the startup environment and an MCP restart.
 Storage is separated by target SHA-256 and analysis-profile identity, including
 the supported Ghidra version. Identical executable bytes at another path can
 reuse the Program. One live REA session holds the checkpoint's socket lease;
-a competing session reports that owner and must wait until it closes. Only
+a competing session reports that owner as a retryable `capability_unavailable`
+failure and succeeds once it closes. If that owner saved Program edits when it
+closed, the retry instead reports that the checkpoint changed and asks for the
+target to be reopened, which restores the saved checkpoint. A process started
+without the setting can
+analyze the same target concurrently through an ephemeral import. Only
 REA-owned Programs are checkpointed. Caller-selected existing projects retain
 their separate read-only workflow below.
 
@@ -1709,7 +1714,9 @@ distinguish restored database state from fresh analysis.
 
 Run `npm run verify:ghidra:checkpoints` with your existing Ghidra/JDK installation
 to verify fresh CLI/MCP processes, name/comment/type preservation, competing
-sessions, corruption refusal and explicit recovery. Lifecycle fixtures cover
+sessions, corruption refusal and explicit recovery. `npm run verify:ghidra:type-edits`
+verifies caller-defined types and function signatures, their refusals and
+their restoration from a checkpoint in a new process. Lifecycle fixtures cover
 save failure/retry and cancellation during checkpoint finalization separately.
 
 ### Reuse an existing Ghidra project

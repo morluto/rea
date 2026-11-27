@@ -1,4 +1,5 @@
 import { inspectAnalysisSettingSeeds } from "../config/analysisSettings.js";
+import { inspectGhidraCancelGrace } from "../config/ghidraCancelGrace.js";
 import {
   parseEnvironment,
   parseEnvironmentValues,
@@ -35,10 +36,10 @@ export const validateRegistrationEnvironment = (
       ? parseEnvironmentValues(runtimeEnvironment, unresolvedSettings)
       : parseEnvironment(runtimeEnvironment, unresolvedSettings);
   if (!validated.ok) return validated;
-  const seedIssues = inspectAnalysisSettingSeeds(
-    runtimeEnvironment,
-    unresolvedSettings,
-  );
+  const seedIssues = [
+    ...inspectAnalysisSettingSeeds(runtimeEnvironment, unresolvedSettings),
+    ...inspectGhidraCancelGrace(runtimeEnvironment, unresolvedSettings),
+  ];
   if (seedIssues.length > 0)
     return err(
       new ConfigurationError("Invalid REA environment configuration", {
