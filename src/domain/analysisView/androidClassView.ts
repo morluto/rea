@@ -5,6 +5,7 @@ import { androidClassViewRequestSchema } from "../android/androidClassQuery.js";
 import { evidenceSubjectTarget } from "../evidence.js";
 import { boundedList } from "../boundedList.js";
 import { err, ok, type Result } from "../result.js";
+import { filterSet } from "./selectViewRows.js";
 import {
   analysisViewInputError,
   invalidAnalysisViewSubject,
@@ -136,7 +137,7 @@ const nameFilter = (
   prefixes: readonly string[] | undefined,
 ) => {
   if (names === undefined && prefixes === undefined) return undefined;
-  const exact = names === undefined ? undefined : new Set(names);
+  const exact = filterSet(names);
   return (name: string) =>
     (exact === undefined || exact.has(name)) &&
     (prefixes === undefined ||

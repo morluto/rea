@@ -12,6 +12,7 @@ import {
   type GpuCodeObjects,
 } from "../gpu/gpuCodeObjects.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
+import { filterSet } from "./selectViewRows.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ownedView,
@@ -307,9 +308,8 @@ export const projectGpuCodeObjectsView = (
       ),
     });
   }
-  const targets =
-    view.targets === undefined ? undefined : new Set(view.targets);
-  const ids = view.ids === undefined ? undefined : new Set(view.ids);
+  const targets = filterSet(view.targets);
+  const ids = filterSet(view.ids);
   const objectIds =
     view.collection === "kernels" && view.object_ids !== undefined
       ? new Set(view.object_ids)

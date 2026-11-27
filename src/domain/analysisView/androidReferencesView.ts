@@ -11,7 +11,7 @@ import {
   selectByteBoundedViewRows,
   type ByteBoundedPageOwner,
 } from "./byteBoundedViewRows.js";
-import { pickFields } from "./selectViewRows.js";
+import { filterSet, pickFields } from "./selectViewRows.js";
 import {
   analysisViewInputError,
   invalidAnalysisViewSubject,
@@ -164,9 +164,9 @@ const topClassGroups = (trace: Trace): readonly TopClassGroup[] => {
 
 /** Exact filters shared by both facets; undefined fields match everything. */
 const filtersOf = (view: ReferencesView) => ({
-  kinds: view.kinds === undefined ? undefined : new Set(view.kinds),
-  packages: view.packages === undefined ? undefined : new Set(view.packages),
-  tops: view.top_classes === undefined ? undefined : new Set(view.top_classes),
+  kinds: filterSet(view.kinds),
+  packages: filterSet(view.packages),
+  tops: filterSet(view.top_classes),
 });
 
 const matcher = (view: ReferencesView) => {
@@ -234,7 +234,7 @@ const referencesPage = (
   view: Extract<ReferencesView, { facet: "references" }>,
   owner: ByteBoundedPageOwner,
 ) => {
-  const fields = view.fields === undefined ? undefined : new Set(view.fields);
+  const fields = filterSet(view.fields);
   const page = selectByteBoundedViewRows(
     references,
     view,

@@ -13,6 +13,7 @@ import {
   PLACEHOLDER_COVERAGE,
   selectByteBoundedViewRows,
 } from "./byteBoundedViewRows.js";
+import { filterSet } from "./selectViewRows.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import {
   createAnalysisViewResultReader,
@@ -135,8 +136,7 @@ const stringsPage = <Shared extends object>(
       "This decode did not read strings (include_strings false); decode again with include_strings true to page them.",
     );
   const rows = stringRows(report);
-  const locales =
-    view.locales === undefined ? undefined : new Set(view.locales);
+  const locales = filterSet(view.locales);
   if (locales !== undefined) {
     const decoded = new Set(
       (report.string_tables ?? [{ locale: report.locale }]).map(
@@ -150,7 +150,7 @@ const stringsPage = <Shared extends object>(
         `This decode has no string table for ${missing.map((locale) => JSON.stringify(locale)).join(", ")}; decode those locales first. Decoded tables: ${[...decoded].map((locale) => JSON.stringify(locale)).join(", ")}.`,
       );
   }
-  const exact = view.names === undefined ? undefined : new Set(view.names);
+  const exact = filterSet(view.names);
   const prefixes = view.name_prefixes;
   const matches =
     locales === undefined && exact === undefined && prefixes === undefined

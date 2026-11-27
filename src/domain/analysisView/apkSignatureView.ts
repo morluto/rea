@@ -15,6 +15,7 @@ import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import type { JsonValue } from "../jsonValue.js";
 import { ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
+import { filterSet } from "./selectViewRows.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   assertOwnedView,
@@ -191,8 +192,7 @@ function* records(
   report: ApkSignatureResult,
   selection: Selection,
 ): Generator<Record<string, JsonValue> & { id: string; signer_id?: string }> {
-  const wanted =
-    selection.schemes === undefined ? undefined : new Set(selection.schemes);
+  const wanted = filterSet(selection.schemes);
   for (const scheme of schemes) {
     if (wanted !== undefined && !wanted.has(scheme)) continue;
     for (const [signerIndex, signer] of report.schemes[
@@ -296,11 +296,9 @@ export const projectApkSignatureView = (
       summary,
       coverage: completeWithinViewCoverage(1),
     });
-  const ids = view.ids === undefined ? undefined : new Set(view.ids);
-  const signers =
-    view.signer_ids === undefined ? undefined : new Set(view.signer_ids);
-  const fields =
-    view.fields === undefined ? undefined : new Set<string>(view.fields);
+  const ids = filterSet(view.ids);
+  const signers = filterSet(view.signer_ids);
+  const fields = filterSet<string>(view.fields);
   const items: Record<string, JsonValue>[] = [];
   let total = 0;
   const rows =
