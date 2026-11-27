@@ -209,6 +209,7 @@ export const ghidraOperationLimitations = (
     case "procedure_address":
       return [
         "External functions and local thunks are distinct; procedure metadata identifies both and preserves a thunk target when Ghidra resolves one.",
+        "The inventory lists Ghidra functions. Code Ghidra disassembled without creating a function, such as main in a stripped ELF, is absent: list_names reports it as a label, and procedure_pseudo_code decompiles it by address.",
       ];
     case "list_strings":
       return [
