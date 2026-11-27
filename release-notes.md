@@ -279,6 +279,7 @@
 * **ci:** recheck pull request eligibility during health scans ([#14365](https://github.com/morluto/rea/issues/14365)) ([5411689](https://github.com/morluto/rea/commit/5411689a5ca3e06b93ecbef9925e927e8d3a2708))
 * **ci:** refresh health diagnostics on workflow retries ([#14349](https://github.com/morluto/rea/issues/14349)) ([5095e12](https://github.com/morluto/rea/commit/5095e1205935b7a4eb7e2d4d1140c6977c641af9))
 * **ci:** reject incomplete merged test timing reports ([#14352](https://github.com/morluto/rea/issues/14352)) ([8a77faf](https://github.com/morluto/rea/commit/8a77faf842e9a3ef5ac54a5fb7aae7424d87ca80))
+* **ci:** remove unused exports flagged by deep checks ([#14852](https://github.com/morluto/rea/issues/14852)) ([412f927](https://github.com/morluto/rea/commit/412f92736e099899a6a4257ffd65ce926337ea0a))
 * **ci:** remove unused Mach-O classifier failing deep static checks ([#14384](https://github.com/morluto/rea/issues/14384)) ([66f6559](https://github.com/morluto/rea/commit/66f65594f57f1ed3c63db2a43af3139e6962295c))
 * **ci:** require complete path references for test coverage ([#14819](https://github.com/morluto/rea/issues/14819)) ([cd744b1](https://github.com/morluto/rea/commit/cd744b1bfbca7d0951762d9711c6a1263dfe4bfd))
 * **ci:** rerun TODO scans against the host interpreter ([ba093e0](https://github.com/morluto/rea/commit/ba093e0777a1480d45e4391a65b54b4b7c8bd40f))
