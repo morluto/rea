@@ -1022,6 +1022,12 @@ status with unknown coverage and are refused on extraction; no decryption is
 attempted. See
 [wxapkg](https://github.com/morluto/rea/blob/main/docs/wxapkg.md).
 
+Android binary XML documents (`AndroidManifest.xml` and compiled resource XML
+with the `03 00 08 00` chunk preamble) decode to XML text as a `document.xml`
+region; names and values come from the declared string pool and typed values
+render literally. Resource table names, DEX references and component semantics
+are not resolved. See
+[AXML](https://github.com/morluto/rea/blob/main/docs/axml.md).
 macOS flat installer packages (`.pkg` files beginning with `xar!`) use the
 same inspection/extraction workflows on every host. Prefer a retained summary
 for XAR header/TOC facts, Distribution `pkg-ref` and choices, PackageInfo

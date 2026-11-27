@@ -574,6 +574,11 @@ export const documentationSections = [
         route: "/wxapkg",
       },
       {
+        text: "Android binary XML (AXML)",
+        source: "guides/android/axml.md",
+        route: "/axml",
+      },
+      {
         text: "macOS flat installer packages",
         source: "macos-pkg.md",
         route: "/macos-pkg",

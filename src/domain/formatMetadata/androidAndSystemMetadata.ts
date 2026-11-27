@@ -316,6 +316,29 @@ export const androidBootImageEntryMetadataSchema = z.strictObject({
 export type AndroidBootImageEntryMetadata = z.infer<
   typeof androidBootImageEntryMetadataSchema
 >;
+/** Android binary XML document facts from the chunk stream, not decoded values. */
+export const axmlMetadataSchema = z.strictObject({
+  kind: z.literal("axml"),
+  string_count: offset,
+  style_count: offset,
+  utf8: z.boolean(),
+  resource_map_count: offset,
+  element_count: offset,
+  attribute_count: offset,
+  namespace_count: offset,
+  declared_size: offset,
+});
+export type AxmlMetadata = z.infer<typeof axmlMetadataSchema>;
+
+/** The decoded XML text region; counts describe the rendered document. */
+export const axmlDocumentMetadataSchema = z.strictObject({
+  kind: z.literal("axml-document"),
+  element_count: offset,
+  attribute_count: offset,
+  namespace_count: offset,
+  string_count: offset,
+  length: offset,
+});
 
 const vbmetaHex = z.string().regex(/^[0-9a-f]*$/u);
 /** An unsigned 64-bit value that is metadata only, as a decimal string. */
