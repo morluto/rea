@@ -234,6 +234,7 @@
 * **binary:** clear snapshot cache when a failed switch cannot restore ([667a005](https://github.com/morluto/rea/commit/667a0054d63a068a32b7028de237d598241ece5b))
 * **binary:** keep an imported snapshot when the first open fails ([a963184](https://github.com/morluto/rea/commit/a9631842825574c025fa4482affb79f20336cc8c))
 * **browser:** advertise the environment variable names a secret may not use ([#10876](https://github.com/morluto/rea/issues/10876)) ([e325216](https://github.com/morluto/rea/commit/e325216510f5cc96f7e1f244391a996bf89727fb))
+* **browser:** bound armed timeline rows by the retained-event allowance ([#14799](https://github.com/morluto/rea/issues/14799)) ([7e01f1d](https://github.com/morluto/rea/commit/7e01f1df85879a1c9f78754086fa85c567d780f6))
 * **browser:** bound mitmproxy replies by the inherited file limit ([465ae4d](https://github.com/morluto/rea/commit/465ae4d1d5ddbfb72b21f099d50495b174b52ee5))
 * **browser:** clamp mitmproxy limits and always shut the decoder down ([919fbfb](https://github.com/morluto/rea/commit/919fbfb983d3206478904bb2a5d411c58df5a8e1))
 * **browser:** deliver the analyze_web_bundle summary when no view is named ([ebe01e7](https://github.com/morluto/rea/commit/ebe01e78845ffcc9bb403cf18be153bcdd92cfe9))
