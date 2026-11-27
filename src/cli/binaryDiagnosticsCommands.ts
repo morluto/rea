@@ -7,10 +7,12 @@ import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../contracts/native/binaryDia
 import { contractNamed } from "./contractCliDescription.js";
 import {
   callerTargetPath,
-  deliverWithService,
-  inspectWithService,
   registerContractCommand,
 } from "./contractCommand.js";
+import {
+  deliverWithService,
+  inspectWithService,
+} from "./contractCommandRunners.js";
 import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
 
 type BinaryDiagnosticsOperation =
@@ -145,6 +147,25 @@ export const registerBinaryDiagnosticsCommands = (
   registerContractCommand(
     cli,
     logger,
+    contract("inspect_pe_unwind_ranges"),
+    {
+      description:
+        "Inspect x64 PE exception-directory function ranges without executing the image",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: { path: { description: "Local PE32+ image" } },
+    },
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/peUnwindRanges.js")
+        ).createPeUnwindRangesService(),
+      "rea-pe-unwind-ranges",
+    ),
+  );
+  registerContractCommand(
+    cli,
+    logger,
     contract("inspect_apple_ips"),
     {
       description:
@@ -237,6 +258,25 @@ export const registerBinaryDiagnosticsCommands = (
   registerContractCommand(
     cli,
     logger,
+    contract("inspect_pe_overlay"),
+    {
+      description:
+        "Report bytes appended after a PE image, including a certificate-table split",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: { path: { description: "Local PE32/PE32+ image" } },
+    },
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/peOverlay.js")
+        ).createPeOverlayService(),
+      "rea-pe-overlay",
+    ),
+  );
+  registerContractCommand(
+    cli,
+    logger,
     contract("inspect_binary_hardening"),
     {
       description:
@@ -262,6 +302,7 @@ export const registerBinaryDiagnosticsCommands = (
         "Inspect file-wide and block byte entropy without executing the file",
       positionals: ["path"],
       callerPaths: ["path"],
+      evidenceDelivery: true,
       fields: {
         path: { description: "Local file" },
         block_size: {
@@ -272,12 +313,8 @@ export const registerBinaryDiagnosticsCommands = (
           description: "Window length in bytes; omit to extend through EOF",
         },
       },
-      omit: {
-        detail:
-          "One-shot output is complete Evidence; this command has no summary delivery",
-      },
     },
-    inspectWithService(
+    deliverWithService(
       async () =>
         (
           await import("../composition/binaryDiagnostics/byteEntropy.js")
@@ -380,6 +417,10 @@ export const registerBinaryDiagnosticsCommands = (
           description: "Maximum number of device-tree properties",
         },
         max_depth: { description: "Maximum device-tree nesting depth" },
+        max_decoded_bytes: {
+          description:
+            "Maximum estimated bytes of the decoded report, charged before allocation",
+        },
       },
     },
     deliverWithService(
@@ -438,7 +479,7 @@ export const registerBinaryDiagnosticsCommands = (
     contract("inspect_binary_layout"),
     {
       description:
-        "Inspect binary file/linked layout without executing the selected object",
+        "Inspect ELF file/linked layout without executing the selected object; Linux x64 with caller-supplied pwntools only",
       positionals: ["path"],
       callerPaths: ["path"],
       jsonText: ["producer_limits"],

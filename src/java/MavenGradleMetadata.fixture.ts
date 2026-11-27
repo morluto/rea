@@ -75,6 +75,29 @@ export const qualifiedMavenPropertiesFixture = `<project xmlns="http://maven.apa
 </project>
 `;
 
+/** Maven trims ASCII padding but keeps non-ASCII property value characters. */
+export const mavenPropertyValuesFixture = `<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>example</groupId>
+  <artifactId>property-values</artifactId>
+  <version>\${revision}</version>
+  <properties>
+    <revision> &#xA0;1.2.3&#xA0; </revision>
+    <dependency.version>&#xFEFF;2.0&#xFEFF;</dependency.version>
+    <marker>&#xA0;&#xFEFF;</marker>
+    <plain> \tordinary value\n </plain>
+    <blank> \t\n </blank>
+    <mirror> &#xA0;https://fixture-user:fixture-password@example.invalid/repository&#xFEFF; </mirror>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>example</groupId><artifactId>dependency</artifactId>
+      <version>\${dependency.version}</version>
+    </dependency>
+  </dependencies>
+</project>
+`;
+
 /** Tiny Gradle Module Metadata 1.1 document with library and platform variants. */
 export const gradleModuleFixture = `{
   "formatVersion": "1.1",

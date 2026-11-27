@@ -4,6 +4,7 @@ import { expect, it } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { registrationChildEnvironment } from "../../support/cli/registrationEnvironment.js";
 import { createTestProcessRegistry } from "../../support/process/processFixture.js";
 
 const PROGRAM = `
@@ -117,20 +118,7 @@ it("keeps owned Gemini launcher facts separate from native connection admission 
       ["--import", "tsx", entrypoint],
       {
         env: {
-          PATH: process.env.PATH,
-          SystemRoot: process.env.SystemRoot,
-          WINDIR: process.env.WINDIR,
-          TMPDIR: process.env.TMPDIR,
-          TMP: process.env.TMP,
-          TEMP: process.env.TEMP,
-          HOME: home,
-          USERPROFILE: home,
-          XDG_CONFIG_HOME: join(home, "config"),
-          XDG_DATA_HOME: join(home, "data"),
-          XDG_CACHE_HOME: join(home, "cache"),
-          XDG_STATE_HOME: join(home, "state"),
-          APPDATA: join(home, "appdata"),
-          LOCALAPPDATA: join(home, "localappdata"),
+          ...registrationChildEnvironment(home),
           GEMINI_CLI_SYSTEM_SETTINGS_PATH: join(home, "system-settings.json"),
           GEMINI_CLI_SYSTEM_DEFAULTS_PATH: join(home, "system-defaults.json"),
           GEMINI_CLI_TRUSTED_FOLDERS_PATH: join(home, "trusted-folders.json"),

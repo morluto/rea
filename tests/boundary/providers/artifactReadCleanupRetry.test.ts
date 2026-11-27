@@ -75,6 +75,7 @@ it.each(["go", "pe"] as const)(
       const input = {
         path,
         max_file_bytes: 8 * 1024 * 1024,
+        max_metadata_bytes: 16 * 1024 * 1024,
         max_entries: 4096,
       };
       const first = await provider.inspect(input, {

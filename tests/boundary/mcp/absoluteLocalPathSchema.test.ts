@@ -313,11 +313,37 @@ it("advertises portable absolute-path constraints after SDK schema conversion", 
   }
 });
 
+const relativeInspectionPaths = [
+  ["inspect_dwarf_units", "program"],
+  ["inspect_elf_dependencies", "program"],
+  ["inspect_elf_notes", "program"],
+  ["inspect_elf_unwind_ranges", "program"],
+  ["inspect_erlang_beam", "app.beam"],
+  ["inspect_kernel_build_config", "vmlinux"],
+  ["inspect_kernel_module", "demo.ko"],
+  ["inspect_maven_gradle_metadata", "pom.xml"],
+  ["inspect_native_initializers", "program"],
+  ["inspect_nuget_nupkg", "pkg.nupkg"],
+  ["inspect_pe_certificates", "signed.exe"],
+  ["inspect_pe_imports", "app.exe"],
+  ["inspect_python_pyc", "sample.pyc"],
+  ["inspect_rust_binary", "sample"],
+  ["inspect_v8_code_cache", "module.jsc"],
+] as const;
+
 it("rejects relative paths through in-memory MCP handlers", async () => {
   const firmwareCalls: string[] = [];
   const { client, close } = await createMcp(firmwareCalls);
   try {
-    const cases = inputCases(resolve("rea-absolute-input"), "relative-input");
+    const cases = [
+      ...inputCases(resolve("rea-absolute-input"), "relative-input"),
+      ...relativeInspectionPaths.map(([name, path]) => ({
+        name,
+        field: "path",
+        invalid: { path },
+        issuePath: ["path"],
+      })),
+    ];
     const checked: string[] = [];
     for (const { name, field, invalid, issuePath } of cases) {
       const result = await client.callTool({ name, arguments: invalid });

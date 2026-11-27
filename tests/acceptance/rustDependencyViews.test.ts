@@ -621,6 +621,19 @@ cliTest(
       });
       expect(refused.exitCode).toBe(1);
       expect(refused.json).toMatchObject({ code: "invalid_request" });
+      if (args[0] === "--view")
+        expect(refused.json).toMatchObject({
+          details: {
+            operation: "inspect_rust_binary",
+            issues: [
+              {
+                path: ["view"],
+                reason: "invalid_format",
+                message: "view must be a JSON package or edge selection",
+              },
+            ],
+          },
+        });
       expect(JSON.stringify(refused.json)).not.toContain("ENOENT");
     }
     expect((await readFile(path)).length).toBeGreaterThan(0);

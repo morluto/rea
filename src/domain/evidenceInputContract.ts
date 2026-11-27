@@ -18,6 +18,15 @@ const borrowedDeclarations = new WeakMap<object, z.ZodType>();
 export const isDeclaredEvidenceInput = (schema: z.ZodType): boolean =>
   declarations.get(schema) !== undefined;
 
+/** Distinguish one Evidence carrier from a borrowed container of carriers. */
+export const isDeclaredEvidenceRecord = (schema: z.core.$ZodType): boolean => {
+  const declaration = declarations.get(schema);
+  if (declaration?.kind === "evidence") return true;
+  if (declaration?.kind !== "borrowed") return false;
+  const owner = borrowedDeclarations.get(declaration.owner);
+  return owner !== undefined && declarations.get(owner)?.kind === "evidence";
+};
+
 /** Mark the canonical logical Evidence input, independently of its JSON shape. */
 export const declareEvidenceInput = <Schema extends z.ZodType>(
   schema: Schema,
@@ -25,6 +34,10 @@ export const declareEvidenceInput = <Schema extends z.ZodType>(
   declarations.add(schema, { kind: "evidence" });
   return schema;
 };
+
+/** Whether `schema` was declared as an inline-or-retained-reference source. */
+export const isEvidenceReferenceAlternative = (schema: z.ZodType): boolean =>
+  referenceAlternatives.get(schema) !== undefined;
 
 /** Mark a source union that accepts both inline Evidence and a retained reference. */
 export const declareEvidenceReferenceAlternative = <Schema extends z.ZodType>(
@@ -105,6 +118,11 @@ export interface EvidenceInputContract<Frame = unknown> {
   readonly hasEvidence: boolean;
   /** A declared field can replace inline Evidence with a retained reference. */
   readonly hasEvidenceReferenceAlternative: boolean;
+  /**
+   * Resolution depends on the union branch this contract's own frame parse
+   * selected, so the frame cannot be replaced by another parser.
+   */
+  readonly selectsParsedBranch: boolean;
   resolve<Failure>(
     input: unknown,
     visit: Visitor<Failure>,
@@ -120,6 +138,7 @@ const identity = (
   frameSchema: schema,
   hasEvidence: false,
   hasEvidenceReferenceAlternative,
+  selectsParsedBranch: false,
   resolve: (input) => ok(input),
 });
 
@@ -144,14 +163,14 @@ export const getEvidenceInputContract = <Schema extends z.ZodType>(
 };
 
 const compile = (schema: z.ZodType): EvidenceInputContract => {
-  if (referenceAlternatives.get(schema) !== undefined)
-    return identity(schema, true);
+  if (isEvidenceReferenceAlternative(schema)) return identity(schema, true);
   const declared = declarations.get(schema);
   if (declared?.kind === "evidence")
     return {
       frameSchema: z.unknown().nonoptional(),
       hasEvidence: true,
       hasEvidenceReferenceAlternative: true,
+      selectsParsedBranch: false,
       resolve: (input, visit, path = []) => visit(input, path),
     };
   if (declared?.kind === "borrowed") {
@@ -159,6 +178,12 @@ const compile = (schema: z.ZodType): EvidenceInputContract => {
     if (declaration === undefined)
       throw new TypeError("Borrowed Evidence schema has no owning declaration");
     const source = getEvidenceInputContract(declaration);
+    // The borrowing parser replaces the frame, so a source that resolves by
+    // the branch its own frame selected would never visit its Evidence.
+    if (source.selectsParsedBranch)
+      throw new TypeError(
+        "Borrowed Evidence declarations cannot select union branches by parsing",
+      );
     return { ...source, frameSchema: schema };
   }
   if (schema instanceof z.ZodObject) return objectContract(schema);
@@ -179,6 +204,7 @@ const compile = (schema: z.ZodType): EvidenceInputContract => {
     return {
       hasEvidence: true,
       hasEvidenceReferenceAlternative: child.hasEvidenceReferenceAlternative,
+      selectsParsedBranch: child.selectsParsedBranch,
       frameSchema: replaceWrappedSchema(schema, child.frameSchema),
       resolve: (input, visit, path = []) =>
         input === undefined ||
@@ -213,6 +239,9 @@ const objectContract = (schema: z.ZodObject): EvidenceInputContract => {
   return {
     hasEvidence: true,
     hasEvidenceReferenceAlternative,
+    selectsParsedBranch: selected.some(
+      ([, child]) => child.selectsParsedBranch,
+    ),
     frameSchema: schema.clone(
       {
         ...schema.def,
@@ -245,6 +274,7 @@ const arrayContract = (schema: z.ZodArray): EvidenceInputContract => {
   return {
     hasEvidence: true,
     hasEvidenceReferenceAlternative: child.hasEvidenceReferenceAlternative,
+    selectsParsedBranch: child.selectsParsedBranch,
     frameSchema: schema.clone(
       { ...schema.def, element: child.frameSchema },
       { parent: true },
@@ -289,6 +319,7 @@ const unionContract = (schema: z.ZodUnion): EvidenceInputContract => {
   return {
     hasEvidence: true,
     hasEvidenceReferenceAlternative,
+    selectsParsedBranch: true,
     frameSchema: frame.clone({
       ...frame.def,
       ...(schema.def.error === undefined ? {} : { error: schema.def.error }),

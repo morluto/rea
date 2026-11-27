@@ -538,22 +538,19 @@ export class JavaScriptSymbolicBindings {
         if (property !== undefined)
           return this.#objectPropertyValue(property, value.environment);
         if (key === "__proto__") {
-          const prototypeSetter = [...value.node.properties]
-            .reverse()
-            .filter(
-              (candidate): candidate is t.ObjectMethod | t.ObjectProperty =>
-                !t.isSpreadElement(candidate),
+          for (let i = value.node.properties.length - 1; i >= 0; i -= 1) {
+            const candidate = value.node.properties[i]!;
+            if (
+              !t.isSpreadElement(candidate) &&
+              isObjectPrototypeSetter(candidate)
             )
-            .find((candidate) => isObjectPrototypeSetter(candidate));
-          if (prototypeSetter !== undefined)
-            return this.#objectPropertyValue(
-              prototypeSetter,
-              value.environment,
-            );
+              return this.#objectPropertyValue(candidate, value.environment);
+          }
         }
         return symbolicUnknown("missing property");
       }
-      for (const p of [...value.node.properties].reverse()) {
+      for (let i = value.node.properties.length - 1; i >= 0; i -= 1) {
+        const p = value.node.properties[i]!;
         if (t.isSpreadElement(p)) {
           const spread = this.evaluate(p.argument, value.environment);
           const found = this.property(spread, key, {
@@ -687,12 +684,13 @@ export class JavaScriptSymbolicBindings {
           (t.isSpreadElement(p)
             ? this.unknownMembers(
                 this.evaluate(p.argument, value.environment),
-                new Set(active),
+                active,
               )
             : Number(semanticStaticPropertyKey(p.key, p.computed) === null)),
         0,
       );
     } finally {
+      active.delete(value);
       this.#depth -= 1;
     }
   }
@@ -769,6 +767,12 @@ export class JavaScriptSymbolicBindings {
     )
       return { kind: "literal", value: node.value };
     if (t.isNullLiteral(node)) return { kind: "literal", value: null };
+    // A template without substitutions spells the same exact string as a
+    // quoted literal; templates with substitutions remain unsupported.
+    if (t.isTemplateLiteral(node)) {
+      const exact = readExactJavaScriptLiteral(node);
+      if (exact.found) return { kind: "literal", value: exact.value };
+    }
     if (t.isFunction(node))
       return { kind: "function", node, environment: env, origins: [] };
     if (t.isObjectExpression(node))

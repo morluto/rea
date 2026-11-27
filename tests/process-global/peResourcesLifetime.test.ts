@@ -23,12 +23,12 @@ vi.mock(
       >();
     return {
       ...original,
-      parsePeResources: async (
-        ...arguments_: Parameters<typeof original.parsePeResources>
+      parsePeResourcesFromSource: async (
+        ...arguments_: Parameters<typeof original.parsePeResourcesFromSource>
       ) => {
         parsing.entered.resolve();
         await parsing.release.promise;
-        return original.parsePeResources(...arguments_);
+        return original.parsePeResourcesFromSource(...arguments_);
       },
     };
   },

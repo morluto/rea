@@ -16,7 +16,6 @@ import {
   isBinaryStringReadLimit,
   createFileMappingIndex,
   mappedFileOffset,
-  readMappedCString,
 } from "../../domain/binaryContainer.js";
 
 it("preserves representable offsets for invalid file ranges", () => {
@@ -217,7 +216,17 @@ it("indexes exactly the spans mappedFileOffset accepts, rejects and translates",
     const lookup = createFileMappingIndex(mappings, zeroFills).offset;
     const indexed: (number | string)[] = [];
     const scanned: (number | string)[] = [];
-    for (let address = 0xff8n; address < 0x10a8n; address++) {
+    // Exercise the bytes immediately before and at each backing transition.
+    const starts = new Set([0xff8n, 0x10a7n]);
+    for (const { address, size } of [...mappings, ...zeroFills]) {
+      const end = address + BigInt(size);
+      starts
+        .add(address - 1n)
+        .add(address)
+        .add(end - 1n)
+        .add(end);
+    }
+    for (const address of starts) {
       for (const size of [1, 2, 4, 9, 20]) {
         indexed.push(outcome(() => lookup(address, size)));
         scanned.push(
@@ -298,20 +307,19 @@ it("refuses a zero-fill alias inside a span spanning multiple mappings", () => {
   expect(prefix(105n, 4)).toEqual({ address: 105n, offset: 5, size: 3 });
 });
 
-it.each(["scan", "index"] as const)(
-  "reads strings across discontiguous source ranges without examining bytes after NUL (%s)",
-  (mode) => {
-    const ranges = [mappings[0]!, { address: 104n, offset: 8, size: 4 }];
-    const zeroFills = [{ address: 106n, size: 2n }];
-    const bytes = Buffer.from("ABCDxxxxE\0xx");
-    const result =
-      mode === "scan"
-        ? readMappedCString(bytes, ranges, 102n, 8, zeroFills)
-        : createFileMappingIndex(ranges, zeroFills).readCString(bytes, 102n, 8);
-    expect(result.toString()).toBe("CDE");
-    expect(() => mappedFileOffset(ranges, 102n, 4)).toThrow(/ambiguous/);
-  },
-);
+it("reads strings across discontiguous file ranges up to the NUL before a zero-fill alias", async () => {
+  const ranges = [mappings[0]!, { address: 104n, offset: 8, size: 4 }];
+  const index = createFileMappingIndex(ranges, [{ address: 106n, size: 2n }]);
+  const bytes = Buffer.from("ABCDxxxxE\0xx");
+  expect(index.readCString(bytes, 102n, 8).toString()).toBe("CDE");
+  const fromReader = await index.readCStringFromReader(
+    async (offset) => bytes.subarray(offset, offset + 1),
+    102n,
+    8,
+  );
+  expect(fromReader.toString()).toBe("CDE");
+  expect(() => mappedFileOffset(ranges, 102n, 4)).toThrow(/ambiguous/);
+});
 
 it.each([0, -1, 0.5, Number.NaN, Number.POSITIVE_INFINITY])(
   "preserves zero-span and invalid-size semantics for %s",
@@ -372,9 +380,11 @@ it("keeps a JVM-sized FAT count unconfirmed while rejecting malformed zero-count
   );
   bytes.writeUInt32BE(0, 4);
   expect(() => readBinaryContainer(bytes, "elf-directory")).toThrow(
+    // The universal container's owner names its own format.
     new BinaryFormatFailure(
       "malformed",
       "FAT header declares no architectures",
+      { format: "macho" },
     ),
   );
 });
@@ -441,4 +451,44 @@ it("names a load segment that runs past the end of the file as truncated", () =>
       },
     }),
   );
+});
+
+it("maps across unsorted adjacent ranges with an overlapping agreeing alias", () => {
+  const ranges = [
+    mappings[1]!,
+    { address: 102n, offset: 2, size: 4 },
+    mappings[0]!,
+  ];
+  const zeroFills = [{ address: 107n, size: 1n }];
+  expect(mappedFileOffset(ranges, 102n, 5, zeroFills)).toBe(2);
+  expect(outcome(() => mappedFileOffset(ranges, 102n, 6, zeroFills))).toBe(
+    "ambiguous",
+  );
+});
+
+it.each([100n, 104n])(
+  "refuses a conflicting file or zero-fill alias overlapping either end at %s",
+  (address) => {
+    const backed = [{ address: 100n, offset: 0, size: 8 }];
+    const alias = { address, offset: 16, size: 3 };
+    expect(outcome(() => mappedFileOffset([...backed, alias], 102n, 4))).toBe(
+      "ambiguous",
+    );
+    expect(
+      outcome(() => mappedFileOffset(backed, 102n, 4, [{ address, size: 3n }])),
+    ).toBe("ambiguous");
+  },
+);
+
+it("keeps exact point mappings at shared endpoints", () => {
+  expect(mappedFileOffset(mappings, 104n, 0)).toBe(4);
+  expect(
+    outcome(() =>
+      mappedFileOffset(
+        [mappings[0]!, { address: 104n, offset: 9, size: 4 }],
+        104n,
+        0,
+      ),
+    ),
+  ).toBe("ambiguous");
 });

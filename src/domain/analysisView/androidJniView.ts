@@ -10,10 +10,10 @@ import {
   androidJniViewItemsSchema,
   androidJniViewRequestSchema,
 } from "../android/androidJniQuery.js";
-import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
+import { boundedList } from "../boundedList.js";
 import type { JsonValue } from "../jsonValue.js";
 import { jsonValueByteLength } from "../jsonValueByteLength.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   assertOwnedView,
@@ -21,8 +21,9 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import {
-  ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
-  analysisViewInputError,
+  ANALYSIS_VIEW_PAGE_BYTES as PAGE_BYTES,
+  analysisViewPageTooLarge,
+  invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
@@ -30,7 +31,7 @@ import {
   pageViewCoverage,
   analysisViewCoverageSchema,
 } from "./analysisViewCoverage.js";
-import { selectViewRows } from "./selectViewRows.js";
+import { selectIndexedViewRows, selectViewRows } from "./selectViewRows.js";
 
 const reportSchema = androidResultSchemas.inspect_android_jni_bindings;
 const readReport = createAnalysisViewResultReader(reportSchema);
@@ -59,9 +60,108 @@ export const androidJniSummarySchema = reportSchema
     declarations: z.array(androidJniDeclarationSchema),
     candidates: z.array(androidJniCandidateSchema),
     libraries: z.array(androidJniLibrarySchema),
+    /** Libraries the summary lists; page collection libraries for the rest. */
+    library_coverage: analysisViewCoverageSchema,
     selected_declaration_ids: z.array(z.string()),
     declaration_coverage: analysisViewCoverageSchema,
   });
+
+/** Rows of each collection the summary previews at most. */
+const SUMMARY_PREVIEW = 16;
+/**
+ * Serialized bytes the previews may use, so a summary stays within the
+ * default agent result budget. A binding counts with the candidates and
+ * declarations it brings in: one registration candidate can name hundreds
+ * of same-signature declarations. Collection pages read the rest.
+ */
+const PREVIEW_BYTES = { relations: 16 * 1024, libraries: 8 * 1024 } as const;
+
+type JniReport = z.output<typeof reportSchema>;
+
+const rowBytes = (row: object): number =>
+  jsonValueByteLength(row as unknown as JsonValue);
+
+/** Leading rows within the preview's count and byte allowance. */
+const previewRows = <Row extends object>(
+  rows: readonly Row[],
+  bytes: number,
+): Row[] => {
+  const kept: Row[] = [];
+  let used = 0;
+  for (const row of boundedList(rows, SUMMARY_PREVIEW).items) {
+    used += rowBytes(row);
+    if (used > bytes) break;
+    kept.push(row);
+  }
+  return kept;
+};
+
+/**
+ * The selected declaration IDs and leading bindings the relation allowance
+ * admits, each with the declarations and candidates it adds to the closure.
+ */
+const previewRelations = (report: JniReport) => {
+  const declarations = new Map(
+    report.declarations.map((row) => [row.declaration_id, row]),
+  );
+  const candidates = new Map(
+    report.candidates.map((row) => [row.candidate_id, row]),
+  );
+  const declarationIds = new Set<string>();
+  const candidateIds = new Set<string>();
+  let used = 0;
+  /** Admit one row and its new relations, or report that it does not fit. */
+  const admit = (
+    row: object,
+    newCandidates: readonly string[],
+    newDeclarations: readonly string[],
+  ): boolean => {
+    let added = rowBytes(row);
+    const addedCandidates = newCandidates.filter((id) => !candidateIds.has(id));
+    for (const id of addedCandidates) {
+      const candidate = candidates.get(id);
+      if (candidate !== undefined) added += rowBytes(candidate);
+    }
+    const addedDeclarations = new Set(
+      [
+        ...newDeclarations,
+        ...addedCandidates.flatMap(
+          (id) => candidates.get(id)?.declaration_ids ?? [],
+        ),
+      ].filter((id) => !declarationIds.has(id)),
+    );
+    for (const id of addedDeclarations) {
+      const declaration = declarations.get(id);
+      if (declaration !== undefined) added += rowBytes(declaration);
+    }
+    if (used + added > PREVIEW_BYTES.relations) return false;
+    used += added;
+    for (const id of addedCandidates) candidateIds.add(id);
+    for (const id of addedDeclarations) declarationIds.add(id);
+    return true;
+  };
+  const selectedIds: string[] = [];
+  for (const id of boundedList(report.selected_declaration_ids, SUMMARY_PREVIEW)
+    .items) {
+    if (!admit({ id }, [], [id])) break;
+    selectedIds.push(id);
+  }
+  const bindings: JniReport["bindings"] = [];
+  for (const binding of boundedList(report.bindings, SUMMARY_PREVIEW).items) {
+    if (!admit(binding, binding.candidate_ids, [binding.declaration_id])) break;
+    bindings.push(binding);
+  }
+  return {
+    selectedIds,
+    bindings,
+    candidates: report.candidates.filter((row) =>
+      candidateIds.has(row.candidate_id),
+    ),
+    declarations: report.declarations.filter((row) =>
+      declarationIds.has(row.declaration_id),
+    ),
+  };
+};
 
 /** Source facts are already parsed; views never reopen the APK or rerun either reader. */
 export const projectAndroidJniView = (
@@ -72,15 +172,8 @@ export const projectAndroidJniView = (
     parent.operation !== "inspect_android_jni_bindings" ||
     (view.kind !== "summary" && view.kind !== "android-jni")
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "JNI Evidence supports summary or android-jni collection pages.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "JNI Evidence supports summary or android-jni collection pages.",
     );
   assertOwnedView<
     SummaryAnalysisView | z.output<typeof androidJniViewRequestSchema>
@@ -105,31 +198,17 @@ export const projectAndroidJniView = (
     ),
   };
   const overBudget = (value: object): boolean =>
-    jsonValueByteLength(value as unknown as JsonValue, 1024 * 1024 - 128) >
-    1024 * 1024 - 128;
+    jsonValueByteLength(value as unknown as JsonValue, PAGE_BYTES - 128) >
+    PAGE_BYTES - 128;
   const budgetError = () =>
-    err(
-      new AnalysisResourceConstraintError(
-        "inspect_analysis_view",
-        "transport",
-        "JNI view exceeds its 1 MiB serialized allowance.",
-        { parent_evidence_id: parent.evidenceId, limit_bytes: 1024 * 1024 },
-        ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
-      ),
+    analysisViewPageTooLarge(
+      parent.evidenceId,
+      "JNI view exceeds its 1 MiB serialized allowance.",
     );
   if (view.kind === "summary") {
-    const bindings = report.bindings.slice(0, 64);
-    const candidateIds = new Set(
-      bindings.flatMap((binding) => binding.candidate_ids),
-    );
-    const candidates = report.candidates.filter((candidate) =>
-      candidateIds.has(candidate.candidate_id),
-    );
-    const declarationIds = new Set([
-      ...report.selected_declaration_ids.slice(0, 64),
-      ...bindings.map((binding) => binding.declaration_id),
-      ...candidates.flatMap((candidate) => candidate.declaration_ids),
-    ]);
+    const { selectedIds, bindings, candidates, declarations } =
+      previewRelations(report);
+    const libraries = previewRows(report.libraries, PREVIEW_BYTES.libraries);
     const counts = {
       declarations: report.declarations.length,
       selected_declarations: report.selected_declaration_ids.length,
@@ -156,16 +235,17 @@ export const projectAndroidJniView = (
         counts,
         bindings,
         candidates,
-        declarations: report.declarations.filter((method) =>
-          declarationIds.has(method.declaration_id),
+        declarations,
+        libraries,
+        library_coverage: pageViewCoverage(
+          0,
+          libraries.length,
+          report.libraries.length,
         ),
-        // Absence, unsupported encoding and read failures have no positive
-        // candidate edge. Their selected library provenance is still essential.
-        libraries: report.libraries,
-        selected_declaration_ids: report.selected_declaration_ids.slice(0, 64),
+        selected_declaration_ids: selectedIds,
         declaration_coverage: pageViewCoverage(
           0,
-          Math.min(64, report.selected_declaration_ids.length),
+          selectedIds.length,
           report.selected_declaration_ids.length,
         ),
       },
@@ -190,13 +270,9 @@ export const projectAndroidJniView = (
       rows: readonly Row[],
       matches: (row: Row) => boolean,
     ) =>
-      selectViewRows(
-        rows,
-        view,
-        (row, index) =>
-          (indices === undefined || indices.has(index)) && matches(row),
-        project,
-      );
+      indices !== undefined
+        ? selectIndexedViewRows(rows, indices, view, matches, project)
+        : selectViewRows(rows, view, matches, project);
     const set = (values: readonly string[] | undefined) =>
       values === undefined ? undefined : new Set(values);
     let selected: { rows: object[]; total: number };

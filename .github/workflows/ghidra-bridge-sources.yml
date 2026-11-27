@@ -42,8 +42,9 @@ jobs:
       GHIDRA_RELEASE_SHA256: 2c2cd776db3c1f6a097ba418922378ac3649cadd5e844a6f5f088ae628a7be67
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
+          package-manager-cache: false
           node-version-file: .nvmrc
       - name: Cache npm package downloads
         id: npm-cache
@@ -57,7 +58,7 @@ jobs:
         run: |
           ghidra_root="${RUNNER_TEMP}/rea-ghidra"
           mkdir -p "${ghidra_root}"
-          curl -fsSL --retry 3 --write-out 'ghidra_download_bytes=%{size_download} ghidra_download_seconds=%{time_total}\n' -o "${ghidra_root}/ghidra.zip" "${GHIDRA_RELEASE_URL}"
+          curl -fsSL --retry 3 --retry-all-errors --write-out 'ghidra_download_bytes=%{size_download} ghidra_download_seconds=%{time_total}\n' -o "${ghidra_root}/ghidra.zip" "${GHIDRA_RELEASE_URL}"
           echo "${GHIDRA_RELEASE_SHA256}  ${ghidra_root}/ghidra.zip" | sha256sum -c -
           unzip -q "${ghidra_root}/ghidra.zip" -d "${ghidra_root}"
           rm "${ghidra_root}/ghidra.zip"
@@ -82,6 +83,12 @@ jobs:
           java_home_variable="JAVA_HOME_${GHIDRA_JAVA_MAJOR}_X64"
           export JAVA_HOME="${!java_home_variable}"
           npm run verify:ghidra:loader-relocation
+      - name: Verify selected-project Evidence provenance through real Ghidra
+        shell: bash
+        run: |
+          java_home_variable="JAVA_HOME_${GHIDRA_JAVA_MAJOR}_X64"
+          export JAVA_HOME="${!java_home_variable}"
+          npm run verify:ghidra:project-coverage
       - name: Check native prototype conflict decoding and frame paths
         shell: bash
         run: |

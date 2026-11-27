@@ -6,11 +6,12 @@ import {
 import { setImmediate } from "node:timers/promises";
 
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
-import type { NodeSeaMetadata } from "../domain/artifactFormatMetadata.js";
+import type { NodeSeaMetadata } from "../domain/formatMetadata/packageAndGameMetadata.js";
 import {
   ArtifactPathRegistry,
   normalizeArtifactPath,
   ArtifactReaderFailure,
+  malformedArtifact,
   artifactReaderLimitFailure,
 } from "../resources/index.js";
 import {
@@ -258,4 +259,4 @@ function* seaMembers(decoded: DecodedNodeSeaBlob): Generator<{
 }
 
 const formatFailure = (detail: string): ArtifactReaderFailure =>
-  new ArtifactReaderFailure("format", `Node SEA blob is malformed: ${detail}`);
+  malformedArtifact("node-sea", `Node SEA blob is malformed: ${detail}`);

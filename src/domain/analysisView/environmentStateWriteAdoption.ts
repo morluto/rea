@@ -1,5 +1,6 @@
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 import {
+  succeeded,
   ownMember,
   at,
   isObject,
@@ -14,7 +15,6 @@ import {
   collectionTarget,
   entityTarget,
   itemTarget,
-  succeeded,
   type SimulatedState,
 } from "./environmentStateWriteChecks.js";
 import type { WriteIo } from "./environmentStateWriteEffects.js";

@@ -376,6 +376,9 @@ export const finishEspFlashLayout = (
   const unplaced = plan.input.table.partitions.some(
     (part) => !plan.regions.some(({ partition }) => partition === part),
   );
+  const bootloaderPlaced = plan.regions.some(
+    ({ role }) => role === "bootloader",
+  );
   return {
     otadata,
     boot_selection: selectEspBootPartition(
@@ -391,7 +394,7 @@ export const finishEspFlashLayout = (
     ),
     undescribed,
     coverage:
-      undescribed.length > 0 || plan.input.bootloader === undefined || unplaced
+      undescribed.length > 0 || !bootloaderPlaced || unplaced
         ? "unknown"
         : "complete",
     limitations,

@@ -1,5 +1,5 @@
 import { evidenceFileTarget } from "../evidence.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { z } from "zod";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import {
@@ -8,7 +8,7 @@ import {
 } from "../managed/managedArtifact.js";
 import { managedModuleRow } from "../managed/managedModuleIdentity.js";
 import { validateManagedTokenScope } from "../managed/managedInspectionEvidence.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
@@ -87,15 +87,8 @@ export const projectManagedArtifactView = (
     SummaryAnalysisView | z.output<typeof managedViewRequestSchema>
   >(admitted, "summary", "managed");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Managed artifact inspection supports summary and managed views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Managed artifact inspection supports summary and managed views.",
     );
   const parsed = readManagedArtifact(parent);
   if (!parsed.ok) return parsed;

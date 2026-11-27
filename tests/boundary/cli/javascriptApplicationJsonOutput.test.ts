@@ -11,6 +11,132 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 
 const filter = "evidence_id,normalized_result.graph.nodes[0,1].node_id";
 
+cliTest(
+  "reports a replaced stream constructor as an uncertain resource",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-js-stream-constructor-");
+    await writeFile(
+      join(root, "main.js"),
+      `
+    const fs = require("node:fs");
+    Object.defineProperty(fs, "ReadStream", { value: Custom });
+    const stream = fs.createReadStream("input", { start: -1 });
+    stream.close();
+  `,
+    );
+    const output = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--json"],
+    });
+    expect(output.exitCode).toBe(0);
+    const data = z
+      .object({ normalized_result: javascriptApplicationAnalysisResultSchema })
+      .parse(output.json).normalized_result;
+    expect(data.semantic_graph.relations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          relation: "acquires",
+          resolution: "candidate",
+        }),
+        expect.objectContaining({
+          relation: "releases",
+          resolution: "candidate",
+        }),
+      ]),
+    );
+    expect(data.semantic_graph.unknowns).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          family: "resource-lifecycle",
+          relation_kinds: ["acquires"],
+        }),
+      ]),
+    );
+  },
+);
+
+cliTest(
+  "retains stream resources after named constructor and validator mutations",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-js-stream-named-import-");
+    await writeFile(
+      join(root, "main.mjs"),
+      `
+    import fs, { ReadStream } from "node:fs";
+    import { Buffer as B } from "node:buffer";
+    Object.defineProperty(ReadStream.prototype, "start", { get() { return 0; }, set(value) {} });
+    B.isEncoding = () => true;
+    const reader = fs.createReadStream("input", { start: -1 });
+    reader.close();
+    const writer = fs.createWriteStream("output", { encoding: "nope" });
+    writer.close();
+  `,
+    );
+    const output = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--json"],
+    });
+    expect(output.exitCode).toBe(0);
+    const data = z
+      .object({ normalized_result: javascriptApplicationAnalysisResultSchema })
+      .parse(output.json).normalized_result;
+    expect(
+      data.semantic_graph.relations.filter(
+        ({ relation }) => relation === "acquires",
+      ),
+    ).toHaveLength(2);
+    expect(
+      data.semantic_graph.relations.filter(
+        ({ relation }) => relation === "releases",
+      ),
+    ).toHaveLength(2);
+    expect(data.semantic_graph.relations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          relation: "acquires",
+          resolution: "candidate",
+        }),
+        expect.objectContaining({
+          relation: "releases",
+          resolution: "candidate",
+        }),
+      ]),
+    );
+  },
+);
+
+cliTest(
+  "retains stream resources after inherited prototype mutations and constructor escapes",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-js-stream-shared-prototype-",
+    );
+    await writeFile(
+      join(root, "main.mjs"),
+      `
+    import fs, { ReadStream } from "node:fs";
+    import { Writable } from "node:stream";
+    import { Buffer as B } from "node:buffer";
+    configure(ReadStream); configure(B);
+    Object.defineProperty(Writable.prototype, "start", { get() { return 0; }, set(value) {} });
+    const reader = fs.createReadStream("input", { start: -1 }); reader.close();
+    const writer = fs.createWriteStream("output", { start: -1 }); writer.close();
+  `,
+    );
+    const output = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--json"],
+    });
+    expect(output.exitCode).toBe(0);
+    const graph = z
+      .object({ normalized_result: javascriptApplicationAnalysisResultSchema })
+      .parse(output.json).normalized_result.semantic_graph;
+    expect(
+      graph.relations.filter(({ relation }) => relation === "acquires"),
+    ).toHaveLength(2);
+    expect(
+      graph.relations.filter(({ relation }) => relation === "releases"),
+    ).toHaveLength(2);
+  },
+);
+
 for (const scenario of [
   {
     command: "analyze-javascript-application",

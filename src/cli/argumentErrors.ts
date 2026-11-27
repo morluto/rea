@@ -2,10 +2,11 @@ import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 import {
   CLI_DOCUMENT_OUTPUT_FORMATS,
+  renderCliDocument,
+  structuredOutputRequested,
   type ParsedCliOutputArguments,
-} from "../cliOutput.js";
+} from "./cliOutput.js";
 import { estimateTokenCount } from "tokenx";
-import { formatCliOutput } from "./cliOutputFormatter.js";
 import type { CliArgvFailure, CliFieldError } from "./argvParser.js";
 import type { CliCommandEntry } from "./commandRegistry.js";
 import { formatCommandHelp } from "./help.js";
@@ -48,7 +49,7 @@ export const cliArgumentFailure = (
   command: string,
   failure: CliArgvFailure,
 ): CliCommandFailure => {
-  if (failure.kind === "dry_run")
+  if (failure.kind === "dry_run" || failure.kind === "flag_spelling")
     return { code: "PARSE_ERROR", message: failure.message, retryable: false };
   if (failure.kind !== "validation")
     return {
@@ -143,7 +144,12 @@ export const renderCliCommandFailure = (
 ): string => {
   const { controls, stdoutIsTerminal, cta } = input;
   const human = stdoutIsTerminal && !controls.formatExplicit;
-  if (human && failure.fieldErrors !== undefined)
+  // Usage text is terminal presentation; a requested document or count wins.
+  if (
+    human &&
+    !structuredOutputRequested(controls) &&
+    failure.fieldErrors !== undefined
+  )
     return `${validationUsage(input.cli, input.entry, failure.fieldErrors)}\n`;
   const format =
     controls.format === "csv" || controls.format === "tsv"
@@ -152,7 +158,7 @@ export const renderCliCommandFailure = (
   // Preserve the ordinary command's established count policy. JSONL errors
   // remain diagnostic records; the common renderer owns their framing.
   if (controls.tokenCount && format !== "jsonl")
-    return `${estimateTokenCount(formatCliOutput(failure, format))}\n`;
+    return `${estimateTokenCount(renderCliDocument(failure, format, stdoutIsTerminal))}\n`;
   return renderFailure(
     failure,
     { command: input.entry.name, duration: input.duration },

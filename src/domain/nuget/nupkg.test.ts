@@ -4,55 +4,6 @@ import {
   nugetNupkgEntryRole,
   nugetNupkgSchema,
 } from "./nupkg.js";
-import { absoluteLocalPathStringSchema } from "../localPath.js";
-
-const jsonSchema = (schema: {
-  readonly "~standard": {
-    readonly jsonSchema: {
-      readonly input: (options: {
-        readonly target: "draft-2020-12";
-      }) => unknown;
-    };
-  };
-}): Record<string, unknown> =>
-  schema["~standard"].jsonSchema.input({
-    target: "draft-2020-12",
-  }) as Record<string, unknown>;
-
-it("applies the shared absolute local-path policy to the public input", () => {
-  expect(
-    inspectNugetNupkgInputSchema.safeParse({ path: "pkg.nupkg" }).success,
-  ).toBe(false);
-  expect(inspectNugetNupkgInputSchema.safeParse({ path: "" }).success).toBe(
-    false,
-  );
-  expect(
-    inspectNugetNupkgInputSchema.safeParse({
-      path: "/artifacts/pkg\0.nupkg",
-    }).success,
-  ).toBe(false);
-  expect(
-    inspectNugetNupkgInputSchema.safeParse({
-      path: "/artifacts/pkg.nupkg",
-    }).success,
-  ).toBe(true);
-
-  const shared = jsonSchema(absoluteLocalPathStringSchema);
-  const advertised = jsonSchema(inspectNugetNupkgInputSchema);
-  const path = (
-    advertised.properties as Record<string, Record<string, unknown>>
-  ).path;
-  const {
-    $schema: _schema,
-    description: _sharedDescription,
-    ...sharedPolicy
-  } = shared;
-  const { description: _pathDescription, ...pathPolicy } = path ?? {};
-  expect(pathPolicy).toEqual(sharedPolicy);
-  expect(path?.description).toBe(
-    "Absolute filesystem path to a NuGet .nupkg package",
-  );
-});
 
 it("rejects extra caller arguments and admits a package with unknown identity", () => {
   expect(

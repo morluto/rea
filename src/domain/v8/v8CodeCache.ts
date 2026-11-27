@@ -2,6 +2,11 @@ import { z } from "zod";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import {
+  parameterBudgetLimitFor,
+  parameterBudgetSchema,
+  type ParameterBudget,
+} from "../parameterBudget.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const offset = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
@@ -69,29 +74,42 @@ export const V8_CODE_CACHE_LEGACY_MODULE_BIT = 0x80000000;
 /** Source length occupies the low bits of that word. */
 export const V8_CODE_CACHE_SOURCE_LENGTH_MASK = 0x1fffffff;
 
+/** Per-call read and observation budgets shared by the input schema and refusal limits. */
+export const V8_CODE_CACHE_BUDGETS = {
+  max_file_bytes: {
+    minimum: 36,
+    maximum: MAX_INSPECT_V8_CODE_CACHE_FILE_BYTES,
+    default_value: 32 * 1024 * 1024,
+    unit: "bytes",
+  },
+  max_strings: {
+    minimum: 1,
+    maximum: MAX_INSPECT_V8_CODE_CACHE_STRINGS,
+    default_value: 4096,
+    unit: "count",
+  },
+} as const satisfies Record<string, ParameterBudget>;
+
+/** Build a structured per-call refusal limit using the input schema's own bounds. */
+export const v8CodeCacheBudgetLimit = parameterBudgetLimitFor(
+  V8_CODE_CACHE_BUDGETS,
+);
+
 /** Bounded inspection of one V8 code cache container. Never executes the payload. */
 export const inspectV8CodeCacheInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to the selected V8 code cache (.jsc) file",
   ),
-  max_file_bytes: z
-    .number()
-    .int()
-    .min(36)
-    .max(MAX_INSPECT_V8_CODE_CACHE_FILE_BYTES)
-    .default(32 * 1024 * 1024)
-    .describe(
-      "Maximum stable artifact bytes to read; exceeding the budget fails without partial success",
-    ),
-  max_strings: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_V8_CODE_CACHE_STRINGS)
-    .default(4096)
-    .describe(
-      "Maximum embedded byte-pattern observations to report; exceeding the budget fails without partial success",
-    ),
+  max_file_bytes: parameterBudgetSchema(
+    V8_CODE_CACHE_BUDGETS.max_file_bytes,
+  ).describe(
+    "Maximum stable artifact bytes to read; exceeding the budget fails without partial success",
+  ),
+  max_strings: parameterBudgetSchema(
+    V8_CODE_CACHE_BUDGETS.max_strings,
+  ).describe(
+    "Maximum embedded byte-pattern observations to report; exceeding the budget fails without partial success",
+  ),
   min_string_bytes: z
     .number()
     .int()

@@ -22,7 +22,6 @@ import type { ProviderInspectionScope } from "../ports/ProviderInspectionScope.j
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import {
-  AnalysisCleanupLease,
   ArtifactResourceScope,
   ArtifactReaderFailure,
   bindArtifactFileCleanup,
@@ -142,15 +141,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
   #inspectionAttempt:
     | SharedStartupAttempt<Result<GhidraInstallationInspection, AnalysisError>>
     | undefined;
-  readonly #inspectionOwner: RetainedResourceScope = {
-    retain: (owner, resource) =>
-      this.#inspectionResources.retain({
-        kind: "lease",
-        resource,
-        lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
-      }),
-    run: (operation) => this.#inspectionResources.run(operation),
-  };
+  readonly #inspectionOwner = this.#inspectionResources.forCloseOwners();
   #closing: Promise<Result<null, AnalysisError>> | undefined;
   private readonly environment: NodeJS.ProcessEnv;
 

@@ -62,9 +62,10 @@ Each `entries[]` item reports:
 - `slot_va`, `slot_file_offset`, `slot_bytes` and `slot_section`: where the
   pointer or offset is stored. For a universal Mach-O, file offsets are
   relative to the whole file, not the slice. For `init` and `fini` the slot is
-  the `DT_INIT` / `DT_FINI` value field in the dynamic section. When that field
-  is outside every load segment, `slot_va` and `slot_section` are null and a
-  limitation says so.
+  the `DT_INIT` / `DT_FINI` value field in the dynamic section. The virtual
+  slot uses the address declared by `PT_DYNAMIC` when the entire field maps to
+  those file bytes. Otherwise `slot_va` and `slot_section` are null, a limitation
+  explains the missing mapping, and the original file field stays available.
 - `value_va`, `value_file_offset` and `section`: the resolved target address,
   its file offset and its containing section. These are null when the value
   was not established. In a linked ELF, file offsets come only from `PT_LOAD`:
@@ -190,13 +191,15 @@ visible.
 
 ## Paging and limits
 
-Each APS2 table has a fixed 16 MiB compressed-input and decode-work allowance.
-Before group expansion, the declared count multiplied by the equivalent
-unpacked REL/RELA record width must fit 16 MiB. This bounds interpretation work
-even when a tiny group encodes millions of records; it is separate from retained
-pointer-index and result limits, and has no runtime override. Decoding yields
-within groups for cancellation. Only zero linker padding is accepted after the
-declared records.
+Each APS2 table's compressed input and decode-work allowance is bounded by
+`max_structure_bytes` in `inspect_native_initializers` (default 16 MiB, up to
+512 MiB; callers without `max_structure_bytes`, such as JNI and IL2CPP loaders,
+keep the 16 MiB fixed allowance). Before group expansion, the declared count
+multiplied by the equivalent unpacked REL/RELA record width must fit the
+budget. This bounds interpretation work even when a tiny group encodes millions
+of records; it is separate from retained pointer-index and result limits.
+Decoding yields within groups for cancellation. Only zero linker padding is
+accepted after the declared records.
 
 `offset` and `limit` page the ordered list (default limit 64, maximum 4096).
 `coverage.examined_entries` counts every slot read, including omitted

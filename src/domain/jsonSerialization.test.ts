@@ -43,8 +43,14 @@ describe("streamed JSON representation", () => {
     expect(JSON.parse(parts.join(""))).toEqual(value);
   });
 
+  it("preserves escaped UTF-16 code units in saved keys and values", () => {
+    expect([...canonicalJsonParts({ "\ud800": "\udc00" })].join("")).toBe(
+      '{"\\ud800":"\\udc00"}',
+    );
+  });
+
   it("matches existing canonical bytes for numeric keys, Unicode, and shared values", () => {
-    const shared = { z: -0, a: [1e-7, 1e30, "雪😀\ud800"] };
+    const shared = { z: -0, a: [1e-7, 1e30, "雪😀"] };
     const ownKeys: unknown = JSON.parse(
       '{"__proto__":1,"constructor":2,"10":3,"2":4}',
     );

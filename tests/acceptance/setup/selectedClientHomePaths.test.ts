@@ -1,3 +1,4 @@
+import { expectResultValue } from "../../support/expectResultValue.js";
 import {
   access,
   mkdir,
@@ -71,9 +72,8 @@ cliTest.skipIf(process.platform === "win32")(
       });
     const configured = await run();
     expect(configured.exitCode, configured.stdout + configured.stderr).toBe(0);
-    const registered = parseClientConfiguration(
-      await readFile(config, "utf8"),
-      "toml",
+    const registered = expectResultValue(
+      parseClientConfiguration(await readFile(config, "utf8"), "toml"),
     );
     expect(registered.document.model).toBe("selected-model");
     expect(registered.servers.other).toMatchObject({ command: "other-server" });

@@ -14,6 +14,7 @@ export const IL2CPP_METADATA_FAILURE_REASONS = {
     "declaring-type-mismatch",
     "image-range-overlap",
     "invalid-string",
+    "invalid-method-definition-token",
   ],
 } as const;
 export type Il2cppMetadataFailureReason =

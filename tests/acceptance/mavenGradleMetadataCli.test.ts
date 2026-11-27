@@ -14,6 +14,7 @@ import {
 import {
   gradleModuleFixture,
   mavenPomFixture,
+  mavenPropertyValuesFixture,
   qualifiedMavenPropertiesFixture,
 } from "../../src/java/MavenGradleMetadata.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -27,6 +28,148 @@ const bundleOutputSchema = contractNamed(
   SESSION_TOOL_CONTRACTS,
   "get_evidence_bundle",
 ).outputSchema;
+
+cliTest(
+  "refuses a POM at report_limits.xml_nodes and reports it when raised through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-maven-report-limits-");
+    const path = join(root, "pom.xml");
+    await writeFile(path, mavenPomFixture);
+    const command = ["inspect-maven-gradle-metadata", path, "--json"];
+    const limit = {
+      control_kind: "parameter",
+      parameter: "report_limits.xml_nodes",
+      effective_value: 8,
+      unit: "count",
+      minimum: 1,
+      default_value: 1_048_576,
+      applies_at: "next_call",
+    };
+    const refused = await cli.run({
+      arguments: [...command, "--report-limits", '{"xml_nodes":8}'],
+    });
+    expect(refused.exitCode).toBe(1);
+    expect(refused.json).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: { limit },
+      remediation: {
+        action: expect.stringContaining("report_limits.xml_nodes"),
+      },
+    });
+    const raised = await cli.run({
+      arguments: [...command, "--report-limits", '{"xml_nodes":100000}'],
+    });
+    expect(raised.exitCode, raised.stderr).toBe(0);
+    expect(outputSchema.parse(raised.json).parameters).toMatchObject({
+      report_limits: { xml_nodes: 100_000 },
+    });
+    const { call } = await connectLocalToolsMcp();
+    const mcpRefused = await call("inspect_maven_gradle_metadata", {
+      path,
+      report_limits: { xml_nodes: 8 },
+    });
+    expect(mcpRefused.isError).toBe(true);
+    expect(parseMcpToolError(mcpRefused).error).toMatchObject({
+      details: { limit },
+    });
+    const mcpRaised = await call("inspect_maven_gradle_metadata", {
+      path,
+      report_limits: { xml_nodes: 100_000 },
+    });
+    expect(mcpRaised.isError, JSON.stringify(mcpRaised)).not.toBe(true);
+  },
+);
+
+cliTest(
+  "preserves Maven property value characters through CLI, MCP and retained Evidence",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-maven-property-values-");
+    const path = join(root, "pom.xml");
+    const bytes = Buffer.from(mavenPropertyValuesFixture);
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-maven-gradle-metadata", path, "--json"],
+    });
+    expect(result.exitCode, result.stdout + result.stderr).toBe(0);
+    const cliEvidence = outputSchema.parse(result.json);
+    const report = cliEvidence.normalized_result;
+    expect(report.properties).toEqual([
+      {
+        name: "revision",
+        value: "\u00a01.2.3\u00a0",
+        value_credentials_redacted: false,
+      },
+      {
+        name: "dependency.version",
+        value: "\ufeff2.0\ufeff",
+        value_credentials_redacted: false,
+      },
+      {
+        name: "marker",
+        value: "\u00a0\ufeff",
+        value_credentials_redacted: false,
+      },
+      {
+        name: "plain",
+        value: "ordinary value",
+        value_credentials_redacted: false,
+      },
+      { name: "blank", value: null, value_credentials_redacted: false },
+      {
+        name: "mirror",
+        value: "\u00a0https://example.invalid/repository\ufeff",
+        value_credentials_redacted: true,
+      },
+    ]);
+    expect(report.coordinates.version).toBe("${revision}");
+    expect(report.dependencies[0]?.version).toBe("${dependency.version}");
+    expect(report.unresolved).toEqual([
+      {
+        kind: "property",
+        reference: "${revision}",
+        field: "version",
+        owner: "project",
+        index: null,
+      },
+      {
+        kind: "property",
+        reference: "${dependency.version}",
+        field: "version",
+        owner: "dependency",
+        index: 0,
+      },
+    ]);
+    expect(report.artifact).toEqual({
+      path,
+      bytes: bytes.length,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    });
+    expect(report.coverage).toEqual({
+      status: "complete",
+      examined_bytes: bytes.length,
+    });
+    const { call } = await connectLocalToolsMcp();
+    const response = await call("inspect_maven_gradle_metadata", { path });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    const evidence = outputSchema.parse(response.structuredContent);
+    expect(evidence.normalized_result).toEqual(report);
+    const retained = await call("get_evidence_bundle", { detail: "complete" });
+    expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
+    const bundle = parseEvidenceBundle(
+      bundleOutputSchema.parse(retained.structuredContent).result,
+    );
+    expect(
+      bundle.records.find(
+        (record) => record.evidence_id === evidence.evidence_id,
+      ),
+    ).toEqual(evidence);
+    expect(JSON.stringify([cliEvidence, response, retained])).not.toContain(
+      "fixture-password",
+    );
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+  },
+);
 
 cliTest(
   "distinguishes POM declaration namespaces and preserves qualified property keys through CLI and MCP",
@@ -422,6 +565,38 @@ cliTest(
   },
 );
 
+cliTest("reads a Maven 4.1.0 model POM", async ({ cli }) => {
+  const root = await createTestTempDirectory("rea-maven-cli-model-41-");
+  const path = join(root, "pom.xml");
+  await writeFile(
+    path,
+    `<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.1.0">
+  <modelVersion>4.1.0</modelVersion>
+  <groupId>g</groupId><artifactId>a</artifactId><version>1</version>
+  <dependencies><dependency><groupId>x</groupId><artifactId>y</artifactId><version>2</version></dependency></dependencies>
+</project>
+`,
+  );
+  const result = await cli.run({
+    arguments: ["inspect-maven-gradle-metadata", path, "--json"],
+  });
+  expect(result.exitCode, result.stdout + result.stderr).toBe(0);
+  const report = outputSchema.parse(result.json).normalized_result;
+  expect(report.format).toBe("maven-pom");
+  expect(report.coordinates).toMatchObject({
+    group_id: "g",
+    artifact_id: "a",
+    version: "1",
+  });
+  expect(report.dependencies).toEqual([
+    expect.objectContaining({ group_id: "x", artifact_id: "y", version: "2" }),
+  ]);
+  expect(report.limitations).toContain(
+    "Maven 4 can infer omitted parent coordinates and, in model version 4.1.0, omitted dependency and managed dependency group IDs and versions from the local project tree; that inference was not applied.",
+  );
+});
+
 cliTest(
   "fails closed on a file that is not Maven POM or Gradle module metadata",
   async ({ cli }) => {
@@ -476,16 +651,11 @@ cliTest.for([
     const bytes = Buffer.from(source, "utf8");
     await writeFile(path, bytes);
     const expected = {
-      code: "invalid_request",
+      code: "unsupported_target",
       details: {
         operation: "inspect_maven_gradle_metadata",
-        issues: [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: expect.stringContaining(issue),
-          },
-        ],
+        failure_kind: "malformed",
+        reason: expect.stringContaining(issue),
         partial_observation: {
           kind: "file-snapshot-hash",
           path,

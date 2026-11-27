@@ -10,6 +10,7 @@ import {
   truncate,
   writeFile,
 } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, onTestFinished, test, vi } from "vitest";
 
@@ -19,11 +20,12 @@ import {
   systemProcessOwnershipHost,
 } from "../process/ProcessOwnershipObservation.js";
 import { ApktoolWorkspace } from "./ApktoolWorkspace.js";
-import { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
+import { createApktoolResourceAnalysisService } from "../application/ProviderOperationServices.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   apktoolRequestSchema,
   apktoolResultSchemas,
+  DEFAULT_APKTOOL_STRING_TABLE_BYTES,
 } from "../domain/apktool/apktoolResourceAnalysis.js";
 import type { ApktoolRequest } from "../domain/apktool/apktoolResourceAnalysis.js";
 
@@ -70,7 +72,7 @@ const DE_STRINGS = [
 const writeApktoolStub = async (
   body: (root: string) => string,
 ): Promise<{ readonly command: string; readonly root: string }> => {
-  const root = await mkdtemp(join("/tmp", "rea-apktool-stub-"));
+  const root = await mkdtemp(join(tmpdir(), "rea-apktool-stub-"));
   onTestFinished(() => rm(root, { recursive: true, force: true }));
   const command = join(root, "apktool");
   await writeFile(command, `#!/bin/sh\n${body(root)}\n`, { mode: 0o755 });
@@ -183,7 +185,7 @@ it("recovers later string pages and an exhausted XML admission on the same APK",
   const apk = await apkFixture(root);
   const provider = providerOver(command);
   onTestFinished(() => provider.close());
-  const service = new ApktoolResourceAnalysisService(provider);
+  const service = createApktoolResourceAnalysisService(provider);
   const inspect = async (input: Record<string, unknown>) => {
     const outcome = await service.execute("decode_android_resources", {
       path: apk.path,
@@ -240,7 +242,7 @@ it("returns table-only facts for a single selected primary table", async () => {
   const apk = await apkFixture(root);
   const provider = providerOver(command);
   onTestFinished(() => provider.close());
-  const outcome = await new ApktoolResourceAnalysisService(provider).execute(
+  const outcome = await createApktoolResourceAnalysisService(provider).execute(
     "decode_android_resources",
     { path: apk.path, string_tables_only: true },
   );
@@ -291,7 +293,7 @@ sdkInfo:
   const original = await readFile(apk.path);
   const provider = providerOver(command);
   onTestFinished(() => provider.close());
-  const outcome = await new ApktoolResourceAnalysisService(provider).execute(
+  const outcome = await createApktoolResourceAnalysisService(provider).execute(
     "decode_android_resources",
     { path: apk.path },
   );
@@ -594,7 +596,7 @@ it("preserves primary strings and reports markup omissions in default and locali
   const apk = await apkFixture(root);
   const provider = providerOver(command);
   onTestFinished(() => provider.close());
-  const observation = await new ApktoolResourceAnalysisService(
+  const observation = await createApktoolResourceAnalysisService(
     provider,
   ).execute("decode_android_resources", {
     path: apk.path,
@@ -726,13 +728,27 @@ it("notes a missing default strings table without strings", async () => {
   const apk = await apkFixture(root);
   const execution = await providerOver(command).execute({
     operation: "decode_android_resources",
-    input: { path: apk.path, include_strings: true },
+    input: {
+      path: apk.path,
+      include_strings: true,
+      max_string_table_bytes: DEFAULT_APKTOOL_STRING_TABLE_BYTES,
+    },
   });
   if (!execution.ok) throw execution.error;
-  expect(execution.value.result).toMatchObject({ strings: [] });
-  expect(execution.value.limitations).toContain(
-    "No default res/values/strings.xml was found in the decoded workspace",
-  );
+  expect(execution.value.result).toMatchObject({
+    strings: [],
+    coverage: "complete",
+    string_tables: [
+      {
+        locale: null,
+        status: "missing",
+        strings: [],
+        total_count: 0,
+        unparsed_count: 0,
+        coverage: "complete",
+      },
+    ],
+  });
 });
 
 it("reports a missing launcher as a capability gap with recovery", async () => {
@@ -838,7 +854,7 @@ it("uses an owned APK snapshot and framework cache and resolves regional locales
     ),
   );
   const apk = await apkFixture(root);
-  const observation = await new ApktoolResourceAnalysisService(
+  const observation = await createApktoolResourceAnalysisService(
     providerOver(command),
   ).execute("decode_android_resources", {
     path: apk.path,
@@ -877,7 +893,7 @@ it("shares one decode across default and selected locale tables", async () => {
     ),
   );
   const apk = await apkFixture(root);
-  const observation = await new ApktoolResourceAnalysisService(
+  const observation = await createApktoolResourceAnalysisService(
     providerOver(command),
   ).execute("decode_android_resources", {
     path: apk.path,
@@ -944,7 +960,7 @@ it("reuses normalized directory table for locale aliases without extra reads", a
     ),
   );
   const apk = await apkFixture(root);
-  const observation = await new ApktoolResourceAnalysisService(
+  const observation = await createApktoolResourceAnalysisService(
     providerOver(command),
   ).execute("decode_android_resources", {
     path: apk.path,
@@ -1007,7 +1023,7 @@ it.each([2000, 2001])(
     const apk = await apkFixture(root);
     const provider = providerOver(command);
     try {
-      const observation = await new ApktoolResourceAnalysisService(
+      const observation = await createApktoolResourceAnalysisService(
         provider,
       ).execute("decode_android_resources", {
         path: apk.path,
@@ -1050,7 +1066,7 @@ it("skips all string tables when include_strings is false despite locales reques
     ),
   );
   const apk = await apkFixture(root);
-  const observation = await new ApktoolResourceAnalysisService(
+  const observation = await createApktoolResourceAnalysisService(
     providerOver(command),
   ).execute("decode_android_resources", {
     path: apk.path,
@@ -1083,7 +1099,7 @@ it("skips remaining tables without reading or parsing once aggregate string budg
   const bigStrings = `<resources>${Array.from({ length: 2000 }, (_, i) => `<string name="s_${String(i)}">val</string>`).join("")}</resources>`;
   await writeFile(join(root, "big-strings.xml"), bigStrings);
   const apk = await apkFixture(root);
-  const observation = await new ApktoolResourceAnalysisService(
+  const observation = await createApktoolResourceAnalysisService(
     providerOver(command),
   ).execute("decode_android_resources", {
     path: apk.path,
@@ -1115,15 +1131,95 @@ it("marks an oversized strings document partial without claiming it is missing",
   const apk = await apkFixture(root);
   const result = await providerOver(command).execute({
     operation: "decode_android_resources",
-    input: { path: apk.path, include_strings: true },
+    input: {
+      path: apk.path,
+      include_strings: true,
+      max_string_table_bytes: DEFAULT_APKTOOL_STRING_TABLE_BYTES,
+    },
   });
   if (!result.ok) throw result.error;
   expect(result.value.result).toMatchObject({
     coverage: "partial",
     strings: [],
+    string_tables: [
+      {
+        locale: null,
+        status: "oversized",
+        strings: [],
+        total_count: null,
+        unparsed_count: null,
+        coverage: "partial",
+      },
+    ],
   });
-  expect(result.value.limitations.join(" ")).toContain("exceeds");
-  expect(result.value.limitations.join(" ")).not.toContain("No default");
+});
+
+describe("decoded manifest package fallback", () => {
+  it.each([
+    [
+      "Apktool 2 current name",
+      "<manifest/>",
+      "version: 2.7.0\npackageInfo: {cur_package: com.rea.current, orig_package: com.rea.original}\n",
+      "com.rea.current",
+    ],
+    [
+      "Apktool 2 original name",
+      "<manifest/>",
+      "version: 2.7.0\npackageInfo: {cur_package: null, orig_package: com.rea.original}\n",
+      "com.rea.original",
+    ],
+    [
+      "Apktool 2 quoted string",
+      "<manifest/>",
+      "version: 2.7.0\npackageInfo: {cur_package: 'null', orig_package: com.rea.original}\n",
+      "null",
+    ],
+    [
+      "Apktool 3 resource metadata",
+      "<manifest/>",
+      "version: 3.0.3\nresourcesInfo:\n  packageName: com.rea.resources\n",
+      "com.rea.resources",
+    ],
+    [
+      "manifest precedence",
+      '<manifest package="com.rea.manifest"/>',
+      "version: 3.0.3\nresourcesInfo:\n  packageName: com.rea.resources\n",
+      "com.rea.manifest",
+    ],
+    [
+      "explicitly empty manifest package",
+      '<manifest package=""/>',
+      "version: 3.0.3\nresourcesInfo:\n  packageName: com.rea.resources\n",
+      null,
+    ],
+    [
+      "truncated manifest",
+      "<manifest/>" + " ".repeat(512 * 1024),
+      "version: 3.0.3\nresourcesInfo:\n  packageName: com.rea.resources\n",
+      null,
+    ],
+  ] as const)(
+    "resolves package identity from %s",
+    async (_name, manifest, yml, expected) => {
+      const { command, root } = await writeApktoolStub((root) =>
+        decodeStub({
+          manifestFile: join(root, "fallback-manifest.xml"),
+          ymlFile: join(root, "fallback-apktool.yml"),
+        })(root),
+      );
+      await writeFile(join(root, "fallback-manifest.xml"), manifest);
+      await writeFile(join(root, "fallback-apktool.yml"), yml);
+      const apk = await apkFixture(root);
+      const result = await providerOver(command).execute({
+        operation: "decode_android_resources",
+        input: { path: apk.path, include_strings: false },
+      });
+      if (!result.ok) throw result.error;
+      expect(result.value.result).toMatchObject({
+        metadata: { package_name: expected },
+      });
+    },
+  );
 });
 
 describe("truncated manifest prefixes", () => {
@@ -1156,9 +1252,6 @@ describe("truncated manifest prefixes", () => {
       manifest: manifest.slice(0, 512 * 1024),
       metadata: { package_name: null, version_name: "1.2.3" },
     });
-    expect(result.value.limitations.join(" ")).toContain(
-      "manifest is truncated",
-    );
   });
 });
 
@@ -1300,7 +1393,11 @@ it.each([
       const result = await provider.execute(
         {
           operation: "decode_android_resources",
-          input: { path: apk.path, include_strings: true },
+          input: {
+            path: apk.path,
+            include_strings: true,
+            max_string_table_bytes: DEFAULT_APKTOOL_STRING_TABLE_BYTES,
+          },
         },
         { signal: controller.signal },
       );
@@ -1318,9 +1415,15 @@ it.each([
       });
       if (stringsXml !== undefined)
         expect(result.error.partialObservation).toMatchObject({
-          limitations: expect.arrayContaining([
-            expect.stringContaining("entry counts are unknown"),
-          ]),
+          normalized_result: {
+            string_tables: [
+              {
+                status: "malformed",
+                total_count: null,
+                unparsed_count: null,
+              },
+            ],
+          },
         });
       denied = false;
       await provider.close();
@@ -1368,7 +1471,7 @@ it.each(["decode", "projection"] as const)(
       expect(controller.signal.aborted).toBe(true);
       expect(result.error._tag).toBe(
         stage === "decode"
-          ? "AnalysisUnsupportedTargetError"
+          ? "AnalysisTargetFailureError"
           : "AnalysisProtocolError",
       );
       if (stage === "decode")
@@ -1720,33 +1823,34 @@ it.each([
     try {
       const result = await provider.execute({
         operation: "decode_android_resources",
-        input: { path: apk.path, include_strings: true },
+        input: {
+          path: apk.path,
+          include_strings: true,
+          max_string_table_bytes: DEFAULT_APKTOOL_STRING_TABLE_BYTES,
+        },
       });
       if (!result.ok) throw result.error;
       expect(result.value.result).toMatchObject({
         strings,
         target: { sha256: apk.sha256 },
         coverage: "partial",
+        string_tables: [
+          kind === "unsupported"
+            ? {
+                locale: null,
+                status: "present",
+                unparsed_count: 2,
+                coverage: "partial",
+              }
+            : {
+                locale: null,
+                status: "malformed",
+                total_count: null,
+                unparsed_count: null,
+                coverage: "partial",
+              },
+        ],
       });
-      const limitations = result.value.limitations.join("\n");
-      if (kind === "unsupported") {
-        expect(limitations).toMatch(/omitted[^\n]*2/iu);
-        expect(limitations).toMatch(
-          /omitted.*unsupported markup.*missing names/iu,
-        );
-        expect(limitations).not.toContain("entry counts are unknown");
-      } else {
-        expect(limitations).toContain(
-          'String table "res/values/strings.xml" could not be projected:',
-        );
-        expect(limitations).toContain("entry counts are unknown");
-        expect(limitations).not.toContain("String entries omitted");
-        expect(limitations).toContain(
-          kind === "wrong_root"
-            ? "root must be <resources>"
-            : "XML is not well-formed",
-        );
-      }
     } finally {
       await provider.close();
     }

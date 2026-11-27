@@ -65,13 +65,12 @@ const validateRemainingJson = (
     }
     const frame = frames.at(-1);
     if (frame === undefined) return;
-    const member = nextMember(frame);
-    if (member === undefined) {
+    if (!advanceMember(frame)) {
       ancestors.delete(frame.value);
       frames.pop();
       continue;
     }
-    pending = member.item;
+    pending = frame.memberItem;
     hasPending = true;
   }
 };
@@ -135,26 +134,21 @@ export const equalJsonText = (left: unknown, right: unknown): boolean => {
     const frameA = leftFrames.at(-1);
     const frameB = rightFrames.at(-1);
     if (frameA === undefined || frameB === undefined) return true;
-    const memberA = nextMember(frameA);
-    const memberB = nextMember(frameB);
-    if (memberA === undefined || memberB === undefined) {
-      if (memberA !== memberB)
-        return finishMismatch(
-          memberA?.item,
-          memberA !== undefined,
-          memberB?.item,
-          memberB !== undefined,
-        );
+    const hasA = advanceMember(frameA);
+    const hasB = advanceMember(frameB);
+    if (!hasA || !hasB) {
+      if (hasA !== hasB)
+        return finishMismatch(frameA.memberItem, hasA, frameB.memberItem, hasB);
       ancestorsLeft.delete(frameA.value);
       ancestorsRight.delete(frameB.value);
       leftFrames.pop();
       rightFrames.pop();
       continue;
     }
-    if (memberA.key !== memberB.key)
-      return finishMismatch(memberA.item, true, memberB.item, true);
-    pendingLeft = memberA.item;
-    pendingRight = memberB.item;
+    if (frameA.memberKey !== frameB.memberKey)
+      return finishMismatch(frameA.memberItem, true, frameB.memberItem, true);
+    pendingLeft = frameA.memberItem;
+    pendingRight = frameB.memberItem;
     hasPending = true;
   }
 };
@@ -216,6 +210,8 @@ interface ContainerFrame {
   readonly depth: number;
   index: number;
   written: number;
+  memberKey: string | undefined;
+  memberItem: unknown;
 }
 
 /** Encoded text of a scalar, or undefined for a container or a long string. */
@@ -245,32 +241,50 @@ const openContainer = (
   const keys = array ? undefined : Object.keys(value);
   if (canonical) keys?.sort();
   const count = array ? value.length : (keys?.length ?? 0);
-  return { value, array, keys, count, depth, index: 0, written: 0 };
+  return {
+    value,
+    array,
+    keys,
+    count,
+    depth,
+    index: 0,
+    written: 0,
+    memberKey: undefined,
+    memberItem: undefined,
+  };
 };
 
-/** The next written member of a container, skipping values JSON omits. */
-const nextMember = (
-  frame: ContainerFrame,
-): { readonly key: string | undefined; readonly item: unknown } | undefined => {
+/** Advance to the next written member in-place, avoiding per-member object allocations. */
+const advanceMember = (frame: ContainerFrame): boolean => {
   while (frame.index < frame.count) {
     const index = frame.index;
     frame.index += 1;
-    if (frame.array)
-      return { key: undefined, item: Reflect.get(frame.value, index) };
+    if (frame.array) {
+      frame.memberKey = undefined;
+      frame.memberItem = (frame.value as readonly unknown[])[index];
+      return true;
+    }
     const key = frame.keys?.[index];
     if (key === undefined)
       throw new TypeError("JSON object changed during serialization");
-    const item: unknown = Reflect.get(frame.value, key);
+    const item: unknown = (frame.value as Readonly<Record<string, unknown>>)[
+      key
+    ];
     // Incur's filter can select inherited methods. Match native JSON's
     // omission without eagerly reading the rest of a bounded result.
     if (
       item !== undefined &&
       typeof item !== "function" &&
       typeof item !== "symbol"
-    )
-      return { key, item };
+    ) {
+      frame.memberKey = key;
+      frame.memberItem = item;
+      return true;
+    }
   }
-  return undefined;
+  frame.memberKey = undefined;
+  frame.memberItem = undefined;
+  return false;
 };
 
 /**
@@ -315,15 +329,15 @@ function* encodeValue(
     }
     const frame = stack.at(-1);
     if (frame === undefined) break;
-    const member = nextMember(frame);
-    if (member !== undefined && frame.written > 0) buffer += ",";
-    if (pretty && (member !== undefined || frame.written > 0)) {
+    const hasMember = advanceMember(frame);
+    if (hasMember && frame.written > 0) buffer += ",";
+    if (pretty && (hasMember || frame.written > 0)) {
       if (buffer.length === PART_CHARACTERS) {
         yield buffer;
         buffer = "";
       }
       buffer += "\n";
-      let spaces = 2 * (frame.depth + (member === undefined ? 0 : 1));
+      let spaces = 2 * (frame.depth + (hasMember ? 1 : 0));
       // Deep indentation can itself fill several parts. Reuse one whitespace
       // block so neither the string allocation nor its retention grows with depth.
       while (buffer.length + spaces >= PART_CHARACTERS) {
@@ -334,24 +348,24 @@ function* encodeValue(
       }
       buffer += INDENT_SPACES.slice(0, spaces);
     }
-    if (member === undefined) {
+    if (!hasMember) {
       buffer += frame.array ? "]" : "}";
       ancestors.delete(frame.value);
       stack.pop();
       continue;
     }
-    if (member.key !== undefined) {
-      const key = scalarText(member.key);
+    if (frame.memberKey !== undefined) {
+      const key = scalarText(frame.memberKey);
       if (key !== undefined) buffer += key;
       else {
         if (buffer !== "") yield buffer;
         buffer = "";
-        yield* encodeString(member.key);
+        yield* encodeString(frame.memberKey);
       }
       buffer += pretty ? ": " : ":";
     }
     frame.written += 1;
-    pending = member.item;
+    pending = frame.memberItem;
     hasPending = true;
   }
   if (buffer !== "") yield buffer;

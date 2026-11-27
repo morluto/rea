@@ -43,7 +43,7 @@ export const sectionNameFixtures = (original, report) => {
       if (problem === "extended-small") selected = sourceTable.index;
       bytes.writeUInt32LE(selected, Number(bytes.readBigUInt64LE(40)) + 40);
     } else bytes.writeUInt16LE(selected, 62);
-    fixtures.push({ name: problem, bytes, expectation: "invalid_input" });
+    fixtures.push({ name: problem, bytes, expectation: "malformed" });
   }
   const absent = Buffer.from(original);
   absent.writeUInt16LE(0, 62);
@@ -82,7 +82,7 @@ export const sectionNameFixtures = (original, report) => {
   fixtures.push({
     name: "direct-reserved",
     bytes: reserved,
-    expectation: "invalid_input",
+    expectation: "malformed",
   });
   return fixtures;
 };

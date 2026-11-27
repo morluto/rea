@@ -9,6 +9,25 @@
       content="A small Notes app for the REA browser and network analysis guide."
     />
     <title>Notes — REA browser example</title>
+    <!-- website:theme:start -->
+    <meta name="theme-color" content="#ffffff" />
+    <script>
+      (() => {
+        let theme;
+        try {
+          theme = localStorage.getItem("rea-theme");
+        } catch {}
+        if (theme !== "light" && theme !== "dark")
+          theme = matchMedia("(prefers-color-scheme: dark)").matches
+            ? "dark"
+            : "light";
+        document.documentElement.dataset.theme = theme;
+        document.querySelector('meta[name="theme-color"]').content =
+          theme === "dark" ? "#1e1e2e" : "#ffffff";
+      })();
+    </script>
+    <script defer src="../../assets/theme.js"></script>
+    <!-- website:theme:end -->
     <link rel="icon" href="../../assets/favicon.svg?v=2" type="image/svg+xml" />
     <link rel="stylesheet" href="../../assets/styles.css" />
     <script src="export.js" defer></script>

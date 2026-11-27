@@ -1,3 +1,4 @@
+import { expectResultValue } from "../../support/expectResultValue.js";
 import { registerMcpClientsOnHost } from "../../fixtures/mcpRegistration.js";
 import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import {
@@ -17,10 +18,8 @@ import {
 import { constants as fsConstants } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import {
-  clientConfigurationRecordSchema,
-  parseClientConfiguration,
-} from "../../../src/application/ClientConfigurationDocument.js";
+import { parseClientConfiguration } from "../../../src/application/ClientConfigurationDocument.js";
+import { clientConfigurationRecordSchema } from "../../../src/application/ClientConfigurationValues.js";
 import { parseGooseConfigurationYaml } from "../../../src/application/GooseConfigurationYaml.js";
 
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
@@ -39,8 +38,8 @@ import { detectClients } from "../../../src/application/SetupHost.js";
 import {
   runUninstall,
   systemUninstallHost,
-  type UninstallFileSystem,
 } from "../../../src/application/Uninstall.js";
+import type { UninstallFileSystem } from "../../../src/application/UninstallShared.js";
 import { ClientConfigurationPublication } from "../../../src/application/ClientConfigurationPublication.js";
 import { existingMaintenanceScope } from "../../../src/application/UpdateMaintenance.js";
 import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
@@ -151,9 +150,11 @@ it.each([
     expect(uninstall.items).toContainEqual(
       expect.objectContaining({ name: client, status: "removed" }),
     );
-    const remaining = parseClientConfiguration(
-      await readFile(row.configPath, "utf8"),
-      row.format,
+    const remaining = expectResultValue(
+      parseClientConfiguration(
+        await readFile(row.configPath, "utf8"),
+        row.format,
+      ),
     );
     expect(remaining.servers).not.toHaveProperty("rea");
     if (row.privateProfile !== undefined && platform !== "win32")
@@ -189,7 +190,9 @@ it("registers Amp in settings.jsonc when that is Amp's only settings file", asyn
   );
   const text = await readFile(jsonc, "utf8");
   expect(text).toContain("// keep");
-  expect(parseClientConfiguration(text, "amp").servers).toHaveProperty("rea");
+  expect(
+    expectResultValue(parseClientConfiguration(text, "amp")).servers,
+  ).toHaveProperty("rea");
 
   // With both files present, which one Amp reads is unknown.
   await writeFile(join(directory, "settings.json"), "{}\n");

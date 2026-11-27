@@ -190,7 +190,7 @@ describe("error delivery omission worklist", () => {
     );
     expect(result.content).toHaveLength(1);
     expect(first.reads()).toBe(3);
-    expect(second.reads()).toBe(3);
+    expect(second.reads()).toBe(2);
     expect(
       (
         result.structuredContent as {

@@ -485,7 +485,7 @@ it("names tools deterministically from literals, strips dotted labels and disamb
   });
 });
 
-it("merges identifier-like siblings at index two or later and never folds stop words", () => {
+it("merges identifier-like siblings from index two and keeps unrelated literals distinct", () => {
   const projected = manifest(
     ["sibling-variance"],
     syntheticCapture([
@@ -495,20 +495,16 @@ it("merges identifier-like siblings at index two or later and never folds stop w
       ["GET", "https://s.test/api/items/b2"],
       ["GET", "https://s.test/api/things/x"],
       ["GET", "https://s.test/api/things/y"],
-      ["GET", "https://s.test/api/widgets/red-one"],
-      ["GET", "https://s.test/api/widgets/blue-two"],
-      ["GET", "https://s.test/api/widgets/green-three"],
-      ["GET", "https://s.test/api/alpha"],
+      ["GET", "https://s.test/api/alpha1"],
       ["GET", "https://s.test/api/beta1"],
       ["GET", "https://s.test/api/items/a1/versions"],
       ["GET", "https://s.test/api/items/a1/children"],
       ["GET", "https://s.test/api/items/mine"],
       ["GET", "https://s.test/api/items/search"],
-      ["GET", "https://s.test/api/widgets/shared"],
     ]),
   );
   expect(projected.tools.map((tool) => tool.path_template)).toEqual([
-    "/api/alpha",
+    "/api/alpha1",
     "/api/beta1",
     "/api/items/a1/children",
     "/api/items/a1/versions",
@@ -519,8 +515,6 @@ it("merges identifier-like siblings at index two or later and never folds stop w
     "/api/things/y",
     "/api/users/{numeric}/search",
     "/api/users/{numeric}/settings",
-    "/api/widgets/shared",
-    "/api/widgets/{widget_id}",
   ]);
   expect(
     projected.tools.find(
@@ -537,11 +531,6 @@ it("merges identifier-like siblings at index two or later and never folds stop w
     ],
     record_ordinals: [2, 3],
   });
-  expect(
-    projected.tools.find(
-      (tool) => tool.path_template === "/api/widgets/{widget_id}",
-    )?.params[0]?.observed_values,
-  ).toEqual(["blue-two", "green-three", "red-one"]);
 });
 
 it("templates two adjacent literals after a plural literal as a pair when three pairs vary in both positions", () => {
@@ -574,6 +563,9 @@ it("templates two adjacent literals after a plural literal as a pair when three 
       ["GET", "https://g.test/api/v1/orgs/acme/x1/hooks"],
       ["GET", "https://g.test/api/v1/orgs/acme/x2/hooks"],
       ["GET", "https://g.test/api/v1/orgs/acme/x3/hooks"],
+      ["GET", "https://g.test/api/v1/users/alice/followers"],
+      ["GET", "https://g.test/api/v1/users/bob/following"],
+      ["GET", "https://g.test/api/v1/users/carol/starred"],
     ]),
   );
   expect(projected.tools.map((tool) => tool.path_template)).toEqual([
@@ -584,6 +576,9 @@ it("templates two adjacent literals after a plural literal as a pair when three 
     "/api/v1/repos/{repo_namespace}/{repo_name}/issues/{numeric}",
     "/api/v1/teams/one/alpha/members",
     "/api/v1/teams/two/beta/members",
+    "/api/v1/users/alice/followers",
+    "/api/v1/users/bob/following",
+    "/api/v1/users/carol/starred",
   ]);
   expect(
     projected.tools.find(
@@ -619,22 +614,6 @@ it("templates two adjacent literals after a plural literal as a pair when three 
     ["repo_namespace", "sibling-pair-variance"],
     ["repo_name", "sibling-pair-variance"],
     ["id", "numeric"],
-  ]);
-});
-
-it("keeps a trailing pair literal because its second half names a sub-resource", () => {
-  const projected = manifest(
-    ["sibling-pair-variance"],
-    syntheticCapture([
-      ["GET", "https://g.test/api/v1/users/alice/followers"],
-      ["GET", "https://g.test/api/v1/users/bob/following"],
-      ["GET", "https://g.test/api/v1/users/carol/starred"],
-    ]),
-  );
-  expect(projected.tools.map((tool) => tool.path_template)).toEqual([
-    "/api/v1/users/alice/followers",
-    "/api/v1/users/bob/following",
-    "/api/v1/users/carol/starred",
   ]);
 });
 
@@ -710,10 +689,14 @@ it("folds a literal sibling recorded before the templated token into the same pa
   const literalFirst = [
     ["GET", "https://g.test/api/folders/general?accesscontrol=true"],
     ["GET", "https://g.test/api/folders/fg1jo91e57e2ob"],
+    ["GET", "https://g.test/api/folders/search"],
   ] as const;
   const projected = manifest(GRAFANA_RULES, syntheticCapture(literalFirst));
-  expect(projected.tools).toHaveLength(1);
-  expect(projected.tools[0]).toMatchObject({
+  expect(projected.tools.map(line)).toEqual([
+    "GET /api/folders/search",
+    "GET /api/folders/{uid}",
+  ]);
+  expect(projected.tools[1]).toMatchObject({
     name: "get_folders_by_uid",
     path_template: "/api/folders/{uid}",
     api_surface_template: "/api/folders/general",
@@ -731,11 +714,11 @@ it("folds a literal sibling recorded before the templated token into the same pa
   expect(projected.templated_groups).toBe(1);
   const tokenFirst = manifest(
     GRAFANA_RULES,
-    syntheticCapture([literalFirst[1], literalFirst[0]]),
-  ).tools[0]!;
+    syntheticCapture([literalFirst[1], literalFirst[0], literalFirst[2]]),
+  ).tools[1]!;
   expect(tokenFirst.api_surface_template).toBe("/api/folders/fg1jo91e57e2ob");
   const { api_surface_template: _literal, ...literalTool } =
-    projected.tools[0]!;
+    projected.tools[1]!;
   const { api_surface_template: _token, ...tokenTool } = tokenFirst;
   expect(literalTool).toEqual(tokenTool);
 });
@@ -837,7 +820,7 @@ it("refuses non-HAR formats, sensitive parents, unsupported parents and malforme
     capture.format = format;
     expect(projectAnalysisView(parentOf(capture), view())).toMatchObject({
       ok: false,
-      error: { _tag: "AnalysisUnsupportedTargetError" },
+      error: { _tag: "AnalysisTargetFailureError" },
     });
   }
   for (const parameters of [{ sensitive_value_count: 1 }, {}, null])
@@ -849,8 +832,10 @@ it("refuses non-HAR formats, sensitive parents, unsupported parents and malforme
     ).toMatchObject({
       ok: false,
       error: {
-        _tag: "AnalysisUnsupportedTargetError",
-        reason: "sensitive_values_unretained",
+        _tag: "AnalysisTargetFailureError",
+        failure: {
+          detail: expect.stringContaining("sensitive_values_unretained"),
+        },
       },
     });
   const layout = analysisViewLayoutEvidence();
@@ -867,7 +852,7 @@ it("refuses non-HAR formats, sensitive parents, unsupported parents and malforme
     ),
   ).toMatchObject({
     ok: false,
-    error: { _tag: "AnalysisUnsupportedTargetError" },
+    error: { _tag: "AnalysisTargetFailureError" },
   });
   const cyclic: { self?: unknown } = {};
   cyclic.self = cyclic;
@@ -961,72 +946,28 @@ it("reads only the top-level key types of a deeply nested request body", () => {
   });
 });
 
-it("assigns collision suffixes in sequence and keeps every name unique", () => {
-  const projected = manifest(
-    [],
-    syntheticCapture(
-      Array.from(
-        { length: 300 },
-        (_, index) =>
-          ["GET", `https://s.test/api/item.${String(index)}`] as const,
-      ),
-    ),
-  );
-  const names = projected.tools.map((tool) => tool.name);
-  expect(new Set(names).size).toBe(300);
-  expect([...names].sort()).toEqual(
-    [
-      "get_item",
-      ...Array.from(
-        { length: 299 },
-        (_, index) => `get_item_${String(index + 2)}`,
-      ),
-    ].sort(),
-  );
-});
-
-it("does not compare routes beyond the sibling-variance segment limit and says so", () => {
-  const tail = Array.from(
-    { length: 36 },
-    (_, index) => `s${String(index)}`,
-  ).join("/");
-  const projected = manifest(
-    ["sibling-variance"],
-    syntheticCapture([
-      ["GET", `https://s.test/api/items/a1/${tail}`],
-      ["GET", `https://s.test/api/items/b2/${tail}`],
-      ["GET", "https://s.test/api/things/c3"],
-      ["GET", "https://s.test/api/things/d4"],
-    ]),
-  );
-  expect(projected.tools.map((tool) => tool.path_template)).toEqual([
-    `/api/items/a1/${tail}`,
-    `/api/items/b2/${tail}`,
-    "/api/things/{thing_id}",
-  ]);
-  expect(projected.limitations).toContainEqual(
-    expect.stringMatching(
-      /32 segments.*not compared.*sibling-variance.*grouped templates/iu,
-    ),
-  );
-});
-
-it("shares collision suffixes across bases that differ only past the name limit", () => {
+it("assigns unique collision suffixes to distinct routes before and after truncation", () => {
   const stem = "x".repeat(70);
+  const paths = [
+    "item.csv",
+    "item.json",
+    "item.txt",
+    ...[0, 1, 2].map((index) => `${stem}${String(index)}`),
+  ];
   const projected = manifest(
     [],
     syntheticCapture(
-      Array.from(
-        { length: 200 },
-        (_, index) =>
-          ["GET", `https://s.test/api/${stem}${String(index)}`] as const,
-      ),
+      paths.map((path) => ["GET", `https://s.test/api/${path}`] as const),
     ),
   );
-  const names = projected.tools.map((tool) => tool.name);
-  expect(new Set(names).size).toBe(200);
-  expect(names.every((name) => name.length <= 60)).toBe(true);
-  expect(names.filter((name) => /_\d+$/u.test(name))).toHaveLength(199);
+  expect(projected.tools.map((tool) => tool.name)).toEqual([
+    "get_item",
+    "get_item_2",
+    "get_item_3",
+    `get_${"x".repeat(56)}`,
+    `get_${"x".repeat(54)}_2`,
+    `get_${"x".repeat(54)}_3`,
+  ]);
 });
 
 it("folds many literal siblings into one opt-in parameter", () => {
@@ -1291,10 +1232,10 @@ it("templates an unobserved literal only when it carries a digit and is spelled 
     ["sibling-variance", "prefix-variance"],
     syntheticCapture([
       ["GET", "https://k.test/api/readlists/0RZ51KSZKA53J"],
-      ["GET", "https://k.test/api/readlists/0RZ56NR37AC1T"],
+      ["GET", "https://k.test/api/readlists/0RZ56NR37AC1TQ"],
       ["PATCH", "https://k.test/api/readlists/0RZ576R5KA57B", null, "{}"],
       ["PUT", "https://k.test/api/readlists/0rz576r5ka57b", null, "{}"],
-      ["DELETE", "https://k.test/api/readlists/ABCDEFGHIJ", null],
+      ["DELETE", "https://k.test/api/readlists/ABCDEFGHIJKLM", null],
       ["POST", "https://k.test/api/readlists/Metrics::12", null, "{}"],
       ["GET", "https://k.test/api/items/a1"],
       ["GET", "https://k.test/api/items/b2"],
@@ -1305,7 +1246,7 @@ it("templates an unobserved literal only when it carries a digit and is spelled 
     "PUT /api/items/v2",
     "GET /api/items/{item_id}",
     "PUT /api/readlists/0rz576r5ka57b",
-    "DELETE /api/readlists/ABCDEFGHIJ",
+    "DELETE /api/readlists/ABCDEFGHIJKLM",
     "POST /api/readlists/Metrics::12",
     "GET /api/readlists/{readlist_id}",
     "PATCH /api/readlists/{readlist_id}",
@@ -1354,32 +1295,44 @@ it("merges tools whose routes now match and keeps the parameter a tool templated
   ]);
 });
 
-it("shares no format-rule position and compares no route beyond the segment limit", () => {
+it("compares 32-segment routes with sibling and prefix rules and preserves 33-segment and format-rule routes", () => {
   const tail = Array.from(
-    { length: 36 },
+    { length: 29 },
     (_, index) => `s${String(index)}`,
   ).join("/");
+  const longer = `${tail}/overflow`;
   const projected = manifest(
     ["sibling-variance", "prefix-variance"],
     syntheticCapture([
+      ["GET", `https://t.test/api/items/a1/${tail}`],
+      ["GET", `https://t.test/api/items/b2/${tail}`],
+      ["PATCH", `https://t.test/api/items/b2/${tail}`, null, "{}"],
+      ["GET", `https://t.test/api/items/a1/${longer}`],
+      ["GET", `https://t.test/api/items/b2/${longer}`],
+      ["PATCH", `https://t.test/api/items/b2/${longer}`, null, "{}"],
       ["GET", "https://t.test/api/teams/1"],
       ["GET", "https://t.test/api/teams/2"],
       ["PATCH", "https://t.test/api/teams/t3", null, "{}"],
-      ["GET", "https://t.test/api/items/a1"],
-      ["GET", "https://t.test/api/items/b2"],
-      ["GET", `https://t.test/api/items/b2/${tail}`],
     ]),
   );
   expect(projected.tools.map(line)).toEqual([
-    `GET /api/items/b2/${tail}`,
-    "GET /api/items/{item_id}",
+    `GET /api/items/a1/${longer}`,
+    `GET /api/items/b2/${longer}`,
+    `PATCH /api/items/b2/${longer}`,
+    `GET /api/items/{item_id}/${tail}`,
+    `PATCH /api/items/{item_id}/${tail}`,
     "PATCH /api/teams/t3",
     "GET /api/teams/{numeric}",
   ]);
-  expect(projected.limitations).toContainEqual(
-    expect.stringMatching(
-      /32 segments.*not compared.*prefix-variance.*grouped templates/iu,
-    ),
+  expect(projected.limitations).toEqual(
+    expect.arrayContaining([
+      expect.stringMatching(
+        /32 segments.*not compared.*sibling-variance.*grouped templates/iu,
+      ),
+      expect.stringMatching(
+        /32 segments.*not compared.*prefix-variance.*grouped templates/iu,
+      ),
+    ]),
   );
 });
 
@@ -1427,9 +1380,11 @@ it("templates a digit-free literal only as a member of a fixed-length identifier
       ["GET", "https://n.test/api/labels/ab12cd34"],
       ["GET", "https://n.test/api/labels/ef56gh78"],
       ["DELETE", "https://n.test/api/labels/abcdefgh", null],
+      ["DELETE", "https://n.test/api/labels/settings", null],
     ]),
   );
   expect(projected.tools.map(line)).toEqual([
+    "DELETE /api/labels/settings",
     "DELETE /api/labels/{label_id}",
     "GET /api/labels/{label_id}",
     "DELETE /api/tags/cc",
@@ -1466,6 +1421,38 @@ it("shares a literal with the parameter that observed it when parameters of diff
     [["item_id", "prefix-variance"]],
     [["uid", "opaque-token"]],
   ]);
+});
+
+it("shares an unobserved literal with the earliest matching parameter after regrouping", () => {
+  const pairs = [
+    "zone-red/x-one/issues",
+    "zone-blu/x-two/issues",
+    "zone-grn/x-tri/issues",
+  ];
+  const singles = ["red-west", "blu-west", "grn-west"];
+  for (const [first, second, name] of [
+    [pairs, singles, "repo_namespace"],
+    [singles, pairs, "repo_id"],
+  ] as const) {
+    const projected = manifest(
+      ["sibling-pair-variance", "sibling-variance", "prefix-variance"],
+      syntheticCapture([
+        ...[...first, ...second].map(
+          (path) => ["GET", `https://p.test/api/repos/${path}`] as const,
+        ),
+        ["PATCH", "https://p.test/api/repos/new-zone", null, "{}"],
+      ]),
+    );
+    expect(
+      projected.tools.find((tool) => tool.method === "PATCH"),
+    ).toMatchObject({
+      path_template: `/api/repos/{${name}}`,
+      params: [
+        { name, rule: "prefix-variance", observed_values: ["new-zone"] },
+      ],
+      record_ordinals: [6],
+    });
+  }
 });
 
 it("templates a digit-free literal in a fixed-length family that one opt-in parameter observed once", () => {

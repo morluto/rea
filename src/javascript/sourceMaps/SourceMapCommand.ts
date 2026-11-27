@@ -1,5 +1,6 @@
 import {
   WEB_SOURCE_MAP_LIMITS,
+  sourceMapBudgetLimit,
   sourceMapLimitSelection,
   sourceMapLimitRecovery,
   type SourceMapLimits,
@@ -17,6 +18,7 @@ import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  OwnerCancellation,
   cancelledBy,
   carriedReason,
 } from "../../domain/analysisErrorCore.js";
@@ -262,6 +264,7 @@ class OwnedCodec implements SourceMapCleanupOwner {
   #cleanupRelease: AnalysisCleanupRelease | undefined;
   #outcome: CodecOutcome | undefined;
   #drainStop: CodecPhysicalObservation | undefined;
+  readonly #wakeController = new AbortController();
   readonly #onInterruption: () => void;
   constructor(
     readonly path: string,
@@ -390,7 +393,11 @@ class OwnedCodec implements SourceMapCleanupOwner {
     const supervisor = this.#supervisor;
     if (supervisor === undefined)
       throw new Error("Codec process was not acquired");
-    while (!(await supervisor.waitForOutputClose(50))) {
+    const wakeSignal = AbortSignal.any([
+      this.deadline.signal,
+      this.#wakeController.signal,
+    ]);
+    while (!(await supervisor.waitForOutputClose(undefined, wakeSignal))) {
       const outcome = this.#outcome;
       if (
         outcome?.kind !== "physical" ||
@@ -476,6 +483,8 @@ class OwnedCodec implements SourceMapCleanupOwner {
       this.#outcome = { kind: "physical", observation };
     else if (observation.kind !== "exit" && this.#drainStop === undefined)
       this.#drainStop = observation;
+    if (observation.kind !== "exit" && !this.#wakeController.signal.aborted)
+      this.#wakeController.abort(OwnerCancellation.noLongerNeeded);
   }
 
   #physicalFailure(observation: CodecPhysicalObservation): AnalysisError {
@@ -551,6 +560,14 @@ class OwnedCodec implements SourceMapCleanupOwner {
         ? "Codec output exceeds its complete-evidence budget."
         : "Codec diagnostic output exceeds its 1048576-byte allowance.",
       {
+        ...(stream === "stdout"
+          ? {
+              limit: sourceMapBudgetLimit(
+                "output_bytes",
+                this.limits.outputBytes,
+              ),
+            }
+          : {}),
         remediationAction:
           stream === "stdout"
             ? sourceMapLimitRecovery("output_bytes", this.limits.outputBytes)
@@ -594,6 +611,7 @@ class OwnedCodec implements SourceMapCleanupOwner {
         ),
       },
       {
+        limit: sourceMapBudgetLimit("codec_heap_mib", this.limits.codecHeapMiB),
         capturedOutput: {
           stdout: "",
           stderr: snapshot.stderr.text,
@@ -601,10 +619,6 @@ class OwnedCodec implements SourceMapCleanupOwner {
             snapshot.diagnosticTruncated === true ||
             !(this.#supervisor?.observedOutputClose() ?? false),
         },
-        remediationAction: sourceMapLimitRecovery(
-          "codec_heap_mib",
-          this.limits.codecHeapMiB,
-        ),
       },
     );
   }
