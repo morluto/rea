@@ -332,8 +332,8 @@ export class GhidraClient {
         grace: options.cancelGrace ?? DEFAULT_GHIDRA_CANCEL_GRACE,
       },
     );
-    this.#readAheadCancellation = new GhidraReadAheadCancellation((generation) =>
-      this.#abandonDecompileReadAhead(generation),
+    this.#readAheadCancellation = new GhidraReadAheadCancellation(
+      (generation) => this.#abandonDecompileReadAhead(generation),
     );
   }
 

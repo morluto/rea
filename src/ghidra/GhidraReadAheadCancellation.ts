@@ -13,7 +13,9 @@ export class GhidraReadAheadCancellation {
   #onAbort: (() => void) | undefined;
   #sendingGeneration: number | undefined;
 
-  constructor(private readonly abandon: (generation: number) => Promise<void>) {}
+  constructor(
+    private readonly abandon: (generation: number) => Promise<void>,
+  ) {}
 
   /**
    * The carrying read-ahead request has been admitted. `signal` becomes the

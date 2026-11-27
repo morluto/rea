@@ -432,12 +432,16 @@ it("does not admit a read-ahead request removed while it is queued", async () =>
   );
   const active = queue.run("active", {}, {});
   const queued = new AbortController();
-  const waiting = queue.run("read-ahead", {}, {
-    signal: queued.signal,
-    onAdmitted: () => {
-      admitted.push("read-ahead");
+  const waiting = queue.run(
+    "read-ahead",
+    {},
+    {
+      signal: queued.signal,
+      onAdmitted: () => {
+        admitted.push("read-ahead");
+      },
     },
-  });
+  );
   expect(admitted).toEqual([]);
   queued.abort();
   const removed = await waiting;
