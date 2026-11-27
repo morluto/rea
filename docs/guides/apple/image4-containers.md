@@ -20,23 +20,27 @@ rea extract-artifact ./kernelcache.im4p --json
 Root `format_metadata` has kind `apple-img4`. For an IM4P, `magic` is `IM4P`
 and `payload` records:
 
-| Field               | Meaning                                                                       |
-| ------------------- | ----------------------------------------------------------------------------- |
-| `type`              | Four-character payload type, such as `krnl`, `ibot` or `sepi`                 |
-| `description`       | Description string, which may be empty                                        |
-| `offset`, `length`  | Stored payload bytes inside the file                                          |
-| `compression`       | `none`, an LZFSE block magic (`bvx2`, `bvx1`, `bvxn`, `bvx-`), or `complzss`  |
-| `uncompressed_size` | Declared size, or the `complzss` header's big-endian size at offset 12        |
-| `payload_magic`     | LZFSE block magic or `complzss` sniffed from the stored bytes, otherwise null |
-| `encrypted`         | True when the payload carries a keybag, decoded or not                        |
-| `keybag_count`      | Number of keybag entries whose type fits in 32 bits                           |
-| `keybag_types`      | Those integer types                                                           |
+| Field               | Meaning                                                                        |
+| ------------------- | ------------------------------------------------------------------------------ |
+| `type`              | Four-character payload type, such as `krnl`, `ibot` or `sepi`                  |
+| `description`       | Description string, or null when absent or not decodable as its string type    |
+| `offset`, `length`  | Stored payload bytes inside the file                                           |
+| `compression`       | `none`, an LZFSE block magic (`bvx2`, `bvx1`, `bvxn`, `bvx-`), or `complzss`   |
+| `uncompressed_size` | Declared size, or the `complzss` header's big-endian size at offset 12         |
+| `payload_magic`     | LZFSE block magic or `complzss` sniffed from the stored bytes, otherwise null  |
+| `encrypted`         | True when the payload carries a keybag, decoded or not                         |
+| `keybag_count`      | Number of keybag entries; 0 with no keybag, null when the keybag isn't decoded |
+| `keybag_types`      | Entry types that fit in 32 bits; null when the keybag isn't decoded            |
 
-The keybag is the OCTET STRING after the payload. Its contents are DER for a
-SEQUENCE of keybags, each an INTEGER type, an IV and a key. Keybag
+Fields are read by position. After the type, description and payload, an
+optional keybag OCTET STRING comes first, then an optional compression
+SEQUENCE, then optional payload properties (`PAYP`) in context tag `[0]`,
+which are reported but not decoded. A value outside its slot is reported as
+an unknown field and never takes another field's role. The keybag's contents
+are DER for a SEQUENCE of keybags, each an INTEGER type, an IV and a key. Keybag
 initialization vectors and keys are not copied into metadata, limitations or
-errors. A keybag that is empty, too large to decode, or not in that layout is
-a limitation, and `encrypted` is still true so the payload is never treated
+errors. A keybag that is empty, too large to decode, constructed, or not in
+that layout is a limitation, and `encrypted` is still true so the payload is never treated
 as plain bytes.
 
 The compression element is SEQUENCE { INTEGER algorithm, INTEGER

@@ -29,6 +29,7 @@ import {
   complzssPayload,
   compressionInfo,
   derSet,
+  explicit,
   ia5,
   im4m,
   im4p,
@@ -523,10 +524,11 @@ it("never reports a payload as plain when its keybag is not recognized", async (
     octet(Buffer.from([0x30, 0x05, 0x02])),
   ]) {
     const result = await image4(im4p({ keybag: bag }));
+    // A keybag that was not decoded has an unknown count, not zero.
     expect(result.facts.payload).toMatchObject({
       encrypted: true,
-      keybag_count: 0,
-      keybag_types: [],
+      keybag_count: null,
+      keybag_types: null,
     });
     expect(result.entries[0]).toMatchObject({ encrypted: true });
     expect(result.limitations.join("\n")).toContain("keybag");
@@ -625,7 +627,8 @@ it("treats a constructed keybag as present so the payload stays encrypted", asyn
   const result = await image4(im4p({ keybag: tlv(0x24, bag) }));
   expect(result.facts.payload).toMatchObject({
     encrypted: true,
-    keybag_count: 0,
+    keybag_count: null,
+    keybag_types: null,
   });
   expect(result.entries[0]).toMatchObject({ encrypted: true });
   expect(result.limitations.join("\n")).toContain("keybag at offset");
@@ -687,7 +690,7 @@ it("decodes UTF8String text as UTF-8 and refuses to alter invalid text", async (
   expect(valid.limitations).toEqual([]);
 
   const invalid = await image4(body(utf8String(Buffer.from([0x63, 0xc3]))));
-  expect(invalid.facts.payload?.description).toBe("");
+  expect(invalid.facts.payload?.description).toBeNull();
   expect(invalid.limitations.join("\n")).toContain("not valid UTF-8");
 });
 
@@ -773,4 +776,83 @@ it("charges each element of a large wrapper once however often it is read", asyn
     digest_hex: SAMPLE_DIGEST.toString("hex"),
   });
   expect(result.limitations.join("\n")).toContain("Unknown Image4 tag");
+});
+
+it("reads the optional IM4P fields from their reference slots", async () => {
+  const bag = keybag([{ type: 1, iv: SAMPLE_IV, key: SAMPLE_KEY }]);
+  // img4tool and img4lib: data, [keybag], [compression], [PAYP in [0]].
+  const ordered = await image4(
+    im4p({
+      keybag: bag,
+      compression: compressionInfo(LZFSE_ALGORITHM, 64),
+      extra: [tlv(0xa0, derSet())],
+    }),
+  );
+  expect(ordered.facts.payload).toMatchObject({
+    encrypted: true,
+    keybag_count: 1,
+    compression: "bvx2",
+    uncompressed_size: 64,
+  });
+  expect(ordered.limitations.join("\n")).toContain("PAYP");
+
+  // An OCTET STRING after the compression slot is not a keybag.
+  const misplaced = await image4(
+    im4p({ compression: compressionInfo(LZFSE_ALGORITHM, 64), extra: [bag] }),
+  );
+  expect(misplaced.facts.payload).toMatchObject({
+    encrypted: false,
+    keybag_count: 0,
+    compression: "bvx2",
+  });
+  expect(misplaced.limitations.join("\n")).toContain("Unknown Image4 tag 0x04");
+});
+
+it("keeps an absent description unknown and counts every keybag entry", async () => {
+  const absent = await image4(
+    sequence(ia5("IM4P"), ia5("krnl"), octet(SAMPLE_PAYLOAD)),
+  );
+  expect(absent.facts.payload?.description).toBeNull();
+  expect(absent.limitations.join("\n")).toContain("description is absent");
+
+  const wide = sequence(
+    integer(2n ** 40n),
+    octet(SAMPLE_IV),
+    octet(SAMPLE_KEY),
+  );
+  const result = await image4(
+    im4p({
+      keybag: octet(
+        sequence(
+          sequence(integer(1), octet(SAMPLE_IV), octet(SAMPLE_KEY)),
+          wide,
+        ),
+      ),
+    }),
+  );
+  expect(result.facts.payload).toMatchObject({
+    keybag_count: 2,
+    keybag_types: [1],
+  });
+  expect(result.limitations.join("\n")).toContain("unsigned 32-bit");
+});
+
+it("reads IMG4 slots by position instead of searching for a matching tag", async () => {
+  const reordered = await image4(
+    sequence(ia5("IMG4"), explicit(0, im4m()), im4p()),
+  );
+  expect(reordered.facts.payload).toBeNull();
+  expect(reordered.facts.manifest).not.toBeNull();
+  expect(reordered.limitations.join("\n")).toContain("no IM4P payload");
+  expect(reordered.limitations.join("\n")).toContain("Unknown Image4 tag 0x30");
+
+  const doubled = await image4(
+    sequence(
+      ia5("IMG4"),
+      im4p(),
+      explicit(0, Buffer.concat([im4m(), integer(1)])),
+    ),
+  );
+  expect(doubled.facts.manifest).not.toBeNull();
+  expect(doubled.limitations.join("\n")).toContain("Unknown Image4 tag 0x02");
 });

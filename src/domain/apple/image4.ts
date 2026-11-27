@@ -98,15 +98,18 @@ export interface Image4ObjectFacts {
 
 export interface Image4PayloadFacts {
   type: string;
-  description: string;
+  /** Null when the field is absent or its text could not be decoded. */
+  description: string | null;
   offset: number;
   length: number;
   compression: Image4Compression;
   uncompressed_size: number | null;
   payload_magic: Image4PayloadMagic | null;
   encrypted: boolean;
-  keybag_count: number;
-  keybag_types: number[];
+  /** Keybag entries; null when a keybag is present but was not decoded. */
+  keybag_count: number | null;
+  /** Types that fit in 32 bits; null when the keybag was not decoded. */
+  keybag_types: number[] | null;
 }
 
 export interface Image4ManifestFacts {
@@ -1009,7 +1012,7 @@ const finishKeybag = (
     }
     types.push(type);
   }
-  return { count: types.length, types };
+  return { count: entries.length, types };
 };
 
 /** SEQUENCE OF SEQUENCE { INTEGER type, OCTET STRING iv, OCTET STRING key }. */
@@ -1227,30 +1230,39 @@ const buildPayload = async (
     extras.push(kid);
   }
   const type = ia5Text(typeValue, notes) ?? "";
-  const description = ia5Text(descriptionValue, notes) ?? "";
+  // Absent or undecodable text is unknown (null), never an empty string.
+  const description = ia5Text(descriptionValue, notes) ?? null;
   if (type.length === 0) notes.add("Image4 payload type is absent.");
   else if (type.length !== 4)
     notes.add(`Image4 payload type is ${type.length} characters.`);
   if (descriptionValue === undefined)
     notes.add("Image4 payload description is absent.");
+  // After the payload, img4lib and img4tool place an optional keybag OCTET
+  // STRING first, then an optional compression SEQUENCE, then optional PAYP
+  // properties in [0]. A field is decoded only in its own slot.
   let keybag: KeybagAttempt | undefined;
   let compression: CompressionInfo | undefined;
-  for (const extra of extras) {
-    if (keybag === undefined) {
-      const parsed = await asKeybag(extra, walk, depth + 1, notes);
-      if (parsed !== undefined) {
-        keybag = parsed;
-        continue;
-      }
-    }
-    if (compression === undefined) {
-      const parsed = await asCompression(extra, walk, depth + 1, notes);
-      if (parsed !== undefined) {
-        compression = parsed;
-        continue;
-      }
-    }
-    unknownTag(extra, notes);
+  let slotIndex = 0;
+  const keybagSlot = extras[slotIndex];
+  if (
+    keybagSlot !== undefined &&
+    universalTag(keybagSlot) === UNIVERSAL.octetString
+  ) {
+    keybag = await asKeybag(keybagSlot, walk, depth + 1, notes);
+    slotIndex += 1;
+  }
+  const compressionSlot = extras[slotIndex];
+  if (isSequence(compressionSlot)) {
+    compression = await asCompression(compressionSlot, walk, depth + 1, notes);
+    if (compression === undefined) unknownTag(compressionSlot, notes);
+    slotIndex += 1;
+  }
+  for (const extra of extras.slice(slotIndex)) {
+    if (tagClassOf(extra) === "context" && tagNumberOf(extra) === 0)
+      notes.add(
+        `Image4 payload properties (PAYP) at offset ${fileOffset(extra)} were not decoded.`,
+      );
+    else unknownTag(extra, notes);
   }
   if (payloadValue === undefined || type.length === 0) {
     if (!unsupportedPayload)
@@ -1295,8 +1307,9 @@ const buildPayload = async (
       uncompressed_size: uncompressed,
       payload_magic: sniffed.magic,
       encrypted,
-      keybag_count: bag?.count ?? 0,
-      keybag_types: bag?.types ?? [],
+      // No keybag means zero; a keybag that was not decoded is unknown.
+      keybag_count: keybag === undefined ? 0 : (bag?.count ?? null),
+      keybag_types: keybag === undefined ? [] : (bag?.types ?? null),
     },
     entry: {
       role: "payload",
@@ -1542,8 +1555,81 @@ const wrappedSequence = async (
   walk: Walk,
   depth: number,
 ): Promise<DerValue | undefined> => {
+  // An EXPLICIT tag wraps exactly one value; anything after it is reported.
   const kids = await walk.childrenOf(value, depth);
-  return kids.find((kid) => isSequence(kid) && kid.kind !== "stopped");
+  const [first, ...rest] = kids;
+  for (const extra of rest)
+    if (extra.kind !== "stopped") unknownTag(extra, walk.notes);
+  return isSequence(first) && first.kind !== "stopped" ? first : undefined;
+};
+
+interface Img4Slots {
+  readonly payloadKids: readonly DerValue[] | undefined;
+  readonly manifest:
+    | { readonly facts: Image4ManifestFacts; readonly range: ByteRange }
+    | undefined;
+  readonly restore:
+    | { readonly facts: Image4RestoreFacts; readonly range: ByteRange }
+    | undefined;
+}
+
+interface ByteRange {
+  readonly offset: number;
+  readonly length: number;
+}
+
+const contextNumber = (value: DerValue | undefined): number | undefined =>
+  value !== undefined && tagClassOf(value) === "context" && isConstructed(value)
+    ? tagNumberOf(value)
+    : undefined;
+
+/** The IMG4 payload, manifest and restore slots, each read in its position. */
+const img4Slots = async (
+  kids: readonly DerValue[],
+  walk: Walk,
+  notes: Notes,
+  counter: PropertyCounter,
+): Promise<Img4Slots> => {
+  let index = 1;
+  let payloadKids: readonly DerValue[] | undefined;
+  const payloadSlot = kids[index];
+  if (isSequence(payloadSlot)) {
+    const inner = await walk.childrenOf(payloadSlot, 1);
+    if (ia5Text(inner[0], notes) === "IM4P") {
+      payloadKids = inner;
+      index += 1;
+    }
+  }
+  let manifest: Img4Slots["manifest"];
+  if (contextNumber(kids[index]) === 0) {
+    const slot = kids[index++];
+    const inner =
+      slot === undefined ? undefined : await wrappedSequence(slot, walk, 1);
+    const innerKids =
+      inner === undefined ? [] : await walk.childrenOf(inner, 2);
+    const facts = await parseManifestKids(innerKids, walk, 2, notes, counter);
+    const range = inner === undefined ? undefined : encodedRange(inner);
+    if (facts !== undefined && range !== undefined) manifest = { facts, range };
+    else if (slot !== undefined) unknownTag(slot, notes);
+  }
+  let restore: Img4Slots["restore"];
+  if (contextNumber(kids[index]) === 1) {
+    const slot = kids[index++];
+    const inner =
+      slot === undefined ? undefined : await wrappedSequence(slot, walk, 1);
+    const facts =
+      inner === undefined
+        ? undefined
+        : await parseRestore(inner, walk, 2, counter);
+    const range = inner === undefined ? undefined : encodedRange(inner);
+    if (facts !== undefined && range !== undefined) restore = { facts, range };
+    else if (slot !== undefined) unknownTag(slot, notes);
+  }
+  for (const extra of kids.slice(index)) {
+    if (extra.kind === "stopped") break;
+    unknownTag(extra, notes);
+  }
+  return { payloadKids, manifest, restore };
 };
 
 /**
@@ -1618,53 +1704,17 @@ export const inspectImage4 = async (
     if (manifest !== null && range !== undefined)
       entries.push(manifestEntry(range));
   } else {
-    let payloadKids: readonly DerValue[] | undefined;
-    for (const child of kids.slice(1)) {
-      if (child.kind === "stopped") break;
-      const context =
-        tagClassOf(child) === "context" && isConstructed(child)
-          ? tagNumberOf(child)
-          : undefined;
-      if (isSequence(child) && payloadKids === undefined) {
-        const inner = await walk.childrenOf(child, 1);
-        if (ia5Text(inner[0], notes) === "IM4P") {
-          payloadKids = inner;
-          continue;
-        }
-      }
-      if (context === 0 && manifest === null) {
-        const inner = await wrappedSequence(child, walk, 1);
-        if (inner !== undefined) {
-          const innerKids = await walk.childrenOf(inner, 2);
-          const parsed = await parseManifestKids(
-            innerKids,
-            walk,
-            2,
-            notes,
-            counter,
-          );
-          if (parsed !== undefined) {
-            manifest = parsed;
-            const range = encodedRange(inner);
-            if (range !== undefined) entries.push(manifestEntry(range));
-            continue;
-          }
-        }
-      }
-      if (context === 1 && restore === null) {
-        const inner = await wrappedSequence(child, walk, 1);
-        if (inner !== undefined) {
-          const parsed = await parseRestore(inner, walk, 2, counter);
-          if (parsed !== undefined) {
-            restore = parsed;
-            const range = encodedRange(inner);
-            if (range !== undefined) entries.push(restoreEntry(range));
-            continue;
-          }
-        }
-      }
-      unknownTag(child, notes);
-    }
+    // IMG4 is SEQUENCE { "IMG4", IM4P, [0] IM4M, [1] IM4R } (img4tool,
+    // img4lib). Each slot is read from its position; a value that does not
+    // fill its slot is reported and does not shift the later slots.
+    const slots = await img4Slots(kids, walk, notes, counter);
+    const payloadKids = slots.payloadKids;
+    manifest = slots.manifest?.facts ?? null;
+    restore = slots.restore?.facts ?? null;
+    if (slots.manifest !== undefined)
+      entries.push(manifestEntry(slots.manifest.range));
+    if (slots.restore !== undefined)
+      entries.push(restoreEntry(slots.restore.range));
     if (payloadKids === undefined)
       notes.add("Image4 container has no IM4P payload.");
     else {

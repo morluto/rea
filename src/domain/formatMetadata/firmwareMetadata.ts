@@ -792,15 +792,15 @@ const image4ObjectSchema = z.strictObject({
 
 const image4PayloadSchema = z.strictObject({
   type: z.string().min(1).max(IMAGE4_MAX_STRING_BYTES),
-  description: z.string().max(IMAGE4_MAX_STRING_BYTES),
+  description: z.string().max(IMAGE4_MAX_STRING_BYTES).nullable(),
   offset,
   length: offset,
   compression: z.enum(IMAGE4_COMPRESSIONS),
   uncompressed_size: offset.nullable(),
   payload_magic: z.enum(IMAGE4_PAYLOAD_MAGICS).nullable(),
   encrypted: z.boolean(),
-  keybag_count: z.number().int().min(0).max(IMAGE4_MAX_ELEMENTS),
-  keybag_types: z.array(uint32).max(IMAGE4_MAX_ELEMENTS),
+  keybag_count: z.number().int().min(0).max(IMAGE4_MAX_ELEMENTS).nullable(),
+  keybag_types: z.array(uint32).max(IMAGE4_MAX_ELEMENTS).nullable(),
 });
 
 const image4ManifestSchema = z.strictObject({
