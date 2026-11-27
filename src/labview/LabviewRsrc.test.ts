@@ -72,6 +72,30 @@ describe("parseLabviewRsrc", () => {
     expect(parsed.value.labviewVersion).toBe("11.0");
   });
 
+  it("reports where an embedded container starts in the selected file", async () => {
+    const bytes = peResourceFixture(true, [
+      { type: 10, name: 1, language: 1033, payload: labviewContainer() },
+    ]).bytes;
+    const root = await createTestTempDirectory("rea-labview-pe-offset-");
+    const path = join(root, "fixture.exe");
+    await writeFile(path, bytes);
+    const provider = new LabviewArtifactProvider();
+    const result = await provider.inspect({ path });
+    if (!result.ok) throw result.error;
+    expect(result.value.container.kind).toBe("pe-rcdata-rsrc");
+    expect(result.value.container.file_offset).toBeGreaterThan(0);
+    // The reported offset is where the container's own header starts.
+    expect(
+      bytes
+        .subarray(
+          result.value.container.file_offset,
+          result.value.container.file_offset + 6,
+        )
+        .toString("latin1"),
+    ).toBe("RSRC\r\n");
+    await provider.close();
+  });
+
   it("keeps each block's interpretation of shared stored bytes", () => {
     // Point the second block's section start at the first block's stored data.
     // The two blocks must keep their own coding: LVzp is XOR even when the
@@ -90,6 +114,18 @@ describe("parseLabviewRsrc", () => {
     if (!parsed.ok) throw new Error(parsed.failure.message);
     expect(parsed.value.blocks[0]?.sections[0]?.coding).toBe("zlib");
     expect(parsed.value.blocks[1]?.sections[0]?.coding).toBe("xor");
+  });
+
+  it("preserves a declared section index, including a negative one", () => {
+    const container = labviewContainer();
+    const infoOffset = container.readUInt32BE(16);
+    const blockInfo = infoOffset + container.readUInt32BE(infoOffset + 44);
+    const starts0 = container.readUInt32BE(blockInfo + 4 + 8);
+    container.writeInt32BE(-1, blockInfo + starts0);
+    const parsed = parseLabviewRsrc(container);
+    if (!parsed.ok) throw new Error(parsed.failure.message);
+    // The stored value is the fact; renumbering it would invent an index.
+    expect(parsed.value.blocks[0]?.sections[0]?.index).toBe(-1);
   });
 
   it("accepts a list extent that runs past the resource payload", () => {

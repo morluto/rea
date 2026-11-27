@@ -25,14 +25,18 @@ The result names the selected artifact by path, complete byte count, and
 SHA-256, then reports:
 
 - the RSRC header: format version, four-character file type and creator, and the
-  data and info ranges;
-- the LabVIEW version recorded by the container's `vers` block, when present;
+  data and info ranges. Those offsets are relative to the container; add
+  `container.file_offset` — where the container starts in the selected file, 0
+  for a direct RSRC file — to map them onto the artifact;
+- the LabVIEW version recorded by the container's `vers` block, when present,
+  read from the section content only;
 - whether a block-diagram heap (`BDH*`) and a front-panel heap (`FPH*`) are
   present, absent from the inspected container, or unknown because content the
   reader did not examine could still hold one;
-- every block identifier with its sections: section index, optional name,
-  stored byte count, coding, and the decoded byte count when this reader
-  decoded the section.
+- every block identifier with its sections: the section index exactly as the
+  container declares it (a negative value is preserved, not renumbered), its
+  optional name, stored byte count, coding, and the decoded byte count when
+  this reader decoded the section.
 
 A LabVIEW-built executable is read through its PE resource directory: the
 largest embedded RSRC container is inspected and the count of containers found

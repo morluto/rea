@@ -250,23 +250,44 @@ const llmsAnswer = (
 const schemaAnswer = (
   cli: CliInstance,
   global: CliGlobalArguments,
+  started: number,
 ): DiscoveryAnswer | undefined => {
   const name = global.command[0]!;
   const entry = cliCommands(cli).find((command) => command.name === name);
+  const controls = readCliOutputArguments(global);
+  const { format, formatExplicit, validation } = controls;
   if (entry === undefined) {
     const suggestion = suggestCommand(
       name,
       cliCommands(cli).map((command) => command.name),
     );
-    const { failure } = unknownCommandReply({
+    const { command, cta, failure } = unknownCommandReply({
       name: cli.name,
       global,
       commandIndex: 0,
       suggestion,
     });
-    return answer(`Error: ${failure.message}`, 1);
+    if (!formatExplicit || !validation.ok)
+      return answer(`Error: ${failure.message}`, 1);
+    // A selected format receives the same structured diagnostic as any
+    // other unknown command, not terminal text.
+    return renderedAnswer(
+      renderFailure(
+        failure,
+        { command, duration: `${Math.round(performance.now() - started)}ms` },
+        cta,
+        {
+          format: format === "csv" || format === "tsv" ? "json" : format,
+          human: false,
+          fullOutput: controls.fullOutput,
+          tokenCount: controls.tokenCount,
+          tokenLimit: controls.tokenLimit,
+          tokenOffset: controls.tokenOffset,
+        },
+      ),
+      1,
+    );
   }
-  const { format, formatExplicit, validation } = readCliOutputArguments(global);
   if (!validation.ok)
     return renderedAnswer(renderCliOutputArgumentError(validation), 1);
   return documentAnswer(
@@ -500,7 +521,8 @@ const discoveryAnswer = (
       }),
     );
   }
-  if (flags.has("--schema")) return schemaAnswer(cli, global);
+  if (flags.has("--schema"))
+    return schemaAnswer(cli, global, invocation.started);
   if (cliCommands(cli).some(({ name }) => name === command[0]))
     return undefined;
   return unknownCommandAnswer(cli, global, invocation);
@@ -537,7 +559,11 @@ export const serveDiscovery = (
   (options.stdout ?? ((text: string) => process.stdout.write(text)))(
     presentDiscoveryAnswer(result, global),
   );
-  if (result.exitCode !== 0)
-    (options.exit ?? ((code: number) => process.exit(code)))(result.exitCode);
+  // Set the exit code rather than exiting: a pipe on macOS drains stdout
+  // asynchronously, and an immediate exit would truncate the answer.
+  if (result.exitCode !== 0) {
+    if (options.exit !== undefined) options.exit(result.exitCode);
+    else process.exitCode = result.exitCode;
+  }
   return Promise.resolve();
 };

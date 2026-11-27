@@ -86,6 +86,7 @@ export const registerBrowserScenarioCommands = (
         signal,
         detail: delivery.detail,
         evidenceOutput: delivery.evidenceOutput,
+        rerunRecoversResult: delivery.rerunRecoversResult,
       });
     },
   );

@@ -414,3 +414,32 @@ it("keeps the deadline when termination fails and retries the owned worker", asy
   expect(fakeWorkers.constructed).toBe(2);
   expect(fakeWorkers.maxAlive).toBeLessThanOrEqual(4);
 });
+
+it("does not post to or terminate an idle worker when the signal aborts after acquisition and before dispatch", async () => {
+  const first = await search("alpha", ["alpha", "beta"]);
+  expect(first).toEqual({ ok: true, value: [0] });
+  const worker = fakeWorkers.instances[0]!;
+  expect(worker.patterns).toEqual(["alpha"]);
+
+  const controller = new AbortController();
+  const reason = { phase: "after-acquisition" };
+  // Acquisition of an idle worker resolves on the next microtask, before dispatch.
+  const pending = search("beta", ["alpha", "beta"], {
+    signal: controller.signal,
+  });
+  controller.abort(reason);
+  const aborted = await pending;
+
+  if (aborted.ok) throw new Error("expected cancellation");
+  expect(aborted.error.cause).toBe(reason);
+  expect(projectAnalysisError(aborted.error)).toMatchObject({
+    code: "cancelled",
+    details: { operation: "search_strings" },
+  });
+  expect(worker.patterns).toEqual(["alpha"]);
+  expect(worker.exited).toBe(false);
+  expect(worker.terminateCalls).toBe(0);
+  expect(await search("gamma", ["gamma"])).toEqual({ ok: true, value: [0] });
+  expect(worker.patterns).toEqual(["alpha", "gamma"]);
+  expect(fakeWorkers.constructed).toBe(1);
+});

@@ -20,7 +20,8 @@ export const labviewSectionCodingSchema = z.enum([
 ]);
 
 export const labviewSectionSchema = z.strictObject({
-  index: z.number().int().nonnegative(),
+  /** Section index exactly as the container declares it; it may be negative. */
+  index: z.number().int(),
   /** Section name from the container's name list; null when the section is unnamed. */
   name: z.string().nullable(),
   /** Bytes stored in the section, as declared by the section data header. */
@@ -51,12 +52,18 @@ export const labviewArtifactSchema = z.strictObject({
     kind: z.enum(["rsrc", "pe-rcdata-rsrc"]),
     /** RSRC containers found in the selected file; the parsed one is the largest. */
     embedded_containers: z.number().int().positive(),
+    /** Where this container starts in the selected file; 0 for a direct RSRC file. */
+    file_offset: count,
     format_version: count,
     file_type: z.string().length(4),
     creator: z.string().length(4),
+    /** Container-relative offset of the data section; add `file_offset` for the file. */
     data_offset: count,
+    /** Bytes declared for the container's data section. */
     data_bytes: count,
+    /** Container-relative offset of the info section; add `file_offset` for the file. */
     info_offset: count,
+    /** Bytes declared for the container's info section. */
     info_bytes: count,
   }),
   /** LabVIEW version recorded by the container's vers block; null when absent. */

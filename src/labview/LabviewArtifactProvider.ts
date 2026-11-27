@@ -279,6 +279,7 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
       container: {
         kind: chosen.offset === 0 ? "rsrc" : "pe-rcdata-rsrc",
         embedded_containers: containers.length,
+        file_offset: chosen.offset,
         format_version: value.formatVersion,
         file_type: value.fileType,
         creator: value.creator,

@@ -288,6 +288,8 @@ interface GdbSession {
   cleanupStarted: boolean;
   /** close_gdb_session started cleanup, so a successful retry releases the ID. */
   closeRequested: boolean;
+  /** One close may queue past the command bound, so release is never refused. */
+  closeQueued: boolean;
   readonly pending: Map<number, PendingCommand>;
   readonly lines: string[];
   readonly bufferChunks: Buffer[];
@@ -668,6 +670,7 @@ export class GdbSessionManager {
       noInferiorVerified: true,
       cleanupStarted: false,
       closeRequested: false,
+      closeQueued: false,
       pending: new Map(),
       lines: [],
       bufferChunks: [],
@@ -1384,6 +1387,11 @@ export class GdbSessionManager {
           } catch {
             // If MI synchronization is lost, stop only the owned debugger process.
           }
+          // Every path here stops the debugger; mark the session as closing
+          // first so an incomplete stop is retried as owned cleanup rather
+          // than kept as a live, ready session.
+          session.cleanupStarted = true;
+          session.closeRequested = true;
           const stopped = await this.#stopDebuggerOnly(session);
           if (stopped.status === "incomplete")
             return err(
@@ -1480,7 +1488,14 @@ export class GdbSessionManager {
     signal?: AbortSignal,
     operationName: "gdb_console" | "close_gdb_session" = "gdb_console",
   ): Promise<Value> {
-    if (session.pendingCommandCount >= this.#maxPendingCommands.value)
+    // Release must stay admissible behind stuck commands; one queued close is
+    // enough, so repeated closes still respect the bound.
+    const closeAdmission =
+      operationName === "close_gdb_session" && !session.closeQueued;
+    if (
+      !closeAdmission &&
+      session.pendingCommandCount >= this.#maxPendingCommands.value
+    )
       throw debuggerResourceConstraintError(
         operationName,
         "transport",
@@ -1492,6 +1507,7 @@ export class GdbSessionManager {
           active_or_queued_commands: session.pendingCommandCount,
         },
       );
+    if (closeAdmission) session.closeQueued = true;
     session.pendingCommandCount += 1;
     const previous = session.commandTail;
     let release: (() => void) | undefined;
@@ -1504,6 +1520,7 @@ export class GdbSessionManager {
       acquired = true;
       return await operation();
     } finally {
+      if (closeAdmission) session.closeQueued = false;
       if (acquired) {
         session.pendingCommandCount -= 1;
         release?.();

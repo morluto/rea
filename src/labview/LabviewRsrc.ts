@@ -382,7 +382,7 @@ export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
         )
           versionSections.push(decoded.decoded ?? stored);
         sections.push({
-          index: declaredIndex >= 0 ? declaredIndex : index,
+          index: declaredIndex,
           name: sectionName(reader, nameBase, nameOffset, listEnd),
           storedBytes,
           decodedBytes: decoded.decodedBytes,

@@ -721,6 +721,18 @@ cliTest(
       code: "partial",
       details: {
         detail: expect.stringContaining("source_map_limits.map_bytes"),
+        limit: {
+          control_kind: "parameter",
+          parameter: "source_map_limits.map_bytes",
+          cli_flag: "--source-map-bytes",
+          effective_value: 128,
+          unit: "bytes",
+          minimum: 1,
+          maximum: 536_870_887,
+          default_value: 8_388_608,
+          applies_at: "next_call",
+          required_value: Buffer.byteLength(fixture.sourceMap.text),
+        },
       },
     });
     const recovered = await cli.run({

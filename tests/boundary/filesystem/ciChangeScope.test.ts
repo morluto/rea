@@ -488,6 +488,54 @@ it("does not credit a fixture test as coverage for an unrelated shared script", 
   });
 });
 
+it("does not let an unrelated changed test mask an untraced fixture module", async () => {
+  const { directory } = await fixture();
+  const implementation = "tests/fixtures/dynamic/provider.ts";
+  const consumer = "tests/boundary/filesystem/dynamicFixture.test.ts";
+  const unrelated = "tests/boundary/filesystem/unrelated.test.ts";
+  await change(
+    directory,
+    [consumer],
+    "await import(`../../fixtures/dynamic/${fixtureName}.js`);\n",
+  );
+  const base = await change(directory, [implementation, unrelated]);
+  const head = await change(
+    directory,
+    [implementation, unrelated],
+    "changed\n",
+  );
+  expect(await runPlanScript(directory, base, head)).toMatchObject({
+    testSelection: {
+      mode: "full",
+      reason: `Input is not traced to tests: ${implementation}`,
+    },
+  });
+});
+
+it("keeps selection narrow when a changed fixture module has a traced consumer", async () => {
+  const { directory } = await fixture();
+  const implementation = "tests/fixtures/dynamic/provider.ts";
+  const consumer = "tests/boundary/filesystem/dynamicFixture.test.ts";
+  const unrelated = "tests/boundary/filesystem/unrelated.test.ts";
+  await change(
+    directory,
+    [consumer],
+    'await import("../../fixtures/dynamic/provider.js");\n',
+  );
+  const base = await change(directory, [implementation, unrelated]);
+  const head = await change(
+    directory,
+    [implementation, unrelated],
+    "changed\n",
+  );
+  expect(await runPlanScript(directory, base, head)).toMatchObject({
+    testSelection: {
+      mode: "selected",
+      files: [consumer, unrelated],
+    },
+  });
+});
+
 it("traces an exact template import alongside an unrelated changed test", async () => {
   const { directory } = await fixture();
   const source = "src/example/Probe.ts";
@@ -1282,6 +1330,18 @@ it.each([
     { code: true, ghidra_bridge: true, runtime: false, package: false },
   ],
   [
+    "scripts/verify-real-ghidra-project-coverage.mjs",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/selected-project-coverage.c",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/ReaSelectedProjectSeeds.java",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
     "scripts/verify-ghidra-loader-relocation.mjs",
     { code: true, ghidra_bridge: true, runtime: false, package: false },
   ],
@@ -1437,6 +1497,7 @@ it.each([
       package: true,
       binary_layout: true,
       signal_recording: true,
+      packet_capture: true,
       recorded_crash: false,
       workflows: true,
     },
@@ -1449,6 +1510,7 @@ it.each([
       package: true,
       binary_layout: true,
       signal_recording: true,
+      packet_capture: true,
       recorded_crash: false,
       workflows: true,
     },
@@ -2323,7 +2385,13 @@ const workflowFile = async (name: string): Promise<unknown> =>
 
 const scopesSchema = z.object({
   CI_FLAGS: z.array(z.string()),
-  CI_LANES: z.record(z.string(), z.object({ paths: z.array(z.string()) })),
+  CI_LANES: z.record(
+    z.string(),
+    z.object({
+      paths: z.array(z.string()),
+      earlyInputs: z.array(z.string()).optional(),
+    }),
+  ),
   MANUAL_VERIFIERS: z.array(z.string()),
 });
 
@@ -2376,7 +2444,10 @@ it("owns every explicit native-host test path with the lane that runs it", async
 });
 
 it("never runs a manual-only verifier from an automatic workflow", async () => {
-  const { MANUAL_VERIFIERS } = await loadScopes();
+  const { MANUAL_VERIFIERS, CI_LANES } = await loadScopes();
+  const ownedAutomaticInputs = Object.values(CI_LANES).flatMap(
+    (lane) => lane.earlyInputs ?? [],
+  );
   const scripts = z
     .object({ scripts: z.record(z.string(), z.string()) })
     .parse(
@@ -2416,8 +2487,10 @@ it("never runs a manual-only verifier from an automatic workflow", async () => {
   }
   expect(files.size).toBeGreaterThan(0);
   expect(
-    [...files].filter((file) =>
-      MANUAL_VERIFIERS.some((pattern) => matchesGlob(file, pattern)),
+    [...files].filter(
+      (file) =>
+        MANUAL_VERIFIERS.some((pattern) => matchesGlob(file, pattern)) &&
+        !ownedAutomaticInputs.some((pattern) => matchesGlob(file, pattern)),
     ),
   ).toEqual([]);
 });

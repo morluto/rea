@@ -136,8 +136,18 @@ describe.each([
       uname: "builder",
     });
     expect(result.entries[1]?.sourcePath).toBe("./app/run.x86_64");
+    expect(result.entries[1]?.limitations).toEqual([]);
     expect(result.contents.get("app/data.pck")).toBe("GDPC-not-really");
-    expect(result.coverage).toEqual([{ status: "complete", limitations: [] }]);
+    expect(result.coverage).toEqual([
+      {
+        status: "complete",
+        limitations: [
+          expect.stringMatching(
+            /^\d+ tar member name\(s\) have a leading current-directory prefix/u,
+          ),
+        ],
+      },
+    ]);
     expect(result.metadata).toMatchObject({
       kind: "tar",
       compression,
@@ -540,6 +550,38 @@ describe("tar header edge cases", () => {
     ]);
   });
 
+  it("decodes a pax path under hdrcharset=BINARY as Latin-1 and keeps later members", async () => {
+    // Python tarfile and libarchive write this for a name that is not UTF-8.
+    const pax = Buffer.from(
+      "21 hdrcharset=BINARY\n17 path=caf\xe9.txt\n",
+      "latin1",
+    );
+    const strict = Buffer.from("17 path=caf\xe9.txt\n", "latin1");
+    const archive = (records: Buffer) =>
+      Buffer.concat([
+        tarHeader({ name: "PaxHeader", type: "x" }, records.length),
+        records,
+        Buffer.alloc(512 - records.length),
+        tarMembers([
+          { name: "ignored", data: "a" },
+          { name: "after.txt", data: "b" },
+        ]),
+        end,
+      ]);
+    const result = await read(archive(pax));
+    expect(result.entries.map((entry) => entry.path)).toEqual([
+      "café.txt",
+      "after.txt",
+    ]);
+    expect(result.entries[0]?.limitations).toEqual([
+      "tar pax path is not UTF-8 under hdrcharset=BINARY; decoded as Latin-1; raw hex: 636166e92e747874.",
+    ]);
+    expect(result.metadata?.end_state).toBe("end-marker");
+    expect(result.coverage[0]?.status).toBe("complete");
+    // Without hdrcharset=BINARY the value must still be UTF-8.
+    expect((await read(archive(strict))).metadata?.end_state).toBe("malformed");
+  });
+
   it("raises cancellation from a gzip read that is waiting for output", async () => {
     // A descriptor whose reads never complete keeps the inflater waiting.
     const handle = { read: () => new Promise<never>(() => undefined) };
@@ -594,6 +636,90 @@ describe("tar header edge cases", () => {
       });
     } finally {
       await reader.close();
+    }
+  });
+
+  it("charges hdrcharset=BINARY warnings to the retained metadata allowance", async () => {
+    const metadataBytes = 64 * 1024;
+    // The same-sized uname leaves the global map charge unchanged; only the
+    // warnings grow.
+    // "8012 uname=" + 8000 bytes + "\n" is 8012 bytes.
+    const pax = Buffer.concat([
+      Buffer.from("21 hdrcharset=BINARY\n8012 uname="),
+      Buffer.alloc(8_000, 0xe9),
+      Buffer.from("\n"),
+    ]);
+    const header = Buffer.concat([
+      tarHeader({ name: "PaxHeader", type: "g" }, pax.length),
+      pax,
+      Buffer.alloc((512 - (pax.length % 512)) % 512),
+    ]);
+    const count = Math.floor(metadataBytes / (2 * 8_000)) + 2;
+    const reader = new TarArtifactReader(
+      await write(
+        "global-pax-binary-budget.tar",
+        Buffer.concat(Array.from({ length: count }, () => header)),
+      ),
+      undefined,
+      undefined,
+      { ...DEFAULT_TAR_READER_LIMITS, metadata_bytes: metadataBytes },
+    );
+    try {
+      await expect(async () => {
+        for await (const entry of reader.entries()) void entry;
+      }).rejects.toMatchObject({
+        reason: "limit",
+        boundary: "memory",
+        readerLimit: { parameter: "artifact_limits.tar.metadata_bytes" },
+      });
+    } finally {
+      await reader.close();
+    }
+  });
+
+  it("refunds hdrcharset=BINARY warnings that no inventoried member keeps", async () => {
+    const metadataBytes = 64 * 1024;
+    const pax = Buffer.concat([
+      Buffer.from("21 hdrcharset=BINARY\n8012 uname="),
+      Buffer.alloc(8_000, 0xe9),
+      Buffer.from("\n"),
+    ]);
+    const local = Buffer.concat([
+      tarHeader({ name: "PaxHeader", type: "x" }, pax.length),
+      pax,
+      Buffer.alloc((512 - (pax.length % 512)) % 512),
+    ]);
+    const fifo = (index: number) =>
+      tarHeader({ name: `fifo${String(index)}`, type: "6" }, 0);
+    const count = Math.floor(metadataBytes / (2 * 8_000)) + 2;
+    // Each warning is discarded by an omitted member, or by the next local
+    // header that replaces it.
+    const archives = [
+      Array.from({ length: count }, (_, index) =>
+        Buffer.concat([local, fifo(index)]),
+      ),
+      [...Array.from({ length: count }, () => local), fifo(0)],
+    ];
+    for (const [index, pieces] of archives.entries()) {
+      const reader = new TarArtifactReader(
+        await write(
+          `local-pax-binary-refund-${String(index)}.tar`,
+          Buffer.concat([...pieces, end]),
+        ),
+        undefined,
+        undefined,
+        { ...DEFAULT_TAR_READER_LIMITS, metadata_bytes: metadataBytes },
+      );
+      const omissions: ArtifactTraversalOmission[] = [];
+      try {
+        for await (const entry of reader.entries(undefined, {
+          onOmission: (value) => omissions.push(value),
+        }))
+          void entry;
+      } finally {
+        await reader.close();
+      }
+      expect(omissions.length).toBeGreaterThan(0);
     }
   });
 
