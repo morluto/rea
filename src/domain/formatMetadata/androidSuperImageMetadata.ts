@@ -23,8 +23,12 @@ const extentSchema = z.discriminatedUnion("kind", [
     device_index: offset,
     device_name: z.string().nullable(),
     device_name_bytes_hex: nameBytesHex,
+    device_flags: uint32.exactOptional(),
     physical_offset: byteCount,
     image_offset: offset.nullable(),
+    image_range_status: z
+      .enum(["present", "truncated", "not-in-image"])
+      .exactOptional(),
   }),
   z.strictObject({
     ...extentFields,
@@ -41,8 +45,37 @@ export const androidSuperPartitionMetadataSchema = z.strictObject({
   group_index: offset,
   group_name: z.string().nullable(),
   group_name_bytes_hex: nameBytesHex,
+  group_flags: uint32.exactOptional(),
   logical_bytes: byteCount,
   extents: z.array(extentSchema),
+});
+
+const failureFacts = {
+  format: z.string(),
+  detail: z.string(),
+  offset: offset.exactOptional(),
+  field: z.string().exactOptional(),
+};
+
+const copyFailureSchema = z.strictObject({
+  slot: offset,
+  copy: z.enum(["primary", "backup"]),
+  metadata_offset: offset,
+  failure: z.discriminatedUnion("kind", [
+    z.strictObject({ ...failureFacts, kind: z.literal("malformed") }),
+    z.strictObject({
+      ...failureFacts,
+      kind: z.literal("truncated"),
+      extent: z
+        .strictObject({ availableBytes: offset, requiredBytes: offset })
+        .exactOptional(),
+    }),
+    z.strictObject({
+      ...failureFacts,
+      kind: z.literal("unsupported"),
+      undecodedContent: z.boolean(),
+    }),
+  ]),
 });
 
 export const androidSuperImageMetadataSchema = z.strictObject({
@@ -53,6 +86,8 @@ export const androidSuperImageMetadataSchema = z.strictObject({
   metadata_max_size: offset,
   metadata_slot_count: offset,
   logical_block_size: offset,
+  // Older Evidence predates per-copy failure and extent availability reporting.
+  failed_copies: z.array(copyFailureSchema).exactOptional(),
   copies: z.array(
     z.strictObject({
       slot: offset.nullable(),

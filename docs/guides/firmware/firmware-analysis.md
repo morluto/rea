@@ -568,23 +568,33 @@ versions 10.0–10.2 from raw super images and metadata-only templates such as
 image reader's `extract-artifact` workflow and then inspect `image.raw`.
 
 The root reports the selected geometry and metadata copies, their byte offsets,
-and their verified SHA-256 checksums. For raw images REA reads each declared
-slot, using its backup if the primary is malformed, truncated, or
-unsupported. The runtime slot remains unknown. A template
-contains one copy without an assigned slot. Each partition record includes its
-stored name, group, attributes, and ordered linear or zero extents. Linear
-extents name a block device and an offset on that device. An image offset is
-reported when the bytes are in the selected raw image. Partition and extent
-record offsets locate the declarations in the selected metadata copy. When
-a group or device name cannot be decoded as UTF-8, its bytes are reported
-in hex.
+and their verified SHA-256 checksums. Each raw slot prefers its primary
+metadata and tries a backup if that copy cannot be decoded. Evidence retains
+failed copy offsets and reasons. An unreadable slot or a backup selected
+after an unsupported primary leaves inventory coverage unknown. Readable
+slots remain available. A template contains one copy without an assigned
+slot. The runtime slot remains unknown.
+
+Each partition records its stored name, attributes, group, and ordered linear
+or zero extents. Group and device flags preserve the retrofit slot-suffix
+declarations alongside the stored names. Undecodable group or device names
+are preserved as hex bytes. REA checks extent lengths against the logical
+block size and counts linear extent bytes toward each group's capacity.
+
+Linear extents report a device-relative physical offset and the availability
+of their range in the selected image. A capture that ends inside or before a
+mapped range retains the primary metadata and marks that range as truncated.
+Partition and extent record offsets locate the declarations in the selected
+metadata copy.
 
 The per-call `artifact_limits.android_super_image` policy defaults to four
 slots, 2 MiB of declared metadata reservation, and 8,192 table records
 across inspected copies. The supported maxima are eight slots, 8 MiB, and
 32,768 records. The metadata reservation includes the primary and backup
-slots of a raw image. Partition extraction, EROFS and ext4 decoding,
-companion-device contents, and AVB verification are outside this inventory.
+slots of a raw image. These controls bound metadata work. The shared Evidence
+workflow still hashes the entire carrier, including before reader admission.
+Partition extraction, EROFS and ext4 decoding, companion-device contents, and
+AVB verification are outside this inventory.
 
 ## Expand Android sparse images
 

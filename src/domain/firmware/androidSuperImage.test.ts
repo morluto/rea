@@ -104,7 +104,7 @@ describe("Android super image metadata", () => {
 
   it("rejects overlapping physical ranges within a slot even with valid checksums", async () => {
     const bytes = androidSuperFixture("split");
-    for (const copy of [12288, 20480]) {
+    for (const copy of [12288, 16384, 20480, 24576]) {
       const secondExtent = copy + 128 + 52 + 24;
       bytes.writeBigUInt64LE(64n, secondExtent + 12);
       bytes.writeUInt32LE(0, secondExtent + 20);
@@ -398,26 +398,207 @@ describe("Android super image metadata", () => {
     });
   });
 
-  it("reports declared metadata and physical extents that end beyond the file", async () => {
+  it("reports a truncated metadata-only template as a typed failure", async () => {
     expect(
       await read(androidSuperFixture("template").subarray(0, 4400)),
     ).toMatchObject({
       ok: false,
       error: { failure: { kind: "truncated", field: "tables" } },
     });
-    expect(
-      await read(androidSuperFixture("raw").subarray(0, 40959)),
-    ).toMatchObject({
-      ok: false,
-      error: { failure: { kind: "truncated", field: "target_data" } },
+  });
+
+  it("reads complete primary tables when the raw capture ends inside the backup reservation", async () => {
+    const bytes = androidSuperFixture("raw").subarray(0, 20600);
+    expect(await read(bytes)).toMatchObject({
+      ok: true,
+      value: {
+        coverage: "complete",
+        metadata: {
+          copies: [
+            { slot: 0, copy: "primary" },
+            { slot: 1, copy: "primary" },
+          ],
+        },
+        partitions: [
+          {
+            slot: 0,
+            extents: [
+              {
+                physical_offset: "32768",
+                image_offset: null,
+                image_range_status: "truncated",
+              },
+            ],
+          },
+          { slot: 0, extents: [] },
+          {
+            slot: 1,
+            extents: [
+              {
+                physical_offset: "32768",
+                image_offset: null,
+                image_range_status: "truncated",
+              },
+            ],
+          },
+          { slot: 1, extents: [] },
+        ],
+      },
     });
   });
 
-  it("distinguishes zero targets from linear ranges", async () => {
+  it("retains an unreadable slot's two copy failures alongside the verified slot", async () => {
+    const bytes = androidSuperFixture("raw").subarray(0, 22000);
+    bytes.fill(0, 16384, 16388);
+    expect(await read(bytes)).toMatchObject({
+      ok: true,
+      value: {
+        coverage: "unknown",
+        metadata: {
+          copies: [{ slot: 0, copy: "primary" }],
+          failed_copies: [
+            {
+              slot: 1,
+              copy: "primary",
+              metadata_offset: 16384,
+              failure: { kind: "malformed", field: "header", offset: 16384 },
+            },
+            {
+              slot: 1,
+              copy: "backup",
+              metadata_offset: 24576,
+              failure: { kind: "truncated", field: "header", offset: 24576 },
+            },
+          ],
+        },
+        partitions: [
+          { slot: 0, name: "system_a" },
+          { slot: 0, name: "vendor_a" },
+        ],
+      },
+    });
+  });
+
+  it("keeps coverage unknown when a checksummed but unsupported primary falls back to a backup", async () => {
+    const bytes = androidSuperFixture("raw");
+    bytes.writeUInt32LE(2, 12288 + 128 + 104 + 8);
+    rehashSuperMetadata(bytes, 12288);
+    expect(await read(bytes)).toMatchObject({
+      ok: true,
+      value: {
+        coverage: "unknown",
+        metadata: {
+          copies: [
+            { slot: 0, copy: "backup" },
+            { slot: 1, copy: "primary" },
+          ],
+          failed_copies: [
+            {
+              slot: 0,
+              copy: "primary",
+              failure: { kind: "unsupported", field: "target_type" },
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  it("retains the stored retrofit names and slot suffix flags in both slots", async () => {
+    const bytes = androidSuperFixture("split");
+    for (const copy of [12288, 16384]) {
+      const tables = copy + 128;
+      bytes.writeUInt32LE(3, tables + 36);
+      bytes.writeUInt32LE(1, tables + 100 + 48 + 36);
+      bytes.writeUInt32LE(1, tables + 196 + 60);
+      bytes.writeUInt32LE(1, tables + 196 + 64 + 60);
+      rehashSuperMetadata(bytes, copy);
+    }
+    const partition = {
+      name: "system_a",
+      attributes: 3,
+      group_name: "main",
+      group_flags: 1,
+      extents: [
+        { kind: "linear", device_name: "super", device_flags: 1 },
+        { kind: "linear", device_name: "companion", device_flags: 1 },
+      ],
+    };
+    expect(await read(bytes)).toMatchObject({
+      ok: true,
+      value: {
+        partitions: [
+          { slot: 0, ...partition },
+          { slot: 1, ...partition },
+        ],
+      },
+    });
+  });
+
+  it.each([0, 1])(
+    "rejects a sector-sized extent below the logical block size for target %i",
+    async (target) => {
+      const bytes = androidSuperFixture("template");
+      const extent = 4096 + 256 + 104;
+      bytes.writeBigUInt64LE(1n, extent);
+      bytes.writeUInt32LE(target, extent + 8);
+      if (target === 1) bytes.writeBigUInt64LE(0n, extent + 12);
+      rehashSuperMetadata(bytes, 4096);
+      expect(await read(bytes)).toMatchObject({
+        ok: false,
+        error: {
+          failure: { kind: "malformed", field: "num_sectors", offset: extent },
+        },
+      });
+    },
+  );
+
+  it("enforces group capacity against the sum of all partition sizes", async () => {
+    const copy = 4096;
+    const tables = copy + 256;
+    const original = androidSuperFixture("template");
+    const secondExtent = Buffer.from(
+      original.subarray(tables + 104, tables + 128),
+    );
+    secondExtent.writeBigUInt64LE(80n, 12);
+    const bytes = Buffer.concat([
+      original.subarray(0, tables + 128),
+      secondExtent,
+      original.subarray(tables + 128),
+    ]);
+    bytes.writeUInt32LE(312, copy + 44);
+    bytes.writeUInt32LE(2, copy + 96);
+    bytes.writeUInt32LE(152, copy + 104);
+    bytes.writeUInt32LE(248, copy + 116);
+    bytes.writeUInt32LE(1, tables + 52 + 40);
+    bytes.writeUInt32LE(1, tables + 52 + 44);
+    const capacity = tables + 152 + 48 + 40;
+    bytes.writeBigUInt64LE(16384n, capacity);
+    rehashSuperMetadata(bytes, copy);
+    expect(await read(bytes)).toMatchObject({
+      ok: true,
+      value: {
+        partitions: [{ logical_bytes: "8192" }, { logical_bytes: "8192" }],
+      },
+    });
+
+    bytes.writeBigUInt64LE(12288n, capacity);
+    rehashSuperMetadata(bytes, copy);
+    expect(await read(bytes)).toMatchObject({
+      ok: false,
+      error: {
+        failure: { kind: "malformed", field: "maximum_size", offset: capacity },
+      },
+    });
+  });
+
+  it("keeps zero targets out of the declared group capacity", async () => {
     const bytes = androidSuperFixture("template");
     const extent = 4096 + 256 + 104;
     bytes.writeUInt32LE(1, extent + 8);
     bytes.writeBigUInt64LE(0n, extent + 12);
+    // AOSP accounts for physical bytes on disk when enforcing a group cap.
+    bytes.writeBigUInt64LE(4096n, 4096 + 256 + 176 + 40);
     rehashSuperMetadata(bytes, 4096);
     expect(await read(bytes)).toMatchObject({
       ok: true,

@@ -22,7 +22,7 @@ it("opens backup geometry, then retains Android super partition provenance throu
   const path = join(root, "super.img");
   const bytes = androidSuperFixture("raw");
   bytes.fill(0, 4096, 4100);
-  bytes[12288 + 6] = 3;
+  bytes[12288 + 12] = bytes[12288 + 12]! ^ 1;
   await writeFile(path, bytes);
   const { call } = mcp;
   try {
@@ -101,6 +101,56 @@ it("opens backup geometry, then retains Android super partition provenance throu
       code: "unsupported_target",
     });
     expect((await readFile(path)).equals(bytes)).toBe(true);
+  } finally {
+    await call("close_binary", {});
+  }
+});
+
+it("retains verified Android super slots and typed copy failures through compiled MCP", async () => {
+  const root = await createTestTempDirectory("rea-android-super-partial-mcp-");
+  const path = join(root, "super.img");
+  const bytes = androidSuperFixture("raw");
+  for (const copy of [16384, 24576]) bytes.fill(0, copy, copy + 4);
+  await writeFile(path, bytes);
+  const { call } = mcp;
+  try {
+    const opened = await call("open_binary", { path });
+    expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
+    const inspected = await call("inspect_artifact", {});
+    expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
+    const inventory = artifactInspectionResultSchema.parse(
+      parseEvidence(inspected.structuredContent).normalized_result,
+    ).substeps[0]!.evidence.normalized_result;
+    expect(inventory.manifest.root_sha256).toBe(sha256Hex(bytes));
+    expect(inventory.coverage).toEqual({
+      scope: "container-entries",
+      status: "unknown",
+    });
+    expect(inventory.occurrences.map((row) => row.logical_path)).toEqual([
+      ".",
+      "slot-0/system_a",
+      "slot-0/vendor_a",
+    ]);
+    expect(
+      inventory.occurrences.find((row) => row.logical_path === ".")
+        ?.format_metadata,
+    ).toMatchObject({
+      copies: [{ slot: 0, copy: "primary" }],
+      failed_copies: [
+        {
+          slot: 1,
+          copy: "primary",
+          metadata_offset: 16384,
+          failure: { kind: "malformed" },
+        },
+        {
+          slot: 1,
+          copy: "backup",
+          metadata_offset: 24576,
+          failure: { kind: "malformed" },
+        },
+      ],
+    });
   } finally {
     await call("close_binary", {});
   }

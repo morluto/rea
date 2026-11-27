@@ -22,6 +22,7 @@ import {
   unsupportedInput,
 } from "../parseFailure.js";
 import { err, ok, type Result } from "../result.js";
+import type { FormatTargetFailure } from "../targetFailure.js";
 
 const GEOMETRY_MAGIC = 0x616c4467;
 const HEADER_MAGIC = 0x414c5030;
@@ -56,6 +57,9 @@ const SHA256_BYTES = 32;
 type ReadRange = (offset: number, length: number) => Promise<Buffer>;
 type Copy = AndroidSuperImageMetadata["copies"][number];
 type CopyLocation = Pick<Copy, "slot" | "copy" | "metadata_offset">;
+type CopyFailure = NonNullable<
+  AndroidSuperImageMetadata["failed_copies"]
+>[number];
 type AdmitRecords = (count: number, offset: number) => void;
 export type AndroidSuperLimitParameter =
   `artifact_limits.android_super_image.${keyof AndroidSuperImageReaderLimits}`;
@@ -273,44 +277,89 @@ const readCopy = async (
         slot: copy.slot,
         metadataEnd,
         rawFileSize: location.copy === "template" ? null : fileSize,
+        logicalBlockSize: geometry.blockSize,
       },
       minor,
     ),
   };
 };
 
-const withBackup = async <T>(
+const attemptRead = async <T>(
+  read: () => Promise<T>,
+): Promise<Result<T, FormatTargetFailure>> => {
+  try {
+    return ok(await read());
+  } catch (cause: unknown) {
+    // Capacity, cancellation, and host I/O failures stop the operation.
+    if (!(cause instanceof ParseFailureError) || cause.failure.kind === "limit")
+      throw cause;
+    return err(cause.failure);
+  }
+};
+
+type RedundantRead<T> =
+  | { readonly kind: "primary"; readonly value: T }
+  | {
+      readonly kind: "backup";
+      readonly value: T;
+      readonly primaryFailure: FormatTargetFailure;
+    }
+  | {
+      readonly kind: "unreadable";
+      readonly primaryFailure: FormatTargetFailure;
+      readonly backupFailure: FormatTargetFailure;
+    };
+
+const readRedundant = async <T>(
   primary: () => Promise<T>,
   backup: () => Promise<T>,
-  label: string,
+): Promise<RedundantRead<T>> => {
+  const first = await attemptRead(primary);
+  if (first.ok) return { kind: "primary", value: first.value };
+  const second = await attemptRead(backup);
+  return second.ok
+    ? { kind: "backup", value: second.value, primaryFailure: first.error }
+    : {
+        kind: "unreadable",
+        primaryFailure: first.error,
+        backupFailure: second.error,
+      };
+};
+
+const bothGeometryFailures = (
+  primary: FormatTargetFailure,
+  backup: FormatTargetFailure,
+) =>
+  new ParseFailureError({
+    ...primary,
+    detail: `Primary geometry (${primary.kind}) — ${primary.detail}. Backup geometry (${backup.kind}) — ${backup.detail}.`,
+  });
+
+const readSelectedGeometry = async (
+  read: ReadRange,
+  fileSize: number,
+  template: boolean,
   limitations: string[],
-): Promise<T> => {
-  try {
-    return await primary();
-  } catch (cause: unknown) {
-    // A damaged version field can make a primary copy look unsupported.
-    // A parser capacity refusal, cancellation or I/O error still stops the read.
-    if (!(cause instanceof ParseFailureError) || cause.kind === "limit")
-      throw cause;
-    try {
-      const parsed = await backup();
-      limitations.push(`Used backup Android super ${label}: ${cause.message}.`);
-      return parsed;
-    } catch (backupCause: unknown) {
-      if (
-        !(backupCause instanceof ParseFailureError) ||
-        backupCause.kind === "limit"
-      )
-        throw backupCause;
-      throw cause;
-    }
-  }
+) => {
+  if (template) return readGeometry(read, fileSize, 0);
+  const result = await readRedundant(
+    () => readGeometry(read, fileSize, PRIMARY_GEOMETRY),
+    () => readGeometry(read, fileSize, BACKUP_GEOMETRY),
+  );
+  if (result.kind === "unreadable")
+    throw bothGeometryFailures(result.primaryFailure, result.backupFailure);
+  if (result.kind === "backup")
+    limitations.push(
+      `Used backup Android super geometry after ${result.primaryFailure.detail}.`,
+    );
+  return result.value;
 };
 
 interface Inventory {
   readonly metadata: AndroidSuperImageMetadata;
   readonly partitions: readonly SuperPartition[];
   readonly limitations: readonly string[];
+  readonly coverage: "complete" | "unknown";
 }
 
 export const readAndroidSuperImage = async (
@@ -322,15 +371,12 @@ export const readAndroidSuperImage = async (
     checkRange(fileSize, 0, 4, "image");
     const template = geometryMagicAt(await read(0, 4), 0);
     const limitations: string[] = [];
-    const geometryAt = (offset: number) => readGeometry(read, fileSize, offset);
-    const geometry = template
-      ? await geometryAt(0)
-      : await withBackup(
-          () => geometryAt(PRIMARY_GEOMETRY),
-          () => geometryAt(BACKUP_GEOMETRY),
-          "geometry",
-          limitations,
-        );
+    const geometry = await readSelectedGeometry(
+      read,
+      fileSize,
+      template,
+      limitations,
+    );
     admit(
       "slot_count",
       "metadata_slot_count",
@@ -361,6 +407,8 @@ export const readAndroidSuperImage = async (
     const readAt = (location: CopyLocation) =>
       readCopy(read, fileSize, geometry, metadataEnd, location, admitRecords);
     const copies: Copy[] = [];
+    const failedCopies: CopyFailure[] = [];
+    let coverage: Inventory["coverage"] = "complete";
     const partitions: SuperPartition[] = [];
     if (template) {
       const parsed = await readAt({
@@ -371,29 +419,66 @@ export const readAndroidSuperImage = async (
       copies.push(parsed.copy);
       partitions.push(...parsed.partitions);
     } else {
-      checkRange(
-        fileSize,
-        PRIMARY_METADATA,
-        2 * metadataSpan,
-        "metadata slots",
-      );
       for (let slot = 0; slot < geometry.slotCount; slot++) {
-        const offset = PRIMARY_METADATA + slot * geometry.metadataMaxSize;
-        const parsed = await withBackup(
-          () => readAt({ slot, copy: "primary", metadata_offset: offset }),
-          () =>
-            readAt({
-              slot,
-              copy: "backup",
-              metadata_offset: offset + metadataSpan,
-            }),
-          `slot ${String(slot)} metadata`,
-          limitations,
+        const primary = {
+          slot,
+          copy: "primary",
+          metadata_offset: PRIMARY_METADATA + slot * geometry.metadataMaxSize,
+        } as const;
+        const backup = {
+          slot,
+          copy: "backup",
+          metadata_offset: primary.metadata_offset + metadataSpan,
+        } as const;
+        const result = await readRedundant(
+          () => readAt(primary),
+          () => readAt(backup),
         );
-        copies.push(parsed.copy);
-        partitions.push(...parsed.partitions);
+
+        if (result.kind !== "primary")
+          failedCopies.push({ ...primary, failure: result.primaryFailure });
+        if (result.kind === "unreadable") {
+          failedCopies.push({ ...backup, failure: result.backupFailure });
+          coverage = "unknown";
+          limitations.push(
+            `Android super slot ${String(slot)} metadata is unavailable from both copies.`,
+          );
+          continue;
+        }
+        if (result.kind === "backup") {
+          if (result.primaryFailure.kind === "unsupported")
+            coverage = "unknown";
+          limitations.push(
+            `Used backup Android super slot ${String(slot)} metadata after ${result.primaryFailure.detail}.`,
+          );
+        }
+        copies.push(result.value.copy);
+        partitions.push(...result.value.partitions);
       }
+      const firstFailure = failedCopies[0];
+      if (copies.length === 0 && firstFailure !== undefined)
+        throw new ParseFailureError({
+          ...firstFailure.failure,
+          detail: failedCopies
+            .map(
+              ({ slot, copy, failure }) =>
+                `Slot ${String(slot)} ${copy} metadata (${failure.kind}) — ${failure.detail}`,
+            )
+            .join(". "),
+        });
     }
+    if (
+      partitions.some(({ extents }) =>
+        extents.some(
+          (extent) =>
+            extent.kind === "linear" &&
+            extent.image_range_status === "truncated",
+        ),
+      )
+    )
+      limitations.push(
+        "Some Android super linear extents extend beyond the captured image.",
+      );
     return ok({
       metadata: {
         kind: ANDROID_SUPER_FORMAT,
@@ -404,9 +489,11 @@ export const readAndroidSuperImage = async (
         metadata_slot_count: geometry.slotCount,
         logical_block_size: geometry.blockSize,
         copies,
+        failed_copies: failedCopies,
       },
       partitions,
       limitations,
+      coverage,
     });
   } catch (cause: unknown) {
     if (cause instanceof ParseFailureError) return err(cause);

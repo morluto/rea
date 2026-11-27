@@ -1,10 +1,6 @@
 import { BinaryReader } from "../binaryContainer.js";
 import type { AndroidSuperPartitionMetadata } from "../formatMetadata/androidSuperImageMetadata.js";
-import {
-  malformedInput,
-  truncatedInput,
-  unsupportedInput,
-} from "../parseFailure.js";
+import { malformedInput, unsupportedInput } from "../parseFailure.js";
 
 import { decodeUtf8PreservingBomOrNull } from "../strictUtf8.js";
 
@@ -164,6 +160,18 @@ const readDevice = (
     first,
     sectors: bytes / SECTOR,
     name: readMetadataName(record.subarray(24), offset + 24),
+    flags: fields.u32(60),
+  };
+};
+
+const readGroup = (record: Buffer, offset: number) => {
+  const fields = androidSuperFields(record);
+  return {
+    name: readMetadataName(record, offset),
+    flags: fields.u32(36),
+    maximumBytes: fields.word(40, 64),
+    maximumSizeOffset: offset + 40,
+    allocatedBytes: 0n,
   };
 };
 
@@ -174,7 +182,8 @@ const readExtent = (
   offset: number,
   index: number,
   devices: readonly Device[],
-  rawFileSize: number | null,
+  rawFileSize: bigint | null,
+  sectorsPerBlock: bigint,
 ) => {
   const fields = androidSuperFields(record);
   const sectors = fields.word(0, 64);
@@ -184,6 +193,12 @@ const readExtent = (
   if (sectors === 0n || sectors > MAX_SECTORS)
     throw malformedSuper(
       "Invalid Android super extent sector count",
+      "num_sectors",
+      offset,
+    );
+  if (sectors % sectorsPerBlock !== 0n)
+    throw malformedSuper(
+      "Android super extent size is not aligned to the logical block size",
       "num_sectors",
       offset,
     );
@@ -225,30 +240,27 @@ const readExtent = (
       offset + 12,
     );
   const physical = physicalSector * SECTOR;
-  let imageOffset: number | null = null;
-  if (rawFileSize !== null && deviceIndex === 0) {
-    if (physical + length > BigInt(rawFileSize))
-      throw truncatedInput(
-        ANDROID_SUPER_FORMAT,
-        "Android super linear extent extends past the captured image",
-        {
-          field: "target_data",
-          offset: offset + 12,
-        },
-      );
-    imageOffset = Number(physical);
-  }
+  // A short capture affects byte availability, while the checked device
+  // bounds above determine whether this mapping is valid metadata.
+  const imageRangeStatus =
+    rawFileSize === null || deviceIndex !== 0
+      ? "not-in-image"
+      : physical + length > rawFileSize
+        ? "truncated"
+        : "present";
   return {
     length,
     facts: {
       ...common,
-      kind: "linear" as const,
+      kind: "linear",
       device_index: deviceIndex,
       device_name: device.name.text,
       device_name_bytes_hex: device.name.rawHex,
+      device_flags: device.flags,
       physical_offset: String(physical),
-      image_offset: imageOffset,
-    },
+      image_offset: imageRangeStatus === "present" ? Number(physical) : null,
+      image_range_status: imageRangeStatus,
+    } as const,
     physical: {
       deviceIndex,
       start: physicalSector,
@@ -265,20 +277,16 @@ export const readSuperPartitions = (
     slot,
     metadataEnd,
     rawFileSize,
+    logicalBlockSize,
   }: {
     readonly slot: number | null;
     readonly metadataEnd: number;
     readonly rawFileSize: number | null;
+    readonly logicalBlockSize: number;
   },
   minorVersion: number,
 ): SuperPartition[] => {
-  const groups = records(
-    bytes,
-    tablesOffset,
-    tables,
-    "groups",
-    readMetadataName,
-  );
+  const groups = records(bytes, tablesOffset, tables, "groups", readGroup);
   const devices = records(
     bytes,
     tablesOffset,
@@ -286,13 +294,22 @@ export const readSuperPartitions = (
     "block_devices",
     (record, offset, index) => readDevice(record, offset, index, metadataEnd),
   );
+  const sectorsPerBlock = BigInt(logicalBlockSize) / SECTOR;
+  const capturedBytes = rawFileSize === null ? null : BigInt(rawFileSize);
   const extents = records(
     bytes,
     tablesOffset,
     tables,
     "extents",
     (record, offset, index) =>
-      readExtent(record, offset, index, devices, rawFileSize),
+      readExtent(
+        record,
+        offset,
+        index,
+        devices,
+        capturedBytes,
+        sectorsPerBlock,
+      ),
   );
   const claimed = new Set<number>();
   const names = new Set<string>();
@@ -333,8 +350,8 @@ export const readSuperPartitions = (
           offset + 40,
         );
       const groupIndex = fields.u32(48);
-      const groupName = groups[groupIndex];
-      if (groupName === undefined)
+      const group = groups[groupIndex];
+      if (group === undefined)
         throw malformedSuper(
           "Android super partition names an absent group",
           "group_index",
@@ -356,6 +373,9 @@ export const readSuperPartitions = (
           logical_offset: String(logical),
         });
         logical += extent.length;
+        // AOSP accounts only for extents backed by storage in group capacity.
+        if (extent.facts.kind === "linear")
+          group.allocatedBytes += extent.length;
         if (logical > MAX_SECTORS * SECTOR)
           throw malformedSuper(
             "Android super logical partition size overflows 64 bits",
@@ -363,6 +383,15 @@ export const readSuperPartitions = (
             offset + 40,
           );
       }
+      if (
+        group.maximumBytes !== 0n &&
+        group.allocatedBytes > group.maximumBytes
+      )
+        throw malformedSuper(
+          `Android super group allocates ${String(group.allocatedBytes)} bytes and exceeds its declared maximum of ${String(group.maximumBytes)} bytes`,
+          "maximum_size",
+          group.maximumSizeOffset,
+        );
       return {
         kind: "android-super-partition",
         slot,
@@ -371,8 +400,9 @@ export const readSuperPartitions = (
         name,
         attributes,
         group_index: groupIndex,
-        group_name: groupName.text,
-        group_name_bytes_hex: groupName.rawHex,
+        group_name: group.name.text,
+        group_name_bytes_hex: group.name.rawHex,
+        group_flags: group.flags,
         logical_bytes: String(logical),
         extents: partitionExtents,
       };

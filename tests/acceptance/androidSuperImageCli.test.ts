@@ -6,7 +6,10 @@ import { expect } from "vitest";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { sha256Hex } from "../../src/kernel/sha256Hex.js";
-import { androidSuperFixture } from "../fixtures/androidSuperImage.js";
+import {
+  androidSuperFixture,
+  rehashSuperMetadata,
+} from "../fixtures/androidSuperImage.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
@@ -83,5 +86,54 @@ cliTest(
       },
     });
     expect((await readFile(path)).equals(bytes)).toBe(true);
+  },
+);
+
+cliTest(
+  "keeps the primary mapping when its payload extends beyond the capture",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-android-super-capture-cli-",
+    );
+    const path = join(root, "super.img");
+    const bytes = androidSuperFixture("raw").subarray(0, 36864);
+    // Slot zero's alternate mapping and slot one's primary fit in the capture.
+    for (const copy of [20480, 16384]) {
+      bytes.writeBigUInt64LE(8n, copy + 128 + 104);
+      rehashSuperMetadata(bytes, copy);
+    }
+    await writeFile(path, bytes);
+    const inspected = await cli.run({
+      arguments: ["inspect-artifact", path, "--json"],
+    });
+    expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
+    const inventory = artifactInspectionResultSchema.parse(
+      parseEvidence(inspected.json).normalized_result,
+    ).substeps[0]!.evidence.normalized_result;
+    expect(inventory.manifest.root_sha256).toBe(sha256Hex(bytes));
+    expect(inventory.coverage.status).toBe("complete");
+    expect(
+      inventory.occurrences.find(
+        (row) => row.logical_path === "slot-0/system_a",
+      ),
+    ).toMatchObject({
+      source_location: { offset: 12416, length: 52 },
+      format_metadata: {
+        logical_bytes: "8192",
+        extents: [
+          {
+            record_offset: 12520,
+            physical_offset: "32768",
+            image_offset: null,
+            image_range_status: "truncated",
+          },
+        ],
+      },
+    });
+    expect(inventory.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("extents extend beyond the captured image"),
+      ]),
+    );
   },
 );

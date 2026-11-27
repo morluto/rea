@@ -92,7 +92,7 @@ export class AndroidSuperImageArtifactReader implements ArtifactReader {
       };
     }
     options?.onCoverage?.({
-      status: "complete",
+      status: inventory.coverage,
       limitations: inventory.limitations,
     });
     this.#assertOpen(signal);
