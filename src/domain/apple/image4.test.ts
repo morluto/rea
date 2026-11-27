@@ -1,0 +1,562 @@
+import { expect, it } from "vitest";
+
+import { ParseFailureError } from "../parseFailure.js";
+import {
+  IMAGE4_DER_DEPTH_LIMIT,
+  IMAGE4_DER_ELEMENTS_LIMIT,
+  IMAGE4_MAX_DEPTH,
+  IMAGE4_MAX_ELEMENTS,
+  IMAGE4_MAX_INTEGER_BYTES,
+  IMAGE4_MAX_NESTED_BYTES,
+  IMAGE4_MAX_OCTET_HEX_BYTES,
+  IMAGE4_MAX_PROPERTIES,
+  IMAGE4_MAX_STRING_BYTES,
+  IMAGE4_PROPERTIES_LIMIT,
+  IMAGE4_STRING_BYTES_LIMIT,
+  inspectImage4,
+  type Image4ByteSource,
+  type Image4Inspection,
+} from "./image4.js";
+import {
+  SAMPLE_CERT,
+  SAMPLE_DIGEST,
+  SAMPLE_ECID,
+  SAMPLE_IV,
+  SAMPLE_KEY,
+  SAMPLE_NONCE,
+  SAMPLE_PAYLOAD,
+  SAMPLE_SIGNATURE,
+  complzssPayload,
+  compressionInfo,
+  derSet,
+  ia5,
+  im4m,
+  im4p,
+  LZFSE_ALGORITHM,
+  im4r,
+  img4,
+  integer,
+  keybag,
+  octet,
+  privateIdentifier,
+  privateTagged,
+  property,
+  sequence,
+  tlv,
+} from "./image4.fixture.js";
+
+const sourceOf = (
+  bytes: Buffer,
+  onRead?: (length: number) => void,
+): Image4ByteSource => ({
+  length: bytes.length,
+  read: async (offset, length) => {
+    onRead?.(length);
+    return bytes.subarray(offset, Math.min(bytes.length, offset + length));
+  },
+});
+
+const inspect = (bytes: Buffer, onRead?: (length: number) => void) =>
+  inspectImage4(sourceOf(bytes, onRead));
+
+const image4 = async (
+  bytes: Buffer,
+  onRead?: (length: number) => void,
+): Promise<Extract<Image4Inspection, { kind: "image4" }>> => {
+  const result = await inspect(bytes, onRead);
+  expect(result.kind).toBe("image4");
+  if (result.kind !== "image4") throw new Error("unreachable");
+  return result;
+};
+
+const depthBomb = (): Buffer => {
+  let inner = sequence();
+  for (let count = 0; count < IMAGE4_MAX_DEPTH + 1; count += 1)
+    inner = sequence(inner);
+  return sequence(ia5("IM4P"), inner);
+};
+
+const elementBomb = (): Buffer => {
+  const empties = Buffer.alloc(IMAGE4_MAX_ELEMENTS * 2);
+  for (let index = 0; index < IMAGE4_MAX_ELEMENTS; index += 1) {
+    empties[index * 2] = 0x30;
+    empties[index * 2 + 1] = 0;
+  }
+  return sequence(ia5("IM4P"), empties);
+};
+
+it("reports a plain IM4P payload range", async () => {
+  const bytes = im4p();
+  const result = await image4(bytes);
+  expect(result.facts).toMatchObject({
+    magic: "IM4P",
+    trailing_bytes: 0,
+    manifest: null,
+    restore_info: null,
+    payload: {
+      type: "krnl",
+      description: "Kernelcache",
+      compression: "none",
+      uncompressed_size: null,
+      payload_magic: null,
+      encrypted: false,
+      keybag_count: 0,
+      keybag_types: [],
+    },
+  });
+  const payload = result.facts.payload;
+  expect(payload).not.toBeNull();
+  expect(
+    bytes
+      .subarray(
+        payload?.offset,
+        (payload?.offset ?? 0) + (payload?.length ?? 0),
+      )
+      .equals(SAMPLE_PAYLOAD),
+  ).toBe(true);
+  expect(result.entries.map((entry) => entry.path)).toEqual(["payload"]);
+  expect(result.limitations).toEqual([]);
+});
+
+it("sniffs an LZFSE bvx2 payload and a complzss uncompressed size", async () => {
+  const lzfse = Buffer.from("bvx2-payload");
+  const lzfseResult = await image4(im4p({ payload: lzfse }));
+  expect(lzfseResult.facts.payload).toMatchObject({
+    compression: "bvx2",
+    payload_magic: "bvx2",
+    uncompressed_size: null,
+    length: lzfse.length,
+  });
+
+  const compressed = complzssPayload(0x01020304);
+  const result = await image4(im4p({ payload: compressed }));
+  expect(compressed.length).toBeGreaterThan(16);
+  expect(compressed.readUInt32BE(8)).not.toBe(0x01020304);
+  expect(result.facts.payload).toMatchObject({
+    compression: "complzss",
+    payload_magic: "complzss",
+    uncompressed_size: 0x01020304,
+  });
+  expect(result.limitations).toEqual([]);
+
+  const short = Buffer.alloc(12);
+  short.write("complzss", 0, "ascii");
+  short.writeUInt32BE(0x01020304, 8);
+  const shortResult = await image4(im4p({ payload: short }));
+  expect(shortResult.facts.payload).toMatchObject({
+    compression: "complzss",
+    payload_magic: "complzss",
+    uncompressed_size: null,
+  });
+  expect(shortResult.limitations.join("\n")).toContain("shorter than 16");
+});
+
+it("prefers explicit compression info and records a magic disagreement", async () => {
+  const tagged = await image4(
+    im4p({
+      payload: Buffer.from("plain"),
+      compression: compressionInfo(LZFSE_ALGORITHM, 1234),
+    }),
+  );
+  expect(tagged.facts.payload).toMatchObject({
+    compression: "bvx2",
+    uncompressed_size: 1234,
+    payload_magic: null,
+  });
+  expect(tagged.limitations).toEqual([]);
+
+  const disagreed = await image4(
+    im4p({
+      payload: complzssPayload(4096),
+      compression: compressionInfo(LZFSE_ALGORITHM, 99),
+    }),
+  );
+  expect(disagreed.facts.payload).toMatchObject({
+    compression: "bvx2",
+    uncompressed_size: 99,
+    payload_magic: "complzss",
+  });
+  expect(disagreed.limitations.join("\n")).toContain("disagrees");
+});
+
+it("keeps the sniffed compression for an algorithm other than LZFSE", async () => {
+  const result = await image4(
+    im4p({
+      payload: Buffer.from("bvx2-payload"),
+      compression: compressionInfo(7, 99),
+    }),
+  );
+  expect(result.facts.payload).toMatchObject({
+    compression: "bvx2",
+    uncompressed_size: null,
+    payload_magic: "bvx2",
+  });
+  expect(result.limitations.join("\n")).toContain(
+    "compression algorithm 7 is not LZFSE",
+  );
+});
+
+it("treats LZFSE block magics other than bvx2 as compressed", async () => {
+  for (const magic of ["bvxn", "bvx1", "bvx-"] as const) {
+    const result = await image4(
+      im4p({ payload: Buffer.from(`${magic}-payload`) }),
+    );
+    expect(result.facts.payload).toMatchObject({
+      compression: magic,
+      payload_magic: magic,
+      uncompressed_size: null,
+    });
+    expect(result.entries[0]).toMatchObject({ compression: magic });
+    expect(result.limitations).toEqual([]);
+  }
+
+  const declared = await image4(
+    im4p({
+      payload: Buffer.from("bvxn-payload"),
+      compression: compressionInfo(LZFSE_ALGORITHM, 50),
+    }),
+  );
+  expect(declared.facts.payload).toMatchObject({
+    compression: "bvx2",
+    uncompressed_size: 50,
+    payload_magic: "bvxn",
+  });
+  expect(declared.limitations).toEqual([]);
+
+  const unknown = await image4(im4p({ payload: Buffer.from("bvxx-payload") }));
+  expect(unknown.facts.payload).toMatchObject({
+    compression: "none",
+    payload_magic: null,
+  });
+  expect(unknown.limitations.join("\n")).toContain("bvxx");
+});
+
+it("reports keybag count and types without IV or key bytes", async () => {
+  const result = await image4(
+    im4p({
+      keybag: keybag([
+        { type: 1, iv: SAMPLE_IV, key: SAMPLE_KEY },
+        { type: 2, iv: SAMPLE_IV, key: SAMPLE_KEY },
+      ]),
+    }),
+  );
+  expect(result.facts.payload).toMatchObject({
+    encrypted: true,
+    keybag_count: 2,
+    keybag_types: [1, 2],
+  });
+  expect(result.entries[0]).toMatchObject({ encrypted: true });
+  const json = JSON.stringify(result);
+  expect(json).not.toContain(SAMPLE_IV.toString("hex"));
+  expect(json).not.toContain(SAMPLE_KEY.toString("hex"));
+});
+
+it("still reports a payload type that is not four characters", async () => {
+  const result = await image4(im4p({ type: "k" }));
+  expect(result.facts.payload?.type).toBe("k");
+  expect(result.limitations.join("\n")).toContain("1 characters");
+});
+
+it("decodes an IM4M manifest with digests as hex", async () => {
+  const bytes = im4m();
+  const result = await image4(bytes);
+  expect(result.facts.magic).toBe("IM4M");
+  expect(result.facts.payload).toBeNull();
+  expect(result.entries.map((entry) => entry.path)).toEqual(["manifest.der"]);
+  expect(result.facts.manifest).toMatchObject({
+    version: "0",
+    signature_size: SAMPLE_SIGNATURE.length,
+    certificate_chain_size: octet(SAMPLE_CERT).length,
+    properties: [
+      { name: "CHIP", value: { type: "integer", decimal: "32816" } },
+      { name: "BORD", value: { type: "integer", decimal: "4" } },
+      {
+        name: "ECID",
+        value: { type: "integer", decimal: SAMPLE_ECID.toString(10) },
+      },
+      { name: "CPRO", value: { type: "boolean", value: true } },
+      { name: "SDOM", value: { type: "integer", decimal: "1" } },
+    ],
+    objects: [
+      {
+        name: "ibot",
+        digest_hex: SAMPLE_DIGEST.toString("hex"),
+      },
+    ],
+  });
+  const entry = result.entries[0];
+  expect(entry).toBeDefined();
+  const manifest = bytes.subarray(
+    entry?.offset,
+    (entry?.offset ?? 0) + (entry?.length ?? 0),
+  );
+  expect(manifest[0]).toBe(0x30);
+  expect(manifest.includes(Buffer.from("IM4M"))).toBe(true);
+  expect(manifest.equals(bytes.subarray(0, bytes.length))).toBe(true);
+});
+
+it("exposes IMG4 payload, manifest and redacted restore info", async () => {
+  const payload = im4p();
+  const manifest = im4m();
+  const restore = im4r();
+  const bytes = img4(payload, manifest, restore);
+  const result = await image4(bytes);
+  expect(result.facts.magic).toBe("IMG4");
+  expect(result.entries.map((entry) => entry.path)).toEqual([
+    "payload",
+    "manifest.der",
+    "restore-info.der",
+  ]);
+  expect(result.facts.restore_info).toEqual({
+    properties_present: ["BNCN"],
+    values: "redacted",
+  });
+  expect(result.facts.manifest?.objects[0]?.digest_hex).toBe(
+    SAMPLE_DIGEST.toString("hex"),
+  );
+  const json = JSON.stringify(result);
+  expect(json).not.toContain(SAMPLE_NONCE.toString("utf8"));
+  expect(json).not.toContain(SAMPLE_NONCE.toString("hex"));
+  const manifestEntry = result.entries[1];
+  const manifestBytes = bytes.subarray(
+    manifestEntry?.offset,
+    (manifestEntry?.offset ?? 0) + (manifestEntry?.length ?? 0),
+  );
+  expect(manifestBytes.equals(manifest)).toBe(true);
+  expect(manifestBytes[0]).toBe(0x30);
+  const restoreEntry = result.entries[2];
+  expect(
+    bytes
+      .subarray(
+        restoreEntry?.offset,
+        (restoreEntry?.offset ?? 0) + (restoreEntry?.length ?? 0),
+      )
+      .equals(restore),
+  ).toBe(true);
+});
+
+it("leaves a missing or non-decimal manifest version unknown", async () => {
+  const absent = await image4(
+    sequence(ia5("IM4M"), derSet(), octet(SAMPLE_SIGNATURE)),
+  );
+  expect(absent.facts.manifest?.version).toBeNull();
+  expect(absent.limitations.join("\n")).toContain("version is absent");
+
+  const negative = await image4(
+    sequence(ia5("IM4M"), integer(-1), derSet(), octet(SAMPLE_SIGNATURE)),
+  );
+  expect(negative.facts.manifest?.version).toBeNull();
+  expect(negative.limitations.join("\n")).toContain("not an unsigned decimal");
+
+  const observed = await image4(
+    sequence(ia5("IM4M"), integer(0), derSet(), octet(SAMPLE_SIGNATURE)),
+  );
+  expect(observed.facts.manifest?.version).toBe("0");
+  expect(observed.limitations.join("\n")).not.toContain("manifest version");
+});
+
+it("keeps an indefinite payload and reports trailing bytes and unknown tags", async () => {
+  const indefinite = await image4(
+    im4p({ indefinite: true, payload: SAMPLE_PAYLOAD }),
+  );
+  expect(indefinite.facts.payload?.length).toBe(SAMPLE_PAYLOAD.length);
+  expect(indefinite.limitations.join("\n")).toContain("indefinite length");
+
+  const trailing = await image4(Buffer.concat([im4p(), Buffer.from([0xde])]));
+  expect(trailing.facts.trailing_bytes).toBe(1);
+  expect(trailing.limitations.join("\n")).toContain("trailing bytes");
+
+  const unknown = await image4(im4p({ extra: [integer(7)] }));
+  expect(unknown.limitations.join("\n")).toContain("Unknown Image4 tag 0x02");
+
+  const body = Buffer.concat([
+    ia5("IM4P"),
+    Buffer.alloc(IMAGE4_MAX_NESTED_BYTES),
+  ]);
+  const unbounded = await image4(
+    Buffer.concat([Buffer.from([0x30, 0x80]), body]),
+  );
+  expect(unbounded.facts.trailing_bytes).toBeNull();
+  expect(unbounded.facts.payload).toBeNull();
+  expect(unbounded.limitations.join("\n")).toContain("indefinite length");
+});
+
+it("omits a wide integer and a long octet property", async () => {
+  const wide = tlv(0x02, Buffer.alloc(IMAGE4_MAX_INTEGER_BYTES + 1, 0x01));
+  const longOctet = octet(Buffer.alloc(IMAGE4_MAX_OCTET_HEX_BYTES + 1, 0xab));
+  const result = await image4(
+    im4m({
+      properties: [
+        property("WIDE", wide),
+        property("LONG", longOctet),
+        property("ODDB", tlv(0x01, Buffer.from([0x01]))),
+      ],
+    }),
+  );
+  expect(result.facts.manifest?.properties).toEqual(
+    expect.arrayContaining([
+      {
+        name: "WIDE",
+        value: { type: "omitted", byte_length: IMAGE4_MAX_INTEGER_BYTES + 1 },
+      },
+      {
+        name: "LONG",
+        value: { type: "omitted", byte_length: IMAGE4_MAX_OCTET_HEX_BYTES + 1 },
+      },
+      { name: "ODDB", value: { type: "boolean", value: true } },
+    ]),
+  );
+  expect(result.limitations.join("\n")).toContain("omitted");
+  expect(result.limitations.join("\n")).toContain("not canonical");
+});
+
+it("does not claim an Image4 container for other bytes", async () => {
+  expect((await inspect(Buffer.from("hello"))).kind).toBe("unrecognized");
+  expect((await inspect(Buffer.alloc(0))).kind).toBe("unrecognized");
+});
+
+it("refuses DER depth, element, property and string ceilings", async () => {
+  await expect(inspect(depthBomb())).rejects.toBeInstanceOf(ParseFailureError);
+  await expect(inspect(depthBomb())).rejects.toMatchObject({
+    failure: {
+      kind: "limit",
+      limit: { name: IMAGE4_DER_DEPTH_LIMIT, maximum: IMAGE4_MAX_DEPTH },
+    },
+  });
+  await expect(inspect(elementBomb())).rejects.toMatchObject({
+    failure: {
+      kind: "limit",
+      limit: { name: IMAGE4_DER_ELEMENTS_LIMIT, maximum: IMAGE4_MAX_ELEMENTS },
+    },
+  });
+  const properties = Array.from(
+    { length: IMAGE4_MAX_PROPERTIES + 1 },
+    (_, index) => property(`P${String(index).padStart(3, "0")}`, integer(1)),
+  );
+  await expect(inspect(im4m({ properties }))).rejects.toMatchObject({
+    failure: {
+      kind: "limit",
+      limit: { name: IMAGE4_PROPERTIES_LIMIT, maximum: IMAGE4_MAX_PROPERTIES },
+    },
+  });
+  await expect(
+    inspect(im4p({ description: "A".repeat(IMAGE4_MAX_STRING_BYTES + 1) })),
+  ).rejects.toMatchObject({
+    failure: {
+      kind: "limit",
+      limit: {
+        name: IMAGE4_STRING_BYTES_LIMIT,
+        maximum: IMAGE4_MAX_STRING_BYTES,
+      },
+    },
+  });
+});
+
+it("rejects a truncated container and a high-tag form for a low tag number", async () => {
+  const full = im4p();
+  await expect(inspect(full.subarray(0, 12))).rejects.toMatchObject({
+    failure: { kind: "truncated" },
+  });
+  await expect(
+    inspect(sequence(ia5("IM4P"), Buffer.from([0x1f, 0x01, 0x00]))),
+  ).rejects.toMatchObject({ failure: { kind: "malformed" } });
+});
+
+it("ranges a payload larger than the nested parse without reading it", async () => {
+  const payload = Buffer.alloc(IMAGE4_MAX_NESTED_BYTES, 0x5a);
+  payload.write("bvx2");
+  let readBytes = 0;
+  const result = await image4(im4p({ payload }), (length) => {
+    readBytes += length;
+  });
+  expect(result.facts.payload).toMatchObject({
+    length: IMAGE4_MAX_NESTED_BYTES,
+    compression: "bvx2",
+    payload_magic: "bvx2",
+  });
+  expect(readBytes).toBeLessThan(IMAGE4_MAX_NESTED_BYTES);
+});
+
+it("keeps an empty manifest object name and a non-minimal length", async () => {
+  const body = derSet(
+    sequence(ia5("MANB"), derSet(sequence(ia5(""), derSet()))),
+  );
+  const manifest = sequence(
+    ia5("IM4M"),
+    integer(0),
+    body,
+    octet(SAMPLE_SIGNATURE),
+  );
+  const emptyName = await image4(manifest);
+  expect(emptyName.facts.manifest?.objects).toEqual([]);
+  expect(emptyName.limitations.join("\n")).toContain("empty name");
+
+  const payload = octet(Buffer.from("abc"));
+  const im4pBody = Buffer.concat([
+    ia5("IM4P"),
+    ia5("krnl"),
+    ia5("Kernelcache"),
+    payload,
+  ]);
+  const nonMinimal = await image4(
+    Buffer.concat([Buffer.from([0x30, 0x81, im4pBody.length]), im4pBody]),
+  );
+  expect(nonMinimal.facts.payload?.type).toBe("krnl");
+  expect(nonMinimal.limitations.join("\n")).toContain("non-minimal length");
+});
+
+it("treats an empty keybag as present and the payload as encrypted", async () => {
+  const result = await image4(im4p({ keybag: keybag([]) }));
+  expect(result.facts.payload).toMatchObject({
+    encrypted: true,
+    keybag_count: 0,
+  });
+  expect(result.entries[0]).toMatchObject({ encrypted: true });
+  expect(result.limitations.join("\n")).toContain("empty");
+});
+
+it("never reports a payload as plain when its keybag is not recognized", async () => {
+  for (const bag of [
+    octet(Buffer.from("not-der-keybag")),
+    octet(sequence(integer(1))),
+    octet(Buffer.from([0x30, 0x05, 0x02])),
+  ]) {
+    const result = await image4(im4p({ keybag: bag }));
+    expect(result.facts.payload).toMatchObject({
+      encrypted: true,
+      keybag_count: 0,
+      keybag_types: [],
+    });
+    expect(result.entries[0]).toMatchObject({ encrypted: true });
+    expect(result.limitations.join("\n")).toContain("keybag");
+  }
+});
+
+it("encodes manifest and restore entries as private four-character tags", async () => {
+  const manifest = im4m();
+  // The MANB entry: PRIVATE, constructed, high-tag-number form.
+  expect(manifest.includes(privateIdentifier("MANB"))).toBe(true);
+  expect(privateIdentifier("MANB")[0]).toBe(0xff);
+  const result = await image4(img4(im4p(), manifest, im4r()));
+  expect(result.facts.manifest?.properties.map((row) => row.name)).toEqual([
+    "CHIP",
+    "BORD",
+    "ECID",
+    "CPRO",
+    "SDOM",
+  ]);
+  expect(result.facts.restore_info?.properties_present).toEqual(["BNCN"]);
+  expect(result.limitations).toEqual([]);
+});
+
+it("notes a private tag whose number does not match the entry name", async () => {
+  const mislabeled = privateTagged(
+    "BORD",
+    sequence(ia5("CHIP"), integer(0x8030)),
+  );
+  const result = await image4(im4m({ properties: [mislabeled] }));
+  expect(result.facts.manifest?.properties).toEqual([
+    { name: "CHIP", value: { type: "integer", decimal: "32816" } },
+  ]);
+  expect(result.limitations.join("\n")).toContain("does not match its name");
+});

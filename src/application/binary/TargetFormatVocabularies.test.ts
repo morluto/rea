@@ -138,6 +138,7 @@ const TARGETS: TargetFixtures = {
   "android-boot-image": { ...archive, format: "android-boot-image" },
   iso9660: { ...archive, format: "iso9660" },
   "qualcomm-mbn": { ...archive, format: "qualcomm-mbn" },
+  "apple-img4": { ...archive, format: "apple-img4" },
   "android-ota-payload": { ...archive, format: "android-ota-payload" },
   "android-vbmeta": { ...archive, format: "android-vbmeta" },
   "android-sparse-image": { ...archive, format: "android-sparse-image" },

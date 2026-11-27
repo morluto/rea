@@ -1,6 +1,7 @@
 import type { ArtifactFormatId } from "./artifactGraph.js";
 import { hasAndroidBootImageMagic } from "./androidBootImageFormat.js";
 import { hasBinaryPlistSignature } from "./apple/appleArchiveFormat.js";
+import { hasImage4Prefix } from "./apple/image4.js";
 import { hasDfuSePrefix, isDfuSeFile } from "./firmware/dfuse.js";
 import { ESP8266_REFUSAL, recognizeEspImage } from "./firmware/espImage.js";
 import { hasFitImagesNode } from "./firmware/fitImage.js";
@@ -76,6 +77,7 @@ export type RecognizedArtifactFormat = Extract<
   | "esp-image"
   | "fit"
   | "qualcomm-mbn"
+  | "apple-img4"
   | "ntfs-mft"
   | "plist"
   | StandaloneArtifactFormat
@@ -174,6 +176,7 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
       "wxapkg",
       (prefix) => hasWxapkgEncryptedMagic(prefix) || hasWxapkgHeader(prefix),
     ),
+    when("apple-img4", hasImage4Prefix),
     // A ustar or GNU header, or a gzip member whose first block is one.
     ({ prefix }) => {
       if (recognizeTarPrefix(prefix) !== undefined)

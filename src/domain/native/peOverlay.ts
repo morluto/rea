@@ -93,6 +93,7 @@ export const PE_OVERLAY_LEADING_FORMATS = [
   "esp-image",
   "fit",
   "qualcomm-mbn",
+  "apple-img4",
   "ntfs-mft",
   "plist",
   "tar",

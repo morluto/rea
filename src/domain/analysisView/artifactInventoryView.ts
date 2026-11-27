@@ -338,6 +338,7 @@ export const projectArtifactInventoryView = (
     inventory.manifest.root_format === "fit" ||
     inventory.manifest.root_format === "nds" ||
     inventory.manifest.root_format === "qualcomm-mbn" ||
+    inventory.manifest.root_format === "apple-img4" ||
     inventory.manifest.root_format === "android-ota-payload" ||
     inventory.manifest.root_format === "android-vbmeta" ||
     inventory.manifest.root_format === "android-sparse-image" ||
