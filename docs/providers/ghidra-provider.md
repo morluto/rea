@@ -205,22 +205,41 @@ changing the backend failure code.
 Cancelling a request that is still queued removes it without touching the
 session. Cancelling the request Ghidra is working on depends on the operation:
 
-| Active operation                                                             | Cancellation                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Reads: every operation except the edits below                                | REA sends the bridge a `cancel` frame naming the request and waits up to two seconds for that request's reply. A decompilation (`procedure_pseudo_code`, `analyze_function`) stops its native decompiler and answers at once; other reads answer when they reach a cancellation check or finish. Once the reply arrives the call returns a cancellation, and the session, its annotations and the requests queued behind it stay. |
-| Edits: `annotate_native_function`, `set_address_name`, `set_addresses_names` | Not interrupted. REA closes the session, so a reply that raced the cancel cannot leave a committed edit behind a cancelled call.                                                                                                                                                                                                                                                                                                  |
+| Active operation                                                             | Cancellation                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Reads: every operation except the edits below                                | REA sends the bridge a `cancel` frame naming the request and waits up to the cancel grace (2,000 ms by default) for that request's reply. A decompilation (`procedure_pseudo_code`, `analyze_function`) stops its native decompiler and answers at once; other reads answer when they reach a cancellation check or finish. Once the reply arrives the call returns a cancellation, and the session, its annotations and the requests queued behind it stay. |
+| Edits: `annotate_native_function`, `set_address_name`, `set_addresses_names` | Not interrupted. REA closes the session, so a reply that raced the cancel cannot leave a committed edit behind a cancelled call.                                                                                                                                                                                                                                                                                                                             |
 
 The bridge reads the connection on one extra thread, which only cancels the
 named request's Ghidra `TaskMonitor`; requests still run one at a time on the
 script thread, and a `cancel` frame has no reply of its own. The reply to the
-cancelled request is the confirmation. If none arrives within two seconds, or
-the request fails without a bridge reply, REA closes the session exactly as it
+cancelled request is the confirmation. If none arrives within the cancel grace,
+or the request fails without a bridge reply, REA closes the session exactly as it
 does for an edit: the Ghidra process is stopped, queued requests fail, session
 annotations are discarded, and the next provider query starts a new session
 (restoring the last checkpoint when one is configured). A result that raced the
 cancel is discarded and the call still returns a cancellation; a bridge failure
 other than the cancellation that raced it stays the reported failure, with the
 session kept.
+
+The cancel grace is 2,000 ms by default. Set `REA_GHIDRA_CANCEL_GRACE_MS` to
+an integer from 100 to 60,000 milliseconds in the environment that starts REA
+to change it. The floor is about five times the slowest acknowledgement
+measured with real Ghidra 12.2 (19 ms); a shorter grace closes sessions that
+would have answered. The maximum is one minute, the pinned MCP client SDK's
+default tool-call deadline: while the grace runs, the cancelled call has not
+returned and the requests queued behind it wait, so a stuck bridge delays all
+of them by the whole grace. REA reads the value when it starts and each session
+keeps the grace it opened with, so a change needs a restart;
+`update_analysis_settings` does not change it and `inspect_analysis_settings`
+does not list it. A fresh-import session's cancellation limitation states the
+value applied and whether it is the default or was set at launch. When the
+grace expires, the requests queued behind the cancelled one fail with a message
+naming the control, the value applied, its source and the range. An empty,
+malformed or out-of-range value does not fall back to the default:
+`rea doctor` and registration validation report it, REA still starts, and a
+Ghidra session refuses to open with `configuration_invalid` until it is
+corrected.
 
 Both mapping directions require a complete original `FileBytes` source whose
 SHA-256 matches the admitted target. Auxiliary files and partial source objects

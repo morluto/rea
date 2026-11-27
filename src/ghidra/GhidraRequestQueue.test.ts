@@ -431,7 +431,10 @@ describe("Ghidra request queue interruptible cancellation", () => {
       { remoteCode: "decompile_cancelled" },
     );
   /** One interruptible queue whose first execution is held by the test. */
-  const interruptibleQueue = (graceMs: number) => {
+  const interruptibleQueue = (
+    graceMs: number,
+    source: "default" | "setting" = "setting",
+  ) => {
     const execution = phaseGate<void, Result<JsonValue, GhidraSessionError>>();
     const cleanup = phaseGate<void, CleanupResult>();
     const executed: { method: string; options: GhidraRequestOptions }[] = [];
@@ -445,7 +448,10 @@ describe("Ghidra request queue interruptible cancellation", () => {
       },
       failure,
       stop,
-      { interruptible: (method) => method === "decompile", graceMs },
+      {
+        interruptible: (method) => method === "decompile",
+        grace: { graceMs, source },
+      },
     );
     return { queue, execution, cleanup, executed, stop };
   };
@@ -528,7 +534,9 @@ describe("Ghidra request queue interruptible cancellation", () => {
       ok: false,
       error: {
         kind: "process",
-        message: "Ghidra session closed after active request cancellation",
+        // The expired grace is the control that closed the session.
+        message:
+          "Ghidra session closed after active request cancellation: Ghidra did not answer the cancelled request within the cancel grace (REA_GHIDRA_CANCEL_GRACE_MS is 5 ms (source launch environment; default 2000, floor 100, maximum 60000); set in the environment that starts REA)",
       },
     });
     // A reply that arrives during the final cleanup does not revive the session.
@@ -547,6 +555,46 @@ describe("Ghidra request queue interruptible cancellation", () => {
     expect(stop).toHaveBeenCalledOnce();
     expect(executed.map(({ method }) => method)).toEqual(["decompile"]);
   });
+
+  it.each([
+    { graceMs: 2_000, source: "default" },
+    { graceMs: 150, source: "setting" },
+    { graceMs: 45_000, source: "setting" },
+  ] as const)(
+    "defers the fallback for exactly the $graceMs ms grace ($source)",
+    async ({ graceMs, source }) => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const { queue, execution, cleanup, stop } = interruptibleQueue(
+          graceMs,
+          source,
+        );
+        const controller = new AbortController();
+        const active = queue.run(
+          "decompile",
+          {},
+          { signal: controller.signal },
+        );
+        const queued = queue.run("queued", {}, {});
+        controller.abort(new Error("caller stopped"));
+        await vi.advanceTimersByTimeAsync(graceMs - 1);
+        expect(stop).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(stop).toHaveBeenCalledOnce();
+        const refused = await queued;
+        if (refused.ok) throw new Error("Expected the session close");
+        expect(refused.error.message).toContain(
+          `REA_GHIDRA_CANCEL_GRACE_MS is ${String(graceMs)} ms (source ${source === "setting" ? "launch environment" : "default"};`,
+        );
+        // The abandoned wire wait settles, then the forced close finishes.
+        execution.release(err(failure("cancelled", "abandoned")));
+        cleanup.release(ok(null));
+        await expect(active).resolves.toMatchObject({ ok: false });
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("closes the session when the interrupted request fails without a bridge reply", async () => {
     const { queue, execution, cleanup, stop } = interruptibleQueue(60_000);

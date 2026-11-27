@@ -157,7 +157,9 @@ preserves the active database and annotations. Retry in literal mode or simplify
 the regex; successful literal searches retain complete matching strings.
 Cancelling an active read, such as a decompilation, stops that request and
 keeps the database, its annotations and the requests queued behind it, provided
-Ghidra answers the request within two seconds. Cancelling an active edit, or a
+Ghidra answers the request within the cancel grace (2,000 ms by default; see
+[active request cancellation](../../providers/ghidra-provider.md#active-request-cancellation)
+for `REA_GHIDRA_CANCEL_GRACE_MS`). Cancelling an active edit, or a
 read Ghidra does not answer in time, terminates the ephemeral database and
 discards its annotations. REA then retains the selected target and imports the
 original artifact again on the next Ghidra query.

@@ -82,13 +82,13 @@ import {
 } from "./GhidraDiagnostics.js";
 import { GhidraLaunchError, type GhidraLaunch } from "./GhidraLauncher.js";
 import { GhidraRequestQueue } from "./GhidraRequestQueue.js";
+import { DEFAULT_GHIDRA_CANCEL_GRACE } from "../config/ghidraCancelGrace.js";
 import {
   bindGhidraSessionFailure,
   GHIDRA_STARTUP_DEADLINE_ELAPSED,
   GhidraSessionError,
 } from "./GhidraSessionError.js";
 import {
-  GHIDRA_ACTIVE_CANCELLATION_GRACE_MS,
   GHIDRA_MUTATING_OPERATIONS,
   isGhidraShutdownAcknowledgement,
   parseGhidraSessionInfo,
@@ -327,7 +327,7 @@ export class GhidraClient {
       () => this.#stopAfterActiveCancellation(),
       {
         interruptible: (method) => !GHIDRA_MUTATING_OPERATIONS.has(method),
-        graceMs: GHIDRA_ACTIVE_CANCELLATION_GRACE_MS,
+        grace: options.cancelGrace ?? DEFAULT_GHIDRA_CANCEL_GRACE,
       },
     );
   }

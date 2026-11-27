@@ -1,5 +1,6 @@
 import { parseConfig } from "../../../../src/config/parseConfig.js";
 import type { BridgeMaxReplyBytes } from "../../../../src/config/bridgeMaxReplyBytes.js";
+import type { GhidraCancelGrace } from "../../../../src/config/ghidraCancelGrace.js";
 import { GhidraProvider } from "../../../../src/ghidra/GhidraProvider.js";
 import { fixtureDosLoadImage } from "../../../../src/ghidra/GhidraLoadImage.fixture.js";
 import { jsonValueSchema } from "../../../../src/domain/jsonValue.js";
@@ -121,6 +122,12 @@ const preExitedProcessLauncher = (options: {
 };
 
 const clients: GhidraClient[] = [];
+/**
+ * The `hang_tools` bridge never answers a cancel, so these cases only wait
+ * out the grace before the fallback; the floor keeps that wait short.
+ */
+const UNANSWERED_GRACE: GhidraCancelGrace = { graceMs: 100, source: "setting" };
+
 const clientFor = (
   launcher: GhidraLauncher,
   options: {
@@ -133,6 +140,7 @@ const clientFor = (
     readonly targetPath?: string;
     readonly targetSha256?: string;
     readonly bridgeMaxReplyBytes?: BridgeMaxReplyBytes;
+    readonly cancelGrace?: GhidraCancelGrace;
   } = {},
 ): GhidraClient => {
   const client = new GhidraClient({
@@ -148,6 +156,9 @@ const clientFor = (
       : { readStartupTimeoutMs: options.readStartupTimeoutMs }),
     ...(options.runId === undefined ? {} : { runId: options.runId }),
     ...(options.logger === undefined ? {} : { logger: options.logger }),
+    ...(options.cancelGrace === undefined
+      ? {}
+      : { cancelGrace: options.cancelGrace }),
     ...(options.bridgeMaxReplyBytes === undefined
       ? {}
       : { bridgeMaxReplyBytes: options.bridgeMaxReplyBytes }),
@@ -1678,7 +1689,7 @@ describe("GhidraClient runtime removal failures", () => {
       const launcher = new FixtureLauncher(
         stage === "active cancellation" ? "hang_tools" : "success",
       );
-      const client = clientFor(launcher);
+      const client = clientFor(launcher, { cancelGrace: UNANSWERED_GRACE });
       await expect(client.start()).resolves.toMatchObject({ ok: true });
       const runtimeRoot = launcher.runtimeRoots[0] ?? "";
       // Without write permission its entries cannot be removed.
@@ -2446,7 +2457,7 @@ it.each([null, "caller stopped", new Error("caller stopped")])(
   "retains cancellation reasons before admission, in the queue, and on the wire (%j)",
   async (reason) => {
     const launcher = new FixtureLauncher("hang_tools");
-    const client = clientFor(launcher);
+    const client = clientFor(launcher, { cancelGrace: UNANSWERED_GRACE });
     await expect(client.start()).resolves.toMatchObject({ ok: true });
     const activeController = new AbortController();
     const active = client.callTool(
@@ -2488,7 +2499,12 @@ it.each([null, "caller stopped", new Error("caller stopped")])(
     expect(result.error.cancellation?.reason).toBe(reason);
     await expect(waiting).resolves.toMatchObject({
       ok: false,
-      error: { kind: "process" },
+      error: {
+        kind: "process",
+        message: expect.stringContaining(
+          "REA_GHIDRA_CANCEL_GRACE_MS is 100 ms (source launch environment",
+        ),
+      },
     });
     expect(launcher.requests).not.toContain("list_procedures");
     // The bridge was asked to stop the decompile and never answered, so the
@@ -2870,7 +2886,7 @@ describe("GhidraClient operation progress heartbeats", () => {
     expect(fastUpdates).toEqual([]);
 
     const launcher = new FixtureLauncher("hang_tools");
-    const client = clientFor(launcher);
+    const client = clientFor(launcher, { cancelGrace: UNANSWERED_GRACE });
     await expect(client.start()).resolves.toMatchObject({ ok: true });
 
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });

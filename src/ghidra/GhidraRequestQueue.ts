@@ -2,6 +2,10 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, type Result } from "../domain/result.js";
+import {
+  ghidraCancelGraceFacts,
+  type GhidraCancelGrace,
+} from "../config/ghidraCancelGrace.js";
 import type { GhidraRequestOptions } from "./GhidraClientTypes.js";
 import {
   GhidraSessionError,
@@ -21,10 +25,14 @@ type GhidraRequestExecutor = (
 type GhidraActiveCancellationHandler = () => Promise<
   Result<null, AnalysisError>
 >;
-/** Which active requests are first asked to stop, and for how long. */
+/**
+ * Which active requests are first asked to stop, and for how long. Edits are
+ * never asked to stop: a reply racing the cancel could leave a committed
+ * change behind a cancelled call.
+ */
 interface GhidraRequestInterruption {
   readonly interruptible: (method: string) => boolean;
-  readonly graceMs: number;
+  readonly grace: GhidraCancelGrace;
 }
 
 interface QueuedRequest {
@@ -122,7 +130,7 @@ export class GhidraRequestQueue {
       signal !== undefined &&
       this.interruption?.interruptible(entry.method) === true
         ? {
-            graceMs: this.interruption.graceMs,
+            grace: this.interruption.grace,
             interrupt: new AbortController(),
             abandon: new AbortController(),
           }
@@ -140,12 +148,14 @@ export class GhidraRequestQueue {
           >;
         }
       | undefined;
-    const closeSession = (): void => {
+    const closeSession = (graceExpired = false): void => {
       if (cancellation !== undefined) return;
       this.failQueued(
         this.failure(
           "process",
-          "Ghidra session closed after active request cancellation",
+          graceExpired && interruption !== undefined
+            ? `Ghidra session closed after active request cancellation: Ghidra did not answer the cancelled request within the cancel grace (${ghidraCancelGraceFacts(interruption.grace)}; set in the environment that starts REA)`
+            : "Ghidra session closed after active request cancellation",
         ),
       );
       cancellation = {
@@ -167,7 +177,9 @@ export class GhidraRequestQueue {
         return;
       }
       interruption.interrupt.abort(signal?.reason);
-      grace = setTimeout(closeSession, interruption.graceMs);
+      grace = setTimeout(() => {
+        closeSession(true);
+      }, interruption.grace.graceMs);
     };
     signal?.addEventListener("abort", onAbort, { once: true });
     try {
