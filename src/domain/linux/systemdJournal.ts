@@ -211,9 +211,12 @@ export interface JournalMetadata {
   readonly unknown_type_object_count: number;
   readonly object_type_counts: readonly JournalObjectTypeCount[];
   readonly object_headers: readonly JournalObjectHeader[];
+  /**
+   * Walked objects outside `object_headers`. Later headers are paged through
+   * inspect_analysis_view's `format_record_headers` collection, which re-reads
+   * the file from a selected index.
+   */
   readonly omitted_object_headers: number;
-  readonly object_header_start_index: number;
-  readonly next_object_header_index: number | null;
   /**
    * Bytes after the last walked object. When the header declares a tail object,
    * this is the journal's preallocated arena capacity, not corruption.
@@ -495,7 +498,6 @@ class JournalScanner {
   #emptyChainDeclared = false;
   /** Objects whose declared extent reaches past the declared arena. */
   #outsideArenaCount = 0;
-  #nextObjectHeaderIndex: number | null = null;
   /** End of the last object that fit the file; the tail begins there or later. */
   #lastObjectEnd = 0;
   /** Absolute offset the declared arena ends at, or null when unread. */
@@ -723,7 +725,6 @@ class JournalScanner {
     if (index >= this.#objectHeaderStart) {
       if (this.#objectHeaders.length < JOURNAL_INLINE_OBJECT_LIMIT)
         this.#objectHeaders.push(object);
-      else this.#nextObjectHeaderIndex ??= index;
     }
 
     // A declared size below the 16-byte header is a self-contradictory
@@ -859,8 +860,6 @@ class JournalScanner {
           0,
           this.#objectCount - this.#objectHeaders.length,
         ),
-        object_header_start_index: this.#objectHeaderStart,
-        next_object_header_index: this.#nextObjectHeaderIndex,
         trailing_bytes: Math.max(
           0,
           this.#fileBytes - align8(this.#lastObjectEnd),
@@ -880,8 +879,8 @@ const objectPayloadLimitations = (limitations: readonly string[]) => [
 /**
  * The scan streams and retains a bounded window, so no whole-file ceiling is
  * needed: memory is one chunk plus `JOURNAL_INLINE_OBJECT_LIMIT` headers
- * whatever the file size. `objectHeaderStart` selects the window, so a later
- * call reaches headers past the first one through `next_object_header_index`.
+ * whatever the file size. `objectHeaderStart` selects the window a page reads,
+ * so headers past the first window stay retrievable without retaining them.
  */
 export const createJournalDecoder = (
   fileBytes: number,

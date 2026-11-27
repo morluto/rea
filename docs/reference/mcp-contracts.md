@@ -957,6 +957,16 @@ Unrecognized bytes keep kind `unknown`. Optional `order_by`, with `field`
 and ties keep inventory order. The container's own `.` row has a size, so add
 `path_globs: ["**"]` to rank only its entries.
 These selectors do not reopen the artifact or resolve filesystem paths.
+The exception is `format_record_headers`, which pages the per-record headers a
+root artifact retains only a window of inline, such as a systemd journal's
+object headers past the first 32. Each page re-reads the root file named by the
+parent Evidence through its format reader, starting at `offset`, after binding
+the file to the inventory's root digest. A changed file fails with
+`artifact_integrity_mismatch` (`integrity_check: "container-identity"`) instead
+of returning shifted rows, and an Evidence bundle source cannot reopen it. A
+page holds at most one window; `coverage.next_offset` continues it, and memory
+stays one read chunk plus one window whatever the file size. A format with no
+record window is refused with an `invalid_request` naming the view.
 `source_complete` records whether the available inventory passes the complete
 graph checks. Exhausting a page from a partial source does not establish that
 unreturned paths are absent. Views carry their own Evidence IDs and preserve

@@ -48,8 +48,8 @@ export class SystemdJournalArtifactReader implements ArtifactReader {
   readonly #objectHeaderStart: number;
 
   /**
-   * `objectHeaderStart` selects the object-header window, so a caller can
-   * continue from a previous inventory's `next_object_header_index`.
+   * `objectHeaderStart` selects the object-header window; a page of the
+   * `format_record_headers` view reads from the page's offset.
    */
   constructor(
     path: string,

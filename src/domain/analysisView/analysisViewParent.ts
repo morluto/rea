@@ -43,6 +43,14 @@ export interface AnalysisViewParent {
   readonly parameters?: unknown;
   /** The complete authenticated parent record, for views that page its exact JSON. */
   readonly evidence?: Evidence;
+  /**
+   * A `format_record_headers` page the application re-read from the unchanged
+   * root file, with the parent inventory's exact record total.
+   */
+  readonly formatRecordPage?: {
+    readonly items: readonly import("./artifactInventoryView.js").FormatRecordHeader[];
+    readonly total: number;
+  };
 }
 import {
   canBorrowParsedJsonSnapshot,

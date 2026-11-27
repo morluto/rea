@@ -91,6 +91,11 @@ export interface ArtifactReaderConstruction {
    * and the container's own bytes; universal Mach-O lipo records consume it.
    */
   readonly integrity?: ArtifactIntegrityPolicyName | undefined;
+  /**
+   * First per-record header a windowed reader retains. Only a page of the
+   * `format_record_headers` view sets it; inventory always starts at 0.
+   */
+  readonly recordHeaderStart?: number | undefined;
 }
 
 export interface FormatDescriptor {
@@ -719,9 +724,11 @@ const NON_ZIP_FORMATS = {
     ...plain,
     retainClassifiedSource: true,
     readerLimitation:
-      "Systemd journal inventory reports the file header and a bounded window of object headers, including counts by object type, declared header and arena sizes, and object extents. Object payloads are not decompressed or decoded, so entries, fields, timestamps and boot filters are not available; file integrity and authenticity are not established.",
+      "Systemd journal inventory reports the file header and the first 32 object headers, including counts by object type, declared header and arena sizes, and object extents; later object headers page through inspect_analysis_view's format_record_headers collection, which re-reads the unchanged file. Object payloads are not decompressed or decoded, so entries, fields, timestamps and boot filters are not available; file integrity and authenticity are not established.",
     createReader: (path, options) =>
-      new SystemdJournalArtifactReader(path, sourceOf(options)),
+      new SystemdJournalArtifactReader(path, sourceOf(options), {
+        objectHeaderStart: options.recordHeaderStart ?? 0,
+      }),
   }),
   unknown: described("unknown", plain),
 } satisfies Record<

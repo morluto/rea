@@ -391,8 +391,6 @@ export const systemdJournalMetadataSchema = z.strictObject({
     .array(systemdJournalObjectHeaderSchema)
     .max(JOURNAL_INLINE_OBJECT_LIMIT),
   omitted_object_headers: offset,
-  object_header_start_index: offset,
-  next_object_header_index: offset.nullable(),
   trailing_bytes: offset,
 });
 const vbmetaHex = z.string().regex(/^[0-9a-f]*$/u);

@@ -8,62 +8,10 @@ import { ArtifactFileSource } from "../resources/ArtifactFileSource.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 
-const HEADER_BYTES = 272;
-const JOURNAL_HEADER_MIN_BYTES = 208;
-
-interface ObjectSpec {
-  readonly type: number;
-  readonly flags?: number;
-  readonly size: number;
-}
-
-/** A minimal, structurally valid journal: fixed header plus aligned objects. */
-const journalBytes = (
-  options: {
-    readonly objects?: readonly ObjectSpec[];
-    readonly headerSize?: number;
-    readonly nObjects?: number;
-    readonly state?: number;
-    readonly incompatibleFlags?: number;
-    readonly compatibleFlags?: number;
-    readonly tailBytes?: number;
-    readonly tailObjectOffset?: number;
-  } = {},
-): Buffer => {
-  const objects = options.objects ?? [];
-  /** Each object starts at the previous extent aligned up to eight bytes. */
-  const bodySize = objects.reduce(
-    (total, object) => total + Math.ceil(Math.min(object.size, 64) / 8) * 8,
-    0,
-  );
-  /** The object area begins after the declared header, which may differ from 272. */
-  const objectStart = Math.max(
-    JOURNAL_HEADER_MIN_BYTES,
-    options.headerSize ?? HEADER_BYTES,
-  );
-  const file = Buffer.alloc(objectStart + bodySize + (options.tailBytes ?? 0));
-  file.write("LPKSHHRH", 0, "latin1");
-  file.writeUInt32LE(options.compatibleFlags ?? 0, 8);
-  file.writeUInt32LE(options.incompatibleFlags ?? 0, 12);
-  file.writeUInt8(options.state ?? 1, 16);
-  for (let index = 0; index < 4; index += 1)
-    file.fill(0x10 + index, 24 + index * 16, 24 + (index + 1) * 16);
-  file.writeBigUInt64LE(BigInt(options.headerSize ?? HEADER_BYTES), 88);
-  file.writeBigUInt64LE(BigInt(file.length - objectStart), 96);
-  file.writeBigUInt64LE(BigInt(options.nObjects ?? objects.length), 144);
-  const tailObjectOffset = options.tailObjectOffset;
-  if (tailObjectOffset !== undefined)
-    file.writeBigUInt64LE(BigInt(tailObjectOffset), 136);
-  /** An oversized object is written only as far as the file's stub for it. */
-  let offset = objectStart;
-  for (const object of objects) {
-    file.writeUInt8(object.type, offset);
-    file.writeUInt8(object.flags ?? 0, offset + 1);
-    file.writeBigUInt64LE(BigInt(object.size), offset + 8);
-    offset += Math.ceil(Math.min(object.size, 64) / 8) * 8;
-  }
-  return file;
-};
+import {
+  HEADER_BYTES,
+  journalBytes,
+} from "../domain/linux/systemdJournal.fixture.js";
 
 const writeJournal = async (name: string, bytes: Buffer): Promise<string> => {
   const directory = await createTestTempDirectory("rea-systemd-journal-");
@@ -400,19 +348,22 @@ it("clamps an inline object window without changing the walked chain", async () 
   const inventory = await scanCanonicalArtifactInventory(
     await writeJournal("many.journal", journalBytes({ objects })),
   );
-  const metadata = inventory.occurrences[0]?.format_metadata as {
-    object_count: number;
-    object_headers: unknown[];
-    omitted_object_headers: number;
-    next_object_header_index: number | null;
-  };
-  expect(metadata.object_count).toBe(40);
-  expect(metadata.object_headers).toHaveLength(32);
-  expect(metadata.omitted_object_headers).toBe(8);
-  expect(metadata.next_object_header_index).toBe(32);
+  expect(inventory.occurrences[0]?.format_metadata).toMatchObject({
+    object_count: 40,
+    omitted_object_headers: 8,
+  });
+  expect(inventory.occurrences[0]?.format_metadata).toHaveProperty(
+    "object_headers.length",
+    32,
+  );
+  // Later headers are paged by re-reading the file; the inline metadata no
+  // longer advertises a continuation of its own.
+  expect(inventory.occurrences[0]?.format_metadata).not.toHaveProperty(
+    "next_object_header_index",
+  );
 });
 
-it("continues the object-header window from next_object_header_index", async () => {
+it("starts the object-header window at a selected index", async () => {
   const objects = Array.from({ length: 40 }, () => ({ type: 1, size: 32 }));
   const path = await writeJournal(
     "windowed.journal",
@@ -425,18 +376,13 @@ it("continues the object-header window from next_object_header_index", async () 
     for await (const _entry of reader.entries()) {
       // No members.
     }
-    const metadata = reader.formatMetadata() as {
-      object_count: number;
-      object_headers: { offset: number }[];
-      object_header_start_index: number;
-      next_object_header_index: number | null;
-    };
+    const metadata = reader.formatMetadata();
+    if (metadata?.kind !== "systemd-journal")
+      throw new Error("Expected systemd-journal metadata");
     // The whole chain is still walked and counted; only the window moves.
     expect(metadata.object_count).toBe(40);
-    expect(metadata.object_header_start_index).toBe(32);
     expect(metadata.object_headers).toHaveLength(8);
     expect(metadata.object_headers[0]?.offset).toBe(HEADER_BYTES + 32 * 32);
-    expect(metadata.next_object_header_index).toBeNull();
   } finally {
     await reader.close();
   }
