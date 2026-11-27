@@ -56,6 +56,7 @@ import { PyInstallerArtifactReader } from "./PyInstallerArtifactReader.js";
 import { UefiArtifactReader } from "../uefi/UefiArtifactReader.js";
 import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
 import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
+import { AuditdLogArtifactReader } from "./AuditdLogArtifactReader.js";
 import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactReader.js";
 import { SystemdJournalArtifactReader } from "./SystemdJournalArtifactReader.js";
 import { AndroidSparseImageArtifactReader } from "./AndroidSparseImageArtifactReader.js";
@@ -104,6 +105,11 @@ export interface FormatDescriptor {
   readonly occurrenceContainer: boolean;
   /** Path-role classification treats the format as a container of its own. */
   readonly roleContainer: boolean;
+  /**
+   * Path role for a format whose bytes say nothing about executability, such as
+   * a text log. Without it those formats fall through to `executable`.
+   */
+  readonly role?: "resource" | undefined;
   /** Classification keeps the admitted source for a later reader. */
   readonly retainClassifiedSource: boolean;
   /** Extraction can open this format without an embedded-pack probe. */
@@ -416,7 +422,7 @@ const NON_ZIP_FORMATS = {
     extractable: true,
     absentInventory: "unavailable",
     readerLimitation:
-      "UnityFS inventory establishes packaged bytes and metadata; serialized objects, textures, meshes and runtime asset behavior were not decoded. LZMA-compressed members are unsupported.",
+      "UnityFS inventory establishes packaged bytes and metadata; serialized objects, textures, meshes and runtime asset behavior were not decoded.",
     createReader: (path, options) =>
       new UnityFsArtifactReader(path, sourceOf(options)),
   }),
@@ -722,6 +728,8 @@ const NON_ZIP_FORMATS = {
   }),
   "systemd-journal": described("systemd-journal", {
     ...plain,
+    // A journal is data, not a program: nothing in it is executed.
+    role: "resource",
     retainClassifiedSource: true,
     readerLimitation:
       "Systemd journal inventory reports the file header and the first 32 object headers, including counts by object type, declared header and arena sizes, and object extents; later object headers page through inspect_analysis_view's format_record_headers collection, which re-reads the unchanged file. Object payloads are not decompressed or decoded, so entries, fields, timestamps and boot filters are not available; file integrity and authenticity are not established.",
@@ -729,6 +737,15 @@ const NON_ZIP_FORMATS = {
       new SystemdJournalArtifactReader(path, sourceOf(options), {
         objectHeaderStart: options.recordHeaderStart ?? 0,
       }),
+  }),
+  "auditd-log": described("auditd-log", {
+    ...plain,
+    role: "resource",
+    retainClassifiedSource: true,
+    readerLimitation:
+      "auditd log inventory reports record and event totals, per-type counts and a bounded window of events joined on their full audit event identity (node, timestamp and serial), with duplicate, out-of-order and malformed records counted. Per-record identity is retained for a bounded window of recent events; events and records past it are counted in the totals but their duplicate and interleaving status is not established. Record key-value fields, hex and escaped values, argument ordering and decoded syscall or permission meanings are not interpreted; the log is not treated as complete or authentic.",
+    createReader: (path, options) =>
+      new AuditdLogArtifactReader(path, sourceOf(options)),
   }),
   unknown: described("unknown", plain),
 } satisfies Record<

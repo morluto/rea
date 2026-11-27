@@ -26,6 +26,7 @@ import { hasNroMagic, hasNsoMagic } from "./switchExecutable.js";
 import { hasUnityFsHeader } from "./unityfsFormat.js";
 import { hasMftFileRecordHeader } from "./windows/ntfsMft.js";
 import { hasSystemdJournalHeader } from "./linux/systemdJournal.js";
+import { hasAuditdLogRecord } from "./linux/auditdLog.js";
 import { hasWindowsShortcutHeader } from "./windows/windowsShortcutHeader.js";
 import { BinaryFormatFailure } from "./binaryContainer.js";
 import {
@@ -79,6 +80,7 @@ export type RecognizedArtifactFormat = Extract<
   | "qualcomm-mbn"
   | "ntfs-mft"
   | "systemd-journal"
+  | "auditd-log"
   | "plist"
   | StandaloneArtifactFormat
 >;
@@ -271,6 +273,7 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     when("fit", hasFitImagesNode),
     when("ntfs-mft", hasMftFileRecordHeader),
     when("systemd-journal", hasSystemdJournalHeader),
+    when("auditd-log", hasAuditdLogRecord),
     when("sqlite", hasSqliteHeader),
     when("windows-shortcut", hasWindowsShortcutHeader),
     when("deb", hasDebPackageHeader),

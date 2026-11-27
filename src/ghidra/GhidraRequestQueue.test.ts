@@ -422,6 +422,38 @@ it.each([
   },
 );
 
+it("does not admit a read-ahead request removed while it is queued", async () => {
+  const execution = phaseGate<void, Result<JsonValue, GhidraSessionError>>();
+  const admitted: string[] = [];
+  const queue = new GhidraRequestQueue(
+    () => execution.hold(),
+    failure,
+    () => Promise.resolve(ok(null)),
+  );
+  const active = queue.run("active", {}, {});
+  const queued = new AbortController();
+  const waiting = queue.run(
+    "read-ahead",
+    {},
+    {
+      signal: queued.signal,
+      onAdmitted: () => {
+        admitted.push("read-ahead");
+      },
+    },
+  );
+  expect(admitted).toEqual([]);
+  queued.abort();
+  const removed = await waiting;
+  expect(admitted).toEqual([]);
+  expect(removed).toMatchObject({
+    ok: false,
+    error: { kind: "cancelled" },
+  });
+  execution.release(ok(null));
+  await active;
+});
+
 describe("Ghidra request queue interruptible cancellation", () => {
   const cancelledReply = (): GhidraSessionError =>
     new GhidraSessionError(

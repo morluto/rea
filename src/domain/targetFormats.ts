@@ -50,6 +50,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   fit: "archive",
   "ntfs-mft": "archive",
   "systemd-journal": "archive",
+  "auditd-log": "archive",
   plist: "artifact",
   javascript: "artifact",
   uefi: "artifact",

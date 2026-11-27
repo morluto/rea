@@ -8,6 +8,11 @@ import {
 } from "../windows/ntfsMftAttributes.js";
 import { MFT_INLINE_HEADER_LIMIT } from "../windows/ntfsMft.js";
 import { JOURNAL_INLINE_OBJECT_LIMIT } from "../linux/systemdJournal.js";
+import {
+  AUDITD_INLINE_DIAGNOSTIC_LIMIT,
+  AUDITD_INLINE_EVENT_LIMIT,
+  AUDITD_INLINE_EVENT_TYPE_LIMIT,
+} from "../linux/auditdLog.js";
 import { offset, uint32 } from "./primitives.js";
 
 const ntfsRecordHeaderSchema = z.strictObject({
@@ -391,6 +396,71 @@ export const systemdJournalMetadataSchema = z.strictObject({
     .array(systemdJournalObjectHeaderSchema)
     .max(JOURNAL_INLINE_OBJECT_LIMIT),
   omitted_object_headers: offset,
+  trailing_bytes: offset,
+});
+/** Raw source bytes of an auditd token that is not valid UTF-8. */
+const auditdHex = z.string().regex(/^(?:[0-9a-f]{2})+$/u);
+const auditdTypeCount = z.strictObject({
+  type: z.string(),
+  type_hex: auditdHex.exactOptional(),
+  count: offset,
+});
+/** auditd text-log facts: record and event totals plus a sampled event window. */
+export const auditdLogMetadataSchema = z.strictObject({
+  kind: z.literal("auditd-log"),
+  line_count: offset,
+  record_count: offset,
+  event_count: offset,
+  /**
+   * True when an event past the retained window was counted once per run of
+   * its records, so `event_count` may repeat an event. Both bound flags are
+   * false when the tail could not hold an identity it met, which leaves the
+   * total unbounded in either direction.
+   */
+  event_count_upper_bound: z.boolean(),
+  /** Always false: a repeated tail run repeats an event, so no lower bound holds. */
+  event_count_lower_bound: z.boolean(),
+  /** True when a tail identity was dropped, so no bound can be stated. */
+  event_count_identity_omitted: z.boolean(),
+  event_type_counts: z.array(auditdTypeCount),
+  malformed_line_count: offset,
+  malformed_lines: z
+    .array(
+      z.strictObject({
+        line: offset,
+        reason: z.string(),
+        excerpt: z.string(),
+        excerpt_hex: auditdHex.exactOptional(),
+      }),
+    )
+    .max(AUDITD_INLINE_DIAGNOSTIC_LIMIT),
+  omitted_malformed_lines: offset,
+  out_of_order_record_count: offset,
+  duplicate_record_count: offset,
+  interleaved_event_count: offset,
+  events: z
+    .array(
+      z.strictObject({
+        event_id: z.string(),
+        node: z.string().nullable(),
+        node_hex: auditdHex.exactOptional(),
+        event_seconds: offset,
+        event_millis: offset,
+        serial: offset,
+        record_count: offset,
+        record_types: z
+          .array(auditdTypeCount)
+          .max(AUDITD_INLINE_EVENT_TYPE_LIMIT),
+        record_types_omitted: offset,
+        record_types_omitted_exact: z.boolean(),
+        first_line: offset,
+        last_line: offset,
+        duplicate_record_count: offset,
+        interleaved: z.boolean(),
+      }),
+    )
+    .max(AUDITD_INLINE_EVENT_LIMIT),
+  omitted_events: offset,
   trailing_bytes: offset,
 });
 const vbmetaHex = z.string().regex(/^[0-9a-f]*$/u);

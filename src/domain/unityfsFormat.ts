@@ -25,6 +25,7 @@ export const UNITYFS_FLAG_USES_BUNDLE_ENCRYPTION = 0x1400;
 
 /** Per-block compression values in the low six flag bits. */
 export const UNITYFS_COMPRESSION_NONE = 0;
+export const UNITYFS_COMPRESSION_LZMA = 1;
 export const UNITYFS_COMPRESSION_LZ4 = 2;
 export const UNITYFS_COMPRESSION_LZ4HC = 3;
 

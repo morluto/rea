@@ -106,6 +106,7 @@ export const PE_OVERLAY_LEADING_FORMATS = [
   "devicetree",
   "deb",
   "systemd-journal",
+  "auditd-log",
 ] as const;
 export type PeOverlayLeadingFormat =
   (typeof PE_OVERLAY_LEADING_FORMATS)[number];

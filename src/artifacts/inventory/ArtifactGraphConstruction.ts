@@ -611,12 +611,9 @@ const artifactRoleForFormat = (
   if (format === "uefi" || isStandaloneArtifactFormat(format))
     return { kind: "resource", format };
   if (format === "plist") return { kind: "plist", format };
-  // A journal is data, not a program: its content format is recognized from
-  // the signature, but nothing in it is executed, so it keeps the resource
-  // role a .journal file would otherwise carry by path.
-  if (format === "systemd-journal") return { kind: "resource", format };
-  if (artifactFormatDescriptor(format)?.roleContainer === true)
-    return { kind: "container", format };
+  const descriptor = artifactFormatDescriptor(format);
+  if (descriptor?.roleContainer === true) return { kind: "container", format };
+  if (descriptor?.role !== undefined) return { kind: descriptor.role, format };
   return {
     kind: ["native-addon", "dynamic-library"].includes(byPath.kind)
       ? byPath.kind
