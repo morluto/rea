@@ -22,7 +22,11 @@ import {
 } from "../../ports/AnalysisProvider.js";
 import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import { EnhancedTools } from "../EnhancedTools.js";
-import { COMMIT_GROUP_SIZE, OUTPUT_IO_STREAK_LIMIT } from "./decompileAll.js";
+import {
+  COMMIT_GROUP_MAX_OPEN_MS,
+  COMMIT_GROUP_SIZE,
+  OUTPUT_IO_STREAK_LIMIT,
+} from "./decompileAll.js";
 import { DecompileExport } from "./exportTree.js";
 import { ExportResources } from "./exportResources.js";
 import { selectProcedures, validateDecompileBounds } from "./selection.js";
@@ -2515,7 +2519,15 @@ it("keeps a settled null failure but starts no independent retry after caller ab
 
 describe("decompile_all grouped commits", () => {
   const directory = useOutputDirectory();
-  afterEach(() => vi.restoreAllMocks());
+  // Group sizes are asserted exactly, so the clock that bounds how long a
+  // group stays open moves only when a test advances it.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["performance"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
 
   const numbered = (count: number) =>
     Array.from({ length: count }, (_, index) => ({
@@ -2765,6 +2777,10 @@ describe("decompile_all grouped commits", () => {
       ),
     );
     await rm(fileOf(unnamed));
+    // A stopped process also leaves the staging of files it had not published.
+    const orphan = join(directory(), ".decompile-stage-orphan");
+    await mkdir(orphan);
+    await writeFile(join(orphan, "content"), "staged by the stopped run");
     const next = harness({ procedures });
     const resumed = await run(next.tools, directory(), { resume: true });
     if (!resumed.ok) throw resumed.error;
@@ -2805,6 +2821,203 @@ describe("decompile_all grouped commits", () => {
     expect(settled.value).toMatchObject({
       counts: { written: 0, skipped: procedures.length, failed: 0 },
     });
+    // Resume neither uses nor removes staging it does not own.
+    expect(await stagingDirectories()).toEqual([".decompile-stage-orphan"]);
+    await expect(readFile(join(orphan, "content"), "utf8")).resolves.toBe(
+      "staged by the stopped run",
+    );
+  });
+
+  it.each(["publication", "journal append"] as const)(
+    "completes a group commit the caller aborts during its %s",
+    async (stage) => {
+      const procedures = numbered(COMMIT_GROUP_SIZE + 4);
+      const controller = new AbortController();
+      if (stage === "publication") {
+        const commit = DecompileExport.prototype.commitFunctionFile;
+        let commits = 0;
+        vi.spyOn(
+          DecompileExport.prototype,
+          "commitFunctionFile",
+        ).mockImplementation(function (
+          this: DecompileExport,
+          relativePath,
+          bytes,
+          staged,
+        ) {
+          commits += 1;
+          if (commits === 3) controller.abort();
+          return commit.call(this, relativePath, bytes, staged);
+        });
+      } else {
+        const append = DecompileExport.prototype.append;
+        vi.spyOn(DecompileExport.prototype, "append").mockImplementation(
+          function (this: DecompileExport, records) {
+            if (records.length > 0) controller.abort();
+            return append.call(this, records);
+          },
+        );
+      }
+      const next = harness({ procedures });
+      const result = await run(next.tools, directory(), {}, controller.signal);
+      if (result.ok) throw new Error("Expected cancellation");
+      expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+      expect(result.error.cleanupIncomplete).toBe(false);
+      // The group in progress is whole: every file and every record.
+      const kept = addresses(procedures.slice(0, COMMIT_GROUP_SIZE));
+      const records = await journalRecords();
+      expect(records.map((record) => record.address)).toEqual(kept);
+      for (const record of records)
+        expect(sha256Hex(await readFile(fileOf(record.address)))).toBe(
+          record.sha256,
+        );
+      // Nothing after the group was requested or left behind.
+      expect(
+        of(next.calls, "procedure_pseudo_code").map((call) => call.procedure),
+      ).toEqual(kept);
+      expect(await readdir(join(directory(), "functions"))).toHaveLength(
+        COMMIT_GROUP_SIZE,
+      );
+      expect(await stagingDirectories()).toEqual([]);
+      const index = decompileDirectoryIndexSchema.parse(
+        JSON.parse(
+          await readFile(
+            join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+            "utf8",
+          ),
+        ),
+      );
+      expect(index.functions.map((record) => record.address)).toEqual(kept);
+      const resumed = await run(harness({ procedures }).tools, directory(), {
+        resume: true,
+      });
+      if (!resumed.ok) throw resumed.error;
+      expect(resumed.value).toMatchObject({
+        counts: { written: 4, skipped: COMMIT_GROUP_SIZE, failed: 0 },
+      });
+    },
+  );
+
+  it("commits the functions decompiled before a provider throws inside a group", async () => {
+    const procedures = numbered(COMMIT_GROUP_SIZE);
+    const { port } = harness({ procedures });
+    const thrown = new Error("provider adapter threw");
+    const throwing: AnalysisOperationPort = {
+      execute: (operation, parameters, execution) =>
+        operation === "procedure_pseudo_code" &&
+        parameters.procedure === procedures[3]?.address
+          ? Promise.reject(thrown)
+          : port.execute(operation, parameters, execution),
+    };
+    await expect(run(new EnhancedTools(throwing), directory())).rejects.toBe(
+      thrown,
+    );
+    const kept = addresses(procedures.slice(0, 3));
+    const records = await journalRecords();
+    expect(records.map((record) => record.address)).toEqual(kept);
+    for (const record of records)
+      expect(sha256Hex(await readFile(fileOf(record.address)))).toBe(
+        record.sha256,
+      );
+    expect(await readdir(join(directory(), "functions"))).toHaveLength(3);
+    expect(await stagingDirectories()).toEqual([]);
+  });
+
+  it("commits each function of a slow provider before requesting the next", async () => {
+    const procedures = numbered(3);
+    const { port } = harness({ procedures });
+    const events: string[] = [];
+    const slow: AnalysisOperationPort = {
+      execute: (operation, parameters, execution) => {
+        if (operation === "procedure_pseudo_code") {
+          events.push(`request ${String(parameters.procedure)}`);
+          vi.advanceTimersByTime(COMMIT_GROUP_MAX_OPEN_MS);
+        }
+        return port.execute(operation, parameters, execution);
+      },
+    };
+    const append = DecompileExport.prototype.append;
+    vi.spyOn(DecompileExport.prototype, "append").mockImplementation(function (
+      this: DecompileExport,
+      records,
+    ) {
+      for (const record of records) events.push(`record ${record.address}`);
+      return append.call(this, records);
+    });
+    const result = await run(new EnhancedTools(slow), directory());
+    if (!result.ok) throw result.error;
+    expect(events).toEqual(
+      addresses(procedures).flatMap((address) => [
+        `request ${address}`,
+        `record ${address}`,
+      ]),
+    );
+  });
+
+  it("commits a group an interval after the previous commit, before it is full", async () => {
+    const procedures = numbered(COMMIT_GROUP_SIZE);
+    const { port } = harness({ procedures });
+    const paced: AnalysisOperationPort = {
+      execute: (operation, parameters, execution) => {
+        if (operation === "procedure_pseudo_code")
+          vi.advanceTimersByTime(COMMIT_GROUP_MAX_OPEN_MS / 2);
+        return port.execute(operation, parameters, execution);
+      },
+    };
+    const appends = observeAppends();
+    const result = await run(new EnhancedTools(paced), directory());
+    if (!result.ok) throw result.error;
+    // Two functions settle per interval, so no group reaches its full size.
+    expect(appends).toEqual([2, 2, 2, 2]);
+    expect((await journalRecords()).map((record) => record.address)).toEqual(
+      addresses(procedures),
+    );
+  });
+
+  it("keeps a discarded staged file owned when its removal fails", async () => {
+    const procedures = numbered(COMMIT_GROUP_SIZE + 1);
+    const seeded = await run(harness({ procedures }).tools, directory(), {
+      limit: 1,
+    });
+    expect(seeded.ok).toBe(true);
+    for (const address of addresses(
+      procedures.slice(1, 1 + OUTPUT_IO_STREAK_LIMIT),
+    ))
+      await mkdir(fileOf(address));
+    const discard = DecompileExport.prototype.discardStaged;
+    const close = OwnedStagedOutput.prototype.close;
+    let discarding = false;
+    vi.spyOn(DecompileExport.prototype, "discardStaged").mockImplementation(
+      function (this: DecompileExport, staged) {
+        discarding = true;
+        return discard.call(this, staged);
+      },
+    );
+    // Removal fails for the discard and for the retry when the export closes.
+    vi.spyOn(OwnedStagedOutput.prototype, "close").mockImplementation(function (
+      this: OwnedStagedOutput,
+    ) {
+      return discarding
+        ? Promise.reject(new Error("staging removal denied"))
+        : close.call(this);
+    });
+    const stopped = await run(harness({ procedures }).tools, directory(), {
+      resume: true,
+    });
+    if (stopped.ok) throw new Error("Expected the export to stop");
+    const left = (await stagingDirectories()).map((name) =>
+      join(directory(), name),
+    );
+    // The functions decompiled after the stop: their staging is still there
+    // and the failure names exactly those directories as owed cleanup.
+    expect(left).toHaveLength(COMMIT_GROUP_SIZE - OUTPUT_IO_STREAK_LIMIT);
+    expect(stopped.error.cleanupIncomplete).toBe(true);
+    expect(stopped.error.cleanupResources).toEqual(
+      expect.arrayContaining(left),
+    );
+    expect(projectAnalysisError(stopped.error).message).toContain(
+      "Stopped after 5 function files in a row",
+    );
   });
 
   it("keeps a journal failure primary and a stopping provider's cleanup attached", async () => {

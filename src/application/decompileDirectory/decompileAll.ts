@@ -431,6 +431,19 @@ interface PublishInput {
  */
 export const COMMIT_GROUP_SIZE = 8;
 
+/**
+ * Time since the previous commit after which the next settled function commits
+ * the group, whatever its size. Grouping pays only while functions settle
+ * faster than a sync; without this bound a slow provider would leave up to a
+ * full group of long decompilations unrecorded when the process stops. With
+ * it, a provider that needs this long per function is committed function by
+ * function, as it was before grouping, and one extra journal sync per interval
+ * costs nothing measurable. The bound is checked when a function settles, so
+ * it does not cover functions waiting behind one that is still pending. A
+ * fixed ceiling for the same reason as the group size.
+ */
+export const COMMIT_GROUP_MAX_OPEN_MS = 1_000;
+
 /** What one attempted function came to, before any journal or count effect. */
 type AttemptOutcome =
   | {
@@ -483,10 +496,26 @@ type Pending =
 const publishSelected = async (
   input: PublishInput,
 ): Promise<Result<void, AnalysisError>> => {
+  const group: Pending[] = [];
+  try {
+    return await publishGroups(input, group);
+  } catch (cause: unknown) {
+    // An unexpected throw, for example from a provider adapter, is not a
+    // reason to drop the functions already decompiled. A throw from the
+    // commit itself left the group empty, so nothing is settled twice.
+    await commitGroup(input, group);
+    throw cause;
+  }
+};
+
+const publishGroups = async (
+  input: PublishInput,
+  group: Pending[],
+): Promise<Result<void, AnalysisError>> => {
   let bodySupport: "unknown" | "unavailable" = "unknown";
   // Attempts admitted against the limit; state.attempted follows at commit.
   let admitted = 0;
-  const group: Pending[] = [];
+  let committedAt = performance.now();
   const stop = (error: AnalysisError): Promise<Result<void, AnalysisError>> => {
     group.push({ kind: "stopped", error });
     return commitGroup(input, group);
@@ -533,8 +562,12 @@ const publishSelected = async (
       group.push({ kind: "attempt", procedure, attempt });
       if (attempt.outcome.kind === "stopped") return commitGroup(input, group);
     }
-    if (group.length >= COMMIT_GROUP_SIZE) {
+    if (
+      group.length >= COMMIT_GROUP_SIZE ||
+      performance.now() - committedAt >= COMMIT_GROUP_MAX_OPEN_MS
+    ) {
       const committed = await commitGroup(input, group);
+      committedAt = performance.now();
       if (!committed.ok) return committed;
     }
   }
@@ -546,7 +579,9 @@ const publishSelected = async (
  * visit order, each already synced in staging, and only then are the group's
  * journal records appended and synced together. A journal record therefore
  * never precedes its file's durable content, and cancellation or a failure
- * commits what was already decompiled before it is reported.
+ * commits what was already decompiled before it is reported. The commit does
+ * not observe the caller's signal: a group whose publication has started is
+ * finished, so no published file is left without its record.
  */
 const commitGroup = async (
   input: PublishInput,
@@ -555,17 +590,17 @@ const commitGroup = async (
   const records: DecompileDirectoryFunctionRecord[] = [];
   let stopped: AnalysisError | undefined;
   let settled = 0;
-  for (const pending of group) {
+  const entries = group.splice(0);
+  for (const pending of entries) {
     settled += 1;
     stopped = await settle(input, pending, records);
     if (stopped !== undefined) break;
   }
   // The export stopped before these functions, so they leave no file, record
   // or count, as if they had not been visited.
-  for (const pending of group.slice(settled))
+  for (const pending of entries.slice(settled))
     if (pending.kind === "attempt" && pending.attempt.outcome.kind === "file")
       await input.session.discardStaged(await pending.attempt.outcome.staged);
-  group.length = 0;
   const appended = await input.session.append(records);
   if (stopped === undefined) return appended;
   if (appended.ok) return err(stopped);
