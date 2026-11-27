@@ -54,6 +54,30 @@ const xmlOf = async (reader: ArscArtifactReader): Promise<string> =>
 const basicBytes = (): Buffer =>
   buildArsc({ types: ARSC_BASIC_TYPES, values: ARSC_BASIC_VALUES });
 
+describe("arsc per-call artifact_limits", () => {
+  it("enforces a caller-selected output budget", async () => {
+    const path = await writeDocument(basicBytes());
+    const reader = new ArscArtifactReader(path, undefined, {
+      file_bytes: 64 * 1024 * 1024,
+      packages: 4096,
+      strings: 0x100000,
+      string_bytes: 64 * 1024 * 1024,
+      entries: 0x100000,
+      output_bytes: 16,
+    });
+    try {
+      await expect(list(reader)).rejects.toMatchObject({
+        reason: "limit",
+        message: expect.stringContaining(
+          "artifact_limits.arsc.output_bytes",
+        ),
+      });
+    } finally {
+      await reader.close();
+    }
+  });
+});
+
 describe("arsc decoder limits", () => {
   it("fails closed on an over-limit global string count", async () => {
     const bytes = basicBytes();
