@@ -89,6 +89,7 @@ import {
   withSessionCleanup,
 } from "./DirectAnalysisCleanup.js";
 import { completeProviderEvidence } from "./ProviderOperationExecution.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import { BUNDLE_RESOURCE_OPERATIONS } from "../ports/BundleResourceOperations.js";
 import { classifyBinaryTargetFilesystemFailure } from "../domain/binaryTargetFilesystemFailure.js";
 
@@ -126,6 +127,8 @@ export const runDirectAnalysis = async (
     readonly loadSelection?: NativeLoadSelection;
     readonly espFlash?: EspFlashSelection;
     readonly includeEvidenceSources?: boolean;
+    /** Receives a long workflow's own waiting reports; provider reads stay silent. */
+    readonly progress?: ProgressReporter;
   } = {},
 ): Promise<AnalysisResultWithSources<Evidence, JsonValue>> =>
   withProcessCancellation(options.signal, (signal) => {
@@ -145,6 +148,9 @@ export const runDirectAnalysis = async (
         ...(options.includeEvidenceSources === true
           ? { includeEvidenceSources: true }
           : {}),
+        ...(options.progress === undefined
+          ? {}
+          : { progress: options.progress }),
         ...targetSelection(options),
         ...(options.providerId === undefined
           ? {}
@@ -357,6 +363,7 @@ const runAnalysis = async (
     readonly evidenceParameters?: Readonly<Record<string, JsonValue>>;
     readonly createSession?: () => BinarySession | Promise<BinarySession>;
     readonly includeEvidenceSources?: boolean;
+    readonly progress?: ProgressReporter;
     readonly providerId?: AnalysisProviderSelector;
     readonly loadSelection?: NativeLoadSelection;
     readonly espFlash?: EspFlashSelection;
@@ -548,6 +555,7 @@ const runAnalysis = async (
       signal,
       evidenceProfile,
       saveSnapshot: snapshotPath !== undefined,
+      ...(options.progress === undefined ? {} : { progress: options.progress }),
     });
     if (!executed.ok) {
       if (options.includeEvidenceSources) {
@@ -719,6 +727,7 @@ const executeAnalysisTool = async (input: {
   readonly signal: AbortSignal;
   readonly evidenceProfile: AnalysisProfileCommitment | undefined;
   readonly saveSnapshot: boolean;
+  readonly progress?: ProgressReporter;
 }): Promise<
   Result<
     {
@@ -760,7 +769,12 @@ const executeAnalysisTool = async (input: {
     let result = await executeComposedWorkflow(
       session,
       (observed) =>
-        new EnhancedTools(observed).execute(tool, input.arguments, signal),
+        new EnhancedTools(observed).execute(
+          tool,
+          input.arguments,
+          signal,
+          input.progress,
+        ),
       composedLimitationBudget(tool),
     );
     retainPartialWorkflowEvidence(result, {
