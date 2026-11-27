@@ -1,4 +1,5 @@
 import type { WorkflowAnalysisPort } from "../WorkflowEvidence.js";
+import type { ProgressReporter } from "../../ports/ProgressReporter.js";
 import {
   ExportPublishedCleanupFailure,
   type StagedExportFile,
@@ -71,6 +72,13 @@ const PROFILE_UNAVAILABLE =
   "The provider did not commit an analysis profile, so this export cannot be resumed.";
 const DUPLICATE_ADDRESSES =
   "Duplicate procedure addresses were coalesced to the first matching inventory row.";
+/**
+ * How long one provider request for a function may stay pending before the
+ * export names it, and how often it repeats while the wait continues. A
+ * provider may be unable to bound or interrupt one decompilation, so the wait
+ * itself is reported.
+ */
+export const FUNCTION_WAIT_REPORT_INTERVAL_MS = 5_000;
 /** Consecutive output_io failures after which an export stops. */
 export const OUTPUT_IO_STREAK_LIMIT = 5;
 const unaddressedRows = (count: number): string =>
@@ -143,6 +151,7 @@ export const decompileAll = async (
   sessionAnalysis: WorkflowAnalysisPort,
   input: DecompileDirectoryInput,
   signal?: AbortSignal,
+  progress?: ProgressReporter,
 ): Promise<Result<JsonValue, AnalysisError>> => {
   const analysis = withInlineSessionLimitations(sessionAnalysis);
   const bounds = validateDecompileBounds(input);
@@ -192,6 +201,7 @@ export const decompileAll = async (
       procedures: attemptOrder(session, selection.procedures),
       identity: loaded.value.identity,
       signal,
+      progress,
       limit: input.limit,
       retryFailed: input.retry_failed,
       state,
@@ -421,6 +431,7 @@ interface PublishInput {
   readonly procedures: readonly SelectedProcedure[];
   readonly identity: ExportIdentity;
   readonly signal: AbortSignal | undefined;
+  readonly progress: ProgressReporter | undefined;
   readonly limit: number | undefined;
   readonly retryFailed: DecompileDirectoryInput["retry_failed"];
   readonly state: PublishState;
@@ -547,7 +558,7 @@ const publishGroups = async (
     group.push({ kind: "stopped", error });
     return commitGroup(input, group);
   };
-  for (const procedure of input.procedures) {
+  for (const [index, procedure] of input.procedures.entries()) {
     if (isAborted(input.signal))
       return stop(cancelledBy("decompile_all", input.signal));
     const existing = await existingFile(
@@ -590,6 +601,8 @@ const publishGroups = async (
         existing,
         bodySupport,
         (record) => group.push({ kind: "superseded", record }),
+        (operation, pending) =>
+          reportingProviderWait(input, procedure, index, operation, pending),
       );
       bodySupport = attempt.bodySupport;
       group.push({ kind: "attempt", procedure, attempt });
@@ -781,6 +794,64 @@ const settle = async (
     : undefined;
 };
 
+/** The provider requests an export makes for one function. */
+type FunctionRequest = "procedure_info" | "procedure_pseudo_code";
+
+/** Wrap one provider request for the current function in wait reporting. */
+type ProviderWait = <Value>(
+  operation: FunctionRequest,
+  pending: Promise<Value>,
+) => Promise<Value>;
+
+const WAITING_FOR: Readonly<Record<FunctionRequest, string>> = {
+  procedure_info: "read the body of",
+  procedure_pseudo_code: "decompile",
+};
+
+/**
+ * Name the function and the provider request an export is waiting on once it
+ * has been pending for a reporting interval, and again each interval until it
+ * settles. Only provider requests are timed: journal and file writes are the
+ * export's own work, so a slow output volume is never reported as a provider
+ * wait. Requests that settle sooner report nothing, so a healthy export stays
+ * quiet.
+ */
+const reportingProviderWait = async <Value>(
+  input: PublishInput,
+  procedure: SelectedProcedure,
+  index: number,
+  operation: FunctionRequest,
+  pending: Promise<Value>,
+): Promise<Value> => {
+  const { progress } = input;
+  if (progress === undefined) return pending;
+  const startedAt = performance.now();
+  const subject =
+    procedure.name === null
+      ? procedure.address
+      : `${procedure.name} at ${procedure.address}`;
+  const timer = setInterval(() => {
+    if (isAborted(input.signal)) return;
+    const elapsedSeconds = Math.floor((performance.now() - startedAt) / 1000);
+    // Reporting is observational; its failure cannot change the export.
+    void Promise.resolve()
+      .then(() =>
+        progress.report({
+          phase: "decompile_all",
+          completed: index,
+          total: input.procedures.length,
+          message: `Waiting for the provider to ${WAITING_FOR[operation]} ${subject} (${String(elapsedSeconds)}s elapsed); function ${String(index + 1)} of ${String(input.procedures.length)} selected.`,
+        }),
+      )
+      .catch(() => undefined);
+  }, FUNCTION_WAIT_REPORT_INTERVAL_MS);
+  try {
+    return await pending;
+  } finally {
+    clearInterval(timer);
+  }
+};
+
 /** One function this call takes on: report a file problem or decompile it. */
 const attemptOne = async (
   input: PublishInput,
@@ -788,9 +859,16 @@ const attemptOne = async (
   existing: "write" | "conflict" | "io",
   bodySupport: "unknown" | "unavailable",
   retainSuperseded: (record: DecompileDirectoryFunctionRecord) => void,
+  providerWait: ProviderWait,
 ): Promise<Attempt> => {
   if (existing === "write")
-    return observeOne({ ...input, procedure, bodySupport, retainSuperseded });
+    return observeOne({
+      ...input,
+      procedure,
+      bodySupport,
+      retainSuperseded,
+      providerWait,
+    });
   const reason =
     existing === "conflict"
       ? {
@@ -826,6 +904,7 @@ const observeOne = async (input: {
   readonly bodySupport: "unknown" | "unavailable";
   readonly retryFailed: DecompileDirectoryInput["retry_failed"];
   readonly retainSuperseded: (record: DecompileDirectoryFunctionRecord) => void;
+  readonly providerWait: ProviderWait;
 }): Promise<Attempt> => {
   const metadata = input.procedure.exportBodyMetadata;
   if (metadata !== undefined)
@@ -841,6 +920,7 @@ const observeOne = async (input: {
           input.identity,
           input.signal,
           input.bodySupport,
+          input.providerWait,
         )
       : {
           kind: "body" as const,
@@ -882,10 +962,13 @@ const observeOne = async (input: {
       kind: "external",
       record: externalRecord(input.procedure, body.fact, infoCaveats),
     });
-  let decompiled = await input.analysis.execute(
+  let decompiled = await input.providerWait(
     "procedure_pseudo_code",
-    { procedure: input.procedure.address },
-    executionOptions(input.signal),
+    input.analysis.execute(
+      "procedure_pseudo_code",
+      { procedure: input.procedure.address },
+      executionOptions(input.signal),
+    ),
   );
   // A provider still owns cleanup even if the caller aborted meanwhile.
   if (!decompiled.ok && decompiled.error.cleanupIncomplete)
@@ -919,10 +1002,13 @@ const observeOne = async (input: {
         kind: "stopped",
         error: cancelledBy("decompile_all", input.signal),
       });
-    decompiled = await input.analysis.execute(
+    decompiled = await input.providerWait(
       "procedure_pseudo_code",
-      { procedure: input.procedure.address, analysis: "independent_fresh" },
-      executionOptions(input.signal),
+      input.analysis.execute(
+        "procedure_pseudo_code",
+        { procedure: input.procedure.address, analysis: "independent_fresh" },
+        executionOptions(input.signal),
+      ),
     );
     if (!decompiled.ok && decompiled.error.cleanupIncomplete)
       return attempt({ kind: "stopped", error: decompiled.error });
@@ -1020,6 +1106,7 @@ const readBody = async (
   identity: ExportIdentity,
   signal: AbortSignal | undefined,
   support: "unknown" | "unavailable",
+  providerWait: ProviderWait,
 ): Promise<
   | {
       readonly kind: "body";
@@ -1050,10 +1137,13 @@ const readBody = async (
       fact: unavailableBody(BODY_UNAVAILABLE),
       support,
     };
-  const observed = await analysis.execute(
+  const observed = await providerWait(
     "procedure_info",
-    { procedure: address },
-    executionOptions(signal),
+    analysis.execute(
+      "procedure_info",
+      { procedure: address },
+      executionOptions(signal),
+    ),
   );
   if (!observed.ok) {
     if (

@@ -26,6 +26,7 @@ import {
   ISO9660_DESCRIPTOR_OFFSET,
   ISO9660_SIGNATURE_BYTES,
 } from "../domain/iso9660/iso9660Structures.js";
+import { gzipTarExtraFieldProbeBytes } from "../domain/tarFormat.js";
 import {
   createAsarHeaderSignatureProbe,
   type FinalAsarHeaderProbeObservation,
@@ -292,6 +293,12 @@ export const createArtifactClassificationProbe = (
     }
     return prefix;
   };
+  const signaturePrefixLimit = (): number =>
+    Math.max(
+      ARTIFACT_CLASSIFICATION_PREFIX_BYTES,
+      retainedBytes < 12 ? 0 : gzipTarExtraFieldProbeBytes(blocks[0]!),
+    );
+
   return {
     get length(): number {
       return observedBytes;
@@ -300,7 +307,7 @@ export const createArtifactClassificationProbe = (
       if (observedBytes < ARTIFACT_CLASSIFICATION_PREFIX_BYTES)
         return ARTIFACT_CLASSIFICATION_PREFIX_BYTES;
       return Math.max(
-        ARTIFACT_CLASSIFICATION_PREFIX_BYTES,
+        signaturePrefixLimit(),
         xml.state === "pending" ? MAX_XML_PLIST_PROBE_BYTES : 0,
         asar.observation.state === "pending" ? asar.limit : 0,
       );
@@ -310,12 +317,13 @@ export const createArtifactClassificationProbe = (
       asar.write(bytes);
       let offset = 0;
       while (offset < bytes.length) {
-        const limit =
-          retainedBytes < ARTIFACT_CLASSIFICATION_PREFIX_BYTES
-            ? ARTIFACT_CLASSIFICATION_PREFIX_BYTES
-            : xml.state === "pending"
-              ? MAX_XML_PLIST_PROBE_BYTES
-              : retainedBytes;
+        const limit = Math.max(
+          signaturePrefixLimit(),
+          xml.state === "pending" &&
+            retainedBytes >= ARTIFACT_CLASSIFICATION_PREFIX_BYTES
+            ? MAX_XML_PLIST_PROBE_BYTES
+            : 0,
+        );
         if (retainedBytes >= limit) break;
         const selected = bytes.subarray(
           offset,

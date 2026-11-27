@@ -9,6 +9,7 @@ import {
   GHIDRA_LITERAL_CANDIDATES_LIMITATION,
 } from "./GhidraLiteralSearch.js";
 import { ghidraCheckpointSelectionSchema } from "./GhidraCheckpoint.js";
+import { DEFAULT_GHIDRA_CANCEL_GRACE } from "../config/ghidraCancelGrace.js";
 import { ghidraProjectHistoryEvidence } from "./GhidraProjectHistory.js";
 import type { Evidence, EvidenceLocation } from "../domain/evidence.js";
 import { ghidraProjectCommitmentSchema } from "./GhidraProjectSnapshot.js";
@@ -675,7 +676,14 @@ export const createGhidraProviderClient = (input: {
     () => config.ghidraStartupTimeoutMs,
   );
   if (!startupTimeout.ok) return startupTimeout;
+  // Every session applies the cancel grace, so an invalid launch value
+  // refuses the session instead of running on the default.
+  const cancelGraceSetting = config.ghidraCancelGrace;
+  if (cancelGraceSetting !== undefined && !cancelGraceSetting.ok)
+    return cancelGraceSetting;
+  const cancelGrace = cancelGraceSetting?.value ?? DEFAULT_GHIDRA_CANCEL_GRACE;
   const client = clientFactory({
+    cancelGrace,
     ...(checkpoint.data === undefined ? {} : { checkpoint: checkpoint.data }),
     startupTimeoutMs: startupTimeout.value,
     readStartupTimeoutMs: () => config.ghidraStartupTimeoutMs,
@@ -1033,6 +1041,10 @@ export const createGhidraProviderClient = (input: {
             projectSessionError(operation, failure, projection),
         })
       : undefined;
+  const commonLimitations = ghidraSessionCommonLimitations(
+    projection.source,
+    cancelGrace,
+  );
   const projectExecution = (
     operation: AnalysisOperation,
     normalized: JsonValue,
@@ -1056,7 +1068,7 @@ export const createGhidraProviderClient = (input: {
           }),
       analysisProfile: committedProfile,
       ...sessionScopedLimitations(
-        ghidraSessionCommonLimitations(projection.source),
+        commonLimitations,
         [
           ...ghidraOperationLimitations(operation, projection.source),
           ...(observation.limitations ?? []),
@@ -1083,7 +1095,6 @@ export const createGhidraProviderClient = (input: {
     if (!parsed.ok) return parsed;
     const { value, ...observation } = parsed.value;
     if (includesExportBodyMetadata && Array.isArray(value)) {
-      const common = ghidraSessionCommonLimitations(projection.source);
       const perOperation = ghidraOperationLimitations(
         "procedure_info",
         projection.source,
@@ -1098,7 +1109,7 @@ export const createGhidraProviderClient = (input: {
           export_body_metadata: {
             ...metadata,
             limitations: [
-              ...common,
+              ...commonLimitations,
               ...perOperation,
               ...metadata.limitations,
               ...session,
@@ -1190,7 +1201,7 @@ export const createGhidraProviderClient = (input: {
           createAnalysisExecution(started.value, committedProfile.provider, {
             analysisProfile: committedProfile,
             ...sessionScopedLimitations(
-              ghidraHealthLimitations(projection.source),
+              ghidraHealthLimitations(projection.source, cancelGrace),
               [],
               sessionLimitations(operation),
             ),
