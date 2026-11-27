@@ -83,6 +83,7 @@ import {
 } from "../domain/apple/appleArchiveFormat.js";
 import { hasDiskImageSignature } from "../domain/apple/diskImageFormat.js";
 import { recognizeArtifactFormat } from "../domain/artifactFormatRecognition.js";
+import { gzipTarExtraFieldProbeBytes } from "../domain/tarFormat.js";
 import {
   ISO9660_DESCRIPTOR_OFFSET,
   ISO9660_SIGNATURE_BYTES,
@@ -780,6 +781,17 @@ const detectArtifactFormat = async (
     initial.size,
     () => throwIfTargetResolutionCancelled(signal),
   );
+  const gzipProbeBytes = Math.min(
+    initial.size,
+    gzipTarExtraFieldProbeBytes(magic),
+  );
+  const recognitionPrefix =
+    gzipProbeBytes > magic.length
+      ? Buffer.concat([
+          magic,
+          await readCachedRange(magic.length, gzipProbeBytes - magic.length),
+        ])
+      : magic;
   // The shared recognizer table decides; this route reads the trailer or
   // locates an ESP flash layout only when a recognizer asks for it, and
   // refuses a file whose header names a format it cannot open.
@@ -787,7 +799,7 @@ const detectArtifactFormat = async (
   let espFlashLayout: boolean | undefined;
   let iso9660Descriptor: Uint8Array | undefined;
   const recognitionInput = () => ({
-    prefix: magic,
+    prefix: recognitionPrefix,
     fileSize: initial.size,
     suffix,
     espFlashLayout,

@@ -9,6 +9,7 @@ import {
 } from "./analysisErrorBase.js";
 import { AnalysisCancelledError } from "./analysisErrorCore.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import type { JsonValue } from "./jsonValue.js";
 import { ProviderCleanupError } from "./providerCleanupError.js";
 
 /** Describe browser cleanup failure without discarding its resource evidence. */
@@ -40,6 +41,11 @@ export class BrowserObservationError extends AnalysisError {
   /** Producer-supplied explanation; undefined selects the operation default. */
   readonly detail: string | undefined;
   readonly remediationAction: string | undefined;
+  /**
+   * Bytes or counts measured before admission stopped. A lower bound, not
+   * `limit.required_value`.
+   */
+  readonly reportedLimits: Readonly<Record<string, JsonValue>> | undefined;
 
   constructor(
     readonly operation: BrowserObservationOperation,
@@ -47,10 +53,12 @@ export class BrowserObservationError extends AnalysisError {
     options?: AnalysisErrorOptions & {
       readonly detail?: string;
       readonly remediationAction?: string;
+      readonly reportedLimits?: Readonly<Record<string, JsonValue>>;
     },
   ) {
     super(`Browser observation ${operation} failed: ${reason}`, options);
     this.detail = options?.detail;
+    this.reportedLimits = options?.reportedLimits;
     this.userMessage =
       options?.detail ?? observationFailureMessage(operation, reason);
     this.remediationAction = options?.remediationAction;
@@ -84,6 +92,10 @@ export class BrowserObservationError extends AnalysisError {
       ...(this.remediationAction === undefined
         ? {}
         : { remediationAction: this.remediationAction }),
+      ...(this.limit === undefined ? {} : { limit: this.limit }),
+      ...(this.reportedLimits === undefined
+        ? {}
+        : { reportedLimits: this.reportedLimits }),
       cleanupPrimary: this.cleanupPrimary,
       diagnostics: this.diagnostics,
       capturedOutput: this.capturedOutput,

@@ -19,9 +19,13 @@ export interface AnalysisSettingValues {
   readonly "javascript.max_heap_mb": number;
   readonly "javascript.member_mutation_alias_states": number;
   readonly "wasm.command_timeout_ms": number;
+  readonly "yara.command_timeout_ms": number;
+  readonly "yara.max_output_bytes": number;
+  readonly "yara.max_matches": number;
   readonly "native.matching_representation_bytes": number;
   readonly "bridge.max_request_bytes": number;
   readonly "bridge.max_reply_bytes": number;
+  readonly "browser.timeline_retained_bytes": number;
   readonly "debugger.command_deadline_ms": number;
   readonly "debugger.max_command_output_bytes": number;
   readonly "hopper.caller_scan_budget_ms": number;

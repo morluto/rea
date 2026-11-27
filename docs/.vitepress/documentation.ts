@@ -109,6 +109,11 @@ export const documentationSections = [
         route: "/binary-diagnostics",
       },
       {
+        text: "YARA rule matches",
+        source: "guides/native/yara-matches.md",
+        route: "/yara-matches",
+      },
+      {
         text: "ELF separate debug files",
         source: "guides/native/elf-debug-link.md",
         route: "/elf-debug-link",
@@ -122,6 +127,11 @@ export const documentationSections = [
         text: "ELF unwind function ranges",
         source: "guides/native/elf-unwind-ranges.md",
         route: "/elf-unwind-ranges",
+      },
+      {
+        text: "Mach-O function starts",
+        source: "guides/native/macho-function-starts.md",
+        route: "/macho-function-starts",
       },
       {
         text: "Linux kernel build config",
@@ -182,6 +192,11 @@ export const documentationSections = [
         text: "PE x64 exception-directory function ranges",
         source: "guides/native/pe-unwind-ranges.md",
         route: "/pe-unwind-ranges",
+      },
+      {
+        text: "PE overlay",
+        source: "guides/native/pe-overlay.md",
+        route: "/pe-overlay",
       },
       {
         text: "Match native functions across builds",
@@ -349,6 +364,11 @@ export const documentationSections = [
         route: "/android-boot-image",
       },
       {
+        text: "Android DTBO partition images",
+        source: "android-dtbo.md",
+        route: "/android-dtbo",
+      },
+      {
         text: "APK signature schemes",
         source: "apk-signature.md",
         route: "/apk-signature",
@@ -382,6 +402,11 @@ export const documentationSections = [
         text: "NuGet packages",
         source: "guides/managed/nuget-nupkg.md",
         route: "/nuget-nupkg",
+      },
+      {
+        text: "VS Code extension packages",
+        source: "guides/managed/vsix-package.md",
+        route: "/vsix-package",
       },
       {
         text: ".NET single-file bundles",
@@ -419,6 +444,11 @@ export const documentationSections = [
         route: "/android-sparse-image",
       },
       {
+        text: "UBI images",
+        source: "guides/firmware/ubi-images.md",
+        route: "/ubi-images",
+      },
+      {
         text: "Flattened devicetree inspection",
         source: "devicetree.md",
         route: "/devicetree",
@@ -429,6 +459,11 @@ export const documentationSections = [
         route: "/esp-flash-image",
       },
       {
+        text: "ESP-IDF NVS partitions",
+        source: "guides/firmware/esp-nvs.md",
+        route: "/esp-nvs",
+      },
+      {
         text: "ESP images",
         source: "esp-image.md",
         route: "/esp-image",
@@ -437,6 +472,11 @@ export const documentationSections = [
         text: "U-Boot FIT images",
         source: "fit-images.md",
         route: "/fit-images",
+      },
+      {
+        text: "Qualcomm MBN images",
+        source: "guides/firmware/qualcomm-mbn-images.md",
+        route: "/qualcomm-mbn-images",
       },
       {
         text: "Intel HEX and S-record images",
@@ -514,6 +554,11 @@ export const documentationSections = [
         route: "/python-packaged-applications",
       },
       {
+        text: "Debian package inspection",
+        source: "deb-package.md",
+        route: "/deb-package",
+      },
+      {
         text: "CPython pyc inspection",
         source: "python-pyc.md",
         route: "/python-pyc",
@@ -544,9 +589,19 @@ export const documentationSections = [
         route: "/nds-roms",
       },
       {
+        text: "Nintendo 64 ROMs",
+        source: "guides/firmware/n64-roms.md",
+        route: "/n64-roms",
+      },
+      {
         text: "WeChat mini-program wxapkg archives",
         source: "wxapkg.md",
         route: "/wxapkg",
+      },
+      {
+        text: "macOS flat installer packages",
+        source: "macos-pkg.md",
+        route: "/macos-pkg",
       },
       {
         text: "ISO 9660 disc images",
@@ -567,6 +622,11 @@ export const documentationSections = [
         text: "GPU asset headers: DDS, GLB, KTX and KTX2",
         source: "gpu-asset-headers.md",
         route: "/gpu-asset-headers",
+      },
+      {
+        text: "Media and cache asset headers: Ogg Opus, RIFF/XMA2, Bink 2 and Vulkan pipeline caches",
+        source: "media-asset-headers.md",
+        route: "/media-asset-headers",
       },
     ],
   },

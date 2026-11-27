@@ -1180,6 +1180,36 @@ const restartOnlyBounds = (owners) => {
       exportedNumber(owners.limits, "MAXIMUM_DEBUGGER_MAX_SESSIONS"),
     ),
     bound(
+      "REA_GHIDRA_CANCEL_GRACE_MS",
+      exportedNumber(
+        owners.ghidraCancelGrace,
+        "DEFAULT_GHIDRA_CANCEL_GRACE_MS",
+      ),
+      exportedNumber(
+        owners.ghidraCancelGrace,
+        "MINIMUM_GHIDRA_CANCEL_GRACE_MS",
+      ),
+      exportedNumber(
+        owners.ghidraCancelGrace,
+        "MAXIMUM_GHIDRA_CANCEL_GRACE_MS",
+      ),
+    ),
+    bound(
+      "REA_GHIDRA_CHECKPOINT_SAVE_WAIT_MS",
+      exportedNumber(
+        owners.ghidraCheckpointSaveWait,
+        "DEFAULT_GHIDRA_CHECKPOINT_SAVE_WAIT_MS",
+      ),
+      exportedNumber(
+        owners.ghidraCheckpointSaveWait,
+        "MINIMUM_GHIDRA_CHECKPOINT_SAVE_WAIT_MS",
+      ),
+      exportedNumber(
+        owners.ghidraCheckpointSaveWait,
+        "MAXIMUM_GHIDRA_CHECKPOINT_SAVE_WAIT_MS",
+      ),
+    ),
+    bound(
       "REA_HOPPER_DEMO_DIALOG_TIMEOUT_MS",
       exportedNumber(
         owners.hopperStartup,
@@ -1296,6 +1326,8 @@ export const loadExportedNumericLimitBounds = async () => {
     mcpInput,
     mcpResponse,
     startupTimeout,
+    ghidraCancelGrace,
+    ghidraCheckpointSaveWait,
     sdk,
   ] = await Promise.all([
     source("../../src/domain/analysisSettingDefinitions.ts"),
@@ -1309,6 +1341,8 @@ export const loadExportedNumericLimitBounds = async () => {
     source("../../src/config/mcpInputBudget.ts"),
     source("../../src/config/mcpResponseBudget.ts"),
     source("../../src/config/providerStartupTimeout.ts"),
+    source("../../src/config/ghidraCancelGrace.ts"),
+    source("../../src/config/ghidraCheckpointSaveWait.ts"),
     import("@modelcontextprotocol/server"),
   ]);
   const owners = {
@@ -1321,6 +1355,8 @@ export const loadExportedNumericLimitBounds = async () => {
     mcpInput,
     mcpResponse,
     startupTimeout,
+    ghidraCancelGrace,
+    ghidraCheckpointSaveWait,
     sdk,
   };
   const restart = restartOnlyBounds(owners);

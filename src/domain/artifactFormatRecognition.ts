@@ -1,5 +1,6 @@
 import type { ArtifactFormatId } from "./artifactGraph.js";
 import { hasAndroidBootImageMagic } from "./androidBootImageFormat.js";
+import { hasAndroidDtboMagic } from "./firmware/androidDtboFormat.js";
 import { hasBinaryPlistSignature } from "./apple/appleArchiveFormat.js";
 import { hasDfuSePrefix, isDfuSeFile } from "./firmware/dfuse.js";
 import { ESP8266_REFUSAL, recognizeEspImage } from "./firmware/espImage.js";
@@ -8,6 +9,7 @@ import { detectHexRecordEncoding } from "./firmware/hexRecords.js";
 import { hasUf2Block } from "./firmware/uf2.js";
 import { hasGodotPckHeader } from "./godotPckFormat.js";
 import { nesContainerFormat, parseInesLayout } from "./inesContainer.js";
+import { n64RomRecognition } from "./n64Rom.js";
 import { hasNdsHeader } from "./ndsRom.js";
 import {
   hasIso9660Signature,
@@ -17,17 +19,24 @@ import {
 import { recognizeAndroidOtaPayload } from "./firmware/androidOtaPayload.js";
 import { hasAndroidVbmetaMagic } from "./firmware/androidVbmeta.js";
 import { recognizeAndroidSparseImage } from "./firmware/androidSparseImage.js";
+import { recognizeUbiImage } from "./firmware/ubiImage.js";
+import { claimsExecutableHeader } from "./binaryTarget.js";
+import { hasQualcommMbnHeader } from "./qualcommMbnImage.js";
 import { hasUImageMagic } from "./uimageFormat.js";
 import { hasBfltMagic } from "./bfltExecutable.js";
 import { hasNroMagic, hasNsoMagic } from "./switchExecutable.js";
 import { hasUnityFsHeader } from "./unityfsFormat.js";
 import { hasMftFileRecordHeader } from "./windows/ntfsMft.js";
+import { hasSystemdJournalHeader } from "./linux/systemdJournal.js";
+import { hasAuditdLogRecord } from "./linux/auditdLog.js";
 import { hasWindowsShortcutHeader } from "./windows/windowsShortcutHeader.js";
 import { BinaryFormatFailure } from "./binaryContainer.js";
 import {
   hasDevicetreeMagic,
   readDevicetreeHeader,
 } from "./firmware/devicetreeHeader.js";
+import { hasEspNvsHeader } from "./firmware/espNvsParser.js";
+import { hasDebPackageHeader } from "./deb/debPackage.js";
 import { observePythonBytecodePrefix } from "./python/pythonBytecodeIdentity.js";
 import { hasSqliteHeader } from "./sqliteFormat.js";
 import { recognizeTarPrefix, tarHeaderRefusal } from "./tarFormat.js";
@@ -37,6 +46,12 @@ import {
   hasKtx1Identifier,
   hasKtx2Identifier,
 } from "./gpuAssetFormats.js";
+import {
+  hasBink2Header,
+  hasOggOpusHeader,
+  hasRiffXma2Header,
+  hasVulkanPipelineCacheHeader,
+} from "./mediaAssetFormats.js";
 import { hasWxapkgEncryptedMagic, hasWxapkgHeader } from "./wxapkgFormat.js";
 import { hasZipSignature } from "./zipPackageFormat.js";
 
@@ -45,6 +60,7 @@ export type RecognizedArtifactFormat = Extract<
   ArtifactFormatId,
   | "ines"
   | "nds"
+  | "n64-rom"
   | "zip"
   | "godot-pck"
   | "unityfs"
@@ -54,13 +70,19 @@ export type RecognizedArtifactFormat = Extract<
   | "glb"
   | "ktx"
   | "ktx2"
+  | "ogg-opus"
+  | "riff-xma2"
+  | "bink2"
+  | "vulkan-pipeline-cache"
   | "uimage"
   | "nso"
   | "nro"
   | "android-boot-image"
+  | "android-dtbo"
   | "android-ota-payload"
   | "android-vbmeta"
   | "android-sparse-image"
+  | "ubi-image"
   | "iso9660"
   | "intel-hex"
   | "srec"
@@ -70,7 +92,10 @@ export type RecognizedArtifactFormat = Extract<
   | "esp-flash-image"
   | "esp-image"
   | "fit"
+  | "qualcomm-mbn"
   | "ntfs-mft"
+  | "systemd-journal"
+  | "auditd-log"
   | "plist"
   | StandaloneArtifactFormat
 >;
@@ -84,6 +109,8 @@ export const STANDALONE_ARTIFACT_FORMATS = [
   "windows-shortcut",
   "python-pyc",
   "devicetree",
+  "esp-nvs",
+  "deb",
 ] as const;
 
 export type StandaloneArtifactFormat =
@@ -160,6 +187,13 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
         ? { state: "recognized", format: "ines" }
         : { state: "refused", format: "ines", reason: layout.error.detail };
     },
+    ({ prefix, fileSize }) => {
+      const claim = n64RomRecognition(prefix, fileSize);
+      if (claim === undefined) return undefined;
+      return claim.state === "recognized"
+        ? { state: "recognized", format: "n64-rom" }
+        : { state: "refused", format: "n64-rom", reason: claim.reason };
+    },
     when("zip", hasZipSignature),
     when("godot-pck", hasGodotPckHeader),
     when("unityfs", hasUnityFsHeader),
@@ -180,10 +214,15 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     when("glb", hasGlbHeader),
     when("ktx", hasKtx1Identifier),
     when("ktx2", hasKtx2Identifier),
+    when("ogg-opus", hasOggOpusHeader),
+    when("riff-xma2", hasRiffXma2Header),
+    when("bink2", hasBink2Header),
+    when("vulkan-pipeline-cache", hasVulkanPipelineCacheHeader),
     when("uimage", hasUImageMagic),
     when("nso", hasNsoMagic),
     when("nro", hasNroMagic),
     when("android-boot-image", hasAndroidBootImageMagic),
+    when("android-dtbo", hasAndroidDtboMagic),
     when("android-vbmeta", hasAndroidVbmetaMagic),
     ({ prefix }) => {
       const ota = recognizeAndroidOtaPayload(prefix);
@@ -195,6 +234,13 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
             format: "android-ota-payload",
             reason: ota.reason,
           };
+    },
+    ({ prefix, fileSize }) => {
+      const ubi = recognizeUbiImage(prefix, fileSize);
+      if (ubi === undefined) return undefined;
+      return ubi.state === "recognized"
+        ? { state: "recognized", format: "ubi-image" }
+        : { state: "refused", format: "ubi-image", reason: ubi.reason };
     },
     ({ prefix }) => {
       const sparse = recognizeAndroidSparseImage(prefix);
@@ -254,8 +300,15 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     },
     when("fit", hasFitImagesNode),
     when("ntfs-mft", hasMftFileRecordHeader),
+    when("systemd-journal", hasSystemdJournalHeader),
+    when("auditd-log", hasAuditdLogRecord),
     when("sqlite", hasSqliteHeader),
     when("windows-shortcut", hasWindowsShortcutHeader),
+    when("deb", hasDebPackageHeader),
+    ({ prefix, fileSize }) =>
+      hasEspNvsHeader(prefix, fileSize)
+        ? { state: "recognized", format: "esp-nvs" }
+        : undefined,
     // Only a pinned CPython magic claims the format; a CR LF trailer alone
     // is too weak a signature for arbitrary bytes.
     when("python-pyc", (prefix) => {
@@ -283,6 +336,15 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     // No magic: the stored logo CRC and a matching checksum claim it, after
     // every format with a leading signature.
     when("nds", hasNdsHeader),
+    // A legacy MBN header has no magic; the version word, sizes and pointer
+    // arithmetic must agree, so it runs after every signature format and yields
+    // to native executable headers (ELF, PE/DOS MZ, Mach-O, FAT). An ELF MBN is
+    // ELF here; root inventory reads it as MBN for its hash segment.
+    ({ prefix, fileSize }) =>
+      !claimsExecutableHeader(prefix, fileSize) &&
+      hasQualcommMbnHeader(prefix, fileSize)
+        ? { state: "recognized", format: "qualcomm-mbn" }
+        : undefined,
   ];
 
 /**
@@ -298,6 +360,33 @@ export const recognizeArtifactFormat = (
     if (recognition !== undefined) return { ...recognition, index };
   }
   return undefined;
+};
+
+/**
+ * Recognize content from a bounded prefix and optional suffix without extra
+ * reads. A refused claim falls through: a header-only iNES region, for
+ * example, has the signature but not the declared cartridge extent. A claim
+ * that needs more bytes falls through too: a bounded prefix and trailer
+ * cannot locate an ESP flash partition table. The caller's bounded XML
+ * signature probe decides plist last.
+ */
+export const recognizeBoundedArtifactFormat = (
+  input: Omit<ArtifactRecognitionInput, "espFlashLayout"> & {
+    readonly xmlPlistSignature: boolean;
+  },
+): Exclude<RecognizedArtifactFormat, "esp-flash-image"> | undefined => {
+  for (
+    let recognition = recognizeArtifactFormat(input);
+    recognition !== undefined;
+    recognition = recognizeArtifactFormat(input, recognition.index + 1)
+  ) {
+    if (
+      recognition.state === "recognized" &&
+      recognition.format !== "esp-flash-image"
+    )
+      return recognition.format;
+  }
+  return input.xmlPlistSignature ? "plist" : undefined;
 };
 
 /**

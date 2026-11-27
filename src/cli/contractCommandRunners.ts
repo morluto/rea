@@ -23,6 +23,7 @@ import type {
   ContractCommandContext,
 } from "./contractCommand.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { cliProgressReporter } from "./cliProgress.js";
 import {
   projectCliAnalysisResult,
   projectCliInputFields,
@@ -127,6 +128,7 @@ export const runOnSessionTarget =
       signal,
       detail: delivery.detail,
       evidenceOutput: delivery.evidenceOutput,
+      rerunRecoversResult: delivery.rerunRecoversResult,
       ...(delivery.view === undefined ? {} : { view: delivery.view }),
     });
   };
@@ -185,6 +187,7 @@ export const runDirectOnTarget =
       {
         logger,
         signal,
+        progress: cliProgressReporter,
         ...directAnalysisOpening(opening),
         // A bundle needs the sources its record cites: a requested one, or
         // the retained-Evidence cache an over-budget result may go to.
@@ -214,6 +217,7 @@ export const runDirectOnTarget =
       signal,
       detail: delivery.detail,
       evidenceOutput,
+      rerunRecoversResult: delivery.rerunRecoversResult,
     });
   };
 
@@ -354,6 +358,7 @@ export const deliverWithService =
       signal: context.signal,
       detail: delivery.detail,
       evidenceOutput: delivery.evidenceOutput,
+      rerunRecoversResult: delivery.rerunRecoversResult,
       ...(delivery.view === undefined ? {} : { view: delivery.view }),
     });
   };

@@ -43,6 +43,7 @@ import {
 } from "../../../tests/fixtures/espImage.js";
 import { devicetreeFixture } from "../../domain/firmware/devicetree.fixture.js";
 import { fitFixture } from "../fit/FitImage.fixture.js";
+import { twoVolumeUbiImage } from "../../domain/firmware/ubiImage.fixture.js";
 import { sampleAndroidVbmeta } from "../../domain/firmware/androidVbmeta.fixture.js";
 
 it("joins only observed PE signature bytes across stream chunks", () => {
@@ -587,6 +588,19 @@ it("classifies nested HEX and S-record content as containers by bytes", () => {
   ).toEqual({ kind: "resource", format: "file" });
 });
 
+it("classifies nested UBI images as containers by a valid UBI# header", () => {
+  const image = twoVolumeUbiImage();
+  expect(classifyArtifactBytesAtPath("nand/rootfs.ubi", image)).toEqual({
+    kind: "container",
+    format: "ubi-image",
+  });
+  image.writeUInt32BE(0, 60);
+  expect(classifyArtifactBytesAtPath("nand/rootfs.ubi", image)).toEqual({
+    kind: "resource",
+    format: "file",
+  });
+});
+
 it("classifies a standalone vbmeta image by AVB0 magic", () => {
   expect(
     classifyArtifactBytesAtPath("vbmeta.img", sampleAndroidVbmeta()),
@@ -805,5 +819,25 @@ it("preserves path-selected inventory roles for XML content", () => {
   expect(classifyArtifactBytesAtPath("state.asar", xml)).toEqual({
     kind: "resource",
     format: "file",
+  });
+});
+
+it("keeps an auditd log a resource rather than an executable", () => {
+  const bytes = Buffer.from(
+    "type=SYSCALL msg=audit(1700000000.123:1000): success=yes\n",
+  );
+  const probe = createArtifactClassificationProbe();
+  probe.write(bytes);
+  expect(
+    classifyArtifactContent(
+      "/var/log/audit/audit.log",
+      probe.finish(bytes.length),
+      bytes.length,
+    ),
+  ).toEqual({
+    kind: "resource",
+    format: "auditd-log",
+    contentFormat: "auditd-log",
+    contentArchitecture: null,
   });
 });

@@ -109,7 +109,12 @@ export const registerAnalysisViewCommands = (
         "Project a selected view of completed Evidence JSON for a supported analysis operation. For inventory rows, use --format csv or --format tsv with --filter-output normalized_result.items and --columns logical_path,artifact_id (if those fields are included in the view).",
       document: "Inline workflow JSON or JSON file path",
       // An evidence-file path is resolved against the operator's working directory.
-      callerPaths: [["source", "path"]],
+      // `view.artifact_path` exists only on format_record_headers pages, so
+      // no other view's semantic `path` selector is resolved as a file.
+      callerPaths: [
+        ["source", "path"],
+        ["view", "artifact_path"],
+      ],
       cliOptions: {
         evidenceBundle: localPathStringSchema
           .optional()

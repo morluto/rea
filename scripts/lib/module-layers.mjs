@@ -56,6 +56,7 @@ export const UNIT_LAYERS = Object.freeze(
       "browser",
       "captures",
       "cutter",
+      "deb",
       "desktop",
       "dotnet",
       "electron",
@@ -79,6 +80,7 @@ export const UNIT_LAYERS = Object.freeze(
       "model",
       "native",
       "nuget",
+      "vsix",
       "objdump",
       "oci",
       "pcap",
@@ -91,6 +93,7 @@ export const UNIT_LAYERS = Object.freeze(
       "uefi",
       "v8",
       "wasm",
+      "yara",
     ]),
     ...units("application", ["application"]),
     ...units("composition", ["composition"]),
@@ -234,6 +237,9 @@ export const ENTRY_FILES = Object.freeze(
         "ArtifactProvider.ts",
         "ArtifactProviderMetadata.ts",
         "DesktopApplicationReader.ts",
+        // inspect_analysis_view's record-header pages re-read a root file
+        // through its format reader under the view's resource scope.
+        "formatRecordHeaderPage.ts",
         "ReleaseExposureReader.ts",
         // JavaScript reconstruction owns one resource scope across the
         // inventory scan, the format reader and the source read.
@@ -266,6 +272,7 @@ export const ENTRY_FILES = Object.freeze(
         "CutterBridgeService.ts",
         "CutterProviderIdentity.ts",
       ],
+      deb: ["DebPackageProvider.ts", "DebPackageProviderIdentity.ts"],
       desktop: [
         "AgentEnvComputer.ts",
         "AgentEnvProviderIdentity.ts",
@@ -299,6 +306,7 @@ export const ENTRY_FILES = Object.freeze(
         "FirmwareProvider.ts",
         "FirmwareProviderIdentities.ts",
         "devicetree/DevicetreeProvider.ts",
+        "espNvs/EspNvsProvider.ts",
       ],
       flutter: ["FlutterBuildProvider.ts", "FlutterProviderIdentity.ts"],
       frida: ["FridaInstrumentationManager.ts", "FridaProviderIdentity.ts"],
@@ -353,6 +361,7 @@ export const ENTRY_FILES = Object.freeze(
         "NativeMacOSProviderMetadata.ts",
         "NativeMacosProviderIdentity.ts",
         "apple/AppleIpsProvider.ts",
+        "apple/MachoFunctionStartsProvider.ts",
         "dwarf/DwarfUnitsProvider.ts",
         "elf/ElfDebugLinkProvider.ts",
         "elf/ElfDependenciesProvider.ts",
@@ -367,6 +376,7 @@ export const ENTRY_FILES = Object.freeze(
         "pe/PeImportsProvider.ts",
         "pe/PeLoadConfigProvider.ts",
         "pe/PeUnwindRangesProvider.ts",
+        "pe/PeOverlayProvider.ts",
         "pe/PeResourcesProvider.ts",
         "pwntools/PwntoolsDecoder.ts",
         "pwntools/PwntoolsLayoutProvider.ts",
@@ -375,6 +385,7 @@ export const ENTRY_FILES = Object.freeze(
         "windows/WindowsShortcutProvider.ts",
       ],
       nuget: ["NugetNupkgProvider.ts", "NugetNupkgProviderIdentity.ts"],
+      vsix: ["VsixPackageProvider.ts", "VsixPackageProviderIdentity.ts"],
       objdump: ["ObjdumpCommand.ts", "ObjdumpProviderIdentity.ts"],
       oci: ["OciImageLayoutProvider.ts", "OciImageLayoutProviderIdentity.ts"],
       pcap: [
@@ -404,6 +415,7 @@ export const ENTRY_FILES = Object.freeze(
       sqlite: ["SqliteDatabaseProvider.ts"],
       v8: ["V8CodeCacheProvider.ts", "V8CodeCacheProviderIdentity.ts"],
       wasm: ["WabtArtifactProvider.ts", "WabtRelease.ts"],
+      yara: ["YaraMatchesProvider.ts", "YaraProviderIdentity.ts"],
     }).map(([unit, files]) => [unit, Object.freeze(files)]),
   ),
 );

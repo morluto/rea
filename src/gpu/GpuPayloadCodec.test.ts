@@ -5,7 +5,11 @@ import {
   MAXIMUM_ZSTD_MAX_FRAMES,
   MINIMUM_ZSTD_MAX_FRAMES,
 } from "../domain/analysisResourceLimits.js";
-import { decodeGpuPayload, decodeGpuPayloadStream } from "./GpuPayloadCodec.js";
+import {
+  decodeGpuPayload,
+  decodeGpuPayloadStream,
+  isTruncatedGpuPayloadFailure,
+} from "./GpuPayloadCodec.js";
 it.each(["zlib", "zstd"] as const)(
   "requires all declared %s input bytes to belong to the codec stream",
   async (codec) => {
@@ -85,6 +89,14 @@ it.each(["zlib", "zstd"] as const)(
     expect(await decodeGpuPayloadStream(input, codec, source.length)).toEqual({
       buffer: source,
       consumedBytes: compressed.length,
+      inputExhausted: false,
+    });
+    expect(
+      await decodeGpuPayloadStream(compressed, codec, source.length),
+    ).toEqual({
+      buffer: source,
+      consumedBytes: compressed.length,
+      inputExhausted: codec === "zstd",
     });
     await expect(
       decodeGpuPayloadStream(compressed.subarray(0, -1), codec, source.length),
@@ -92,5 +104,35 @@ it.each(["zlib", "zstd"] as const)(
     await expect(
       decodeGpuPayload(compressed, codec, source.length + 1),
     ).rejects.toMatchObject({ kind: "malformed" });
+  },
+);
+
+it.each(["zlib", "zstd"] as const)(
+  "distinguishes truncated %s streams from corrupt bytes and output overflow",
+  async (codec) => {
+    const source = Buffer.from("ordinary CCOB marker payload");
+    const compressed =
+      codec === "zstd" ? zstdCompressSync(source) : deflateSync(source);
+
+    const truncatedError = await decodeGpuPayloadStream(
+      compressed.subarray(0, -1),
+      codec,
+      source.length,
+    ).catch((cause: unknown) => cause);
+    expect(isTruncatedGpuPayloadFailure(truncatedError)).toBe(true);
+
+    const corruptError = await decodeGpuPayloadStream(
+      Buffer.alloc(16, 0xff),
+      codec,
+      source.length,
+    ).catch((cause: unknown) => cause);
+    expect(isTruncatedGpuPayloadFailure(corruptError)).toBe(false);
+
+    const overflowError = await decodeGpuPayloadStream(
+      compressed,
+      codec,
+      1,
+    ).catch((cause: unknown) => cause);
+    expect(isTruncatedGpuPayloadFailure(overflowError)).toBe(false);
   },
 );

@@ -6,6 +6,10 @@ import {
   webRuntimeCommandTimeoutSchema,
 } from "./browserDeadline.js";
 import {
+  MAXIMUM_BROWSER_TIMELINE_RETAINED_BYTES,
+  MINIMUM_BROWSER_TIMELINE_RETAINED_BYTES,
+} from "./analysisResourceLimits.js";
+import {
   browserAllowedOriginsSchema,
   browserObservationEndpointSchema,
 } from "./browserObservation.js";
@@ -20,6 +24,14 @@ export const observeWebSessionInputSchema = z.strictObject({
   target_id: z.string().min(1),
   observation_ms: z.int().min(1).default(10_000),
   command_timeout_ms: webRuntimeCommandTimeoutSchema,
+  timeline_retained_bytes: z
+    .int()
+    .min(MINIMUM_BROWSER_TIMELINE_RETAINED_BYTES)
+    .max(MAXIMUM_BROWSER_TIMELINE_RETAINED_BYTES)
+    .optional()
+    .describe(
+      "Byte allowance for armed timeline rows on this call. Omitted uses browser.timeline_retained_bytes, whose default is 8 MiB. Request identities use a separate counter.",
+    ),
 });
 export type ObserveWebSessionInput = z.infer<
   typeof observeWebSessionInputSchema

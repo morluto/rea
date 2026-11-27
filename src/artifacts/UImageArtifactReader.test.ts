@@ -197,6 +197,27 @@ it("inventories a kernel image with its stored payload", async () => {
   }
 });
 
+it("keeps coverage unknown when bytes follow the declared payload", async () => {
+  const payload = Buffer.from("kernel-bytes");
+  const image = buildUImage({ type: 2, payload });
+  const appended = Buffer.from("appended-rootfs");
+  const path = await writeCarrier(
+    "uimage-appended",
+    Buffer.concat([image, appended]),
+  );
+  const snapshot = await scanCanonicalArtifactInventory(path);
+  expect(snapshot.manifest.root_format).toBe("uimage");
+  expect(
+    snapshot.occurrences
+      .filter((row) => row.logical_path !== ".")
+      .map((row) => [row.logical_path, row.declared_size]),
+  ).toEqual([["payload.bin", payload.length]]);
+  expect(snapshot.coverage.status).toBe("unknown");
+  expect(snapshot.limitations).toContain(
+    `${String(appended.length)} byte(s) after the uImage payload, starting at offset ${String(image.length)}, were not exposed as entries.`,
+  );
+});
+
 it("splits multi images and keeps compressed payloads as stored", async () => {
   const partA = Buffer.from("first-part");
   const partB = Buffer.from("second-part-longer");

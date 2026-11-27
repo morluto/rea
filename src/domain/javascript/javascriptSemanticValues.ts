@@ -44,6 +44,7 @@ import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
+import { unwrapPureSemanticSequenceExpression } from "./javascriptSemanticGlobalReference.js";
 import {
   semanticAmbiguousProvenance,
   semanticLocalProvenance,
@@ -648,6 +649,26 @@ const evaluateExpressionValue = (
     return evaluateExpression(unwrapped.node, {
       ...context,
       expressionDepth: context.expressionDepth + unwrapped.depth,
+    });
+  }
+  const unwrappedSequence = unwrapPureSemanticSequenceExpression(
+    node,
+    context.state,
+  );
+  if (unwrappedSequence !== node) {
+    if (
+      context.expressionDepth + 1 >
+      context.state.precision.expression_depth
+    ) {
+      context.dependence.lowest = EVERY_CALLER;
+      return semanticResourceLimitUnknown(
+        "expression-depth",
+        context.state.precision,
+      );
+    }
+    return evaluateExpression(unwrappedSequence, {
+      ...context,
+      expressionDepth: context.expressionDepth + 1,
     });
   }
   const literal = readExactJavaScriptLiteral(node);

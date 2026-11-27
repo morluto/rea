@@ -19,7 +19,7 @@ import {
   type LimitRef,
 } from "../parseFailure.js";
 import { err, ok, type Result } from "../result.js";
-import { decodeStrictUtf8 } from "../strictUtf8.js";
+import { decodeUtf8PreservingBomOrNull } from "../strictUtf8.js";
 
 /** Four-byte magic at offset 0 of a standalone vbmeta image. */
 export const AVB_MAGIC = "AVB0";
@@ -320,14 +320,6 @@ const flagNames = (
   return names;
 };
 
-const decodeText = (bytes: Buffer): string | null => {
-  try {
-    return decodeStrictUtf8(bytes, "preserve");
-  } catch {
-    return null;
-  }
-};
-
 /** Hex needs two characters per byte, so check before encoding. */
 const hexField = (bytes: Buffer, field: string, at: number): string => {
   const maximum = Math.floor(androidVbmetaHostBounds.maxStringLength / 2);
@@ -347,7 +339,7 @@ const textField = (
   at: number,
 ): { readonly text: string | null; readonly hex: string } => {
   const hex = hexField(bytes, field, at);
-  return { text: decodeText(bytes), hex };
+  return { text: decodeUtf8PreservingBomOrNull(bytes), hex };
 };
 
 /** NUL-terminated fixed field. The hex is the whole field, including padding. */
@@ -359,7 +351,7 @@ const cStringField = (
   const nul = field.indexOf(0);
   if (nul === -1) malformed(`${name} is not NUL-terminated`, name, at);
   return {
-    text: decodeText(field.subarray(0, nul)),
+    text: decodeUtf8PreservingBomOrNull(field.subarray(0, nul)),
     hex: hexField(field, name, at),
   };
 };

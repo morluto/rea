@@ -535,3 +535,54 @@ it("lets an unowned close failure read the later successful close", async () => 
   expect((await session.close()).ok).toBe(true);
   expect(failed.error.cleanupIncomplete).toBe(false);
 });
+
+it("reports released-unsaved edits on a close whose session file cleanup fails", async () => {
+  const [first] = await createBinarySessionTargets();
+  const cache = createCacheProvider([]);
+  const discarded = {
+    checkpoint: {
+      status: "discarded",
+      reason: "superseded",
+      directory: "/checkpoints/target",
+    },
+  } as const;
+  let released = false;
+  const provider: AnalysisProvider = {
+    ...cache,
+    createClient: (...arguments_) => ({
+      ...cache.createClient(...arguments_),
+      close: async () => {
+        const report = released ? null : discarded;
+        released = true;
+        return resultOk(report);
+      },
+    }),
+  };
+  const session = createTestBinarySession(provider);
+  let releaseFile = false;
+  onTestFinished(async () => {
+    releaseFile = true;
+    await session.close();
+  });
+  expect((await session.open(first)).ok).toBe(true);
+  expect((await session.execute("address_name", {})).ok).toBe(true);
+  session.resourceScope.retain(
+    {
+      close: async () => {
+        if (!releaseFile) throw new Error("retained descriptor close denied");
+      },
+      cleanupResources: ["session-file"],
+    },
+    "session-file",
+  );
+  // The engine closes, releasing its edits; the session's own file does not.
+  const closed = await session.close({ cleanupRetry: CLOSE_RETRY });
+  if (closed.ok) throw new Error("Expected retained file cleanup");
+  expect(projectAnalysisError(closed.error).details).toMatchObject({
+    partial_observation: discarded,
+  });
+  releaseFile = true;
+  expect(await session.close({ cleanupRetry: CLOSE_RETRY })).toEqual(
+    resultOk(null),
+  );
+});

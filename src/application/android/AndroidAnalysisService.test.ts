@@ -11,6 +11,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
+import { ANDROID_CLASS_SEARCH_PAGE } from "../../domain/android/androidAnalysis.js";
 
 it("retains the selected subject in bounded search Evidence", () => {
   const provider = { id: "fixture", name: "Fixture", version: "1" };
@@ -155,4 +156,31 @@ it("retains selector correction issues before target acquisition", async () => {
     },
   });
   expect(execute).not.toHaveBeenCalled();
+});
+
+it("pages an omitted class-search limit without recording it as a caller choice", async () => {
+  const root = await createTestTempDirectory("rea-android-search-default-");
+  const path = join(root, "selected.apk");
+  await writeFile(
+    path,
+    Buffer.concat([Buffer.from([0x50, 0x4b, 0x05, 0x06]), Buffer.alloc(18)]),
+  );
+  const provider = { id: "fixture", name: "Fixture", version: "1" };
+  const execute = vi.fn<AndroidAnalysisPort["execute"]>(async () =>
+    ok(createAnalysisExecution({ classes: [] }, provider)),
+  );
+  const service = new AndroidAnalysisService({
+    inspectAvailability: vi.fn(),
+    close: vi.fn(),
+    execute,
+  });
+  const result = await service.execute("search_android_classes", {
+    path,
+    query: "",
+  });
+  if (!result.ok) throw result.error;
+  expect(execute.mock.calls[0]?.[1]).toMatchObject({
+    input: { limit: ANDROID_CLASS_SEARCH_PAGE },
+  });
+  expect(result.value.parameters).toEqual({ path, query: "" });
 });

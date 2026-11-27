@@ -8,29 +8,55 @@ import {
   type MipsElfMetadata,
 } from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import {
+  AFL_ASE_MIPS16,
+  EF_MIPS_32BITMODE,
+  EF_MIPS_ABI,
+  EF_MIPS_ABI2,
+  EF_MIPS_ABI_O32,
+  EF_MIPS_ABI_ON32,
+  EF_MIPS_ARCH,
+  EF_MIPS_ARCH_1,
+  EF_MIPS_ARCH_32,
+  EF_MIPS_ARCH_32R2,
+  EF_MIPS_ARCH_ASE,
+  EF_MIPS_ARCH_ASE_M16,
+  EF_MIPS_CPIC,
+  EF_MIPS_FP64,
+  EF_MIPS_LOW_OPTIONS,
+  EF_MIPS_MACH,
+  EF_MIPS_NAN2008,
+  EF_MIPS_NOREORDER,
+  EF_MIPS_PIC,
+} from "../domain/mipsElfFlags.js";
 
 const MIPS_FP_ABI_SOFT = 3;
 const MIPS_ET_REL = 1;
 const MIPS_ET_EXEC = 2;
 const MIPS_ET_DYN = 3;
-const MIPS16_HEADER_ASE = 0x04000000;
-const MIPS_ARCH_1 = 0x00000000;
-const MIPS_ARCH_32 = 0x50000000;
-const MIPS_ARCH_32R2 = 0x70000000;
+/** The only low header options the declared-o32 MIPS32 lane admits. */
+const DECLARED_O32_OPTIONS = EF_MIPS_NOREORDER | EF_MIPS_PIC | EF_MIPS_CPIC;
+
+const isDeclaredMips32Exec = (metadata: MipsElfMetadata): boolean =>
+  metadata.elfClass === 32 &&
+  metadata.type === MIPS_ET_EXEC &&
+  (metadata.flags & EF_MIPS_ARCH) === EF_MIPS_ARCH_32 &&
+  (metadata.flags & (EF_MIPS_ARCH_ASE | EF_MIPS_MACH)) === 0 &&
+  (metadata.flags & EF_MIPS_ABI) === EF_MIPS_ABI_O32;
 
 /** A distinct compressed shared-image shape; admission still checks every declaration. */
 const isGhidraMips16SharedTarget = (target: BinaryTarget): boolean =>
   target.kind === "executable" &&
   target.architecture === "mips" &&
   target.mips.type === MIPS_ET_DYN &&
-  (target.mips.flags & 0x0f000000) === MIPS16_HEADER_ASE;
+  (target.mips.flags & EF_MIPS_ARCH_ASE) === EF_MIPS_ARCH_ASE_M16;
 
 /** Candidate for plain MIPS32 PIC shared-library admission: no compressed-ISA ASE declared. */
 const isGhidraMipsStandardSharedTarget = (target: BinaryTarget): boolean =>
   target.kind === "executable" &&
   target.architecture === "mips" &&
   target.mips.type === MIPS_ET_DYN &&
-  (target.mips.flags & 0x0f000000) === 0;
+  (target.mips.flags & EF_MIPS_ARCH_ASE) === 0;
 
 /**
  * R_MIPS_NONE, R_MIPS_REL32, and the TLS relocations whose values only the
@@ -43,7 +69,11 @@ const MIPS_TLS_RELOCATIONS = new Set([38, 39, 47]);
 export const ghidraMipsLanguageOverride = (
   target: BinaryTarget,
 ): GhidraLanguageOverride | undefined =>
-  (isGhidraMips16SharedTarget(target) || hasLegacyMipsHeaderShape(target)) &&
+  (isGhidraMips16SharedTarget(target) ||
+    hasLegacyMipsHeaderShape(target) ||
+    (target.architecture === "mips" &&
+      target.mips !== undefined &&
+      isDeclaredMips32Exec(target.mips))) &&
   ghidraMipsUnsupportedReason(target) === null &&
   target.architecture === "mips"
     ? {
@@ -159,26 +189,31 @@ export const ghidraMipsUnsupportedReason = (
     !standardShared
   )
     return "This Ghidra MIPS lane supports ET_EXEC and ET_REL only; shared images and PSP PRX need separate load verification.";
-  if ((metadata.flags & 0x0f000000) !== 0 && !shared)
+  if ((metadata.flags & EF_MIPS_ARCH_ASE) !== 0 && !shared)
     return "MIPS16, microMIPS and other ASE encodings are outside this standard-instruction MIPS lane.";
-  if ((metadata.flags & 0x00ff0000) !== 0)
+  if ((metadata.flags & EF_MIPS_MACH) !== 0)
     return "Machine-specific MIPS variants, including PSP Allegrex, need a separately supported processor profile.";
-  const arch = metadata.flags & 0xf0000000;
-  if (arch !== MIPS_ARCH_1 && arch !== MIPS_ARCH_32 && arch !== MIPS_ARCH_32R2)
+  const arch = metadata.flags & EF_MIPS_ARCH;
+  if (
+    arch !== EF_MIPS_ARCH_1 &&
+    arch !== EF_MIPS_ARCH_32 &&
+    arch !== EF_MIPS_ARCH_32R2
+  )
     return "This Ghidra MIPS lane requires EF_MIPS_ARCH_32R2, or a recordless legacy EF_MIPS_ARCH_1 (MIPS-I) or EF_MIPS_ARCH_32 header; other ISA revisions need separate verification.";
+  // Every lane below shares these two refusals, recordless or declared.
+  if ((metadata.flags & EF_MIPS_FP64) !== 0)
+    return "EF_MIPS_FP64 requires separate verification of 64-bit floating-point register semantics in this Ghidra lane.";
+  if ((metadata.flags & EF_MIPS_NAN2008) !== 0)
+    return "EF_MIPS_NAN2008 requires separate verification of NaN encoding semantics in this Ghidra lane.";
   const recordlessShape =
-    (metadata.flags & 0x0000f000) === 0 &&
-    (metadata.flags & 0x20) === 0 &&
+    (metadata.flags & EF_MIPS_ABI) === 0 &&
+    (metadata.flags & EF_MIPS_ABI2) === 0 &&
     metadata.abiFlags === null;
   if (recordlessShape) {
-    if ((metadata.flags & 0x100) !== 0)
+    if ((metadata.flags & EF_MIPS_32BITMODE) !== 0)
       return "EF_MIPS_32BITMODE declares code for a 64-bit processor in 32-bit mode; it is outside the recordless MIPS32 admission.";
-    if ((metadata.flags & 0x40) !== 0)
+    if ((metadata.flags & EF_MIPS_ABI_ON32) !== 0)
       return "EF_MIPS_ABI_ON32 declares the n32 ABI; recordless headers carrying it are outside the recordless legacy admission.";
-    if ((metadata.flags & 0x00000200) !== 0)
-      return "EF_MIPS_FP64 requires separate verification of 64-bit floating-point register semantics in this Ghidra lane.";
-    if ((metadata.flags & 0x00000400) !== 0)
-      return "EF_MIPS_NAN2008 requires separate verification of NaN encoding semantics in this Ghidra lane.";
     if (hasLegacyMipsHeaderShape(target)) return null;
     // A recordless relocatable object is not an incomplete inspection; the
     // lane is scoped to executable firmware images by design.
@@ -192,18 +227,20 @@ export const ghidraMipsUnsupportedReason = (
     ].join(" ");
   }
   if (
-    (metadata.flags & 0x0000f000) !== 0x00001000 ||
-    (metadata.flags & 0x20) !== 0
+    (metadata.flags & EF_MIPS_ABI) !== EF_MIPS_ABI_O32 ||
+    (metadata.flags & EF_MIPS_ABI2) !== 0
   )
     return "This Ghidra MIPS lane requires an explicit o32 ABI or a recordless legacy header with an unspecified ABI; n32, EABI and mixed declarations remain unsupported.";
-  if (arch !== MIPS_ARCH_32R2)
-    return "This Ghidra MIPS lane requires EF_MIPS_ARCH_32R2 for headers that declare an ABI; EF_MIPS_ARCH_1 (MIPS-I) and EF_MIPS_ARCH_32 headers are admitted only through the recordless legacy admission.";
-  if ((metadata.flags & 0x00000200) !== 0)
-    return "EF_MIPS_FP64 requires separate verification of 64-bit floating-point register semantics in this Ghidra lane.";
-  if ((metadata.flags & 0x00000400) !== 0)
-    return "EF_MIPS_NAN2008 requires separate verification of NaN encoding semantics in this Ghidra lane.";
+  const declaredMips32Exec = isDeclaredMips32Exec(metadata);
+  if (arch !== EF_MIPS_ARCH_32R2 && !declaredMips32Exec)
+    return "Explicit o32 requires EF_MIPS_ARCH_32R2 or an EF_MIPS_ARCH_32 executable. MIPS-I remains limited to the recordless legacy admission.";
+  if (
+    declaredMips32Exec &&
+    (metadata.flags & EF_MIPS_LOW_OPTIONS & ~DECLARED_O32_OPTIONS) !== 0
+  )
+    return "For declared-o32 MIPS32 executables, only the NOREORDER, PIC and CPIC header options are supported.";
   if (shared) {
-    if ((metadata.flags & 0x40) !== 0)
+    if ((metadata.flags & EF_MIPS_ABI_ON32) !== 0)
       return "EF_MIPS_ABI_ON32 declares an unverified ABI for the MIPS16 shared-image lane.";
     const load = metadata.sharedLoad;
     if (load === undefined || load.status !== "complete")
@@ -229,8 +266,13 @@ export const ghidraMipsUnsupportedReason = (
   const incomplete = ghidraMipsIncompleteDeclarationsReason(metadata);
   if (incomplete !== null) return incomplete;
   const abi = metadata.abiFlags;
-  if (shared && abi === null && (metadata.limitations?.length ?? 0) === 0)
-    return null; // Inspected absence leaves FP semantics unknown, never inferred.
+  if (declaredMips32Exec)
+    return abi === null
+      ? null
+      : abi === undefined
+        ? "The declared-o32 MIPS32 release 1 lane requires an inspected absence of the ABI flags record; the record has not been inspected, so its absence is unknown."
+        : "The declared-o32 MIPS32 release 1 lane requires an inspected absence of the ABI flags record; record-bearing images need separate verification.";
+  if (shared && abi === null) return null;
   if (abi === undefined || abi === null)
     return [
       "This Ghidra MIPS lane requires an inspected ABI flags record; header flags alone do not establish the floating-point ABI.",
@@ -246,7 +288,7 @@ export const ghidraMipsUnsupportedReason = (
   const softFloat = abi.cpr1Size === 0 && abi.fpAbi === MIPS_FP_ABI_SOFT;
   if (!hardFloat && !softFloat)
     return "This Ghidra MIPS lane admits double-precision or FPXX ABI declarations with 32-bit CPR1, or soft-float without CPR1; single-float, FP64 and unspecified modes need separate verification.";
-  if (abi.isaExtension !== 0 || abi.ases !== (shared ? 0x400 : 0))
+  if (abi.isaExtension !== 0 || abi.ases !== (shared ? AFL_ASE_MIPS16 : 0))
     return "MIPS ABI flags declare an ISA extension or ASE outside this profile's verified instruction declarations.";
   // MIPS_AFL_FLAGS1_ODDSPREG (bit 0) is the GCC and LLVM default for MIPS32 o32
   // whatever the FP ABI; soft-float objects from both carry it. With no CPR1 it
@@ -264,7 +306,7 @@ export const isLegacyMipsAdmission = (target: BinaryTarget): boolean =>
 const isMips1Header = (target: BinaryTarget): boolean =>
   target.architecture === "mips" &&
   target.mips !== undefined &&
-  (target.mips.flags & 0xf0000000) === MIPS_ARCH_1;
+  (target.mips.flags & EF_MIPS_ARCH) === EF_MIPS_ARCH_1;
 
 /** Whether the target is admitted through the recordless MIPS-I legacy lane. */
 export const isMips1LegacyAdmission = (target: BinaryTarget): boolean =>
@@ -511,14 +553,20 @@ export const ghidraMipsProfileParameters = (
       ? isMips1Header(target)
         ? "elf32-exec-mips1-legacy-pinned"
         : "elf32-exec-arch32-legacy-pinned"
-      : isGhidraMips16SharedTarget(target)
-        ? "elf32-dyn-o32-arch32r2-mips16-local-rel32"
-        : isGhidraMipsStandardSharedTarget(target)
-          ? "elf32-dyn-o32-arch32r2-standard"
-          : target.mips.type === MIPS_ET_REL
-            ? "elf32-rel-o32-arch32r2-standard"
-            : "elf32-exec-o32-arch32r2-standard",
-    ...(legacy ? { mips_abi_basis: "inferred-o32-assumption" } : {}),
+      : isDeclaredMips32Exec(target.mips)
+        ? "elf32-exec-o32-arch32-standard"
+        : isGhidraMips16SharedTarget(target)
+          ? "elf32-dyn-o32-arch32r2-mips16-local-rel32"
+          : isGhidraMipsStandardSharedTarget(target)
+            ? "elf32-dyn-o32-arch32r2-standard"
+            : target.mips.type === MIPS_ET_REL
+              ? "elf32-rel-o32-arch32r2-standard"
+              : "elf32-exec-o32-arch32r2-standard",
+    ...(legacy
+      ? { mips_abi_basis: "inferred-o32-assumption" }
+      : isDeclaredMips32Exec(target.mips)
+        ? { mips_abi_basis: "declared-o32-header" }
+        : {}),
     ...pinnedLanguage,
   };
 };

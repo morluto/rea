@@ -1,5 +1,20 @@
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
-import { MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS } from "../domain/analysisResourceLimits.js";
+import {
+  MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS,
+  DEFAULT_GHIDRA_SIGNATURE_MAX_UTF16,
+  DEFAULT_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16,
+  DEFAULT_GHIDRA_C_PARENTHESIS_DEPTH,
+  GHIDRA_C_MAX_TYPE_DEPTH,
+  MAXIMUM_GHIDRA_C_PARENTHESIS_DEPTH,
+  MINIMUM_GHIDRA_C_PARENTHESIS_DEPTH,
+  MAXIMUM_GHIDRA_SIGNATURE_MAX_UTF16,
+  MAXIMUM_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16,
+  MINIMUM_GHIDRA_C_TEXT_UTF16,
+} from "../domain/analysisResourceLimits.js";
+import {
+  ghidraCheckpointSaveWaitLimit,
+  ghidraCheckpointSaveWaitRecovery,
+} from "../config/ghidraCheckpointSaveWait.js";
 import { z } from "zod";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
@@ -33,12 +48,24 @@ import {
 } from "../domain/providerOperationHealth.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import {
+  GhidraCheckpointBusyError,
+  GhidraCheckpointSupersededError,
+} from "./GhidraCheckpoint.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import type { AnalysisErrorOptions } from "../domain/analysisErrorBase.js";
+import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
+import { decodeLimit } from "../domain/parseFailure.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { GhidraLaunchError } from "./GhidraLauncher.js";
 import type { GhidraSessionSource } from "./GhidraProviderCapabilities.js";
 import {
   GHIDRA_STARTUP_DEADLINE_ELAPSED,
   isGhidraInputFailureCode,
+  isGhidraTypeEditRefusalCode,
+  isGhidraCParserLimitCode,
+  isGhidraRemoteCancellation,
+  type GhidraTypeEditRefusalCode,
   type GhidraSessionError,
 } from "./GhidraSessionError.js";
 import {
@@ -87,13 +114,17 @@ export const projectSessionError = (
     request,
     entryHint,
   );
-  return failure.cleanupFailure === undefined
-    ? primary
-    : analysisErrorWithCleanupDependencies(
-        primary,
-        failure.cleanupFailure,
-        operation,
-      );
+  const projected =
+    failure.cleanupFailure === undefined
+      ? primary
+      : analysisErrorWithCleanupDependencies(
+          primary,
+          failure.cleanupFailure,
+          operation,
+        );
+  for (const secondary of failure.secondaryFailures)
+    projected.retainSecondaryFailure(secondary);
+  return projected;
 };
 
 const projectPrimarySessionError = (
@@ -116,6 +147,36 @@ const projectPrimarySessionError = (
   if (failure.configurationFailure !== undefined)
     return failure.configurationFailure;
   if (failure.kind === "checkpoint") {
+    if (failure.cause instanceof GhidraCheckpointBusyError)
+      return new AnalysisCapabilityUnavailableError(
+        "ghidra",
+        operation,
+        failure.cause.message,
+        {
+          ...context,
+          retryable: true,
+          userMessage: `${failure.cause.message}. Sessions share a checkpointed target; one at a time saves it.`,
+          remediationAction: ghidraCheckpointSaveWaitRecovery(
+            failure.cause.wait,
+          ),
+          limit: ghidraCheckpointSaveWaitLimit(failure.cause.wait),
+        },
+      );
+    // The session's committed profile names the generation it selected, so
+    // the unchanged call cannot succeed; reopening selects the current one.
+    if (failure.cause instanceof GhidraCheckpointSupersededError)
+      return new AnalysisCapabilityUnavailableError(
+        "ghidra",
+        operation,
+        failure.cause.message,
+        {
+          ...context,
+          retryable: false,
+          userMessage: `${failure.cause.message}.`,
+          remediationAction:
+            "Reopen the target: call open_binary again for this path, or rerun the CLI command. The current checkpoint is intact and REA_GHIDRA_CHECKPOINT_DIR needs no change.",
+        },
+      );
     if (failure.cause instanceof AnalysisError)
       return analysisClientFailureForOperation(
         failure.cause,
@@ -231,6 +292,38 @@ const projectPrimarySessionError = (
     return new AnalysisInputError(operation, context, [
       { path: ["name"], reason: "invalid_value", message: failure.message },
     ]);
+  const overLimit = ghidraCParserLimitRefusal(
+    operation,
+    failure,
+    request,
+    context,
+  );
+  if (overLimit !== undefined) return overLimit;
+  const typeEdit =
+    failure.kind === "remote"
+      ? ghidraTypeEditRefusal(operation, failure.remoteCode)
+      : undefined;
+  if (typeEdit !== undefined)
+    return new AnalysisInputError(
+      operation,
+      {
+        ...context,
+        ...(typeEdit.recovery === undefined
+          ? {}
+          : {
+              remediationAction: typeEdit.recovery.action,
+              conformsToInputContract: true,
+              related: { operations: typeEdit.recovery.operations },
+            }),
+      },
+      [
+        {
+          path: [typeEdit.field],
+          reason: "invalid_value",
+          message: failure.message,
+        },
+      ],
+    );
   if (
     failure.kind === "remote" &&
     (failure.remoteCode === "procedure_not_found" ||
@@ -296,10 +389,7 @@ const projectPrimarySessionError = (
       ],
     );
   }
-  if (
-    failure.kind === "cancelled" ||
-    (failure.kind === "remote" && failure.remoteCode === "decompile_cancelled")
-  ) {
+  if (failure.kind === "cancelled" || isGhidraRemoteCancellation(failure)) {
     const { cause: _failure, ...cancellationContext } = context;
     return cancelledBy(
       operation,
@@ -667,6 +757,201 @@ const projectObservedJvmMemoryFailure = (
 /** Outcome addition that only a caller keeping the Ghidra session receives. */
 const GHIDRA_SESSION_RETAINED = "The Ghidra session remains usable.";
 
+type GhidraTypeEditOperation =
+  | "annotate_native_function"
+  | "define_native_data_types";
+
+interface GhidraTypeEditRefusal {
+  /** The argument the refusal is attributed to, per operation that can raise it. */
+  readonly fields: Partial<
+    Record<GhidraTypeEditOperation, "signature" | "declarations">
+  >;
+  /** Present when the text is well formed and the database state refuses it. */
+  readonly recovery?: {
+    readonly action: string;
+    readonly operations: readonly string[];
+  };
+}
+
+/** The operation and argument each refused prototype or type definition is attributed to. */
+const GHIDRA_TYPE_EDIT_REFUSALS: Readonly<
+  Record<GhidraTypeEditRefusalCode, GhidraTypeEditRefusal>
+> = {
+  invalid_function_signature: {
+    fields: { annotate_native_function: "signature" },
+  },
+  unknown_data_type: {
+    fields: { annotate_native_function: "signature" },
+    recovery: {
+      action:
+        "Define the named types first (MCP define_native_data_types; CLI rea define-native-data-types), then repeat this call. Nothing in this call was applied.",
+      operations: ["define_native_data_types"],
+    },
+  },
+  ambiguous_data_type: {
+    fields: {
+      annotate_native_function: "signature",
+      define_native_data_types: "declarations",
+    },
+    recovery: {
+      action:
+        "Use a type whose name is unique in the database: inspect the listed types (MCP inspect_native_data_type; CLI rea inspect-native-data-type) and define the intended layout under a new name. This release cannot select a type by category path in C text; nothing in this call was applied.",
+      operations: ["inspect_native_data_type", "define_native_data_types"],
+    },
+  },
+  invalid_type_declarations: {
+    fields: { define_native_data_types: "declarations" },
+  },
+  data_type_conflict: {
+    fields: { define_native_data_types: "declarations" },
+    recovery: {
+      action:
+        "Use another type name, or inspect the existing type (MCP inspect_native_data_type; CLI rea inspect-native-data-type) and use it unchanged. REA does not replace an existing type; nothing in this call was stored.",
+      operations: ["inspect_native_data_type"],
+    },
+  },
+  conflicting_type_definitions: {
+    fields: { define_native_data_types: "declarations" },
+    recovery: {
+      action:
+        "Give each distinct type its own name. C keeps a struct, union or enum tag and a typedef in separate namespaces, and Ghidra stores both under one name. Repeat this call (MCP define_native_data_types; CLI rea define-native-data-types) with the renamed text. Nothing in this call was stored.",
+      operations: ["define_native_data_types"],
+    },
+  },
+};
+
+const ghidraTypeEditRefusal = (
+  operation: string,
+  remoteCode: string | undefined,
+):
+  | (Pick<GhidraTypeEditRefusal, "recovery"> & {
+      readonly field: "signature" | "declarations";
+    })
+  | undefined => {
+  if (
+    !isGhidraTypeEditRefusalCode(remoteCode) ||
+    (operation !== "annotate_native_function" &&
+      operation !== "define_native_data_types")
+  )
+    return undefined;
+  const refusal = GHIDRA_TYPE_EDIT_REFUSALS[remoteCode];
+  const field = refusal.fields[operation];
+  return field === undefined
+    ? undefined
+    : {
+        field,
+        ...(refusal.recovery === undefined
+          ? {}
+          : { recovery: refusal.recovery }),
+      };
+};
+
+/** The per-call control that bounds each Ghidra C parser refusal. */
+const GHIDRA_C_PARSER_CONTROLS = {
+  signature_length_limit: {
+    parameter: "signature_max_utf16",
+    unit: "UTF-16 code units",
+    minimum: MINIMUM_GHIDRA_C_TEXT_UTF16,
+    defaultValue: DEFAULT_GHIDRA_SIGNATURE_MAX_UTF16,
+    maximum: MAXIMUM_GHIDRA_SIGNATURE_MAX_UTF16,
+  },
+  declarations_length_limit: {
+    parameter: "declarations_max_utf16",
+    unit: "UTF-16 code units",
+    minimum: MINIMUM_GHIDRA_C_TEXT_UTF16,
+    defaultValue: DEFAULT_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16,
+    maximum: MAXIMUM_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16,
+  },
+  parenthesis_depth_limit: {
+    parameter: "parenthesis_max_depth",
+    unit: "levels",
+    minimum: MINIMUM_GHIDRA_C_PARENTHESIS_DEPTH,
+    defaultValue: DEFAULT_GHIDRA_C_PARENTHESIS_DEPTH,
+    maximum: MAXIMUM_GHIDRA_C_PARENTHESIS_DEPTH,
+  },
+} as const;
+
+const GHIDRA_C_PARSER_LIMIT_REASON =
+  "Ghidra's C parser cannot be cancelled, so REA bounds the text it parses. Nothing in this call was applied";
+
+/**
+ * Caller C text over a per-call bound on Ghidra's parser. The bridge refused
+ * it before parsing, so the session is unaffected. The effective bound comes
+ * from the request; the bridge measured the text's whole length or deepest
+ * nesting and sends it as the required value.
+ */
+const ghidraCParserLimitRefusal = (
+  operation: string,
+  failure: GhidraSessionError,
+  request: Readonly<Record<string, JsonValue>> | undefined,
+  context: AnalysisErrorOptions,
+): AnalysisResourceConstraintError | undefined => {
+  if (
+    failure.kind !== "remote" ||
+    !isGhidraCParserLimitCode(failure.remoteCode)
+  )
+    return undefined;
+  const { cause: _cause, ...options } = context;
+  // A stack-safety bound on Ghidra's recursive type code: no value raises it safely.
+  if (failure.remoteCode === "type_depth_limit")
+    return parseLimitConstraint(
+      operation,
+      "memory",
+      decodeLimit(
+        "c-declarations",
+        `${failure.message}, above the ${String(GHIDRA_C_MAX_TYPE_DEPTH)}-level limit. Nothing in this call was applied`,
+        {
+          name: "Ghidra C type depth",
+          maximum: GHIDRA_C_MAX_TYPE_DEPTH,
+        },
+        { cause: failure },
+      ),
+      {
+        ...options,
+        requestSent: true,
+        ...fixedAllowanceOptions("The Ghidra C type depth allowance", "count", {
+          limit: GHIDRA_C_MAX_TYPE_DEPTH,
+          unit: "levels",
+          narrowing: `Ghidra stores and compares types recursively and exhausts its stack on deeper chains, so the limit is fixed. The depth counts through typedefs, members and existing database types, so naming intermediate types or splitting the definitions across calls does not reduce it; only fewer nested pointer, array, typedef or member levels does.`,
+        }),
+      },
+    );
+  const control = GHIDRA_C_PARSER_CONTROLS[failure.remoteCode];
+  const requested = request?.[control.parameter];
+  const effective =
+    typeof requested === "number" ? requested : control.defaultValue;
+  const required =
+    failure.cause instanceof GhidraRemoteError
+      ? failure.cause.requiredValue
+      : undefined;
+  return parseLimitConstraint(
+    operation,
+    "cpu",
+    decodeLimit(
+      "c-declarations",
+      `${failure.message}; ${control.parameter} admits at most ${String(effective)} ${control.unit}. ${GHIDRA_C_PARSER_LIMIT_REASON}`,
+      { name: control.parameter, maximum: effective },
+      { cause: failure },
+    ),
+    {
+      ...options,
+      retryable: false,
+      requestSent: true,
+      limit: {
+        control_kind: "parameter",
+        parameter: control.parameter,
+        effective_value: effective,
+        unit: "count",
+        minimum: control.minimum,
+        maximum: control.maximum,
+        default_value: control.defaultValue,
+        applies_at: "next_call",
+        ...(required === undefined ? {} : { required_value: required }),
+      },
+    },
+  );
+};
+
 /** The same addition when a failed search leaves session annotations intact. */
 const GHIDRA_ANNOTATIONS_RETAINED =
   "The active analysis session and annotations remain available.";
@@ -697,7 +982,7 @@ const ghidraDecompileTimeoutRecovery = (
       : `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS is already at its maximum of ${String(seconds)} seconds; unset it to leave decompilation unbounded`
   } in the environment of a new REA invocation, then rerun the command. That invocation starts a new Ghidra session and ${ghidraSessionRestart(source)}. Use analyze_function for this procedure's listing facts without pseudocode.`,
   continuingRemediationAction:
-    "Use analyze_function for listing facts. Call update_analysis_settings with setting ghidra.decompile_timeout_seconds and action set to raise the per-function deadline for the next operation on this Program. For CLI or future REA processes, set REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS. Set the MCP tool-call deadline to cover startup and the full call; earlier cancellation closes the session. `rea setup` estimates deadlines for new Codex/Kimi registrations and preserves existing positive values; edit existing deadlines yourself.",
+    "Use analyze_function for listing facts. Call update_analysis_settings with setting ghidra.decompile_timeout_seconds and action set to raise the per-function deadline for the next operation on this Program. For CLI or future REA processes, set REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS. Set the MCP tool-call deadline to cover startup and the full call; earlier cancellation stops the call, and closes the session when Ghidra does not confirm the stop. `rea setup` estimates deadlines for new Codex/Kimi registrations and preserves existing positive values; edit existing deadlines yourself.",
 });
 
 /**
