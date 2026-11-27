@@ -1151,6 +1151,7 @@
 * **server:** simplify contractToolBindings types and handler dispatch ([#13912](https://github.com/morluto/rea/issues/13912)) ([fdad60a](https://github.com/morluto/rea/commit/fdad60aea7ba8c090c367ad7315a0101b644ecc4))
 * **setup:** extract SupportedClientLocations from SupportedClients ([#13731](https://github.com/morluto/rea/issues/13731)) ([8e619be](https://github.com/morluto/rea/commit/8e619be40c3074a36fe21d319d1c9dde11ae533d))
 * **setup:** share client configuration path error checks ([#14822](https://github.com/morluto/rea/issues/14822)) ([54a6f08](https://github.com/morluto/rea/commit/54a6f08ecb22e1fb6751702f3195735249d07f89))
+* **setup:** share publication destination checks ([#14904](https://github.com/morluto/rea/issues/14904)) ([68f817c](https://github.com/morluto/rea/commit/68f817cdee7bc46071c6cb4693a0a9de4aa374a1))
 * **tests:** consolidate repeated CLI capture and fixture construction ([#14311](https://github.com/morluto/rea/issues/14311)) ([78149ee](https://github.com/morluto/rea/commit/78149eeec979a124ffca8f36c815405491901709))
 * **tooling:** share verifier fixture and lint helpers ([#14318](https://github.com/morluto/rea/issues/14318)) ([4f0d160](https://github.com/morluto/rea/commit/4f0d1602546adc9b9da23bb148a844ab139310ae))
 * **uefi/native:** cache UEFI BinaryReader and reuse hasDosMzMagic ([#13659](https://github.com/morluto/rea/issues/13659)) ([0fc591d](https://github.com/morluto/rea/commit/0fc591da7c2309f59a46933658de8591a4c90c41))
