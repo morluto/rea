@@ -248,7 +248,6 @@ export const decompileAll = async (
       ? undefined
       : { output_directory: session.root, index_path: publishedIndex };
   if (primary !== undefined) {
-    let failure = primary;
     if (
       isAborted(signal) &&
       !(
@@ -257,19 +256,7 @@ export const decompileAll = async (
       )
     )
       primary.retainSecondaryFailure(cancelledBy("decompile_all", signal));
-    for (const failure of failures.slice(1))
-      primary.retainSecondaryFailure(failure);
-    if (
-      !closed.ok &&
-      primary !== closed.error &&
-      closed.error.cleanupIncomplete
-    ) {
-      failure = analysisErrorWithCleanupDependencies(
-        primary,
-        closed.error,
-        "decompile_all",
-      );
-    }
+    const failure = composeFailures(primary, failures.slice(1));
     if (publishedOutput !== undefined)
       failure.retainPrimaryDiagnostics({ published_output: publishedOutput });
     return err(failure);
@@ -516,7 +503,7 @@ const publishSelected = async (
     // primary and the throw is retained with it.
     return err(
       cause instanceof AnalysisError
-        ? followedBy(committed.error, cause)
+        ? composeFailures(committed.error, [cause])
         : committed.error.retainDiagnostics({
             later_unexpected_throw:
               cause instanceof Error
@@ -613,51 +600,62 @@ const commitGroup = async (
   group: Pending[],
 ): Promise<Result<void, AnalysisError>> => {
   const records: DecompileDirectoryFunctionRecord[] = [];
-  let stopped: AnalysisError | undefined;
-  let settled = 0;
-  const entries = group.splice(0);
-  for (const pending of entries) {
-    settled += 1;
-    stopped = await settle(input, pending, records);
-    if (stopped !== undefined) break;
-  }
-  // The export stopped before these functions, so they leave no file, record
-  // or count, as if they had not been visited. A later function's provider
-  // failure was already observed, though, and may still own cleanup: it is
-  // retained behind the earlier stop.
-  for (const pending of entries.slice(settled)) {
-    if (pending.kind === "attempt" && pending.attempt.outcome.kind === "file")
-      await input.session.discardStaged(await pending.attempt.outcome.staged);
-    const later =
-      pending.kind === "stopped"
-        ? pending.error
-        : pending.kind === "attempt" &&
-            pending.attempt.outcome.kind === "stopped"
-          ? pending.attempt.outcome.error
-          : undefined;
-    if (stopped !== undefined && later !== undefined)
-      stopped = followedBy(stopped, later);
+  // Every entry's failure, in visit order. The first stops the export; the
+  // rest are kept behind it, with any cleanup they still own.
+  const stops: AnalysisError[] = [];
+  for (const pending of group.splice(0)) {
+    if (stops.length === 0) {
+      const stopped = await settle(input, pending, records);
+      if (stopped !== undefined) stops.push(stopped);
+    } else await abandon(input, pending, stops);
   }
   const appended = await input.session.append(records);
-  if (stopped === undefined) return appended;
-  if (appended.ok) return err(stopped);
-  // The journal failed on functions before the stop, so it is the failure the
-  // caller needs.
-  return err(followedBy(appended.error, stopped));
+  // The journal failed on functions before the stop, so it leads.
+  const failures = appended.ok ? stops : [appended.error, ...stops];
+  const [primary, ...later] = failures;
+  return primary === undefined
+    ? ok(undefined)
+    : err(composeFailures(primary, later));
 };
 
 /**
- * Keep `primary` and retain a later failure behind it. A later failure that
- * still owns cleanup keeps the composite incomplete until that owner releases.
+ * Leave a function the export stopped before as if it had not been visited:
+ * no file, record or count. Its provider observation already ran, though, so
+ * a failure it observed, which may still own cleanup, is kept.
  */
-const followedBy = (
+const abandon = async (
+  input: PublishInput,
+  pending: Pending,
+  stops: AnalysisError[],
+): Promise<void> => {
+  if (pending.kind === "stopped") stops.push(pending.error);
+  if (pending.kind !== "attempt") return;
+  const { outcome } = pending.attempt;
+  if (outcome.kind === "file")
+    await input.session.discardStaged(await outcome.staged);
+  else if (outcome.kind === "stopped") stops.push(outcome.error);
+};
+
+/**
+ * Keep `primary` and retain each later failure behind it as a secondary
+ * failure. A later failure that still owns cleanup keeps the result
+ * incomplete until that owner releases.
+ */
+const composeFailures = (
   primary: AnalysisError,
-  later: AnalysisError,
+  later: readonly AnalysisError[],
 ): AnalysisError => {
-  primary.retainSecondaryFailure(later);
-  return later.cleanupIncomplete
-    ? analysisErrorWithCleanupDependencies(primary, later, "decompile_all")
-    : primary;
+  let failure = primary;
+  for (const next of later) {
+    primary.retainSecondaryFailure(next);
+    if (next.cleanupIncomplete)
+      failure = analysisErrorWithCleanupDependencies(
+        failure,
+        next,
+        "decompile_all",
+      );
+  }
+  return failure;
 };
 
 /**

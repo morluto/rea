@@ -3134,6 +3134,46 @@ describe("decompile_all grouped commits", () => {
     expect(stopped.error.cleanupIncomplete).toBe(false);
   });
 
+  it("keeps an index failure's cleanup attached behind an earlier publish failure", async () => {
+    const { port } = harness();
+    const journalFailure = new AnalysisOutputError(
+      "decompile_all",
+      "decompile journal could not be updated",
+    );
+    vi.spyOn(DecompileExport.prototype, "append").mockImplementation(
+      (records) =>
+        Promise.resolve(
+          records.length > 0 ? err(journalFailure) : ok(undefined),
+        ),
+    );
+    const indexFailure = new AnalysisOutputError(
+      "decompile_all",
+      "decompile index cleanup failed",
+      {
+        cleanup: {
+          reason: "index staging removal denied",
+          resources: ["index staging"],
+        },
+      },
+    );
+    const lease = new AnalysisCleanupLease(
+      async () => undefined,
+      ["index staging"],
+    );
+    lease.bindCleanupError(indexFailure);
+    vi.spyOn(DecompileExport.prototype, "writeIndex").mockResolvedValue(
+      err(indexFailure),
+    );
+    const result = await run(new EnhancedTools(port), directory());
+    if (result.ok) throw new Error("Expected the journal failure");
+    expect(result.error.cleanupPrimary).toBe(journalFailure);
+    expect(journalFailure.secondaryFailures).toContain(indexFailure);
+    expect(result.error.cleanupResources).toEqual(["index staging"]);
+    expect(result.error.cleanupIncomplete).toBe(true);
+    await lease.release();
+    expect(result.error.cleanupIncomplete).toBe(false);
+  });
+
   it("keeps a failed commit primary over a provider throw that followed it", async () => {
     const procedures = numbered(COMMIT_GROUP_SIZE);
     const { port } = harness({ procedures });

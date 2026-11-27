@@ -206,7 +206,7 @@ export class DecompileExport {
   ): Promise<Result<void, AnalysisError>> {
     const lines: DecompileDirectoryFunctionRecord[] = [];
     let text = "";
-    let invalid = false;
+    let invalid: AnalysisOutputError | undefined;
     for (const record of records) {
       const line = decompileJournalLineSchema.safeParse({
         kind: "function",
@@ -215,7 +215,10 @@ export class DecompileExport {
       // Records before an invalid one are still appended, as they were when
       // each record was appended on its own.
       if (!line.success || line.data.kind !== "function") {
-        invalid = true;
+        invalid = new AnalysisOutputError(
+          "decompile_all",
+          "decompile journal record is invalid",
+        );
         break;
       }
       text += `${JSON.stringify(line.data)}\n`;
@@ -232,13 +235,15 @@ export class DecompileExport {
           () => true,
           () => false,
         );
-      if (!written)
-        return err(
-          new AnalysisOutputError(
-            "decompile_all",
-            "decompile journal could not be updated",
-          ),
+      if (!written) {
+        const failure = new AnalysisOutputError(
+          "decompile_all",
+          "decompile journal could not be updated",
         );
+        // The records before the invalid one failed first; it stays behind.
+        if (invalid !== undefined) failure.retainSecondaryFailure(invalid);
+        return err(failure);
+      }
     }
     for (const committed of lines) {
       this.records.set(committed.address, committed);
@@ -247,14 +252,7 @@ export class DecompileExport {
       if (committed.relative_path !== undefined)
         reservePath(this.paths, committed.relative_path, committed.address);
     }
-    return invalid
-      ? err(
-          new AnalysisOutputError(
-            "decompile_all",
-            "decompile journal record is invalid",
-          ),
-        )
-      : ok(undefined);
+    return invalid === undefined ? ok(undefined) : err(invalid);
   }
 
   async writeIndex(input: {
