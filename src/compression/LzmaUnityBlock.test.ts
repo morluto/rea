@@ -113,6 +113,14 @@ it("refuses a decode whose declared length exceeds the budget", async () => {
   ).rejects.toMatchObject({ kind: "limit" });
 });
 
+it("reports a stream that exceeds its declared size as malformed, not over budget", async () => {
+  // A nonempty stream with a zero declaration overruns during decode; that is
+  // a size mismatch. Declarations above maximumBytes are refused separately.
+  await expect(
+    decodeUnityLzmaBlock(encodeUnityLzma(Buffer.from("overrun")), 0, 64),
+  ).rejects.toMatchObject({ kind: "malformed" });
+});
+
 it("preserves timer-driven cancellation during Unity LZMA decode", async () => {
   const plain = Buffer.alloc(2 * 1024 * 1024, 0x61);
   const budget = 64 * 1024 * 1024;

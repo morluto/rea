@@ -27,7 +27,7 @@ type WorkerReply =
   | { readonly ok: true; readonly buffer: ArrayBuffer }
   | {
       readonly ok: false;
-      readonly kind: "malformed" | "structure";
+      readonly kind: "malformed";
       readonly message: string;
     };
 
@@ -63,8 +63,8 @@ const decode = (sizeField) => {
       writeByte(byte) {
         if (written >= expected)
           throw {
-            kind: "structure",
-            message: "LZMA decoded length exceeds the object budget",
+            kind: "malformed",
+            message: "LZMA decoded length exceeds its declaration",
           };
         output[written++] = byte;
       },
@@ -147,15 +147,12 @@ type DecodeOutcome =
   | { readonly ok: false; readonly cause: unknown };
 
 /** The decoder's own verdict about the block, as the worker reported it. */
-const replyOutcome = (message: WorkerReply, expected: number): DecodeOutcome =>
+const replyOutcome = (message: WorkerReply): DecodeOutcome =>
   message.ok
     ? { ok: true, value: Buffer.from(message.buffer) }
     : {
         ok: false,
-        cause:
-          message.kind === "structure"
-            ? new BinaryResourceFailure("structure", expected, message.message)
-            : new BinaryFormatFailure("malformed", message.message),
+        cause: new BinaryFormatFailure("malformed", message.message),
       };
 
 /**
@@ -252,7 +249,7 @@ const decodeAloneInWorker = async (
       return;
     }
     worker.on("message", (message: WorkerReply) => {
-      finish(replyOutcome(message, expected), true);
+      finish(replyOutcome(message), true);
     });
     worker.on("error", (cause: Error & { readonly code?: unknown }) => {
       finish({ ok: false, cause: workerRuntimeFailure(cause, expected) }, true);
