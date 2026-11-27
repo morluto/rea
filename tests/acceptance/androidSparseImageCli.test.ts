@@ -14,12 +14,25 @@ import {
   mixedAndroidSparseImage,
 } from "../../src/domain/firmware/androidSparseImage.fixture.js";
 
-cliTest(
-  "inspects an Android sparse image through the compiled CLI",
-  async ({ cli }) => {
+const sparseCoverageCases = [
+  {
+    label: "without trailing bytes",
+    trailing: Buffer.alloc(0),
+    coverage: "complete",
+  },
+  {
+    label: "with trailing bytes",
+    trailing: mixedAndroidSparseImage(),
+    coverage: "unknown",
+  },
+] as const;
+
+cliTest.for(sparseCoverageCases)(
+  "inspects an Android sparse image $label through the compiled CLI",
+  async ({ trailing, coverage }, { cli }) => {
     const root = await createTestTempDirectory("rea-android-sparse-cli-");
     const source = join(root, "system.img");
-    const bytes = mixedAndroidSparseImage();
+    const bytes = Buffer.concat([mixedAndroidSparseImage(), trailing]);
     await writeFile(source, bytes);
     const inspected = await cli.run({
       arguments: ["inspect-artifact", source, "--json"],
@@ -30,7 +43,7 @@ cliTest(
     );
     const graph = inspection.substeps[0]!.evidence.normalized_result;
     expect(graph.manifest.root_format).toBe("android-sparse-image");
-    expect(graph.coverage.status).toBe("complete");
+    expect(graph.coverage.status).toBe(coverage);
     expect(
       graph.occurrences.find((row) => row.logical_path === ".")
         ?.format_metadata,
@@ -38,6 +51,7 @@ cliTest(
       kind: "android-sparse-image",
       block_size: 4,
       expanded_size: 16,
+      trailing_bytes: trailing.length,
       checksums_verified: false,
       chunk_counts: { raw: 1, fill: 1, dont_care: 1, crc32: 1 },
     });
@@ -45,12 +59,12 @@ cliTest(
   },
 );
 
-cliTest(
-  "extracts an Android sparse image through the compiled CLI",
-  async ({ cli }) => {
+cliTest.for(sparseCoverageCases)(
+  "extracts an Android sparse image $label through the compiled CLI",
+  async ({ trailing, coverage }, { cli }) => {
     const root = await createTestTempDirectory("rea-android-sparse-cli-");
     const source = join(root, "system.img");
-    const bytes = mixedAndroidSparseImage();
+    const bytes = Buffer.concat([mixedAndroidSparseImage(), trailing]);
     await writeFile(source, bytes);
     const extracted = await cli.run({
       arguments: ["extract-artifact", source, "--json"],
@@ -61,6 +75,7 @@ cliTest(
       parseEvidence(extracted.json).normalized_result,
     );
     expect(result.containment_verified).toBe(true);
+    expect(result.coverage.status).toBe(coverage);
     expect(
       (await readFile(join(result.output_root, "image.raw"))).equals(
         MIXED_ANDROID_SPARSE_EXPANDED,
