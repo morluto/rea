@@ -119,8 +119,8 @@ const elements = (
   seq: Uint8Array | null,
   what: string,
   version: ApkSchemeVersion,
-  limit: number = APK_SIGNATURE_BUDGETS.max_signer_elements.default_value,
-  sharedBudget?: ApkSchemeCountBudget,
+  limitOrBudget: number | ApkSchemeCountBudget = APK_SIGNATURE_BUDGETS
+    .max_signer_elements.default_value,
 ): Result<Uint8Array[], ApkSchemeError> => {
   if (seq === null) return malformed(`${what} sequence missing or truncated`);
   const reader = new LeReader(seq);
@@ -128,12 +128,12 @@ const elements = (
   while (reader.remaining > 0) {
     const el = reader.lenChunk();
     if (el === null) return malformed(`${what} element truncated`);
-    if (sharedBudget !== undefined) {
-      if (sharedBudget.used >= sharedBudget.limit)
-        return schemeLimit(version, "signer-elements", sharedBudget.limit);
-      sharedBudget.used += 1;
-    } else if (out.length >= limit) {
-      return schemeLimit(version, what, limit);
+    if (typeof limitOrBudget !== "number") {
+      if (limitOrBudget.used >= limitOrBudget.limit)
+        return schemeLimit(version, "signer-elements", limitOrBudget.limit);
+      limitOrBudget.used += 1;
+    } else if (out.length >= limitOrBudget) {
+      return schemeLimit(version, what, limitOrBudget);
     }
     out.push(el);
   }
@@ -151,13 +151,7 @@ const decodeAlgorithmRecords = <T>(
   ) => T,
   elementBudget: ApkSchemeCountBudget,
 ): Result<T[], ApkSchemeError> => {
-  const items = elements(
-    seq,
-    what,
-    version,
-    elementBudget.limit,
-    elementBudget,
-  );
+  const items = elements(seq, what, version, elementBudget);
   if (!items.ok) return items;
   const records: T[] = [];
   for (const item of items.value) {
@@ -176,13 +170,7 @@ const decodeAttributes = (
   version: ApkSchemeVersion,
   elementBudget: ApkSchemeCountBudget,
 ): Result<ApkSignerAttribute[], ApkSchemeError> => {
-  const items = elements(
-    seq,
-    "attributes",
-    version,
-    elementBudget.limit,
-    elementBudget,
-  );
+  const items = elements(seq, "attributes", version, elementBudget);
   if (!items.ok) return items;
   const attributes: ApkSignerAttribute[] = [];
   for (const item of items.value) {
@@ -219,7 +207,6 @@ const decodeSignedData = (
     reader.lenChunk(),
     "certificates",
     version,
-    elementBudget.limit,
     elementBudget,
   );
   if (!certificates.ok) return certificates;
@@ -297,11 +284,17 @@ export interface ApkDecodedScheme {
 export const decodeSigners = (
   value: Uint8Array,
   version: ApkSchemeVersion,
-  limits?: {
-    readonly maxSigners?: number;
-    readonly maxElements?: number;
-    readonly elementBudget?: ApkSchemeCountBudget;
-  },
+  limits?:
+    | {
+        readonly maxSigners?: number;
+        readonly maxElements?: number;
+        readonly elementBudget?: undefined;
+      }
+    | {
+        readonly maxSigners?: number;
+        readonly maxElements?: undefined;
+        readonly elementBudget: ApkSchemeCountBudget;
+      },
 ): Result<ApkDecodedScheme, ApkSchemeError> => {
   const maxSigners =
     limits?.maxSigners ?? APK_SIGNATURE_BUDGETS.max_signers.default_value;
@@ -364,7 +357,7 @@ export const decodeRotationLineage = (
   while (reader.remaining > 0) {
     const node = reader.lenChunk();
     if (node === null) return malformed("lineage node truncated");
-    if (lineageBudget.used >= lineageBudget.limit)
+    if (lineageBudget.used + nodes.length >= lineageBudget.limit)
       return schemeLimit(version, "lineage-nodes", lineageBudget.limit);
     const nodeReader = new LeReader(node);
     const signedData = nodeReader.lenChunk();
@@ -378,9 +371,10 @@ export const decodeRotationLineage = (
       return malformed("lineage signed algorithm missing or truncated");
     if (nodeReader.u32() === null || nodeReader.lenChunk() === null)
       return malformed("lineage algorithm or signature missing or truncated");
-    lineageBudget.used += 1;
     nodes.push({ certificate, flags });
   }
+  // Commit retained nodes to the shared budget only after the full lineage decodes.
+  lineageBudget.used += nodes.length;
   return ok(nodes);
 };
 

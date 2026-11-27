@@ -198,19 +198,17 @@ const lineageOf = (
 };
 
 /**
- * Upper bound on the result size from decoded counts, before materialising
- * any of it. The stamp certificate is no larger than its block value.
+ * Upper bound on the non-v1-signer report size from decoded counts, before
+ * materialising any of it. The stamp certificate is no larger than its block value.
  */
-const projectedOutputBytes = (
+const projectedBaseOutputBytes = (
   schemes: readonly DecodedScheme[],
   v1: ApkV1Signature,
-  v1Decoded: readonly DecodedV1Signer[],
   stamp: Uint8Array | undefined,
 ): number => {
   let total = 4096 + (stamp === undefined ? 0 : certificateBytes(stamp));
   for (const name of [...v1.signatureFiles, ...v1.blockFiles])
     total += 1 + jsonStringBytes(name);
-  for (const signer of v1Decoded) total += projectedV1SignerBytes(signer);
   for (const scheme of schemes)
     for (const { signer, rotation } of scheme.signers) {
       total += 512 + certificateBytes(signer.certificates[0]);
@@ -486,16 +484,9 @@ export class ApkSignatureProvider implements ApkSignaturePort {
       limits.maxOutputBytes,
       APK_SIGNATURE_BUDGETS.max_output_bytes.default_value,
     );
-    const v1Read = await readV1(
-      handle,
-      centralDirectory,
-      tail,
-      block.value,
-      limits,
-      allocationCeiling,
-    );
-    if (!v1Read.ok) return v1Read;
-    const { v1, decoded: v1Decoded, duplicates } = v1Read.value;
+    const v1Directory = readV1Directory(centralDirectory, tail, limits);
+    if (!v1Directory.ok) return v1Directory;
+    const { v1, duplicates } = v1Directory.value;
 
     const elementBudget: ApkSchemeCountBudget = {
       used: 0,
@@ -534,18 +525,34 @@ export class ApkSignatureProvider implements ApkSignaturePort {
     if (!v31.ok) return v31;
 
     // Keep pre-materialization allocation protection separate from smaller
-    // caller max_output_bytes budgets: only refuse before materializing when
-    // the worst-case estimate exceeds the allocation ceiling (at least the
-    // default output budget). Reports within that ceiling are checked against
-    // the caller's exact serialized byte budget below.
-    const projected = projectedOutputBytes(
+    // caller max_output_bytes budgets: refuse before materializing (and before
+    // inflating additional v1 blocks) once the worst-case estimate exceeds the
+    // allocation ceiling (at least the default output budget). Reports within
+    // that ceiling are checked against the caller's exact serialized byte budget below.
+    let projected = projectedBaseOutputBytes(
       [v2.value, v3.value, v31.value],
       v1,
-      v1Decoded,
       sourceStampPair(block.value)?.value,
     );
     if (projected > allocationCeiling)
       return err(apkOutputBudgetError(projected, limits.maxOutputBytes, false));
+
+    // Entry data lies before the signing block, or the directory without one.
+    const entriesEnd = block.value?.blockStart ?? tail.centralDirectoryOffset;
+    const v1Decoded: DecodedV1Signer[] = [];
+    for (const signer of v1.signers) {
+      const decodedSigner = await decodeV1SignerFromReader(
+        handle,
+        signer,
+        entriesEnd,
+      );
+      projected += projectedV1SignerBytes(decodedSigner);
+      if (projected > allocationCeiling)
+        return err(
+          apkOutputBudgetError(projected, limits.maxOutputBytes, false),
+        );
+      v1Decoded.push(decodedSigner);
+    }
 
     const matcher = await buildDigestMatcher(
       handle,
@@ -650,25 +657,19 @@ export class ApkSignatureProvider implements ApkSignaturePort {
 }
 
 /**
- * v1 signing from the central directory, with each paired block decoded. A
- * directory that cannot be walked leaves v1 unknown and is refused.
+ * v1 signing entries from the central directory. A directory that cannot be
+ * walked leaves v1 presence unknown and is refused.
  */
-const readV1 = async (
-  handle: StableArtifactHandle,
+const readV1Directory = (
   centralDirectory: Uint8Array,
   tail: ZipTail,
-  block: ApkSigningBlock | null,
   limits: EffectiveApkSignatureLimits,
-  allocationCeiling: number,
-): Promise<
-  Result<
-    {
-      readonly v1: ApkV1Signature;
-      readonly decoded: DecodedV1Signer[];
-      readonly duplicates: ApkDuplicateNames;
-    },
-    AnalysisError
-  >
+): Result<
+  {
+    readonly v1: ApkV1Signature;
+    readonly duplicates: ApkDuplicateNames;
+  },
+  AnalysisError
 > => {
   const entries = centralDirectoryV1SignatureEntries(
     centralDirectory,
@@ -683,29 +684,9 @@ const readV1 = async (
   const v1 = detectV1Signature(entries.value.entries);
   if (v1.signers.length > limits.maxSigners)
     return err(v1SignerCapacityError(limits.maxSigners));
-  // Entry data lies before the signing block, or the directory without one.
-  const entriesEnd = block?.blockStart ?? tail.centralDirectoryOffset;
-  let projectedV1 = 4096;
-  for (const name of [...v1.signatureFiles, ...v1.blockFiles])
-    projectedV1 += 1 + jsonStringBytes(name);
-  const decoded: DecodedV1Signer[] = [];
-  for (const signer of v1.signers) {
-    const decodedSigner = await decodeV1SignerFromReader(
-      handle,
-      signer,
-      entriesEnd,
-    );
-    projectedV1 += projectedV1SignerBytes(decodedSigner);
-    if (projectedV1 > allocationCeiling)
-      return err(
-        apkOutputBudgetError(projectedV1, limits.maxOutputBytes, false),
-      );
-    decoded.push(decodedSigner);
-  }
   return ok({
     v1,
     duplicates: entries.value.duplicates,
-    decoded,
   });
 };
 

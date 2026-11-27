@@ -337,5 +337,20 @@ describe("APK proof-of-rotation lineage", () => {
         failure: { limit: { name: "lineage-nodes", maximum: 3 } },
       },
     });
+
+    // A malformed lineage does not charge discarded nodes against later signers.
+    const malformedBudget = { used: 0, limit: 2 };
+    const truncatedAfterTwo = Uint8Array.from([...u32(1), ...node, ...node, 1]);
+    expect(
+      decodeRotationLineage(truncatedAfterTwo, "v3", malformedBudget),
+    ).toMatchObject({
+      ok: false,
+      error: { kind: "malformed-signer", detail: "lineage node truncated" },
+    });
+    expect(malformedBudget.used).toBe(0);
+    expect(decodeRotationLineage(twoNodes, "v3.1", malformedBudget).ok).toBe(
+      true,
+    );
+    expect(malformedBudget.used).toBe(2);
   });
 });

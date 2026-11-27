@@ -1023,6 +1023,66 @@ describe("ApkSignatureProvider output budget", () => {
       lineageAdmitted.ok,
       lineageAdmitted.ok ? "" : lineageAdmitted.error.message,
     ).toBe(true);
+
+    // Deterministic v2/v3/v3.1 framing failures surface before v1 output-budget
+    // projection stops, so an over-estimated v1 block never masks a damaged v2 block.
+    const innerPayloadLen = 1_048_000;
+    const innerOctet = new Uint8Array(5 + innerPayloadLen);
+    innerOctet[0] = 0x04;
+    innerOctet[1] = 0x83;
+    innerOctet[2] = (innerPayloadLen >>> 16) & 0xff;
+    innerOctet[3] = (innerPayloadLen >>> 8) & 0xff;
+    innerOctet[4] = innerPayloadLen & 0xff;
+    const bigCert = new Uint8Array(5 + innerOctet.length);
+    bigCert[0] = 0x30;
+    bigCert[1] = 0x83;
+    bigCert[2] = (innerOctet.length >>> 16) & 0xff;
+    bigCert[3] = (innerOctet.length >>> 8) & 0xff;
+    bigCert[4] = innerOctet.length & 0xff;
+    bigCert.set(innerOctet, 5);
+    const bigV1Block = signedDataBlock({
+      certificates: [bigCert],
+      signerInfos: [],
+    });
+    const bigV1Zip = await zipWith([
+      { name: "META-INF/CERT.SF", data: "Signature-Version: 1.0" },
+      { name: "META-INF/CERT.RSA", data: bigV1Block },
+    ]);
+    // Confirm the v1 block alone exceeds the 8 MiB allocation ceiling before testing v2 precedence.
+    const v1AlonePath = await write("v1-big-alone.apk", bigV1Zip);
+    const v1OverBudget = await provider.inspect({ path: v1AlonePath });
+    expect(v1OverBudget.ok).toBe(false);
+    if (!v1OverBudget.ok) {
+      expect(projectAnalysisError(v1OverBudget.error)).toMatchObject({
+        code: "resource_constraint",
+        details: { limit: { parameter: "max_output_bytes" } },
+      });
+    }
+    const maskedPath = await write(
+      "v1-big-v2-malformed.apk",
+      withSigningBlock(bigV1Zip, [
+        {
+          id: APK_SIGNATURE_V2_ID,
+          value: Uint8Array.of(0xff, 0xff, 0xff, 0x7f),
+        },
+      ]),
+    );
+    const malformedV2 = await provider.inspect({ path: maskedPath });
+    expect(malformedV2.ok).toBe(false);
+    if (!malformedV2.ok) {
+      expect(projectAnalysisError(malformedV2.error)).toMatchObject({
+        code: "invalid_request",
+        details: {
+          issues: expect.arrayContaining([
+            expect.objectContaining({
+              message: expect.stringContaining(
+                "Malformed APK Signature Scheme v2",
+              ),
+            }),
+          ]),
+        },
+      });
+    }
   });
 });
 
