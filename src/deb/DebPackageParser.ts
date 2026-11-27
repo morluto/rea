@@ -1,4 +1,4 @@
-import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { decodeUtf8PreservingBomOrNull } from "../domain/strictUtf8.js";
 import { ellipsisExcerpt } from "../domain/excerpt.js";
 import {
   AnalysisCancelledError,
@@ -155,18 +155,10 @@ const tarText = (
 ): { readonly text: string; readonly undecodable: boolean } => {
   const end = bytes.indexOf(0);
   const field = end === -1 ? bytes : bytes.subarray(0, end);
-  const strict = decodeUtf8(field);
+  const strict = decodeUtf8PreservingBomOrNull(field);
   return strict === null
     ? { text: UTF8_LENIENT.decode(field), undecodable: true }
     : { text: strict, undecodable: false };
-};
-
-const decodeUtf8 = (bytes: Uint8Array): string | null => {
-  try {
-    return decodeStrictUtf8(bytes, "preserve");
-  } catch {
-    return null;
-  }
 };
 
 const looksLike = (bytes: Uint8Array, magic: Uint8Array): boolean => {
@@ -910,7 +902,7 @@ const listedFile = (
   // same basename is not one of them.
   const bytes = files.get(name);
   if (bytes === undefined) return { present: false, count: null, text: null };
-  const text = decodeUtf8(bytes);
+  const text = decodeUtf8PreservingBomOrNull(bytes);
   if (text === null) return { present: true, count: null, text: null };
   return { present: true, count: countNonEmptyLines(text), text };
 };
@@ -919,7 +911,7 @@ const interpreterLine = (bytes: Uint8Array): string | null => {
   if (bytes.length < 2 || bytes[0] !== 0x23 || bytes[1] !== 0x21) return null;
   // Decode only the `#!` line, so bytes later in the script cannot hide it.
   const newline = bytes.indexOf(0x0a);
-  const line = decodeUtf8(
+  const line = decodeUtf8PreservingBomOrNull(
     bytes.subarray(2, newline === -1 ? bytes.length : newline),
   );
   if (line === null) return null;
@@ -941,7 +933,8 @@ const parseControl = (
   // Only the first paragraph describes the package; stop there so a control
   // file of many small paragraphs never builds one map for each of them.
   const bytes = tar.files.get("control");
-  const text = bytes === undefined ? null : decodeUtf8(bytes);
+  const text =
+    bytes === undefined ? null : decodeUtf8PreservingBomOrNull(bytes);
   const fields = text === null ? undefined : deb822Paragraphs(text, 1)[0];
   const textField = (name: string): string | null =>
     nonempty(fields?.get(name));
@@ -1253,7 +1246,12 @@ export const parseDebPackage = async (
   const format_version =
     debianBinary === undefined
       ? null
-      : nonempty(decodeUtf8(debianBinary.bytes)?.replace(/\n$/u, "") ?? "");
+      : nonempty(
+          decodeUtf8PreservingBomOrNull(debianBinary.bytes)?.replace(
+            /\n$/u,
+            "",
+          ) ?? "",
+        );
   const issues: DebPackageIssue[] = [];
   let control: DebControl | null = null;
   let controlFilePresent = false;

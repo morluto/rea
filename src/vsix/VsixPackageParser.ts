@@ -12,7 +12,6 @@ import {
   type Entry,
   type FileEntry,
 } from "@zip.js/zip.js";
-import type { Element, Node } from "@xmldom/xmldom";
 
 import {
   ArtifactReaderFailure,
@@ -23,7 +22,14 @@ import {
   zipEntryPath,
   zipListingCoverage,
 } from "../resources/index.js";
-import { parseXmlDocumentWithinNodeLimit } from "../domain/xmlDocument.js";
+import {
+  isXmlElement,
+  parseXmlDocumentWithinNodeLimit,
+  xmlChildrenNamed,
+  xmlFirstChildNamed,
+  xmlTrimmedAttribute,
+  xmlTrimmedDirectText,
+} from "../domain/xmlDocument.js";
 import { countJsonValues } from "../domain/jsonValue.js";
 import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
@@ -112,46 +118,7 @@ const emptyKindCounts = (): VsixPackage["member_kind_counts"] => ({
   unknown: 0,
 });
 
-const isElement = (node: Node | null): node is Element =>
-  node !== null && node.nodeType === 1;
-
-const childElements = (element: Element): Element[] => {
-  const children: Element[] = [];
-  for (
-    let child = element.firstChild;
-    child !== null;
-    child = child.nextSibling
-  )
-    if (isElement(child)) children.push(child);
-  return children;
-};
-
-const childrenNamed = (element: Element, local: string): Element[] =>
-  childElements(element).filter((child) => child.localName === local);
-
-const firstNamed = (element: Element, local: string): Element | undefined =>
-  childrenNamed(element, local)[0];
-
-const nonempty = (value: string | null | undefined): string | null => {
-  if (value === null || value === undefined) return null;
-  const trimmed = value.trim();
-  return trimmed === "" ? null : trimmed;
-};
-
-const attribute = (element: Element, name: string): string | null =>
-  nonempty(element.getAttribute(name));
-
-const elementText = (element: Element): string | null => {
-  const parts: string[] = [];
-  for (
-    let child = element.firstChild;
-    child !== null;
-    child = child.nextSibling
-  )
-    if (child.nodeType === 3 || child.nodeType === 4)
-      parts.push(child.nodeValue ?? "");
-  return nonempty(parts.join(""));
-};
+const nonempty = (value: string): string | null => value.trim() || null;
 
 const zipSize = (value: number | undefined): number | null =>
   typeof value === "number" && Number.isSafeInteger(value) && value >= 0
@@ -617,54 +584,64 @@ const parseVsixManifestDocument = (
     return empty;
   }
   const root = parsed.value.documentElement;
-  if (!isElement(root) || root.localName !== "PackageManifest") {
+  if (!isXmlElement(root) || root.localName !== "PackageManifest") {
     limitations.push(
       "The selected extension.vsixmanifest root element is not PackageManifest.",
     );
     return empty;
   }
-  const metadata = firstNamed(root, "Metadata");
-  const identityElement =
-    metadata === undefined ? undefined : firstNamed(metadata, "Identity");
-  const properties =
-    metadata === undefined ? undefined : firstNamed(metadata, "Properties");
+  const namespace = root.namespaceURI ?? "";
+  const metadata = xmlFirstChildNamed(root, "Metadata", namespace);
+  const metadataChild = (name: string) =>
+    metadata === undefined
+      ? undefined
+      : xmlFirstChildNamed(metadata, name, namespace);
+  const identityElement = metadataChild("Identity");
+  const properties = metadataChild("Properties");
   const propertyById = new Map<string, string>();
   if (properties !== undefined)
-    for (const property of childrenNamed(properties, "Property")) {
-      const id = attribute(property, "Id");
-      const value = attribute(property, "Value");
+    for (const property of xmlChildrenNamed(
+      properties,
+      "Property",
+      namespace,
+    )) {
+      const id = xmlTrimmedAttribute(property, "Id");
+      const value = xmlTrimmedAttribute(property, "Value");
       if (id !== null && value !== null && !propertyById.has(id))
         propertyById.set(id, value);
     }
-  const assetsElement = firstNamed(root, "Assets");
+  const assetsElement = xmlFirstChildNamed(root, "Assets", namespace);
   const assets: VsixPackage["assets"] =
     assetsElement === undefined
       ? []
-      : childrenNamed(assetsElement, "Asset").map((asset) => {
-          const path = attribute(asset, "Path");
+      : xmlChildrenNamed(assetsElement, "Asset", namespace).map((asset) => {
+          const path = xmlTrimmedAttribute(asset, "Path");
           const logical = path === null ? null : vsixPackageLogicalPath(path);
           return {
-            type: attribute(asset, "Type"),
+            type: xmlTrimmedAttribute(asset, "Type"),
             path,
             present:
               logical === null ? null : presentPaths.has(logical.toLowerCase()),
           };
         });
-  const displayName =
-    metadata === undefined ? null : firstNamed(metadata, "DisplayName");
-  const description =
-    metadata === undefined ? null : firstNamed(metadata, "Description");
+  const metadataText = (name: string) => {
+    const element = metadataChild(name);
+    return element === undefined ? null : xmlTrimmedDirectText(element);
+  };
   return {
     identity:
       identityElement === undefined
         ? null
         : {
-            id: attribute(identityElement, "Id"),
-            version: attribute(identityElement, "Version"),
-            publisher: attribute(identityElement, "Publisher"),
-            target_platform: attribute(identityElement, "TargetPlatform"),
-            display_name: displayName == null ? null : elementText(displayName),
-            description: description == null ? null : elementText(description),
+            id: xmlTrimmedAttribute(identityElement, "Id"),
+            version: xmlTrimmedAttribute(identityElement, "Version"),
+            publisher: xmlTrimmedAttribute(identityElement, "Publisher"),
+            target_platform: xmlTrimmedAttribute(
+              identityElement,
+              "TargetPlatform",
+            ),
+            display_name: metadataText("DisplayName"),
+            description: metadataText("Description"),
           },
     engine: propertyById.get("Microsoft.VisualStudio.Code.Engine") ?? null,
     extensionDependencies: splitCsv(
