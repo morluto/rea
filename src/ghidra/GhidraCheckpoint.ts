@@ -451,6 +451,10 @@ export class GhidraCheckpoint {
     let heldBy:
       | { readonly runId: string; readonly processId: number }
       | undefined;
+    // A handoff that is still inside the wait. If the wait ends before the
+    // next probe, or that probe acquires only after the wait, this failure
+    // is the result: publication does not start.
+    let handoffFailure: Error | undefined;
     for (;;) {
       assertArtifactReadActive(signal);
       let acquired: LeaseAcquisition | undefined;
@@ -526,19 +530,25 @@ export class GhidraCheckpoint {
           deadline.expired()
         )
           throw cause;
+        handoffFailure = cause;
       }
       if (acquired?.acquired === true) {
-        // The wait bounds contention with a holder already observed. An
-        // uncontended acquire that finishes late is this session's own
-        // overhead, so publication still proceeds. A late acquire after a
-        // holder was seen keeps the lease for cleanup and does not publish.
-        if (heldBy !== undefined && deadline.expired()) {
+        // The wait bounds contention already observed: a holder, or a
+        // handoff that has not settled. An uncontended acquire that
+        // finishes late is this session's own overhead, so publication
+        // still proceeds. A late acquire after contention keeps the lease
+        // for cleanup and does not publish.
+        if (deadline.expired() && heldBy !== undefined) {
           this.#lease = acquired.lease;
           throw new GhidraCheckpointBusyError(
             admission.directory,
             heldBy,
             this.saveWait,
           );
+        }
+        if (deadline.expired() && handoffFailure !== undefined) {
+          this.#lease = acquired.lease;
+          throw handoffFailure;
         }
         return acquired.lease;
       }
@@ -556,16 +566,18 @@ export class GhidraCheckpoint {
         () => undefined,
       );
       // The poll callback can run after the wait when the event loop stalls.
-      // A holder already observed for this poll used the whole wait, so do
-      // not probe again. A handoff failure has no holder and is reported by
-      // the next probe once the wait has ended.
+      // Contention already observed for this poll used the whole wait, so
+      // do not probe again. A holder becomes the busy refusal. A handoff
+      // that outlasts the wait is reported unchanged.
       assertArtifactReadActive(signal);
-      if (sawHolder && deadline.expired())
+      if (!deadline.expired()) continue;
+      if (sawHolder)
         throw new GhidraCheckpointBusyError(
           admission.directory,
           heldBy,
           this.saveWait,
         );
+      if (handoffFailure !== undefined) throw handoffFailure;
     }
   }
 

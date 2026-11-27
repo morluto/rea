@@ -1156,6 +1156,47 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
+  "reports a handoff when the lease frees only after the save wait",
+  async () => {
+    const f = await fixture();
+    const session = new GhidraCheckpoint(f.selection, f.resources, {
+      waitMs: 50,
+      source: "setting",
+    });
+    owners.push(session);
+    await session.admit("waiter");
+    vi.mocked(acquireOwnedLease).mockImplementation(async (input) => {
+      if (vi.mocked(acquireOwnedLease).mock.calls.length === 1)
+        throw input.failure({
+          kind: "owner_unverified",
+          reason: "owner closed without a complete response",
+        });
+      return { acquired: true, lease: { release: async () => undefined } };
+    });
+    const now = vi.spyOn(performance, "now");
+    now
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(40)
+      .mockReturnValue(50);
+    const rejected = await session
+      .publish(f.packed)
+      .catch((cause: unknown) => cause);
+    now.mockRestore();
+    expect(rejected).toMatchObject({
+      settings: [
+        {
+          setting: "REA_GHIDRA_CHECKPOINT_DIR",
+          constraint: expect.stringContaining("lease owner_unverified"),
+        },
+      ],
+    });
+    expect(vi.mocked(acquireOwnedLease)).toHaveBeenCalledTimes(1);
+    expect(session.observation.source).toBeNull();
+  },
+);
+
+it.skipIf(process.platform === "win32")(
   "publishes when the first uncontended acquire finishes after the save wait",
   async () => {
     const f = await fixture();
