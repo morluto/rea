@@ -113,15 +113,16 @@ const replayDocumentSelected = (
   typeof parameters.document === "string";
 
 /**
- * Ghidra's private Program belongs to this one-shot target, so every read
- * without a document selector still names it; GUI defaults do not. Whether
- * the read may replay stays with the declared cache policy and effects.
+ * A headless Ghidra session holds exactly one private Program, bound to the
+ * caller's target, so a caller's own read without a document selector still
+ * names it; GUI defaults do not. Workflow-internal reads carry no context and
+ * stay out of the ledger. Whether the read may replay stays with the declared
+ * cache policy and effects.
  */
-const isOneShotTargetRead = (
+const isSoleProgramRead = (
   descriptor: CapabilityDescriptor | undefined,
   context: ExecutionOptions["snapshotContext"],
-): boolean =>
-  context === "one-shot-target" && descriptor?.provider.id === "ghidra";
+): boolean => context !== undefined && descriptor?.provider.id === "ghidra";
 
 /**
  * Caller and callee walks omit `document`. Their observations are still
@@ -152,7 +153,7 @@ export const isSourceEvidenceRetainable = (
     typeof parameters.document === "string" ||
     DOCUMENTLESS_SOURCE_EVIDENCE_OPERATIONS.has(operation) ||
     options.requiresSourceEvidence === true ||
-    isOneShotTargetRead(descriptor, options.snapshotContext)) &&
+    isSoleProgramRead(descriptor, options.snapshotContext)) &&
   (!CURSOR_DEFAULT_OPERATIONS.has(operation) ||
     typeof parameters.address === "string") &&
   descriptor?.effects.mutatesArtifact === false &&
@@ -182,7 +183,7 @@ export const isSnapshotCacheable = (
     snapshotContext: context,
   }) &&
   (replayDocumentSelected(operation, parameters) ||
-    isOneShotTargetRead(descriptor, context)) &&
+    isSoleProgramRead(descriptor, context)) &&
   descriptor.cachePolicy !== "live";
 
 /**

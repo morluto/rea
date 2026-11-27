@@ -867,6 +867,23 @@ describe("document-scoped snapshot admission", () => {
         "one-shot-target",
       ),
     ).toBe(true);
+    // A direct tool call on a session's sole Program replays the same way.
+    expect(
+      isSnapshotCacheable(
+        "procedure_pseudo_code",
+        ghidra,
+        parameters,
+        "session-target",
+      ),
+    ).toBe(true);
+    expect(
+      isSnapshotCacheable(
+        "procedure_pseudo_code",
+        pseudocode,
+        parameters,
+        "session-target",
+      ),
+    ).toBe(false);
     for (const refused of [
       pseudocode,
       { ...ghidra, cachePolicy: "live" as const },
