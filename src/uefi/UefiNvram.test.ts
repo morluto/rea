@@ -715,6 +715,7 @@ it("does not claim EDK2 absence when a store signature has an unusable header", 
   const scan = scanEdk2VariableStores(image, 8);
   expect(scan.stores).toEqual([]);
   expect(scan.rejectedSignatures).toBe(1);
+  expect(scan.absent).toBe(false);
   expect(scan.coverage).toBe("complete");
   expect(scan.limitations).toEqual([
     "EDK2 gEfiAuthenticatedVariableGuid signature at 0x40 is not a formatted variable-store header (Format 0xff, Size 0x100); its bytes were not walked as variables.",
@@ -725,6 +726,38 @@ it("does not claim EDK2 absence when a store signature has an unusable header", 
   const limitations = result.limitations.join(" ");
   expect(limitations).toContain("No formatted EDK2 variable store was found");
   expect(limitations).not.toContain("No EDK2 variable stores");
+});
+
+it("does not claim EDK2 absence when the shared record budget stops the search", async () => {
+  // Malformed NVAR candidates can exhaust the shared ceiling before EDK2 runs.
+  const malformed = Buffer.concat([NVAR_MAGIC, Buffer.alloc(6)]);
+  const burned = Buffer.alloc(
+    UEFI_FIRMWARE_LIMITS.scanRecords * malformed.length,
+    malformed,
+  );
+  const image = Buffer.concat([burned, buildSyntheticEdk2Vars()]);
+  const result = await inspectNvram(image);
+  expect(result.edk2_stores).toEqual([]);
+  expect(result.coverage).toBe("partial");
+  const limitations = result.limitations.join(" ");
+  expect(limitations).toContain("Structural record limit");
+  expect(limitations).toContain(
+    "whether the image holds a store remains unknown",
+  );
+  expect(limitations).not.toContain("No EDK2 variable stores");
+});
+
+it("reports EDK2 absence only after a completed search finds no store", async () => {
+  const image = Buffer.alloc(0x100, 0xff);
+  const scan = scanEdk2VariableStores(image, 8);
+  expect(scan).toMatchObject({
+    stores: [],
+    rejectedSignatures: 0,
+    coverage: "complete",
+    absent: true,
+  });
+  const result = await inspectNvram(image);
+  expect(result.limitations.join(" ")).toContain("No EDK2 variable stores");
 });
 
 it("counts store signatures beyond the reported matches", () => {
@@ -789,6 +822,7 @@ it("charges EDK2 records against the inspection's shared ceiling", () => {
   );
   expect(scan.stores).toEqual([]);
   expect(scan.coverage).toBe("partial");
+  expect(scan.absent).toBe(false);
   expect(scan.limitations[0]).toContain("Structural record limit");
 });
 

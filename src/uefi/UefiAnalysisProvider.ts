@@ -135,6 +135,8 @@ const EDK2_NVRAM_ABSENT =
   "No EDK2 variable stores (gEfiVariableGuid / gEfiAuthenticatedVariableGuid) were found in the image.";
 const EDK2_NVRAM_UNESTABLISHED =
   "No formatted EDK2 variable store was found; the store signatures listed above were examined and rejected, so the image may still hold a damaged store.";
+const EDK2_NVRAM_UNCHECKED =
+  "EDK2 variable-store search did not finish; whether the image holds a store remains unknown.";
 
 const nvramLimitations = (
   ami: ReturnType<typeof scanAmiNvramStores>,
@@ -143,11 +145,11 @@ const nvramLimitations = (
   const limitations = [...ami.limitations, ...edk2.limitations];
   if (ami.stores.length === 0 && edk2.stores.length === 0) {
     if (ami.absent) limitations.push(AMI_NVRAM_ABSENT);
-    limitations.push(
-      edk2.rejectedSignatures === 0
-        ? EDK2_NVRAM_ABSENT
-        : EDK2_NVRAM_UNESTABLISHED,
-    );
+    if (edk2.absent) limitations.push(EDK2_NVRAM_ABSENT);
+    else if (edk2.rejectedSignatures > 0)
+      limitations.push(EDK2_NVRAM_UNESTABLISHED);
+    else if (edk2.coverage === "partial")
+      limitations.push(EDK2_NVRAM_UNCHECKED);
   }
   return limitations;
 };

@@ -126,6 +126,12 @@ export interface Edk2NvramScan {
    * here has not established that no store exists.
    */
   readonly rejectedSignatures: number;
+  /**
+   * True when the image was fully searched, every candidate was examined, and
+   * no EDK2 store was found. False when the search stopped early or only
+   * rejected signatures were seen, so absence has not been established.
+   */
+  readonly absent: boolean;
 }
 
 interface OccupiedRange {
@@ -571,5 +577,6 @@ export const scanEdk2VariableStores = (
     coverage: partial ? "partial" : "complete",
     limitations,
     rejectedSignatures,
+    absent: stores.length === 0 && !partial && rejectedSignatures === 0,
   };
 };
