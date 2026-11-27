@@ -89,9 +89,10 @@ without `architecture` is refused.
 bounds decoded starts plus complete data-in-code entries, and bounds the
 decoding work as well as the result. A data table larger than the allowance
 is refused from its byte count before any entry is examined, and the start
-walk stops once the combined count would pass it. The refusal carries
-`details.limit` without `required_value`, because decoding stopped before
-the total was measured. The call returns no partial report.
+walk stops once the combined count would pass it. When the image has no
+function starts to decode, the data count is the whole total and the refusal
+reports it as `required_value`. Otherwise decoding stopped before the total
+was measured, so `details.limit` omits `required_value`. The call returns no partial report.
 
 The default [read allowance](../../reference/limits-and-recovery.md#static-reader-read-allowance)
 is 64 MiB (`max_file_bytes`, floor 64 bytes, ceiling 512 MiB). The identity

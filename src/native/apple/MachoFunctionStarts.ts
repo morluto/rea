@@ -65,11 +65,48 @@ interface LinkeditRange {
   readonly fileSize: bigint;
 }
 
-interface LinkeditCommand {
-  readonly command: number;
-  readonly size: number;
-  readonly dataOffset: number | null;
-  readonly dataSize: number | null;
+/**
+ * Facts about every LC_FUNCTION_STARTS or LC_DATA_IN_CODE command, kept
+ * compactly. A malformed image can repeat a command millions of times within
+ * the load-command budget, so each one adds two 32-bit words, not an object.
+ * The first command is the one decoded; later ones only feed issue counters.
+ */
+class LinkeditCommandTally {
+  count = 0;
+  misSized = 0;
+  /** Commands too short to hold `dataoff` and `datasize`. */
+  fieldless = 0;
+  first: { readonly dataOffset: number; readonly dataSize: number } | null =
+    null;
+  #ranges = new Uint32Array(16);
+  #rangeCount = 0;
+
+  add(
+    size: number,
+    fields: { readonly dataOffset: number; readonly dataSize: number } | null,
+  ): void {
+    this.count += 1;
+    if (size !== LINKEDIT_COMMAND_BYTES) this.misSized += 1;
+    if (fields === null) {
+      this.fieldless += 1;
+      return;
+    }
+    if (this.count === 1) this.first = fields;
+    if (this.#rangeCount * 2 === this.#ranges.length) {
+      const grown = new Uint32Array(this.#ranges.length * 2);
+      grown.set(this.#ranges);
+      this.#ranges = grown;
+    }
+    this.#ranges[this.#rangeCount * 2] = fields.dataOffset;
+    this.#ranges[this.#rangeCount * 2 + 1] = fields.dataSize;
+    this.#rangeCount += 1;
+  }
+
+  /** Each declared `[dataoff, datasize)` pair, in declaration order. */
+  *ranges(): Generator<readonly [number, number]> {
+    for (let index = 0; index < this.#rangeCount; index += 1)
+      yield [this.#ranges[index * 2]!, this.#ranges[index * 2 + 1]!];
+  }
 }
 
 /** One decoded start, handed to a walk visitor without being retained. */
@@ -173,13 +210,11 @@ interface LoadedTable {
 
 const loadTable = async (
   source: ByteSource,
-  commands: readonly LinkeditCommand[],
-  code: number,
+  tally: LinkeditCommandTally,
   sliceFileOffset: number,
   linkedit: LinkeditRange | undefined,
 ): Promise<LoadedTable> => {
-  const matches = commands.filter((command) => command.command === code);
-  if (matches.length === 0)
+  if (tally.count === 0)
     return {
       record: absentCommand,
       misSized: 0,
@@ -189,19 +224,17 @@ const loadTable = async (
       bytes: Buffer.alloc(0),
       declared: 0,
     };
-  const first = matches[0]!;
-  const duplicate = matches.length - 1;
-  let misSized = 0;
+  const first = tally.first;
+  const duplicate = tally.count - 1;
+  const misSized = tally.misSized;
   let outside = 0;
   let pastFile = 0;
-  for (const match of matches) {
-    if (match.size !== LINKEDIT_COMMAND_BYTES) misSized += 1;
-    if (match.dataOffset === null || match.dataSize === null) continue;
-    const blob = declaredBlob(source.size, match.dataOffset, match.dataSize);
+  for (const [dataOffset, dataSize] of tally.ranges()) {
+    const blob = declaredBlob(source.size, dataOffset, dataSize);
     if (!insideLinkedit(linkedit, blob)) outside += 1;
     if (blobPastSlice(source.size, blob)) pastFile += 1;
   }
-  if (first.dataOffset === null || first.dataSize === null)
+  if (first === null)
     return {
       record: { ...absentCommand, status: "present" },
       misSized,
@@ -537,28 +570,22 @@ export const parseMachoFunctionStartsFromHandle = async (
   const source = selected.source;
   // The shared image walk hands back the two LINKEDIT data commands, so the
   // load-command table is read and framed once.
-  const visited: MachoLoadCommandVisit[] = [];
+  const startsCommands = new LinkeditCommandTally();
+  const dataCommands = new LinkeditCommandTally();
   const image = await readMachoImageFromReader(
     source,
     input.max_structure_bytes,
-    (command) => {
-      if (
-        command.command === LC.FUNCTION_STARTS ||
-        command.command === LC.DATA_IN_CODE
-      )
-        visited.push(command);
+    ({ command, size, body, littleEndian: little }: MachoLoadCommandVisit) => {
+      const tally =
+        command === LC.FUNCTION_STARTS
+          ? startsCommands
+          : command === LC.DATA_IN_CODE
+            ? dataCommands
+            : undefined;
+      tally?.add(size, readMachoLinkeditDataCommand(command, body, little));
     },
   );
   const littleEndian = image.byte_order === "little";
-  const commands: LinkeditCommand[] = visited.map(({ command, size, body }) => {
-    const fields = readMachoLinkeditDataCommand(command, body, littleEndian);
-    return {
-      command,
-      size,
-      dataOffset: fields?.dataOffset ?? null,
-      dataSize: fields?.dataSize ?? null,
-    };
-  });
   // Declared segments, file-backed or not: llvm-objdump anchors the deltas on
   // the first __TEXT segment command's vmaddr, which needs no file bytes.
   const segments = keyedBy(image.macho_segments, (segment) => segment.name);
@@ -588,15 +615,13 @@ export const parseMachoFunctionStartsFromHandle = async (
   );
   const startsTable = await loadTable(
     source,
-    commands,
-    LC.FUNCTION_STARTS,
+    startsCommands,
     selected.fileOffset,
     linkedit,
   );
   const dataTable = await loadTable(
     source,
-    commands,
-    LC.DATA_IN_CODE,
+    dataCommands,
     selected.fileOffset,
     linkedit,
   );
@@ -637,8 +662,13 @@ export const parseMachoFunctionStartsFromHandle = async (
   // table counted from its bytes is refused before any entry is examined,
   // and the start walk stops once the combined count would exceed it.
   const dataCount = Math.floor(dataTable.bytes.length / DATA_ENTRY_BYTES);
+  // With no starts to decode, the data count is the complete need.
+  const noStarts = missingText === 1 || startsTable.bytes.length === 0;
   if (dataCount > input.max_entries)
-    throw entryBudgetFailure(input.max_entries, undefined);
+    throw entryBudgetFailure(
+      input.max_entries,
+      noStarts ? dataCount : undefined,
+    );
   // Every entry is checked and counted, but result objects are built only for
   // the requested page of each table.
   const data = await decodeData(

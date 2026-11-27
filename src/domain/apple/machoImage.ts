@@ -40,8 +40,10 @@ export const readMachoImage = (
 export interface MachoLoadCommandVisit {
   readonly command: number;
   readonly size: number;
-  /** The whole command, `cmdsize` bytes from its `cmd` field. */
+  /** The whole command, `cmdsize` bytes from its `cmd` field. A view, not a copy. */
   readonly body: Buffer;
+  /** Byte order of the image, so a visitor decodes fields without the result. */
+  readonly littleEndian: boolean;
 }
 
 /**
@@ -133,7 +135,12 @@ const readMachoImageCore = (
     const frame = commands.read(bytes.subarray(offset, offset + 8));
     if (!frame.ok) throw new BinaryFormatFailure("malformed", frame.error);
     const { command, size } = frame.value;
-    visit?.({ command, size, body: bytes.subarray(offset, offset + size) });
+    visit?.({
+      command,
+      size,
+      body: bytes.subarray(offset, offset + size),
+      littleEndian: little,
+    });
     if (command === LC.DYLD_CHAINED_FIXUPS) chainedFixups = true;
     if (command === LC.SEGMENT || command === LC.SEGMENT_64) {
       const wide = command === LC.SEGMENT_64;

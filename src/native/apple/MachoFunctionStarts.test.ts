@@ -648,10 +648,26 @@ it("bounds decoding work by max_entries, not only the result", async () => {
     () => undefined,
     (error: unknown) => error,
   );
+  // With no LC_FUNCTION_STARTS, the data count is the measured total.
   expect(dataOnly).toMatchObject({
     name: "BinaryResourceFailure",
-    failure: { limit: { name: "entries", maximum: 10 } },
+    failure: { limit: { name: "entries", maximum: 10, required: 64 } },
   });
+  // With starts left uncounted, the total is unknown and not claimed.
+  const both = await parse(
+    machoFunctionStartsImage({
+      starts: { deltas: [0x1000n] },
+      data: { entries: many },
+    }),
+    { max_entries: 10, limit: 0 },
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  expect(both).toBeInstanceOf(BinaryResourceFailure);
+  expect((both as BinaryResourceFailure).failure.limit).not.toHaveProperty(
+    "required",
+  );
   // At the allowance exactly, both tables still decode.
   const fits = await parse(
     machoFunctionStartsImage({
@@ -1077,4 +1093,39 @@ it("wraps a 32-bit image's starts at 2^32, not 2^64", async () => {
     status: "partial",
     non_monotonic: 1,
   });
+});
+
+it("tallies duplicate LINKEDIT commands without an object per command", async () => {
+  // 900 repeated LC_FUNCTION_STARTS commands: only the first is decoded,
+  // the rest feed counters, and each declared range is still checked.
+  const image = machoFunctionStartsImage({
+    starts: { deltas: ARM64_DELTAS },
+    extraSegments: [],
+  });
+  const count = image.readUInt32LE(16);
+  const commandBytes = image.readUInt32LE(20);
+  const repeated = 900;
+  const extra = Buffer.alloc(repeated * 16);
+  for (let index = 0; index < repeated; index += 1) {
+    extra.writeUInt32LE(0x26, index * 16);
+    extra.writeUInt32LE(16, index * 16 + 4);
+    // Every other duplicate points outside __LINKEDIT.
+    extra.writeUInt32LE(index % 2 === 0 ? 0x4000 : 0x100, index * 16 + 8);
+    extra.writeUInt32LE(4, index * 16 + 12);
+  }
+  // The commands must end before __LINKEDIT at file offset 0x4000.
+  expect(32 + commandBytes + extra.length).toBeLessThan(0x4000);
+  const file = Buffer.alloc(image.length);
+  image.copy(file, 0, 0, 32 + commandBytes);
+  extra.copy(file, 32 + commandBytes);
+  image.copy(file, 0x4000, 0x4000);
+  file.writeUInt32LE(count + repeated, 16);
+  file.writeUInt32LE(commandBytes + extra.length, 20);
+  const report = await parse(file, { limit: 0 });
+  expect(report.coverage).toMatchObject({
+    total_starts: 3,
+    duplicate_commands: repeated,
+    outside_linkedit: repeated / 2,
+  });
+  expect(report.limitations).toContain(TEXT.duplicateStarts);
 });
