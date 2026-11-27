@@ -43,8 +43,8 @@ import {
 export interface ExecutionOptions {
   /** Ephemeral state shared only by one composed workflow. */
   readonly workScope?: AnalysisWorkScope;
-  /** A single CLI answer bound to its isolated target, not a persistent default document. */
-  readonly snapshotContext?: "one-shot-target";
+  /** Direct reads that may use an isolated provider target as their document. */
+  readonly snapshotContext?: "one-shot-target" | "direct-session-target";
   readonly signal?: AbortSignal;
   /** Bundle facts from the current target admission, even when a client is reused. */
   readonly bundleExecutableProvenance?: BundleExecutableProvenance | null;

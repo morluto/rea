@@ -113,15 +113,14 @@ const replayDocumentSelected = (
   typeof parameters.document === "string";
 
 /**
- * Ghidra's private Program belongs to this one-shot target, so every read
- * without a document selector still names it; GUI defaults do not. Whether
- * the read may replay stays with the declared cache policy and effects.
+ * Ghidra's private Program binds direct reads to an isolated target even
+ * when the caller omits the document. Composed workflows can retain their
+ * own results, and GUI defaults may point at a different document.
  */
-const isOneShotTargetRead = (
+const isIsolatedGhidraRead = (
   descriptor: CapabilityDescriptor | undefined,
   context: ExecutionOptions["snapshotContext"],
-): boolean =>
-  context === "one-shot-target" && descriptor?.provider.id === "ghidra";
+): boolean => context !== undefined && descriptor?.provider.id === "ghidra";
 
 /**
  * Caller and callee walks omit `document`. Their observations are still
@@ -134,7 +133,7 @@ const DOCUMENTLESS_SOURCE_EVIDENCE_OPERATIONS: ReadonlySet<AnalysisOperation> =
 
 /**
  * Whether a source observation is safe to retain as Evidence.
- * A missing document selector blocks snapshot replay. A producer can require
+ * A missing selector needs an isolated target to replay. A producer can require
  * its observation as Evidence independently of whether it can be replayed.
  */
 export const isSourceEvidenceRetainable = (
@@ -152,7 +151,7 @@ export const isSourceEvidenceRetainable = (
     typeof parameters.document === "string" ||
     DOCUMENTLESS_SOURCE_EVIDENCE_OPERATIONS.has(operation) ||
     options.requiresSourceEvidence === true ||
-    isOneShotTargetRead(descriptor, options.snapshotContext)) &&
+    isIsolatedGhidraRead(descriptor, options.snapshotContext)) &&
   (!CURSOR_DEFAULT_OPERATIONS.has(operation) ||
     typeof parameters.address === "string") &&
   descriptor?.effects.mutatesArtifact === false &&
@@ -182,7 +181,7 @@ export const isSnapshotCacheable = (
     snapshotContext: context,
   }) &&
   (replayDocumentSelected(operation, parameters) ||
-    isOneShotTargetRead(descriptor, context)) &&
+    isIsolatedGhidraRead(descriptor, context)) &&
   descriptor.cachePolicy !== "live";
 
 /**

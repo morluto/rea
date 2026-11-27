@@ -114,6 +114,9 @@ export const createProviderOperationToolHandler =
             options.parametersForExecution?.(operation, providerParameters) ??
             providerParameters;
           const executionOptions = {
+            ...(operation === "procedure_pseudo_code"
+              ? { snapshotContext: "direct-session-target" as const }
+              : {}),
             signal: context.mcpReq.signal,
             progress,
             isOperationAdvertised: (advertised: AnalysisOperation) =>
@@ -129,7 +132,7 @@ export const createProviderOperationToolHandler =
                 executionParameters,
                 (parameters) =>
                   analysis.execute(operation, parameters, executionOptions),
-                { signal: context.mcpReq.signal },
+                executionOptions,
               ),
           );
           if (!execution.ok)

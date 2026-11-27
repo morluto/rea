@@ -364,6 +364,50 @@ it("searches bytes through MCP and the socket bridge with pagination and skipped
   }
 });
 
+it("replays documentless Ghidra pseudocode within a session and after snapshot reopen", async () => {
+  const directory = await createTestTempDirectory("rea-documentless-snapshot-");
+  const snapshotPath = join(directory, "analysis.json");
+  const harness = await connectGhidraMcp("ghidra-documentless-snapshot");
+  const { mcp, session, calls } = harness;
+  const read = async () => {
+    const reply = await mcp.callTool({
+      name: "procedure_pseudo_code",
+      arguments: { procedure: "fixture_main" },
+    });
+    if (reply.isError) throw new Error(JSON.stringify(reply));
+    return sessionEvidence(session, reply.structuredContent);
+  };
+  try {
+    const live = await read();
+    expect(calls).toContain("procedure_pseudo_code");
+    const observed = [...calls];
+    const repeated = await read();
+    expect(repeated.normalized_result).toEqual(live.normalized_result);
+    expect(calls).toEqual(observed);
+    expect(repeated.limitations).toContainEqual(
+      expect.stringMatching(/snapshot.*did not re.run the provider/iu),
+    );
+    const closed = await mcp.callTool({
+      name: "close_binary",
+      arguments: { snapshot_path: snapshotPath },
+    });
+    expect(closed.isError, JSON.stringify(closed.content)).not.toBe(true);
+    const reopened = await mcp.callTool({
+      name: "open_binary",
+      arguments: { path: process.execPath, snapshot_path: snapshotPath },
+    });
+    expect(reopened.isError, JSON.stringify(reopened.content)).not.toBe(true);
+    const replayed = await read();
+    expect(replayed.normalized_result).toEqual(live.normalized_result);
+    expect(replayed.limitations).toContainEqual(
+      expect.stringMatching(/snapshot.*did not re.run the provider/iu),
+    );
+    expect(calls).toEqual(observed);
+  } finally {
+    await harness.close();
+  }
+});
+
 it("retains missing PDB coverage in empty PE name-search Evidence and snapshot replay", async () => {
   const root = await createTestTempDirectory("rea-pdb-evidence-");
   const targetPath = join(root, "fixture.exe");
