@@ -26,6 +26,35 @@ it("parses a class extending a local binding named module", () => {
   }
 });
 
+it("keeps omitted call arguments with their own list", () => {
+  const source = 'outer<Pair<A, B>>(, inner(, "a,b"), /* , */ , (1, 2),,)';
+  for (const file of [
+    parseJavaScriptSource(source, "example.ts"),
+    parseRecoveredJavaScript(source, "example.ts", {}).file,
+  ]) {
+    const statement = file?.program.body[0];
+    if (
+      !t.isExpressionStatement(statement) ||
+      !t.isCallExpression(statement.expression)
+    )
+      throw new Error("Expected the outer call");
+    const outer = statement.expression;
+    expect(Array.from(outer.arguments, (arg) => arg?.type)).toEqual([
+      undefined,
+      "CallExpression",
+      undefined,
+      "SequenceExpression",
+      undefined,
+    ]);
+    const inner = outer.arguments[1];
+    if (!t.isCallExpression(inner)) throw new Error("Expected the inner call");
+    expect(Array.from(inner.arguments, (arg) => arg?.type)).toEqual([
+      undefined,
+      "StringLiteral",
+    ]);
+  }
+});
+
 it.each([
   ["class C extends (this.marker, Object) {}", true],
   ["class C { [this.marker]() {} }", true],
