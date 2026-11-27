@@ -559,6 +559,7 @@
 * **resources:** close unadmitted output handles and preserve caller directories ([#13201](https://github.com/morluto/rea/issues/13201)) ([36c6c61](https://github.com/morluto/rea/commit/36c6c61003f68e7c1309ae0cfc4683dc2ccf82a6))
 * **resources:** refresh open handle identity after chmod on virtualized mounts ([#14579](https://github.com/morluto/rea/issues/14579)) ([8e9d712](https://github.com/morluto/rea/commit/8e9d712df51289ff31b5fb9f1b11ee1082b3e58a))
 * **rizin:** report the required inferior terminal field ([#13019](https://github.com/morluto/rea/issues/13019)) ([d84652e](https://github.com/morluto/rea/commit/d84652e55b43ad7c494efe67d8324b35d4a05695))
+* **rizin:** terminate the owned debugger when cleanup cannot resynchronize ([#10462](https://github.com/morluto/rea/issues/10462)) ([f6a019a](https://github.com/morluto/rea/commit/f6a019a34660a989e7870d92490d7db03d3c258e))
 * **rust:** admit valid reports at the configured byte limit ([#13570](https://github.com/morluto/rea/issues/13570)) ([0b1dcb4](https://github.com/morluto/rea/commit/0b1dcb413d8c1a7f64f3bebbf664c4f2f419718f))
 * **rust:** retain verified reports through descriptor finalization ([#14034](https://github.com/morluto/rea/issues/14034)) ([dba1c01](https://github.com/morluto/rea/commit/dba1c014ef22988a0a2aae97c130cf09c3dcc2b6))
 * **server:** reject duplicate in-flight MCP request IDs ([#14776](https://github.com/morluto/rea/issues/14776)) ([2edef1e](https://github.com/morluto/rea/commit/2edef1e2ccd0a150a6b8c75b2b8109a150d95274))
