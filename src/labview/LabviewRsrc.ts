@@ -201,17 +201,10 @@ const decodeVersion = (content: Uint8Array): string | null => {
   const majorLow = (word >>> 24) & 0x0f;
   const minor = (word >>> 20) & 0x0f;
   const bugfix = (word >>> 16) & 0x0f;
-  // The format packs decimal digits; any A-F nibble is a damaged record.
-  const digits = [
-    majorHigh,
-    majorLow,
-    minor,
-    bugfix,
-    (word >>> 8) & 0x0f,
-    (word >>> 4) & 0x0f,
-    word & 0x0f,
-  ];
-  if (digits.some((digit) => digit > 9)) return null;
+  // The major, minor and bugfix fields pack decimal digits; any A-F nibble
+  // there is a damaged record. The build field below them is not read here.
+  if ([majorHigh, majorLow, minor, bugfix].some((digit) => digit > 9))
+    return null;
   return `${String(majorHigh * 10 + majorLow)}.${String(minor)}`;
 };
 

@@ -201,6 +201,19 @@ describe("parseLabviewRsrc", () => {
     expect(parsed.value.versionCoverage).toBe("observed");
   });
 
+  it("accepts a version whose build field is not decimal", () => {
+    const record = labviewVersionSection("11.0");
+    // Build bits are not part of the reported version; A-F nibbles there
+    // must not reject an otherwise valid record.
+    record.writeUInt32BE((record.readUInt32BE(0) | 0x00000f0f) >>> 0, 0);
+    const parsed = parseLabviewRsrc(
+      buildLabviewRsrc([{ ident: "vers", sections: [record] }]),
+    );
+    if (!parsed.ok) throw new Error(parsed.failure.message);
+    expect(parsed.value.labviewVersion).toBe("11.0");
+    expect(parsed.value.versionCoverage).toBe("observed");
+  });
+
   it("reports a damaged-only vers record as unknown", () => {
     const parsed = parseLabviewRsrc(
       buildLabviewRsrc([{ ident: "vers", sections: [Buffer.alloc(8, 0xff)] }]),

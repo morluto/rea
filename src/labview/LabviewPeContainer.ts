@@ -161,14 +161,12 @@ export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
       const { identity, target } = readPeResourceEntryFacts(
         reader.range(at, PE_RESOURCE_ENTRY_BYTES, "resource entry"),
       );
+      // Depth 0 holds the resource types; only LabVIEW's RCDATA subtree is
+      // relevant, so other types are neither walked nor charged, and a root
+      // entry that points straight at a payload is filtered here too.
+      if (depth === 0 && (identity.kind !== "id" || identity.id !== RT_RCDATA))
+        continue;
       if (target.kind === "directory") {
-        // Depth 0 holds the resource types; only LabVIEW's RCDATA subtree is
-        // relevant, so other types are neither walked nor charged.
-        if (
-          depth === 0 &&
-          (identity.kind !== "id" || identity.id !== RT_RCDATA)
-        )
-          continue;
         visit(target.offset, depth + 1);
         continue;
       }
