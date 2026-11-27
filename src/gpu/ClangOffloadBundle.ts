@@ -15,7 +15,12 @@ import {
   GPU_OBJECT_BYTES_LIMIT,
   type GpuCodeObjectsBudgets,
 } from "../domain/gpu/gpuCodeObjectsBudgets.js";
-import { gpuCount, rejectGpu, type GpuSource } from "./GpuSource.js";
+import {
+  CONTAINER_SCAN_CHUNK_BYTES,
+  gpuCount,
+  rejectGpu,
+  type GpuSource,
+} from "./GpuSource.js";
 import { gpuObject } from "./GpuObject.js";
 import {
   isAmdGpuBundleId,
@@ -199,7 +204,10 @@ export const findLegacyCcobRecoveryTotal = async (
   // at `base + maxObjectBytes` (when the corrupt v1 extent equals maxObjectBytes)
   // is still observed without admitting markers starting beyond `maxStart`.
   const searchEnd = Math.min(source.size, maxStart + CCOB_MAGIC.length);
-  const maxChunk = Math.max(1, Math.min(64 * 1024, maxObjectBytes));
+  const maxChunk = Math.max(
+    1,
+    Math.min(CONTAINER_SCAN_CHUNK_BYTES, maxObjectBytes),
+  );
   let position = base + 20;
   const seam = Buffer.allocUnsafe(6);
   let tailLen = 0;

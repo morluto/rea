@@ -75,7 +75,11 @@ const gpuResourceConstraint = (
     maximum_object_bytes: budgets.maxObjectBytes,
     maximum_report_bytes: budgets.maxReportBytes,
   };
-  const { name, maximum } = primary.failure.limit;
+  const { name, maximum, required } = primary.failure.limit;
+  const requiredValue =
+    required !== undefined && required <= BigInt(Number.MAX_SAFE_INTEGER)
+      ? Number(required)
+      : undefined;
   const parameter = gpuBudgetParameterForLimit(name);
   if (parameter === "max_structure_bytes")
     return parseLimitConstraint(OPERATION, "memory", primary, {
@@ -87,7 +91,7 @@ const gpuResourceConstraint = (
     return parseLimitConstraint(OPERATION, "memory", primary, {
       reportedLimitContext,
       retryable: false,
-      limit: gpuCodeObjectsBudgetLimit(parameter, maximum),
+      limit: gpuCodeObjectsBudgetLimit(parameter, maximum, requiredValue),
     });
   if (
     name === GPU_CONTAINER_NESTING_LIMIT ||

@@ -2824,12 +2824,15 @@ it("does not double-charge work on CCOB v1 refill, bounds aliased sections, keep
   ]);
   expect(refillNulBundles[1]?.encoded_size).toBe(manyEncoded.length);
 
-  // 3. 40 aliased .hip_fatbin sections pointing to a <= 4 KiB PTX payload (all
-  // bytes read via sectionSource.readBounded) must be bounded by max_work_bytes.
+  // 3. 40 aliased .hip_fatbin sections pointing to a 3,860-byte PTX payload (all
+  // bytes read via sectionSource recognition) must yield exactly 4 complete and
+  // 36 capacity sections under max_work_bytes: 16_384.
+  const ptxHeader = ".version 8.8\n.target sm_80\n// ";
+  const ptxFooter = "\n.visible .entry k() { ret; }\n";
   const aliasedPtx = Buffer.from(
-    `.version 8.8\n.target sm_80\n// ${"x".repeat(3800)}\n.visible .entry k() { ret; }\n`,
+    `${ptxHeader}${"x".repeat(3860 - ptxHeader.length - ptxFooter.length)}${ptxFooter}`,
   );
-  expect(aliasedPtx.length).toBeLessThanOrEqual(4096);
+  expect(aliasedPtx.length).toBe(3860);
   const secCount = 40;
   const totalSections = 2 + secCount;
   const shstrtab = Buffer.from("\0.shstrtab\0.hip_fatbin\0");
@@ -2865,14 +2868,120 @@ it("does not double-charge work on CCOB v1 refill, bounds aliased sections, keep
     max_work_bytes: 16_384,
   });
   if (!aliasedSectionRefused.ok) throw aliasedSectionRefused.error;
+  const nativeSections = aliasedSectionRefused.value.objects.filter(
+    (o) => o.kind === "native-section",
+  );
   expect(
-    aliasedSectionRefused.value.objects.some(
-      (o) =>
-        o.kind === "native-section" &&
-        o.inspection === "capacity" &&
-        o.limitations.some((l) => l.includes("(parameter: max_work_bytes)")),
+    nativeSections.filter((o) => o.inspection === "complete"),
+  ).toHaveLength(4);
+  const capacitySections = nativeSections.filter(
+    (o) =>
+      o.inspection === "capacity" &&
+      o.limitations.some((l) => l.includes("(parameter: max_work_bytes)")),
+  );
+  expect(capacitySections).toHaveLength(36);
+
+  // 3b. Single .hip_fatbin section with 6,060-byte PTX:
+  // (a) max_work_bytes: 6100 succeeds (no double-charge across recognition + probe read);
+  // (b) max_object_bytes: 4096 reports capacity (parameter: max_object_bytes).
+  const sectionPtx6060 = Buffer.from(
+    `${ptxHeader}${"y".repeat(6060 - ptxHeader.length - ptxFooter.length)}${ptxFooter}`,
+  );
+  expect(sectionPtx6060.length).toBe(6060);
+  const singleSectionPtxElf = elfFixture(62, [
+    { name: ".hip_fatbin", type: 1, bytes: sectionPtx6060 },
+  ]);
+  const singleSectionWorkOk = await inspect(singleSectionPtxElf, {
+    analysis: "inventory",
+    max_work_bytes: 6100,
+  });
+  if (!singleSectionWorkOk.ok) throw singleSectionWorkOk.error;
+  expect(
+    singleSectionWorkOk.value.objects.every(
+      (o) => o.inspection === "complete" || o.inspection === "inventory",
     ),
   ).toBe(true);
+  expect(
+    singleSectionWorkOk.value.objects.find((o) => o.kind === "native-section")
+      ?.inspection,
+  ).toBe("complete");
+
+  const singleSectionObjRefused = await inspect(singleSectionPtxElf, {
+    analysis: "inventory",
+    max_object_bytes: 4096,
+  });
+  if (!singleSectionObjRefused.ok) throw singleSectionObjRefused.error;
+  expect(
+    singleSectionObjRefused.value.objects.find(
+      (o) => o.kind === "native-section",
+    ),
+  ).toMatchObject({
+    inspection: "capacity",
+    limitations: expect.arrayContaining([
+      expect.stringContaining("(parameter: max_object_bytes)"),
+    ]),
+  });
+
+  // 3c. Metered #reserveReadWork, nested sectionSource !parentMetered, and
+  // #amdPayload child !parentMetered must each charge work once, not twice.
+  const ccobInnerPayload = hipFixture(Buffer.alloc(2000, 0x41), "host-x86_64");
+  const ccobStoredV2 = ccobFixture(2, "zlib", ccobInnerPayload);
+  const ccobInSectionElf = elfFixture(62, [
+    { name: ".hip_fatbin", type: 1, bytes: ccobStoredV2 },
+  ]);
+  const ccobExactWork = 32 + 32 + ccobStoredV2.length + ccobInnerPayload.length;
+  const ccobSectionOk = await inspect(ccobInSectionElf, {
+    analysis: "inventory",
+    max_work_bytes: ccobExactWork,
+  });
+  if (!ccobSectionOk.ok) throw ccobSectionOk.error;
+  expect(
+    ccobSectionOk.value.objects.find((o) => o.kind === "hip-bundle")
+      ?.inspection,
+  ).toBe("complete");
+
+  const nestedPtx = Buffer.from(
+    `${ptxHeader}${"n".repeat(2000 - ptxHeader.length - ptxFooter.length)}${ptxFooter}`,
+  );
+  const innerElf = elfFixture(62, [
+    { name: ".hip_fatbin", type: 1, bytes: nestedPtx },
+  ]);
+  const outerElf = elfFixture(62, [
+    { name: ".hip_fatbin", type: 1, bytes: innerElf },
+  ]);
+  const nestedExactWork = innerElf.length + 256;
+  const nestedSectionOk = await inspect(outerElf, {
+    analysis: "inventory",
+    max_work_bytes: nestedExactWork,
+  });
+  if (!nestedSectionOk.ok) throw nestedSectionOk.error;
+  expect(
+    nestedSectionOk.value.objects
+      .filter((o) => o.kind === "native-section")
+      .every((o) => o.inspection === "complete"),
+  ).toBe(true);
+
+  const nestedAmdElf = elfFixture(
+    224,
+    Array.from({ length: 48 }, (_, index) => ({
+      name: `.s${String(index)}`,
+      type: 1,
+      bytes: Buffer.alloc(0),
+    })),
+  );
+  const nestedAmdBundle = hipFixture(nestedAmdElf, "hipv4-amdgcn-amd-amdhsa--");
+  const nestedAmdSectionElf = elfFixture(62, [
+    { name: ".hip_fatbin", type: 1, bytes: nestedAmdBundle },
+  ]);
+  const nestedAmdWork = nestedAmdElf.length + 512;
+  const nestedAmdOk = await inspect(nestedAmdSectionElf, {
+    analysis: "inventory",
+    max_work_bytes: nestedAmdWork,
+  });
+  if (!nestedAmdOk.ok) throw nestedAmdOk.error;
+  expect(
+    nestedAmdOk.value.objects.some((o) => o.inspection === "capacity"),
+  ).toBe(false);
 
   // 4. Non-GPU plain text must fail with unsupported_target rather than being
   // preempted by lowered max_object_bytes or max_token_bytes.
@@ -2966,6 +3075,31 @@ it("does not double-charge work on CCOB v1 refill, bounds aliased sections, keep
       .filter((o) => o.kind === "hip-bundle")
       .map((o) => o.inspection),
   ).toEqual(["capacity"]);
+
+  // 7. CudaFatbinary forwards AbortSignal to nextGpuContainerOffset during
+  // multi-megabyte NUL padding scans.
+  const cudaBase = cudaFixture("none");
+  const paddedCuda = Buffer.concat([cudaBase, Buffer.alloc(2 * 1024 * 1024)]);
+  const abortController = new AbortController();
+  let readsAfterStart = 0;
+  const origSource = new GpuInventory(
+    { path: "/padded-cuda", analysis: "inventory" },
+    abortController.signal,
+  );
+  await expect(
+    origSource.inspect({
+      size: paddedCuda.length,
+      containerId: null,
+      read: async (offset, size) => paddedCuda.subarray(offset, offset + size),
+      readBounded: async (offset, size) => {
+        if (offset >= cudaBase.length && ++readsAfterStart === 17)
+          abortController.abort(
+            new Error("cancelled during cuda padding scan"),
+          );
+        return paddedCuda.subarray(offset, offset + size);
+      },
+    }),
+  ).rejects.toThrow();
 });
 
 it("applies max_structure_bytes independently of max_object_bytes and covers PE, CUBIN, and report baseline", async () => {
@@ -2988,20 +3122,32 @@ it("applies max_structure_bytes independently of max_object_bytes and covers PE,
   expect(elfOk.value.format).toBe("elf");
   expect(elfOk.value.coverage.discovery).toBe("complete");
 
-  // Baseline report reservation is enforced even when no GPU sections are present.
+  // Baseline report reservation is enforced even when no GPU sections are present
+  // and reports required_value so a caller retrying with that value clears construction.
   const baselineRefused = await inspect(emptyElf, {
     analysis: "inventory",
     max_report_bytes: 500,
   });
   if (baselineRefused.ok)
     throw new Error("Expected baseline max_report_bytes refusal");
-  expect(projectAnalysisError(baselineRefused.error)).toMatchObject({
+  const baselineProjected = projectAnalysisError(baselineRefused.error);
+  expect(baselineProjected).toMatchObject({
     code: "resource_constraint",
     details: {
       limit: { parameter: "max_report_bytes", effective_value: 500 },
       refusal: { kind: "adjustable_budget", control: "max_report_bytes" },
     },
   });
+  const requiredBaseline = (
+    baselineProjected.details as { limit?: { required_value?: number } }
+  )?.limit?.required_value;
+  expect(requiredBaseline).toBeTypeOf("number");
+  expect(requiredBaseline!).toBeGreaterThan(500);
+  const baselineRecovered = await inspect(emptyElf, {
+    analysis: "inventory",
+    max_report_bytes: requiredBaseline!,
+  });
+  expect(baselineRecovered.ok).toBe(true);
 
   // PE section directory enforces max_structure_bytes and recovers when raised.
   const peBytes = peGpuFixture();

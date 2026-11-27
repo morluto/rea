@@ -59,6 +59,7 @@ import {
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
+  CONTAINER_SCAN_CHUNK_BYTES,
   GpuBufferSource,
   checkGpuRange,
   GpuReportCapacityFailure,
@@ -69,6 +70,7 @@ import {
   type GpuSource,
 } from "./GpuSource.js";
 import {
+  DEFAULT_GPU_REPORT_BYTES,
   GPU_CONTAINER_NESTING_LIMIT,
   GPU_OBJECT_BYTES_LIMIT,
   GPU_WORK_BYTES_LIMIT,
@@ -108,6 +110,17 @@ const readPtxText = (
   }
 };
 
+interface MeteredGpuSource extends GpuSource {
+  /** Read for format recognition: charges aggregate work without enforcing max_object_bytes. */
+  readWorkOnly?(
+    offset: number,
+    size: number,
+    maximumBytes: number,
+  ): Promise<Buffer>;
+  /** Read bytes whose object and work budgets were already reserved by the caller. */
+  readPrecharged?(offset: number, size: number): Promise<Buffer>;
+}
+
 /** File declarations only. Every child range stays in its named parent coordinate space. */
 export class GpuInventory {
   readonly objects: GpuObject[] = [];
@@ -139,15 +152,31 @@ export class GpuInventory {
       input.object_ids === undefined ? undefined : new Set(input.object_ids);
     this.#selectedTargets =
       input.targets === undefined ? undefined : new Set(input.targets);
-    this.#retain({ path: input.path, limitations: this.limitations });
-    if (1024 > this.#budgets.maxReportBytes - this.#factBytes)
-      throw new GpuReportCapacityFailure(this.#budgets.maxReportBytes);
-    this.#factBytes += 1024;
+    const headerBytes =
+      jsonValueByteLength(
+        { path: input.path, limitations: this.limitations },
+        DEFAULT_GPU_REPORT_BYTES,
+      ) + 2;
+    const baselineRequired = headerBytes + 1024;
+    if (baselineRequired > this.#budgets.maxReportBytes)
+      throw new GpuReportCapacityFailure(
+        this.#budgets.maxReportBytes,
+        baselineRequired,
+      );
+    this.#factBytes = baselineRequired;
   }
   #retain(value: JsonValue): void {
     const bytes = jsonValueByteLength(value, this.#budgets.maxReportBytes);
-    if (bytes + 2 > this.#budgets.maxReportBytes - this.#factBytes)
-      throw new GpuReportCapacityFailure(this.#budgets.maxReportBytes);
+    if (bytes + 2 > this.#budgets.maxReportBytes - this.#factBytes) {
+      const required =
+        bytes <= this.#budgets.maxReportBytes
+          ? this.#factBytes + bytes + 2
+          : undefined;
+      throw new GpuReportCapacityFailure(
+        this.#budgets.maxReportBytes,
+        required,
+      );
+    }
     this.#factBytes += bytes + 2;
   }
   #add(row: GpuObject, amdTarget?: AmdGpuTargetIdentity | null): void {
@@ -193,8 +222,8 @@ export class GpuInventory {
     }
     this.#workBytes = workBytes;
   }
-  /** Reserve input/output work atomically, before any payload allocation or read. */
-  #budgetWork(...sizes: (number | bigint)[]): void {
+  /** Verify that every single-buffer read/decode size fits within max_object_bytes. */
+  #checkObjectBytes(...sizes: (number | bigint)[]): void {
     const { maxObjectBytes } = this.#budgets;
     for (const size of sizes) {
       if (size > maxObjectBytes)
@@ -206,7 +235,24 @@ export class GpuInventory {
           "bytes",
         );
     }
+  }
+  /** Reserve input/output work atomically, before any payload allocation or read. */
+  #budgetWork(...sizes: (number | bigint)[]): void {
+    this.#checkObjectBytes(...sizes);
     this.#reserveWork(...sizes);
+  }
+  /** Read a format-recognition chunk without enforcing max_object_bytes or borrowing NATIVE_STRUCTURE_LIMIT. */
+  #readRecognitionChunk(
+    source: MeteredGpuSource,
+    offset: number,
+    size: number,
+    maximumBytes: number,
+  ): Promise<Buffer> {
+    if (source.readWorkOnly !== undefined)
+      return source.readWorkOnly(offset, size, maximumBytes);
+    if (source.readBounded !== undefined)
+      return source.readBounded(offset, size, maximumBytes);
+    return source.read(offset, size);
   }
   /**
    * Atomically verify and reserve work for a read of `readBytes` plus `extra`
@@ -237,7 +283,7 @@ export class GpuInventory {
     );
   }
   async inspect(
-    source: GpuSource,
+    source: MeteredGpuSource,
     depth = 0,
   ): Promise<GpuCodeObjects["format"]> {
     assertArtifactReadActive(this.signal);
@@ -249,10 +295,12 @@ export class GpuInventory {
         GPU_CONTAINER_NESTING_LIMIT,
       );
     const prefixLength = Math.min(32, source.size);
-    const prefix =
-      source.readBounded !== undefined
-        ? await source.readBounded(0, prefixLength, 32, NATIVE_STRUCTURE_LIMIT)
-        : await source.read(0, prefixLength);
+    const prefix = await this.#readRecognitionChunk(
+      source,
+      0,
+      prefixLength,
+      32,
+    );
     if (prefix.subarray(0, 4).equals(Buffer.from([0x50, 0xed, 0x55, 0xba]))) {
       await this.#cuda(source);
       return "cuda-fatbin";
@@ -335,7 +383,7 @@ export class GpuInventory {
           row.location.section_index = section.index;
           row.location.section_name = section.name;
           this.#add(row);
-          const sectionSource: GpuSource = {
+          const sectionSource: MeteredGpuSource = {
             size,
             containerId: row.id,
             maxObjectBytes: this.#budgets.maxObjectBytes,
@@ -360,6 +408,27 @@ export class GpuInventory {
                   )
                 : source.read(offset + start, length);
             },
+            readWorkOnly: (start, length, maximumBytes) => {
+              checkGpuRange(size, start, length, maximumBytes);
+              if (!parentMetered) this.#reserveWork(length);
+              if (source.readWorkOnly !== undefined)
+                return source.readWorkOnly(
+                  offset + start,
+                  length,
+                  maximumBytes,
+                );
+              return source.readBounded !== undefined
+                ? source.readBounded(offset + start, length, maximumBytes)
+                : source.read(offset + start, length);
+            },
+            readPrecharged: (start, length) => {
+              checkGpuRange(size, start, length, size);
+              if (source.readPrecharged !== undefined)
+                return source.readPrecharged(offset + start, length);
+              return source.readBounded !== undefined
+                ? source.readBounded(offset + start, length, size)
+                : source.read(offset + start, length);
+            },
           };
           this.#meteredSources.add(sectionSource);
           try {
@@ -374,39 +443,39 @@ export class GpuInventory {
       return directory.format;
     }
     // PTX is positively identified by its directives, never by extension or arbitrary embedded text.
-    // Recognize the leading `.version <major>.<minor>` header incrementally before applying
-    // max_object_bytes or max_token_bytes so non-GPU inputs fail with unsupported_target.
+    // Recognize the leading `.version <major>.<minor>` header incrementally without retaining
+    // chunks so non-GPU inputs fail with unsupported_target and peak heap stays at 1x probeSize.
     const probeSize = Math.min(source.size, this.#budgets.maxReportBytes);
     const scanner = createPtxVersionScanner();
-    const scannedChunks: Buffer[] = [];
+    let firstPiece: Buffer | undefined;
     let scanned = 0;
     let verdict: "yes" | "no" | "incomplete" = "incomplete";
     let chunkLimit = 4096;
     while (scanned < probeSize && verdict === "incomplete") {
       if (scanned > 0) await yieldArtifactRead(this.signal);
       const want = Math.min(chunkLimit, probeSize - scanned);
-      const piece =
-        source.readBounded !== undefined
-          ? await source.readBounded(
-              scanned,
-              want,
-              64 * 1024,
-              NATIVE_STRUCTURE_LIMIT,
-            )
-          : await source.read(scanned, want);
-      scannedChunks.push(piece);
+      const piece = await this.#readRecognitionChunk(
+        source,
+        scanned,
+        want,
+        CONTAINER_SCAN_CHUNK_BYTES,
+      );
+      firstPiece = scanned === 0 ? piece : undefined;
       scanned += piece.length;
       verdict = scanner.feed(piece);
-      chunkLimit = 64 * 1024;
+      chunkLimit = CONTAINER_SCAN_CHUNK_BYTES;
     }
     if (verdict === "incomplete" && scanned === source.size)
       verdict = scanner.finish();
-    if (verdict === "no")
+    if (verdict === "no") {
+      firstPiece = undefined;
       throw new BinaryFormatFailure(
         "unsupported",
         "No supported CUDA/HIP container or PTX declarations were identified",
       );
-    if (verdict === "incomplete")
+    }
+    if (verdict === "incomplete") {
+      firstPiece = undefined;
       throw new BinaryResourceFailure(
         "structure",
         this.#budgets.maxReportBytes,
@@ -414,28 +483,29 @@ export class GpuInventory {
         "gpu-retained-report-bytes",
         "bytes",
       );
-    const remainingProbe = probeSize - scanned;
-    if (!this.#meteredSources.has(source)) {
-      this.#budgetWork(probeSize);
-    } else {
-      // `scanned` bytes were already charged to work during recognition; check
-      // the full object ceiling and reserve remaining work atomically.
-      if (probeSize > this.#budgets.maxObjectBytes)
-        throw new BinaryResourceFailure(
-          "structure",
-          this.#budgets.maxObjectBytes,
-          `GPU read/decoding buffer exceeds the ${String(this.#budgets.maxObjectBytes)}-byte object budget`,
-          GPU_OBJECT_BYTES_LIMIT,
-          "bytes",
-        );
-      if (remainingProbe > 0) this.#reserveReadWork(source, remainingProbe);
     }
-    if (remainingProbe > 0)
-      scannedChunks.push(await source.read(scanned, remainingProbe));
-    const probe =
-      scannedChunks.length === 1
-        ? scannedChunks[0]!
-        : Buffer.concat(scannedChunks);
+    let probe: Buffer;
+    const metered = this.#meteredSources.has(source);
+    if (firstPiece !== undefined && scanned === probeSize) {
+      // Single <= 4 KiB read already holds the complete probe buffer.
+      this.#checkObjectBytes(probeSize);
+      if (!metered) this.#reserveWork(probeSize);
+      probe = firstPiece;
+      firstPiece = undefined;
+    } else {
+      // Release the recognition chunk before reading into one probe-sized buffer
+      // so peak heap remains 1x max_report_bytes rather than 2x.
+      firstPiece = undefined;
+      this.#checkObjectBytes(probeSize);
+      const remainingWork = metered
+        ? Math.max(0, probeSize - scanned)
+        : probeSize;
+      if (remainingWork > 0) this.#reserveWork(remainingWork);
+      probe =
+        metered && source.readPrecharged !== undefined
+          ? await source.readPrecharged(0, probeSize)
+          : await source.read(0, probeSize);
+    }
     const complete = probe.length === source.size;
     const text = readPtxText(probe, complete ? "complete" : "prefix");
     // Replacement decoding may identify a malformed candidate. Only strict

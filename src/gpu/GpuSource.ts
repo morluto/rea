@@ -25,13 +25,17 @@ import {
 } from "../domain/gpu/gpuCodeObjectsBudgets.js";
 /** A retained-facts refusal aborts discovery; it is never downgraded to one opaque payload. */
 export class GpuReportCapacityFailure extends BinaryResourceFailure {
-  constructor(maxReportBytes: number = DEFAULT_GPU_REPORT_BYTES) {
+  constructor(
+    maxReportBytes: number = DEFAULT_GPU_REPORT_BYTES,
+    requiredBytes?: number,
+  ) {
     super(
       "structure",
       maxReportBytes,
       `GPU facts exceed the ${String(maxReportBytes)}-byte retained report budget`,
       GPU_RETAINED_REPORT_BYTES_LIMIT,
       "bytes",
+      requiredBytes,
     );
   }
 }
@@ -207,7 +211,7 @@ export const readGpuNativeDirectory = async (
   }
   return next.value;
 };
-const CONTAINER_SCAN_CHUNK_BYTES = 65_536;
+export const CONTAINER_SCAN_CHUNK_BYTES = 65_536;
 export const nextGpuContainerOffset = async (
   source: GpuSource,
   start: number,

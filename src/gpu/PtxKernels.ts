@@ -710,12 +710,15 @@ export const createPtxVersionScanner = (): {
     | "after-line-comment"
     | "after-block-comment"
     | "after-block-star"
-    | "version-number";
+    | "version-major"
+    | "version-minor";
   const VERSION_DIRECTIVE = ".version";
-  const MAX_VERSION_NUMBER_BYTES = 32;
   let state: State = "leading";
   let wordIndex = 0;
-  let versionNumber = "";
+  let majorValue = 0;
+  let hasMajorDigit = false;
+  let minorValue = 0;
+  let hasMinorDigit = false;
   let utf8Pending: number[] = [];
   let utf8Expected = 0;
 
@@ -763,9 +766,10 @@ export const createPtxVersionScanner = (): {
           wordIndex = 1;
           return "incomplete";
         }
-        if (!isPtxWordChar(byte)) return "no";
-        state = "version-number";
-        versionNumber = String.fromCharCode(byte);
+        if (byte < 0x30 || byte > 0x39) return "no";
+        state = "version-major";
+        majorValue = byte - 0x30;
+        hasMajorDigit = true;
         return "incomplete";
       }
       if (state === "slash" || state === "after-slash") {
@@ -813,13 +817,29 @@ export const createPtxVersionScanner = (): {
         state = "after-version";
         continue;
       }
-      // state === "version-number"
-      if (isPtxWordChar(byte)) {
-        if (versionNumber.length >= MAX_VERSION_NUMBER_BYTES) return "no";
-        versionNumber += String.fromCharCode(byte);
+      if (state === "version-major") {
+        if (byte >= 0x30 && byte <= 0x39) {
+          majorValue = majorValue * 10 + (byte - 0x30);
+          if (!Number.isSafeInteger(majorValue)) return "no";
+          return "incomplete";
+        }
+        if (byte === 0x2e && hasMajorDigit) {
+          state = "version-minor";
+          minorValue = 0;
+          hasMinorDigit = false;
+          return "incomplete";
+        }
+        return "no";
+      }
+      // state === "version-minor"
+      if (byte >= 0x30 && byte <= 0x39) {
+        minorValue = minorValue * 10 + (byte - 0x30);
+        if (!Number.isSafeInteger(minorValue)) return "no";
+        hasMinorDigit = true;
         return "incomplete";
       }
-      return ptxVersion(versionNumber) !== null ? "yes" : "no";
+      if (isPtxWordChar(byte)) return "no";
+      return hasMinorDigit ? "yes" : "no";
     }
   };
 
@@ -832,9 +852,9 @@ export const createPtxVersionScanner = (): {
       return "incomplete";
     },
     finish() {
-      if (state === "version-number" && utf8Expected === 0)
-        return ptxVersion(versionNumber) !== null ? "yes" : "no";
-      return "no";
+      return state === "version-minor" && hasMinorDigit && utf8Expected === 0
+        ? "yes"
+        : "no";
     },
   };
 };
