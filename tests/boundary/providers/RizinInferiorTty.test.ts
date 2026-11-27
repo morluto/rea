@@ -16,7 +16,7 @@ import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.
 import { rizinTestInferiorTty } from "./RizinTestInferiorTty.js";
 import { createInjectedProcess } from "./RizinDebugSessionCoverage.fixtures.js";
 import { waitForTestPidFile } from "../../support/process/pidFile.js";
-import { waitFor } from "../../support/testWait.js";
+import { waitForPosixProcessStopped } from "../../support/process/observePosixProcess.js";
 
 let terminal: ReturnType<typeof spawn> | undefined;
 let manager: RizinDebugSessionManager | undefined;
@@ -291,8 +291,7 @@ it.skipIf(process.platform !== "linux")(
       if (watchdog !== undefined) clearTimeout(watchdog);
     });
 
-    expect(completed.ok).toBe(true);
-    if (!completed.ok) return;
+    if (!completed.ok) throw completed.error;
     expect(completed.value.result).toMatchObject({
       output_truncated: true,
       completion_status: "unknown",
@@ -308,9 +307,7 @@ it.skipIf(process.platform !== "linux")(
     );
     expect(manager!.status(sessionId)?.state).toBe("closed");
     expect(providerPid).toBeDefined();
-    await waitFor(() => {
-      expect(() => process.kill(providerPid!, 0)).toThrow();
-    });
+    await waitForPosixProcessStopped(providerPid!);
     // The target was never signalled: it keeps running after owned cleanup.
     expect(inferiorPid).toBeDefined();
     expect(() => process.kill(inferiorPid!, 0)).not.toThrow();
@@ -318,7 +315,8 @@ it.skipIf(process.platform !== "linux")(
     const commandEnd = stat.lastIndexOf(") ");
     expect(commandEnd).toBeGreaterThan(0);
     expect(stat.slice(commandEnd + 2).trimStart()[0]).not.toBe("Z");
-    expect((await manager!.close(sessionId)).ok).toBe(true);
+    const closed = await manager!.close(sessionId);
+    if (!closed.ok) throw closed.error;
     expect(manager!.status(sessionId)).toBeUndefined();
   },
 );

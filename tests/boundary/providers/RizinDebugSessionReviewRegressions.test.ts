@@ -6,7 +6,10 @@ import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { phaseArrival } from "../../support/lifecycleHarness.js";
-import { waitFor } from "../../support/testWait.js";
+import {
+  processHasStopped,
+  waitForPosixProcessStopped,
+} from "../../support/process/observePosixProcess.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 
 import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
@@ -682,23 +685,21 @@ setInterval(() => {}, 1000);
 
     const result = await manager.execute(sessionId, "dc");
 
-    expect(result.ok, result.ok ? "" : result.error.message).toBe(true);
-    if (result.ok) {
-      expect(result.value.result).toMatchObject({
-        completion_status: "unknown",
-        output_truncated: true,
-      });
-      expect(result.value.evidence.limitations).toContainEqual(
-        expect.stringMatching(
-          /terminated without a verified inferior detach.*resynchroniz/iu,
-        ),
-      );
-    }
+    if (!result.ok) throw result.error;
+    expect(result.value.result).toMatchObject({
+      completion_status: "unknown",
+      output_truncated: true,
+    });
+    expect(result.value.evidence.limitations).toContainEqual(
+      expect.stringMatching(
+        /terminated without a verified inferior detach.*resynchroniz/iu,
+      ),
+    );
     const pid = Number(await readFile(pidPath, "utf8"));
-    expect(() => process.kill(pid, 0)).toThrow();
+    expect(await processHasStopped(pid)).toBe(true);
     expect(manager.status(sessionId)?.state).toBe("closed");
     const closed = await manager.close(sessionId);
-    expect(closed.ok).toBe(true);
+    if (!closed.ok) throw closed.error;
     expect(manager.status(sessionId)).toBeUndefined();
   },
 );
@@ -753,23 +754,20 @@ setInterval(() => {}, 1000);
     }
     const result = await executed;
 
-    expect(result.ok, result.ok ? "" : result.error.message).toBe(true);
-    if (result.ok) {
-      expect(result.value.result.completion_status).toBe("unknown");
-      expect(result.value.evidence.limitations).toContainEqual(
-        expect.stringMatching(
-          /terminated without a verified inferior detach.*resynchroniz/iu,
-        ),
-      );
-    }
+    if (!result.ok) throw result.error;
+    expect(result.value.result.completion_status).toBe("unknown");
+    expect(result.value.evidence.limitations).toContainEqual(
+      expect.stringMatching(
+        /terminated without a verified inferior detach.*resynchroniz/iu,
+      ),
+    );
     if (!closed.ok) expect(closed.error.cleanupIncomplete).toBe(false);
     const pidText = await readFile(pidPath, "utf8");
-    await waitFor(() => {
-      expect(() => process.kill(Number(pidText), 0)).toThrow();
-    });
+    await waitForPosixProcessStopped(Number(pidText));
     // Keep the published session addressable until its explicit close retry.
     expect(manager.status(sessionId)).toBeDefined();
-    expect((await manager.close(sessionId)).ok).toBe(true);
+    const retriedClose = await manager.close(sessionId);
+    if (!retriedClose.ok) throw retriedClose.error;
     expect(manager.status(sessionId)).toBeUndefined();
   },
 );
@@ -810,26 +808,24 @@ setInterval(() => {}, 1000);
 
     const result = await manager.execute(sessionId, "slow");
 
-    expect(result.ok, result.ok ? "" : result.error.message).toBe(true);
-    if (result.ok) {
-      expect(result.value.result).toMatchObject({
-        completion_status: "unknown",
-        output_truncated: true,
-      });
-      expect(result.value.evidence.limitations).toContainEqual(
-        expect.stringMatching(
-          /debugger session was stopped because output correlation/iu,
-        ),
-      );
-      expect(result.value.evidence.limitations.join(" ")).not.toMatch(
-        /terminated without a verified inferior detach/iu,
-      );
-    }
+    if (!result.ok) throw result.error;
+    expect(result.value.result).toMatchObject({
+      completion_status: "unknown",
+      output_truncated: true,
+    });
+    expect(result.value.evidence.limitations).toContainEqual(
+      expect.stringMatching(
+        /debugger session was stopped because output correlation/iu,
+      ),
+    );
+    expect(result.value.evidence.limitations.join(" ")).not.toMatch(
+      /terminated without a verified inferior detach/iu,
+    );
     const pid = Number(await readFile(pidPath, "utf8"));
-    expect(() => process.kill(pid, 0)).toThrow();
+    expect(await processHasStopped(pid)).toBe(true);
     expect(manager.status(sessionId)?.state).toBe("closed");
     const closed = await manager.close(sessionId);
-    expect(closed.ok).toBe(true);
+    if (!closed.ok) throw closed.error;
     expect(manager.status(sessionId)).toBeUndefined();
   },
 );

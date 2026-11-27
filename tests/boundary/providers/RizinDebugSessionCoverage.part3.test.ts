@@ -183,8 +183,7 @@ it.skipIf(process.platform === "win32")(
       // so it can never declare detach unavailable.
       stopProcess: stopOwnedDebuggerProcess,
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     const result = await manager.execute(started.value.session_id, "dr");
 
@@ -593,9 +592,10 @@ it.skipIf(process.platform === "win32")(
     );
     if (!started.ok) throw started.error;
     const result = await manager.execute(started.value.session_id, "noisy");
-    expect(result.ok).toBe(true);
+    if (!result.ok) throw result.error;
     expect(writes.some((text) => text.startsWith("olj\n"))).toBe(true);
-    expect((await manager.close(started.value.session_id)).ok).toBe(true);
+    const closed = await manager.close(started.value.session_id);
+    if (!closed.ok) throw closed.error;
     expect(manager.status(started.value.session_id)).toBeUndefined();
   },
 );
@@ -621,15 +621,15 @@ it.skipIf(process.platform === "win32")(
     );
     if (!started.ok) throw started.error;
     const result = await manager.execute(started.value.session_id, "noisy");
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     expect(result.value.result.output_truncated).toBe(true);
     expect(result.value.evidence.limitations).toContainEqual(
       expect.stringMatching(/terminated without a verified inferior detach/iu),
     );
     expect(writes.some((text) => text.startsWith("olj\n"))).toBe(false);
     expect(manager.status(started.value.session_id)?.state).toBe("closed");
-    expect((await manager.close(started.value.session_id)).ok).toBe(true);
+    const closed = await manager.close(started.value.session_id);
+    if (!closed.ok) throw closed.error;
     expect(manager.status(started.value.session_id)).toBeUndefined();
   },
 );
