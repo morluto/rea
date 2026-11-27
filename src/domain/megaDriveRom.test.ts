@@ -13,6 +13,7 @@ import {
   MEGA_DRIVE_SMD_BLOCK_BYTES,
   MEGA_DRIVE_SMD_HEADER_BYTES,
   megaDriveFileCeiling,
+  megaDriveWordSum,
   recognizeMegaDriveRom,
   type MegaDriveRom,
 } from "./megaDriveRom.js";
@@ -120,7 +121,38 @@ it("names Genesis, 32X and Sega CD from the system string", () => {
   expect(other.limitations.join("\n")).not.toContain("32X");
 });
 
+it("sums big-endian words through the inclusive ROM end with 16-bit wraparound", () => {
+  const image = new Uint8Array(0x208);
+  image.set([0x12, 0x34, 0x00, 0x01, 0xff, 0xff, 0xab, 0xcd], 0x200);
+  // 0x1234 + 0x0001 + 0xffff wraps mod 2^16 back to 0x1234.
+  expect(megaDriveWordSum(image, 0x205)).toEqual({
+    computed: 0x1234,
+    summedBytes: 6,
+    empty: false,
+    bounded: false,
+  });
+  // Half word at the end is skipped.
+  expect(megaDriveWordSum(image, 0x206).computed).toBe(0x1234);
+  expect(megaDriveWordSum(image, 0x207).computed).toBe(0xbe01);
+  expect(megaDriveWordSum(image, 0x2ff)).toEqual({
+    computed: 0xbe01,
+    summedBytes: 8,
+    empty: false,
+    bounded: true,
+  });
+  expect(megaDriveWordSum(image, 0x1ff)).toEqual({
+    computed: 0,
+    summedBytes: 0,
+    empty: true,
+    bounded: false,
+  });
+});
+
 it("reports a checksum mismatch and keeps a matching bounded sum", () => {
+  const baseline = decoded(megaDriveRom());
+  expect(baseline.metadata.checksum.computed).toBe(0x8000);
+  expect(baseline.metadata.checksum.declared).toBe(0x8000);
+
   const mismatch = decoded(megaDriveRom({ checksum: 0x1234 }));
   expect(mismatch.metadata.checksum.matches).toBe(false);
   expect(mismatch.metadata.checksum.declared).toBe(0x1234);
@@ -147,6 +179,7 @@ it("flags ROM and RAM ranges that disagree with the image", () => {
 
   const trailing = decoded(megaDriveRom({ romEnd: 0x2ff }));
   expect(trailing.metadata.checksum.matches).toBe(true);
+  expect(trailing.metadata.checksum.computed).toBe(0xc000);
   expect(trailing.limitations.join("\n")).toContain("stay in program.bin");
   expect(trailing.limitations.join("\n")).not.toContain("past the image");
 
