@@ -17,6 +17,7 @@ import ghidra.app.util.headless.HeadlessAnalyzer;
 import ghidra.app.util.headless.HeadlessScript;
 import ghidra.framework.Application;
 import ghidra.program.model.listing.Function;
+import ghidra.util.UndefinedFunction;
 import ghidra.util.task.TaskMonitor;
 import java.io.File;
 import java.lang.reflect.Field;
@@ -209,6 +210,88 @@ public class ReaDecompilerFailureProbe extends GhidraScript {
         require("read_ahead_hint_clamped_to_window", kept.equals(expected));
     }
 
+    private Object parsedRequest(GhidraScript bridge, String method, JsonObject params, JsonElement payload)
+        throws Exception {
+        Method parse = bridge.getClass().getDeclaredMethod("parseRequest", String.class, String.class);
+        parse.setAccessible(true);
+        JsonObject line = new JsonObject();
+        line.addProperty("id", 4);
+        line.addProperty("token", "probe");
+        line.addProperty("method", method);
+        line.add("params", params);
+        if (payload != null) line.add("decompile_max_payload_mib", payload);
+        return parse.invoke(null, line.toString(), "probe");
+    }
+
+    /**
+     * A read that carries no decompiler options, as procedure_info and
+     * instruction reads do, keeps the configured payload limit and the
+     * decompiles completed under it. An explicit null still restores the
+     * installed default.
+     */
+    private void readsKeepDecompiles(GhidraScript bridge, Class<?> requestType, Field completed,
+        Method pseudocode, JsonObject pseudocodeQuery) throws Exception {
+        Method apply = bridge.getClass().getDeclaredMethod("applyRequestDecompilerOptions", requestType);
+        apply.setAccessible(true);
+        Field payload = bridge.getClass().getDeclaredField("decompileMaxPayloadMiB");
+        payload.setAccessible(true);
+        Map<?, ?> cache = (Map<?, ?>) completed.get(bridge);
+        cache.clear();
+        apply.invoke(bridge, parsedRequest(bridge, "procedure_pseudo_code", pseudocodeQuery,
+            new com.google.gson.JsonPrimitive(64)));
+        pseudocode.invoke(bridge, pseudocodeQuery);
+        int retained = cache.size();
+        require("configured_payload_decompile_retained", retained > 0 && Integer.valueOf(64).equals(payload.get(bridge)));
+        apply.invoke(bridge, parsedRequest(bridge, "procedure_info", new JsonObject(), null));
+        require("read_without_decompiler_options_keeps_payload_limit", Integer.valueOf(64).equals(payload.get(bridge)));
+        require("read_without_decompiler_options_keeps_decompiles", cache.size() == retained);
+        apply.invoke(bridge, parsedRequest(bridge, "procedure_pseudo_code", pseudocodeQuery, JsonNull.INSTANCE));
+        require("explicit_null_payload_restores_default", payload.get(bridge) == null && cache.isEmpty());
+    }
+
+    /**
+     * Decompiling code outside every function widens the on-the-fly
+     * UndefinedFunction's body. A reused result keeps that widened function,
+     * so its boundary limitations cover the decompiled code rather than the
+     * entry-only body of a fresh lookup.
+     */
+    private void reusedUndefinedFunctionBody(GhidraScript bridge, Field completed, Method pseudocode,
+        Function defined) throws Exception {
+        Method decompile = bridge.getClass().getDeclaredMethod("decompile", Function.class);
+        decompile.setAccessible(true);
+        Method decompiledFunction = bridge.getClass().getDeclaredMethod(
+            "decompiledFunction", Function.class, DecompileResults.class);
+        decompiledFunction.setAccessible(true);
+        Field inventory = bridge.getClass().getDeclaredField("procedureInventory");
+        inventory.setAccessible(true);
+        ghidra.program.model.address.Address entry = defined.getEntryPoint();
+        JsonObject query = new JsonObject();
+        query.add("document", JsonNull.INSTANCE);
+        query.addProperty("procedure", "0x" + Long.toUnsignedString(entry.getOffset(), 16));
+        int transaction = currentProgram.startTransaction("Orphan the fixture function");
+        try {
+            // Removing the function leaves its instructions disassembled, as
+            // Ghidra leaves code an analyzer never made a function.
+            currentProgram.getFunctionManager().removeFunction(entry);
+            inventory.set(bridge, null);
+            ((Map<?, ?>) completed.get(bridge)).clear();
+            JsonObject first = (JsonObject) pseudocode.invoke(bridge, query);
+            JsonObject repeated = (JsonObject) pseudocode.invoke(bridge, query);
+            require("undefined_function_repeat_keeps_limitations",
+                first.get("limitations").equals(repeated.get("limitations")));
+            UndefinedFunction fresh = UndefinedFunction.findFunction(currentProgram, entry, monitor);
+            DecompileResults reused = (DecompileResults) decompile.invoke(bridge, fresh);
+            Function covered = (Function) decompiledFunction.invoke(null, fresh, reused);
+            require("undefined_function_reuse_keeps_widened_body",
+                fresh.getBody().getNumAddresses() == 1 &&
+                covered.getBody().getNumAddresses() > fresh.getBody().getNumAddresses());
+        } finally {
+            currentProgram.endTransaction(transaction, false);
+            inventory.set(bridge, null);
+            ((Map<?, ?>) completed.get(bridge)).clear();
+        }
+    }
+
     @Override
     public void run() throws Exception {
         String[] args = getScriptArgs();
@@ -368,6 +451,8 @@ public class ReaDecompilerFailureProbe extends GhidraScript {
 
             readAhead(bridge, requestType, requestConstructor, flowLimits, analyze, decompiler,
                 limit, target, procedure, pseudocodeQuery);
+            readsKeepDecompiles(bridge, requestType, completed, pseudocode, pseudocodeQuery);
+            reusedUndefinedFunctionBody(bridge, completed, pseudocode, exportedFunction("rea_cross_leaf"));
         } finally {
             decompiler.set(bridge, real);
             real.dispose();
