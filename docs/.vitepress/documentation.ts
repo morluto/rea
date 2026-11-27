@@ -580,7 +580,7 @@ export const documentationSections = [
       },
       {
         text: "Android compiled resources (arsc)",
-        source: "arsc.md",
+        source: "guides/android/arsc.md",
         route: "/arsc",
       },
       {
