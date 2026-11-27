@@ -1019,10 +1019,12 @@ it("keeps a literal suffix and an unmatched table name apart from an addend", ()
     "      0x0001  _other+0x4  (from libFixture)",
     "      0x0002  _fixture_data+0x  (from libFixture)",
     "      0x0003  _fixture_data+0x4-  (from libFixture)",
+    "      0x0004  _fixture_data+0X4  (from libFixture)",
   ].join("\n");
   expect(
     parseDyldImports(output, true, undefined, [
       "_literal+0x4",
+      "_fixture_data",
       "_fixture_data",
       "_fixture_data",
       "_fixture_data",
@@ -1039,6 +1041,13 @@ it("keeps a literal suffix and an unmatched table name apart from an addend", ()
     },
     { name: null, name_status: "ambiguous", addend: null },
     { name: null, name_status: "ambiguous", addend: null },
+    // dyld_info prints a lowercase 0x prefix; another spelling is not its addend.
+    {
+      name: null,
+      raw_name: "0x0004  _fixture_data+0X4  (from libFixture)",
+      name_status: "ambiguous",
+      addend: null,
+    },
   ]);
 });
 

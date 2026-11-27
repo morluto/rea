@@ -100,8 +100,9 @@ describe.skipIf(process.platform !== "darwin")(
           library,
         ]);
         expect(imports.exitCode, imports.stderr).toBe(0);
-        expect(imports.stdout).toContain(
-          "  __ZTVN10__cxxabiv117__class_type_infoE+0x10  (from libc++)",
+        // dyld_info prints one or two spaces after the ordinal.
+        expect(imports.stdout).toMatch(
+          /0x[\dA-Fa-f]+ {1,2}__ZTVN10__cxxabiv117__class_type_infoE\+0x10 {2}\(from libc\+\+\)/u,
         );
         const result = await cli.run({
           arguments: ["inspect-macho", library, "--json"],

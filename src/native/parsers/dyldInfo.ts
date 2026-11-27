@@ -53,7 +53,8 @@ const ADDEND_SUFFIX = /\+0x[\da-f]+$/iu;
 
 /**
  * The addend a chained row prints after the exact import-table name: null when
- * the row is that name alone, undefined when the row is not that name.
+ * the row is that name alone, undefined when the row is not that name. Only
+ * dyld_info's lowercase `0x` prefix is an addend, which keeps it a hex address.
  */
 const tableNameAddend = (
   text: string,
@@ -62,7 +63,7 @@ const tableNameAddend = (
   text === tableName
     ? null
     : text.startsWith(tableName)
-      ? /^\+(0x[\da-f]+)$/iu.exec(text.slice(tableName.length))?.[1]
+      ? /^\+(0x[\dA-Fa-f]+)$/u.exec(text.slice(tableName.length))?.[1]
       : undefined;
 
 /**
