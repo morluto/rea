@@ -209,6 +209,25 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private List<StringEntry> stringInventory;
     private Boolean swiftProgramCached;
     private DecompInterface decompiler;
+    /**
+     * Completed decompilations of the current Program state, least recently
+     * used first. DecompInterface keeps no results, so a repeated request would
+     * otherwise run the native decompiler again. The key carries every input a
+     * result depends on; soft references let the heap reclaim large results.
+     */
+    private final LinkedHashMap<DecompileCacheKey, java.lang.ref.SoftReference<DecompileResults>> decompileResults =
+        new LinkedHashMap<>(16, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(
+                Map.Entry<DecompileCacheKey, java.lang.ref.SoftReference<DecompileResults>> eldest
+            ) {
+                return size() > DECOMPILE_RESULT_ENTRIES;
+            }
+        };
+    // Fixed: this bounds retained Java objects, not analysis the caller can
+    // observe. A miss only repeats a decompile, and soft references release
+    // entries under heap pressure. Ghidra's own panel keeps 10 by default.
+    private static final int DECOMPILE_RESULT_ENTRIES = 32;
     private boolean existingProject;
     // A refused Program may only report its admission failure to the client.
     private String identityAdmissionFailure;
@@ -1257,6 +1276,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (!decompiler.setOptions(decompileOptions(payloadMiB)))
             throw new RequestFailure("decompile_options_failed", "Ghidra could not apply the selected native decompiler payload limit");
         decompiler.flushCache();
+        decompileResults.clear();
         decompileMaxPayloadMiB = payloadMiB;
     }
 
@@ -1279,17 +1299,22 @@ public final class ReaGhidraBridge extends HeadlessScript {
         Function function = resolveDecompileProcedure(selector, selection);
         try {
             String value = decompiledText(decompile(function));
+            List<String> limitations = new ArrayList<>(functionBoundaryLimitations(
+                function,
+                currentProgram.getListing().getInstructions(function.getBody(), true)
+            ));
+            boolean undefined = selection.has("undefined_function_entry");
+            if (undefined) limitations.add(0, undefinedFunctionLimitation(selection));
             JsonObject result = functionObservation(
                 value == null ? JsonNull.INSTANCE : GSON.toJsonTree(value),
-                functionBoundaryLimitations(
-                    function,
-                    currentProgram.getListing().getInstructions(function.getBody(), true)
-                )
+                limitations
             );
-            if (selection.size() > 0) result.add("selection", selection);
+            // The file-offset selection is a contract field; the undefined
+            // function's facts are carried by its limitation.
+            if (selection.size() > 0 && !undefined) result.add("selection", selection);
             return result;
         } catch (RequestFailure failure) {
-            if (selection.size() == 0) throw failure;
+            if (!selection.has("mapped_address")) throw failure;
             // Preserve completed resolution facts without changing the backend's
             // failure code or suggesting that the successful mapping was invalid.
             throw new RequestFailure(failure.code, "Selector " + selector +
@@ -1308,8 +1333,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
             } catch (RequestFailure failure) {
                 // Existing names/addresses win. Only an unresolved numeric input
                 // can fall back to source coordinates; ambiguity never falls back.
-                if (!failure.code.equals("procedure_not_found") || !selector.matches("0x[0-9a-fA-F]+"))
-                    throw failure;
+                if (!failure.code.equals("procedure_not_found")) throw failure;
+                // Analyzed code outside every function is still an analysis
+                // address, so it wins over a file-offset reading of the number.
+                Function undefined = undefinedFunctionAt(selector, selection);
+                if (undefined != null) return undefined;
+                if (!selector.matches("0x[0-9a-fA-F]+")) throw failure;
             }
         }
         String coordinate = explicitOffset ? selector.substring(prefix.length()) : selector;
@@ -1339,7 +1368,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 " has multiple loaded mappings: " + candidates.stream().map(ReaGhidraBridge::canonicalAddress).toList() +
                 "; select an explicit analysis address");
         if (candidates.isEmpty())
-            throw new RequestFailure("file_offset_unmapped", "File offset " + coordinate +
+            throw new RequestFailure("file_offset_unmapped",
+                (explicitOffset || !isMappedAnalysisAddress(selector) ? "" :
+                    coordinate + " is a mapped analysis address that holds no disassembled code and no procedure. Read as a file offset instead: ") +
+                "File offset " + coordinate +
                 " has no loaded source mapping for the admitted target file; Ghidra image base: " + canonicalAddress(currentProgram.getImageBase()) +
                 ". Inspect mappings with rea inspect-native-load-image <path> --provider ghidra --json or MCP inspect_native_load_image.");
         Address mapped = candidates.get(0);
@@ -1353,6 +1385,41 @@ public final class ReaGhidraBridge extends HeadlessScript {
         selection.addProperty("mapped_address", canonicalAddress(mapped));
         selection.addProperty("procedure_address", canonicalAddress(function.getEntryPoint()));
         return function;
+    }
+
+    /**
+     * Ghidra can disassemble code without creating a function for it, for
+     * example a range named only by an exception-frame entry and reached
+     * through a data reference, as `main` is in a stripped ELF. The decompiler
+     * panel reads such code through an on-the-fly UndefinedFunction, which
+     * leaves the Program unchanged; this does the same and records that the
+     * entry is inferred from control flow and absent from the inventory.
+     */
+    private Function undefinedFunctionAt(String selector, JsonObject selection) throws Exception {
+        Address address = isExplicitReaAddress(selector) ? parseReaAddress(selector) : tryParseAddress(selector);
+        if (address == null || !address.isMemoryAddress()) return null;
+        if (currentProgram.getListing().getInstructionContaining(address) == null) return null;
+        if (currentProgram.getFunctionManager().getFunctionContaining(address) != null) return null;
+        ghidra.util.UndefinedFunction undefined =
+            ghidra.util.UndefinedFunction.findFunction(currentProgram, address, monitor);
+        if (undefined == null) return null;
+        selection.addProperty("requested_address", canonicalAddress(address));
+        selection.addProperty("undefined_function_entry", canonicalAddress(undefined.getEntryPoint()));
+        return undefined;
+    }
+
+    private boolean isMappedAnalysisAddress(String selector) {
+        Address address = tryParseAddress(selector);
+        return address != null && address.isMemoryAddress() && currentProgram.getMemory().contains(address);
+    }
+
+    private static String undefinedFunctionLimitation(JsonObject selection) {
+        return "No Ghidra function contains " + selection.get("requested_address").getAsString() +
+            ": Ghidra disassembled this code without creating a function, so it is absent from the procedure inventory. " +
+            "This pseudocode is Ghidra's on-the-fly decompilation from " +
+            selection.get("undefined_function_entry").getAsString() +
+            ", an entry inferred by following control flow back from the requested address. " +
+            "The entry and extent are not an analyzed function boundary, and the Program is unchanged.";
     }
 
     private boolean isTargetSource(FileBytes source) throws Exception {
@@ -1806,6 +1873,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         nameInventory = null;
         procedureInventory = null;
         procedureNameIndex = null;
+        decompileResults.clear();
         if (decompiler != null) decompiler.flushCache();
     }
 
@@ -3158,6 +3226,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (function == null)
             // Other procedure operations retain their analysis-address semantics.
             throw new RequestFailure("procedure_not_found", "No procedure exists at the requested address: " + value +
+                (currentProgram.getListing().getInstructionContaining(address) == null ? "" :
+                    ". Ghidra disassembled code there without creating a function, so it is absent from the procedure inventory; " +
+                    "procedure_pseudo_code can decompile it on the fly, and inspect_native_instruction reads its instructions") +
                 "; Ghidra image base: " + canonicalAddress(currentProgram.getImageBase()) +
                 ". Choose an observed analysis address. CLI: rea search <path> . --kind procedures --mode regex --provider ghidra --json; " +
                 "MCP: list_procedures. Inspect the loaded base and source mappings with CLI rea analyze <path> --provider ghidra --json " +
@@ -4576,6 +4647,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (function.isExternal() || function.getBody().isEmpty()) {
             return null;
         }
+        // The modification number changes with every committed Program edit,
+        // so an edit that skipped the explicit invalidation still misses.
+        DecompileCacheKey key = new DecompileCacheKey(
+            function.getEntryPoint(),
+            function instanceof ghidra.util.UndefinedFunction,
+            currentProgram.getModificationNumber(),
+            decompileMaxPayloadMiB
+        );
+        java.lang.ref.SoftReference<DecompileResults> retained = decompileResults.get(key);
+        DecompileResults reused = retained == null ? null : retained.get();
+        if (reused != null) return reused;
         DecompileResults results = decompiler.decompileFunction(
             function,
             decompileTimeoutSeconds,
@@ -4603,8 +4685,18 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 " MiB. " + decompilePayloadRecovery()
             );
         }
+        // Only a completed decompilation is reusable; failures stay retryable.
+        decompileResults.put(key, new java.lang.ref.SoftReference<>(results));
         return results;
     }
+
+    /** Every input a completed decompilation of one Program state depends on. */
+    private record DecompileCacheKey(
+        Address entry,
+        boolean undefinedFunction,
+        long programModification,
+        Integer maxPayloadMiB
+    ) {}
 
     private String decompilePayloadRecovery() {
         int effective = decompiler.getOptions().getMaxPayloadMBytes();

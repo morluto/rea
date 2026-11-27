@@ -281,7 +281,8 @@ export const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
       reason: null,
       // Dossier projections consume runtime budgets. Reobserve even an imported
       // snapshot so a raised or lowered budget cannot replay stale flow coverage.
-      // Ghidra retains its own native decompiler cache.
+      // The Java bridge keeps completed decompilations of the current Program
+      // state, so reobserving does not run the native decompiler again.
       ...(GHIDRA_MUTATING_OPERATIONS.has(operation) ||
       operation === "list_documents"
         ? {}
