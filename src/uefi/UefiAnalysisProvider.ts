@@ -28,6 +28,7 @@ import { jsonValueSchema, ownedJsonValueSchema } from "../domain/jsonValue.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Result } from "../domain/result.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
+import { Budget } from "../domain/budget.js";
 import {
   uefiResultSchemas,
   type UefiExtractResult,
@@ -132,6 +133,8 @@ const AMI_NVRAM_ABSENT =
   "No AMI NVRAM variable stores (NVAR chains) were found in the image.";
 const EDK2_NVRAM_ABSENT =
   "No EDK2 variable stores (gEfiVariableGuid / gEfiAuthenticatedVariableGuid) were found in the image.";
+const EDK2_NVRAM_UNESTABLISHED =
+  "No formatted EDK2 variable store was found; the store signatures listed above were examined and rejected, so the image may still hold a damaged store.";
 
 const nvramLimitations = (
   ami: ReturnType<typeof scanAmiNvramStores>,
@@ -140,7 +143,11 @@ const nvramLimitations = (
   const limitations = [...ami.limitations, ...edk2.limitations];
   if (ami.stores.length === 0 && edk2.stores.length === 0) {
     if (ami.absent) limitations.push(AMI_NVRAM_ABSENT);
-    limitations.push(EDK2_NVRAM_ABSENT);
+    limitations.push(
+      edk2.rejectedSignatures === 0
+        ? EDK2_NVRAM_ABSENT
+        : EDK2_NVRAM_UNESTABLISHED,
+    );
   }
   return limitations;
 };
@@ -607,16 +614,20 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     image: Buffer,
     checkpoint: () => void,
   ): AnalysisExecution {
+    // One structural record ceiling covers the whole inspection.
+    const records = new Budget(UEFI_FIRMWARE_LIMITS.scanRecords);
     const ami = scanAmiNvramStores(
       image,
       request.input.max_stores,
       request.input.max_depth,
       checkpoint,
+      records,
     );
     const edk2 = scanEdk2VariableStores(
       image,
       request.input.max_stores,
       checkpoint,
+      records,
     );
     const limitations = nvramLimitations(ami, edk2);
     const result: UefiNvramInspectResult =
@@ -868,7 +879,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           ? scan.limitations
           : gaps
               .filter(({ kind }) => kind !== "pad-file")
-              .slice(0, 512)
+              .slice(0, UEFI_FIRMWARE_LIMITS.limitationLines)
               .map(({ detail }) => detail),
     });
   }

@@ -314,6 +314,7 @@ export const scanAmiNvramStores = (
   maxStores: number,
   maxDepth: number,
   checkpoint: () => void = () => {},
+  records: Budget = new Budget(UEFI_FIRMWARE_LIMITS.scanRecords),
 ): AmiNvramScan => {
   const stores: AmiNvramStore[] = [];
   const limitations: string[] = [];
@@ -321,9 +322,9 @@ export const scanAmiNvramStores = (
   let partial = false;
   const noteOmission = (detail: string): void => {
     partial = true;
-    if (limitations.length < 512) limitations.push(detail);
+    if (limitations.length < UEFI_FIRMWARE_LIMITS.limitationLines)
+      limitations.push(detail);
   };
-  const records = new Budget(UEFI_FIRMWARE_LIMITS.scanRecords);
   const limit: { offset: number | null } = { offset: null };
   const reserve: ReserveNvarRecord = (offset) => {
     checkpoint();

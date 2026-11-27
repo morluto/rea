@@ -12,6 +12,7 @@ import {
 import { scanEdk2VariableStores } from "./UefiEdk2Nvram.js";
 import { scanAmiNvramStores } from "./UefiNvram.js";
 import { UefiAnalysisProvider } from "./UefiAnalysisProvider.js";
+import { Budget } from "../domain/budget.js";
 
 const expectOk = <
   T extends
@@ -684,4 +685,135 @@ it("exposes edk2_stores digests and suppresses AMI-absent wording through the pr
     data_length: 4,
     data_sha256: expectedDigest,
   });
+});
+
+const inspectNvram = async (image: Buffer): Promise<UefiNvramInspectResult> => {
+  const directory = await createTestTempDirectory("rea-uefi-edk2-scope-");
+  const imagePath = join(directory, "image.fd");
+  await writeFile(imagePath, image);
+  const provider = new UefiAnalysisProvider();
+  onTestFinished(() => provider.close());
+  const executed = expectOk(
+    await provider.execute(
+      uefiRequestSchema.parse({
+        operation: "inspect_uefi_nvram",
+        input: { path: imagePath, max_stores: 64, max_depth: 2 },
+      }),
+    ),
+  );
+  return executed.value.result as UefiNvramInspectResult;
+};
+
+it("does not claim EDK2 absence when a store signature has an unusable header", async () => {
+  // A signature whose header lacks the formatted marker is not a store header.
+  const image = Buffer.alloc(0x200, 0xff);
+  uuidLe("aaf32c78-947b-439a-a180-2e144ec37792").copy(image, 0x40);
+  image.writeUInt32LE(0x100, 0x40 + 16);
+  image.writeUInt8(0xff, 0x40 + 20);
+  image.writeUInt8(0xff, 0x40 + 21);
+
+  const scan = scanEdk2VariableStores(image, 8);
+  expect(scan.stores).toEqual([]);
+  expect(scan.rejectedSignatures).toBe(1);
+  expect(scan.coverage).toBe("complete");
+  expect(scan.limitations).toEqual([
+    "EDK2 gEfiAuthenticatedVariableGuid signature at 0x40 is not a formatted variable-store header (Format 0xff, Size 0x100); its bytes were not walked as variables.",
+  ]);
+
+  const result = await inspectNvram(image);
+  expect(result.edk2_stores).toEqual([]);
+  const limitations = result.limitations.join(" ");
+  expect(limitations).toContain("No formatted EDK2 variable store was found");
+  expect(limitations).not.toContain("No EDK2 variable stores");
+});
+
+it("counts store signatures beyond the reported matches", () => {
+  const image = Buffer.alloc(0x400, 0x00);
+  for (let index = 0; index < 10; index++)
+    uuidLe("ddcf3616-3275-4164-98b6-fe85707ffe7d").copy(image, index * 0x40);
+  const scan = scanEdk2VariableStores(image, 8);
+  expect(scan.rejectedSignatures).toBe(10);
+  expect(scan.limitations).toHaveLength(9);
+  expect(scan.limitations.at(-1)).toBe(
+    "2 further EDK2 store signatures are not formatted variable-store headers.",
+  );
+});
+
+const writeWorkingBlock = (
+  image: Buffer,
+  offset: number,
+  firstWriteFlags: number,
+): void => {
+  // FtwInitWorkSpaceHeader: 0xff fill, then Signature and WriteQueueSize.
+  image.fill(0xff, offset, offset + 32);
+  uuidLe("9e58292b-7c68-497d-a0ce-6500fd9f1b95").copy(image, offset);
+  image.writeUInt32LE(0x12345678, offset + 16);
+  image.writeUInt8(0xfe, offset + 20);
+  image.writeBigUInt64LE(0xfe0n, offset + 24);
+  image.writeUInt8(firstWriteFlags, offset + 32);
+};
+
+it("notes an EDK2 FTW working block whose write queue holds records", () => {
+  const store = buildSyntheticEdk2Vars();
+  const image = Buffer.concat([store, Buffer.alloc(0x1000, 0xff)]);
+  writeWorkingBlock(image, 0x1000, 0xfc);
+  const scan = scanEdk2VariableStores(image, 8);
+  expect(scan.stores).toHaveLength(1);
+  expect(scan.coverage).toBe("complete");
+  expect(scan.limitations).toEqual([
+    "EDK2 fault-tolerant-write working block at 0x1000 holds write records. REA does not replay them or reconstruct a store from the FTW spare area, so a store interrupted mid-reclaim may be reported from its stale copy.",
+  ]);
+});
+
+it("adds no FTW caveat for an erased write queue or a bare signature constant", () => {
+  const store = buildSyntheticEdk2Vars();
+  const erased = Buffer.concat([store, Buffer.alloc(0x1000, 0xff)]);
+  writeWorkingBlock(erased, 0x1000, 0xff);
+  expect(scanEdk2VariableStores(erased, 8).limitations).toEqual([]);
+
+  // The GUID constant inside a driver is followed by unrelated bytes.
+  const driver = Buffer.concat([store, Buffer.alloc(0x1000, 0x00)]);
+  uuidLe("9e58292b-7c68-497d-a0ce-6500fd9f1b95").copy(driver, 0x1000);
+  expect(scanEdk2VariableStores(driver, 8).limitations).toEqual([]);
+});
+
+it("charges EDK2 records against the inspection's shared ceiling", () => {
+  // The provider passes one budget to both scanners; an exhausted one stops EDK2.
+  const records = new Budget(1);
+  records.tryCharge(1);
+  const scan = scanEdk2VariableStores(
+    buildSyntheticEdk2Vars(),
+    64,
+    () => {},
+    records,
+  );
+  expect(scan.stores).toEqual([]);
+  expect(scan.coverage).toBe("partial");
+  expect(scan.limitations[0]).toContain("Structural record limit");
+});
+
+it("walks a formatted EDK2 store that is not healthy and reports EDK2's verdict", () => {
+  // EDK2 treats it as invalid; UEFITool still walks it. Both facts are kept.
+  const image = buildSyntheticEdk2Vars();
+  image.writeUInt8(0xff, 0x48 + 21);
+  const scan = scanEdk2VariableStores(image, 8);
+  expect(scan.coverage).toBe("complete");
+  expect(scan.rejectedSignatures).toBe(0);
+  expect(scan.stores).toMatchObject([{ storeState: 0xff }]);
+  expect(scan.stores[0]?.variables).toHaveLength(2);
+  expect(scan.limitations).toEqual([
+    "EDK2 store at 0x48 has State 0xff, not HEALTHY (0xfe); EDK2 treats this store as invalid and would not read its variables.",
+  ]);
+});
+
+it("states the alignment assumption for a store at an unaligned image offset", () => {
+  const image = Buffer.concat([
+    Buffer.alloc(2, 0x00),
+    buildSyntheticEdk2Vars(),
+  ]);
+  const scan = scanEdk2VariableStores(image, 8);
+  expect(scan.stores).toMatchObject([{ offset: 0x4a }]);
+  expect(scan.limitations).toContain(
+    "EDK2 store at 0x4a is not 4-byte aligned; variable positions assume HEADER_ALIGN applies to image offsets.",
+  );
 });
