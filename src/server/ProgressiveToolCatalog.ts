@@ -86,6 +86,11 @@ export class ProgressiveToolCatalog {
     });
   }
 
+  /** Whether exact-name discovery may enable this registration. */
+  canDiscoverTool(name: string): boolean {
+    return this.tools.has(name);
+  }
+
   private inputSchemaFor(registered: RegisteredTool): Record<string, unknown> {
     let schema = this.inputSchemas.get(registered);
     if (schema === undefined) {
@@ -168,7 +173,7 @@ export class ProgressiveToolCatalog {
           ? matches.length === 0
             ? "No matches. Try fewer or different task keywords, or browse without query."
             : "No remaining matches at this offset. Use offset 0 to restart this query, or select an earlier offset."
-          : "Call the returned tool by its original name using input_schema. Your client must refresh tools/list first; if it cannot, reconnect with REA_MCP_TOOL_CATALOG_PROFILE=full.",
+          : "Call the returned tool by its original name using input_schema. If your client caches the tool list, refresh tools/list first or reconnect with REA_MCP_TOOL_CATALOG_PROFILE=full.",
     };
     // This reply borrows read-only SDK schema projections for synchronous
     // encoding; validate the new reply without copying their complete trees.

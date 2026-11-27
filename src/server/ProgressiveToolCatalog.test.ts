@@ -323,11 +323,6 @@ it("points unknown tool calls to discover_tools and only suggests currently adve
   expect(loadedQuery).not.toContain("beta_sqlite");
   expect(loadedQuery).not.toContain("excluded_sqlite");
 
-  // Calling an unloaded or excluded tool directly still returns the SDK disabled error.
-  await expect(
-    f.client.callTool({ name: "beta_sqlite", arguments: {} }),
-  ).rejects.toThrow("disabled");
-
   // Reconnecting the server resets cold visibility, so a later session does
   // not receive suggestions for tools loaded only in the previous session.
   await f.client.close();
@@ -393,4 +388,25 @@ it("returns ranked matches for multi-word task queries when not every word appea
   );
   expect(unmatched.total_matches).toBe(0);
   expect(unmatched.tools).toEqual([]);
+});
+
+it("recovers an exact cold tool call through discovery without an SDK list refresh", async () => {
+  const f = await connect();
+  const call = (name: string) => f.client.callTool({ name, arguments: {} });
+  await expect(call("alpha_sqlite")).rejects.toMatchObject({
+    code: -32602,
+    message: expect.stringContaining(
+      'discover_tools with {"names":["alpha_sqlite"]}',
+    ),
+  });
+  expect(f.changed).not.toHaveBeenCalled();
+  await expect(call("excluded_sqlite")).rejects.toMatchObject({
+    code: -32602,
+    message: expect.stringContaining("Tool excluded_sqlite disabled"),
+  });
+  expect(f.forbidden).not.toHaveBeenCalled();
+  const discovery = await f.discover({ names: ["alpha_sqlite"] });
+  expect(discovery.isError).not.toBe(true);
+  expect(f.changed).toHaveBeenCalledOnce();
+  expect((await call("alpha_sqlite")).isError).not.toBe(true);
 });

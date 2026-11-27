@@ -910,11 +910,23 @@ describe("unknown MCP tool remediation", () => {
       expect(hotMessage).toContain("open_binary");
       expect(hotMessage).toContain("call discover_tools");
 
+      const exactColdMessage = await callUnknownMessage(
+        client,
+        "procedure_pseudo_code",
+      );
+      expect(exactColdMessage).toContain(
+        'discover_tools with {"names":["procedure_pseudo_code"]}',
+      );
+
       const loaded = await client.callTool({
         name: "discover_tools",
         arguments: { names: ["procedure_pseudo_code"] },
       });
       expect(loaded.isError).not.toBe(true);
+
+      expect(
+        await client.callTool({ name: "procedure_pseudo_code", arguments: {} }),
+      ).toMatchObject({ content: [{ type: "text", text: "ok" }] });
 
       const afterLoadMessage = await callUnknownMessage(client, "decompile");
       expect(afterLoadMessage).toContain(

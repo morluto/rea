@@ -901,20 +901,18 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
     if (
       !isJSONRPCErrorResponse(recovered) ||
       tool === undefined ||
-      recovered.error.code !== -32602 ||
-      recovered.error.message !== `Tool ${tool} not found`
+      recovered.error.code !== -32602
     )
       return recovered;
-    return {
-      ...recovered,
-      error: {
-        ...recovered.error,
-        message: formatUnknownMcpToolMessage(
-          tool,
-          this.currentAdvertisedTools(),
-        ),
-      },
-    };
+    const messageText = recovered.error.message;
+    const disabled = messageText === `Tool ${tool} disabled`;
+    if (!disabled && messageText !== `Tool ${tool} not found`) return recovered;
+    const catalog = this.currentAdvertisedTools();
+    if (disabled && !catalog.canDiscoverTool?.(tool)) return recovered;
+    const hint = disabled
+      ? `The MCP tool ${tool} is in scope but was not loaded. Call discover_tools with ${JSON.stringify({ names: [tool] })}, then retry. If your client requires a refreshed catalog, refresh tools/list after discovery or reconnect with REA_MCP_TOOL_CATALOG_PROFILE=full.`
+      : formatUnknownMcpToolMessage(tool, catalog);
+    return { ...recovered, error: { ...recovered.error, message: hint } };
   }
 }
 

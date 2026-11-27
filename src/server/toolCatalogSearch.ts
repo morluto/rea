@@ -8,6 +8,7 @@ export interface AdvertisedToolDescriptor {
 export interface AdvertisedToolCatalog {
   readonly tools: readonly AdvertisedToolDescriptor[];
   readonly discoveryAvailable: boolean;
+  readonly canDiscoverTool?: (name: string) => boolean;
 }
 
 /** Pre-normalized tool search text shared by discover_tools and unknown-tool hints. */
