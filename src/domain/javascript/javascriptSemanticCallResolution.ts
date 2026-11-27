@@ -9,10 +9,8 @@ import type {
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
-import {
-  unwrapJavaScriptExpression,
-  runtimeFunctionParameters,
-} from "./javascriptAstValues.js";
+import { runtimeFunctionParameters } from "./javascriptAstValues.js";
+import { unwrapPureSemanticSequenceExpression } from "./javascriptSemanticGlobalReference.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
@@ -60,13 +58,15 @@ export const resolveLocalCallables = (
     bindingCache: input.bindingCache,
   });
 
+export { unwrapPureSemanticSequenceExpression };
+
 const resolveCallables = (
   node: t.Node,
   context: CallResolutionContext,
 ): LocalCallableResolution => {
-  // `unwrapJavaScriptExpression` strips all transparent layers iteratively,
-  // so a single recursion step suffices (no per-layer stack growth).
-  const unwrapped = unwrapJavaScriptExpression(node).node;
+  // `unwrapPureSemanticSequenceExpression` strips all transparent layers and
+  // pure-leading sequences iteratively, so a single recursion step suffices.
+  const unwrapped = unwrapPureSemanticSequenceExpression(node, context.state);
   if (unwrapped !== node) return resolveCallables(unwrapped, context);
   const direct = semanticCallableIdForNode(node);
   if (direct !== null && context.callableById.has(direct))

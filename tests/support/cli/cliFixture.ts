@@ -12,15 +12,12 @@ import {
   createTestWorkspace,
   removeTestWorkspace,
 } from "../workspace/workspaceFixture.js";
-import {
-  processTest,
-  type ProcessResult,
-  type TestProcesses,
-} from "../process/processFixture.js";
+import { processTest, type TestProcesses } from "../process/processFixture.js";
 import {
   createCliCommandSession,
   type CliCommandSession,
 } from "./cliCommandSession.js";
+import { withParsedStdout, type CliResult } from "./cliResult.js";
 import {
   createSharedMcpSession,
   type SharedMcpSession as GenericSharedMcpSession,
@@ -54,11 +51,6 @@ export interface CliInvocation {
   readonly terminal?: boolean;
 }
 
-/** Normalized result from the compiled REA CLI. */
-export interface CliResult extends ProcessResult {
-  readonly json: unknown | undefined;
-}
-
 /** One compiled stdio MCP tool call. */
 export type SharedMcpCall = Awaited<
   ReturnType<
@@ -85,6 +77,7 @@ export interface TestCli {
 export type SharedMcpSession<T = SharedMcpCall> = GenericSharedMcpSession<T>;
 
 export { createSharedMcpSession };
+export type { CliResult } from "./cliResult.js";
 
 const sharedMcpSessionClosed = (): Error =>
   new Error("Shared MCP session is closed");
@@ -105,16 +98,6 @@ const createFileMcpSession = (
     );
     return mcp.call;
   });
-
-const parseJson = (stdout: string): unknown | undefined => {
-  const document = stdout.trim();
-  if (document.length === 0) return undefined;
-  try {
-    return JSON.parse(document) as unknown;
-  } catch {
-    return undefined;
-  }
-};
 
 /** Child environment for one compiled CLI process, without the parent environment. */
 export const cliProcessEnvironment = (
@@ -230,7 +213,7 @@ export const createTestCli = (
       ...(input === undefined ? {} : { input }),
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
     });
-    return { ...result, json: parseJson(result.stdout) };
+    return withParsedStdout(result);
   },
 });
 

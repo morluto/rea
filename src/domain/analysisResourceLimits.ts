@@ -121,6 +121,22 @@ export const MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS = Math.floor(
   MAX_NODE_TIMER_DELAY_MS / 1000,
 );
 
+/**
+ * tools/list page budget when `REA_MCP_TOOLS_LIST_PAGE_BYTES` is unset.
+ * FastMCP's default SSE event cap is 1,048,576 bytes. 128 KiB of that stays
+ * free for SSE framing and transport fields.
+ */
+export const DEFAULT_MCP_TOOLS_LIST_PAGE_BYTES = 917_504;
+
+/** A page budget of zero admits nothing, so the setting starts at one byte. */
+export const MINIMUM_MCP_TOOLS_LIST_PAGE_BYTES = 1;
+
+/**
+ * Largest tools/list page REA will advertise. This is FastMCP's default SSE
+ * event cap. A larger JSON-RPC message cannot be delivered to that client.
+ */
+export const MAXIMUM_MCP_TOOLS_LIST_PAGE_BYTES = 1_048_576;
+
 /** Matching deadline used when the setting is unset. Today's fixed constant. */
 export const DEFAULT_REGEX_MATCHING_DEADLINE_MS = 5_000;
 
@@ -309,6 +325,18 @@ export const DEFAULT_AGENT_RESULT_BUDGET_BYTES = 32_768;
 export const MINIMUM_AGENT_RESULT_BUDGET_BYTES = 4_096;
 /** The stdio frame floor (10 MiB); the transport limit applies above it. */
 export const MAXIMUM_AGENT_RESULT_BUDGET_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Default byte allowance for armed `observe_web_session` timeline rows.
+ * Request-identity metadata uses `WEB_RUNTIME_LIMITS.retainedEventBytes` as
+ * its own counter. The two counters start at the same 8 MiB and do not share
+ * remaining room.
+ */
+export const DEFAULT_BROWSER_TIMELINE_RETAINED_BYTES = 8 * 1024 * 1024;
+/** One byte is enough to refuse the next row. */
+export const MINIMUM_BROWSER_TIMELINE_RETAINED_BYTES = 1;
+/** Admission arithmetic stays inside a safe integer. */
+export const MAXIMUM_BROWSER_TIMELINE_RETAINED_BYTES = Number.MAX_SAFE_INTEGER;
 
 /**
  * Total size of the per-user cache that keeps over-budget CLI results

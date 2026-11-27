@@ -109,6 +109,16 @@ both `source.kind: "retained-evidence"` and `view: {kind: "native", facet:
 Use the producer's handoff for other supported views rather than maintaining
 another supposedly exhaustive list in the shared consumer description.
 
+Make an input refusal teach the rule it applies. Below the first level the
+compact profile keeps no refinement, `pattern`, `not` or description, so a
+nested rule reaches the agent only when a call is refused. Report the issue
+at the field path, and state the rule and the accepted form in one sentence,
+as in `A page's fetch cannot set Sec-Trace: names starting with Proxy- or Sec-
+are reserved for the browser.` A bare `Invalid value` costs another round trip.
+Do not echo a refused value that may carry a secret, such as a URL or an
+endpoint identifier. Restating the rule in the tool description costs tokens
+on every listing; do that only for a rule most calls need.
+
 Keep configuration tutorials and detailed matching algorithms with their owning
 parameter contracts, product guides and actionable failures. Retain applicability,
 source identity, uncertainty, authority and cleanup facts needed to choose or
@@ -251,6 +261,20 @@ does not establish another instance.
     operation actually reads. A header reader is bounded by the bytes it reads,
     not by file size. Name the ceiling and its recovery as described in
     [admission limits and recovery](../reference/limits-and-recovery.md).
+  - Choose the limit's control. Give it a per-call parameter. Also register
+    one analysis setting per limit family an agent plausibly raises
+    repeatedly in a session, such as member or entry counts,
+    decompressed or retained bytes, and producer output bytes, not one per
+    sub-limit: every setting ID is enumerated in `update_analysis_settings`'
+    advertised schema and costs tokens in every session. One-off structural
+    limits, such as nesting depth or a single document, stay per-call. A
+    limit that is a real format, protocol or representation fact stays fixed
+    with its stated reason.
+  - Set `required_value` whenever the producer measured the complete need (not
+    a lower bound), and let the
+    typed refusal generate the recovery
+    ([adjustable budget recovery](../reference/limits-and-recovery.md#adjustable-budget-recovery));
+    do not author duplicate recovery prose.
   - A delivery budget never refuses. It sizes the inline answer for the
     agent's context, retains the complete result as Evidence, and returns a
     summary, the Evidence ID and a cursor. The agent's context is a valid

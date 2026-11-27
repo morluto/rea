@@ -3,7 +3,10 @@ import {
   type AnalysisObservation,
 } from "../../domain/analysisObservation.js";
 import { estimateJsonArrayScalarEntry } from "../JsonAuthenticationHeadroom.js";
-import type { EvidenceCreationOptions } from "../../domain/evidence.js";
+import type {
+  EvidenceCreationOptions,
+  Evidence,
+} from "../../domain/evidence.js";
 import {
   admitInvestigationAuthentication,
   type RecoveryAdmission,
@@ -16,19 +19,24 @@ export const admitCompletedAnalysis = (
   observation: AnalysisObservation,
   {
     callerTarget,
+    metadata,
     admit = (input, name, additional) =>
       admitInvestigationAuthentication(input, name, {}, additional),
   }: {
     readonly callerTarget?: EvidenceCreationOptions["callerTarget"];
+    readonly metadata?: Readonly<Pick<Evidence, "provider_selection">>;
     readonly admit?: RecoveryAdmission | undefined;
   } = {},
 ) => {
-  const envelope = analysisExecutionEnvelopeForAdmission(
-    operation,
-    parameters,
-    observation,
-    callerTarget,
-  );
+  const envelope = {
+    ...analysisExecutionEnvelopeForAdmission(
+      operation,
+      parameters,
+      observation,
+      callerTarget,
+    ),
+    ...metadata,
+  };
   let valueBytes = 0;
   let serializedUtf16Bytes = 0;
   for (const [index, source] of (observation.sourceEvidence ?? []).entries()) {

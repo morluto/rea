@@ -692,3 +692,155 @@ it("indexes one statement body for distinct captured functions", () => {
     lookup.mockRestore();
   }
 });
+
+it.each([
+  [
+    "single numeric literal",
+    "function localFn(x) { return x; } (0, localFn)(1);",
+  ],
+  [
+    "const alias",
+    "function localFn(x) { return x; } const aliasFn = localFn; (0, aliasFn)(1);",
+  ],
+  [
+    "multi-literal sequence",
+    "function localFn(x) { return x; } (0, 0, localFn)(1);",
+  ],
+  [
+    "nested pure sequence",
+    "function localFn(x) { return x; } (0, (0, localFn))(1);",
+  ],
+  [
+    "mixed pure primitives",
+    'function localFn(x) { return x; } ("ok", null, undefined, true, false, void 0, !0, -1, 0n, `x`, localFn)(1);',
+  ],
+  [
+    "stored sequence alias",
+    "function localFn(x) { return x; } const wrapped = (0, localFn); wrapped(1);",
+  ],
+])("resolves pure sequence call target (%s)", (_label, source) => {
+  const ir = analyzeJavaScriptSemantics(source);
+  const localFn = ir.callables.find(({ name }) => name === "localFn");
+  if (localFn === undefined) throw new Error("Missing localFn callable");
+  expect(ir.callSites).toHaveLength(1);
+  expect(ir.callSites[0]).toMatchObject({
+    resolution: "exact",
+    calleeCallableIds: [localFn.callableId],
+  });
+  expect(ir.argumentFlows).toEqual([
+    expect.objectContaining({
+      callSiteId: ir.callSites[0]?.callSiteId,
+      argumentIndex: 0,
+      callableId: localFn.callableId,
+    }),
+  ]);
+  expect(ir.callReturnFlows).toEqual([
+    expect.objectContaining({
+      callSiteId: ir.callSites[0]?.callSiteId,
+      callableId: localFn.callableId,
+    }),
+  ]);
+  expect(ir.frontiers).toEqual([]);
+  expect(ir.expressionFlows).toEqual([]);
+});
+
+it("resolves conditional candidates inside a pure sequence call target", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    function a(x) { return x; }
+    function b(x) { return x; }
+    (0, cond ? a : b)(1);
+  `);
+  const a = ir.callables.find(({ name }) => name === "a");
+  const b = ir.callables.find(({ name }) => name === "b");
+  if (a === undefined || b === undefined)
+    throw new Error("Missing conditional callables");
+  expect(ir.callSites).toHaveLength(1);
+  expect(ir.callSites[0]).toMatchObject({
+    resolution: "ambiguous",
+    calleeCallableIds: [a.callableId, b.callableId].sort(),
+  });
+  expect(ir.argumentFlows.map(({ callableId }) => callableId).sort()).toEqual(
+    [a.callableId, b.callableId].sort(),
+  );
+  expect(ir.frontiers).toEqual([
+    expect.objectContaining({
+      kind: "dynamic-call",
+      reason: "Conditional or logical call target has multiple candidates.",
+    }),
+  ]);
+  expect(ir.expressionFlows.map(({ operator }) => operator)).toEqual(["?:"]);
+});
+
+it.each([
+  [
+    "side-effecting call",
+    "function sideEffect() {} function localFn() {} (sideEffect(), localFn)();",
+  ],
+  [
+    "side-effecting void",
+    "function sideEffect() {} function localFn() {} (void sideEffect(), localFn)();",
+  ],
+  [
+    "non-literal binding read",
+    "function localFn() {} const extra = 0; (extra, localFn)();",
+  ],
+  [
+    "shadowed undefined",
+    "function localFn() {} function run(undefined) { (undefined, localFn)(); }",
+  ],
+  [
+    "with dynamic scope",
+    "function localFn() {} with ({}) { (undefined, localFn)(); }",
+  ],
+  [
+    "inner impure sequence",
+    "function sideEffect() {} function localFn() {} (0, (sideEffect(), localFn))();",
+  ],
+])(
+  "preserves conservative unresolved reporting for impure sequence (%s)",
+  (_label, source) => {
+    const ir = analyzeJavaScriptSemantics(source);
+    const localFn = ir.callables.find(({ name }) => name === "localFn");
+    if (localFn === undefined) throw new Error("Missing localFn");
+    const outerCall = ir.callSites.find(
+      ({ calleeCallableIds }) => calleeCallableIds.length === 0,
+    );
+    expect(outerCall).toMatchObject({
+      resolution: "unresolved",
+      calleeCallableIds: [],
+    });
+    expect(ir.frontiers).toContainEqual(
+      expect.objectContaining({
+        kind: "dynamic-call",
+        location: outerCall?.calleeLocation,
+        reason: "Unsupported SequenceExpression call target.",
+      }),
+    );
+  },
+);
+
+it("unwraps pure sequence around member calls to preserve MemberExpression behavior", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    const obj = { method(x) { return x; } };
+    (0, obj.method)(1);
+  `);
+  expect(ir.callSites).toHaveLength(1);
+  expect(ir.callSites[0]).toMatchObject({
+    resolution: "unresolved",
+    calleeCallableIds: [],
+  });
+  expect(ir.frontiers).toEqual([
+    expect.objectContaining({
+      kind: "dynamic-call",
+      location: ir.callSites[0]?.calleeLocation,
+      reason: "Unsupported MemberExpression call target.",
+    }),
+  ]);
+  expect(ir.expressionFlows).toEqual([]);
+  expect(ir.objectOperations).toEqual([
+    expect.objectContaining({
+      kind: "read",
+      propertyPath: ["method"],
+    }),
+  ]);
+});

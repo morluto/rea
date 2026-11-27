@@ -131,6 +131,10 @@ export const registerBrowserCommands = (
         observation_ms: {
           description: "Observation duration in milliseconds",
         },
+        timeline_retained_bytes: {
+          description:
+            "Byte allowance for armed timeline rows on this call. Omitted uses browser.timeline_retained_bytes.",
+        },
       },
     },
     observeThroughBrowser(observeSession, (provider, input, options) =>

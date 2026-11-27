@@ -9,7 +9,10 @@ import {
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { readMachoImageFromReader } from "../../domain/apple/machoImage.js";
-import { BinaryResourceFailure } from "../../domain/binaryContainer.js";
+import {
+  BinaryResourceFailure,
+  DEFAULT_NATIVE_STRUCTURE_BYTES,
+} from "../../domain/binaryContainer.js";
 import {
   MAX_DWARF_DECOMPRESSED_SECTION_BYTES,
   inspectDwarfUnitsInputSchema,
@@ -24,8 +27,6 @@ import { DwarfUnitsProvider } from "./DwarfUnitsProvider.js";
 import {
   DwarfSectionAllowanceFailure,
   locateDwarfSectionsFromHandle,
-  MAX_PE_DECODED_NAME_BYTES,
-  MAX_PE_SECTION_NAME_BYTES,
 } from "./DwarfSections.js";
 import {
   abbrevTable,
@@ -48,6 +49,8 @@ const inspect = async (
     readonly architecture?: "x86" | "x86_64" | "arm" | "arm64";
     readonly offset?: number;
     readonly limit?: number;
+    readonly max_structure_bytes?: number;
+    readonly max_decompressed_bytes?: number;
   } = {},
 ) => {
   const root = await createTestTempDirectory("rea-dwarf-units-");
@@ -188,12 +191,49 @@ it("refuses a decompression bomb before inflation and reads zlib, zstd, and GNU 
     expect(bomb.error).toBeInstanceOf(AnalysisResourceConstraintError);
     expect(bomb.error).toMatchObject({
       resource: "memory",
-      fixedAllowance: {
-        name: "The DWARF decompressed section allowance",
-        kind: "parser",
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_decompressed_bytes",
+        effective_value: 268435456,
+        default_value: 268435456,
       },
     });
+    expect(
+      "limit" in bomb.error ? bomb.error.limit : undefined,
+    ).not.toHaveProperty("required_value");
   }
+  const compressedImage = elfDebugImage(
+    { info: elfCompressedBody(named.info, "zlib"), abbrev: named.abbrev },
+    { infoFlags: 0x800n },
+  );
+  const small = await inspect(compressedImage, { max_decompressed_bytes: 1 });
+  expect(small.ok).toBe(false);
+  if (!small.ok)
+    expect(small.error).toMatchObject({
+      limit: { parameter: "max_decompressed_bytes", effective_value: 1 },
+    });
+  const raised = await inspect(compressedImage, {
+    max_decompressed_bytes: Math.max(
+      named.info.length,
+      elfCompressedBody(named.info, "zlib").length,
+    ),
+  });
+  if (!raised.ok) throw raised.error;
+  expect(raised.value.units[0]).toMatchObject({
+    name: { state: "present", value: "compressed.c" },
+  });
+  expect(
+    inspectDwarfUnitsInputSchema.safeParse({
+      path: "/tmp/example.elf",
+      max_decompressed_bytes: 0,
+    }).success,
+  ).toBe(false);
+  expect(
+    inspectDwarfUnitsInputSchema.safeParse({
+      path: "/tmp/example.elf",
+      max_decompressed_bytes: 1_073_741_825,
+    }).success,
+  ).toBe(false);
   for (const [compression, body] of [
     ["zlib", elfCompressedBody(named.info, "zlib")],
     ["zstd", elfCompressedBody(named.info, "zstd")],
@@ -281,7 +321,7 @@ it("reads a GNU base64 COFF long section name", async () => {
   expect(read.value.units[0]?.name.value).toBe("base64.c");
 });
 
-it("decodes a shared PE long name once, including at the per-name allowance", async () => {
+it("decodes a shared PE long name once", async () => {
   const image = peImage([
     { name: "x".repeat(65536), body: Buffer.alloc(0) },
     ...Array.from({ length: 127 }, () => ({
@@ -308,23 +348,60 @@ it("decodes a shared PE long name once, including at the per-name allowance", as
   }
 });
 
-it("bounds individual PE long names before decoding", async () => {
-  const read = await inspect(
-    peImage([
-      {
-        name: "x".repeat(MAX_PE_SECTION_NAME_BYTES + 1),
-        body: Buffer.alloc(0),
-      },
-    ]),
-  );
-  if (read.ok) throw new Error("Expected a per-name allowance refusal");
-  expect(read.error).toBeInstanceOf(AnalysisResourceConstraintError);
-  expect(read.error).toMatchObject({
-    reportedLimits: {
-      boundary: "structure",
-      maximum: MAX_PE_SECTION_NAME_BYTES,
+it("bounds individual PE long names with max_structure_bytes before decoding", async () => {
+  const longNameLength = 100_000;
+  const image = peImage([
+    {
+      name: "x".repeat(longNameLength),
+      body: Buffer.alloc(0),
     },
-  });
+  ]);
+
+  // Admitted under the default 16 MiB max_structure_bytes (no 65,536-byte fixed cap).
+  const admitted = await inspect(image);
+  if (!admitted.ok) throw admitted.error;
+  expect(admitted.value.debug_info).toBe("absent");
+
+  // Refused before decoding when max_structure_bytes (even above 2 * 65,536) is
+  // below the 200,000-byte UTF-16 reservation.
+  const decode = vi.spyOn(Buffer.prototype, "toString");
+  try {
+    const refused = await inspect(image, { max_structure_bytes: 150_000 });
+    if (refused.ok) throw new Error("Expected a max_structure_bytes refusal");
+    if (!(refused.error instanceof AnalysisResourceConstraintError))
+      throw refused.error;
+    expect(refused.error).toMatchObject({
+      reportedLimits: {
+        boundary: "max_structure_bytes",
+        maximum: 150_000,
+      },
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_structure_bytes",
+        effective_value: 150_000,
+        default_value: DEFAULT_NATIVE_STRUCTURE_BYTES,
+        maximum: 512 * 1024 * 1024,
+        applies_at: "next_call",
+      },
+    });
+    expect(refused.error.fixedAllowance).toBeUndefined();
+    expect(
+      decode.mock.calls.filter(
+        ([encoding, start, end]) =>
+          encoding === "latin1" &&
+          typeof start === "number" &&
+          typeof end === "number" &&
+          end - start === longNameLength,
+      ),
+    ).toHaveLength(0);
+  } finally {
+    decode.mockRestore();
+  }
+
+  // Raising max_structure_bytes admits the same image.
+  const raised = await inspect(image, { max_structure_bytes: 200_000 });
+  if (!raised.ok) throw raised.error;
+  expect(raised.value.debug_info).toBe("absent");
 });
 
 it("bounds aggregate PE name decoding for overlapping string-table offsets", async () => {
@@ -341,10 +418,33 @@ it("bounds aggregate PE name decoding for overlapping string-table offsets", asy
   expect(read.error).toBeInstanceOf(AnalysisResourceConstraintError);
   expect(read.error).toMatchObject({
     reportedLimits: {
-      boundary: "structure",
-      maximum: MAX_PE_DECODED_NAME_BYTES,
+      boundary: "max_structure_bytes",
+      maximum: DEFAULT_NATIVE_STRUCTURE_BYTES,
+    },
+    limit: {
+      control_kind: "parameter",
+      parameter: "max_structure_bytes",
+      effective_value: DEFAULT_NATIVE_STRUCTURE_BYTES,
+      default_value: DEFAULT_NATIVE_STRUCTURE_BYTES,
+      maximum: 512 * 1024 * 1024,
+      applies_at: "next_call",
     },
   });
+});
+
+it("admits aggregate PE name decoding with a larger max_structure_bytes", async () => {
+  const read = await inspect(
+    peImage([
+      { name: "x".repeat(65536), body: Buffer.alloc(0) },
+      ...Array.from({ length: 299 }, (_, index) => ({
+        name: `/${String(index + 5)}`,
+        body: Buffer.alloc(0),
+      })),
+    ]),
+    { max_structure_bytes: 64 * 1024 * 1024 },
+  );
+  if (!read.ok) throw read.error;
+  expect(read.value.debug_info).toBe("absent");
 });
 
 it("rejects an unterminated PE long name within the decoding allowance", async () => {

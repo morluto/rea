@@ -16,9 +16,11 @@ import { decodeLimit } from "../domain/parseFailure.js";
 import { fixedCeilingConstraint } from "../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import {
+  NUGET_NUPKG_BUDGETS,
   NUGET_NUPKG_FORMAT,
-  NUGET_NUPKG_LIMIT_MAXIMA,
+  nugetNupkgBudgetLimit,
   type InspectNugetNupkgInput,
+  type NugetNupkgBudget,
 } from "../domain/nuget/nupkg.js";
 import { err, ok } from "../domain/result.js";
 import { errorMessage } from "../kernel/errorMessage.js";
@@ -28,13 +30,14 @@ import { parseNugetNupkg } from "./NugetNupkgParser.js";
 
 const OPERATION = "inspect_nuget_nupkg";
 
-const budgetRecovery = (
-  parameter: keyof typeof NUGET_NUPKG_LIMIT_MAXIMA,
-  selected: number,
-): string =>
-  selected >= NUGET_NUPKG_LIMIT_MAXIMA[parameter]
-    ? `${parameter} is at this operation's maximum of ${String(NUGET_NUPKG_LIMIT_MAXIMA[parameter])}; select a complete artifact within that bound.`
-    : `Raise ${parameter} above ${String(selected)}, up to ${String(NUGET_NUPKG_LIMIT_MAXIMA[parameter])}, or select a smaller artifact. The budget applies on the next call; repeating the unchanged request does not raise it.`;
+/** The refusal options for an exhausted per-call budget. */
+const budgetRecovery = (parameter: NugetNupkgBudget, selected: number) => ({
+  limit: nugetNupkgBudgetLimit(parameter, selected),
+  remediationAction:
+    selected >= NUGET_NUPKG_BUDGETS[parameter].maximum
+      ? `${parameter} is at this operation's maximum of ${String(NUGET_NUPKG_BUDGETS[parameter].maximum)}; select a complete artifact within that bound.`
+      : `Raise ${parameter} above ${String(selected)}, up to ${String(NUGET_NUPKG_BUDGETS[parameter].maximum)}, or select a smaller artifact. The budget applies on the next call; repeating the unchanged request does not raise it.`,
+});
 
 const nupkgFailure = (
   cause: unknown,
@@ -52,9 +55,7 @@ const nupkgFailure = (
       recognise: (failure, origin) => {
         if (isParseLimit(failure, NUGET_NUPKG_FORMAT)) {
           const parameter = (
-            Object.keys(
-              NUGET_NUPKG_LIMIT_MAXIMA,
-            ) as (keyof typeof NUGET_NUPKG_LIMIT_MAXIMA)[]
+            Object.keys(NUGET_NUPKG_BUDGETS) as NugetNupkgBudget[]
           ).find((name) => name === failure.failure.limit.name);
           return parseLimitConstraint(
             OPERATION,
@@ -67,12 +68,7 @@ const nupkgFailure = (
               retryable: false,
               ...(parameter === undefined
                 ? {}
-                : {
-                    remediationAction: budgetRecovery(
-                      parameter,
-                      failure.failure.limit.maximum,
-                    ),
-                  }),
+                : budgetRecovery(parameter, failure.failure.limit.maximum)),
             },
           );
         }
@@ -114,10 +110,7 @@ const nupkgFailure = (
           ),
           {
             retryable: false,
-            remediationAction: budgetRecovery(
-              "max_file_bytes",
-              input.max_file_bytes,
-            ),
+            ...budgetRecovery("max_file_bytes", input.max_file_bytes),
           },
         ),
       unclassified: (failure) =>

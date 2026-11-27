@@ -6,6 +6,7 @@ import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../../src/contracts/native
 import { elfDependencyFixture } from "../../../src/native/elf/ElfDependencies.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { fileInspectionTest } from "../../support/mcp/fileInspection.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
 const dependenciesContract = contractNamed(
   BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
@@ -87,6 +88,52 @@ fileInspectionTest(
         { name: "libm.so.6" },
         { name: "libc.so.6" },
       ],
+    });
+  },
+);
+
+fileInspectionTest(
+  "names the dependency count budget that stopped an inspection",
+  async ({ client }) => {
+    const root = await createTestTempDirectory("rea-elf-dependencies-limit-");
+    const path = join(root, "program");
+    await writeFile(path, elfDependencyFixture({ bits: 64, little: true }));
+    const refused = parseMcpToolError(
+      await client.callTool({
+        name: "inspect_elf_dependencies",
+        arguments: { path, max_needed: 1 },
+      }),
+    ).error;
+    expect(refused).toMatchObject({
+      code: "resource_constraint",
+      remediation: {
+        action: expect.stringContaining(
+          "Pass a larger max_needed on the next inspect_elf_dependencies call",
+        ),
+      },
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_needed",
+          effective_value: 1,
+          unit: "count",
+          minimum: 1,
+          maximum: 65536,
+          default_value: 1024,
+          applies_at: "next_call",
+        },
+      },
+    });
+    const refusedFile = parseMcpToolError(
+      await client.callTool({
+        name: "inspect_elf_dependencies",
+        arguments: { path, max_file_bytes: 64 },
+      }),
+    ).error;
+    expect(refusedFile.details?.limit).toMatchObject({
+      parameter: "max_file_bytes",
+      effective_value: 64,
+      default_value: 67108864,
     });
   },
 );

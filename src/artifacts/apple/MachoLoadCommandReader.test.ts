@@ -191,6 +191,25 @@ it.each([
   },
 );
 
+// LC_BUILD_VERSION platform 1 is macOS and 6 is macCatalyst; dyld folds that
+// pair into a zippered image. `platform` names one platform only, so the
+// declarations stay distinguishable from no declaration through `platforms`.
+it.each([
+  { declared: [], platform: null },
+  { declared: [1], platform: 1 },
+  { declared: [1, 1], platform: 1 },
+  { declared: [1, 6], platform: null },
+])(
+  "keeps each build platform declaration $declared",
+  async ({ declared, platform }) => {
+    const facts = await read(
+      machoImage({ commands: declared.map((id) => buildVersionCommand(id)) }),
+    );
+    if (facts.status !== "parsed") throw new Error(facts.status);
+    expect(facts.slices[0]).toMatchObject({ platform, platforms: declared });
+  },
+);
+
 it("uses legacy simulator and device platform facts when resolving dylibs", async () => {
   const root = await createTestTempDirectory("rea-macho-legacy-platform-");
   const dylibPath = "Frameworks/libThing.dylib";

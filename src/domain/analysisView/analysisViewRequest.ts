@@ -19,6 +19,10 @@ import { elfDependenciesViewRequestSchema } from "./elfDependenciesView.js";
 import { javaScriptRoutesViewRequestSchema } from "./javascriptRoutesView.js";
 import { webBundleViewRequestSchema } from "./webBundleView.js";
 import { webPageViewRequestSchema } from "./webPageView.js";
+import { webExecutionViewRequestSchema } from "./webExecutionView.js";
+import { apktoolResourcesViewRequestSchema } from "../apktool/apktoolResourcesQuery.js";
+import { androidReferencesViewSchema } from "../android/androidReferencesQuery.js";
+import { androidClassViewRequestSchema } from "../android/androidClassQuery.js";
 import { sourceToBundleViewRequestSchema } from "./sourceToBundleView.js";
 import { endpointComparisonViewRequestSchema } from "./endpointComparisonView.js";
 import { featureTraceViewRequestSchema } from "./featureTraceView.js";
@@ -53,6 +57,7 @@ import { declareEvidenceReferenceAlternative } from "../evidenceInputContract.js
 import { apiSurfaceViewSchema } from "./apiSurfaceSchema.js";
 import { evmViewRequestSchema } from "./evmInterfaceView.js";
 import { artifactInventoryViewRequestSchema } from "./artifactInventoryView.js";
+import { artifactExtractionViewRequestSchema } from "./artifactExtractionView.js";
 import { managedViewRequestSchema } from "./managedArtifactView.js";
 import { managedMembersViewRequestSchema } from "./managedMemberViewSchemas.js";
 import { wasmViewRequestSchema } from "./wasmArtifactView.js";
@@ -104,6 +109,10 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   javaScriptRoutesViewRequestSchema,
   webBundleViewRequestSchema,
   webPageViewRequestSchema,
+  webExecutionViewRequestSchema,
+  apktoolResourcesViewRequestSchema,
+  androidReferencesViewSchema,
+  androidClassViewRequestSchema,
   nativeFunctionMatchingViewRequestSchema,
   sourceToBundleViewRequestSchema,
   endpointComparisonViewRequestSchema,
@@ -130,6 +139,7 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   nativeProcedureReferencesViewRequestSchema,
   nativeLoadImageViewRequestSchema,
   artifactInventoryViewRequestSchema,
+  artifactExtractionViewRequestSchema,
   wasmViewRequestSchema,
   machoViewRequestSchema,
   interfaceBuilderViewRequestSchema,

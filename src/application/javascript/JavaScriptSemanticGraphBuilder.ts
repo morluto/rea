@@ -1022,6 +1022,8 @@ const projectCalls = (context: FileContext): void => {
           candidate_node_ids: [],
           evidence: unknownSemanticEvidence(context.file, argument.location),
         });
+      const valueLocation =
+        argument.valueExpressionLocation ?? argument.location;
       const references =
         argument.valueExpressionLocation !== null &&
         expressions.has(
@@ -1029,7 +1031,7 @@ const projectCalls = (context: FileContext): void => {
         )
           ? []
           : context
-              .referenceNodesWithin(argument.location)
+              .referenceNodesWithin(valueLocation)
               .filter(
                 (reference) =>
                   reference.function_node_id === callNode.function_node_id,
@@ -1041,7 +1043,7 @@ const projectCalls = (context: FileContext): void => {
           relation: "aliases",
           resolution:
             references.length === 1 &&
-            rangesEqual(reference.identity.source_range, argument.location)
+            rangesEqual(reference.identity.source_range, valueLocation)
               ? "resolved"
               : "candidate",
         });
