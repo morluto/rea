@@ -1201,6 +1201,7 @@
 * **install:** describe setup's direct-launch MCP registrations ([c0af3e2](https://github.com/morluto/rea/commit/c0af3e293cd85bfdece21a4e2ce2f7d25ab8e684)), refs [#10252](https://github.com/morluto/rea/issues/10252)
 * **install:** link Windows native build steps from a source checkout ([4a6fa19](https://github.com/morluto/rea/commit/4a6fa1937940f35c0873aff7b63bb6ffd98a583f)), refs [#10317](https://github.com/morluto/rea/issues/10317)
 * **mcp:** clarify DeepSeek catalog refresh compatibility ([#13041](https://github.com/morluto/rea/issues/13041)) ([baad68f](https://github.com/morluto/rea/commit/baad68f437edc5c41116092cbc5bf272b40fd5f7))
+* **mcp:** clarify when discovery requires a catalog refresh ([#14837](https://github.com/morluto/rea/issues/14837)) ([a6b1b3e](https://github.com/morluto/rea/commit/a6b1b3e92c72dfce2656027ccc30c1e423d6762b))
 * **native:** describe export RVAs and name-prefix views ([d3773c9](https://github.com/morluto/rea/commit/d3773c910e85770573e2e6c47d8a49205cdb6fe1))
 * **native:** explain resource-only bundle admission ([#5764](https://github.com/morluto/rea/issues/5764)) ([e773afd](https://github.com/morluto/rea/commit/e773afd9c31570a463d988109b1da9b19ad71d2e))
 * **objdump:** describe the command summary output counts ([9676960](https://github.com/morluto/rea/commit/9676960a46119b4fdfa7537a250734ccf6ed9156))
