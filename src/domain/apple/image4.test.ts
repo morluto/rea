@@ -1173,3 +1173,45 @@ it("keeps an unreadable PRIVATE manifest entry opaque", async () => {
   expect(result.facts.manifest?.objects).toEqual([]);
   expect(result.limitations.join("\n")).toContain("could not be read");
 });
+
+it("reports a MANB, MANP or IM4R entry with no body after its name", async () => {
+  const nameOnly = (name: string): Buffer =>
+    privateTagged(name, sequence(ia5(name)));
+  const manp = await image4(
+    sequence(
+      ia5("IM4M"),
+      integer(0),
+      derSet(
+        privateTagged(
+          "MANB",
+          sequence(
+            ia5("MANB"),
+            derSet(
+              nameOnly("MANP"),
+              manifestObject("ibot", property("DGST", octet(SAMPLE_DIGEST))),
+            ),
+          ),
+        ),
+      ),
+      octet(SAMPLE_SIGNATURE),
+      sequence(octet(SAMPLE_CERT)),
+    ),
+  );
+  expect(manp.facts.manifest?.objects[0]?.name).toBe("ibot");
+  expect(manp.limitations.join("\n")).toContain("MANP entry");
+
+  const manb = await image4(
+    sequence(
+      ia5("IM4M"),
+      integer(0),
+      derSet(nameOnly("MANB")),
+      octet(SAMPLE_SIGNATURE),
+      sequence(octet(SAMPLE_CERT)),
+    ),
+  );
+  expect(manb.limitations.join("\n")).toContain("MANB entry");
+
+  const restore = await image4(img4(im4p(), im4m(), sequence(ia5("IM4R"))));
+  expect(restore.facts.restore_info?.properties_present).toEqual([]);
+  expect(restore.limitations.join("\n")).toContain("IM4R entry");
+});

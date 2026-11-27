@@ -1540,6 +1540,12 @@ const consumeManifest = async (
     return;
   }
   const { name } = named;
+  // MANB, MANP and IM4R each hold their contents after the name. A name with
+  // nothing after it is a missing body, not a confirmed-empty one.
+  if ((name === "MANB" || name === "MANP") && kids.length < 2)
+    notes.add(
+      `Image4 ${name} entry at offset ${fileOffset(value)} has no body after its name.`,
+    );
   if (name === "MANB") {
     for (const kid of kids.slice(1))
       await consumeManifest(
@@ -1658,6 +1664,10 @@ const parseRestore = async (
 ): Promise<Image4RestoreFacts | undefined> => {
   const kids = await walk.childrenOf(value, depth);
   if (ia5Text(kids[0], walk.notes) !== "IM4R") return undefined;
+  if (kids.length < 2)
+    walk.notes.add(
+      `Image4 IM4R entry at offset ${fileOffset(value)} has no body after its name.`,
+    );
   const names: string[] = [];
   for (const kid of kids.slice(1))
     await collectRestoreNames(kid, walk, depth + 1, counter, names);
