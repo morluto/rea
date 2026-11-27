@@ -153,7 +153,8 @@ export class FirmwareVectorTableProvider implements FirmwareVectorTablePort {
   ) {
     let completed: FirmwareVectorTable | undefined;
     let observed:
-      { readonly sha256: string; readonly bytes: number } | undefined;
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
     const maxSliceBytes = input.max_entries * 4 + 4;
     const minimumBytes = minimumVectorTableBytes(input.architecture);
     const baseAddress = Number.parseInt(input.base_address.slice(2), 16) >>> 0;
