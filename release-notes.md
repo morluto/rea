@@ -141,6 +141,7 @@
 * **errors:** add the TargetFailure model, its projection table and conformance registry ([#14247](https://github.com/morluto/rea/issues/14247)) ([40e9a3f](https://github.com/morluto/rea/commit/40e9a3f1a1769f3fbb24ca226aa853f42d78c42e))
 * **evidence:** find direct referrers by linked Evidence ID ([#11709](https://github.com/morluto/rea/issues/11709)) ([b57671c](https://github.com/morluto/rea/commit/b57671cb42ed16687d0b0ea8ff43d3643e045aef))
 * **evidence:** paginate retained evidence discovery summaries ([#9084](https://github.com/morluto/rea/issues/9084)) ([a16669a](https://github.com/morluto/rea/commit/a16669ab2adf8341b0261e9527bb26c98c1d7b21))
+* **firmware:** inspect and extract Android DTBO partition images ([#14398](https://github.com/morluto/rea/issues/14398)) ([b3f7089](https://github.com/morluto/rea/commit/b3f70898e4319e616be23e86d223a0a13bdfb954))
 * **firmware:** inspect Qualcomm MBN image headers and hash segments offline ([#14649](https://github.com/morluto/rea/issues/14649)) ([f78470e](https://github.com/morluto/rea/commit/f78470e36164aa4f84e7154628499bafebccfab4))
 * **firmware:** inspect uClinux bFLT flat executables offline ([#14663](https://github.com/morluto/rea/issues/14663)) ([04cb70c](https://github.com/morluto/rea/commit/04cb70c1a39270e8a1fd94a69382db01a6c7c159))
 * **firmware:** inventory and extract UBI image volumes offline ([#13333](https://github.com/morluto/rea/issues/13333)) ([14b4d1f](https://github.com/morluto/rea/commit/14b4d1f7ad8ede0c4c8e162e6ab55e2a09e2a6e0))
