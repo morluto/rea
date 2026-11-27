@@ -414,6 +414,7 @@
 * **ghidra:** cancel an active request without closing the session ([#14857](https://github.com/morluto/rea/issues/14857)) ([1aa301e](https://github.com/morluto/rea/commit/1aa301e149c558ad46cc5f78adcda50d234d0065))
 * **ghidra:** expose NativeAOT opt-out recovery ([#12923](https://github.com/morluto/rea/issues/12923)) ([753b7e9](https://github.com/morluto/rea/commit/753b7e908c5ab91508cbda7b954aaa8138822712))
 * **ghidra:** forget an elapsed startup only after close settles ([ae2bbe0](https://github.com/morluto/rea/commit/ae2bbe056158eac51aaf0d6ff12d1c2eddc1e5f5))
+* **ghidra:** let sessions share a checkpointed target ([#14856](https://github.com/morluto/rea/issues/14856)) ([dc12e57](https://github.com/morluto/rea/commit/dc12e5768b57ae8b78dec5c3eb453929b255cf7f))
 * **ghidra:** link the published installation guide from decompiler remediation ([62ec695](https://github.com/morluto/rea/commit/62ec69530319a17552f52dbfb7bdf3c4575ac85b)), refs [#7018](https://github.com/morluto/rea/issues/7018)
 * **ghidra:** load ESP-IDF flash code in Ghidra's default address space ([#8464](https://github.com/morluto/rea/issues/8464)) ([5e56bd0](https://github.com/morluto/rea/commit/5e56bd0a2311d92afe7ab8be1cb143f5b467c369))
 * **ghidra:** name invalid installed language definition files ([#13401](https://github.com/morluto/rea/issues/13401)) ([1d85f68](https://github.com/morluto/rea/commit/1d85f680f9aeee634ff3da8cd20c9209c6275b9e))
