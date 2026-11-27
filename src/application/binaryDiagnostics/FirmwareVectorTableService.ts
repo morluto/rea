@@ -67,6 +67,13 @@ export class FirmwareVectorTableService {
                   ...restParams,
                   svd_xml_sha256: sha256Hex(svd_xml),
                 };
+          const limitations =
+            svd_xml === undefined
+              ? value.limitations
+              : [
+                  ...value.limitations,
+                  "Inline svd_xml UTF-8 text is not retained in Evidence and is unavailable from this record; parameters.svd_xml_sha256 records the SHA-256 digest of the caller-supplied svd_xml.",
+                ];
           return createEvidence(
             {
               path: value.artifact.path,
@@ -79,7 +86,7 @@ export class FirmwareVectorTableService {
               parameters: evidenceParams,
               result: value,
               confidence: "derived",
-              limitations: value.limitations,
+              limitations,
               locations: [
                 { kind: "artifact-path", path: value.artifact.path },
                 {

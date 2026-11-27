@@ -98,15 +98,31 @@ describe("FirmwareVectorTableProvider", () => {
         max_file_bytes: 32,
       }),
     );
-    if (tooSmall.ok) throw new Error("Expected file-size refusal");
-    expect(tooSmall.error).toBeInstanceOf(AnalysisResourceConstraintError);
-    expect(projectAnalysisError(tooSmall.error).details).toMatchObject({
+    if (
+      tooSmall.ok ||
+      !(tooSmall.error instanceof AnalysisResourceConstraintError)
+    )
+      throw new Error("Expected file-size refusal");
+    expect(tooSmall.error.remediationAction).toBeUndefined();
+    const projectedTooSmall = projectAnalysisError(tooSmall.error);
+    expect(projectedTooSmall.remediation.action).toBe(
+      "inspect_firmware_vector_table reached its max_file_bytes budget of 32 bytes. Pass a larger max_file_bytes on the next inspect_firmware_vector_table call (at least 128 bytes; range 8..67108864 bytes), then retry.",
+    );
+    expect(projectedTooSmall.details).toMatchObject({
       limit: {
         control_kind: "parameter",
         parameter: "max_file_bytes",
         effective_value: 32,
+        required_value: 128,
         unit: "bytes",
         applies_at: "next_call",
+      },
+      refusal: {
+        kind: "adjustable_budget",
+        operation: "inspect_firmware_vector_table",
+        control: "max_file_bytes",
+        effective_value: 32,
+        required_value: 128,
       },
     });
 
@@ -121,9 +137,17 @@ describe("FirmwareVectorTableProvider", () => {
         max_svd_xml_nodes: 3,
       }),
     );
-    if (tooManyNodes.ok) throw new Error("Expected max_svd_xml_nodes refusal");
-    expect(tooManyNodes.error).toBeInstanceOf(AnalysisResourceConstraintError);
-    expect(projectAnalysisError(tooManyNodes.error).details).toMatchObject({
+    if (
+      tooManyNodes.ok ||
+      !(tooManyNodes.error instanceof AnalysisResourceConstraintError)
+    )
+      throw new Error("Expected max_svd_xml_nodes refusal");
+    expect(tooManyNodes.error.remediationAction).toBeUndefined();
+    const projectedNodes = projectAnalysisError(tooManyNodes.error);
+    expect(projectedNodes.remediation.action).toBe(
+      "inspect_firmware_vector_table reached its max_svd_xml_nodes budget of 3. Pass a larger max_svd_xml_nodes on the next inspect_firmware_vector_table call (range 1..1000000), then retry.",
+    );
+    expect(projectedNodes.details).toMatchObject({
       limit: {
         control_kind: "parameter",
         parameter: "max_svd_xml_nodes",
@@ -131,33 +155,55 @@ describe("FirmwareVectorTableProvider", () => {
         unit: "count",
         applies_at: "next_call",
       },
-    });
-
-    // 3. max_svd_expanded_chars parameter budget refusal
-    const longName = "U".repeat(128);
-    const expandedRefusal = await provider.inspect(
-      inspectFirmwareVectorTableInputSchema.parse({
-        path: fwPath,
-        architecture: "armv7-m",
-        base_address: "0x08000000",
-        svd_xml: `<device><peripherals><peripheral><name>${longName}</name><interrupt><name>IRQ0</name><value>0</value></interrupt></peripheral></peripherals></device>`,
-        max_svd_expanded_chars: 64,
-      }),
-    );
-    if (expandedRefusal.ok)
-      throw new Error("Expected max_svd_expanded_chars refusal");
-    expect(expandedRefusal.error).toBeInstanceOf(
-      AnalysisResourceConstraintError,
-    );
-    expect(projectAnalysisError(expandedRefusal.error).details).toMatchObject({
-      limit: {
-        control_kind: "parameter",
-        parameter: "max_svd_expanded_chars",
-        effective_value: 64,
-        unit: "count",
-        applies_at: "next_call",
+      refusal: {
+        kind: "adjustable_budget",
+        operation: "inspect_firmware_vector_table",
+        control: "max_svd_xml_nodes",
+        effective_value: 3,
       },
     });
+
+    // 3. max_svd_expanded_chars parameter budget refusal (valid and rejected SVD declarations)
+    const longName = "U".repeat(128);
+    for (const svdXml of [
+      `<device><peripherals><peripheral><name>${longName}</name><interrupt><name>IRQ0</name><value>0</value></interrupt></peripheral></peripherals></device>`,
+      `<device><peripherals><peripheral><name>${longName}</name><interrupt><value>0</value></interrupt></peripheral></peripherals></device>`,
+    ]) {
+      const expandedRefusal = await provider.inspect(
+        inspectFirmwareVectorTableInputSchema.parse({
+          path: fwPath,
+          architecture: "armv7-m",
+          base_address: "0x08000000",
+          svd_xml: svdXml,
+          max_svd_expanded_chars: 64,
+        }),
+      );
+      if (
+        expandedRefusal.ok ||
+        !(expandedRefusal.error instanceof AnalysisResourceConstraintError)
+      )
+        throw new Error("Expected max_svd_expanded_chars refusal");
+      expect(expandedRefusal.error.remediationAction).toBeUndefined();
+      const projectedExpanded = projectAnalysisError(expandedRefusal.error);
+      expect(projectedExpanded.remediation.action).toBe(
+        "inspect_firmware_vector_table reached its max_svd_expanded_chars budget of 64. Pass a larger max_svd_expanded_chars on the next inspect_firmware_vector_table call (range 64..8388608), then retry.",
+      );
+      expect(projectedExpanded.details).toMatchObject({
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_svd_expanded_chars",
+          effective_value: 64,
+          unit: "count",
+          applies_at: "next_call",
+        },
+        refusal: {
+          kind: "adjustable_budget",
+          operation: "inspect_firmware_vector_table",
+          control: "max_svd_expanded_chars",
+          effective_value: 64,
+        },
+      });
+    }
 
     // 4. Caller cancellation preserves abort reason
     const abortReason = { reason: "caller-aborted-vector-read" };

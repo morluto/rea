@@ -1,4 +1,5 @@
 import type { Element } from "@xmldom/xmldom";
+import { Budget } from "../budget.js";
 import {
   decodeLimit,
   malformedInput,
@@ -118,7 +119,36 @@ export const parseSvdInterruptMap = (
   }
 
   const rawByIrq = new Map<number, IrqCandidateAccumulator>();
-  let totalExpandedChars = 0;
+  const expandedBudget = new Budget(maxExpandedChars);
+
+  const chargeExpandedChars = (
+    chars: number,
+  ): SvdInterruptParseError | null => {
+    const required = expandedBudget.used + chars;
+    if (!expandedBudget.tryCharge(chars)) {
+      return decodeLimit(
+        "cmsis-svd",
+        `CMSIS-SVD interrupt metadata expands beyond ${String(maxExpandedChars)} characters`,
+        {
+          name: "max_svd_expanded_chars",
+          maximum: maxExpandedChars,
+          required,
+        },
+      );
+    }
+    return null;
+  };
+
+  const appendSkipped = (
+    parts: readonly string[],
+  ): SvdInterruptParseError | null => {
+    let messageChars = 0;
+    for (const part of parts) messageChars += part.length;
+    const limitError = chargeExpandedChars(messageChars);
+    if (limitError !== null) return limitError;
+    skipped.push(parts.join(""));
+    return null;
+  };
 
   for (const [periphIndex, periphEl] of xmlChildrenNamed(
     peripheralsEl,
@@ -127,20 +157,68 @@ export const parseSvdInterruptMap = (
     const periphName = trimmedText(xmlFirstChildNamed(periphEl, "name"));
     const interrupts = xmlChildrenNamed(periphEl, "interrupt");
     if (periphName === null) {
-      if (interrupts.length > 0)
-        skipped.push(
-          `CMSIS-SVD peripheral ${String(periphIndex)} has no <name>; its ${String(interrupts.length)} interrupt declaration(s) were not bound.`,
-        );
+      if (interrupts.length > 0) {
+        const skippedError = appendSkipped([
+          "CMSIS-SVD peripheral ",
+          String(periphIndex),
+          " has no <name>; its ",
+          String(interrupts.length),
+          " interrupt declaration(s) were not bound.",
+        ]);
+        if (skippedError !== null) return err(skippedError);
+      }
       continue;
     }
     for (const intEl of interrupts) {
       const intName = trimmedText(xmlFirstChildNamed(intEl, "name"));
       const valueText = trimmedText(xmlFirstChildNamed(intEl, "value"));
       const irqNumber = valueText === null ? null : parseIrqNumber(valueText);
-      if (intName === null || irqNumber === null) {
-        skipped.push(
-          `CMSIS-SVD interrupt ${intName ?? "(no <name>)"} of peripheral ${periphName} has ${valueText === null ? "no <value>" : `value "${valueText}", which is not a non-negative integer`}; it was not bound.`,
-        );
+      if (intName === null) {
+        const skippedError =
+          valueText === null
+            ? appendSkipped([
+                "CMSIS-SVD interrupt of peripheral ",
+                periphName,
+                " has no <name> and no <value>; it was not bound.",
+              ])
+            : irqNumber === null
+              ? appendSkipped([
+                  "CMSIS-SVD interrupt of peripheral ",
+                  periphName,
+                  ' has no <name> and value "',
+                  valueText,
+                  '", which is not a non-negative integer; it was not bound.',
+                ])
+              : appendSkipped([
+                  'CMSIS-SVD interrupt with <value> "',
+                  valueText,
+                  '" of peripheral ',
+                  periphName,
+                  " has no <name>; it was not bound.",
+                ]);
+        if (skippedError !== null) return err(skippedError);
+        continue;
+      }
+      if (irqNumber === null) {
+        const skippedError =
+          valueText === null
+            ? appendSkipped([
+                "CMSIS-SVD interrupt ",
+                intName,
+                " of peripheral ",
+                periphName,
+                " has no <value>; it was not bound.",
+              ])
+            : appendSkipped([
+                "CMSIS-SVD interrupt ",
+                intName,
+                " of peripheral ",
+                periphName,
+                ' has value "',
+                valueText,
+                '", which is not a non-negative integer; it was not bound.',
+              ]);
+        if (skippedError !== null) return err(skippedError);
         continue;
       }
 
@@ -151,21 +229,8 @@ export const parseSvdInterruptMap = (
       // The `peripheral:interrupt` text an ambiguous binding reports; a
       // single binding reports less, so this bounds every emitted name.
       const entryChars = periphName.length + 1 + intName.length;
-      const nextExpandedChars = totalExpandedChars + entryChars;
-      if (nextExpandedChars > maxExpandedChars) {
-        return err(
-          decodeLimit(
-            "cmsis-svd",
-            `CMSIS-SVD interrupt metadata expands beyond ${String(maxExpandedChars)} characters`,
-            {
-              name: "max_svd_expanded_chars",
-              maximum: maxExpandedChars,
-              required: nextExpandedChars,
-            },
-          ),
-        );
-      }
-      totalExpandedChars = nextExpandedChars;
+      const limitError = chargeExpandedChars(entryChars);
+      if (limitError !== null) return err(limitError);
 
       if (acc === undefined) {
         acc = {

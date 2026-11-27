@@ -58,6 +58,7 @@ describe("inspect_firmware_vector_table CLI and MCP parity", () => {
     expect(mcpRes.isError).not.toBe(true);
     const mcpStructured = mcpRes.structuredContent as {
       parameters: Record<string, unknown>;
+      limitations: string[];
       normalized_result: {
         initial_stack_pointer: string;
         reset_code_address: string;
@@ -72,6 +73,9 @@ describe("inspect_firmware_vector_table CLI and MCP parity", () => {
       max_entries: 20,
       svd_xml_sha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
     });
+    expect(mcpStructured.limitations).toContain(
+      "Inline svd_xml UTF-8 text is not retained in Evidence and is unavailable from this record; parameters.svd_xml_sha256 records the SHA-256 digest of the caller-supplied svd_xml.",
+    );
     expect(mcpStructured.normalized_result.initial_stack_pointer).toBe(
       "0x20020000",
     );
@@ -94,6 +98,25 @@ describe("inspect_firmware_vector_table CLI and MCP parity", () => {
       },
     });
     expect(oversizedRes.isError).toBe(true);
+    const oversizedError = JSON.parse(
+      (oversizedRes.content[0] as { type: "text"; text: string }).text,
+    ) as Record<string, unknown>;
+    expect(oversizedError).toMatchObject({
+      error: {
+        remediation: {
+          action:
+            "inspect_firmware_vector_table reached its max_file_bytes budget of 16 bytes. Pass a larger max_file_bytes on the next inspect_firmware_vector_table call (at least 128 bytes; range 8..67108864 bytes), then retry.",
+        },
+        details: {
+          refusal: {
+            kind: "adjustable_budget",
+            control: "max_file_bytes",
+            effective_value: 16,
+            required_value: 128,
+          },
+        },
+      },
+    });
 
     let cliStdout = "";
     let cliExitCode = 0;
@@ -124,8 +147,10 @@ describe("inspect_firmware_vector_table CLI and MCP parity", () => {
     );
     expect(cliExitCode).toBe(0);
     const cliParsed = JSON.parse(cliStdout) as {
+      limitations: string[];
       normalized_result: typeof mcpStructured.normalized_result;
     };
+    expect(cliParsed.limitations).toEqual(mcpStructured.limitations);
     expect(cliParsed.normalized_result).toEqual(
       mcpStructured.normalized_result,
     );

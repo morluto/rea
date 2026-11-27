@@ -153,14 +153,18 @@ const collectSharedHandlers = (
     if (list === undefined) byAddr.set(item.address, [item.slotIndex]);
     else list.push(item.slotIndex);
   }
-  return [...byAddr.entries()]
-    .filter(([, slots]) => slots.length >= 2)
-    .sort((a, b) => b[1].length - a[1].length)
-    .map(([target_code_address, slot_indices]) => ({
-      target_code_address,
-      slot_count: slot_indices.length,
-      slot_indices,
-    }));
+  const groups: SharedHandlerGroup[] = [];
+  for (const [target_code_address, slot_indices] of byAddr) {
+    if (slot_indices.length >= 2) {
+      groups.push({
+        target_code_address,
+        slot_count: slot_indices.length,
+        slot_indices,
+      });
+    }
+  }
+  groups.sort((a, b) => b.slot_count - a.slot_count);
+  return groups;
 };
 
 const summarizeSvdBindings = (options: {
@@ -304,12 +308,16 @@ const buildRiscvVectorReport = (ctx: ReportContext): FirmwareVectorTable => {
     entryCount,
     svdMap: options.svdMap,
   });
-  const jumpSlots = slots.filter(
-    (s) =>
-      s.encoding === "jal" ||
-      s.encoding === "c_j" ||
-      s.encoding === "auipc_jalr",
-  ).length;
+  let jumpSlots = 0;
+  for (const slot of slots) {
+    if (
+      slot.encoding === "jal" ||
+      slot.encoding === "c_j" ||
+      slot.encoding === "auipc_jalr"
+    ) {
+      jumpSlots += 1;
+    }
+  }
   const shape: FirmwareVectorTable["riscv_table_shape"] =
     jumpSlots >= 2
       ? "vectored_jumps"

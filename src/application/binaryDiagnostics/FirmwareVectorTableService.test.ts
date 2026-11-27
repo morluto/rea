@@ -82,6 +82,21 @@ describe("FirmwareVectorTableService", () => {
       { kind: "artifact-path", path: "/tmp/stm32.bin" },
       { kind: "file-offset-range", start: 0, end: 16 },
     ]);
+    expect(res.value.limitations).toEqual([
+      "Decoded 4 slots up to max_entries.",
+      "Inline svd_xml UTF-8 text is not retained in Evidence and is unavailable from this record; parameters.svd_xml_sha256 records the SHA-256 digest of the caller-supplied svd_xml.",
+    ]);
+
+    const withoutSvd = await service.inspect({
+      path: "/tmp/stm32.bin",
+      architecture: "armv7-m",
+      base_address: "0x08000000",
+    });
+    expect(withoutSvd.ok).toBe(true);
+    if (!withoutSvd.ok) return;
+    expect(withoutSvd.value.limitations).toEqual([
+      "Decoded 4 slots up to max_entries.",
+    ]);
   });
 
   it("retains completed Evidence and caller selections on late cancellation", async () => {
@@ -140,7 +155,6 @@ describe("FirmwareVectorTableService", () => {
                 "max_file_bytes",
                 input.max_file_bytes,
               ),
-              remediationAction: "Raise max_file_bytes.",
             },
           ),
         ),

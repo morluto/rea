@@ -79,7 +79,11 @@ const decodeRiscvSlotInstruction = (
       target_code_address: hex32(target),
     };
   }
-  if (opcode === 0x17 && relOffset + 8 <= tableBytes.length) {
+  if (
+    opcode === 0x17 &&
+    relOffset + 8 <= tableBytes.length &&
+    slotAddress + 7 <= 0xffff_ffff
+  ) {
     const word2 = readUint32At(tableBytes, relOffset + 4, true);
     const rd1 = (word >>> 7) & 0x1f;
     const rs1 = (word2 >>> 15) & 0x1f;

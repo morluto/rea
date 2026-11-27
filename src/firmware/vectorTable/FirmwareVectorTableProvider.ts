@@ -16,8 +16,6 @@ import {
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { FirmwareVectorTablePort } from "../../ports/binaryDiagnostics/FirmwareVectorTablePort.js";
 import {
-  FIRMWARE_VECTOR_TABLE_BUDGETS,
-  MAX_VECTOR_TABLE_FILE_BYTES,
   firmwareVectorBudgetLimit,
   type FirmwareVectorTable,
   type InspectFirmwareVectorTableInput,
@@ -138,26 +136,6 @@ export class FirmwareVectorTableProvider implements FirmwareVectorTablePort {
   }
 }
 
-const fileSizeRemediation = (input: InspectFirmwareVectorTableInput): string =>
-  input.max_file_bytes >= MAX_VECTOR_TABLE_FILE_BYTES
-    ? `The image exceeds the ${String(MAX_VECTOR_TABLE_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller firmware slice.`
-    : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes within its ${String(MAX_VECTOR_TABLE_FILE_BYTES)}-byte ceiling, or select a smaller firmware slice.`;
-
-const svdBudgetRemediation = (
-  parameter: "max_svd_xml_nodes" | "max_svd_expanded_chars",
-  effectiveValue: number,
-  required: number | bigint | undefined,
-): string => {
-  const ceiling = FIRMWARE_VECTOR_TABLE_BUDGETS[parameter].maximum;
-  if (
-    effectiveValue < ceiling &&
-    (required === undefined || required <= BigInt(ceiling))
-  ) {
-    return `Pass a larger ${parameter}${required === undefined ? "" : ` (at least ${String(required)})`} within its ${String(ceiling)} ceiling, or provide a trimmed CMSIS-SVD document.`;
-  }
-  return `${parameter} cannot exceed ${String(ceiling)}; provide a trimmed CMSIS-SVD document with only the relevant peripheral interrupt declarations.`;
-};
-
 const vectorTableFailure = (
   cause: unknown,
   input: InspectFirmwareVectorTableInput,
@@ -175,7 +153,7 @@ const vectorTableFailure = (
       fallbackMessage: "Firmware vector table inspection failed.",
       recognise: (failure) => {
         if (isParseLimit(failure, "cmsis-svd")) {
-          const { name, maximum, required } = failure.failure.limit;
+          const { name, maximum } = failure.failure.limit;
           if (name === "max_svd_expanded_chars") {
             return parseLimitConstraint(OPERATION, "memory", failure, {
               retryable: false,
@@ -183,44 +161,51 @@ const vectorTableFailure = (
                 "max_svd_expanded_chars",
                 maximum,
               ),
-              remediationAction: svdBudgetRemediation(
-                "max_svd_expanded_chars",
-                maximum,
-                required,
-              ),
             });
           }
           return parseLimitConstraint(OPERATION, "capacity", failure, {
             retryable: false,
             limit: firmwareVectorBudgetLimit("max_svd_xml_nodes", maximum),
-            remediationAction: svdBudgetRemediation(
-              "max_svd_xml_nodes",
-              maximum,
-              required,
-            ),
           });
         }
         return undefined;
       },
-      fileSize: (failure) =>
-        parseLimitConstraint(
+      fileSize: (failure) => {
+        const requiredBytes =
+          failure.observedBytes === undefined
+            ? undefined
+            : failure.observedBytes <= BigInt(Number.MAX_SAFE_INTEGER)
+              ? Number(failure.observedBytes)
+              : failure.observedBytes;
+        return parseLimitConstraint(
           OPERATION,
           "file-size",
           decodeLimit(
             FORMAT,
             failure.message,
-            { name: "max_file_bytes", maximum: input.max_file_bytes },
+            {
+              name: "max_file_bytes",
+              maximum: input.max_file_bytes,
+              ...(requiredBytes === undefined
+                ? {}
+                : { required: requiredBytes }),
+            },
             { cause: failure },
           ),
           {
             retryable: false,
-            limit: firmwareVectorBudgetLimit(
-              "max_file_bytes",
-              input.max_file_bytes,
-            ),
-            remediationAction: fileSizeRemediation(input),
+            limit: {
+              ...firmwareVectorBudgetLimit(
+                "max_file_bytes",
+                input.max_file_bytes,
+              ),
+              ...(typeof requiredBytes === "number"
+                ? { required_value: requiredBytes }
+                : {}),
+            },
           },
-        ),
+        );
+      },
     }),
   );
   if (completed !== undefined) primary.retainPartialObservation(completed);

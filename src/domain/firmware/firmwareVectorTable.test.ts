@@ -243,6 +243,36 @@ describe("parseFirmwareVectorTable ARM M-profile", () => {
         maximum: 5,
       });
     }
+
+    // Rejected <interrupt> and nameless <peripheral> diagnostics also charge max_svd_expanded_chars
+    const invalidIrqs = Array.from(
+      { length: 32 },
+      () => `<interrupt><value>5</value></interrupt>`,
+    ).join("");
+    const rejectedExpansionSvd = `<device><peripherals><peripheral><name>${longPeriph}</name>${invalidIrqs}</peripheral></peripherals></device>`;
+    const rejectedRefused = parseSvdInterruptMap(rejectedExpansionSvd, {
+      maxExpandedChars: 16_384,
+    });
+    expect(rejectedRefused.ok).toBe(false);
+    if (!rejectedRefused.ok && rejectedRefused.error.failure.kind === "limit") {
+      expect(rejectedRefused.error.failure.limit.name).toBe(
+        "max_svd_expanded_chars",
+      );
+    }
+
+    const namelessPeriphRefused = parseSvdInterruptMap(
+      `<device><peripherals><peripheral><interrupt><name>X</name><value>0</value></interrupt></peripheral></peripherals></device>`,
+      { maxExpandedChars: 32 },
+    );
+    expect(namelessPeriphRefused.ok).toBe(false);
+    if (
+      !namelessPeriphRefused.ok &&
+      namelessPeriphRefused.error.failure.kind === "limit"
+    ) {
+      expect(namelessPeriphRefused.error.failure.limit.name).toBe(
+        "max_svd_expanded_chars",
+      );
+    }
   });
 });
 
@@ -306,6 +336,72 @@ describe("parseFirmwareVectorTable RISC-V mtvec", () => {
       target_code_address: "0x80001140",
     });
     expect(report.svd_interrupts.unmapped_active_irq_count).toBe(1);
+  });
+
+  it("pairs AUIPC+JALR up to 0xfffffff8..0xffffffff and refuses pairs that cross 0xffffffff", () => {
+    const auipcX5 = 0x0000_0297; // auipc x5, 0
+    const jalrX0X5 = (0x10 << 20) | (5 << 15) | 0x67; // jalr x0, 0x10(x5)
+
+    // At 0xfffffff8, word 1 occupies 0xfffffff8..0xfffffffb and word 2 occupies 0xfffffffc..0xffffffff
+    const fitsBuf = Buffer.alloc(16, 0);
+    fitsBuf.writeUInt32LE(auipcX5, 0);
+    fitsBuf.writeUInt32LE(jalrX0X5, 4);
+    const fits = parseFirmwareVectorTable({
+      artifact: {
+        path: "/tmp/rv-top-fits.bin",
+        sha256: "f".repeat(64),
+        bytes: fitsBuf.length,
+      },
+      architecture: "riscv",
+      baseAddressHex: "0xfffffff8",
+      vectorTableOffset: 0,
+      maxEntries: 8,
+      tableBytes: fitsBuf,
+      svdSupplied: false,
+      svdMap: new Map(),
+      svdSkipped: [],
+    });
+    expect(fits.ok).toBe(true);
+    if (!fits.ok) return;
+    expect(fits.value.examined_entries).toBe(2);
+    expect(fits.value.riscv_slots[0]).toMatchObject({
+      slot_address: "0xfffffff8",
+      encoding: "auipc_jalr",
+      raw_words: ["0x297", "0x1028067"],
+      target_code_address: "0x8",
+    });
+    expect(fits.value.riscv_table_shape).toBe("single_entry_or_inline");
+
+    // At 0xfffffffc, word 2 in tableBytes would lie at 0x1_0000_0000 and must not be paired
+    const wrapsBuf = Buffer.alloc(16, 0);
+    wrapsBuf.writeUInt32LE(auipcX5, 0);
+    wrapsBuf.writeUInt32LE(jalrX0X5, 4);
+    const wraps = parseFirmwareVectorTable({
+      artifact: {
+        path: "/tmp/rv-top-wraps.bin",
+        sha256: "e".repeat(64),
+        bytes: wrapsBuf.length,
+      },
+      architecture: "riscv",
+      baseAddressHex: "0xfffffffc",
+      vectorTableOffset: 0,
+      maxEntries: 8,
+      tableBytes: wrapsBuf,
+      svdSupplied: false,
+      svdMap: new Map(),
+      svdSkipped: [],
+    });
+    expect(wraps.ok).toBe(true);
+    if (!wraps.ok) return;
+    expect(wraps.value.examined_entries).toBe(1);
+    expect(wraps.value.riscv_slots[0]).toMatchObject({
+      slot_address: "0xfffffffc",
+      encoding: "unrecognized",
+      raw_words: ["0x297"],
+      decoded_mnemonic: null,
+      target_code_address: null,
+    });
+    expect(wraps.value.riscv_table_shape).toBe("empty_or_unrecognized");
   });
 });
 
@@ -393,12 +489,22 @@ describe("parseFirmwareVectorTable variant rules", () => {
         <interrupt><name>UART0_IRQ</name><value>0X1F</value></interrupt>
         <interrupt><name>UART0_ERR</name><value>-3</value></interrupt>
         <interrupt><name>UART0_WAKE</name></interrupt>
+        <interrupt><value>5</value></interrupt>
+        <interrupt><value>-9</value></interrupt>
+        <interrupt></interrupt>
       </peripheral>
       <peripheral><interrupt><name>ORPHAN</name><value>4</value></interrupt></peripheral>
     </peripherals></device>`);
     if (!svd.ok) throw new Error(svd.error.message);
     expect([...svd.value.byIrq.keys()]).toEqual([31]);
-    expect(svd.value.skipped).toHaveLength(3);
+    expect(svd.value.skipped).toEqual([
+      'CMSIS-SVD interrupt UART0_ERR of peripheral UART0 has value "-3", which is not a non-negative integer; it was not bound.',
+      "CMSIS-SVD interrupt UART0_WAKE of peripheral UART0 has no <value>; it was not bound.",
+      'CMSIS-SVD interrupt with <value> "5" of peripheral UART0 has no <name>; it was not bound.',
+      'CMSIS-SVD interrupt of peripheral UART0 has no <name> and value "-9", which is not a non-negative integer; it was not bound.',
+      "CMSIS-SVD interrupt of peripheral UART0 has no <name> and no <value>; it was not bound.",
+      "CMSIS-SVD peripheral 1 has no <name>; its 1 interrupt declaration(s) were not bound.",
+    ]);
     const table = Buffer.alloc(48 * 4);
     table.writeUInt32LE(0x2000_8000, 0);
     const report = parse(table, "armv7-m", "0x08000000", svd.value);
@@ -407,7 +513,7 @@ describe("parseFirmwareVectorTable variant rules", () => {
         (item) =>
           item.includes("was not bound") || item.includes("were not bound"),
       ),
-    ).toHaveLength(3);
+    ).toHaveLength(6);
   });
 
   it("states RISC-V dispatch, CLIC and SVD numbering assumptions", () => {
