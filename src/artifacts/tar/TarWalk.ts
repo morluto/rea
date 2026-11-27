@@ -302,9 +302,28 @@ export const walkTar = async (
       }
       const parsed = parseTarHeaderBlock(block);
       if (parsed.state === "zero") {
-        endOffset = headerOffset;
-        endState = "end-marker";
-        const tarTrailing = await countTrailingNonZero(stream, signal);
+        const secondBlock = await stream.read(TAR_BLOCK_BYTES, signal);
+        const secondBlockNonZero = secondBlock.reduce(
+          (count, byte) => count + Number(byte !== 0),
+          0,
+        );
+        if (secondBlock.length < TAR_BLOCK_BYTES) {
+          stop(
+            "truncated",
+            headerOffset,
+            `Tar end-of-archive marker at offset ${String(headerOffset)} has only ${String(secondBlock.length)} byte(s) in its second zero block.`,
+          );
+        } else if (secondBlockNonZero > 0) {
+          stop(
+            "malformed",
+            headerOffset,
+            `Tar end-of-archive marker at offset ${String(headerOffset)} has a non-zero second block.`,
+          );
+        } else {
+          stop("end-marker", headerOffset);
+        }
+        const tarTrailing =
+          secondBlockNonZero + (await countTrailingNonZero(stream, signal));
         if (tarTrailing > 0) {
           trailingNonZeroBytes += tarTrailing;
           limitations.push(

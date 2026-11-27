@@ -222,6 +222,41 @@ describe.each([
     });
   });
 
+  it.each([0, 256])(
+    "reports an incomplete second end block (%i bytes)",
+    async (bytes) => {
+      const body = Buffer.concat([
+        tarMembers([{ name: "a.txt", data: "a" }]),
+        Buffer.alloc(512 + bytes),
+      ]);
+      const result = await read(compression === "gzip" ? gzipSync(body) : body);
+      expect(result.entries.map((entry) => entry.path)).toEqual(["a.txt"]);
+      expect(result.metadata).toMatchObject({
+        end_state: "truncated",
+        end_offset: 1024,
+      });
+      expect(result.coverage[0]?.status).toBe("unknown");
+    },
+  );
+
+  it("reports a non-zero second end block and counts the remaining data", async () => {
+    const body = Buffer.concat([
+      tarMembers([{ name: "a.txt", data: "a" }]),
+      Buffer.alloc(512),
+      Buffer.from("tail"),
+      Buffer.alloc(509),
+      Buffer.from("more"),
+    ]);
+    const result = await read(compression === "gzip" ? gzipSync(body) : body);
+    expect(result.entries.map((entry) => entry.path)).toEqual(["a.txt"]);
+    expect(result.metadata).toMatchObject({
+      end_state: "malformed",
+      end_offset: 1024,
+      trailing_nonzero_bytes: 8,
+    });
+    expect(result.coverage[0]?.status).toBe("unknown");
+  });
+
   it("reports non-zero bytes after the end marker as uninventoried", async () => {
     const body = Buffer.concat([
       tarMembers([{ name: "a.txt", data: "a" }]),

@@ -6,6 +6,7 @@ import {
 } from "../../fixtures/binarySession.js";
 import { CompositeProvider } from "../../../src/application/binary/CompositeProvider.js";
 import type {
+  AnalysisClient,
   AnalysisOperation,
   AnalysisProvider,
   CapabilityDescriptor,
@@ -13,7 +14,10 @@ import type {
 } from "../../../src/ports/AnalysisProvider.js";
 import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import type { BinaryTarget } from "../../../src/domain/binaryTargetTypes.js";
-import { ok } from "../../../src/domain/result.js";
+import { err, ok } from "../../../src/domain/result.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
+import type { EngineCloseReport } from "../../../src/domain/engineCloseReport.js";
 import { createStubHopperProject } from "../../fixtures/hopperProjectFile.js";
 
 const target: BinaryTarget = {
@@ -54,6 +58,39 @@ describe("composite analysis provider", () => {
       error: { _tag: "AnalysisCapabilityUnavailableError" },
     });
     expect(starts).toEqual(["hopper", "native"]);
+  });
+
+  it("reports a child's released-unsaved edits on the close that a sibling's cleanup fails", async () => {
+    const discarded: EngineCloseReport = {
+      checkpoint: {
+        status: "discarded",
+        reason: "superseded",
+        directory: "/checkpoints/target",
+      },
+    };
+    const starts: string[] = [];
+    const ghidra = provider("ghidra", "analyze_function", starts, [
+      ok(discarded),
+    ]);
+    const sibling = provider("hopper", "address_name", starts, [
+      err(
+        new ProviderCleanupError("hopper", ["hopper-document"], {
+          reason: "controlled sibling cleanup failure",
+        }),
+      ),
+    ]);
+    const client = new CompositeProvider([ghidra, sibling]).createClient(
+      target,
+    );
+    await client.execute("analyze_function", {});
+    await client.execute("address_name", {});
+    const failed = await client.close();
+    if (failed.ok) throw new Error("the sibling cleanup failure was lost");
+    // The released child is skipped on retry, so this failure must say so.
+    expect(projectAnalysisError(failed.error).details).toMatchObject({
+      partial_observation: discarded,
+    });
+    expect(await client.close()).toEqual(ok(null));
   });
 
   it("rejects ambiguous provider routes", () => {
@@ -253,6 +290,8 @@ const provider = (
   id: string,
   operation: Exclude<AnalysisOperation, "health">,
   starts: string[],
+  /** Close outcomes in order; ok(null) after they run out. */
+  closes: Awaited<ReturnType<AnalysisClient["close"]>>[] = [],
 ): AnalysisProvider => {
   const identity: ProviderIdentity = { id, name: id, version: "1" };
   return {
@@ -263,7 +302,7 @@ const provider = (
       return {
         execute: async (called) =>
           ok(createAnalysisExecution(`${id}:${called}`, identity)),
-        close: async () => ok(null),
+        close: async () => closes.shift() ?? ok(null),
       };
     },
   };

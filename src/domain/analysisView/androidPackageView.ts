@@ -9,6 +9,7 @@ import {
 import { jsonValueByteLength } from "../jsonValueByteLength.js";
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
+import { filterSet } from "./selectViewRows.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { androidViewRequestSchema } from "../android/androidPackageQuery.js";
@@ -18,6 +19,7 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import {
+  boundedViewLimitations,
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
@@ -232,11 +234,7 @@ export const projectAndroidPackageView = (
     ...shared,
     source_status: report.components.status,
     source_components: rows.length,
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...report.components.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, report.components.limitations),
     unknowns: boundedViewMessages(
       [
         ...shared.unknowns,
@@ -265,10 +263,9 @@ export const projectAndroidPackageView = (
     ) > PROJECTION_BYTES
   )
     return tooLarge();
-  const kinds = view.kinds === undefined ? undefined : new Set(view.kinds);
-  const names = view.names === undefined ? undefined : new Set(view.names);
-  const actions =
-    view.actions === undefined ? undefined : new Set(view.actions);
+  const kinds = filterSet(view.kinds);
+  const names = filterSet(view.names);
+  const actions = filterSet(view.actions);
   const filtered =
     kinds !== undefined ||
     names !== undefined ||
@@ -320,8 +317,7 @@ export const projectAndroidPackageView = (
     DIGEST_BYTES +
     jsonValueByteLength(envelope as unknown as JsonValue, PROJECTION_BYTES);
   if (bytes > PAGE_BYTES) return tooLarge();
-  const fields =
-    view.fields === undefined ? undefined : new Set<string>(view.fields);
+  const fields = filterSet<string>(view.fields);
   const items: z.output<typeof androidComponentViewRowSchema>[] = [];
   let byte_limited = false;
   let total = filtered ? 0 : rows.length;

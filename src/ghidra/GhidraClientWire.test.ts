@@ -251,6 +251,7 @@ it("preserves distinct decompile and value-flow options on the wire", async () =
     const second = wire.request(method, params, {
       decompileTimeoutSeconds: null,
       decompileMaxPayloadMiB: 31,
+      decompileReadAhead: ["0x1000", "0x2000"],
     });
     expect(JSON.parse(writes[1]!)).toEqual({
       id: 2,
@@ -259,6 +260,7 @@ it("preserves distinct decompile and value-flow options on the wire", async () =
       params,
       decompile_timeout_seconds: null,
       decompile_max_payload_mib: 31,
+      decompile_read_ahead: ["0x1000", "0x2000"],
     });
     expect(pending.settle(2, ok("second"))).toBe(true);
     await expect(second).resolves.toEqual(ok("second"));
@@ -266,4 +268,47 @@ it("preserves distinct decompile and value-flow options on the wire", async () =
     pending.failAll(() => ok(null));
     await first;
   }
+});
+
+it("writes one authenticated cancel frame for an interrupted request and keeps awaiting its reply", async () => {
+  const { wire, writes, pending } = harness(limit(8_192));
+  const interrupt = new AbortController();
+  const request = wire.request(
+    "procedure_pseudo_code",
+    { procedure: "main" },
+    { interrupt: interrupt.signal },
+  );
+  expect(writes).toHaveLength(1);
+  interrupt.abort("caller stopped");
+  // The cancel is a request frame with its own id; the request stays pending.
+  expect(writes.slice(1).map((line) => JSON.parse(line) as JsonValue)).toEqual([
+    {
+      id: 2,
+      token: "b".repeat(64),
+      method: "cancel",
+      params: { request_id: 1 },
+    },
+  ]);
+  expect(writes[1]?.endsWith("\n")).toBe(true);
+  expect(pending.has(1)).toBe(true);
+  expect(pending.has(2)).toBe(false);
+  pending.settle(1, ok({ answered: true }));
+  await expect(request).resolves.toEqual(ok({ answered: true }));
+});
+
+it("writes no cancel frame once the interrupted request has settled", async () => {
+  const { wire, writes, pending } = harness(limit(8_192));
+  const interrupt = new AbortController();
+  const request = wire.request(
+    "procedure_pseudo_code",
+    {},
+    {
+      interrupt: interrupt.signal,
+    },
+  );
+  pending.settle(1, ok(null));
+  // Before the request's own continuation runs, and after it.
+  interrupt.abort("caller stopped");
+  await request;
+  expect(writes).toHaveLength(1);
 });

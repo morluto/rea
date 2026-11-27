@@ -195,3 +195,58 @@ it.each([
     await service.close();
   }
 });
+
+it("omits required_value on details.limit when a file grows past max_file_bytes during reading", async () => {
+  const root = await createTestTempDirectory("rea-v8-growth-");
+  const path = join(root, "growing.jsc");
+  const bytes = v8CodeCacheFixture("function g(){ return 7; } g();");
+  await writeFile(path, bytes);
+  let grew = false;
+  selected.opened = (openedPath, handle) => {
+    if (String(openedPath) !== path) return;
+    const file = handle as {
+      read(
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number | null,
+      ): Promise<{ bytesRead: number; buffer: Buffer }>;
+    };
+    const read = file.read.bind(file);
+    vi.spyOn(file, "read").mockImplementation(
+      async (buffer, offset, length, position) => {
+        if (!grew) {
+          grew = true;
+          await appendFile(path, "!");
+        }
+        return read(buffer, offset, length, position);
+      },
+    );
+  };
+  const service = createV8CodeCacheService();
+  try {
+    const result = await service.inspect({
+      path,
+      max_file_bytes: bytes.length,
+    });
+    expect(grew).toBe(true);
+    if (result.ok) throw new Error("Expected file-growth byte-budget refusal");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      resource: "file-size",
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_file_bytes",
+        effective_value: bytes.length,
+        unit: "bytes",
+        minimum: 36,
+        maximum: 67_108_864,
+        default_value: 33_554_432,
+        applies_at: "next_call",
+      },
+    });
+    expect(result.error.limit).not.toHaveProperty("required_value");
+  } finally {
+    await service.close();
+  }
+});

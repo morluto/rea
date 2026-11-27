@@ -234,6 +234,9 @@ export const retainCliEvidence = async <Committed>(input: {
           reason:
             "A file that is not a retained Evidence record holds its name.",
         });
+      // A prior invocation may have kept the bundle with a larger cap.
+      // Its cited source records count towards the current invocation's cap.
+      if (bytes > capBytes) return err(tooLarge(bytes));
       await renew(path, now);
       return ok({ path, bytes, cacheKey, reused: true });
     };

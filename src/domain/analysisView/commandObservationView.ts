@@ -16,6 +16,7 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import {
+  boundedViewLimitations,
   boundedViewMessages,
   completeWithinViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -129,11 +130,7 @@ export const projectCommandObservationView = (
     source_analysis_profile_digest: parent.analysisProfile?.digest ?? null,
     source_parameters: parameters.data,
     coverage: completeWithinViewCoverage(1),
-    limitations: boundedViewMessages(
-      parent.limitations,
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent),
     unknowns: boundedViewMessages(
       [
         "This retained command observation does not establish current target state or global analysis coverage.",
