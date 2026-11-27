@@ -39,6 +39,7 @@ import {
   keybag,
   octet,
   privateIdentifier,
+  manifestObject,
   privateTagged,
   property,
   sequence,
@@ -559,4 +560,217 @@ it("notes a private tag whose number does not match the entry name", async () =>
     { name: "CHIP", value: { type: "integer", decimal: "32816" } },
   ]);
   expect(result.limitations.join("\n")).toContain("does not match its name");
+});
+
+const utf8String = (text: string | Buffer): Buffer =>
+  tlv(0x0c, typeof text === "string" ? Buffer.from(text, "utf8") : text);
+
+/** IM4M with the given certificate-chain slot. */
+const manifestWithCertificates = (certificates: Buffer): Buffer =>
+  sequence(
+    ia5("IM4M"),
+    integer(0),
+    derSet(
+      manifestObject(
+        "MANB",
+        manifestObject("MANP", property("CHIP", integer(1))),
+        manifestObject("ibot", property("DGST", octet(SAMPLE_DIGEST))),
+      ),
+    ),
+    octet(SAMPLE_SIGNATURE),
+    certificates,
+  );
+
+/** A constructed OCTET STRING (identifier 0x24) holding one segment. */
+const constructedOctet = (segment: Buffer): Buffer => tlv(0x24, octet(segment));
+
+it("reports a constructed string by its universal tag number in both parse paths", async () => {
+  const small = await image4(
+    img4(
+      im4p(),
+      im4m(),
+      sequence(
+        ia5("IM4R"),
+        derSet(property("BNCN", constructedOctet(SAMPLE_NONCE))),
+      ),
+    ),
+  );
+  expect(small.limitations.join("\n")).toContain("constructed string or octet");
+
+  const large = await image4(
+    im4p({ extra: [constructedOctet(Buffer.alloc(IMAGE4_MAX_NESTED_BYTES))] }),
+  );
+  expect(large.limitations.join("\n")).toContain("constructed string or octet");
+});
+
+it("keeps a constructed payload in its slot instead of promoting the keybag", async () => {
+  const bag = keybag([{ type: 1, iv: SAMPLE_IV, key: SAMPLE_KEY }]);
+  const result = await image4(
+    sequence(
+      ia5("IM4P"),
+      ia5("krnl"),
+      ia5("Kernelcache"),
+      constructedOctet(SAMPLE_PAYLOAD),
+      bag,
+    ),
+  );
+  expect(result.facts.payload).toBeNull();
+  expect(result.entries).toEqual([]);
+  expect(result.limitations.join("\n")).toContain("payload at offset");
+  expect(result.limitations.join("\n")).toContain("constructed OCTET STRING");
+});
+
+it("treats a constructed keybag as present so the payload stays encrypted", async () => {
+  const bag = keybag([{ type: 1, iv: SAMPLE_IV, key: SAMPLE_KEY }]);
+  const result = await image4(im4p({ keybag: tlv(0x24, bag) }));
+  expect(result.facts.payload).toMatchObject({
+    encrypted: true,
+    keybag_count: 0,
+  });
+  expect(result.entries[0]).toMatchObject({ encrypted: true });
+  expect(result.limitations.join("\n")).toContain("keybag at offset");
+});
+
+it("records unknown restore members, extra property fields and a mistyped certificate chain", async () => {
+  const restore = await image4(
+    img4(
+      im4p(),
+      im4m(),
+      sequence(
+        ia5("IM4R"),
+        derSet(property("BNCN", octet(SAMPLE_NONCE)), integer(5)),
+      ),
+    ),
+  );
+  expect(restore.facts.restore_info?.properties_present).toEqual(["BNCN"]);
+  expect(restore.limitations.join("\n")).toContain("Unknown Image4 tag 0x02");
+  expect(JSON.stringify(restore)).not.toContain(
+    SAMPLE_NONCE.toString("latin1"),
+  );
+
+  const extraField = await image4(
+    im4m({
+      properties: [
+        privateTagged("CHIP", sequence(ia5("CHIP"), integer(1), integer(2))),
+      ],
+    }),
+  );
+  expect(extraField.facts.manifest?.properties).toEqual([
+    { name: "CHIP", value: { type: "integer", decimal: "1" } },
+  ]);
+  expect(extraField.limitations.join("\n")).toContain("Unknown Image4 tag");
+
+  const mistyped = manifestWithCertificates(integer(7));
+  const chain = await image4(mistyped);
+  expect(chain.facts.manifest?.certificate_chain_size).toBeNull();
+  expect(chain.limitations.join("\n")).toContain("Unknown Image4 tag 0x02");
+});
+
+it("decodes an unsigned 32-bit keybag type that DER sign-pads to five octets", async () => {
+  const result = await image4(
+    im4p({
+      keybag: keybag([{ type: 0xffffffff, iv: SAMPLE_IV, key: SAMPLE_KEY }]),
+    }),
+  );
+  expect(result.facts.payload).toMatchObject({
+    keybag_count: 1,
+    keybag_types: [0xffffffff],
+  });
+  expect(result.limitations).toEqual([]);
+});
+
+it("decodes UTF8String text as UTF-8 and refuses to alter invalid text", async () => {
+  const body = (description: Buffer): Buffer =>
+    sequence(ia5("IM4P"), ia5("krnl"), description, octet(SAMPLE_PAYLOAD));
+  const valid = await image4(body(utf8String("café")));
+  expect(valid.facts.payload?.description).toBe("café");
+  expect(valid.limitations).toEqual([]);
+
+  const invalid = await image4(body(utf8String(Buffer.from([0x63, 0xc3]))));
+  expect(invalid.facts.payload?.description).toBe("");
+  expect(invalid.limitations.join("\n")).toContain("not valid UTF-8");
+});
+
+it("recognizes a magic string with a tolerated non-minimal length", async () => {
+  const content = Buffer.concat([
+    Buffer.from([0x16, 0x81, 0x04]),
+    Buffer.from("IM4P", "latin1"),
+    ia5("krnl"),
+    ia5("Kernelcache"),
+    octet(SAMPLE_PAYLOAD),
+  ]);
+  const result = await image4(tlv(0x30, content));
+  expect(result.facts.magic).toBe("IM4P");
+  expect(result.facts.payload?.type).toBe("krnl");
+  expect(result.limitations.join("\n")).toContain("non-minimal length");
+});
+
+it("checks the structure of a large value its consumer does not decode", async () => {
+  const truncatedOctet = Buffer.from([0x04, 0x05, 0x01]);
+  const manifestWith = manifestWithCertificates;
+  const small = manifestWith(sequence(octet(SAMPLE_CERT), truncatedOctet));
+  const large = manifestWith(
+    sequence(octet(Buffer.alloc(IMAGE4_MAX_NESTED_BYTES)), truncatedOctet),
+  );
+  await expect(inspect(small)).rejects.toMatchObject({
+    failure: { kind: "truncated" },
+  });
+  await expect(inspect(large)).rejects.toMatchObject({
+    failure: { kind: "truncated" },
+  });
+
+  let nested = sequence();
+  for (let count = 0; count < IMAGE4_MAX_DEPTH + 8; count += 1)
+    nested = sequence(nested);
+  await expect(
+    inspect(
+      manifestWith(
+        sequence(octet(Buffer.alloc(IMAGE4_MAX_NESTED_BYTES)), nested),
+      ),
+    ),
+  ).rejects.toMatchObject({
+    failure: { kind: "limit", limit: { name: IMAGE4_DER_DEPTH_LIMIT } },
+  });
+});
+
+it("charges each element of a large wrapper once however often it is read", async () => {
+  const padding = sequence(...Array.from({ length: 2100 }, () => sequence()));
+  const object = privateTagged(
+    "ibot",
+    sequence(
+      ia5("ibot"),
+      derSet(
+        property("DGST", octet(SAMPLE_DIGEST)),
+        property("PADD", octet(Buffer.alloc(IMAGE4_MAX_NESTED_BYTES))),
+      ),
+      padding,
+    ),
+  );
+  const body = derSet(
+    privateTagged(
+      "MANB",
+      sequence(
+        ia5("MANB"),
+        privateTagged(
+          "MANP",
+          sequence(ia5("MANP"), derSet(property("CHIP", integer(1)))),
+        ),
+        object,
+      ),
+    ),
+  );
+  const result = await image4(
+    sequence(
+      ia5("IM4M"),
+      integer(0),
+      body,
+      octet(SAMPLE_SIGNATURE),
+      sequence(octet(SAMPLE_CERT)),
+    ),
+  );
+  expect(result.facts.manifest?.objects[0]).toMatchObject({
+    name: "ibot",
+    digest_hex: SAMPLE_DIGEST.toString("hex"),
+  });
+  expect(result.limitations.join("\n")).toContain("Unknown Image4 tag");
 });

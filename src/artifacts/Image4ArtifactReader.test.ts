@@ -15,6 +15,7 @@ import {
   im4p,
   img4,
   keybag,
+  tlv,
 } from "../domain/apple/image4.fixture.js";
 import {
   createTestTempDirectory,
@@ -198,5 +199,24 @@ it("lists only the manifest for IM4M and only the payload for IM4P", async () =>
   } finally {
     await manifestReader.close();
     await payloadReader.close();
+  }
+});
+
+it("refuses to open a payload whose keybag is a constructed OCTET STRING", async () => {
+  const bag = keybag([{ type: 1, iv: SAMPLE_IV, key: SAMPLE_KEY }]);
+  const path = await writeImage(
+    "constructed-keybag.im4p",
+    im4p({ keybag: tlv(0x24, bag) }),
+  );
+  const reader = new Image4ArtifactReader(path);
+  try {
+    const { entries, coverage } = await readAll(reader);
+    expect(entries[0]).toMatchObject({ path: "payload", encrypted: true });
+    await expect(reader.open(entries[0]!)).rejects.toMatchObject({
+      reason: "unavailable",
+    });
+    expect(JSON.stringify(coverage)).not.toContain('"complete"');
+  } finally {
+    await reader.close();
   }
 });

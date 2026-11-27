@@ -15,6 +15,7 @@ import {
   truncatedInput,
   ParseFailureError,
 } from "../parseFailure.js";
+import { decodeUtf8PreservingBomOrNull } from "../strictUtf8.js";
 import { byteToHex } from "../../kernel/byteToHex.js";
 
 /** Image4 DER nesting. Real containers sit well under this. */
@@ -157,6 +158,13 @@ export interface Image4ByteSource {
 }
 
 const MAGICS = new Set<string>(["IMG4", "IM4P", "IM4M"]);
+const UNIVERSAL_SEQUENCE = 16;
+const UNIVERSAL_IA5_STRING = 22;
+/**
+ * Bytes recognition reads: a SEQUENCE header with up to four length octets,
+ * an IA5String header with up to four length octets, and the four-byte magic.
+ */
+export const IMAGE4_PREFIX_BYTES = 16;
 
 /**
  * True when `prefix` begins with a DER SEQUENCE whose first element is the
@@ -165,22 +173,37 @@ const MAGICS = new Set<string>(["IMG4", "IM4P", "IM4M"]);
 export const image4PrefixMagic = (
   prefix: Uint8Array,
 ): Image4Magic | undefined => {
-  if (prefix.length < 8 || prefix[0] !== 0x30) return undefined;
-  const lengthByte = prefix[1];
-  if (lengthByte === undefined) return undefined;
-  let cursor = 2;
-  if (lengthByte !== 0x80 && (lengthByte & 0x80) !== 0) {
-    const width = lengthByte & 0x7f;
-    if (width < 1 || width > 4) return undefined;
-    cursor += width;
+  // Recognition reads both headers with the same decoder inspection uses, so
+  // a length form inspection tolerates, such as 81 04, is also recognized.
+  let outer: Asn1BerHeader;
+  let inner: Asn1BerHeader;
+  try {
+    outer = readAsn1BerHeader(prefix, 0, prefix.length);
+    if (
+      outer.tagClass !== "universal" ||
+      outer.tagNumber !== UNIVERSAL_SEQUENCE ||
+      !outer.constructed
+    )
+      return undefined;
+    inner = readAsn1BerHeader(prefix, outer.headerLength, prefix.length);
+  } catch (cause: unknown) {
+    if (cause instanceof Asn1BerFailure) return undefined;
+    throw cause;
   }
-  if (cursor + 6 > prefix.length) return undefined;
-  if (prefix[cursor] !== 0x16 || prefix[cursor + 1] !== 4) return undefined;
+  if (
+    inner.tagClass !== "universal" ||
+    inner.tagNumber !== UNIVERSAL_IA5_STRING ||
+    inner.constructed ||
+    inner.length !== 4
+  )
+    return undefined;
+  const at = outer.headerLength + inner.headerLength;
+  if (at + 4 > prefix.length) return undefined;
   const magic = String.fromCharCode(
-    prefix[cursor + 2] ?? 0,
-    prefix[cursor + 3] ?? 0,
-    prefix[cursor + 4] ?? 0,
-    prefix[cursor + 5] ?? 0,
+    prefix[at] ?? 0,
+    prefix[at + 1] ?? 0,
+    prefix[at + 2] ?? 0,
+    prefix[at + 3] ?? 0,
   );
   return MAGICS.has(magic) ? (magic as Image4Magic) : undefined;
 };
@@ -425,23 +448,19 @@ const noteStructure = (node: Asn1BerNode, notes: Notes, base: number): void => {
     notes.add(`Image4 value at offset ${offset} uses indefinite length.`);
   else if (nonMinimalLength(node))
     notes.add(`Image4 value at offset ${offset} uses a non-minimal length.`);
-  if (
-    node.constructed &&
-    (node.tag === 0x16 ||
-      node.tag === 0x0c ||
-      node.tag === 0x13 ||
-      node.tag === 0x04)
-  )
+  if (isConstructedString(node.tagClass, node.tagNumber, node.constructed))
     notes.add(
       `Image4 value at offset ${offset} is a constructed string or octet.`,
     );
-  if (node.tag === 0x01 && !node.constructed) {
+  const universal = node.tagClass === "universal";
+  if (universal && node.tagNumber === UNIVERSAL.boolean && !node.constructed) {
     const byte = node.content[0];
     if (node.content.length !== 1 || (byte !== 0x00 && byte !== 0xff))
       notes.add(`Image4 boolean at offset ${offset} is not canonical.`);
   }
   if (
-    node.tag === 0x02 &&
+    universal &&
+    node.tagNumber === UNIVERSAL.integer &&
     !node.constructed &&
     isNonMinimalInteger(node.content)
   )
@@ -451,6 +470,8 @@ const noteStructure = (node: Asn1BerNode, notes: Notes, base: number): void => {
 
 class Walk {
   readonly #elements = new Budget(IMAGE4_MAX_ELEMENTS);
+  /** Children of a header-walked value, read and charged exactly once. */
+  readonly #spanChildren = new WeakMap<TlvHeader, DerValue[]>();
 
   constructor(
     readonly source: Image4ByteSource,
@@ -498,7 +519,8 @@ class Walk {
     const contentLength = header.contentEnd - header.contentStart;
     if (
       !header.constructed &&
-      (header.tag === 0x16 || header.tag === 0x0c || header.tag === 0x13) &&
+      header.tagClass === "universal" &&
+      STRING_TAGS.has(header.tagNumber) &&
       contentLength > IMAGE4_MAX_STRING_BYTES
     )
       stringLimit(header.contentStart, contentLength);
@@ -511,16 +533,57 @@ class Walk {
       );
     this.charge(1);
     if (
-      header.constructed &&
-      (header.tag === 0x16 ||
-        header.tag === 0x0c ||
-        header.tag === 0x13 ||
-        header.tag === 0x04)
+      isConstructedString(header.tagClass, header.tagNumber, header.constructed)
     )
       this.notes.add(
         `Image4 value at offset ${offset} is a constructed string or octet.`,
       );
-    return { kind: "span", header };
+    const span: DerValue = { kind: "span", header };
+    // Walk every constructed value once, even when no consumer decodes its
+    // meaning, so its structure, depth and element count are always checked.
+    if (header.constructed) await this.childrenOf(span, depth);
+    return span;
+  }
+
+  /**
+   * The children of a constructed value. A tree-parsed node already holds its
+   * charged children; a header-walked value reads its children on first use
+   * and returns the same values afterwards, so asking twice charges nothing.
+   */
+  async childrenOf(value: DerValue, depth: number): Promise<DerValue[]> {
+    if (value.kind === "stopped") return [];
+    if (value.kind === "node")
+      return value.node.children.map((child) => ({
+        kind: "node" as const,
+        node: child,
+        base: value.base,
+        end: value.base + child.end,
+      }));
+    if (!value.header.constructed) return [];
+    const cached = this.#spanChildren.get(value.header);
+    if (cached !== undefined) return cached;
+    const children: DerValue[] = [];
+    let cursor = value.header.contentStart;
+    while (cursor < value.header.contentEnd) {
+      const child = await this.readValue(
+        cursor,
+        depth + 1,
+        value.header.contentEnd,
+      );
+      if (child.kind === "stopped") {
+        children.push(child);
+        break;
+      }
+      const end = endOf(child);
+      if (end <= cursor)
+        throw malformedInput(FORMAT, "DER value did not advance.", {
+          offset: cursor,
+        });
+      children.push(child);
+      cursor = end;
+    }
+    this.#spanChildren.set(value.header, children);
+    return children;
   }
 }
 
@@ -536,11 +599,72 @@ const fileOffset = (value: DerValue): number => {
   return value.offset;
 };
 
-const tagOf = (value: DerValue): number | undefined => {
+/** First identifier octet, for diagnostics only. Never compare it to a type. */
+const rawTagOf = (value: DerValue): number | undefined => {
   if (value.kind === "node") return value.node.tag;
   if (value.kind === "span") return value.header.tag;
   return undefined;
 };
+
+const tagClassOf = (value: DerValue): Asn1TagClass | undefined => {
+  if (value.kind === "node") return value.node.tagClass;
+  if (value.kind === "span") return value.header.tagClass;
+  return undefined;
+};
+
+/** Universal tag numbers Image4 uses. The constructed bit is separate. */
+const UNIVERSAL = {
+  boolean: 1,
+  integer: 2,
+  octetString: 4,
+  utf8String: 12,
+  sequence: UNIVERSAL_SEQUENCE,
+  set: 17,
+  printableString: 19,
+  ia5String: UNIVERSAL_IA5_STRING,
+} as const;
+
+const STRING_TAGS: ReadonlySet<number> = new Set([
+  UNIVERSAL.utf8String,
+  UNIVERSAL.printableString,
+  UNIVERSAL.ia5String,
+]);
+
+/**
+ * The universal tag number of a value, or undefined for any other class. A
+ * constructed OCTET STRING (identifier 0x24) is universal 4 and constructed.
+ */
+const universalTag = (value: DerValue | undefined): number | undefined =>
+  value !== undefined && tagClassOf(value) === "universal"
+    ? tagNumberOf(value)
+    : undefined;
+
+/** A universal value of `tag` in primitive form. */
+const isPrimitive = (
+  value: DerValue | undefined,
+  tag: number,
+): value is DerValue =>
+  value !== undefined && universalTag(value) === tag && !isConstructed(value);
+
+const isSequence = (value: DerValue | undefined): value is DerValue =>
+  value !== undefined &&
+  universalTag(value) === UNIVERSAL.sequence &&
+  isConstructed(value);
+
+const isSet = (value: DerValue | undefined): value is DerValue =>
+  value !== undefined &&
+  universalTag(value) === UNIVERSAL.set &&
+  isConstructed(value);
+
+/** A universal string or OCTET STRING sent in constructed (segmented) form. */
+const isConstructedString = (
+  tagClass: Asn1TagClass,
+  tagNumber: number,
+  constructed: boolean,
+): boolean =>
+  constructed &&
+  tagClass === "universal" &&
+  (STRING_TAGS.has(tagNumber) || tagNumber === UNIVERSAL.octetString);
 
 const tagNumberOf = (value: DerValue): number | undefined => {
   if (value.kind === "node") return value.node.tagNumber;
@@ -588,43 +712,6 @@ const encodedRange = (
   return { offset, length: end - offset };
 };
 
-const childrenOf = async (
-  value: DerValue,
-  walk: Walk,
-  depth: number,
-): Promise<DerValue[]> => {
-  if (value.kind === "stopped") return [];
-  if (value.kind === "node")
-    return value.node.children.map((child) => ({
-      kind: "node" as const,
-      node: child,
-      base: value.base,
-      end: value.base + child.end,
-    }));
-  if (!value.header.constructed) return [];
-  const children: DerValue[] = [];
-  let cursor = value.header.contentStart;
-  while (cursor < value.header.contentEnd) {
-    const child = await walk.readValue(
-      cursor,
-      depth + 1,
-      value.header.contentEnd,
-    );
-    if (child.kind === "stopped") {
-      children.push(child);
-      break;
-    }
-    const end = endOf(child);
-    if (end <= cursor)
-      throw malformedInput(FORMAT, "DER value did not advance.", {
-        offset: cursor,
-      });
-    children.push(child);
-    cursor = end;
-  }
-  return children;
-};
-
 const hexTag = (tag: number | undefined): string => byteToHex(tag ?? 0);
 
 /** A 32-bit tag number as four printable ASCII characters, such as `MANB`. */
@@ -646,7 +733,7 @@ const fourCharCode = (tagNumber: number | undefined): string | undefined => {
 };
 
 const unknownTag = (value: DerValue, notes: Notes): void => {
-  const tag = tagOf(value);
+  const tag = rawTagOf(value);
   const highTag = tag !== undefined && (tag & 0x1f) === 0x1f;
   const number = tagNumberOf(value);
   const label = highTag
@@ -657,15 +744,52 @@ const unknownTag = (value: DerValue, notes: Notes): void => {
   );
 };
 
-const ia5Text = (value: DerValue | undefined): string | undefined => {
+/** PrintableString's repertoire (X.680): letters, digits and ` '()+,-./:=?`. */
+const PRINTABLE_STRING = /^[A-Za-z0-9 '()+,\-./:=?]*$/u;
+
+/**
+ * Decodes a primitive IA5String, PrintableString or UTF8String by its own
+ * encoding. Bytes outside that encoding are reported and the text is treated
+ * as absent rather than returned altered.
+ */
+const ia5Text = (
+  value: DerValue | undefined,
+  notes?: Notes,
+): string | undefined => {
   if (value === undefined || value.kind !== "node") return undefined;
   const { node, base } = value;
-  if (node.tag !== 0x16 && node.tag !== 0x0c && node.tag !== 0x13)
+  if (
+    node.tagClass !== "universal" ||
+    !STRING_TAGS.has(node.tagNumber) ||
+    node.constructed
+  )
     return undefined;
-  if (node.constructed) return undefined;
   if (node.content.length > IMAGE4_MAX_STRING_BYTES)
     stringLimit(base + node.contentStart, node.content.length);
-  return node.content.toString("latin1");
+  const offset = base + node.start;
+  if (node.tagNumber === UNIVERSAL.utf8String) {
+    // A BOM is part of the field's value, not an encoding signature.
+    const text = decodeUtf8PreservingBomOrNull(node.content);
+    if (text === null)
+      notes?.add(`Image4 UTF8String at offset ${offset} is not valid UTF-8.`);
+    return text ?? undefined;
+  }
+  for (const byte of node.content)
+    if (byte > 0x7f) {
+      notes?.add(
+        `Image4 ${node.tagNumber === UNIVERSAL.ia5String ? "IA5String" : "PrintableString"} at offset ${offset} has a byte outside ASCII.`,
+      );
+      return undefined;
+    }
+  const text = node.content.toString("latin1");
+  if (
+    node.tagNumber === UNIVERSAL.printableString &&
+    !PRINTABLE_STRING.test(text)
+  )
+    notes?.add(
+      `Image4 PrintableString at offset ${offset} has characters outside its repertoire.`,
+    );
+  return text;
 };
 
 /**
@@ -681,12 +805,12 @@ const unwrapPrivate = async (
   notes: Notes,
 ): Promise<DerValue> => {
   if (!isPrivateTagged(value)) return value;
-  const kids = await childrenOf(value, walk, depth);
+  const kids = await walk.childrenOf(value, depth);
   const inner = kids[0];
-  if (kids.length !== 1 || inner === undefined || tagOf(inner) !== 0x30)
+  if (kids.length !== 1 || inner === undefined || !isSequence(inner))
     return value;
   const code = fourCharCode(tagNumberOf(value));
-  const name = ia5Text((await childrenOf(inner, walk, depth + 1))[0]);
+  const name = ia5Text((await walk.childrenOf(inner, depth + 1))[0]);
   if (name !== undefined && code !== name)
     notes.add(
       `Image4 entry ${printable(name) ?? "with an unprintable name"} at offset ${fileOffset(value)} has a private tag that does not match its name.`,
@@ -756,12 +880,10 @@ const decodeBoolean = (value: DerValue, notes: Notes): Image4PropertyValue => {
   return { type: "boolean", value: byte !== 0 };
 };
 
-const isScalar = (value: DerValue): boolean => {
-  const tag = tagOf(value);
-  return (
-    !isConstructed(value) && (tag === 0x02 || tag === 0x01 || tag === 0x04)
-  );
-};
+const isScalar = (value: DerValue): boolean =>
+  isPrimitive(value, UNIVERSAL.integer) ||
+  isPrimitive(value, UNIVERSAL.boolean) ||
+  isPrimitive(value, UNIVERSAL.octetString);
 
 const scalarSlot = async (
   value: DerValue,
@@ -769,9 +891,8 @@ const scalarSlot = async (
   depth: number,
 ): Promise<DerValue | undefined> => {
   if (isScalar(value)) return value;
-  const tag = tagOf(value);
-  if ((tag !== 0x31 && tag !== 0x30) || !isConstructed(value)) return undefined;
-  const kids = await childrenOf(value, walk, depth + 1);
+  if (!isSet(value) && !isSequence(value)) return undefined;
+  const kids = await walk.childrenOf(value, depth + 1);
   const only = kids[0];
   return kids.length === 1 && only !== undefined && isScalar(only)
     ? only
@@ -779,10 +900,10 @@ const scalarSlot = async (
 };
 
 const decodeScalar = (value: DerValue, notes: Notes): Image4PropertyValue => {
-  const tag = tagOf(value);
-  if (tag === 0x02) return decodeInteger(value, notes);
-  if (tag === 0x01) return decodeBoolean(value, notes);
-  if (tag === 0x04) return decodeOctet(value, notes);
+  const tag = universalTag(value);
+  if (tag === UNIVERSAL.integer) return decodeInteger(value, notes);
+  if (tag === UNIVERSAL.boolean) return decodeBoolean(value, notes);
+  if (tag === UNIVERSAL.octetString) return decodeOctet(value, notes);
   unknownTag(value, notes);
   return { type: "omitted", byte_length: contentRange(value)?.length ?? 0 };
 };
@@ -797,9 +918,9 @@ const tryProperty = async (
   counter: PropertyCounter,
 ): Promise<PropertyAttempt> => {
   const entry = await unwrapPrivate(value, walk, depth, notes);
-  if (tagOf(entry) !== 0x30) return "no";
-  const kids = await childrenOf(entry, walk, depth + 1);
-  const name = ia5Text(kids[0]);
+  if (!isSequence(entry)) return "no";
+  const kids = await walk.childrenOf(entry, depth + 1);
+  const name = ia5Text(kids[0], notes);
   if (name === undefined) return "no";
   if (name === "MANB" || name === "MANP" || name === "IM4M") return "no";
   const slot = kids[1];
@@ -812,6 +933,8 @@ const tryProperty = async (
     );
     return "ignored";
   }
+  // A property is { name, value }; anything after the value is not decoded.
+  for (const extra of kids.slice(2)) unknownTag(extra, notes);
   counter.charge();
   return { name, value: decodeScalar(scalar, notes) };
 };
@@ -824,7 +947,7 @@ const takeProperties = async (
   counter: PropertyCounter,
   into: Image4Property[],
 ): Promise<void> => {
-  const kids = await childrenOf(value, walk, depth);
+  const kids = await walk.childrenOf(value, depth);
   for (const kid of kids) {
     const attempt = await tryProperty(kid, walk, depth + 1, notes, counter);
     if (attempt === "no") unknownTag(kid, notes);
@@ -835,9 +958,14 @@ const takeProperties = async (
 const uint32Integer = (value: DerValue | undefined): number | undefined => {
   if (value === undefined || value.kind !== "node" || value.node.constructed)
     return undefined;
-  const bytes = value.node.content;
-  if (bytes.length === 0 || bytes.length > 4) return undefined;
-  if (((bytes[0] ?? 0) & 0x80) !== 0) return undefined;
+  const content = value.node.content;
+  if (content.length === 0 || ((content[0] ?? 0) & 0x80) !== 0)
+    return undefined;
+  // DER prefixes a zero octet when the high bit of a positive value is set,
+  // so 0xffffffff is five octets: 00 ff ff ff ff.
+  const bytes =
+    content.length > 1 && content[0] === 0 ? content.subarray(1) : content;
+  if (bytes.length > 4) return undefined;
   let number = 0;
   for (const byte of bytes) number = number * 256 + byte;
   return number;
@@ -851,12 +979,10 @@ const looksLikeKeybagEntry = (kids: readonly DerValue[]): boolean => {
     type !== undefined &&
     iv !== undefined &&
     key !== undefined &&
-    tagOf(type) === 0x02 &&
-    !isConstructed(type) &&
-    tagOf(iv) === 0x04 &&
-    !isConstructed(iv) &&
-    tagOf(key) === 0x04 &&
-    !isConstructed(key)
+    kids.length === 3 &&
+    isPrimitive(type, UNIVERSAL.integer) &&
+    isPrimitive(iv, UNIVERSAL.octetString) &&
+    isPrimitive(key, UNIVERSAL.octetString)
   );
 };
 
@@ -892,11 +1018,11 @@ const keybagEntries = async (
   walk: Walk,
   depth: number,
 ): Promise<DerValue[][] | undefined> => {
-  if (tagOf(value) !== 0x30 || !isConstructed(value)) return undefined;
+  if (!isSequence(value)) return undefined;
   const entries: DerValue[][] = [];
-  for (const kid of await childrenOf(value, walk, depth)) {
-    if (tagOf(kid) !== 0x30) return undefined;
-    const inner = await childrenOf(kid, walk, depth + 1);
+  for (const kid of await walk.childrenOf(value, depth)) {
+    if (!isSequence(kid)) return undefined;
+    const inner = await walk.childrenOf(kid, depth + 1);
     if (!looksLikeKeybagEntry(inner)) return undefined;
     entries.push(inner);
   }
@@ -914,8 +1040,14 @@ const asKeybag = async (
   depth: number,
   notes: Notes,
 ): Promise<KeybagAttempt | undefined> => {
-  if (tagOf(value) !== 0x04 || isConstructed(value)) return undefined;
+  if (universalTag(value) !== UNIVERSAL.octetString) return undefined;
   const offset = fileOffset(value);
+  if (isConstructed(value)) {
+    notes.add(
+      `Image4 keybag at offset ${offset} is a constructed OCTET STRING and was not decoded.`,
+    );
+    return "unrecognized";
+  }
   if (value.kind !== "node") {
     notes.add(
       `Image4 keybag at offset ${offset} is larger than ${IMAGE4_MAX_NESTED_BYTES} bytes and was not decoded.`,
@@ -982,18 +1114,16 @@ const asCompression = async (
   depth: number,
   notes: Notes,
 ): Promise<CompressionInfo | undefined> => {
-  if (tagOf(value) !== 0x30 || !isConstructed(value)) return undefined;
-  const kids = await childrenOf(value, walk, depth);
+  if (!isSequence(value)) return undefined;
+  const kids = await walk.childrenOf(value, depth);
   const algorithmValue = kids[0];
   const sizeValue = kids[1];
   if (
     kids.length !== 2 ||
     algorithmValue === undefined ||
     sizeValue === undefined ||
-    tagOf(algorithmValue) !== 0x02 ||
-    isConstructed(algorithmValue) ||
-    tagOf(sizeValue) !== 0x02 ||
-    isConstructed(sizeValue)
+    !isPrimitive(algorithmValue, UNIVERSAL.integer) ||
+    !isPrimitive(sizeValue, UNIVERSAL.integer)
   )
     return undefined;
   const algorithm = uint32Integer(algorithmValue);
@@ -1070,28 +1200,38 @@ const buildPayload = async (
   source: Image4ByteSource,
   notes: Notes,
 ): Promise<PayloadBuild> => {
-  const strings: DerValue[] = [];
-  let payloadValue: DerValue | undefined;
+  // IM4P is SEQUENCE { "IM4P", type, [description], payload OCTET STRING,
+  // [keybag OCTET STRING], [compression SEQUENCE] }. Each field is read from
+  // its position, so a later sibling never takes a slot it does not fill.
+  let index = 1;
+  const isText = (value: DerValue | undefined): value is DerValue =>
+    value !== undefined && STRING_TAGS.has(universalTag(value) ?? -1);
+  const typeValue = isText(kids[index]) ? kids[index++] : undefined;
+  const descriptionValue = isText(kids[index]) ? kids[index++] : undefined;
+  const slot = kids[index];
   const extras: DerValue[] = [];
-  for (const kid of kids.slice(1)) {
+  let payloadValue: DerValue | undefined;
+  let unsupportedPayload = false;
+  if (slot !== undefined && slot.kind !== "stopped") {
+    index += 1;
+    if (isPrimitive(slot, UNIVERSAL.octetString)) payloadValue = slot;
+    else if (universalTag(slot) === UNIVERSAL.octetString) {
+      unsupportedPayload = true;
+      notes.add(
+        `Image4 payload at offset ${fileOffset(slot)} is a constructed OCTET STRING; its bytes are not exposed.`,
+      );
+    } else extras.push(slot);
+  }
+  for (const kid of kids.slice(index)) {
     if (kid.kind === "stopped") break;
-    const tag = tagOf(kid);
-    if (payloadValue === undefined && tag === 0x04) {
-      payloadValue = kid;
-      continue;
-    }
-    if (strings.length < 2 && (tag === 0x16 || tag === 0x0c || tag === 0x13)) {
-      strings.push(kid);
-      continue;
-    }
     extras.push(kid);
   }
-  const type = ia5Text(strings[0]) ?? "";
-  const description = ia5Text(strings[1]) ?? "";
+  const type = ia5Text(typeValue, notes) ?? "";
+  const description = ia5Text(descriptionValue, notes) ?? "";
   if (type.length === 0) notes.add("Image4 payload type is absent.");
   else if (type.length !== 4)
     notes.add(`Image4 payload type is ${type.length} characters.`);
-  if (strings[1] === undefined)
+  if (descriptionValue === undefined)
     notes.add("Image4 payload description is absent.");
   let keybag: KeybagAttempt | undefined;
   let compression: CompressionInfo | undefined;
@@ -1113,7 +1253,8 @@ const buildPayload = async (
     unknownTag(extra, notes);
   }
   if (payloadValue === undefined || type.length === 0) {
-    notes.add("Image4 payload octet string is absent.");
+    if (!unsupportedPayload)
+      notes.add("Image4 payload octet string is absent.");
     return { payload: null, entry: null };
   }
   const range = contentRange(payloadValue);
@@ -1175,10 +1316,10 @@ const parseManifestKids = async (
   notes: Notes,
   counter: PropertyCounter,
 ): Promise<Image4ManifestFacts | undefined> => {
-  if (ia5Text(kids[0]) !== "IM4M") return undefined;
+  if (ia5Text(kids[0], notes) !== "IM4M") return undefined;
   let version: string | null = null;
   const versionValue = kids[1];
-  if (versionValue === undefined || tagOf(versionValue) !== 0x02)
+  if (!isPrimitive(versionValue, UNIVERSAL.integer))
     notes.add("Image4 manifest version is absent.");
   else {
     const decoded = decodeInteger(versionValue, notes);
@@ -1204,13 +1345,16 @@ const parseManifestKids = async (
   const signature = kids[3];
   if (signature === undefined)
     notes.add("Image4 manifest signature is absent.");
-  else if (tagOf(signature) === 0x04)
+  else if (isPrimitive(signature, UNIVERSAL.octetString))
     signatureSize = contentRange(signature)?.length ?? null;
   else unknownTag(signature, notes);
   let certificateChainSize: number | null = null;
+  // The certificate chain is a SEQUENCE of certificates. Its contents are not
+  // decoded, but the walker has examined their structure.
   const certificates = kids[4];
-  if (certificates !== undefined)
+  if (isSequence(certificates))
     certificateChainSize = contentRange(certificates)?.length ?? null;
+  else if (certificates !== undefined) unknownTag(certificates, notes);
   for (const extra of kids.slice(5)) unknownTag(extra, notes);
   return {
     version,
@@ -1246,10 +1390,10 @@ const consumeManifest = async (
       return;
     }
   }
-  const kids = await childrenOf(value, walk, depth);
-  const name = ia5Text(kids[0]);
+  const kids = await walk.childrenOf(value, depth);
+  const name = ia5Text(kids[0], notes);
   if (name === undefined) {
-    if (tagOf(value) === 0x30 || tagOf(value) === 0x31) {
+    if (isSequence(value) || isSet(value)) {
       for (const kid of kids)
         await consumeManifest(
           kid,
@@ -1282,6 +1426,7 @@ const consumeManifest = async (
     const body = kids[1];
     if (body !== undefined)
       await takeProperties(body, walk, depth + 1, notes, counter, properties);
+    for (const extra of kids.slice(2)) unknownTag(extra, notes);
     return;
   }
   if (name.length === 0) {
@@ -1297,6 +1442,8 @@ const consumeManifest = async (
   }
   const objectProperties: Image4Property[] = [];
   await takeProperties(body, walk, depth + 1, notes, counter, objectProperties);
+  // An object is { name, SET of properties }; later fields are not decoded.
+  for (const extra of kids.slice(2)) unknownTag(extra, notes);
   let digest: string | null = null;
   for (const property of objectProperties)
     if (property.name === "DGST" && property.value.type === "octet")
@@ -1319,20 +1466,26 @@ const collectRestoreNames = async (
       return;
     }
   }
-  const kids = await childrenOf(value, walk, depth);
-  const name = ia5Text(kids[0]);
+  const kids = await walk.childrenOf(value, depth);
+  const name = ia5Text(kids[0], walk.notes);
   if (
     name !== undefined &&
     name !== "IM4R" &&
     name.length > 0 &&
     kids.length >= 2 &&
-    tagOf(value) === 0x30
+    isSequence(value)
   ) {
+    // Only the name is reported; restore values stay redacted. Fields after
+    // the value are noted by position without exposing them.
+    if (kids.length > 2)
+      walk.notes.add(
+        `Image4 restore entry at offset ${fileOffset(value)} has ${kids.length - 2} fields after its value that were not decoded.`,
+      );
     counter.charge();
     names.push(name);
     return;
   }
-  if (name === undefined && (tagOf(value) === 0x30 || tagOf(value) === 0x31)) {
+  if (name === undefined && (isSequence(value) || isSet(value))) {
     for (const kid of kids)
       await collectRestoreNames(kid, walk, depth + 1, counter, names);
     return;
@@ -1340,7 +1493,10 @@ const collectRestoreNames = async (
   if (name === "IM4R") {
     for (const kid of kids.slice(1))
       await collectRestoreNames(kid, walk, depth + 1, counter, names);
+    return;
   }
+  // An entry this reader does not recognize: name its tag and position only.
+  unknownTag(value, walk.notes);
 };
 
 const parseRestore = async (
@@ -1349,8 +1505,8 @@ const parseRestore = async (
   depth: number,
   counter: PropertyCounter,
 ): Promise<Image4RestoreFacts | undefined> => {
-  const kids = await childrenOf(value, walk, depth);
-  if (ia5Text(kids[0]) !== "IM4R") return undefined;
+  const kids = await walk.childrenOf(value, depth);
+  if (ia5Text(kids[0], walk.notes) !== "IM4R") return undefined;
   const names: string[] = [];
   for (const kid of kids.slice(1))
     await collectRestoreNames(kid, walk, depth + 1, counter, names);
@@ -1386,8 +1542,8 @@ const wrappedSequence = async (
   walk: Walk,
   depth: number,
 ): Promise<DerValue | undefined> => {
-  const kids = await childrenOf(value, walk, depth);
-  return kids.find((kid) => tagOf(kid) === 0x30 && kid.kind !== "stopped");
+  const kids = await walk.childrenOf(value, depth);
+  return kids.find((kid) => isSequence(kid) && kid.kind !== "stopped");
 };
 
 /**
@@ -1403,7 +1559,11 @@ export const inspectImage4 = async (
       kind: "unrecognized",
       detail: "Image4 magic is not IM4P, IMG4, or IM4M.",
     };
-  const prefix = await readExact(source, 0, Math.min(source.length, 16));
+  const prefix = await readExact(
+    source,
+    0,
+    Math.min(source.length, IMAGE4_PREFIX_BYTES),
+  );
   const magic = image4PrefixMagic(prefix);
   if (magic === undefined)
     return {
@@ -1434,12 +1594,12 @@ export const inspectImage4 = async (
     notes.add(
       `Image4 container ends at ${rootEnd}; ${trailing} trailing bytes were not decoded.`,
     );
-  if (tagOf(root) !== 0x30)
+  if (!isSequence(root))
     throw malformedInput(FORMAT, "Image4 root is not a SEQUENCE.", {
       offset: 0,
     });
-  const kids = await childrenOf(root, walk, 0);
-  const rootMagic = ia5Text(kids[0]);
+  const kids = await walk.childrenOf(root, 0);
+  const rootMagic = ia5Text(kids[0], notes);
   if (rootMagic !== "IMG4" && rootMagic !== "IM4P" && rootMagic !== "IM4M")
     throw malformedInput(FORMAT, "Image4 magic is not IM4P, IMG4, or IM4M.", {
       offset: fileOffset(kids[0] ?? root),
@@ -1461,18 +1621,21 @@ export const inspectImage4 = async (
     let payloadKids: readonly DerValue[] | undefined;
     for (const child of kids.slice(1)) {
       if (child.kind === "stopped") break;
-      const tag = tagOf(child);
-      if (tag === 0x30 && payloadKids === undefined) {
-        const inner = await childrenOf(child, walk, 1);
-        if (ia5Text(inner[0]) === "IM4P") {
+      const context =
+        tagClassOf(child) === "context" && isConstructed(child)
+          ? tagNumberOf(child)
+          : undefined;
+      if (isSequence(child) && payloadKids === undefined) {
+        const inner = await walk.childrenOf(child, 1);
+        if (ia5Text(inner[0], notes) === "IM4P") {
           payloadKids = inner;
           continue;
         }
       }
-      if (tag === 0xa0 && manifest === null) {
+      if (context === 0 && manifest === null) {
         const inner = await wrappedSequence(child, walk, 1);
         if (inner !== undefined) {
-          const innerKids = await childrenOf(inner, walk, 2);
+          const innerKids = await walk.childrenOf(inner, 2);
           const parsed = await parseManifestKids(
             innerKids,
             walk,
@@ -1488,7 +1651,7 @@ export const inspectImage4 = async (
           }
         }
       }
-      if (tag === 0xa1 && restore === null) {
+      if (context === 1 && restore === null) {
         const inner = await wrappedSequence(child, walk, 1);
         if (inner !== undefined) {
           const parsed = await parseRestore(inner, walk, 2, counter);
