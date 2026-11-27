@@ -127,31 +127,39 @@ describe("bounded Ghidra MIPS admission", () => {
     },
   );
   it.each([
-    { flags: 0x1005 },
-    { flags: 0x50001807 },
-    { flags: 0x50001107 },
-    { flags: 0x50001047 },
-    { flags: 0x50001027 },
-    { type: 1 },
-    { type: 3 },
-    abi({ isaRevision: 1 }),
-    abi({ isaRevision: 1, cpr1Size: 0, fpAbi: 3 }),
-    abi({ isaRevision: 2 }),
-    { gnuAttributes: { fpAbi: 3, msa: null } },
-    {
-      limitations: [
-        { kind: "unexamined_declarations", message: "unread declarations" },
-      ],
-    },
-  ] satisfies Partial<MipsElfMetadata>[])(
+    [{ flags: 0x1005 }, "Explicit o32 requires EF_MIPS_ARCH_32R2"],
+    [{ flags: 0x50001807 }, "only the NOREORDER, PIC and CPIC"],
+    [{ flags: 0x50001107 }, "only the NOREORDER, PIC and CPIC"],
+    [{ flags: 0x50001047 }, "only the NOREORDER, PIC and CPIC"],
+    [{ flags: 0x50001027 }, "requires an explicit o32 ABI"],
+    [{ type: 1 }, "Explicit o32 requires EF_MIPS_ARCH_32R2"],
+    [{ type: 3 }, "Explicit o32 requires EF_MIPS_ARCH_32R2"],
+    [abi({ isaRevision: 1 }), "record-bearing images"],
+    [abi({ isaRevision: 1, cpr1Size: 0, fpAbi: 3 }), "record-bearing images"],
+    [abi({ isaRevision: 2 }), "record-bearing images"],
+    [
+      { gnuAttributes: { fpAbi: 3, msa: null } },
+      "GNU floating-point ABI attribute",
+    ],
+    [
+      {
+        limitations: [
+          { kind: "unexamined_declarations", message: "unread declarations" },
+        ],
+      },
+      "inspection is incomplete",
+    ],
+  ] satisfies [Partial<MipsElfMetadata>, string][])(
     "does not widen declared MIPS32 admission to %j",
-    (change) => {
+    (change, reason) => {
       const ghidra = new GhidraProvider(config, silentLogger, {}, host);
-      expect(
-        ghidra.inspectTargetSupport(
-          target({ flags: 0x50001007, abiFlags: null, ...change }),
-        ).status,
-      ).toBe("unsupported");
+      const support = ghidra.inspectTargetSupport(
+        target({ flags: 0x50001007, abiFlags: null, ...change }),
+      );
+      // The named refusal pins which rule rejects the case, so a widened
+      // earlier rule cannot be hidden by a later one.
+      expect(support.status).toBe("unsupported");
+      expect(JSON.stringify(support)).toContain(reason);
     },
   );
   it("keeps an uninspected ABI flags record unknown for declared-o32 MIPS32", () => {

@@ -6,6 +6,20 @@ import type {
 } from "./architectureVariant.js";
 import type { TargetFormatsOfKind } from "./targetFormats.js";
 import type { BundleExecutableSelection } from "./apple/bundleExecutableProvenance.js";
+import {
+  EF_MIPS_32BITMODE,
+  EF_MIPS_ABI,
+  EF_MIPS_ABI2,
+  EF_MIPS_ABI_ON32,
+  EF_MIPS_ARCH,
+  EF_MIPS_ARCH_1,
+  EF_MIPS_ARCH_32,
+  EF_MIPS_ARCH_32R2,
+  EF_MIPS_ARCH_ASE,
+  EF_MIPS_FP64,
+  EF_MIPS_MACH,
+  EF_MIPS_NAN2008,
+} from "./mipsElfFlags.js";
 
 /** Provider-neutral CPU families detected from headers or explicitly selected raw loads. */
 export const BINARY_ARCHITECTURES = [
@@ -145,9 +159,6 @@ export const mipsLimitationMessages = (
   (limitations ?? []).map((limitation) => limitation.message);
 
 const MIPS_ET_EXEC = 2;
-const MIPS_ARCH_1 = 0x00000000;
-const MIPS_ARCH_32 = 0x50000000;
-const MIPS_ARCH_32R2 = 0x70000000;
 
 /**
  * Whether an ELF header has the recordless legacy ELF32 MIPS ET_EXEC shape:
@@ -160,20 +171,23 @@ export const isRecordlessLegacyMipsExecHeader = (
   metadata: ElfFamilyMetadata,
 ): boolean => {
   const { flags } = metadata;
-  const arch = flags & 0xf0000000;
+  const arch = flags & EF_MIPS_ARCH;
   return (
     metadata.elfClass === 32 &&
     metadata.type === MIPS_ET_EXEC &&
-    (arch === MIPS_ARCH_1 ||
-      arch === MIPS_ARCH_32 ||
-      arch === MIPS_ARCH_32R2) &&
-    (flags & 0x0f000000) === 0 &&
-    (flags & 0x00ff0000) === 0 &&
-    (flags & 0x0000f000) === 0 &&
-    (flags & 0x20) === 0 &&
-    (flags & 0x40) === 0 &&
-    (flags & 0x100) === 0 &&
-    (flags & 0x600) === 0
+    (arch === EF_MIPS_ARCH_1 ||
+      arch === EF_MIPS_ARCH_32 ||
+      arch === EF_MIPS_ARCH_32R2) &&
+    (flags &
+      (EF_MIPS_ARCH_ASE |
+        EF_MIPS_MACH |
+        EF_MIPS_ABI |
+        EF_MIPS_ABI2 |
+        EF_MIPS_ABI_ON32 |
+        EF_MIPS_32BITMODE |
+        EF_MIPS_FP64 |
+        EF_MIPS_NAN2008)) ===
+      0
   );
 };
 
