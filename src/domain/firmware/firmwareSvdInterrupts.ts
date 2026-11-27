@@ -57,11 +57,14 @@ const trimmedText = (element: Element | undefined): string | null => {
  * an optional `+`. Hexadecimal `0x`/`0X` is also accepted because vendor files
  * use it. A negative or other value is not an IRQ number.
  */
+const HEX_IRQ_VALUE = /^0[xX][0-9a-fA-F]+$/u;
+const DECIMAL_IRQ_VALUE = /^\+?[0-9]+$/u;
+
 const parseIrqNumber = (raw: string): number | null => {
   const normalized = raw.trim();
-  const parsed = /^0[xX][0-9a-fA-F]+$/u.test(normalized)
+  const parsed = HEX_IRQ_VALUE.test(normalized)
     ? Number.parseInt(normalized.slice(2), 16)
-    : /^\+?[0-9]+$/u.test(normalized)
+    : DECIMAL_IRQ_VALUE.test(normalized)
       ? Number.parseInt(normalized, 10)
       : Number.NaN;
   return Number.isSafeInteger(parsed) ? parsed : null;
