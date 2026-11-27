@@ -525,7 +525,7 @@ it("verifies the carrier before returning an empty stream", async () => {
   }
 });
 
-it("verifies a consumed stream before delivering it complete", async () => {
+it("rejects a stream whose carrier shrank while it was being delivered", async () => {
   const path = await write(
     "late-truncate.automaticDestinations-ms",
     compoundFile({
@@ -536,18 +536,21 @@ it("verifies a consumed stream before delivering it complete", async () => {
   );
   const reader = new CompoundFileArtifactReader(path);
   try {
-    let entry: Awaited<ReturnType<typeof reader.open>> extends never
-      ? never
-      : Parameters<typeof reader.open>[0] | undefined;
+    let entry: Parameters<typeof reader.open>[0] | undefined;
     for await (const member of reader.entries())
       if (member.path === "Stream") entry = member;
     if (entry === undefined) throw new Error("Missing Stream entry");
-    // Truncate the carrier after the inventory was built, so the range read
-    // delivers fewer bytes than the entry declares.
+    const stream = await reader.open(entry);
+    // Truncate only after open() admitted the carrier and started the pump, so
+    // the failure has to come from the delivered-length check rather than from
+    // the pre-read identity check that already ran.
     await writeFile(path, Buffer.alloc(0));
-    await expect(reader.open(entry)).rejects.toMatchObject({
-      reason: "integrity",
-    });
+    const consumed = (async (): Promise<number> => {
+      let delivered = 0;
+      for await (const chunk of stream) delivered += chunk.length;
+      return delivered;
+    })();
+    await expect(consumed).rejects.toMatchObject({ reason: "integrity" });
   } finally {
     await reader.close();
   }
