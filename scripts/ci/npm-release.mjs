@@ -31,7 +31,17 @@ export function stableUpdateVersion(version, published) {
   return stable;
 }
 
-/** Retry confirmed absence and a bounded number of consecutive gateway failures. */
+/** A socket loss can interrupt either fetch or response.json(). */
+function transientRegistryRead(error) {
+  if (error instanceof NpmRegistryResponseError)
+    return [502, 503, 504].includes(error.status);
+  return (
+    error instanceof TypeError &&
+    ["ECONNRESET", "UND_ERR_SOCKET"].includes(error.cause?.code)
+  );
+}
+
+/** Retry absence and a bounded number of consecutive transient reads. */
 export async function waitForNpmRelease(
   version,
   lookup = readNpmRelease,
@@ -40,20 +50,16 @@ export async function waitForNpmRelease(
   const windowMinutes = 75;
   const intervalMs = 30_000;
   const attempts = (windowMinutes * 60_000) / intervalMs + 1;
-  let gatewayFailures = 0;
+  let transientFailures = 0;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       const published = await lookup(version);
       if (published.status === "published") return published;
-      gatewayFailures = 0;
+      transientFailures = 0;
     } catch (error) {
-      if (
-        !(error instanceof NpmRegistryResponseError) ||
-        ![502, 503, 504].includes(error.status)
-      )
-        throw error;
-      gatewayFailures += 1;
-      if (gatewayFailures === 3 || attempt === attempts) throw error;
+      if (!transientRegistryRead(error)) throw error;
+      transientFailures += 1;
+      if (transientFailures === 3 || attempt === attempts) throw error;
     }
     if (attempt < attempts) await pause(intervalMs);
   }

@@ -177,6 +177,51 @@ it("retries transient npm HTTP failures before checking the published release", 
   expect(pauses).toEqual([30_000, 30_000]);
 });
 
+it("retries a registry socket failure within the shared transient allowance", async () => {
+  const version = "6.5.0";
+  const disconnected = new TypeError("fetch failed", {
+    cause: Object.assign(new Error("peer disconnected"), {
+      code: "UND_ERR_SOCKET",
+    }),
+  });
+  let attempts = 0;
+  const lookup = () =>
+    readNpmRelease(version, async () => {
+      attempts++;
+      if (attempts === 1) throw disconnected;
+      return attempts === 2
+        ? new Response(null, { status: 503 })
+        : Response.json(
+            metadata(version, "sha512-target", { latest: version }),
+          );
+    });
+  await expect(
+    waitForNpmRelease(version, lookup, async () => {}),
+  ).resolves.toMatchObject({
+    status: "published",
+    taggedVersion: version,
+  });
+  expect(attempts).toBe(3);
+
+  attempts = 0;
+  await expect(
+    waitForNpmRelease(
+      version,
+      async () => {
+        attempts++;
+        if (attempts === 2)
+          return readNpmRelease(
+            version,
+            async () => new Response(null, { status: 503 }),
+          );
+        throw disconnected;
+      },
+      async () => {},
+    ),
+  ).rejects.toBe(disconnected);
+  expect(attempts).toBe(3);
+});
+
 it("resets the consecutive gateway failures after observing absence", async () => {
   const version = "6.5.0";
   const statuses = [503, 503, 404, 503, 503];
