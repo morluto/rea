@@ -8,7 +8,7 @@ import type {
 import { BinaryReader } from "../../domain/binaryContainer.js";
 import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 import type { MediaAssetReaderLimits } from "../../domain/artifactReaderLimits.js";
-import { artifactReaderLimitFailure } from "../../resources/ArtifactReaderLimits.js";
+import { artifactReaderLimitFailure } from "../../resources/index.js";
 import { byteToHex } from "../../kernel/byteToHex.js";
 import {
   malformedInput,
