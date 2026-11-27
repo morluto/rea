@@ -7,6 +7,8 @@ import type {
 } from "../../domain/formatMetadata/mediaAssetMetadata.js";
 import { BinaryReader } from "../../domain/binaryContainer.js";
 import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
+import type { MediaAssetReaderLimits } from "../../domain/artifactReaderLimits.js";
+import { artifactReaderLimitFailure } from "../../resources/ArtifactReaderLimits.js";
 import { byteToHex } from "../../kernel/byteToHex.js";
 import {
   malformedInput,
@@ -45,21 +47,26 @@ export type MediaAssetRead = (
 type Extent = "consistent" | "truncated" | "trailing-bytes";
 
 /**
- * Pages walked for Ogg Opus identification and comment inventory. OpusHead and
- * OpusTags normally fit in a few pages; the allowance stops a page-flood from
- * unbounded comment continuations. Fixed: RFC 3533 does not bound page count.
+ * Admit one more listed region against `artifact_limits.media_asset.
+ * region_count`. RFC 3533 bounds neither the pages that carry the Opus
+ * header packets nor RIFF the chunk count, so the walk stops here with a
+ * typed refusal the caller can raise.
  */
-const MAX_OGG_PAGES = 64;
+export const admitMediaAssetRegions = (
+  count: number,
+  limits: MediaAssetReaderLimits,
+): void => {
+  if (count > limits.region_count)
+    throw artifactReaderLimitFailure(
+      "artifact_limits.media_asset.region_count",
+      limits.region_count,
+      "count",
+    );
+};
 /**
- * RIFF chunks walked before the remainder is left unexamined. WAVE files carry
- * a small chunk table; the allowance stops zero-length chunk floods. Fixed:
- * the RIFF form does not bound chunk count.
- */
-const MAX_RIFF_CHUNKS = 256;
-/**
- * OpusTags vendor string bytes retained for the vendor fact. Longer vendors
- * stay in the comment page regions; only the root fact is capped. Fixed:
- * metadata field representation bound, not a decode of comment payloads.
+ * OpusTags vendor bytes delivered inline as the root `vendor` fact. This is a
+ * delivery bound, not an admission: a longer vendor is omitted from the root
+ * with a limitation and stays complete in the extractable comment pages.
  */
 const MAX_VENDOR_BYTES = 4096;
 /**
@@ -203,6 +210,7 @@ export const oggOpusLayout = async (
   header: Buffer,
   fileSize: number,
   read: MediaAssetRead,
+  limits: MediaAssetReaderLimits,
 ): Promise<MediaAssetLayout<OggOpusMetadata>> => {
   let buffer = header;
   const ensure = async (end: number): Promise<Buffer> => {
@@ -232,7 +240,9 @@ export const oggOpusLayout = async (
   let tagsPacketOpen = false;
   let tagsComplete = false;
   let otherStreamPages = 0;
-  while (at < fileSize && pages.length < MAX_OGG_PAGES) {
+  let secondPacketNotTags = false;
+  while (at < fileSize) {
+    admitMediaAssetRegions(pages.length + 1, limits);
     await ensure(Math.min(at + 27 + 255 + 65_536, fileSize));
     const page = readOggPage(buffer, at, fileSize);
     if (page === "malformed")
@@ -280,6 +290,7 @@ export const oggOpusLayout = async (
         continue;
       }
       // RFC 7845 section 3 requires OpusTags as the stream's second packet.
+      secondPacketNotTags = true;
       limitations.push(
         `The Opus stream's second packet, on the page at offset ${String(page.offset)}, is not OpusTags; no comment header was read.`,
       );
@@ -393,8 +404,17 @@ export const oggOpusLayout = async (
   }));
   let regionsExamined: "complete" | "unknown" = "complete";
   let declaredEnd = pageEnd;
-  const hitPageCeiling = pages.length >= MAX_OGG_PAGES && pageEnd < fileSize;
-  if (truncated) {
+  // RFC 7845 requires an OpusTags packet; a file that ends before it holds
+  // an incomplete header, not a complete stream.
+  const endedBeforeTags =
+    !truncated && !tagsPacketOpen && !secondPacketNotTags && at >= fileSize;
+  if (endedBeforeTags) {
+    truncated = true;
+    regionsExamined = "unknown";
+    limitations.push(
+      `The file ends at offset ${String(fileSize)} before the OpusTags packet RFC 7845 requires after OpusHead.`,
+    );
+  } else if (truncated) {
     limitations.push(
       `An Ogg page at offset ${String(at)} is cut off; later pages were not listed.`,
     );
@@ -402,14 +422,7 @@ export const oggOpusLayout = async (
   } else if (tagsPacketOpen && !tagsComplete) {
     regionsExamined = "unknown";
     limitations.push(
-      hitPageCeiling
-        ? `Only the first ${String(MAX_OGG_PAGES)} Ogg pages were examined while OpusTags still continued; ${String(fileSize - pageEnd)} byte(s) remain. Raise is unavailable: this is a fixed inventory walk ceiling.`
-        : `OpusTags still continues at offset ${String(pageEnd)}; later bytes were not classified as audio.`,
-    );
-  } else if (hitPageCeiling) {
-    regionsExamined = "unknown";
-    limitations.push(
-      `Only the first ${String(MAX_OGG_PAGES)} Ogg pages were examined; ${String(fileSize - pageEnd)} byte(s) remain. Raise is unavailable: this is a fixed inventory walk ceiling.`,
+      `OpusTags still continues at offset ${String(pageEnd)}; later bytes were not classified as audio.`,
     );
   } else if (pageEnd < fileSize) {
     // Bytes after the identification/comment pages are the opaque audio stream.
@@ -426,9 +439,7 @@ export const oggOpusLayout = async (
   const extent =
     truncated || fitted.extent === "truncated"
       ? "truncated"
-      : fitted.extent === "trailing-bytes" ||
-          hitPageCeiling ||
-          (tagsPacketOpen && !tagsComplete)
+      : fitted.extent === "trailing-bytes" || (tagsPacketOpen && !tagsComplete)
         ? "trailing-bytes"
         : "consistent";
   return {
@@ -470,6 +481,7 @@ export const riffXma2Layout = async (
   header: Buffer,
   fileSize: number,
   read: MediaAssetRead,
+  limits: MediaAssetReaderLimits,
 ): Promise<MediaAssetLayout<RiffXma2Metadata>> => {
   let buffer = header;
   /** Extend only through `end`; never fill opaque chunk payloads. */
@@ -524,7 +536,8 @@ export const riffXma2Layout = async (
   let stopped = false;
   let incompleteFraming = false;
   const limitations: string[] = [];
-  while (at + 8 <= containerEnd && chunks.length < MAX_RIFF_CHUNKS) {
+  while (at + 8 <= containerEnd) {
+    admitMediaAssetRegions(chunks.length + 1, limits);
     const headerBytes = await readRange(at, 8);
     if (headerBytes === "truncated") {
       stopped = true;
@@ -657,13 +670,7 @@ export const riffXma2Layout = async (
   const allLimitations = [...limitations, ...fitted.limitations];
   const extent: Extent = incompleteFraming ? "truncated" : fitted.extent;
   let regionsExamined: "complete" | "unknown" = "complete";
-  if (stopped || chunks.length >= MAX_RIFF_CHUNKS || incompleteFraming) {
-    regionsExamined = "unknown";
-    if (chunks.length >= MAX_RIFF_CHUNKS)
-      allLimitations.push(
-        `Only the first ${String(MAX_RIFF_CHUNKS)} RIFF chunks were examined. Raise is unavailable: this is a fixed inventory walk ceiling.`,
-      );
-  }
+  if (stopped || incompleteFraming) regionsExamined = "unknown";
 
   return {
     metadata: {

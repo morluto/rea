@@ -284,7 +284,12 @@ const mediaAsset = <Id extends MediaAssetFormat>(id: Id) =>
     readerLimitation:
       "Media asset inventory reports declared header fields and the byte regions they name. Audio, video and pipeline-cache payloads are not decoded.",
     createReader: (path, options) =>
-      new MediaAssetArtifactReader(path, id, sourceOf(options)),
+      new MediaAssetArtifactReader(
+        path,
+        id,
+        sourceOf(options),
+        options.readerLimits?.media_asset,
+      ),
   });
 
 const switchExecutable = <Id extends "nso" | "nro">(id: Id) =>

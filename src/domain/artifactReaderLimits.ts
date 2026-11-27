@@ -124,6 +124,20 @@ export const androidSparseImageReaderLimitsSchema = z.strictObject({
 export type AndroidSparseImageReaderLimits = z.output<
   typeof androidSparseImageReaderLimitsSchema
 >;
+/**
+ * Media asset admission. Ogg, RIFF and Bink headers bound neither the pages
+ * walked for the Opus header packets nor the RIFF chunk count, so the regions
+ * one container lists are admitted against this count.
+ */
+export const DEFAULT_MEDIA_ASSET_READER_LIMITS = {
+  region_count: DEFAULT_ARTIFACT_MEMBER_COUNT,
+};
+export const mediaAssetReaderLimitsSchema = z.strictObject({
+  region_count: count,
+});
+export type MediaAssetReaderLimits = z.output<
+  typeof mediaAssetReaderLimitsSchema
+>;
 export const DEFAULT_ISO9660_READER_LIMITS = {
   descriptor_count: 64,
   directory_depth: 64,
@@ -285,6 +299,15 @@ export const artifactReaderLimitsInputSchema = z.strictObject({
     .describe(
       `Android sparse image admission; omitted fields use ${JSON.stringify(DEFAULT_ANDROID_SPARSE_IMAGE_READER_LIMITS)}. The declared total_chunks is admitted before the chunk walk; it bounds walked chunk headers and the retained expansion plan.`,
     ),
+  media_asset: z
+    .strictObject({
+      region_count:
+        mediaAssetReaderLimitsSchema.shape.region_count.exactOptional(),
+    })
+    .exactOptional()
+    .describe(
+      `Ogg Opus, RIFF/XMA2, Bink 2 and Vulkan pipeline-cache admission; omitted fields use ${JSON.stringify(DEFAULT_MEDIA_ASSET_READER_LIMITS)}. Region count bounds the Ogg header pages and RIFF chunks walked and listed.`,
+    ),
   iso9660: z
     .strictObject({
       descriptor_count:
@@ -361,6 +384,7 @@ const readerLimitGroups = {
   godot: godotReaderLimitsSchema,
   android_vbmeta: androidVbmetaReaderLimitsSchema,
   android_sparse_image: androidSparseImageReaderLimitsSchema,
+  media_asset: mediaAssetReaderLimitsSchema,
   iso9660: iso9660ReaderLimitsSchema,
   deno: denoReaderLimitsSchema,
   wxapkg: wxapkgReaderLimitsSchema,
@@ -375,11 +399,12 @@ export type ArtifactReaderLimits = z.output<
   typeof resolvedArtifactReaderLimitsSchema
 >;
 
-// Earlier Evidence may omit the later vbmeta and sparse-image policies.
+// Earlier Evidence may omit the later vbmeta, sparse-image and media policies.
 export const artifactReaderLimitsSchema =
   resolvedArtifactReaderLimitsSchema.extend({
     android_vbmeta: androidVbmetaReaderLimitsSchema.exactOptional(),
     android_sparse_image: androidSparseImageReaderLimitsSchema.exactOptional(),
+    media_asset: mediaAssetReaderLimitsSchema.exactOptional(),
   });
 
 /**
@@ -420,6 +445,10 @@ export const resolveArtifactReaderLimits = (
   android_sparse_image: {
     ...DEFAULT_ANDROID_SPARSE_IMAGE_READER_LIMITS,
     ...selected?.android_sparse_image,
+  },
+  media_asset: {
+    ...DEFAULT_MEDIA_ASSET_READER_LIMITS,
+    ...selected?.media_asset,
   },
   iso9660: { ...DEFAULT_ISO9660_READER_LIMITS, ...selected?.iso9660 },
   deno: {

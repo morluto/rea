@@ -68,11 +68,15 @@ export const hasOggOpusHeader = (prefix: Uint8Array): boolean => {
 
 /**
  * `RIFF` / `WAVE` whose first `fmt ` chunk declares tag 0x166. Only the
- * contiguous leading WAVE layout (fmt at offset 12) is claimed here.
+ * contiguous leading WAVE layout (fmt at offset 12) is claimed here. The
+ * claim needs only the bytes through that tag (offset 22), so a file cut off
+ * inside the fmt fields is still recognized and its reader reports it as
+ * truncated.
  */
+const RIFF_XMA2_SIGNATURE_BYTES = 22;
 export const hasRiffXma2Header = (prefix: Uint8Array): boolean => {
   if (!startsWith(prefix, RIFF_MAGIC)) return false;
-  if (prefix.length < 36) return false;
+  if (prefix.length < RIFF_XMA2_SIGNATURE_BYTES) return false;
   if (!startsWith(prefix.subarray(8), WAVE_MAGIC)) return false;
   if (
     prefix[12] !== 0x66 ||
@@ -103,9 +107,10 @@ export const hasBink2Header = (prefix: Uint8Array): boolean => {
 
 /**
  * `VkPipelineCacheHeaderVersionOne`: header size 32 and version 1. There is
- * no magic; only this exact VersionOne size is claimed.
+ * no magic; only this exact VersionOne size and version pair is claimed. The
+ * pair is the signature, so a file cut off after it is still recognized and
+ * its reader reports the header as truncated.
  */
 export const hasVulkanPipelineCacheHeader = (prefix: Uint8Array): boolean =>
   leU32(prefix, 0) === VK_PIPELINE_CACHE_HEADER_SIZE &&
-  leU32(prefix, 4) === VK_PIPELINE_CACHE_HEADER_VERSION_ONE &&
-  prefix.length >= VK_PIPELINE_CACHE_HEADER_SIZE;
+  leU32(prefix, 4) === VK_PIPELINE_CACHE_HEADER_VERSION_ONE;

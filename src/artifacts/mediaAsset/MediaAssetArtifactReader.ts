@@ -14,6 +14,11 @@ import {
   type PositionalArtifactEntry,
 } from "../PositionalArtifactReader.js";
 import {
+  DEFAULT_MEDIA_ASSET_READER_LIMITS,
+  type MediaAssetReaderLimits,
+} from "../../domain/artifactReaderLimits.js";
+import {
+  admitMediaAssetRegions,
   bink2Layout,
   oggOpusLayout,
   riffXma2Layout,
@@ -37,6 +42,7 @@ const LAYOUTS: {
     header: Buffer,
     fileSize: number,
     read: MediaAssetRead,
+    limits: MediaAssetReaderLimits,
   ) =>
     | MediaAssetLayout<Extract<MediaAssetMetadata, { kind: Format }>>
     | Promise<MediaAssetLayout<Extract<MediaAssetMetadata, { kind: Format }>>>;
@@ -62,13 +68,17 @@ const LABELS: Readonly<Record<MediaAssetFormat, string>> = {
 export class MediaAssetArtifactReader extends PositionalArtifactReader<MediaAssetMetadata> {
   override readonly format: MediaAssetFormat;
 
+  readonly #limits: MediaAssetReaderLimits;
+
   constructor(
     path: string,
     format: MediaAssetFormat,
     admitted?: StableRegularFileDescriptor,
+    limits: MediaAssetReaderLimits = DEFAULT_MEDIA_ASSET_READER_LIMITS,
   ) {
     super(path, LABELS[format], admitted);
     this.format = format;
+    this.#limits = limits;
   }
 
   formatMetadata(): MediaAssetMetadata | undefined {
@@ -94,12 +104,20 @@ export class MediaAssetArtifactReader extends PositionalArtifactReader<MediaAsse
     const header = await read(0, HEADER_BYTES);
     let layout: MediaAssetLayout<MediaAssetMetadata>;
     try {
-      layout = await LAYOUTS[this.format](header, initial.size, read);
+      layout = await LAYOUTS[this.format](
+        header,
+        initial.size,
+        read,
+        this.#limits,
+      );
     } catch (cause: unknown) {
       if (cause instanceof ParseFailureError)
         throw artifactParseFailure(cause, signal);
       throw cause;
     }
+    // Every listed region, including the trailing audio and fixed-layout
+    // regions, counts against the same admission as the walks.
+    admitMediaAssetRegions(layout.regions.length, this.#limits);
     const entries = layout.regions.map((region): PositionalArtifactEntry => ({
       path: region.path,
       kind: "file",

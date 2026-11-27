@@ -26,10 +26,16 @@ import {
 const write = (name: string, bytes: Buffer): Promise<string> =>
   createTestTempFile("rea-media-asset-", name, bytes);
 
-const read = async (format: MediaAssetFormat, bytes: Buffer) => {
+const read = async (
+  format: MediaAssetFormat,
+  bytes: Buffer,
+  limits?: { readonly region_count: number },
+) => {
   const reader = new MediaAssetArtifactReader(
     await write(`asset.${format}`, bytes),
     format,
+    undefined,
+    limits,
   );
   const coverage: ArtifactReaderTraversal[] = [];
   const entries: ArtifactEntry[] = [];
@@ -669,4 +675,72 @@ describe("Vulkan pipeline cache headers", () => {
       },
     });
   });
+});
+
+describe("media asset region admission", () => {
+  it("refuses an Ogg walk past region_count with a raisable limit", async () => {
+    const bytes = oggOpusSpannedTagsFixture();
+    await expect(
+      read("ogg-opus", bytes, { region_count: 2 }),
+    ).rejects.toMatchObject({
+      readerLimit: {
+        parameter: "artifact_limits.media_asset.region_count",
+        effective_value: 2,
+        unit: "count",
+        update_mode: "parameter",
+      },
+    });
+    const raised = await read("ogg-opus", bytes, { region_count: 4 });
+    expect(raised.coverage[0]?.status).toBe("complete");
+  });
+
+  it("refuses a RIFF chunk walk past region_count", async () => {
+    await expect(
+      read("riff-xma2", riffXma2Fixture(), { region_count: 1 }),
+    ).rejects.toMatchObject({
+      readerLimit: {
+        parameter: "artifact_limits.media_asset.region_count",
+        effective_value: 1,
+      },
+    });
+  });
+
+  it("counts fixed-layout regions against the same admission", async () => {
+    await expect(
+      read("vulkan-pipeline-cache", vulkanPipelineCacheFixture(), {
+        region_count: 1,
+      }),
+    ).rejects.toMatchObject({
+      readerLimit: { parameter: "artifact_limits.media_asset.region_count" },
+    });
+  });
+});
+
+describe("incomplete media asset headers", () => {
+  it("reports an Ogg Opus file that ends after OpusHead as truncated, not complete", async () => {
+    const bytes = oggPage(0, 0n, opusHeadPacket(), 2);
+    const result = await read("ogg-opus", bytes);
+    expect(result.metadata).toMatchObject({ extent_check: "truncated" });
+    expect(result.coverage[0]?.status).toBe("unknown");
+    expect(
+      result.coverage[0]?.limitations.some((line) =>
+        line.includes("before the OpusTags packet"),
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    ["riff-xma2", riffXma2Fixture().subarray(0, 22)],
+    ["vulkan-pipeline-cache", vulkanPipelineCacheFixture().subarray(0, 8)],
+  ] as const)(
+    "recognizes a cut-off %s header and reports it as truncated",
+    async (format, cut) => {
+      expect(
+        recognizeArtifactFormat({ prefix: cut, fileSize: cut.length }),
+      ).toMatchObject({ state: "recognized", format });
+      await expect(read(format, cut)).rejects.toMatchObject({
+        parseFailure: { kind: "truncated", format },
+      });
+    },
+  );
 });

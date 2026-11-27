@@ -13,8 +13,13 @@ Detection reads the bytes, so the file name does not matter:
 | ----------------------- | ---------------------------------------------------------- | -------------------------------------------- |
 | `ogg-opus`              | `OggS` page whose first packet starts with `OpusHead`      | RFC 7845 Opus in Ogg                         |
 | `riff-xma2`             | `RIFF`…`WAVE` with `fmt ` tag `0x166` (`WAVE_FORMAT_XMA2`) | RIFF WAVE plus XMA2WAVEFORMATEX              |
-| `bink2`                 | `KB2` plus a revision byte                                 | Bink 2 leading header and frame-offset table |
+| `bink2`                 | `KB2` plus a lowercase revision letter                     | Bink 2 leading header and frame-offset table |
 | `vulkan-pipeline-cache` | `headerSize` 32 and `VK_PIPELINE_CACHE_HEADER_VERSION_ONE` | Vulkan pipeline cache VersionOne header      |
+
+Each signature needs only the bytes that carry it: the RIFF claim stops at the
+fmt tag (22 bytes), Bink at the revision letter (4 bytes) and Vulkan at the
+size and version words (8 bytes). A file cut off after its signature is
+recognized, and inspection refuses it as truncated with the bytes it needs.
 
 ## What each format reports
 
@@ -62,7 +67,8 @@ Detection reads the bytes, so the file name does not matter:
 disagreement is reported as a fact, not a refusal:
 
 - A truncated Ogg page after OpusHead keeps the pages already read and
-  reports unknown coverage. A first page whose declared payload runs past
+  reports unknown coverage. A file that ends after OpusHead, before the
+  OpusTags packet RFC 7845 requires, is `truncated` with unknown coverage. A first page whose declared payload runs past
   EOF refuses with a truncated-input failure, not malformed.
 - A RIFF chunk whose payload does not fit inside the declared RIFF end is
   not listed. An odd-sized final chunk whose pad byte is omitted at the form
@@ -75,21 +81,25 @@ disagreement is reported as a fact, not a refusal:
 Coverage is `complete` only when `extent_check` is `consistent` and every
 declared header region was examined.
 
-## Fixed inventory ceilings
+## Limits
 
-These walks use fixed ceilings with a stated representation reason; they are
-not `REA_` runtime settings:
+RFC 3533 does not bound the pages that carry the Opus header packets, and
+RIFF does not bound its chunk count, so the regions one container lists are
+admitted against `artifact_limits.media_asset.region_count` (default
+100,000). The Ogg page walk, the RIFF chunk walk and the final region list
+(including `audio.bin` and the fixed Bink and Vulkan regions) all count
+against it. Past it, inspection refuses with `details.limit` naming that
+field; raise it on the next call:
 
-| Ceiling                                       | Value | Reason                                                                                     |
-| --------------------------------------------- | ----- | ------------------------------------------------------------------------------------------ |
-| Ogg pages examined for OpusHead/OpusTags      | 64    | Stops page floods from unbounded comment continuations; RFC 3533 does not bound page count |
-| RIFF chunks walked inside the WAVE form       | 256   | Stops zero-length chunk floods; RIFF does not bound chunk count                            |
-| OpusTags vendor bytes retained as a root fact | 4096  | Metadata-field bound; longer vendors remain in page regions                                |
+```json
+{ "artifact_limits": { "media_asset": { "region_count": 200000 } } }
+```
 
-When a ceiling stops the walk, coverage is `unknown` and a limitation names
-the ceiling and that raise is unavailable. Bink frame counts are not capped:
-the frame-offset table is a declared byte range and is never loaded during
-inventory.
+The OpusTags vendor is delivered inline as the root `vendor` fact only up to
+4096 bytes. That is a delivery bound, not an admission: a longer vendor is
+omitted from the root with a limitation and stays complete in the extractable
+comment pages. Bink frame counts are not capped: the frame-offset table is a
+declared byte range and is never loaded during inventory.
 
 ## CLI
 
