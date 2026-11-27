@@ -614,7 +614,9 @@ export const readFailureError = (
   failure: FormatTargetFailure | TargetFailureOf<"changed">,
 ):
   | ArtifactReaderFailure
-  | ParseFailureError<"malformed" | "truncated" | "unsupported"> =>
+  | ParseFailureError<
+      "unrecognized" | "malformed" | "truncated" | "unsupported"
+    > =>
   failure.kind === "changed"
     ? new ArtifactReaderFailure("integrity", failure.detail, {
         integrityCheck: "read-coverage",

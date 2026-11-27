@@ -102,11 +102,12 @@ export type TargetFailureOf<Kind extends TargetFailureKind> = Extract<
 >;
 
 /**
- * A format owner's refusal of the bytes it read: they break or end inside a
- * structure of the format, or use a form outside the owner's coverage.
+ * A format owner's refusal of the bytes it read: they are not that format at
+ * all, they break or end inside a structure of the format, or they use a form
+ * outside the owner's coverage.
  */
 export type FormatTargetFailure = TargetFailureOf<
-  "malformed" | "truncated" | "unsupported"
+  "unrecognized" | "malformed" | "truncated" | "unsupported"
 >;
 
 /**

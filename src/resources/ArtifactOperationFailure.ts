@@ -131,6 +131,7 @@ export const artifactOperationReason = (
   cause: ArtifactReaderFailure,
 ): ArtifactOperationError["reason"] => {
   switch (cause.reason) {
+    case "unrecognized":
     case "malformed":
     case "truncated":
     case "unsupported":

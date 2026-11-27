@@ -10,6 +10,7 @@ import type {
  * {@link TargetFailureOf} variants themselves, so a parser's fact is the
  * target failure every projection reads; only `limit` is parser-specific.
  *
+ * - `unrecognized`: the bytes are not this format; another reader may own them.
  * - `malformed`: the bytes violate the format's structure.
  * - `truncated`: a declared structure starts in the bytes but ends past them.
  * - `unsupported`: the bytes use a form outside this decoder's coverage.
@@ -17,6 +18,7 @@ import type {
  *   to be invalid.
  */
 export type ParseFailureKind =
+  | "unrecognized"
   | "malformed"
   | "truncated"
   | "unsupported"
@@ -44,7 +46,7 @@ export const reportedParseLimit = ({ name, maximum, required }: LimitRef) => ({
 
 /** A parse outcome the parser established, carried with its facts. */
 export type ParseFailure =
-  | TargetFailureOf<"malformed" | "truncated" | "unsupported">
+  | TargetFailureOf<"unrecognized" | "malformed" | "truncated" | "unsupported">
   | (TargetFailureFacts & {
       readonly kind: "limit";
       readonly limit: LimitRef;
@@ -79,6 +81,14 @@ const failureWith = <Kind extends ParseFailureKind>(
   cause: unknown,
 ): ParseFailureError<Kind> =>
   new ParseFailureError(failure, cause === undefined ? undefined : { cause });
+
+/** The bytes are not this format; another reader may own them. */
+export const unrecognizedInput = (
+  format: string,
+  detail: string,
+  { cause, ...at }: ParseFailureSite = {},
+): ParseFailureError<"unrecognized"> =>
+  failureWith({ kind: "unrecognized", format, detail, ...at }, cause);
 
 /** The bytes violate the format's structure. */
 export const malformedInput = (

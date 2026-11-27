@@ -40,10 +40,10 @@ interface BinaryFormatFailureFacts {
 
 /** Distinguish corrupt recognized binaries from containers outside parser coverage. */
 export class BinaryFormatFailure extends ParseFailureError<
-  "malformed" | "truncated" | "unsupported"
+  "unrecognized" | "malformed" | "truncated" | "unsupported"
 > {
   constructor(
-    kind: "malformed" | "truncated" | "unsupported",
+    kind: "unrecognized" | "malformed" | "truncated" | "unsupported",
     message: string,
     facts: BinaryFormatFailureFacts = {},
   ) {
