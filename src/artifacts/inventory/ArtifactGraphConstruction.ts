@@ -639,7 +639,7 @@ export const classifyArtifactHeader = (
 ): Pick<ArtifactNode, "format" | "architecture"> => {
   const {
     prefix,
-    suffix,
+    tail,
     iso9660Descriptor,
     mzWindowsHeaderSignature,
     mzWindowsHeaderRecord,
@@ -655,7 +655,7 @@ export const classifyArtifactHeader = (
   const recognized = recognizeBoundedArtifactFormat({
     prefix,
     fileSize,
-    suffix,
+    tail,
     iso9660Descriptor,
     xmlPlistSignature: evidence.xmlPlistSignature,
   });

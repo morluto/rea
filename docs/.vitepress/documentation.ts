@@ -559,6 +559,11 @@ export const documentationSections = [
         route: "/unityfs",
       },
       {
+        text: "Unreal pak indexes",
+        source: "unreal-pak.md",
+        route: "/unreal-pak",
+      },
+      {
         text: "iNES containers",
         source: "ines-containers.md",
         route: "/ines-containers",

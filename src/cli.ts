@@ -37,6 +37,7 @@ import * as nugetNupkgModule from "./cli/nugetNupkgCommands.js";
 import * as vsixPackageModule from "./cli/vsixPackageCommands.js";
 import * as ociImageLayoutModule from "./cli/ociImageLayoutCommands.js";
 import * as erlangModule from "./cli/erlangCommands.js";
+import * as unrealModule from "./cli/unrealCommands.js";
 import * as v8CodeCacheModule from "./cli/v8CodeCacheCommands.js";
 import * as mavenGradleMetadataModule from "./cli/mavenGradleMetadataCommands.js";
 import * as sqliteModule from "./cli/sqliteCommands.js";
@@ -102,6 +103,7 @@ const CLI_COMMAND_MODULES: CliCommandModules = {
   vsixPackage: vsixPackageModule,
   ociImageLayout: ociImageLayoutModule,
   erlang: erlangModule,
+  unreal: unrealModule,
   v8CodeCache: v8CodeCacheModule,
   mavenGradleMetadata: mavenGradleMetadataModule,
   sqlite: sqliteModule,

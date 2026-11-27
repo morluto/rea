@@ -1,3 +1,4 @@
+import { InternalInvariantError } from "../../../src/domain/internalInvariant.js";
 import {
   lstat,
   appendFile,
@@ -14,6 +15,7 @@ import { phaseGate } from "../../support/lifecycleHarness.js";
 import {
   completedStableArtifactStream,
   readStableArtifact,
+  readStableArtifactRanges,
   streamStableArtifact,
 } from "../../../src/resources/readStableArtifact.js";
 import {
@@ -24,6 +26,7 @@ import {
 } from "../../../src/resources/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { ParseFailureError } from "../../../src/domain/parseFailure.js";
 
 it("reads an empty artifact and rejects symlink, size, and cancellation boundaries", async () => {
   const root = await createTestTempDirectory("rea-stable-artifact-");
@@ -573,6 +576,136 @@ it("does not turn a retention callback abort into completed-file cancellation", 
     file.release();
     await scope.close();
   }
+});
+
+it("decodes ranges and hashes the whole file through one admitted descriptor", async () => {
+  const root = await createTestTempDirectory("rea-stable-ranges-");
+  const path = join(root, "source.bin");
+  const bytes = Buffer.from("0123456789abcdef");
+  await writeFile(path, bytes);
+  const {
+    result,
+    sha256,
+    bytes: size,
+  } = await readStableArtifactRanges(path, async (source) =>
+    Buffer.concat([await source.read(14, 2), await source.read(0, 3)]),
+  );
+  expect(result.toString()).toBe("ef012");
+  expect(size).toBe(16);
+  expect(sha256).toBe(createHash("sha256").update(bytes).digest("hex"));
+  await expect(
+    readStableArtifactRanges(path, (source) => source.read(10, 7)),
+  ).rejects.toBeInstanceOf(InternalInvariantError);
+  const link = join(root, "link.bin");
+  await symlink(path, link);
+  await expect(
+    readStableArtifactRanges(link, (source) => source.read(0, 1)),
+  ).rejects.toMatchObject({ reason: "path" });
+});
+
+it("stops hashing a file that grows after its ranges were decoded", async () => {
+  const root = await createTestTempDirectory("rea-stable-ranges-grow-");
+  const path = join(root, "selected");
+  await writeFile(path, "original evidence");
+  await expect(
+    readStableArtifactRanges(path, async (source) => {
+      await appendFile(path, Buffer.alloc(1 << 20));
+      return source.read(0, 4);
+    }),
+  ).rejects.toMatchObject({
+    reason: "integrity",
+    message: expect.stringContaining("grew during read"),
+  });
+});
+
+it("rejects a file changed after its ranges were decoded", async () => {
+  const root = await createTestTempDirectory("rea-stable-ranges-change-");
+  const path = join(root, "selected");
+  await writeFile(path, "original evidence");
+  let inspected = 0;
+  const reading = readStableArtifactRanges(
+    path,
+    (source) => source.read(0, 4),
+    undefined,
+    undefined,
+    {
+      async lstat(selected) {
+        inspected++;
+        if (inspected === 2) await unlink(selected);
+        return lstat(selected, { bigint: true });
+      },
+      open,
+    },
+  );
+  await expect(reading).rejects.toMatchObject({ reason: "integrity" });
+});
+
+it("reports a file rewritten mid-decode as changed instead of its format failure", async () => {
+  const root = await createTestTempDirectory("rea-stable-ranges-rewrite-");
+  const path = join(root, "selected");
+  await writeFile(path, "original evidence");
+  const malformed = new ParseFailureError({
+    kind: "malformed",
+    format: "test",
+    detail: "rewritten index",
+  });
+  const decode = (rewrite: boolean, failure: Error) => async () => {
+    if (rewrite) await writeFile(path, "replaced evidence");
+    throw failure;
+  };
+  await expect(
+    readStableArtifactRanges(path, decode(true, malformed)),
+  ).rejects.toMatchObject({
+    reason: "integrity",
+    message: expect.stringContaining("changed during read"),
+  });
+  // An unchanged file keeps its format failure, and limits stay primary.
+  await expect(
+    readStableArtifactRanges(path, decode(false, malformed)),
+  ).rejects.toBe(malformed);
+  const limit = new ParseFailureError({
+    kind: "limit",
+    format: "test",
+    detail: "index too large",
+    limit: { name: "index-bytes", maximum: 1 },
+  });
+  await expect(
+    readStableArtifactRanges(path, decode(true, limit)),
+  ).rejects.toBe(limit);
+});
+
+it("keeps a completed range read when cancellation arrives during the final checks", async () => {
+  const root = await createTestTempDirectory("rea-stable-ranges-late-");
+  const path = join(root, "selected");
+  const bytes = Buffer.from("original evidence");
+  await writeFile(path, bytes);
+  const controller = new AbortController();
+  let inspected = 0;
+  const failure = await readStableArtifactRanges(
+    path,
+    (source) => source.read(0, 4),
+    controller.signal,
+    undefined,
+    {
+      async lstat(selected) {
+        // The second lstat is the post-read check, after every byte is hashed.
+        if (++inspected === 2) controller.abort(new Error("late"));
+        return lstat(selected, { bigint: true });
+      },
+      open,
+    },
+  ).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(ArtifactFileCancelled);
+  expect(
+    (failure as ArtifactFileCancelled<{ sha256: string }>).fileCancellation
+      .outcome,
+  ).toMatchObject({
+    kind: "completed",
+    value: {
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      bytes: bytes.length,
+    },
+  });
 });
 
 it("keeps a completed void operation distinct from a failed operation and arbitrary error payloads", async () => {

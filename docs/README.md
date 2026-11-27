@@ -139,6 +139,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [Erlang BEAM files](erlang-beam.md)
 - [Godot PCK archives](godot-pck.md)
 - [UnityFS AssetBundle archives](unityfs.md)
+- [Unreal pak indexes](unreal-pak.md)
 - [iNES containers](ines-containers.md)
 - [Nintendo DS ROMs](guides/firmware/nds-roms.md)
 - [WeChat mini-program wxapkg archives](wxapkg.md)

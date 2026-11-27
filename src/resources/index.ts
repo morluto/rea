@@ -126,6 +126,7 @@ export {
   completedStableArtifactStream,
   readAdmittedRange,
   readStableArtifact,
+  readStableArtifactRanges,
   streamStableArtifact,
   withStableArtifactHandle,
 } from "./readStableArtifact.js";

@@ -165,6 +165,7 @@ const TARGETS: TargetFixtures = {
   "windows-shortcut": { ...artifact, format: "windows-shortcut" },
   "python-pyc": { ...artifact, format: "python-pyc" },
   devicetree: { ...artifact, format: "devicetree" },
+  "unreal-pak": { ...artifact, format: "unreal-pak" },
   deb: { ...artifact, format: "deb" },
 };
 

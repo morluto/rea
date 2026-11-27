@@ -2,8 +2,10 @@ import {
   createXmlPlistSignatureProbe,
   MAX_XML_PLIST_PROBE_BYTES,
 } from "../../domain/apple/appleArchiveFormat.js";
-import { recognizeBoundedArtifactFormat } from "../../domain/artifactFormatRecognition.js";
-import { DFUSE_SUFFIX_BYTES } from "../../domain/firmware/dfuse.js";
+import {
+  ARTIFACT_RECOGNITION_TAIL_BYTES,
+  recognizeBoundedArtifactFormat,
+} from "../../domain/artifactFormatRecognition.js";
 import { computeBlockEntropy } from "../../domain/native/byteEntropy.js";
 import {
   computePeOverlay,
@@ -33,7 +35,9 @@ const recognizeLeadingFormat = (bytes: Buffer): PeOverlayLeadingFormat => {
   const format = recognizeBoundedArtifactFormat({
     prefix: bytes.subarray(0, PE_OVERLAY_ENTROPY_WINDOW_BYTES),
     fileSize: bytes.length,
-    suffix: bytes.subarray(Math.max(0, bytes.length - DFUSE_SUFFIX_BYTES)),
+    tail: bytes.subarray(
+      Math.max(0, bytes.length - ARTIFACT_RECOGNITION_TAIL_BYTES),
+    ),
     xmlPlistSignature: hasXmlPlistSignature(bytes),
   });
   // The overlay samples 4 KiB. ISO 9660 recognition requires a sector 16 probe.

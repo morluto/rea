@@ -41,6 +41,7 @@ import { readHostFile } from "../desktop/HostFileRead.js";
 import { createGoBinaryService } from "./go.js";
 import { createRustBinaryService } from "./rust.js";
 import { createBeamService } from "./erlang.js";
+import { createUnrealPakService } from "./unreal.js";
 import { createV8CodeCacheService } from "./v8CodeCache.js";
 import { createMavenGradleMetadataService } from "./mavenGradleMetadata.js";
 import { createModelArtifactService } from "./model.js";
@@ -120,6 +121,7 @@ import type { NugetNupkgService } from "../application/nuget/NugetNupkgService.j
 import type { VsixPackageService } from "../application/vsix/VsixPackageService.js";
 import type { OciImageLayoutService } from "../application/oci/OciImageLayoutService.js";
 import type { BeamService } from "../application/erlang/BeamService.js";
+import type { UnrealPakService } from "../application/unreal/UnrealPakService.js";
 import type { V8CodeCacheService } from "../application/v8CodeCache/V8CodeCacheService.js";
 import type { MavenGradleMetadataService } from "../application/java/MavenGradleMetadataService.js";
 import type { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
@@ -160,6 +162,7 @@ export interface CapabilityServiceOptions {
   readonly vsixPackage?: VsixPackageService;
   readonly ociImageLayout?: OciImageLayoutService;
   readonly erlangBeam?: BeamService;
+  readonly unrealPak?: UnrealPakService;
   readonly v8CodeCache?: V8CodeCacheService;
   readonly mavenGradleMetadata?: MavenGradleMetadataService;
   readonly electronFuses?: ElectronFuseService;
@@ -391,6 +394,9 @@ const modules = {
   ),
   erlangBeam: service(
     ({ options }) => options.erlangBeam ?? createBeamService(),
+  ),
+  unrealPak: service(
+    ({ options }) => options.unrealPak ?? createUnrealPakService(),
   ),
   v8CodeCache: service(
     ({ options }) => options.v8CodeCache ?? createV8CodeCacheService(),

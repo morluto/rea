@@ -182,6 +182,11 @@ import {
   rustBinaryViewContextSchema,
 } from "./rustBinaryView.js";
 import {
+  unrealPakViewContextSchema,
+  unrealPakViewItemsSchema,
+  unrealPakViewRequestSchema,
+} from "./unrealPakView.js";
+import {
   wasmViewItemSchema,
   wasmViewRequestSchema,
 } from "./wasmArtifactView.js";
@@ -296,6 +301,7 @@ import {
   sourceToBundlePageViewResultSchema,
   sourceToBundleSummaryViewResultSchema,
 } from "./summarySchemas/sourceToBundleSummarySchemas.js";
+import { unrealPakSummaryViewResultSchema } from "./summarySchemas/unrealPakSummarySchema.js";
 import { vsixPackageSummaryViewResultSchema } from "./summarySchemas/vsixPackageSummarySchema.js";
 import { wasmArtifactSummaryViewResultSchema } from "./summarySchemas/wasmArtifactSummarySchema.js";
 import {
@@ -375,6 +381,7 @@ export {
   modelArtifactPageViewResultSchema,
   modelArtifactSummaryViewResultSchema,
   nativeExportsSummaryViewResultSchema,
+  unrealPakSummaryViewResultSchema,
   nativeFeatureTraceSummaryViewResultSchema,
   nativeFunctionMatchingSummaryViewResultSchema,
   nativeFunctionSummaryViewResultSchema,
@@ -459,6 +466,7 @@ const viewResultBase = {
     "inspect_dart_aot",
     "inspect_il2cpp_metadata",
     "inspect_model_artifact",
+    "inspect_unreal_pak",
     "inspect_gpu_code_objects",
     ...NATIVE_INVENTORY_OPERATIONS,
     ...NATIVE_OBSERVATION_OPERATIONS,
@@ -823,6 +831,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     il2cppMetadataSummaryViewResultSchema,
     apkSignatureSummaryViewResultSchema,
     modelArtifactSummaryViewResultSchema,
+    unrealPakSummaryViewResultSchema,
     gpuCodeObjectsSummaryViewResultSchema,
     nativeInventorySummaryViewResultSchema,
     nativeFeatureTraceSummaryViewResultSchema,
@@ -1048,6 +1057,14 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     ...viewResultBase,
     ...il2cppMetadataViewContextSchema.shape,
     parent_operation: z.literal("inspect_il2cpp_metadata"),
+  }),
+  z.strictObject({
+    kind: z.literal("unreal-pak"),
+    view: unrealPakViewRequestSchema,
+    items: unrealPakViewItemsSchema,
+    ...viewResultBase,
+    ...unrealPakViewContextSchema.shape,
+    parent_operation: z.literal("inspect_unreal_pak"),
   }),
   z.strictObject({
     kind: z.literal("inventory"),

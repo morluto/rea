@@ -68,10 +68,7 @@ import {
 import type { ArtifactInventoryOptions } from "./types.js";
 import { readFatSliceHeaders } from "../../domain/apple/machoContainer.js";
 import { hasDiskImageSignature } from "../../domain/apple/diskImageFormat.js";
-import {
-  DFUSE_SUFFIX_BYTES,
-  hasDfuSePrefix,
-} from "../../domain/firmware/dfuse.js";
+import { ARTIFACT_RECOGNITION_TAIL_BYTES } from "../../domain/artifactFormatRecognition.js";
 import {
   observeMzWindowsHeader,
   type MzWindowsHeaderRecordEvidence,
@@ -425,14 +422,12 @@ const classifyRootFormat = async (
           offset: mzWindowsHeaderRecord.offset,
           bytes: mzWindowsHeaderRecord.bytes.subarray(0, 4),
         };
-  // The probe stops at its bounded prefix, so a DfuSe trailer is read from
-  // the file's own end unless the probe already observed every byte.
-  const suffix =
-    fatEvidence.suffix === undefined &&
-    archiveBytes >= DFUSE_SUFFIX_BYTES &&
-    hasDfuSePrefix(evidence.prefix)
-      ? await read(archiveBytes - DFUSE_SUFFIX_BYTES, DFUSE_SUFFIX_BYTES)
-      : fatEvidence.suffix;
+  // The probe stops at its bounded prefix, so trailer formats (a DfuSe
+  // suffix, an Unreal pak footer) are read from the file's own end unless the
+  // probe already observed every byte.
+  const tailBytes = Math.min(archiveBytes, ARTIFACT_RECOGNITION_TAIL_BYTES);
+  const tail =
+    fatEvidence.tail ?? (await read(archiveBytes - tailBytes, tailBytes));
   // Likewise the ISO 9660 descriptor signature lies past the bounded prefix.
   const iso9660Descriptor =
     fatEvidence.iso9660Descriptor === undefined &&
@@ -441,7 +436,7 @@ const classifyRootFormat = async (
       : fatEvidence.iso9660Descriptor;
   const classificationEvidence = {
     ...fatEvidence,
-    ...(suffix === undefined ? {} : { suffix }),
+    tail,
     ...(iso9660Descriptor === undefined ? {} : { iso9660Descriptor }),
     ...(mzWindowsHeaderSignature === undefined
       ? {}

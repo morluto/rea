@@ -120,6 +120,10 @@ export const CLI_COMMAND_REGISTRATIONS = {
     () => import("./erlangCommands.js"),
     "registerErlangCommands",
   ),
+  unreal: cliRegistrar(
+    () => import("./unrealCommands.js"),
+    "registerUnrealCommands",
+  ),
   v8CodeCache: cliRegistrar(
     () => import("./v8CodeCacheCommands.js"),
     "registerV8CodeCacheCommands",
@@ -321,6 +325,7 @@ const CLI_FAMILY_REGISTRATIONS: {
     "vsixPackage",
     "ociImageLayout",
     "erlang",
+    "unreal",
     "v8CodeCache",
     "mavenGradleMetadata",
     "sqlite",

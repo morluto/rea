@@ -19,6 +19,7 @@ const MIGRATED_PROVIDER_ROOTS = new Set([
   "vsix",
   "oci",
   "rust",
+  "unreal",
   "wasm",
   "captures",
   "signals",

@@ -226,6 +226,9 @@ explicit path or endpoint and do not need it.
   - Unity IL2CPP `global-metadata.dat`: `inspect_il2cpp_metadata`; pass the
     matching native binary as `binary_path` to link method addresses
     ([IL2CPP metadata guide](https://github.com/morluto/rea/blob/main/docs/il2cpp-metadata.md)).
+  - Unreal Engine `.pak` footer and index: `inspect_unreal_pak`; nothing is
+    extracted, decompressed or decrypted
+    ([Unreal pak guide](https://github.com/morluto/rea/blob/main/docs/unreal-pak.md)).
   - Maven `pom.xml` or Gradle `.module`: `inspect_maven_gradle_metadata`
     ([Maven and Gradle guide](https://github.com/morluto/rea/blob/main/docs/maven-gradle-metadata.md)).
   - PE tables: `inspect_pe_certificates`, `inspect_pe_imports`,
