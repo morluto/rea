@@ -6,6 +6,7 @@ import {
   clearCliEvidencePublication,
   cliPublicationInvocation,
   recordCliEvidencePublication,
+  type PublishedEvidenceReceipt,
 } from "./cliEvidencePublication.js";
 import { recordCliDeliveredEvidence } from "./cliResultControls.js";
 import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewRequest.js";
@@ -365,7 +366,6 @@ const retainOverBudgetEvidence = async (
   try {
     const projected = await prepareDeliveredEvidence(complete, input, true);
     if (!projected.ok) {
-      clearCliEvidencePublication();
       return err({
         reason: redactExplicitText(
           projected.error.error.message,
@@ -377,7 +377,6 @@ const retainOverBudgetEvidence = async (
     recordSha256 = retainedEvidenceDigest(complete);
     cacheKey = retainedEvidenceBundleDigest(prepared.bundle);
   } catch (cause: unknown) {
-    clearCliEvidencePublication();
     return err({
       reason: redactExplicitText(
         "The retained-Evidence cache could not be used: " + errorMessage(cause),
@@ -386,6 +385,7 @@ const retainOverBudgetEvidence = async (
     });
   }
   let attemptedPath: string | undefined;
+  let publishedReceipt: PublishedEvidenceReceipt | undefined;
   const kept = await retainCliEvidence<AnalysisError>({
     cacheKey,
     completeBytes,
@@ -399,7 +399,8 @@ const retainOverBudgetEvidence = async (
       // The bundle writer creates the file exclusively and never overwrites.
       const published = await publishPreparedEvidence(prepared, path, input);
       if (published.ok) {
-        const { bytes } = published.value.receipt as { readonly bytes: number };
+        publishedReceipt = published.value.receipt;
+        const { bytes } = published.value.receipt;
         return ok({ bytes });
       }
       const { error, committed } = published.error;
@@ -446,9 +447,13 @@ const retainOverBudgetEvidence = async (
         retentionFailure: redactedReason,
       });
     }
-    // Clear the recorded receipt whenever no published file remains on disk.
-    if (kept.error.committed === undefined && kept.error.fileRemains !== true)
-      clearCliEvidencePublication();
+    // Only this attempt's discarded publication can withdraw its receipt.
+    if (
+      kept.error.committed === undefined &&
+      kept.error.fileRemains !== true &&
+      publishedReceipt !== undefined
+    )
+      clearCliEvidencePublication(publishedReceipt);
     if (kept.error.committed !== undefined)
       return err({
         reason: redactedReason,
@@ -741,7 +746,7 @@ const publishPreparedEvidence = async (
   Result<
     {
       readonly delivered: Evidence;
-      readonly receipt: JsonValue;
+      readonly receipt: ReturnType<typeof bundleReceipt<number>>;
       readonly summarized: boolean;
       readonly budgeted: boolean;
     },
