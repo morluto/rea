@@ -269,6 +269,9 @@ explicit path or endpoint and do not need it.
     [BEAM](https://github.com/morluto/rea/blob/main/docs/erlang-beam.md),
     [NuGet](https://github.com/morluto/rea/blob/main/docs/guides/managed/nuget-nupkg.md),
     [VSIX](https://github.com/morluto/rea/blob/main/docs/guides/managed/vsix-package.md)).
+  - YARA rules the caller supplies against one local file:
+    `inspect_yara_matches` with the file and `rule_paths`, run by the installed
+    `yara` command ([YARA guide](https://github.com/morluto/rea/blob/main/docs/guides/native/yara-matches.md)).
   - SQLite snapshot: `inspect_sqlite_database`; read the schema first and
     supply a quiescent snapshot rather than a live database/WAL pair
     ([SQLite guide](https://github.com/morluto/rea/blob/main/docs/guides/data/sqlite-databases.md)).

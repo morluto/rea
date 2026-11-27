@@ -90,6 +90,20 @@ Frida process discovery applies `limit` and `offset` after enumerating the
 selected device. It reports `total_processes` and `truncated`. Moving to another
 page runs a fresh discovery on that device.
 
+`inspect_gpu_code_objects` accepts per-call budgets `max_object_bytes` (default
+and maximum 128 MiB), `max_work_bytes` (default and maximum 512 MiB, covering
+payload input, decoded output, native-section reads, and AMDGPU note/structure
+reads), `max_report_bytes` (default and maximum 16 MiB), `max_metadata_bytes`
+(default and maximum 8 MiB), `max_structure_bytes` (default 16 MiB, up to
+512 MiB), `max_parser_entries` (default and maximum 65,536),
+`max_parser_visits` (default and maximum 262,144), and `max_token_bytes`
+(default and maximum 65,536). Top-level refusals report `details.limit`
+(`control_kind: "parameter"`), per-object payload/metadata/visit limits retain
+sibling observations with `inspection: "capacity"` naming the budget, and
+recursive container/AMDGPU MessagePack nesting caps and the 128-token PTX
+single-parameter syntax limit remain fixed ceilings; see
+[GPU code objects](../gpu-code-objects.md#work-and-limits).
+
 Graph tools accept per-call traversal bounds (`max_depth` and `max_nodes` on
 `get_call_graph` and `trace_call_path`).
 
@@ -107,7 +121,8 @@ their per-call budgets (`max_file_bytes`, entry, depth and decoded-byte budgets,
 `max_output_bytes`/`max_output_files`, and `block_size` or `length`).
 `inspect_devicetree` bounds its estimated decoded representation with
 `max_decoded_bytes` (default 32 MiB, at most 256 MiB).
-`inspect_elf_dependencies`, `inspect_elf_unwind_ranges`, `inspect_apple_ips`,
+`inspect_elf_dependencies`, `inspect_elf_unwind_ranges`, `inspect_macho_function_starts`,
+`inspect_apple_ips`,
 `inspect_dwarf_units`, `inspect_native_initializers`, `inspect_pe_overlay`,
 `inspect_pe_resources` (`max_entries`), `inspect_api_contract` (`max_file_bytes`),
 `compare_wasm_interfaces` (`max_interface_bytes`),
@@ -118,9 +133,9 @@ import and lambda rows combined; default 65,536, at most 1,048,576).
 
 ### Native table structure budget
 
-`inspect_elf_unwind_ranges`, `inspect_kernel_module`, `inspect_elf_debug_link`,
-`inspect_dwarf_units`, `inspect_binary_hardening`, `inspect_native_initializers`
-and `inspect_native_exports` accept `max_structure_bytes` (CLI
+`inspect_elf_unwind_ranges`, `inspect_macho_function_starts`, `inspect_kernel_module`, `inspect_elf_debug_link`,
+`inspect_dwarf_units`, `inspect_binary_hardening`, `inspect_native_initializers`,
+`inspect_gpu_code_objects` and `inspect_native_exports` accept `max_structure_bytes` (CLI
 `--max-structure-bytes`, 64 bytes to 512 MiB, default 16 MiB). It bounds one
 header, section, load-command or ELF dynamic-directory table read, and,
 separately, the section names decoded from the section-name table, before the
@@ -156,7 +171,8 @@ whose declared count exceeds `max_entries` reports that count as
 ### Static reader read allowance
 
 `inspect_pe_imports`, `inspect_pe_resources`, `inspect_pe_load_config`,
-`inspect_pe_certificates`, `inspect_pe_unwind_ranges`, `inspect_binary_hardening` and
+`inspect_pe_certificates`, `inspect_pe_unwind_ranges`, `inspect_macho_function_starts`,
+`inspect_binary_hardening` and
 `inspect_native_exports` bound the bytes they read, not the file size.
 `max_file_bytes` (CLI `--max-file-bytes`) counts each positional read of
 headers, directory tables and the ranges they reference. Defaults are 64 MiB
@@ -171,15 +187,18 @@ It is a lower bound, since later reads depend on structures not yet decoded, so
 the limit reports no `required_value`. Raise `max_file_bytes` and retry;
 `update_analysis_settings` does not change it.
 The identity pass has a fixed whole-file ceiling: 4 GiB minus one byte for the
-PE-only readers, whose file offsets are 32-bit, and 512 MiB for hardening and
-exports. A file above it is a `file-size` refusal naming that fixed allowance,
-which `max_file_bytes` does not raise.
+PE readers and `inspect_macho_function_starts` (their file offsets are 32-bit),
+and 512 MiB for hardening and exports. A file above it is a `file-size`
+refusal naming that fixed allowance, which `max_file_bytes` does not raise.
 
-The PE readers also report `details.limit` for their per-call inventory budgets:
+Those readers also report `details.limit` for their per-call inventory budgets:
 `inspect_pe_imports` `max_dlls`, `max_functions` and `max_text_bytes` (decoded
 names, default 16 MiB, at most 256 MiB); `inspect_pe_load_config`
 `max_callbacks`; `inspect_pe_unwind_ranges` `max_entries` (default 2,097,152, at
-most 16,777,216; the declared count is its `required_value`); and
+most 16,777,216; the declared count is its `required_value`);
+`inspect_macho_function_starts` `max_entries` (default 2,097,152, at most
+16,777,216; the combined start and data-in-code count is its `required_value`);
+and
 `inspect_pe_resources` `max_entries` and `max_metadata_bytes` (the complete
 result, default 8 MiB, at most 256 MiB).
 
@@ -555,6 +574,13 @@ authored `remediationAction`, with no `limit`, `fixedAllowance` or
 that count may only shrink, and `--shrink-baselines` lowers it
 ([#14234](https://github.com/morluto/rea/issues/14234)).
 
+A Nintendo 64 ROM above 64 MiB (67,108,864 bytes) is refused as the fixed
+allowance "The Nintendo 64 ROM size allowance" (`n64.rom_bytes`). Retail
+cartridge masks stop at 64 MiB (512 Mbit). The reader refuses the file before
+swapping its bytes. This release has no runtime override.
+`artifact_limits.expanded_bytes` does not raise it. A v64 or n64 dump also
+counts a decoded copy of each member toward `artifact_limits.expanded_bytes`.
+
 JSON values stop at `MAX_JSON_DEPTH` (1000) in
 [`jsonValue.ts`](https://github.com/morluto/rea/blob/main/src/domain/jsonValue.ts):
 "JSON value exceeds maximum nesting depth of 1000. This release has no runtime
@@ -751,21 +777,25 @@ editable setting or active worker telemetry.
 
 `inspect_artifact` and `extract_artifact` accept `bun`, `dotnet_bundle`,
 `node_sea`, `godot`, `iso9660`, `deno`, `wxapkg`, `tar` and
-`android_sparse_image` and `android_vbmeta` groups in `artifact_limits`. Their controls apply when
+`android_sparse_image`, `android_vbmeta`, `media_asset` and `android_dtbo`
+groups in `artifact_limits`. Their controls apply when
 recognition or inventory encounters that format. Supplying a policy does not
 assert the format is present. Unsupported keys are rejected. Each group follows
 one domain-owned default policy. See [.NET bundles](../dotnet-bundles.md),
 [Node SEA](../node-sea.md), [Godot PCK](../godot-pck.md),
 [Bun standalone](../bun-standalone.md), [Deno compile](../deno-standalone.md),
-[wxapkg](../wxapkg.md), [tar](../tar-archives.md) and
-[Android sparse images](../guides/firmware/android-sparse-image.md) and
-[Android vbmeta](../guides/firmware/android-vbmeta.md) for format semantics.
+[wxapkg](../wxapkg.md), [tar](../tar-archives.md),
+[Android sparse images](../guides/firmware/android-sparse-image.md),
+[Android vbmeta](../guides/firmware/android-vbmeta.md),
+[media asset headers](../media-asset-headers.md) and
+[Android DTBO partition images](../android-dtbo.md) for format semantics.
 
 `artifact_limits.expanded_bytes` selects aggregate plaintext work for ZIP, Bun,
 SEA, PCK, ISO 9660, Deno, wxapkg, tar, macOS flat `.pkg` (including
 `Scripts`/`Payload` cpio archive decoding and scaled cpio member and path-byte
 allowances, plus `Distribution`/`PackageInfo` metadata decoding and scaled
-metadata record and XML-node allowances) and Android sparse image readers, NSO
+metadata record and XML-node allowances), Android sparse image and Android DTBO
+readers (every DTBO row is charged, including rows that share one payload), NSO
 segment decompression, and bFLT gzip decompression (which is also capped at a
 fixed 128 MiB in-memory inflation ceiling), including repeated readable logical
 occurrences. Omission retains each archive's encoded-size-derived default. The

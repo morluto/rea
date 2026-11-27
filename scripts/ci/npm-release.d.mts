@@ -10,6 +10,7 @@ export function stableUpdateVersion(
 ): string;
 export function waitForNpmRelease(
   version: string,
-  lookup?: (version: string) => Promise<NpmReleaseState>,
-  pause?: (milliseconds: number) => Promise<unknown>,
+  lookup?: (version: string, signal: AbortSignal) => Promise<NpmReleaseState>,
+  pause?: (milliseconds: number, signal: AbortSignal) => Promise<unknown>,
+  signal?: AbortSignal,
 ): Promise<Extract<NpmReleaseState, { status: "published" }>>;

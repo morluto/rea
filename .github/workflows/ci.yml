@@ -496,6 +496,8 @@ jobs:
         id: npm-cache
         uses: ./.github/actions/npm-cache
       - run: npm ci
+      - name: Require mutation targets in the checker projects
+        run: npm run verify:mutation-targets
       - name: Reuse portable build outputs across runs
         uses: ./.github/actions/portable-build-cache
       - name: Run reverse tools tests with coverage
@@ -568,7 +570,9 @@ jobs:
           github-token: ${{ github.token }}
           path: .cache/ci-test-history
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: needs.changes.outputs.tier != 'warm'
+        if: >-
+          (needs.changes.outputs.code == 'true' && needs.changes.outputs.tier != 'warm') ||
+          needs.changes.outputs.sqlite == 'true'
         with:
           name: rea-test-runtime
           overwrite: true
@@ -1081,6 +1085,7 @@ jobs:
           key: rea-windows-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-${{ github.sha }}
           restore-keys: rea-windows-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-
       - name: Typecheck with the official Windows compiler
+        if: matrix.suite == 'capabilities'
         env:
           GOMAXPROCS: "2"
           GOMEMLIMIT: "3GiB"

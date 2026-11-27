@@ -79,6 +79,7 @@ import {
   JAVASCRIPT_WORKER_HEAP_MIB_MAXIMUM,
 } from "./javascript/javascriptAnalysisResourceControls.js";
 import { DEFAULT_WASM_COMMAND_TIMEOUT_MS } from "./wasm/wasmArtifact.js";
+import { YARA_SETTING_BOUNDS } from "./yara/yaraMatches.js";
 import { BOUNDED_PRODUCER_LIMITS } from "./producerResourceLimits.js";
 import {
   DEFAULT_ARTIFACT_MEMBER_COUNT,
@@ -180,6 +181,7 @@ const hopperAndGhidraBridgeOperations = [
   "inspect_native_load_image",
   "search_bytes",
   "annotate_native_function",
+  "define_native_data_types",
   "inspect_native_data_type",
   "inspect_native_instruction",
   "resolve_native_call_targets",
@@ -454,6 +456,41 @@ export const ANALYSIS_SETTINGS = {
     provider: "wabt-artifact",
     operations: ["inspect_wasm_artifact"],
     parameter: "command_timeout_ms",
+  },
+  "yara.command_timeout_ms": {
+    updateMode: "runtime",
+    ...timer,
+    environment: "REA_YARA_COMMAND_TIMEOUT_MS",
+    defaultValue: YARA_SETTING_BOUNDS.command_timeout_ms.default_value,
+    minimum: YARA_SETTING_BOUNDS.command_timeout_ms.minimum,
+    maximum: YARA_SETTING_BOUNDS.command_timeout_ms.maximum,
+    provider: "yara.command",
+    operations: ["inspect_yara_matches"],
+    parameter: "command_timeout_ms",
+  },
+  "yara.max_output_bytes": {
+    updateMode: "runtime",
+    environment: "REA_YARA_MAX_OUTPUT_BYTES",
+    defaultValue: YARA_SETTING_BOUNDS.max_output_bytes.default_value,
+    minimum: YARA_SETTING_BOUNDS.max_output_bytes.minimum,
+    maximum: YARA_SETTING_BOUNDS.max_output_bytes.maximum,
+    unit: "bytes",
+    appliesAt: "next_operation",
+    provider: "yara.command",
+    operations: ["inspect_yara_matches"],
+    parameter: "max_output_bytes",
+  },
+  "yara.max_matches": {
+    updateMode: "runtime",
+    environment: "REA_YARA_MAX_MATCHES",
+    defaultValue: YARA_SETTING_BOUNDS.max_matches.default_value,
+    minimum: YARA_SETTING_BOUNDS.max_matches.minimum,
+    maximum: YARA_SETTING_BOUNDS.max_matches.maximum,
+    unit: "count",
+    appliesAt: "next_operation",
+    provider: "yara.command",
+    operations: ["inspect_yara_matches"],
+    parameter: "max_matches",
   },
   "browser.timeline_retained_bytes": {
     updateMode: "runtime",

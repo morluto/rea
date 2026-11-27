@@ -20,7 +20,12 @@ import {
   rankAttributes,
 } from "./attributeRank.js";
 import { pairMembers } from "./memberPairing.js";
-import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
+import {
+  elementText,
+  isXmlElement,
+  resolvePointer,
+  xmlParentPointer,
+} from "./viewPointer.js";
 import { selectorOf } from "./viewSelector.js";
 import { isRecord } from "../../kernel/isRecord.js";
 
@@ -69,12 +74,7 @@ type Element = Extract<JsonValue, Record<string, JsonValue>> & {
   readonly children: JsonValue[];
 };
 
-const attributesOf = (element: Element) =>
-  isRecord(element.attributes) ? element.attributes : {};
-
 const listOf = (pointer: string) => pointer.replace(/\/[^/]+$/u, "");
-const parentElementOf = (pointer: string): string | undefined =>
-  /^(?<parent>.+)\/children\/[^/]+$/u.exec(pointer)?.groups?.parent;
 
 /** How many elements with a tag the list a member sits in holds, in a view. */
 const likeCount = (view: JsonValue | null, pointer: string, tag: string) => {
@@ -101,9 +101,7 @@ const copiesSibling = (
           item !== element &&
           isXmlElement(item) &&
           item.name === element.name &&
-          attributes.every(
-            ({ key, value }) => attributesOf(item)[key] === value,
-          ),
+          attributes.every(({ key, value }) => item.attributes[key] === value),
       )
     );
   });
@@ -190,9 +188,7 @@ export const attributeChecks = (
       item !== element && isXmlElement(item) && item.name === element.name,
   );
   const everywhere = (key: string, value: string) =>
-    likes.every(
-      (item) => isXmlElement(item) && attributesOf(item)[key] === value,
-    );
+    likes.every((item) => isXmlElement(item) && item.attributes[key] === value);
   // A value two or more like siblings all hold, as Grisbi's `Cu="1"`, is a default: it comes after what varies.
   const usual = (key: string, value: string) =>
     likes.length > 1 && everywhere(key, value) ? 1 : 0;
@@ -282,9 +278,9 @@ const plainText = (node: JsonValue | null, bookkeeping = false): string => {
 const keptNamedAncestor = (context: AddedContext, pointer: string) => {
   const { ends } = context;
   for (
-    let at = parentElementOf(pointer);
+    let at = xmlParentPointer(pointer);
     at !== undefined;
-    at = parentElementOf(at)
+    at = xmlParentPointer(at)
   )
     if (
       context.named(ends.final, at) &&

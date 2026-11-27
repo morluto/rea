@@ -1,7 +1,12 @@
 import type { JsonValue } from "../jsonValue.js";
 import { collapseWhitespace, type DesktopTaskCheckInput } from "./appTask.js";
 import { isStamp } from "./appTaskDraftNoise.js";
-import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
+import {
+  elementText,
+  isXmlElement,
+  resolvePointer,
+  xmlParentPointer,
+} from "./viewPointer.js";
 
 /** The fewest characters of an item's text a check looks for, and the kept items a draft guards. */
 const MIN_TEXT = 3;
@@ -13,10 +18,6 @@ const checkable = (text: string, chars: number): boolean =>
   text.length <= chars &&
   !isStamp(text) &&
   !text.includes("][");
-
-/** The list a member sits in, and the element holding it. */
-const placeOf = (pointer: string) =>
-  /^(?<owner>.+)\/children\/[^/]+$/u.exec(pointer)?.groups?.owner;
 
 const NUMBER = /^-?\d+(?:\.\d+)?$/u;
 
@@ -43,7 +44,7 @@ export const isPlacedItem = (
     ? (element.name.split(":").at(-1) ?? element.name)
     : "";
   if (TEXT_RUN.test(local)) return false;
-  const owner = placeOf(pointer);
+  const owner = xmlParentPointer(pointer);
   const list =
     owner === undefined
       ? undefined
@@ -105,7 +106,7 @@ export const placedItemCheck = (
     }
   | undefined => {
   const { ends, file } = context;
-  const owner = placeOf(pointer);
+  const owner = xmlParentPointer(pointer);
   const at = owner === undefined ? undefined : context.name(owner);
   const item = resolvePointer(ends.final, pointer, "xml");
   const value = isXmlElement(item) ? collapseWhitespace(elementText(item)) : "";

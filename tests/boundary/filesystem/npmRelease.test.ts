@@ -1,13 +1,14 @@
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import {
   readNpmRelease,
   stableUpdateVersion,
   waitForNpmRelease,
 } from "../../../scripts/ci/npm-release.mjs";
 import { requireMatchingNpmRelease } from "../../../scripts/ci/npm-release-state.mjs";
+import { createDeferred } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const metadata = (
@@ -173,4 +174,70 @@ it.each([
   await expect(
     readNpmRelease("6.5.0", async () => Response.json(value)),
   ).rejects.toThrow();
+});
+
+it("keeps the 75-minute visibility budget and the per-request cap", async () => {
+  const timeout = vi.spyOn(AbortSignal, "timeout");
+  const request = vi.fn(async () =>
+    Response.json(metadata("6.5.0", "sha512-target", { latest: "6.5.0" })),
+  );
+  vi.stubGlobal("fetch", request);
+  try {
+    await expect(waitForNpmRelease("6.5.0")).resolves.toMatchObject({
+      status: "published",
+    });
+    expect(timeout.mock.calls).toEqual([[75 * 60_000], [30_000]]);
+    expect(request).toHaveBeenCalledOnce();
+  } finally {
+    vi.unstubAllGlobals();
+    timeout.mockRestore();
+  }
+});
+
+it("interrupts an in-flight registry request at the shared deadline", async () => {
+  const deadline = new AbortController();
+  const reason = new Error("test deadline");
+  const { promise: started, resolve: markStarted } = createDeferred<void>();
+  vi.stubGlobal("fetch", (_url: string, init: RequestInit) => {
+    markStarted();
+    const requestSignal = init.signal;
+    if (!requestSignal) throw new Error("missing request signal");
+    return new Promise<Response>((_resolve, reject) => {
+      requestSignal.addEventListener(
+        "abort",
+        () => reject(requestSignal.reason),
+        {
+          once: true,
+        },
+      );
+    });
+  });
+  try {
+    const waiting = waitForNpmRelease(
+      "6.5.0",
+      undefined,
+      undefined,
+      deadline.signal,
+    );
+    await Promise.race([started, waiting]);
+    deadline.abort(reason);
+    await expect(waiting).rejects.toMatchObject({
+      message: expect.stringContaining("after 75 minutes"),
+      cause: reason,
+    });
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it("interrupts the polling delay without starting another lookup", async () => {
+  const deadline = new AbortController();
+  const lookup = vi.fn(async () => {
+    setImmediate(() => deadline.abort());
+    return { status: "absent" } as const;
+  });
+  await expect(
+    waitForNpmRelease("6.5.0", lookup, undefined, deadline.signal),
+  ).rejects.toThrow("visibility deadline reached");
+  expect(lookup).toHaveBeenCalledExactlyOnceWith("6.5.0", deadline.signal);
 });

@@ -1,12 +1,12 @@
 REA third-party npm runtime copyright, license and NOTICE texts
 Collected from integrity-verified locked npm archives. Release-specific supplements and upstream notice gaps are identified in their entries.
 External engines are separately obtained; see THIRD_PARTY_NOTICES.md.
-Runtime dependency fingerprint (SHA-256): d423a0fbe497336fdefa44f041c45536e54fdeba797b295019405c2a7f4e45ab
+Runtime dependency fingerprint (SHA-256): e298ab4084421f9c78894fdada2fc051eb44a999e1810b408f0d5d074ea0a1c1
 
-===== @babel/helper-string-parser@8.1.2 =====
+===== @babel/helper-string-parser@8.1.3 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/@babel/helper-string-parser/-/helper-string-parser-8.1.2.tgz
-Integrity: sha512-TRz5Z0MgfIfWqwEIq/pCpUpEXQxUt2Ig2ZbxG3SdmhSbHMAFFYGOix0kI4JLV371/TA+qWnQ4xWHPWjojkyRFA==
+Archive: https://registry.npmjs.org/@babel/helper-string-parser/-/helper-string-parser-8.1.3.tgz
+Integrity: sha512-5HTuREtgj0xIc345zU4gtD2+3vIPkZpJw7wUYytt/mzBTQN2mWpGr1nxYiocYa2E8sWggRkrSg/k7BK51pAxIg==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
@@ -65,10 +65,10 @@ LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-===== @babel/parser@8.1.2 =====
+===== @babel/parser@8.1.3 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/@babel/parser/-/parser-8.1.2.tgz
-Integrity: sha512-ZDKU7vaX0VORd2BhaO+3FKr/30TKjbUy3SMZcydiPngnAb+MesgUoh5SJcE5EwEyBj14M5J6fK56GuBqvYmOpw==
+Archive: https://registry.npmjs.org/@babel/parser/-/parser-8.1.3.tgz
+Integrity: sha512-v3ck2WN7jn8gEJlEfIDEwTM8dCBjOac1CZjolvB6/r0O1ome6E7xS2cDQEOQqESRQZWWrLrhnjxD0qjmZ8QBgg==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
@@ -93,10 +93,10 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
-===== @babel/types@8.1.2 =====
+===== @babel/types@8.1.3 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/@babel/types/-/types-8.1.2.tgz
-Integrity: sha512-uXt6qt2f5G61jZwNIzK1RKu7l5Xjt1VXtPPOGuVveha9fxbx0QM94U1kM4pFZKTRLjWK+X8vmwjwbIemJjiQTA==
+Archive: https://registry.npmjs.org/@babel/types/-/types-8.1.3.tgz
+Integrity: sha512-eBREGwDHRPHtdsg44t071GE2KRDEuJrf0J2uT5/qvJPB2+pfPZOKlx93dMZOFkE7QW5G0JWoczySD7a01Jf0iw==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
@@ -3341,6 +3341,38 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
+===== eckey-utils@0.7.14 =====
+Declared license: ISC
+Archive: https://registry.npmjs.org/eckey-utils/-/eckey-utils-0.7.14.tgz
+Integrity: sha512-s/mENS+mMnJjDSydy0muBQQHMTWJ1nPe8EiphANZrf+lv/1u35aP9WvWHTWqCBJ21blNIurGF7UoLjtaOpoCFw==
+Scope: npm runtime dependency.
+
+--- package/README.md (License section) ---
+
+Written in 2018 by tibetty <xihua.duan@gmail.com>
+
+The 0.7.14 archive declares ISC in package.json. The upstream project added the following ISC license text in a later revision.
+Source: https://raw.githubusercontent.com/tibetty/eckey-utils/e568a0a6d15e258dbf85cfff2481b72653fd84b4/LICENSE
+SHA-256: f52d1f5f4dc6cc6974a64937612175048c3026b0e295864eae7eab8717ffcf1c
+
+--- upstream LICENSE (supplement) ---
+
+ISC License
+
+Copyright (c) 2018-2026 tibetty <xihua.duan@gmail.com>
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
 ===== es-define-property@1.0.1 =====
 Declared license: MIT
 Archive: https://registry.npmjs.org/es-define-property/-/es-define-property-1.0.1.tgz
@@ -4803,10 +4835,10 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 
-===== openpgp@6.3.2 =====
+===== openpgp@6.3.3 =====
 Declared license: LGPL-3.0+
-Archive: https://registry.npmjs.org/openpgp/-/openpgp-6.3.2.tgz
-Integrity: sha512-wcZTzHz41LV8Y48zH/JlD1JT8YdNmpWOuMAjQ/podvvCwsjBEU37K3znJh4UQcj3hksE5z9TzvhbUbwzsGvlLQ==
+Archive: https://registry.npmjs.org/openpgp/-/openpgp-6.3.3.tgz
+Integrity: sha512-W0foQI+Zb7/TCy7Z50gqZejYe3oJkiZJ9OSV4ImuRT8MmoKOJhtAMvRm6w9STlyYluLiuezG7+0Qdqbcmmx7ig==
 Scope: npm runtime dependency. GPLv3 terms incorporated by this LGPL text are preserved in licenses/GPL-3.0.txt.
 
 --- package/LICENSE ---

@@ -16,6 +16,7 @@ import {
 } from "../filesystem/RegularFile.js";
 import type { RegularFileOperationOutcome } from "../filesystem/OwnedRegularFile.js";
 import { readRegularFileTextSnapshot } from "../process/RegularFileRead.js";
+import { publicationPathMatchesSelection } from "./PublicationFileSelection.js";
 import { ClientConfigurationPublicationFailure } from "./ClientConfigurationCleanup.js";
 import {
   isEnoentError,
@@ -151,7 +152,8 @@ export class ClientConfigurationPublication {
       await staging.assertReadyForPublication(stagedPath);
       if (selection !== undefined)
         await assertRequestedConfigurationPath(path, selection.requestedPath);
-      await assertSelectedConfiguration(destination, input);
+      if (!(await publicationPathMatchesSelection(destination, input)))
+        throw new RegularFileChangedError(destination);
       if (input === undefined) {
         // An exclusive link cannot overwrite a file created after absence was checked.
         try {
@@ -330,7 +332,7 @@ const isParentAliasRetarget = async (
   try {
     requestedStats = await lstat(requestedPath);
   } catch (cause: unknown) {
-    if (isNodeErrorCode(cause, "ENOENT")) return false;
+    if (isEnoentError(cause)) return false;
     throw new ClientConfigurationPathError(
       `Client configuration path could not be safely verified: ${requestedPath}`,
     );
@@ -345,9 +347,6 @@ const isParentAliasRetarget = async (
     return false;
   }
 };
-
-const isNodeErrorCode = (cause: unknown, code: string): boolean =>
-  cause instanceof Error && "code" in cause && cause.code === code;
 
 const selectedConfiguration = async (
   path: string,
@@ -364,26 +363,6 @@ const selectedConfiguration = async (
   if (selected?.text !== previous || selected?.state.ino === 0)
     throw new RegularFileChangedError(path);
   return selected?.state;
-};
-
-const assertSelectedConfiguration = async (
-  path: string,
-  selected: Stats | undefined,
-): Promise<void> => {
-  let current: Stats | undefined;
-  try {
-    current = await lstat(path);
-  } catch (cause: unknown) {
-    if (!isEnoentError(cause)) throw cause;
-  }
-  if (
-    selected === undefined
-      ? current !== undefined
-      : current === undefined ||
-        current.isSymbolicLink() ||
-        !sameRegularFileState(selected, current)
-  )
-    throw new RegularFileChangedError(path);
 };
 
 const releaseStaging = async <Value>(
