@@ -26,6 +26,8 @@ export const UEFI_FIRMWARE_LIMITS = {
   scanRecords: 100_000,
   /** Limit retained and traversed decoded data across all streams in an operation. */
   decodedBytes: 128 * 1024 * 1024,
+  /** Limitation lines retained per scan; coverage still turns partial past it. */
+  limitationLines: 512,
   /** Diagnostic text retained inline before truncation. */
   diagnosticBytes: 8 * 1024 * 1024,
 } as const;

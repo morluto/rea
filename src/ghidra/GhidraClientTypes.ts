@@ -44,6 +44,11 @@ export interface GhidraRequestOptions {
    * for requests the caller writes directly.
    */
   readonly limits?: GhidraAdmittedLimits;
+  /**
+   * Runs immediately before the wire writes a frame that passed admission.
+   * A request removed while queued, or refused before that write, never runs it.
+   */
+  readonly onAdmitted?: () => void;
 }
 
 /** Bridge ceilings copied from the settings when one request was admitted. */

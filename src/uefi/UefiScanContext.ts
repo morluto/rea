@@ -166,7 +166,8 @@ export class UefiScanContext {
 
   noteLimitations(lines: readonly string[]): void {
     for (const line of lines) {
-      if (this.limitations.length >= 512) break;
+      if (this.limitations.length >= UEFI_FIRMWARE_LIMITS.limitationLines)
+        break;
       this.limitations.push(line);
     }
   }
