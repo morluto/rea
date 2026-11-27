@@ -37,8 +37,7 @@ describe("androidDtboFormat", () => {
   it("parses a valid v0 DTBO header and entry table with custom[4] words", () => {
     const { image, entries } = sampleAndroidDtboV0();
     const headerResult = parseAndroidDtboHeader(image, image.length);
-    expect(headerResult.ok).toBe(true);
-    if (!headerResult.ok) return;
+    if (!headerResult.ok) throw headerResult.error;
 
     expect(headerResult.value).toMatchObject({
       magic: ANDROID_DTBO_MAGIC,
@@ -58,8 +57,7 @@ describe("androidDtboFormat", () => {
       headerResult.value.dtEntriesOffset + headerResult.value.tableSize,
     );
     const tableResult = parseAndroidDtboEntries(headerResult.value, tableSlice);
-    expect(tableResult.ok).toBe(true);
-    if (!tableResult.ok) return;
+    if (!tableResult.ok) throw tableResult.error;
 
     expect(tableResult.value.limitations).toEqual([]);
     expect(tableResult.value.entries).toHaveLength(2);
@@ -113,8 +111,7 @@ describe("androidDtboFormat", () => {
     });
 
     const headerResult = parseAndroidDtboHeader(padded, padded.length);
-    expect(headerResult.ok).toBe(true);
-    if (!headerResult.ok) return;
+    if (!headerResult.ok) throw headerResult.error;
 
     expect(headerResult.value.limitations).toHaveLength(3);
     expect(headerResult.value.limitations[0]).toContain(
@@ -130,8 +127,7 @@ describe("androidDtboFormat", () => {
       headerResult.value.dtEntriesOffset + headerResult.value.tableSize,
     );
     const tableResult = parseAndroidDtboEntries(headerResult.value, tableSlice);
-    expect(tableResult.ok).toBe(true);
-    if (!tableResult.ok) return;
+    if (!tableResult.ok) throw tableResult.error;
 
     expect(tableResult.value.entries[0]).toMatchObject({
       flags: 0x8000_0000,
@@ -153,22 +149,18 @@ describe("androidDtboFormat", () => {
       entries: [],
     });
     const headerRes = parseAndroidDtboHeader(largeHeader, largeHeader.length);
-    expect(headerRes.ok).toBe(true);
-    if (headerRes.ok) {
-      expect(headerRes.value.headerSize).toBe(65_537);
-      expect(headerRes.value.limitations[0]).toContain("65505 extra header");
-    }
+    if (!headerRes.ok) throw headerRes.error;
+    expect(headerRes.value.headerSize).toBe(65_537);
+    expect(headerRes.value.limitations[0]).toContain("65505 extra header");
 
     const largeRow = buildSyntheticAndroidDtbo({
       dtEntrySize: 4097,
       entries: [{ payload: sampleAndroidDtboV0().entries[0]! }],
     });
     const rowRes = parseAndroidDtboHeader(largeRow, largeRow.length);
-    expect(rowRes.ok).toBe(true);
-    if (rowRes.ok) {
-      expect(rowRes.value.dtEntrySize).toBe(4097);
-      expect(rowRes.value.limitations[0]).toContain("reserves 4097 bytes");
-    }
+    if (!rowRes.ok) throw rowRes.error;
+    expect(rowRes.value.dtEntrySize).toBe(4097);
+    expect(rowRes.value.limitations[0]).toContain("reserves 4097 bytes");
   });
 
   it("handles empty tables and omits zero-size entries with explicit limitations", () => {
@@ -180,17 +172,14 @@ describe("androidDtboFormat", () => {
       emptyHeaderBuf,
       emptyHeaderBuf.length,
     );
-    expect(emptyHeader.ok).toBe(true);
-    if (!emptyHeader.ok) return;
+    if (!emptyHeader.ok) throw emptyHeader.error;
     const emptyEntries = parseAndroidDtboEntries(
       emptyHeader.value,
       Buffer.alloc(0),
     );
-    expect(emptyEntries.ok).toBe(true);
-    if (emptyEntries.ok) {
-      expect(emptyEntries.value.entries).toEqual([]);
-      expect(emptyEntries.value.limitations[0]).toContain("dt_entry_count 0");
-    }
+    if (!emptyEntries.ok) throw emptyEntries.error;
+    expect(emptyEntries.value.entries).toEqual([]);
+    expect(emptyEntries.value.limitations[0]).toContain("dt_entry_count 0");
 
     const withZero = buildSyntheticAndroidDtbo({
       entries: [
@@ -199,8 +188,7 @@ describe("androidDtboFormat", () => {
       ],
     });
     const zeroHeader = parseAndroidDtboHeader(withZero, withZero.length);
-    expect(zeroHeader.ok).toBe(true);
-    if (!zeroHeader.ok) return;
+    if (!zeroHeader.ok) throw zeroHeader.error;
     const parsedZero = parseAndroidDtboEntries(
       zeroHeader.value,
       withZero.subarray(
@@ -208,12 +196,10 @@ describe("androidDtboFormat", () => {
         zeroHeader.value.dtEntriesOffset + zeroHeader.value.tableSize,
       ),
     );
-    expect(parsedZero.ok).toBe(true);
-    if (parsedZero.ok) {
-      expect(parsedZero.value.entries).toHaveLength(1);
-      expect(parsedZero.value.entries[0]!.index).toBe(1);
-      expect(parsedZero.value.limitations[0]).toContain("declares dt_size 0");
-    }
+    if (!parsedZero.ok) throw parsedZero.error;
+    expect(parsedZero.value.entries).toHaveLength(1);
+    expect(parsedZero.value.entries[0]!.index).toBe(1);
+    expect(parsedZero.value.limitations[0]).toContain("declares dt_size 0");
   });
 
   it("rejects truncated, malformed, and unsupported DTBO headers", () => {
@@ -366,7 +352,7 @@ describe("androidDtboFormat", () => {
         entry_count: defaultCount + 1,
       },
     );
-    expect(admittedRaisedCount.ok).toBe(true);
+    if (!admittedRaisedCount.ok) throw admittedRaisedCount.error;
 
     const sample = sampleAndroidDtboV0().image;
     const loweredTableBudget = parseAndroidDtboHeader(sample, sample.length, {
@@ -389,7 +375,7 @@ describe("androidDtboFormat", () => {
       ...DEFAULT_ANDROID_DTBO_READER_LIMITS,
       entry_table_bytes: 64,
     });
-    expect(raisedTableBudget.ok).toBe(true);
+    if (!raisedTableBudget.ok) throw raisedTableBudget.error;
   });
 
   it("accepts entries that share one payload, as mkdtimg writes a repeated file", () => {
@@ -412,9 +398,9 @@ describe("androidDtboFormat", () => {
       image.writeUInt32BE(id, row + 8);
     }
     const header = parseAndroidDtboHeader(image, image.length);
-    if (!header.ok) throw new Error(header.error.message);
+    if (!header.ok) throw header.error;
     const table = parseAndroidDtboEntries(header.value, image.subarray(32, 96));
-    if (!table.ok) throw new Error(table.error.message);
+    if (!table.ok) throw table.error;
     expect(
       table.value.entries.map(({ id, dtOffset }) => [id, dtOffset]),
     ).toEqual([
@@ -438,17 +424,17 @@ describe("androidDtboFormat", () => {
     image.writeUInt32BE(16, 32);
     image.writeUInt32BE(80, 36);
     const header = parseAndroidDtboHeader(image, image.length);
-    if (!header.ok) throw new Error(header.error.message);
+    if (!header.ok) throw header.error;
     const table = parseAndroidDtboEntries(header.value, image.subarray(32, 64));
-    if (!table.ok) throw new Error(table.error.message);
+    if (!table.ok) throw table.error;
     expect(table.value.unaccountedRanges).toEqual([[64, 80]]);
   });
 
   it("rejects out-of-bounds and overlapping entry payloads", () => {
     const parseWithEntries = (buf: Buffer) => {
       const hdr = parseAndroidDtboHeader(buf, buf.length);
-      expect(hdr.ok).toBe(true);
-      if (!hdr.ok) throw new Error(hdr.error.message);
+      if (!hdr.ok) throw hdr.error;
+      if (!hdr.ok) throw hdr.error;
       return parseAndroidDtboEntries(
         hdr.value,
         buf.subarray(
