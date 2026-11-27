@@ -44,6 +44,11 @@ export const UBI_MAX_PEBS = 262_144;
  * stream without retaining offsets.
  */
 export const UBI_MAX_CACHED_EC_HEADERS = 65_536;
+/**
+ * Internal memoization bound, sized like the EC header cache. Uncached
+ * positions are read again, so this does not limit accepted images.
+ */
+export const UBI_MAX_CACHED_GRID_POSITIONS = 65_536;
 /** Names of the parser limits that carry these ceilings into refusals. */
 export const UBI_PEB_SIZE_LIMIT = "UBI eraseblock size";
 export const UBI_PEB_COUNT_LIMIT = "UBI eraseblock count";
@@ -1507,6 +1512,10 @@ export interface UbiEcHeaderCacheStats {
   readonly cacheCapped: boolean;
 }
 
+export interface UbiSmallerGridCacheStats {
+  readonly cachedPositionCount: number;
+}
+
 export interface ParseUbiImageOptions {
   /**
    * Called before scan chunks and header-probe batches. When `yieldControl` is
@@ -1525,6 +1534,8 @@ export interface ParseUbiImageOptions {
    * retention statistics.
    */
   readonly onEcHeaderCacheStats?: (stats: UbiEcHeaderCacheStats) => void;
+  /** Observe retained smaller-grid results after parsing finishes. */
+  readonly onSmallerGridCacheStats?: (stats: UbiSmallerGridCacheStats) => void;
 }
 
 interface UbiErasedRange {
@@ -1572,6 +1583,9 @@ interface UbiParseContext {
     | undefined;
   readonly onEcHeaderCacheStats:
     | ((stats: UbiEcHeaderCacheStats) => void)
+    | undefined;
+  readonly onSmallerGridCacheStats:
+    | ((stats: UbiSmallerGridCacheStats) => void)
     | undefined;
 }
 
@@ -1844,7 +1858,11 @@ const findSmallerGridError = async (
           await ctx.read(offset, measured.headerReadBytes),
           measured,
         );
-        ctx.smallerGridPositions.set(offset, fits);
+        // This memoization must not grow with every 512-byte slot in a dump.
+        // Missing entries are still checked above; the cap never admits a
+        // geometry by skipping its remaining probes.
+        if (ctx.smallerGridPositions.size < UBI_MAX_CACHED_GRID_POSITIONS)
+          ctx.smallerGridPositions.set(offset, fits);
       }
     }
     if (fits) return ok(ubiAmbiguousPebSize(measured, smaller));
@@ -2222,6 +2240,7 @@ export const parseUbiImage = async (
     checkpoint: options?.checkpoint,
     onErasedBodyVerification: options?.onErasedBodyVerification,
     onEcHeaderCacheStats: options?.onEcHeaderCacheStats,
+    onSmallerGridCacheStats: options?.onSmallerGridCacheStats,
   };
   let fallback: UbiImage | null = null;
   let anyNext: number | null = null;
@@ -2281,6 +2300,9 @@ export const parseUbiImage = async (
       ? ok(fallback)
       : await resolveUnacceptedUbiImage(ctx, firstFailure, anyNext);
   } finally {
+    ctx.onSmallerGridCacheStats?.({
+      cachedPositionCount: ctx.smallerGridPositions.size,
+    });
     ctx.onEcHeaderCacheStats?.({
       cachedHeaderCount: ctx.validEcHeaderOffsets.length,
       ecHeaderScanEnd: ctx.ecHeaderScanEnd,
