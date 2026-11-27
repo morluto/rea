@@ -253,6 +253,7 @@ export interface ArtifactReader {
     | "ines"
     | "nds"
     | "mega-drive-rom"
+    | "n64-rom"
     | "godot-pck"
     | "unityfs"
     | "wxapkg"
@@ -265,6 +266,7 @@ export interface ArtifactReader {
     | "nso"
     | "nro"
     | "android-boot-image"
+    | "android-dtbo"
     | "android-ota-payload"
     | "android-vbmeta"
     | "android-sparse-image"
@@ -286,6 +288,7 @@ export interface ArtifactReader {
     | "fit"
     | "qualcomm-mbn"
     | "ntfs-mft"
+    | "auditd-log"
     | "pkg"
     | "file";
   entries(

@@ -116,6 +116,10 @@ export const CLI_COMMAND_REGISTRATIONS = {
     () => import("./ociImageLayoutCommands.js"),
     "registerOciImageLayoutCommands",
   ),
+  yara: cliRegistrarWithEnvironment(
+    () => import("./yaraCommands.js"),
+    "registerYaraCommands",
+  ),
   erlang: cliRegistrar(
     () => import("./erlangCommands.js"),
     "registerErlangCommands",
@@ -320,6 +324,7 @@ const CLI_FAMILY_REGISTRATIONS: {
     "nugetNupkg",
     "vsixPackage",
     "ociImageLayout",
+    "yara",
     "erlang",
     "v8CodeCache",
     "mavenGradleMetadata",

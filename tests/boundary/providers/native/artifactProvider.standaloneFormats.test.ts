@@ -6,6 +6,7 @@ import { expect, it } from "vitest";
 
 import { bfltFile } from "../../../../src/domain/bfltExecutable.fixture.js";
 import { megaDriveRom } from "../../../../src/domain/megaDriveRom.fixture.js";
+import { n64RomImage } from "../../../../src/domain/n64Rom.fixture.js";
 import { windowsShortcutBytes } from "../../../fixtures/binaryDiagnostics/windowsShortcut.js";
 import { createSqliteDatabaseFixture } from "../../../fixtures/sqlite/database.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
@@ -189,6 +190,45 @@ it("classifies a synthetic Mega Drive ROM", async () => {
   );
 
   expect(inspection.subject.root_format).toBe("mega-drive-rom");
+});
+
+it("inventories a Nintendo 64 ROM in any byte order as n64-rom", async () => {
+  const directory = await createTestTempDirectory("rea-n64-rom-");
+  const path = await writeBytes(
+    "game.v64",
+    () => n64RomImage({ order: "v64" }).encoded,
+  )(directory);
+  const evidence = parseEvidence(
+    await runProviderAnalysis(path, "inspect_artifact", {}).then(
+      projectCliAnalysisResult,
+    ),
+  );
+  const inspection = artifactInspectionResultSchema.parse(
+    evidence.normalized_result,
+  );
+
+  expect(inspection.subject.root_format).toBe("n64-rom");
+  expect(inspection.next_probes).toEqual([]);
+  const inventory = inspection.substeps[0]?.evidence.normalized_result;
+  expect(
+    inventory?.occurrences.find((row) => row.logical_path === ".")
+      ?.format_metadata,
+  ).toMatchObject({
+    kind: "n64-rom",
+    source_order: "v64",
+    cic: "6102/7101",
+    boot_address: 0x8000_0400,
+    crc: { status: "match" },
+  });
+  expect(
+    inventory?.occurrences.find((row) => row.logical_path === "program.z64")
+      ?.format_metadata,
+  ).toMatchObject({
+    kind: "n64-rom-entry",
+    role: "program",
+    source_order: "v64",
+    decoded: true,
+  });
 });
 
 it("routes a bFLT executable's text segment to open_binary", async () => {

@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import {
   buildUnityFs,
+  encodeUnityLzmaWithEndMarker,
   type UnityFsMember,
 } from "../../tests/fixtures/unityfs.js";
 
@@ -218,9 +219,79 @@ describe("UnityFS unavailable and malformed directories", () => {
     );
   });
 
-  it("reports an LZMA blocks-info table as unknown coverage", async () => {
+  it("inventories an LZMA blocks-info table", async () => {
     await withReader(
       buildUnityFs(members, { blocksInfoCompression: 1 }),
+      async (reader) => {
+        const entries = await collectEntries(reader);
+        expect(entries.map((entry) => entry.path)).toEqual(
+          members.map((member) => member.path),
+        );
+        expect(reader.formatMetadata()).toMatchObject({
+          directory_status: "available",
+        });
+      },
+    );
+  });
+
+  it("decodes an LZMA-compressed member block", async () => {
+    await withReader(
+      buildUnityFs(members, { blockCompression: 1 }),
+      async (reader) => {
+        const entries = await collectEntries(reader);
+        expect(entries).toHaveLength(members.length);
+        for (const [index, entry] of entries.entries()) {
+          const stream = await reader.open(entry);
+          expect(await text(stream)).toBe(
+            typeof members[index]!.data === "string"
+              ? members[index]!.data
+              : members[index]!.data.toString("utf8"),
+          );
+        }
+      },
+    );
+  });
+
+  it("decodes an LZMA member block that includes an end marker", async () => {
+    await withReader(
+      buildUnityFs(members, {
+        blockCompression: 1,
+        encodeBlock: encodeUnityLzmaWithEndMarker,
+      }),
+      async (reader) => {
+        const entries = await collectEntries(reader);
+        expect(entries).toHaveLength(members.length);
+        for (const [index, entry] of entries.entries()) {
+          const stream = await reader.open(entry);
+          expect(await text(stream)).toBe(
+            typeof members[index]!.data === "string"
+              ? members[index]!.data
+              : members[index]!.data.toString("utf8"),
+          );
+        }
+      },
+    );
+  });
+
+  it("refuses a malformed LZMA member block", async () => {
+    await withReader(
+      buildUnityFs([{ path: "broken", data: "payload" }], {
+        blockCompression: 1,
+        encodeBlock: () => Buffer.from([0x5d, 0, 0, 0, 1, 0, 0xff]),
+      }),
+      async (reader) => {
+        const [entry] = await collectEntries(reader);
+        if (entry === undefined) throw new Error("expected one entry");
+        await expect(buffer(await reader.open(entry))).rejects.toMatchObject({
+          reason: "malformed",
+        });
+      },
+    );
+  });
+
+  it("reports an LZHAM blocks-info table as unknown coverage", async () => {
+    await withReader(
+      buildUnityFs(members, { blocksInfoCompression: 4 }),
       async (reader) => {
         const entries: ArtifactEntry[] = [];
         const coverage: unknown[] = [];
@@ -235,19 +306,6 @@ describe("UnityFS unavailable and malformed directories", () => {
         expect(coverage).toEqual([
           expect.objectContaining({ status: "unknown" }),
         ]);
-      },
-    );
-  });
-
-  it("refuses an LZMA-compressed member block while retaining the directory", async () => {
-    await withReader(
-      buildUnityFs(members, { blockCompression: 1 }),
-      async (reader) => {
-        const [entry] = await collectEntries(reader);
-        if (entry === undefined) throw new Error("expected one entry");
-        await expect(reader.open(entry)).rejects.toMatchObject({
-          reason: "unavailable",
-        });
       },
     );
   });
