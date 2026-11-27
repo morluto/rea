@@ -1125,3 +1125,51 @@ it("explains a declared uncompressed size it cannot keep", async () => {
     expect(result.limitations.join("\n")).toContain(text);
   }
 });
+
+it("never reserves tree budget for a value it only ranges", async () => {
+  const indefiniteRestore = Buffer.concat([
+    Buffer.from([0x30, 0x80]),
+    ia5("IM4R"),
+    derSet(property("BNCN", octet(SAMPLE_NONCE))),
+    Buffer.from([0x00, 0x00]),
+  ]);
+  // Size the payload so the root and IM4P wrappers together are just under
+  // the retained budget: reserving their bytes would leave too little for the
+  // small indefinite IM4R, which must still be tree-parsed to find its end.
+  const build = (length: number): { file: Buffer; payload: Buffer } => {
+    const payload = im4p({ payload: Buffer.alloc(length) });
+    return { file: img4(payload, im4m(), indefiniteRestore), payload };
+  };
+  const probe = IMAGE4_MAX_RETAINED_BYTES / 2 - 4096;
+  const sized = build(probe);
+  const wrappers = sized.file.length + sized.payload.length;
+  const length =
+    probe + Math.floor((IMAGE4_MAX_RETAINED_BYTES - 10 - wrappers) / 2);
+  const result = await image4(build(length).file);
+  expect(result.facts.restore_info?.properties_present).toEqual(["BNCN"]);
+  expect(result.entries.map((entry) => entry.path)).toContain(
+    "restore-info.der",
+  );
+});
+
+it("keeps an unreadable PRIVATE manifest entry opaque", async () => {
+  const hidden = privateTagged(
+    "TEST",
+    sequence(
+      integer(7),
+      sequence(ia5("MANP"), derSet(property("CHIP", integer(0x1234)))),
+    ),
+  );
+  const result = await image4(
+    sequence(
+      ia5("IM4M"),
+      integer(0),
+      derSet(privateTagged("MANB", sequence(ia5("MANB"), hidden))),
+      octet(SAMPLE_SIGNATURE),
+      sequence(octet(SAMPLE_CERT)),
+    ),
+  );
+  expect(result.facts.manifest?.properties).toEqual([]);
+  expect(result.facts.manifest?.objects).toEqual([]);
+  expect(result.limitations.join("\n")).toContain("could not be read");
+});

@@ -553,8 +553,10 @@ class Walk {
     // A small primitive is always loaded: the element allowance bounds how
     // many there are, and reading names and scalars must not depend on how
     // much of the retained budget earlier opaque structure used.
-    const loadable = !header.constructed || this.#retain(encoded);
-    if (encoded <= IMAGE4_MAX_NESTED_BYTES && !opaque && loadable)
+    // Reserve tree bytes only for a value that will actually be tree-parsed,
+    // so a ranged wrapper never uses budget for bytes it does not load.
+    const parseable = encoded <= IMAGE4_MAX_NESTED_BYTES && !opaque;
+    if (parseable && (!header.constructed || this.#retain(encoded)))
       return this.adopt(
         await readExact(this.source, offset, encoded),
         offset,
@@ -1491,6 +1493,16 @@ const consumeManifest = async (
   }
   if (isPrivateTagged(value)) {
     const inner = await unwrapPrivate(value, walk, depth, notes);
+    // A PRIVATE value is one manifest entry and must name itself. When its
+    // name cannot be read, its value is reported and never interpreted as
+    // manifest facts.
+    if (
+      inner !== value &&
+      entryName(await walk.childrenOf(inner, depth + 1), notes).kind !== "named"
+    ) {
+      unreadableEntry(value, notes);
+      return;
+    }
     if (inner !== value) {
       await consumeManifest(
         inner,
