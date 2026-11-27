@@ -1714,7 +1714,9 @@ distinguish restored database state from fresh analysis.
 
 Run `npm run verify:ghidra:checkpoints` with your existing Ghidra/JDK installation
 to verify fresh CLI/MCP processes, name/comment/type preservation, competing
-sessions, corruption refusal and explicit recovery. Lifecycle fixtures cover
+sessions, corruption refusal and explicit recovery. `npm run verify:ghidra:type-edits`
+verifies caller-defined types and function signatures, their refusals and
+their restoration from a checkpoint in a new process. Lifecycle fixtures cover
 save failure/retry and cancellation during checkpoint finalization separately.
 
 ### Reuse an existing Ghidra project

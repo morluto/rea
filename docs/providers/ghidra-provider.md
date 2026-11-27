@@ -136,6 +136,45 @@ effective payload allowance; payload recovery applies only when that diagnostic
 identifies payload exhaustion. Raising these controls does not raise the MCP
 client's deadline or receive buffer.
 
+## C text for signatures and type definitions
+
+`annotate_native_function` `signature` and `define_native_data_types`
+`declarations` are parsed by Ghidra's C parser, which cannot be cancelled, so
+REA bounds that text before parsing it. Each bound has a per-call parameter;
+`parenthesis_max_depth` applies to `signature`; a `declarations` text admits no parentheses at all.
+
+| Bound                                         | Default | Floor | Maximum | Slowest measured parse at the maximum      |
+| --------------------------------------------- | ------: | ----: | ------: | ------------------------------------------ |
+| `signature_max_utf16` (UTF-16 code units)     |    2048 |    16 |    4096 | 0.8 s (one chain of pointer declarators)   |
+| `declarations_max_utf16` (UTF-16 code units)  |    4096 |    16 |    8192 | 6.8 s (one chain of pointer declarators)   |
+| `parenthesis_max_depth` (`signature`, levels) |       8 |     1 |      12 | 2.2 s (8192 units of 12-level expressions) |
+
+Measured with Ghidra 12.2 on arm64 macOS; other hosts differ. Parse time is
+cubic in the length of a declarator chain (16384 units took 100 s) and doubles
+with each level of nested parentheses (12 levels took 2.2 s), so the maxima
+are fixed. A text over a bound is refused before parsing with
+`code: "resource_constraint"`; `details.limit` carries
+`control_kind: "parameter"`, the parameter, its effective value, range,
+default and `required_value`: the text's length, or its deepest nesting over
+the whole text. The recovery names the larger value to pass, or asks for
+shorter or flatter text, or several calls, when the need is above the maximum.
+A type chained more than 256 levels deep through pointers, arrays, typedefs
+or members, counting existing database types, is refused with
+`details.refusal.kind: "fixed_ceiling"` and the measured depth of the whole
+chain. Because the depth counts through typedefs and existing types, naming
+intermediate types or splitting definitions across calls does not reduce it;
+only fewer nested levels do. Ghidra 12.2 stores, names and
+compares types recursively: 1024 levels resolved and 2048 exhausted the stack
+inside `addDataType` while its database lock was held, leaving the Program
+unable to save. No caller value raises that stack, so the bound is fixed. If
+Ghidra exhausts its stack anyway, the bridge reports it and ends the session
+rather than serve a Program whose lock may be held.
+
+The bridge also refuses, with the construct's line and column (CR, LF and
+CRLF each end a line, as in Ghidra's parser),
+what its parser would accept without applying; see the
+[native guide](../guides/native/native-investigation.md).
+
 ## PE debug-symbol coverage
 
 The post-analysis handshake reports Ghidra's PDB Program Information attributes:
