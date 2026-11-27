@@ -5868,7 +5868,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         SoftReference<DecompileResults> retained = decompileResults.get(key);
         DecompileResults reused = retained == null ? null : retained.get();
         if (reused != null) return reused;
-        DecompileResults results = takeDecompileAhead(key);
+        DecompileResults results = takeDecompileAhead(key, decompileTimeoutSeconds);
         // A failure or timeout read ahead for this request already spent its
         // deadline, so it is reported rather than started again.
         if (results == null) results = decompiler.decompileFunction(
@@ -6062,8 +6062,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
      * decompiled twice; a running one is waited for, and its worker's own
      * native deadline, which started earlier, bounds that wait. A queued one
      * that no worker has started is taken back and decompiled here at once.
+     *
+     * The deadline matters only where the cache policy says it does: a
+     * completed decompilation is reusable under any deadline, as cached ones
+     * are, but a failure, a timeout or unfinished work under a different
+     * deadline than this request's is cancelled and decompiled again, so a
+     * changed ghidra.decompile_timeout_seconds applies and the reported limit
+     * is the one used.
      */
-    private DecompileResults takeDecompileAhead(DecompileCacheKey key) {
+    private DecompileResults takeDecompileAhead(DecompileCacheKey key, int timeoutSeconds) {
         AheadTask task;
         synchronized (decompileAheadLock) {
             task = decompileAheadTasks.remove(key);
@@ -6072,6 +6079,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 decompileAheadQueue.remove(task);
                 return null;
             }
+        }
+        if (task.timeoutSeconds != timeoutSeconds) {
+            DecompileResults finished = task.done.getNow(null);
+            if (finished != null && finished.decompileCompleted() && !finished.isCancelled() &&
+                    !finished.isTimedOut()) return finished;
+            task.monitor.cancel();
+            return null;
         }
         while (true) {
             // Cancelling the waiting request cancels the decompile it waits

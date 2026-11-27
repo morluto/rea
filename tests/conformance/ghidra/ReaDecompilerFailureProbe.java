@@ -302,6 +302,52 @@ public class ReaDecompilerFailureProbe extends GhidraScript {
                 requestMonitor.set(bridge, previousMonitor);
             }
 
+            // A changed decompile deadline reuses a completed result but not
+            // a timeout produced under the earlier deadline.
+            dispose.invoke(bridge);
+            pooled.clear();
+            foreground.clear();
+            ((Map<?, ?>) retained.get(bridge)).clear();
+            limit.setInt(bridge, 1);
+            opener.set(bridge, (java.util.function.Function<Integer, DecompInterface>) payload -> {
+                DecompInterface real = new DecompInterface() {
+                    @Override
+                    public DecompileResults decompileFunction(Function function, int timeout, TaskMonitor taskMonitor) {
+                        DecompileResults results = super.decompileFunction(function, timeout, taskMonitor);
+                        pooled.add(function.getName());
+                        return results;
+                    }
+                };
+                real.toggleCCode(true);
+                real.toggleSyntaxTree(true);
+                real.openProgram(currentProgram);
+                return real;
+            });
+            handleRequest.invoke(bridge, requestConstructor.newInstance(11, "procedure_pseudo_code",
+                pseudocodeFor(pseudocodeQuery, own), null, null, flowLimits, window), null);
+            require("read_ahead_completed_under_old_deadline",
+                await(() -> pooled.contains(second.getName()) && pooled.contains(third.getName()), 10000));
+            limit.setInt(bridge, 5);
+            handleRequest.invoke(bridge, requestConstructor.newInstance(12, "procedure_pseudo_code",
+                pseudocodeFor(pseudocodeQuery, third), null, null, flowLimits, List.of()), null);
+            require("read_ahead_success_reused_across_deadline_change", !foreground.contains(third.getName()));
+            dispose.invoke(bridge);
+            pooled.clear();
+            foreground.clear();
+            ((Map<?, ?>) retained.get(bridge)).clear();
+            limit.setInt(bridge, 1);
+            opener.set(bridge, (java.util.function.Function<Integer, DecompInterface>) payload ->
+                injectedWorker(pooled, disposed, 0));
+            handleRequest.invoke(bridge, requestConstructor.newInstance(13, "procedure_pseudo_code",
+                pseudocodeFor(pseudocodeQuery, own), null, null, flowLimits, window), null);
+            require("read_ahead_timed_out_under_old_deadline",
+                await(() -> pooled.contains(second.getName()), 5000));
+            limit.setInt(bridge, 5);
+            handleRequest.invoke(bridge, requestConstructor.newInstance(14, "procedure_pseudo_code",
+                pseudocodeFor(pseudocodeQuery, second), null, null, flowLimits, List.of()), null);
+            require("read_ahead_timeout_not_reused_after_deadline_change", foreground.contains(second.getName()));
+            limit.setInt(bridge, 0);
+
             // A one-function remainder starts no worker.
             dispose.invoke(bridge);
             handleRequest.invoke(bridge, requestConstructor.newInstance(9, "procedure_pseudo_code",
@@ -313,6 +359,7 @@ public class ReaDecompilerFailureProbe extends GhidraScript {
             dispose.invoke(bridge);
             pooled.clear();
             disposed.clear();
+            ((Map<?, ?>) retained.get(bridge)).clear();
             java.util.concurrent.CountDownLatch opening = new java.util.concurrent.CountDownLatch(1);
             opener.set(bridge, (java.util.function.Function<Integer, DecompInterface>) payload -> {
                 try {
