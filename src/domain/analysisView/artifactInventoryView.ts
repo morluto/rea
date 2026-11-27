@@ -152,11 +152,6 @@ const FORMAT_RECORD_HEADER_TOTALS: Readonly<
     metadata.kind === "systemd-journal" ? metadata.object_count : null,
 };
 
-/** One row of a `format_record_headers` page. */
-export type FormatRecordHeader = z.output<
-  typeof systemdJournalObjectHeaderSchema
->;
-
 /** What a `format_record_headers` page must re-read, from the parent inventory. */
 export interface FormatRecordPageSource {
   readonly format: string;

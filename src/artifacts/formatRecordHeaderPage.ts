@@ -7,7 +7,7 @@ import {
   type ArtifactResourceOwner,
 } from "../resources/index.js";
 import { createArtifactReader } from "./createArtifactReader.js";
-import type { FormatRecordHeader } from "../domain/analysisView/artifactInventoryView.js";
+import type { FormatRecordHeader } from "../domain/analysisView/analysisViewParent.js";
 
 /** One page of a root artifact's per-record headers. */
 export interface FormatRecordHeaderPageRequest {
