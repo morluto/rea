@@ -1938,18 +1938,61 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private static final int MIN_C_PARENTHESIS_DEPTH = 1;
     private static final int DEFAULT_C_PARENTHESIS_DEPTH = 8;
     private static final int MAX_C_PARENTHESIS_DEPTH = 12;
-    private static final Set<String> C_CONST_QUALIFIERS = Set.of("const", "__const", "__const__");
-    private static final Set<String> C_VOLATILE_QUALIFIERS = Set.of("volatile", "__volatile", "__volatile__");
     /** Accepted caller C and the qualifiers Ghidra's types cannot record. */
     private record ParsedCallerC(CParser parser, JsonArray droppedQualifiers) {}
     // Data types carry no SourceType; this category is the persisted mark of caller authorship.
     private static final CategoryPath CALLER_DEFINED_TYPES = new CategoryPath("/rea_caller_defined");
-    // Ghidra's parser accepts these and records nothing for them.
-    private static final Set<String> UNAPPLIED_C_EXTENSIONS = Set.of(
-        "__attribute__", "__attribute", "__declspec", "_Alignas", "alignas", "__asm__", "__asm", "asm",
-        "__extension__", "__packed");
-    private static final Set<String> UNAPPLIED_C_SPECIFIERS = Set.of(
-        "static", "extern", "inline", "__inline", "__inline__", "register", "auto", "_Thread_local", "thread_local");
+    /** A token Ghidra's C parser consumes without applying, and what REA does with it. */
+    private record UnappliedCToken(Pattern spelling, String construct, String droppedQualifier) {
+        boolean refused() { return droppedQualifier == null; }
+    }
+
+    private static UnappliedCToken refusedC(String spelling, String construct) {
+        return new UnappliedCToken(Pattern.compile(spelling), construct, null);
+    }
+
+    private static UnappliedCToken droppedC(String spelling, String qualifier) {
+        return new UnappliedCToken(Pattern.compile(spelling), null, qualifier);
+    }
+
+    /**
+     * Every token Ghidra 12.2's C.jj grammar accepts and then ignores, in that
+     * grammar's own spellings (its token regular expressions). REA refuses a
+     * token whose meaning would be lost, such as a pointer width, an attribute
+     * or a storage class, and reports a pure qualifier that changes neither
+     * layout nor storage as dropped. Every other C.jj keyword is applied: base
+     * types (including __int8..__int64, _Bool and _*signed), struct, union,
+     * enum and typedef, calling conventions, _Noreturn, _Alignof and sizeof.
+     * Types the parser invents for an undefined name are a parse result, not a
+     * token; requireNoInventedTypes refuses those.
+     */
+    private static final List<UnappliedCToken> UNAPPLIED_C_TOKENS = List.of(
+        // TypeQualifier: consumed without a Ghidra representation.
+        droppedC("_*const", "const"),
+        droppedC("_*volatile_*", "volatile"),
+        droppedC("_+restrict", "restrict"),
+        droppedC("__unaligned", "__unaligned"),
+        droppedC("__w64", "__w64"),
+        refusedC("__ptr32|__ptr64", "the pointer-width qualifier %s (Ghidra stores a native-width pointer)"),
+        refusedC("__near|__far", "the pointer qualifier %s (Ghidra ignores it)"),
+        // AttributeSpec, DeclSpec and AlignmentSpecifier: parsed and discarded.
+        refusedC("__attribute_*|__declspec|__readableTo|_Alignas|alignas|__packed|__packed__|packed|_*asm_*|_+extension_*",
+            "the attribute or extension %s"),
+        refusedC("\\[\\[", "a [[...]] attribute"),
+        // StorageClassSpecifier and function specifiers: no storage or linkage in a type.
+        refusedC("static|extern|register|auto|_Thread_local|thread_local|_*(?:inline|forceinline)_*", "the specifier %s"),
+        // Pragma operators, assertions and lexer states whose text is skipped.
+        // Ghidra applies a pack through the operator but skips any other pragma; REA admits one spelling.
+        refusedC("__pragma|_Pragma", "the pragma operator %s (write #pragma pack instead)"),
+        refusedC("_Static_assert|static_assert", "the static assertion %s (Ghidra does not store it)"),
+        refusedC("@", "an Objective-C @ directive (Ghidra skips its text)"),
+        refusedC("\\\\", "a backslash (Ghidra's parser skips it)"));
+
+    private static UnappliedCToken unappliedC(String token) {
+        for (UnappliedCToken rule : UNAPPLIED_C_TOKENS)
+            if (rule.spelling().matcher(token).matches()) return rule;
+        return null;
+    }
 
     private static boolean isCallerDefinedType(DataType type) {
         CategoryPath category = type.getCategoryPath();
@@ -1964,12 +2007,18 @@ public final class ReaGhidraBridge extends HeadlessScript {
     /** One token of caller C text and where it starts in the caller's own lines. */
     private record CToken(String text, int line, int column) {
         boolean is(String expected) { return text.equals(expected); }
-        boolean isIdentifier() { return Character.isLetter(text.charAt(0)) || text.charAt(0) == '_'; }
+        boolean isIdentifier() { return isCIdentifierStart(text.charAt(0)); }
+    }
+
+    // C.jj's LETTER: identifiers may hold $, as in its IDENTIFIER token.
+    private static boolean isCIdentifierStart(char character) {
+        return Character.isLetter(character) || character == '_' || character == '$';
     }
 
     /**
-     * The one reader of caller C text. Tokens are identifiers or single
-     * characters; comments read as whitespace, as in C. CR, LF and CRLF each
+     * The one reader of caller C text. Tokens are identifiers, numbers or
+     * single characters; comments, and the byte-order mark C.jj skips, read as
+     * whitespace. CR, LF and CRLF each
      * end one line, as in Ghidra's own C parser, so positions name the
      * caller's text. A string or character literal is refused here, so no
      * later check can mistake its contents for code.
@@ -2014,7 +2063,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 char character = text.charAt(index);
                 int tokenLine = line, column = index - lineStart + 1;
                 if (lineEnds && isLineBreak(character)) return null;
-                if (Character.isWhitespace(character)) {
+                if (Character.isWhitespace(character) || character == '\ufeff') {
                     advance();
                     continue;
                 }
@@ -2035,11 +2084,22 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 if (character == '"' || character == '\'')
                     throw refusedConstruct(code, field, "a string or character literal", tokenLine, column);
                 int stop = index + 1;
-                if (Character.isLetter(character) || character == '_')
+                if (isCIdentifierStart(character) || Character.isDigit(character))
                     while (stop < text.length() &&
-                            (Character.isLetterOrDigit(text.charAt(stop)) || text.charAt(stop) == '_')) stop++;
+                            (isCIdentifierStart(text.charAt(stop)) || Character.isDigit(text.charAt(stop)))) stop++;
                 String token = text.substring(index, stop);
                 index = stop;
+                // C.jj reads "[" "[" as an attribute, with anything skippable between.
+                if (token.equals("[")) {
+                    int savedIndex = index, savedLine = line, savedLineStart = lineStart;
+                    boolean savedEnds = endsInLineComment;
+                    CToken after = next(lineEnds);
+                    if (after != null && after.is("[")) return new CToken("[[", tokenLine, column);
+                    index = savedIndex;
+                    line = savedLine;
+                    lineStart = savedLineStart;
+                    endsInLineComment = savedEnds;
+                }
                 return new CToken(token, tokenLine, column);
             }
             return null;
@@ -2049,22 +2109,53 @@ public final class ReaGhidraBridge extends HeadlessScript {
     /** What the tokenizer observed in admitted caller C. */
     private record AdmittedCallerC(JsonArray droppedQualifiers, boolean terminated, boolean endsInLineComment) {}
 
+    // The #pragma pack operands Ghidra applies as written: (), (n), (push), (push, n),
+    // (push, id), (push, id, n), (pop) and (pop, id). It reads n with
+    // Integer.parseInt, so only a decimal literal keeps its C value.
+    private static final Pattern PACK_VALUE = Pattern.compile("0|[1-9][0-9]*");
+
+    private static boolean appliedPackOperands(List<CToken> operands) {
+        List<String> texts = operands.stream().map(CToken::text).toList();
+        java.util.function.Predicate<String> value = text -> PACK_VALUE.matcher(text).matches();
+        java.util.function.Predicate<String> label = text -> isCIdentifierStart(text.charAt(0)) &&
+            !text.equals("push") && !text.equals("pop");
+        return switch (texts.size()) {
+            case 0 -> true;
+            case 1 -> value.test(texts.get(0)) || texts.get(0).equals("push") || texts.get(0).equals("pop");
+            case 3 -> texts.get(1).equals(",") && (texts.get(0).equals("push")
+                ? value.test(texts.get(2)) || label.test(texts.get(2))
+                : texts.get(0).equals("pop") && label.test(texts.get(2)));
+            case 5 -> texts.get(0).equals("push") && texts.get(1).equals(",") && label.test(texts.get(2)) &&
+                texts.get(3).equals(",") && value.test(texts.get(4));
+            default -> false;
+        };
+    }
+
     /**
      * Admit one directive from the tokens after its #. Only a declarations
-     * text's #pragma pack(...) with no nested parentheses is applied; Ghidra's
-     * parser accepts other directives without recording them.
+     * text's #pragma pack in a form Ghidra applies is admitted. C.jj reads
+     * "#pragma" as one token and "#" followed by a space as a line marker
+     * whose text it skips, so the name must follow # directly.
      */
     private static void admitCallerCDirective(
             CTokenizer tokens, CToken hash, String field, boolean declarations, String code) {
         CToken first = tokens.next(true);
         String name = first == null ? "" : first.text();
+        boolean adjacent = first != null && first.line() == hash.line() && first.column() == hash.column() + 1;
         // Any other directive is refused by its name, before its operands are read.
         List<CToken> directive = new ArrayList<>();
-        if (declarations && name.equals("pragma"))
+        if (declarations && adjacent && name.equals("pragma"))
             for (CToken token = tokens.next(true); token != null; token = tokens.next(true)) directive.add(token);
         boolean pack = directive.size() >= 3 && directive.get(0).is("pack") && directive.get(1).is("(") &&
             directive.get(directive.size() - 1).is(")") &&
-            directive.subList(2, directive.size() - 1).stream().noneMatch(token -> token.is("(") || token.is(")"));
+            appliedPackOperands(directive.subList(2, directive.size() - 1));
+        if (!adjacent && first != null)
+            throw refusedConstruct(code, field, "# separated from its directive name (Ghidra reads it as a line marker)",
+                hash.line(), hash.column());
+        if (!pack && !directive.isEmpty() && directive.get(0).is("pack"))
+            throw refusedConstruct(code, field, "#pragma pack with operands Ghidra ignores or reads differently " +
+                "(it applies (), (n), (push), (push, n), (push, id), (push, id, n), (pop) and (pop, id) with a decimal n)",
+                hash.line(), hash.column());
         if (!pack)
             throw refusedConstruct(code, field, "the directive #" + name +
                 (name.equals("pragma") ? " (only #pragma pack is applied)" : ""), hash.line(), hash.column());
@@ -2098,23 +2189,22 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 admitCallerCDirective(tokens, next, field, declarations, code);
                 continue;
             }
-            if (next.isIdentifier()) {
-                if (UNAPPLIED_C_EXTENSIONS.contains(token))
-                    throw refusedConstruct(code, field, "the attribute or extension " + token +
-                        (declarations ? " (use #pragma pack for packing)" : ""), line, column);
-                if (UNAPPLIED_C_SPECIFIERS.contains(token) || (!declarations && token.equals("typedef")))
-                    throw refusedConstruct(code, field, "the specifier " + token, line, column);
-                boolean isConst = C_CONST_QUALIFIERS.contains(token);
-                if (isConst || C_VOLATILE_QUALIFIERS.contains(token)) {
-                    JsonObject qualifier = new JsonObject();
-                    qualifier.addProperty("qualifier", isConst ? "const" : "volatile");
-                    qualifier.addProperty("line", line);
-                    qualifier.addProperty("column", column);
-                    if (!declarations)
-                        qualifier.add("parameter_index", parameter < 0 || parametersClosed
-                            ? JsonNull.INSTANCE : GSON.toJsonTree(parameter));
-                    dropped.add(qualifier);
-                }
+            if (!declarations && token.equals("typedef"))
+                throw refusedConstruct(code, field, "the specifier typedef", line, column);
+            UnappliedCToken unapplied = unappliedC(token);
+            if (unapplied != null && unapplied.refused())
+                throw refusedConstruct(code, field, String.format(unapplied.construct(), token) +
+                    (declarations && unapplied.construct().startsWith("the attribute") ? " (use #pragma pack for packing)" : ""),
+                    line, column);
+            if (unapplied != null) {
+                JsonObject qualifier = new JsonObject();
+                qualifier.addProperty("qualifier", unapplied.droppedQualifier());
+                qualifier.addProperty("line", line);
+                qualifier.addProperty("column", column);
+                if (!declarations)
+                    qualifier.add("parameter_index", parameter < 0 || parametersClosed
+                        ? JsonNull.INSTANCE : GSON.toJsonTree(parameter));
+                dropped.add(qualifier);
             }
             if (ended && !token.equals(";"))
                 throw refusedConstruct(code, field, "a second declaration", line, column);
@@ -2158,7 +2248,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                             "a declaration that is not a struct, union, enum or typedef definition (" + token + ")", line, column);
                 }
                 case tag -> {
-                    if (!Character.isLetter(token.charAt(0)) && token.charAt(0) != '_')
+                    if (!next.isIdentifier())
                         throw refusedConstruct(code, field, "an unnamed struct or union definition", line, column);
                     definition = token;
                     state = named;
@@ -2312,7 +2402,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new RequestFailure(code, "Function at " + entry + " is a thunk; its prototype belongs to the function it forwards to");
         ParsedCallerC parsed = parseCallerC(text, "signature", false, code, maximum, maxParenthesisDepth);
         CParser parser = parsed.parser();
-        // The parser invents an empty composite for an undefined struct, union or enum tag.
+        // The parser invents an empty composite or enum for an undefined tag, and a
+        // prototype defines no types, so every type it reports was invented.
         Set<String> undefined = new TreeSet<>(parser.getComposites().keySet());
         undefined.addAll(parser.getEnums().keySet());
         undefined.addAll(parser.getTypes().keySet());
@@ -2406,6 +2497,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 monitor.checkCancelled();
                 String name = entry.getKey();
                 DataType type = entry.getValue();
+                // Ghidra's parser invents an empty type for a struct, union or enum
+                // tag that neither the text nor the database defines, and reports nothing.
+                if (type instanceof ghidra.program.model.data.Enum enumeration && enumeration.getCount() == 0)
+                    throw new RequestFailure(code, "declarations leave enum " + name + " without members; define every enum they use");
                 if (type instanceof ghidra.program.model.data.Composite composite) {
                     if (composite.getNumComponents() == 0)
                         throw new RequestFailure(code, "declarations leave " + name + " without members; define every struct or union they use");

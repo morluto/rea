@@ -546,6 +546,10 @@ it.each([
 
 it("returns the qualifiers each edit could not record", async () => {
   const qualifier = { qualifier: "const", line: 1, column: 14 };
+  // Every other pure qualifier the bridge reports.
+  const PURE_QUALIFIERS = ["restrict", "__unaligned", "__w64"].map(
+    (name, index) => ({ qualifier: name, line: 2, column: 1 + index }),
+  );
   const harness = await connectGhidraMcp(
     "ghidra-dropped-qualifiers",
     (requested) =>
@@ -554,7 +558,7 @@ it("returns the qualifiers each edit could not record", async () => {
           requested === "define_native_data_types"
             ? {
                 types: [SESSION_TYPE],
-                dropped_qualifiers: [qualifier],
+                dropped_qualifiers: [qualifier, ...PURE_QUALIFIERS],
                 effects: DEFINITION_EFFECTS,
               }
             : {
@@ -581,7 +585,9 @@ it("returns the qualifiers each edit could not record", async () => {
       arguments: { declarations: DECLARATIONS },
     });
     expect(defined.structuredContent).toMatchObject({
-      normalized_result: { dropped_qualifiers: [qualifier] },
+      normalized_result: {
+        dropped_qualifiers: [qualifier, ...PURE_QUALIFIERS],
+      },
     });
     const annotated = await harness.mcp.callTool({
       name: "annotate_native_function",

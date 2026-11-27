@@ -344,6 +344,21 @@ int main(void) { struct session one = { 1, "one", 16, 1.5, 0 }; return (int)rea_
             /second declaration at line 1, column 22/u,
           ],
           ['double total(int a) __asm__("g")', /__asm__ at line 1, column 21/u],
+          // Ghidra stores a native-width pointer for these and ignores the rest.
+          [
+            "double total(int * __ptr64 a)",
+            /pointer-width qualifier __ptr64 \(Ghidra stores a native-width pointer\) at line 1, column 20/u,
+          ],
+          ["double total(int __far * a)", /pointer qualifier __far/u],
+          [
+            "__forceinline double total(int a)",
+            /specifier __forceinline at line 1, column 1/u,
+          ],
+          [
+            "[[noreturn]] double total(int a)",
+            /\[\[\.\.\.\]\] attribute at line 1, column 1/u,
+          ],
+          ["double total(enum rea_missing a)", /does not define: rea_missing/u],
           ["#pragma pack(1)\ndouble total(int a)", /directive #pragma/u],
         ]) {
           const refusal = await first.refused(
@@ -454,6 +469,31 @@ typedef struct { volatile int k; } rea_unnamed_t;`,
           });
         const packed = await inspect("rea_packed");
         assert.equal(packed.alignment_bytes, 1);
+        // Pure qualifiers are reported; a labelled pack push and pop applies.
+        const qualified = `struct rea_quals { int __w64 a; int __unaligned *b; int * __restrict c; };
+#pragma pack(push, rea, 1)
+struct rea_labeled { char c; int i; };
+#pragma pack(pop, rea)
+struct rea_after { char c; int i; };`;
+        const quals = await first.call("define_native_data_types", {
+          declarations: qualified,
+        });
+        assert.deepEqual(
+          quals.types.map(({ name, size_bytes }) => [name, size_bytes]),
+          [
+            ["rea_after", 8],
+            ["rea_labeled", 5],
+            ["rea_quals", 24],
+          ],
+        );
+        assert.deepEqual(
+          quals.dropped_qualifiers,
+          ["__w64", "__unaligned", "__restrict"].map((spelling) => ({
+            qualifier: spelling === "__restrict" ? "restrict" : spelling,
+            line: 1,
+            column: qualified.indexOf(spelling) + 1,
+          })),
+        );
         assert.deepEqual(
           packed.fields.map(({ name, offset_bytes }) => [name, offset_bytes]),
           [
@@ -595,10 +635,59 @@ typedef struct { volatile int k; } rea_unnamed_t;`,
           ],
           [
             "#pragma pack(push, (1))\nstruct rea_kept { int a; };",
-            /directive #pragma \(only #pragma pack is applied\)/u,
+            /#pragma pack with operands Ghidra ignores or reads differently/u,
           ],
           ["enum { REA_A, REA_B };", /unnamed enum/u],
           ["typedef enum { REA_A } rea_enum_t;", /unnamed enum/u],
+          // The audit of C.jj tokens Ghidra consumes without applying.
+          [
+            "struct rea_kept { int * __ptr32 p; };",
+            /pointer-width qualifier __ptr32/u,
+          ],
+          [
+            "struct rea_kept { int x; } packed;",
+            /attribute or extension packed/u,
+          ],
+          [
+            "struct [[deprecated]] rea_kept { int a; };",
+            /\[\[\.\.\.\]\] attribute at line 1, column 8/u,
+          ],
+          [
+            "@interface Foo\n@end\nstruct rea_kept { int a; };",
+            /Objective-C @ directive \(Ghidra skips its text\) at line 1, column 1/u,
+          ],
+          [
+            "__pragma(pack(1)) struct rea_kept { char c; int i; };",
+            /pragma operator __pragma \(write #pragma pack instead\)/u,
+          ],
+          [
+            "_Static_assert(1); struct rea_kept { int a; };",
+            /static assertion _Static_assert/u,
+          ],
+          [
+            "struct __readableTo(x) rea_kept { int a; };",
+            /attribute or extension __readableTo/u,
+          ],
+          ["struct rea_kept { char c; \\\n int i; };", /backslash/u],
+          ...[
+            "#pragma pack(0x1)",
+            "#pragma pack(010)",
+            "#pragma pack(show)",
+            "#pragma pack(pop, 1)",
+          ].map((pragma) => [
+            `${pragma}\nstruct rea_kept { char c; int i; };`,
+            /#pragma pack with operands Ghidra ignores or reads differently \(.*\) at line 1, column 1/u,
+          ]),
+          [
+            "# pragma pack(1)\nstruct rea_kept { char c; int i; };",
+            /# separated from its directive name/u,
+          ],
+          // Ghidra invents an empty enum for an undefined tag.
+          [
+            "struct rea_user2 { enum rea_missing_e m; };",
+            /enum rea_missing_e without members/u,
+          ],
+          ["enum rea_fwd;", /enum rea_fwd without members/u],
           [
             "enum rea_mode { REA_BUSY = 1, REA_BUSY = 2 };",
             /Ghidra's C parser reported declarations: duplicate enum value: rea_mode : REA_BUSY : 2/u,
@@ -649,6 +738,9 @@ typedef struct { volatile int k; } rea_unnamed_t;`,
           "rea_kept",
           "rea_enum_t",
           "rea_mode",
+          "rea_user2",
+          "rea_missing_e",
+          "rea_fwd",
         ])
           assert.equal(
             await typeStatus(first, `/rea_caller_defined/${name}`),

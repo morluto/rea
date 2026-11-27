@@ -1521,26 +1521,30 @@ Ghidra's C parser accepts several constructs and records nothing for them. REA
 refuses those before parsing, names the construct and its line and column, and
 changes nothing:
 
-| Construct                                                                                                           | `signature`        | `declarations`                        |
-| ------------------------------------------------------------------------------------------------------------------- | ------------------ | ------------------------------------- |
-| `__attribute__`, `__declspec`, `_Alignas`, `__packed`, asm labels                                                   | refused            | refused; use `#pragma pack` to pack   |
-| `static`, `extern`, `inline`, `register`, `auto`, `_Thread_local`                                                   | refused            | refused                               |
-| Variable declarations and other non-type statements                                                                 | refused            | refused                               |
-| Preprocessor directives                                                                                             | refused            | refused except `#pragma pack`         |
-| String and character literals                                                                                       | refused            | refused                               |
-| Function body, default argument, second declaration                                                                 | refused            | not applicable                        |
-| Function pointers                                                                                                   | refused            | refused                               |
-| Unnamed enum; unnamed struct or union other than `typedef struct { } name`                                          | refused            | refused                               |
-| Repeated parameter or member name; struct or union without members                                                  | refused            | refused                               |
-| Array parameter (Ghidra stores a pointer)                                                                           | refused            | not applicable                        |
-| A type name the database holds as different types                                                                   | refused            | refused                               |
-| Anything Ghidra's parser reports a diagnostic for, such as a repeated enumerator name                               | refused            | refused                               |
-| `#pragma pack`, bit-fields, flexible and zero-length arrays, enum constant expressions, several typedef declarators | not applicable     | applied; the stored layout shows them |
-| `_Noreturn`, a calling convention the compiler specification defines                                                | applied            | not applicable                        |
-| `const`, `volatile`                                                                                                 | accepted, reported | accepted, reported                    |
+| Construct                                                                                                           | `signature`        | `declarations`                                                                                   |
+| ------------------------------------------------------------------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------ |
+| `__attribute__`, `__declspec`, `__readableTo`, `_Alignas`, `packed`, `[[...]]`, asm labels, `__extension__`         | refused            | refused; use `#pragma pack` to pack                                                              |
+| `__ptr32`, `__ptr64` (Ghidra stores a native-width pointer), `__near`, `__far`                                      | refused            | refused                                                                                          |
+| `__pragma`, `_Pragma`, `_Static_assert`, Objective-C `@` blocks, backslashes, `#` apart from its name               | refused            | refused                                                                                          |
+| `static`, `extern`, `inline`, `__forceinline`, `register`, `auto`, `_Thread_local`                                  | refused            | refused                                                                                          |
+| Variable declarations and other non-type statements                                                                 | refused            | refused                                                                                          |
+| Preprocessor directives                                                                                             | refused            | refused except `#pragma pack` in a form Ghidra applies (decimal values; `pop` with a label only) |
+| String and character literals                                                                                       | refused            | refused                                                                                          |
+| Function body, default argument, second declaration                                                                 | refused            | not applicable                                                                                   |
+| Function pointers                                                                                                   | refused            | refused                                                                                          |
+| Unnamed enum; unnamed struct or union other than `typedef struct { } name`                                          | refused            | refused                                                                                          |
+| Repeated parameter or member name; struct, union or enum without members (Ghidra invents one for an undefined tag)  | refused            | refused                                                                                          |
+| Array parameter (Ghidra stores a pointer)                                                                           | refused            | not applicable                                                                                   |
+| A type name the database holds as different types                                                                   | refused            | refused                                                                                          |
+| Anything Ghidra's parser reports a diagnostic for, such as a repeated enumerator name                               | refused            | refused                                                                                          |
+| `#pragma pack`, bit-fields, flexible and zero-length arrays, enum constant expressions, several typedef declarators | not applicable     | applied; the stored layout shows them                                                            |
+| `_Noreturn`, a calling convention the compiler specification defines                                                | applied            | not applicable                                                                                   |
+| `const`, `volatile`, `restrict`, `__unaligned`, `__w64`                                                             | accepted, reported | accepted, reported                                                                               |
 
-`const` and `volatile` have no representation in Ghidra's type system and no
+These qualifiers have no representation in Ghidra's type system and no
 effect on layout or storage, so the stored type and the readback omit them.
+The bridge recognizes every spelling Ghidra 12.2's C grammar accepts, such as
+`__const` or `_restrict`, and reports the qualifier by its plain name.
 The result's `dropped_qualifiers` lists each one with its line and column, and
 for a signature its zero-based `parameter_index` (`null` for the return type),
 so the omission is visible without comparing the text with the readback. Ghidra's parser can report a diagnostic, such as a repeated enumerator it

@@ -49,16 +49,16 @@ export const nativeDataTypeDefinitionsInputSchema = z.strictObject({
   parenthesis_max_depth: cParenthesisMaxDepthSchema,
 });
 
-/** A const or volatile in caller C text, which Ghidra's types cannot record. */
+/** A pure qualifier in caller C text, which Ghidra's types cannot record. */
 export const droppedCQualifierSchema = z.strictObject({
-  qualifier: z.enum(["const", "volatile"]),
+  qualifier: z.enum(["const", "volatile", "restrict", "__unaligned", "__w64"]),
   line: z.int().positive(),
   column: z.int().positive().describe("UTF-16 column in the caller's text"),
 });
 
 /** Present only when the caller's text held qualifiers that were not recorded. */
 export const droppedCQualifiersDescription =
-  "const and volatile in the caller's text that Ghidra has no representation for and did not record; absent when there were none";
+  "Qualifiers in the caller's text (const, volatile, restrict, __unaligned, __w64) that Ghidra has no representation for and did not record; absent when there were none";
 
 /** Readback of each type one atomic definition call stored or found unchanged. */
 export const nativeDataTypeDefinitionsSchema = z.strictObject({
