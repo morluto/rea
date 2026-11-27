@@ -557,6 +557,33 @@ describe("vector table size and SVD duplicate rules", () => {
     if (!arm.ok) expect(arm.error.message).toContain("fewer than 8 bytes");
   });
 
+  it("records the full 8-byte AUIPC+JALR extent in table_file_range and coverage when max_entries is 1", () => {
+    const pair = Buffer.alloc(16);
+    pair.writeUInt32LE(0x0000_1297, 4); // auipc x5, 0x1 at offset 4
+    pair.writeUInt32LE((0x20 << 20) | (5 << 15) | 0x67, 8); // jalr x0, 0x20(x5) at offset 8
+    const parsed = parseFirmwareVectorTable({
+      artifact: { path: "/tmp/pair.bin", sha256: "d".repeat(64), bytes: 12 },
+      architecture: "riscv",
+      baseAddressHex: "0x80000000",
+      vectorTableOffset: 4,
+      maxEntries: 1,
+      tableBytes: pair.subarray(4, 12),
+      svdSupplied: false,
+      svdMap: new Map(),
+      svdSkipped: [],
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.examined_entries).toBe(1);
+    expect(parsed.value.table_file_range).toEqual({ start: 4, end: 12 });
+    expect(parsed.value.coverage).toEqual({
+      status: "complete",
+      examined_bytes: 8,
+      available_from_offset_bytes: 8,
+    });
+    expect(parsed.value.trap_entry_address).toBe("0x80001024");
+  });
+
   it("binds repeated declarations once, including across <peripheral> elements with one name", () => {
     const repeats =
       "<interrupt><name>IRQ</name><value>3</value></interrupt>".repeat(3);

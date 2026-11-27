@@ -275,26 +275,72 @@ const decodeArmVectorEntries = (
   return { entries, activeTargets, activeIrqs };
 };
 
+/** Minimum byte length required to decode the leading slots of `architecture`. */
+export const minimumVectorTableBytes = (
+  architecture: FirmwareVectorArchitecture,
+): number =>
+  (architecture === "riscv" ? 1 : ARM_REQUIRED_LEADING_SLOTS) * WORD_BYTES;
+
 interface ReportContext {
   readonly options: ParseFirmwareVectorTableOptions;
   readonly baseAddress: number;
   readonly vtorUnsigned: number;
   readonly entryCount: number;
-  readonly coverageStatus: "complete" | "partial";
+  readonly addressableEntries: number;
   readonly limitations: string[];
   readonly anomalies: string[];
 }
 
-const buildRiscvVectorReport = (ctx: ReportContext): FirmwareVectorTable => {
-  const { options, baseAddress, vtorUnsigned, entryCount, limitations } = ctx;
+const finalizeTableCoverage = (
+  options: ParseFirmwareVectorTableOptions,
+  entryCount: number,
+  addressableEntries: number,
+  consumedBytes: number,
+  limitations: string[],
+): FirmwareVectorTable["coverage"] => {
   const availableFromOffset =
     options.artifact.bytes - options.vectorTableOffset;
-  const examinedBytes = entryCount * WORD_BYTES;
+  const coverageAcc = new CoverageAccumulator().recordComplete();
+  if (consumedBytes < availableFromOffset) {
+    const afterConsumedOffset = options.vectorTableOffset + consumedBytes;
+    const omission =
+      entryCount === addressableEntries && entryCount < options.maxEntries
+        ? `Decoded ${String(entryCount)} slots (${String(consumedBytes)} bytes); later slots would lie past the end of the 32-bit address space and were not interpreted.`
+        : entryCount < options.maxEntries
+          ? `Decoded ${String(entryCount)} slots (${String(consumedBytes)} bytes); ${String(availableFromOffset - consumedBytes)} trailing byte(s) past offset ${String(afterConsumedOffset)} do not form a complete 32-bit slot.`
+          : `Decoded ${String(entryCount)} slots (${String(consumedBytes)} bytes) up to max_entries; bytes past offset ${String(afterConsumedOffset)} were not interpreted as vector slots.`;
+    coverageAcc.recordOmission(omission);
+    limitations.push(omission);
+  }
+  return {
+    status: coverageAcc.finalizeKnown(),
+    examined_bytes: consumedBytes,
+    available_from_offset_bytes: availableFromOffset,
+  };
+};
+
+const buildRiscvVectorReport = (ctx: ReportContext): FirmwareVectorTable => {
+  const { options, baseAddress, vtorUnsigned, entryCount, limitations } = ctx;
   if ((vtorUnsigned & 0x3) !== 0) {
     ctx.anomalies.push(
       `Trap table address ${hex32(vtorUnsigned)} is not 4-byte aligned as required by RISC-V mtvec.BASE.`,
     );
   }
+  const { slots, activeTargets, activeIrqs, consumedBytes } =
+    decodeRiscvVectorSlots({
+      tableBytes: options.tableBytes,
+      vectorTableOffset: options.vectorTableOffset,
+      vtorAddress: vtorUnsigned,
+      entryCount,
+      svdMap: options.svdMap,
+    });
+  const coverage = finalizeTableCoverage(
+    options,
+    entryCount,
+    ctx.addressableEntries,
+    consumedBytes,
+    limitations,
+  );
   limitations.push(
     "RISC-V mtvec Direct vs Vectored dispatch is controlled at runtime by mtvec.MODE; static slot decoding reports jump-stub structure without proving runtime CSR state. In vectored mode slot 0 also receives every synchronous exception.",
     "A CLIC table (mtvec.MODE 0b11 with mtvt) holds handler addresses, not jump instructions, so its slots decode as unrecognized.",
@@ -303,13 +349,6 @@ const buildRiscvVectorReport = (ctx: ReportContext): FirmwareVectorTable => {
     limitations.push(
       "CMSIS-SVD interrupt values are bound to RISC-V slots as mcause codes 16 and up; a platform whose SVD numbers its interrupts differently binds the wrong names.",
     );
-  const { slots, activeTargets, activeIrqs } = decodeRiscvVectorSlots({
-    tableBytes: options.tableBytes,
-    vectorTableOffset: options.vectorTableOffset,
-    vtorAddress: vtorUnsigned,
-    entryCount,
-    svdMap: options.svdMap,
-  });
   let jumpSlots = 0;
   for (const slot of slots) {
     if (
@@ -338,13 +377,9 @@ const buildRiscvVectorReport = (ctx: ReportContext): FirmwareVectorTable => {
     examined_entries: entryCount,
     table_file_range: {
       start: options.vectorTableOffset,
-      end: options.vectorTableOffset + examinedBytes,
+      end: options.vectorTableOffset + consumedBytes,
     },
-    coverage: {
-      status: ctx.coverageStatus,
-      examined_bytes: examinedBytes,
-      available_from_offset_bytes: availableFromOffset,
-    },
+    coverage,
     initial_stack_pointer: null,
     // RISC-V mtvec slot 0 is the synchronous exception / trap entry, not CPU reset.
     reset_code_address: null,
@@ -368,9 +403,14 @@ const buildArmVectorReport = (
   architecture: ArchitectureVariant,
 ): FirmwareVectorTable => {
   const { options, baseAddress, vtorUnsigned, entryCount, anomalies } = ctx;
-  const availableFromOffset =
-    options.artifact.bytes - options.vectorTableOffset;
-  const examinedBytes = entryCount * WORD_BYTES;
+  const consumedBytes = entryCount * WORD_BYTES;
+  const coverage = finalizeTableCoverage(
+    options,
+    entryCount,
+    ctx.addressableEntries,
+    consumedBytes,
+    ctx.limitations,
+  );
   const minimumAlignment = ARM_MIN_VTOR_ALIGNMENT_BYTES[architecture];
   const vtorAligned =
     minimumAlignment === null ? null : vtorUnsigned % minimumAlignment === 0;
@@ -423,13 +463,9 @@ const buildArmVectorReport = (
     examined_entries: entryCount,
     table_file_range: {
       start: options.vectorTableOffset,
-      end: options.vectorTableOffset + examinedBytes,
+      end: options.vectorTableOffset + consumedBytes,
     },
-    coverage: {
-      status: ctx.coverageStatus,
-      examined_bytes: examinedBytes,
-      available_from_offset_bytes: availableFromOffset,
-    },
+    coverage,
     initial_stack_pointer: initialSpWord === null ? null : hex32(initialSpWord),
     reset_code_address:
       resetEntry?.status === "active" ? resetEntry.target_code_address : null,
@@ -458,8 +494,7 @@ export const parseFirmwareVectorTable = (
     Number.parseInt(options.baseAddressHex.slice(2), 16) >>> 0;
   // An ARM table starts with the initial stack pointer and Reset; a RISC-V
   // Direct-mode table can be a single instruction.
-  const minimumBytes =
-    (architecture === "riscv" ? 1 : ARM_REQUIRED_LEADING_SLOTS) * WORD_BYTES;
+  const minimumBytes = minimumVectorTableBytes(architecture);
   if (
     vectorTableOffset >= artifact.bytes ||
     artifact.bytes - vectorTableOffset < minimumBytes
@@ -481,7 +516,6 @@ export const parseFirmwareVectorTable = (
     );
   }
 
-  const availableFromOffset = artifact.bytes - vectorTableOffset;
   // Slots past the end of the 32-bit address space have no address; they are
   // not decoded rather than wrapped to low memory.
   const addressableEntries = Math.floor(
@@ -492,27 +526,14 @@ export const parseFirmwareVectorTable = (
     Math.floor(tableBytes.length / WORD_BYTES),
     addressableEntries,
   );
-  const examinedBytes = entryCount * WORD_BYTES;
-  const anomalies = [...options.svdSkipped];
-  const limitations: string[] = [];
-  const coverageAcc = new CoverageAccumulator().recordComplete();
-  if (examinedBytes < availableFromOffset) {
-    const omission =
-      entryCount === addressableEntries && entryCount < maxEntries
-        ? `Decoded ${String(entryCount)} slots (${String(examinedBytes)} bytes); later slots would lie past the end of the 32-bit address space and were not interpreted.`
-        : `Decoded ${String(entryCount)} slots (${String(examinedBytes)} bytes) up to max_entries; bytes past offset ${String(vectorTableOffset + examinedBytes)} were not interpreted as vector slots.`;
-    coverageAcc.recordOmission(omission);
-    limitations.push(omission);
-  }
-
   const ctx: ReportContext = {
     options,
     baseAddress,
     vtorUnsigned,
     entryCount,
-    coverageStatus: coverageAcc.finalizeKnown(),
-    limitations,
-    anomalies,
+    addressableEntries,
+    limitations: [],
+    anomalies: [...options.svdSkipped],
   };
   return ok(
     architecture === "riscv"

@@ -131,6 +131,7 @@ export interface DecodedRiscvVectorSlots {
     readonly address: string;
   }[];
   readonly activeIrqs: readonly number[];
+  readonly consumedBytes: number;
 }
 
 export const decodeRiscvVectorSlots = (options: {
@@ -145,6 +146,8 @@ export const decodeRiscvVectorSlots = (options: {
   const slots: RiscvTrapSlot[] = [];
   const activeTargets: { slotIndex: number; address: string }[] = [];
   const activeIrqs: number[] = [];
+  // not-an-allowance: tracks the furthest byte read across 4-byte and 8-byte slots
+  let consumedBytes = 0;
 
   for (let i = 0; i < entryCount; i += 1) {
     const rel = i * 4;
@@ -170,6 +173,8 @@ export const decodeRiscvVectorSlots = (options: {
     }
 
     const decoded = decodeRiscvSlotInstruction(tableBytes, rel, slotAddress);
+    const slotEnd = rel + (decoded.encoding === "auipc_jalr" ? 8 : 4);
+    if (slotEnd > consumedBytes) consumedBytes = slotEnd;
     if (decoded.target_code_address !== null) {
       activeTargets.push({
         slotIndex: i,
@@ -189,5 +194,5 @@ export const decodeRiscvVectorSlots = (options: {
       ...decoded,
     });
   }
-  return { slots, activeTargets, activeIrqs };
+  return { slots, activeTargets, activeIrqs, consumedBytes };
 };

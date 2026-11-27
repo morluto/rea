@@ -1,4 +1,8 @@
-import { decodeLimit } from "../../domain/parseFailure.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import {
+  decodeLimit,
+  type ParseFailureError,
+} from "../../domain/parseFailure.js";
 import {
   isParseLimit,
   parseLimitConstraint,
@@ -21,7 +25,10 @@ import {
   type InspectFirmwareVectorTableInput,
 } from "../../domain/firmware/firmwareVectorTable.js";
 import { parseSvdInterruptMap } from "../../domain/firmware/firmwareSvdInterrupts.js";
-import { parseFirmwareVectorTable } from "../../domain/firmware/firmwareVectorTableParser.js";
+import {
+  minimumVectorTableBytes,
+  parseFirmwareVectorTable,
+} from "../../domain/firmware/firmwareVectorTableParser.js";
 import { FIRMWARE_VECTOR_TABLE_PROVIDER } from "../../domain/investigationProviders.js";
 import { err, ok } from "../../domain/result.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
@@ -29,6 +36,98 @@ import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFa
 
 const OPERATION = "inspect_firmware_vector_table";
 const FORMAT = "firmware-vector-table";
+
+const svdXmlInputError = (
+  cause: ParseFailureError<"malformed"> | ParseFailureError<"unsupported">,
+): AnalysisInputError =>
+  new AnalysisInputError(
+    OPERATION,
+    {
+      cause,
+      conformsToInputContract: true,
+      userMessage: `Invalid svd_xml for ${OPERATION}: ${cause.failure.detail}`,
+      remediationAction:
+        "Pass well-formed CMSIS-SVD XML whose root element is <device> without DOCTYPE declarations in svd_xml, or omit svd_xml to decode vector slots without profile names, then retry.",
+      related: { parameters: ["svd_xml"] },
+    },
+    [
+      {
+        path: ["svd_xml"],
+        reason: "invalid_format",
+        message: cause.failure.detail,
+      },
+    ],
+  );
+
+const addressOverflowInputError = (
+  input: InspectFirmwareVectorTableInput,
+  baseAddress: number,
+): AnalysisInputError => {
+  const maxOffset = Math.floor((0xffff_ffff - baseAddress) / 4) * 4;
+  const message = `base_address (${input.base_address}) + vector_table_offset (${String(input.vector_table_offset)}) overflows the 32-bit address space.`;
+  return new AnalysisInputError(
+    OPERATION,
+    {
+      conformsToInputContract: true,
+      userMessage: `Invalid address selection for ${OPERATION}: ${message}`,
+      remediationAction:
+        "Reduce base_address or vector_table_offset so base_address + vector_table_offset fits within 0x0..0xffffffff, then retry.",
+      related: { parameters: ["base_address", "vector_table_offset"] },
+    },
+    [
+      {
+        path: ["vector_table_offset"],
+        reason: "out_of_range",
+        message,
+        maximum: maxOffset,
+        observed: {
+          base_address: input.base_address,
+          vector_table_offset: input.vector_table_offset,
+        },
+      },
+    ],
+  );
+};
+
+const vectorOffsetRangeError = (
+  input: InspectFirmwareVectorTableInput,
+  fileBytes: number,
+  minimumBytes: number,
+): AnalysisInputError => {
+  const maxOffset =
+    fileBytes >= minimumBytes
+      ? Math.floor((fileBytes - minimumBytes) / 4) * 4
+      : null;
+  const message =
+    input.vector_table_offset >= fileBytes
+      ? `Selected vector_table_offset (${String(input.vector_table_offset)}) starts at or beyond the end of the ${String(fileBytes)}-byte file.`
+      : `Selected vector_table_offset (${String(input.vector_table_offset)}) leaves ${String(fileBytes - input.vector_table_offset)} byte(s) in the ${String(fileBytes)}-byte file; ${input.architecture} requires at least ${String(minimumBytes)} bytes.`;
+  return new AnalysisInputError(
+    OPERATION,
+    {
+      conformsToInputContract: true,
+      userMessage: `Invalid vector_table_offset for ${OPERATION}: ${message}`,
+      remediationAction:
+        maxOffset !== null
+          ? `Pass a 4-byte aligned vector_table_offset between 0 and ${String(maxOffset)} for this ${String(fileBytes)}-byte file, then retry.`
+          : `The ${String(fileBytes)}-byte file at ${input.path} is smaller than the ${String(minimumBytes)}-byte minimum ${input.architecture} vector table; select the complete firmware image or verify architecture.`,
+      related: { parameters: ["vector_table_offset"] },
+    },
+    [
+      {
+        path: ["vector_table_offset"],
+        reason: "out_of_range",
+        message,
+        ...(maxOffset === null ? {} : { maximum: maxOffset }),
+        observed: {
+          vector_table_offset: input.vector_table_offset,
+          file_bytes: fileBytes,
+          required_table_bytes: minimumBytes,
+        },
+      },
+    ],
+  );
+};
 
 /** Portable ARM M-profile and RISC-V vector/trap table decoder over one regular file. */
 export class FirmwareVectorTableProvider implements FirmwareVectorTablePort {
@@ -54,9 +153,10 @@ export class FirmwareVectorTableProvider implements FirmwareVectorTablePort {
   ) {
     let completed: FirmwareVectorTable | undefined;
     let observed:
-      | { readonly sha256: string; readonly bytes: number }
-      | undefined;
+      { readonly sha256: string; readonly bytes: number } | undefined;
     const maxSliceBytes = input.max_entries * 4 + 4;
+    const minimumBytes = minimumVectorTableBytes(input.architecture);
+    const baseAddress = Number.parseInt(input.base_address.slice(2), 16) >>> 0;
     try {
       return await this.#resources.run(async () => {
         assertArtifactReadActive(options?.signal);
@@ -67,7 +167,13 @@ export class FirmwareVectorTableProvider implements FirmwareVectorTablePort {
                 maxXmlNodes: input.max_svd_xml_nodes,
                 maxExpandedChars: input.max_svd_expanded_chars,
               });
-        if (!svdResult.ok) throw svdResult.error;
+        if (!svdResult.ok) {
+          if (isParseLimit(svdResult.error, "cmsis-svd")) throw svdResult.error;
+          throw svdXmlInputError(svdResult.error);
+        }
+        if (baseAddress + input.vector_table_offset > 0xffff_ffff) {
+          throw addressOverflowInputError(input, baseAddress);
+        }
 
         const report = await withStableArtifactHandle<FirmwareVectorTable>(
           input.path,
@@ -91,10 +197,14 @@ export class FirmwareVectorTableProvider implements FirmwareVectorTablePort {
           },
           async (handle) => {
             assertArtifactReadActive(options?.signal);
+            if (
+              input.vector_table_offset > 0 &&
+              handle.size - input.vector_table_offset < minimumBytes
+            ) {
+              throw vectorOffsetRangeError(input, handle.size, minimumBytes);
+            }
             let tableSlice: Buffer;
-            if (input.vector_table_offset >= handle.size) {
-              tableSlice = Buffer.alloc(0);
-            } else if (input.vector_table_offset === 0) {
+            if (input.vector_table_offset === 0) {
               tableSlice = handle.prefix;
             } else {
               const sliceLength = Math.min(

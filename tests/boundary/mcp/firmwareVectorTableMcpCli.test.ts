@@ -154,5 +154,29 @@ describe("inspect_firmware_vector_table CLI and MCP parity", () => {
     expect(cliParsed.normalized_result).toEqual(
       mcpStructured.normalized_result,
     );
+
+    const badSvdMcp = await client.callTool({
+      name: "inspect_firmware_vector_table",
+      arguments: {
+        path: fwPath,
+        architecture: "armv7-m",
+        base_address: "0x08000000",
+        svd_xml: "<wrong/>",
+      },
+    });
+    expect(badSvdMcp.isError).toBe(true);
+    expect(
+      JSON.parse(
+        (badSvdMcp.content[0] as { type: "text"; text: string }).text,
+      ) as Record<string, unknown>,
+    ).toMatchObject({
+      error: {
+        code: "invalid_request",
+        category: "invalid_input",
+        details: {
+          issues: [{ path: ["svd_xml"], reason: "invalid_format" }],
+        },
+      },
+    });
   });
 });

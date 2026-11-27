@@ -5,7 +5,9 @@ import { describe, expect, it } from "vitest";
 import {
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
+  AnalysisInputError,
   AnalysisResourceConstraintError,
+  AnalysisTargetFailureError,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { inspectFirmwareVectorTableInputSchema } from "../../domain/firmware/firmwareVectorTable.js";
@@ -263,5 +265,99 @@ describe("FirmwareVectorTableProvider", () => {
     await provider.close();
     if (integrityRes.ok) throw new Error("Expected read-coverage failure");
     expect(integrityRes.error).toBeInstanceOf(AnalysisArtifactChangedError);
+  });
+
+  it("attributes rejected svd_xml, out-of-file vector_table_offset, and address overflow to caller inputs while keeping short images at offset 0 as target failures", async () => {
+    const dir = await createTestTempDirectory("rea-fw-vt-inputs-");
+    const fwPath = join(dir, "fw.bin");
+    const shortPath = join(dir, "short.bin");
+    const image = Buffer.alloc(128, 0);
+    image.writeUInt32LE(0x20010000, 0);
+    image.writeUInt32LE(0x08000081, 4);
+    await writeFile(fwPath, image);
+    await writeFile(shortPath, Buffer.alloc(4, 0));
+
+    const provider = new FirmwareVectorTableProvider();
+
+    // 1. Rejected svd_xml (<wrong/> or DOCTYPE) blames svd_xml, not fwPath
+    for (const badSvd of [
+      "<wrong/>",
+      '<!DOCTYPE device SYSTEM "x.dtd"><device/>',
+    ]) {
+      const svdRes = await provider.inspect(
+        inspectFirmwareVectorTableInputSchema.parse({
+          path: fwPath,
+          architecture: "armv7-m",
+          base_address: "0x08000000",
+          svd_xml: badSvd,
+        }),
+      );
+      if (svdRes.ok || !(svdRes.error instanceof AnalysisInputError))
+        throw new Error("Expected svd_xml AnalysisInputError");
+      const projected = projectAnalysisError(svdRes.error);
+      expect(projected.code).toBe("invalid_request");
+      expect(projected.category).toBe("invalid_input");
+      expect(projected.remediation.action).toContain("svd_xml");
+      expect(projected.details).toMatchObject({
+        operation: "inspect_firmware_vector_table",
+        issues: [{ path: ["svd_xml"], reason: "invalid_format" }],
+        related_parameters: ["svd_xml"],
+      });
+    }
+
+    // 2. Out-of-file vector_table_offset blames vector_table_offset with valid bounds
+    const offsetRes = await provider.inspect(
+      inspectFirmwareVectorTableInputSchema.parse({
+        path: fwPath,
+        architecture: "armv7-m",
+        base_address: "0x08000000",
+        vector_table_offset: 124,
+      }),
+    );
+    if (offsetRes.ok || !(offsetRes.error instanceof AnalysisInputError))
+      throw new Error("Expected vector_table_offset AnalysisInputError");
+    const projectedOffset = projectAnalysisError(offsetRes.error);
+    expect(projectedOffset.code).toBe("invalid_request");
+    expect(projectedOffset.remediation.action).toContain(
+      "Pass a 4-byte aligned vector_table_offset between 0 and 120",
+    );
+    expect(projectedOffset.details).toMatchObject({
+      issues: [
+        {
+          path: ["vector_table_offset"],
+          reason: "out_of_range",
+          maximum: 120,
+        },
+      ],
+      related_parameters: ["vector_table_offset"],
+    });
+
+    // 3. base_address + vector_table_offset overflowing 32-bit address space blames caller inputs
+    const overflowRes = await provider.inspect(
+      inspectFirmwareVectorTableInputSchema.parse({
+        path: fwPath,
+        architecture: "riscv",
+        base_address: "0xfffffff8",
+        vector_table_offset: 16,
+      }),
+    );
+    if (overflowRes.ok || !(overflowRes.error instanceof AnalysisInputError))
+      throw new Error("Expected overflow AnalysisInputError");
+    expect(projectAnalysisError(overflowRes.error).details).toMatchObject({
+      issues: [{ path: ["vector_table_offset"], reason: "out_of_range" }],
+      related_parameters: ["base_address", "vector_table_offset"],
+    });
+
+    // 4. Too-short image at default offset 0 remains a malformed target failure
+    const shortRes = await provider.inspect(
+      inspectFirmwareVectorTableInputSchema.parse({
+        path: shortPath,
+        architecture: "armv7-m",
+        base_address: "0x08000000",
+      }),
+    );
+    await provider.close();
+    if (shortRes.ok) throw new Error("Expected short target failure");
+    expect(shortRes.error).toBeInstanceOf(AnalysisTargetFailureError);
   });
 });
