@@ -384,6 +384,67 @@ it("keeps members read before a damaged cpio tail next to the refusal", async ()
   }
 });
 
+it("rejects a cpio trailer that declares a member body", () => {
+  const archive = buildCpioOdc([]);
+  archive.write("00000000001", 65, "ascii");
+  expect(parseCpioOdc(archive)).toMatchObject({
+    ok: false,
+    error: {
+      message: expect.stringContaining("trailer declares a non-zero size"),
+    },
+  });
+});
+
+it.each([
+  { name: "stored", wrap: (bytes: Buffer) => bytes },
+  { name: "gzip", wrap: gzipSync },
+])(
+  "keeps prior package members when a $name cpio has bytes after its trailer",
+  async ({ wrap }) => {
+    const archive = buildCpioOdc([
+      { name: "preinstall", mode: 0o100755, data: Buffer.from("fixture") },
+    ]);
+    const padding = Buffer.alloc(512);
+    const tail = buildCpioOdc([
+      { name: "postinstall", mode: 0o100755, data: Buffer.from("fixture") },
+    ]);
+    const { reader, coverage, entries } = await entriesOf(
+      buildXar({
+        files: [
+          { path: "Payload", bytes: wrap(Buffer.concat([archive, padding])) },
+          {
+            path: "Scripts",
+            bytes: wrap(Buffer.concat([archive, padding, tail])),
+          },
+        ],
+      }),
+      "cpio-tail.pkg",
+    );
+    try {
+      expect(entries.map((entry) => entry.path)).toEqual(
+        expect.arrayContaining(["Payload/preinstall", "Scripts/preinstall"]),
+      );
+      expect(
+        entries.some((entry) => entry.path === "Scripts/postinstall"),
+      ).toBe(false);
+      expect(reader.formatMetadata()?.refusals).toEqual([
+        expect.objectContaining({
+          path: "Scripts",
+          code: "cpio-malformed",
+          message: expect.stringContaining(
+            `non-zero data at offset ${String(archive.length + padding.length)}`,
+          ),
+        }),
+      ]);
+      expect(coverage).toEqual([
+        expect.objectContaining({ status: "unknown" }),
+      ]);
+    } finally {
+      await reader.close();
+    }
+  },
+);
+
 it("records a cpio name refusal even when it matches the remaining budget", async () => {
   const payload = buildCpioOdc([]);
   payload.write("000000", 59, "ascii");
