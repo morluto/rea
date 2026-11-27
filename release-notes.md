@@ -598,6 +598,7 @@
 * **uninstall:** report verified removal after staging cleanup failure ([#13293](https://github.com/morluto/rea/issues/13293)) ([2af8248](https://github.com/morluto/rea/commit/2af8248a441a4d49bb2202001393e5ac9c626e6a))
 * **v8:** admit the six-word code cache header of V8 8.8 through 11.7 ([cc19240](https://github.com/morluto/rea/commit/cc19240ca963a263f8c33a061782385e76344e0f))
 * **v8:** preserve verified code cache results and require exact payload reads ([#14067](https://github.com/morluto/rea/issues/14067)) ([71cea56](https://github.com/morluto/rea/commit/71cea564fb3707c85be8688fa7df6f3bb001e0b1))
+* **v8:** report details.limit for V8 code cache per-call budgets ([#14793](https://github.com/morluto/rea/issues/14793)) ([4b56f61](https://github.com/morluto/rea/commit/4b56f617f8ae29d60aed5e32d092ba731cb478d1))
 * **verification:** bind DeepSeek skill evidence to its installed directory ([#13238](https://github.com/morluto/rea/issues/13238)) ([e3ce2b5](https://github.com/morluto/rea/commit/e3ce2b53d4225eed98977727534f97c0e0e06433))
 * **verification:** distinguish MCP probe refusals from local deadlines ([#13246](https://github.com/morluto/rea/issues/13246)) ([eacbd25](https://github.com/morluto/rea/commit/eacbd2522a4ab17310a1708179fdf118ba76f2cd))
 * **verification:** isolate MCP package canaries from target settings ([#13256](https://github.com/morluto/rea/issues/13256)) ([ac0dd6b](https://github.com/morluto/rea/commit/ac0dd6b3716285516cbbc79362468d192faeec56))
