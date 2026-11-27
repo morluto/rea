@@ -244,7 +244,8 @@ it("reads a distant Rich header past the prefix without reading the trailing ima
     checksum: { matches: true },
     entries: decoded,
   });
-  expect(reads.length).toBeGreaterThan(0);
+  const peOffset = image.readUInt32LE(0x3c);
+  expect(reads).toContainEqual({ offset: 0, length: peOffset });
   expect(
     reads.every(({ offset, length }) => offset + length <= image.length),
   ).toBe(true);
@@ -259,7 +260,7 @@ it("fails closed as truncated when reading the stub past the prefix returns fewe
       prefix: image.subarray(0, 4096),
       readRange: (offset, length) =>
         Promise.resolve(
-          offset === 4096 && length === peOffset - 4096
+          offset === 0 && length === peOffset
             ? image.subarray(offset, offset + length - 1)
             : image.subarray(offset, offset + length),
         ),

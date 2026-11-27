@@ -229,14 +229,12 @@ export const parsePeRichHeaderFromHandle = async (
     if (peOffset <= source.prefix.length) {
       headerBytes = source.prefix.subarray(0, peOffset);
     } else {
-      const needed = peOffset - source.prefix.length;
-      const tail = await source.readRange(source.prefix.length, needed);
-      if (tail.length < needed)
+      headerBytes = await source.readRange(0, peOffset);
+      if (headerBytes.length < peOffset)
         throw new BinaryFormatFailure(
           "truncated",
           "PE DOS stub or Rich header range exceeds the artifact size",
         );
-      headerBytes = Buffer.concat([source.prefix, tail]);
     }
     assertArtifactReadActive(signal);
     record = await richRecord(
