@@ -39,6 +39,7 @@ import type { GhidraSessionSource } from "./GhidraProviderCapabilities.js";
 import {
   GHIDRA_STARTUP_DEADLINE_ELAPSED,
   isGhidraInputFailureCode,
+  isGhidraRemoteCancellation,
   type GhidraSessionError,
 } from "./GhidraSessionError.js";
 import {
@@ -296,10 +297,7 @@ const projectPrimarySessionError = (
       ],
     );
   }
-  if (
-    failure.kind === "cancelled" ||
-    (failure.kind === "remote" && failure.remoteCode === "decompile_cancelled")
-  ) {
+  if (failure.kind === "cancelled" || isGhidraRemoteCancellation(failure)) {
     const { cause: _failure, ...cancellationContext } = context;
     return cancelledBy(
       operation,
@@ -697,7 +695,7 @@ const ghidraDecompileTimeoutRecovery = (
       : `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS is already at its maximum of ${String(seconds)} seconds; unset it to leave decompilation unbounded`
   } in the environment of a new REA invocation, then rerun the command. That invocation starts a new Ghidra session and ${ghidraSessionRestart(source)}. Use analyze_function for this procedure's listing facts without pseudocode.`,
   continuingRemediationAction:
-    "Use analyze_function for listing facts. Call update_analysis_settings with setting ghidra.decompile_timeout_seconds and action set to raise the per-function deadline for the next operation on this Program. For CLI or future REA processes, set REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS. Set the MCP tool-call deadline to cover startup and the full call; earlier cancellation closes the session. `rea setup` estimates deadlines for new Codex/Kimi registrations and preserves existing positive values; edit existing deadlines yourself.",
+    "Use analyze_function for listing facts. Call update_analysis_settings with setting ghidra.decompile_timeout_seconds and action set to raise the per-function deadline for the next operation on this Program. For CLI or future REA processes, set REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS. Set the MCP tool-call deadline to cover startup and the full call; earlier cancellation stops the call, and closes the session when Ghidra does not confirm the stop. `rea setup` estimates deadlines for new Codex/Kimi registrations and preserves existing positive values; edit existing deadlines yourself.",
 });
 
 /**

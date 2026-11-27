@@ -31,6 +31,18 @@ export const GHIDRA_MUTATING_OPERATIONS: ReadonlySet<string> = new Set([
   ...GHIDRA_NAMING_OPERATIONS,
 ]);
 
+/**
+ * How long a cancelled read may take to answer before REA closes the session
+ * instead. Edits are never asked to stop: a reply racing the cancel could
+ * leave a committed change behind a cancelled call. Ghidra stops a
+ * decompilation by disposing its native decompiler process; with real Ghidra
+ * 12.2 the next request was served 4-19 ms after the cancel. Two seconds
+ * absorbs a loaded host while staying well below the cost of the restart it
+ * avoids. It is a fixed ceiling, not a setting: it bounds only how long the
+ * fallback is deferred.
+ */
+export const GHIDRA_ACTIVE_CANCELLATION_GRACE_MS = 2_000;
+
 // Shared wire budget: Java bounds the aggregate before serializing the handshake.
 const PDB_ATTRIBUTE_UTF16_BUDGET = 4096;
 const pdbAttributeSchema = z

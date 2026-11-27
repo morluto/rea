@@ -44,6 +44,8 @@ import java.util.NavigableMap;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
@@ -132,7 +134,9 @@ import ghidra.program.model.pcode.VarnodeAST;
 import ghidra.program.util.ContextEvaluatorAdapter;
 import ghidra.program.util.SymbolicPropogator;
 import ghidra.program.util.VarnodeContext;
+import ghidra.util.exception.CancelledException;
 import ghidra.util.task.TaskMonitor;
+import ghidra.util.task.TaskMonitorAdapter;
 
 public final class ReaGhidraBridge extends HeadlessScript {
     // At most 24 KiB after worst-case JSON escaping (six bytes per UTF-16 unit).
@@ -435,27 +439,115 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
     }
 
+    /**
+     * One frame handed from the connection reader to the request handler: a
+     * request with its cancellation monitor, an unusable frame, a read
+     * failure, or the end of the connection when every field is unset.
+     */
+    private record Inbound(Request request, TaskMonitor monitor, boolean invalid, IOException failure) {}
+
+    // A full queue only delays the reader; REA writes one Program request at a
+    // time, plus lifecycle requests beside it.
+    private static final int INBOUND_REQUEST_CAPACITY = 8;
+
+    /** Monitors of requests that were read and have not been answered. */
+    private final Map<Integer, TaskMonitor> requestMonitors = new ConcurrentHashMap<>();
+
+    private Inbound admitRequest(Request request) {
+        // Registered before the handler can see the request, so a cancel read
+        // right behind it finds the monitor even while the request still waits.
+        TaskMonitor requestMonitor = new TaskMonitorAdapter(true);
+        requestMonitors.put(request.id, requestMonitor);
+        return new Inbound(request, requestMonitor, false, null);
+    }
+
+    /**
+     * Read frames while the handler works. This is the bridge's only second
+     * thread: it never touches the Program or the writer. It cancels the
+     * monitor of the request a `cancel` frame names and queues every other
+     * frame in arrival order, so requests still run one at a time.
+     */
+    private void readRequests(
+            SessionDescriptor descriptor,
+            BufferedReader reader,
+            BlockingQueue<Inbound> inbound) {
+        try {
+            while (true) {
+                String line;
+                try {
+                    line = reader.readLine();
+                }
+                catch (IOException exception) {
+                    inbound.put(new Inbound(null, null, false, exception));
+                    return;
+                }
+                if (line == null) {
+                    inbound.put(new Inbound(null, null, false, null));
+                    return;
+                }
+                Request request;
+                try {
+                    request = parseRequest(line, descriptor.token);
+                    if (request.method.equals("cancel")) {
+                        requireKeys(request.params, Set.of("request_id"));
+                        // A request that already answered has no monitor left.
+                        TaskMonitor active = requestMonitors.get(requireInteger(request.params, "request_id"));
+                        if (active != null) active.cancel();
+                        continue;
+                    }
+                }
+                catch (RuntimeException exception) {
+                    inbound.put(new Inbound(null, null, true, null));
+                    return;
+                }
+                inbound.put(admitRequest(request));
+            }
+        }
+        catch (InterruptedException exception) {
+            // The handler finished with this connection.
+        }
+    }
+
     private void serveClient(
             SessionDescriptor descriptor,
             BufferedReader reader,
             BufferedWriter writer,
             Request first) throws Exception {
+        TaskMonitor scriptMonitor = monitor;
+        BlockingQueue<Inbound> inbound = new ArrayBlockingQueue<>(INBOUND_REQUEST_CAPACITY);
+        if (first != null) inbound.put(admitRequest(first));
+        Thread requestReader = new Thread(
+            () -> readRequests(descriptor, reader, inbound), "rea-bridge-request-reader");
+        requestReader.setDaemon(true);
+        requestReader.start();
+        try {
+            serveRequests(descriptor, writer, inbound);
+        }
+        finally {
+            monitor = scriptMonitor;
+            requestMonitors.clear();
+            // Interrupting a blocked channel read closes the connection, which
+            // the caller is about to do anyway.
+            requestReader.interrupt();
+        }
+    }
+
+    private void serveRequests(
+            SessionDescriptor descriptor,
+            BufferedWriter writer,
+            BlockingQueue<Inbound> inbound) throws Exception {
         while (true) {
-            Request request = first;
-            first = null;
-            if (request == null) {
-                String line = reader.readLine();
-                if (line == null) return;
-                try {
-                    request = parseRequest(line, descriptor.token);
-                }
-                catch (RuntimeException exception) {
-                    // The request id may not have parsed, so the connection-level
-                    // failure uses id 0, which no client request uses.
-                    writeFailure(writer, CONNECTION_FAILURE_ID, "invalid_request", "Bridge request is invalid");
-                    return;
-                }
+            Inbound next = inbound.take();
+            if (next.failure() != null) throw next.failure();
+            if (next.invalid()) {
+                // The request id may not have parsed, so the connection-level
+                // failure uses id 0, which no client request uses.
+                writeFailure(writer, CONNECTION_FAILURE_ID, "invalid_request", "Bridge request is invalid");
+                return;
             }
+            Request request = next.request();
+            if (request == null) return;
+            monitor = next.monitor();
             try {
                 if (request.method.equals("shutdown")) {
                     requireKeys(request.params, Set.of());
@@ -477,10 +569,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     ? descriptor.decompileTimeoutSeconds() : request.decompileTimeoutSeconds();
                 valueFlowLimits = request.valueFlowLimits();
                 applyDecompilePayloadLimit(request.decompileMaxPayloadMiB());
+                monitor.checkCancelled();
                 dispatchAndWrite(writer, request, descriptor);
             }
             catch (RequestFailure failure) {
                 writeFailure(writer, request.id, failure.code, failure.getMessage(), failure.candidates);
+            }
+            catch (CancelledException exception) {
+                writeFailure(writer, request.id, "request_cancelled", "Ghidra request was cancelled");
             }
             catch (Exception exception) {
                 writeFailure(
@@ -489,6 +585,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     "bridge_exception",
                     exception.getClass().getSimpleName() + ": " + safeMessage(exception)
                 );
+            }
+            finally {
+                requestMonitors.remove(request.id);
             }
         }
     }
@@ -4575,6 +4674,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private DecompileResults decompile(Function function) {
         if (function.isExternal() || function.getBody().isEmpty()) {
             return null;
+        }
+        // DecompInterface returns an empty result, not a cancelled one, for a
+        // monitor cancelled before it starts.
+        if (monitor.isCancelled()) {
+            throw new RequestFailure("decompile_cancelled", "Ghidra decompilation was cancelled");
         }
         DecompileResults results = decompiler.decompileFunction(
             function,

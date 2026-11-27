@@ -88,6 +88,8 @@ import {
   GhidraSessionError,
 } from "./GhidraSessionError.js";
 import {
+  GHIDRA_ACTIVE_CANCELLATION_GRACE_MS,
+  GHIDRA_MUTATING_OPERATIONS,
   isGhidraShutdownAcknowledgement,
   parseGhidraSessionInfo,
   type GhidraSessionInfo,
@@ -323,6 +325,10 @@ export class GhidraClient {
       },
       this.#failure,
       () => this.#stopAfterActiveCancellation(),
+      {
+        interruptible: (method) => !GHIDRA_MUTATING_OPERATIONS.has(method),
+        graceMs: GHIDRA_ACTIVE_CANCELLATION_GRACE_MS,
+      },
     );
   }
 

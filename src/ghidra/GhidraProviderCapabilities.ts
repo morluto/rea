@@ -6,7 +6,10 @@ import {
 } from "../process/WindowsAuthority.js";
 import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionOperations.js";
 import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryOperations.js";
-import { GHIDRA_MUTATING_OPERATIONS } from "./GhidraSessionValues.js";
+import {
+  GHIDRA_ACTIVE_CANCELLATION_GRACE_MS,
+  GHIDRA_MUTATING_OPERATIONS,
+} from "./GhidraSessionValues.js";
 import { ghidraLoadImageVerificationNote } from "./GhidraVerifiedLoadImageFormats.js";
 import {
   EXISTING_PROJECT_WINDOWS_REMEDIATION,
@@ -32,7 +35,7 @@ const providerOperations = Object.freeze([
 export const healthLimitations = Object.freeze([
   "The session serves operations only after Ghidra reports default auto-analysis complete; incomplete analysis does not expose partial results.",
   "Ghidra Program checkpoint mode is disabled: closing discards metadata edits; original executable bytes are unchanged. For stock ELF/PE/Mach-O on Linux/macOS, set REA_GHIDRA_CHECKPOINT_DIR to a private absolute directory before starting REA (restart MCP after changing its startup environment).",
-  "Cancelling an active Ghidra request terminates its ephemeral database and discards session annotations. The selected target remains open; the next provider query imports the original artifact again.",
+  `Cancelling an active Ghidra read request stops only that request when Ghidra answers it within ${String(GHIDRA_ACTIVE_CANCELLATION_GRACE_MS / 1000)} seconds, as a decompilation does. Cancelling an active edit (${[...GHIDRA_MUTATING_OPERATIONS].join(", ")}), or a read Ghidra does not answer in time, terminates the ephemeral database and discards session annotations; the selected target remains open and the next provider query imports the original artifact again.`,
 ]);
 
 /** Additional limitations applied to the experimental Windows x64 P0 boundary. */

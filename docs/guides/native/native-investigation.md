@@ -155,9 +155,12 @@ Ghidra regex searches use Java Pattern semantics. If compiling or matching a
 pattern exhausts the engine's stack, REA returns a resource constraint and
 preserves the active database and annotations. Retry in literal mode or simplify
 the regex; successful literal searches retain complete matching strings.
-Cancelling an active request terminates the ephemeral database and discards its
-annotations. REA retains the selected target and imports the original artifact
-again on the next Ghidra query.
+Cancelling an active read, such as a decompilation, stops that request and
+keeps the database, its annotations and the requests queued behind it, provided
+Ghidra answers the request within two seconds. Cancelling an active edit, or a
+read Ghidra does not answer in time, terminates the ephemeral database and
+discards its annotations. REA then retains the selected target and imports the
+original artifact again on the next Ghidra query.
 
 Opening the same target and profile again retains the live database, including
 annotations. It does not make those edits eligible for an immutable snapshot.

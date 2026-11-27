@@ -20,6 +20,12 @@ export interface GhidraRequestOptions {
   readonly decompileMaxPayloadMiB?: number | null;
   readonly valueFlowLimits?: NativeValueFlowLimits;
   readonly signal?: AbortSignal;
+  /**
+   * Asks the bridge to stop this request while its reply is still awaited.
+   * The request queue sets it for interruptible operations; `signal` stays the
+   * stop that abandons the reply.
+   */
+  readonly interrupt?: AbortSignal;
   /** Internal startup/shutdown deadline; analysis calls have no fixed deadline. */
   readonly timeoutMs?: number;
   /**
