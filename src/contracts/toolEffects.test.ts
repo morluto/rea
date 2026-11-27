@@ -101,6 +101,17 @@ describe("tool effects", () => {
     expect(annotationsFromEffects(effects).destructiveHint).toBe(true);
   });
 
+  it("marks automatic LLDB detach as destructive target execution", () => {
+    const effects = contractNamed("close_lldb_session")?.effects;
+    if (effects === undefined)
+      throw new Error("close_lldb_session is unaudited");
+    expect(effects).toMatchObject({
+      mutatesTarget: true,
+      executesForeignCode: true,
+    });
+    expect(annotationsFromEffects(effects).destructiveHint).toBe(true);
+  });
+
   it("publishes the advertised annotations derived from canonical effects", () => {
     for (const contract of TOOL_CONTRACTS)
       expect(contract.annotations, contract.name).toEqual(

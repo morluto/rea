@@ -50,19 +50,31 @@ import {
 import { captureSensitiveValues } from "../domain/webNetworkCapture.js";
 import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureService.js";
 import type { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
+import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
+import type { GdbSessionManager } from "../gdb/GdbSessionManager.js";
+import type { LldbSessionManager } from "../lldb/LldbSessionManager.js";
+import type { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
 import {
   resolveRizinCommandRequest,
   type ReverseEngineeringService,
 } from "../application/reverse/ReverseEngineeringService.js";
+import {
+  GDB_SESSION_TOOLS,
+  LLDB_SESSION_TOOLS,
+  RIZIN_DEBUG_SESSION_TOOLS,
+  unknownDebuggerSessionError,
+} from "../domain/debuggerSessionErrors.js";
 import type { ExternalMutationAdmission } from "./externalMutationAdmission.js";
 import type { EvidenceCommand } from "./externalMutationToolHandler.js";
 import {
   bindCutterTools,
   bindFridaTools,
   bindGdbTools,
+  bindLldbTools,
   bindRizinDebugTools,
   type CutterToolOptions,
   type GdbToolOptions,
+  type LldbToolOptions,
   type RizinDebugToolOptions,
 } from "./debuggerToolBindings.js";
 import {
@@ -554,6 +566,9 @@ const SERVICE_TOOL_BINDINGS = {
   // command may change the bound artifact and runs under external-mutation
   // admission, keeping a failed cleanup owned for the next retry.
   gdb: bindGdbTools satisfies Bind<GdbToolOptions>,
+  // LLDB debugging sessions on macOS Apple Silicon run under external-mutation admission;
+  // each command keeps a failed cleanup owned for the next retry.
+  lldb: bindLldbTools satisfies Bind<LldbToolOptions>,
   // Browser observation runs through an optional provider; when it failed
   // to load, every call reports it unavailable before admission.
   browserObservation:
