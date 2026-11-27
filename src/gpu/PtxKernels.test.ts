@@ -298,7 +298,7 @@ it("does not preempt non-PTX recognition with max_token_bytes but enforces it af
   ).toThrow("PTX token exceeds the string budget");
 
   // Long leading-zero version numbers (> 32 bytes) must agree between the
-  // incremental scanner and readPtxTarget.
+  // incremental scanner and readPtxTarget, and header tokens remain bounded by max_token_bytes.
   const longZeroVersion = `.version ${"0".repeat(40)}8.${"0".repeat(40)}0\n.target sm_80\n`;
   const scanner = createPtxVersionScanner();
   expect(scanner.feed(Buffer.from(longZeroVersion))).toBe("yes");
@@ -306,4 +306,11 @@ it("does not preempt non-PTX recognition with max_token_bytes but enforces it af
     recognized: true,
     target: "sm_80",
   });
+  expect(() => readPtxTarget(".version 8.8\n.target sm_80\n", 7)).toThrow(
+    "PTX token exceeds the string budget",
+  );
+  const overDefaultZeroVersion = `.version ${"0".repeat(70_000)}8.0\n.target sm_80\n`;
+  expect(() => readPtxTarget(overDefaultZeroVersion)).toThrow(
+    "PTX token exceeds the string budget",
+  );
 });

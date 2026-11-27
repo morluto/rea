@@ -25,9 +25,15 @@ import {
 } from "../domain/gpu/gpuCodeObjectsBudgets.js";
 /** A retained-facts refusal aborts discovery; it is never downgraded to one opaque payload. */
 export class GpuReportCapacityFailure extends BinaryResourceFailure {
+  /**
+   * Lower bound measured up to the stopped step. Kept out of `limit.required`
+   * because later facts may require more bytes to admit the complete request.
+   */
+  readonly minimumReportBytes?: number;
+
   constructor(
     maxReportBytes: number = DEFAULT_GPU_REPORT_BYTES,
-    requiredBytes?: number,
+    minimumReportBytes?: number,
   ) {
     super(
       "structure",
@@ -35,8 +41,9 @@ export class GpuReportCapacityFailure extends BinaryResourceFailure {
       `GPU facts exceed the ${String(maxReportBytes)}-byte retained report budget`,
       GPU_RETAINED_REPORT_BYTES_LIMIT,
       "bytes",
-      requiredBytes,
     );
+    if (minimumReportBytes !== undefined)
+      this.minimumReportBytes = minimumReportBytes;
   }
 }
 export const rejectGpu = (message: string): never => {

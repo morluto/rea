@@ -3010,6 +3010,41 @@ it("does not double-charge work on CCOB v1 refill, bounds aliased sections, keep
     code: "unsupported_target",
   });
 
+  // Once PTX is recognized, max_token_bytes still applies to the .version header
+  // tokens in inventory mode (matching kernels mode) and prevents over-limit
+  // zero-padded version literals from bypassing the default token ceiling.
+  const ptxHeaderTooSmall = await inspect(
+    Buffer.from(".version 8.8\n.target sm_80\n"),
+    {
+      analysis: "inventory",
+      max_token_bytes: 7,
+    },
+  );
+  expect(ptxHeaderTooSmall.ok).toBe(false);
+  if (ptxHeaderTooSmall.ok) return;
+  expect(projectAnalysisError(ptxHeaderTooSmall.error)).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      limit: { parameter: "max_token_bytes", effective_value: 7 },
+      refusal: { kind: "adjustable_budget", control: "max_token_bytes" },
+    },
+  });
+  const overDefaultVersionPtx = Buffer.from(
+    `.version ${"0".repeat(70_000)}8.0\n.target sm_80\n`,
+  );
+  const ptxVersionOverDefault = await inspect(overDefaultVersionPtx, {
+    analysis: "inventory",
+  });
+  expect(ptxVersionOverDefault.ok).toBe(false);
+  if (ptxVersionOverDefault.ok) return;
+  expect(projectAnalysisError(ptxVersionOverDefault.error)).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      limit: { parameter: "max_token_bytes", effective_value: 65_536 },
+      refusal: { kind: "adjustable_budget", control: "max_token_bytes" },
+    },
+  });
+
   // 5. zstd.max_frames takes precedence over max_object_bytes at +0..+3 when
   // lookahead confirms a following frame past the frame allowance.
   const frameTarget = hipFixture(Buffer.from("x"), "host-x86_64");
@@ -3122,8 +3157,9 @@ it("applies max_structure_bytes independently of max_object_bytes and covers PE,
   expect(elfOk.value.format).toBe("elf");
   expect(elfOk.value.coverage.discovery).toBe("complete");
 
-  // Baseline report reservation is enforced even when no GPU sections are present
-  // and reports required_value so a caller retrying with that value clears construction.
+  // Baseline report reservation is enforced even when no GPU sections are present.
+  // Because this is a lower bound before later facts are retained, details.limit
+  // omits required_value and details.reported_limits records minimum_report_bytes.
   const baselineRefused = await inspect(emptyElf, {
     analysis: "inventory",
     max_report_bytes: 500,
@@ -3138,14 +3174,17 @@ it("applies max_structure_bytes independently of max_object_bytes and covers PE,
       refusal: { kind: "adjustable_budget", control: "max_report_bytes" },
     },
   });
-  const requiredBaseline = (
-    baselineProjected.details as { limit?: { required_value?: number } }
-  )?.limit?.required_value;
-  expect(requiredBaseline).toBeTypeOf("number");
-  expect(requiredBaseline!).toBeGreaterThan(500);
+  const baselineDetails = baselineProjected.details as {
+    limit?: { required_value?: number };
+    reported_limits?: { minimum_report_bytes?: number };
+  };
+  expect(baselineDetails.limit?.required_value).toBeUndefined();
+  const minimumBaseline = baselineDetails.reported_limits?.minimum_report_bytes;
+  expect(minimumBaseline).toBeTypeOf("number");
+  expect(minimumBaseline!).toBeGreaterThan(500);
   const baselineRecovered = await inspect(emptyElf, {
     analysis: "inventory",
-    max_report_bytes: requiredBaseline!,
+    max_report_bytes: minimumBaseline!,
   });
   expect(baselineRecovered.ok).toBe(true);
 

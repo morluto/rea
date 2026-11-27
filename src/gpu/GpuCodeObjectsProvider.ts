@@ -56,7 +56,11 @@ import {
   resolveGpuCodeObjectsBudgets,
   type GpuCodeObjectsBudgets,
 } from "../domain/gpu/gpuCodeObjectsBudgets.js";
-import { GpuFileSource, gpuCount } from "./GpuSource.js";
+import {
+  GpuFileSource,
+  GpuReportCapacityFailure,
+  gpuCount,
+} from "./GpuSource.js";
 import { GpuInventory } from "./GpuInventory.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
@@ -74,6 +78,10 @@ const gpuResourceConstraint = (
   const reportedLimitContext = {
     maximum_object_bytes: budgets.maxObjectBytes,
     maximum_report_bytes: budgets.maxReportBytes,
+    ...(primary instanceof GpuReportCapacityFailure &&
+    primary.minimumReportBytes !== undefined
+      ? { minimum_report_bytes: primary.minimumReportBytes }
+      : {}),
   };
   const { name, maximum, required } = primary.failure.limit;
   const requiredValue =

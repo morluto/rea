@@ -882,6 +882,17 @@ export const readPtxTarget = (
       ptxVersion(declaredVersion.value.value) === null
     )
       return { recognized: false, target: null, limitation: null };
+    if (
+      first.value.end - first.value.start > maxTokenBytes ||
+      declaredVersion.value.end - declaredVersion.value.start > maxTokenBytes
+    )
+      throw new BinaryResourceFailure(
+        "structure",
+        maxTokenBytes,
+        "PTX token exceeds the string budget",
+        GPU_TOKEN_BYTES_LIMIT,
+        "bytes",
+      );
     enforceTokenBudget = true;
     for (const token of stream) {
       if (token.value === "{") {
