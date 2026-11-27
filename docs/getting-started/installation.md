@@ -1668,18 +1668,38 @@ enabling checkpoint mode requires the startup environment and an MCP restart.
 
 Storage is separated by target SHA-256 and analysis-profile identity, including
 the supported Ghidra version. Identical executable bytes at another path can
-reuse the Program. One live REA session holds the checkpoint's socket lease;
-a competing session reports that owner as a retryable `capability_unavailable`
-failure and succeeds once it closes; a process started without the setting can
-analyze the same target concurrently through an ephemeral import. Only
-REA-owned Programs are checkpointed. Caller-selected existing projects retain
-their separate read-only workflow below.
+reuse the Program. Only REA-owned Programs are checkpointed. Caller-selected
+existing projects retain their separate read-only workflow below.
+
+Several sessions and parallel CLI commands can use one checkpointed target at
+the same time. Each restores the packed Program into its own private project,
+so queries never wait for another session. Two sessions that both open a
+target with no checkpoint both analyze it; the first to finish publishes the
+initial checkpoint and the other keeps its own analysis without publishing a
+second copy.
+
+Saving is not merged. A session saves only onto the checkpoint it started
+from, and holds the checkpoint's socket lease only while it publishes. When
+another session saved first, the later session's `close_binary` fails with
+`cleanup_incomplete`, its remediation states that the edits were not saved,
+and the current checkpoint is unchanged. That refusal is permanent for the
+session: call `close_binary` again to discard its edits and release it, then
+reopen the target and reapply them. To avoid it, make edits to one target from
+one session at a time.
+
+Two related refusals are not configuration faults and leave the checkpoint
+intact. A session whose selected checkpoint was replaced before its Ghidra
+process restored it reports `capability_unavailable` with `retryable: false`;
+reopen the target. A save that waits 30 seconds for another session's
+publication reports a retryable `capability_unavailable` naming that session;
+repeat the call.
 
 The directory retains the current manifest and packed Program. Publication
 writes and syncs a new packed file before atomically replacing the manifest;
 superseded files are removed after publication. A failed save preserves the
 previous checkpoint and the live session for retry. Correct the reported storage
-problem, then call `close_binary` again. Incomplete cleanup retains its owner.
+problem, then call `close_binary` again; the refused save described above is
+the exception, where the retry discards. Incomplete cleanup retains its owner.
 Corrupt, malformed or changed checkpoints fail explicitly instead of falling
 back to a fresh import. Preserve that directory and repair it or explicitly
 select a new directory to start fresh.

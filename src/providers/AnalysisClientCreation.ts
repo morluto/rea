@@ -287,7 +287,16 @@ export class AnalysisClientCreation {
             ? { client_close_failure: projectAnalysisError(cause) }
             : {}),
         },
-        { cause, operation: "create_analysis_client" },
+        {
+          cause,
+          operation: "create_analysis_client",
+          // The client knows what its retained close needs; keep that advice
+          // on the failure the caller reads.
+          ...(cause instanceof ProviderAdapterError &&
+          cause.remediationAction !== undefined
+            ? { remediationAction: cause.remediationAction }
+            : {}),
+        },
       );
       if (cause instanceof AnalysisError && cause.hasCleanupOwner) {
         failure.bindCleanupResourceOwner({

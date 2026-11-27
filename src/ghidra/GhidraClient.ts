@@ -141,6 +141,8 @@ import { completeGhidraStartupHandshake } from "./GhidraClientStartup.js";
 import { ghidraSessionRoot } from "./GhidraSessionRoot.js";
 import {
   GhidraCheckpoint,
+  GhidraCheckpointBusyError,
+  GhidraCheckpointSupersededError,
   type GhidraPackedProgram,
 } from "./GhidraCheckpoint.js";
 import { errorMessage } from "../kernel/errorMessage.js";
@@ -187,6 +189,8 @@ export class GhidraClient {
     | { readonly path: string; readonly disposition: "publish" | "discard" }
     | undefined;
   #checkpointRestore: GhidraPackedProgram | undefined;
+  /** A refused save can never succeed later, so the next close discards the edits. */
+  #checkpointSaveRefused = false;
   /** Reported by every cleanup failure until a close releases everything. */
   #cleanupRelease = new AnalysisCleanupRelease();
   #targetAdmission: JsonValue | undefined;
@@ -970,7 +974,15 @@ export class GhidraClient {
         reason: errorMessage(cause),
         diagnostics: this.#diagnostics(),
       },
-      { cause },
+      {
+        cause,
+        ...(cause instanceof GhidraCheckpointSupersededError
+          ? {
+              remediationAction:
+                "Another REA session saved this target's Ghidra checkpoint first, so this session's Program edits were not saved and the current checkpoint is unchanged. Closing the target again discards those edits and releases the session; then reopen the target and reapply them.",
+            }
+          : {}),
+      },
     );
     return this.#retainCleanupFailure(failure);
   }
@@ -1163,7 +1175,7 @@ export class GhidraClient {
     if (!limits.ok) return limits;
     let packedProgram: GhidraPackedProgram | undefined;
     try {
-      packedProgram = await this.#checkpoint?.acquire(
+      packedProgram = await this.#checkpoint?.admit(
         this.#options.runId ?? randomUUID(),
         deadline.signal,
       );
@@ -1287,14 +1299,25 @@ export class GhidraClient {
           : launched.error instanceof GhidraLaunchError
             ? launched.error.primaryFailure
             : undefined;
+      // A save by another session after admission removes the packed file
+      // this launch was restoring; report that instead of the missing file.
+      const superseded =
+        packedProgram === undefined ||
+        producerFailure instanceof AnalysisCancelledError
+          ? undefined
+          : await this.#checkpoint
+              ?.supersededRestore(deadline.signal)
+              .catch(() => undefined);
       const failure =
         producerFailure instanceof AnalysisCancelledError
           ? this.#interruptionFailure(deadline, launched.error, {
               reason: producerFailure.cause,
             })
-          : launched.error instanceof GhidraSessionError
-            ? launched.error
-            : this.#failure("start", launched.error.message, launched.error);
+          : superseded !== undefined
+            ? this.#failure("checkpoint", superseded.message, superseded)
+            : launched.error instanceof GhidraSessionError
+              ? launched.error
+              : this.#failure("start", launched.error.message, launched.error);
       return this.#startupFailure(failure, deadline);
     }
     this.#launch = launched.value;
@@ -1328,7 +1351,10 @@ export class GhidraClient {
             ? this.#interruptionFailure(deadline, cause)
             : this.#failure(
                 "checkpoint",
-                "Initial Ghidra checkpoint could not be saved; check REA_GHIDRA_CHECKPOINT_DIR and reopen the target",
+                cause instanceof GhidraCheckpointSupersededError ||
+                  cause instanceof GhidraCheckpointBusyError
+                  ? cause.message
+                  : "Initial Ghidra checkpoint could not be saved; check REA_GHIDRA_CHECKPOINT_DIR and reopen the target",
                 cause,
               ),
           deadline,
@@ -1420,7 +1446,18 @@ export class GhidraClient {
           "protocol",
           "Checkpoint publication owner is missing",
         );
-      await this.#checkpoint.publish(staged.path, signal);
+      try {
+        await this.#checkpoint.publish(staged.path, signal);
+      } catch (cause: unknown) {
+        if (cause instanceof GhidraCheckpointSupersededError) {
+          this.#checkpointStaging = {
+            path: staged.path,
+            disposition: "discard",
+          };
+          this.#checkpointSaveRefused = true;
+        }
+        throw cause;
+      }
     }
     await rm(staged.path, { force: true });
     this.#checkpointStaging = undefined;
@@ -1545,6 +1582,7 @@ export class GhidraClient {
         !forceStop &&
         this.#startupSucceeded() &&
         this.#checkpoint !== undefined &&
+        !this.#checkpointSaveRefused &&
         this.#socket !== undefined &&
         !this.#socket.destroyed
       ) {
@@ -1617,7 +1655,7 @@ export class GhidraClient {
       this.#lastDiagnostics = this.#diagnostics();
       this.#process = undefined;
       this.#launch = undefined;
-      await this.#checkpoint?.close();
+      await this.#checkpoint?.retryCleanup();
       await this.#fileResources.retryCleanup();
       try {
         await this.#removeRuntimeRoots();
@@ -1627,6 +1665,7 @@ export class GhidraClient {
       }
       this.#snapshotPath = undefined;
       this.#checkpointStaging = undefined;
+      this.#checkpointSaveRefused = false;
       this.#checkpointRestore = undefined;
       this.#endpointPath = undefined;
       this.#token = undefined;

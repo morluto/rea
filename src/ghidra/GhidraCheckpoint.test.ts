@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { waitFor } from "../../tests/support/testWait.js";
 import {
   chmod,
   access,
@@ -20,12 +21,16 @@ import { acquireOwnedLease } from "../process/OwnedLease.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import {
   GhidraCheckpoint,
+  GhidraCheckpointBusyError,
+  GhidraCheckpointSupersededError,
   hashGhidraPackedProgram,
   resolveGhidraCheckpoint,
 } from "./GhidraCheckpoint.js";
 
 const controls = vi.hoisted(() => ({
-  file: undefined as ((handle: FileHandle, path: string) => void) | undefined,
+  file: undefined as
+    | ((handle: FileHandle, path: string) => void | Promise<void>)
+    | undefined,
 }));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -35,7 +40,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     rm: vi.fn(actual.rm),
     open: async (...args: Parameters<typeof actual.open>) => {
       const handle = await actual.open(...args);
-      controls.file?.(handle, String(args[0]));
+      await controls.file?.(handle, String(args[0]));
       return handle;
     },
   };
@@ -63,7 +68,7 @@ afterEach(async () => {
     );
   vi.mocked(rm).mockReset().mockImplementation(actual.rm);
   vi.mocked(rename).mockReset().mockImplementation(actual.rename);
-  for (const owner of owners.splice(0)) await owner.close();
+  for (const owner of owners.splice(0)) await owner.retryCleanup();
 });
 
 it.skipIf(process.platform === "win32")(
@@ -91,19 +96,34 @@ it.skipIf(process.platform === "win32")(
         },
       };
     });
-    await f.owner.acquire("original");
-    const retained = [...f.owner.cleanupResources];
-    expect(retained).toHaveLength(1);
-    await expect(f.owner.close()).rejects.toThrow(
+    await f.owner.admit("original");
+    expect(f.owner.hasResources).toBe(false);
+    await expect(f.owner.publish(f.packed)).rejects.toThrow(
       "controlled lease release failure",
     );
-    expect(f.owner.cleanupResources).toEqual(retained);
+    // The manifest was committed; only the lease release is outstanding.
+    const committed = await readFile(
+      join(f.selection.directory, "current.json"),
+      "utf8",
+    );
+    const retained = [...f.owner.cleanupResources];
+    expect(retained).toHaveLength(1);
     expect(f.owner.hasResources).toBe(true);
-    await f.owner.close();
-    expect(f.owner.cleanupResources).toEqual([]);
     const peer = new GhidraCheckpoint(f.selection, f.resources);
     owners.push(peer);
-    expect(await peer.acquire("replacement")).toBeUndefined();
+    expect((await peer.admit("reader"))?.sha256).toBe(
+      f.owner.observation.source?.sha256,
+    );
+    await f.owner.publish(f.packed);
+    expect(f.owner.cleanupResources).toEqual([]);
+    expect(f.owner.hasResources).toBe(false);
+    expect(
+      await readFile(join(f.selection.directory, "current.json"), "utf8"),
+    ).toBe(committed);
+    const edited = join(f.root, "edited.gzf");
+    await writeFile(edited, "edited by the reader");
+    await peer.publish(edited);
+    expect(peer.observation.state.kind).toBe("retained");
   },
 );
 const profile = createAnalysisProfile(
@@ -139,9 +159,9 @@ it.skipIf(process.platform === "win32").each(
   "preserves $stage cancellation=$cancel and descriptor cleanup=$closeFails",
   async ({ stage, cancel, closeFails }) => {
     const f = await fixture();
-    await f.owner.acquire("writer");
+    await f.owner.admit("writer");
     await f.owner.publish(f.packed);
-    await f.owner.close();
+    await f.owner.retryCleanup();
     const controller = new AbortController();
     const reason = { caller: "stopped hashing" };
     controls.file = (handle, path) => {
@@ -196,18 +216,263 @@ it("hashes packed checkpoint bytes beyond the first buffer", async () => {
   );
 });
 
+const edit = async (f: { root: string }, name: string) => {
+  const path = join(f.root, `${name}.gzf`);
+  await writeFile(path, `${name} packed bytes`);
+  return path;
+};
+const peerOf = (f: Awaited<ReturnType<typeof fixture>>) => {
+  const peer = new GhidraCheckpoint(f.selection, f.resources);
+  owners.push(peer);
+  return peer;
+};
+const programs = async (directory: string) =>
+  (await readdir(directory)).filter((name) => name.endsWith(".gzf"));
+
 it.skipIf(process.platform === "win32")(
-  "refuses a concurrent owner and admits it after the original owner closes",
+  "admits concurrent sessions without holding a lease between publications",
   async () => {
     const f = await fixture();
-    await f.owner.acquire("first");
-    const other = new GhidraCheckpoint(f.selection, f.resources);
-    owners.push(other);
-    await expect(other.acquire("second")).rejects.toThrow(
-      /another REA session.*first/,
+    const other = peerOf(f);
+    expect(await f.owner.admit("first")).toBeUndefined();
+    expect(await other.admit("second")).toBeUndefined();
+    expect(f.owner.hasResources).toBe(false);
+    await f.owner.publish(f.packed);
+    expect(f.owner.hasResources).toBe(false);
+    const third = peerOf(f);
+    expect((await third.admit("third"))?.sha256).toBe(
+      f.owner.observation.source?.sha256,
     );
-    await f.owner.close();
-    expect(await other.acquire("second")).toBeUndefined();
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "adopts the initial analysis another session published first instead of publishing twice",
+  async () => {
+    const f = await fixture();
+    const other = peerOf(f);
+    await f.owner.admit("first");
+    await other.admit("second");
+    await f.owner.publish(f.packed);
+    const manifest = join(f.selection.directory, "current.json");
+    const committed = await readFile(manifest, "utf8");
+    await other.publish(await edit(f, "second-initial"));
+    expect(await readFile(manifest, "utf8")).toBe(committed);
+    expect(await programs(f.selection.directory)).toHaveLength(1);
+    expect(other.observation).toMatchObject({
+      source: f.owner.observation.source,
+      state: { kind: "initial-analysis" },
+      pending_cleanup: [],
+    });
+    expect(other.hasResources).toBe(false);
+    // The adopter's later edits build on the published generation.
+    await other.publish(await edit(f, "second-edited"));
+    expect(JSON.parse(await readFile(manifest, "utf8")).source).toEqual(
+      other.observation.source,
+    );
+    expect(other.observation.state.kind).toBe("retained");
+  },
+);
+
+it.skipIf(process.platform === "win32").each(["restored", "analyzed"] as const)(
+  "refuses to save over a generation another session published (%s session)",
+  async (start) => {
+    const f = await fixture();
+    const stale = peerOf(f);
+    await f.owner.admit("first");
+    if (start === "analyzed") await stale.admit("stale");
+    await f.owner.publish(f.packed);
+    if (start === "restored") await stale.admit("stale");
+    await f.owner.publish(await edit(f, "first-edited"));
+    const manifest = join(f.selection.directory, "current.json");
+    const committed = await readFile(manifest, "utf8");
+    const files = (await readdir(f.selection.directory)).sort();
+    const staged = await edit(f, "stale-edited");
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const refused = await stale.publish(staged).catch((cause) => cause);
+      expect(refused).toBeInstanceOf(GhidraCheckpointSupersededError);
+      expect(refused).toMatchObject({ stage: "save" });
+      expect(refused.message).toMatch(/were not saved/);
+      expect(await readFile(manifest, "utf8")).toBe(committed);
+      expect((await readdir(f.selection.directory)).sort()).toEqual(files);
+      expect(stale.hasResources).toBe(false);
+    }
+    // The refused session did not disturb the winner or a later reader.
+    await f.owner.publish(await edit(f, "first-edited-again"));
+    const reader = peerOf(f);
+    const selection = await resolveGhidraCheckpoint(
+      f.root,
+      target,
+      profile,
+      f.resources,
+    );
+    expect(selection.state).toEqual(f.owner.observation.state);
+    await expect(reader.admit("reader")).rejects.toBeInstanceOf(
+      GhidraCheckpointSupersededError,
+    );
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "refuses a save when the manifest it restored was removed",
+  async () => {
+    const f = await fixture();
+    await f.owner.admit("first");
+    await f.owner.publish(f.packed);
+    await rm(join(f.selection.directory, "current.json"));
+    await expect(
+      f.owner.publish(await edit(f, "edited")),
+    ).rejects.toBeInstanceOf(GhidraCheckpointSupersededError);
+    await expect(
+      access(join(f.selection.directory, "current.json")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "waits for another session's publication, then saves or reports contention",
+  async () => {
+    const f = await fixture();
+    const other = peerOf(f);
+    await f.owner.admit("first");
+    await other.admit("second");
+    const actual =
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      );
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let reached!: () => void;
+    const renaming = new Promise<void>((resolve) => (reached = resolve));
+    vi.mocked(rename).mockImplementationOnce(async (...args) => {
+      reached();
+      await held;
+      await actual.rename(...args);
+    });
+    const publishing = f.owner.publish(f.packed);
+    await renaming;
+    // The peer polls the held lease; cancellation ends its wait.
+    const controller = new AbortController();
+    const cancelled = other.publish(
+      await edit(f, "second-initial"),
+      controller.signal,
+    );
+    await waitFor(() =>
+      expect(vi.mocked(acquireOwnedLease).mock.calls.length).toBeGreaterThan(2),
+    );
+    controller.abort({ caller: "stopped waiting" });
+    await expect(cancelled).rejects.toBeInstanceOf(AnalysisCancelledError);
+    expect(other.hasResources).toBe(false);
+    // A second wait ends when the publication does, and adopts its result.
+    const waiting = other.publish(await edit(f, "second-initial-retry"));
+    await waitFor(() =>
+      expect(vi.mocked(acquireOwnedLease).mock.calls.length).toBeGreaterThan(5),
+    );
+    release();
+    await publishing;
+    await waiting;
+    expect(other.observation.source).toEqual(f.owner.observation.source);
+    expect(await programs(f.selection.directory)).toHaveLength(1);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "reports a publication lease held for the whole wait as busy and keeps the checkpoint",
+  async () => {
+    const f = await fixture();
+    await f.owner.admit("first");
+    await f.owner.publish(f.packed);
+    const committed = await readFile(
+      join(f.selection.directory, "current.json"),
+      "utf8",
+    );
+    vi.mocked(acquireOwnedLease).mockResolvedValue({
+      acquired: false,
+      owner: { runId: "publisher", processId: 4242 },
+    });
+    const now = vi.spyOn(performance, "now");
+    now.mockReturnValueOnce(0).mockReturnValue(60_000);
+    const busy = await f.owner
+      .publish(await edit(f, "edited"))
+      .catch((cause) => cause);
+    expect(busy).toBeInstanceOf(GhidraCheckpointBusyError);
+    expect(busy).toMatchObject({
+      owner: { runId: "publisher", processId: 4242 },
+    });
+    expect(f.owner.hasResources).toBe(false);
+    expect(
+      await readFile(join(f.selection.directory, "current.json"), "utf8"),
+    ).toBe(committed);
+    now.mockRestore();
+    const leases = await vi.importActual<
+      typeof import("../process/OwnedLease.js")
+    >("../process/OwnedLease.js");
+    vi.mocked(acquireOwnedLease).mockImplementation(leases.acquireOwnedLease);
+    await f.owner.publish(await edit(f, "edited-retry"));
+    expect(f.owner.observation.state.kind).toBe("retained");
+  },
+);
+
+it.skipIf(process.platform === "win32").each(["manifest", "packed"] as const)(
+  "re-reads a checkpoint replaced while a lease-free reader had its %s open",
+  async (stage) => {
+    const f = await fixture();
+    await f.owner.admit("writer");
+    await f.owner.publish(f.packed);
+    await f.owner.publish(await edit(f, "first-edit"));
+    const superseded = f.owner.observation.source!;
+    const next = await edit(f, "second-edit");
+    let interleaved = false;
+    controls.file = (handle, path) => {
+      if (
+        interleaved ||
+        !path.endsWith(stage === "manifest" ? "current.json" : superseded.file)
+      )
+        return;
+      interleaved = true;
+      // A whole publication runs between the reader's admission of the
+      // superseded file and its first read of it.
+      const read = handle.read.bind(handle);
+      vi.spyOn(handle, "read").mockImplementationOnce(
+        async (...args: Parameters<typeof handle.read>) => {
+          await f.owner.publish(next);
+          return read(...args);
+        },
+      );
+    };
+    const selection = await resolveGhidraCheckpoint(
+      f.root,
+      target,
+      profile,
+      f.resources,
+    );
+    controls.file = undefined;
+    expect(interleaved).toBe(true);
+    expect(f.owner.observation.source!.file).not.toBe(superseded.file);
+    expect(selection.state).toEqual({
+      kind: "retained",
+      sha256: f.owner.observation.source!.sha256,
+    });
+    expect(f.resources.hasPending).toBe(false);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "explains a restore whose packed file was superseded after admission",
+  async () => {
+    const f = await fixture();
+    await f.owner.admit("writer");
+    await f.owner.publish(f.packed);
+    const reader = peerOf(f);
+    const restored = await reader.admit("reader");
+    expect(await reader.supersededRestore()).toBeUndefined();
+    await f.owner.publish(await edit(f, "edited"));
+    await expect(access(restored!.path)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const superseded = await reader.supersededRestore();
+    expect(superseded).toBeInstanceOf(GhidraCheckpointSupersededError);
+    expect(superseded).toMatchObject({ stage: "restore" });
   },
 );
 
@@ -215,23 +480,20 @@ it.skipIf(process.platform === "win32")(
   "refuses state changed after profile resolution without replacing the current manifest",
   async () => {
     const f = await fixture();
-    await f.owner.acquire("first");
+    await f.owner.admit("first");
     await f.owner.publish(f.packed);
-    const edited = join(f.root, "edited.gzf");
-    await writeFile(edited, "edited checkpoint");
-    await f.owner.publish(edited);
-    await f.owner.close();
-    const stale = new GhidraCheckpoint(f.selection, f.resources);
-    owners.push(stale);
+    await f.owner.publish(await edit(f, "edited"));
+    await f.owner.retryCleanup();
+    const stale = peerOf(f);
     const bytes = await readFile(
       join(f.selection.directory, "current.json"),
       "utf8",
     );
-    await expect(stale.acquire("stale")).rejects.toThrow(
-      /changed after profile selection/,
-    );
+    const refused = await stale.admit("stale").catch((cause) => cause);
+    expect(refused).toBeInstanceOf(GhidraCheckpointSupersededError);
+    expect(refused).toMatchObject({ stage: "restore" });
     await expect(stale.publish(f.packed)).rejects.toThrow(
-      /no admitted session lease/,
+      /no admitted session/,
     );
     expect(
       await readFile(join(f.selection.directory, "current.json"), "utf8"),
@@ -243,9 +505,9 @@ it.skipIf(process.platform === "win32")(
   "rejects an unknown manifest version without rewriting it",
   async () => {
     const f = await fixture();
-    await f.owner.acquire("initial");
+    await f.owner.admit("initial");
     await f.owner.publish(f.packed);
-    await f.owner.close();
+    await f.owner.retryCleanup();
     const path = join(f.selection.directory, "current.json");
     const record = JSON.parse(await readFile(path, "utf8"));
     const unknown = JSON.stringify({ ...record, version: 1 });
@@ -261,9 +523,9 @@ it.skipIf(process.platform === "win32")(
   "rejects corruption, malformed manifests, and traversal rather than silently importing fresh",
   async () => {
     const f = await fixture();
-    await f.owner.acquire("first");
+    await f.owner.admit("first");
     await f.owner.publish(f.packed);
-    await f.owner.close();
+    await f.owner.retryCleanup();
     const manifestPath = join(f.selection.directory, "current.json");
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
     await writeFile(
@@ -294,7 +556,7 @@ it.skipIf(process.platform === "win32")(
   "keeps the prior checkpoint after a failed publication and succeeds on retry",
   async () => {
     const f = await fixture("previous packed bytes");
-    await f.owner.acquire("first");
+    await f.owner.admit("first");
     await f.owner.publish(f.packed);
     const directory = f.selection.directory;
     const previous = f.owner.observation.source!;
@@ -333,7 +595,7 @@ it.skipIf(process.platform === "win32")(
   "retains publication and its old-file cleanup when cleanup fails, then retries without saving twice",
   async () => {
     const f = await fixture();
-    await f.owner.acquire("first");
+    await f.owner.admit("first");
     await f.owner.publish(f.packed);
     const old = f.owner.observation.source!;
     const next = join(f.root, "next.gzf");
@@ -357,7 +619,7 @@ it.skipIf(process.platform === "win32")(
       "utf8",
     );
     expect(f.owner.hasResources).toBe(true);
-    await expect(f.owner.close()).rejects.toMatchObject({
+    await expect(f.owner.retryCleanup()).rejects.toMatchObject({
       cause: expect.objectContaining({
         message: "controlled cleanup failure",
       }),
@@ -367,7 +629,7 @@ it.skipIf(process.platform === "win32")(
     expect(
       await readFile(join(f.selection.directory, "current.json"), "utf8"),
     ).toEqual(committed);
-    await f.owner.close();
+    await f.owner.retryCleanup();
     expect(f.owner.hasResources).toBe(false);
   },
 );
@@ -376,7 +638,7 @@ it.skipIf(process.platform === "win32")(
   "preserves a published checkpoint when cancellation is observed after the manifest commit",
   async () => {
     const f = await fixture();
-    await f.owner.acquire("first");
+    await f.owner.admit("first");
     const controller = new AbortController();
     const actual =
       await vi.importActual<typeof import("node:fs/promises")>(
@@ -403,7 +665,7 @@ it.skipIf(process.platform === "win32")(
     const f = await fixture();
     await mkdir(f.selection.directory, { mode: 0o755 });
     await chmod(f.selection.directory, 0o755);
-    await expect(f.owner.acquire("first")).rejects.toThrow(/private directory/);
+    await expect(f.owner.admit("first")).rejects.toThrow(/private directory/);
   },
 );
 
@@ -419,7 +681,7 @@ it.skipIf(process.platform === "win32")(
     );
     const owner = new GhidraCheckpoint(selection, f.resources);
     owners.push(owner);
-    expect(await owner.acquire("long-directory")).toBeUndefined();
+    expect(await owner.admit("long-directory")).toBeUndefined();
   },
 );
 
@@ -439,7 +701,7 @@ it.skipIf(process.platform === "win32")(
     expect(selection.directory.startsWith(selected)).toBe(true);
     const owner = new GhidraCheckpoint(selection, f.resources);
     owners.push(owner);
-    await owner.acquire("selected");
+    await owner.admit("selected");
     await owner.publish(f.packed);
     await access(
       join(f.root, "physical", "selected", selection.key, "current.json"),
@@ -455,12 +717,27 @@ it.skipIf(process.platform === "win32")(
     );
     const peer = new GhidraCheckpoint(alias, f.resources);
     owners.push(peer);
-    await expect(peer.acquire("physical")).rejects.toThrow(
-      /another REA session/,
-    );
-    await owner.close();
-    expect((await peer.acquire("physical"))?.sha256).toBe(
+    expect((await peer.admit("physical"))?.sha256).toBe(
       owner.observation.source?.sha256,
     );
+    // Both spellings publish under one lease identity: the physical directory.
+    const identities: unknown[] = [];
+    const leases = await vi.importActual<
+      typeof import("../process/OwnedLease.js")
+    >("../process/OwnedLease.js");
+    vi.mocked(acquireOwnedLease).mockImplementation((input) => {
+      identities.push(input.identity);
+      return leases.acquireOwnedLease(input);
+    });
+    const selectedEdit = join(f.root, "selected-edit.gzf");
+    await writeFile(selectedEdit, "selected edit");
+    await owner.publish(selectedEdit);
+    const physicalEdit = join(f.root, "physical-edit.gzf");
+    await writeFile(physicalEdit, "physical edit");
+    await expect(peer.publish(physicalEdit)).rejects.toBeInstanceOf(
+      GhidraCheckpointSupersededError,
+    );
+    expect(identities).toHaveLength(2);
+    expect(identities[1]).toEqual(identities[0]);
   },
 );

@@ -3,9 +3,11 @@ import { classifyProviderFailure } from "../providers/classifyProviderFailure.js
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, open, realpath, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import { Deadline } from "../domain/deadline.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -91,10 +93,15 @@ const failure = (directory: string, reason: string, cause?: unknown) =>
     },
   );
 
+/** How long a save waits for another session's publication to finish. */
+export const GHIDRA_CHECKPOINT_PUBLICATION_WAIT_MS = 30_000;
+const PUBLICATION_POLL_MS = 50;
+
 /**
- * Another live REA session holds this checkpoint's lease. The directory and
- * its setting are valid, so this is contention that ends when that session
- * closes the target, not a configuration fault.
+ * Another live REA session held this checkpoint's publication lease for the
+ * whole bounded wait. The directory and its setting are valid, so this is
+ * contention that ends when that publication finishes, not a configuration
+ * fault.
  */
 export class GhidraCheckpointBusyError extends Error {
   constructor(
@@ -102,9 +109,29 @@ export class GhidraCheckpointBusyError extends Error {
     readonly owner: { readonly runId: string; readonly processId: number },
   ) {
     super(
-      `Ghidra checkpoint at ${JSON.stringify(directory)} is in use by another REA session (run ${owner.runId}, process ${String(owner.processId)})`,
+      `Ghidra checkpoint at ${JSON.stringify(directory)} is being saved by another REA session (run ${owner.runId}, process ${String(owner.processId)})`,
     );
     this.name = "GhidraCheckpointBusyError";
+  }
+}
+
+/**
+ * The checkpoint no longer holds the generation this session selected or
+ * restored. Nothing was published and the current checkpoint is unchanged:
+ * a restore must reopen the target, and a save was refused instead of
+ * overwriting the newer generation.
+ */
+export class GhidraCheckpointSupersededError extends Error {
+  constructor(
+    readonly directory: string,
+    readonly stage: "restore" | "save",
+  ) {
+    super(
+      stage === "restore"
+        ? `Ghidra checkpoint at ${JSON.stringify(directory)} changed after this session selected it, normally because another REA session saved Program edits; reopen the target to restore the current checkpoint`
+        : `Ghidra checkpoint at ${JSON.stringify(directory)} changed after this session restored it, normally because another REA session saved Program edits first; this session's Program edits were not saved and the current checkpoint is unchanged. Closing the target again discards them; reopen the target and reapply them to the current checkpoint`,
+    );
+    this.name = "GhidraCheckpointSupersededError";
   }
 }
 
@@ -139,11 +166,13 @@ export const hashGhidraPackedProgram = (
     },
   );
 
-async function readSource(
-  selection: Omit<GhidraCheckpointSelection, "state">,
+type CheckpointSelectionKey = Omit<GhidraCheckpointSelection, "state">;
+
+async function readManifest(
+  selection: CheckpointSelectionKey,
   resources: ArtifactResourceScope,
   signal?: AbortSignal,
-) {
+): Promise<CheckpointSource | null> {
   let manifest: z.infer<typeof manifestSchema>;
   try {
     manifest = await readGhidraProfileArtifact(
@@ -174,7 +203,17 @@ async function readSource(
       selection.directory,
       "the manifest belongs to a different target or analysis profile",
     );
-  const path = appendCallerPath(selection.directory, manifest.source.file);
+  return manifest.source;
+}
+
+async function readVerifiedSource(
+  selection: CheckpointSelectionKey,
+  resources: ArtifactResourceScope,
+  signal?: AbortSignal,
+): Promise<CheckpointSource | null> {
+  const source = await readManifest(selection, resources, signal);
+  if (source === null) return null;
+  const path = appendCallerPath(selection.directory, source.file);
   let actual: string;
   try {
     actual = await hashGhidraPackedProgram(path, resources, signal);
@@ -184,13 +223,60 @@ async function readSource(
       ghidraFileDialect("resolve_analysis_profile", { path }),
     );
   }
-  if (actual !== manifest.source.sha256)
+  if (actual !== source.sha256)
     throw failure(
       selection.directory,
       "the packed Program checksum differs from its manifest",
     );
-  return manifest.source;
+  return source;
 }
+
+/** A publication renames a new manifest file into place, so its identity changes. */
+const manifestIdentity = async (directory: string): Promise<string | null> => {
+  try {
+    const state = await lstat(appendCallerPath(directory, "current.json"), {
+      bigint: true,
+    });
+    return `${String(state.dev)}:${String(state.ino)}`;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Readers hold no lease. A publication replaces the manifest and then removes
+ * the packed file it superseded, so a read that straddles one can find the
+ * replaced manifest or the removed file. Only a read during which the manifest
+ * was replaced is repeated; any other failure is reported as it is.
+ */
+async function readSource(
+  selection: CheckpointSelectionKey,
+  resources: ArtifactResourceScope,
+  signal?: AbortSignal,
+): Promise<CheckpointSource | null> {
+  for (let attempt = 0; ; attempt += 1) {
+    const before = await manifestIdentity(selection.directory);
+    try {
+      return await readVerifiedSource(selection, resources, signal);
+    } catch (cause: unknown) {
+      if (
+        attempt === 2 ||
+        signal?.aborted === true ||
+        resources.hasPending ||
+        (await manifestIdentity(selection.directory)) === before
+      )
+        throw cause;
+    }
+  }
+}
+
+const sameSource = (
+  left: CheckpointSource | null,
+  right: CheckpointSource | null,
+): boolean =>
+  left === null || right === null
+    ? left === right
+    : left.file === right.file && left.sha256 === right.sha256;
 
 /** Resolve storage and content identity once for the shared CLI/MCP analysis profile. */
 export async function resolveGhidraCheckpoint(
@@ -213,9 +299,20 @@ export async function resolveGhidraCheckpoint(
   };
 }
 
-/** One session owns publication, the socket lease, and any failed staging cleanup. */
+/**
+ * One session's view of a shared checkpoint. Sessions restore the packed
+ * Program into private projects without a lease; the socket lease is held only
+ * while one of them publishes. Publication is a compare-and-set on the source
+ * this session started from, so a session never overwrites a generation it did
+ * not restore. The session owns its lease and any failed staging cleanup.
+ */
 export class GhidraCheckpoint {
   #lease: OwnedLease | undefined;
+  /** Physical directory and lease owner of the admitted session. */
+  #admission:
+    | { readonly directory: string; readonly runId: string }
+    | undefined;
+  /** The source this session's Program derives from; null before any publication. */
   #source: CheckpointSource | null | undefined;
   #state: GhidraCheckpointSelection["state"];
   readonly #pendingRemoval = new Set<string>();
@@ -249,7 +346,8 @@ export class GhidraCheckpoint {
     };
   }
 
-  async acquire(
+  /** Verify the selected generation and return its packed Program, if one exists. */
+  async admit(
     runId: string,
     signal?: AbortSignal,
   ): Promise<GhidraPackedProgram | undefined> {
@@ -266,24 +364,7 @@ export class GhidraCheckpoint {
         "the checkpoint directory must be a private directory owned by this user",
       );
     const directory = await realpath(this.selection.directory);
-    const acquired = await acquireOwnedLease({
-      identity: { kind: "ghidra-checkpoint-v1", directory },
-      runId,
-      directory: join(
-        "/tmp",
-        `rea-ghidra-checkpoint-leases-${process.getuid?.() ?? "user"}`,
-      ),
-      resources: this.resources,
-      failure: (reason, cause) =>
-        failure(
-          directory,
-          `lease ${reason.kind}${cause instanceof Error ? `: ${cause.message}` : ""}`,
-          cause,
-        ),
-    });
-    if (!acquired.acquired)
-      throw new GhidraCheckpointBusyError(directory, acquired.owner);
-    this.#lease = acquired.lease;
+    this.#admission = undefined;
     this.#source = undefined;
     const current = await readSource(this.selection, this.resources, signal);
     const generation = checkpointState(current);
@@ -293,82 +374,115 @@ export class GhidraCheckpoint {
         : this.#state.kind === "retained" &&
           this.#state.sha256 === generation.sha256;
     if (!aligned)
-      throw failure(
-        directory,
-        "the checkpoint changed after profile selection; reopen the target",
-      );
+      throw new GhidraCheckpointSupersededError(directory, "restore");
     assertArtifactReadActive(signal);
+    this.#admission = { directory, runId };
     this.#source = current;
     return current === null
       ? undefined
       : { path: join(directory, current.file), sha256: current.sha256 };
   }
 
-  /** Publish a new immutable blob, then atomically replace its manifest. */
+  /**
+   * Explain a failed private restore: a publication after admission removes
+   * the packed file this session was about to copy.
+   */
+  async supersededRestore(
+    signal?: AbortSignal,
+  ): Promise<GhidraCheckpointSupersededError | undefined> {
+    if (this.#admission === undefined || this.#source === undefined)
+      return undefined;
+    const current = await readManifest(this.selection, this.resources, signal);
+    return sameSource(current, this.#source)
+      ? undefined
+      : new GhidraCheckpointSupersededError(
+          this.#admission.directory,
+          "restore",
+        );
+  }
+
+  /** Wait a bounded time for another session's publication to finish. */
+  async #acquireLease(
+    admission: { readonly directory: string; readonly runId: string },
+    signal?: AbortSignal,
+  ): Promise<OwnedLease> {
+    const deadline = Deadline.after(GHIDRA_CHECKPOINT_PUBLICATION_WAIT_MS);
+    for (;;) {
+      assertArtifactReadActive(signal);
+      const acquired = await acquireOwnedLease({
+        identity: {
+          kind: "ghidra-checkpoint-v1",
+          directory: admission.directory,
+        },
+        runId: admission.runId,
+        directory: join(
+          "/tmp",
+          `rea-ghidra-checkpoint-leases-${process.getuid?.() ?? "user"}`,
+        ),
+        resources: this.resources,
+        failure: (reason, cause) =>
+          failure(
+            admission.directory,
+            `lease ${reason.kind}${cause instanceof Error ? `: ${cause.message}` : ""}`,
+            cause,
+          ),
+      });
+      if (acquired.acquired) return acquired.lease;
+      if (deadline.expired())
+        throw new GhidraCheckpointBusyError(
+          admission.directory,
+          acquired.owner,
+        );
+      await delay(PUBLICATION_POLL_MS, undefined, { signal }).catch(
+        () => undefined,
+      );
+    }
+  }
+
+  /**
+   * Publish a new immutable blob, then atomically replace its manifest, only
+   * while the checkpoint still holds the source this session started from.
+   * Two sessions that both analyzed a target without a checkpoint hold the
+   * same initial generation, so the later one adopts the published Program
+   * instead of publishing a second copy.
+   */
   async publish(path: string, signal?: AbortSignal): Promise<void> {
-    if (this.#lease === undefined || this.#source === undefined)
+    const admission = this.#admission;
+    if (admission === undefined || this.#source === undefined)
       throw failure(
         this.selection.directory,
-        "publication has no admitted session lease",
+        "publication has no admitted session",
       );
     const previous = this.#source;
     await this.retryCleanup();
     if (this.#publishedInput === path) return;
-    const file = `program-${randomUUID()}.gzf`;
-    const destination = appendCallerPath(this.selection.directory, file);
-    const temporary = appendCallerPath(
-      this.selection.directory,
-      `.current-${randomUUID()}.json`,
-    );
-    this.#pendingRemoval.add(destination);
-    this.#pendingRemoval.add(temporary);
+    const classify = (cause: unknown) =>
+      classifyProviderFailure(
+        cause,
+        ghidraFileDialect("checkpoint_program", {
+          path: this.selection.directory,
+        }),
+      );
     let primary: unknown;
     let failed = false;
     try {
-      assertArtifactReadActive(signal);
-      const hash = createHash("sha256");
-      await copyGhidraRegularFile(path, destination, this.resources, {
-        signal,
-        hash,
-        sync: true,
-      });
-      const sha256 = hash.digest("hex");
-      const source: CheckpointSource = {
-        file,
-        sha256,
-        kind: previous === null ? "initial-analysis" : "retained",
-      };
-      const metadata = JSON.stringify({
-        version: 2,
-        target_sha256: this.selection.target_sha256,
-        base_profile_digest: this.selection.base_profile_digest,
-        source,
-      });
-      const handle = await open(temporary, "wx", 0o600);
-      await withArtifactFileHandle(
-        temporary,
-        handle,
+      this.#lease = await this.#acquireLease(admission, signal);
+      const current = await readManifest(
+        this.selection,
         this.resources,
         signal,
-        async (handle) => {
-          await handle.writeFile(metadata);
-          await handle.sync();
-        },
       );
-      assertArtifactReadActive(signal);
-      await rename(
-        temporary,
-        appendCallerPath(this.selection.directory, "current.json"),
-      );
-      this.#source = source;
-      this.#state = checkpointState(source);
-      this.#publishedInput = path;
-      this.#pendingRemoval.delete(destination);
-      this.#pendingRemoval.delete(temporary);
-      if (previous !== null)
-        this.#pendingRemoval.add(
-          appendCallerPath(this.selection.directory, previous.file),
-        );
+      if (
+        previous === null &&
+        current !== null &&
+        current.kind === "initial-analysis"
+      ) {
+        this.#source = current;
+        this.#publishedInput = path;
+      } else if (sameSource(current, previous))
+        await this.#replace(path, previous, signal);
+      else
+        throw new GhidraCheckpointSupersededError(admission.directory, "save");
     } catch (cause: unknown) {
       primary = cause;
       failed = true;
@@ -378,31 +492,79 @@ export class GhidraCheckpoint {
     } catch (cause: unknown) {
       if (failed)
         throw analysisErrorWithCleanupFailure(
-          classifyProviderFailure(
-            primary,
-            ghidraFileDialect("checkpoint_program", {
-              path: this.selection.directory,
-            }),
-          ),
-          classifyProviderFailure(
-            cause,
-            ghidraFileDialect("checkpoint_program", {
-              path: this.selection.directory,
-            }),
-          ),
+          classify(primary),
+          classify(cause),
         );
       throw cause;
     }
     if (failed)
-      throw classifyProviderFailure(
-        primary,
-        ghidraFileDialect("checkpoint_program", {
-          path: this.selection.directory,
-        }),
-      );
+      throw primary instanceof GhidraCheckpointSupersededError ||
+        primary instanceof GhidraCheckpointBusyError
+        ? primary
+        : classify(primary);
     assertArtifactReadActive(signal);
   }
 
+  /** Runs under the publication lease after the compare-and-set admitted it. */
+  async #replace(
+    path: string,
+    previous: CheckpointSource | null,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const file = `program-${randomUUID()}.gzf`;
+    const destination = appendCallerPath(this.selection.directory, file);
+    const temporary = appendCallerPath(
+      this.selection.directory,
+      `.current-${randomUUID()}.json`,
+    );
+    this.#pendingRemoval.add(destination);
+    this.#pendingRemoval.add(temporary);
+    assertArtifactReadActive(signal);
+    const hash = createHash("sha256");
+    await copyGhidraRegularFile(path, destination, this.resources, {
+      signal,
+      hash,
+      sync: true,
+    });
+    const source: CheckpointSource = {
+      file,
+      sha256: hash.digest("hex"),
+      kind: previous === null ? "initial-analysis" : "retained",
+    };
+    const metadata = JSON.stringify({
+      version: 2,
+      target_sha256: this.selection.target_sha256,
+      base_profile_digest: this.selection.base_profile_digest,
+      source,
+    });
+    const handle = await open(temporary, "wx", 0o600);
+    await withArtifactFileHandle(
+      temporary,
+      handle,
+      this.resources,
+      signal,
+      async (handle) => {
+        await handle.writeFile(metadata);
+        await handle.sync();
+      },
+    );
+    assertArtifactReadActive(signal);
+    await rename(
+      temporary,
+      appendCallerPath(this.selection.directory, "current.json"),
+    );
+    this.#source = source;
+    this.#state = checkpointState(source);
+    this.#publishedInput = path;
+    this.#pendingRemoval.delete(destination);
+    this.#pendingRemoval.delete(temporary);
+    if (previous !== null)
+      this.#pendingRemoval.add(
+        appendCallerPath(this.selection.directory, previous.file),
+      );
+  }
+
+  /** Remove owned staging and superseded files, then release the publication lease. */
   async retryCleanup(): Promise<void> {
     for (const path of this.#pendingRemoval) {
       try {
@@ -421,12 +583,9 @@ export class GhidraCheckpoint {
         throw this.#cleanupRelease.bind(error);
       }
     }
-    this.#cleanupRelease.confirm();
-    this.#cleanupRelease = new AnalysisCleanupRelease();
-  }
-  async close(): Promise<void> {
-    await this.retryCleanup();
     await this.#lease?.release();
     this.#lease = undefined;
+    this.#cleanupRelease.confirm();
+    this.#cleanupRelease = new AnalysisCleanupRelease();
   }
 }

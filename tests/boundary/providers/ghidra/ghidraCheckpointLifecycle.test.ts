@@ -11,7 +11,16 @@ import { createAnalysisProfile } from "../../../../src/domain/analysisProfile.js
 import { GhidraClient } from "../../../../src/ghidra/GhidraClient.js";
 import type { BridgeMaxReplyBytes } from "../../../../src/config/bridgeMaxReplyBytes.js";
 import { ConfigurationError } from "../../../../src/domain/configurationErrors.js";
-import { resolveGhidraCheckpoint } from "../../../../src/ghidra/GhidraCheckpoint.js";
+import {
+  GhidraCheckpoint,
+  GhidraCheckpointSupersededError,
+  resolveGhidraCheckpoint,
+} from "../../../../src/ghidra/GhidraCheckpoint.js";
+import { err } from "../../../../src/domain/result.js";
+import {
+  GhidraLaunchError,
+  type GhidraLauncher,
+} from "../../../../src/ghidra/GhidraLauncher.js";
 import { GhidraFixtureLauncher } from "./ghidraClient.fixture.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -96,6 +105,39 @@ async function fixture(
   clients.push(client);
   return { root, selection, launcher, client, targetPath, sha256 };
 }
+
+/** Another session on the same target, selecting the checkpoint as it is now. */
+async function peer(
+  f: Awaited<ReturnType<typeof fixture>>,
+  launcher: GhidraLauncher = fixtureLauncher(),
+) {
+  const selection = await resolveGhidraCheckpoint(
+    f.root,
+    f.sha256,
+    profile,
+    new ArtifactResourceScope(),
+  );
+  const client = new GhidraClient({
+    launcher,
+    targetPath: f.targetPath,
+    targetSha256: f.sha256,
+    providerVersion: "12.1.4",
+    profileDigest: profile.digest,
+    checkpoint: selection,
+    startupTimeoutMs: 10_000,
+  });
+  clients.push(client);
+  return { client, selection };
+}
+function fixtureLauncher() {
+  const launcher = new GhidraFixtureLauncher("checkpoint");
+  launchers.push(launcher);
+  return launcher;
+}
+const rename = (client: GhidraClient) =>
+  client.callTool("set_address_name", { address: "0x1000", name: "changed" });
+const programs = async (directory: string) =>
+  (await readdir(directory)).filter((name) => name.endsWith(".gzf"));
 
 it.skipIf(process.platform === "win32")(
   "saves completed initial analysis, leaves an unchanged checkpoint alone, and releases its lease",
@@ -213,35 +255,153 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
-  "does not release a Program or its lease before its final checkpoint acknowledges",
+  "keeps a Program until its final checkpoint acknowledges while another session restores the same target",
   async () => {
     const f = await fixture("checkpoint_hold_close");
     expect((await f.client.start()).ok).toBe(true);
-    await f.client.callTool("set_address_name", {
-      address: "0x1000",
-      name: "changed",
-    });
+    await rename(f.client);
     const closing = f.client.close();
     await f.launcher.checkpointHold.reached(closing, "final checkpoint");
     expect(f.launcher.processes[0]!.exitCode).toBeNull();
-    const selection = await resolveGhidraCheckpoint(
-      f.root,
-      f.sha256,
-      profile,
-      new ArtifactResourceScope(),
+    // The stalled save holds no lease a reader needs: a second session
+    // restores the still-current generation and answers queries.
+    const other = await peer(f);
+    expect((await other.client.start()).ok).toBe(true);
+    expect((await other.client.callTool("list_documents", {})).ok).toBe(true);
+    expect(other.client.checkpointRestore()?.sha256).toBe(
+      createHash("sha256").update("fixture checkpoint initial").digest("hex"),
     );
-    const other = new GhidraClient({
-      launcher: f.launcher,
-      targetPath: f.targetPath,
-      targetSha256: f.sha256,
-      providerVersion: "12.1.4",
-      profileDigest: profile.digest,
-      checkpoint: selection,
-    });
-    clients.push(other);
-    expect((await other.start()).ok).toBe(false);
     f.launcher.processes[0]!.send("release_checkpoint");
     expect((await closing).ok).toBe(true);
+    // The reader made no edits, so its close publishes nothing.
+    const published = await readFile(
+      join(f.selection.directory, "current.json"),
+      "utf8",
+    );
+    expect(JSON.parse(published)).toMatchObject({
+      source: { kind: "retained" },
+    });
+    expect((await other.client.close()).ok).toBe(true);
+    expect(
+      await readFile(join(f.selection.directory, "current.json"), "utf8"),
+    ).toBe(published);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "lets two sessions analyze an unseen target at once and publishes its initial checkpoint once",
+  async () => {
+    const f = await fixture();
+    const other = await peer(f);
+    const [first, second] = await Promise.all([
+      f.client.start(),
+      other.client.start(),
+    ]);
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(f.client.checkpointRestore()).toBeNull();
+    expect(other.client.checkpointRestore()).toBeNull();
+    const manifest = join(f.selection.directory, "current.json");
+    const published = await readFile(manifest, "utf8");
+    expect(JSON.parse(published)).toMatchObject({
+      source: { kind: "initial-analysis" },
+    });
+    expect(await programs(f.selection.directory)).toHaveLength(1);
+    expect((await f.client.callTool("list_documents", {})).ok).toBe(true);
+    expect((await other.client.callTool("list_documents", {})).ok).toBe(true);
+    expect((await f.client.close()).ok).toBe(true);
+    expect((await other.client.close()).ok).toBe(true);
+    expect(await readFile(manifest, "utf8")).toBe(published);
+    expect(await programs(f.selection.directory)).toHaveLength(1);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "refuses the later of two edited saves, keeps its session live, then discards on the next close",
+  async () => {
+    const f = await fixture();
+    expect((await f.client.start()).ok).toBe(true);
+    const stale = await peer(f);
+    expect((await stale.client.start()).ok).toBe(true);
+    expect((await rename(f.client)).ok).toBe(true);
+    expect((await rename(stale.client)).ok).toBe(true);
+    expect((await f.client.close()).ok).toBe(true);
+    const manifest = join(f.selection.directory, "current.json");
+    const published = await readFile(manifest, "utf8");
+    const files = (await readdir(f.selection.directory)).sort();
+
+    const refused = await stale.client.close();
+    if (refused.ok) throw new Error("the stale save unexpectedly succeeded");
+    expect(refused.error.cause).toBeInstanceOf(GhidraCheckpointSupersededError);
+    expect(refused.error.cause).toMatchObject({ stage: "save" });
+    expect(refused.error.diagnostics).toMatchObject({
+      reason: expect.stringMatching(/were not saved.*Closing the target again/),
+    });
+    expect(refused.error).toMatchObject({
+      remediationAction: expect.stringMatching(
+        /edits were not saved.*Closing the target again discards/,
+      ),
+    });
+    expect(await readFile(manifest, "utf8")).toBe(published);
+    expect((await readdir(f.selection.directory)).sort()).toEqual(files);
+    // Non-destructive: the refused session still answers from its Program.
+    expect(stale.client.isReady()).toBe(true);
+    expect((await stale.client.callTool("list_documents", {})).ok).toBe(true);
+
+    // The refusal is permanent for this generation, so the next close
+    // releases the session without another export or publication.
+    expect((await stale.client.close()).ok).toBe(true);
+    expect(await readFile(manifest, "utf8")).toBe(published);
+    expect((await readdir(f.selection.directory)).sort()).toEqual(files);
+    expect(refused.error.cleanupResources).toEqual([]);
+    for (const launcher of launchers)
+      for (const root of launcher.runtimeRoots)
+        await expect(access(root)).rejects.toThrow();
+    // A reopened session restores the winner's generation.
+    const reopened = await peer(f);
+    expect(reopened.selection.state.kind).toBe("retained");
+    expect((await reopened.client.start()).ok).toBe(true);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "reports a restore whose packed Program was superseded during launch as a reopen",
+  async () => {
+    const f = await fixture();
+    expect((await f.client.start()).ok).toBe(true);
+    expect((await f.client.close()).ok).toBe(true);
+    // The launcher's private copy finds the file removed by a publication
+    // that completed after this session's admission.
+    const launcher: GhidraLauncher = {
+      launch: async (session) => {
+        const writer = new GhidraCheckpoint(
+          stale.selection,
+          new ArtifactResourceScope(),
+        );
+        await writer.admit("writer");
+        const edited = join(f.root, "edited.gzf");
+        await writeFile(edited, "edited by another session");
+        await writer.publish(edited);
+        await expect(access(session.packedProgram!.path)).rejects.toThrow();
+        return err(
+          new GhidraLaunchError(
+            "Ghidra checkpoint changed before its private import; reopen the target.",
+          ),
+        );
+      },
+    };
+    const stale = await peer(f, launcher);
+    const started = await stale.client.start();
+    if (started.ok) throw new Error("the superseded restore succeeded");
+    expect(started.error.kind).toBe("checkpoint");
+    expect(started.error.cause).toBeInstanceOf(GhidraCheckpointSupersededError);
+    expect(started.error.cause).toMatchObject({ stage: "restore" });
+    expect((await stale.client.close()).ok).toBe(true);
+    const reopened = await peer(f);
+    expect((await reopened.client.start()).ok).toBe(true);
+    expect(reopened.client.checkpointRestore()?.sha256).toBe(
+      createHash("sha256").update("edited by another session").digest("hex"),
+    );
   },
 );
 

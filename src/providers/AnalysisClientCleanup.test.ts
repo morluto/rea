@@ -222,3 +222,26 @@ it("retains the latest close options across concurrent close() calls", async () 
   await Promise.all([acquiring, close1, close2]);
   expect(seenOptions).toEqual([options2]);
 });
+
+it("keeps the client's own close advice on the retained close failure", async () => {
+  const advice = "Close again to discard the unsaved edits.";
+  const refused = new ProviderCleanupError(
+    "fixture",
+    ["client"],
+    {},
+    { remediationAction: advice },
+  );
+  let closes = 0;
+  const creation = new AnalysisClientCreation("fixture", async () => ({
+    execute: clientClosingWith(refused).execute,
+    close: async () => ((closes += 1) === 1 ? err(refused) : ok(null)),
+  }));
+  expect((await creation.acquire("open")).ok).toBe(true);
+  const closed = await creation.close();
+  if (closed.ok) throw new Error("the refused close unexpectedly succeeded");
+  expect(closed.error).toMatchObject({ remediationAction: advice });
+  expect(projectAnalysisError(closed.error).remediation.action).toContain(
+    advice,
+  );
+  expect(await creation.close()).toEqual(ok(null));
+});
