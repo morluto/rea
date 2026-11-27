@@ -175,6 +175,26 @@ await withVerifierFixture(workspaceFixture, async () => {
       "timed_out_listing_unchanged",
       "timed_out_pseudocode_request_names_limit",
       "session_recovers_after_failure",
+      "read_ahead_carrying_request_does_not_wait_for_startup",
+      "read_ahead_workers_match_queued_work",
+      "read_ahead_queued_function_taken_back",
+      "read_ahead_worker_takes_queued_function",
+      "read_ahead_result_reported_not_decompiled_again",
+      "read_ahead_failure_uncached",
+      "read_ahead_idle_workers_disposed",
+      "read_ahead_running",
+      "read_ahead_running_result_awaited",
+      "read_ahead_running_before_cancel",
+      "read_ahead_cancel_reaches_running_worker",
+      "read_ahead_completed_under_old_deadline",
+      "read_ahead_success_reused_across_deadline_change",
+      "read_ahead_timed_out_under_old_deadline",
+      "read_ahead_timeout_not_reused_after_deadline_change",
+      "read_ahead_single_remainder_starts_no_worker",
+      "read_ahead_opening_workers_disposed",
+      "read_ahead_concurrent_open_program",
+      "read_ahead_private_thread_pool",
+      "read_ahead_hint_clamped_to_window",
     ])
       assert.ok(probe.checks.includes(check), check);
   } finally {
@@ -195,10 +215,12 @@ await withVerifierFixture(workspaceFixture, async () => {
   if (!degraded.ok) throw degraded.error;
   assert.equal(degraded.value.cachePolicy, "live");
   const dossier = degraded.value.value;
-  assert.deepEqual(dossier.facet_availability.pseudocode, {
-    available: false,
-    reason: injected,
-  });
+  assert.equal(dossier.facet_availability.pseudocode.available, false);
+  // The reason goes on to name the payload allowance and its recovery.
+  assert.ok(
+    dossier.facet_availability.pseudocode.reason.startsWith(`${injected}. `),
+    dossier.facet_availability.pseudocode.reason,
+  );
   assert.equal(dossier.pseudocode, "");
   assert.equal(dossier.native_api.available, false);
   assert.equal(dossier.native_value_flow.available, false);

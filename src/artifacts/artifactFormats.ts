@@ -21,6 +21,7 @@ import {
 } from "../resources/index.js";
 import type { ArtifactReaderAdmission } from "./ArtifactReaderAdmission.js";
 import { AndroidBootImageArtifactReader } from "./AndroidBootImageArtifactReader.js";
+import { AndroidDtboArtifactReader } from "./AndroidDtboArtifactReader.js";
 import { AndroidVbmetaArtifactReader } from "./AndroidVbmetaArtifactReader.js";
 import {
   AsarArtifactReader,
@@ -42,6 +43,7 @@ import { FitArtifactReader } from "./FitArtifactReader.js";
 import type { GodotPckAdmission } from "./GodotPckLocation.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
 import { InesArtifactReader } from "./InesArtifactReader.js";
+import { N64RomArtifactReader } from "./N64RomArtifactReader.js";
 import { NdsRomArtifactReader } from "./NdsRomArtifactReader.js";
 import { Iso9660ArtifactReader } from "./Iso9660ArtifactReader.js";
 import { QualcommMbnArtifactReader } from "./QualcommMbnArtifactReader.js";
@@ -56,7 +58,9 @@ import { PyInstallerArtifactReader } from "./PyInstallerArtifactReader.js";
 import { UefiArtifactReader } from "../uefi/UefiArtifactReader.js";
 import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
 import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
+import { AuditdLogArtifactReader } from "./AuditdLogArtifactReader.js";
 import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactReader.js";
+import { SystemdJournalArtifactReader } from "./SystemdJournalArtifactReader.js";
 import { AndroidSparseImageArtifactReader } from "./AndroidSparseImageArtifactReader.js";
 import { UbiImageArtifactReader } from "./UbiImageArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
@@ -69,6 +73,10 @@ import {
   GpuAssetArtifactReader,
   type GpuAssetFormat,
 } from "./gpuAsset/GpuAssetArtifactReader.js";
+import {
+  MediaAssetArtifactReader,
+  type MediaAssetFormat,
+} from "./mediaAsset/MediaAssetArtifactReader.js";
 
 /** How inventory describes a format when no reader was constructed. */
 export type AbsentInventory = "platform" | "universal" | "unavailable" | "root";
@@ -90,6 +98,11 @@ export interface ArtifactReaderConstruction {
    * and the container's own bytes; universal Mach-O lipo records consume it.
    */
   readonly integrity?: ArtifactIntegrityPolicyName | undefined;
+  /**
+   * First per-record header a windowed reader retains. Only a page of the
+   * `format_record_headers` view sets it; inventory always starts at 0.
+   */
+  readonly recordHeaderStart?: number | undefined;
 }
 
 export interface FormatDescriptor {
@@ -98,6 +111,11 @@ export interface FormatDescriptor {
   readonly occurrenceContainer: boolean;
   /** Path-role classification treats the format as a container of its own. */
   readonly roleContainer: boolean;
+  /**
+   * Path role for a format whose bytes say nothing about executability, such as
+   * a text log. Without it those formats fall through to `executable`.
+   */
+  readonly role?: "resource" | undefined;
   /** Classification keeps the admitted source for a later reader. */
   readonly retainClassifiedSource: boolean;
   /** Extraction can open this format without an embedded-pack probe. */
@@ -270,6 +288,24 @@ const gpuAsset = <Id extends GpuAssetFormat>(id: Id) =>
       new GpuAssetArtifactReader(path, id, sourceOf(options)),
   });
 
+/** Media asset containers: declared header facts and stored regions, nothing decoded. */
+const mediaAsset = <Id extends MediaAssetFormat>(id: Id) =>
+  container(id, {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Media asset inventory reports declared header fields and the byte regions they name. Audio, video and pipeline-cache payloads are not decoded.",
+    createReader: (path, options) =>
+      new MediaAssetArtifactReader(
+        path,
+        id,
+        sourceOf(options),
+        options.readerLimits?.media_asset,
+      ),
+  });
+
 const switchExecutable = <Id extends "nso" | "nro">(id: Id) =>
   container(id, {
     roleContainer: true,
@@ -410,7 +446,7 @@ const NON_ZIP_FORMATS = {
     extractable: true,
     absentInventory: "unavailable",
     readerLimitation:
-      "UnityFS inventory establishes packaged bytes and metadata; serialized objects, textures, meshes and runtime asset behavior were not decoded. LZMA-compressed members are unsupported.",
+      "UnityFS inventory establishes packaged bytes and metadata; serialized objects, textures, meshes and runtime asset behavior were not decoded.",
     createReader: (path, options) =>
       new UnityFsArtifactReader(path, sourceOf(options)),
   }),
@@ -458,10 +494,28 @@ const NON_ZIP_FORMATS = {
         options.readerLimits?.expanded_bytes,
       ),
   }),
+  "n64-rom": container("n64-rom", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Nintendo 64 ROM inventory reports cartridge header facts, the IPL3/CIC variant and the CRC pair when that variant is known. header.bin, ipl3.bin and program.z64 are big-endian ranges: stored when the dump is z64, decoded when it is v64 or n64. Nothing is executed or patched. A CRC mismatch is a limitation.",
+    createReader: (path, options) =>
+      new N64RomArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+      ),
+  }),
   dds: gpuAsset("dds"),
   glb: gpuAsset("glb"),
   ktx: gpuAsset("ktx"),
   ktx2: gpuAsset("ktx2"),
+  "ogg-opus": mediaAsset("ogg-opus"),
+  "riff-xma2": mediaAsset("riff-xma2"),
+  bink2: mediaAsset("bink2"),
+  "vulkan-pipeline-cache": mediaAsset("vulkan-pipeline-cache"),
   uimage: container("uimage", {
     roleContainer: true,
     retainClassifiedSource: true,
@@ -483,6 +537,21 @@ const NON_ZIP_FORMATS = {
       "Android boot image inventory establishes header facts and stored component bytes. Payloads are not decompressed, the v4 signature and AVB footer are not verified, and the image is not executed.",
     createReader: (path, options) =>
       new AndroidBootImageArtifactReader(path, sourceOf(options)),
+  }),
+  "android-dtbo": container("android-dtbo", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Android DTBO inventory establishes dt_table_header and dt_table_entry table facts, verifies leading 0xd00dfeed FDT magic on uncompressed entries, and bounds stored entry bytes. Compressed payloads are not decompressed, device trees are not overlaid, and images are not executed.",
+    createReader: (path, options) =>
+      new AndroidDtboArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.android_dtbo,
+        options.readerLimits?.expanded_bytes,
+      ),
   }),
   "android-ota-payload": container("android-ota-payload", {
     roleContainer: true,
@@ -583,6 +652,7 @@ const NON_ZIP_FORMATS = {
   "windows-shortcut": described("windows-shortcut", plain),
   "python-pyc": described("python-pyc", plain),
   devicetree: described("devicetree", plain),
+  "esp-nvs": described("esp-nvs", plain),
   deb: described("deb", plain),
   entitlements: described("entitlements", plain),
   directory: container("directory", {
@@ -713,6 +783,27 @@ const NON_ZIP_FORMATS = {
       "MFT inventory reports whole-stream counts and up to 32 physical FILE record details, including fixup coverage, supported names, timestamps, declared sizes and attributes. Bounded attribute-list links expose verified metadata from acquired extension records, with explicit reference outcomes and omissions. Nonresident list values and file contents are not recovered; full paths and complete change history are not established. Use inspect_ntfs_journal for caller-paired journal events.",
     createReader: (path, options) =>
       new NtfsMftArtifactReader(path, sourceOf(options)),
+  }),
+  "systemd-journal": described("systemd-journal", {
+    ...plain,
+    // A journal is data, not a program: nothing in it is executed.
+    role: "resource",
+    retainClassifiedSource: true,
+    readerLimitation:
+      "Systemd journal inventory reports the file header and the first 32 object headers, including counts by object type, declared header and arena sizes, and object extents; later object headers page through inspect_analysis_view's format_record_headers collection, which re-reads the unchanged file. Object payloads are not decompressed or decoded, so entries, fields, timestamps and boot filters are not available; file integrity and authenticity are not established.",
+    createReader: (path, options) =>
+      new SystemdJournalArtifactReader(path, sourceOf(options), {
+        objectHeaderStart: options.recordHeaderStart ?? 0,
+      }),
+  }),
+  "auditd-log": described("auditd-log", {
+    ...plain,
+    role: "resource",
+    retainClassifiedSource: true,
+    readerLimitation:
+      "auditd log inventory reports record and event totals, per-type counts and a bounded window of events joined on their full audit event identity (node, timestamp and serial), with duplicate, out-of-order and malformed records counted. Per-record identity is retained for a bounded window of recent events; events and records past it are counted in the totals but their duplicate and interleaving status is not established. Record key-value fields, hex and escaped values, argument ordering and decoded syscall or permission meanings are not interpreted; the log is not treated as complete or authentic.",
+    createReader: (path, options) =>
+      new AuditdLogArtifactReader(path, sourceOf(options)),
   }),
   unknown: described("unknown", plain),
 } satisfies Record<

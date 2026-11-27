@@ -5,13 +5,7 @@ import {
   ParseFailureError,
   unsupportedInput,
 } from "../domain/parseFailure.js";
-import {
-  Reader,
-  Uint8ArrayWriter,
-  ZipReader,
-  type Entry,
-  type FileEntry,
-} from "@zip.js/zip.js";
+import { Reader, ZipReader, type Entry, type FileEntry } from "@zip.js/zip.js";
 import type { Element, Node } from "@xmldom/xmldom";
 
 import {
@@ -24,6 +18,9 @@ import {
   ZIP_READER_OPTIONS,
   zipEntryPath,
   zipListingCoverage,
+  isZipFileEntry,
+  readBoundedZipMember,
+  zipMemberSize,
 } from "../resources/index.js";
 import {
   isXmlElement,
@@ -45,7 +42,6 @@ import {
   type NugetNupkg,
 } from "../domain/nuget/nupkg.js";
 import { redactRecordedTransportUrl } from "../domain/recordedTransportUrl.js";
-import { Budget } from "../domain/budget.js";
 import type { PrefixedByteSource } from "../domain/byteSource.js";
 
 /** Limitation wording owned by the parser; tests assert delivery through these. */
@@ -67,11 +63,6 @@ const BASE_LIMITATIONS = [
   "Directory ZIP markers are omitted from contents; only file members are listed.",
 ] as const;
 
-const zipSize = (value: number | undefined): number | null =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 0
-    ? value
-    : null;
-
 /** NuGet indexes nonempty leaf metadata by local name and keeps its first value. */
 const indexedMetadataText = (
   metadata: Element,
@@ -85,30 +76,26 @@ const indexedMetadataText = (
       continue;
     const text = child.textContent ?? "";
     if (!text) continue;
-    // XDocument ignores ordinary XML whitespace. CDATA and xml:space can
-    // retain a whitespace-only value that occupies this key in NuGet's index.
-    if (/[^\t\r\n ]/u.test(text)) return text.trim() || null;
-    if (
-      Array.from(child.childNodes).some(
-        (node) => node.nodeType === 4 && node.nodeValue,
-      )
-    )
-      return null;
     for (
       let scope: Node | null = child;
       isXmlElement(scope);
       scope = scope.parentNode
     ) {
       const space = scope.getAttribute("xml:space");
-      if (space === "preserve") return null;
+      if (space === "preserve") return text.trim() === "" ? null : text;
       if (space === "default") break;
     }
+    if (/[^\t\r\n ]/u.test(text)) return text.trim() || null;
+    // A blank CDATA value still occupies the first matching key.
+    if (
+      Array.from(child.childNodes).some(
+        (node) => node.nodeType === 4 && node.nodeValue,
+      )
+    )
+      return null;
   }
   return null;
 };
-
-const asFileEntry = (entry: Entry): entry is FileEntry =>
-  !entry.directory && "getData" in entry;
 
 const wrapZipFailure = (cause: unknown, compressionMethod?: number): never => {
   if (
@@ -138,32 +125,6 @@ const wrapZipFailure = (cause: unknown, compressionMethod?: number): never => {
   throw cause;
 };
 
-/** Refuse expansion past the metadata budget before buffering more output. */
-class BoundedUint8ArrayWriter extends Uint8ArrayWriter {
-  readonly #budget: Budget;
-
-  constructor(
-    maximum: number,
-    private readonly exceeded: (required: number) => Error,
-  ) {
-    super();
-    this.#budget = new Budget(maximum);
-  }
-
-  override async init(size?: number): Promise<void> {
-    if (size !== undefined && size > this.#budget.maximum)
-      throw this.exceeded(size);
-    await super.init?.(size);
-  }
-
-  override async writeUint8Array(array: Uint8Array): Promise<void> {
-    this.#budget.charge(array.length, () =>
-      this.exceeded(this.#budget.used + array.length),
-    );
-    await super.writeUint8Array(array);
-  }
-}
-
 /** Read one metadata member under max_nuspec_bytes, declared and expanded. */
 const readMemberBytes = async (
   entry: FileEntry,
@@ -177,13 +138,8 @@ const readMemberBytes = async (
       `${label} exceeds the ${String(maximum)}-byte budget.`,
       { name: "max_nuspec_bytes", maximum, required },
     );
-  const declared = zipSize(entry.uncompressedSize);
-  if (declared !== null && declared > maximum) throw exceeded(declared);
   try {
-    return await entry.getData(new BoundedUint8ArrayWriter(maximum, exceeded), {
-      checkSignature: true,
-      ...(signal === undefined ? {} : { signal }),
-    });
+    return await readBoundedZipMember(entry, signal, maximum, exceeded);
   } catch (cause: unknown) {
     return wrapZipFailure(cause, entry.compressionMethod);
   }
@@ -611,8 +567,7 @@ export const parseNugetNupkg = async (
     const files: { entry: FileEntry; name: string }[] = [];
     const contents: NugetNupkg["contents"] = [];
     for (const entry of entries) {
-      if (entry.directory) continue;
-      if (!asFileEntry(entry)) continue;
+      if (!isZipFileEntry(entry)) continue;
       const sourceName = zipEntryPath(entry);
       const name = nugetNupkgLogicalPath(sourceName);
       if (name === "") continue;
@@ -624,8 +579,8 @@ export const parseNugetNupkg = async (
       contents.push({
         name: sourceName,
         path: name,
-        uncompressed_size: zipSize(entry.uncompressedSize),
-        compressed_size: zipSize(entry.compressedSize),
+        uncompressed_size: zipMemberSize(entry.uncompressedSize),
+        compressed_size: zipMemberSize(entry.compressedSize),
         role: nugetNupkgEntryRole(name),
         encrypted: entry.encrypted === true,
       });

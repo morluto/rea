@@ -11,7 +11,7 @@ import {
   type AnalysisViewParent,
 } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -340,11 +340,7 @@ export const projectWebPageView = (
     parent_digest: parent.evidenceId.slice(3),
     artifact: parent.artifact ?? null,
     target_url: report.target.url,
-    limitations: boundedViewMessages(
-      parent.limitations,
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent),
     unknowns: [
       "Activity before the capture attached is not recorded; network and console coverage start at their coverage_started_at.",
     ],

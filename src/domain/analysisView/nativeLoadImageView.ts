@@ -1,3 +1,4 @@
+import { filterSet } from "./selectViewRows.js";
 import { analysisViewPageFields } from "./analysisViewPageFields.js";
 import { z } from "zod";
 import {
@@ -25,7 +26,7 @@ import {
 import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
   unavailableViewCoverage,
@@ -188,8 +189,7 @@ type PageRequest = z.output<typeof nativeLoadImageViewRequestSchema>;
 /** Exact source indices need no inventory scan or persistent lookup index. */
 const selectRows = (source: readonly (Row | string)[], view: PageRequest) => {
   const selectedFields = view.fields ?? defaultFields[view.collection];
-  const fields =
-    selectedFields === undefined ? undefined : new Set<string>(selectedFields);
+  const fields = filterSet<string>(selectedFields);
   const project = (value: Row | string, source_index: number) => {
     const record = typeof value === "string" ? { address: value } : value;
     return {
@@ -264,11 +264,7 @@ export const projectNativeLoadImageView = (
     source_provider: parent.provider ?? null,
     source_analysis_profile_digest: parent.analysisProfile?.digest ?? null,
     source_parameters: jsonValueSchema.parse(parent.parameters ?? null),
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, limitations),
     unknowns: [
       "Counts and pages describe retained provider observations, not complete runtime mappings or relocation behavior.",
       "Null collection counts or rows mean not recorded or not applicable, not observed absence.",

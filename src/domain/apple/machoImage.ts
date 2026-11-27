@@ -20,6 +20,7 @@ import {
   type BinaryContainer,
   type ImageSection,
   type LoadRegion,
+  type MachoSegmentDeclaration,
 } from "../binaryContainer.js";
 import {
   MachoLoadCommandCursor,
@@ -35,10 +36,25 @@ export const readMachoImage = (
 ): Extract<BinaryContainer, { format: "macho" }> =>
   readMachoImageCore(bytes, bytes.length, structureBytes);
 
-/** Same thin Mach-O header and section read over a random-access source without buffering the full image. */
+/** One framed load command handed to a reader's visitor during the shared walk. */
+export interface MachoLoadCommandVisit {
+  readonly command: number;
+  readonly size: number;
+  /** The whole command, `cmdsize` bytes from its `cmd` field. A view, not a copy. */
+  readonly body: Buffer;
+  /** Byte order of the image, so a visitor decodes fields without the result. */
+  readonly littleEndian: boolean;
+}
+
+/**
+ * Same thin Mach-O header and section read over a random-access source without
+ * buffering the full image. `visit` sees every framed load command during the
+ * one shared walk, so a consumer needing other commands does not walk again.
+ */
 export const readMachoImageFromReader = async (
   source: ByteSource,
   structureBytes: number = DEFAULT_NATIVE_STRUCTURE_BYTES,
+  visit?: (command: MachoLoadCommandVisit) => void,
 ): Promise<Extract<BinaryContainer, { format: "macho" }>> => {
   const headerPrefix = await readByteSourceSlice(
     source,
@@ -71,13 +87,14 @@ export const readMachoImageFromReader = async (
     0,
     table.headerSize + table.commandBytes,
   );
-  return readMachoImageCore(tableBytes, source.size, structureBytes);
+  return readMachoImageCore(tableBytes, source.size, structureBytes, visit);
 };
 
 const readMachoImageCore = (
   bytes: Buffer,
   fileBytes: number,
   structureBytes: number,
+  visit?: (command: MachoLoadCommandVisit) => void,
 ): Extract<BinaryContainer, { format: "macho" }> => {
   const parsed = readMachoLoadCommandDeclarations(bytes, fileBytes);
   if (!parsed.ok) throw new BinaryFormatFailure("malformed", parsed.error);
@@ -110,6 +127,7 @@ const readMachoImageCore = (
   const executableMappings: FileMapping[] = [];
   const zeroFills: ZeroFillMapping[] = [];
   const sections: ImageSection[] = [];
+  const segmentDeclarations: MachoSegmentDeclaration[] = [];
   let chainedFixups = false;
   const commands = new MachoLoadCommandCursor(table);
   while (commands.nextOffset !== null) {
@@ -117,6 +135,12 @@ const readMachoImageCore = (
     const frame = commands.read(bytes.subarray(offset, offset + 8));
     if (!frame.ok) throw new BinaryFormatFailure("malformed", frame.error);
     const { command, size } = frame.value;
+    visit?.({
+      command,
+      size,
+      body: bytes.subarray(offset, offset + size),
+      littleEndian: little,
+    });
     if (command === LC.DYLD_CHAINED_FIXUPS) chainedFixups = true;
     if (command === LC.SEGMENT || command === LC.SEGMENT_64) {
       const wide = command === LC.SEGMENT_64;
@@ -167,6 +191,14 @@ const readMachoImageCore = (
           ? undefined
           : { ...fileRange, address: fileAddress };
       const name = decodeMachoFixedName(nameBytes);
+      segmentDeclarations.push({
+        name,
+        address: parsedSegment.value.address,
+        memory_size: memorySize,
+        file_offset: fileOffset,
+        file_size: fileSize,
+        protection,
+      });
       if (mapping !== undefined && name !== "__PAGEZERO") {
         mappings.push(mapping);
         loadRegions.push({
@@ -224,6 +256,8 @@ const readMachoImageCore = (
   return {
     format: "macho",
     macho_cpu_type: table.identity.cpuType,
+    macho_file_type: table.fileType,
+    macho_segments: segmentDeclarations,
     macho_chained_fixups: chainedFixups,
     architecture: names.get(cpu) ?? `macho-cpu-${cpu}`,
     bits,

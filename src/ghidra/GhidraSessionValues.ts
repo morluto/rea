@@ -28,6 +28,7 @@ export const GHIDRA_SESSION_CAPABILITIES = [
 /** Methods that edit the session database; read-only bridges omit them. */
 export const GHIDRA_MUTATING_OPERATIONS: ReadonlySet<string> = new Set([
   "annotate_native_function",
+  "define_native_data_types",
   ...GHIDRA_NAMING_OPERATIONS,
 ]);
 

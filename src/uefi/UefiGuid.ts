@@ -34,6 +34,26 @@ export function formatGuidLittleEndian(
   return `${data1}-${data2}-${data3}-${clockSeq}-${node}`;
 }
 
+const GUID_TEXT =
+  /^([0-9a-f]{8})-([0-9a-f]{4})-([0-9a-f]{4})-([0-9a-f]{4})-([0-9a-f]{12})$/u;
+
+/**
+ * Encode a GUID in the same mixed-endian layout `formatGuidLittleEndian`
+ * reads, for searching raw images for a known signature. Only canonical
+ * lowercase 8-4-4-4-12 text is accepted, so a typo in a constant fails at load
+ * time instead of producing a signature that never matches.
+ */
+export function guidBytesLittleEndian(guid: string): Buffer {
+  const parts = GUID_TEXT.exec(guid);
+  if (parts === null) throw new Error(`invalid GUID text ${guid}`);
+  const out = Buffer.alloc(GUID_LENGTH);
+  out.writeUInt32LE(Number.parseInt(parts[1]!, 16), 0);
+  out.writeUInt16LE(Number.parseInt(parts[2]!, 16), 4);
+  out.writeUInt16LE(Number.parseInt(parts[3]!, 16), 6);
+  Buffer.from(`${parts[4]!}${parts[5]!}`, "hex").copy(out, 8);
+  return out;
+}
+
 /**
  * FFS2 container GUID (PI Specification, firmware file system 2).
  * Raw bytes: 78 E5 8C 8C 3D 8A 1C 4F 99 35 89 61 85 C3 2D D3.
