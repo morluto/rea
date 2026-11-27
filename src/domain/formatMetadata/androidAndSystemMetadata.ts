@@ -329,12 +329,16 @@ export const auditdLogMetadataSchema = z.strictObject({
   record_count: offset,
   event_count: offset,
   /**
-   * False when every event stayed inside the retained window, so `event_count`
-   * is exact. Past the window an event's records are no longer joined, and an
-   * interleaved tail event counted once per run makes the total an upper
-   * bound; the limitations say so.
+   * True when an event past the retained window was counted once per run of
+   * its records, so `event_count` may repeat an event. Both bound flags are
+   * false when the tail could not hold an identity it met, which leaves the
+   * total unbounded in either direction.
    */
   event_count_upper_bound: z.boolean(),
+  /** True when the repeat is the only gap: the total still counts each event. */
+  event_count_lower_bound: z.boolean(),
+  /** True when a tail identity was dropped, so no bound can be stated. */
+  event_count_identity_omitted: z.boolean(),
   event_type_counts: z.array(
     z.strictObject({ type: z.string(), count: offset }),
   ),
@@ -364,6 +368,7 @@ export const auditdLogMetadataSchema = z.strictObject({
         record_types: z
           .array(z.strictObject({ type: z.string(), count: offset }))
           .max(AUDITD_INLINE_EVENT_TYPE_LIMIT),
+        record_types_omitted: offset,
         first_line: offset,
         last_line: offset,
         duplicate_record_count: offset,

@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import { AuditdLogArtifactReader } from "./AuditdLogArtifactReader.js";
-import { AUDITD_RETAINED_RECORD_LIMIT } from "../domain/linux/auditdLog.js";
+import {
+  AUDITD_RETAINED_EVENT_TYPE_LIMIT,
+  AUDITD_RETAINED_RECORD_LIMIT,
+  AUDITD_RETAINED_TYPE_LIMIT,
+} from "../domain/linux/auditdLog.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
@@ -314,9 +318,13 @@ it("reports the tail event total as an upper bound when a run repeats", async ()
   );
   const metadata = await metadataOf(`${lines.join("\n")}\n`);
   expect(metadata.event_count).toBe(4099);
+  // Two distinct tail identities were seen and one repeated, so the total may
+  // repeat an event: an upper bound, not a lower one, and nothing was dropped.
   expect(metadata.event_count_upper_bound).toBe(true);
+  expect(metadata.event_count_lower_bound).toBe(false);
+  expect(metadata.event_count_identity_omitted).toBe(false);
   expect(metadata.limitations.join(" ")).toContain(
-    "event_count is an upper bound",
+    "event_count can be an upper bound",
   );
 });
 
@@ -327,8 +335,10 @@ it("names the type sample omission for a wide event", async () => {
   const metadata = await metadataOf(`${wide.join("\n")}\n`);
   expect(metadata.events[0]?.record_count).toBe(18);
   expect(metadata.events[0]?.record_types).toHaveLength(16);
+  // Two distinct types fall past the 16 listed; their records are still counted.
+  expect(metadata.events[0]?.record_types_omitted).toBe(2);
   expect(metadata.limitations.join(" ")).toContain(
-    "record_types omits the remaining types",
+    "record_types_omitted counts the omitted type names",
   );
 });
 
@@ -348,6 +358,50 @@ it("stops retaining record digests within one event and says so", async () => {
   expect(metadata.duplicate_record_count).toBe(0);
   expect(metadata.limitations.join(" ")).toContain(
     "duplicate_record_count is a lower bound",
+  );
+});
+
+it("counts a record under a type past the per-event type cap and says so", async () => {
+  // One more than the per-event cap, each record its own type: the last type
+  // cannot join the event's counts, but its record must still be counted.
+  const eventLines = Array.from(
+    { length: AUDITD_RETAINED_EVENT_TYPE_LIMIT + 1 },
+    (_unused, index) =>
+      record(
+        `W${String(index).padStart(2, "0")}`,
+        1700000000,
+        100,
+        1000,
+        "x=1",
+      ),
+  );
+  const metadata = await metadataOf(`${eventLines.join("\n")}\n`);
+  const event = metadata.events[0];
+  expect(event?.record_count).toBe(AUDITD_RETAINED_EVENT_TYPE_LIMIT + 1);
+  expect(event?.record_types).toHaveLength(16);
+  // 48 distinct types fall past the 16-name display list and one past the cap.
+  expect(event?.record_types_omitted).toBe(48 + 1);
+  expect(event?.record_count).toBe(AUDITD_RETAINED_EVENT_TYPE_LIMIT + 1);
+  expect(metadata.limitations.join(" ")).toContain("per-type counts stop at");
+});
+
+it("bounds the whole-file type table once the retained window fills", async () => {
+  // The window holds 4096 events; a log past it that names a fresh type per
+  // record must not grow the totals table with the file.
+  const lines = Array.from({ length: 4096 }, (_unused, index) =>
+    record("SYSCALL", 1700000000, 100, 1000 + index, "success=yes"),
+  );
+  for (let index = 0; index <= AUDITD_RETAINED_TYPE_LIMIT; index += 1)
+    lines.push(
+      record(`Z${String(index)}`, 1700000000, 200, 9000 + index, "x=1"),
+    );
+  const metadata = await metadataOf(`${lines.join("\n")}\n`);
+  expect(metadata.record_count).toBe(4096 + AUDITD_RETAINED_TYPE_LIMIT + 1);
+  expect(metadata.event_type_counts.length).toBeLessThanOrEqual(
+    AUDITD_RETAINED_TYPE_LIMIT + 1,
+  );
+  expect(metadata.limitations.join(" ")).toContain(
+    "event_type_counts omits those types",
   );
 });
 

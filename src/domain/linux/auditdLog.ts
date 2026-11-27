@@ -33,6 +33,20 @@ export const AUDITD_RETAINED_EVENT_LIMIT = 4096;
  * is bounded too; records past it are counted but no longer checked.
  */
 export const AUDITD_RETAINED_RECORD_LIMIT = 1024;
+/**
+ * Distinct `type=` labels whose whole-file totals are retained once the
+ * retained event window has filled. A log's record types are a small, fixed
+ * vocabulary, but a crafted header can name any token, so past the window the
+ * label is retained only while it fits; records under an unretained label are
+ * still counted as records but not under their type.
+ */
+export const AUDITD_RETAINED_TYPE_LIMIT = 256;
+/**
+ * Distinct `type=` labels counted per event. Unlike the whole-file totals this
+ * counts every record of the types it meets, so a capped event's per-type
+ * counts are exact for the types it lists and omit any first seen past the cap.
+ */
+export const AUDITD_RETAINED_EVENT_TYPE_LIMIT = 64;
 
 /** `type=... msg=audit(<sec>.<millis>:<serial>): <body>` — the auditd record header. */
 // The body is opaque bytes: a literal CR, U+2028 or U+2029 can reach it through
@@ -65,6 +79,12 @@ export interface AuditEventSummary {
   readonly serial: number;
   readonly record_count: number;
   readonly record_types: readonly AuditEventTypeCount[];
+  /**
+   * Distinct `type=` labels not in `record_types` because the event held its
+   * per-event type cap, plus the labels the display list dropped. Each label's
+   * records are still counted in `record_count`.
+   */
+  readonly record_types_omitted: number;
   readonly first_line: number;
   readonly last_line: number;
   /** Record types the event repeats with the same `item=` index. */
@@ -95,11 +115,22 @@ export interface AuditdLogInventory {
     readonly omitted_events: number;
     /**
      * True when an event past the retained window was counted once per run of
-     * its records rather than once. `event_count` is then an upper bound; false
-     * means either that no event left the window or that the tail did not
-     * repeat an identity, so the count is exact.
+     * its records rather than once, so `event_count` (and `omitted_events`) may
+     * include repeats of an event already counted.
      */
     readonly event_count_upper_bound: boolean;
+    /**
+     * True when that over-count is the only reason the total is not exact: the
+     * tail kept every identity it saw and repeated one, so the total counts each
+     * distinct event or run exactly and merely repeats some.
+     */
+    readonly event_count_lower_bound: boolean;
+    /**
+     * True when the tail held no identity for some records, so an event the
+     * total counted may have been counted before and the total says nothing
+     * about how many distinct events exist. Both bound flags stay false.
+     */
+    readonly event_count_identity_omitted: boolean;
     readonly trailing_bytes: number;
   };
   readonly limitations: readonly string[];
@@ -115,6 +146,8 @@ interface PendingEvent {
   readonly serial: number;
   recordCount: number;
   readonly typeCounts: Map<string, number>;
+  /** Records whose type was not counted because the event held the type cap. */
+  typeCountsOmitted: number;
   /** Record digests already seen in this event, bounded by the record limit. */
   readonly seenRecords: Set<string>;
   firstLine: number;
@@ -155,7 +188,10 @@ class AuditdLogScanner {
   // not-an-allowance: bytes of a final line that ended without a newline, a tally of what the file held rather than a budget.
   #trailingBytes = 0;
   #recordCount = 0;
+  // not-an-allowance: observed per-type record totals for the whole file; admitted at most AUDITD_RETAINED_TYPE_LIMIT distinct labels, which the scanner tallies rather than refuses.
   readonly #typeCounts = new Map<string, number>();
+  // not-an-allowance: distinct record-type labels the tail (events past the window) held past AUDITD_RETAINED_TYPE_LIMIT; a tally reported as an omission.
+  #omittedTypeCount = 0;
   readonly #events = new Map<string, PendingEvent>();
   /** First-seen order of the retained events, bounded to the sample. */
   readonly #sampleOrder: string[] = [];
@@ -175,16 +211,32 @@ class AuditdLogScanner {
   #duplicateCount = 0;
   /** Sampled events whose type map exceeded the inline type limit. */
   #typeSampleLimitedEventCount = 0;
+  /** Events whose record types exceeded AUDITD_RETAINED_EVENT_TYPE_LIMIT. */
+  #eventTypeOmittedEventCount = 0;
   /** Every retained event seen out of sequence, not just the sampled ones. */
   #interleavedEventCount = 0;
   /** Records whose event already held its full digest quota, so not checked. */
   #identityLimitedEventCount = 0;
   /**
    * Identities already counted as a tail event start, bounded like the retained
-   * window. A repeat means an interleaved tail event was counted once per run.
+   * window. A hit means a tail event was counted once per run, so the total
+   * repeats an event but still counts each one it met.
    */
   readonly #tailEventKeys = new Set<string>();
   #tailOverCount = false;
+  /**
+   * True once an identity past the window could not be held. From then on a
+   * membership miss no longer proves the event was not counted before, so the
+   * total cannot be bounded at all.
+   */
+  #tailIdentityOmitted = false;
+  /**
+   * Records past the retained window whose identity was held for the first
+   * time as a new event start. A later identity miss is only new information
+   * when more than one tail identity was seen: with one, a noncontiguous run
+   * must be that same event and the total under-counts instead of repeating.
+   */
+  #tailEventStarts = 0;
   /** Records past the retained window, whose identity is not joined. */
   #skippedRecordCount = 0;
   /** Lexicographically ordered event identity; a smaller one is out of order. */
@@ -244,11 +296,27 @@ class AuditdLogScanner {
       );
     if (this.#beyondWindowEventCount > 0 || this.#skippedRecordCount > 0)
       limitations.push(
-        `per-record identity is retained for the most recent ${String(AUDITD_RETAINED_EVENT_LIMIT)} events; ${String(this.#beyondWindowEventCount)} further event start(s) and ${String(this.#skippedRecordCount)} record(s) past that window are counted in the totals, but their duplicate, interleaving and event-start status is not established, so event_count is an upper bound when the tail interleaves events`,
+        `per-record identity is retained for the most recent ${String(AUDITD_RETAINED_EVENT_LIMIT)} events; ${String(this.#beyondWindowEventCount)} further event start(s) and ${String(this.#skippedRecordCount)} record(s) past that window are counted in the totals, but their duplicate, interleaving and event-start status is not established, so event_count can be an upper bound when the tail interleaves events`,
+      );
+    if (this.#tailIdentityOmitted)
+      limitations.push(
+        `the tail held ${String(AUDITD_RETAINED_EVENT_LIMIT)} event identities and met a further one it could not hold; an event start past that point may be an event already counted, so event_count is neither an upper nor a lower bound and no bound flag is set`,
+      );
+    else if (this.#tailOverCount && this.#tailEventStarts < 2)
+      limitations.push(
+        "the tail repeated one event across a noncontiguous run, so it was counted once per run; event_count is a lower bound because no other tail identity was seen",
       );
     if (this.#identityLimitedEventCount > 0)
       limitations.push(
-        `duplicate detection retains at most ${String(AUDITD_RETAINED_RECORD_LIMIT)} record digests per event; ${String(this.#identityLimitedEventCount)} record(s) past that limit are counted but no longer checked for repetition, so duplicate_record_count is a lower bound and a sampled event's record_types may omit a type first seen after the limit`,
+        `duplicate detection retains at most ${String(AUDITD_RETAINED_RECORD_LIMIT)} record digests per event; ${String(this.#identityLimitedEventCount)} record(s) past that limit are counted and tallied by type but no longer checked for repetition, so duplicate_record_count is a lower bound`,
+      );
+    if (this.#eventTypeOmittedEventCount > 0)
+      limitations.push(
+        `a retained event's per-type counts stop at ${String(AUDITD_RETAINED_EVENT_TYPE_LIMIT)} distinct types; ${String(this.#eventTypeOmittedEventCount)} event(s) hold records past that, so their record_types omits those types although record_count counts every record`,
+      );
+    if (this.#omittedTypeCount > 0)
+      limitations.push(
+        `${String(this.#omittedTypeCount)} record(s) past the retained window name a type beyond the ${String(AUDITD_RETAINED_TYPE_LIMIT)} distinct types whose totals are kept, so event_type_counts omits those types although record_count counts every record`,
       );
     limitations.push(
       "records are inventoried by header and record type: key-value fields, hex/escaped values, argument ordering and decoded syscall or permission meanings are not interpreted",
@@ -259,7 +327,7 @@ class AuditdLogScanner {
     );
     if (this.#typeSampleLimitedEventCount > 0)
       limitations.push(
-        `${String(AUDITD_INLINE_EVENT_TYPE_LIMIT)} record types are listed per sampled event, ordered by name; ${String(this.#typeSampleLimitedEventCount)} sampled event(s) hold more, so their record_types omits the remaining types even though record_count counts every record`,
+        `${String(AUDITD_INLINE_EVENT_TYPE_LIMIT)} record types are listed per sampled event, ordered by name; ${String(this.#typeSampleLimitedEventCount)} sampled event(s) hold more, so their record_types_omitted counts the omitted type names while record_count counts every record`,
       );
     return ok({
       metadata: {
@@ -268,8 +336,19 @@ class AuditdLogScanner {
         record_count: this.#recordCount,
         event_count: this.#windowEventCount + this.#beyondWindowEventCount,
         // A tail run whose identity was counted before is the same event
-        // counted twice, so only then does the total exceed the evidence.
-        event_count_upper_bound: this.#tailOverCount,
+        // counted again, so the total repeats an event. With only that one tail
+        // identity the total still counts every event it met, so it is a lower
+        // bound; a run that repeats after the identity cap, or that repeats one
+        // event while others were seen, leaves no honest bound either way.
+        event_count_upper_bound:
+          this.#tailOverCount &&
+          !this.#tailIdentityOmitted &&
+          this.#tailEventStarts >= 2,
+        event_count_lower_bound:
+          this.#tailOverCount &&
+          !this.#tailIdentityOmitted &&
+          this.#tailEventStarts < 2,
+        event_count_identity_omitted: this.#tailIdentityOmitted,
         event_type_counts: sortedCounts(this.#typeCounts),
         malformed_line_count: this.#malformedCount,
         malformed_lines: this.#malformed,
@@ -359,7 +438,14 @@ class AuditdLogScanner {
     }
 
     this.#recordCount += 1;
-    this.#typeCounts.set(type, (this.#typeCounts.get(type) ?? 0) + 1);
+    const typeCount = this.#typeCounts.get(type);
+    if (typeCount !== undefined) this.#typeCounts.set(type, typeCount + 1);
+    else if (
+      this.#windowEventCount < AUDITD_RETAINED_EVENT_LIMIT ||
+      this.#typeCounts.size < AUDITD_RETAINED_TYPE_LIMIT
+    )
+      this.#typeCounts.set(type, 1);
+    else this.#omittedTypeCount += 1;
 
     // The event identity is the whole join key: node, timestamp and serial.
     // Serial and timestamp are only unique enough to join on within one host,
@@ -379,12 +465,14 @@ class AuditdLogScanner {
       // The event's identity was not retained, so only a record that does not
       // share the previous record's identity can be shown to start one. A
       // contiguous tail is therefore exact, while an interleaved one is counted
-      // once per run it appears in, which makes the total an upper bound.
+      // once per run it appears in, which counts an event more than once.
       if (this.#lastEventKey !== key) {
         this.#beyondWindowEventCount += 1;
         if (this.#tailEventKeys.has(key)) this.#tailOverCount = true;
-        else if (this.#tailEventKeys.size < AUDITD_RETAINED_EVENT_LIMIT)
+        else if (this.#tailEventKeys.size < AUDITD_RETAINED_EVENT_LIMIT) {
           this.#tailEventKeys.add(key);
+          this.#tailEventStarts += 1;
+        } else this.#tailIdentityOmitted = true;
       }
       this.#skippedRecordCount += 1;
       this.#lastEventKey = key;
@@ -405,6 +493,7 @@ class AuditdLogScanner {
         serial,
         recordCount: 0,
         typeCounts: new Map(),
+        typeCountsOmitted: 0,
         seenRecords: new Set(),
         firstLine: this.#lineNumber,
         lastLine: this.#lineNumber,
@@ -434,10 +523,20 @@ class AuditdLogScanner {
       // At the limit the digest is not retained, so a repeat after this point
       // is counted as another record rather than a duplicate. The limitation
       // says so instead of letting the set grow with the file.
-      if (event.seenRecords.size < AUDITD_RETAINED_RECORD_LIMIT) {
+      if (event.seenRecords.size < AUDITD_RETAINED_RECORD_LIMIT)
         event.seenRecords.add(recordKey);
-        event.typeCounts.set(type, (event.typeCounts.get(type) ?? 0) + 1);
-      } else this.#identityLimitedEventCount += 1;
+      else this.#identityLimitedEventCount += 1;
+      // Type counts are kept apart from digest retention: a record past the
+      // digest limit is still tallied under its type, so a listed count is
+      // exact rather than stopping at the limit.
+      const typeCount = event.typeCounts.get(type);
+      if (typeCount !== undefined) event.typeCounts.set(type, typeCount + 1);
+      else if (event.typeCounts.size < AUDITD_RETAINED_EVENT_TYPE_LIMIT)
+        event.typeCounts.set(type, 1);
+      else {
+        event.typeCountsOmitted += 1;
+        this.#eventTypeOmittedEventCount += 1;
+      }
     }
     event.recordCount += 1;
     event.lastLine = this.#lineNumber;
@@ -452,6 +551,13 @@ class AuditdLogScanner {
   #summarize(event: PendingEvent): AuditEventSummary {
     if (event.typeCounts.size > AUDITD_INLINE_EVENT_TYPE_LIMIT)
       this.#typeSampleLimitedEventCount += 1;
+    // Records under a type the display list drops travel as the list's omitted
+    // count, so a reader can still account for every record.
+    const listed = boundedList(
+      sortedCounts(event.typeCounts),
+      AUDITD_INLINE_EVENT_TYPE_LIMIT,
+      event.typeCountsOmitted,
+    );
     return {
       event_id: eventId(event),
       node: event.node ?? null,
@@ -459,10 +565,8 @@ class AuditdLogScanner {
       event_millis: event.millis,
       serial: event.serial,
       record_count: event.recordCount,
-      record_types: boundedList(
-        sortedCounts(event.typeCounts),
-        AUDITD_INLINE_EVENT_TYPE_LIMIT,
-      ).items,
+      record_types: listed.items,
+      record_types_omitted: listed.omitted,
       first_line: event.firstLine,
       last_line: event.lastLine,
       duplicate_record_count: event.duplicateCount,
