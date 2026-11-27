@@ -79,9 +79,12 @@ const MAX_DIRECTORY_ENTRIES = 1_048_576;
 /**
  * Total characters of directory paths one parse retains. Deep nesting plus many
  * children multiplies its ancestors into each descendant's path, so this bounds
- * the representation even though every individual path is short.
+ * the representation even though every individual path is short. The reader
+ * charges its own rebuilt paths against the same allowance so the two views of
+ * the directory cannot retain more than it.
  */
-const MAX_PATH_BYTES = 32 * 1024 * 1024;
+export const COMPOUND_FILE_PATH_ALLOWANCE = 32 * 1024 * 1024;
+const MAX_PATH_BYTES = COMPOUND_FILE_PATH_ALLOWANCE;
 
 /** Header field offsets; all are relative to the start of the file. */
 const HEADER = {
@@ -134,6 +137,16 @@ export interface CompoundFileDirectoryEntry {
   readonly path: string | null;
   /** The declared name, or `null` when its length or encoding is invalid. */
   readonly name: string | null;
+  /**
+   * This entry's declared name as one plain path component, or `null` when the
+   * name cannot be one. The raw `name` may read as several components (`a/b`),
+   * a parent step, or carry a NUL, so a consumer that places this entry under
+   * its parent must use this component instead of the raw name. It is present
+   * even when `path` is null: an ancestor's unusable name or the cumulative
+   * allowance stops naming a path, not the entry's own name from naming a
+   * member of the storage that owns it.
+   */
+  readonly component: string | null;
   readonly type: CompoundFileEntryType;
   /**
    * The type byte exactly as declared, before it is mapped. `0` is an
@@ -835,6 +848,10 @@ export const parseCompoundFile = (
   // path. A cycle or a link outside the table is reported, not followed.
   const parents = new Map<number, number>();
   const paths = new Map<number, string>();
+  // The name each entry can contribute as one path component. A consumer that
+  // places a member under its parent needs this fact: rebuilding a path from
+  // the raw `name` would treat a rejected `a/b` as two components.
+  const components = new Map<number, string>();
   const visited = new Set<number>();
   let cycleCount = 0;
   let depthLimited = 0;
@@ -858,13 +875,15 @@ export const parseCompoundFile = (
       parent: number;
       prefix: string | null;
       depth: number;
-    }[] = [{ index, parent, prefix, depth: 0 }];
+      chainNamed: boolean;
+    }[] = [{ index, parent, prefix, depth: 0, chainNamed: true }];
     while (pending.length > 0) {
       const next = pending.pop() as {
         index: number;
         parent: number;
         prefix: string | null;
         depth: number;
+        chainNamed: boolean;
       };
       const entryIndex = next.index;
       if (entryIndex >= entryCount) {
@@ -884,17 +903,20 @@ export const parseCompoundFile = (
       // unpaired surrogate) cannot name a path. Its own facts stay, but it and
       // everything below it are left unnamed instead of projecting
       // `foo/bar` as two components or handing descendants their grandparent's
-      // prefix. `unnamedBelow` marks that carry so descendants inherit it.
+      // prefix. `descendantsNamed` marks that carry so descendants inherit it.
       const component =
         entry.name === null || entry.nameProblem !== null ? null : entry.name;
-      const path =
-        component === null
-          ? null
-          : next.prefix === null
-            ? component
-            : next.prefix === ""
-              ? component
-              : `${next.prefix}/${component}`;
+      // A child is listed where the tree put its parent only when every name on
+      // the chain is usable; an unusable name stops naming its whole subtree.
+      const descendantsNamed = next.chainNamed && component !== null;
+      if (component !== null) components.set(entryIndex, component);
+      const path = !descendantsNamed
+        ? null
+        : next.prefix === null
+          ? (component as string)
+          : next.prefix === ""
+            ? (component as string)
+            : `${next.prefix}/${component as string}`;
       // Charge the allowance before the string is retained: dropping it later
       // would leave the already-built text in `paths` and so bound nothing.
       // A path past the allowance is not stored, which also leaves its
@@ -920,6 +942,7 @@ export const parseCompoundFile = (
           parent: next.parent,
           prefix: next.prefix,
           depth: next.depth,
+          chainNamed: next.chainNamed,
         });
       if (entry.rightSibling !== null)
         pending.push({
@@ -927,6 +950,7 @@ export const parseCompoundFile = (
           parent: next.parent,
           prefix: next.prefix,
           depth: next.depth,
+          chainNamed: next.chainNamed,
         });
       // Only a canonical storage owns a child tree. An extra root record is a
       // directory entry outside entry 0 that claims to be a root: the format
@@ -946,6 +970,7 @@ export const parseCompoundFile = (
           parent: entryIndex,
           prefix: retained,
           depth: next.depth + 1,
+          chainNamed: descendantsNamed,
         });
       }
     }
@@ -1024,6 +1049,7 @@ export const parseCompoundFile = (
         index,
         path,
         name: entry.name,
+        component: components.get(index) ?? null,
         type: entry.type,
         declaredType: entry.declaredType,
         parentIndex: parent,
@@ -1073,6 +1099,7 @@ export const parseCompoundFile = (
       index,
       path,
       name: entry.name,
+      component: components.get(index) ?? null,
       type: entry.type,
       declaredType: entry.declaredType,
       parentIndex: parent,

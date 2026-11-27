@@ -1,6 +1,7 @@
 import { once } from "node:events";
 import { PassThrough, Readable } from "node:stream";
 
+import { Budget } from "../domain/budget.js";
 import type {
   CompoundFileEntryMetadata,
   CompoundFileMetadata,
@@ -8,6 +9,7 @@ import type {
 import type { RegionDecodeFailure } from "../domain/firmware/regionDecoder.js";
 import {
   COMPOUND_FILE_FIXED_LIMITS,
+  COMPOUND_FILE_PATH_ALLOWANCE,
   createCompoundFileDecoder,
   type CompoundFileChainProblem,
   type CompoundFileDirectoryEntry,
@@ -257,10 +259,13 @@ export class CompoundFileArtifactReader implements ArtifactReader {
           );
         return;
       } catch (cause: unknown) {
+        // A cancelled waiter aborts only its own wait: the preparation it was
+        // borrowing keeps running under its starter's signal, and discarding it
+        // here would make the next caller read and parse the file again.
+        if (signal?.aborted === true) throw cause;
         if (this.#prepared === pending) this.#prepared = undefined;
         if (
           pending.signal !== signal &&
-          signal?.aborted !== true &&
           artifactReadCancelledBy(cause, pending.signal)
         )
           continue;
@@ -275,47 +280,83 @@ export class CompoundFileArtifactReader implements ArtifactReader {
     // damaged tree can hold two entries with the same logical path, and one
     // must not silently replace the other.
     const claimed = new Set<string>();
+    // The parser's allowance bounds the paths it stores, not the ones the
+    // reader rebuilds under a placed parent, so the reader charges its own
+    // retained path text against the same ceiling.
+    const pathBudget = new Budget(COMPOUND_FILE_PATH_ALLOWANCE);
     // A storage renamed by claimPath moves its whole subtree, so each parent's
     // placed path is carried to its descendants: otherwise a child would keep
     // the declared prefix while its parent was listed somewhere else, and the
-    // registry rejects that as a file prefix.
+    // registry rejects that as a file prefix. Directory ordinals say nothing
+    // about parent-before-child, so a child whose parent is not placed yet
+    // waits until it is instead of claiming a prefix its parent may lose.
     const placedByIndex = new Map<number, string>();
     const entries = new Map<string, ArtifactEntry>();
     const byPath = new Map<string, string>();
-    for (const entry of image.entries) {
+    const place = (entry: CompoundFileDirectoryEntry): void => {
       const artifact = toArtifactEntry(entry);
-      if (artifact === null) continue;
+      if (artifact === null) return;
       const key = String(entry.index);
       const declaredParent = entry.parentIndex;
       const placedParent =
         declaredParent === null ? undefined : placedByIndex.get(declaredParent);
-      const declaredPrefix =
-        entry.path === null || entry.name === null
-          ? undefined
-          : entry.path.slice(
-              0,
-              Math.max(0, entry.path.length - entry.name.length - 1),
-            );
-      // The parser leaves an entry unnamed when an ancestor's name cannot name
-      // a path, so its parent is known but its own path is not. Projecting it
-      // onto the placed parent keeps it under that storage instead of
-      // inventing a root-level member the directory never declared.
+      // The parser owns where its tree lists a member: the parent's placed path
+      // plus the member's own usable component. `path` may be null because the
+      // entry is an orphan, an ancestor's name cannot name a path, or the
+      // cumulative allowance stopped retaining the text; in every case the
+      // parent and this entry's component still say where the directory put it,
+      // and claiming it at the root would invent a member the tree never holds.
+      const component = entry.component;
+      const listed =
+        placedParent === undefined || component === null
+          ? null
+          : placedParent === ""
+            ? component
+            : `${placedParent}/${component}`;
       const projected =
-        placedParent === undefined ||
-        entry.name === null ||
-        placedParent === declaredPrefix
+        listed === null || listed === artifact.path
           ? artifact
-          : { ...artifact, path: `${placedParent}/${entry.name}` };
-      const placed = claimPath(
-        projected,
-        claimed,
-        entry.index,
-        artifact.limitations,
-      );
+          : { ...artifact, path: listed };
+      const placed = claimPath(projected, claimed, pathBudget, entry.index);
       placedByIndex.set(entry.index, placed.path);
       entries.set(key, placed);
       byPath.set(placed.path, key);
+    };
+    // Ancestors first: a child's path is built from its parent's placed path,
+    // so the parent must be placed before it whatever order the directory
+    // lists them in. The root storage is not a member of itself, so it seeds
+    // the map at the empty prefix its children extend.
+    for (const entry of image.entries)
+      if (entry.type === "root-storage") placedByIndex.set(entry.index, "");
+    const waiting = new Map<number, CompoundFileDirectoryEntry[]>();
+    const settle = (entry: CompoundFileDirectoryEntry): void => {
+      const queued = waiting.get(entry.index);
+      if (queued === undefined) return;
+      waiting.delete(entry.index);
+      for (const child of queued) {
+        place(child);
+        // A dropped child (the root storage is the only one) still has to
+        // release its own children; its placed path is absent, so those fall
+        // back to the parser's path.
+        settle(child);
+      }
+    };
+    for (const entry of image.entries) {
+      const parent = entry.parentIndex;
+      if (parent !== null && !placedByIndex.has(parent)) {
+        const siblings = waiting.get(parent) ?? [];
+        siblings.push(entry);
+        waiting.set(parent, siblings);
+        continue;
+      }
+      place(entry);
+      settle(entry);
     }
+    // A parent the directory stream does not hold cannot place its children;
+    // those keep the parser's path, which is what the directory declared, so
+    // nothing is silently dropped.
+    for (const orphans of waiting.values())
+      for (const entry of orphans) place(entry);
     // The final check can still reject a carrier rewritten during the read, so
     // nothing is published until it succeeds: `formatMetadata()` must not
     // describe an image whose traversal failed.
@@ -412,17 +453,33 @@ const drain = (output: PassThrough): Promise<void> =>
  * Claiming compares the normalized identity, not the raw spelling: the
  * inventory registry normalizes NFC, so two canonically equivalent names would
  * otherwise both pass here and abort the whole inventory downstream.
+ *
+ * `paths` bounds the text retained across every entry, because the parser's
+ * own allowance covers only what it stores: a member whose path it cannot
+ * retain is placed under its parent here, so the reader charges those strings
+ * too. An entry past the allowance keeps its ordinal path and says why.
  */
 const claimPath = (
   entry: ArtifactEntry,
   claimed: Set<string>,
+  paths: Budget,
   index: number,
-  limitations: readonly string[],
 ): ArtifactEntry => {
-  const identity = normalizedIdentity(entry.path);
+  const budgeted =
+    entry.path === "" || paths.tryCharge(entry.path.length)
+      ? entry
+      : {
+          ...entry,
+          path: "",
+          limitations: [
+            ...entry.limitations,
+            "Directory paths exceeded the cumulative allowance this read retains, so this entry is listed under its source ordinal; its declared name and facts are kept.",
+          ],
+        };
+  const identity = normalizedIdentity(budgeted.path);
   const collides =
-    entry.path === "" || identity === null || claimed.has(identity);
-  let path = entry.path;
+    budgeted.path === "" || identity === null || claimed.has(identity);
+  let path = budgeted.path;
   if (collides) {
     // A member may literally be named `entry-<ordinal>`, so the fallback is
     // probed against the same set; reusing a claimed fallback would overwrite
@@ -433,16 +490,20 @@ const claimPath = (
       path = `${base}-${String(suffix)}`;
   }
   claimed.add(collides ? path : (identity as string));
-  if (!collides) return entry;
+  if (!collides && budgeted === entry) return entry;
   return {
-    ...entry,
+    ...budgeted,
     path,
-    ...(entry.path === "" || entry.sourcePath !== undefined
+    ...(budgeted.path === "" || budgeted.sourcePath !== undefined
       ? {}
-      : { sourcePath: entry.path }),
+      : { sourcePath: budgeted.path }),
     limitations: [
-      ...limitations,
-      "This entry's declared name is not a single safe path component, or another entry already claimed its logical path, so it is listed under its source ordinal; the declared name, when it has one, is retained in sourcePath.",
+      ...budgeted.limitations,
+      ...(budgeted === entry
+        ? [
+            "This entry's declared name is not a single safe path component, or another entry already claimed its logical path, so it is listed under its source ordinal; the declared name, when it has one, is retained in sourcePath.",
+          ]
+        : []),
     ],
   };
 };
@@ -489,7 +550,11 @@ const entryMetadata = (
     right_sibling: entry.rightSibling,
     child: entry.child,
     starting_sector: stream ? entry.startingSector : null,
-    stream_size: stream ? entry.streamSize : null,
+    // A size past what a JavaScript number carries exactly is stored clamped,
+    // and publishing the clamp would present an invented observed size next to
+    // the limitation that says the size is unknown.
+    stream_size:
+      stream && entry.streamSizeRepresentable ? entry.streamSize : null,
     storage: stream || entry.type === "root-storage" ? entry.storage : null,
     contiguous: stream ? entry.contiguous : null,
   };

@@ -71,6 +71,68 @@ const compoundFile = (options: {
   return file;
 };
 
+/**
+ * A version-3 container whose directory spans as many sectors as `entries`
+ * need. `compoundFile` fixes the layout its small fixtures use; a directory
+ * past one 512-byte sector needs its own FAT sector and sector count.
+ */
+const sprawlingFixture = (entries: readonly FixtureEntry[]): Buffer => {
+  const directorySectors = Math.max(
+    1,
+    Math.ceil((entries.length * 128) / SECTOR),
+  );
+  let fatSectors = 1;
+  while (fatSectors * 128 < directorySectors + fatSectors) fatSectors += 1;
+  if (fatSectors > 109)
+    throw new Error("sprawling fixture needs a DIFAT chain");
+  const firstDirectorySector = fatSectors;
+  const totalSectors = fatSectors + directorySectors;
+  const file = Buffer.alloc((totalSectors + 1) * SECTOR);
+  Buffer.from("d0cf11e0a1b11ae1", "hex").copy(file, 0);
+  file.writeUInt16LE(0x003e, 0x18);
+  file.writeUInt16LE(3, 0x1a);
+  file.writeUInt16LE(0xfffe, 0x1c);
+  file.writeUInt16LE(9, 0x1e);
+  file.writeUInt16LE(6, 0x20);
+  file.writeUInt32LE(fatSectors, 0x2c);
+  file.writeUInt32LE(firstDirectorySector, 0x30);
+  file.writeUInt32LE(4096, 0x38);
+  file.writeUInt32LE(END, 0x3c);
+  file.writeUInt32LE(0, 0x40);
+  file.writeUInt32LE(END, 0x44);
+  file.writeUInt32LE(0, 0x48);
+  for (let index = 0; index < 109; index += 1)
+    file.writeUInt32LE(index < fatSectors ? index : FREE, 0x4c + index * 4);
+  const cells: number[] = [];
+  for (let sector = 0; sector < totalSectors; sector += 1)
+    cells.push(
+      sector < firstDirectorySector
+        ? FREE
+        : sector + 1 < totalSectors
+          ? sector + 1
+          : END,
+    );
+  for (let sector = 0; sector < fatSectors; sector += 1)
+    for (let index = 0; index < 128; index += 1)
+      file.writeUInt32LE(
+        cells[sector * 128 + index] ?? FREE,
+        (1 + sector) * SECTOR + index * 4,
+      );
+  entries.forEach((entry, index) => {
+    const base = (1 + firstDirectorySector) * SECTOR + index * 128;
+    const entryName = Buffer.from(`${entry.name}\0`, "utf16le");
+    entryName.copy(file, base);
+    file.writeUInt16LE(entryName.length, base + 0x40);
+    file.writeUInt8(entry.type, base + 0x42);
+    file.writeUInt32LE(entry.left ?? FREE, base + 0x44);
+    file.writeUInt32LE(entry.right ?? FREE, base + 0x48);
+    file.writeUInt32LE(entry.child ?? FREE, base + 0x4c);
+    file.writeUInt32LE(entry.start, base + 0x74);
+    file.writeBigUInt64LE(BigInt(entry.size), base + 0x78);
+  });
+  return file;
+};
+
 const write = async (name: string, bytes: Buffer): Promise<string> => {
   const directory = await createTestTempDirectory("rea-compound-file-");
   const path = join(directory, name);
@@ -270,6 +332,33 @@ it("keeps a descendant of an unusable name under its storage", async () => {
   expect(paths).not.toContain("payload");
 });
 
+it("does not rebuild a rejected name into a path under its parent", async () => {
+  // The storage is named safely; only the stream's own name reads as two
+  // components. The parser refuses that name, so the member has no logical
+  // path. Projecting it onto its parent by concatenating the raw name would
+  // invent an intermediate directory the directory never declared.
+  const path = await write(
+    "rejected-member.automaticDestinations-ms",
+    compoundFile({
+      entries: rootWith(1, [
+        { name: "Nested", type: 1, start: 0, size: 0, child: 2 },
+        { name: "bad/name", type: 2, start: 2, size: 512 },
+      ]),
+    }),
+  );
+  const inventory = await scanCanonicalArtifactInventory(path);
+  const paths = inventory.occurrences
+    .map((row) => row.logical_path)
+    .filter((row) => row !== ".");
+  expect(paths).not.toContain("Nested/bad/name");
+  expect(paths.some((row) => row.includes("bad"))).toBe(false);
+  // The member is still listed, under its source ordinal, with its raw name.
+  const listed = inventory.occurrences.find(
+    (row) => row.source_path === "bad/name",
+  );
+  expect(listed?.logical_path).toBe("entry-2");
+});
+
 it("keeps an entry that declares no usable name", async () => {
   const bytes = compoundFile({
     entries: rootWith(1, [
@@ -357,18 +446,17 @@ it("keeps a storage's children under the path it was listed at", async () => {
 });
 
 it("moves a projected storage's child under the path it was listed at", async () => {
-  // `foo` is a file and something else wants `foo/bar`. Both cannot exist, and
-  // the second must be projected rather than aborting the whole inventory.
+  // The child is listed before the storage that owns it (ordinal 1, parent 3),
+  // so placing it by directory order would claim `foo/child` before the storage
+  // is projected to `entry-3`. The parent must be placed first.
   const path = await write(
     "prefix-conflict.automaticDestinations-ms",
     compoundFile({
-      entries: rootWith(1, [
-        // The file comes first, so it owns `foo`. Its right sibling is the
-        // storage that also wants `foo`; the storage is projected, and the
-        // child it carries moves with it instead of aborting the inventory.
-        { name: "foo", type: 2, start: 2, size: 512, right: 2 },
-        { name: "foo", type: 1, start: 0, size: 0, child: 3 },
+      entries: rootWith(2, [
+        // Ordinal 1 is the storage's child; the storage itself is ordinal 3.
         { name: "child", type: 2, start: 3, size: 3 },
+        { name: "foo", type: 2, start: 2, size: 512, right: 3 },
+        { name: "foo", type: 1, start: 0, size: 0, child: 1 },
       ]),
     }),
   );
@@ -379,11 +467,61 @@ it("moves a projected storage's child under the path it was listed at", async ()
   expect(paths).toContain("foo");
   // The storage is projected to its ordinal and its child follows it, so no
   // path in the result would be rejected as a prefix conflict.
-  expect(paths).toContain("entry-2");
-  expect(paths).toContain("entry-2/child");
+  expect(paths).toContain("entry-3");
+  expect(paths).toContain("entry-3/child");
   expect(paths).not.toContain("foo/child");
   expect(new Set(paths).size).toBe(paths.length);
-  expect(new Set(paths).size).toBe(paths.length);
+});
+
+it("bounds the path text the reader rebuilds under a placed parent", async () => {
+  // The parser's allowance covers the paths it can name, but a member of a
+  // storage whose own name cannot name a path is placed here, and those
+  // rebuilt paths are charged against the same ceiling. Fifty thousand
+  // members under sixty nested maximum-length names retain about 100 MiB of
+  // path text without that charge.
+  const depth = 60;
+  const name = "s".repeat(31);
+  const leaves = 50_000;
+  const entries: FixtureEntry[] = [
+    // Ordinal 1 is the unusable storage; storages 2..61 nest under each other.
+    { name: "bad/name", type: 1, start: 0, size: 0, child: 2 },
+  ];
+  for (let level = 0; level < depth; level += 1)
+    entries.push({
+      name,
+      type: 1,
+      start: 0,
+      size: 0,
+      child: level === depth - 1 ? 2 + depth : 3 + level,
+    });
+  const firstLeaf = 2 + depth;
+  for (let leaf = 0; leaf < leaves; leaf += 1)
+    entries.push({
+      name,
+      type: 2,
+      start: END,
+      size: 0,
+      ...(leaf === leaves - 1 ? {} : { right: firstLeaf + leaf + 1 }),
+    });
+  const path = await write(
+    "path-allowance.automaticDestinations-ms",
+    sprawlingFixture(rootWith(1, entries)),
+  );
+  const inventory = await scanCanonicalArtifactInventory(path);
+  const members = inventory.occurrences.filter(
+    (row) => row.format_metadata?.kind === "compound-file-entry",
+  );
+  const retained = members.reduce(
+    (total, row) => total + row.logical_path.length,
+    0,
+  );
+  expect(members.length).toBe(leaves + depth + 1);
+  expect(retained).toBeLessThanOrEqual(32 * 1024 * 1024);
+  expect(
+    members.filter((row) =>
+      row.limitations.some((text) => text.includes("cumulative allowance")),
+    ).length,
+  ).toBeGreaterThan(0);
 });
 
 it("claims a canonically equivalent name as one path", async () => {
@@ -463,6 +601,13 @@ it("does not publish a clamped size as the declared size", async () => {
     (row) => row.logical_path === "Huge",
   );
   expect(listed).toMatchObject({ entry_kind: "metadata", declared_size: null });
+  // The clamp that stands in for the unrepresentable size must not be
+  // published either: inventing an observed size next to a limitation that
+  // says the size is unknown would present a fact the file never declared.
+  expect(listed?.format_metadata).toMatchObject({
+    kind: "compound-file-entry",
+    stream_size: null,
+  });
   expect(listed?.limitations).toContainEqual(
     expect.stringMatching(/more bytes than a JavaScript number carries/u),
   );
@@ -524,6 +669,69 @@ it("refuses a file above the whole-file ceiling with its ceiling named", async (
       },
     });
   } finally {
+    await reader.close();
+  }
+});
+
+it("keeps a cancelled waiter from restarting a shared preparation", async () => {
+  const reader = new CompoundFileArtifactReader(
+    await write(
+      "shared-stays.automaticDestinations-ms",
+      compoundFile({
+        entries: rootWith(1, [
+          { name: "Stream", type: 2, start: 2, size: 512 },
+        ]),
+      }),
+    ),
+  );
+  const read = ArtifactFileSource.prototype.read;
+  let reads = 0;
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  // The first read parks, so a preparation that is discarded has to start a
+  // second read while the first is still in flight.
+  const spy = vi
+    .spyOn(ArtifactFileSource.prototype, "read")
+    .mockImplementation(function (this: ArtifactFileSource, signal) {
+      reads += 1;
+      if (reads === 1) return gate.then(() => read.call(this, signal));
+      return read.call(this, signal);
+    });
+  const collect = async (signal?: AbortSignal): Promise<string[]> => {
+    const paths: string[] = [];
+    for await (const entry of reader.entries(signal)) paths.push(entry.path);
+    return paths;
+  };
+  const starter = new AbortController();
+  const cancelling = new AbortController();
+  let started: Promise<string[]> | undefined;
+  let abandoned: Promise<string[]> | undefined;
+  let joined: Promise<string[]> | undefined;
+  try {
+    started = collect(starter.signal);
+    // A caller that joins the in-flight preparation and then cancels must end
+    // only its own wait: discarding the preparation here would make every later
+    // caller read and parse the file again.
+    abandoned = collect(cancelling.signal);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    cancelling.abort("cancelled after joining");
+    await expect(abandoned).rejects.toMatchObject({ reason: "cancelled" });
+    joined = collect();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The read the cancelled caller borrowed is still the only one.
+    expect(reads).toBe(1);
+    release();
+    await expect(joined).resolves.toContain("Stream");
+    await expect(started).resolves.toContain("Stream");
+  } finally {
+    release();
+    starter.abort();
+    cancelling.abort();
+    for (const pending of [started, abandoned, joined])
+      await pending?.catch(() => undefined);
+    spy.mockRestore();
     await reader.close();
   }
 });
