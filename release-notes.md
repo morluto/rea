@@ -527,6 +527,7 @@
 * **native:** resolve name and import selectors through one owner ([#14250](https://github.com/morluto/rea/issues/14250)) ([cab39c6](https://github.com/morluto/rea/commit/cab39c640a50726d7766f202046a403ba8e72fff))
 * **native:** resolve Objective-C protocol _classProperties via pointer fixups ([#14283](https://github.com/morluto/rea/issues/14283)) ([5a283a5](https://github.com/morluto/rea/commit/5a283a5f874fdb472afdd4355733aced05c38d02))
 * **native:** validate SHT_GNU_HASH bounds and fall back to DT_GNU_HASH ([#13713](https://github.com/morluto/rea/issues/13713)) ([e6b30f9](https://github.com/morluto/rea/commit/e6b30f945ec214e05ca13c36874e155737a6d4cb))
+* **nuget:** preserve explicitly spaced publisher metadata ([#14906](https://github.com/morluto/rea/issues/14906)) ([bbed314](https://github.com/morluto/rea/commit/bbed314998666ed84128aa25f532ce27a6380e64))
 * **objc:** preserve class import reader failures ([#13892](https://github.com/morluto/rea/issues/13892)) ([99c2104](https://github.com/morluto/rea/commit/99c2104da9b3e4d179436cbed477c98668a935a3))
 * **objdump:** summarize command output by its size ([285af34](https://github.com/morluto/rea/commit/285af34aead58d24cd503bb49047d238b4f25053))
 * **package:** declare the projected manifest scripts without prepare ([68e1ec3](https://github.com/morluto/rea/commit/68e1ec3e3633af005bbac8ab3a077a3741107e41))
