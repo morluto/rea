@@ -537,6 +537,74 @@ describe("LabviewArtifactProvider", () => {
     }
   });
 
+  /** The container's block-info list offset, from its info section. */
+  const blockInfoOf = (container: Buffer): number => {
+    const info = container.readUInt32BE(16);
+    return info + container.readUInt32BE(info + 44);
+  };
+
+  it("reports an impossible block count as truncated, not as capacity", () => {
+    const container = buildLabviewRsrc([
+      { ident: "vers", sections: [labviewVersionSection()] },
+    ]);
+    // 5000 declared blocks need 60,000 header bytes the list cannot hold.
+    container.writeUInt32BE(4999, blockInfoOf(container));
+    const parsed = parseLabviewRsrc(container);
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.failure.failure.kind).toBe("truncated");
+  });
+
+  it("keeps a fully framed block count over its allowance a capacity refusal", () => {
+    const parsed = parseLabviewRsrc(
+      buildLabviewRsrc(
+        Array.from({ length: 4097 }, () => ({
+          ident: "DFDS",
+          sections: [Buffer.from("x")],
+        })),
+      ),
+    );
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.failure.failure).toMatchObject({
+      kind: "limit",
+      limit: { name: "labview_rsrc_blocks", maximum: 4096, required: 4097 },
+    });
+  });
+
+  it("reports an impossible section count as truncated, not as capacity", () => {
+    const container = buildLabviewRsrc([
+      { ident: "vers", sections: [labviewVersionSection()] },
+    ]);
+    // The first block header's +4 holds its section count minus one.
+    container.writeUInt32BE(4999, blockInfoOf(container) + 4 + 4);
+    const parsed = parseLabviewRsrc(container);
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.failure.failure.kind).toBe("truncated");
+  });
+
+  it("keeps a fully framed section count over its allowance a capacity refusal", () => {
+    const parsed = parseLabviewRsrc(
+      buildLabviewRsrc([
+        {
+          ident: "DFDS",
+          sections: Array.from({ length: 4097 }, () => Buffer.from("x")),
+        },
+      ]),
+    );
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.failure.failure).toMatchObject({
+      kind: "limit",
+      limit: {
+        name: "labview_rsrc_sections_per_block",
+        maximum: 4096,
+        required: 4097,
+      },
+    });
+  });
+
   it("keeps the completed file identity on a later parse failure", async () => {
     const root = await createTestTempDirectory("rea-labview-identity-");
     const path = join(root, "fixture.vi");

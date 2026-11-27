@@ -329,6 +329,14 @@ export const parseLabviewRsrc = (
       });
     const listEnd = Math.min(blockInfo + blockInfoBytes, infoEnd);
     const blockCount = reader.u32(blockInfo) + 1;
+    const blockHeadersAt = blockInfo + 4;
+    const headersEnd = blockHeadersAt + blockCount * BLOCK_HEADER_BYTES;
+    // A table that cannot fit is damaged input, not a capacity question:
+    // frame it before applying the count allowance.
+    if (!inside(blockHeadersAt, blockCount * BLOCK_HEADER_BYTES, listEnd))
+      throw truncatedInput(FORMAT, "truncated RSRC block headers", {
+        offset: blockHeadersAt,
+      });
     if (blockCount > MAX_BLOCKS)
       throw decodeLimit(
         FORMAT,
@@ -336,12 +344,6 @@ export const parseLabviewRsrc = (
         limit("labview_rsrc_blocks", MAX_BLOCKS, blockCount),
         { offset: blockInfo },
       );
-    const blockHeadersAt = blockInfo + 4;
-    const headersEnd = blockHeadersAt + blockCount * BLOCK_HEADER_BYTES;
-    if (!inside(blockHeadersAt, blockCount * BLOCK_HEADER_BYTES, listEnd))
-      throw truncatedInput(FORMAT, "truncated RSRC block headers", {
-        offset: blockHeadersAt,
-      });
 
     const blocks: LabviewBlock[] = [];
     const versionSections: Uint8Array[] = [];
@@ -362,6 +364,20 @@ export const parseLabviewRsrc = (
         .range(headerAt, 4, "block identifier")
         .toString("latin1");
       const sectionCount = reader.u32(headerAt + 4) + 1;
+      const startsAt = blockInfo + reader.u32(headerAt + 8);
+      // Section-start tables follow the count word and every block header;
+      // blocks may share one later table, but none may reuse header rows.
+      if (startsAt < headersEnd)
+        throw malformedInput(
+          FORMAT,
+          "RSRC section-start table overlaps the block headers",
+          { offset: headerAt + 8, field: identifier },
+        );
+      if (!inside(startsAt, sectionCount * SECTION_START_BYTES, listEnd))
+        throw truncatedInput(FORMAT, "truncated RSRC section starts", {
+          offset: startsAt,
+          field: identifier,
+        });
       if (sectionCount > MAX_SECTIONS_PER_BLOCK)
         throw decodeLimit(
           FORMAT,
@@ -385,20 +401,6 @@ export const parseLabviewRsrc = (
           ),
           { offset: headerAt + 4, field: identifier },
         );
-      const startsAt = blockInfo + reader.u32(headerAt + 8);
-      // Section-start tables follow the count word and every block header;
-      // blocks may share one later table, but none may reuse header rows.
-      if (startsAt < headersEnd)
-        throw malformedInput(
-          FORMAT,
-          "RSRC section-start table overlaps the block headers",
-          { offset: headerAt + 8, field: identifier },
-        );
-      if (!inside(startsAt, sectionCount * SECTION_START_BYTES, listEnd))
-        throw truncatedInput(FORMAT, "truncated RSRC section starts", {
-          offset: startsAt,
-          field: identifier,
-        });
       namesBase = Math.max(
         namesBase,
         startsAt + sectionCount * SECTION_START_BYTES,
