@@ -310,6 +310,60 @@ it("does not reuse a fallback path a member already claimed", async () => {
   expect(new Set(paths).size).toBe(paths.length);
 });
 
+it("keeps a storage's children under the path it was listed at", async () => {
+  // Two entries are both named `item`: the stream is listed first and keeps
+  // the path, so the storage behind it is projected to `entry-2`. Its child
+  // must move with it — leaving it at `item/child` would put a file named
+  // `item` in front of a path under it, which the registry rejects.
+  const path = await write(
+    "renamed-storage.automaticDestinations-ms",
+    compoundFile({
+      entries: rootWith(1, [
+        { name: "item", type: 2, start: 2, size: 512, right: 2 },
+        { name: "item", type: 1, start: 0, size: 0, child: 3 },
+        { name: "child", type: 2, start: 3, size: 3 },
+      ]),
+    }),
+  );
+  const inventory = await scanCanonicalArtifactInventory(path);
+  const paths = inventory.occurrences
+    .map((row) => row.logical_path)
+    .filter((row) => row !== ".");
+  expect(paths).toContain("entry-2");
+  expect(paths).toContain("entry-2/child");
+  expect(paths).not.toContain("item/child");
+});
+
+it("moves a projected storage's child under the path it was listed at", async () => {
+  // `foo` is a file and something else wants `foo/bar`. Both cannot exist, and
+  // the second must be projected rather than aborting the whole inventory.
+  const path = await write(
+    "prefix-conflict.automaticDestinations-ms",
+    compoundFile({
+      entries: rootWith(1, [
+        // The file comes first, so it owns `foo`. Its right sibling is the
+        // storage that also wants `foo`; the storage is projected, and the
+        // child it carries moves with it instead of aborting the inventory.
+        { name: "foo", type: 2, start: 2, size: 512, right: 2 },
+        { name: "foo", type: 1, start: 0, size: 0, child: 3 },
+        { name: "child", type: 2, start: 3, size: 3 },
+      ]),
+    }),
+  );
+  const inventory = await scanCanonicalArtifactInventory(path);
+  const paths = inventory.occurrences
+    .map((row) => row.logical_path)
+    .filter((row) => row !== ".");
+  expect(paths).toContain("foo");
+  // The storage is projected to its ordinal and its child follows it, so no
+  // path in the result would be rejected as a prefix conflict.
+  expect(paths).toContain("entry-2");
+  expect(paths).toContain("entry-2/child");
+  expect(paths).not.toContain("foo/child");
+  expect(new Set(paths).size).toBe(paths.length);
+  expect(new Set(paths).size).toBe(paths.length);
+});
+
 it("claims a canonically equivalent name as one path", async () => {
   // `é` (U+00E9) and `e` + U+0301 normalize to the same NFC path. Claiming
   // raw spellings would let both through and the inventory registry would

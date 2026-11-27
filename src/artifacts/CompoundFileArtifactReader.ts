@@ -275,13 +275,41 @@ export class CompoundFileArtifactReader implements ArtifactReader {
     // damaged tree can hold two entries with the same logical path, and one
     // must not silently replace the other.
     const claimed = new Set<string>();
+    // A storage renamed by claimPath moves its whole subtree, so each parent's
+    // placed path is carried to its descendants: otherwise a child would keep
+    // the declared prefix while its parent was listed somewhere else, and the
+    // registry rejects that as a file prefix.
+    const placedByIndex = new Map<number, string>();
     const entries = new Map<string, ArtifactEntry>();
     const byPath = new Map<string, string>();
     for (const entry of image.entries) {
       const artifact = toArtifactEntry(entry);
       if (artifact === null) continue;
       const key = String(entry.index);
-      const placed = claimPath(artifact, claimed, entry.index);
+      const declaredParent = entry.parentIndex;
+      const placedParent =
+        declaredParent === null ? undefined : placedByIndex.get(declaredParent);
+      const declaredPrefix =
+        entry.path === null || entry.name === null
+          ? undefined
+          : entry.path.slice(
+              0,
+              Math.max(0, entry.path.length - entry.name.length - 1),
+            );
+      const projected =
+        placedParent !== undefined &&
+        declaredPrefix !== undefined &&
+        entry.name !== null &&
+        placedParent !== declaredPrefix
+          ? { ...artifact, path: `${placedParent}/${entry.name}` }
+          : artifact;
+      const placed = claimPath(
+        projected,
+        claimed,
+        entry.index,
+        artifact.limitations,
+      );
+      placedByIndex.set(entry.index, placed.path);
       entries.set(key, placed);
       byPath.set(placed.path, key);
     }
@@ -386,6 +414,7 @@ const claimPath = (
   entry: ArtifactEntry,
   claimed: Set<string>,
   index: number,
+  limitations: readonly string[],
 ): ArtifactEntry => {
   const identity = normalizedIdentity(entry.path);
   const collides =
@@ -405,9 +434,11 @@ const claimPath = (
   return {
     ...entry,
     path,
-    ...(entry.path === "" ? {} : { sourcePath: entry.path }),
+    ...(entry.path === "" || entry.sourcePath !== undefined
+      ? {}
+      : { sourcePath: entry.path }),
     limitations: [
-      ...entry.limitations,
+      ...limitations,
       "This entry's declared name is not a single safe path component, or another entry already claimed its logical path, so it is listed under its source ordinal; the declared name, when it has one, is retained in sourcePath.",
     ],
   };
