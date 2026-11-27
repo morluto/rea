@@ -1477,6 +1477,56 @@ struct rea_after { char c; int i; };`;
           ).status,
           "available",
         );
+        // A typedef of an anonymous composite is stored as the composite
+        // itself, so 254 pointers behind its int member chain 256 levels and
+        // define; one more pointer chains 257 and is refused.
+        const anonymous = await flood.call("define_native_data_types", {
+          declarations: `typedef struct { int ${"*".repeat(254)} x; } rea_anon;`,
+          declarations_max_utf16: max,
+        });
+        assert.equal(anonymous.types[0].status, "defined");
+        assert.equal(
+          requireMcpToolError(
+            await flood.raw("define_native_data_types", {
+              declarations: `typedef struct { int ${"*".repeat(255)} x; } rea_anon_deep;`,
+              declarations_max_utf16: max,
+            }),
+          ).code,
+          "resource_constraint",
+        );
+        // A grouped signature name carries the same pointer chain.
+        assert.equal(
+          requireMcpToolError(
+            await flood.raw("annotate_native_function", {
+              procedure,
+              signature: `int ${"*".repeat(4000)} (total)(void)`,
+              signature_max_utf16: 4096,
+            }),
+          ).code,
+          "resource_constraint",
+        );
+        // A tag and a typedef may share a name; the typedef does not reset
+        // the tag chain the next composite builds on.
+        const shared = await flood.call("define_native_data_types", {
+          declarations:
+            "struct rea_shared { int x; }; typedef int rea_shared; struct rea_uses { struct rea_shared *p; };",
+          declarations_max_utf16: max,
+        });
+        assert.equal(shared.types[0].status, "defined");
+        assert.equal(
+          requireMcpToolError(
+            await flood.raw("define_native_data_types", {
+              declarations: [0, 1, 2]
+                .map(
+                  (index) =>
+                    `struct rea_chain${String(index)} { ${index === 0 ? "int" : `struct rea_chain${String(index - 1)}`} ${"*".repeat(250)} x; }; typedef int rea_chain${String(index)};`,
+                )
+                .join(""),
+              declarations_max_utf16: max,
+            }),
+          ).code,
+          "resource_constraint",
+        );
         // A held database lock would fail this close's checkpoint save.
         await flood.call("close_binary");
         return { flood_outcomes: outcomes };

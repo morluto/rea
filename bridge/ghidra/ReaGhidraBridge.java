@@ -2428,9 +2428,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
     }
 
-    /** What the tokenizer observed in admitted caller C. */
+    /** What the tokenizer observed in admitted caller C, directives excluded. */
     private record AdmittedCallerC(JsonArray droppedQualifiers, boolean terminated, boolean endsInLineComment,
-        Set<String> soleParameterIdentifiers) {}
+        Set<String> soleParameterIdentifiers, List<CToken> tokens) {}
 
     // Ghidra reads a pack value with Integer.parseInt and, on overflow, keeps the
     // packing already in effect. A decimal literal is admitted only when that parse accepts it.
@@ -2672,6 +2672,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         // The tokens of the parameter slot being read, of a signature or a function pointer.
         List<CToken> slot = new ArrayList<>();
         Set<String> soleParameters = new HashSet<>();
+        // Every admitted token, so later passes measure these facts instead of re-reading the text.
+        List<CToken> admittedTokens = new ArrayList<>();
         for (CToken next = tokens.next(false); next != null; next = tokens.next(false)) {
             String token = next.text();
             int line = next.line(), column = next.column();
@@ -2679,6 +2681,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 admitCallerCDirective(tokens, next, field, declarations, code, packLabels);
                 continue;
             }
+            admittedTokens.add(next);
             if (!declarations && token.equals("typedef"))
                 throw refusedConstruct(code, field, "the specifier typedef", line, column);
             if (declarations && token.equals("_Noreturn"))
@@ -2842,7 +2845,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new RequestFailure("parenthesis_depth_limit", field + " nests parentheses " + deepest +
                 " levels deep, first beyond " + maxParenthesisDepth + " at line " + beyondLine + ", column " + beyondColumn,
                 null, deepest);
-        return new AdmittedCallerC(dropped, ended, tokens.endsInLineComment, soleParameters);
+        return new AdmittedCallerC(dropped, ended, tokens.endsInLineComment, soleParameters, admittedTokens);
     }
 
     /**
@@ -2936,18 +2939,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
      * measured on its own, and the post-parse walk remains the authority for
      * chains through database types a definition fills in place.
      */
-    private void requireBoundedCallerCTypeDepth(String text, String field, boolean declarations, String code) {
-        CTokenizer tokenizer = new CTokenizer(text, field, code);
-        List<CToken> tokens = new ArrayList<>();
-        for (CToken token = tokenizer.next(false); token != null; token = tokenizer.next(false)) {
-            if (token.is("#")) {
-                while (tokenizer.next(true) != null) { }
-                continue;
-            }
-            tokens.add(token);
-        }
+    private void requireBoundedCallerCTypeDepth(AdmittedCallerC admitted, String field, boolean declarations) {
         try {
-            CallerCTypeDepths depths = new CallerCTypeDepths(tokens, field, currentProgram.getDataTypeManager());
+            CallerCTypeDepths depths =
+                new CallerCTypeDepths(admitted.tokens(), field, currentProgram.getDataTypeManager());
             if (declarations) depths.measureDefinitions();
             else depths.measureSignature();
         } catch (CallerCTypeDepths.Unmeasured unmeasured) {
@@ -2969,11 +2964,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
         private final List<CToken> tokens;
         private final String field;
         private final DataTypeManager types;
-        private final Map<String, Integer> defined = new HashMap<>();
+        // C keeps tag names and ordinary identifiers in separate namespaces, and
+        // one text may define both under one name; depths are tracked apart.
+        private final Map<String, Integer> tagDepths = new HashMap<>();
+        private final Map<String, Integer> typedefDepths = new HashMap<>();
         private final Map<DataType, Integer> databaseDepths = new IdentityHashMap<>();
         private final Set<String> measuring = new HashSet<>();
         /** The tag the last specifiers defined with a body, if any. */
         private String specifierTag;
+        /** Whether the last specifiers defined an anonymous composite body. */
+        private boolean specifierAnonymousComposite;
         private int index;
 
         CallerCTypeDepths(List<CToken> tokens, String field, DataTypeManager types) {
@@ -3008,20 +3008,50 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     " levels deep through pointers, arrays, typedefs, members or existing database types");
         }
 
-        private void record(String name, int depth) {
+        private void recordTag(String name, int depth) {
             if (name == null) return;
             refuse(name, depth);
-            defined.put(name, depth);
+            tagDepths.put(name, depth);
         }
 
-        private int resolve(String name) {
+        private void recordTypedef(String name, int depth) {
+            if (name == null) return;
+            refuse(name, depth);
+            typedefDepths.put(name, depth);
+        }
+
+        /** The depth of a struct, union or enum tag: this text's definition, else the database composite. */
+        private int resolveTag(String name) {
             if (measuring.contains(name)) return 0;
-            Integer depth = defined.get(name);
+            Integer depth = tagDepths.get(name);
             if (depth != null) return depth;
             List<DataType> found = new ArrayList<>();
             types.findDataTypes(name, found);
             int deepest = 1;
-            for (DataType type : found) deepest = Math.max(deepest, measuredTypeDepth(type, databaseDepths));
+            for (DataType type : found)
+                if (type instanceof ghidra.program.model.data.Composite ||
+                        type instanceof ghidra.program.model.data.Enum)
+                    deepest = Math.max(deepest, measuredTypeDepth(type, databaseDepths));
+            return deepest;
+        }
+
+        /** The depth of an ordinary type name: this text's typedef, else the database typedef it names. */
+        private int resolveTypedef(String name) {
+            if (measuring.contains(name)) return 0;
+            Integer depth = typedefDepths.get(name);
+            if (depth != null) return depth;
+            List<DataType> found = new ArrayList<>();
+            types.findDataTypes(name, found);
+            int deepest = 1;
+            boolean aliased = false;
+            for (DataType type : found)
+                if (type instanceof ghidra.program.model.data.TypeDef) {
+                    aliased = true;
+                    deepest = Math.max(deepest, measuredTypeDepth(type, databaseDepths));
+                }
+            // A bare name with no typedef in the database reads as the type itself.
+            if (!aliased)
+                for (DataType type : found) deepest = Math.max(deepest, measuredTypeDepth(type, databaseDepths));
             return deepest;
         }
 
@@ -3037,12 +3067,18 @@ public final class ReaGhidraBridge extends HeadlessScript {
         private void measureTypedef() {
             expect("typedef");
             int base = measureSpecifiers();
+            boolean first = true;
             while (true) {
                 Declarator declarator = measureDeclarator(base);
-                // A typedef of its own struct or enum is that tag, recorded once.
-                int depth = declarator.depth() == base && declarator.name() != null &&
-                        declarator.name().equals(specifierTag) ? base : 1 + declarator.depth();
-                record(declarator.name(), depth);
+                // A typedef naming its own struct or enum is that tag, and Ghidra
+                // stores a typedef of an anonymous composite as the composite
+                // itself under the typedef name; neither adds a typedef level.
+                boolean namesSpecifier = declarator.depth() == base && declarator.name() != null &&
+                    (declarator.name().equals(specifierTag) || (first && specifierAnonymousComposite));
+                int depth = namesSpecifier ? base : 1 + declarator.depth();
+                recordTypedef(declarator.name(), depth);
+                if (namesSpecifier && specifierAnonymousComposite) recordTag(declarator.name(), base);
+                first = false;
                 if (!at(",")) break;
                 index++;
             }
@@ -3060,7 +3096,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 else depth = measureCompositeBody(name);
                 expect("}");
             }
-            record(name, depth);
+            recordTag(name, depth);
             expect(";");
         }
 
@@ -3092,6 +3128,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
         private int measureSpecifiers() {
             specifierTag = null;
+            specifierAnonymousComposite = false;
             int base = -1;
             while (index < tokens.size()) {
                 CToken token = tokens.get(index);
@@ -3103,12 +3140,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
                         index++;
                         int depth = measureCompositeBody(name);
                         expect("}");
-                        record(name, depth);
+                        recordTag(name, depth);
                         specifierTag = name;
+                        specifierAnonymousComposite = name == null;
                         return depth;
                     }
                     if (name == null) throw new Unmeasured();
-                    return resolve(name);
+                    return resolveTag(name);
                 }
                 if (text.equals("enum")) {
                     index++;
@@ -3117,7 +3155,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                         index++;
                         skipBody();
                         expect("}");
-                        record(name, 1);
+                        recordTag(name, 1);
                         specifierTag = name;
                     }
                     return 1;
@@ -3135,7 +3173,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 }
                 if (token.isIdentifier() && base < 0) {
                     index++;
-                    return resolve(text);
+                    return resolveTypedef(text);
                 }
                 break;
             }
@@ -3147,18 +3185,44 @@ public final class ReaGhidraBridge extends HeadlessScript {
             int stars = measureStars();
             while (index < tokens.size() && C_CALLING_CONVENTION.matcher(tokens.get(index).text()).matches()) index++;
             if (at("(")) {
-                index++;
-                int innerStars = measureStars();
-                if (innerStars == 0) throw new Unmeasured();
+                // Parentheses either group the declarator or open a function
+                // pointer; stars inside make it the pointer form.
+                int groups = 0;
+                int innerStars = 0;
+                while (at("(")) {
+                    index++;
+                    groups++;
+                    innerStars = measureStars();
+                    if (innerStars > 0) break;
+                }
                 String name = identifier();
                 int arrays = measureArrays();
-                expect(")");
-                expect("(");
-                int parameters = measureParameters();
-                return new Declarator(name, innerStars + arrays + 1 + Math.max(stars + base, parameters));
+                for (int group = 0; group < groups; group++) expect(")");
+                if (innerStars > 0) {
+                    expect("(");
+                    int parameters = measureParameters();
+                    return new Declarator(name, innerStars + arrays + 1 + Math.max(stars + base, parameters));
+                }
+                int depth = stars + arrays + base + measureArrays();
+                if (at("(")) {
+                    index++;
+                    int parameters = measureParameters();
+                    return new Declarator(name, 1 + Math.max(depth, parameters));
+                }
+                if (at(":")) {
+                    index++;
+                    skipBitFieldWidth();
+                    return new Declarator(name, 1 + base);
+                }
+                return new Declarator(name, depth);
             }
             String name = index < tokens.size() && tokens.get(index).isIdentifier() ? identifier() : null;
             int arrays = measureArrays();
+            if (at("(")) {
+                index++;
+                int parameters = measureParameters();
+                return new Declarator(name, 1 + Math.max(stars + arrays + base, parameters));
+            }
             if (at(":")) {
                 index++;
                 skipBitFieldWidth();
@@ -3231,7 +3295,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
             int base = measureSpecifiers();
             int stars = measureStars();
             while (index < tokens.size() && C_CALLING_CONVENTION.matcher(tokens.get(index).text()).matches()) index++;
+            // A grouped name, as in int **** (total)(void), carries the same chain.
+            int groups = 0;
+            while (at("(")) {
+                index++;
+                groups++;
+            }
             String name = identifier();
+            for (int group = 0; group < groups; group++) expect(")");
             expect("(");
             int parameters = measureParameters();
             refuse(name, 1 + Math.max(stars + base, parameters));
@@ -3286,7 +3357,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new RequestFailure(declarations ? "declarations_length_limit" : "signature_length_limit",
                 field + " has " + text.length() + " UTF-16 code units", null, text.length());
         AdmittedCallerC admitted = admitCallerC(text, field, declarations, code, maxParenthesisDepth);
-        requireBoundedCallerCTypeDepth(text, field, declarations, code);
+        requireBoundedCallerCTypeDepth(admitted, field, declarations);
         DataTypeManager types = currentProgram.getDataTypeManager();
         CParser parser = new CParser(types, false, new DataTypeManager[] { types });
         try {
