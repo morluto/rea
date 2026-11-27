@@ -3183,7 +3183,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
         private Declarator measureDeclarator(int base) {
             int stars = measureStars();
-            while (index < tokens.size() && C_CALLING_CONVENTION.matcher(tokens.get(index).text()).matches()) index++;
+            while (skipCallingConventions()) stars += measureStars();
             if (at("(")) {
                 // Parentheses either group the declarator or open a function
                 // pointer; stars inside make it the pointer form.
@@ -3192,7 +3192,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 while (at("(")) {
                     index++;
                     groups++;
+                    // A convention inside the parenthesis, before or after
+                    // the stars, does not hide the pointer chain.
+                    skipCallingConventions();
                     innerStars = measureStars();
+                    skipCallingConventions();
                     if (innerStars > 0) break;
                 }
                 String name = identifier();
@@ -3250,6 +3254,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
             return stars;
         }
 
+        /** Consume calling-convention tokens; report whether any were present. */
+        private boolean skipCallingConventions() {
+            boolean skipped = false;
+            while (index < tokens.size() && C_CALLING_CONVENTION.matcher(tokens.get(index).text()).matches()) {
+                index++;
+                skipped = true;
+            }
+            return skipped;
+        }
+
         private int measureArrays() {
             int arrays = 0;
             while (at("[")) {
@@ -3294,12 +3308,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
         void measureSignature() {
             int base = measureSpecifiers();
             int stars = measureStars();
-            while (index < tokens.size() && C_CALLING_CONVENTION.matcher(tokens.get(index).text()).matches()) index++;
+            while (skipCallingConventions()) stars += measureStars();
             // A grouped name, as in int **** (total)(void), carries the same chain.
             int groups = 0;
             while (at("(")) {
                 index++;
                 groups++;
+                skipCallingConventions();
+                stars += measureStars();
+                skipCallingConventions();
             }
             String name = identifier();
             for (int group = 0; group < groups; group++) expect(")");

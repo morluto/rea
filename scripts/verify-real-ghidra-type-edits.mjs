@@ -1505,14 +1505,33 @@ struct rea_after { char c; int i; };`;
           ).code,
           "resource_constraint",
         );
-        // A tag and a typedef may share a name; the typedef does not reset
-        // the tag chain the next composite builds on.
-        const shared = await flood.call("define_native_data_types", {
-          declarations:
-            "struct rea_shared { int x; }; typedef int rea_shared; struct rea_uses { struct rea_shared *p; };",
-          declarations_max_utf16: max,
-        });
-        assert.equal(shared.types[0].status, "defined");
+        // A calling convention inside the function-pointer parenthesis does
+        // not hide the pointer chain behind it.
+        assert.equal(
+          requireMcpToolError(
+            await flood.raw("annotate_native_function", {
+              procedure,
+              signature: `int total(int (__stdcall ${"*".repeat(4000)}p)(void))`,
+              signature_max_utf16: 4096,
+            }),
+          ).code,
+          "resource_constraint",
+        );
+        // A tag and an unrelated typedef share a Ghidra name only when they
+        // are one type, so this text conflicts and stores nothing; the
+        // chained case below still measures the tag chain on its own.
+        const shared = requireMcpToolError(
+          await flood.raw("define_native_data_types", {
+            declarations:
+              "struct rea_shared { int x; }; typedef int rea_shared; struct rea_uses { struct rea_shared *p; };",
+            declarations_max_utf16: max,
+          }),
+        );
+        assert.equal(shared.code, "invalid_request");
+        assert.equal(
+          shared.details?.diagnostics?.remote_code,
+          "conflicting_type_definitions",
+        );
         assert.equal(
           requireMcpToolError(
             await flood.raw("define_native_data_types", {
