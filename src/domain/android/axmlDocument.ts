@@ -564,6 +564,7 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
     const synthNs = new Map<string, string>();
     let nsCount = 0;
     let elementCount = 0;
+    let elementOrdinal = 0;
     let attributeCount = 0;
     let synthNsCount = 0;
     let rootSeen = false;
@@ -575,6 +576,8 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
       nsUri: string;
       name: string;
       text: boolean;
+      /** Direct text or comments forbid layout whitespace inside. */
+      mixed: boolean;
       /** Emitted bindings to undo when the element closes. */
       decls: { prefix: string; prior: string | undefined }[];
     }[] = [];
@@ -635,7 +638,9 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
       // content so the parent's character data stays untouched.
       const parent = stack.at(-1);
       const lead =
-        parent !== undefined && parent.text ? "" : `\n${"  ".repeat(depth)}`;
+        parent !== undefined && (parent.text || parent.mixed)
+          ? ""
+          : `\n${"  ".repeat(depth)}`;
       return emit(`${lead}${wrapComment(text)}`);
     };
 
@@ -761,6 +766,40 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
       decls.set(prefix, uri);
       return ok(`${prefix}:`);
     };
+
+    // Pre-scan the deterministic chunk order for elements whose direct
+    // content includes character data or node comments. Layout whitespace
+    // inside such an element would join its text, so indentation decisions
+    // need this knowledge before the text itself arrives. Malformed tails
+    // end the scan early; the decoding pass reports them.
+    const mixedElements = new Set<number>();
+    {
+      let scanOrdinal = 0;
+      const scanFrames: number[] = [];
+      let scan = cursor;
+      while (scan < documentEnd) {
+        const scanChunk = readChunk(scan);
+        if (!scanChunk.ok) break;
+        const sType = scanChunk.value.type;
+        const sBase = scan;
+        if (
+          (sType === CHUNK_START_ELEMENT ||
+            sType === CHUNK_END_ELEMENT ||
+            sType === CHUNK_CDATA ||
+            sType === CHUNK_START_NAMESPACE ||
+            sType === CHUNK_END_NAMESPACE) &&
+          scanChunk.value.headerSize >= NODE_HEADER_BYTES &&
+          reader.u32(sBase + 12) !== NO_INDEX &&
+          scanFrames.length > 0
+        )
+          mixedElements.add(scanFrames[scanFrames.length - 1]!);
+        if (sType === CHUNK_START_ELEMENT) scanFrames.push(scanOrdinal++);
+        else if (sType === CHUNK_END_ELEMENT) scanFrames.pop();
+        else if (sType === CHUNK_CDATA && scanFrames.length > 0)
+          mixedElements.add(scanFrames[scanFrames.length - 1]!);
+        scan += scanChunk.value.size;
+      }
+    }
 
     let terminated = true;
     let sawStringPoolEnd = false;
@@ -1041,7 +1080,7 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
         }
         const parent = stack.at(-1);
         const indent =
-          parent === undefined || parent.text
+          parent === undefined || parent.text || parent.mixed
             ? ""
             : `\n${"  ".repeat(stack.length)}`;
         const opened = emit(`${indent}<${elemPrefix.value}${nameResult.value}`);
@@ -1076,6 +1115,7 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
           nsUri: elemNsUri,
           name: `${elemPrefix.value}${nameResult.value}`,
           text: false,
+          mixed: mixedElements.has(elementOrdinal++),
           decls: declUndo,
         });
         pendingOpen = true;
@@ -1128,7 +1168,7 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
             open.text = true;
           }
           const wrote = emit(
-            `${open.text ? "" : `\n${"  ".repeat(stack.length + 1)}`}${wrapComment(text)}`,
+            `${open.text || open.mixed ? "" : `\n${"  ".repeat(stack.length + 1)}`}${wrapComment(text)}`,
           );
           if (!wrote.ok) return wrote;
         }
@@ -1140,7 +1180,8 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
           const wrote = emit(`</${open.name}>`);
           if (!wrote.ok) return wrote;
         } else {
-          const wrote = emit(`\n${"  ".repeat(stack.length)}</${open.name}>`);
+          const lead = open.mixed ? "" : `\n${"  ".repeat(stack.length)}`;
+          const wrote = emit(`${lead}</${open.name}>`);
           if (!wrote.ok) return wrote;
         }
       } else if (type === CHUNK_CDATA) {

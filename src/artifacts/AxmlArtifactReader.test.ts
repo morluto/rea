@@ -203,6 +203,35 @@ describe("axml value rendering", () => {
     });
   });
 
+  it("inserts no layout whitespace inside mixed content", async () => {
+    const events: readonly AxmlEvent[] = [
+      { kind: "start", name: "a" },
+      { kind: "start", name: "b" },
+      { kind: "end", name: "b" },
+      { kind: "cdata", text: "tail" },
+      { kind: "end", name: "a" },
+    ];
+    await withReader(buildAxml(events), async (reader) => {
+      const xml = await text(await reader.open((await list(reader))[0]!));
+      // The parent's character data is exactly the declared text; no newline
+      // or indent may join it ahead of the child element or the close tag.
+      expect(xml).toContain("<a><b/>tail</a>");
+    });
+  });
+
+  it("keeps indentation in element-only content", async () => {
+    const events: readonly AxmlEvent[] = [
+      { kind: "start", name: "a" },
+      { kind: "start", name: "b" },
+      { kind: "end", name: "b" },
+      { kind: "end", name: "a" },
+    ];
+    await withReader(buildAxml(events), async (reader) => {
+      const xml = await text(await reader.open((await list(reader))[0]!));
+      expect(xml).toContain("<a>\n  <b/>\n</a>");
+    });
+  });
+
   it("distinguishes @null and @empty typed nulls", async () => {
     const events: readonly AxmlEvent[] = [
       {
