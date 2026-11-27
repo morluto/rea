@@ -108,6 +108,20 @@ export class GhidraCheckpointBusyError extends Error {
   }
 }
 
+/**
+ * The checkpoint no longer holds the generation this session selected,
+ * normally because another session saved Program edits while this one
+ * waited. The current checkpoint is intact; reopening selects it.
+ */
+export class GhidraCheckpointSupersededError extends Error {
+  constructor(readonly directory: string) {
+    super(
+      `Ghidra checkpoint at ${JSON.stringify(directory)} changed after this session selected it, normally because another REA session saved Program edits; reopen the target to restore the current checkpoint`,
+    );
+    this.name = "GhidraCheckpointSupersededError";
+  }
+}
+
 /** Hash large packed Programs with one 64 KiB buffer and stable descriptor identity. */
 export const hashGhidraPackedProgram = (
   path: string,
@@ -292,11 +306,7 @@ export class GhidraCheckpoint {
         ? this.#state.kind === "initial-analysis"
         : this.#state.kind === "retained" &&
           this.#state.sha256 === generation.sha256;
-    if (!aligned)
-      throw failure(
-        directory,
-        "the checkpoint changed after profile selection; reopen the target",
-      );
+    if (!aligned) throw new GhidraCheckpointSupersededError(directory);
     assertArtifactReadActive(signal);
     this.#source = current;
     return current === null
