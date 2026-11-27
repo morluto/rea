@@ -183,6 +183,68 @@ describe("WxapkgArtifactReader", () => {
   });
 });
 
+describe("WxapkgArtifactReader coverage", () => {
+  const coverageOf = (bytes: Buffer) =>
+    withReader(bytes, async (reader) => {
+      let observed: { status: string; limitations: readonly string[] } = {
+        status: "none",
+        limitations: [],
+      };
+      await list(reader, {
+        onCoverage: ({ status, limitations }) => {
+          observed = { status, limitations: [...limitations] };
+        },
+      });
+      return observed;
+    });
+  const unaccounted = (bytes: number, ranges: number, first: number) =>
+    `${String(bytes)} byte(s) in ${String(ranges)} range(s), the first at offset ${String(first)}, lie outside the member table and every member and were not exposed as entries.`;
+
+  it("is complete when members tile the data region, including aliases", async () => {
+    for (const bytes of [
+      buildWxapkg(members),
+      buildWxapkg(
+        [
+          { path: "a.js", data: "AAAA" },
+          { path: "b.js", data: "AA" },
+        ],
+        { aliasOffsets: true },
+      ),
+    ])
+      expect(await coverageOf(bytes)).toEqual({
+        status: "complete",
+        limitations: [],
+      });
+  });
+
+  it("stays unknown when bytes follow the last member", async () => {
+    const plain = buildWxapkg(members);
+    expect(
+      await coverageOf(Buffer.concat([plain, Buffer.from("appended")])),
+    ).toEqual({
+      status: "unknown",
+      limitations: [unaccounted(8, 1, plain.length)],
+    });
+  });
+
+  it("counts unused index bytes and trailing bytes as separate ranges", async () => {
+    // One 13-byte row ends at offset 31; eight unused index bytes follow it.
+    const padded = buildWxapkg([{ path: "a", data: "Z" }], {
+      tablePadding: 8,
+    });
+    expect(await coverageOf(padded)).toEqual({
+      status: "unknown",
+      limitations: [unaccounted(8, 1, 31)],
+    });
+    expect(
+      await coverageOf(Buffer.concat([padded, Buffer.alloc(4, 0xee)])),
+    ).toEqual({
+      status: "unknown",
+      limitations: [unaccounted(12, 2, 31)],
+    });
+  });
+});
+
 describe("WxapkgArtifactReader malformed inputs", () => {
   it.each([
     ["wrong first mark", { firstMark: 0x00 }],

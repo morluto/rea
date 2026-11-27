@@ -27,6 +27,12 @@ that exceed the file, truncated rows, invalid UTF-8 names, and counts that
 cannot fit their table are malformed-input errors. All member extents must
 fit the data region declared by one index-length convention.
 
+Coverage is complete only when the header, the parsed rows and the members
+account for every file byte. Members may share one stored range, so their
+union is measured. Unused index bytes after the last row, gaps between members
+and bytes after the last member belong to no entry. Coverage is then unknown,
+and a limitation gives their total length, range count and first offset.
+
 ## Resource bounds
 
 These are resource policies, not format maxima, and each is a per-call field
@@ -63,7 +69,7 @@ Synthetic fixtures cover plaintext headers, multiple members, empty members,
 chunked reads, unicode and dotted names, malformed marks, truncated tables,
 invalid UTF-8, table and directory-budget admission, member extents inside
 the header, the index, or beyond the declared data region, a data region
-declared past the file, a one-byte member whose table length includes the
+declared past the file, unused index bytes and bytes after the last member, a one-byte member whose table length includes the
 member count, an overstated first row consuming its successor, V1MMWX
 packages, cancellation inside member reads, paused iteration, close during
 I/O, cleanup retry, stream capacity and carrier freshness. Compiled
