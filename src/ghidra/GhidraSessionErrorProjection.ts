@@ -1,4 +1,5 @@
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
+import { shellQuote } from "../domain/desktop/shellQuote.js";
 import { MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS } from "../domain/analysisResourceLimits.js";
 import { z } from "zod";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
@@ -256,14 +257,34 @@ const projectPrimarySessionError = (
           "Choose an explicit procedure entry address from the reported candidates. Use list_procedures or search_procedures to inspect the current Ghidra inventory.";
         relatedOperations = ["list_procedures", "search_procedures"];
         break;
-      default:
+      default: {
+        const query =
+          typeof request?.procedure === "string"
+            ? request.procedure
+            : undefined;
+        const selectorText = query !== undefined ? ` \`${query}\`` : "";
+        const inProject =
+          source === "existing-project" ? " in this project" : "";
+        const isAddress =
+          query !== undefined &&
+          /^(?:0x[0-9a-fA-F]+|(?:[A-Za-z0-9._~-]|%[0-9a-fA-F]{2})+:0x[0-9a-fA-F]+)$/i.test(
+            query,
+          );
+        const pattern = query ?? "entry";
+        const suggestion = isAddress
+          ? `Ghidra couldn't resolve address${selectorText}${inProject}. Choose an observed procedure entry from the current Ghidra inventory. CLI: rea search <path> . --kind procedures --mode regex --provider ghidra. MCP: use list_procedures or search_procedures. An inventory miss leaves the function's presence in the artifact unknown.`
+          : `Ghidra couldn't resolve${selectorText}${inProject}. Search the procedure inventory for ${JSON.stringify(pattern)}. If you find a matching entry procedure, retry with its address. CLI: rea search <path> --pattern=${shellQuote(pattern)} --kind procedures --provider ghidra. MCP: use search_procedures with ${JSON.stringify({ pattern })} or list_procedures. Choose an observed name or address from the current Ghidra inventory. An inventory miss leaves the function's presence in the artifact unknown.`;
         recovery =
           (entryHint === undefined ? "" : `${entryHint} `) +
-          "Choose an observed name or address from the current Ghidra inventory. CLI: rea search <path> . --kind procedures --mode regex --provider ghidra. MCP: use search_procedures or list_procedures. An inventory miss leaves the function's presence in the artifact unknown." +
+          (entryHint !== undefined
+            ? "Choose an observed name or address from the current Ghidra inventory. CLI: rea search <path> . --kind procedures --mode regex --provider ghidra. MCP: use search_procedures or list_procedures. An inventory miss leaves the function's presence in the artifact unknown."
+            : suggestion) +
           (source === "existing-project"
             ? " The selected project's previous analysis completeness is unknown. To explicitly request a separate fresh import, start a new REA process without REA_GHIDRA_PROJECT_PATH and REA_GHIDRA_PROGRAM_NAME. That separate analysis excludes the selected project's annotations and other edits."
             : "");
         relatedOperations = ["list_procedures", "search_procedures"];
+        break;
+      }
     }
     return new AnalysisInputError(
       operation,

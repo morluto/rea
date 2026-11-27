@@ -280,7 +280,12 @@ export const analysisErrorRemediationAction = (
     );
     const baseAction =
       error.remediationAction ??
-      renderInputSchemaRemediation(error.operation, MCP_INPUT_SCHEMA_SPELLING);
+      (error.conformsToInputContract
+        ? "The requested item or selection could not be resolved. Review the reported details and correct the selection before retrying. Do not repeat the unchanged call."
+        : renderInputSchemaRemediation(
+            error.operation,
+            MCP_INPUT_SCHEMA_SPELLING,
+          ));
     return mistakeRemediation === undefined
       ? baseAction
       : `${mistakeRemediation} ${baseAction}`;

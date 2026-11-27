@@ -189,6 +189,31 @@ describe("agent recovery metadata", () => {
     expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
   });
 
+  it("avoids input schema inspection guidance when a conforming request has no explicit remediationAction", () => {
+    const issue = {
+      path: ["procedure"],
+      reason: "invalid_value",
+      message: "Procedure main not found in target",
+    } as const;
+    const projected = projectAnalysisError(
+      new AnalysisInputError(
+        "procedure_address",
+        {
+          conformsToInputContract: true,
+        },
+        [issue],
+      ),
+    );
+
+    expect(projected.remediation.action).not.toContain(
+      "Read the declared input schema",
+    );
+    expect(projected.remediation.action).toContain(
+      "The requested item or selection could not be resolved",
+    );
+    expect(projected).not.toHaveProperty("recovery");
+  });
+
   it("separates timeout-state inspection from client deadline recovery", () => {
     const projected = projectAnalysisError(
       new AnalysisTimeoutError("inspect_binary_layout", 2_500),
