@@ -494,6 +494,7 @@
 * **mcp:** paginate tools/list under the FastMCP SSE limit ([#9142](https://github.com/morluto/rea/issues/9142)) ([a00511e](https://github.com/morluto/rea/commit/a00511e88e1008d233c89b8911dddb6d493a1cbd))
 * **mcp:** rank multi-word discover_tools queries by matched terms ([#14584](https://github.com/morluto/rea/issues/14584)) ([c58de7f](https://github.com/morluto/rea/commit/c58de7f77efc738b414376fa7b7a1e98b1499c99))
 * **mcp:** refuse stale sessions and serialize initialize handovers ([#13195](https://github.com/morluto/rea/issues/13195)) ([7b4d84a](https://github.com/morluto/rea/commit/7b4d84a48e5c1ecabdced7fbc78185be434225ac))
+* **mcp:** replay direct Ghidra reads that omit document ([#14842](https://github.com/morluto/rea/issues/14842)) ([366e1d9](https://github.com/morluto/rea/commit/366e1d98c1b3ba31e7f9e33cd8779713f86b3099))
 * **mcp:** retain doctor initialization when catalog requests fail ([#13255](https://github.com/morluto/rea/issues/13255)) ([87889b8](https://github.com/morluto/rea/commit/87889b8729da8a02a4159bc7274c92be52464031))
 * **mcp:** settle independent launch preparation owners ([#13259](https://github.com/morluto/rea/issues/13259)) ([178467f](https://github.com/morluto/rea/commit/178467f6a7c77f6c61f81008ccffeaa7d0061d38))
 * **mcp:** share catalog tool search to suggest advertised tools on unknown tool calls ([#14305](https://github.com/morluto/rea/issues/14305)) ([16c972b](https://github.com/morluto/rea/commit/16c972bb91637dfabda11c77ef9246e6dbed5694))
