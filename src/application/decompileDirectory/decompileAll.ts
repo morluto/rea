@@ -69,9 +69,10 @@ const PROFILE_UNAVAILABLE =
 const DUPLICATE_ADDRESSES =
   "Duplicate procedure addresses were coalesced to the first matching inventory row.";
 /**
- * How long one function may stay pending before the export names it, and how
- * often it repeats while the wait continues. A provider may be unable to bound
- * or interrupt one decompilation, so the wait itself is reported.
+ * How long one provider request for a function may stay pending before the
+ * export names it, and how often it repeats while the wait continues. A
+ * provider may be unable to bound or interrupt one decompilation, so the wait
+ * itself is reported.
  */
 export const FUNCTION_WAIT_REPORT_INTERVAL_MS = 5_000;
 /** Consecutive output_io failures after which an export stops. */
@@ -476,12 +477,13 @@ const publishSelected = async (
     input.state.attempted += 1;
     input.state.lastFailureCode = undefined;
     const externalBefore = input.state.external;
-    const attempt = attemptOne(input, procedure, existing, bodySupport);
-    const outcome = await reportingFunctionWait(
+    const outcome = await attemptOne(
       input,
       procedure,
-      index,
-      attempt,
+      existing,
+      bodySupport,
+      (operation, pending) =>
+        reportingProviderWait(input, procedure, index, operation, pending),
     );
     bodySupport = outcome.bodySupport;
     if (!outcome.result.ok) return outcome.result;
@@ -500,15 +502,33 @@ const publishSelected = async (
   return ok(undefined);
 };
 
+/** The provider requests an export makes for one function. */
+type FunctionRequest = "procedure_info" | "procedure_pseudo_code";
+
+/** Wrap one provider request for the current function in wait reporting. */
+type ProviderWait = <Value>(
+  operation: FunctionRequest,
+  pending: Promise<Value>,
+) => Promise<Value>;
+
+const WAITING_FOR: Readonly<Record<FunctionRequest, string>> = {
+  procedure_info: "read the body of",
+  procedure_pseudo_code: "decompile",
+};
+
 /**
- * Name the function an export is waiting on once it has been pending for a
- * reporting interval, and again each interval until it settles. Functions that
- * settle sooner report nothing, so a healthy export stays quiet.
+ * Name the function and the provider request an export is waiting on once it
+ * has been pending for a reporting interval, and again each interval until it
+ * settles. Only provider requests are timed: journal and file writes are the
+ * export's own work, so a slow output volume is never reported as a provider
+ * wait. Requests that settle sooner report nothing, so a healthy export stays
+ * quiet.
  */
-const reportingFunctionWait = async <Value>(
+const reportingProviderWait = async <Value>(
   input: PublishInput,
   procedure: SelectedProcedure,
   index: number,
+  operation: FunctionRequest,
   pending: Promise<Value>,
 ): Promise<Value> => {
   const { progress } = input;
@@ -528,7 +548,7 @@ const reportingFunctionWait = async <Value>(
           phase: "decompile_all",
           completed: index,
           total: input.procedures.length,
-          message: `Waiting for the provider to decompile ${subject} (${String(elapsedSeconds)}s elapsed); function ${String(index + 1)} of ${String(input.procedures.length)} selected.`,
+          message: `Waiting for the provider to ${WAITING_FOR[operation]} ${subject} (${String(elapsedSeconds)}s elapsed); function ${String(index + 1)} of ${String(input.procedures.length)} selected.`,
         }),
       )
       .catch(() => undefined);
@@ -546,6 +566,7 @@ const attemptOne = async (
   procedure: SelectedProcedure,
   existing: "write" | "conflict" | "io",
   bodySupport: "unknown" | "unavailable",
+  providerWait: ProviderWait,
 ): Promise<{
   readonly result: Result<void, AnalysisError>;
   readonly bodySupport: "unknown" | "unavailable";
@@ -585,6 +606,7 @@ const attemptOne = async (
     ...input,
     procedure,
     bodySupport,
+    providerWait,
   });
 };
 
@@ -597,6 +619,7 @@ const publishOne = async (input: {
   readonly state: PublishState;
   readonly bodySupport: "unknown" | "unavailable";
   readonly retryFailed: DecompileDirectoryInput["retry_failed"];
+  readonly providerWait: ProviderWait;
 }): Promise<{
   readonly result: Result<void, AnalysisError>;
   readonly bodySupport: "unknown" | "unavailable";
@@ -607,6 +630,7 @@ const publishOne = async (input: {
     input.identity,
     input.signal,
     input.bodySupport,
+    input.providerWait,
   );
   if (body.kind === "error")
     return { result: err(body.error), bodySupport: input.bodySupport };
@@ -627,10 +651,13 @@ const publishOne = async (input: {
     };
   }
   let attemptedIndependent = false;
-  let decompiled = await input.analysis.execute(
+  let decompiled = await input.providerWait(
     "procedure_pseudo_code",
-    { procedure: input.procedure.address },
-    executionOptions(input.signal),
+    input.analysis.execute(
+      "procedure_pseudo_code",
+      { procedure: input.procedure.address },
+      executionOptions(input.signal),
+    ),
   );
   // A provider still owns cleanup even if the caller aborted meanwhile.
   if (!decompiled.ok && decompiled.error.cleanupIncomplete)
@@ -665,10 +692,13 @@ const publishOne = async (input: {
         bodySupport: body.support,
       };
     attemptedIndependent = true;
-    decompiled = await input.analysis.execute(
+    decompiled = await input.providerWait(
       "procedure_pseudo_code",
-      { procedure: input.procedure.address, analysis: "independent_fresh" },
-      executionOptions(input.signal),
+      input.analysis.execute(
+        "procedure_pseudo_code",
+        { procedure: input.procedure.address, analysis: "independent_fresh" },
+        executionOptions(input.signal),
+      ),
     );
     if (!decompiled.ok && decompiled.error.cleanupIncomplete)
       return { result: decompiled, bodySupport: body.support };
@@ -827,6 +857,7 @@ const readBody = async (
   identity: ExportIdentity,
   signal: AbortSignal | undefined,
   support: "unknown" | "unavailable",
+  providerWait: ProviderWait,
 ): Promise<
   | {
       readonly kind: "body";
@@ -857,10 +888,13 @@ const readBody = async (
       fact: unavailableBody(BODY_UNAVAILABLE),
       support,
     };
-  const observed = await analysis.execute(
+  const observed = await providerWait(
     "procedure_info",
-    { procedure: address },
-    executionOptions(signal),
+    analysis.execute(
+      "procedure_info",
+      { procedure: address },
+      executionOptions(signal),
+    ),
   );
   if (!observed.ok) {
     if (
