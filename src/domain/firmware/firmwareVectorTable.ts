@@ -239,7 +239,11 @@ export const firmwareVectorTableSchema = z.strictObject({
     .enum(["vectored_jumps", "single_entry_or_inline", "empty_or_unrecognized"])
     .nullable(),
   arm_entries: z.array(armVectorEntrySchema),
+  /** ARM slots with status `active`; counted once by the producer. */
+  active_arm_entry_count: z.number().int().min(0),
   riscv_slots: z.array(riscvTrapSlotSchema),
+  /** RISC-V slots that decode to a jump target; counted once by the producer. */
+  recognized_riscv_slot_count: z.number().int().min(0),
   shared_handler_groups: z.array(sharedHandlerGroupSchema),
   svd_interrupts: svdInterruptSummarySchema,
   anomalies: z.array(z.string()),
@@ -247,3 +251,21 @@ export const firmwareVectorTableSchema = z.strictObject({
 });
 
 export type FirmwareVectorTable = z.infer<typeof firmwareVectorTableSchema>;
+
+/** Whether a report's stored slot counts match its slots. */
+export const vectorTableCountsMatch = (
+  report: FirmwareVectorTable,
+): boolean => {
+  // not-an-allowance: recount of active ARM entries
+  let active = 0;
+  for (const entry of report.arm_entries)
+    if (entry.status === "active") active += 1;
+  // not-an-allowance: recount of RISC-V slots with a jump target
+  let recognized = 0;
+  for (const slot of report.riscv_slots)
+    if (slot.target_code_address !== null) recognized += 1;
+  return (
+    active === report.active_arm_entry_count &&
+    recognized === report.recognized_riscv_slot_count
+  );
+};

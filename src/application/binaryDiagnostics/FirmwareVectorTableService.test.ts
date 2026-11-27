@@ -37,7 +37,9 @@ const sampleArmReport = (
   trap_entry_address: null,
   riscv_table_shape: null,
   arm_entries: [],
+  active_arm_entry_count: 0,
   riscv_slots: [],
+  recognized_riscv_slot_count: 0,
   shared_handler_groups: [],
   svd_interrupts: {
     supplied: true,
@@ -50,6 +52,25 @@ const sampleArmReport = (
 });
 
 describe("FirmwareVectorTableService", () => {
+  it("refuses a provider report whose stored slot counts disagree with its slots", async () => {
+    const mockPort: FirmwareVectorTablePort = {
+      identity: FIRMWARE_VECTOR_TABLE_PROVIDER,
+      inspect: async (input) =>
+        ok({
+          ...sampleArmReport(input.path, input.vector_table_offset),
+          active_arm_entry_count: 1,
+        }),
+    };
+    const res = await new FirmwareVectorTableService(mockPort).inspect({
+      path: "/tmp/stm32.bin",
+      architecture: "armv7-m",
+      base_address: "0x08000000",
+    });
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error.message).toContain("malformed output");
+  });
+
   it("records sha256-bound Evidence, file-offset-range location, hashed svd_xml provenance, and omits defaulted controls", async () => {
     const mockPort: FirmwareVectorTablePort = {
       identity: FIRMWARE_VECTOR_TABLE_PROVIDER,

@@ -5,6 +5,7 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   firmwareVectorTableSchema,
+  vectorTableCountsMatch,
   inspectFirmwareVectorTableInputSchema,
   type FirmwareVectorTable,
   type InspectFirmwareVectorTableInput,
@@ -31,7 +32,7 @@ const validVectorReport = (
     return false;
   if (input.architecture !== "riscv" && report.trap_entry_address !== null)
     return false;
-  return true;
+  return vectorTableCountsMatch(report);
 };
 
 /** Shared caller validation, output parsing, and Evidence provenance for CLI/MCP. */

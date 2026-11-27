@@ -3,7 +3,10 @@ import {
   parseSvdInterruptMap,
   type SvdInterruptMap,
 } from "./firmwareSvdInterrupts.js";
-import { firmwareVectorTableSchema } from "./firmwareVectorTable.js";
+import {
+  firmwareVectorTableSchema,
+  vectorTableCountsMatch,
+} from "./firmwareVectorTable.js";
 import { parseFirmwareVectorTable } from "./firmwareVectorTableParser.js";
 
 const SAMPLE_SVD = `<?xml version="1.0" encoding="utf-8"?>
@@ -597,5 +600,54 @@ describe("vector table size and SVD duplicate rules", () => {
       "UART:IRQ",
       "UART:ERR",
     ]);
+  });
+});
+
+describe("stored vector-table slot counts", () => {
+  const report = (architecture: "armv7-m" | "riscv", tableBytes: Buffer) => {
+    const parsed = parseFirmwareVectorTable({
+      artifact: {
+        path: "/tmp/counts.bin",
+        sha256: "e".repeat(64),
+        bytes: tableBytes.length,
+      },
+      architecture,
+      baseAddressHex: "0x08000000",
+      vectorTableOffset: 0,
+      maxEntries: 64,
+      tableBytes,
+      svdSupplied: false,
+      svdMap: new Map(),
+      svdSkipped: [],
+    });
+    if (!parsed.ok) throw new Error(parsed.error.message);
+    return parsed.value;
+  };
+
+  it("counts active ARM entries and recognized RISC-V slots once, matching the slots", () => {
+    const arm = Buffer.alloc(20 * 4);
+    arm.writeUInt32LE(0x2000_8000, 0);
+    arm.writeUInt32LE(0x0800_0201, 4); // Reset, active
+    arm.writeUInt32LE(0x0800_0300, 8); // NMI, even: not active
+    arm.writeUInt32LE(0x0800_0301, 12); // HardFault, active
+    arm.writeUInt32LE(0xffff_ffff, 16 * 4); // IRQ 0, erased
+    arm.writeUInt32LE(0x0800_0401, 17 * 4); // IRQ 1, active
+    const armReport = report("armv7-m", arm);
+    expect(armReport.active_arm_entry_count).toBe(3);
+    expect(armReport.recognized_riscv_slot_count).toBe(0);
+    expect(vectorTableCountsMatch(armReport)).toBe(true);
+
+    const riscv = Buffer.alloc(4 * 4);
+    riscv.writeUInt32LE(0x0080_006f, 0); // jal x0, +8
+    riscv.writeUInt32LE(0x1234_5678, 4); // unrecognized
+    riscv.writeUInt32LE(0x0040_006f, 8); // jal x0, +4
+    const riscvReport = report("riscv", riscv);
+    expect(riscvReport.recognized_riscv_slot_count).toBe(2);
+    expect(riscvReport.active_arm_entry_count).toBe(0);
+    expect(vectorTableCountsMatch(riscvReport)).toBe(true);
+
+    expect(
+      vectorTableCountsMatch({ ...armReport, active_arm_entry_count: 2 }),
+    ).toBe(false);
   });
 });

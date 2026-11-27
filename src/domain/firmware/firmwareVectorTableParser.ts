@@ -386,7 +386,10 @@ const buildRiscvVectorReport = (ctx: ReportContext): FirmwareVectorTable => {
     trap_entry_address: slots[0]?.target_code_address ?? null,
     riscv_table_shape: shape,
     arm_entries: [],
+    active_arm_entry_count: 0,
     riscv_slots: slots,
+    // Every slot with a jump target is an active target.
+    recognized_riscv_slot_count: activeTargets.length,
     shared_handler_groups: collectSharedHandlers(activeTargets),
     svd_interrupts: summarizeSvdBindings({
       supplied: options.svdSupplied,
@@ -472,7 +475,10 @@ const buildArmVectorReport = (
     trap_entry_address: null,
     riscv_table_shape: null,
     arm_entries: entries,
+    // Every active entry, and only those, is an active target.
+    active_arm_entry_count: activeTargets.length,
     riscv_slots: [],
+    recognized_riscv_slot_count: 0,
     shared_handler_groups: collectSharedHandlers(activeTargets),
     svd_interrupts: summarizeSvdBindings({
       supplied: options.svdSupplied,
