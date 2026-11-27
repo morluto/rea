@@ -86,6 +86,14 @@ export class ProgressiveToolCatalog {
     });
   }
 
+  /** In-scope tools this connection could load through discovery. */
+  unloadedTools(): ReadonlySet<string> {
+    const unloaded = new Set<string>();
+    for (const [name, { registered }] of this.tools)
+      if (!registered.enabled) unloaded.add(name);
+    return unloaded;
+  }
+
   private inputSchemaFor(registered: RegisteredTool): Record<string, unknown> {
     let schema = this.inputSchemas.get(registered);
     if (schema === undefined) {

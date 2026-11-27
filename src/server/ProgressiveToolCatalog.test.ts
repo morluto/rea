@@ -323,10 +323,10 @@ it("points unknown tool calls to discover_tools and only suggests currently adve
   expect(loadedQuery).not.toContain("beta_sqlite");
   expect(loadedQuery).not.toContain("excluded_sqlite");
 
-  // Calling an unloaded or excluded tool directly still returns the SDK disabled error.
+  // Calling an unloaded tool directly names the discover_tools call that loads it.
   await expect(
     f.client.callTool({ name: "beta_sqlite", arguments: {} }),
-  ).rejects.toThrow("disabled");
+  ).rejects.toThrow("not loaded on this connection");
 
   // Reconnecting the server resets cold visibility, so a later session does
   // not receive suggestions for tools loaded only in the previous session.
@@ -350,6 +350,33 @@ it("points unknown tool calls to discover_tools and only suggests currently adve
   }
   expect(reconnectMessage).toContain("call discover_tools");
   expect(reconnectMessage).not.toContain("alpha_sqlite");
+});
+
+it("tells a caller that names an unloaded in-scope tool the one call that loads it", async () => {
+  const f = await connect();
+  const fail = async (name: string): Promise<string> => {
+    try {
+      await f.client.callTool({ name, arguments: {} });
+    } catch (error) {
+      expect(error).toMatchObject({ code: -32602 });
+      return error instanceof Error ? error.message : String(error);
+    }
+    throw new Error(`expected ${name} to fail`);
+  };
+
+  const unloaded = await fail("alpha_sqlite");
+  expect(unloaded).toContain(
+    'MCP tool alpha_sqlite is in scope but not loaded on this connection. Call discover_tools with names: ["alpha_sqlite"] to load it',
+  );
+  // A tool the caller excluded from this server stays the SDK's refusal.
+  const excluded = await fail("excluded_sqlite");
+  expect(excluded).toContain("disabled");
+  expect(excluded).not.toContain("discover_tools");
+
+  await f.discover({ names: ["alpha_sqlite"] });
+  await expect(
+    f.client.callTool({ name: "alpha_sqlite", arguments: {} }),
+  ).resolves.toBeDefined();
 });
 
 it("returns ranked matches for multi-word task queries when not every word appears (#11707)", async () => {
