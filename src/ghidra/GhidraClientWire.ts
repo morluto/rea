@@ -193,6 +193,20 @@ export class GhidraWire {
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       cancelledValue: () => err(this.#cancelled(options.signal)),
     });
+    // A cancel is a request frame with its own id and no reply: the reply of
+    // the request it names is the acknowledgement.
+    const onInterrupt = (): void => {
+      if (!this.#options.pending.has(id) || socket.destroyed) return;
+      socket.write(
+        `${JSON.stringify({
+          id: this.#options.nextId(),
+          token,
+          method: "cancel",
+          params: { request_id: id },
+        })}\n`,
+      );
+    };
+    options.interrupt?.addEventListener("abort", onInterrupt, { once: true });
     socket.write(`${payload}\n`, (cause) => {
       if (cause !== undefined && cause !== null)
         this.#options.pending.settle(
@@ -206,9 +220,10 @@ export class GhidraWire {
           ),
         );
     });
-    const result = await response.finally(() =>
-      this.#inFlightReplyLimits.delete(id),
-    );
+    const result = await response.finally(() => {
+      options.interrupt?.removeEventListener("abort", onInterrupt);
+      this.#inFlightReplyLimits.delete(id);
+    });
     this.#options.logger[result.ok ? "debug" : "warn"](
       { method, status: result.ok ? "ok" : "error" },
       "Ghidra bridge request completed",

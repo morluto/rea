@@ -39,6 +39,18 @@ export type GhidraSessionFailureKind =
 export const GHIDRA_STARTUP_DEADLINE_ELAPSED =
   "Ghidra startup deadline elapsed";
 
+/**
+ * Whether the bridge reports that it stopped the request because its monitor
+ * was cancelled: `decompile_cancelled` from the native decompiler, or
+ * `request_cancelled` from a cancellation check elsewhere in the handler.
+ */
+export const isGhidraRemoteCancellation = (
+  failure: GhidraSessionError,
+): boolean =>
+  failure.kind === "remote" &&
+  (failure.remoteCode === "decompile_cancelled" ||
+    failure.remoteCode === "request_cancelled");
+
 /** Additional structured context for a Ghidra session failure. */
 export interface GhidraSessionErrorOptions extends ErrorOptions {
   readonly cancellation?: { readonly reason: unknown };

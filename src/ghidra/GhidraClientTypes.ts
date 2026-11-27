@@ -1,6 +1,7 @@
 import type { Logger } from "pino";
 import type { GhidraCheckpointSelection } from "./GhidraCheckpoint.js";
 import type { BridgeMaxRequestBytes } from "../config/bridgeMaxRequestBytes.js";
+import type { GhidraCancelGrace } from "../config/ghidraCancelGrace.js";
 import type { BridgeMaxReplyBytes } from "../config/bridgeMaxReplyBytes.js";
 import type { Result } from "../domain/result.js";
 import type { LinuxCgroupMemoryState } from "../process/LinuxCgroupMemory.js";
@@ -25,6 +26,12 @@ export interface GhidraRequestOptions {
   readonly decompileMaxPayloadMiB?: number | null;
   readonly valueFlowLimits?: NativeValueFlowLimits;
   readonly signal?: AbortSignal;
+  /**
+   * Asks the bridge to stop this request while its reply is still awaited.
+   * The request queue sets it for interruptible operations; `signal` stays the
+   * stop that abandons the reply.
+   */
+  readonly interrupt?: AbortSignal;
   /** Internal startup/shutdown deadline; analysis calls have no fixed deadline. */
   readonly timeoutMs?: number;
   /**
@@ -76,6 +83,11 @@ export interface GhidraClientOptions {
   readonly expectedImageBase?: string;
   readonly startupTimeoutMs?: number;
   readonly readStartupTimeoutMs?: () => number;
+  /**
+   * How long a cancelled read may take to answer before the session is closed
+   * instead; absent keeps the default.
+   */
+  readonly cancelGrace?: GhidraCancelGrace;
   readonly onDiagnostic?: (event: GhidraDiagnostic) => void;
   readonly logger?: Logger;
   /**

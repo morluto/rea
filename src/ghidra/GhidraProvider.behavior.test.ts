@@ -5106,6 +5106,82 @@ it("identifies checkpoint recovery for a timed-out startup", async () => {
   }
 });
 
+describe("the cancel grace launch control", () => {
+  const open = async (environment: Readonly<Record<string, string>>) => {
+    const received: unknown[] = [];
+    const ghidra = provider(
+      installationHost(),
+      (options) => {
+        received.push(options.cancelGrace);
+        return {
+          start: async () => ok(sessionInfo()),
+          callTool: async () => ok([]),
+          close: async () => ok(null),
+        };
+      },
+      environment,
+    );
+    onTestFinished(async () => {
+      await ghidra.closeOwnedResources();
+    });
+    const target = executableTarget("elf", "x86_64");
+    const profile = await ghidra.resolveAnalysisProfile(target);
+    if (!profile.ok || profile.value.profile === null)
+      throw new Error("Expected Ghidra analysis profile");
+    const result = await ghidra
+      .createClient(target, profile.value.profile)
+      .execute("health", {});
+    const capabilityNotes = new Set(
+      ghidra
+        .capabilities()
+        .flatMap((capability) => capability.limitations)
+        .filter((note) =>
+          note.startsWith("Cancelling an active Ghidra read request"),
+        ),
+    );
+    return { received, result, capabilityNotes };
+  };
+  const cancellationNote = (result: Awaited<ReturnType<typeof open>>) => {
+    if (!result.result.ok) throw result.result.error;
+    return (
+      result.result.value.limitations.find((note) =>
+        note.startsWith("Cancelling an active Ghidra read request"),
+      ) ?? ""
+    );
+  };
+
+  it("hands each session the launch value and states it in the session limitation", async () => {
+    const selected = await open({ REA_GHIDRA_CANCEL_GRACE_MS: "750" });
+    expect(selected.received).toEqual([{ graceMs: 750, source: "setting" }]);
+    expect(cancellationNote(selected)).toContain(
+      "within 750 ms, as a decompilation does (REA_GHIDRA_CANCEL_GRACE_MS, set at launch)",
+    );
+    const unset = await open({});
+    expect(unset.received).toEqual([{ graceMs: 2_000, source: "default" }]);
+    expect(cancellationNote(unset)).toContain(
+      "within 2000 ms, as a decompilation does (REA_GHIDRA_CANCEL_GRACE_MS, default)",
+    );
+    // Capabilities belong to no session, so they name the control and its
+    // default rather than claim a value the launch environment may override.
+    for (const { capabilityNotes } of [selected, unset])
+      expect([...capabilityNotes]).toEqual([
+        expect.stringContaining(
+          "within the cancel grace, as a decompilation does (REA_GHIDRA_CANCEL_GRACE_MS, default 2000 ms; a session's limitations state the value it applies)",
+        ),
+      ]);
+  });
+
+  it("refuses a Ghidra session on an invalid value instead of using the default", async () => {
+    const refused = await open({ REA_GHIDRA_CANCEL_GRACE_MS: "60001" });
+    expect(refused.received).toEqual([]);
+    if (refused.result.ok) throw new Error("invalid cancel grace was applied");
+    expect(projectAnalysisError(refused.result.error)).toMatchObject({
+      code: "configuration_invalid",
+      details: { settings: [{ setting: "REA_GHIDRA_CANCEL_GRACE_MS" }] },
+    });
+  });
+});
+
 const startFailure = async (
   stdout: string,
   environment: Readonly<Record<string, string>> = {},

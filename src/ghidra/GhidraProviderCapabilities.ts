@@ -7,6 +7,11 @@ import {
 import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionOperations.js";
 import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryOperations.js";
 import { GHIDRA_MUTATING_OPERATIONS } from "./GhidraSessionValues.js";
+import {
+  DEFAULT_GHIDRA_CANCEL_GRACE_MS,
+  GHIDRA_CANCEL_GRACE_SETTING,
+  type GhidraCancelGrace,
+} from "../config/ghidraCancelGrace.js";
 import { ghidraLoadImageVerificationNote } from "./GhidraVerifiedLoadImageFormats.js";
 import {
   EXISTING_PROJECT_WINDOWS_REMEDIATION,
@@ -28,12 +33,23 @@ const providerOperations = Object.freeze([
   ...GHIDRA_FUNCTION_OPERATIONS,
 ]);
 
-/** Health limitations shared by every Ghidra-backed capability. */
-export const healthLimitations = Object.freeze([
+/**
+ * The grace one session applies; without a session, the control and its
+ * default, since a launch value is only read when a session is created.
+ */
+const cancelGraceClause = (cancelGrace: GhidraCancelGrace | undefined) =>
+  cancelGrace === undefined
+    ? `within the cancel grace, as a decompilation does (${GHIDRA_CANCEL_GRACE_SETTING}, default ${String(DEFAULT_GHIDRA_CANCEL_GRACE_MS)} ms; a session's limitations state the value it applies)`
+    : `within ${String(cancelGrace.graceMs)} ms, as a decompilation does (${GHIDRA_CANCEL_GRACE_SETTING}, ${cancelGrace.source === "setting" ? "set at launch" : "default"})`;
+
+/** Health limitations shared by every fresh-import Ghidra capability. */
+const healthLimitations = (
+  cancelGrace: GhidraCancelGrace | undefined,
+): readonly string[] => [
   "The session serves operations only after Ghidra reports default auto-analysis complete; incomplete analysis does not expose partial results.",
   "Ghidra Program checkpoint mode is disabled: closing discards metadata edits; original executable bytes are unchanged. For stock ELF/PE/Mach-O on Linux/macOS, set REA_GHIDRA_CHECKPOINT_DIR to a private absolute directory before starting REA (restart MCP after changing its startup environment).",
-  "Cancelling an active Ghidra request terminates its ephemeral database and discards session annotations. The selected target remains open; the next provider query imports the original artifact again.",
-]);
+  `Cancelling an active Ghidra read request stops only that request when Ghidra answers it ${cancelGraceClause(cancelGrace)}. Cancelling an active edit (${[...GHIDRA_MUTATING_OPERATIONS].join(", ")}), or a read Ghidra does not answer in time, terminates the ephemeral database and discards session annotations; the selected target remains open and the next provider query imports the original artifact again.`,
+];
 
 /** Additional limitations applied to the experimental Windows x64 P0 boundary. */
 export const windowsP0Limitations = Object.freeze([
@@ -47,9 +63,14 @@ export type GhidraSessionSource =
   | "existing-project"
   | "owned-checkpoint";
 
-/** Existing databases have their own unknown analysis history; reopening does not complete it. */
+/**
+ * Existing databases have their own unknown analysis history; reopening does
+ * not complete it. `cancelGrace` is the grace a session applies; capability
+ * descriptors, which no session owns, omit it.
+ */
 export const ghidraHealthLimitations = (
   source: GhidraSessionSource = "fresh-import",
+  cancelGrace?: GhidraCancelGrace,
 ): readonly string[] =>
   source === "existing-project"
     ? [
@@ -63,7 +84,7 @@ export const ghidraHealthLimitations = (
           "REA saves initial completed analysis and metadata changes on normal close (close_binary in MCP). A failed save retains the live session for close retry. Cancellation or process failure can lose changes after the last successful save; unfinished initial auto-analysis is not resumable.",
           "The live project is a temporary working copy. Checkpoints persist in REA_GHIDRA_CHECKPOINT_DIR; source executables and caller-selected source projects are not modified.",
         ]
-      : healthLimitations;
+      : healthLimitations(cancelGrace);
 
 const stringInventoryLimitation =
   "Only Ghidra-defined string Data is observed; packed or undefined string bytes may be absent. Completeness applies to that inventory, and an empty search does not establish that text is absent from the artifact. If an address is known, use read_bytes and xrefs to inspect bytes and references.";
@@ -138,8 +159,9 @@ export const ghidraNotInListingLimitation = (
  */
 export const ghidraSessionCommonLimitations = (
   source: GhidraSessionSource = "fresh-import",
+  cancelGrace?: GhidraCancelGrace,
 ): readonly string[] => [
-  ...ghidraHealthLimitations(source),
+  ...ghidraHealthLimitations(source, cancelGrace),
   "Default-space addresses use lowercase 0x-prefixed hexadecimal; other address spaces use <percent-encoded-space>:0x<hex>.",
 ];
 
