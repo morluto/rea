@@ -3,7 +3,7 @@ import { toolContract } from "../../contracts/toolContracts.js";
 import { SQLITE_PROVIDER_IDENTITY } from "../../domain/sqlite/SqliteProviderIdentity.js";
 
 const SQLITE_RUNTIME_REQUIREMENT =
-  "SQLite inspection requires Node.js 24.x >=24.15 or 26+ with the native DatabaseSync.limits API. Other REA features retain their published runtime requirements. The inspection worker verifies the API before querying the snapshot.";
+  "SQLite inspection requires the native DatabaseSync.limits API, which REA's supported Node.js 24.x and 26.x runtimes provide; it is unavailable on Node.js 22.x. Other REA features retain their published runtime requirements. The inspection worker verifies the API before querying the snapshot.";
 
 /** Discover inspection readiness without opening a database or starting a worker. */
 export const sqliteDatabaseCapability = (nodeVersion: string) => {

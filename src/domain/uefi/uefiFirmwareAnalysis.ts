@@ -102,7 +102,7 @@ export const uefiSectionTypeNameSchema = z.enum([
  * Compression classification for guided or uncompressed sections; kinds that
  * cannot be decoded are reported as gaps, never silently skipped.
  */
-export const uefiCompressionSchema = z.union([
+export const uefiCompressionSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("none") }),
   z.strictObject({
     kind: z.enum([
@@ -253,7 +253,7 @@ export const uefiInputSchemas = {
       .max(1024)
       .default(64)
       .describe(
-        "Maximum AMI NVRAM variable stores reported before coverage turns partial",
+        "Maximum AMI NVAR chains and EDK2 VARIABLE_STORE_HEADER regions reported per format before coverage turns partial",
       ),
     max_depth: z
       .number()
@@ -262,7 +262,7 @@ export const uefiInputSchemas = {
       .max(4)
       .default(2)
       .describe(
-        "Nesting depth for NVAR chains embedded in variable data (StdDefaults holds one nested chain)",
+        "Nesting depth for AMI NVAR chains embedded in variable data (StdDefaults holds one nested chain); unused for EDK2 stores",
       ),
   }),
 } as const;
@@ -396,6 +396,53 @@ export const uefiNvramStoreRecordSchema = z.strictObject({
   trailing_padding: bytes.nullable(),
 });
 
+/** EDK2 variable State after flash bit-clearing (VariableFormat.h). */
+export const uefiEdk2VariableStateSchema = z.enum([
+  "added",
+  "in-deleted-transition",
+  "deleted",
+  "header-only",
+  "unknown",
+]);
+/** One EDK2 variable header; data bytes are referenced, never interpreted. */
+export const uefiEdk2NvramVariableRecordSchema = z.strictObject({
+  offset: bytes,
+  name: z.string().nullable(),
+  state: uefiEdk2VariableStateSchema,
+  state_raw: z.number().int().min(0).max(0xff),
+  attributes: z
+    .number()
+    .int()
+    .min(0)
+    .max(0xffffffff)
+    .describe("32-bit EFI variable Attributes from the store header"),
+  vendor_guid: guidSchema,
+  data_offset: bytes,
+  data_length: bytes,
+  data_sha256: digestSchema,
+});
+/**
+ * One EDK2 `VARIABLE_STORE_HEADER` region (gEfiVariableGuid or
+ * gEfiAuthenticatedVariableGuid).
+ */
+export const uefiEdk2NvramStoreRecordSchema = z.strictObject({
+  offset: bytes,
+  store_guid: guidSchema,
+  size: bytes,
+  store_format: z.number().int().min(0).max(0xff),
+  store_state: z.number().int().min(0).max(0xff),
+  authenticated: z.boolean(),
+  variables: z.array(uefiEdk2NvramVariableRecordSchema),
+});
+
+/** The mapped FFS file that owns an extracted payload. */
+export const uefiExtractedFileOwnerSchema = z.strictObject({
+  guid: guidSchema,
+  ui_string: z.string().nullable(),
+  type_name: ffsTypeNameSchema,
+  logical_path: z.string(),
+});
+
 /** Portable results retain observed boundaries, unknowns and integrity notes. */
 export const uefiResultSchemas = {
   inspect_uefi_firmware: z.strictObject({
@@ -470,6 +517,12 @@ export const uefiResultSchemas = {
           "compressed-passthrough",
         ]),
         parent_logical_path: z.string().nullable(),
+        ffs_file: uefiExtractedFileOwnerSchema
+          .nullable()
+          .optional()
+          .describe(
+            "FFS file whose body or section produced these bytes; null for a stream outside any mapped file. The extractor always records it; Evidence saved before this field existed omits it.",
+          ),
       }),
     ),
     derivations: z.array(
@@ -507,6 +560,12 @@ export const uefiResultSchemas = {
     input_size: bytes,
     image_sha256: digestSchema,
     stores: z.array(uefiNvramStoreRecordSchema),
+    edk2_stores: z
+      .array(uefiEdk2NvramStoreRecordSchema)
+      .describe(
+        "TianoCore EDK2 / OVMF VARIABLE_STORE_HEADER regions. Evidence saved before this field existed omits it.",
+      )
+      .optional(),
     coverage: knownCoverageStatusSchema,
     limitations: z.array(z.string()),
   }),

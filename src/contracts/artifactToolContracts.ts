@@ -11,6 +11,7 @@ import { distinctItems } from "../domain/schemaConstraints.js";
 import type { EffectAudit } from "./toolEffects.js";
 import {
   toolContractMetadata,
+  artifactInspectionEffects,
   evidenceEffects,
   nativeEvidenceEffects,
   toolEffects,
@@ -27,13 +28,18 @@ export const artifactInventoryInputSchema = z.strictObject({
   artifact_limits: artifactReaderLimitsInputSchema
     .exactOptional()
     .describe(
-      "Per-call Bun, .NET bundle, Node SEA and Godot producer admission, plus optional aggregate expanded plaintext work. Omitted fields retain existing defaults; changes apply on the next call without restart. Independent of summary/paging and MCP response limits.",
+      "Per-call Bun, .NET bundle, Node SEA, Godot, Android sparse image and Android vbmeta producer admission, plus optional aggregate expanded plaintext work. Omitted fields retain existing defaults; changes apply on the next call without restart. Independent of summary/paging and MCP response limits.",
     ),
 });
 
 /** Delivery selection belongs to the adapter, not the inventory producer. */
 export const artifactInspectionInputSchema =
   artifactInventoryInputSchema.extend({
+    path: absoluteLocalPathStringSchema
+      .exactOptional()
+      .describe(
+        "Absolute path of the file or directory to inspect, independently of the open target. A directory is inventoried as a tree whose subject is its content-addressed root digest. Omit to inspect the target open_binary opened.",
+      ),
     detail: analysisDetailSchema
       .unwrap()
       .optional()
@@ -59,11 +65,16 @@ export const artifactExtractionInputSchema = z.strictObject({
     .describe(
       "Exact regular-file or slice occurrence IDs from the current inventory. Omit to extract all regular entries exposed by the active reader. Directories, links, the root and members inside nested archives cannot be selected.",
     ),
+  detail: analysisDetailSchema,
 });
 
-/** Provider input after the adapter has supplied the optional destination. */
-export const artifactExtractionExecutionSchema =
-  artifactExtractionInputSchema.extend({
+/**
+ * Provider input after the adapter has supplied the optional destination;
+ * delivery detail never reaches the provider.
+ */
+export const artifactExtractionExecutionSchema = artifactExtractionInputSchema
+  .omit({ detail: true })
+  .extend({
     output_root: artifactExtractionInputSchema.shape.output_root.unwrap(),
   });
 
@@ -89,6 +100,7 @@ const artifact = <
   description: string,
   inputSchema: Schema,
   retainedSummary?: ToolContract["retainedSummary"],
+  requiresActiveTarget = true,
 ) => {
   const outputSchema = requireOutputSchema(artifactOutputSchemas, name);
   return {
@@ -97,7 +109,7 @@ const artifact = <
     description,
     kind: "artifact-provider",
     cli: true,
-    requiresActiveTarget: true,
+    requiresActiveTarget,
     ...(retainedSummary === undefined ? {} : { retainedSummary }),
     inputSchema,
     outputSchema,
@@ -114,14 +126,11 @@ const artifact = <
 export const ARTIFACT_TOOL_CONTRACTS = [
   artifact(
     "inspect_artifact",
-    toolEffects({
-      mutatesSession: true,
-      launchesProcess: true,
-      writesFilesystem: true,
-    }),
-    "Inventory the active archive, app package, firmware container or supported packaged executable without running it. Returns nested content-addressed inventory Evidence with integrity observations, unexplored branches and next probes. Default complete returns the full graph; detail summary retains it for inspect_analysis_view kind inventory using parent_evidence_id, exact paths/IDs, fields and paging. Summary changes delivery, not inventory coverage. Bun/Node SEA/Deno carriers expose stored modules/assets and recorded metadata; opaque bytecode and npm snapshots are not decoded. Local Evidence can include environment-file values and certificate bytes. iNES and NES 2.0 add file-region/reconstruction facts, not mapper execution. Integrity mismatches fail unless record-and-continue explicitly retains untrusted contradictions. Supported macOS DMGs are mounted read-only. Use extract_artifact to materialize regular contents; DMGs instead need a caller-managed read-only mount.",
+    artifactInspectionEffects,
+    "Inventory an archive, app package, directory, firmware container or supported packaged executable without running it: the path given, else the open target. A directory's subject is its content-addressed root digest; a walk a limit stops is partial and has none. Returns nested content-addressed inventory Evidence with integrity observations, unexplored branches and next probes. Default complete returns the full graph; detail summary retains it for inspect_analysis_view kind inventory using parent_evidence_id, exact paths/IDs, path globs, size order, fields and paging. Summary changes delivery, not inventory coverage. Bun/Node SEA/Deno carriers expose stored modules/assets and recorded metadata; opaque bytecode and npm snapshots are not decoded. Local Evidence can include environment-file values and certificate bytes. iNES and NES 2.0 add file-region/reconstruction facts, not mapper execution. Integrity mismatches fail unless record-and-continue explicitly retains untrusted contradictions. Supported macOS DMGs are mounted read-only. Use extract_artifact to materialize regular contents; DMGs instead need a caller-managed read-only mount.",
     artifactInspectionInputSchema,
     { evidenceParameters: "preserve-detail" },
+    false,
   ),
   artifact(
     "extract_artifact",
@@ -131,8 +140,9 @@ export const ARTIFACT_TOOL_CONTRACTS = [
       launchesProcess: true,
       idempotent: false,
     }),
-    "Write all or selected regular files from the active supported archive to an absent absolute output_root, or a fresh temporary directory if omitted. Use exact inventory occurrence_ids to select files. Returns IDs and actual output paths; successful files persist. Nested archives are copied, not recursively unpacked. Never overwrites; rejects traversal/symlink escapes and verifies cleanup. Full-input integrity checks still apply: mismatches fail unless record-and-continue retains explicitly untrusted contradictions. DMG extraction is unavailable; use a caller-managed read-only mount on macOS.",
+    "Write all or selected regular files from the active supported archive to an absent absolute output_root, or a fresh temporary directory if omitted. Use exact inventory occurrence_ids to select files. Returns IDs and actual output paths; successful files persist. A large extraction's written-file list is retained behind its summary, which inspect_analysis_view kind artifact-extraction pages by exact path, glob or artifact ID. Nested archives are copied, not recursively unpacked. Never overwrites; rejects traversal/symlink escapes and verifies cleanup. Full-input integrity checks still apply: mismatches fail unless record-and-continue retains explicitly untrusted contradictions. DMG extraction is unavailable; use a caller-managed read-only mount on macOS.",
     artifactExtractionInputSchema,
+    { evidenceParameters: "omit-detail" },
   ),
   artifact(
     "decode_interface_builder",
@@ -154,7 +164,7 @@ export const ARTIFACT_TOOL_CONTRACTS = [
   artifact(
     "inspect_keyed_archive",
     evidenceEffects,
-    "Inspect one Foundation NSKeyedArchiver plist in the active app bundle as original object-table nodes, class descriptors, named roots, and UID edges. Preserves shared and cyclic references without instantiating classes. The path is relative to the bundle; root selection and object pagination preserve original identities.",
+    "Inspect one Foundation keyed archive plist in the active app bundle, written by NSKeyedArchiver or a subclass archiver such as SceneKit's SCNKeyedArchiver, as original object-table nodes, class descriptors, named roots, and UID edges; the result names the declared archiver. Preserves shared and cyclic references without instantiating classes. The path is relative to the bundle; root selection and object pagination preserve original identities.",
     keyedArchiveInputSchema,
   ),
   artifact(

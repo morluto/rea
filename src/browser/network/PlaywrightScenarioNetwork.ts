@@ -147,6 +147,7 @@ export class PlaywrightScenarioNetwork {
   /** One request and one response-content job at most per admitted transaction. */
   private readonly pending: Promise<void>[] = [];
   private readonly queuedReads: QueuedContentRead[] = [];
+  private queuedReadsHead = 0;
   private readonly gaps = new Set<string>();
   private accepting = true;
   private activeReads = 0;
@@ -761,9 +762,21 @@ export class PlaywrightScenarioNetwork {
   }
 
   private pumpContentReads(): void {
-    while (this.activeReads < 16 && this.queuedReads.length > 0) {
-      const job = this.queuedReads.shift();
-      if (job === undefined) return;
+    while (
+      this.activeReads < 16 &&
+      this.queuedReadsHead < this.queuedReads.length
+    ) {
+      const job = this.queuedReads[this.queuedReadsHead++]!;
+      if (this.queuedReadsHead >= this.queuedReads.length) {
+        this.queuedReads.length = 0;
+        this.queuedReadsHead = 0;
+      } else if (
+        this.queuedReadsHead >= 64 &&
+        this.queuedReadsHead * 2 >= this.queuedReads.length
+      ) {
+        this.queuedReads.splice(0, this.queuedReadsHead);
+        this.queuedReadsHead = 0;
+      }
       this.activeReads += 1;
       void job
         .run()

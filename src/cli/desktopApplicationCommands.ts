@@ -3,10 +3,8 @@ import type { Logger } from "pino";
 import { createDesktopApplicationService } from "../composition/desktop.js";
 import { DESKTOP_APPLICATION_TOOL_CONTRACTS } from "../contracts/desktopApplicationToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
-import {
-  deliverWithService,
-  registerContractCommand,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { deliverWithService } from "./contractCommandRunners.js";
 import type { CliInstance } from "./types.js";
 
 /** One-shot complete Evidence can be saved and queried with inspect-analysis-view. */

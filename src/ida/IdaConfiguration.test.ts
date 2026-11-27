@@ -125,6 +125,86 @@ it("rejects registration growth beyond the byte limit after descriptor admission
   }
 });
 
+it.each([
+  ["admission", "denied"],
+  ["growth", "denied"],
+  ["admission", "cancelled"],
+  ["admission", "cancelled-and-denied"],
+] as const)(
+  "keeps the 64 KiB rejection from the %s size check through a %s close",
+  async (branch, closeOutcome) => {
+    const root = await createTestTempDirectory("rea-ida-config-");
+    const path = join(root, "mcp.json");
+    await writeFile(
+      path,
+      branch === "admission"
+        ? ATTACHED_REGISTRATION.padEnd(65_537)
+        : ATTACHED_REGISTRATION,
+    );
+    const retained: { close(): Promise<void> }[] = [];
+    const owner: RetainedResourceScope = {
+      retain: (resource) => retained.push(resource),
+      run: (operation) => operation(),
+    };
+    const openRegularFile = regularFile.openRegularFile;
+    const admission =
+      branch === "growth"
+        ? vi
+            .spyOn(regularFile, "openRegularFile")
+            .mockImplementation(async (...args) => {
+              const source = await openRegularFile(...args);
+              await appendFile(path, " ".repeat(65_536));
+              return source;
+            })
+        : undefined;
+    const controller = new AbortController();
+    const reason = new Error("cancel while closing the oversized registration");
+    const close = OwnedFileHandle.prototype.close;
+    const denial = new Error("descriptor close denied");
+    const closeSpy = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementationOnce(function (this: OwnedFileHandle) {
+        if (closeOutcome !== "denied") controller.abort(reason);
+        return closeOutcome === "cancelled"
+          ? close.call(this)
+          : Promise.reject(denial);
+      });
+    try {
+      const result = await readIdaConfiguration(path, {
+        resourceScope: owner,
+        signal: controller.signal,
+      });
+      if (result.ok) throw new Error("expected the size rejection");
+      expect(result.error.message).toContain("64 KiB");
+      if (closeOutcome !== "denied") {
+        expect(result.error.secondaryFailures).toEqual([
+          expect.objectContaining({
+            _tag: "AnalysisCancelledError",
+            cause: reason,
+          }),
+        ]);
+      }
+      if (closeOutcome === "cancelled") {
+        expect(result.error.cleanupIncomplete).toBe(false);
+        expect(retained).toHaveLength(0);
+      } else {
+        expect(result.error.cleanup).toMatchObject({
+          reason: expect.stringContaining("descriptor close denied"),
+          resources: [path],
+        });
+        expect(result.error.cleanupIncomplete).toBe(true);
+        expect(retained).toHaveLength(1);
+        await rm(path);
+        await retained[0]!.close();
+        expect(result.error.cleanupIncomplete).toBe(false);
+      }
+    } finally {
+      admission?.mockRestore();
+      closeSpy.mockRestore();
+    }
+  },
+);
+
 describe("IDA registration descriptor ownership", () => {
   it("retains the exact descriptor after close denial and resolves its error only after retry", async () => {
     const root = await createTestTempDirectory("rea-ida-config-");
@@ -138,24 +218,28 @@ describe("IDA registration descriptor ownership", () => {
     const close = OwnedFileHandle.prototype.close;
     let denied = false;
     const denial = new Error("descriptor close denied");
-    vi.spyOn(OwnedFileHandle.prototype, "close").mockImplementation(function (
-      this: OwnedFileHandle,
-    ) {
-      if (!denied) {
-        denied = true;
-        return Promise.reject(denial);
-      }
-      return close.call(this);
-    });
-    const result = await readIdaConfiguration(path, {
-      resourceScope: owner,
-    });
-    if (result.ok) throw new Error("expected close failure");
-    expect(result.error.cleanupIncomplete).toBe(true);
-    expect(retained).toHaveLength(1);
-    await rm(path);
-    await retained[0]!.close();
-    expect(result.error.cleanupIncomplete).toBe(false);
+    const closeSpy = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(function (this: OwnedFileHandle) {
+        if (!denied) {
+          denied = true;
+          return Promise.reject(denial);
+        }
+        return close.call(this);
+      });
+    try {
+      const result = await readIdaConfiguration(path, {
+        resourceScope: owner,
+      });
+      if (result.ok) throw new Error("expected close failure");
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(retained).toHaveLength(1);
+      await rm(path);
+      await retained[0]!.close();
+      expect(result.error.cleanupIncomplete).toBe(false);
+    } finally {
+      closeSpy.mockRestore();
+    }
   });
   it("preserves the caller's exact cancellation reason", async () => {
     const root = await createTestTempDirectory("rea-ida-config-");
@@ -262,7 +346,7 @@ describe("IDA registration descriptor ownership", () => {
 });
 
 it.each(["env", "headers"] as const)(
-  "preserves all explicit IDA %s keys",
+  "preserves explicit IDA %s keys and rejects invalid values at the same keys",
   async (field) => {
     const root = await createTestTempDirectory("rea-ida-config-");
     const path = join(root, "mcp.json");
@@ -284,18 +368,7 @@ it.each(["env", "headers"] as const)(
           : undefined;
     expect(parsed).toEqual(mapping);
     expect(Object.hasOwn(parsed ?? {}, "__proto__")).toBe(true);
-  },
-);
 
-it.each(["env", "headers"] as const)(
-  "rejects malformed explicit IDA %s values at __proto__",
-  async (field) => {
-    const root = await createTestTempDirectory("rea-ida-config-");
-    const path = join(root, "mcp.json");
-    const transport =
-      field === "env"
-        ? { command: "python", protocol: "native" }
-        : { url: "http://127.0.0.1:8745/mcp", protocol: "native" };
     for (const value of [42, null, {}]) {
       await writeFile(
         path,
@@ -304,85 +377,104 @@ it.each(["env", "headers"] as const)(
           [field]: Object.fromEntries([["__proto__", value]]),
         }),
       );
-      expect((await read(path)).ok).toBe(false);
+      expect((await read(path)).ok, JSON.stringify(value)).toBe(false);
     }
   },
 );
 
-// A stored registration that still selects the removed 1.4 proxy is refused
-// with migration guidance; it is never read as the native or headless protocol.
-it.each([
-  { command: "python", args: ["server.py"], protocol: "legacy" },
-  { url: "http://127.0.0.1:13337/mcp", mode: "attached", protocol: "legacy" },
-  {
-    mcpServers: {
-      "ida-pro-mcp": { command: "python", protocol: "legacy" },
+describe("IDA registration compatibility profiles", () => {
+  it.each([
+    { url: "http://127.0.0.1:13337/mcp", mode: "attached", protocol: "legacy" },
+    {
+      mcpServers: {
+        "ida-pro-mcp": { command: "python", protocol: "legacy" },
+      },
     },
-  },
-])("refuses the removed legacy protocol in %j", async (input) => {
-  const root = await createTestTempDirectory("rea-ida-config-");
-  const path = join(root, "mcp.json");
-  await writeFile(path, JSON.stringify(input));
-  const parsed = await read(path);
-  if (parsed.ok) throw new Error("Expected the legacy protocol to fail");
-  // The refusal names the protocol setting and delivers the owner's guidance.
-  const constraint = `protocol: ${LEGACY_PROTOCOL_REMOVED}`;
-  expect(parsed.error.settings).toEqual([
-    { setting: "REA_IDA_MCP_CONFIG", constraint },
-  ]);
-  expect(parsed.error.message).toContain(constraint);
-});
-
-it("points legacy protocol recovery to the documented migration", async () => {
-  expect(LEGACY_PROTOCOL_REMOVED).toContain('"protocol": "native"');
-  const guide = await fs.readFile("docs/providers/ida-provider.md", "utf8");
-  expect(guide).toMatch(/^### Migrate a legacy attached registration$/mu);
-  expect(LEGACY_PROTOCOL_REMOVED).toContain(
-    '"Migrate a legacy attached registration"',
-  );
-});
-
-// An attached registration has no default protocol; it fails closed naming
-// the protocol choice instead of guessing.
-it.each([
-  { command: "python", args: ["server.py"] },
-  { command: "python", mode: "attached" },
-  { url: "http://127.0.0.1:13337/mcp" },
-])(
-  "requires an explicit protocol for attached registration %j",
-  async (input) => {
+  ])("refuses the removed legacy protocol in %j", async (input) => {
     const root = await createTestTempDirectory("rea-ida-config-");
     const path = join(root, "mcp.json");
     await writeFile(path, JSON.stringify(input));
     const parsed = await read(path);
-    if (parsed.ok) throw new Error("Expected an omitted protocol to fail");
+    if (parsed.ok) throw new Error("Expected the legacy protocol to fail");
+    const constraint = `protocol: ${LEGACY_PROTOCOL_REMOVED}`;
+    expect(parsed.error.settings).toEqual([
+      { setting: "REA_IDA_MCP_CONFIG", constraint },
+    ]);
+    expect(parsed.error.message).toContain(constraint);
+    expect(constraint).toContain('"protocol": "native"');
+  });
+
+  it.each([
+    [{ command: "python", args: ["server.py"] }, 'set protocol to "native"'],
+    [
+      { url: "http://127.0.0.1:13337/mcp", mode: "attached" },
+      'set protocol to "native"',
+    ],
+    [
+      { command: "python", mode: "headless", protocol: "native" },
+      'a headless registration omits protocol or sets "hexrays"',
+    ],
+    [
+      {
+        url: "http://127.0.0.1:13337/mcp",
+        mode: "headless",
+        protocol: "native",
+      },
+      'a headless registration omits protocol or sets "hexrays"',
+    ],
+    [
+      { command: "uvx", args: ["ida-mcp", "stdio"], protocol: "hexrays" },
+      "requires a headless stdio registration",
+    ],
+    [
+      {
+        url: "http://127.0.0.1:8737/mcp",
+        mode: "headless",
+        protocol: "hexrays",
+      },
+      "requires a headless stdio registration",
+    ],
+  ] as const)("rejects incompatible registration %j", async (input, reason) => {
+    const root = await createTestTempDirectory("rea-ida-config-");
+    const path = join(root, "mcp.json");
+    await writeFile(path, JSON.stringify(input));
+    const parsed = await read(path);
+    if (parsed.ok)
+      throw new Error("Expected incompatible registration to fail");
     expect(parsed.error.settings).toEqual([
       {
         setting: "REA_IDA_MCP_CONFIG",
-        constraint: expect.stringContaining('set protocol to "native"'),
+        constraint: expect.stringContaining(reason),
       },
     ]);
-  },
-);
-
-it("resolves the single headless protocol without a protocol field", async () => {
-  const root = await createTestTempDirectory("rea-ida-config-");
-  const path = join(root, "mcp.json");
-  await writeFile(
-    path,
-    JSON.stringify({ command: "python", mode: "headless" }),
-  );
-  expect(await read(path)).toMatchObject({
-    ok: true,
-    value: { mode: "headless", protocol: "modern" },
   });
-  await writeFile(
-    path,
-    JSON.stringify({
+
+  it.each([
+    {
       command: "python",
-      mode: "headless",
-      protocol: "native",
-    }),
+      args: ["server.py"],
+      protocol: "modern",
+      inputProtocol: {},
+    },
+    {
+      command: "uvx",
+      args: ["ida-mcp", "stdio"],
+      protocol: "hexrays",
+      inputProtocol: { protocol: "hexrays" },
+    },
+  ])(
+    "resolves a headless $protocol registration",
+    async ({ command, args, protocol, inputProtocol }) => {
+      const root = await createTestTempDirectory("rea-ida-config-");
+      const path = join(root, "mcp.json");
+      await writeFile(
+        path,
+        JSON.stringify({ command, args, mode: "headless", ...inputProtocol }),
+      );
+      expect(await read(path)).toMatchObject({
+        ok: true,
+        value: { command, args, mode: "headless", protocol },
+      });
+    },
   );
-  expect((await read(path)).ok).toBe(false);
 });

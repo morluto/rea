@@ -11,7 +11,7 @@ import {
   CLI_REGISTRATION_ORDER,
 } from "../../../src/cli/cliCommandRegistrations.js";
 import { createCliShell } from "../../../src/cli/cliShell.js";
-import type { ContractCliDescription } from "../../../src/cli/contractCliDescription.js";
+import type { ContractCliDescription } from "../../../src/cli/contractCliDescriptionTypes.js";
 import { registeredContractDescriptions } from "../../support/cli/commandCli.js";
 import { createArtifactBinarySession } from "../../../src/composition/binary.js";
 import { bindDirectAnalysis } from "../../../src/composition/directAnalysis.js";
@@ -89,11 +89,13 @@ const KNOWN_DIFFERENCES: Readonly<Record<string, readonly string[]>> = {
       ],
     ]),
   ),
-  // The MCP inspection records the delivery detail in Evidence parameters.
+  // The MCP inspection records the delivery detail and its selected path in
+  // Evidence parameters; the CLI records the path as `input_path`.
   inspect_artifact: [
     "evidence.evidence_id",
     "evidence.parameters.detail",
     "evidence.parameters.input_path",
+    "evidence.parameters.path",
   ],
   // `DirectAnalysis` shapes CLI failures in the application layer and adds
   // an `error: "Analysis failed"` marker MCP does not send.

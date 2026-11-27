@@ -12,8 +12,13 @@ import { GO_TOOL_CONTRACTS } from "./go/goToolContracts.js";
 import { MODEL_TOOL_CONTRACTS } from "./model/modelToolContracts.js";
 import { IL2CPP_TOOL_CONTRACTS } from "./il2cpp/il2cppToolContracts.js";
 import { RUST_TOOL_CONTRACTS } from "./rust/rustToolContracts.js";
+import { LABVIEW_TOOL_CONTRACTS } from "./labview/labviewToolContracts.js";
 import { PYTHON_PYC_TOOL_CONTRACTS } from "./python/pythonPycToolContracts.js";
+import { DEB_PACKAGE_TOOL_CONTRACTS } from "./deb/debPackageToolContracts.js";
 import { NUGET_NUPKG_TOOL_CONTRACTS } from "./nuget/nupkgToolContracts.js";
+import { VSIX_PACKAGE_TOOL_CONTRACTS } from "./vsix/vsixPackageToolContracts.js";
+import { OCI_IMAGE_LAYOUT_TOOL_CONTRACTS } from "./oci/ociImageLayoutToolContracts.js";
+import { YARA_TOOL_CONTRACTS } from "./yara/yaraToolContracts.js";
 import { ERLANG_BEAM_TOOL_CONTRACTS } from "./erlang/beamToolContracts.js";
 import { V8_CODE_CACHE_TOOL_CONTRACTS } from "./v8/v8CodeCacheToolContracts.js";
 import { MAVEN_GRADLE_METADATA_TOOL_CONTRACTS } from "./java/mavenGradleMetadataToolContracts.js";
@@ -72,8 +77,13 @@ const CATALOG_CONTRACT_GROUPS = {
   MODEL_TOOL_CONTRACTS,
   GPU_TOOL_CONTRACTS,
   RUST_TOOL_CONTRACTS,
+  LABVIEW_TOOL_CONTRACTS,
   PYTHON_PYC_TOOL_CONTRACTS,
+  DEB_PACKAGE_TOOL_CONTRACTS,
   NUGET_NUPKG_TOOL_CONTRACTS,
+  VSIX_PACKAGE_TOOL_CONTRACTS,
+  OCI_IMAGE_LAYOUT_TOOL_CONTRACTS,
+  YARA_TOOL_CONTRACTS,
   ERLANG_BEAM_TOOL_CONTRACTS,
   V8_CODE_CACHE_TOOL_CONTRACTS,
   MAVEN_GRADLE_METADATA_TOOL_CONTRACTS,
@@ -131,20 +141,30 @@ export const TOOL_CONTRACTS: readonly CatalogContract[] = Object.values(
   CATALOG_CONTRACT_GROUPS,
 ).flat();
 
+/** Public tool contract paired with its canonical catalog index. */
+export interface ToolContractEntry {
+  readonly contract: CatalogContract;
+  readonly index: number;
+}
+
+const TOOL_CONTRACTS_BY_NAME: ReadonlyMap<string, ToolContractEntry> = new Map(
+  TOOL_CONTRACTS.map((contract, index) => [contract.name, { contract, index }]),
+);
+
+/** Resolve a public contract entry in catalog order in O(1). */
+export const toolContractEntry = (
+  name: string,
+): ToolContractEntry | undefined => TOOL_CONTRACTS_BY_NAME.get(name);
+
 /** Resolve a public contract by name while retaining its exact schema types. */
 export const toolContract = <
   Name extends (typeof TOOL_CONTRACTS)[number]["name"],
 >(
   name: Name,
 ): Extract<(typeof TOOL_CONTRACTS)[number], { readonly name: Name }> => {
-  const contract = TOOL_CONTRACTS.find(
-    (
-      candidate,
-    ): candidate is Extract<
-      (typeof TOOL_CONTRACTS)[number],
-      { readonly name: Name }
-    > => candidate.name === name,
-  );
+  const contract = TOOL_CONTRACTS_BY_NAME.get(name)?.contract as
+    | Extract<(typeof TOOL_CONTRACTS)[number], { readonly name: Name }>
+    | undefined;
   if (contract === undefined) throw new Error(`Missing tool contract: ${name}`);
   return contract;
 };

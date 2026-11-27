@@ -1,11 +1,6 @@
 import { Buffer } from "node:buffer";
 import { expect, it } from "vitest";
-import {
-  FFS2_FILE_SYSTEM_GUID,
-  FFS3_FILE_SYSTEM_GUID,
-  formatGuidLittleEndian,
-  guidEquals,
-} from "./UefiGuid.js";
+import { formatGuidLittleEndian, guidBytesLittleEndian } from "./UefiGuid.js";
 
 const ffs2RawBytes = Buffer.from([
   0x78, 0xe5, 0x8c, 0x8c, 0x3d, 0x8a, 0x1c, 0x4f, 0x99, 0x35, 0x89, 0x61, 0x85,
@@ -28,8 +23,8 @@ const lzmaf86RawBytes = Buffer.from([
   0xea, 0xe8, 0x89,
 ]);
 
-it("formats the FFS2 container GUID from raw little-endian bytes", () => {
-  const header = Buffer.alloc(48, 0xff);
+it("formats the FFS2 GUID at a nonzero offset ending at the buffer boundary", () => {
+  const header = Buffer.alloc(32, 0xff);
   ffs2RawBytes.copy(header, 16);
   expect(formatGuidLittleEndian(header, 16)).toBe(
     "8c8ce578-8a3d-4f1c-9935-896185c32dd3",
@@ -37,7 +32,9 @@ it("formats the FFS2 container GUID from raw little-endian bytes", () => {
 });
 
 it("names the published FFS3 container GUID for its raw bytes", () => {
-  expect(formatGuidLittleEndian(ffs3RawBytes, 0)).toBe(FFS3_FILE_SYSTEM_GUID);
+  expect(formatGuidLittleEndian(ffs3RawBytes, 0)).toBe(
+    "5473c07a-3dcb-4dca-bd6f-1e9689e7349a",
+  );
 });
 
 it("formats the LZMA custom compression GUID", () => {
@@ -59,15 +56,21 @@ it("returns null for out-of-bounds and truncated reads", () => {
   expect(formatGuidLittleEndian(ffs2RawBytes, 1)).toBeNull();
 });
 
-it("accepts a read exactly at the buffer end", () => {
-  expect(formatGuidLittleEndian(ffs2RawBytes, 0)).toBe(FFS2_FILE_SYSTEM_GUID);
-});
-
-it("compares GUIDs case-insensitively without accepting mixed values", () => {
+it("encodes signature GUID text back to the bytes a volume stores", () => {
   expect(
-    guidEquals(FFS2_FILE_SYSTEM_GUID, "8C8CE578-8A3D-4F1C-9935-896185C32DD3"),
+    guidBytesLittleEndian("8c8ce578-8a3d-4f1c-9935-896185c32dd3").equals(
+      ffs2RawBytes,
+    ),
   ).toBe(true);
   expect(
-    guidEquals(FFS2_FILE_SYSTEM_GUID, "ee4e5898-3914-4259-9d6e-dc7bd79403cf"),
-  ).toBe(false);
+    guidBytesLittleEndian("5473c07a-3dcb-4dca-bd6f-1e9689e7349a").equals(
+      ffs3RawBytes,
+    ),
+  ).toBe(true);
+  expect(() => guidBytesLittleEndian("8c8ce578-8a3d-4f1c-9935")).toThrow(
+    "invalid GUID text",
+  );
+  expect(() =>
+    guidBytesLittleEndian("zzzzzzzz-8a3d-4f1c-9935-896185c32dd3"),
+  ).toThrow("invalid GUID text");
 });

@@ -1,11 +1,19 @@
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
 import {
+  ARTIFACT_MEMBER_COUNT_PARAMETERS,
+  ARTIFACT_MEMBER_COUNT_SETTING,
+  artifactMemberCountSelected,
+  artifactReaderLimitsInputSchema,
   resolveArtifactReaderLimits,
+  type ArtifactMemberCount,
   type ArtifactReaderLimitsInput,
 } from "../domain/artifactReaderLimits.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
+import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
+import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import { runtimeAsarHeaderAdmission } from "../config/runtimeAnalysisSettings.js";
+import { runtimeArtifactMemberCount } from "../config/artifactMemberCount.js";
 import { artifactTargetRefusal } from "../domain/apple/artifactTargetApplicability.js";
 import {
   bindArtifactFileCleanup,
@@ -19,11 +27,13 @@ import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
   createAnalysisExecution,
   type AnalysisClient,
+  type AnalysisExecution,
   type AnalysisOperation,
   type AnalysisProvider,
   type CapabilityDescriptor,
   type ProviderIdentity,
   type ExecutionOptions,
+  type RetainedResourceScope,
 } from "../ports/AnalysisProvider.js";
 import {
   inspectBundleKeyedArchive,
@@ -47,19 +57,29 @@ import {
 } from "../domain/binaryTargetTypes.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisUnsupportedTargetError,
+  AnalysisTargetFailureError,
+  unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { interfaceBuilderLimitsSchema } from "../domain/apple/interfaceBuilderGraph.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { artifactCapabilities } from "./ArtifactProviderMetadata.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../domain/investigationProviders.js";
-import { createEvidence } from "../domain/evidence.js";
+import {
+  createEvidence,
+  type EvidenceSubjectTarget,
+} from "../domain/evidence.js";
 import { binaryTargetSelection } from "../domain/targetIdentity.js";
+import type { ArtifactInventoryResult } from "../domain/artifactGraph.js";
+import {
+  artifactInventorySubject,
+  type ArtifactInventorySubject as InventorySubject,
+} from "../domain/artifactInventoryEvidence.js";
 import { freezeJsonSnapshot } from "../domain/immutableJson.js";
 import {
   artifactInspectionSources,
   createArtifactInspection,
+  type ArtifactInspectionRootImage,
 } from "../domain/artifactInspection.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type {
@@ -101,6 +121,63 @@ export class ArtifactProvider implements AnalysisProvider {
       this.#platform,
       this.settings,
     );
+  }
+
+  /**
+   * Inspect a caller-selected directory without a session target. The
+   * directory's subject is its complete tree digest, or an explicit unknown
+   * when the walk was partial.
+   */
+  async inspectDirectory(
+    path: string,
+    parameters: Readonly<Record<string, JsonValue>>,
+    options?: ExecutionOptions,
+    /** The caller's lifetime, which keeps a failed cleanup retryable. */
+    retained?: RetainedResourceScope,
+  ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    const resources = new ArtifactResourceScope();
+    const policy = new ArtifactReaderPolicy(this.environment, this.settings);
+    let inspected: Result<AnalysisExecution, AnalysisError>;
+    try {
+      inspected = await inspectInventory(
+        artifactInventoryInputSchema.parse(parameters),
+        (inventoryParameters) =>
+          inventoryArtifact(path, {
+            selectedPath: path,
+            resourceScope: resources,
+            ...inventoryRuntimeOptions(
+              this.environment,
+              this.settings,
+              inventoryParameters,
+              options,
+              policy,
+            ),
+          }),
+        (inventory) => ({
+          subject: artifactInventorySubject(path, inventory),
+          rootImage: undefined,
+        }),
+        options,
+      );
+    } catch (cause: unknown) {
+      inspected = err(
+        translateArtifactFailure("inspect_artifact", path, cause),
+      );
+    }
+    if (!inspected.ok) policy.bind(inspected.error, parameters);
+    // A completed inspection still fails when its readers could not be
+    // released. The caller's lifetime keeps this scope, so a later close of
+    // that lifetime retries exactly the owners that are still pending.
+    const closed = await closeArtifactResources(resources, path);
+    if (!closed.ok)
+      retained?.retain(
+        {
+          close: () => resources.close(),
+          cleanupResources: resources.cleanupResources,
+        },
+        `artifact directory inspection of ${path}`,
+      );
+    return closed.ok || !inspected.ok ? inspected : closed;
   }
 
   createBundleResourceClient(
@@ -223,7 +300,11 @@ class BundleResourceArtifactClient implements AnalysisClient {
       );
     } catch (cause: unknown) {
       return err(
-        translateArtifactFailure(operation as ArtifactAnalysisOperation, cause),
+        translateArtifactFailure(
+          operation as ArtifactAnalysisOperation,
+          this.root.callerPath,
+          cause,
+        ),
       );
     }
   }
@@ -251,6 +332,23 @@ class ArtifactClient implements AnalysisClient {
     parameters: Readonly<Record<string, JsonValue>>,
     options?: ExecutionOptions,
   ) {
+    const policy = new ArtifactReaderPolicy(this.environment, this.settings);
+    const executed = await this.#execute(
+      operation,
+      parameters,
+      policy,
+      options,
+    );
+    if (!executed.ok) policy.bind(executed.error, parameters);
+    return executed;
+  }
+
+  async #execute(
+    operation: AnalysisOperation,
+    parameters: Readonly<Record<string, JsonValue>>,
+    policy: ArtifactReaderPolicy,
+    options?: ExecutionOptions,
+  ) {
     if (operation === "health")
       return ok(createAnalysisExecution(null, ARTIFACT_GRAPH_PROVIDER));
     if (!isArtifactOperation(operation))
@@ -266,7 +364,11 @@ class ArtifactClient implements AnalysisClient {
       if (targetRefusal !== undefined)
         throw this.unsupportedTarget(operation, targetRefusal.reason);
       if (operation === "inspect_artifact") {
-        const inspected = await this.inspectArtifact(parameters, options);
+        const inspected = await this.inspectArtifact(
+          parameters,
+          policy,
+          options,
+        );
         return inspected;
       }
       if (operation === "decode_interface_builder") {
@@ -375,13 +477,7 @@ class ArtifactClient implements AnalysisClient {
               this.settings,
             ),
             integrityPolicy: parsed.integrity_policy,
-            ...(parsed.artifact_limits === undefined
-              ? {}
-              : {
-                  readerLimits: resolveArtifactReaderLimits(
-                    parsed.artifact_limits,
-                  ),
-                }),
+            ...policy.readerLimits(parsed.artifact_limits),
             resourceScope: this.#resourceScope,
           },
           options?.signal,
@@ -390,26 +486,34 @@ class ArtifactClient implements AnalysisClient {
           createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
             rawResult: null,
             limitations: result.limitations,
-            subject: subjectFor(this.target, result.manifest),
+            subject: executionSubject(
+              subjectFor(this.target, { manifest: result.manifest }),
+            ),
             // Each extracted file's path is already in artifacts.
             locations: [],
           }),
         );
       }
       const parsed = artifactInventoryInputSchema.parse(parameters);
-      const result = await this.inventory(parsed, options);
+      const result = await this.inventory(parsed, policy, options);
       return ok(
         createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
           rawResult: null,
           limitations: result.limitations,
-          subject: subjectFor(this.target, result.manifest),
+          subject: executionSubject(subjectFor(this.target, result)),
           // Each occurrence's logical path is already in the result.
           locations: [],
         }),
       );
     } catch (cause: unknown) {
       return err(
-        translateArtifactFailure(operation as ArtifactAnalysisOperation, cause),
+        translateArtifactFailure(
+          operation as ArtifactAnalysisOperation,
+          // The caller's spelling, not the resolved file the reader opened.
+          this.target.callerInputPath ??
+            artifactTargetSelectedPath(this.target),
+          cause,
+        ),
       );
     }
   }
@@ -422,10 +526,11 @@ class ArtifactClient implements AnalysisClient {
   private unsupportedTarget(
     operation: string,
     reason: string,
-  ): AnalysisUnsupportedTargetError {
-    return new AnalysisUnsupportedTargetError(
+  ): AnalysisTargetFailureError {
+    return unsupportedTarget(
       operation,
       this.target.sourcePath ?? this.target.path,
+      this.target.format,
       reason,
     );
   }
@@ -502,64 +607,26 @@ class ArtifactClient implements AnalysisClient {
     );
   }
 
-  private async inspectArtifact(
+  private inspectArtifact(
     parameters: Readonly<Record<string, JsonValue>>,
+    policy: ArtifactReaderPolicy,
     options?: ExecutionOptions,
   ) {
-    const parsed = artifactInventoryInputSchema.parse(parameters);
-    const inventoryParameters = {
-      integrity_policy: parsed.integrity_policy,
-      ...(parsed.artifact_limits === undefined
-        ? {}
-        : { artifact_limits: parsed.artifact_limits }),
-    };
-    await options?.progress?.report({
-      phase: "inspect_artifact.inventory",
-      completed: 0,
-      total: 1,
-      message: "inventory substep started",
-    });
-    // The freshly parsed inventory is exclusively owned here. Sealing it lets
-    // the nested Evidence share it instead of cloning and re-digesting it.
-    const inventory = freezeJsonSnapshot(
-      await this.inventory(inventoryParameters, options),
-    );
-    const subject = subjectFor(this.target, inventory.manifest);
-    const inventoryEvidence = createEvidence(subject, ARTIFACT_GRAPH_PROVIDER, {
-      operation: "inventory_artifact",
-      parameters: inventoryParameters,
-      result: inventory,
-      rawResult: null,
-      limitations: inventory.limitations,
-      // The nested inventory already names every occurrence's logical path.
-      locations: [],
-    });
-    // The returned execution and its Evidence then reuse this owned report.
-    const result = freezeJsonSnapshot(
-      createArtifactInspection(inventoryEvidence),
-    );
-    await options?.progress?.report({
-      phase: "inspect_artifact.inventory",
-      completed: 1,
-      total: 1,
-      message: "inventory substep completed",
-    });
-    return ok(
-      createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
-        rawResult: null,
-        limitations: result.limitations,
-        sourceEvidence: artifactInspectionSources(result),
-        subject,
-        locations: [],
+    return inspectInventory(
+      artifactInventoryInputSchema.parse(parameters),
+      (inventoryParameters) =>
+        this.inventory(inventoryParameters, policy, options),
+      (inventory) => ({
+        subject: subjectFor(this.target, inventory),
+        rootImage: rootImage(this.target, inventory.manifest),
       }),
+      options,
     );
   }
 
   private inventory(
-    parsed: {
-      readonly integrity_policy: "fail" | "record-and-continue";
-      readonly artifact_limits?: ArtifactReaderLimitsInput | undefined;
-    },
+    parsed: InventoryParameters,
+    policy: ArtifactReaderPolicy,
     options?: ExecutionOptions,
   ) {
     return inventoryArtifact(this.target.sourcePath ?? this.target.path, {
@@ -569,22 +636,193 @@ class ArtifactClient implements AnalysisClient {
           : undefined,
       selectedPath: this.target.artifactSelectedPath,
       resourceScope: this.#resourceScope,
-      environment: this.environment,
-      asarHeaderAdmission: runtimeAsarHeaderAdmission(
+      espFlashSelection: espFlashSelection(this.target),
+      ...inventoryRuntimeOptions(
         this.environment,
         this.settings,
+        parsed,
+        options,
+        policy,
       ),
-      espFlashSelection: espFlashSelection(this.target),
-      ...(options?.signal === undefined ? {} : { signal: options.signal }),
-      integrity: parsed.integrity_policy,
-      ...(parsed.artifact_limits === undefined
-        ? {}
-        : {
-            readerLimits: resolveArtifactReaderLimits(parsed.artifact_limits),
-          }),
     });
   }
 }
+
+/** The inventory request facts an inspection records and its nested inventory runs with. */
+interface InventoryParameters {
+  readonly integrity_policy: "fail" | "record-and-continue";
+  readonly artifact_limits?: ArtifactReaderLimitsInput | undefined;
+}
+
+/** Runtime inventory options shared by session-target and path inspections. */
+const inventoryRuntimeOptions = (
+  environment: Readonly<NodeJS.ProcessEnv>,
+  settings: AnalysisSettingsReader | undefined,
+  parsed: InventoryParameters,
+  options: ExecutionOptions | undefined,
+  policy: ArtifactReaderPolicy,
+) => ({
+  environment,
+  asarHeaderAdmission: runtimeAsarHeaderAdmission(environment, settings),
+  ...(options?.signal === undefined ? {} : { signal: options.signal }),
+  integrity: parsed.integrity_policy,
+  ...policy.readerLimits(parsed.artifact_limits),
+});
+
+/**
+ * One call's reader admission policy. The session member count is resolved at
+ * most once, so the limits a reader enforced and the setting a refusal names
+ * agree. Without a caller selection or a non-default session value, readers
+ * keep their own defaults and Evidence reports no effective limits.
+ */
+class ArtifactReaderPolicy {
+  #memberCount: ArtifactMemberCount | undefined;
+
+  constructor(
+    private readonly environment: Readonly<NodeJS.ProcessEnv>,
+    private readonly settings: AnalysisSettingsReader | undefined,
+  ) {}
+
+  #resolved(): ArtifactMemberCount {
+    this.#memberCount ??= runtimeArtifactMemberCount(
+      this.environment,
+      this.settings,
+    );
+    return this.#memberCount;
+  }
+
+  readerLimits(selected: ArtifactReaderLimitsInput | undefined) {
+    // The caller's fields come first: when every backed field is selected,
+    // the session value (and an invalid launch seed) is never consulted.
+    if (
+      selected !== undefined &&
+      ARTIFACT_MEMBER_COUNT_PARAMETERS.every((parameter) =>
+        artifactMemberCountSelected(selected, parameter),
+      )
+    )
+      return { readerLimits: resolveArtifactReaderLimits(selected) };
+    const memberCount = this.#resolved();
+    return selected === undefined && memberCount.source === "default"
+      ? {}
+      : {
+          readerLimits: resolveArtifactReaderLimits(
+            selected,
+            memberCount.value,
+          ),
+        };
+  }
+
+  /**
+   * Report a member-count refusal as the setting that backs its field, with
+   * that field as the per-call route and the value's source.
+   */
+  bind(
+    error: AnalysisError,
+    parameters: Readonly<Record<string, JsonValue>>,
+  ): void {
+    if (!(error instanceof ArtifactOperationError)) return;
+    const fact = error.readerLimit;
+    const parameter = ARTIFACT_MEMBER_COUNT_PARAMETERS.find(
+      (candidate) => candidate === fact?.parameter,
+    );
+    if (fact === undefined || parameter === undefined) return;
+    const selected = artifactReaderLimitsInputSchema.safeParse(
+      parameters.artifact_limits,
+    );
+    const requested =
+      selected.success && artifactMemberCountSelected(selected.data, parameter);
+    // An unselected field took the session value this call resolved.
+    const source = requested ? "request" : this.#memberCount?.source;
+    if (source === undefined) return;
+    error.bindLimit({
+      ...analysisSettingLimit(
+        ARTIFACT_MEMBER_COUNT_SETTING,
+        fact.effective_value,
+        source,
+      ),
+      parameter,
+      ...(typeof fact.required_value === "number"
+        ? { required_value: fact.required_value }
+        : {}),
+    });
+  }
+}
+
+/**
+ * Inventory once, commit the inventory as nested Evidence, and derive the
+ * inspection from it. The subject and root image come from the caller, which
+ * owns what the inventoried root is.
+ */
+const inspectInventory = async (
+  parsed: InventoryParameters,
+  inventory: (
+    parameters: InventoryParameters,
+  ) => Promise<ArtifactInventoryResult>,
+  describe: (inventory: ArtifactInventoryResult) => {
+    readonly subject: InventorySubject;
+    readonly rootImage: ArtifactInspectionRootImage | undefined;
+  },
+  options: ExecutionOptions | undefined,
+): Promise<Result<AnalysisExecution, AnalysisError>> => {
+  const inventoryParameters = {
+    integrity_policy: parsed.integrity_policy,
+    ...(parsed.artifact_limits === undefined
+      ? {}
+      : { artifact_limits: parsed.artifact_limits }),
+  };
+  await options?.progress?.report({
+    phase: "inspect_artifact.inventory",
+    completed: 0,
+    total: 1,
+    message: "inventory substep started",
+  });
+  // The freshly parsed inventory is exclusively owned here. Sealing it lets
+  // the nested Evidence share it instead of cloning and re-digesting it.
+  const inventoryResult = freezeJsonSnapshot(
+    await inventory(inventoryParameters),
+  );
+  const { subject, rootImage: image } = describe(inventoryResult);
+  // Sealed at creation, the nested Evidence is borrowed when the session
+  // records it as a source, rather than parsed and digested again.
+  const inventoryEvidence = createEvidence(
+    subject,
+    ARTIFACT_GRAPH_PROVIDER,
+    {
+      operation: "inventory_artifact",
+      parameters: inventoryParameters,
+      result: inventoryResult,
+      rawResult: null,
+      limitations: inventoryResult.limitations,
+      // The nested inventory already names every occurrence's logical path.
+      locations: [],
+    },
+    { immutable: true },
+  );
+  // The returned execution and its Evidence then reuse this owned report.
+  const result = freezeJsonSnapshot(
+    createArtifactInspection(inventoryEvidence, image),
+  );
+  await options?.progress?.report({
+    phase: "inspect_artifact.inventory",
+    completed: 1,
+    total: 1,
+    message: "inventory substep completed",
+  });
+  return ok(
+    createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
+      rawResult: null,
+      limitations: result.limitations,
+      sourceEvidence: artifactInspectionSources(result),
+      subject: executionSubject(subject),
+      locations: [],
+    }),
+  );
+};
+
+/** An execution names a local subject, or null for an explicit unknown. */
+const executionSubject = (
+  subject: InventorySubject,
+): EvidenceSubjectTarget | null => ("path" in subject ? subject : null);
 
 /** Caller inputs of an explicitly selected ESP flash image, for its readers. */
 const espFlashSelection = (
@@ -604,27 +842,47 @@ const isArtifactOperation = (
     operation as (typeof ARTIFACT_ANALYSIS_OPERATIONS)[number],
   );
 
+/** The native image target admission parsed from the inventory root's bytes. */
+const rootImage = (
+  target: BinaryTarget,
+  manifest: { readonly root_sha256: string },
+): ArtifactInspectionRootImage | undefined => {
+  if (manifest.root_sha256 !== target.sha256) return undefined;
+  if (target.format === "pe") return { format: "pe", managed: target.managed };
+  return target.format === "elf" ||
+    target.format === "mach-o" ||
+    target.format === "mach-o-universal"
+    ? { format: target.format }
+    : undefined;
+};
+
 /**
  * The inventory root as an Evidence subject. When the root is the open
- * target's own bytes, it carries the target's selection (ESP flash offsets),
- * so observations of different selections name different subjects.
+ * target's own bytes, it carries the target's selection (ESP flash offsets)
+ * and the architecture target admission parsed from its header, so
+ * observations of different selections name different subjects.
  */
 const subjectFor = (
   target: BinaryTarget,
-  manifest: {
-    readonly root_sha256: string;
-    readonly root_format: import("../domain/artifactGraph.js").ArtifactInventoryResult["manifest"]["root_format"];
-  },
-) => {
-  const selection =
+  inventory: Pick<ArtifactInventoryResult, "manifest" | "root_digest">,
+): InventorySubject => {
+  const { manifest } = inventory;
+  if (inventory.root_digest !== undefined)
+    return artifactInventorySubject(
+      artifactTargetSelectedPath(target),
+      inventory,
+    );
+  const sameTarget =
     manifest.root_sha256 === target.sha256 &&
-    manifest.root_format === target.format
-      ? binaryTargetSelection(target)
-      : null;
+    manifest.root_format === target.format;
+  const selection = sameTarget ? binaryTargetSelection(target) : null;
   return {
     path: artifactTargetSelectedPath(target),
     sha256: manifest.root_sha256,
     format: manifest.root_format,
+    ...(sameTarget && target.architecture !== undefined
+      ? { architecture: target.architecture }
+      : {}),
     ...(selection === null ? {} : { selection }),
   };
 };

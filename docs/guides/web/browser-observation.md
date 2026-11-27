@@ -23,6 +23,18 @@ authority are validated independently before selection and connection.
 
 - `list_browser_targets` / `rea list-browser-targets` discovers all eligible page targets at the endpoint by default, with an optional exact-origin filter.
 - `inspect_web_page` / `rea inspect-web-page` captures DOM structure, accessibility nodes, scripts, resources, safe response/DOM metadata, attach-window network and console metadata, WebSocket frame sizes, workers, quota, and optionally selected storage key names, redacted storage-content fingerprints, or script sources.
+  An MCP call that omits `detail` returns the capture inline when its Evidence
+  fits the [agent result budget](../../reference/limits-and-recovery.md#agent-result-budget). A larger capture is retained, and the call returns a
+  summary with the small sections and counts. On a local page with 2,000 list
+  rows, 200 buttons and three libraries, the complete result was 4.6 MB, mostly
+  6,423 DOM nodes and 10,614 accessibility nodes; the summary was 12.5 KB.
+  Page `dom` (`node_names`), `accessibility` (`roles`), `console` (`types`),
+  `network` (`methods`), `scripts` or `resources` with
+  `inspect_analysis_view` view `{"kind":"web-page","collection":...}`.
+  To compare a summarized capture, pass
+  `{"kind":"retained-evidence","evidence_id":...}` in `compare_web_captures`
+  instead of resending it; either the summary's or the complete record's ID
+  works.
 - `analyze_web_bundle` / `rea analyze-web-bundle` parses selected script artifacts without execution and derives chunk edges, route and endpoint candidates, vendor fingerprints, static WebMCP declarations, and optionally source-map/original-source evidence.
   Sources reported as JavaScript use JavaScript grammar even when the script
   has no URL or its URL ends in a different source extension.
@@ -30,7 +42,7 @@ authority are validated independently before selection and connection.
   `importScripts()` call. The edge describes recovered source syntax. Whether
   the call ran in a classic worker remains a runtime question.
 - `observe_web_session` / `rea observe-web-session` arms an observation window of the requested duration for an external user action and records ordered reload, SPA navigation, redirect, failure, lifecycle, and target-termination metadata.
-- `discover_webmcp_tools` / `rea discover-webmcp-tools` uses the experimental CDP WebMCP domain to return observed in-scope registrations and their complete observed `input_schema` declaration and canonical `input_schema_sha256` digest inline. Declarations are untrusted JSON data, including declared types, required fields, enums, examples and reference URLs. REA does not resolve schema references. An omitted optional `inputSchema` is a valid parameterless registration, represented by null schema and digest. These fields replace `input_schema_shape`. Registrations with the same name and URL in distinct observed frames retain separate identities. `tool_key` includes the observed frame ID; it is not a stable identity across navigation or browser sessions. Same-frame registration updates replace that owner only, and removal leaves other owners intact. Declared `readOnly`, `untrustedContent`, `consequential`, and `autosubmit` annotation hints are reported per registration: `true`/`false` are declared values, `null` means the declaration did not provide the hint in that capture, and a missing `consequential` key means the observed annotation was invalid, so the hint was not recorded. Consult discovery completeness and exclusions to distinguish these cases. Malformed annotation values or registration stacks retain the registration with incomplete coverage and an `invalid_protocol_value` exclusion. Other malformed protocol payloads can fail discovery explicitly. REA never exposes `WebMCP.invokeTool`.
+- `discover_webmcp_tools` / `rea discover-webmcp-tools` uses the experimental CDP WebMCP domain to return observed in-scope registrations and their complete observed `input_schema` declaration and canonical `input_schema_sha256` digest inline. Declarations are untrusted JSON data, including declared types, required fields, enums, examples and reference URLs. REA does not resolve schema references. An omitted optional `inputSchema` is a valid parameterless registration, represented by null schema and digest. Registrations with the same name and URL in distinct observed frames retain separate identities. `tool_key` includes the observed frame ID; it is not a stable identity across navigation or browser sessions. Same-frame registration updates replace that owner only, and removal leaves other owners intact. Declared `readOnly`, `untrustedContent`, `consequential`, and `autosubmit` annotation hints are reported per registration: `true`/`false` are declared values, `null` means the declaration did not provide the hint in that capture, and a missing `consequential` key means the observed annotation was invalid, so the hint was not recorded. Consult discovery completeness and exclusions to distinguish these cases. Malformed annotation values or registration stacks retain the registration with incomplete coverage and an `invalid_protocol_value` exclusion. Other malformed protocol payloads can fail discovery explicitly. REA never exposes `WebMCP.invokeTool`.
 
 - `compare_web_captures` / `rea compare-web-captures` compares passive captures or exact-step-aligned browser scenarios. Scenario results commit reproducible literal normalization and expose alignment failures plus artifact-level action, screenshot, DOM, accessibility, URL, history, storage, and event differences. Missing or truncated evidence is never treated as equivalence.
 
@@ -99,9 +111,10 @@ evidence, and inventory coverage separate:
 Storage fingerprints decode supported CDP primitive/JSON values before hashing.
 Debugger descriptions, previews, and remote references do not represent storage
 content. Actual JSON properties with those names remain content. Reference-only
-objects, unsupported values, and opaque cookie partition identities remain
-incomplete. Previously exported fingerprints are not recomputed; recapture both
-sides when comparing captures produced across this decoder change.
+objects, unsupported values, and opaque or unreadable cookie partition
+identities remain incomplete. Previously exported fingerprints are not
+recomputed; recapture both sides when comparing captures produced across this
+decoder change.
 IndexedDB schema fingerprints carry `projection_version: 2` and include the
 observed database version and object-store definitions. A missing, malformed, or
 imprecise version leaves the schema fingerprint incomplete while retaining
@@ -422,14 +435,18 @@ main frame.
 
 The web-session timeline uses CDP monotonic seconds where the event producer
 provides a comparable timestamp; absent or invalid timestamps are `null` rather
-than a synthetic zero. Events buffered while REA samples the window boundary are
-retained only when their timestamp places them after that boundary; older events
-are excluded. A buffered event without a comparable timestamp may remain as
-contextual evidence with `timestamp: null`, accompanied by a limitation stating
-that it does not establish activity in the selected window. Main-frame scope
-enforcement still applies to contextual navigation events. Network redirect
-events retain their paired prior-hop response context when the timestamped
-next-request event falls inside the window. Every redirect row, and only a redirect row, has a
+than a synthetic zero. After enabling the Page domain, REA buffers timeline
+events through preparation and clock sampling. Timestamped rows describe
+events after the sampled boundary; earlier requests can still identify a
+document load failure that occurs inside the window. A buffered event without a
+comparable timestamp may remain as contextual evidence with `timestamp: null`,
+accompanied by a limitation stating that it does not establish activity in the
+selected window. Main-frame scope enforcement still applies to contextual
+navigation events. Commit details include the browser-reported navigation kind,
+such as `backforwardcacherestore`. A missing kind remains unknown.
+
+Network redirect events retain their paired prior-hop response context when the
+timestamped next-request event falls inside the window. Every redirect row, and only a redirect row, has a
 `redirect_response` that contains the prior response `url`, CDP-reported `status`,
 and `scope`. The URL has transport credentials removed; URL and status are
 withheld unless its origin is approved. Missing or malformed response URLs have
@@ -450,7 +467,20 @@ Cancellation and clock-request failures retain their own outcomes. Session
 subresources, child-frame requests and failures without admitted request ownership
 are excluded. Redirects reuse their request identity, and completed/failed requests
 release it. Active request identity metadata uses the existing 8 MiB retained-event
-allowance; exhaustion fails the observation explicitly instead of guessing scope.
+allowance as its own counter; exhaustion fails the observation explicitly
+instead of guessing scope. Armed timeline rows keep a separate counter.
+Each row counts its retained strings plus a fixed overhead for its numbers.
+That counter defaults to the same 8 MiB (`browser.timeline_retained_bytes`).
+One call can pass `timeline_retained_bytes` (CLI `--timeline-retained-bytes`).
+A running REA changes the default for later calls with
+`update_analysis_settings`. The range is 1 to `Number.MAX_SAFE_INTEGER`.
+A row that does not fit fails the observation with `payload_limit` and
+`details.limit`, and does not return a shorter timeline.
+`details.reported_limits.measured_timeline_bytes` counts the retained rows
+and the refused row. Later rows in the window are not counted, so the limit
+has no `required_value`. Raising the
+timeline allowance does not raise the request-identity counter, and the
+reverse is also true. Event count has no separate ceiling.
 
 ## Data minimization
 

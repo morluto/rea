@@ -5,16 +5,15 @@ import {
 } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import {
+  artifactFileCleanupError,
   ArtifactResourceScope,
   ArtifactReaderFailure,
   withArtifactRegularFile,
   ArtifactFileCleanupFailure,
   artifactFileCompletion,
-  bindArtifactFileCleanup,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   assertArtifactReadActive,
 } from "../resources/index.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { isUtf8 } from "node:buffer";
 import {
   AnalysisCapabilityUnavailableError,
@@ -158,7 +157,7 @@ const serializeRequest = (
     throw bridgeRequestOversizeError(
       "cutter_command",
       limit,
-      measured,
+      { bytesAtLeast: measured },
       "Cutter",
     );
   const requestBytes = JSON.stringify(requestValue);
@@ -1018,6 +1017,7 @@ export class CutterBridgeClient {
                 const bytes = await readBoundedFileBytes(
                   file,
                   MAX_DESCRIPTOR_BYTES,
+                  { expectedSize: info.size },
                 );
                 assertArtifactReadActive(signal);
                 return bytes;
@@ -1313,14 +1313,8 @@ const discoveryFailure = (
     );
   }
   if (!(cause instanceof ArtifactReaderFailure)) return cause;
-  if (cause.cleanup !== undefined) {
-    const cleanup = new ProviderCleanupError(
-      "cutter",
-      cause.cleanup.resources,
-      { reason: cause.cleanup.reason },
-      { operation, cause },
-    );
-    bindArtifactFileCleanup(cause, cleanup);
+  const cleanup = artifactFileCleanupError(cause, "cutter", operation);
+  if (cleanup !== undefined) {
     const outcome =
       cause instanceof ArtifactFileCleanupFailure
         ? cause.fileCleanupFailure.outcome
@@ -1340,9 +1334,6 @@ const discoveryFailure = (
     return analysisErrorWithCleanupDependencies(original, cleanup, operation);
   }
   if (cause.reason === "cancelled")
-    return cancelledBy(
-      operation,
-      carriedReason(artifactFileCancellationCause(cause)),
-    );
+    return artifactFileCancellationError(operation, cause);
   return cause;
 };

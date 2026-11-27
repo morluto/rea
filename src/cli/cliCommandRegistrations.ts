@@ -2,7 +2,12 @@ import {
   TOOL_FAMILY_IDS,
   type ToolFamilyId,
 } from "../contracts/toolFamilyIds.js";
-import { plain, withAnalysis } from "./cliCommandRegistration.js";
+import {
+  cliRegistrar,
+  cliRegistrarWithEnvironment,
+  plain,
+  withAnalysis,
+} from "./cliCommandRegistration.js";
 
 /** Every CLI command registrar; see `cliLoader.ts` for one-shot loading. */
 export const CLI_COMMAND_REGISTRATIONS = {
@@ -13,6 +18,7 @@ export const CLI_COMMAND_REGISTRATIONS = {
         context.cli,
         context.logger,
         context.environment,
+        context.savedDefaults,
       ),
   ),
   coreAnalysis: withAnalysis(
@@ -25,23 +31,17 @@ export const CLI_COMMAND_REGISTRATIONS = {
         context.environment,
       ),
   ),
-  reverseEngineering: plain(
+  reverseEngineering: cliRegistrarWithEnvironment(
     () => import("./reverseEngineeringCommands.js"),
-    (module, context) =>
-      module.registerReverseEngineeringCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+    "registerReverseEngineeringCommands",
   ),
-  cutter: plain(
+  cutter: cliRegistrarWithEnvironment(
     () => import("./cutterCommands.js"),
-    (module, context) =>
-      module.registerCutterCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+    "registerCutterCommands",
+  ),
+  userConfig: cliRegistrarWithEnvironment(
+    () => import("./userConfigCommands.js"),
+    "registerUserConfigCommands",
   ),
   utility: withAnalysis(
     () => import("./utilityCommands.js"),
@@ -53,131 +53,92 @@ export const CLI_COMMAND_REGISTRATIONS = {
         context.analysis,
       ),
   ),
-  binaryDiagnostics: plain(
+  binaryDiagnostics: cliRegistrarWithEnvironment(
     () => import("./binaryDiagnosticsCommands.js"),
-    (module, context) =>
-      module.registerBinaryDiagnosticsCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+    "registerBinaryDiagnosticsCommands",
   ),
-  wasm: plain(
+  wasm: cliRegistrarWithEnvironment(
     () => import("./wasmCommands.js"),
-    (module, context) =>
-      module.registerWasmCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+    "registerWasmCommands",
   ),
-  apkSignature: plain(
+  apkSignature: cliRegistrarWithEnvironment(
     () => import("./apkSignatureCommands.js"),
-    (module, context) =>
-      module.registerApkSignatureCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+    "registerApkSignatureCommands",
   ),
-  capture: plain(
+  capture: cliRegistrarWithEnvironment(
     () => import("./captureCommands.js"),
-    (module, context) =>
-      module.registerCaptureCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+    "registerCaptureCommands",
   ),
-  signal: plain(
+  signal: cliRegistrarWithEnvironment(
     () => import("./signalCommands.js"),
-    (module, context) =>
-      module.registerSignalCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+    "registerSignalCommands",
   ),
-  evm: plain(
+  evm: cliRegistrarWithEnvironment(
     () => import("./evmCommands.js"),
-    (module, context) =>
-      module.registerEvmCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+    "registerEvmCommands",
   ),
-  desktopApplication: plain(
+  desktopApplication: cliRegistrar(
     () => import("./desktopApplicationCommands.js"),
-    (module, context) =>
-      module.registerDesktopApplicationCommands(context.cli, context.logger),
+    "registerDesktopApplicationCommands",
   ),
-  releaseExposure: plain(
+  releaseExposure: cliRegistrarWithEnvironment(
     () => import("./releaseExposureCommands.js"),
-    (module, context) =>
-      module.registerReleaseExposureCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+    "registerReleaseExposureCommands",
   ),
-  go: plain(
-    () => import("./goCommands.js"),
-    (module, context) => module.registerGoCommands(context.cli, context.logger),
+  go: cliRegistrar(() => import("./goCommands.js"), "registerGoCommands"),
+  labview: cliRegistrar(
+    () => import("./labviewCommands.js"),
+    "registerLabviewCommands",
   ),
-  il2cpp: plain(
+  il2cpp: cliRegistrar(
     () => import("./il2cppCommands.js"),
-    (module, context) =>
-      module.registerIl2cppCommands(context.cli, context.logger),
+    "registerIl2cppCommands",
   ),
-  model: plain(
+  model: cliRegistrar(
     () => import("./modelCommands.js"),
-    (module, context) =>
-      module.registerModelCommands(context.cli, context.logger),
+    "registerModelCommands",
   ),
-  gpu: plain(
-    () => import("./gpuCommands.js"),
-    (module, context) =>
-      module.registerGpuCommands(context.cli, context.logger),
-  ),
-  rust: plain(
-    () => import("./rustCommands.js"),
-    (module, context) =>
-      module.registerRustCommands(context.cli, context.logger),
-  ),
-  pythonPyc: plain(
+  gpu: cliRegistrar(() => import("./gpuCommands.js"), "registerGpuCommands"),
+  rust: cliRegistrar(() => import("./rustCommands.js"), "registerRustCommands"),
+  pythonPyc: cliRegistrar(
     () => import("./pythonPycCommands.js"),
-    (module, context) =>
-      module.registerPythonPycCommands(context.cli, context.logger),
+    "registerPythonPycCommands",
   ),
-  nugetNupkg: plain(
+  debPackage: cliRegistrar(
+    () => import("./debPackageCommands.js"),
+    "registerDebPackageCommands",
+  ),
+  nugetNupkg: cliRegistrar(
     () => import("./nugetNupkgCommands.js"),
-    (module, context) =>
-      module.registerNugetNupkgCommands(context.cli, context.logger),
+    "registerNugetNupkgCommands",
   ),
-  erlang: plain(
+  vsixPackage: cliRegistrar(
+    () => import("./vsixPackageCommands.js"),
+    "registerVsixPackageCommands",
+  ),
+  ociImageLayout: cliRegistrar(
+    () => import("./ociImageLayoutCommands.js"),
+    "registerOciImageLayoutCommands",
+  ),
+  yara: cliRegistrarWithEnvironment(
+    () => import("./yaraCommands.js"),
+    "registerYaraCommands",
+  ),
+  erlang: cliRegistrar(
     () => import("./erlangCommands.js"),
-    (module, context) =>
-      module.registerErlangCommands(context.cli, context.logger),
+    "registerErlangCommands",
   ),
-  v8CodeCache: plain(
+  v8CodeCache: cliRegistrar(
     () => import("./v8CodeCacheCommands.js"),
-    (module, context) =>
-      module.registerV8CodeCacheCommands(context.cli, context.logger),
+    "registerV8CodeCacheCommands",
   ),
-  mavenGradleMetadata: plain(
+  mavenGradleMetadata: cliRegistrar(
     () => import("./mavenGradleMetadataCommands.js"),
-    (module, context) =>
-      module.registerMavenGradleMetadataCommands(context.cli, context.logger),
+    "registerMavenGradleMetadataCommands",
   ),
-  sqlite: plain(
+  sqlite: cliRegistrarWithEnvironment(
     () => import("./sqliteCommands.js"),
-    (module, context) =>
-      module.registerSqliteCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+    "registerSqliteCommands",
   ),
   artifact: withAnalysis(
     () => import("./artifactCommands.js"),
@@ -186,6 +147,7 @@ export const CLI_COMMAND_REGISTRATIONS = {
         context.cli,
         context.logger,
         context.analysis.runProviderAnalysis,
+        context.environment,
       ),
   ),
   managed: withAnalysis(
@@ -197,42 +159,22 @@ export const CLI_COMMAND_REGISTRATIONS = {
         context.analysis,
       ),
   ),
-  firmware: plain(
+  firmware: cliRegistrarWithEnvironment(
     () => import("./firmwareCommands.js"),
-    (module, context) =>
-      module.registerFirmwareCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+    "registerFirmwareCommands",
   ),
-  uefi: plain(
-    () => import("./uefiCommands.js"),
-    (module, context) =>
-      module.registerUefiCommands(context.cli, context.logger),
-  ),
-  android: plain(
+  uefi: cliRegistrar(() => import("./uefiCommands.js"), "registerUefiCommands"),
+  android: cliRegistrarWithEnvironment(
     () => import("./androidCommands.js"),
-    (module, context) =>
-      module.registerAndroidCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+    "registerAndroidCommands",
   ),
-  pcap: plain(
+  pcap: cliRegistrarWithEnvironment(
     () => import("./pcapCommands.js"),
-    (module, context) =>
-      module.registerPcapCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+    "registerPcapCommands",
   ),
-  flutter: plain(
+  flutter: cliRegistrar(
     () => import("./flutterCommands.js"),
-    (module, context) =>
-      module.registerFlutterCommands(context.cli, context.logger),
+    "registerFlutterCommands",
   ),
   frida: plain(
     () => import("./fridaCommands.js"),
@@ -243,180 +185,105 @@ export const CLI_COMMAND_REGISTRATIONS = {
         context.fridaInstrumentation,
       ),
   ),
-  apktool: plain(
+  apktool: cliRegistrarWithEnvironment(
     () => import("./apktoolCommands.js"),
-    (module, context) =>
-      module.registerApktoolCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+    "registerApktoolCommands",
   ),
-  jeb: plain(
+  jeb: cliRegistrarWithEnvironment(
     () => import("./jebCommands.js"),
-    (module, context) =>
-      module.registerJebCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+    "registerJebCommands",
   ),
-  adb: plain(
+  adb: cliRegistrarWithEnvironment(
     () => import("./adbCommands.js"),
-    (module, context) =>
-      module.registerAdbCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+    "registerAdbCommands",
   ),
-  browser: plain(
+  browser: cliRegistrarWithEnvironment(
     () => import("./browserCommands.js"),
-    (module, context) =>
-      module.registerBrowserCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+    "registerBrowserCommands",
   ),
-  webRuntime: plain(
+  webRuntime: cliRegistrar(
     () => import("./webRuntimeCommands.js"),
-    (module, context) =>
-      module.registerWebRuntimeCommands(context.cli, context.logger),
+    "registerWebRuntimeCommands",
   ),
-  webNetworkCapture: plain(
+  webNetworkCapture: cliRegistrarWithEnvironment(
     () => import("./webNetworkCaptureCommands.js"),
-    (module, context) =>
-      module.registerWebNetworkCaptureCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+    "registerWebNetworkCaptureCommands",
   ),
-  advancedBrowser: plain(
+  advancedBrowser: cliRegistrar(
     () => import("./browserAdvancedCommands.js"),
-    (module, context) =>
-      module.registerAdvancedBrowserCommands(context.cli, context.logger),
+    "registerAdvancedBrowserCommands",
   ),
-  browserScenario: plain(
-    () => import("../cliBrowserScenarioCommands.js"),
-    (module, context) =>
-      module.registerBrowserScenarioCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+  browserScenario: cliRegistrarWithEnvironment(
+    () => import("./browserScenarioCommands.js"),
+    "registerBrowserScenarioCommands",
   ),
-  electron: plain(
+  electron: cliRegistrarWithEnvironment(
     () => import("./electronCommands.js"),
-    (module, context) =>
-      module.registerElectronCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+    "registerElectronCommands",
   ),
-  javaScriptRuntimeObservation: plain(
+  javaScriptRuntimeObservation: cliRegistrarWithEnvironment(
     () => import("./javascriptRuntimeCommands.js"),
-    (module, context) =>
-      module.registerJavaScriptRuntimeObservationCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+    "registerJavaScriptRuntimeObservationCommands",
   ),
-  guidance: plain(
+  guidance: cliRegistrar(
     () => import("./guidanceCommands.js"),
-    (module, context) =>
-      module.registerGuidanceCommands(context.cli, context.logger),
+    "registerGuidanceCommands",
   ),
-  guidedWorkflow: plain(
+  guidedWorkflow: cliRegistrar(
     () => import("./guidedWorkflowCommands.js"),
-    (module, context) =>
-      module.registerGuidedWorkflowCommands(context.cli, context.logger),
+    "registerGuidedWorkflowCommands",
   ),
-  analysisView: plain(
+  sourceToBundle: cliRegistrar(
+    () => import("./sourceToBundleCommand.js"),
+    "registerSourceToBundleCommand",
+  ),
+  staticObservedEndpoints: cliRegistrar(
+    () => import("./staticObservedEndpointsCommand.js"),
+    "registerStaticObservedEndpointsCommand",
+  ),
+  analysisView: cliRegistrar(
     () => import("./analysisViewCommands.js"),
-    (module, context) =>
-      module.registerAnalysisViewCommands(context.cli, context.logger),
+    "registerAnalysisViewCommands",
   ),
-  evidence: plain(
-    () => import("../cliEvidenceCommands.js"),
-    (module, context) =>
-      module.registerEvidenceCommands(context.cli, context.logger),
+  evidence: cliRegistrar(
+    () => import("./evidenceCommands.js"),
+    "registerEvidenceCommands",
   ),
-  environment: plain(
+  environment: cliRegistrarWithEnvironment(
     () => import("./environmentCommands.js"),
-    (module, context) =>
-      module.registerEnvironmentCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+    "registerEnvironmentCommands",
   ),
-  process: plain(
+  process: cliRegistrarWithEnvironment(
     () => import("./processCommands.js"),
-    (module, context) =>
-      module.registerProcessCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+    "registerProcessCommands",
   ),
-  desktopCapture: plain(
+  desktopCapture: cliRegistrarWithEnvironment(
     () => import("./desktopCaptureCommands.js"),
-    (module, context) =>
-      module.registerDesktopCaptureCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+    "registerDesktopCaptureCommands",
   ),
-  javaScriptRecovery: plain(
+  javaScriptRecovery: cliRegistrarWithEnvironment(
     () => import("./javascriptRecoveryCommands.js"),
-    (module, context) =>
-      module.registerJavaScriptRecoveryCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+    "registerJavaScriptRecoveryCommands",
   ),
-  webScript: plain(
+  webScript: cliRegistrar(
     () => import("./webScriptCommands.js"),
-    (module, context) =>
-      module.registerWebScriptCommands(context.cli, context.logger),
+    "registerWebScriptCommands",
   ),
-  webModule: plain(
+  webModule: cliRegistrarWithEnvironment(
     () => import("./webModuleCommands.js"),
-    (module, context) =>
-      module.registerWebModuleCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+    "registerWebModuleCommands",
   ),
-  webSourceLocation: plain(
+  webSourceLocation: cliRegistrarWithEnvironment(
     () => import("./webSourceLocationCommands.js"),
-    (module, context) =>
-      module.registerWebSourceLocationCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+    "registerWebSourceLocationCommands",
   ),
-  application: plain(
+  application: cliRegistrar(
     () => import("./applicationCommands.js"),
-    (module, context) =>
-      module.registerApplicationCommands(context.cli, context.logger),
+    "registerApplicationCommands",
   ),
-  nativeFunctionMatching: plain(
+  nativeFunctionMatching: cliRegistrarWithEnvironment(
     () => import("./nativeFunctionMatchingCommands.js"),
-    (module, context) =>
-      module.registerNativeFunctionMatchingCommands(
-        context.cli,
-        context.logger,
-        context.environment,
-      ),
+    "registerNativeFunctionMatchingCommands",
   ),
 };
 
@@ -439,7 +306,7 @@ const CLI_FAMILY_REGISTRATIONS: {
     Family in "setup" | ToolFamilyId
   ]: readonly CliCommandRegistrationId[];
 } = {
-  setup: ["setup"],
+  setup: ["setup", "userConfig"],
   direct: ["coreAnalysis"],
   enhanced: [],
   native: ["reverseEngineering", "cutter", "utility", "binaryDiagnostics"],
@@ -453,11 +320,16 @@ const CLI_FAMILY_REGISTRATIONS: {
     "releaseExposure",
     "go",
     "il2cpp",
+    "labview",
     "model",
     "gpu",
     "rust",
     "pythonPyc",
+    "debPackage",
     "nugetNupkg",
+    "vsixPackage",
+    "ociImageLayout",
+    "yara",
     "erlang",
     "v8CodeCache",
     "mavenGradleMetadata",
@@ -486,6 +358,8 @@ const CLI_FAMILY_REGISTRATIONS: {
   application: [
     "guidance",
     "guidedWorkflow",
+    "sourceToBundle",
+    "staticObservedEndpoints",
     "analysisView",
     "evidence",
     "environment",

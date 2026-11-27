@@ -74,6 +74,9 @@ export const isLiteralLoopbackHostname = (hostname: string): boolean =>
 const HTTP_ENDPOINT_MESSAGE =
   "CDP endpoint must be an explicit-port HTTP URL on 127.0.0.1 or ::1";
 const BROWSER_SOCKET_PATH = "/devtools/browser/";
+/** The refusal names both accepted endpoint forms; the value is not echoed. */
+const BROWSER_OBSERVATION_ENDPOINT_MESSAGE =
+  "CDP endpoint must be a literal loopback URL: http://127.0.0.1:PORT, or ws://127.0.0.1:PORT/devtools/browser/ID";
 const REDACTED_BROWSER_SOCKET_PATH = `${BROWSER_SOCKET_PATH}[REDACTED]`;
 
 /** Retain an explicit default port, which URL.port and URL.origin erase. */
@@ -128,8 +131,8 @@ export const browserEndpointSchema = z
     if (origin !== undefined) return origin;
     context.addIssue({
       code: "custom",
-      message:
-        url === null ? "Invalid CDP endpoint URL" : HTTP_ENDPOINT_MESSAGE,
+      // The rule names the one accepted form, whether or not the value parsed.
+      message: HTTP_ENDPOINT_MESSAGE,
     });
     return z.NEVER;
   });
@@ -154,7 +157,10 @@ export const browserObservationEndpointSchema = z
   .transform((value, context): BrowserObservationEndpoint => {
     const url = URL.parse(value);
     if (url === null) {
-      context.addIssue({ code: "custom", message: "Invalid CDP endpoint URL" });
+      context.addIssue({
+        code: "custom",
+        message: BROWSER_OBSERVATION_ENDPOINT_MESSAGE,
+      });
       return z.NEVER;
     }
     const origin = httpDiscoveryOrigin(value, url);
@@ -230,9 +236,9 @@ const inspectWebPageInputFacts = {
   include_storage_fingerprints: z.boolean().default(false),
 } as const;
 
-const inspectWebPageWithoutSourceSchema = z.strictObject({
+export const inspectWebPageShapeSchema = z.strictObject({
   ...inspectWebPageInputFacts,
-  include_script_sources: z.literal(false).optional().default(false),
+  include_script_sources: z.boolean().default(false),
 });
 
 const inspectWebPageWithSourceShapeSchema = z.strictObject({
@@ -240,11 +246,9 @@ const inspectWebPageWithSourceShapeSchema = z.strictObject({
   include_script_sources: z.literal(true).default(true),
 });
 
-type InspectWebPageShape =
-  | z.output<typeof inspectWebPageWithoutSourceSchema>
-  | z.output<typeof inspectWebPageWithSourceShapeSchema>;
+type InspectWebPageShape = z.output<typeof inspectWebPageShapeSchema>;
 
-const refineInspectWebPageInput = (
+export const refineInspectWebPageInput = (
   input: InspectWebPageShape,
   context: z.RefinementCtx,
 ): void => {
@@ -261,16 +265,8 @@ export const inspectWebPageWithSourceInputSchema =
   inspectWebPageWithSourceShapeSchema.superRefine(refineInspectWebPageInput);
 
 /** Caller-visible schema for one passive inspection. */
-export const inspectWebPageInputSchema = z.discriminatedUnion(
-  "include_script_sources",
-  [
-    inspectWebPageWithoutSourceSchema.superRefine(refineInspectWebPageInput),
-    inspectWebPageWithSourceShapeSchema
-      .extend({
-        include_script_sources: z.literal(true),
-      })
-      .superRefine(refineInspectWebPageInput),
-  ],
+export const inspectWebPageInputSchema = inspectWebPageShapeSchema.superRefine(
+  refineInspectWebPageInput,
 );
 
 export type ListBrowserTargetsInput = z.infer<

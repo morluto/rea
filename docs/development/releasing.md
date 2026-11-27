@@ -40,9 +40,9 @@ Before publishing, npm lookup failures and malformed metadata stop the job.
 An existing version must match the qualified tarball's SHA-512 and intended
 `latest`/`next` dist-tag before it can be reused. Publication never overwrites
 an existing version or silently changes a dist-tag. After publication, confirmed
-registry absence is polled every 30 seconds for a 75-minute retry window. This
-covers the roughly 55 minutes between npm accepting 6.10.1 and the registry
-recording it. Lookup errors and content or tag mismatches fail immediately. If
+registry absence is polled every 30 seconds. A single 75-minute deadline covers
+both requests and polling delays, and each request keeps its 30-second cap.
+Lookup errors and content or tag mismatches fail immediately. If
 visibility takes longer, rerun the failed jobs in the original workflow once the
 package appears. A separate post-publication job with read-only
 repository/actions permissions verifies registry bytes and tags, then installs
@@ -68,11 +68,9 @@ the original run after a partial publication.
 
 ## Check the packed catalog with client engines
 
-rea-agents 6.9.0 advertised a pattern that RE2 and Rust's `regex` cannot
-compile, so clients rejected the whole tools list
-([#10830](https://github.com/morluto/rea/issues/10830)). Release qualification
-runs `ci.yml` on the release revision, and its build job checks the advertised
-catalog with every client engine and, in full qualification, Python
+A client that cannot compile one advertised pattern can reject the whole tools
+list. Release qualification runs `ci.yml` on the release revision, and its build
+job checks the advertised catalog with every client engine and, in full qualification, Python
 `jsonschema`; a refusal fails qualification, so publication does not start.
 
 To check the archive itself, for example when auditing a release or
@@ -182,7 +180,7 @@ the optional manual path below. It retains explicit prepare and publish phases.
 
 Automatic main proposals and manual checkpoint preparation use
 `scripts/release-proposal.mjs` with the pinned release-please dependency.
-The controller applies `patches/release-please+17.3.0.patch` only when invoked;
+The controller applies `patches/release-please+17.11.2.patch` only when invoked;
 normal dependency installation and published-package installation do not apply it.
 The patch avoids commit-file backfills, associated PR file lists and path splitting
 for a single root Node package with the default changelog, default or
@@ -288,15 +286,12 @@ registry metadata or changelog disagrees with that version before creating a tag
 ### Compatibility and version selection
 
 Before publishing a candidate, review its changelog's breaking changes and the
-migration notes for the release being prepared. The
-[6.1 to 6.2 migration guide](../migrations/migration-6.2.md) records that release's changes;
-it is a historical reference, not the compatibility checklist for later releases.
+migration notes for the release being prepared.
 
 REA uses Release Please's `always-bump-minor` strategy: every release increments
 minor and resets patch, including releases with breaking changes. For example,
 the next release after 6.0.0 is 6.1.0. Version numbers use the SemVer format,
-but a minor increment does not promise backward compatibility. Review the
-changelog's breaking-change section and migration notes before upgrading.
+but a minor increment does not promise backward compatibility.
 
 The supported public surface includes documented CLI commands/options, MCP tool
 names and input/result contracts, saved evidence formats and supported runtime
@@ -400,7 +395,7 @@ records the actual release commit. Before npm publication, the workflow validate
 the dispatch, qualifies and rehearses the selected revision, and rechecks that
 the branch tip still equals the dispatch SHA. Registry jobs run only during
 `publish`. A GitHub tag pointing to a different commit stops MCP publication.
-See [npm's provenance implementation](https://github.com/npm/cli/blob/v11.16.0/workspaces/libnpmpublish/lib/provenance.js)
+See [npm's provenance implementation](https://github.com/npm/cli/blob/v11.21.3/workspaces/libnpmpublish/lib/provenance.js)
 for the use of GitHub's workflow ref and commit SHA.
 
 Full qualification builds the bundled Windows controls and verifies the packaged

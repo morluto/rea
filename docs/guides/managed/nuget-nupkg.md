@@ -12,7 +12,12 @@ rea inspect-nuget-nupkg /absolute/path/to/Demo.Package.1.2.3.nupkg --json
 With `--detail summary --evidence_output /absolute/path/nupkg.json`, the CLI
 saves the complete Evidence as a new bundle and prints a summary view with the
 package identity, license, repository, selected `.nuspec`, coverage, and counts
-of dependency groups, dependencies, contents and limitations.
+of dependency groups, dependencies, contents and limitations. MCP
+`detail: "summary"` returns the same summary and retains the complete Evidence
+in the session. With `detail` omitted, complete Evidence is returned when it
+fits the
+[agent result budget](../../reference/limits-and-recovery.md#agent-result-budget),
+and the summary otherwise; `detail: "complete"` always returns everything.
 
 The CLI resolves relative paths against the caller's working directory. MCP
 requires an absolute filesystem path and preserves that exact selection:
@@ -33,10 +38,12 @@ the `.nuspec` metadata. Authors and description follow NuGet's first eligible
 leaf rule with case-insensitive local names. Empty leaves and ordinary
 whitespace-only leaves are skipped. Whitespace preserved by CDATA or
 `xml:space` can occupy the first slot and yield `null` even when a later leaf
-has text. The package ID and version use their case-sensitive names in the
-metadata namespace. Missing fields are `null`. In the `.nuspec` and OPC
-relationships, XML end-of-line handling maps CRLF and lone CR to LF. When no `.nuspec` can be
-selected, `identity` is `null`.
+has text. For nonblank authors and descriptions, `xml:space="preserve"` keeps
+leading and trailing whitespace. Descendants inherit this setting until
+`xml:space="default"` resets it. The package ID and version use their
+case-sensitive names in the metadata namespace. Missing fields are `null`. In
+the `.nuspec` and OPC relationships, XML end-of-line handling maps CRLF and
+lone CR to LF. When no `.nuspec` can be selected, `identity` is `null`.
 
 `license` reports the `.nuspec` license element. `type` is `expression` or
 `file` after a case-insensitive match, and `null` for missing or unrecognized
@@ -91,7 +98,10 @@ are not decoded.
 
 ## Limits and failures
 
-The selected file is limited to 64 MiB by default (512 MiB maximum). At most
+The selected file is limited to 256 MiB by default (512 MiB maximum). Inspection
+streams the file in fixed chunks for SHA-256 verification and reads only the
+ZIP central directory and selected metadata members over the same verified file
+handle without buffering the entire archive in memory. At most
 4096 ZIP entries are inventoried by default (65536 maximum), and the selected
 `.nuspec` is limited to 1 MiB by default (16 MiB maximum). Invalid ZIP input
 fails without a partial inventory.

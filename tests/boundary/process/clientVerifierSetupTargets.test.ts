@@ -1,6 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
@@ -58,7 +57,8 @@ export async function createVerifierCommands(){return {
     );
     await writeFile(
       fixture,
-      `export async function createOpenAiModelFixture(){return {baseUrl:'http://127.0.0.1:1',async close(){}};}`,
+      `export { toolCallMessage } from ${JSON.stringify(new URL("../../../scripts/verify/clients/model-fixture.mjs", import.meta.url).href)};
+export async function createOpenAiModelFixture(){return {baseUrl:'http://127.0.0.1:1',async close(){}};}`,
     );
     await writeFile(
       hook,

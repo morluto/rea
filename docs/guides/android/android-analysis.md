@@ -18,10 +18,15 @@ package. See [Android OTA update payloads](../firmware/android-ota-payload.md).
 
 ## Optional package delivery
 
-The MCP `inspect_android_package` request keeps complete output when `detail` is
-omitted or `"complete"`. Select `detail: "summary"` explicitly to receive all
-package, SDK and permission declarations, engine identity and class/resource
-counts without decoded manifest text or duplicate raw provider replies. A
+An MCP `inspect_android_package` call that omits `detail` returns the complete
+package inline when its Evidence fits the
+[agent result budget](../../reference/limits-and-recovery.md#agent-result-budget),
+and the retained summary otherwise; `detail: "complete"` always returns it
+inline. The summary carries package, SDK and permission declarations, engine
+identity, class/resource counts, the manifest's length and component counts by
+kind, exported declaration, exported default and declaration coverage. It omits
+the decoded manifest text, component rows and duplicate raw provider replies.
+On VLC 3.7.2 it was 62,118 bytes before component rows moved to the view. A
 retaining session keeps the complete original Evidence and returns a distinct
 linked `inspect_analysis_view` summary. This changes delivery, not JADX analysis.
 
@@ -150,7 +155,7 @@ type tokens or establish runtime eligibility.
 ## Supply tools
 
 Use a **full JDK 17 or newer** (including its compiler module) and
-[**jadx-headless-mcp 0.7.1**](https://github.com/1013503897/jadx-headless-mcp/releases/download/v0.7.1/jadx-headless-mcp-0.7.1-all.jar).
+[**jadx-headless-mcp 0.8.0**](https://github.com/1013503897/jadx-headless-mcp/releases/download/v0.8.0/jadx-headless-mcp-0.8.0-all.jar).
 Verify the downloaded JAR's SHA-256 against
 [REA's pinned release metadata](https://github.com/morluto/rea/blob/main/src/android/JadxRelease.ts)
 before using it. The following download and verification commands work for npm
@@ -162,43 +167,38 @@ On macOS or Linux, choose a destination and verify the pinned digest:
 ```sh
 mkdir -p "$HOME/.local/share/rea/android" &&
 cd "$HOME/.local/share/rea/android" &&
-curl -fL -o jadx-headless-mcp-0.7.1-all.jar https://github.com/1013503897/jadx-headless-mcp/releases/download/v0.7.1/jadx-headless-mcp-0.7.1-all.jar &&
+curl -fL -o jadx-headless-mcp-0.8.0-all.jar https://github.com/1013503897/jadx-headless-mcp/releases/download/v0.8.0/jadx-headless-mcp-0.8.0-all.jar &&
 if command -v sha256sum >/dev/null; then
-  echo '6e5eacf500b64292bfb73c49797c1958f6ee44646e43e868039ae7feb573ff75  jadx-headless-mcp-0.7.1-all.jar' | sha256sum -c -
+  echo '4b9a01c23845c123c217840182d2b5f2c26a7ca20dec3d08810b310fc80a2372  jadx-headless-mcp-0.8.0-all.jar' | sha256sum -c -
 else
-  echo '6e5eacf500b64292bfb73c49797c1958f6ee44646e43e868039ae7feb573ff75  jadx-headless-mcp-0.7.1-all.jar' | shasum -a 256 -c -
+  echo '4b9a01c23845c123c217840182d2b5f2c26a7ca20dec3d08810b310fc80a2372  jadx-headless-mcp-0.8.0-all.jar' | shasum -a 256 -c -
 fi &&
-export REA_JADX_MCP_JAR="$PWD/jadx-headless-mcp-0.7.1-all.jar"
+export REA_JADX_MCP_JAR="$PWD/jadx-headless-mcp-0.8.0-all.jar"
 ```
 
 On Windows, run the equivalent in PowerShell:
 
 ```powershell
-$jar = Join-Path $HOME '.local\share\rea\android\jadx-headless-mcp-0.7.1-all.jar'
+$jar = Join-Path $HOME '.local\share\rea\android\jadx-headless-mcp-0.8.0-all.jar'
 New-Item -ItemType Directory -Force (Split-Path $jar) | Out-Null
-Invoke-WebRequest -Uri 'https://github.com/1013503897/jadx-headless-mcp/releases/download/v0.7.1/jadx-headless-mcp-0.7.1-all.jar' -OutFile $jar
-if ((Get-FileHash -Algorithm SHA256 $jar).Hash.ToLowerInvariant() -ne '6e5eacf500b64292bfb73c49797c1958f6ee44646e43e868039ae7feb573ff75') { throw 'JADX JAR SHA-256 does not match REA pinned metadata' }
+Invoke-WebRequest -Uri 'https://github.com/1013503897/jadx-headless-mcp/releases/download/v0.8.0/jadx-headless-mcp-0.8.0-all.jar' -OutFile $jar
+if ((Get-FileHash -Algorithm SHA256 $jar).Hash.ToLowerInvariant() -ne '4b9a01c23845c123c217840182d2b5f2c26a7ca20dec3d08810b310fc80a2372') { throw 'JADX JAR SHA-256 does not match REA pinned metadata' }
 $env:REA_JADX_MCP_JAR = $jar
 ```
 
 REA runs its packaged Java metadata bridge in source-file mode against the
 unmodified engine JAR. REA does not install Java, an Android SDK, JADX, a device
-service or an emulator. Set the path in the shell or MCP server environment:
+service or an emulator. Set `REA_JADX_MCP_JAR` in the shell or MCP server
+environment, as above. To select an existing JDK rather than `java` on `PATH`,
+also set `JAVA_HOME=/absolute/path/existing-jdk`.
 
-```sh
-export REA_JADX_MCP_JAR=/absolute/path/jadx-headless-mcp-0.7.1-all.jar
-# Optional: select an existing JDK rather than java on PATH.
-export JAVA_HOME=/absolute/path/existing-jdk
-```
-
-On Windows x64, use a REA package with its matching bundled Windows native
-controls **including owned protocol stdin support**. This Windows boundary is
-new on repository main; an older released package can still reject this host.
-PowerShell accepts paths containing spaces without additional escaping
-inside these environment values:
+On Windows x64, use a REA package (6.2.0 or later) with its matching bundled
+Windows native controls **including owned protocol stdin support**. PowerShell
+accepts paths containing spaces without additional escaping inside these
+environment values:
 
 ```powershell
-$env:REA_JADX_MCP_JAR = 'D:\tools\jadx-headless-mcp-0.7.1-all.jar'
+$env:REA_JADX_MCP_JAR = 'D:\tools\jadx-headless-mcp-0.8.0-all.jar'
 $env:JAVA_HOME = 'D:\tools\jdk-21'
 rea inspect-android-package 'D:\targets\Example.apk'
 ```
@@ -222,7 +222,7 @@ metadata-bridge records covered macOS arm64/OpenJDK 21 and Windows x64/JDK 21;
 this protocol revision has not been rerun on those hosts or Linux/JDK 25.
 Windows x64 uses an owned Job Object with bidirectional stdio, atomic job
 assignment and kill-on-owner-close. Real Windows verification uses JDK 21 and
-the pinned JADX 0.7.1 JAR; see the real verification lane below.
+the pinned JADX 0.8.0 JAR; see the real verification lane below.
 
 ## Answer an analyst question
 
@@ -239,7 +239,12 @@ rea trace-android-references /path/Example.apk example.MainActivity --method-nam
 
 Equivalent MCP methods are `inspect_android_package`, `search_android_classes`,
 `inspect_android_class`, `inspect_android_method` and `trace_android_references`.
-Every request includes `path`. Class/method operations use `class_name`,
+Every request includes `path`. `search_android_classes` also accepts optional
+`limit` (`>= 1`, default 256) and `offset` (`>= 0`) pagination (CLI `--limit`
+and `--offset`), so large APKs stop JADX pagination early once the requested
+page is filled. A result that returns every match reports
+`coverage: "complete"`, and a page that omits matches reports
+`coverage: "partial"`. Class/method operations use `class_name`,
 `method_name` and optional `overload_index` as applicable. For example:
 
 ```json
@@ -253,6 +258,15 @@ Every request includes `path`. Class/method operations use `class_name`,
   }
 }
 ```
+
+For class searches, `offset` is the zero-based index among matches, and
+`limit` is the maximum number of matches to return. Pass `--offset` and
+`--limit` on the CLI or `offset` and `limit` in an MCP request. Omitting
+`limit` returns at most 256 matches; an empty query on a large APK lists tens
+of thousands of classes. `next_offset` is the offset of the next page, or null
+when no match follows this one. Keep the same APK and query when advancing to
+`next_offset`. A page reports `partial` when it omits matching rows, including
+earlier pages. `duplicate_names` counts occurrences within the returned page.
 
 Use `inspect_android_class` to choose an overload. REA rejects an ambiguous
 method request rather than silently selecting the first match. Method reference
@@ -277,6 +291,26 @@ generating their source. It does not resolve reflection, JNI, method handles,
 inherited method lookup or possible runtime dispatch. Class-only queries and
 class/method inspection still require an APK definition; an external target has
 no invented body. Unknown class/method names remain input errors.
+
+A trace lists every using node, so it grows with the target's callers: on VLC's
+`org.videolan.vlc.PlaybackService` the MCP result was 214,955 bytes, 140 KB of it
+the retained raw provider reply. An MCP call that omits `detail` returns the
+trace inline when it fits the
+[agent result budget](../../reference/limits-and-recovery.md#agent-result-budget),
+else the retained summary: the target, `total`, direct-invoke coverage and
+counts by kind, top class and package, with the 32 most referenced packages. On
+that class the summary was 5,987 bytes. Page the using nodes with
+`view: {kind: "android-references", facet: ...}`, in the call with
+`detail: "summary"` or later through `inspect_analysis_view`:
+
+- `top-classes`: distinct `top_class` names with their package and using-node
+  count, sorted by name.
+- `references`: using nodes with their `index`, and only the `fields` you name.
+
+Both filter by exact `kinds`, `packages` (the top class's name before its last
+dot) and `top_classes`. Use `packages: [""]` for classes in the unnamed
+package. A top class can itself be a nested synthetic class, so group by the
+name before the first `$` when you need outer classes.
 
 External prototype and caller metadata use a bridge-frame-derived representation
 allowance that reserves space for retained raw calls and CLI/MCP copies. Exhausting
@@ -337,19 +371,29 @@ rea inspect-android-class /path/Example.apk a.b --mapping-path /path/mapping.txt
   --detail summary --evidence_output /tmp/class-evidence.json
 ```
 
-For agent workflows, select `detail: "summary"` on class and method inspection.
-It preserves the complete normalized member inventory or selected method body,
-including mapping annotations, while retaining duplicate raw provider calls in
-the complete parent Evidence. The reply links that parent's identity and digest;
-export it with `export_evidence_bundle` or read its summary again through
-`inspect_analysis_view`. CLI summaries require `--evidence_output` and return
-the portable bundle path. Omitted or `complete` detail preserves complete inline
-Evidence. Search and reference operations retain their existing contracts.
-Symbol summary views admit at most **1 MiB**, including view context. An admitted
-method's source can already consume that amount; a larger combined summary
-fails explicitly instead of silently truncating facts. MCP refusal includes
-the retained parent ID. Select complete detail, or inspect one method rather
-than a whole class, when the requested summary does not fit.
+Class and method inspection follow the same budget: omitted `detail` returns
+the result inline when it fits, else the retained summary. A method summary is
+the selected body with its normalized facts and mapping annotations. A class
+summary counts methods, constructors, overloaded method names, fields, encoded
+static values and inner classes, lists overloaded method names with their
+overload counts, and keeps the mapping's identity and record counts. On VLC's
+`org.videolan.vlc.PlaybackService` (302 methods) the previous summary, the whole
+member inventory, was 70,266 bytes. Page members with
+`view: {kind: "android-class", facet: ...}`, in the call with `detail: "summary"`
+or later through `inspect_analysis_view`:
+
+- `methods`: one row per overload with its `index`; filter by exact `names`,
+  `name_prefixes` or `constructors`.
+- `fields`: filter by `names`, `name_prefixes` or `static_values`.
+- `inner-classes`, and `mapping-symbols` for the selected mapping.
+
+The reply links the complete parent's identity and digest; export it with
+`export_evidence_bundle`. CLI summaries require `--evidence_output` and return
+the portable bundle path. Symbol summary views admit at most **1 MiB**,
+including view context. An admitted method's source can already consume that
+amount; a larger summary fails explicitly instead of silently truncating facts.
+MCP refusal includes the retained parent ID; select complete detail when the
+requested summary does not fit.
 
 The mapping path must be absolute. Mapping records accept optional spacing
 around `->` and spaces or tabs between a member type and its name.
@@ -360,8 +404,9 @@ the file's path, SHA-256 and size, the header values the file reports
 `pg_map_hash`), valid record counts and up to 16 malformed line samples. Its
 `symbols` list has one entry per observed class, inner class, method and field;
 `inspect_android_method` lists the class and the selected method. `coverage`
-counts each resolution status. With summary delivery, these unchanged facts are
-under the view's `summary` field; the view separately reports source coverage.
+counts each resolution status. A method summary keeps these facts under the
+view's `summary` field; a class summary pages its symbols with facet
+`mapping-symbols`.
 
 Lookups use the bridge's raw DEX names, not JADX display aliases such as a
 renamed reserved word. Each symbol resolves as:
@@ -454,9 +499,11 @@ is `unknown`, never `unmatched`. ELF/ABI label mismatches preserve facts without
 asserting a binding. No result establishes library loading, runtime registration
 or method invocation.
 
-Summary returns the first 64 selected binding rows, their declaration/candidate
-closure and every selected library's identity, coverage and failure reason;
-counts and page coverage describe the full selected binding set. Selected
+Summary returns the first 16 selected binding rows, their declaration/candidate
+closure and the first 16 selected libraries' identity, coverage and failure
+reason, so a large APK's summary stays within the default agent result budget.
+Counts and page coverage describe the full selected binding set, and
+`library_coverage` says how many libraries the summary omits. Selected
 declaration IDs have separate preview coverage, so native declarations remain
 visible even when the APK has no bundled ABI libraries. Complete
 Evidence stays retained. Read exact fields or further pages without reopening
@@ -569,6 +616,21 @@ or provide split APK/AAB handling,
 signature validation, full resource-table semantics, native-library analysis or
 Android runtime capture. An `.aab` suffix is a ZIP archive, not an APK, so
 Android tools and the application graph do not treat it as a standalone APK.
+JADX package, class, method, and reference operations also admit a ZIP root
+whose name does not already select another package family when the central
+directory lists a root `AndroidManifest.xml` or `classes*.dex` entry
+(`classes.dex`, `classes2.dex`, and further numbered members). The probe reads
+at most 8 MiB across all candidate central directories, in addition to the
+ZIP format's bounded end-record tail. It checks each candidate's fixed header
+before reading its directory prefix. A completely examined directory with
+neither entry stays `zip`. Unsupported, malformed, unreadable, or unexamined
+directory data leaves Android classification unknown and also keeps `zip`;
+this does not establish that Android entries are absent. Android operations
+then refuse that ZIP. Inspect its archive inventory, and use an `.apk` path
+only when it is independently known to be a standalone Android package.
+The caller's path is kept when content classification succeeds; renaming the
+file to `.apk` is not required. A selected `.aab` path stays a ZIP even when
+it is an alias to an extensionless file.
 Existing artifact inventory/extraction tools can supply archive evidence.
 Inventory records an APK root only for ZIP bytes whose name ends in `.apk`.
 The projection adds a limitation when no root `AndroidManifest.xml` was
@@ -711,7 +773,7 @@ bounds each upstream call. Timeout recovery reports the effective milliseconds
 and range, with `details.limit` identifying the runtime setting. An invalid
 provider-local launch value can also be repaired by a runtime override; reset
 exposes that invalid launch value again. See the
-[settings design](../../design/limits-and-recovery.md#invalid-launch-configuration).
+[analysis settings and recovery](../../reference/limits-and-recovery.md#invalid-launch-configuration).
 A passing JADX configuration check in `rea doctor` reports its launch-derived
 `operation_timeout_ms`; it does not inspect another running server's overrides. Explicit
 cancellation still ends the operation immediately, and partial observations
@@ -755,7 +817,7 @@ Download the explicit public fixtures once; this installs no tools:
 
 ```sh
 npm run fixtures:android
-export REA_JADX_MCP_JAR="$PWD/_reference/apk-integration/jadx-headless-mcp-0.7.1-all.jar"
+export REA_JADX_MCP_JAR="$PWD/_reference/apk-integration/jadx-headless-mcp-0.8.0-all.jar"
 export REA_ANDROID_TEST_APK="$PWD/_reference/apk-integration/ApiDemos-debug.apk"
 npm run verify:android
 ```

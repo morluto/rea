@@ -12,7 +12,14 @@ import {
   createGlobalPathReader,
   type GlobalReferenceRead,
 } from "./javascriptSemanticAmbientWrites.js";
-import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
+import {
+  traverseJavaScriptAst,
+  traverseJavaScriptValueAst,
+} from "./javascriptSemanticTraversal.js";
+import {
+  clearSemanticModuleSourceQueries,
+  semanticModuleSourceQueries,
+} from "./javascriptSemanticModuleSourceCache.js";
 
 import { BUILTIN_RESOURCE_METHODS } from "./javascriptBuiltinResourceMethods.js";
 import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
@@ -20,6 +27,7 @@ import type { JavaScriptModuleOrigin } from "./javascriptSemanticIr.js";
 import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
+  semanticPrototypeOwners,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptBindingIndex,
@@ -31,6 +39,8 @@ import {
   semanticBindingHasPriorValueWrite,
 } from "./javascriptSemanticMutationInitializers.js";
 import {
+  stringValue,
+  readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
   semanticMemberChain,
   semanticWriteSiteTarget,
@@ -38,10 +48,7 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
-import {
-  staticSourceRelativeUrlPath,
-  stringValue,
-} from "./javascriptStaticAnalysisHelpers.js";
+import { staticSourceRelativeUrlPath } from "./javascriptStaticAnalysisHelpers.js";
 import {
   createSemanticModuleInterop,
   semanticModuleInteropWithAmbientWrites,
@@ -49,12 +56,18 @@ import {
 import {
   ambientBindingMayObserveWriteAt,
   ambientPathMayObserveAt,
+  ambientPathOrMemberMayHaveChanged,
+  bindingHasUnmodeledMemberValues,
+  opaqueCodeMayRebindBinding,
   semanticEffectMayPrecede,
+  semanticMemberWriteSources,
 } from "./javascriptSemanticEffectLog.js";
+import { semanticGlobalCodeSites } from "./javascriptSemanticEffectRecord.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
 import {
   semanticCommonJsRequireOwnEnumerableAt,
+  semanticReferenceIterationUnknown,
   semanticReferenceSourcesInactive,
 } from "./javascriptSemanticReferenceSources.js";
 import {
@@ -75,6 +88,7 @@ import {
   isUnmodifiedGlobalReference,
   isUnmodifiedImportMetaUrl,
 } from "./javascriptSemanticGlobalReference.js";
+import { semanticConsumerMemo } from "./javascriptSemanticConsumer.js";
 
 const possibleCommonJsDelegateWriteStates =
   new WeakSet<JavaScriptSemanticAnalysisState>();
@@ -121,6 +135,7 @@ export const invalidateSemanticRequireDelegateWrites = (
 ): void => {
   moduleRequireWrites.delete(state);
   moduleReturnedReferences.delete(state);
+  clearSemanticModuleSourceQueries(state);
 };
 
 const commonJsDelegateChangedAt = (
@@ -128,7 +143,7 @@ const commonJsDelegateChangedAt = (
   state: JavaScriptSemanticAnalysisState,
 ): boolean =>
   writesModuleRequire(state).some((write) =>
-    semanticEffectMayPrecede(state, node, write.node),
+    semanticEffectMayPrecede(state, node, write),
   );
 
 const commonJsLoaderAt = (
@@ -391,6 +406,15 @@ const selectedRequireSourcesAt = (
       "loader" | "sourceRelative" | "sourceRelativePath" | "loaderAuthority"
     >
   | undefined => {
+  // A selected loader is a bundler factory binding or comes from a loader
+  // this program names. Without either, no value can select one, and a walk
+  // that exhausted its budget would report an unknown loader that cannot
+  // exist.
+  if (
+    factoryBindingIds.size === 0 &&
+    !programMayNameCommonJsLoader(state.program)
+  )
+    return undefined;
   const pending: ModuleObjectSource[] = [{ node: root, path: [] }];
   const seen = new WeakMap<t.Node, Set<string>>();
   let count = 0;
@@ -422,7 +446,7 @@ const selectedRequireSourcesAt = (
     paths.add(key);
     seen.set(node, paths);
     if (++count > state.precision.alias_selections) {
-      state.valueResourceLimits.add("alias-selections");
+      state.observations.valueResourceLimits.add("alias-selections");
       return { loader: "unknown", sourceRelative: false };
     }
     if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
@@ -982,21 +1006,14 @@ const isWrapperRequireInitializerCall = (
 };
 
 type ModuleSourceMatch = "possible" | "no-match" | "incomplete";
-type ModuleRequireWrite = {
-  readonly node: t.Node;
-  readonly resolution: "possible" | "incomplete";
-};
-const moduleRequireWrites = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  readonly ModuleRequireWrite[]
->();
-const moduleReturnedReferences = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  Map<
-    "direct-call" | "awaited-call",
-    ReturnType<typeof createSemanticReturnedReferences>
-  >
->();
+const moduleRequireWrites = semanticConsumerMemo<readonly t.Node[]>();
+const moduleReturnedReferences =
+  semanticConsumerMemo<
+    Map<
+      "direct-call" | "awaited-call",
+      ReturnType<typeof createSemanticReturnedReferences>
+    >
+  >();
 
 /** Reuse one result-reference owner for loader values and module receivers. */
 const returnedLoaderReferences = (
@@ -1026,19 +1043,24 @@ type ModuleObjectSource = {
     | undefined;
 };
 
-/** Both loader queries retain the same read and shallow-copy selection owner. */
-const loaderSourceContextKey = (source: ModuleObjectSource): string =>
-  JSON.stringify([
-    source.eligibility,
-    source.readAt?.start,
-    source.readAt?.end,
-    source.capturedSelections?.map(({ at, depth, ownEnumerable }) => [
-      at.start,
-      at.end,
-      depth,
-      ownEnumerable,
-    ]),
-  ]);
+/** A source position, with null and absent positions sharing one key. */
+const positionKey = (position: number | null | undefined): string =>
+  position === null || position === undefined ? "-" : String(position);
+
+/**
+ * Both loader queries retain the same read and shallow-copy selection owner.
+ * Absent captures differ from an empty capture list. This hot key is built
+ * without JSON serialization.
+ */
+const loaderSourceContextKey = (source: ModuleObjectSource): string => {
+  let key = `${source.eligibility === true ? "e" : "-"}|${positionKey(source.readAt?.start)}|${positionKey(source.readAt?.end)}|`;
+  const captures = source.capturedSelections;
+  if (captures === undefined) return `${key}-`;
+  key += "[";
+  for (const { at, depth, ownEnumerable } of captures)
+    key += `${positionKey(at.start)},${positionKey(at.end)},${String(depth)},${ownEnumerable === true ? "o" : "-"};`;
+  return key;
+};
 
 const inheritLoaderSourceContext = (
   current: ModuleObjectSource,
@@ -1177,7 +1199,170 @@ export const isCommonJsRequireDelegate = (
   hasCommonJsModuleSource(node, state, includeUnknown, "delegate", readAt) ===
   "possible";
 
+/** Names whose presence anywhere can denote or select a CommonJS loader. */
+const COMMONJS_LOADER_NAMES: ReadonlySet<string> = new Set([
+  "require",
+  "module",
+  "mainModule",
+  "createRequire",
+  "getBuiltinModule",
+  // Global code can name a loader this program's syntax does not.
+  "eval",
+  "Function",
+]);
+
+/** String keys that select a loader; `"module"` is also an ordinary value. */
+const COMMONJS_LOADER_KEYS: ReadonlySet<string> = new Set([
+  "require",
+  "mainModule",
+  "createRequire",
+  "getBuiltinModule",
+]);
+
+const COMMONJS_LOADER_MODULES: ReadonlySet<string> = new Set([
+  "module",
+  "node:module",
+]);
+
+const programLoaderCapability = new WeakMap<t.Program, boolean>();
+
+/**
+ * Whether this program names anything a CommonJS module object or loader
+ * delegate can come from: `require`, `module`, a `mainModule` member, the
+ * `module` builtin, `process` used as a value, or global code. Every
+ * identity the loader walk recognizes is rooted in one of these, so a
+ * program with none cannot contain one, and a walk that only exhausted its
+ * budget there would report a loader that cannot exist. The answer depends
+ * on syntax alone and is computed once per program.
+ *
+ * `typeof process` and a static member of `process` do not make it a value
+ * that can be aliased or indexed dynamically; a `mainModule` member is named.
+ */
+const programMayNameCommonJsLoader = (program: t.Program): boolean => {
+  const known = programLoaderCapability.get(program);
+  if (known !== undefined) return known;
+  let capable = false;
+  traverseJavaScriptAst(program, {
+    skip: () => capable,
+    enter: (node, parent) => {
+      if (nodeMayNameCommonJsLoader(node, parent)) capable = true;
+    },
+  });
+  programLoaderCapability.set(program, capable);
+  return capable;
+};
+
+const nodeMayNameCommonJsLoader = (
+  node: t.Node,
+  parent: t.Node | null,
+): boolean => {
+  if (t.isJSXIdentifier(node)) return COMMONJS_LOADER_NAMES.has(node.name);
+  if (t.isIdentifier(node))
+    return (
+      COMMONJS_LOADER_NAMES.has(node.name) ||
+      (node.name === "process" && !isInertProcessMention(node, parent))
+    );
+  if (t.isStringLiteral(node))
+    return (
+      COMMONJS_LOADER_KEYS.has(node.value) ||
+      (COMMONJS_LOADER_MODULES.has(node.value) &&
+        isModuleSpecifierPosition(node, parent))
+    );
+  if (t.isTemplateElement(node))
+    return COMMONJS_LOADER_KEYS.has(node.value.cooked ?? node.value.raw);
+  return (
+    t.isTSImportEqualsDeclaration(node) || t.isTSExternalModuleReference(node)
+  );
+};
+
+/**
+ * `typeof process`, a static member of `process`, or `process` as a property
+ * name: none lets the process object be aliased or indexed dynamically.
+ */
+const isInertProcessMention = (
+  node: t.Identifier,
+  parent: t.Node | null,
+): boolean =>
+  (t.isUnaryExpression(parent, { operator: "typeof" }) &&
+    parent.argument === node) ||
+  ((t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent)) &&
+    !parent.computed) ||
+  ((t.isObjectProperty(parent) ||
+    t.isObjectMethod(parent) ||
+    t.isClassMethod(parent) ||
+    t.isClassProperty(parent)) &&
+    parent.key === node &&
+    !parent.computed);
+
+/** A string that names the module an import, re-export or `import()` loads. */
+const isModuleSpecifierPosition = (
+  node: t.StringLiteral,
+  parent: t.Node | null,
+): boolean =>
+  ((t.isImportDeclaration(parent) ||
+    t.isExportNamedDeclaration(parent) ||
+    t.isExportAllDeclaration(parent) ||
+    t.isImportExpression(parent)) &&
+    parent.source === node) ||
+  ((t.isCallExpression(parent) || t.isOptionalCallExpression(parent)) &&
+    t.isImport(parent.callee) &&
+    parent.arguments[0] === node);
+
+/**
+ * Complete member-mutation facts fix every input of this query until the next
+ * value-cache or require-delegate invalidation, so an identical query reuses
+ * its answer and re-records the resource limits the first walk reached.
+ */
 const hasCommonJsModuleSource = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  includeUnknown: boolean,
+  target: "module" | "delegate",
+  readAt?: t.Node,
+): ModuleSourceMatch => {
+  if (!programMayNameCommonJsLoader(state.program)) return "no-match";
+  if (!state.memberMutationFactsComplete)
+    return walkCommonJsModuleSource(
+      node,
+      state,
+      includeUnknown,
+      target,
+      readAt,
+    );
+  const queries = semanticModuleSourceQueries<ModuleSourceMatch>(state, node);
+  let byOptions = queries.get(readAt);
+  if (byOptions === undefined) {
+    byOptions = new Map();
+    queries.set(readAt, byOptions);
+  }
+  const key = `${target}:${String(includeUnknown)}`;
+  const cached = byOptions.get(key);
+  if (cached !== undefined) {
+    for (const limit of cached.limits)
+      state.observations.valueResourceLimits.add(limit);
+    return cached.match;
+  }
+  const before = new Set(state.observations.valueResourceLimits);
+  const match = walkCommonJsModuleSource(
+    node,
+    state,
+    includeUnknown,
+    target,
+    readAt,
+  );
+  // The walk can clear this state's queries; retain the answer only if the
+  // same generation still owns them.
+  if (semanticModuleSourceQueries<ModuleSourceMatch>(state, node) === queries)
+    byOptions.set(key, {
+      match,
+      limits: [...state.observations.valueResourceLimits].filter(
+        (limit) => !before.has(limit),
+      ),
+    });
+  return match;
+};
+
+const walkCommonJsModuleSource = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
   includeUnknown: boolean,
@@ -1191,7 +1376,7 @@ const hasCommonJsModuleSource = (
   const pending: Work[] = [{ node, path: [], readAt, awaitDepths: [] }];
   // Keep depths separate and join finite key alternatives at each source read.
   const selections = new SemanticAliasSelections(() => {
-    state.valueResourceLimits.add("alias-selections");
+    state.observations.valueResourceLimits.add("alias-selections");
   }, state.precision.alias_selections);
   const contexts = new WeakMap<
     t.Node,
@@ -1211,17 +1396,24 @@ const hasCommonJsModuleSource = (
   // created after exhaustion. Unnormalized paths can grow without a binding.
   let exhausted = false;
   let drained = 0;
+  let pendingHead = 0;
   for (
     let next = pending.pop();
     next !== undefined;
-    next = exhausted ? pending.shift() : pending.pop()
+    next = exhausted
+      ? pendingHead < pending.length
+        ? pending[pendingHead++]
+        : undefined
+      : pendingHead < pending.length
+        ? pending.pop()
+        : undefined
   ) {
     const value = unwrapJavaScriptExpression(next.node).node;
     const { awaitDepths } = next;
     const byMode =
       contexts.get(value) ??
       new Map<string, { readonly identities: Map<string, object> }>();
-    const modeKey = JSON.stringify([awaitDepths, loaderSourceContextKey(next)]);
+    const modeKey = `${awaitDepths.join(",")}#${loaderSourceContextKey(next)}`;
     let context = byMode.get(modeKey);
     if (context === undefined) {
       context = { identities: new Map() };
@@ -1246,7 +1438,7 @@ const hasCommonJsModuleSource = (
         (byMode.size > 1 || context.identities.size > 0) &&
         ++additionalStates > state.precision.alias_selections
       ) {
-        state.valueResourceLimits.add("alias-selections");
+        state.observations.valueResourceLimits.add("alias-selections");
         if (includeUnknown) return "possible";
         exhausted = true;
       }
@@ -1554,21 +1746,125 @@ export const semanticModuleRequireCallAt = (
   );
 };
 
+/**
+ * An exhausted selector walk can still exclude the host on a closed graph of
+ * local values. Follow every retained source and member-write RHS without
+ * expanding selector paths. Opaque inputs and an unfinished graph stay unknown.
+ */
+const hasClosedLocalReceiverSources = (
+  root: t.Node,
+  write: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (
+    !state.memberMutationFactsComplete ||
+    // The closure follows inherited members without selecting a read time.
+    semanticGlobalCodeSites(state).length > 0 ||
+    semanticPrototypeOwners.some((owner) =>
+      ambientPathOrMemberMayHaveChanged(state, ["global", owner]),
+    )
+  )
+    return false;
+  const pending: t.Node[] = [];
+  const scheduled = new Set<t.Node>();
+  const enqueue = (source: t.Node): boolean => {
+    const node = unwrapJavaScriptExpression(source).node;
+    if (scheduled.has(node)) return true;
+    if (scheduled.size >= state.precision.alias_selections) return false;
+    scheduled.add(node);
+    pending.push(node);
+    return true;
+  };
+  if (!enqueue(root)) return false;
+  const bindings = new Set<string>();
+  while (pending.length > 0) {
+    const node = pending.pop()!;
+    if (t.isIdentifier(node)) {
+      const binding = resolveSemanticBindingState(state, node, node.name);
+      if (
+        binding === undefined ||
+        semanticResolutionBlocked(state, node, node.name) ||
+        commonJsWrapperBindingDeclaration(node, node.name, state) !==
+          undefined ||
+        binding.definitions.some(
+          ({ kind }) => kind === "parameter" || kind === "catch",
+        ) ||
+        binding.directOrigins.length !== 0 ||
+        binding.initializers.length === 0 ||
+        bindingHasUnmodeledMemberValues(binding, write, state) ||
+        opaqueCodeMayRebindBinding(binding, state, node)
+      )
+        return false;
+      if (bindings.has(binding.bindingId)) continue;
+      bindings.add(binding.bindingId);
+      for (const sources of [
+        binding.initializers,
+        binding.referenceInitializers,
+        semanticMemberWriteSources(binding),
+      ])
+        for (const source of sources) {
+          if (semanticReferenceIterationUnknown(source, state)) return false;
+          if (
+            !semanticReferenceSourcesInactive(source, state) &&
+            !enqueue(source.node)
+          )
+            return false;
+        }
+    } else if (
+      t.isMemberExpression(node) ||
+      t.isOptionalMemberExpression(node)
+    ) {
+      if (!enqueue(node.object)) return false;
+    } else if (t.isObjectExpression(node)) {
+      for (const property of node.properties) {
+        if (
+          !t.isObjectProperty(property) ||
+          semanticStaticPropertyKey(property.key, property.computed) ===
+            "__proto__"
+        )
+          return false;
+        if (!enqueue(property.value)) return false;
+      }
+    } else if (t.isArrayExpression(node)) {
+      for (const element of node.elements) {
+        if (t.isSpreadElement(element)) return false;
+        if (element !== null && !enqueue(element)) return false;
+      }
+    } else if (t.isConditionalExpression(node) || t.isLogicalExpression(node)) {
+      const [left, right] = t.isConditionalExpression(node)
+        ? [node.consequent, node.alternate]
+        : [node.left, node.right];
+      if (!enqueue(left) || !enqueue(right)) return false;
+    } else if (!readExactJavaScriptLiteral(node).found) {
+      return false;
+    }
+  }
+  return true;
+};
+
 const writesModuleRequire = (
   state: JavaScriptSemanticAnalysisState,
-): readonly ModuleRequireWrite[] => {
+): readonly t.Node[] => {
   const cached = moduleRequireWrites.get(state);
   if (cached !== undefined) return cached;
   // Interop invocation resolution may ask for require provenance while this
   // index is being built. Publish a temporary empty result to break that cycle.
   moduleRequireWrites.set(state, []);
-  const writes: ModuleRequireWrite[] = [];
+  const writes: t.Node[] = [];
   const interop = createSemanticModuleInterop(state);
-  const isModuleObject = (node: t.Node): ModuleSourceMatch =>
-    hasCommonJsModuleSource(node, state, false, "module");
   const record = (node: t.Node, receiver: t.Node): void => {
-    const resolution = isModuleObject(receiver);
-    if (resolution !== "no-match") writes.push({ node, resolution });
+    const resolution = hasCommonJsModuleSource(
+      receiver,
+      state,
+      false,
+      "module",
+    );
+    if (
+      resolution === "possible" ||
+      (resolution === "incomplete" &&
+        !hasClosedLocalReceiverSources(receiver, node, state))
+    )
+      writes.push(node);
   };
   traverseJavaScriptValueAst(state.program, state.erasedSyntaxNodes, {
     enter: (node) => {
@@ -1627,10 +1923,8 @@ export const semanticOriginalGlobalProcessAt = (
   !ambientPathMayObserveAt(state, node, ["global", "process"]) &&
   !ambientBindingMayObserveWriteAt(state, node, "process");
 
-const globalProcessReaders = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  (site: t.Node) => GlobalReferenceRead
->();
+const globalProcessReaders =
+  semanticConsumerMemo<(site: t.Node) => GlobalReferenceRead>();
 
 /**
  * Whether a write or escape through the global process object at this source
@@ -1845,12 +2139,25 @@ const MUTABLE_BUILTIN_DEFAULTS = new Set([
   "path/posix",
   "path/win32",
   "url",
+  "buffer",
+  "stream",
+  // `Stream` extends `EventEmitter`, so a member installed on that ancestor is inherited
+  // by every fs stream. Measured on Node 24.22.1, defining `start` on
+  // `EventEmitter.prototype` makes `createReadStream(p, {start:-1})` return a handle
+  // while the unmutated call throws `ERR_OUT_OF_RANGE`.
+  "events",
+  // `fs.createReadStream` builds its `StringDecoder` from this module at first use, so a
+  // replaced export changes which encodings a read stream accepts. Measured on Node
+  // 24.22.1 with an admitting `Buffer.isEncoding`, replacing `StringDecoder` through the
+  // default export constructs a handle from `{encoding:"nope"}`.
+  "string_decoder",
 ]);
 
 /** Mutable default/object selections share CommonJS identity; namespace slots do not. */
 export const semanticMutableBuiltinOrigin = <Key = never>(
   origin: JavaScriptModuleOrigin,
   selected: readonly Key[] = [],
+  escaped = false,
 ):
   | { readonly specifier: string; readonly path: readonly (Key | string)[] }
   | undefined => {
@@ -1860,9 +2167,37 @@ export const semanticMutableBuiltinOrigin = <Key = never>(
   const specifier = origin.specifier.replace(/^node:/u, "");
   if (!MUTABLE_BUILTIN_DEFAULTS.has(specifier)) return undefined;
   if (path[0] === "default") return { specifier, path: path.slice(1) };
-  if (specifier === "events" && path[0] === "EventEmitter" && path.length > 1)
+  // Named imports cannot replace their namespace slots, but their exported
+  // constructor objects still share identity with the CommonJS built-in.
+  if (
+    (selected.length > 0 || escaped) &&
+    ((specifier === "fs" &&
+      (path[0] === "ReadStream" ||
+        path[0] === "WriteStream" ||
+        path[0] === "FileReadStream" ||
+        path[0] === "FileWriteStream")) ||
+      (specifier === "buffer" && path[0] === "Buffer") ||
+      // `Stream` is the ancestor both fs stream classes extend, so a member installed
+      // through a named `Stream` import reaches them. Measured on Node 24.22.1, the
+      // named-import form constructs a handle from `{start:-1}` exactly like the
+      // CommonJS form.
+      (specifier === "stream" &&
+        (path[0] === "Readable" ||
+          path[0] === "Writable" ||
+          path[0] === "Stream")) ||
+      (specifier === "events" && path[0] === "EventEmitter") ||
+      // The default-import form is handled by the `default` arm above; this covers a
+      // named `StringDecoder` import, whose binding is the same constructor object.
+      (specifier === "string_decoder" && path[0] === "StringDecoder"))
+  )
     return { specifier, path };
   if (specifier === "process" && (path[0] === "env" || path[0] === "argv"))
+    return { specifier, path };
+  // Named and namespace exports still expose the same mutable Agent object.
+  if (
+    (specifier === "http" || specifier === "https") &&
+    path[0] === "globalAgent"
+  )
     return { specifier, path };
   return specifier === "fs" && path[0] === "promises"
     ? { specifier, path }

@@ -118,6 +118,10 @@ export const decodeBunModuleGraph = async (
         recordBytes,
         failure: await assessLayout(graph, records, recordBytes, limits),
       });
+    // A budget refusal leaves that layout unexamined, not structurally invalid.
+    // Do not let a smaller module allowance choose another revision's records.
+    for (const { failure } of assessments)
+      if (failure?.reason === "limit") throw failure;
     const valid = assessments.filter((item) => item.failure === null);
     if (valid.length > 1)
       throw unsupported(
@@ -207,17 +211,23 @@ const assessLayout = async (
 ): Promise<ArtifactReaderFailure | null> => {
   const { data, entryPointId } = graph;
   const count = records.length / recordBytes;
-  if (count > limits.module_count) return bunModuleCountLimit(count, limits);
-  for (let index = 0; index < count; index += 1) {
+  if (entryPointId >= count)
+    return bunFormatFailure(
+      `entry_point_id ${String(entryPointId)} is outside the module table`,
+    );
+  // An invalid prefix can disprove an over-budget interpretation without
+  // walking its remaining records. A wholly valid prefix cannot prove it.
+  for (
+    let index = 0;
+    index < Math.min(count, limits.module_count);
+    index += 1
+  ) {
     const record = readRecord(records, index, recordBytes);
     if (index % 256 === 0) await setImmediate();
     const failure = await recordPointerFailure(data, record, recordBytes);
     if (failure !== null) return failure;
   }
-  if (entryPointId >= count)
-    return bunFormatFailure(
-      `entry_point_id ${String(entryPointId)} is outside the module table`,
-    );
+  if (count > limits.module_count) return bunModuleCountLimit(count, limits);
   return null;
 };
 

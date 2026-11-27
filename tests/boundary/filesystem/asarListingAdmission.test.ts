@@ -5,6 +5,7 @@ import { buffer } from "node:stream/consumers";
 import { setImmediate } from "node:timers/promises";
 import { expect, it } from "vitest";
 
+import type { ArtifactEntry } from "../../../src/resources/ArtifactReader.js";
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
 import {
   BLOCK_INTEGRITY_LIMITATION,
@@ -156,7 +157,7 @@ it.each([
     });
     const path = await archiveWith(asarHeaderBytes(json));
     await expect(inventoryArtifact(path)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: inArchive(message, path),
     });
   },
@@ -167,7 +168,7 @@ it("names the rejected root fields", async () => {
     asarHeaderBytes(JSON.stringify({ files: {}, unpacked: "yes" })),
   );
   await expect(inventoryArtifact(path)).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: inArchive("ASAR root metadata is malformed (unpacked)", path),
   });
 });
@@ -257,45 +258,49 @@ it("preserves POSIX literal backslashes and rejects Windows component separators
   }
 });
 
-it.each([undefined, "01", "-1", "9007199254740992"])(
-  "retains inventory facts for an unreadable packed offset %s",
-  async (offset) => {
-    const digest = "a".repeat(64);
-    const bytes = asarHeaderBytes(
-      JSON.stringify({
-        files: {
-          member: {
-            size: 0,
-            ...(offset === undefined ? {} : { offset }),
-            executable: true,
-            integrity: { algorithm: "SHA256", hash: digest },
-          },
-        },
-      }),
-    );
-    const path = await archiveWith(bytes);
-    const reader = new AsarArtifactReader(path);
-    try {
-      const entries = [];
-      for await (const entry of reader.entries()) entries.push(entry);
-      expect(entries).toHaveLength(1);
-      const entry = entries[0]!;
+it("retains inventory facts for members with unreadable packed offsets", async () => {
+  const digest = "a".repeat(64);
+  const offsets = {
+    absent: undefined,
+    negative: "-1",
+    padded: "01",
+    unsafe: "9007199254740992",
+  };
+  const integrity = { algorithm: "SHA256", hash: digest };
+  const files = Object.fromEntries(
+    Object.entries(offsets).map(([name, offset]) => [
+      name,
+      { size: 0, offset, executable: true, integrity },
+    ]),
+  );
+  // A coerced "01" would point at the end of this real payload.
+  const bytes = Buffer.concat([
+    asarHeaderBytes(JSON.stringify({ files })),
+    Buffer.from("x"),
+  ]);
+  const path = await archiveWith(bytes);
+  const reader = new AsarArtifactReader(path);
+  try {
+    const seen: string[] = [];
+    for await (const entry of reader.entries()) {
+      seen.push(entry.path);
       expect(entry).toMatchObject({
-        path: "member",
         kind: "file",
         declaredSize: 0,
         executable: true,
         declaredIntegrity: { algorithm: "sha256", digest },
       });
       await expect(reader.open(entry)).rejects.toMatchObject({
-        reason: "format",
+        reason: "malformed",
+        parseFailure: { kind: "malformed", format: "asar", field: "offset" },
       });
-      expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
-    } finally {
-      await reader.close();
     }
-  },
-);
+    expect(seen).toEqual(Object.keys(offsets));
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+  } finally {
+    await reader.close();
+  }
+});
 
 const invalidSize = (declared: string) =>
   `ASAR entry declares ${declared}, which is not a non-negative safe integer.`;
@@ -303,7 +308,7 @@ const unretainedSize =
   "ASAR entry declares a numeric size outside the safe-integer range; its exact source value was not retained.";
 
 // Header spellings, so values JSON.parse rounds or overflows stay exact here.
-it.each([
+const invalidSizes = [
   ["-1000", invalidSize("size -1000")],
   ["1.5", invalidSize("size 1.5")],
   [
@@ -329,61 +334,72 @@ it.each([
   ["9007199254740993", unretainedSize],
   ["1e400", unretainedSize],
   ["-1e400", unretainedSize],
-])(
-  "inventories the other members when one declares size %s",
-  async (sizeText, limitation) => {
-    // Figma Desktop ships `.codesign` with size -1000 and the empty-input digest.
-    const empty = createHash("sha256").update("").digest("hex");
-    const payload = Buffer.from("console.log(1);\n");
-    const digest = createHash("sha256").update(payload).digest("hex");
-    const bytes = Buffer.concat([
-      asarHeaderBytes(
-        JSON.stringify({
-          files: {
-            ".codesign": {
-              size: "__SIZE__",
-              offset: "0",
-              integrity: { algorithm: "SHA256", hash: empty },
-            },
-            "main.js": {
-              size: payload.length,
-              offset: "0",
-              integrity: { algorithm: "SHA256", hash: digest },
-            },
-          },
-        }).replace('"__SIZE__"', sizeText),
-      ),
-      payload,
-    ]);
-    const path = await archiveWith(bytes);
+] as const;
 
-    const reader = new AsarArtifactReader(path);
-    try {
-      const entries = [];
-      for await (const entry of reader.entries()) entries.push(entry);
-      const invalid = entries.find((entry) => entry.path === ".codesign");
-      expect(invalid).toMatchObject({
+it("keeps invalid ASAR sizes unavailable while reading valid packed siblings", async () => {
+  // Figma Desktop ships .codesign with size -1000 and the empty-input digest.
+  const empty = createHash("sha256").update("").digest("hex");
+  const payload = Buffer.from("console.log(1);\n");
+  const digest = createHash("sha256").update(payload).digest("hex");
+  const variants = invalidSizes.map(([size, limitation], index) => ({
+    name: size === "-1000" ? ".codesign" : `size-${index}.bin`,
+    size,
+    limitation,
+  }));
+  const invalidFiles = variants.map(
+    ({ name, size }) =>
+      `${JSON.stringify(name)}:{"size":${size},"offset":"0","integrity":{"algorithm":"SHA256","hash":"${empty}"}}`,
+  );
+  const validFiles = [
+    `"main.js":{"size":${payload.length},"offset":"0","integrity":{"algorithm":"SHA256","hash":"${digest}"}}`,
+    `"exponent":{"size":10e-1,"offset":"${payload.length}"}`,
+    `"fraction":{"size":1.0000000000000000000,"offset":"${payload.length + 1}"}`,
+  ];
+  const bytes = Buffer.concat([
+    asarHeaderBytes(
+      `{"files":{${[...invalidFiles, ...validFiles].join(",")}}}`,
+    ),
+    payload,
+    Buffer.from("xy"),
+  ]);
+  const path = await archiveWith(bytes);
+  const reader = new AsarArtifactReader(path);
+  try {
+    const entries = new Map<string, ArtifactEntry>();
+    for await (const entry of reader.entries()) entries.set(entry.path, entry);
+    for (const { name, size, limitation } of variants) {
+      const entry = entries.get(name);
+      expect(entry, size).toMatchObject({
         kind: "file",
         declaredSize: null,
         declaredIntegrity: { algorithm: "sha256", digest: empty },
         limitations: [limitation],
       });
-      await expect(reader.open(invalid!)).rejects.toMatchObject({
+      await expect(reader.open(entry!), size).rejects.toMatchObject({
         reason: "unavailable",
-        message: "ASAR entry declares no readable size: .codesign",
+        message: `ASAR entry declares no readable size: ${name}`,
       });
-      const valid = entries.find((entry) => entry.path === "main.js")!;
-      expect(
-        Buffer.compare(await buffer(await reader.open(valid)), payload),
-      ).toBe(0);
-    } finally {
-      await reader.close();
     }
-
-    const inventory = await inventoryArtifact(path);
-    const occurrence = (name: string) =>
-      inventory.occurrences.find((row) => row.logical_path === name);
-    expect(occurrence(".codesign")).toMatchObject({
+    for (const [name, content] of [
+      ["main.js", payload],
+      ["exponent", Buffer.from("x")],
+      ["fraction", Buffer.from("y")],
+    ] as const) {
+      const entry = entries.get(name);
+      expect(entry?.declaredSize, name).toBe(content.length);
+      expect(
+        (await buffer(await reader.open(entry!))).equals(content),
+        name,
+      ).toBe(true);
+    }
+  } finally {
+    await reader.close();
+  }
+  const inventory = await inventoryArtifact(path);
+  const occurrence = (name: string) =>
+    inventory.occurrences.find((row) => row.logical_path === name);
+  for (const { name, size, limitation } of variants) {
+    expect(occurrence(name), size).toMatchObject({
       artifact_id: null,
       declared_size: null,
       hash_status: "unavailable",
@@ -392,34 +408,10 @@ it.each([
         "ASAR packed entry bytes were not read because its declared size cannot bound them; no content hash or child artifact was produced.",
       ],
     });
-    expect(occurrence("main.js")?.hash_status).toBe("verified");
-    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
-  },
-);
-
-it.each(["1.0000000000000000000", "10e-1"] as const)(
-  "uses an exactly integral ASAR size spelled %s",
-  async (sizeText) => {
-    const bytes = Buffer.concat([
-      asarHeaderBytes(
-        `{"files":{"member.txt":{"size":${sizeText},"offset":"0"}}}`,
-      ),
-      Buffer.from("x"),
-    ]);
-    const path = await archiveWith(bytes);
-    const reader = new AsarArtifactReader(path);
-    try {
-      for await (const entry of reader.entries()) {
-        expect(entry.declaredSize).toBe(1);
-        expect((await buffer(await reader.open(entry))).toString()).toBe("x");
-        return;
-      }
-      throw new Error("The member was not listed");
-    } finally {
-      await reader.close();
-    }
-  },
-);
+  }
+  expect(occurrence("main.js")?.hash_status).toBe("verified");
+  expect((await readFile(path)).equals(bytes)).toBe(true);
+});
 
 it("reads unpacked members and lists directories whose declared size is invalid", async () => {
   const payload = Buffer.from("native");
@@ -617,9 +609,12 @@ it("retains uninterpreted integrity declarations through packed and unpacked inv
         expect((await readFile(join(outputRoot, name))).equals(payload)).toBe(
           true,
         );
-        expect(extracted.limitations).toContain(
-          `${name}: ${occurrence(name).limitations[0]}`,
-        );
+        // Each written file keeps its own occurrence's limitations.
+        expect(
+          extracted.artifacts.find(
+            ({ relative_path }) => relative_path === name,
+          )?.limitations,
+        ).toContain(occurrence(name).limitations[0]);
       }
     } finally {
       await resources.close();

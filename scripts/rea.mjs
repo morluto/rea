@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 
-import { access } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  compiledRuntimeExists,
+  missingCompiledRuntimeMessage,
+} from "./lib/cli-compiled-runtime.mjs";
 import { prepareCliProcessEnvironment } from "./lib/cli-process-environment.mjs";
 import { unsupportedRuntimeMessage } from "./lib/runtime-admission.mjs";
 
@@ -34,7 +37,9 @@ prepareCliProcessEnvironment(
 );
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const builtinArgumentRuntime = "dist/cli-runtime/cliBuiltinArguments.js";
-const builtinArguments = (await compiledRuntimeExists([builtinArgumentRuntime]))
+const builtinArguments = (await compiledRuntimeExists(packageRoot, [
+  builtinArgumentRuntime,
+]))
   ? await import("../dist/cli-runtime/cliBuiltinArguments.js")
   : undefined;
 const entry = builtinArguments?.classifyCliEntrypoint(args, process.env);
@@ -57,10 +62,8 @@ const runtimeFiles = [
         ]),
 ];
 
-if (!(await compiledRuntimeExists(runtimeFiles))) {
-  process.stderr.write(
-    `REA's compiled runtime is missing. Run \`npm ci && npm run build:cached\` in ${packageRoot} to install dependencies and build REA, then restart it. If this is an installed package, reinstall rea-agents.\n`,
-  );
+if (!(await compiledRuntimeExists(packageRoot, runtimeFiles))) {
+  process.stderr.write(missingCompiledRuntimeMessage(packageRoot));
   process.exitCode = 1;
 } else if (entry?.kind === "mcp-stdio") {
   const { runEntrypoint } = await import("../dist/mcp/main.js");
@@ -101,6 +104,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   try {
     await runOneShotCli(args, {
       environment: process.env,
+      persistentUserConfig: true,
       runtime: {
         packageName: packageJson.name,
         packageVersion: packageJson.version,
@@ -129,6 +133,9 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
       // Worker shutdown is shared with the dispatch finally below. A failed
       // shutdown is reported here because this callback is what exits.
       exit: (code, finishOutput) => {
+        // Registration and command presentation can request exit again after
+        // a failed document write. The first request owns shutdown.
+        if (exiting) return;
         exiting = true;
         void (async () => {
           let status = code;
@@ -224,25 +231,4 @@ function isClosedReaderFailure(cause) {
 
 function writeStdout(output) {
   if (!stdoutClosed) process.stdout.write(output);
-}
-
-async function compiledRuntimeExists(paths) {
-  for (const path of paths) {
-    try {
-      await access(resolve(packageRoot, path));
-    } catch (cause) {
-      if (isMissing(cause)) return false;
-      throw cause;
-    }
-  }
-  return true;
-}
-
-function isMissing(cause) {
-  return (
-    typeof cause === "object" &&
-    cause !== null &&
-    "code" in cause &&
-    cause.code === "ENOENT"
-  );
 }

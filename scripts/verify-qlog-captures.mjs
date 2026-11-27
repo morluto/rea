@@ -20,6 +20,7 @@ import {
   requireMcpOutput,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 // Caller-supplied producer evidence stays local; no fixture capture or secrets are bundled.
 const [controlPath, lossPath, reportPath] = process.argv.slice(2);
@@ -32,7 +33,9 @@ if (
     "Usage: node scripts/verify-qlog-captures.mjs /absolute/control/origin.qlog /absolute/loss/origin.qlog /absolute/new-report.json",
   );
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
-const client = new Client({ name: "qlog-producer-verifier", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "qlog-producer-verifier", version: "1" }),
+);
 const environment = {
   PATH: process.env.PATH ?? "/usr/bin:/bin",
   REA_LOG_LEVEL: "silent",
@@ -88,7 +91,15 @@ const report = await withVerifierCleanup(async () => {
     );
     const completed = await promisify(execFile)(
       process.execPath,
-      [entrypoint, "inspect-web-network-capture", path, "qlog", "--json"],
+      [
+        entrypoint,
+        "inspect-web-network-capture",
+        "--detail",
+        "complete",
+        path,
+        "qlog",
+        "--json",
+      ],
       { env: environment, timeout: 40_000, maxBuffer: 96 * 1024 * 1024 },
     );
     const cli = parseEvidence(JSON.parse(completed.stdout));

@@ -25,12 +25,11 @@ import {
 import { errorMessage } from "../kernel/errorMessage.js";
 import type { ComputerRelease } from "../domain/desktop/computerRelease.js";
 import { AGENTENV_PROVIDER } from "./AgentEnvProviderIdentity.js";
+import { AGENTENV_BRIDGE_SOURCES } from "./AgentEnvBridgeSources.js";
 
 const execFileAsync = promisify(execFile);
 
-const HELPER = fileURLToPath(
-  new URL("../../bridge/agentenv/computer.py", import.meta.url),
-);
+const HELPER = fileURLToPath(AGENTENV_BRIDGE_SOURCES.computer);
 const HANDSHAKE_BYTES = 64 * 1024;
 const STDERR_BYTES = 16 * 1024;
 const TEARDOWN_MS = 120_000;
@@ -282,14 +281,18 @@ export class ComputerHelper {
   }
 
   /** The handshake, or undefined when the helper ended without one; cancellation rejects with its reason. */
-  handshake(signal: AbortSignal): Promise<Handshake | undefined> {
+  async handshake(signal: AbortSignal): Promise<Handshake | undefined> {
     signal.throwIfAborted();
+    let onAbort!: () => void;
     const aborted = new Promise<never>((_, reject) => {
-      signal.addEventListener("abort", () => reject(signal.reason), {
-        once: true,
-      });
+      onAbort = () => reject(signal.reason);
+      signal.addEventListener("abort", onAbort, { once: true });
     });
-    return Promise.race([this.#handshake, aborted]);
+    try {
+      return await Promise.race([this.#handshake, aborted]);
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+    }
   }
 
   /** The helper's stderr tail with the control token removed, and how it exited. */
@@ -339,9 +342,10 @@ export class ComputerHelper {
    * can be retried.
    */
   async release(): Promise<ComputerRelease> {
-    const { exit, stopped } = await (this.#stopped ??= this.#stop());
+    const attempt = (this.#stopped ??= this.#stop());
+    const { exit, stopped } = await attempt;
     if (stopped !== undefined) {
-      this.#stopped = undefined;
+      if (this.#stopped === attempt) this.#stopped = undefined;
       return {
         verified: false,
         reason: `REA's agentenv helper did not stop: ${stopped}`,
@@ -350,6 +354,7 @@ export class ComputerHelper {
         ],
       };
     }
+    await this.#handshake.catch(() => undefined);
     if (exit === 0 || exit === 2)
       return { verified: true, teardown: "agentenv" };
     const sandbox = this.#sandboxId;

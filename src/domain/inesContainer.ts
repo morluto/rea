@@ -26,21 +26,29 @@ const unsupported = (detail: string, at: FailureSite = {}): ParseFailure => ({
   ...at,
 });
 
-const readNesContainerFormat = (
-  reader: BinaryReader,
+/** Byte signatures select a container family, never an executable architecture. */
+export const nesContainerFormat = (
+  prefix: Buffer,
 ): "ines" | "nes-2.0" | "unif" | undefined => {
-  const prefix = reader.bytes;
-  if (prefix.subarray(0, 4).equals(Buffer.from("UNIF"))) return "unif";
-  if (!prefix.subarray(0, 4).equals(Buffer.from([0x4e, 0x45, 0x53, 0x1a])))
+  if (prefix.length < 4) return undefined;
+  if (
+    prefix[0] === 0x55 &&
+    prefix[1] === 0x4e &&
+    prefix[2] === 0x49 &&
+    prefix[3] === 0x46
+  )
+    return "unif";
+  if (
+    prefix[0] !== 0x4e ||
+    prefix[1] !== 0x45 ||
+    prefix[2] !== 0x53 ||
+    prefix[3] !== 0x1a
+  )
     return undefined;
-  return prefix.length >= 8 && (reader.u8(7) & 0x0c) === 0x08
+  return prefix.length >= 8 && (prefix[7]! & 0x0c) === 0x08
     ? "nes-2.0"
     : "ines";
 };
-
-/** Byte signatures select a container family, never an executable architecture. */
-export const nesContainerFormat = (prefix: Buffer) =>
-  readNesContainerFormat(new BinaryReader(prefix, true, "ines"));
 
 const headerHexSchema = z.string().regex(/^[a-f0-9]{32}$/u);
 const byteSchema = z.number().int().min(0).max(255);
@@ -307,8 +315,7 @@ export const parseInesLayout = (
   prefix: Buffer,
   fileSize: number,
 ): Result<InesLayout, ParseFailure> => {
-  const reader = new BinaryReader(prefix, true, "ines");
-  const format = readNesContainerFormat(reader);
+  const format = nesContainerFormat(prefix);
   if (format === undefined)
     return err(
       malformed("missing iNES byte signature", {
@@ -323,6 +330,7 @@ export const parseInesLayout = (
         field: "signature",
       }),
     );
+  const reader = new BinaryReader(prefix, true, "ines");
   if (!Number.isSafeInteger(fileSize) || fileSize < 0)
     return err(
       malformed(

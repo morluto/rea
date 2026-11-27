@@ -1,7 +1,12 @@
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createInflate } from "node:zlib";
-import { ArtifactReaderFailure, abortIfNeeded } from "../../resources/index.js";
+import {
+  ArtifactReaderFailure,
+  abortIfNeeded,
+  malformedArtifact,
+} from "../../resources/index.js";
+import { invariantViolation } from "../../domain/internalInvariant.js";
 
 interface MemberStreamOptions {
   readonly sourceBytes: number;
@@ -51,12 +56,24 @@ export const readPyInstallerMemberPrefix = async (
   return prefix.subarray(0, copied);
 };
 
+const declaredSizeMismatch = (): ArtifactReaderFailure =>
+  new ArtifactReaderFailure(
+    "integrity",
+    "PyInstaller member size disagrees with its declaration or previous observation",
+    { integrityCheck: "declared-size" },
+  );
+
 /** Backpressure bounds plaintext independently of the untrusted declared size. */
 export const pyInstallerMemberStream = (
   source: Readable,
   options: MemberStreamOptions,
 ): { readonly output: Readable; readonly completion: Promise<void> } => {
+  const plaintextBound = Math.min(
+    options.maxBytes,
+    options.expectedBytes ?? options.maxBytes,
+  );
   let bytes = 0;
+  let consumedSourceBytes = 0;
   let headerSent = false;
   let completing = false;
   let failure: ArtifactReaderFailure | undefined;
@@ -70,11 +87,13 @@ export const pyInstallerMemberStream = (
       try {
         abortIfNeeded(options.signal);
         bytes += chunk.length;
-        if (bytes > options.maxBytes)
-          throw new ArtifactReaderFailure(
-            "limit",
-            "PyInstaller member exceeds its plaintext budget",
-          );
+        if (bytes > plaintextBound)
+          throw options.expectedBytes === plaintextBound
+            ? declaredSizeMismatch()
+            : new ArtifactReaderFailure(
+                "limit",
+                "PyInstaller member exceeds its plaintext budget",
+              );
         options.charge?.(chunk.length);
         prependHeader();
         callback(null, chunk);
@@ -89,21 +108,29 @@ export const pyInstallerMemberStream = (
         if (
           inflate !== undefined &&
           inflate.bytesWritten !== options.sourceBytes
-        )
+        ) {
+          // The declared span arrived and zlib left some of it unread: the
+          // member contains another stream or trailing junk, which a retry
+          // cannot repair. A source that ended first never delivered that
+          // span, so the file changed under the read.
+          const sourceEndedEarly = consumedSourceBytes < options.sourceBytes;
           throw new ArtifactReaderFailure(
             "integrity",
-            "Compressed PyInstaller member did not consume its complete declared source span",
-            { integrityCheck: "read-coverage" },
+            sourceEndedEarly
+              ? "Compressed PyInstaller member ended before its declared source span"
+              : "Compressed PyInstaller member left part of its declared source span unread",
+            {
+              integrityCheck: sourceEndedEarly
+                ? "read-coverage"
+                : "layout-consistency",
+            },
           );
+        }
         if (
           options.expectedBytes !== undefined &&
           bytes !== options.expectedBytes
         )
-          throw new ArtifactReaderFailure(
-            "integrity",
-            "PyInstaller member size disagrees with its declaration or previous observation",
-            { integrityCheck: "declared-size" },
-          );
+          throw declaredSizeMismatch();
         await options.complete?.(bytes);
         abortIfNeeded(options.signal);
         prependHeader();
@@ -172,17 +199,29 @@ export const pyInstallerMemberStream = (
     failure ??=
       cause instanceof ArtifactReaderFailure
         ? cause
-        : new ArtifactReaderFailure(
-            "format",
+        : malformedArtifact(
+            "pyinstaller",
             "Compressed PyInstaller member is not a complete zlib stream",
             { cause },
           );
     output.destroy(failure);
   });
+  // Count bytes the source actually yielded. zlib's own counter stops at the
+  // first complete stream, so it cannot tell leftover input from a short read.
   const production = (
     inflate === undefined
       ? pipeline(source, output)
-      : pipeline(source, inflate, output)
+      : pipeline(
+          source,
+          new Transform({
+            transform(chunk: Buffer, _encoding, callback) {
+              consumedSourceBytes += chunk.length;
+              callback(null, chunk);
+            },
+          }),
+          inflate,
+          output,
+        )
   )
     .catch((cause: unknown) => {
       // Pipeline can reject with the native error that caused a mapped output
@@ -210,6 +249,6 @@ export const pyInstallerMemberStream = (
 const asError = (cause: unknown): Error =>
   cause instanceof Error
     ? cause
-    : new ArtifactReaderFailure("format", "PyInstaller member read failed", {
+    : invariantViolation("PyInstaller member read failed without an error", {
         cause,
       });

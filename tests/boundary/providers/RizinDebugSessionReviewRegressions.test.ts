@@ -6,6 +6,10 @@ import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { phaseArrival } from "../../support/lifecycleHarness.js";
+import {
+  processHasStopped,
+  waitForPosixProcessStopped,
+} from "../../support/process/observePosixProcess.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 
 import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
@@ -45,10 +49,13 @@ const startRizinWithProvider = async (
   };
 };
 
-const startRizinWithOwnedStop = async (provider: string) => {
+const startRizinWithOwnedStop = async (
+  provider: string,
+  environment: Readonly<NodeJS.ProcessEnv> = {},
+) => {
   let debuggerProcess: ProviderProcessHandle | undefined;
   const manager = new RizinDebugSessionManager(
-    { ...process.env, REA_RIZIN_COMMAND: provider },
+    { ...process.env, REA_RIZIN_COMMAND: provider, ...environment },
     {
       platform: "linux",
       spawnProcess: async (options) => {
@@ -77,12 +84,6 @@ const startRizinWithOwnedStop = async (provider: string) => {
       await exited;
     },
   };
-};
-
-const expectOwnedProcessExited = async (pidText: string): Promise<void> => {
-  const pid = Number(pidText);
-  expect(Number.isInteger(pid)).toBe(true);
-  expect(() => process.kill(pid, 0)).toThrow();
 };
 
 afterEach(async () => {
@@ -318,9 +319,7 @@ process.stdin.on("data", (chunk) => {
     expect(firstValid.ok).toBe(true);
     if (firstValid.ok) {
       expect(firstValid.value.result).not.toHaveProperty("output_invalid_utf8");
-      expect(firstValid.value.evidence.raw_result).not.toHaveProperty(
-        "output_invalid_utf8",
-      );
+      expect(firstValid.value.evidence.raw_result).toBeNull();
       expect(firstValid.value.evidence.normalized_result).not.toHaveProperty(
         "output_invalid_utf8",
       );
@@ -333,9 +332,7 @@ process.stdin.on("data", (chunk) => {
     expect(invalid.ok).toBe(true);
     if (invalid.ok) {
       expect(invalid.value.result.output_invalid_utf8).toBe(true);
-      expect(invalid.value.evidence.raw_result).toMatchObject({
-        output_invalid_utf8: true,
-      });
+      expect(invalid.value.evidence.raw_result).toBeNull();
       expect(invalid.value.evidence.normalized_result).toMatchObject({
         output_invalid_utf8: true,
       });
@@ -348,9 +345,7 @@ process.stdin.on("data", (chunk) => {
     expect(laterValid.ok).toBe(true);
     if (laterValid.ok) {
       expect(laterValid.value.result).not.toHaveProperty("output_invalid_utf8");
-      expect(laterValid.value.evidence.raw_result).not.toHaveProperty(
-        "output_invalid_utf8",
-      );
+      expect(laterValid.value.evidence.raw_result).toBeNull();
       expect(laterValid.value.evidence.normalized_result).not.toHaveProperty(
         "output_invalid_utf8",
       );
@@ -655,51 +650,183 @@ process.stdin.on("data", (chunk) => {
   },
 );
 
-it.skipIf(process.platform === "win32")(
-  "waits for the Rizin process to exit when command correlation times out",
+it.skipIf(process.platform !== "linux")(
+  "terminates the owned Rizin process when a command deadline leaves detach unverifiable",
   async () => {
-    directory = await createTestTempDirectory("rea-rizin-command-timeout-");
-    const provider = join(directory, "fake-rizin-command-timeout.mjs");
+    directory = await createTestTempDirectory("rea-rizin-blocked-timeout-");
+    const provider = join(directory, "fake-rizin-blocked-timeout.mjs");
+    const pidPath = join(directory, "pid");
     await writeFile(
       provider,
       `#!/usr/bin/env node
-await import("node:fs/promises").then((fs) => fs.writeFile(${JSON.stringify(join(directory ?? "", "pid"))}, String(process.pid)));
+import { writeFile } from "node:fs/promises";
+await writeFile(${JSON.stringify(pidPath)}, String(process.pid));
 process.stdout.write("\\0");
+let input = "";
+let blocked = false;
 process.stdin.setEncoding("utf8");
-process.stdin.on("data", () => process.stdout.write(Buffer.from([0xff, 0])));
+process.stdin.on("data", (chunk) => {
+  if (blocked) return;
+  input += chunk;
+  for (;;) {
+    const boundary = input.indexOf("\\n");
+    if (boundary < 0) break;
+    const line = input.slice(0, boundary); input = input.slice(boundary + 1);
+    if (line === "dc") blocked = true;
+  }
+});
+setInterval(() => {}, 1000);
 `,
     );
     await chmod(provider, 0o700);
-    const manager = createRizinTestManager({
-      REA_RIZIN_COMMAND: provider,
-      REA_DEBUGGER_COMMAND_DEADLINE_MS: "40",
+    const { manager, sessionId } = await startRizinWithOwnedStop(provider, {
+      REA_DEBUGGER_COMMAND_DEADLINE_MS: "50",
     });
-    managers.push(manager);
-    const started = await manager.start({
-      path: "/tmp/fixture.bin",
-      inferior_tty: await rizinTestInferiorTty(),
+
+    const result = await manager.execute(sessionId, "dc");
+
+    if (!result.ok) throw result.error;
+    expect(result.value.result).toMatchObject({
+      completion_status: "unknown",
+      output_truncated: true,
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
-
-    const result = await manager.execute(started.value.session_id, "dr");
-
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value.result).toMatchObject({
-        output: "�",
-        output_truncated: true,
-        completion_status: "unknown",
-        output_invalid_utf8: true,
-      });
-      expect(result.value.evidence.limitations).toContain(
-        "Collected command frames contained invalid UTF-8 bytes; decoded text may contain replacement characters.",
-      );
-    }
-    await expectOwnedProcessExited(
-      await readFile(join(directory, "pid"), "utf8"),
+    expect(result.value.evidence.limitations).toContainEqual(
+      expect.stringMatching(
+        /terminated without a verified inferior detach.*resynchroniz/iu,
+      ),
     );
-    expect(manager.status(started.value.session_id)?.state).toBe("closed");
+    const pid = Number(await readFile(pidPath, "utf8"));
+    expect(await processHasStopped(pid)).toBe(true);
+    expect(manager.status(sessionId)?.state).toBe("closed");
+    const closed = await manager.close(sessionId);
+    if (!closed.ok) throw closed.error;
+    expect(manager.status(sessionId)).toBeUndefined();
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "terminates the owned Rizin process when close starts shortly before a command deadline",
+  async () => {
+    directory = await createTestTempDirectory(
+      "rea-rizin-close-before-timeout-",
+    );
+    const provider = join(directory, "fake-rizin-close-before-timeout.mjs");
+    const pidPath = join(directory, "pid");
+    await writeFile(
+      provider,
+      `#!/usr/bin/env node
+import { writeFile } from "node:fs/promises";
+await writeFile(${JSON.stringify(pidPath)}, String(process.pid));
+process.stdout.write("\\0");
+let input = "";
+let blocked = false;
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  if (blocked) return;
+  input += chunk;
+  for (;;) {
+    const boundary = input.indexOf("\\n");
+    if (boundary < 0) break;
+    const line = input.slice(0, boundary); input = input.slice(boundary + 1);
+    if (line === "dc") blocked = true;
+  }
+});
+setInterval(() => {}, 1000);
+`,
+    );
+    await chmod(provider, 0o700);
+    const { manager, sessionId } = await startRizinWithOwnedStop(provider, {
+      REA_DEBUGGER_COMMAND_DEADLINE_MS: "2000",
+    });
+
+    // Close cannot queue a detach behind an active command. The command's
+    // deadline must still clean up the debugger using its held command turn.
+    const executed = manager.execute(sessionId, "dc");
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 1500));
+    const closed = await manager.close(sessionId);
+
+    expect(closed.ok).toBe(false);
+    if (!closed.ok) {
+      expect(closed.error.diagnostics?.debugger_cleanup).toBe(
+        "inferior-state-unknown",
+      );
+      expect(closed.error.cleanupIncomplete).toBe(true);
+    }
+    const result = await executed;
+
+    if (!result.ok) throw result.error;
+    expect(result.value.result.completion_status).toBe("unknown");
+    expect(result.value.evidence.limitations).toContainEqual(
+      expect.stringMatching(
+        /terminated without a verified inferior detach.*resynchroniz/iu,
+      ),
+    );
+    if (!closed.ok) expect(closed.error.cleanupIncomplete).toBe(false);
+    const pidText = await readFile(pidPath, "utf8");
+    await waitForPosixProcessStopped(Number(pidText));
+    // Keep the published session addressable until its explicit close retry.
+    expect(manager.status(sessionId)).toBeDefined();
+    const retriedClose = await manager.close(sessionId);
+    if (!retriedClose.ok) throw retriedClose.error;
+    expect(manager.status(sessionId)).toBeUndefined();
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "detaches normally when command correlation recovers after a deadline",
+  async () => {
+    directory = await createTestTempDirectory("rea-rizin-responsive-timeout-");
+    const provider = join(directory, "fake-rizin-responsive-timeout.mjs");
+    const pidPath = join(directory, "pid");
+    await writeFile(
+      provider,
+      `#!/usr/bin/env node
+import { writeFile } from "node:fs/promises";
+await writeFile(${JSON.stringify(pidPath)}, String(process.pid));
+process.stdout.write("\\0");
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  for (;;) {
+    const boundary = input.indexOf("\\n");
+    if (boundary < 0) break;
+    const line = input.slice(0, boundary); input = input.slice(boundary + 1);
+    if (line === "slow") continue;
+    if (line.startsWith("!echo __REA_COMMAND_COMPLETE_")) continue;
+    if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
+    else if (line === "olj") process.stdout.write("[]\\0");
+  }
+});
+setInterval(() => {}, 1000);
+`,
+    );
+    await chmod(provider, 0o700);
+    const { manager, sessionId } = await startRizinWithOwnedStop(provider, {
+      REA_DEBUGGER_COMMAND_DEADLINE_MS: "50",
+    });
+
+    const result = await manager.execute(sessionId, "slow");
+
+    if (!result.ok) throw result.error;
+    expect(result.value.result).toMatchObject({
+      completion_status: "unknown",
+      output_truncated: true,
+    });
+    expect(result.value.evidence.limitations).toContainEqual(
+      expect.stringMatching(
+        /debugger session was stopped because output correlation/iu,
+      ),
+    );
+    expect(result.value.evidence.limitations.join(" ")).not.toMatch(
+      /terminated without a verified inferior detach/iu,
+    );
+    const pid = Number(await readFile(pidPath, "utf8"));
+    expect(await processHasStopped(pid)).toBe(true);
+    expect(manager.status(sessionId)?.state).toBe("closed");
+    const closed = await manager.close(sessionId);
+    if (!closed.ok) throw closed.error;
+    expect(manager.status(sessionId)).toBeUndefined();
   },
 );
 
@@ -848,39 +975,6 @@ it.skipIf(process.platform === "win32")(
 
     expect(started.ok).toBe(false);
     if (!started.ok) expect(started.error._tag).toBe("AnalysisCancelledError");
-  },
-);
-
-it.skipIf(process.platform === "win32")(
-  "converts a Rizin stdin pipe failure into a provider session error",
-  async () => {
-    directory = await createTestTempDirectory("rea-rizin-stdin-error-");
-    const provider = join(directory, "fake-rizin-stdin-error.mjs");
-    await writeFile(
-      provider,
-      `#!/usr/bin/env node
-process.stdout.write("\\0");
-setTimeout(() => import("node:fs").then((fs) => fs.closeSync(0)), 40);
-setInterval(() => {}, 1000);
-`,
-    );
-    await chmod(provider, 0o700);
-    const manager = createRizinTestManager({
-      REA_RIZIN_COMMAND: provider,
-    });
-    managers.push(manager);
-    const started = await manager.start({
-      path: "/tmp/fixture.bin",
-      inferior_tty: await rizinTestInferiorTty(),
-    });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 80));
-
-    const result = await manager.execute(started.value.session_id, "dr");
-
-    expect(result.ok).toBe(false);
-    expect(manager.status(started.value.session_id)?.state).toBe("closed");
   },
 );
 

@@ -1,15 +1,17 @@
 import { probeUefiFlashImage } from "../uefi/UefiFormatProbe.js";
-import {
-  BINARY_TARGET_FORMAT_KINDS,
-  type TargetFormatHint,
-} from "../domain/targetFormats.js";
+import { BINARY_TARGET_FORMAT_KINDS } from "../domain/targetFormats.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   artifactNameForClassification,
   namedArtifactFormat,
 } from "../domain/artifactNameSelection.js";
-import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
-import { readPeCoffHeader } from "../domain/peCoffHeader.js";
+import { createCachedPrefixReader } from "../filesystem/readFileHandleRange.js";
+import { hasXarMagic } from "../domain/binaryContainer.js";
+import {
+  readExecutableMetadata,
+  readHandleRange,
+  throwIfTargetResolutionCancelled,
+} from "./BinaryTargetExecutableProbes.js";
 import {
   regularFileCancellation,
   RegularFileCleanupFailure,
@@ -29,7 +31,7 @@ import {
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { childFailureDiagnostics } from "../domain/analysisErrorProjection.js";
-import { constants, type Stats } from "node:fs";
+import { constants } from "node:fs";
 import { access, realpath, stat, type FileHandle } from "node:fs/promises";
 import { extname } from "node:path";
 
@@ -51,19 +53,11 @@ import {
   carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
-  PE_CODEVIEW_PREFIX_BYTES,
-  type BinaryTarget,
-  type BinaryArchitecture,
-  type PeCodeViewRecord,
-  type UniversalMachOSlice,
-} from "../domain/binaryTargetTypes.js";
+  hasIdaDatabaseSignature,
+  type AnalysisDatabaseEngine,
+} from "../domain/analysisDatabase.js";
+import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { readMipsElfMetadata } from "./MipsElfMetadata.js";
-import {
-  validateElfDeclaredRanges,
-  type ElfDeclarationRead,
-} from "../domain/elfDeclaredRanges.js";
-import { readRiscvIsaDeclaration } from "../domain/riscvIsaDeclaration.js";
 import {
   resolveAppleBundleExecutable,
   type ResolvedAppBundle,
@@ -77,66 +71,38 @@ import { validateDosComLength } from "../domain/dosCom.js";
 import {
   admitRawBinary,
   rawBinarySelectionError,
+  type NativeLoadSelection,
+  type RawBinaryAdmission,
+  type RawBinaryAdmissionRejection,
 } from "../domain/rawBinary.js";
 import { admitGamecubeDol } from "../domain/gamecubeDolAdmission.js";
 import { DOL_HEADER_SIZE } from "../domain/gamecubeDol.js";
-import {
-  mzWindowsHeaderLayoutLimitation,
-  parseMzHeaderEvidence,
-  withMzWindowsHeaderSignature,
-  type DosMzHeader,
-  type MzHeaderEvidence,
-  type MzWindowsHeaderObservation,
-} from "../domain/dosMz.js";
 import {
   createXmlPlistSignatureProbe,
   MAX_XML_PLIST_PROBE_BYTES,
 } from "../domain/apple/appleArchiveFormat.js";
 import { hasDiskImageSignature } from "../domain/apple/diskImageFormat.js";
 import { recognizeArtifactFormat } from "../domain/artifactFormatRecognition.js";
+import { gzipTarExtraFieldProbeBytes } from "../domain/tarFormat.js";
+import {
+  ISO9660_DESCRIPTOR_OFFSET,
+  ISO9660_SIGNATURE_BYTES,
+} from "../domain/iso9660/iso9660Structures.js";
 import { DFUSE_SUFFIX_BYTES } from "../domain/firmware/dfuse.js";
 import {
   locateEspFlashLayout,
   type EspFlashSelection,
 } from "../domain/firmware/espFlashLocation.js";
 import { espFlashSelectionError } from "../domain/firmware/espFlashSelection.js";
+import { zipDeclaresAndroidPackage } from "../domain/zip/androidPackageDirectory.js";
 import {
   hasTrailingZipArchive,
   zipRootPackageFormat,
 } from "../domain/zipPackageFormat.js";
 
-import {
-  parseCodeViewData,
-  claimsExecutableHeader,
-  parseExecutableHeader,
-  parseMzExecutableMetadata,
-  parsePeRecordFacts,
-  peDebugDirectoryEntry,
-  peCodeViewDirectoryEntries,
-  peRvaToFileOffset,
-  type ExecutableMetadata,
-} from "../domain/binaryTarget.js";
-import {
-  classifyFatContainerIdentity,
-  readFatContainerHeader,
-  readFatJvmIdentityLimitIssue,
-  readMachoHeaderPrefixFacts,
-  type FatSliceHeaderEvidence,
-  type MachoHeaderPrefixFacts,
-} from "../domain/apple/machoContainer.js";
-import {
-  hasJvmClassHeader,
-  isJvmClassFile,
-  MAX_JVM_CLASS_IDENTITY_BYTES,
-} from "../domain/apple/jvmClassFile.js";
-import {
-  MachoLoadCommandCursor,
-  readMachoLoadCommandTableHeader,
-  type MachoLoadCommandTableHeader,
-} from "../domain/apple/machoLoadCommands.js";
+import { claimsExecutableHeader } from "../domain/binaryTarget.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { localPathStringSchema } from "../domain/localPath.js";
-import type { JsonValue } from "../domain/jsonValue.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
 const XML_PLIST_PROBE_CHUNK_BYTES = 64 * 1024;
@@ -146,9 +112,7 @@ export interface BinaryTargetResolverOptions {
   readonly cwd?: string;
   readonly hostArchitecture?: NodeJS.Architecture;
   readonly targetKind?: BinaryTarget["kind"];
-  readonly formatHint?: TargetFormatHint;
-  readonly architecture?: BinaryArchitecture;
-  readonly entryPoint?: string;
+  readonly loadSelection?: NativeLoadSelection;
   /** Inputs for format=esp-flash-image; rejected with any other format. */
   readonly espFlash?: EspFlashSelection;
   readonly signal?: AbortSignal;
@@ -199,7 +163,11 @@ export const parseBinaryTarget = async (
     const resolved = await resolveAppBundle(canonical, options);
     if (!resolved.ok) return resolved;
     throwIfTargetResolutionCancelled(signal);
-    const { executable: path, infoPlist } = resolved.value;
+    const {
+      executable: path,
+      infoPlist,
+      bundleExecutableSelection,
+    } = resolved.value;
     const bundle =
       infoPlist === undefined ? {} : { bundleInfoPlist: infoPlist };
     // A bundle directory is selected for its executable, so the executable's
@@ -222,6 +190,9 @@ export const parseBinaryTarget = async (
               selectedPath: candidate,
               classifiedAs,
               ...bundle,
+              ...(bundleExecutableSelection === undefined
+                ? {}
+                : { bundleExecutableSelection }),
             },
             options,
           );
@@ -306,8 +277,7 @@ const readOpenedBinaryTarget = async (
     readonly selectedPath: string;
     /** Spelling whose name supplies format hints: the selected file, or a bundle's executable. */
     readonly classifiedAs: string;
-    readonly bundleInfoPlist?: string;
-  },
+  } & Pick<BinaryTarget, "bundleInfoPlist" | "bundleExecutableSelection">,
   options: BinaryTargetResolverOptions,
 ): Promise<TargetResolution> => {
   const { handle, initial: metadata } = source;
@@ -318,6 +288,7 @@ const readOpenedBinaryTarget = async (
     selectedPath,
     classifiedAs,
     bundleInfoPlist,
+    bundleExecutableSelection,
   } = selected;
   const bundle = bundleInfoPlist === undefined ? {} : { bundleInfoPlist };
   // Every admitted target shares one identity; routes add their own facts.
@@ -326,11 +297,15 @@ const readOpenedBinaryTarget = async (
     sourcePath,
     ...(callerInputPath === path ? {} : { callerInputPath }),
     ...bundle,
+    ...(bundleExecutableSelection === undefined
+      ? {}
+      : { bundleExecutableSelection }),
     sha256: await sha256Handle(source, path, signal),
   });
   const hostArchitecture =
     options.hostArchitecture ?? HOST_PLATFORM.architecture;
-  const { targetKind, formatHint, signal, architecture, entryPoint } = options;
+  const { targetKind, signal, loadSelection = {} } = options;
+  const formatHint = loadSelection.format;
   throwIfTargetResolutionCancelled(signal);
   // Flash inputs pair with one format; check before any hint branch.
   const flashPairing = espFlashSelectionError({
@@ -353,15 +328,37 @@ const readOpenedBinaryTarget = async (
           { constraint: "load_selection_rejected" },
         ),
       );
-    const admitted = admitRawBinary({
-      architecture,
-      entryPoint,
+    const selected = admitRawBinary({
+      architecture: loadSelection.architecture,
+      entryPoint: loadSelection.entryPoint,
+      baseAddress: loadSelection.baseAddress,
+      architectureVariant: loadSelection.architectureVariant,
+      vectorTableAddress: loadSelection.vectorTableAddress,
       fileBytes: metadata.size,
     });
+    let admitted: Result<RawBinaryAdmission, RawBinaryAdmissionRejection>;
+    if (!selected.ok) admitted = selected;
+    // An omitted M-profile entry is the Reset word of the selected vector table.
+    else if ("admit" in selected.value)
+      admitted = selected.value.admit(
+        await readHandleRange(
+          handle,
+          selected.value.fileOffset,
+          selected.value.byteLength,
+          signal,
+        ),
+      );
+    else admitted = ok(selected.value);
     if (!admitted.ok)
       return err(
         new BinaryTargetError(path, admitted.error.reason, {
           constraint: admitted.error.constraint,
+          ...(admitted.error.field === undefined
+            ? {}
+            : { field: admitted.error.field }),
+          ...(admitted.error.diagnostics === undefined
+            ? {}
+            : { diagnostics: admitted.error.diagnostics }),
         }),
       );
     return ok({
@@ -370,19 +367,15 @@ const readOpenedBinaryTarget = async (
       format: "raw-binary",
       architecture: admitted.value.architecture,
       availableArchitectures: [admitted.value.architecture],
-      entryPoint: admitted.value.entryPoint,
-      entryPointSource: admitted.value.entryPointSource,
+      rawLoad: admitted.value.load,
     });
   }
-  const pairing = rawBinarySelectionError({
-    ...(formatHint === undefined ? {} : { format: formatHint }),
-    architecture,
-    entryPoint,
-  });
+  const pairing = rawBinarySelectionError(loadSelection);
   if (pairing !== undefined)
     return err(
-      new BinaryTargetError(path, pairing, {
+      new BinaryTargetError(path, pairing.message, {
         constraint: "load_selection_rejected",
+        field: pairing.field,
       }),
     );
   if (formatHint === "gamecube-dol") {
@@ -404,7 +397,7 @@ const readOpenedBinaryTarget = async (
     const admitted = admitGamecubeDol({
       bytes: headerBytes,
       fileSize: metadata.size,
-      entryPoint,
+      entryPoint: loadSelection.entryPoint,
     });
     if (!admitted.ok)
       return err(
@@ -487,7 +480,9 @@ const readOpenedBinaryTarget = async (
     });
   }
   // Probe WASM content before suffix-only database routing; an explicit
-  // database selection keeps the caller's chosen interpretation.
+  // database selection keeps the caller's chosen interpretation. Formats
+  // recognized by a fixed content signature (iNES, UEFI, plist, ISO 9660)
+  // outrank a `.hop` suffix.
   const classificationPath = artifactNameForClassification(classifiedAs, path);
   const artifactFormat =
     targetKind === "database"
@@ -497,18 +492,24 @@ const readOpenedBinaryTarget = async (
     ...(await identity()),
     artifactSelectedPath: selectedPath,
   });
+  const databaseEngine =
+    targetKind === undefined || targetKind === "database"
+      ? await detectDatabaseEngine(path, handle, signal)
+      : null;
   if (
     targetKind === "database" ||
     (targetKind === undefined &&
       artifactFormat !== "ines" &&
       artifactFormat !== "uefi" &&
       artifactFormat !== "plist" &&
-      path.toLowerCase().endsWith(".hop"))
+      artifactFormat !== "iso9660" &&
+      databaseEngine !== null)
   )
     return ok({
       ...(await identity()),
       kind: "database",
       format: "analysis-database",
+      databaseEngine,
     });
   if (artifactFormat !== undefined) {
     const identity = await artifactIdentity();
@@ -540,12 +541,18 @@ const readOpenedBinaryTarget = async (
       (await hasTrailingZipArchive(metadata.size, (position, length) =>
         readHandleRange(handle, position, length, signal),
       ))
-    )
+    ) {
+      const format = await zipRootFormatByContent(
+        classificationPath,
+        metadata.size,
+        (position, length) => readHandleRange(handle, position, length, signal),
+      );
       return ok({
         ...(await artifactIdentity()),
         kind: "archive",
-        format: zipRootPackageFormat(classificationPath),
+        format,
       });
+    }
     const reason =
       typeof detected.error === "string"
         ? detected.error
@@ -691,9 +698,30 @@ const targetResolutionFailure = (
   return err(retainTargetCancellation(failure, signal));
 };
 
-const throwIfTargetResolutionCancelled = (signal?: AbortSignal): void => {
-  if (signal?.aborted === true)
-    throw cancelledBy("resolve_binary_target", signal);
+/** IDA databases carry a signature; Hopper databases are known only by suffix. */
+const detectDatabaseEngine = async (
+  path: string,
+  handle: FileHandle,
+  signal?: AbortSignal,
+): Promise<AnalysisDatabaseEngine | null> => {
+  const magic = await readHandleRange(handle, 0, 4, signal);
+  if (hasIdaDatabaseSignature(magic)) return "ida";
+  return path.toLowerCase().endsWith(".hop") ? "hopper" : null;
+};
+
+/**
+ * Named ZIP suffixes win. A generic ZIP root is an APK when its central
+ * directory lists a root Android package entry. An `.aab` stays a ZIP:
+ * an Android App Bundle is not a standalone APK.
+ */
+const zipRootFormatByContent = async (
+  path: string,
+  size: number,
+  read: (position: number, length: number) => Promise<Uint8Array>,
+) => {
+  const named = zipRootPackageFormat(path);
+  if (named !== "zip" || path.toLowerCase().endsWith(".aab")) return named;
+  return (await zipDeclaresAndroidPackage(size, read)) === true ? "apk" : named;
 };
 
 const detectArtifactFormat = async (
@@ -733,30 +761,58 @@ const detectArtifactFormat = async (
   throwIfTargetResolutionCancelled(signal);
   if (
     magic.length >= 8 &&
-    magic.subarray(0, 8).equals(Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]))
+    magic[0] === 0 &&
+    magic[1] === 0x61 &&
+    magic[2] === 0x73 &&
+    magic[3] === 0x6d &&
+    magic[4] === 1 &&
+    magic[5] === 0 &&
+    magic[6] === 0 &&
+    magic[7] === 0
   )
     throw new BinaryTargetError(
       path,
       "WebAssembly v1 artifacts are not supported by the native opening route",
       { constraint: "wasm_requires_static_inspection" },
     );
+  const readCachedRange = createCachedPrefixReader(
+    handle,
+    magic,
+    initial.size,
+    () => throwIfTargetResolutionCancelled(signal),
+  );
+  const gzipProbeBytes = Math.min(
+    initial.size,
+    gzipTarExtraFieldProbeBytes(magic),
+  );
+  const recognitionPrefix =
+    gzipProbeBytes > magic.length
+      ? Buffer.concat([
+          magic,
+          await readCachedRange(magic.length, gzipProbeBytes - magic.length),
+        ])
+      : magic;
   // The shared recognizer table decides; this route reads the trailer or
   // locates an ESP flash layout only when a recognizer asks for it, and
   // refuses a file whose header names a format it cannot open.
   let suffix: Uint8Array | undefined;
   let espFlashLayout: boolean | undefined;
+  let iso9660Descriptor: Uint8Array | undefined;
   const recognitionInput = () => ({
-    prefix: magic,
+    prefix: recognitionPrefix,
     fileSize: initial.size,
     suffix,
     espFlashLayout,
+    iso9660Descriptor,
   });
   let recognition = recognizeArtifactFormat(recognitionInput());
   while (recognition !== undefined) {
     throwIfTargetResolutionCancelled(signal);
     if (recognition.state === "recognized")
       return recognition.format === "zip"
-        ? zipRootPackageFormat(lower)
+        ? zipRootFormatByContent(lower, initial.size, (position, length) =>
+            readHandleRange(handle, position, length, signal),
+          )
         : recognition.format;
     if (recognition.state === "refused")
       throw new BinaryTargetError(path, recognition.reason, {
@@ -766,18 +822,22 @@ const detectArtifactFormat = async (
       suffix =
         initial.size < DFUSE_SUFFIX_BYTES
           ? new Uint8Array(0)
-          : await readHandleRange(
-              handle,
+          : await readCachedRange(
               initial.size - DFUSE_SUFFIX_BYTES,
               DFUSE_SUFFIX_BYTES,
-              signal,
             );
+    else if (recognition.format === "iso9660")
+      iso9660Descriptor = await readHandleRange(
+        handle,
+        ISO9660_DESCRIPTOR_OFFSET,
+        ISO9660_SIGNATURE_BYTES,
+        signal,
+      );
     else
       espFlashLayout = (
         await locateEspFlashLayout(
           initial.size,
-          (position, length) =>
-            readHandleRange(handle, position, length, signal),
+          readCachedRange,
           {},
           { explicit: false, ...(signal === undefined ? {} : { signal }) },
         )
@@ -790,20 +850,19 @@ const detectArtifactFormat = async (
   const named = namedArtifactFormat(lower);
   if (named !== undefined && !claimsExecutableHeader(magic, initial.size))
     return named;
-  if (
-    lower.endsWith(".pkg") &&
-    magic.length >= 4 &&
-    magic.subarray(0, 4).equals(Buffer.from("xar!"))
-  )
-    return "pkg";
+  if (lower.endsWith(".pkg") && hasXarMagic(magic)) return "pkg";
   if (
     lower.endsWith(".dmg") &&
-    (await hasDiskImageSignature(initial.size, (position, length) =>
-      readHandleRange(handle, position, length, signal),
-    ))
+    (await hasDiskImageSignature(initial.size, readCachedRange))
   )
     return "dmg";
-  if (await probeUefiFlashImage(handle, signal)) return "uefi";
+  if (
+    await probeUefiFlashImage(handle, signal, {
+      fileSize: initial.size,
+      prefix: magic,
+    })
+  )
+    return "uefi";
   // XML property lists can use archive-specific suffixes such as .archive.
   // The named-format check above keeps .js, .map, and .asar classifications.
   const xmlProbe = createXmlPlistSignatureProbe();
@@ -864,20 +923,6 @@ const claimsLeadingExecutableHeader = async (
     Buffer.from(await readHandleRange(handle, 0, Math.min(size, 4096), signal)),
     size,
   );
-
-/** Fill one bounded range, honoring cancellation; a short result means end of file. */
-const readHandleRange = async (
-  handle: FileHandle,
-  position: number,
-  length: number,
-  signal?: AbortSignal,
-): Promise<Buffer> => {
-  const bytes = await readFileHandleRange(handle, position, length, () =>
-    throwIfTargetResolutionCancelled(signal),
-  );
-  throwIfTargetResolutionCancelled(signal);
-  return bytes;
-};
 
 /** Read exactly `size` bytes by offset; a short read means the file changed or ended early. */
 const readLeadingBytes = async (
@@ -955,522 +1000,4 @@ const resolveAppBundle = async (
       },
     ),
   );
-};
-
-const readExecutableMetadata = async (
-  source: StableRegularFileDescriptor,
-  hostArchitecture: NodeJS.Architecture,
-  signal?: AbortSignal,
-): Promise<Result<ExecutableMetadata, ExecutableMetadataFailure>> => {
-  const { handle, initial } = source;
-  throwIfTargetResolutionCancelled(signal);
-  const bytes = await readHandleRange(handle, 0, 4096, signal);
-  // Header commitments such as Mach-O load commands and FAT slices are
-  // checked against the whole file, not the probed prefix.
-  const fileSize = initial.size;
-  if (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a) {
-    let evidence = parseMzHeaderEvidence(bytes, fileSize);
-    let signatureEvidence:
-      | { readonly offset: number; readonly bytes: Buffer }
-      | undefined;
-    if (evidence.windowsHeader.state === "signature-needed") {
-      const { offset } = evidence.windowsHeader;
-      signatureEvidence = {
-        offset,
-        bytes: await readHandleRange(
-          handle,
-          offset,
-          Math.min(4, fileSize - offset),
-          signal,
-        ),
-      };
-      evidence = withMzWindowsHeaderSignature(
-        bytes,
-        fileSize,
-        evidence,
-        signatureEvidence,
-      );
-    }
-    const { windowsHeader } = evidence;
-    if (windowsHeader.state === "declared") {
-      const limitation = mzWindowsHeaderLayoutLimitation(windowsHeader);
-      if (limitation !== undefined)
-        return err({
-          reason: limitation,
-          diagnostics: {
-            unsupported_layout: true,
-            mz_windows_header: { ...windowsHeader },
-          },
-        });
-      return readPeMetadata(handle, windowsHeader.offset, {
-        mzPrefix: bytes,
-        fileSize,
-        mzEvidence: evidence,
-        signal,
-      });
-    }
-    // MZ relocation records may extend past the initial probe; their format
-    // bounds are at most 65535 records inside a 65535-paragraph header.
-    const { relocationTableRead } = evidence;
-    if (relocationTableRead !== undefined) {
-      const observedBytes = await readHandleRange(
-        handle,
-        relocationTableRead.offset,
-        relocationTableRead.byteLength,
-        signal,
-      );
-      evidence = parseMzHeaderEvidence(
-        observedBytes,
-        fileSize,
-        signatureEvidence,
-      );
-      if (evidence.windowsHeader.state === "candidate")
-        return err(
-          unresolvedMzHeaderFailure(evidence.windowsHeader, evidence.dos),
-        );
-      return parseMzExecutableMetadata(observedBytes, evidence);
-    }
-    if (windowsHeader.state === "candidate")
-      return err(unresolvedMzHeaderFailure(windowsHeader, evidence.dos));
-    return parseMzExecutableMetadata(bytes, evidence);
-  }
-  if (bytes.length >= 4 && bytes.toString("hex", 0, 4) === "7f454c46")
-    return readElfMetadata(handle, bytes, {
-      fileSize,
-      hostArchitecture,
-      signal,
-    });
-  const thin = await readThinMachoMetadata(handle, bytes, {
-    fileSize,
-    hostArchitecture,
-    signal,
-  });
-  if (thin !== null) return thin;
-  const mayBeJvmClass = hasJvmClassHeader(bytes);
-  if (
-    mayBeJvmClass &&
-    fileSize > bytes.length &&
-    fileSize <= MAX_JVM_CLASS_IDENTITY_BYTES
-  ) {
-    const complete = await readHandleRange(handle, 0, fileSize, signal);
-    if (complete.byteLength === fileSize && isJvmClassFile(complete))
-      return err("unsupported binary format");
-  }
-  const fatEvidence = await readFatSliceHeaderEvidence(
-    handle,
-    bytes,
-    fileSize,
-    signal,
-  );
-  if (
-    mayBeJvmClass &&
-    fileSize > MAX_JVM_CLASS_IDENTITY_BYTES &&
-    fatEvidence !== undefined
-  ) {
-    const { header, sliceHeadersByOffset } = fatEvidence;
-    const identity = classifyFatContainerIdentity(
-      header,
-      (offset) => sliceHeadersByOffset.get(offset)?.magic,
-    );
-    const limitIssue = await readFatJvmIdentityLimitIssue(
-      header,
-      identity,
-      (offset, length) => readHandleRange(handle, offset, length, signal),
-    );
-    if (limitIssue !== null) return err(limitIssue);
-  }
-  const parsed = parseExecutableHeader(
-    bytes,
-    hostArchitecture,
-    fileSize,
-    undefined,
-    fatEvidence,
-  );
-  if (
-    parsed.ok &&
-    parsed.value.format === "mach-o-universal" &&
-    fatEvidence !== undefined
-  ) {
-    for (const slice of fatEvidence.header.slices) {
-      const framed = await readMachoSliceCommandFrames(handle, slice, signal);
-      if (!framed.ok) return framed;
-    }
-  }
-  return parsed;
-};
-
-/** ELF structure and family declarations share one descriptor before provider selection. */
-const readElfMetadata = async (
-  handle: FileHandle,
-  bytes: Buffer,
-  options: {
-    readonly fileSize: number;
-    readonly hostArchitecture: NodeJS.Architecture;
-    readonly signal?: AbortSignal | undefined;
-  },
-): Promise<Result<ExecutableMetadata, ExecutableMetadataFailure>> => {
-  const { fileSize, hostArchitecture, signal } = options;
-  const parsed = parseExecutableHeader(bytes, hostArchitecture, fileSize);
-  if (!parsed.ok || parsed.value.format !== "elf") return parsed;
-  const ranges = await readElfDeclarations(
-    handle,
-    bytes,
-    validateElfDeclaredRanges(bytes, fileSize),
-    signal,
-  );
-  if (!ranges.ok) return ranges;
-  if (parsed.value.architecture === "riscv")
-    return ok({
-      ...parsed.value,
-      riscv: {
-        ...parsed.value.riscv,
-        ...(ranges.value.hasInterpreter ? { hasInterpreter: true } : {}),
-        isa: await readElfDeclarations(
-          handle,
-          bytes,
-          readRiscvIsaDeclaration(bytes, fileSize),
-          signal,
-        ),
-      },
-    });
-  if (parsed.value.architecture !== "mips" || parsed.value.mips.elfClass !== 32)
-    return parsed;
-  const declarations = await readMipsElfMetadata(
-    handle,
-    parsed.value.mips,
-    () => throwIfTargetResolutionCancelled(signal),
-  );
-  if (!declarations.ok) return declarations;
-  return ok({
-    ...parsed.value,
-    mips: {
-      ...parsed.value.mips,
-      abiFlags: declarations.value.abiFlags,
-      gnuAttributes: declarations.value.gnuAttributes,
-      ...(ranges.value.hasInterpreter ? { hasInterpreter: true } : {}),
-      ...(declarations.value.sharedLoad === undefined
-        ? {}
-        : { sharedLoad: declarations.value.sharedLoad }),
-      ...(declarations.value.limitations.length === 0
-        ? {}
-        : { limitations: declarations.value.limitations }),
-    },
-  });
-};
-
-/**
- * Satisfy one ELF declaration reader from the admitted descriptor. Every
- * request is at most one 64 KiB chunk, and the reader consumes each chunk
- * before its next request reuses the window.
- */
-const readElfDeclarations = async <T>(
-  handle: FileHandle,
-  prefix: Buffer,
-  steps: Generator<ElfDeclarationRead, T, Buffer>,
-  signal?: AbortSignal,
-): Promise<T> => {
-  let next = steps.next();
-  let window: Buffer | undefined;
-  while (!next.done) {
-    throwIfTargetResolutionCancelled(signal);
-    const { offset, size } = next.value;
-    let bytes: Buffer;
-    if (offset + size <= prefix.length)
-      bytes = prefix.subarray(offset, offset + size);
-    else {
-      window ??= Buffer.allocUnsafe(64 * 1024);
-      bytes = window.subarray(0, size);
-      let length = 0;
-      while (length < size) {
-        const read = await handle.read(
-          bytes,
-          length,
-          size - length,
-          offset + length,
-        );
-        throwIfTargetResolutionCancelled(signal);
-        if (read.bytesRead === 0) break;
-        length += read.bytesRead;
-      }
-      bytes = bytes.subarray(0, length);
-    }
-    next = steps.next(bytes);
-  }
-  return next.value;
-};
-
-type ExecutableMetadataFailure =
-  | string
-  | {
-      readonly reason: string;
-      readonly diagnostics: Readonly<Record<string, JsonValue>>;
-    };
-
-const unresolvedMzHeaderFailure = (
-  windowsHeader: Extract<MzWindowsHeaderObservation, { state: "candidate" }>,
-  dos: Result<DosMzHeader, string>,
-): Exclude<ExecutableMetadataFailure, string> => {
-  return {
-    reason: "MZ Windows new-header candidate is unresolved",
-    diagnostics: {
-      mz_windows_header: {
-        state: windowsHeader.state,
-        offset: windowsHeader.offset,
-        signature: windowsHeader.signature,
-      },
-      mz_dos: dos.ok
-        ? {
-            state: "valid",
-            header_bytes: dos.value.headerBytes,
-            image_bytes: dos.value.imageBytes,
-            module_bytes: dos.value.moduleBytes,
-            overlay_bytes: dos.value.overlayBytes,
-            relocation_count: dos.value.relocationCount,
-            relocation_table_offset: dos.value.relocationTableOffset,
-            entry_segment: dos.value.entrySegment,
-            entry_offset: dos.value.entryOffset,
-          }
-        : { state: "invalid", reason: dos.error },
-    },
-  };
-};
-
-/** Establish a complete thin-command framing proof before provider admission. */
-const readThinMachoMetadata = async (
-  handle: FileHandle,
-  prefix: Buffer,
-  input: {
-    readonly fileSize: number;
-    readonly hostArchitecture: NodeJS.Architecture;
-    readonly signal?: AbortSignal | undefined;
-  },
-): Promise<Result<ExecutableMetadata, string> | null> => {
-  const table = readMachoLoadCommandTableHeader(prefix, input.fileSize);
-  if (!table.ok) return table;
-  if (table.value === null) return null;
-  const parsed = parseExecutableHeader(
-    prefix.subarray(0, table.value.headerSize),
-    input.hostArchitecture,
-    input.fileSize,
-  );
-  if (!parsed.ok) return parsed;
-  const framed = await readMachoCommandFrames(handle, table.value, {
-    prefix,
-    fileSize: input.fileSize,
-    signal: input.signal,
-  });
-  return framed.ok ? parsed : framed;
-};
-
-/** Walk thin command headers through one probe window, skipping payload bytes. */
-const readMachoCommandFrames = async (
-  handle: FileHandle,
-  table: MachoLoadCommandTableHeader,
-  input: {
-    readonly prefix: Buffer;
-    readonly fileSize: number;
-    readonly fileOffset?: number | undefined;
-    readonly signal?: AbortSignal | undefined;
-  },
-): Promise<Result<null, string>> => {
-  const commands = new MachoLoadCommandCursor(table);
-  let window = input.prefix;
-  let windowOffset = 0;
-  while (commands.nextOffset !== null) {
-    const offset = table.headerSize + commands.nextOffset;
-    if (
-      offset + 8 <= input.fileSize &&
-      (offset < windowOffset || offset + 8 > windowOffset + window.length)
-    ) {
-      windowOffset = offset;
-      window = await readHandleRange(
-        handle,
-        (input.fileOffset ?? 0) + offset,
-        Math.min(4096, input.fileSize - offset),
-        input.signal,
-      );
-    }
-    const relative = offset - windowOffset;
-    const frame = commands.read(
-      relative >= 0 ? window.subarray(relative, relative + 8) : Buffer.alloc(0),
-    );
-    if (!frame.ok) return frame;
-  }
-  return commands.finish();
-};
-
-/** Validate declared FAT slices after the canonical table/identity admission succeeds. */
-const readMachoSliceCommandFrames = async (
-  handle: FileHandle,
-  slice: UniversalMachOSlice,
-  signal?: AbortSignal,
-): Promise<Result<null, string>> => {
-  const bytes = await readHandleRange(
-    handle,
-    slice.offset,
-    Math.min(4096, slice.size),
-    signal,
-  );
-  const table = readMachoLoadCommandTableHeader(bytes, slice.size);
-  if (!table.ok) return table;
-  if (table.value === null)
-    return err("FAT slice does not identify a thin Mach-O image");
-  return readMachoCommandFrames(handle, table.value, {
-    prefix: bytes,
-    fileSize: slice.size,
-    fileOffset: slice.offset,
-    signal,
-  });
-};
-
-/** Read the validated FAT table and bounded thin-header identity prefixes. */
-const readFatSliceHeaderEvidence = async (
-  handle: FileHandle,
-  prefix: Buffer,
-  fileSize: number,
-  signal?: AbortSignal,
-): Promise<FatSliceHeaderEvidence | undefined> => {
-  let header = readFatContainerHeader(prefix, fileSize);
-  if (header.state === "needs-data") {
-    // readFatContainerHeader enforces the 128-entry format bound before this
-    // allocation; this is only the table, never a synthesized file image.
-    const table = await readHandleRange(
-      handle,
-      0,
-      header.requiredBytes,
-      signal,
-    );
-    header = readFatContainerHeader(table, fileSize);
-  }
-  if (header.state !== "parsed") return undefined;
-
-  const sliceHeadersByOffset = new Map<number, MachoHeaderPrefixFacts>();
-  for (let index = 0; index < header.slices.length; index += 1) {
-    const slice = header.slices[index];
-    if (slice === undefined) continue;
-    if (header.rangeIssues[index] !== null) continue;
-    const observedLength = Math.min(12, slice.size);
-    const thinHeader = await readHandleRange(
-      handle,
-      slice.offset,
-      observedLength,
-      signal,
-    );
-    sliceHeadersByOffset.set(
-      slice.offset,
-      readMachoHeaderPrefixFacts(thinHeader),
-    );
-  }
-  return { header, sliceHeadersByOffset };
-};
-
-const readPeMetadata = async (
-  handle: FileHandle,
-  offset: number,
-  {
-    mzPrefix,
-    fileSize,
-    mzEvidence,
-    signal,
-  }: {
-    readonly mzPrefix: Buffer;
-    readonly fileSize: number;
-    readonly mzEvidence: MzHeaderEvidence;
-    readonly signal: AbortSignal | undefined;
-  },
-): Promise<Result<ExecutableMetadata, string>> => {
-  throwIfTargetResolutionCancelled(signal);
-  const fileHeader = await readHandleRange(handle, offset, 24, signal);
-  if (fileHeader.length !== 24) return err("invalid or truncated PE header");
-  const { windowsHeader } = withMzWindowsHeaderSignature(
-    mzPrefix,
-    fileSize,
-    mzEvidence,
-    { offset, bytes: fileHeader.subarray(0, 4) },
-  );
-  if (windowsHeader.state !== "declared")
-    return err("invalid Windows new-header signature in MZ image");
-  if (["NE", "LE", "LX"].includes(windowsHeader.signature))
-    return err(`unsupported ${windowsHeader.signature} executable in MZ image`);
-  const coff = readPeCoffHeader(fileHeader.subarray(4));
-  if (!coff.ok) return err("invalid or truncated PE header");
-  const optionalHeaderSize = coff.value.optionalHeaderSize;
-  if (optionalHeaderSize > 4096) return err("invalid PE optional header size");
-  const numberOfSections = coff.value.sectionCount;
-  const record = await readHandleRange(
-    handle,
-    offset,
-    24 + optionalHeaderSize,
-    signal,
-  );
-  if (record.length !== 24 + optionalHeaderSize)
-    return err("invalid or truncated PE header");
-  const codeView = await readPeCodeView(
-    handle,
-    offset,
-    numberOfSections,
-    record.subarray(24),
-    optionalHeaderSize,
-    signal,
-  );
-  const parsed = parsePeRecordFacts(record, codeView);
-  return parsed.ok ? ok(parsed.value.metadata) : parsed;
-};
-
-const readPeCodeView = async (
-  handle: FileHandle,
-  peOffset: number,
-  numberOfSections: number,
-  optionalHeader: Buffer,
-  optionalHeaderSize: number,
-  signal?: AbortSignal,
-): Promise<PeCodeViewRecord | undefined> => {
-  throwIfTargetResolutionCancelled(signal);
-  const debugDir = peDebugDirectoryEntry(optionalHeader);
-  if (debugDir === undefined || numberOfSections > 96) return undefined;
-  const sectionTableOffset = peOffset + 24 + optionalHeaderSize;
-  const sectionTableSize = numberOfSections * 40;
-  const sectionTable = await readHandleRange(
-    handle,
-    sectionTableOffset,
-    sectionTableSize,
-    signal,
-  );
-  if (sectionTable.length !== sectionTableSize) return undefined;
-  const debugFileOffset = peRvaToFileOffset(
-    debugDir.debugRva,
-    sectionTable,
-    numberOfSections,
-    debugDir.sizeOfHeaders,
-    Math.min(debugDir.debugSize, 4096),
-  );
-  if (debugFileOffset === undefined) return undefined;
-  const maxDebugSize = Math.min(debugDir.debugSize, 4096);
-  const debugDirectoryBuffer = await readHandleRange(
-    handle,
-    debugFileOffset,
-    maxDebugSize,
-    signal,
-  );
-  for (const {
-    fileOffset: pointerToRawData,
-    declaredSize: sizeOfData,
-  } of peCodeViewDirectoryEntries(
-    debugDirectoryBuffer,
-    sectionTable,
-    numberOfSections,
-    debugDir.sizeOfHeaders,
-  )) {
-    if (pointerToRawData === undefined) continue;
-    const maxCodeViewRead = Math.min(sizeOfData, PE_CODEVIEW_PREFIX_BYTES);
-    const codeViewBuffer = await readHandleRange(
-      handle,
-      pointerToRawData,
-      maxCodeViewRead,
-      signal,
-    );
-    const parsed = parseCodeViewData(codeViewBuffer, sizeOfData);
-    if (parsed !== undefined) return parsed;
-  }
-  return undefined;
 };

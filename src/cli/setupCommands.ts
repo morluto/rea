@@ -2,6 +2,7 @@ import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { z } from "zod";
 
+import { omitEnvironmentSettings } from "../process/snapshotEnvironment.js";
 import type { DoctorScope } from "../application/Doctor.js";
 import {
   DESKTOP_BUILD_PROVIDER_ID,
@@ -14,6 +15,7 @@ import {
 import { isUninstallFailure } from "../application/UninstallFailure.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { localPathStringSchema } from "../domain/localPath.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   mcpToolFamiliesSchema,
   toolFamiliesConstraint,
@@ -25,7 +27,8 @@ import {
 } from "../config/mcpToolCatalogProfile.js";
 import {
   confirmInteractiveSetup,
-  renderSetupDryRun,
+  createSetupJourney,
+  renderSetupPlan,
   renderInteractiveSetupResult,
   renderSetupProgress,
 } from "./interactiveSetup.js";
@@ -35,27 +38,29 @@ import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
 import type { Logger } from "pino";
 import { registerCliCommand } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
-import { SUPPORTED_CLIENT_DEFINITIONS } from "../application/SupportedClients.js";
-
-const supportedClientIds = SUPPORTED_CLIENT_DEFINITIONS.map(({ name }) => name);
-const supportedClientSchema = z.enum(supportedClientIds);
-const skillClientSchema = z.union([z.literal("shared"), supportedClientSchema]);
+import { skillClientSchema, supportedClientSchema } from "./clientNameInput.js";
 
 /** Register setup, doctor, uninstall, and update CLI commands. */
 export const registerSetupCommands = (
   cli: CliInstance,
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
+  savedDefaults: ReadonlySet<string> | undefined,
 ): void => {
-  registerSetupCommand(cli, logger, environment);
-  registerDoctorCommand(cli, logger, environment);
-  registerMaintenanceCommands(cli, logger, environment);
+  registerSetupCommand(cli, logger, environment, savedDefaults);
+  registerDoctorCommand(cli, logger, environment, savedDefaults);
+  registerMaintenanceCommands(
+    cli,
+    logger,
+    omitEnvironmentSettings(environment, savedDefaults),
+  );
 };
 
 const registerSetupCommand = (
   cli: CliInstance,
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
+  savedDefaults: ReadonlySet<string> | undefined,
 ): void => {
   registerCliCommand(cli, CLI_COMMANDS.setup, {
     description: "Configure agent integrations and optional analysis providers",
@@ -126,13 +131,18 @@ const registerSetupCommand = (
         .describe("Use sequential accessible setup prompts"),
     }),
     alias: { yes: "y" },
-    run: ({ options, formatExplicit }) =>
+    run: ({ options, structuredOutput }) =>
       withCommandCancellation((signal) =>
         logCliCommand(
           logger,
           CLI_COMMANDS.setup,
           () =>
-            runSetupCommand({ options, formatExplicit }, environment, signal),
+            runSetupCommand(
+              { options, structuredOutput },
+              environment,
+              signal,
+              savedDefaults,
+            ),
           isSetupFailure,
         ),
       ),
@@ -143,6 +153,7 @@ const registerDoctorCommand = (
   cli: CliInstance,
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
+  savedDefaults: ReadonlySet<string> | undefined,
 ): void => {
   registerCliCommand(cli, CLI_COMMANDS.doctor, {
     description: "Check whether REA is ready",
@@ -175,7 +186,12 @@ const registerDoctorCommand = (
             ]);
           return runDoctorOwned(
             options.target,
-            createSystemDoctorHost(environment, signal),
+            createSystemDoctorHost(
+              environment,
+              signal,
+              HOST_PLATFORM,
+              savedDefaults,
+            ),
             doctorScope(options),
           );
         }),
@@ -191,6 +207,11 @@ const registerMaintenanceCommands = (
   registerCliCommand(cli, CLI_COMMANDS.uninstall, {
     description: "Remove REA-owned agent configuration and skill files",
     options: z.object({
+      project: localPathStringSchema
+        .optional()
+        .describe(
+          "Remove owned Pi and OpenCode registrations in this directory only",
+        ),
       purgeData: z
         .boolean()
         .default(false)
@@ -201,6 +222,10 @@ const registerMaintenanceCommands = (
         logger,
         "uninstall",
         async () => {
+          if (options.project !== undefined && options.purgeData)
+            throw new ConfigurationError(
+              "--project cannot be combined with --purge-data.",
+            );
           const { runUninstall, systemUninstallHost } =
             await import("../application/Uninstall.js");
           return runUninstall(
@@ -210,6 +235,8 @@ const registerMaintenanceCommands = (
               undefined,
               environment,
               HOST_PLATFORM.platform,
+              undefined,
+              options.project,
             ),
           );
         },
@@ -219,7 +246,7 @@ const registerMaintenanceCommands = (
   registerCliCommand(cli, CLI_COMMANDS.update, {
     description:
       "Update this REA installation and verify the installed release",
-    run: ({ formatExplicit }) =>
+    run: ({ structuredOutput }) =>
       logCliCommand(
         logger,
         CLI_COMMANDS.update,
@@ -236,7 +263,7 @@ const registerMaintenanceCommands = (
               environment,
               HOST_PLATFORM.platform,
             ),
-            formatExplicit ? "structured" : "human",
+            structuredOutput ? "structured" : "human",
           );
         },
         isUpdateFailure,
@@ -262,13 +289,15 @@ interface SetupCommandOptions {
 const runSetupCommand = async (
   input: {
     readonly options: SetupCommandOptions;
-    readonly formatExplicit: boolean;
+    readonly structuredOutput: boolean;
   },
   environment: Readonly<NodeJS.ProcessEnv>,
   signal: AbortSignal,
+  savedDefaults: ReadonlySet<string> | undefined,
 ) => {
   const { options } = input;
-  const interactive = setupIsInteractive(options, input.formatExplicit);
+  const interactive = setupIsInteractive(options, input.structuredOutput);
+  const journey = createSetupJourney();
   const hasExplicitScope = setupHasExplicitScope(options);
   const [{ runSetup }, { systemSetupHost }, { createSystemDoctorHost }] =
     await Promise.all([
@@ -278,19 +307,47 @@ const runSetupCommand = async (
     ]);
   const result = await runSetup(
     { ...setupRunOptions(input, interactive, hasExplicitScope), signal },
-    systemSetupHost(createSystemDoctorHost(environment, signal), environment),
+    systemSetupHost(
+      createSystemDoctorHost(
+        environment,
+        signal,
+        HOST_PLATFORM,
+        savedDefaults,
+        "user",
+      ),
+      environment,
+      savedDefaults,
+    ),
     interactive
       ? (actions, context) =>
-          confirmInteractiveSetup(actions, options.accessible, context, signal)
+          confirmInteractiveSetup(
+            actions,
+            options.accessible,
+            context,
+            signal,
+            journey,
+          )
       : undefined,
   );
-  if (interactive) renderInteractiveSetupResult(result, environment);
-  // Setup's output is agent-only, which incur hides when stdout is a terminal
-  // and no format was chosen, so that terminal gets a rendered summary instead.
-  else if (!input.formatExplicit && process.stdout.isTTY === true) {
+  if (interactive) renderInteractiveSetupResult(result, environment, journey);
+  // Setup's output is agent-only, which the CLI hides when stdout is a
+  // terminal and no document was requested, so that terminal gets a rendered
+  // summary instead. A plan that was not applied is shown in full, because
+  // its remediation asks the reader to review it.
+  else if (!input.structuredOutput && process.stdout.isTTY === true) {
     if (result.status === "planned")
-      renderSetupDryRun(result.plannedActions, result.remediation);
-    else renderInteractiveSetupResult(result, environment);
+      renderSetupPlan(
+        result.plannedActions,
+        result.remediation,
+        "Dry run complete. No changes were made.",
+      );
+    else if (result.status === "needs_confirmation")
+      renderSetupPlan(
+        result.plannedActions,
+        result.remediation,
+        "No changes were made.",
+      );
+    else renderInteractiveSetupResult(result, environment, journey);
   }
   return result;
 };
@@ -298,7 +355,7 @@ const runSetupCommand = async (
 const setupRunOptions = (
   input: {
     readonly options: SetupCommandOptions;
-    readonly formatExplicit: boolean;
+    readonly structuredOutput: boolean;
   },
   interactive: boolean,
   hasExplicitScope: boolean,
@@ -316,7 +373,7 @@ const setupRunOptions = (
   return {
     approved: options.yes && !options.dryRun,
     installHopper: options.installHopper,
-    structured: input.formatExplicit || options.dryRun,
+    structured: input.structuredOutput || options.dryRun,
     dryRun: options.dryRun,
     allDetectedClients: options.allDetected,
     proposeHopper: interactive || options.installHopper,
@@ -369,11 +426,11 @@ const setupProviders = (options: SetupCommandOptions): readonly string[] => [
 
 const setupIsInteractive = (
   options: SetupCommandOptions,
-  formatExplicit: boolean,
+  structuredOutput: boolean,
 ): boolean =>
   !options.yes &&
   !options.dryRun &&
-  !formatExplicit &&
+  !structuredOutput &&
   hasInteractiveTerminal();
 
 const hasInteractiveTerminal = (): boolean =>

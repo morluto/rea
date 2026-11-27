@@ -98,8 +98,20 @@ try {
       throw new Error(
         `Selected test files were not discovered: ${missing.join(", ")}`,
       );
+    let specifications = [...selected];
+    const { shard, sequence, passWithNoTests } = vitest.config;
+    if (shard && shutdownSignal === undefined) {
+      if (!passWithNoTests && shard.count > specifications.length)
+        throw new Error(
+          `Cannot run ${shard.count} shards for ${specifications.length} selected test specifications`,
+        );
+      // runTestSpecifications takes the final inventory for this shard.
+      specifications = await new sequence.sequencer(vitest).shard(
+        specifications,
+      );
+    }
     if (shutdownSignal === undefined)
-      await vitest.runTestSpecifications([...selected]);
+      await vitest.runTestSpecifications(specifications);
   }
 } finally {
   await close();

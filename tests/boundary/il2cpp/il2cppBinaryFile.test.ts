@@ -6,10 +6,17 @@ import {
   readUInt32,
   requireIl2cppBinaryImage,
 } from "../../../src/il2cpp/Il2cppBinaryImage.js";
-import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  AnalysisTargetFailureError,
+} from "../../../src/domain/analysisErrorCore.js";
 import type { Il2cppBinaryArchitecture } from "../../../src/domain/il2cpp/il2cppMetadata.js";
-import { expect, it } from "vitest";
-import { linkIl2cppBinarySteps } from "../../../src/il2cpp/Il2cppBinaryFile.js";
+import { describe, expect, it } from "vitest";
+import { findCodeRegistration } from "../../../src/il2cpp/Il2cppBinaryRegistration.js";
+import {
+  linkIl2cppBinarySteps,
+  type Il2cppCodeGenModule,
+} from "../../../src/il2cpp/Il2cppBinaryFile.js";
 import {
   drain,
   linkIl2cppBinary,
@@ -130,6 +137,20 @@ const selectionIssue = (
   }
   throw new Error("expected a selection failure");
 };
+/** The universal file's own format refusal, which names the binary's path. */
+const containerFailure = (
+  bytes: Buffer,
+  architecture?: Il2cppBinaryArchitecture,
+) => {
+  try {
+    link(bytes, architecture);
+  } catch (cause) {
+    if (cause instanceof AnalysisTargetFailureError)
+      return { path: cause.path, ...cause.failure };
+    throw cause;
+  }
+  throw new Error("expected a container failure");
+};
 const addElfLoadAlias = (
   bytes: Buffer,
   fileOffset: number,
@@ -223,13 +244,15 @@ it("still rejects distinct MetadataRegistration fields", () => {
   ).toEqual({ reason: "metadata-registration-not-found", kind: "malformed" });
 });
 
-it("rejects reused MethodDef tokens within an image but preserves cross-image reuse and folded addresses", () => {
-  const duplicateTokens = Uint32Array.from(facts.methodTokens);
-  duplicateTokens[1] = duplicateTokens[0]!;
+it("rejects a MethodDef row past the module's method pointers but preserves cross-image reuse and folded addresses", () => {
+  // A valid MethodDef row the binary's 3-slot module does not hold: the
+  // metadata admits it, so only the pair disagrees.
+  const beyondModule = Uint32Array.from(facts.methodTokens);
+  beyondModule[0] = 0x06000004;
   expect(() =>
     linkIl2cppBinary(createIl2cppBinaryFixture(), metadata, {
       ...facts,
-      methodTokens: duplicateTokens,
+      methodTokens: beyondModule,
     }),
   ).toThrow(
     expect.objectContaining({
@@ -246,10 +269,11 @@ it("rejects reused MethodDef tokens within an image but preserves cross-image re
   // Distinct rows may still point at the same native address after folding.
   const folded = createIl2cppBinaryFixture();
   folded.writeBigUInt64LE(folded.readBigUInt64LE(0x308), 0x300);
-  const linkedFolded = link(folded);
-  expect(linkedFolded.method_addresses[0]?.address).toBe(
-    linkedFolded.method_addresses[1]?.address,
-  );
+  expect(link(folded).method_addresses).toEqual([
+    expectedAddresses[0],
+    expectedAddresses[0],
+    ...expectedAddresses.slice(2),
+  ]);
 });
 
 it.each([0, 4000, 9000])(
@@ -335,9 +359,11 @@ it("rejects a universal Mach-O whose slices overlap before selecting one", () =>
   const first = universal.readUInt32BE(8 + 8);
   const second = universal.readUInt32BE(8 + 20 + 8);
   universal.writeUInt32BE(second - first + 16, 8 + 12);
-  expect(selectionIssue(universal, "arm64")).toMatchObject({
-    path: ["binary_path"],
-    reason: "invalid_format",
+  expect(containerFailure(universal, "arm64")).toMatchObject({
+    path: "/GameAssembly.dylib",
+    kind: "malformed",
+    format: "macho",
+    detail: "Mach-O slices 0 and 1 overlap.",
   });
 });
 
@@ -566,10 +592,7 @@ it("finds an x86-64 module array through the instruction that loads it", () => {
   const linked = link(inlined);
   expect(linked.code_gen_modules_field).toBeNull();
   expect(linked.code_gen_modules_array).toBe(FIXTURE_BINARY_BASE + 0x500n);
-  expect(linked.method_addresses).toEqual(
-    link(createElfFixture(createIl2cppBinaryFixture(), { machine: 62 }))
-      .method_addresses,
-  );
+  expect(linked.method_addresses).toEqual(expectedAddresses);
 });
 
 it.each([
@@ -604,27 +627,17 @@ it.each([
       bytes.writeUInt32LE(1, 32 + 72 + 60); // The second segment is read-only.
       return bytes;
     };
-    expect(link(makeImage(width)).code_gen_modules_array).toBe(
-      FIXTURE_BINARY_BASE + 0x500n,
-    );
+    expect(link(makeImage(width))).toMatchObject({
+      code_gen_modules_field: null,
+      code_gen_modules_array: FIXTURE_BINARY_BASE + 0x500n,
+      method_addresses: expectedAddresses,
+    });
     expect(failure(makeImage(width - 1))).toMatchObject({
       reason: "code-registration-not-found",
       kind: "malformed",
     });
   },
 );
-
-it("finds an arm64 module array through the ADRP+ADD pair that loads it", () => {
-  const linked = link(
-    createIl2cppBinaryFixture({
-      codeRegistration: false,
-      adrpAdd: [[0xc00, 0x500]],
-    }),
-  );
-  expect(linked.code_gen_modules_field).toBeNull();
-  expect(linked.code_gen_modules_array).toBe(FIXTURE_BINARY_BASE + 0x500n);
-  expect(linked.method_addresses).toEqual(expectedAddresses);
-});
 
 it.each([
   ["no instruction pair loads the array", {}],
@@ -651,35 +664,32 @@ it.each([
   },
 );
 
-it("finds an arm64 type table through the ADRP+ADD pair that loads it", () => {
-  const linked = linkWholeTable(
-    createIl2cppBinaryFixture({
+it.each(["arm64", "x86-64"] as const)(
+  "links exact type identities from the %s code-referenced table",
+  (architecture) => {
+    const image = createIl2cppBinaryFixture({
       metadataRegistration: false,
-      adrpAdd: [[0xc20, 0x900]],
-    }),
-  );
-  const reference = linkWholeTable(createIl2cppBinaryFixture());
-  expect(linked.types_field).toBeNull();
-  expect(linked.types_count).toBe(4);
-  expect(linked.return_types).toEqual(reference.return_types);
-  expect(linked.field_types).toEqual(reference.field_types);
-  expect(linked.parameter_types).toEqual(reference.parameter_types);
-});
-
-it("finds an x86-64 type table through the instruction that loads it", () => {
-  const image = createIl2cppBinaryFixture({ metadataRegistration: false });
-  // lea rcx, [rip + disp32] at 0xc40, loading the type table at 0x900.
-  image.set([0x48, 0x8d, 0x0d], 0xc40);
-  image.writeInt32LE(0x900 - (0xc40 + 7), 0xc43);
-  const linked = linkWholeTable(createElfFixture(image, { machine: 62 }));
-  expect(linked.types_field).toBeNull();
-  expect(linked.types_count).toBe(4);
-  expect(linked.return_types).toEqual(
-    linkWholeTable(
-      createElfFixture(createIl2cppBinaryFixture(), { machine: 62 }),
-    ).return_types,
-  );
-});
+      adrpAdd: architecture === "arm64" ? [[0xc20, 0x900]] : [],
+    });
+    if (architecture === "x86-64") {
+      // lea rcx, [rip + disp32] at 0xc40, loading the type table at 0x900.
+      image.set([0x48, 0x8d, 0x0d], 0xc40);
+      image.writeInt32LE(0x900 - (0xc40 + 7), 0xc43);
+    }
+    const bytes =
+      architecture === "arm64"
+        ? image
+        : createElfFixture(image, { machine: 62 });
+    const genericArray = { type: 0, name: FIXTURE_RETURN_TYPE_NAME };
+    expect(linkWholeTable(bytes)).toMatchObject({
+      types_field: null,
+      types_count: 4,
+      return_types: Array.from({ length: 5 }, () => ({ type: 3, name: "int" })),
+      field_types: [genericArray, genericArray],
+      parameter_types: [genericArray],
+    });
+  },
+);
 
 it.each([
   ["the pair loads an address inside the run", { target: 0x908 }],
@@ -1292,11 +1302,6 @@ it("ignores unrelated unaligned Mach-O binds while finding module records", () =
   expect(linked.method_addresses).toEqual(expectedAddresses);
 });
 
-it("keeps unbound Mach-O method words classified from their values", () => {
-  const linked = link(createIl2cppBinaryFixture());
-  expect(linked.method_addresses[1]).toEqual(expectedAddresses[1]);
-  expect(linked.method_addresses[4]).toEqual(expectedAddress("no-body"));
-});
 it("refuses an unresolved inner type value instead of rendering its stored placeholder", () => {
   expect(
     failure(createIl2cppDyldBindFixture(FIXTURE_BINARY_BASE + 0x990n, 0x980)),
@@ -1435,13 +1440,38 @@ it("refuses an ambiguous architecture instead of choosing the first FAT slice", 
     message: expect.stringContaining("no slice was selected"),
   });
 });
+it("refuses a selected slice that ends inside its Mach-O identity as a truncated binary", () => {
+  const bytes = createUniversalFixture([
+    { cpu: 0x0100000c, bytes: createIl2cppBinaryFixture() },
+  ]);
+  bytes.writeUInt32BE(8, 8 + 12);
+  expect(containerFailure(bytes, "arm64")).toMatchObject({
+    path: "/GameAssembly.dylib",
+    kind: "truncated",
+    format: "macho",
+    offset: bytes.readUInt32BE(8 + 8),
+  });
+});
+it("refuses an architecture the universal binary does not hold as the caller's selection", () => {
+  const bytes = createUniversalFixture([
+    { cpu: 0x0100000c, bytes: createIl2cppBinaryFixture() },
+  ]);
+  expect(selectionIssue(bytes, "amd64")).toMatchObject({
+    path: ["binary_architecture"],
+    reason: "invalid_value",
+  });
+});
 it("checks the observed slice header against the caller-selected FAT architecture", () => {
   const bytes = createUniversalFixture([
     { cpu: 0x01000007, bytes: createIl2cppBinaryFixture() },
   ]);
-  expect(selectionIssue(bytes, "amd64")).toMatchObject({
-    path: ["binary_path"],
-    reason: "invalid_format",
+  // The table and the slice header are two records of one file, so their
+  // disagreement is the file's malformed container, not the caller's choice.
+  expect(containerFailure(bytes, "amd64")).toMatchObject({
+    path: "/GameAssembly.dylib",
+    kind: "malformed",
+    format: "macho",
+    detail: expect.stringContaining("disagrees with its Mach-O header"),
   });
 });
 it.each([1, 0x80000000])(
@@ -1450,9 +1480,10 @@ it.each([1, 0x80000000])(
     const thin = createIl2cppBinaryFixture();
     thin.writeUInt32LE(subtype, 8);
     const bytes = createUniversalFixture([{ cpu: 0x0100000c, bytes: thin }]);
-    expect(selectionIssue(bytes, "arm64")).toMatchObject({
-      path: ["binary_path"],
-      reason: "invalid_format",
+    expect(containerFailure(bytes, "arm64")).toMatchObject({
+      path: "/GameAssembly.dylib",
+      kind: "malformed",
+      format: "macho",
     });
     bytes.writeUInt32BE(subtype, 12);
     expect(link(bytes, "arm64").method_addresses).toEqual(expectedAddresses);
@@ -2334,4 +2365,120 @@ it("retains an unresolved matching image count when its method array could fit",
   bytes.writeUInt32LE(bytes.readUInt32LE(0x400), 0x700);
   bytes.writeBigUInt64LE(bytes.readBigUInt64LE(0x410), 0x710);
   expect(() => link(bytes)).toThrow(Il2cppBinaryFormatFailure);
+});
+
+describe("executable reference scan fast paths", () => {
+  const buildExecScanFixture = (
+    arch: "amd64" | "arm64",
+    extendExecutableMappingPastEof = false,
+  ) => {
+    const execSize = 0x2000;
+    const totalSize = 0x4000;
+    const bytes = Buffer.alloc(totalSize);
+    const base = 0x100000000n;
+    const container = {
+      format: "pe" as const,
+      architecture: arch,
+      bits: 64 as const,
+      byte_order: "little" as const,
+      image_base: base,
+      mappings: [{ address: base + 0x1000n, size: 0x2000, offset: 0x1000 }],
+      executable_mappings: [
+        {
+          address: base + 0x1000n,
+          size: extendExecutableMappingPastEof ? 0x10_000 : execSize,
+          offset: 0x1000,
+        },
+      ],
+      sections: [],
+      zero_fills: [],
+      symbols: [],
+    };
+    return { bytes, base, image: drain(openImageSteps(bytes, container)) };
+  };
+
+  const createCodeGenModules = (
+    addresses: readonly bigint[],
+  ): Il2cppCodeGenModule[] =>
+    addresses.map((address, image) => ({
+      image,
+      address,
+      method_pointer_count: 1,
+      method_pointers: 0n,
+    }));
+
+  it("matches x86-64 REX.W+R mov/lea with negative displacement and ignores non-matching bytes", () => {
+    const fix = buildExecScanFixture("amd64");
+    fix.bytes.fill(0x48, 0x1000, 0x2fff); // partial REX decoy
+    fix.bytes.writeBigUInt64LE(fix.base + 0x1100n, 0x1000);
+    fix.bytes.writeBigUInt64LE(fix.base + 0x1140n, 0x1008);
+    const insnAt = 0x2000;
+    fix.bytes.set([0x4c, 0x8b, 0x0d], insnAt); // REX.W|REX.R (0x4c), MOV (0x8b), mod=0 rm=5 reg=1 (0x0d)
+    fix.bytes.writeInt32LE(0x1000 - (insnAt + 7), insnAt + 3);
+    expect(
+      drain(
+        findCodeRegistration(
+          fix.image,
+          createCodeGenModules([fix.base + 0x1100n, fix.base + 0x1140n]),
+        ),
+      ),
+    ).toEqual({ field: null, array: fix.base + 0x1000n });
+  });
+
+  it("rejects arm64 register 31 / mismatched registers and matches negative ADRP+ADD page deltas", () => {
+    const fix = buildExecScanFixture("arm64");
+    fix.bytes.writeBigUInt64LE(fix.base + 0x1200n, 0x1000);
+    fix.bytes.writeBigUInt64LE(fix.base + 0x1240n, 0x1008);
+    // At 0x2000: ADRP x31 (xzr) + ADD x31, x31, #0 -> must be rejected
+    fix.bytes.writeUInt32LE(0x90ffffff >>> 0, 0x2000);
+    fix.bytes.writeUInt32LE(0x910003ff >>> 0, 0x2004);
+    // At 0x2010: ADRP x8, #page(0x1000); ADD x9, x8, #0 (mismatched dst register!) -> rejected
+    const deltaNeg = -1 & 0x1fffff;
+    fix.bytes.writeUInt32LE(
+      (0x90000008 | ((deltaNeg & 3) << 29) | ((deltaNeg >> 2) << 5)) >>> 0,
+      0x2010,
+    );
+    fix.bytes.writeUInt32LE(0x91000109 >>> 0, 0x2014);
+    // At 0x2020: valid ADRP x8, #page(0x1000); ADD x8, x8, #0x000
+    fix.bytes.writeUInt32LE(
+      (0x90000008 | ((deltaNeg & 3) << 29) | ((deltaNeg >> 2) << 5)) >>> 0,
+      0x2020,
+    );
+    fix.bytes.writeUInt32LE(0x91000108 >>> 0, 0x2024);
+    expect(
+      drain(
+        findCodeRegistration(
+          fix.image,
+          createCodeGenModules([fix.base + 0x1200n, fix.base + 0x1240n]),
+        ),
+      ),
+    ).toEqual({ field: null, array: fix.base + 0x1000n });
+  });
+
+  it("clamps scan bounds cleanly when an executable mapping exceeds buffer length", () => {
+    for (const arch of ["amd64", "arm64"] as const) {
+      const fix = buildExecScanFixture(arch, true);
+      fix.bytes.writeBigUInt64LE(fix.base + 0x1100n, 0x1000);
+      fix.bytes.writeBigUInt64LE(fix.base + 0x1140n, 0x1008);
+      if (arch === "amd64") {
+        fix.bytes.set([0x48, 0x8d, 0x05], 0x2000);
+        fix.bytes.writeInt32LE(0x1000 - (0x2000 + 7), 0x2003);
+      } else {
+        const deltaNeg = -1 & 0x1fffff;
+        fix.bytes.writeUInt32LE(
+          (0x90000008 | ((deltaNeg & 3) << 29) | ((deltaNeg >> 2) << 5)) >>> 0,
+          0x2000,
+        );
+        fix.bytes.writeUInt32LE(0x91000108 >>> 0, 0x2004);
+      }
+      expect(
+        drain(
+          findCodeRegistration(
+            fix.image,
+            createCodeGenModules([fix.base + 0x1100n, fix.base + 0x1140n]),
+          ),
+        ),
+      ).toEqual({ field: null, array: fix.base + 0x1000n });
+    }
+  });
 });

@@ -101,9 +101,12 @@ its address when selecting the containing function. `search_procedures` matches
 the same names, in leaf or qualified spelling: the function appears once with
 its primary name as `value`, and `matched_aliases` lists the qualified names of
 the secondary symbols that matched.
-For Ghidra case-insensitive literal searches of procedures or strings,
-`raw_result` contains bridge candidates before REA applies Unicode-aware
-matching. Use `normalized_result` for matches; a raw candidate need not match.
+For Ghidra case-insensitive literal searches of procedures or strings, use
+`normalized_result` for matches. REA applies Unicode-aware matching to the
+bridge's candidates. When that removes a candidate or a matched secondary
+name, `raw_result` contains the bridge candidates, which need not match, and
+`limitations` says so. When it removes nothing, the candidates are the matches
+and `raw_result` is `null`; that is not missing evidence.
 Overloads can share a fully qualified name; ambiguity errors return every
 matching entry address so the caller can select the intended function directly.
 
@@ -152,9 +155,14 @@ Ghidra regex searches use Java Pattern semantics. If compiling or matching a
 pattern exhausts the engine's stack, REA returns a resource constraint and
 preserves the active database and annotations. Retry in literal mode or simplify
 the regex; successful literal searches retain complete matching strings.
-Cancelling an active request terminates the ephemeral database and discards its
-annotations. REA retains the selected target and imports the original artifact
-again on the next Ghidra query.
+Cancelling an active read, such as a decompilation, stops that request and
+keeps the database, its annotations and the requests queued behind it, provided
+Ghidra answers the request within the cancel grace (2,000 ms by default; see
+[active request cancellation](../../providers/ghidra-provider.md#active-request-cancellation)
+for `REA_GHIDRA_CANCEL_GRACE_MS`). Cancelling an active edit, or a
+read Ghidra does not answer in time, terminates the ephemeral database and
+discards its annotations. REA then retains the selected target and imports the
+original artifact again on the next Ghidra query.
 
 Opening the same target and profile again retains the live database, including
 annotations. It does not make those edits eligible for an immutable snapshot.
@@ -349,7 +357,30 @@ a known body. `--layout dwarf`
 reports that compilation-unit paths are unavailable and still names files by
 address. Filters are a case-sensitive name substring, a case-sensitive name
 prefix, an inclusive address range (including uppercase hexadecimal input), and a positive safe-integer attempt limit. The limit does not allocate space in proportion to its value. Cancellation leaves
-files already written in place. One run at a time holds an output directory,
+files already written in place and first commits the functions already decompiled. Function files and their journal records are committed in groups of
+up to eight: each file's bytes are synced before the file gets its final name, and a
+group's records are appended and synced together only after its files are
+published. A group is also committed by the first function that settles one
+second or more after the previous commit, so a slow provider is committed
+function by function. A process or host that stops between commits leaves at most eight
+decompiled functions unrecorded. A resume decompiles those again; when a file is
+already in place and the new bytes match it, the function is counted as skipped
+and recorded with `provider_source.reason: "existing_file_origin_unknown"`
+rather than as a conflict. While one provider request for a function, reading its body
+or decompiling it, stays pending, the export reports a `decompile_all` progress
+update every five seconds naming that request, the function's name and
+address, its position among the selected functions, and the elapsed wait;
+requests that settle sooner report nothing. The export's own journal and file
+writes are not timed, so a slow output volume is never reported as a provider
+wait. MCP delivers
+these as progress notifications when the request carries a progress token, and
+the CLI writes each as a `rea_progress` JSON line on stderr, leaving stdout for
+the manifest. Ghidra bounds one function with its decompile deadline. Hopper
+has no per-function deadline and REA cannot interrupt a decompilation Hopper
+has started, so a pathological function holds the serial bridge until Hopper
+finishes or is quit. Cancelling such an export from the CLI ends the command
+with `cleanup_incomplete` while Hopper keeps working; the remediation then
+describes the steps available in Hopper itself. One run at a time holds an output directory,
 identified by its device and inode, through export finalization and any retained cleanup retry; another
 run on the same directory is refused with the holder's process ID, and a
 crashed run can be recovered by the next run. Failed descriptor or staging cleanup remains owned by the session; close the target to retry it. Initialization cleanup preserves unexpected entries rather than recursively removing the directory. Resume hashes existing files in bounded chunks, and index generation reuses committed journal facts already held by the export owner. After five consecutive functions whose files
@@ -456,7 +487,7 @@ configuration errors and do not fall back to 128. The setting is read from
 the environment that starts REA, while MCP `regex.worker_heap_request_mib`
 can override it for workers belonging to newly accepted searches. Use
 `update_analysis_settings` for either runtime control; accepted work keeps its
-budget. See the [settings design](../../design/limits-and-recovery.md).
+budget. See the [analysis settings and recovery](../../reference/limits-and-recovery.md).
 A heap failure names the effective request, known source, default, floor, and
 maximum. A positive Node.js
 `--max-old-space-size` on the process that starts
@@ -714,10 +745,35 @@ per-row `hidden` marker from lipo output. Mach-O image and Electron fuse
 inspection include the row in architecture selection while retaining that
 marker in their reported slices.
 
+The four app resource commands, `inspect_plist`, `inspect_asset_catalog`,
+`inspect_keyed_archive`, and `decode_interface_builder`, use a separate read-only
+resource session when the CLI input is a bundle directory. They do not require
+`CFBundleExecutable`, resolve a program by filename convention, or establish
+executable identity. For MCP, select the app with `open_bundle_resources` before
+querying its resources. `inspect_plist` defaults to the selected bundle's
+Info.plist. A declared executable is not opened or validated by this resource
+route either.
+
+Resource-only Evidence has a null `subject`; results identify the selected
+root through `resource_root`, and executable target digests remain null. Use
+the reported per-resource provenance for the bytes actually read. A supported
+Info.plist layout identifies a resource root; it does not establish that the
+plist contents or every resource can be decoded. Parsing, resource selection,
+and filesystem failures remain explicit outcomes of their respective readers.
+
+Executable analysis still uses `open_binary` and the ordinary binary admission
+checks. Missing or invalid executable declarations, unsafe program names, and
+unresolved program paths remain typed failures on that route. Resource sessions
+do not support binary-only operations or binary analysis snapshots. See the
+[resource session contract](../../reference/mcp-contracts.md#identity-and-discovery)
+for session status and provenance semantics.
+
 `inspect_plist.format` describes the selected source, not plutil's conversion
 format. Sources explicitly identified as XML, binary or JSON retain those
-labels. For generic text, a bounded source-prefix probe recognizes leading XML
-markup, including UTF-8 and BOM-marked UTF-16 sources. Unidentified text and
+labels. For any other `file` description, a bounded source-prefix probe
+recognizes leading XML markup, including UTF-8 and BOM-marked UTF-16 sources.
+`file` reports `data` for XML containing a control character or NUL byte, which
+CoreFoundation can still read; the probe labels it `xml`. Unidentified text and
 OpenStep plists, including a data-only value such as `<deadbeef>`, report
 `unknown` even when plutil decodes their values through an XML conversion.
 
@@ -939,7 +995,7 @@ complete observation.
   malformed/unresolved/nil references. Missing fields stay absent; unknown
   classes are preserved. Select `root`, `offset` and `limit` explicitly.
   Named parser limits report the exhausted bound and its maximum in
-  `details.reported_limits` on a `truncated` error.
+  `details.reported_limits` on a `partial` error.
   Binary references retain their serialized type-8 UID identity; ordinary
   dictionaries with `UID` or `CF$UID` keys remain authored data. XML uses
   Foundation's single numeric `CF$UID` dictionary convention for references;
@@ -1110,8 +1166,10 @@ complete observation.
   Unresolved parents preserve the leaf name and a partial identity reason,
   while independently readable witness implementations remain available.
   Protocol instance properties use the same property-list reader as classes.
-  Unreadable instance properties and unimplemented class-property lists keep
-  the protocol's methods and record with partial protocol coverage.
+  Unreadable instance properties and undecoded class-property lists keep
+  the protocol's methods and record with partial protocol coverage; a
+  `_classProperties` slot bound to another image counts as present, and an
+  unreadable or unknown-fixup zero slot stays partial instead of absent.
   The `swift_class_vtable_descriptors` coverage counters count examined vtable
   slots and successfully decoded slots, rather than type-section entries.
   The `objc_class_method_ivar_metadata` counters count admitted class and
@@ -1177,13 +1235,16 @@ complete observation.
   names. Class implementation methods have null `is_required` and `is_optional`
   fields because those facts apply to protocol declarations; decoded protocol
   method lists retain their observed required/optional values. Class properties
-  and `__objc_catlist` categories are also decoded. Categories record the
+  and categories are also decoded, from `__objc_catlist` and from
+  `__objc_catlist2`, where Swift lists categories on classes it reaches through
+  a Swift class stub. Categories record the
   extended class, local or external, plus
   their methods, protocols and properties; category methods appear as
   implementations with a `category`. A category whose class reference is null,
-  or is bound to a symbol other than `_OBJC_CLASS_$_`, such as the `_$s…CN`
-  metadata symbol of another module's Swift class, keeps a null class, and
-  `objc_properties_categories` coverage names that reference. A category's
+  is bound to a symbol other than `_OBJC_CLASS_$_`, such as the `_$s…CN`
+  metadata symbol of another module's Swift class, or is a Swift class stub,
+  keeps a null class, and `objc_properties_categories` coverage names that
+  reference. A category's
   class property list (`@property (class)`), present when the image info
   declares it, is not decoded: the category is partial with
   `category_class_properties_not_decoded` and coverage names the list field.
@@ -1213,7 +1274,8 @@ complete observation.
 
 `get_objc_classes` keeps names from the provider inventory. It coalesces rows
 only when their exact selected-image pointer slots decode to the same class
-import, including its binding stream, raw library ordinal, resolved library, weak status, and addend. A literal filter is
+import, including its binding stream, library ordinal, resolved library, weak status, and addend. Weak streams use
+the implicit weak-lookup ordinal `-3` until an opcode supplies another ordinal. A literal filter is
 applied to the original names before that join; if the filter selects only an
 alias, the output keeps that exact row. `identity_coverage` distinguishes a
 complete selected-inventory scan from partial, unsupported, and unknown cases.
@@ -1441,6 +1503,143 @@ unpaired Unicode surrogate; a rejection identifies the field and UTF-16 index
 and leaves every annotation unchanged. CRLF, supplementary Unicode characters,
 and combining characters are preserved. Windows P0 remains read-only. Ghidra has no
 GUI authority, and REA never falls back automatically to Hopper.
+
+For a target without debug information, set a function's prototype and the
+types it needs so later pseudocode uses field and parameter names instead of
+offsets. Define the types, then pass `signature` to
+`annotate_native_function`:
+
+```javascript
+await call("define_native_data_types", {
+  declarations:
+    "struct session { int id; char name[32]; unsigned flags; double score; struct session *next; };",
+});
+await call("annotate_native_function", {
+  procedure: "0x1001800",
+  name: "session_total",
+  signature: "double total(const struct session *s, unsigned mask)",
+});
+```
+
+`signature` is one C prototype over types the database already holds. Its
+function name is a placeholder; `name` renames the function. The prototype is
+applied in the same transaction as the name and comments with Ghidra's
+`USER_DEFINED` source and Ghidra-assigned parameter storage.
+`annotations.signature` is the applied prototype, which `signature` accepts
+back when its function and type names are C identifiers,
+`annotations.signature_source` is `user_defined` for a caller-authored
+prototype rather than `default`, `analysis` or `imported`, and
+`annotations.calling_convention` is the convention that storage follows. When
+the function has no calling convention and the prototype names none, REA
+records the compiler specification's default convention, which is the one
+Ghidra already uses to assign the storage; without it the decompiler prefixes
+the pseudocode with `Unknown calling convention -- yet parameter storage is
+locked`. Name a convention in the prototype (for example `__stdcall`) to
+assert another one.
+
+`define_native_data_types` accepts C struct, union, enum and typedef
+definitions and stores all of them or none in the category
+`/rea_caller_defined`. `inspect_native_data_type` reports those types with
+`source: "caller-defined"`; they are the caller's assertions about layout, not
+observations of the target. A name the database already holds in any category
+is refused and never replaced; repeating an equivalent caller definition
+reports `unchanged`. Ghidra fills an existing empty composite in place while
+parsing, and that replacement is rolled back with the rest of a refused call. Ghidra keeps a struct, union or enum tag in a different
+map from a typedef and stores one type per name. When the declarations give
+that name to definitions that are not equivalent, such as
+`struct item { int x; }; typedef int item;`, the call is refused with
+`details.diagnostics.remote_code` `conflicting_type_definitions` and stores
+nothing. `typedef struct s { ... } s;` is one struct and is stored.
+
+Ghidra's C parser accepts several constructs and records nothing for them. REA
+refuses those before parsing, names the construct and its line and column, and
+changes nothing:
+
+| Construct                                                                                                                                                                      | `signature`        | `declarations`                                                                                                                                                          |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `__attribute__`, `__declspec`, `__readableTo`, `_Alignas`, `packed`, `[[...]]`, asm labels, `__extension__`                                                                    | refused            | refused; use `#pragma pack` to pack                                                                                                                                     |
+| `__ptr32`, `__ptr64` (Ghidra stores a native-width pointer), `__near`, `__far`                                                                                                 | refused            | refused                                                                                                                                                                 |
+| `__pragma`, `_Pragma`, `_Static_assert`, Objective-C `@` blocks, backslashes, `#` apart from its name                                                                          | refused            | refused                                                                                                                                                                 |
+| `static`, `extern`, `inline`, `__forceinline`, `register`, `auto`, `_Thread_local`                                                                                             | refused            | refused                                                                                                                                                                 |
+| Variable declarations and other non-type statements                                                                                                                            | refused            | refused                                                                                                                                                                 |
+| Preprocessor directives                                                                                                                                                        | refused            | refused except `#pragma pack` in a form Ghidra applies: decimal values from 0 through 2147483647, a `push` with a value or label, a `pop` that matches an admitted push |
+| String and character literals                                                                                                                                                  | refused            | refused                                                                                                                                                                 |
+| Function body, default argument, second declaration                                                                                                                            | refused            | not applicable                                                                                                                                                          |
+| Function pointers `ret (*name)(parameters)`, `(**name)`, `(*name[N])` as members or typedefs                                                                                   | refused            | applied; see below                                                                                                                                                      |
+| In a function pointer: `()` (Ghidra stores `(void)`), a calling convention inside the parenthesis, `_Noreturn`, a nested function-pointer parameter, an untyped parameter      | not applicable     | refused                                                                                                                                                                 |
+| Any other parenthesis in a definition, such as a grouped declarator or a function type (Ghidra stores none of them as written)                                                 | not applicable     | refused                                                                                                                                                                 |
+| Unnamed enum; unnamed struct or union other than `typedef struct { } name`                                                                                                     | refused            | refused                                                                                                                                                                 |
+| Repeated parameter or member name; struct, union or enum without members (Ghidra invents one for an undefined tag)                                                             | refused            | refused                                                                                                                                                                 |
+| Array parameter (Ghidra stores a pointer)                                                                                                                                      | refused            | not applicable                                                                                                                                                          |
+| A type name the database holds as different types                                                                                                                              | refused            | refused                                                                                                                                                                 |
+| Anything Ghidra's parser reports a diagnostic for, such as a repeated enumerator name                                                                                          | refused            | refused                                                                                                                                                                 |
+| An enum value, array size or bit-field width other than one decimal or hex integer literal, optionally negated, without suffixes; a value or implicit enumerator outside `int` | not applicable     | refused                                                                                                                                                                 |
+| `#pragma pack`, bit-fields, flexible and zero-length arrays, enum values, several typedef declarators                                                                          | not applicable     | applied; the stored layout shows them                                                                                                                                   |
+| `_Noreturn`, a calling convention the compiler specification defines                                                                                                           | applied            | not applicable                                                                                                                                                          |
+| `const`, `volatile`, `restrict`, `__unaligned`, `__w64`                                                                                                                        | accepted, reported | accepted, reported                                                                                                                                                      |
+
+A function-pointer member or typedef, including one after a comma as in
+`int (*open)(int), (*close)(int);`, is stored as a pointer to a function
+type in `/rea_caller_defined`, named `owner.member` for a member (for example
+`/rea_caller_defined/ops.open`) and `typedef.target` for a typedef. Ghidra's
+parser names these types by a counter that restarts with every call, so REA
+names them by declarator: repeating an equivalent definition reports
+`unchanged`, and a differing one is refused. `inspect_native_data_type`
+reports such a type with `kind: "function"` and its `function_definition`:
+return type, parameters with their names, `varargs` and `calling_convention`.
+A calling convention written before the parenthesis, as in
+`int __stdcall (*name)(int)`, is stored by name as written, whether or not the
+program's compiler specification defines it; inside the parenthesis Ghidra
+drops it, so REA refuses that spelling. `()` is refused because Ghidra stores
+it as `(void)`; write `(void)`. A parameter that is itself a function pointer
+gets a function type named after the parameter, so REA refuses it: define a
+typedef for the inner function pointer and use its name. In a signature or
+a function pointer, a repeated parameter name is refused, and so is a
+parameter written as a bare name that is not a type, such as a K&R identifier
+list, which Ghidra would store as `undefined`.
+
+These qualifiers have no representation in Ghidra's type system and no
+effect on layout or storage, so the stored type and the readback omit them.
+The bridge recognizes every spelling Ghidra 12.2's C grammar accepts, such as
+`__const` or `_restrict`, and reports the qualifier by its plain name.
+The result's `dropped_qualifiers` lists each one with its line and column, and
+for a signature its zero-based `parameter_index` (`null` for the return type),
+so the omission is visible without comparing the text with the readback.
+Ghidra evaluates enum values, array sizes and bit-field widths with its own
+rules, which differ from C: it does not evaluate names such as an earlier
+enumerator (`MASK = FIRST << 4` would be stored as the next implicit value),
+it truncates values outside `int`, and comparisons and unsigned arithmetic
+give other results (`~0U >> 1` is -1). REA therefore admits each one only as a
+single decimal or hex integer literal within `int`, optionally negated,
+without suffixes, and refuses anything else at its position: write the
+computed value. Ghidra's parser can report a diagnostic, such as a repeated enumerator it
+drops, and still succeed; REA refuses such text with Ghidra's message, which
+names the nearest type but has no line or column. Parsing runs inside the
+edit's own transaction, because Ghidra's parser fills an existing empty
+composite of the same name in place, so a refusal leaves even such a type
+unchanged. A
+type name that exists in several categories is accepted only when every type
+of that name is equivalent; otherwise the refusal lists their category paths,
+because C text cannot select one.
+
+Ghidra's C parser cannot be cancelled, so REA bounds the text it parses. Each
+bound has a per-call parameter, and a refusal names it with its effective
+value, range and the measured need:
+
+| Parameter                                             | Default | Range    | Bounds                              |
+| ----------------------------------------------------- | ------: | -------- | ----------------------------------- |
+| `signature_max_utf16` (`annotate_native_function`)    |    2048 | 16..4096 | UTF-16 code units of `signature`    |
+| `declarations_max_utf16` (`define_native_data_types`) |    4096 | 16..8192 | UTF-16 code units of `declarations` |
+| `parenthesis_max_depth` (`annotate_native_function`)  |       8 | 1..12    | Parenthesis nesting in `signature`  |
+
+The maxima follow measured parse times on Ghidra 12.2: the slowest admitted
+text at the maxima took about 7 seconds (a single chain of 8192 pointer
+declarators); twice the length took 100 seconds. Each level of parentheses
+doubles the time (12 levels took 2.2 seconds). Split a larger set
+of definitions across calls. Both edits invalidate immutable analysis
+snapshots and persist exactly as names and comments do: saved on normal close
+in checkpoint mode, discarded otherwise. Cancelling an active edit stops the
+Ghidra process without saving it.
 For a before-and-after `compare_functions` in MCP, call `analyze_function`
 before and after the edit while the session remains open; the annotation Evidence
 itself is not an `analyze_function` input. If comparing after close, export the
@@ -1608,12 +1807,11 @@ projection; these estimates are not a hard process-memory bound. Keyed-archive
 object identities always come from their original `$objects` table indices.
 Authored `objectID`, `object-id`, `archiveUID` and `id` fields remain ordinary
 object data and do not change inventory, reference, connector or hierarchy
-identity. This changes keyed-archive graph IDs that previously used authored
-`objectID` or `object-id` values: `interface_builder_object_id` and linked node
-IDs now use the decimal table UID, while the authored values remain in attributes.
-For example, an authored `objectID: "2"` on table entry 1 now identifies object
-`"1"`; its graph node ends in `object:["1"]`. Nonkeyed ibtool dictionary IDs
-and native NIBArchive IDs keep their existing source-specific meaning.
+identity: `interface_builder_object_id` and linked node IDs use the decimal
+table UID, and the authored values remain in attributes. For example, an
+authored `objectID: "2"` on table entry 1 identifies object `"1"`; its graph
+node ends in `object:["1"]`. Nonkeyed ibtool dictionary IDs and native
+NIBArchive IDs keep their source-specific meaning.
 Connector endpoints require encoded UID references to archived objects; strings
 and dictionaries that merely resemble resolved reference stubs do not establish
 identity. Inline hierarchy dictionaries have no table identity and count as
@@ -1704,9 +1902,41 @@ missing match does not establish absence from uninitialized or excluded memory.
 See [Ghidra byte search](../../providers/ghidra-provider.md#masked-byte-search) for mask and coverage
 semantics. This query never executes or modifies target bytes.
 
-Exact-name xref lookup reports distinct candidate addresses as an input ambiguity;
+### Name and import selectors
+
+`find_xrefs_to_name`, `xrefs`, `procedure_callers` and incoming
+`procedure_references` resolve one name the same way on every provider. An
+exact observed name wins. Otherwise a provider-reported import matches by its
+imported name or library-qualified name, so `VirtualAlloc` and
+`kernel32.dll::VirtualAlloc` both select Ghidra's `KERNEL32.DLL::VirtualAlloc`
+(the library compares without case). `find_xrefs_to_name` then tries the
+provider's procedure lookup and reports the provider's spelling as
+`resolved_name`. Hopper reports imported names without their library, so a
+library-qualified name stays unresolved there and lists the bare-name rows as
+`candidates`; REA does not select one.
+
+`procedure_callers` and incoming `procedure_references` also answer a symbol or
+address outside every procedure, such as an imported name, an import
+address-table slot or a data label. The result lists the provider's recorded
+references to that address, each with its containing procedure, and identifies
+the target without a body. Providers may disagree about which reference sites
+belong to a function: on one MSVC x64 DLL, Ghidra and Hopper reported the same
+18 references to `VirtualAlloc`, and Hopper placed one more of them inside a
+procedure.
+
+Name lookup reports distinct candidate addresses as an input ambiguity;
 inventory order cannot select one silently. Duplicate rows at one address remain
 a singular match, and a missing name remains an unresolved observation.
+
+On `find_xrefs_to_name`, `limit` and the zero-based `offset` slice the
+addresses in provider order after reference lookup. Omitting both returns
+the available provider list. A page reports `observed_xrefs` before slicing
+and `total_xrefs` only when the provider confirms it did not cap the read.
+`provider_truncated` is null when the provider did not report a cap status.
+`truncated` is true when the page or provider omitted rows, false when the
+provider confirms an uncapped read and the page includes every row, and null
+when completeness remains unknown. Advancing the offset can retrieve other
+observed rows, within the available provider list.
 
 Hopper procedure names must identify a procedure entry. A non-entry symbol returns
 an input diagnostic with its coordinate and containing procedure; an explicit

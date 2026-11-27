@@ -10,6 +10,8 @@ import { SHARED_BOUNDARY } from "./scopes.mjs";
 
 /** More selected files than this run the complete suite instead. */
 const SELECTION_CAP = 400;
+// Observe the next band while the complete suite still runs.
+const SHADOW_CAP = 600;
 // Selected files per test job, and the most jobs one selection uses. Each job
 // runs one `--shard` of the selection; the CI sequencer balances the shards by
 // main's recorded per-file durations when that history is available.
@@ -35,10 +37,162 @@ const OWNERS = [
   "sqlite",
   "wasm",
 ];
-const ownedTests = (path) =>
-  OWNERS.filter((owner) => path.startsWith(`src/${owner}/`)).flatMap(
-    (owner) => [`tests/**/${owner}/**/*.test.ts`, `tests/**/${owner}*.test.ts`],
+const PACKAGED_BRIDGE_TESTS = [
+  "tests/boundary/process/packedBridgeVerification.test.ts",
+  "tests/boundary/process/packageTarListing.test.ts",
+  "tests/conformance/package/packedTarListing.test.ts",
+];
+// Bridge sources outside src/ whose portable tests are owned by adapter/packaging
+// suites rather than TS imports. Missing declared explicit owners fail closed;
+// unmatched bridge paths remain untraced and fall back to the complete suite.
+const BRIDGE_OWNERS = [
+  {
+    patterns: ["bridge/ghidra/*.java"],
+    explicitTests: PACKAGED_BRIDGE_TESTS,
+    ownerGlobs: [
+      "src/ghidra/**/*.test.ts",
+      "tests/**/ghidra/**/*.test.ts",
+      "tests/**/ghidra*.test.ts",
+    ],
+  },
+  {
+    patterns: ["bridge/hopper_bridge.py"],
+    explicitTests: [
+      ...PACKAGED_BRIDGE_TESTS,
+      "tests/boundary/providers/hopper/hopperBridgeFacade.test.ts",
+    ],
+    ownerGlobs: [
+      "src/hopper/**/*.test.ts",
+      "tests/**/hopper/**/*.test.ts",
+      "tests/**/hopper*.test.ts",
+    ],
+  },
+  {
+    patterns: ["bridge/test_hopper_bridge.py"],
+    explicitTests: [
+      "tests/boundary/providers/hopper/hopperBridgeFacade.test.ts",
+    ],
+    ownerGlobs: [
+      "src/hopper/**/*.test.ts",
+      "tests/**/hopper/**/*.test.ts",
+      "tests/**/hopper*.test.ts",
+    ],
+  },
+  {
+    patterns: ["bridge/ida/*.py"],
+    explicitTests: [
+      ...PACKAGED_BRIDGE_TESTS,
+      "src/ida/IdaHexRaysProtocol.test.ts",
+    ],
+    ownerGlobs: [
+      "src/ida/**/*.test.ts",
+      "tests/**/ida/**/*.test.ts",
+      "tests/**/ida*.test.ts",
+    ],
+  },
+  {
+    patterns: ["bridge/cutter/*.py"],
+    explicitTests: [
+      ...PACKAGED_BRIDGE_TESTS,
+      "tests/boundary/providers/CutterBridgeClient.test.ts",
+    ],
+    ownerGlobs: [
+      "src/cutter/**/*.test.ts",
+      "tests/**/cutter/**/*.test.ts",
+      "tests/**/cutter*.test.ts",
+      "tests/**/*Cutter*.test.ts",
+    ],
+  },
+  {
+    patterns: ["bridge/android/*.java"],
+    explicitTests: PACKAGED_BRIDGE_TESTS,
+    ownerGlobs: [
+      "src/android/**/*.test.ts",
+      "tests/**/android/**/*.test.ts",
+      "tests/**/jadx*.test.ts",
+    ],
+  },
+  {
+    patterns: ["bridge/agentenv/*.py"],
+    explicitTests: [
+      ...PACKAGED_BRIDGE_TESTS,
+      "tests/boundary/providers/agentEnvCapture.test.ts",
+      "src/desktop/BuildComputerController.test.ts",
+    ],
+    ownerGlobs: [
+      "src/desktop/**/*.test.ts",
+      "tests/**/agentEnv*.test.ts",
+      "tests/**/agentenv/**/*.test.ts",
+      "tests/**/desktop*.test.ts",
+    ],
+  },
+  {
+    patterns: ["bridge/mitmproxy/*.py"],
+    explicitTests: PACKAGED_BRIDGE_TESTS,
+    ownerGlobs: [
+      "tests/**/mitmproxy*.test.ts",
+      "tests/**/webNetwork*.test.ts",
+      "tests/**/networkCapture*.test.ts",
+    ],
+  },
+  {
+    patterns: ["bridge/native/*.swift", "bridge/native/*.py"],
+    explicitTests: PACKAGED_BRIDGE_TESTS,
+    ownerGlobs: [
+      "src/native/**/*.test.ts",
+      "tests/**/native/**/*.test.ts",
+      "tests/**/native*.test.ts",
+      "tests/**/lldb*.test.ts",
+    ],
+  },
+  {
+    patterns: ["bridge/process/*.swift"],
+    explicitTests: [
+      ...PACKAGED_BRIDGE_TESTS,
+      "tests/boundary/process/darwinProcessRunTokenReader.test.ts",
+    ],
+    ownerGlobs: [],
+  },
+  {
+    patterns: ["bridge/pwndbg/*.py"],
+    explicitTests: [
+      ...PACKAGED_BRIDGE_TESTS,
+      "tests/boundary/native/PwndbgCoreContext.test.ts",
+    ],
+    ownerGlobs: ["tests/**/pwndbg*.test.ts", "tests/**/recordedCrash*.test.ts"],
+  },
+  {
+    patterns: ["bridge/pwntools/*.py"],
+    explicitTests: [
+      ...PACKAGED_BRIDGE_TESTS,
+      "tests/boundary/binaryDiagnostics/pwntoolsDecoderOwnership.test.ts",
+    ],
+    ownerGlobs: [
+      "tests/**/pwntools*.test.ts",
+      "tests/**/binaryLayout*.test.ts",
+      "tests/**/recordedCrash*.test.ts",
+    ],
+  },
+  {
+    patterns: ["bridge/nativeaot/*.java"],
+    explicitTests: ["tests/boundary/filesystem/ghidraBridgeSources.test.ts"],
+    ownerGlobs: [
+      "tests/**/nativeAot*.test.ts",
+      "tests/**/ghidra/**/*.test.ts",
+      "tests/**/ghidra*.test.ts",
+    ],
+  },
+];
+const bridgeOwnersFor = (path) =>
+  BRIDGE_OWNERS.filter(({ patterns }) =>
+    patterns.some((pattern) => matchesGlob(path, pattern)),
   );
+const ownedTests = (path) => [
+  ...OWNERS.filter((owner) => path.startsWith(`src/${owner}/`)).flatMap(
+    (owner) => [`tests/**/${owner}/**/*.test.ts`, `tests/**/${owner}*.test.ts`],
+  ),
+  ...bridgeOwnersFor(path).flatMap(({ ownerGlobs }) => ownerGlobs),
+];
 
 const isTest = (path) => path.endsWith(".test.ts");
 // Owners of what the built CLI and MCP server present: tool contracts,
@@ -63,6 +217,8 @@ const isCheckerInput = (path) =>
   path === "scripts/run-python-tests.py" ||
   /^tests\/support\/analysis-efficiency\/.+\.py$/u.test(path) ||
   /^scripts\/verify\/baselines\/[^/]+\.json$/u.test(path) ||
+  path === "scripts/verify/fixed-ceiling-registry.json" ||
+  path === "scripts/verify/untyped-budget-refusal-baseline.json" ||
   /^scripts\/verify\/advertised-schemas\/tools\/[^/]+\.json$/u.test(path);
 // Inputs whose owning tests are not reachable through the selection graph.
 const EXPLICIT_TEST_OWNERS = [
@@ -79,10 +235,14 @@ const EXPLICIT_TEST_OWNERS = [
     "src/dotnet/ManagedMemberPointers.test.ts",
   ],
 ];
-const explicitTestOwners = (path) =>
-  EXPLICIT_TEST_OWNERS.filter(([pattern]) => matchesGlob(path, pattern)).map(
-    ([, owner]) => owner,
-  );
+const explicitTestOwners = (path) => [
+  ...new Set([
+    ...EXPLICIT_TEST_OWNERS.filter(([pattern]) =>
+      matchesGlob(path, pattern),
+    ).map(([, owner]) => owner),
+    ...bridgeOwnersFor(path).flatMap(({ explicitTests }) => explicitTests),
+  ]),
+];
 // Verifier scripts are imported by their tests like source modules.
 const isVerifier = (path) =>
   /^scripts\/(verify-[^/]+|verify\/.+)\.mjs$/u.test(path);
@@ -133,12 +293,14 @@ const isProse = (path) =>
     !DOCS_CODE.test(path) &&
     !path.endsWith("/package.json")) ||
   path.startsWith("licenses/");
-const isNonModuleFixture = (path) =>
+const isTraceableFixture = (path) =>
   path.startsWith("tests/fixtures/") &&
-  !isModule(path) &&
+  !isTest(path) &&
   !isProse(path) &&
   !isCheckerInput(path) &&
   explicitTestOwners(path).length === 0;
+const isNonModuleFixture = (path) =>
+  isTraceableFixture(path) && !isModule(path);
 /** Why a changed path cannot be traced to tests, if it cannot. */
 const untracedInput = (path) =>
   !isTest(path) && SHARED_BOUNDARY.test(path)
@@ -157,9 +319,18 @@ const untracedInput = (path) =>
 // runs before dependencies are installed, so it cannot load that parser).
 const SPECIFIER =
   /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\bvi\.mock\(\s*|\bnew\s+URL\(\s*)["'](\.{1,2}\/[^"']+)["']/gu;
+// A substitution-free, unescaped template used by a dynamic import has the
+// same exact path identity as a quoted specifier.
+const STATIC_IMPORT_TEMPLATE =
+  /\bimport\s*\(\s*\x60(\.{1,2}\/[^\x60\\]*)\x60\s*(?=[,)])/gu;
 // TypeScript imports name the emitted `.js`/`.mjs`; scripts are imported as is.
 const importsOf = (path, source) =>
-  [...source.matchAll(SPECIFIER)].flatMap(([, specifier]) => {
+  [
+    ...source.matchAll(SPECIFIER),
+    ...[...source.matchAll(STATIC_IMPORT_TEMPLATE)].filter(
+      ([, specifier]) => !specifier.includes("${"),
+    ),
+  ].flatMap(([, specifier]) => {
     const target = posix.normalize(posix.join(posix.dirname(path), specifier));
     return [target, target.replace(/\.(m?)js$/u, ".$1ts")];
   });
@@ -206,19 +377,28 @@ export function traceAffectedTests({ files, snapshot }) {
   }
 
   const isNamedTarget = (path) =>
-    path.startsWith("scripts/") || path.startsWith("tests/fixtures/");
+    isTest(path) ||
+    path.startsWith("scripts/") ||
+    path.startsWith("tests/fixtures/");
+  const mentionsPath = (source, path) => source.includes(path);
+  // A possible mention can select extra tests. Only a complete path literal
+  // or a traced import establishes coverage for an individual input.
+  const quotesPath = (source, path) =>
+    ["'", '"', "`"].some((quote) => source.includes(quote + path + quote));
+  const names = (file, paths, matches = mentionsPath) =>
+    paths.some((path) => matches(sources.get(file) ?? "", path));
+
   // A seed and every helper that imports or names it, directly or through another.
-  const throughHelpers = (seed) => {
+  const throughHelpers = (seed, matches = mentionsPath) => {
     const reached = new Set(seed);
     for (let grew = true; grew;) {
       grew = false;
       const namedReached = [...reached].filter(isNamedTarget);
       for (const helper of helpers) {
         if (reached.has(helper)) continue;
-        const source = sources.get(helper) ?? "";
         if (
           imports.get(helper).some((target) => reached.has(target)) ||
-          namedReached.some((target) => source.includes(target))
+          names(helper, namedReached, matches)
         ) {
           reached.add(helper);
           grew = true;
@@ -227,11 +407,12 @@ export function traceAffectedTests({ files, snapshot }) {
     }
     return reached;
   };
-  // Close over test-only helpers, verifiers and shared script modules, then
-  // take the tests that import a change.
+  // Include removed tests: a coverage registry may still name the old path.
+  // Changes reach tests that import any affected test-only helper.
   const affected = throughHelpers([
     ...changedModules,
     ...changedNonModuleFixtures,
+    ...files.filter(isTest),
   ]);
   for (const test of tests)
     if (imports.get(test).some((target) => affected.has(target)))
@@ -241,39 +422,25 @@ export function traceAffectedTests({ files, snapshot }) {
   const named = (reached) => [
     ...new Set([...files, ...[...reached].filter(isNamedTarget)]),
   ];
-  const names = (test, paths) =>
-    paths.some((path) => (sources.get(test) ?? "").includes(path));
 
-  // A changed non-module fixture under tests/fixtures/ that no test reaches
-  // via URL/import or path literal (for example, a directory-scanned asset)
-  // fails closed to the complete suite.
-  for (const fixture of changedNonModuleFixtures) {
-    const reached = throughHelpers([fixture]);
-    const paths = [fixture, ...[...reached].filter(isNamedTarget)];
-    if (
-      !tests.some(
-        (test) =>
-          imports.get(test).some((target) => reached.has(target)) ||
-          names(test, paths),
-      )
-    )
-      untraced.push(`Input is not traced to tests: ${fixture}`);
-  }
-
-  // A changed shared module that no test reaches has no coverage in a
-  // selection, even when other changes select tests.
-  for (const library of changedModules.filter(isScriptLibrary)) {
-    const reached = throughHelpers([library]);
+  const hasTestConsumer = (path) => {
+    const reached = throughHelpers([path], quotesPath);
     const paths = [...reached].filter(isNamedTarget);
-    if (
-      !tests.some(
-        (test) =>
-          imports.get(test).some((target) => reached.has(target)) ||
-          names(test, paths),
-      )
-    )
+    return tests.some(
+      (test) =>
+        imports.get(test).some((target) => reached.has(target)) ||
+        names(test, paths, quotesPath),
+    );
+  };
+
+  // Check each input independently: another change can select tests without
+  // exercising this fixture or library.
+  for (const fixture of files.filter(isTraceableFixture))
+    if (!hasTestConsumer(fixture))
+      untraced.push(`Input is not traced to tests: ${fixture}`);
+  for (const library of changedModules.filter(isScriptLibrary))
+    if (!hasTestConsumer(library))
       untraced.push(`No test reaches shared script module: ${library}`);
-  }
 
   // A shared script module that another script, configuration file, hook or
   // workflow imports or names as a standalone file name can shape every run.
@@ -342,7 +509,9 @@ export function traceAffectedTests({ files, snapshot }) {
           /\breaddir(?:Sync)?\s*\(/u.test(sources.get(test) ?? ""))
       )
         select(test, "beside");
-    // Leaf adapters' boundary tests.
+  }
+  for (const path of files) {
+    // Leaf adapters' and owned bridge sources' tests.
     const patterns = ownedTests(path);
     for (const test of tests)
       if (patterns.some((glob) => matchesGlob(test, glob)))
@@ -378,16 +547,16 @@ export function planTestSelection({ files, event, tier, code, snapshot }) {
   const paths = [...selected.keys()].sort();
   if (!paths.length)
     return full("No test imports, names or sits beside a changed path");
-  if (paths.length > SELECTION_CAP)
-    return full(
-      `${paths.length} affected test files exceed the ${SELECTION_CAP}-file selection cap`,
-    );
+  const overCap = paths.length > SELECTION_CAP;
+  const capReason = `${paths.length} affected test files exceed the ${SELECTION_CAP}-file selection cap`;
+  if (paths.length > SHADOW_CAP) return full(capReason);
   for (const path of paths)
     try {
       projectForTest(path);
     } catch {
-      return full(`No single test project runs ${path}`);
+      return full(overCap ? capReason : `No single test project runs ${path}`);
     }
+  if (overCap) return { ...full(capReason), shadowFiles: paths };
   const reasons = Object.groupBy([...selected.values()], (reason) => reason);
   return {
     version: 3,

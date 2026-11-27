@@ -1,7 +1,6 @@
 import {
   bindArtifactFileCleanup,
   ArtifactResourceScope,
-  AnalysisCleanupLease,
 } from "../resources/index.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { launchRegexMatchingLimitation } from "../process/RegexMatcher.js";
@@ -28,7 +27,6 @@ import type {
   AnalysisProviderCandidate,
   ProviderAvailability,
   ProviderTargetSupport,
-  RetainedResourceScope,
 } from "../ports/AnalysisProvider.js";
 import type { AppConfig } from "../config/types.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
@@ -79,15 +77,7 @@ const IDA_ARCHITECTURES = {
 /** Bring-your-own IDA MCP candidate; discovery performs no provider startup. */
 export class IdaProvider implements AnalysisProviderCandidate {
   readonly #ownedResources = new ArtifactResourceScope();
-  readonly #inspectionOwner: RetainedResourceScope = {
-    retain: (owner, resource) =>
-      this.#ownedResources.retain({
-        kind: "lease",
-        resource,
-        lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
-      }),
-    run: (operation) => this.#ownedResources.run(operation),
-  };
+  readonly #inspectionOwner = this.#ownedResources.forCloseOwners();
   readonly #registrationByScope = new WeakMap<
     ProviderInspectionScope,
     Promise<Result<IdaConfiguration, ConfigurationError>>
@@ -278,12 +268,28 @@ export class IdaProvider implements AnalysisProviderCandidate {
           "IDA does not admit caller-selected GameCube DOL images. Open the target with Ghidra and select format gamecube-dol.",
         diagnostics,
       };
+    if (target.kind === "database")
+      return target.databaseEngine !== "ida"
+        ? {
+            status: "unsupported",
+            code: "target_format_unsupported",
+            reason:
+              "IDA opens only IDA .idb/.i64 databases. Select the original input binary or an IDA database.",
+            diagnostics,
+          }
+        : {
+            status: "unknown",
+            code: null,
+            reason:
+              "IDA registration has not been resolved, so whether it can open an existing database is unknown.",
+            diagnostics,
+          };
     if (target.kind !== "executable")
       return {
         status: "unsupported",
         code: "target_kind_unsupported",
         reason:
-          "IDA MCP integration admits executable inputs, not analysis databases. Select the original input binary.",
+          "IDA MCP integration admits executable inputs and IDA databases. Select the original input binary.",
         diagnostics,
       };
     if (target.format === "raw-binary")
@@ -321,19 +327,45 @@ export class IdaProvider implements AnalysisProviderCandidate {
     options: AnalysisProviderInspectionOptions,
   ): Promise<ProviderTargetSupport> {
     const base = this.inspectTargetSupport(target);
-    if (base.status === "unsupported" || target.format !== "mach-o-universal")
-      return base;
-    // Attached identity is the recorded whole-input digest, which every slice
-    // of a universal file shares, so it cannot prove the GUI loaded the slice
-    // admission selected. Headless mode thins that slice into its own input.
+    // Only IDA databases and universal Mach-O depend on the registration.
+    if (base.status !== "unknown") return base;
     const config = await this.#configuration(options);
     if (!config.ok)
       return {
         status: "unknown",
         code: null,
-        reason: "IDA mode could not be resolved from the registration.",
+        reason: "IDA registration could not be resolved.",
         diagnostics: base.diagnostics,
       };
+    // Only a Hex-Rays lease opens a private database copy; attached GUIs and
+    // database supervisors have no verified route for an existing database.
+    if (target.kind === "database") {
+      if (config.value.protocol !== "hexrays")
+        return {
+          status: "unsupported",
+          code: "target_kind_unsupported",
+          reason:
+            'Opening an existing IDA database requires the "hexrays" headless registration. Select the original input binary with this registration.',
+          diagnostics: base.diagnostics,
+        };
+      if (!/\.(?:idb|i64)$/iu.test(target.path))
+        return {
+          status: "unsupported",
+          code: "target_format_unsupported",
+          reason:
+            "The Hex-Rays IDA MCP requires a .idb or .i64 filename for a saved database. Select a packed database with its filename suffix.",
+          diagnostics: base.diagnostics,
+        };
+      return {
+        status: "supported",
+        code: null,
+        reason: null,
+        diagnostics: base.diagnostics,
+      };
+    }
+    // Attached identity is the recorded whole-input digest, which every slice
+    // of a universal file shares, so it cannot prove the GUI loaded the slice
+    // admission selected. Headless mode thins that slice into its own input.
     if (config.value.mode === "attached")
       return {
         status: "unsupported",
@@ -406,7 +438,15 @@ export class IdaProvider implements AnalysisProviderCandidate {
             ...(signal === undefined ? {} : { signal }),
             resourceScope: options?.resourceScope ?? this.#inspectionOwner,
           });
-    if (scope?.active === true) this.#registrationByScope.set(scope, pending);
+    if (scope?.active === true) {
+      this.#registrationByScope.set(scope, pending);
+      // The read observes the first caller's signal; a cancelled or failed
+      // read must not answer every later caller in this scope.
+      pending.catch(() => {
+        if (this.#registrationByScope.get(scope) === pending)
+          this.#registrationByScope.delete(scope);
+      });
+    }
     const registration = await pending;
     return registration;
   }

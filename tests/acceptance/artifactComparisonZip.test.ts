@@ -4,8 +4,8 @@ import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect, it } from "vitest";
 
 import type { ArtifactComparisonResult } from "../../src/domain/artifactComparison.js";
-import { artifactInventoryResultSchema } from "../../src/domain/artifactGraph.js";
 import type { Evidence } from "../../src/domain/evidence.js";
+import { occurrenceAt } from "../fixtures/artifactEvidence.js";
 import { connectArtifactComparisonMcp } from "../fixtures/artifactComparisonMcp.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
@@ -41,14 +41,6 @@ const connectZipComparison = async () => {
   return { inspect, compare };
 };
 
-const member = (evidence: Evidence, path: string) => {
-  const occurrence = artifactInventoryResultSchema
-    .parse(evidence.normalized_result)
-    .occurrences.find(({ logical_path }) => logical_path === path);
-  if (occurrence === undefined) throw new Error(`Missing ${path}`);
-  return occurrence;
-};
-
 /** The archive root differs whenever members do; compare members only. */
 const memberChanges = (result: ArtifactComparisonResult) =>
   result.changes.filter(({ logical_path }) => logical_path !== ".");
@@ -63,13 +55,13 @@ it("reports a ZIP member that becomes a symlink", async () => {
   const link = await inspect("link.zip", [
     { name: "current", data: "target.txt", mode: 0o120777 },
   ]);
-  expect(member(file, "current")).toMatchObject({
+  expect(occurrenceAt(file, "current")).toMatchObject({
     entry_kind: "file",
     hash_status: "verified",
     executable: false,
   });
   // REA does not read symlink targets, so the link has no content.
-  expect(member(link, "current")).toMatchObject({
+  expect(occurrenceAt(link, "current")).toMatchObject({
     entry_kind: "symlink",
     artifact_id: null,
     hash_status: "not-hashed",
@@ -82,8 +74,8 @@ it("reports a ZIP member that becomes a symlink", async () => {
       logical_path: "current",
       classification: "unknown",
       dimensions: ["metadata", "availability"],
-      left_occurrence_id: member(file, "current").occurrence_id,
-      right_occurrence_id: member(link, "current").occurrence_id,
+      left_occurrence_id: occurrenceAt(file, "current").occurrence_id,
+      right_occurrence_id: occurrenceAt(link, "current").occurrence_id,
     },
   ]);
   // Without a known difference, unread content stays unknown.
@@ -106,7 +98,7 @@ it("reports an executable mode change on an encrypted ZIP member", async () => {
     [plain, false],
     [marked, true],
   ] as const)
-    expect(member(evidence, "tool")).toMatchObject({
+    expect(occurrenceAt(evidence, "tool")).toMatchObject({
       artifact_id: null,
       encrypted: true,
       hash_status: "unavailable",

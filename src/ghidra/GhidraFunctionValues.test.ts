@@ -81,6 +81,7 @@ describe("Ghidra unresolved call locations", () => {
         relationship_coverage: {
           status: "partial",
           limitations: ["An unresolved call remains."],
+          limited_directions: ["callees"],
         },
       }),
     ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
@@ -169,8 +170,13 @@ describe("Ghidra function-analysis result values", () => {
     {
       status: "partial",
       limitations: ["Only the first instruction range was examined."],
+      limited_directions: ["callees"],
     },
-    { status: "unknown", reason: "Relationship inventory was unavailable." },
+    {
+      status: "unknown",
+      reason: "Relationship inventory was unavailable.",
+      limited_directions: ["callers", "callees"],
+    },
     {
       status: "partial",
       limitations: ["Missing callers."],
@@ -193,6 +199,16 @@ describe("Ghidra function-analysis result values", () => {
     });
   });
 
+  it("validates Ghidra dossier uncertainty via typed limitation_codes without matching prose", () => {
+    const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+    expect(
+      parseFunctionValueFixture("analyze_function", {
+        ...dossier,
+        limitations: ["Static analysis caveat."],
+      }).ok,
+    ).toBe(true);
+  });
+
   it("preserves omitted relationship coverage for legacy observations", () => {
     const parsed = parseGhidraFunctionResult("analyze_function", {
       value: ghidraFunctionDossier(),
@@ -206,7 +222,9 @@ describe("Ghidra function-analysis result values", () => {
 describe("Ghidra relationship metadata validation", () => {
   it.each([
     { status: "partial", limitations: [] },
+    { status: "partial", limitations: ["Missing directions."] },
     { status: "unknown", reason: "" },
+    { status: "unknown", reason: "Missing directions." },
     { status: "complete", limitations: ["Truncated."] },
     { status: "partial", limitations: ["Truncated."], limited_directions: [] },
     {
@@ -261,92 +279,69 @@ describe("Ghidra relationship metadata validation", () => {
       }),
     ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
   });
-  it.each([...observationOperations])(
-    "requires the function-observation limitations envelope for %s",
-    (operation) => {
-      expect(parseGhidraFunctionResult(operation, null)).toMatchObject({
-        ok: false,
-        error: { _tag: "AnalysisOutputError" },
-      });
-    },
-  );
-
-  it("preserves a named function-observation limitation", () => {
-    expect(
-      parseGhidraFunctionResult("procedure_pseudo_code", "void f() {}"),
-    ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
-    const limitation =
-      "Ghidra marks a call to external __tls_get_addr terminal; return behavior is not independently verified.";
-    expect(
-      parseGhidraFunctionResult("procedure_pseudo_code", {
-        value: "void f() {}",
-        limitations: [limitation],
-      }),
-    ).toEqual({
-      ok: true,
-      value: { value: "void f() {}", limitations: [limitation] },
-    });
-  });
-
-  it("preserves handler-region limitations on procedure references", () => {
-    const limitation =
-      "Ghidra Listing shows a Borland/Delphi-style SEH frame registration at 0x401008 (push 0x4010a0 followed by fs-segment stack chaining); handler 0x4010a0 lies outside this procedure's body, so callees, strings, and cross-references may omit the handler region.";
-    const parsed = parseGhidraFunctionResult("procedure_references", {
-      value: {
-        procedure: ghidraFunctionIdentity(),
+  const identity = ghidraFunctionIdentity();
+  it.each([
+    ["analyze_function", ghidraFunctionDossier()],
+    ["procedure_assembly", "RET"],
+    ["procedure_callees", ["0x402000"]],
+    ["procedure_callers", ["0x401000"]],
+    [
+      "procedure_info",
+      {
+        name: identity.name,
+        entrypoint: identity.address,
+        signature: null,
+        locals: [],
+        basicblock_count: 1,
+        length: identity.body.total_bytes,
+        classification: identity.classification,
+        body: identity.body,
+      },
+    ],
+    ["procedure_pseudo_code", "void f() {}"],
+    [
+      "procedure_references",
+      {
+        procedure: identity,
         direction: "outgoing",
         references: [ghidraReferenceEdge()],
         reference_kinds_available: true,
         unresolved_calls: [],
       },
-      limitations: [limitation],
-    });
-    expect(parsed).toEqual({
-      ok: true,
-      value: {
-        value: {
-          procedure: ghidraFunctionIdentity(),
-          direction: "outgoing",
-          references: [ghidraReferenceEdge()],
-          reference_kinds_available: true,
-          unresolved_calls: [],
-        },
-        limitations: [limitation],
-      },
-    });
-    expect(
-      parseGhidraFunctionResult("procedure_references", {
-        procedure: ghidraFunctionIdentity(),
-        direction: "outgoing",
-        references: [],
-        reference_kinds_available: true,
-        unresolved_calls: [],
-      }),
-    ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
-  });
-
-  it.each(["procedure_callees", "procedure_callers"] as const)(
-    "requires the function-observation envelope to carry terminal-call limitations for %s",
-    (operation) => {
-      // A bare address list is the pre-fix bridge shape; without the envelope
-      // a truncated function body reports no warning, so it must be rejected.
-      expect(parseGhidraFunctionResult(operation, ["0x2000"])).toMatchObject({
+    ],
+    [
+      "read_function_instructions",
+      { procedure: identity, instructions: ["RET"], limitations: [] },
+    ],
+  ] satisfies ReadonlyArray<[GhidraFunctionOperation, JsonValue]>)(
+    "requires a limitations envelope around a valid %s value",
+    (operation, value) => {
+      expect(
+        parseGhidraFunctionResult(operation, { value, limitations: [] }).ok,
+      ).toBe(true);
+      expect(parseGhidraFunctionResult(operation, value)).toMatchObject({
         ok: false,
         error: { _tag: "AnalysisOutputError" },
       });
-      const limitation =
-        "Ghidra Listing reports a terminal call at 0x401000 to 0x402000 abort; fallthrough is excluded by Ghidra's flow model.";
-      expect(
-        parseGhidraFunctionResult(operation, {
-          value: ["0x2000"],
-          limitations: [limitation],
-        }),
-      ).toEqual({
-        ok: true,
-        value: { value: ["0x2000"], limitations: [limitation] },
-      });
     },
   );
+  it("requires the pseudocode envelope when the producer observed no source", () => {
+    expect(
+      parseGhidraFunctionResult("procedure_pseudo_code", {
+        value: null,
+        limitations: ["The producer did not supply pseudocode."],
+      }),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        value: null,
+        limitations: ["The producer did not supply pseudocode."],
+      },
+    });
+    expect(parseGhidraFunctionResult("procedure_pseudo_code", null).ok).toBe(
+      false,
+    );
+  });
 });
 
 describe("Ghidra reference and value-flow completeness", () => {
@@ -936,6 +931,33 @@ const malformedOutputs = (): Array<
         limitations: [],
       },
     ],
+    [
+      "missing required uncertainty limitation code",
+      "analyze_function",
+      {
+        ...dossier,
+        limitation_codes: ["unresolved_computed_or_indirect_flows"],
+      },
+    ],
+    [
+      "omitted limitation_codes field",
+      "analyze_function",
+      Object.fromEntries(
+        Object.entries(dossier).filter(([key]) => key !== "limitation_codes"),
+      ),
+    ],
+    [
+      "unrecognized limitation code",
+      "analyze_function",
+      {
+        ...dossier,
+        limitation_codes: [
+          "unresolved_computed_or_indirect_flows",
+          "provider_specific_representations",
+          "unknown_code",
+        ],
+      },
+    ],
   ];
 };
 
@@ -1345,4 +1367,31 @@ describe("Ghidra native facet coordinate admission", () => {
       }
     },
   );
+});
+
+it("accepts an address outside every function as an incoming-reference target, without function facts", () => {
+  const target = {
+    address: "0x18004a168",
+    name: "PTR_VirtualAlloc_18004a168",
+    symbol: null,
+    classification: null,
+    body: { available: false, reason: "outside every Ghidra function" },
+  };
+  const observation = (procedure: JsonValue) => ({
+    procedure,
+    direction: "incoming",
+    references: [ghidraReferenceEdge()],
+    reference_kinds_available: true,
+    unresolved_calls: [],
+  });
+  expect(
+    parseFunctionValueFixture("procedure_references", observation(target)),
+  ).toMatchObject({ ok: true, value: { procedure: target } });
+  // A function identity keeps its classification and body; mixing fails.
+  expect(
+    parseFunctionValueFixture(
+      "procedure_references",
+      observation({ ...ghidraFunctionIdentity(), classification: null }),
+    ),
+  ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
 });

@@ -36,6 +36,7 @@ const REAL_YML = [
 describe("parseApktoolYml", () => {
   it("projects version and SDK facts from a real apktool.yml", () => {
     expect(parseApktoolYml(REAL_YML)).toEqual({
+      packageName: null,
       versionName: "1.2.3",
       versionCode: "7",
       minSdkVersion: "24",
@@ -49,6 +50,7 @@ describe("parseApktoolYml", () => {
         '!!brut.androlib.meta.MetaInfo\nversionInfo:\n  versionName: "2.0.0"\n  versionCode: 45\n',
       ),
     ).toEqual({
+      packageName: null,
       versionName: "2.0.0",
       versionCode: "45",
       minSdkVersion: null,
@@ -74,6 +76,7 @@ describe("parseApktoolYml", () => {
         ].join("\n"),
       ),
     ).toEqual({
+      packageName: null,
       versionName: "01.2.3",
       versionCode: "045",
       minSdkVersion: "24",
@@ -92,6 +95,7 @@ describe("parseApktoolYml", () => {
         ].join("\n"),
       ),
     ).toEqual({
+      packageName: null,
       versionName: "null",
       versionCode: "0045",
       minSdkVersion: null,
@@ -101,6 +105,7 @@ describe("parseApktoolYml", () => {
 
   it("reports null facts for unrelated YAML", () => {
     expect(parseApktoolYml("version: 2.7.0\n")).toEqual({
+      packageName: null,
       versionName: null,
       versionCode: null,
       minSdkVersion: null,
@@ -132,6 +137,7 @@ describe("parseApktoolYml", () => {
           `version: 3.0.3\nversionInfo:\n  versionCode: 7\n  versionName: ${source}\nsdkInfo:\n  minSdkVersion: 24\n  targetSdkVersion: 35\n`,
         ),
       ).toEqual({
+        packageName: null,
         versionName: expected,
         versionCode: "7",
         minSdkVersion: "24",
@@ -153,6 +159,7 @@ sdkInfo:
 `,
       ),
     ).toEqual({
+      packageName: null,
       versionName: String.raw`literal \n #beta`,
       versionCode: "0045",
       minSdkVersion: null,
@@ -227,6 +234,7 @@ describe("parseApktoolYml Apktool 2.9+ metadata dialect", () => {
     "reads Apktool %s version string %j as its writer escaped it",
     (version, source, expected) => {
       expect(parseApktoolYml(yml(version, source))).toEqual({
+        packageName: null,
         versionName: expected,
         versionCode: "7",
         minSdkVersion: "24",

@@ -22,7 +22,7 @@ import {
   fridaSessionStatusInputSchema,
   fridaSessionStatusSchema,
 } from "../domain/fridaSessionStatus.js";
-import { fridaSessionStatusSummaryViewResultSchema } from "../domain/analysisView/analysisViewResult.js";
+import { fridaSessionStatusSummaryViewResultSchema } from "../domain/analysisView/summarySchemas/fridaSessionStatusSummarySchema.js";
 import {
   fridaDeviceListSchema,
   fridaProcessListSchema,
@@ -105,7 +105,20 @@ export const FRIDA_TOOL_CONTRACTS = [
     kind: "native-provider",
     description:
       "List processes observed on a selected Frida device or caller-supplied remote endpoint. A remote connection is closed after discovery; authentication values are never returned or recorded.",
-    inputSchema: exclusiveDeviceSelector(deviceSelector)
+    inputSchema: exclusiveDeviceSelector(
+      deviceSelector.extend({
+        limit: z
+          .int()
+          .positive()
+          .optional()
+          .describe("Maximum number of processes to return"),
+        offset: z
+          .int()
+          .nonnegative()
+          .optional()
+          .describe("Zero-based starting index in PID order; defaults to 0"),
+      }),
+    )
       .refine(
         (value) => value.device_id !== undefined || value.remote !== undefined,
         "Select a device_id or a remote endpoint",
@@ -272,7 +285,7 @@ export const FRIDA_TOOL_CONTRACTS = [
     ...toolContractMetadata("frida_session_status", evidenceEffects),
     kind: "native-provider",
     description:
-      "Read observed Frida session state on each call. Default detail=complete returns queued script messages and capture truncation. detail=summary retains the complete observation in this session and returns identity, state, scripts, retained message count and truncation without payloads. Export the complete parent with export_evidence_bundle; retained summaries are historical and never refresh live state.",
+      "Read observed Frida session state on each call. Omitted detail returns queued script messages and capture truncation within the agent result budget, else the retained summary. detail=summary retains the complete observation in this session and returns identity, state, scripts, retained message count and truncation without payloads. Export the complete parent with export_evidence_bundle; retained summaries are historical and never refresh live state.",
     inputSchema: fridaSessionStatusInputSchema,
     outputSchema: analysisDetailOutputSchemaOf(
       fridaSessionStatusSchema,

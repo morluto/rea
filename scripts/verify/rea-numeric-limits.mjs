@@ -2,13 +2,14 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript6";
+import { mapWithConcurrency } from "./bounded-file-reads.mjs";
 
 // Recognized numeric REA_ limit reads must be an analysis setting or a
 // documented exception with a reason. External behavioral witnesses are
 // reported separately and are not verified by this Node-only scan.
 // Per-call limits belong to ANALYSIS_SETTINGS.
 // A name in REQUIRED_RUNTIME_LIMITS that is absent from source fails closed.
-// Each default, floor, and maximum in docs/design/rea-limit-inventory.md must
+// Each default, floor, and maximum in docs/reference/rea-limit-inventory.md must
 // equal ANALYSIS_SETTINGS or the owner export the parser enforces.
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -949,7 +950,7 @@ export const parseDocumentedNumericLimits = (markdown) => {
     const heading = lines.findIndex((line) => line.trim() === `## ${title}`);
     if (heading < 0)
       throw new Error(
-        `docs/design/rea-limit-inventory.md is missing "## ${title}"`,
+        `docs/reference/rea-limit-inventory.md is missing "## ${title}"`,
       );
     let index = heading + 1;
     while (index < lines.length && !lines[index].startsWith("|")) {
@@ -1092,7 +1093,7 @@ export const compareDocumentedNumericLimits = (rows, bounds, names) => {
         ? `${bound.name} (${bound.aliases.join(", ")})`
         : bound.name;
     failures.push(
-      `${label}: code exports default ${showLimitValue(bound.defaultValue)}, floor ${showLimitValue(bound.minimum)}, maximum ${showLimitValue(bound.maximum)}, but docs/design/rea-limit-inventory.md has no row`,
+      `${label}: code exports default ${showLimitValue(bound.defaultValue)}, floor ${showLimitValue(bound.minimum)}, maximum ${showLimitValue(bound.maximum)}, but docs/reference/rea-limit-inventory.md has no row`,
     );
   }
   return failures;
@@ -1179,6 +1180,36 @@ const restartOnlyBounds = (owners) => {
       exportedNumber(owners.limits, "MAXIMUM_DEBUGGER_MAX_SESSIONS"),
     ),
     bound(
+      "REA_GHIDRA_CANCEL_GRACE_MS",
+      exportedNumber(
+        owners.ghidraCancelGrace,
+        "DEFAULT_GHIDRA_CANCEL_GRACE_MS",
+      ),
+      exportedNumber(
+        owners.ghidraCancelGrace,
+        "MINIMUM_GHIDRA_CANCEL_GRACE_MS",
+      ),
+      exportedNumber(
+        owners.ghidraCancelGrace,
+        "MAXIMUM_GHIDRA_CANCEL_GRACE_MS",
+      ),
+    ),
+    bound(
+      "REA_GHIDRA_CHECKPOINT_SAVE_WAIT_MS",
+      exportedNumber(
+        owners.ghidraCheckpointSaveWait,
+        "DEFAULT_GHIDRA_CHECKPOINT_SAVE_WAIT_MS",
+      ),
+      exportedNumber(
+        owners.ghidraCheckpointSaveWait,
+        "MINIMUM_GHIDRA_CHECKPOINT_SAVE_WAIT_MS",
+      ),
+      exportedNumber(
+        owners.ghidraCheckpointSaveWait,
+        "MAXIMUM_GHIDRA_CHECKPOINT_SAVE_WAIT_MS",
+      ),
+    ),
+    bound(
       "REA_HOPPER_DEMO_DIALOG_TIMEOUT_MS",
       exportedNumber(
         owners.hopperStartup,
@@ -1230,6 +1261,12 @@ const restartOnlyBounds = (owners) => {
       exportedNumber(owners.mcpResponse, "MAXIMUM_RESPONSE_BYTES"),
     ),
     phaseBound(phases.toolsList),
+    bound(
+      "REA_MCP_TOOLS_LIST_PAGE_BYTES",
+      exportedNumber(owners.limits, "DEFAULT_MCP_TOOLS_LIST_PAGE_BYTES"),
+      exportedNumber(owners.limits, "MINIMUM_MCP_TOOLS_LIST_PAGE_BYTES"),
+      exportedNumber(owners.limits, "MAXIMUM_MCP_TOOLS_LIST_PAGE_BYTES"),
+    ),
     bound("REA_RECONNECT_TIMEOUT_SECONDS", seconds, seconds, seconds),
     bound(
       "REA_SWIFTC_COMPILE_TIMEOUT_MS",
@@ -1289,6 +1326,8 @@ export const loadExportedNumericLimitBounds = async () => {
     mcpInput,
     mcpResponse,
     startupTimeout,
+    ghidraCancelGrace,
+    ghidraCheckpointSaveWait,
     sdk,
   ] = await Promise.all([
     source("../../src/domain/analysisSettingDefinitions.ts"),
@@ -1302,6 +1341,8 @@ export const loadExportedNumericLimitBounds = async () => {
     source("../../src/config/mcpInputBudget.ts"),
     source("../../src/config/mcpResponseBudget.ts"),
     source("../../src/config/providerStartupTimeout.ts"),
+    source("../../src/config/ghidraCancelGrace.ts"),
+    source("../../src/config/ghidraCheckpointSaveWait.ts"),
     import("@modelcontextprotocol/server"),
   ]);
   const owners = {
@@ -1314,6 +1355,8 @@ export const loadExportedNumericLimitBounds = async () => {
     mcpInput,
     mcpResponse,
     startupTimeout,
+    ghidraCancelGrace,
+    ghidraCheckpointSaveWait,
     sdk,
   };
   const restart = restartOnlyBounds(owners);
@@ -1355,11 +1398,12 @@ if (direct) {
   }
 
   const discovered = discoverNumericLimitUses(
-    await Promise.all(
-      (await listFiles(join(root, "src"))).map(async (path) => ({
+    await mapWithConcurrency(
+      await listFiles(join(root, "src")),
+      async (path) => ({
         path: relative(root, path),
         source: await readFile(path, "utf8"),
-      })),
+      }),
     ),
   );
 
@@ -1373,7 +1417,7 @@ if (direct) {
   )) {
     if (!runtime.has(name) && !listed.has(name))
       failures.push(
-        `${name} in ${file.path} is neither an analysis setting nor docs/design/rea-limit-inventory.md via src/domain/numericLimitRegistry.ts`,
+        `${name} in ${file.path} is neither an analysis setting nor docs/reference/rea-limit-inventory.md via src/domain/numericLimitRegistry.ts`,
       );
   }
   for (const name of listed.keys()) {
@@ -1453,7 +1497,7 @@ if (direct) {
   if (checkout) {
     try {
       const inventory = await readFile(
-        join(root, "docs/design/rea-limit-inventory.md"),
+        join(root, "docs/reference/rea-limit-inventory.md"),
         "utf8",
       );
       const exported = await loadExportedNumericLimitBounds();

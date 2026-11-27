@@ -4,17 +4,17 @@
 
 REA is a local-only reverse-engineering tool with shared CLI/MCP workflows. Distinguish observations, derivations, inferences, and unknowns; preserve Evidence provenance and session semantics through both adapters. Provider support and setup live in [README.md](README.md#choosing-a-deep-analysis-provider) and its linked guides.
 
-Follow the [contribution scope and fail-closed integration rule](CONTRIBUTING.md#contribution-scope). Do not integrate capabilities while material scope, authority, side-effect, or required verification questions remain unresolved. For new providers or capabilities involving target execution, injection, mutation, or protection recovery, seek the required maintainer scope decision before substantial implementation for integration. Welcome early proposals, small exploratory prototypes, and draft PRs that help resolve questions; they do not authorize integration.
+Follow the [contribution scope](CONTRIBUTING.md#contribution-scope) and [fail-closed integration rule](CONTRIBUTING.md#fail-closed-integration), including the maintainer scope decision required before substantial implementation of a new provider or of target execution, injection, mutation, or protection recovery.
 
 Ghidra uses ephemeral databases without modifying executable bytes or controlling a GUI; Windows Ghidra P0 has no mutation authority. IDA analysis is read-only; never save or close an attached GUI database.
 
-Configuration changes must be additive and idempotent, with backups. Installers must not install or upgrade unrelated software, including Homebrew, Node.js, npm, Java, or Ghidra. Ghidra and IDA are bring-your-own. `rea setup` must show its planned changes and require approval before writing files or installing Hopper.
+Configuration changes must be additive and idempotent, with backups. Installers must not install or upgrade unrelated software, including Homebrew, Node.js, npm, Java, or Ghidra; Ghidra and IDA are bring-your-own. `rea setup` must show its planned changes and require approval before writing files or installing Hopper.
 
 Preserve caller-selected inputs and local evidence, including output, URLs, paths, digests, and metadata. Redact transport authentication credentials and explicitly marked sensitive values; do not infer secrecy from names or text patterns. Do not persist the ambient environment merely because a child inherits it.
 
 ## Architecture and Cleanup
 
-Dependencies flow inward: domain semantics and contracts, provider adapters, shared application workflows, then CLI/MCP adapters. Keep engine protocols and provider-specific code out of domain/application layers. See [docs/architecture/architecture.mermaid](docs/architecture/architecture.mermaid) when changing composition.
+Dependencies flow inward: domain semantics and contracts, provider adapters, shared application workflows, then CLI/MCP adapters. Keep engine protocols and provider-specific code out of domain/application layers. Read the relevant wiring in `src/composition/` when changing composition.
 
 Give each interpretation and resource a clear owner. Consumers must use that owner's parsed facts rather than reinterpret raw source. Preserve identity, omission, uncertainty, and source evidence across boundaries. Retain ownership of resources whose cleanup failed. Reuse `src/process/` supervision and identity primitives; a PID and executable path alone do not establish ownership after exit or reuse.
 
@@ -22,26 +22,13 @@ Keep proof of ownership separate from validity, editability, and readiness. Malf
 
 For lifecycle changes, follow [ownership and completion invariants](docs/development/tool-design.md#own-the-lifecycle) and select the applicable [lifecycle regressions](docs/development/testing.md#lifecycle-regressions). Include late handshakes, cancellation during final cleanup, mixed child outcomes, and cleanup retry where those stages exist; active-execution cancellation alone does not cover finalization.
 
-Before adding complexity for a speculative or vanishingly unlikely race or security edge case, explain the concrete failure mode, likelihood, and complexity cost to the user and get their buy-in. Do not silently expand scope for theoretical robustness.
+Before adding complexity for a speculative or vanishingly unlikely race or security edge case, explain its concrete failure mode, likelihood, and complexity cost to the user and get their buy-in. Do not silently expand scope for theoretical robustness.
 
-Check touched code for brittleness during implementation, debugging, review,
-and maintenance. Look for duplicated decisions, unclear ownership, and
-assumptions about state or lifecycle. Trace affected behavior through its
-consumers. Fix the producing representation or ownership rule before adding
-downstream repairs. When interpreting formatted input,
-[normalize once at the owning boundary using a format-aware parser](docs/development/tool-design.md#interpret-boundary-facts-once).
+Whenever you implement, debug, review, or maintain code, check what you touch for brittleness: duplicated decisions, unclear ownership, and assumptions about state or lifecycle. Trace affected behavior through its consumers, and fix the producing representation or ownership rule before adding downstream repairs. When interpreting formatted input, [normalize once at the owning boundary using a format-aware parser](docs/development/tool-design.md#interpret-boundary-facts-once).
 
-Include directly related refactoring in the fix. Passing regressions alone
-cannot establish that the root cause is gone. Remove superseded representations,
-aliases, wrappers, and redundant tests after verifying affected consumers.
-Introduce abstractions only when they remove observed complexity. Explain any
-remaining cleanup and why it remains.
+Include directly related refactoring in the fix; passing regressions alone cannot establish that the root cause is gone. After verifying affected consumers, remove superseded representations, aliases, wrappers, and redundant tests. Introduce abstractions only when they remove observed complexity. Explain any remaining cleanup and why it remains.
 
-Check sibling paths for the same failure, verify suspected matches with working
-controls, and group findings by root cause.
-
-Before resolving a review thread, explain the root cause, structural fix,
-validation, and any remaining cleanup.
+Check sibling paths for the same failure, verify suspected matches with working controls, and group findings by root cause. Before resolving a review thread, explain the root cause, structural fix, validation, and any remaining cleanup.
 
 Parse unknown boundary values and model expected failures with the tagged error algebra and `Result`. Preserve partial facts and meaningful failure reasons. Keep identity and lookup values separate from display formatting; preserve source values and explicit unknowns when normalization loses information. Absolute paths, file URLs, and HTTP paths have different semantics.
 
@@ -49,41 +36,21 @@ Validate advertised JSON Schemas after SDK conversion against their declared dia
 
 ## Performance
 
-Design analysis workflows and agent interfaces for efficiency from the first
-implementation. Correctness, useful answers, Evidence provenance, caller choices,
-compatibility and safe resource bounds remain required.
+Design analysis workflows and agent interfaces for efficiency from the first implementation. Correctness, useful answers, Evidence provenance, caller choices, compatibility and safe resource bounds remain required.
 
 Optimize in this order:
 
-1. Agent tokens and context. Return the smallest sufficient answer with
-   necessary provenance, coverage and limitations. Use task selection,
-   summaries, paging and retained Evidence where supported; honor requested
-   detail and keep complete Evidence accessible. Count the whole task,
-   including schemas, extra calls and retries.
-2. Analysis time. Reuse validated results and shared work. Cache keys must
-   cover result-affecting inputs; define invalidation and lifetime. Validate
-   freshness before reporting cached live state as current.
-3. CPU and memory. Avoid unnecessary work and copies; bound concurrency,
-   retained state and serialization growth.
+1. Agent tokens and context. Return the smallest sufficient answer with necessary provenance, coverage and limitations. Use task selection, summaries, paging and retained Evidence where supported; honor requested detail and keep complete Evidence accessible. Count the whole task, including schemas, extra calls and retries.
+2. Analysis time. Reuse validated results and shared work. Cache keys must cover result-affecting inputs; define invalidation and lifetime. Validate freshness before reporting cached live state as current.
+3. CPU and memory. Avoid unnecessary work and copies; bound concurrency, retained state and serialization growth.
 
-Reserve performance measurements for changes that target performance or have a
-concrete regression concern. Routine cleanup uses correctness checks; changes
-to helper calls, imports, or representations alone do not require synthetic
-benchmarks. When measurement is warranted, measure representative completed
-tasks and compare equivalent workflows before and after where available. Report
-token usage, elapsed time, CPU time and peak process-family memory. Separate cold
-and warm runs, label estimates, and state unmeasured costs. Fewer bytes alone
-do not establish fewer tokens or faster analysis.
+Measure performance only for changes that target it or have a concrete regression concern. Routine cleanup, including changes to helper calls, imports, or representations alone, uses correctness checks, not synthetic benchmarks. When measurement is warranted, measure representative completed tasks and compare equivalent workflows before and after where available. Report token usage, elapsed time, CPU time and peak process-family memory. Separate cold and warm runs, label estimates, and state unmeasured costs. Fewer bytes alone do not establish fewer tokens or faster analysis.
 
 ## Development
 
-Use the [documentation directory](docs/README.md) and
-[authoring guide](docs/development/documentation.md) to find the owning page.
-Follow the [feature lifecycle](docs/development/documentation.md#feature-lifecycle)
-to decide whether a change needs a feature record. The authoring guide defines
-the paths for feature records and architecture decisions.
+Treat code as the source of truth for implemented behavior and architecture. Keep specs, implementation plans, task lists, ADRs, and architecture diagrams in issue or pull request discussions or in local drafts outside Git. Use the [documentation directory](docs/README.md) and [authoring guide](docs/development/documentation.md) for guides and references.
 
-Use [.nvmrc](.nvmrc) and `package.json#packageManager` for the pinned toolchain. Cursor Cloud may place older Node.js first on `PATH`; environment setup installs the pinned toolchain under `/usr/local/bin`. Prefix `PATH="/usr/local/bin:$PATH"` before `node` and `npm`.
+Use the toolchain pinned in [.nvmrc](.nvmrc) and `package.json#packageManager`. Cursor Cloud may place an older Node.js first on `PATH`; its environment setup installs the pinned toolchain under `/usr/local/bin`, so prefix `PATH="/usr/local/bin:$PATH"` before `node` and `npm`.
 
 - `npm ci`: install locked dependencies.
 - `npm run build:cached`: build the runtime and packaged skill.
@@ -92,10 +59,7 @@ Use [.nvmrc](.nvmrc) and `package.json#packageManager` for the pinned toolchain.
 - `npm run check:fast`: cached typecheck and lint, plus architecture guards.
 - `npm run docs:check`: validate generated documentation.
 
-Use relevant checks for the change. The complete local gate, `npm run check:pr`, is optional for broad changes or CI diagnosis. See [CONTRIBUTING.md](CONTRIBUTING.md) for development, generated-file ownership, and release conventions.
-
-When changing installers or setup recovery, follow
-[Checking installers and publisher downloads](docs/development/testing.md#checking-installers-and-publisher-downloads).
+Run the checks relevant to the change; the complete local gate, `npm run check:pr`, is optional for broad changes or CI diagnosis. [CONTRIBUTING.md](CONTRIBUTING.md) covers development, generated-file ownership, and release conventions. When changing installers or setup recovery, follow [Checking installers and publisher downloads](docs/development/testing.md#checking-installers-and-publisher-downloads).
 
 Coordinate expensive checks across agents. If a test unexpectedly consumes heavy CPU, stop its owned process family and profile a bounded representative case before retrying. Inspect production work, fixture generation, subprocesses, and repeated setup; preserve regression coverage when optimizing. Follow the [test resource guidance](docs/development/testing.md#developer-commands).
 
@@ -103,44 +67,19 @@ Coordinate expensive checks across agents. If a test unexpectedly consumes heavy
 
 ## Tool and Test Changes
 
-For tool design, follow [docs/development/tool-design.md](docs/development/tool-design.md): start from the analyst question, reuse existing contracts, preserve caller choices, and return useful evidence inline. Limits must follow real format, protocol, authority, or resource constraints. Account for representation expansion before allocation; derive completeness from examined coverage.
+For tool design, follow [docs/development/tool-design.md](docs/development/tool-design.md): start from the analyst question, reuse existing contracts, preserve caller choices, and return useful evidence inline. Admission limits, which refuse or stop work, must follow real format, protocol, authority, or resource constraints; delivery budgets size inline output for the consumer, never refuse, and keep the complete result retrievable. Account for representation expansion before allocation; derive completeness from examined coverage.
 
-Choose the scope of a new limit from [analysis settings, limits, and recovery](docs/design/limits-and-recovery.md).
-A registered runtime setting may have an optional launch seed. Per-call and
-launch-only controls have their own contracts. Report the effective limit and
-recovery for the control that stopped the work, and document the setting ID
-and `update_analysis_settings` for changes that apply at runtime.
+Choose the scope of a new limit from [analysis settings, limits, and recovery](docs/reference/limits-and-recovery.md). A registered runtime setting may have an optional launch seed; per-call and launch-only controls have their own contracts. Report the effective limit and recovery for the control that stopped the work. For changes that apply at runtime, document the setting ID and `update_analysis_settings`.
 
-For user- or agent-facing tool problems, prioritize fixing the owning behavior,
-contract, and actionable result or recovery at the point of use. Document the
-result in product docs when explanation is needed. Add skill guidance only for
-workflow judgment or context that the tool cannot reasonably convey; do not use
-a skill as the primary repair for a discoverability or contract defect.
+For user- or agent-facing tool problems, fix the owning behavior, contract, and actionable result or recovery at the point of use first. Document the result in product docs when explanation is needed. Add skill guidance only for workflow judgment or context that the tool cannot reasonably convey; a skill is not the primary repair for a discoverability or contract defect.
 
 For test changes or provider claims, use [docs/development/testing.md](docs/development/testing.md). Select applicable [boundary regressions](docs/development/testing.md#boundary-regressions) for parser, inventory, snapshot, and projection fixes. Prefer real public CLI/MCP workflows, then production-boundary integration, then producer goldens. Keep module tests for distinct semantics stronger workflows cannot reliably reproduce. Preserve malformed-input, cancellation, cleanup, permission, capacity, and target-identity coverage when pruning. Report unverified coverage explicitly; simulated providers do not establish real-provider behavior.
 
-Use structured facts to test behavior and assert wording when wording is part
-of the contract. Follow [test design and pruning](docs/development/testing.md#test-design-and-pruning)
-and use the [supervised command owner](docs/development/testing.md#verifier-scripts)
-for commands launched by a verifier.
+Test behavior through structured facts, and assert wording when it is part of the contract. Follow [test design and pruning](docs/development/testing.md#test-design-and-pruning) and use the [supervised command owner](docs/development/testing.md#verifier-scripts) for commands launched by a verifier.
 
-Use Conventional Commit subjects and PR titles as specified under [pull request ownership and readiness](CONTRIBUTING.md#pull-request-ownership-and-readiness). Mark breaking changes with `!` or a `BREAKING CHANGE:` footer. Describe behavior changes, relevant validation, and real-provider verification scope.
+## Issues and Pull Requests
 
-## Issue Reports
-
-Follow [issue reporting guidance](CONTRIBUTING.md#reporting-issues) and the matching
-issue form. Keep reports concise and cite the smallest useful evidence.
-Distinguish observed results, source-derived reasoning, hypotheses, and proposed
-checks. Never claim runtime reproduction or measurements you did not perform.
-Use `NOT_ENOUGH_INFO` with an explanation for missing narrative answers or evidence.
-Incomplete reports, source-only findings, and early feature or design ideas are
-welcome when their limitations are explicit; a completed diagnosis or fix is not
-required to open an issue.
-
-## Pull Request Readiness
-
-Follow [human ownership and readiness](CONTRIBUTING.md#pull-request-ownership-and-readiness)
-when preparing a PR. Leave human readiness declarations to the human owner.
+Follow the [issue reporting guidance](CONTRIBUTING.md#reporting-issues) and the matching issue form, and the [pull request ownership and readiness rules](CONTRIBUTING.md#pull-request-ownership-and-readiness). Use Conventional Commit subjects and PR titles as specified there, and mark breaking changes with `!` or a `BREAKING CHANGE:` footer. Describe behavior changes, relevant validation, and real-provider verification scope. Leave human readiness declarations to the human owner.
 
 <!-- BEGIN:turborepo-agent-rules -->
 

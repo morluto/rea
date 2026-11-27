@@ -28,6 +28,8 @@ export interface RuntimeDependencies {
   /** HTTP keeps the eager runtime; deferred materialization is stdio-only. */
   readonly transport?: "stdio" | "http";
   readonly captureShutdown?: (shutdown: () => Promise<void>) => void;
+  /** Cancels startup when an outer owner closes before the runtime is ready. */
+  readonly startupSignal?: AbortSignal;
   readonly env: NodeJS.ProcessEnv;
   /** Stdio startup owns this raw input until the SDK starts; HTTP never reads it. */
   readonly stdin?: Readable | undefined;
@@ -36,5 +38,9 @@ export interface RuntimeDependencies {
   readonly setExitCode: (code: number) => void;
   readonly registerShutdown: (handler: () => void) => () => void;
   readonly createServer?: typeof import("../server/createServer.js").createServer;
+  /** Close materialized server resources when the SDK transport has another owner. */
+  readonly closeServer?: (
+    server: ReturnType<typeof import("../server/createServer.js").createServer>,
+  ) => Promise<void>;
   readonly loadOptionalProviders?: () => Promise<OptionalProviderLoadResult>;
 }
