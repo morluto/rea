@@ -2,8 +2,8 @@
  * Read-ahead outlives the request that queued it. The signal on that request
  * still owns the workers after the reply, including while the caller commits
  * files, journals, or reads the next function. Aborting it abandons them.
- * A later request on a different signal is a different workflow and must not
- * be abandoned by the previous signal.
+ * Only a later request that carries its own read-ahead replaces that owner.
+ * Another request on a different signal leaves the watch in place.
  */
 export class GhidraReadAheadCancellation {
   #signal: AbortSignal | undefined;
@@ -13,11 +13,12 @@ export class GhidraReadAheadCancellation {
   constructor(private readonly abandon: () => Promise<void>) {}
 
   /**
-   * A Program request is about to run. The same signal keeps its watch; a
-   * different signal replaces the workflow, so the previous abort no longer
-   * applies.
+   * A request that carries read-ahead is about to run. The same signal keeps
+   * its watch. A different signal becomes the owner, because the bridge has
+   * one worker pool and disposing it would stop the new window. A request
+   * that does not carry read-ahead must not call this.
    */
-  noteRequest(signal: AbortSignal | undefined): void {
+  takeOwnership(signal: AbortSignal | undefined): void {
     if (signal === undefined || signal === this.#signal) return;
     this.#drop();
   }

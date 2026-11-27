@@ -565,10 +565,14 @@ export class GhidraClient {
       readonly valueFlowLimits?: NativeValueFlowLimits;
     },
   ): Promise<Result<JsonValue, GhidraSessionError>> {
-    // The signal still owns read-ahead started by an earlier request. A
-    // different signal is a different workflow and must not be cancelled
-    // by the previous one.
-    this.#readAheadCancellation.noteRequest(options.signal);
+    // One worker pool. A new read-ahead window replaces its owner. A request
+    // that does not carry one leaves the current owner's abort watch alone,
+    // including while that owner is committing or journaling.
+    const readAhead = options.decompileReadAhead;
+    const carriesReadAhead =
+      readAhead !== undefined && readAhead.length > 1;
+    if (carriesReadAhead)
+      this.#readAheadCancellation.takeOwnership(options.signal);
     const pattern =
       (operation === "search_procedures" || operation === "search_strings") &&
       parameters.mode === "literal" &&
@@ -628,8 +632,7 @@ export class GhidraClient {
     } finally {
       // Workers keep running after this reply. Abort during the caller's
       // own commit, journal, or next read still abandons them.
-      if (options.decompileReadAhead !== undefined)
-        this.#readAheadCancellation.watch(options.signal);
+      if (carriesReadAhead) this.#readAheadCancellation.watch(options.signal);
     }
   }
 

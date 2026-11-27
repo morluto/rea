@@ -30,21 +30,21 @@ describe("Ghidra read-ahead cancellation", () => {
     expect(abandoned).toEqual([1]);
   });
 
-  it("keeps the watch across another request on the same signal", () => {
+  it("keeps the watch across another read-ahead request on the same signal", () => {
     const { abandoned, cancellation } = watcher();
     const controller = new AbortController();
     cancellation.watch(controller.signal);
-    cancellation.noteRequest(controller.signal);
+    cancellation.takeOwnership(controller.signal);
     controller.abort();
     expect(abandoned).toEqual([1]);
   });
 
-  it("does not let the previous signal abandon a later workflow", () => {
+  it("replaces the owner only when another signal carries read-ahead", () => {
     const { abandoned, cancellation } = watcher();
     const previous = new AbortController();
     const next = new AbortController();
     cancellation.watch(previous.signal);
-    cancellation.noteRequest(next.signal);
+    cancellation.takeOwnership(next.signal);
     previous.abort();
     expect(abandoned).toEqual([]);
     cancellation.watch(next.signal);
