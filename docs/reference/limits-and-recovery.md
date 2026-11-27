@@ -569,6 +569,13 @@ authored `remediationAction`, with no `limit`, `fixedAllowance` or
 that count may only shrink, and `--shrink-baselines` lowers it
 ([#14234](https://github.com/morluto/rea/issues/14234)).
 
+A Nintendo 64 ROM above 64 MiB (67,108,864 bytes) is refused as the fixed
+allowance "The Nintendo 64 ROM size allowance" (`n64.rom_bytes`). Retail
+cartridge masks stop at 64 MiB (512 Mbit). The reader refuses the file before
+swapping its bytes. This release has no runtime override.
+`artifact_limits.expanded_bytes` does not raise it. A v64 or n64 dump also
+counts a decoded copy of each member toward `artifact_limits.expanded_bytes`.
+
 JSON values stop at `MAX_JSON_DEPTH` (1000) in
 [`jsonValue.ts`](https://github.com/morluto/rea/blob/main/src/domain/jsonValue.ts):
 "JSON value exceeds maximum nesting depth of 1000. This release has no runtime

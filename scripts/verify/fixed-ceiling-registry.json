@@ -84,6 +84,12 @@
       "reason": "Projects the compound-file parser's own named ceiling (`ceiling.name` from COMPOUND_FILE_FIXED_LIMITS); the value is declared by the parser in src/domain/windows/compoundFile.ts."
     }
   },
+  "src/artifacts/N64RomArtifactReader.ts": {
+    "\"The Nintendo 64 ROM size allowance\"": {
+      "class": "format",
+      "reason": "Retail cartridge masks stop at 64 MiB (512 Mbit). A larger file is refused before its bytes are swapped. This release has no runtime override, and artifact_limits.expanded_bytes does not raise it."
+    }
+  },
   "src/artifacts/NdsRomArtifactReader.ts": {
     "\"The Nintendo DS ROM directory depth allowance\"": {
       "class": "representation",

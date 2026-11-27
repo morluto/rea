@@ -70,11 +70,16 @@ describe("detached binary PGP publisher verification", () => {
     });
   });
 
+  it("rejects a changed payload with either signing subkey", async () => {
+    const payload = Buffer.from("Binary package fixture\0\xff", "latin1");
+    for (const signature of signatures)
+      expect(await verify({ payload, signature })).toMatchObject({
+        ok: false,
+        error: { reason: "invalid_signature" },
+      });
+  });
+
   it.each([
-    {
-      defect: "changed payload",
-      payload: Buffer.from("Binary package fixture\0\xff", "latin1"),
-    },
     { defect: "malformed signature", signature: Uint8Array.of(1, 2, 3) },
     { defect: "malformed public key", key: "malformed" },
   ])("refuses $defect", async (input) => {

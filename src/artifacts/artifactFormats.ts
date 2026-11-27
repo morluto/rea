@@ -43,6 +43,7 @@ import { FitArtifactReader } from "./FitArtifactReader.js";
 import type { GodotPckAdmission } from "./GodotPckLocation.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
 import { InesArtifactReader } from "./InesArtifactReader.js";
+import { N64RomArtifactReader } from "./N64RomArtifactReader.js";
 import { NdsRomArtifactReader } from "./NdsRomArtifactReader.js";
 import { Iso9660ArtifactReader } from "./Iso9660ArtifactReader.js";
 import { QualcommMbnArtifactReader } from "./QualcommMbnArtifactReader.js";
@@ -460,6 +461,20 @@ const NON_ZIP_FORMATS = {
       "Nintendo DS ROM inventory reports cartridge header facts and lists the ARM9 and ARM7 binaries, overlay files and NitroROM filesystem files as stored byte ranges. Secure-area encryption, compression and NitroARC archives inside files are not decoded.",
     createReader: (path, options) =>
       new NdsRomArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+      ),
+  }),
+  "n64-rom": container("n64-rom", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Nintendo 64 ROM inventory reports cartridge header facts, the IPL3/CIC variant and the CRC pair when that variant is known. header.bin, ipl3.bin and program.z64 are big-endian ranges: stored when the dump is z64, decoded when it is v64 or n64. Nothing is executed or patched. A CRC mismatch is a limitation.",
+    createReader: (path, options) =>
+      new N64RomArtifactReader(
         path,
         sourceOf(options),
         options.readerLimits?.expanded_bytes,

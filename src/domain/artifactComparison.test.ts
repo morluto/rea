@@ -650,6 +650,64 @@ it("compares NDS overlay RAM addresses with identical member content and ignores
   ).toMatchObject({ status: "unchanged", changes: [] });
 });
 
+it("ignores Nintendo 64 dump-order metadata when the served bytes match", () => {
+  const program = {
+    kind: "n64-rom-entry",
+    role: "program",
+    source_order: "z64",
+    decoded: false,
+  } as const satisfies FormatMetadata;
+  const content = { content: "1" };
+  expect(
+    compareArtifacts(
+      recordObservation(program, content),
+      recordObservation(
+        { ...program, source_order: "v64", decoded: true },
+        content,
+      ),
+    ),
+  ).toMatchObject({ status: "unchanged", changes: [] });
+
+  const root = {
+    kind: "n64-rom",
+    source_order: "z64",
+    rom_bytes: 0x1008,
+    pi_dom1_config: 0x8037_1240,
+    clock_rate: 0x0f,
+    boot_address: 0x8000_0400,
+    libultra_release: 0x20,
+    crc: {
+      status: "match",
+      declared_crc1: 1,
+      declared_crc2: 2,
+      computed_crc1: 1,
+      computed_crc2: 2,
+    },
+    ipl3_crc32: 0,
+    cic: "6102/7101",
+    title_raw_hex: "20".repeat(20),
+    title_ascii: "REA TEST".padEnd(20, " "),
+    media_byte: 0x4e,
+    media_name: "cartridge",
+    cartridge_id: "RE",
+    cartridge_id_hex: "5245",
+    destination_byte: 0x45,
+    destination_code: "E",
+    destination_name: "North America",
+    version: 1,
+  } as const satisfies FormatMetadata;
+  expect(
+    compareArtifacts(
+      declared(root),
+      declared({
+        ...root,
+        source_order: "n64",
+        crc: { ...root.crc, status: "mismatch" },
+      }),
+    ),
+  ).toMatchObject({ status: "unchanged", changes: [] });
+});
+
 it("does not emit a declaration for NDS filesystem files compared against extracted files", () => {
   const fileEntry = {
     kind: "nds-entry",

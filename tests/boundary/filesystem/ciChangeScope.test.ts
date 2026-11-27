@@ -10,9 +10,10 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join, matchesGlob } from "node:path";
+import { dirname, join, matchesGlob, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import ts from "typescript6";
 import { afterAll, beforeAll, expect, it as sequentialIt } from "vitest";
 import { parse } from "yaml";
 import { z } from "zod";
@@ -830,6 +831,7 @@ it.each([
   "stryker.semantics.config.mjs",
   "tsconfig.reverse-tools-mutation.json",
   "scripts/prepare-reverse-tools-mutation.mjs",
+  "scripts/verify/mutation-target-tsconfig.mjs",
   "scripts/lib/reverse-tools-mutation-targets.mjs",
 ])(
   "selects the reverse-tool coverage and mutation gate for %s",
@@ -856,17 +858,24 @@ const reverseToolsVitestInputs = (
     ([, path]) => path!.replace(/^\.\//u, ""),
   ),
 );
-const reverseToolsMutationConfig = JSON.parse(
-  await readFile(
-    new URL("../../../tsconfig.reverse-tools-mutation.json", import.meta.url),
-    "utf8",
-  ),
-) as { include: string[] };
+const reverseToolsRoot = fileURLToPath(new URL("../../../", import.meta.url));
+const reverseToolsMutationConfig = ts.getParsedCommandLineOfConfigFile(
+  join(reverseToolsRoot, "tsconfig.reverse-tools-mutation.json"),
+  {},
+  {
+    ...ts.sys,
+    onUnRecoverableConfigFileDiagnostic: (diagnostic) => {
+      throw new Error(
+        ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"),
+      );
+    },
+  },
+)!;
 const reverseToolsInputs = [
   ...new Set([
     ...reverseToolsVitestInputs,
-    ...reverseToolsMutationConfig.include.map((path) =>
-      path.replace(/^\.\//u, ""),
+    ...reverseToolsMutationConfig.fileNames.map((path) =>
+      relative(reverseToolsRoot, path).split(sep).join("/"),
     ),
   ]),
 ];
