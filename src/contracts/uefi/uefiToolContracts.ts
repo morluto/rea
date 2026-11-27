@@ -155,13 +155,17 @@ export const UEFI_TOOL_CONTRACTS = [
     ...toolContractMetadata("inspect_uefi_nvram", evidenceEffects),
     kind: "firmware-provider",
     description:
-      "Map valid AMI NVAR entries inside a local flash image, including nested factory defaults such as StdDefaults. Reports raw link displacements, attributes, inline GUIDs or GUID-table indices, data ranges and SHA-256 digests. Data-only records have no name or GUID reference. Links describe the image bytes. The parser walks physical records and reports the nesting depth and parent offset. No external tools or target execution are required.",
+      "Map AMI NVAR chains and TianoCore EDK2 / OVMF VARIABLE_STORE_HEADER regions inside a local flash image. AMI results stay under stores (nested StdDefaults, raw link displacements, 8-bit attributes, GUID index or inline GUID). EDK2 results are under edk2_stores (gEfiVariableGuid / gEfiAuthenticatedVariableGuid, 32-bit EFI Attributes, State including added vs in-deleted-transition vs deleted, vendor GUID, data ranges and SHA-256). Variable bytes are never interpreted. No external tools or target execution are required.",
     inputSchema: uefiInputSchemas.inspect_uefi_nvram,
     outputSchema: evidenceResultOf(uefiResultSchemas.inspect_uefi_nvram),
     examples: [
       {
         title: "Inspect AMI NVRAM stores",
         input: { path: "/media/firmware/images/B550AORUSELITEV212.FId" },
+      },
+      {
+        title: "Inspect EDK2 / OVMF variable store",
+        input: { path: "/tmp/OVMF_VARS.fd" },
       },
     ],
   },

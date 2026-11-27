@@ -41,6 +41,14 @@ import {
   type RelationshipCoverage,
 } from "../domain/relationshipCoverage.js";
 
+/**
+ * How many functions one decompile request names in `upcomingDecompiles`,
+ * its own first. A provider that prepares them together retains that many
+ * results at most, so a larger window would only discard work. This is a
+ * batching size, not an analysis limit, and a provider is free to ignore it.
+ */
+export const UPCOMING_DECOMPILES_WINDOW = 32;
+
 export interface ExecutionOptions {
   /** Ephemeral state shared only by one composed workflow. */
   readonly workScope?: AnalysisWorkScope;
