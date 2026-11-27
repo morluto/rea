@@ -86,12 +86,15 @@ exit 1
         expect(output.json).toMatchObject({
           details: { limit: { parameter: recovery, cli_flag: cliFlag } },
         });
-        if (
-          command === "inspect-go-binary" ||
-          command === "inspect-il2cpp-metadata"
-        ) {
+        if (command === "inspect-go-binary") {
           expect(refusal.remediation.action).toContain(cliFlag);
           expect(refusal.remediation.action).toContain(`rea ${command}`);
+        } else if (command === "inspect-il2cpp-metadata") {
+          expect(refusal.remediation.action).toContain(cliFlag);
+          expect(refusal.remediation.action).toContain(
+            "already at its maximum",
+          );
+          expect(refusal.remediation.action).not.toContain("Pass a larger");
         } else {
           expect(refusal.remediation.action).not.toContain("--");
         }

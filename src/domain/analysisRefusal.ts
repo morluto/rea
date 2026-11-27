@@ -165,14 +165,18 @@ const adjustableBudgetRemediation = (
     required_value: required,
   } = facts;
   const range = quantity(`${String(minimum)}..${String(maximum)}`, unit);
+  const spelledControl =
+    setting !== undefined && control === setting
+      ? control
+      : spelling.control(control, operation);
   const effective =
     value === null
       ? `The effective ${control} value is unknown`
       : `${operation} reached its ${control} budget of ${quantity(value, unit)}${source === undefined ? "" : ` (source ${source})`}`;
   if (value !== null && value >= maximum)
-    return `${effective}. ${control} is already at its maximum (${range}); narrow the request or select a smaller input. ${UNCHANGED}`;
+    return `${effective}. ${spelledControl} is already at its maximum (${range}); narrow the request or select a smaller input. ${UNCHANGED}`;
   if (required !== undefined && required > maximum)
-    return `${effective}. The request requires ${quantity(required, unit)}, above the ${control} maximum (${range}); narrow the request or select a smaller input. ${UNCHANGED}`;
+    return `${effective}. The request requires ${quantity(required, unit)}, above the ${spelledControl} maximum (${range}); narrow the request or select a smaller input. ${UNCHANGED}`;
   const atLeast =
     required === undefined ? "" : `at least ${quantity(required, unit)}; `;
   const bounds = `(${atLeast}range ${range}), then retry.`;
@@ -180,7 +184,7 @@ const adjustableBudgetRemediation = (
     setting === undefined ? undefined : settingRoute(setting, callerLifetime);
   if (setting !== undefined && control === setting)
     return `${effective}. ${route?.alone ?? `Set ${setting} for the next invocation`} ${bounds}`;
-  const perCall = `${effective}. Pass a larger ${spelling.control(control, operation)} on ${spelling.call(operation)} ${bounds}`;
+  const perCall = `${effective}. Pass a larger ${spelledControl} on ${spelling.call(operation)} ${bounds}`;
   return route === undefined ? perCall : `${perCall} ${route.after}`;
 };
 

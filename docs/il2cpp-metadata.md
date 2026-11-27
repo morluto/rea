@@ -603,7 +603,7 @@ validated section row counts; these counts do not establish that names and
 relationships were decoded. A file that changes during reading and a cancelled
 request keep distinct errors. Decode checkpoints yield for cancellation, and
 close waits for active work. Each reader admits one inspection at a time.
-Resource guards default the selected metadata file to 256 MiB (`max_file_bytes`, CLI `--max-file-bytes`, up to 1 GiB) and the encoded complete report to 64 MiB (`max_output_bytes`, CLI `--max-output-bytes`, up to 512 MiB), checking row counts before allocation and JSON/UTF-8/base64 expansion during decoding, before serialization. Names and identical literal spans are decoded
+Resource guards default the selected metadata file to 256 MiB (`max_file_bytes`, CLI `--max-file-bytes`, maximum 256 MiB) and the encoded complete report to 64 MiB (`max_output_bytes`, CLI `--max-output-bytes`, maximum 64 MiB), checking row counts before allocation and JSON/UTF-8/base64 expansion during decoding, before serialization. Names and identical literal spans are decoded
 once within one stable file snapshot; no filesystem results are cached across
 inspections. Ownership assignment also yields to cancellation. MCP also applies its
 [response transport budget](reference/mcp-contracts.md); a complete report within the
