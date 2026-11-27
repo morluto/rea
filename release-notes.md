@@ -1169,6 +1169,7 @@
 * **views:** share fixed page budget errors ([#14479](https://github.com/morluto/rea/issues/14479)) ([a2fd2d7](https://github.com/morluto/rea/commit/a2fd2d7d3045951ee684b6612294495d9c4f7435))
 * **views:** share invalid parent subject errors ([#14505](https://github.com/morluto/rea/issues/14505)) ([59a0ed3](https://github.com/morluto/rea/commit/59a0ed33fb5dad9b6bcce3e7f318350d88fbc78c))
 * **views:** share optional filter set construction ([#14850](https://github.com/morluto/rea/issues/14850)) ([3fc508d](https://github.com/morluto/rea/commit/3fc508ddcc42d39aa837d10709f0383176ee3d8f))
+* **vsix:** share manifest extension list parsing ([#14876](https://github.com/morluto/rea/issues/14876)) ([16af28c](https://github.com/morluto/rea/commit/16af28c09e7d242a52ef1509c12f96cbabb032ea))
 * **web:** remove the superseded single-query module matcher ([#14319](https://github.com/morluto/rea/issues/14319)) ([ab96130](https://github.com/morluto/rea/commit/ab96130f2277fa8a8571fb4bb4f210b6902acd5b))
 * **web:** reuse the shared map list appender ([#14531](https://github.com/morluto/rea/issues/14531)) ([8da1e56](https://github.com/morluto/rea/commit/8da1e562775eced153123b32cdace52c8030ef19))
 * **windows:** reuse the verified package argument encoder ([#14591](https://github.com/morluto/rea/issues/14591)) ([aad3c9c](https://github.com/morluto/rea/commit/aad3c9c45aa855e3c33fde4561a6e27f272cd695))
