@@ -365,6 +365,7 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
     let typeCount = 0;
     let entryCount = 0;
     let skippedChunks = 0;
+    let packageGapBytes = 0;
     let unrenderedValues = 0;
     let globalPool: StringPool | undefined;
 
@@ -407,13 +408,26 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
           `type entries start ${entriesStart} lies outside the chunk`,
         );
       const slotBytes = offset16 ? 2 : 4;
-      if (base + header.headerSize + count * slotBytes > base + header.size)
+      // The complete offset table must end at or before entriesStart;
+      // otherwise entry data and offsets overlap and the same bytes decode
+      // as both table slots and resource records.
+      if (header.headerSize + count * slotBytes > entriesStart)
         return formatFailure(
-          `type ${typeId} declares ${count} entry offsets past the chunk end`,
+          `type ${typeId} declares ${count} entry offsets past the table end`,
         );
       if (count > ARSC_MAX_ENTRIES)
         return limitFailure(
           `type ${typeId} declares ${count} entries above the ${ARSC_MAX_ENTRIES} bound`,
+        );
+      // Resource IDs pack type and entry into 8/16-bit fields; wider values
+      // collide distinct resources onto one exported ID.
+      if (typeId + typeIdOffset > 0xff)
+        return formatFailure(
+          `type ${typeId} with id offset ${typeIdOffset} escapes the 8-bit type field`,
+        );
+      if (count > 0x10000)
+        return formatFailure(
+          `type ${typeId} declares ${count} entries past the 16-bit index field`,
         );
       const typeName = typeStrings.get(typeId - 1);
       if (typeName === undefined || typeName === null)
@@ -580,6 +594,13 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
         for (let m = 0; m < mapCount; m++) {
           const mapBase = entryBase + entrySize + m * 12;
           const mapName = reader.u32(mapBase);
+          if (
+            reader.u16(mapBase + 4) !== RES_VALUE_BYTES ||
+            reader.bytes[mapBase + 6] !== 0
+          )
+            return formatFailure(
+              `item ${m} of complex entry ${index} in type ${typeId} carries an invalid Res_value header`,
+            );
           const valueType = reader.bytes[mapBase + 7]!;
           const valueData = reader.u32(mapBase + 8);
           const rendered = globalPool
@@ -695,8 +716,24 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
           },
         );
         if (!keyStrings.ok) return keyStrings;
+        // Account for every byte before the walked body: spans ahead of
+        // the first pool or between the two pools are otherwise invisible
+        // to coverage, while overlapping pools cannot both be genuine.
+        const firstPoolAt = Math.min(typeStringsAt, keyStringsAt);
+        const firstPool =
+          typeStringsAt <= keyStringsAt ? typePoolHeader : keyPoolHeader;
+        const firstPoolEnd = firstPoolAt + firstPool.value.size;
+        const secondPoolAt = Math.max(typeStringsAt, keyStringsAt);
+        if (firstPoolAt > h.headerSize)
+          packageGapBytes += firstPoolAt - h.headerSize;
+        if (firstPoolEnd < secondPoolAt)
+          packageGapBytes += secondPoolAt - firstPoolEnd;
+        if (firstPoolEnd > secondPoolAt && secondPoolAt !== firstPoolAt)
+          return formatFailure(
+            "package type/key string pools overlap each other",
+          );
         // Walk the remaining package body after the larger pool offset.
-        let inner = cursor + Math.max(typeStringsAt, keyStringsAt);
+        let inner = cursor + secondPoolAt;
         const last =
           inner === cursor + typeStringsAt ? typePoolHeader : keyPoolHeader;
         inner += last.value.size;
@@ -779,6 +816,10 @@ class BufferedArscDecoder implements RegionDecoder<ArscDocumentImage> {
     if (skippedChunks !== 0)
       limitations.push(
         `${skippedChunks} library/overlay/staged-alias chunks were walked but not projected`,
+      );
+    if (packageGapBytes !== 0)
+      limitations.push(
+        `${packageGapBytes} package-body bytes before or between the string pools were not examined`,
       );
     if (unrenderedValues !== 0)
       limitations.push(
