@@ -16,15 +16,12 @@ import {
   type SignatureTypeName,
 } from "../domain/managed/managedMemberInspectorCore.js";
 import { signature } from "../../tests/fixtures/managedSignature.js";
-import {
-  metadataRowOffset,
-  readManagedMetadataLayout,
-} from "../domain/managed/managedMetadataLayout.js";
+import { metadataRowOffset } from "../domain/managed/managedMetadataLayout.js";
 import {
   buildManagedPeFixture,
   managedPeFixtureTarget,
 } from "./ManagedPe.fixture.js";
-import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
+import { readManagedFixtureMetadataLayout } from "./ManagedPeMetadata.fixture.js";
 import { compareManagedMembers } from "../domain/managed/managedMemberComparison.js";
 import { managedMemberInspectionSchema } from "../domain/managed/managedArtifact.js";
 import { managedSignatureTypeNames } from "../domain/managed/managedSignatureTypeNames.js";
@@ -43,16 +40,6 @@ const nameDigest = (name: string): Buffer => {
     .digest();
 };
 
-const metadataLayout = (bytes: Buffer) => {
-  const pe = readManagedPeLayout(bytes);
-  if (pe.cli === null) throw new Error("Fixture has no CLI metadata");
-  return readManagedMetadataLayout(
-    bytes,
-    pe.rvaToOffset(pe.cli.metadata.rva, pe.cli.metadata.size, "cli.metadata"),
-    pe.cli.metadata.size,
-  );
-};
-
 const named =
   (names: Readonly<Record<number, string>>) =>
   ({ value }: Parameters<SignatureTypeName>[0]): Buffer | null => {
@@ -63,7 +50,7 @@ const named =
 it.each([0, 0x25, 0x07])(
   "recovers method generic arity without admitting type coordinate %i",
   (value) => {
-    const layout = metadataLayout(buildManagedPeFixture());
+    const layout = readManagedFixtureMetadataLayout(buildManagedPeFixture());
     expect(
       methodGenericArity(layout, Buffer.from([0x10, 0x01, 0, 0x12, value])),
     ).toBe(1);
@@ -136,7 +123,7 @@ describe("resolved member signature digests", () => {
 describe("metadata type-name digest ownership", () => {
   it("shares declaration and operand identity while preserving invalid TypeDef diagnostics", () => {
     const bytes = buildManagedPeFixture();
-    const layout = metadataLayout(bytes);
+    const layout = readManagedFixtureMetadataLayout(bytes);
     const issues: ManagedParseIssue[] = [];
     const names = managedSignatureTypeNames(
       layout,
@@ -173,7 +160,7 @@ describe("metadata type-name digest ownership", () => {
     const bytes = buildManagedPeFixture({
       typeReferences: [{ namespace: "System", name: "Uri" }],
     });
-    const layout = metadataLayout(bytes);
+    const layout = readManagedFixtureMetadataLayout(bytes);
     const budget = new ManagedDecodeBudget();
     attachManagedDecodeBudget(layout, budget);
     const typeNames = managedSignatureTypeNames(
@@ -210,7 +197,7 @@ describe("metadata type-name digest ownership", () => {
         ...(index + 1 === rows ? {} : { enclosingRow: index + 3 }),
       })),
     });
-    const layout = metadataLayout(bytes);
+    const layout = readManagedFixtureMetadataLayout(bytes);
     const first =
       metadataRowOffset(layout, 1, 2) +
       layout.codedIndexSize("ResolutionScope");
@@ -304,7 +291,7 @@ describe("type operand names", () => {
       fieldSignature: Buffer.from([0x06, 0x12, uri]),
       methodSignature: Buffer.from([0x00, 0x00, 0x12, uri]),
     });
-    const layout = metadataLayout(bytes);
+    const layout = readManagedFixtureMetadataLayout(bytes);
     // An out-of-range name index makes TypeRef row 2 unreadable.
     bytes.writeUInt16LE(
       0xffff,
