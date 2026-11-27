@@ -192,6 +192,26 @@ Multiple mapping candidates fail as ambiguous rather than selecting a bank or
 address space. A successful conversion retains the file offset, mapped address
 and procedure entry in raw Evidence and `locations`.
 
+Ghidra can disassemble code without creating a function for it. A range named
+only by an exception-frame entry and reached through a data reference is one
+case: `main` in a stripped ELF is passed to `__libc_start_main` as a pointer
+and never called. Such an address is absent from `list_procedures`. When a
+decompile selector names an analysis address that holds disassembled code
+outside every function, `procedure_pseudo_code` decompiles it on the fly from
+an entry found by following control flow back from that address, the way
+Ghidra's decompiler panel does. The Program and the procedure inventory are
+unchanged, and the result's limitations state that the entry and extent are
+inferred rather than an analyzed function boundary. This reading takes
+precedence over the file-offset fallback. A file offset that maps to such code
+resolves the same way as its mapped address; its `selection` reports the
+inferred entry as `procedure_address`. Other procedure operations still
+require a function and say when the address holds code without one.
+
+Completed decompilations are reused while the Program is unchanged, so
+repeating `procedure_pseudo_code` or `analyze_function` for one function does
+not run the native decompiler again. A rename, comment or payload-limit change
+discards them.
+
 If an offset maps to loaded target bytes but no procedure starts at or contains
 the mapped address, the failure preserves both the original file offset and
 analysis address. This differs from an unmapped offset and does not recommend

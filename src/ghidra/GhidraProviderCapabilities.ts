@@ -209,6 +209,7 @@ export const ghidraOperationLimitations = (
     case "procedure_address":
       return [
         "External functions and local thunks are distinct; procedure metadata identifies both and preserves a thunk target when Ghidra resolves one.",
+        "The inventory lists Ghidra functions. Code Ghidra disassembled without creating a function, such as main in a stripped ELF, is absent: list_names reports it as a label, and procedure_pseudo_code decompiles it by address.",
       ];
     case "list_strings":
       return [
@@ -281,7 +282,8 @@ export const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
       reason: null,
       // Dossier projections consume runtime budgets. Reobserve even an imported
       // snapshot so a raised or lowered budget cannot replay stale flow coverage.
-      // Ghidra retains its own native decompiler cache.
+      // The Java bridge keeps completed decompilations of the current Program
+      // state, so reobserving does not run the native decompiler again.
       ...(GHIDRA_MUTATING_OPERATIONS.has(operation) ||
       operation === "list_documents"
         ? {}
