@@ -130,7 +130,12 @@ export const suggestAdvertisedTools = (
 
   const allMatches = rankCatalogToolMatches(searchable, words, "all", true);
   if (allMatches.length > 0) return allMatches.slice(0, limit);
-  if (words.length <= 1) return [];
+  if (words.length <= 1) {
+    // Single-word fallback: Levenshtein distance against each word in tool names
+    const levMatches = suggestByLevenshtein(trimmed, candidates, limit);
+    if (levMatches.length > 0) return levMatches;
+    return [];
+  }
   return rankCatalogToolMatches(searchable, words, "any", true).slice(0, limit);
 };
 
@@ -142,7 +147,84 @@ export const suggestAdvertisedTools = (
 export const formatUnloadedMcpToolMessage = (requested: string): string =>
   `MCP tool ${requested} is in scope but not loaded on this connection. Call discover_tools with names: [${JSON.stringify(requested)}] to load it and read its input schema, then call it again.`;
 
-/** Build the JSON-RPC -32602 error message for an unadvertised MCP tool name. */
+/** Maximum Levenshtein distance to consider a match (prevents unrelated suggestions). */
+const MAX_LEVENSHTEIN_DISTANCE = 3;
+/** Minimum requested name length for Levenshtein fallback (avoids matching very short names). */
+const MIN_LEVENSHTEIN_NAME_LENGTH = 6;
+
+/**
+ * Compute Levenshtein distance between two strings.
+ * Uses optimized O(min(m,n)) space with early exit when distance exceeds maxDistance.
+ */
+const levenshteinDistance = (
+  a: string,
+  b: string,
+  maxDistance: number,
+): number => {
+  if (a.length > b.length) return levenshteinDistance(b, a, maxDistance);
+
+  const aLen = a.length;
+  const bLen = b.length;
+
+  if (bLen - aLen > maxDistance) return maxDistance + 1;
+
+  let previous = Array.from({ length: aLen + 1 }, (_, i) => i);
+
+  for (let j = 1; j <= bLen; j += 1) {
+    const current = Array.from({ length: aLen + 1 });
+    current[0] = j;
+    let minInRow = j;
+
+    for (let i = 1; i <= aLen; i += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      current[i] = Math.min(
+        previous[i] + 1,
+        current[i - 1] + 1,
+        previous[i - 1] + cost,
+      );
+      minInRow = Math.min(minInRow, current[i]);
+    }
+    if (minInRow > maxDistance) return maxDistance + 1;
+    previous = current;
+  }
+  return previous[aLen];
+};
+
+/**
+ * Find tools with minimal Levenshtein distance to the requested name.
+ * Compares against each word within a tool's name/description so multi-part
+ * tool names like "decompile_all" can match a typo like "decomplie".
+ * Returns tools sorted by distance, then alphabetically.
+ */
+const suggestByLevenshtein = (
+  requested: string,
+  candidates: readonly AdvertisedToolDescriptor[],
+  limit: number,
+  maxDistance = MAX_LEVENSHTEIN_DISTANCE,
+): readonly string[] => {
+  if (requested.length < MIN_LEVENSHTEIN_NAME_LENGTH) return [];
+
+  const matches: { name: string; distance: number }[] = [];
+
+  for (const candidate of candidates) {
+    const words = candidate.name.split(/[\s_-]+/u);
+    let bestDistance = maxDistance + 1;
+    for (const word of words) {
+      const distance = levenshteinDistance(
+        requested.toLowerCase(),
+        word.toLowerCase(),
+        maxDistance,
+      );
+      if (distance < bestDistance) bestDistance = distance;
+    }
+    if (bestDistance <= maxDistance) {
+      matches.push({ name: candidate.name, distance: bestDistance });
+    }
+  }
+
+  matches.sort((a, b) => a.distance - b.distance || (a.name < b.name ? -1 : 1));
+  return matches.slice(0, limit).map((m) => m.name);
+};
 export const formatUnknownMcpToolMessage = (
   requested: string,
   catalog: AdvertisedToolCatalog,
