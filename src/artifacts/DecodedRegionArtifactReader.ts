@@ -12,6 +12,8 @@ import type {
 import {
   ArtifactReaderFailure,
   malformedArtifact,
+  truncatedArtifact,
+  unsupportedArtifact,
   copyArtifactEntry,
   assertProducedEntry,
   type ArtifactEntry,
@@ -303,18 +305,35 @@ export class DecodedRegionArtifactReader<Image> implements ArtifactReader {
     return image.value;
   }
 
+  /** Each decoder failure kind keeps its own typed reader failure. */
   #failure(failure: RegionDecodeFailure): ArtifactReaderFailure {
-    if (failure.kind === "malformed")
-      return malformedArtifact(
-        this.format,
-        `${this.#decoding.label} is malformed: ${failure.message}`,
-      );
-    const mapped = this.#decoding.limitFailure?.(failure);
-    if (mapped !== undefined) return mapped;
-    return new ArtifactReaderFailure(
-      "limit",
-      `${this.#decoding.label} exceeds a fixed limit: ${failure.message}`,
-      failure.boundary === undefined ? {} : { boundary: failure.boundary },
-    );
+    const label = this.#decoding.label;
+    switch (failure.kind) {
+      case "malformed":
+        return malformedArtifact(
+          this.format,
+          `${label} is malformed: ${failure.message}`,
+        );
+      case "truncated":
+        return truncatedArtifact(
+          this.format,
+          `${label} is truncated: ${failure.message}`,
+          failure.extent ?? {},
+        );
+      case "unsupported":
+        return unsupportedArtifact(
+          this.format,
+          `${label} is not supported: ${failure.message}`,
+        );
+      case "limit": {
+        const mapped = this.#decoding.limitFailure?.(failure);
+        if (mapped !== undefined) return mapped;
+        return new ArtifactReaderFailure(
+          "limit",
+          `${label} exceeds a fixed limit: ${failure.message}`,
+          failure.boundary === undefined ? {} : { boundary: failure.boundary },
+        );
+      }
+    }
   }
 }

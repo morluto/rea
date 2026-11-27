@@ -57,9 +57,15 @@ const readPath = async (path: string) => {
 it("refuses a header cut short", async () => {
   const bytes = megaDriveRom().subarray(0, 0x180);
   await expect(readRejected(bytes)).rejects.toThrow(/truncated/u);
+  // A recognized header that stops short is truncated, with its measured
+  // extent, not malformed.
   await expect(readRejected(bytes)).rejects.toMatchObject({
-    reason: "malformed",
-    parseFailure: { kind: "malformed", format: "mega-drive-rom" },
+    reason: "truncated",
+    parseFailure: {
+      kind: "truncated",
+      format: "mega-drive-rom",
+      extent: { availableBytes: 0x180, requiredBytes: 0x200 },
+    },
   });
 });
 

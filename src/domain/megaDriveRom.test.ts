@@ -75,8 +75,18 @@ it("reports the same header facts for a plain image and its SMD dump", () => {
     smd_blocks: null,
     image_bytes: plain.length,
     checksum: { matches: true },
-    rom: { start: 0, end: plain.length - 1 },
-    ram: { start: 0x00ff_0000, end: 0x00ff_ffff },
+    rom: {
+      start: 0,
+      end: plain.length - 1,
+      bus_start: 0,
+      bus_end: plain.length - 1,
+    },
+    ram: {
+      start: 0x00ff_0000,
+      end: 0x00ff_ffff,
+      bus_start: 0x00ff_0000,
+      bus_end: 0x00ff_ffff,
+    },
     external_ram: { present: false },
   });
   expect(plainRom.metadata.vectors).toHaveLength(64);
@@ -192,7 +202,7 @@ it("flags ROM and RAM ranges that disagree with the image", () => {
   );
   expect(aliasedRam.limitations.join("\n")).not.toContain("before RAM start");
   expect(aliasedRam.limitations.join("\n")).not.toContain("64 KiB work RAM");
-  expect(aliasedRam.metadata.ram).toEqual({
+  expect(aliasedRam.metadata.ram).toMatchObject({
     start: 0xe0ff_0000,
     end: 0x00ff_ffff,
   });
@@ -202,7 +212,10 @@ it("flags ROM and RAM ranges that disagree with the image", () => {
   );
   expect(oversizedRam.complete).toBe(false);
   expect(oversizedRam.limitations.join("\n")).toContain("64 KiB work RAM");
-  expect(oversizedRam.metadata.ram).toEqual({ start: 0, end: 0xffff_ffff });
+  expect(oversizedRam.metadata.ram).toMatchObject({
+    start: 0,
+    end: 0xffff_ffff,
+  });
 
   // SGDK declares work RAM with a nonzero top byte, which the 68000's 24-bit
   // bus ignores; the declared values are kept as written.
@@ -210,7 +223,7 @@ it("flags ROM and RAM ranges that disagree with the image", () => {
     megaDriveRom({ ramStart: 0xe0ff_0000, ramEnd: 0xe0ff_ffff }),
   );
   expect(sgdkRam.limitations.join("\n")).not.toContain("64 KiB work RAM");
-  expect(sgdkRam.metadata.ram).toEqual({
+  expect(sgdkRam.metadata.ram).toMatchObject({
     start: 0xe0ff_0000,
     end: 0xe0ff_ffff,
   });
@@ -221,7 +234,7 @@ it("flags ROM and RAM ranges that disagree with the image", () => {
     megaDriveRom({ ramStart: 0x00e0_0000, ramEnd: 0x00e0_ffff }),
   );
   expect(mirroredRam.limitations.join("\n")).not.toContain("64 KiB work RAM");
-  expect(mirroredRam.metadata.ram).toEqual({
+  expect(mirroredRam.metadata.ram).toMatchObject({
     start: 0x00e0_0000,
     end: 0x00e0_ffff,
   });
@@ -239,7 +252,7 @@ it("flags ROM and RAM ranges that disagree with the image", () => {
   const wrongRam = decoded(megaDriveRom({ ramStart: 0, ramEnd: 0xffff }));
   expect(wrongRam.complete).toBe(false);
   expect(wrongRam.limitations.join("\n")).toContain("64 KiB work RAM");
-  expect(wrongRam.metadata.ram).toEqual({ start: 0, end: 0xffff });
+  expect(wrongRam.metadata.ram).toMatchObject({ start: 0, end: 0xffff });
 
   const trailing = decoded(megaDriveRom({ romEnd: 0x2ff }));
   expect(trailing.metadata.checksum.matches).toBe(true);
@@ -369,6 +382,19 @@ it("compares the reset PC with the ROM range on the 68000's 24-bit bus", () => {
   );
   expect(highByte.complete).toBe(true);
   expect(highByte.metadata.reset_pc).toBe(0xff00_0200);
+  expect(highByte.metadata.reset_pc_bus).toBe(0x200);
+  // An aliased ROM start: the bus start is where a raw m68k load maps
+  // file offset 0, and the reset PC lands inside that loaded range.
+  const aliasedRom = decoded(
+    megaDriveRom({ romStart: 0xff00_0000, romEnd: 0xff00_03ff }),
+  );
+  expect(aliasedRom.metadata.rom).toEqual({
+    start: 0xff00_0000,
+    end: 0xff00_03ff,
+    bus_start: 0,
+    bus_end: 0x3ff,
+  });
+  expect(aliasedRom.metadata.reset_pc_bus).toBe(0x200);
   expect(
     decoded(megaDriveRom({ resetPc: 0xff00_0400 })).limitations.join("\n"),
   ).toContain("outside the declared ROM range");
@@ -390,6 +416,8 @@ it("reads the ROM range and checksum window on the 68000's 24-bit bus", () => {
   expect(highEnd.metadata.rom).toEqual({
     start: 0xff00_0000,
     end: 0xff00_02ff,
+    bus_start: 0,
+    bus_end: 0x2ff,
   });
   const highEndText = highEnd.limitations.join("\n");
   expect(highEndText).toContain("stay in program.bin");
@@ -441,8 +469,10 @@ it("refuses a truncated plain header", () => {
   const result = decodeMegaDriveRom(bytes);
   expect(result.ok).toBe(false);
   if (result.ok) return;
-  expect(result.error.kind).toBe("malformed");
-  expect(result.error.message).toContain("truncated");
+  expect(result.error).toMatchObject({
+    kind: "truncated",
+    extent: { availableBytes: 0x180, requiredBytes: 0x200 },
+  });
 });
 
 it("recognizes SMD from the prefix bytes classification can see", () => {

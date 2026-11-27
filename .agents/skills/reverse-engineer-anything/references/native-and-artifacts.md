@@ -975,7 +975,7 @@ superset of the 68000 family; Amiga/Atari containers and vector-table entry
 discovery are unsupported. A Mega Drive or Genesis ROM is a container:
 `inspect_artifact` reads its header, and an `.smd` dump is de-interleaved to
 `program.bin`. Open that file as raw-binary `m68k` with `entry_point` set to
-the declared ROM start, usually `0x0`. Windows Ghidra P0 admits raw images only for `6502`. See [raw binary guide](https://github.com/morluto/rea/blob/main/docs/providers/raw-binary.md).
+`rom.bus_start`, the 24-bit ROM start, usually `0x0`. Windows Ghidra P0 admits raw images only for `6502`. See [raw binary guide](https://github.com/morluto/rea/blob/main/docs/providers/raw-binary.md).
 
 Intel HEX, S-record, UF2 and DfuSe files are containers, not raw images:
 `inspect_artifact` lists address regions (UF2 per familyID, DfuSe per element
@@ -1138,8 +1138,10 @@ member has no file offset because its bytes are de-interleaved. A checksum
 mismatch or a ROM range that disagrees with the file leaves coverage
 `unknown`. 32X and Sega CD system strings are reported and not decoded.
 Extract `program.bin` and open it as raw-binary `m68k` with `entry_point`
-set to the declared ROM start (usually `0x0`), so file offset 0 maps at that
-address. `reset_pc` is where code begins; raw-binary does not discover
+set to `rom.bus_start` (usually `0x0`), so file offset 0 maps at that
+address. Raw m68k does not apply the console's 24-bit address aliases, so use
+the bus values, not the stored `rom.start`. `reset_pc_bus` is where code
+begins; raw-binary does not discover
 vectors, and analysis at `entry_point` `0x0` starts on the vector table.
 Windows Ghidra P0 does not admit `m68k`. The image ceiling is 8 MiB, and an
 SMD dump is at most 512 blocks; this release has no runtime override. See

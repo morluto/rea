@@ -120,6 +120,14 @@ const WORK_RAM_MIRROR_END = 0x00ff_ffff;
 const busAddress = (declared: number): number =>
   (declared & M68000_ADDRESS_MASK) >>> 0;
 
+/** A declared range with the bus addresses the 68000 drives for it. */
+const busRange = (start: number, end: number) => ({
+  start,
+  end,
+  bus_start: busAddress(start),
+  bus_end: busAddress(end),
+});
+
 /**
  * Whether a declared range is in order on the bus. Every header range is
  * ordered by this, so endpoints that alias through different top bytes,
@@ -516,8 +524,9 @@ const parseMegaDriveImage = (
 ): Result<MegaDriveRom, RegionDecodeFailure> => {
   if (image.length < MIN_IMAGE_BYTES)
     return err({
-      kind: "malformed",
-      message: `header is truncated: ${String(image.length)} bytes is shorter than the ${String(MIN_IMAGE_BYTES)}-byte vector table and header`,
+      kind: "truncated",
+      message: `the image is ${String(image.length)} bytes, shorter than the ${String(MIN_IMAGE_BYTES)}-byte vector table and header`,
+      extent: { availableBytes: image.length, requiredBytes: MIN_IMAGE_BYTES },
     });
   if (!hasSegaAt(image, SYSTEM_OFFSET))
     return err({
@@ -707,6 +716,7 @@ const parseMegaDriveImage = (
     memo,
     initial_ssp: initialSsp,
     reset_pc: resetPc,
+    reset_pc_bus: busAddress(resetPc),
     vectors,
     checksum: {
       declared: declaredChecksum,
@@ -714,8 +724,8 @@ const parseMegaDriveImage = (
       matches: declaredChecksum === summed.computed,
       summed_bytes: summed.summedBytes,
     },
-    rom: { start: romStart, end: romEnd },
-    ram: { start: ramStart, end: ramEnd },
+    rom: busRange(romStart, romEnd),
+    ram: busRange(ramStart, ramEnd),
     external_ram: externalPresent
       ? {
           present: true,

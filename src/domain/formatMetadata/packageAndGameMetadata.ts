@@ -445,9 +445,16 @@ const megaDriveChecksumSchema = z.strictObject({
   summed_bytes: offset,
 });
 
+/**
+ * A declared header range. `start` and `end` are the stored longwords;
+ * `bus_start` and `bus_end` are the 24-bit addresses the 68000 drives for
+ * them, which every check uses and a raw m68k load should use.
+ */
 const megaDriveAddressRangeSchema = z.strictObject({
   start: uint32,
   end: uint32,
+  bus_start: uint32,
+  bus_end: uint32,
 });
 
 /**
@@ -502,8 +509,10 @@ export const megaDriveRomMetadataSchema = z.strictObject({
   memo: megaDriveTextSchema,
   /** Vector 0, initial supervisor stack pointer. */
   initial_ssp: uint32,
-  /** Vector 1, reset program counter. */
+  /** Vector 1, reset program counter, as stored. */
   reset_pc: uint32,
+  /** The 24-bit address the 68000 fetches the first instruction from. */
+  reset_pc_bus: uint32,
   vectors: z.array(megaDriveVectorSchema).length(64),
   checksum: megaDriveChecksumSchema,
   rom: megaDriveAddressRangeSchema,

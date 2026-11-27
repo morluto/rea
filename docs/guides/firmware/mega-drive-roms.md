@@ -38,7 +38,9 @@ DOS MZ or FAT header is left to that format when it also contains `SEGA` at
   16-bit sum of big-endian words from image offset `0x200` through the
   declared ROM end, counting a word only when both bytes are inside that
   window and inside the image. A mismatch is a limitation.
-- `rom` and `ram` start and end addresses, as declared. Ends are inclusive.
+- `rom` and `ram` start and end addresses, as declared, with `bus_start` and
+  `bus_end`, the 24-bit addresses the 68000 drives for them. Ends are
+  inclusive. `reset_pc_bus` is the same for the reset vector.
   Address checks use the 68000's 24-bit bus, so the top byte is ignored:
   the SGDK form `0xE0FF0000`-`0xE0FFFFFF` is work RAM, and a reset PC of
   `0xFF000200` is inside a ROM range that covers `0x200`. ROM ordering,
@@ -106,11 +108,15 @@ is truncated.
 ## Hand-off to raw m68k
 
 Extract `program.bin`. Open it with `format: "raw-binary"`,
-`architecture: "m68k"` and `entry_point` set to the declared ROM start,
-usually `0x0`. Raw m68k maps file offset 0 at `entry_point` and does not
-discover a vector table, so the image then sits at the ROM start. `reset_pc`
-is the address of the first instruction. Analysis started at `entry_point`
-`0x0` begins on the vector table, not at `reset_pc`. The entry must be even.
+`architecture: "m68k"` and `entry_point` set to `rom.bus_start`, usually
+`0x0`. Raw m68k uses full 32-bit addresses and does not apply the console's
+24-bit address aliases, so use the bus value rather than the stored
+`rom.start`: a header that stores `0xFF000000` is console address `0x0`.
+Raw m68k maps file offset 0 at `entry_point` and does not discover a vector
+table, so the image then sits at the ROM start. `reset_pc_bus` is the address
+of the first instruction in that load; `reset_pc` keeps the stored vector.
+Analysis started at `entry_point` `0x0` begins on the vector table, not at
+`reset_pc_bus`. The entry must be even.
 Windows Ghidra P0 does not admit `m68k`. See
 [raw binary](../../providers/raw-binary.md).
 
