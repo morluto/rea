@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { YARA_INCLUDE_LEXER_CASES } from "../../tests/fixtures/yara/includeLexerCases.js";
 import {
   MAX_RETAINED_DIRECTIVES,
   MAX_RETAINED_PATH_BYTES,
@@ -136,4 +137,14 @@ describe("createYaraIncludeScanner", () => {
     expect(scanBytewise(text)).toEqual(scan(text));
     expect(scan(text).total).toBe(3);
   });
+
+  // Independent of this scanner: each case's `opened` list is what libyara
+  // 4.5.4 itself asked to open (see the fixture). A wrong lexer assumption
+  // here would let an include through or refuse a valid rule.
+  it.each(YARA_INCLUDE_LEXER_CASES)(
+    "opens exactly what libyara opens: $name",
+    ({ text, opened }) => {
+      expect(scan(text).directives.map(({ path }) => path)).toEqual(opened);
+    },
+  );
 });

@@ -14,6 +14,8 @@ import {
 } from "../../../src/yara/YaraMatchesProvider.js";
 import { yaraMatchesSchema } from "../../../src/domain/yara/yaraMatches.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { YARA_INCLUDE_LEXER_CASES } from "../../fixtures/yara/includeLexerCases.js";
+import { createYaraIncludeScanner } from "../../../src/yara/YaraRuleIncludes.js";
 
 const findYara = (): string | undefined => {
   if (process.platform === "win32") return undefined;
@@ -233,5 +235,31 @@ it.skipIf(yara === undefined)(
       },
     ]);
     await service.close();
+  },
+);
+
+// The include scanner against the installed yara: no included file exists, so
+// yara reports the first directive its lexer starts as a missing include.
+it.skipIf(yara === undefined).each(YARA_INCLUDE_LEXER_CASES)(
+  "the include scanner and the installed yara agree: $name",
+  async ({ name, text }) => {
+    const root = await createTestTempDirectory("rea-yara-include-lexer-");
+    const rule = join(root, `${name}.yar`);
+    const sample = join(root, "sample.bin");
+    await writeFile(rule, text);
+    await writeFile(sample, "sample");
+    let stderr = "";
+    try {
+      execFileSync(yara!, [rule, sample], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (cause: unknown) {
+      stderr = String((cause as { stderr?: unknown }).stderr ?? "");
+    }
+    const yaraOpened = /can't open include file: (\S+)/u.exec(stderr)?.[1];
+    const scanner = createYaraIncludeScanner();
+    scanner.push(Buffer.from(text, "utf8"));
+    expect(scanner.finish().directives[0]?.path).toBe(yaraOpened);
   },
 );
