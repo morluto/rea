@@ -387,7 +387,9 @@ export class ArtifactResourceScope {
       )
         break;
     }
-    const failures = [...failed].map(([owner, cause]) => ({ owner, cause }));
+    const failures = [...failed]
+      .filter(([owner]) => this.#pending.has(owner))
+      .map(([owner, cause]) => ({ owner, cause }));
     if (failures.length === 0) return;
     const observations = failures.map(({ owner, cause }) =>
       ArtifactReaderFailure.cleanupObservation(

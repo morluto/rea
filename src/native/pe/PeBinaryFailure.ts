@@ -1,3 +1,5 @@
+import type { AnalysisParameterLimit } from "../../domain/analysisSettings.js";
+import { decodeLimit } from "../../domain/parseFailure.js";
 import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import {
   artifactFileCeilingConstraint,
@@ -25,12 +27,18 @@ interface PeBinaryInput {
 interface PeBinaryFailureOptions<Limit extends string> {
   readonly operation: string;
   readonly providerId: string;
-  /** The whole-file ceiling of the identity pass; `max_file_bytes` does not raise it. */
-  readonly fileCeiling: { readonly name: string; readonly bytes: number };
+  /**
+   * The whole-file ceiling of the identity pass (`max_file_bytes` does not
+   * raise it), or an adjustable `max_file_bytes` parameter limit when
+   * `max_file_bytes` directly bounds the whole-file read.
+   */
+  readonly fileCeiling:
+    | { readonly name: string; readonly bytes: number }
+    | { readonly parameterLimit: AnalysisParameterLimit };
   /** The allowances the parser names in its `BinaryResourceFailure`; no other reaches these readers. */
-  readonly limits: readonly Limit[];
+  readonly limits?: readonly Limit[];
   /** The control or recovery of the named allowance. */
-  readonly limitRecovery: (
+  readonly limitRecovery?: (
     limit: Limit,
     failure: BinaryResourceFailure,
   ) => ResourceConstraintRecovery & {
@@ -41,7 +49,7 @@ interface PeBinaryFailureOptions<Limit extends string> {
 }
 
 /** Keep one PE error interpretation while preserving the provider's cleanup and partial facts. */
-export const projectPeBinaryFailure = <Limit extends string>(
+export const projectPeBinaryFailure = <Limit extends string = never>(
   cause: unknown,
   input: PeBinaryInput,
   options: PeBinaryFailureOptions<Limit>,
@@ -61,7 +69,11 @@ export const projectPeBinaryFailure = <Limit extends string>(
           max_file_bytes: input.max_file_bytes,
         });
         if (readBudget !== undefined) return readBudget;
-        if (failure instanceof BinaryResourceFailure) {
+        if (
+          failure instanceof BinaryResourceFailure &&
+          options.limits !== undefined &&
+          options.limitRecovery !== undefined
+        ) {
           const limit = binaryResourceAllowance(failure, options.limits);
           if (limit === null) return undefined;
           return parseLimitConstraint(operation, "capacity", failure, {
@@ -71,10 +83,44 @@ export const projectPeBinaryFailure = <Limit extends string>(
         }
         return undefined;
       },
-      fileSize: (failure) =>
-        artifactFileCeilingConstraint(operation, failure, options.fileCeiling, {
-          max_file_bytes: input.max_file_bytes,
-        }),
+      fileSize: (failure) => {
+        if (!("parameterLimit" in options.fileCeiling))
+          return artifactFileCeilingConstraint(
+            operation,
+            failure,
+            options.fileCeiling,
+            {
+              max_file_bytes: input.max_file_bytes,
+            },
+          );
+        const { parameterLimit } = options.fileCeiling;
+        const requiredBytes = failure.observedBytes;
+        const limit: AnalysisParameterLimit =
+          requiredBytes === undefined ||
+          requiredBytes > BigInt(Number.MAX_SAFE_INTEGER)
+            ? parameterLimit
+            : { ...parameterLimit, required_value: Number(requiredBytes) };
+        return parseLimitConstraint(
+          operation,
+          "file-size",
+          decodeLimit(
+            "pe",
+            failure.message,
+            {
+              name: parameterLimit.parameter,
+              maximum: parameterLimit.effective_value,
+              ...(requiredBytes === undefined
+                ? {}
+                : { required: requiredBytes }),
+            },
+            { cause: failure },
+          ),
+          {
+            retryable: false,
+            limit,
+          },
+        );
+      },
     }),
   );
   if (options.completed !== undefined)

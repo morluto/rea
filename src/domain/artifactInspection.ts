@@ -468,6 +468,7 @@ const formatProbes = (
       : [];
   if (format === "bflt") return bfltProbes(inventory);
   if (format === "esp-image") return espFlashDumpProbes(inventory);
+  if (format === "zip") return zipPackageProbes(inventory);
   if (format === "fit") return fitProbes(inventory);
   if (format === "directory") return directoryProbes(inventory);
   if (format === "pe")
@@ -500,6 +501,25 @@ const bfltProbes = (
     },
   ];
 };
+
+// A ZIP whose root holds `extension.vsixmanifest` is a VS Code extension
+// package; the VSIX reader decodes its manifests without installing it.
+const zipPackageProbes = (
+  inventory: ArtifactInventoryResult,
+): ArtifactInspectionResult["next_probes"] =>
+  inventory.occurrences.some(
+    ({ logical_path, entry_kind }) =>
+      logical_path === "extension.vsixmanifest" && entry_kind === "file",
+  )
+    ? [
+        {
+          operation: "inspect_vsix_package",
+          rationale:
+            "Decode the VS Code extension manifests, activation events and native members without installing or running the extension.",
+          authority: "artifact-bytes",
+        },
+      ]
+    : [];
 
 // An ESP image that its reader found at the start of a flash dump read from
 // a later address is better read as that dump.
@@ -691,6 +711,11 @@ const STANDALONE_FORMAT_READERS = {
     operation: "inspect_devicetree",
     rationale:
       "Decode the flattened devicetree header, reservations and node tree.",
+  },
+  deb: {
+    operation: "inspect_deb_package",
+    rationale:
+      "Read the ar container, control metadata, maintainer scripts and data.tar inventory without installing or executing the package.",
   },
 } as const satisfies Record<
   "uefi" | StandaloneArtifactFormat,

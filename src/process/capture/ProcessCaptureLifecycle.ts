@@ -133,7 +133,12 @@ export type TerminalExitResult =
   | {
       readonly unobserved: true;
       readonly reason: "timeout" | "idle_timeout" | "cancelled";
-      readonly finalization: ProcessCaptureFinalization;
+      /**
+       * Present after a finalization interval recorded attempts. A direct
+       * kill that throws before that interval has none: there was no SIGTERM
+       * and the result does not invent an exit.
+       */
+      readonly finalization?: ProcessCaptureFinalization;
     };
 
 /**
@@ -848,7 +853,9 @@ export const describeUnverifiedCause = (
  * with its delivery result before the delivery is awaited, and each wait is
  * bounded by the cleanup verification grace. If the SIGKILL cannot be
  * delivered the wait ends with `unobserved: true` and no invented exit, so the
- * caller can keep its observations and release the run through cleanup.
+ * caller can keep its observations and release the run through cleanup. A
+ * direct `terminal.kill("SIGKILL")` that throws before the interval does the
+ * same and omits finalization, because that path never sent SIGTERM.
  */
 export const awaitTerminalExit = async ({
   terminal,
@@ -877,6 +884,7 @@ export const awaitTerminalExit = async ({
     // cannot shorten it or produce a negative elapsed time.
     let finalizationStartedAt: number | undefined;
     let escalationSent = false;
+    let killSent = false;
     let settled = false;
     let exitObserved = false;
     const finalizationSignals: {
@@ -896,14 +904,20 @@ export const awaitTerminalExit = async ({
       signals: finalizationSignals.map((attempt) => ({ ...attempt })),
     });
     const unobservedExit = (): void => {
-      if (settled || exitObserved || finalizationStartedAt === undefined)
-        return;
+      if (settled || exitObserved) return;
       settled = true;
       for (const timer of timers) timer.cancel();
       timers.clear();
+      const initiating = reason === "exited" ? "timeout" : reason;
+      // A direct kill can fail before any finalization attempt exists. End
+      // the wait without an exit code or a SIGKILL-only finalization record.
+      if (finalizationStartedAt === undefined) {
+        resolveExit({ unobserved: true, reason: initiating });
+        return;
+      }
       resolveExit({
         unobserved: true,
-        reason: reason === "exited" ? "timeout" : reason,
+        reason: initiating,
         finalization: snapshot(null),
       });
     };
@@ -979,18 +993,30 @@ export const awaitTerminalExit = async ({
         attempt("SIGKILL");
         return;
       }
-      terminal.kill("SIGKILL");
+      if (killSent) return;
+      killSent = true;
+      try {
+        terminal.kill("SIGKILL");
+      } catch {
+        unobservedExit();
+      }
     };
     const terminateAtDeadline = (): void => {
       if (scenario.finalization_ms === 0) {
-        terminal.kill("SIGKILL");
+        if (killSent) return;
+        killSent = true;
+        try {
+          terminal.kill("SIGKILL");
+        } catch {
+          unobservedExit();
+        }
         return;
       }
       finalizationStartedAt = monotonicProcessCaptureClock();
       attempt("SIGTERM");
     };
     terminal.onExit((exit) => {
-      if (settled) return;
+      if (settled || exitObserved) return;
       exitObserved = true;
       // Measures when the exit was observed, not when the operating system
       // ended the process; the PTY layer can deliver the notification late.
@@ -1070,6 +1096,8 @@ export const awaitTerminalExit = async ({
           scenario.finalization_ms
         )
           forceKill();
+      } else if (killSent) {
+        return;
       } else if (
         monotonicProcessCaptureClock() - started >=
         scenario.timeout_ms
@@ -1425,6 +1453,10 @@ export class ProcessCaptureResourceScope {
   /** Admit one capture before it starts acquiring resources. */
   async run<T>(operation: () => Promise<T>): Promise<T> {
     while (true) {
+      if (this.#closed)
+        throw new ProcessCaptureError(
+          "process capture lifecycle is closing; start a new server session before capturing again",
+        );
       while (this.#draining !== undefined) await this.#draining;
       if (this.#closed)
         throw new ProcessCaptureError(

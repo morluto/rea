@@ -43,6 +43,16 @@ import { findTypedScriptSiblingDeclarations } from "./typed-script-declarations-
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 
+// The source, test and vocabulary checks overlap within this invocation.
+const sourceTextByPath = new Map();
+const readSourceText = async (path) => {
+  const cached = sourceTextByPath.get(path);
+  if (cached !== undefined) return cached;
+  const source = await readFile(path, "utf8");
+  sourceTextByPath.set(path, source);
+  return source;
+};
+
 const listFiles = async (dir) => {
   const output = [];
   for (const entry of await readdir(dir, { withFileTypes: true })) {
@@ -61,7 +71,7 @@ const listFiles = async (dir) => {
 
 const sources = await listFiles(join(root, "src"));
 const files = await mapWithConcurrency(sources, async (path) => {
-  const source = await readFile(path, "utf8");
+  const source = await readSourceText(path);
   return {
     path: relative(root, path).split(sep).join("/"),
     content: blankComments(source),
@@ -944,7 +954,7 @@ const testFiles = await mapWithConcurrency(
   ],
   async (path) => ({
     path: relative(root, path).split(sep).join("/"),
-    content: await readFile(path, "utf8"),
+    content: await readSourceText(path),
   }),
 );
 checkCounted(
@@ -1007,7 +1017,7 @@ const verifierScripts = await mapWithConcurrency(
     ),
   async (path) => ({
     path: `scripts/${path}`,
-    content: blankComments(await readFile(join(root, "scripts", path), "utf8")),
+    content: blankComments(await readSourceText(join(root, "scripts", path))),
   }),
 );
 // The Windows native lane tests PrivateRuntimeRoot itself: it calls
@@ -1127,7 +1137,7 @@ const vocabularyFiles = await mapWithConcurrency(
   ],
   async (path) => ({
     path: relative(root, path).split(sep).join("/"),
-    content: await readFile(path, "utf8"),
+    content: await readSourceText(path),
   }),
 );
 const retiredVocabulary = vocabularyFiles.filter(
