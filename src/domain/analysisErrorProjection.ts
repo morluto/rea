@@ -869,6 +869,9 @@ const providerErrorDetails = (
     return {
       operation: error.operation,
       reason: error.reason,
+      ...(error.reportedLimits === undefined
+        ? {}
+        : { reported_limits: error.reportedLimits }),
       ...(error.cleanupIncomplete
         ? {
             cleanup: "incomplete",

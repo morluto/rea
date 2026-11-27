@@ -6,6 +6,7 @@ import {
   clearCliEvidencePublication,
   cliPublicationInvocation,
   recordCliEvidencePublication,
+  type PublishedEvidenceReceipt,
 } from "./cliEvidencePublication.js";
 import { recordCliDeliveredEvidence } from "./cliResultControls.js";
 import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewRequest.js";
@@ -63,6 +64,12 @@ interface CliEvidencePublication {
   readonly sourceEvidence?: readonly Evidence[];
   /** Invocation exclusions cover final cleanup and publication paths/diagnostics. */
   readonly sensitiveValues?: readonly string[];
+  /**
+   * False when a rerun would not reproduce the result, as for a
+   * non-idempotent extraction: an over-budget result the cache cannot keep
+   * is then delivered complete instead of pointing at a rerun.
+   */
+  readonly rerunRecoversResult?: boolean;
 }
 
 /** A one-shot run whose provider cleanup the delivery finishes before publishing. */
@@ -238,7 +245,8 @@ export const publishCliAnalysisEvidence = async (
  * An over-budget result without --evidence_output: its summary, with the
  * complete Evidence kept in the private cache when that is on, and the
  * rerun arguments otherwise. An operation without a summary view keeps
- * complete delivery.
+ * complete delivery, as does one whose rerun would not reproduce it when
+ * the cache does not keep it.
  */
 const deliverRetainedSummary = async (
   complete: Evidence,
@@ -257,6 +265,8 @@ const deliverRetainedSummary = async (
   // stayed incomplete before commit: report that failure and cleanup owner.
   if (retained?.ok === false && retained.error.reportError !== undefined)
     return projectFailure(retained.error.reportError);
+  if (retained?.ok !== true && input.rerunRecoversResult === false)
+    return complete;
   return retained?.ok === true
     ? {
         summary,
@@ -356,7 +366,6 @@ const retainOverBudgetEvidence = async (
   try {
     const projected = await prepareDeliveredEvidence(complete, input, true);
     if (!projected.ok) {
-      clearCliEvidencePublication();
       return err({
         reason: redactExplicitText(
           projected.error.error.message,
@@ -368,7 +377,6 @@ const retainOverBudgetEvidence = async (
     recordSha256 = retainedEvidenceDigest(complete);
     cacheKey = retainedEvidenceBundleDigest(prepared.bundle);
   } catch (cause: unknown) {
-    clearCliEvidencePublication();
     return err({
       reason: redactExplicitText(
         "The retained-Evidence cache could not be used: " + errorMessage(cause),
@@ -377,6 +385,7 @@ const retainOverBudgetEvidence = async (
     });
   }
   let attemptedPath: string | undefined;
+  let publishedReceipt: PublishedEvidenceReceipt | undefined;
   const kept = await retainCliEvidence<AnalysisError>({
     cacheKey,
     completeBytes,
@@ -390,7 +399,8 @@ const retainOverBudgetEvidence = async (
       // The bundle writer creates the file exclusively and never overwrites.
       const published = await publishPreparedEvidence(prepared, path, input);
       if (published.ok) {
-        const { bytes } = published.value.receipt as { readonly bytes: number };
+        publishedReceipt = published.value.receipt;
+        const { bytes } = published.value.receipt;
         return ok({ bytes });
       }
       const { error, committed } = published.error;
@@ -437,9 +447,13 @@ const retainOverBudgetEvidence = async (
         retentionFailure: redactedReason,
       });
     }
-    // Clear the recorded receipt whenever no published file remains on disk.
-    if (kept.error.committed === undefined && kept.error.fileRemains !== true)
-      clearCliEvidencePublication();
+    // Only this attempt's discarded publication can withdraw its receipt.
+    if (
+      kept.error.committed === undefined &&
+      kept.error.fileRemains !== true &&
+      publishedReceipt !== undefined
+    )
+      clearCliEvidencePublication(publishedReceipt);
     if (kept.error.committed !== undefined)
       return err({
         reason: redactedReason,
@@ -732,7 +746,7 @@ const publishPreparedEvidence = async (
   Result<
     {
       readonly delivered: Evidence;
-      readonly receipt: JsonValue;
+      readonly receipt: ReturnType<typeof bundleReceipt<number>>;
       readonly summarized: boolean;
       readonly budgeted: boolean;
     },

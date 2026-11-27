@@ -274,8 +274,10 @@ import { nativeLoadImageSummaryViewResultSchema } from "./summarySchemas/nativeL
 import { nativeObservationSummaryViewResultSchemas } from "./summarySchemas/nativeObservationSummarySchemas.js";
 import { nativeProcedureReferencesSummaryViewResultSchema } from "./summarySchemas/nativeProcedureReferencesSummarySchema.js";
 import { nativeValueTraceSummaryViewResultSchema } from "./summarySchemas/nativeValueTraceSummarySchema.js";
+import { debPackageSummaryViewResultSchema } from "./summarySchemas/debPackageSummarySchema.js";
 import { nugetNupkgSummaryViewResultSchema } from "./summarySchemas/nugetNupkgSummarySchema.js";
 import { objdumpSummaryViewResultSchema } from "./summarySchemas/objdumpSummarySchema.js";
+import { ociImageLayoutSummaryViewResultSchema } from "./summarySchemas/ociImageLayoutSummarySchema.js";
 import { pcapCaptureSummaryViewResultSchema } from "./summarySchemas/pcapCaptureSummarySchema.js";
 import {
   playwrightTracePageViewResultSchema,
@@ -294,6 +296,7 @@ import {
   sourceToBundlePageViewResultSchema,
   sourceToBundleSummaryViewResultSchema,
 } from "./summarySchemas/sourceToBundleSummarySchemas.js";
+import { vsixPackageSummaryViewResultSchema } from "./summarySchemas/vsixPackageSummarySchema.js";
 import { wasmArtifactSummaryViewResultSchema } from "./summarySchemas/wasmArtifactSummarySchema.js";
 import { warcArchiveSummaryViewResultSchema } from "./summarySchemas/warcArchiveSummarySchema.js";
 import {
@@ -312,6 +315,10 @@ import {
   apktoolResourcesPageViewResultSchema,
   apktoolResourcesSummaryViewResultSchema,
 } from "./summarySchemas/apktoolResourcesSummarySchemas.js";
+import {
+  artifactExtractionPageViewResultSchema,
+  artifactExtractionSummaryViewResultSchema,
+} from "./summarySchemas/artifactExtractionSummarySchemas.js";
 import { webNetworkCaptureSummaryViewResultSchema } from "./summarySchemas/webNetworkCaptureSummarySchema.js";
 import {
   webSourceLocationMatchesViewResultSchema,
@@ -342,6 +349,7 @@ export {
   byteEntropyPageViewResultSchema,
   byteEntropySummaryViewResultSchema,
   dartAotSummaryViewResultSchema,
+  debPackageSummaryViewResultSchema,
   desktopApplicationSummaryViewResultSchema,
   devicetreeSummaryViewResultSchema,
   elfDependenciesSummaryViewResultSchema,
@@ -378,6 +386,7 @@ export {
   nativeValueTraceSummaryViewResultSchema,
   nugetNupkgSummaryViewResultSchema,
   objdumpSummaryViewResultSchema,
+  ociImageLayoutSummaryViewResultSchema,
   pcapCaptureSummaryViewResultSchema,
   playwrightTracePageViewResultSchema,
   playwrightTraceSummaryViewResultSchema,
@@ -392,6 +401,7 @@ export {
   uefiExtractionSummaryViewResultSchema,
   uefiFirmwarePageViewResultSchema,
   uefiFirmwareSummaryViewResultSchema,
+  vsixPackageSummaryViewResultSchema,
   wasmArtifactSummaryViewResultSchema,
   warcArchiveSummaryViewResultSchema,
   webBundlePageViewResultSchema,
@@ -402,6 +412,8 @@ export {
   webExecutionSummaryViewResultSchema,
   apktoolResourcesPageViewResultSchema,
   apktoolResourcesSummaryViewResultSchema,
+  artifactExtractionPageViewResultSchema,
+  artifactExtractionSummaryViewResultSchema,
   webNetworkCaptureSummaryViewResultSchema,
   webSourceLocationMatchesViewResultSchema,
   webSourceLocationSummaryViewResultSchema,
@@ -413,7 +425,10 @@ const viewResultBase = {
   parent_operation: z.enum([
     "trace_web_source_location",
     "inspect_python_pyc",
+    "inspect_deb_package",
     "inspect_nuget_nupkg",
+    "inspect_vsix_package",
+    "inspect_oci_image_layout",
     "inspect_erlang_beam",
     "inspect_devicetree",
     "inspect_byte_entropy",
@@ -713,6 +728,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   webPagePageViewResultSchema,
   webExecutionPageViewResultSchema,
   apktoolResourcesPageViewResultSchema,
+  artifactExtractionPageViewResultSchema,
   sourceToBundlePageViewResultSchema,
   endpointComparisonPageViewResultSchema,
   apiContractPageViewResultSchema,
@@ -781,6 +797,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     uefiFirmwareSummaryViewResultSchema,
     uefiExtractionSummaryViewResultSchema,
     pythonPycSummaryViewResultSchema,
+    debPackageSummaryViewResultSchema,
     nativeExportsSummaryViewResultSchema,
     elfDependenciesSummaryViewResultSchema,
     byteEntropySummaryViewResultSchema,
@@ -828,7 +845,10 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     webExecutionSummaryViewResultSchema,
     apktoolResourcesSummaryViewResultSchema,
     androidReferencesSummaryViewResultSchema,
+    artifactExtractionSummaryViewResultSchema,
     nugetNupkgSummaryViewResultSchema,
+    vsixPackageSummaryViewResultSchema,
+    ociImageLayoutSummaryViewResultSchema,
   ]),
   z.strictObject({
     ...viewResultBase,

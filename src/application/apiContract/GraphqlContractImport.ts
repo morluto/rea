@@ -81,6 +81,7 @@ const decode = (
           available_heap_bytes: available,
         },
         {
+          measuredExhaustion: true,
           remediationAction:
             "Select a smaller complete document or free parser memory; reply paging does not reduce parsing work.",
         },

@@ -184,6 +184,11 @@ export const documentationSections = [
         route: "/pe-unwind-ranges",
       },
       {
+        text: "PE overlay",
+        source: "guides/native/pe-overlay.md",
+        route: "/pe-overlay",
+      },
+      {
         text: "Match native functions across builds",
         source: "native-function-matching.md",
         route: "/native-function-matching",
@@ -384,6 +389,11 @@ export const documentationSections = [
         route: "/nuget-nupkg",
       },
       {
+        text: "VS Code extension packages",
+        source: "guides/managed/vsix-package.md",
+        route: "/vsix-package",
+      },
+      {
         text: ".NET single-file bundles",
         source: "dotnet-bundles.md",
         route: "/dotnet-bundles",
@@ -409,9 +419,19 @@ export const documentationSections = [
         route: "/android-ota-payload",
       },
       {
+        text: "Android Verified Boot vbmeta images",
+        source: "guides/firmware/android-vbmeta.md",
+        route: "/android-vbmeta",
+      },
+      {
         text: "Android sparse images",
         source: "guides/firmware/android-sparse-image.md",
         route: "/android-sparse-image",
+      },
+      {
+        text: "UBI images",
+        source: "guides/firmware/ubi-images.md",
+        route: "/ubi-images",
       },
       {
         text: "Flattened devicetree inspection",
@@ -434,6 +454,11 @@ export const documentationSections = [
         route: "/fit-images",
       },
       {
+        text: "Qualcomm MBN images",
+        source: "guides/firmware/qualcomm-mbn-images.md",
+        route: "/qualcomm-mbn-images",
+      },
+      {
         text: "Intel HEX and S-record images",
         source: "hex-records.md",
         route: "/hex-records",
@@ -452,6 +477,16 @@ export const documentationSections = [
         text: "uClinux bFLT flat executables",
         source: "bflt-executables.md",
         route: "/bflt-executables",
+      },
+    ],
+  },
+  {
+    text: "Container images",
+    items: [
+      {
+        text: "OCI image layouts",
+        source: "guides/artifacts/oci-image-layout.md",
+        route: "/oci-image-layout",
       },
     ],
   },
@@ -499,6 +534,11 @@ export const documentationSections = [
         route: "/python-packaged-applications",
       },
       {
+        text: "Debian package inspection",
+        source: "deb-package.md",
+        route: "/deb-package",
+      },
+      {
         text: "CPython pyc inspection",
         source: "python-pyc.md",
         route: "/python-pyc",
@@ -532,6 +572,11 @@ export const documentationSections = [
         text: "WeChat mini-program wxapkg archives",
         source: "wxapkg.md",
         route: "/wxapkg",
+      },
+      {
+        text: "macOS flat installer packages",
+        source: "macos-pkg.md",
+        route: "/macos-pkg",
       },
       {
         text: "ISO 9660 disc images",

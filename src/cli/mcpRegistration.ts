@@ -133,7 +133,10 @@ const createRegistrationPresentation = (
 ): RegistrationPresentation | undefined => {
   const write =
     options.stdout ?? ((text: string) => process.stdout.write(text));
+  let exitRequested = false;
   const fail = () => {
+    if (exitRequested) return;
+    exitRequested = true;
     if (options.exit !== undefined) options.exit(1);
     else process.exitCode = 1;
   };

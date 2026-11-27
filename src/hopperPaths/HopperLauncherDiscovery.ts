@@ -1,4 +1,4 @@
-import { accessSync, constants, statSync } from "node:fs";
+import { isExecutableFileSync } from "../filesystem/regularFileProbe.js";
 
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 
@@ -61,15 +61,6 @@ export const hopperLauncherDiscovery = (
   };
 };
 
-const executableAvailable = (path: string): boolean => {
-  try {
-    accessSync(path, constants.X_OK);
-    return statSync(path).isFile();
-  } catch {
-    return false;
-  }
-};
-
 /**
  * The launcher automatic discovery selects: the first executable candidate,
  * then renamed macOS application bundles, else the platform's fallback.
@@ -77,7 +68,7 @@ const executableAvailable = (path: string): boolean => {
 export const defaultHopperLauncherPath = (
   platform: NodeJS.Platform,
   homeDirectory: string,
-  executable: (path: string) => boolean = executableAvailable,
+  executable: (path: string) => boolean = isExecutableFileSync,
 ): string => {
   const discovery = hopperLauncherDiscovery(platform, homeDirectory);
   for (const candidate of discovery.candidates)
