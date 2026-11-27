@@ -586,22 +586,17 @@ struct rea_after { char c; int i; };`;
         );
         assert.match(builtin.message, /uint \(existing \/uint\)/u);
         // Each is accepted by Ghidra's parser and dropped or stored differently.
-        // Declarator parentheses: refused at the default bound; a raised bound
-        // passes them to Ghidra, which reports a diagnostic and stores nothing.
-        const parenthesized = `struct rea_kept { char ${"(".repeat(10)}x${")".repeat(10)}; };`;
-        await first.overNesting(
+        // A definition admits no parentheses; Ghidra stores none of their forms as written.
+        const parenthesized = await first.refused(
           "define_native_data_types",
-          { declarations: parenthesized },
-          10,
-        );
-        const raised = await first.refused(
-          "define_native_data_types",
-          { declarations: parenthesized, parenthesis_max_depth: 10 },
+          {
+            declarations: `struct rea_kept { char ${"(".repeat(10)}x${")".repeat(10)}; };`,
+          },
           "declarations",
         );
         assert.match(
-          raised.message,
-          /Ghidra's C parser reported declarations/u,
+          parenthesized.message,
+          /a parenthesis .* at line 1, column 24/u,
         );
         for (const [declarations, reason] of [
           [
@@ -610,7 +605,7 @@ struct rea_after { char c; int i; };`;
           ],
           [
             "struct rea_callbacks { int (*fn)(int); };",
-            /function-pointer members: fn/u,
+            /a parenthesis \(a struct, union, enum or typedef definition admits none.*\) at line 1, column 28/u,
           ],
           [
             "struct rea_nested { struct { int a; } inner; };",
@@ -1082,6 +1077,14 @@ struct rea_after { char c; int i; };`;
               signature_max_utf16: 4096,
             },
           ],
+          [
+            "annotate_native_function",
+            {
+              procedure,
+              signature: `int total(${"(".repeat(4000)}`,
+              signature_max_utf16: 4096,
+            },
+          ],
         ];
         const outcomes = [];
         const errors = [];
@@ -1107,11 +1110,12 @@ struct rea_after { char c; int i; };`;
         // Pointer, array and typedef chains are refused before Ghidra walks them.
         assert.deepEqual(outcomes, [
           "invalid_request",
-          "resource_constraint",
+          "invalid_request",
           "resource_constraint",
           "resource_constraint",
           "resource_constraint",
           "invalid_request",
+          "resource_constraint",
           "resource_constraint",
         ]);
         assert.equal(

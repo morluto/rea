@@ -141,13 +141,13 @@ client's deadline or receive buffer.
 `annotate_native_function` `signature` and `define_native_data_types`
 `declarations` are parsed by Ghidra's C parser, which cannot be cancelled, so
 REA bounds that text before parsing it. Each bound has a per-call parameter;
-`parenthesis_max_depth` applies to both tools.
+`parenthesis_max_depth` applies to `signature`; a `declarations` text admits no parentheses at all.
 
-| Bound                                        | Default | Floor | Maximum | Slowest measured parse at the maximum      |
-| -------------------------------------------- | ------: | ----: | ------: | ------------------------------------------ |
-| `signature_max_utf16` (UTF-16 code units)    |    2048 |    16 |    4096 | 0.8 s (one chain of pointer declarators)   |
-| `declarations_max_utf16` (UTF-16 code units) |    4096 |    16 |    8192 | 6.8 s (one chain of pointer declarators)   |
-| `parenthesis_max_depth` (levels)             |       8 |     1 |      12 | 2.2 s (8192 units of 12-level expressions) |
+| Bound                                         | Default | Floor | Maximum | Slowest measured parse at the maximum      |
+| --------------------------------------------- | ------: | ----: | ------: | ------------------------------------------ |
+| `signature_max_utf16` (UTF-16 code units)     |    2048 |    16 |    4096 | 0.8 s (one chain of pointer declarators)   |
+| `declarations_max_utf16` (UTF-16 code units)  |    4096 |    16 |    8192 | 6.8 s (one chain of pointer declarators)   |
+| `parenthesis_max_depth` (`signature`, levels) |       8 |     1 |      12 | 2.2 s (8192 units of 12-level expressions) |
 
 Measured with Ghidra 12.2 on arm64 macOS; other hosts differ. Parse time is
 cubic in the length of a declarator chain (16384 units took 100 s) and doubles

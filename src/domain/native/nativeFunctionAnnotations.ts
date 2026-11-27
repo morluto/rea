@@ -1,12 +1,14 @@
 import { z } from "zod";
 import { functionDossierSchema } from "../native/functionDossier.js";
 import {
+  DEFAULT_GHIDRA_C_PARENTHESIS_DEPTH,
+  MAXIMUM_GHIDRA_C_PARENTHESIS_DEPTH,
+  MINIMUM_GHIDRA_C_PARENTHESIS_DEPTH,
   DEFAULT_GHIDRA_SIGNATURE_MAX_UTF16,
   MAXIMUM_GHIDRA_SIGNATURE_MAX_UTF16,
   MINIMUM_GHIDRA_C_TEXT_UTF16,
 } from "../analysisResourceLimits.js";
 import {
-  cParenthesisMaxDepthSchema,
   droppedCQualifierSchema,
   droppedCQualifiersDescription,
 } from "./nativeDataType.js";
@@ -44,7 +46,14 @@ export const nativeFunctionAnnotationsInputSchema = z
       .describe(
         `Longest signature to parse, in UTF-16 code units (default ${String(DEFAULT_GHIDRA_SIGNATURE_MAX_UTF16)}); the C parser cannot be cancelled`,
       ),
-    parenthesis_max_depth: cParenthesisMaxDepthSchema,
+    parenthesis_max_depth: z
+      .int()
+      .min(MINIMUM_GHIDRA_C_PARENTHESIS_DEPTH)
+      .max(MAXIMUM_GHIDRA_C_PARENTHESIS_DEPTH)
+      .optional()
+      .describe(
+        `Deepest parenthesis nesting to parse (default ${String(DEFAULT_GHIDRA_C_PARENTHESIS_DEPTH)})`,
+      ),
   })
   .refine(
     (value) =>

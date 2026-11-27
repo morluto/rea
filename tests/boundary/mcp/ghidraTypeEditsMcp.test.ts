@@ -456,12 +456,12 @@ it.each([
 it.each([
   {
     name: "the default bound",
-    operation: "define_native_data_types",
+    operation: "annotate_native_function",
     bound: undefined,
     required: 9,
     effective: 8,
     recovery:
-      /Pass a larger parenthesis_max_depth .*define_native_data_types.*\(at least 9; range 1\.\.12\), then retry/u,
+      /Pass a larger parenthesis_max_depth .*annotate_native_function.*\(at least 9; range 1\.\.12\), then retry/u,
   },
   {
     name: "the caller's bound",
@@ -474,7 +474,7 @@ it.each([
   },
   {
     name: "nesting above the maximum",
-    operation: "define_native_data_types",
+    operation: "annotate_native_function",
     bound: undefined,
     required: 13,
     effective: 8,

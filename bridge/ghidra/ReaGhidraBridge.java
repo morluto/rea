@@ -2546,6 +2546,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     if (enumExpression) explicitEnumValue = value;
                     expression = null;
                 }
+            } else if (token.equals("(")) {
+                // Ghidra applies no parenthesis in a definition as written: function
+                // declarators, attributes, casts, sizeof and grouped declarators are
+                // each refused or reported by its parser, so refuse the first one here.
+                throw refusedConstruct(code, field, "a parenthesis (a struct, union, enum or typedef definition " +
+                    "admits none: Ghidra does not store function declarators, attributes or grouped declarators as written)",
+                    line, column);
             } else if (token.equals("[") || (token.equals("=") && Boolean.TRUE.equals(enumBodies.peek())) ||
                     (token.equals(":") && Boolean.FALSE.equals(enumBodies.peek()) && !enumPending)) {
                 expression = new ArrayList<>();
@@ -2875,20 +2882,20 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private JsonObject defineNativeDataTypes(JsonObject params) throws Exception {
-        if (!Set.of("declarations", "declarations_max_utf16", "parenthesis_max_depth").containsAll(params.keySet()) || !params.has("declarations"))
+        if (!Set.of("declarations", "declarations_max_utf16").containsAll(params.keySet()) || !params.has("declarations"))
             throw new RequestFailure("invalid_request", "Bridge request fields are invalid");
         String code = "invalid_type_declarations";
         String declarations = requireText(params, "declarations");
         int lengthBound = callerCTextBound(
             params, "declarations_max_utf16", DEFAULT_TYPE_DECLARATIONS_UTF16, MAX_TYPE_DECLARATIONS_UTF16);
-        int parenthesisBound = callerParenthesisBound(params);
         // Ghidra's parser writes the database (see parseCallerC), so parsing,
         // validation and storage share one rollback: a refusal changes nothing.
         int transaction = currentProgram.startTransaction("REA data type definitions");
         boolean commit = false;
         try {
             ParsedCallerC parsedDeclarations =
-                parseCallerC(declarations, "declarations", true, code, lengthBound, parenthesisBound);
+                // Declarations admit no parentheses (see admitCallerC), so no nesting bound applies.
+                parseCallerC(declarations, "declarations", true, code, lengthBound, MAX_C_PARENTHESIS_DEPTH);
             CParser parser = parsedDeclarations.parser();
             if (!parser.getFunctions().isEmpty())
                 throw new RequestFailure(code, "declarations must not declare functions or function-pointer members: " +

@@ -1560,6 +1560,7 @@ changes nothing:
 | String and character literals                                                                                                                                                  | refused            | refused                                                                                                                                       |
 | Function body, default argument, second declaration                                                                                                                            | refused            | not applicable                                                                                                                                |
 | Function pointers                                                                                                                                                              | refused            | refused                                                                                                                                       |
+| Any parenthesis in a definition (Ghidra stores no parenthesized form there as written)                                                                                         | not applicable     | refused                                                                                                                                       |
 | Unnamed enum; unnamed struct or union other than `typedef struct { } name`                                                                                                     | refused            | refused                                                                                                                                       |
 | Repeated parameter or member name; struct, union or enum without members (Ghidra invents one for an undefined tag)                                                             | refused            | refused                                                                                                                                       |
 | Array parameter (Ghidra stores a pointer)                                                                                                                                      | refused            | not applicable                                                                                                                                |
@@ -1602,7 +1603,7 @@ value, range and the measured need:
 | ----------------------------------------------------- | ------: | -------- | ----------------------------------- |
 | `signature_max_utf16` (`annotate_native_function`)    |    2048 | 16..4096 | UTF-16 code units of `signature`    |
 | `declarations_max_utf16` (`define_native_data_types`) |    4096 | 16..8192 | UTF-16 code units of `declarations` |
-| `parenthesis_max_depth` (both)                        |       8 | 1..12    | Parenthesis nesting in either text  |
+| `parenthesis_max_depth` (`annotate_native_function`)  |       8 | 1..12    | Parenthesis nesting in `signature`  |
 
 The maxima follow measured parse times on Ghidra 12.2: the slowest admitted
 text at the maxima took about 7 seconds (a single chain of 8192 pointer
