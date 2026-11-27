@@ -56,6 +56,15 @@ const scenarios = [
     preferences: `${FIRST}, ["sandbox"]: true, "": runtimeValue`,
     preloadPath: "./first.js",
   },
+  {
+    preferences: `${FIRST}, ...(!app.isPackaged && { devTools: true })`,
+    preloadPath: "./first.js",
+  },
+  {
+    preferences: `${FIRST}, ...(isDev ? { preload: runtimePath } : {})`,
+    preloadPath: null,
+    overrideExpression: "isDev ? { preload: runtimePath } : {}",
+  },
 ] as const;
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
@@ -210,6 +219,40 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
           'new BrowserWindow(({webPreferences:{preload:"./first.js",...runtimeOptions}} as const));',
         expectedPreload: null,
         preferencesStatus: "object-literal",
+      },
+      // Conditional literal spreads after webPreferences can replace only
+      // the keys their branches copy.
+      {
+        sourceLine:
+          'new BrowserWindow({webPreferences:{preload:"./first.js",sandbox:true},...(process.platform==="darwin"&&{titleBarStyle:"hidden"})});',
+        expectedPreload: "./first.js",
+        preferencesStatus: "object-literal",
+      },
+      {
+        sourceLine:
+          'new BrowserWindow({webPreferences:{preload:"./first.js"},...(isMac?{titleBarStyle:"hidden"}:null)});',
+        expectedPreload: "./first.js",
+        preferencesStatus: "object-literal",
+      },
+      {
+        sourceLine:
+          'new BrowserWindow({webPreferences:{preload:"./first.js"},...(process.platform==="darwin"&&{webPreferences:{sandbox:false}})});',
+        expectedPreload: null,
+        preferencesStatus: "dynamic",
+      },
+      {
+        sourceLine:
+          'new BrowserWindow({webPreferences:{preload:"./first.js"},...(extraOptions||{})});',
+        expectedPreload: null,
+        preferencesStatus: "dynamic",
+      },
+      // A falsy unresolved `&&` operand is copied itself; document.all can
+      // carry an expando with any key.
+      {
+        sourceLine:
+          'new BrowserWindow({webPreferences:{preload:"./first.js"},...(isMac&&{titleBarStyle:"hidden"})});',
+        expectedPreload: null,
+        preferencesStatus: "dynamic",
       },
     ] as const;
     const sourceLines = scenarios.map(({ sourceLine }) => sourceLine);

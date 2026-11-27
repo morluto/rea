@@ -30,6 +30,58 @@ const bundleOutputSchema = contractNamed(
 ).outputSchema;
 
 cliTest(
+  "refuses a POM at report_limits.xml_nodes and reports it when raised through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-maven-report-limits-");
+    const path = join(root, "pom.xml");
+    await writeFile(path, mavenPomFixture);
+    const command = ["inspect-maven-gradle-metadata", path, "--json"];
+    const limit = {
+      control_kind: "parameter",
+      parameter: "report_limits.xml_nodes",
+      effective_value: 8,
+      unit: "count",
+      minimum: 1,
+      default_value: 1_048_576,
+      applies_at: "next_call",
+    };
+    const refused = await cli.run({
+      arguments: [...command, "--report-limits", '{"xml_nodes":8}'],
+    });
+    expect(refused.exitCode).toBe(1);
+    expect(refused.json).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: { limit },
+      remediation: {
+        action: expect.stringContaining("report_limits.xml_nodes"),
+      },
+    });
+    const raised = await cli.run({
+      arguments: [...command, "--report-limits", '{"xml_nodes":100000}'],
+    });
+    expect(raised.exitCode, raised.stderr).toBe(0);
+    expect(outputSchema.parse(raised.json).parameters).toMatchObject({
+      report_limits: { xml_nodes: 100_000 },
+    });
+    const { call } = await connectLocalToolsMcp();
+    const mcpRefused = await call("inspect_maven_gradle_metadata", {
+      path,
+      report_limits: { xml_nodes: 8 },
+    });
+    expect(mcpRefused.isError).toBe(true);
+    expect(parseMcpToolError(mcpRefused).error).toMatchObject({
+      details: { limit },
+    });
+    const mcpRaised = await call("inspect_maven_gradle_metadata", {
+      path,
+      report_limits: { xml_nodes: 100_000 },
+    });
+    expect(mcpRaised.isError, JSON.stringify(mcpRaised)).not.toBe(true);
+  },
+);
+
+cliTest(
   "preserves Maven property value characters through CLI, MCP and retained Evidence",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-maven-property-values-");
@@ -512,6 +564,38 @@ cliTest(
     ).toBe(join(root, "pom.xml"));
   },
 );
+
+cliTest("reads a Maven 4.1.0 model POM", async ({ cli }) => {
+  const root = await createTestTempDirectory("rea-maven-cli-model-41-");
+  const path = join(root, "pom.xml");
+  await writeFile(
+    path,
+    `<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.1.0">
+  <modelVersion>4.1.0</modelVersion>
+  <groupId>g</groupId><artifactId>a</artifactId><version>1</version>
+  <dependencies><dependency><groupId>x</groupId><artifactId>y</artifactId><version>2</version></dependency></dependencies>
+</project>
+`,
+  );
+  const result = await cli.run({
+    arguments: ["inspect-maven-gradle-metadata", path, "--json"],
+  });
+  expect(result.exitCode, result.stdout + result.stderr).toBe(0);
+  const report = outputSchema.parse(result.json).normalized_result;
+  expect(report.format).toBe("maven-pom");
+  expect(report.coordinates).toMatchObject({
+    group_id: "g",
+    artifact_id: "a",
+    version: "1",
+  });
+  expect(report.dependencies).toEqual([
+    expect.objectContaining({ group_id: "x", artifact_id: "y", version: "2" }),
+  ]);
+  expect(report.limitations).toContain(
+    "Maven 4 can infer omitted parent coordinates and, in model version 4.1.0, omitted dependency and managed dependency group IDs and versions from the local project tree; that inference was not applied.",
+  );
+});
 
 cliTest(
   "fails closed on a file that is not Maven POM or Gradle module metadata",

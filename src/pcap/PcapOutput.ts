@@ -21,7 +21,6 @@ import {
   PCAP_PRODUCER_LIMITS,
   PCAP_TSHARK_DECODED_BYTES,
   pcapProducerLimit,
-  pcapProducerLimitRecovery,
 } from "../domain/pcap/pcapAnalysis.js";
 
 const OPERATION = "inspect_pcap_capture";
@@ -214,10 +213,6 @@ const decodeTsharkPackets = async (
         {
           retryable: false,
           limit: pcapProducerLimit("output_bytes", failure.maxBytes),
-          remediationAction: pcapProducerLimitRecovery(
-            "output_bytes",
-            failure.maxBytes,
-          ),
         },
       );
     case "json-expansion":

@@ -22,6 +22,7 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import { invalidAnalysisView } from "./analysisViewErrors.js";
+import { pickFields } from "./selectViewRows.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewMessages,
@@ -160,11 +161,7 @@ export const projectNativeInventoryView = (
               ...(selectingValue && record.decoding !== undefined
                 ? { decoding: record.decoding }
                 : {}),
-              ...Object.fromEntries(
-                fields
-                  .filter((field) => Object.hasOwn(record, field))
-                  .map((field) => [field, record[field]]),
-              ),
+              ...pickFields(record, fields),
             },
     })),
     coverage: pageViewCoverage(view.offset, selected.length, rows.length),

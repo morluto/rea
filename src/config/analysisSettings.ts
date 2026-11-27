@@ -1,3 +1,4 @@
+import { artifactMemberCountSchema } from "./artifactMemberCount.js";
 import { err, ok } from "../domain/result.js";
 import type { z } from "zod";
 import type { AnalysisSettingId } from "../domain/analysisSettings.js";
@@ -34,6 +35,7 @@ import {
   windowsChangeTimeSettlePollMsSchema,
 } from "./windowsChangeTimeSettle.js";
 import { pwntoolsInputBytesSchema } from "./pwntoolsInputLimit.js";
+import { producerOutputBytesSchema } from "./producerOutputBytesSeed.js";
 import { zstandardMaxFramesSchema } from "../domain/compression/zstandardFrameAllowance.js";
 import {
   agentResultBudgetBytesSchema,
@@ -41,6 +43,7 @@ import {
 } from "../domain/agentResultBudget.js";
 const environmentSchemas: Readonly<Record<string, z.ZodType<number, string>>> =
   {
+    REA_ARTIFACT_MEMBER_COUNT: artifactMemberCountSchema,
     REA_ASAR_MAX_HEADER_BYTES: asarMaxHeaderBytesSchema,
     REA_ASAR_MAX_LISTING_BYTES: asarMaxListingBytesSchema,
     REA_GHIDRA_VALUE_FLOW_MAX_OPERATIONS: ghidraValueFlowCountSchema,
@@ -68,6 +71,7 @@ const environmentSchemas: Readonly<Record<string, z.ZodType<number, string>>> =
     REA_KUNA_PROJECT_TIMEOUT_MS: providerStartupTimeoutSchema,
     REA_KUNA_TIMEOUT_MS: providerStartupTimeoutSchema,
     REA_PWNTOOLS_MAX_INPUT_BYTES: pwntoolsInputBytesSchema,
+    REA_PRODUCER_OUTPUT_BYTES: producerOutputBytesSchema,
     REA_WINDOWS_CHANGE_TIME_DRIFT_MS: windowsChangeTimeDriftMsSchema,
     REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS: windowsChangeTimeSettlePollMsSchema,
     REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS:

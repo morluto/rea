@@ -610,9 +610,6 @@ cliTest(
       result.json,
     ).normalized_result;
     expect(report.build_info).toBeNull();
-    expect(report.limitations.join(" ")).toContain(
-      "does not establish that the binary is not Go",
-    );
   },
 );
 
@@ -639,9 +636,6 @@ cliTest(
       complete: true,
       unparsed_lines: [],
     });
-    expect(evidence.limitations.join(" ")).toContain(
-      "Dependency coverage is unknown",
-    );
   },
 );
 

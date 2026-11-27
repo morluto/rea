@@ -34,8 +34,9 @@ import {
   BinaryFormatFailure,
   BinaryMappingFailure,
   BinaryReader,
-  BinaryResourceFailure,
   createFileMappingIndex,
+  DEFAULT_NATIVE_STRUCTURE_BYTES,
+  nativeStructureFailure,
   type ElfDynamicSegment,
   type FileMappingIndex,
 } from "../../domain/binaryContainer.js";
@@ -129,6 +130,8 @@ interface Source {
 }
 
 interface ElfScan {
+  /** `max_structure_bytes` for the dynamic directory and Android packed relocation tables. */
+  readonly structureBytes: number;
   readonly reader: BinaryReader;
   readonly bytes: Buffer;
   readonly bits: 32 | 64;
@@ -169,16 +172,19 @@ const readDynamicTags = (
   if (segment === undefined) return tags;
   if (extra > 0)
     throw new BinaryFormatFailure("malformed", "multiple PT_DYNAMIC segments");
-  const table = admitElfDynamicDirectory(scan.bytes.length, segment, scan.bits);
+  const table = admitElfDynamicDirectory(
+    scan.bytes.length,
+    segment,
+    scan.bits,
+    scan.structureBytes,
+  );
   if (!table.ok) {
     if (table.error.kind === "malformed")
       throw new BinaryFormatFailure("malformed", table.error.message);
-    throw new BinaryResourceFailure(
-      "structure",
+    throw nativeStructureFailure(
+      "The ELF dynamic directory",
+      table.error.size,
       table.error.maximum,
-      table.error.message,
-      "structure",
-      "bytes",
     );
   }
   const { offset: start, size, width } = table.value;
@@ -643,6 +649,7 @@ const loadWrites = async (
         dynamicSegments: image.elf.dynamicSegments,
         mappings: image.mappings,
         zeroFills: image.zero_fills,
+        structureBytes: scan.structureBytes,
       },
       { unsupported: "record", wholeExtents: true },
     );
@@ -669,8 +676,9 @@ const loadWrites = async (
     }
     return { writes, clobbered, trustRaw: true };
   } catch (cause) {
-    // A budget stop is not a malformed table; the provider reports it with
-    // the maximum the failing index declared.
+    // A budget stop (`BinaryResourceFailure` for `max_structure_bytes`, or a
+    // limit `ElfPointerRelocationFailure`) is not a malformed table; rethrow it
+    // for the provider to project as a resource constraint.
     if (
       !(cause instanceof ElfPointerRelocationFailure) ||
       cause.kind === "limit"
@@ -965,20 +973,23 @@ export const readElfInitializers = async (
   bytes: Buffer,
   page: InitializerPage,
   signal?: AbortSignal,
+  structureBytes: number = DEFAULT_NATIVE_STRUCTURE_BYTES,
 ): Promise<NativeInitializerInspection> => {
   assertArtifactReadActive(signal);
   const operation = "inspect_native_initializers";
   const directory =
     signal === undefined
-      ? readElfDirectoryFromBuffer(bytes, operation)
+      ? readElfDirectoryFromBuffer(bytes, operation, { structureBytes })
       : await readElfDirectoryFromBufferCooperative(
           bytes,
           () => yieldArtifactRead(signal),
           operation,
+          { structureBytes },
         );
   assertArtifactReadActive(signal);
   const image = readElfImageFromDirectory(bytes, directory);
   const scan: ElfScan = {
+    structureBytes,
     bytes,
     reader: new BinaryReader(bytes, image.byte_order === "little", "elf"),
     bits: image.bits,

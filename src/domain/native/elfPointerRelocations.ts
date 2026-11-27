@@ -24,6 +24,7 @@ import {
   BinaryReader,
   createFileMappingIndex,
   isZeroFilledSpan,
+  nativeStructureFailure,
   type ElfDynamicSegment,
 } from "../binaryContainer.js";
 import { ParseFailureError } from "../parseFailure.js";
@@ -138,6 +139,13 @@ export interface ElfPointerRelocationInput {
   >[];
   readonly mappings: readonly FileMapping[];
   readonly zeroFills: readonly ZeroFillMapping[];
+  /**
+   * The caller's `max_structure_bytes` for the dynamic directory and Android
+   * packed relocation tables. A caller that owns that control passes it and
+   * receives its failure; the IL2CPP and JNI loaders omit it and keep their
+   * native-index-capacity failure.
+   */
+  readonly structureBytes?: number | undefined;
 }
 
 // JNI sparse consumers retain per-write provenance; streaming materializers do not.
@@ -208,8 +216,16 @@ function* androidPackedRelocations(
   fileOffset: number,
   bits: 32 | 64,
   encoding: "rel" | "rela",
+  structureBytes?: number,
 ): Generator<PackedRelocation | undefined> {
-  const exhausted = (): never => {
+  const maximumBytes = structureBytes ?? ANDROID_PACKED_TABLE_BYTES;
+  const exhausted = (requiredBytes: bigint | number): never => {
+    if (structureBytes !== undefined)
+      throw nativeStructureFailure(
+        "The Android packed relocation table",
+        requiredBytes,
+        structureBytes,
+      );
     throw new ElfPointerRelocationFailure(
       "native-index-capacity",
       "Android packed relocation input or expanded table exceeds the 16 MiB decode-work allowance",
@@ -217,9 +233,9 @@ function* androidPackedRelocations(
       "bytes",
     );
   };
-  if (bytes.length > ANDROID_PACKED_TABLE_BYTES) exhausted();
   if (bytes.length < 4 || bytes.toString("latin1", 0, 4) !== "APS2")
     return malformed("Android packed relocation table lacks an APS2 header");
+  if (bytes.length > maximumBytes) exhausted(bytes.length);
   let cursor = 4;
   const signed = (): bigint => {
     const parsed = readLeb128(bytes, cursor, bytes.length, SLEB64);
@@ -234,8 +250,13 @@ function* androidPackedRelocations(
   if (rawCount < 0n)
     return malformed("Android APS2 relocation count is negative");
   const expandedWidth = (bits / 8) * (encoding === "rela" ? 3 : 2);
-  if (rawCount * BigInt(expandedWidth) > BigInt(ANDROID_PACKED_TABLE_BYTES))
-    exhausted();
+  const expandedBytes = rawCount * BigInt(expandedWidth);
+  if (expandedBytes > BigInt(maximumBytes))
+    exhausted(
+      expandedBytes <= BigInt(Number.MAX_SAFE_INTEGER)
+        ? Number(expandedBytes)
+        : expandedBytes,
+    );
   const count = Number(rawCount);
   let offset = BigInt.asUintN(bits, signed()),
     addend = 0n,
@@ -527,9 +548,20 @@ function* dynamicTags(
   const declaration = input.dynamicSegments[0];
   if (declaration === undefined)
     return { values: new Map(), ambiguous: new Set() };
-  const table = admitElfDynamicDirectory(bytes.length, declaration, input.bits);
+  const table = admitElfDynamicDirectory(
+    bytes.length,
+    declaration,
+    input.bits,
+    input.structureBytes,
+  );
   if (!table.ok) {
     if (table.error.kind === "malformed") return malformed(table.error.message);
+    if (input.structureBytes !== undefined)
+      throw nativeStructureFailure(
+        "The ELF dynamic directory",
+        table.error.size,
+        table.error.maximum,
+      );
     throw new ElfPointerRelocationFailure(
       "native-index-capacity",
       table.error.message,
@@ -748,17 +780,22 @@ export function* readElfRelocationWritesSteps(
   }
   let symbolCountRead = false;
   let symbolCount: number | undefined;
-  function* symbolLinkValue(
+  function* boundedDynamicSymbol(
     symbolIndex: number,
-  ): Generator<undefined, bigint | undefined> {
-    if (symbolIndex === 0) return 0n;
+  ): Generator<undefined, ReturnType<typeof dynamicSymbol>> {
     if (!symbolCountRead) {
       symbolCountRead = true;
       symbolCount = yield* countSymbols();
     }
     if (symbolCount === undefined || symbolIndex >= symbolCount)
       return undefined;
-    const symbol = dynamicSymbol(symbolIndex);
+    return dynamicSymbol(symbolIndex);
+  }
+  function* symbolLinkValue(
+    symbolIndex: number,
+  ): Generator<undefined, bigint | undefined> {
+    if (symbolIndex === 0) return 0n;
+    const symbol = yield* boundedDynamicSymbol(symbolIndex);
     if (symbol === undefined) return undefined;
     const { section_index, type, value } = symbol;
     // Undefined/reserved sections, TLS offsets and IFUNC resolvers do not
@@ -774,18 +811,18 @@ export function* readElfRelocationWritesSteps(
    * image's own dynamic symbol records. Undefined when that size is unreadable
    * or the span leaves the address space.
    */
-  const copyWidth = (
+  function* copyWidth(
     destination: bigint,
     symbolIndex: number,
-  ): number | undefined => {
-    const symbol = dynamicSymbol(symbolIndex);
+  ): Generator<undefined, number | undefined> {
+    const symbol = yield* boundedDynamicSymbol(symbolIndex);
     if (symbol === undefined) return undefined;
     const { size } = symbol;
     return size <= BigInt(Number.MAX_SAFE_INTEGER) &&
       destination + size <= 1n << BigInt(input.bits)
       ? Number(size)
       : undefined;
-  };
+  }
   // Consumers do work across each COPY span, which repeated or overlapping
   // records would multiply, so the spans together are limited to the file size.
   let copyAllowance = bytes.length;
@@ -811,7 +848,7 @@ export function* readElfRelocationWritesSteps(
       addend: explicitAddend ?? null,
     };
     if (kind === copy) {
-      const width = copyWidth(destination, symbolIndex);
+      const width = yield* copyWidth(destination, symbolIndex);
       if (width === undefined)
         unsupported("ELF COPY relocation write size is not established");
       else if (width > copyAllowance)
@@ -947,6 +984,7 @@ export function* readElfRelocationWritesSteps(
       start,
       input.bits,
       encoding,
+      input.structureBytes,
     )) {
       if (entry === undefined) yield;
       else yield* applyRelocation(entry, entry.source);

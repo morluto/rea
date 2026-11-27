@@ -2,7 +2,7 @@ import { expect, it, onTestFinished } from "vitest";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
-import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import { listedEvidenceCaller } from "../../support/mcp/listedEvidenceCaller.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 
 /** A page whose console emits `count` events, one error among them. */
@@ -37,17 +37,7 @@ const connect = async (count: number) => {
     // These cases cover the budget's choice for an omitted detail.
     testDelivery: "budgeted",
   });
-  const definitions = (await client.listTools()).tools;
-  const call = async (name: string, args: Record<string, unknown>) => {
-    const definition = definitions.find((tool) => tool.name === name);
-    if (definition === undefined) throw new Error(`Missing tool ${name}`);
-    const reply = await client.callTool(
-      { name, arguments: args },
-      { toolDefinition: withCanonicalOutputSchema(definition) },
-    );
-    expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
-    return parseEvidence(reply.structuredContent);
-  };
+  const call = listedEvidenceCaller(client, (await client.listTools()).tools);
   const page = {
     cdp_endpoint: browser.endpoint,
     allowed_origins: [browser.allowedOrigin],

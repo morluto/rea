@@ -66,7 +66,6 @@ it("retains a discovery checkpoint once for the exact request, including sources
   const base = request(randomUUID(), plain, "analysis");
   retainJavaScriptStaticCheckpoint(javaScriptStaticReuseKey(base), facts);
   for (const other of [
-    request(randomUUID(), plain, "analysis", { package_type: "module" }),
     request(randomUUID(), plain, "analysis", { path: "other.js" }),
     request(randomUUID(), `${plain}\n`, "analysis"),
   ])
@@ -78,6 +77,29 @@ it("retains a discovery checkpoint once for the exact request, including sources
       javaScriptStaticReuseKey(request(randomUUID(), plain, "analysis")),
     )?.text,
   ).toBe(encodeJavaScriptStaticCheckpoint(facts));
+});
+
+it("drops a checkpoint the normal pass reads with another package type", () => {
+  // Discovery reads an ESM package's preload as a module; the normal pass
+  // reads the discovered preload as CommonJS and cannot reuse that checkpoint.
+  const preload = "export const ready = true;";
+  const facts = analyzeJavaScriptStaticSource(preload);
+  const discovered = request(randomUUID(), preload, "preload-discovery", {
+    path: "preload.js",
+    package_type: "module",
+  });
+  const normal = request(randomUUID(), preload, "analysis", {
+    path: "preload.js",
+    package_type: "commonjs",
+  });
+  retainJavaScriptStaticCheckpoint(javaScriptStaticReuseKey(discovered), facts);
+  expect(
+    takeJavaScriptStaticCheckpoint(javaScriptStaticReuseKey(normal)),
+  ).toBeUndefined();
+  // The mismatched take released the entry rather than parking it forever.
+  expect(
+    takeJavaScriptStaticCheckpoint(javaScriptStaticReuseKey(discovered)),
+  ).toBeUndefined();
 });
 
 /** Start the production worker entrypoint in its own private root. */

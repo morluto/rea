@@ -1,3 +1,4 @@
+import { analysisViewPageFields } from "./analysisViewPageFields.js";
 import { z } from "zod";
 import { literalFeatureMatchSchema } from "../native/literalFeatureMatch.js";
 import {
@@ -23,11 +24,7 @@ import {
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 
-const page = {
-  kind: z.literal("native-feature-trace"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
-};
+const page = analysisViewPageFields("native-feature-trace");
 export const nativeFeatureTraceRequests = {
   matches: z.strictObject({
     ...page,

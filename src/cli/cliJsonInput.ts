@@ -19,7 +19,7 @@ import {
   RegularFileCleanupFailure,
   regularFileCancellation,
 } from "../filesystem/OwnedRegularFile.js";
-import { ownCliProcessResource } from "./cliResources.js";
+import { registerCliScopeCleanup } from "./cliResources.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -47,20 +47,10 @@ import { reportedSystemCode } from "../kernel/reportedSystemCode.js";
  * a handle never loses its owner when parsing returns, and a later read never
  * inherits an earlier file's cleanup.
  */
-const retainedJsonInputs = new Set<ArtifactResourceScope>();
-ownCliProcessResource("json-input", async () => {
-  const failures: unknown[] = [];
-  for (const resources of retainedJsonInputs)
-    try {
-      await resources.close();
-      retainedJsonInputs.delete(resources);
-    } catch (cause: unknown) {
-      failures.push(cause);
-    }
-  if (failures.length === 1) throw failures[0];
-  if (failures.length > 1)
-    throw new AggregateError(failures, "JSON input cleanup failed");
-});
+const retainJsonInput = registerCliScopeCleanup(
+  "json-input",
+  "JSON input cleanup failed",
+);
 
 /** Parse inline JSON, standard input ('-'), or one local JSON file, honoring optional caller cancellation. */
 export const parseCliJsonInput = async (
@@ -138,7 +128,7 @@ export const parseCliJsonInput = async (
         };
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure) {
-      retainedJsonInputs.add(resources);
+      retainJsonInput(resources);
       return jsonFileCleanupError(value, operation, cause);
     }
     if (cause instanceof JsonInputCancellationFailure)

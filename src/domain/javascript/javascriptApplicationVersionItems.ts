@@ -1,3 +1,4 @@
+import { countValues } from "../valueCounts.js";
 import { appendToMapList } from "../appendToMapList.js";
 import { absenceClaimable, canonicalJson } from "../comparisonSemantics.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
@@ -644,15 +645,10 @@ const unexplainedRelationshipDifference = (
   leftPossible: readonly string[],
   rightPossible: readonly string[],
 ): boolean => {
-  const counts = (values: readonly string[]) => {
-    const result = new Map<string, number>();
-    for (const value of values) result.set(value, (result.get(value) ?? 0) + 1);
-    return result;
-  };
-  const leftCounts = counts(left);
-  const rightCounts = counts(right);
-  const leftCandidateCounts = counts(leftPossible);
-  const rightCandidateCounts = counts(rightPossible);
+  const leftCounts = countValues(left);
+  const rightCounts = countValues(right);
+  const leftCandidateCounts = countValues(leftPossible);
+  const rightCandidateCounts = countValues(rightPossible);
   for (const key of new Set([...leftCounts.keys(), ...rightCounts.keys()])) {
     const difference = (leftCounts.get(key) ?? 0) - (rightCounts.get(key) ?? 0);
     if (

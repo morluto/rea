@@ -11,6 +11,7 @@ import {
 } from "../../fixtures/captureDecoderLimits.js";
 import { webNetworkCaptureSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { PACKAGE_METADATA } from "../../../src/generatedPackageMetadata.js";
 import { evidenceRecordSelectionSchema } from "../../../src/domain/evidenceRecordSummary.js";
 import { lifecycleResultOf } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import {
@@ -62,6 +63,9 @@ it("preserves aioquic recovery packet-number spaces and their source records", a
   expect(response.isError, JSON.stringify(response)).not.toBe(true);
   const capture = webNetworkCaptureSchema.parse(
     parseEvidence(response.structuredContent).normalized_result,
+  );
+  expect(capture.decoder.version).toBe(
+    `aioquic-profile@1.5.0;qlog@0.3;jsonc-parser@${PACKAGE_METADATA.jsoncParserVersion};lossless-json@${PACKAGE_METADATA.losslessJsonVersion}`,
   );
   if (capture.format !== "qlog") throw new Error("qlog format required");
   expect(capture.artifact.sha256).toBe(
