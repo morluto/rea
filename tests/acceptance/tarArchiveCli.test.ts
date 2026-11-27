@@ -6,6 +6,7 @@ import { cliTest } from "../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import {
   gzipTarFixture,
+  withGzipExtraField,
   RELEASE_TAR_MEMBERS,
   tarFixture,
 } from "../../src/artifacts/tar/tar.fixture.js";
@@ -25,6 +26,11 @@ cliTest.for([
   {
     name: "release.tar.gz",
     bytes: gzipTarFixture(RELEASE_TAR_MEMBERS),
+    compression: "gzip",
+  },
+  {
+    name: "release-with-extra",
+    bytes: withGzipExtraField(gzipTarFixture(RELEASE_TAR_MEMBERS), 9000),
     compression: "gzip",
   },
 ] as const)(
