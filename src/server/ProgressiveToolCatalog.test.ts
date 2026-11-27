@@ -1,7 +1,10 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { DISCOVER_TOOLS } from "../contracts/catalog/catalogDiscovery.js";
+import {
+  DISCOVER_TOOLS,
+  DISCOVERY_REFRESH_GUIDANCE,
+} from "../contracts/catalog/catalogDiscovery.js";
 import { EvidenceMcpServerCore } from "./EvidenceMcpServerCore.js";
 import { ToolResultDelivery } from "./ToolResultDelivery.js";
 import { parseMcpToolError } from "../../tests/fixtures/mcpToolError.js";
@@ -407,6 +410,13 @@ it("recovers an exact cold tool call through discovery without an SDK list refre
   expect(f.forbidden).not.toHaveBeenCalled();
   const discovery = await f.discover({ names: ["alpha_sqlite"] });
   expect(discovery.isError).not.toBe(true);
-  expect(f.changed).toHaveBeenCalledOnce();
   expect((await call("alpha_sqlite")).isError).not.toBe(true);
+  const description = (await f.client.listTools()).tools.find(
+    ({ name }) => name === "discover_tools",
+  )?.description;
+  expect(description).toContain(DISCOVERY_REFRESH_GUIDANCE);
+  expect(
+    DISCOVER_TOOLS.outputSchema.parse(discovery.structuredContent).next_step,
+  ).toContain(DISCOVERY_REFRESH_GUIDANCE);
+  expect(f.changed).toHaveBeenCalledOnce();
 });

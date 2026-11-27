@@ -18,6 +18,7 @@ import {
 import { unknownTarget } from "../domain/targetIdentity.js";
 import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjectionSchema.js";
 import { transportClosedByOwner } from "./transportOwnerClose.js";
+import { DISCOVERY_REFRESH_GUIDANCE } from "../contracts/catalog/catalogDiscovery.js";
 import { ForwardingTransport } from "./ForwardingTransport.js";
 import {
   formatUnknownMcpToolMessage,
@@ -910,7 +911,7 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
     const catalog = this.currentAdvertisedTools();
     if (disabled && !catalog.canDiscoverTool?.(tool)) return recovered;
     const hint = disabled
-      ? `The MCP tool ${tool} is in scope but was not loaded. Call discover_tools with ${JSON.stringify({ names: [tool] })}, then retry. If your client requires a refreshed catalog, refresh tools/list after discovery or reconnect with REA_MCP_TOOL_CATALOG_PROFILE=full.`
+      ? `The MCP tool ${tool} is in scope but was not loaded. Call discover_tools with ${JSON.stringify({ names: [tool] })}, then retry. ${DISCOVERY_REFRESH_GUIDANCE}`
       : formatUnknownMcpToolMessage(tool, catalog);
     return { ...recovered, error: { ...recovered.error, message: hint } };
   }
