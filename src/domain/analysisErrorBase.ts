@@ -726,6 +726,7 @@ import type { CutterBridgeDiscovery } from "./cutterDiscovery.js";
 
 import type { WebTraceObservation } from "./webTraceObservation.js";
 import type { WebArtifactAcquisition } from "./webArtifactAcquisition.js";
+import type { YaraMatches } from "./yara/yaraMatches.js";
 
 /** Provider-neutral evidence collected before a typed analysis failure. */
 export type AnalysisPartialObservation =
@@ -802,4 +803,5 @@ export type AnalysisPartialObservation =
   | AdbActivityStartPartialObservation
   | AdbAcquiredFilePartialObservation
   | AdbPackagePullPartialObservation
-  | AdbDisplayPartialObservation;
+  | AdbDisplayPartialObservation
+  | YaraMatches;

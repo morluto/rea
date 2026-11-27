@@ -1,4 +1,4 @@
-import { pipeline, Transform, type Readable } from "node:stream";
+import { pipeline, Readable, Transform } from "node:stream";
 
 import {
   ArtifactReaderFailure,
@@ -64,6 +64,38 @@ export class ArtifactStreamLifecycle {
     };
   }
 }
+
+/** Whether a decoded member's producer is between reads, reading, or failed. */
+export type DecodedMemberReadState = "idle" | "pending" | "failed";
+
+/**
+ * Serve a member whose bytes are produced by decoding. A pending read or
+ * decode owns its own cancellation failure; once the producer is idle (such
+ * as paused on backpressure), caller cancellation destroys the source at once
+ * so pipeline and reader.close() retire promptly.
+ */
+export const decodedArtifactMemberSource = (
+  { signal, cancellationFailure }: ArtifactMemberLifecycle,
+  produce: (
+    onStateChange: (state: DecodedMemberReadState) => void,
+  ) => AsyncIterable<Buffer>,
+): Readable => {
+  let readState: DecodedMemberReadState = "idle";
+  const source = Readable.from(
+    produce((state) => {
+      readState = state;
+    }),
+    { objectMode: false },
+  );
+  const onAbort = (): void => {
+    if (readState === "idle" && !source.destroyed)
+      source.destroy(cancellationFailure(signal.reason));
+  };
+  signal.addEventListener("abort", onAbort, { once: true });
+  source.once("close", () => signal.removeEventListener("abort", onAbort));
+  if (signal.aborted) onAbort();
+  return source;
+};
 
 /** Verify the member's byte count and source before stream completion. */
 export const checkedArtifactMemberStream = (

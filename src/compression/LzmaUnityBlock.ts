@@ -6,28 +6,24 @@ import {
 } from "../resources/index.js";
 import {
   BinaryFormatFailure,
-  BinaryReader,
   BinaryResourceFailure,
 } from "../domain/binaryContainer.js";
-
-const LZMA_PROPS_BYTES = 5;
-const LZMA_ALONE_SIZE_BYTES = 8;
-const LZMA_DICTIONARY_OFFSET = 1;
-const LZMA_MIN_DICTIONARY_BYTES = 0x1000;
-const LZMA_RANGE_CODER_INIT_BYTES = 5;
-/**
- * The properties byte is `(pb * 5 + lp) * 9 + lc` with lc 0-8, lp 0-4 and
- * pb 0-4 (LZMA SDK lzma-specification.txt, "if (d >= (9 * 5 * 5)) throw").
- * The tighter lc + lp <= 4 belongs to LZMA2 and to liblzma's encoder, not
- * to LZMA1, which Unity writes through the LZMA SDK.
- */
-const LZMA_PROPERTIES_LIMIT = 9 * 5 * 5;
+import {
+  checkLzma1RangeCoderLeadIn,
+  lzma1AloneFromRaw,
+  type Lzma1Refusal,
+} from "./Lzma1.js";
+import { readLzma1AloneHeader } from "./Lzma1Header.js";
 
 type WorkerReply =
-  | { readonly ok: true; readonly buffer: ArrayBuffer }
+  | {
+      readonly ok: true;
+      readonly buffer: ArrayBuffer;
+      readonly byteLength: number;
+    }
   | {
       readonly ok: false;
-      readonly kind: "malformed";
+      readonly kind: Lzma1Refusal["kind"];
       readonly message: string;
     };
 
@@ -35,112 +31,40 @@ const rejectLzma = (message: string): never => {
   throw new BinaryFormatFailure("malformed", message);
 };
 
-/** Off-thread decompressFile so AbortSignal timers remain observable. */
+/**
+ * Decode off-thread so AbortSignal timers remain observable. The worker only
+ * hosts the shared LZMA1 owner; every verdict is that module's.
+ */
 const LZMA_WORKER_SOURCE = String.raw`
 const { parentPort, workerData } = process.getBuiltinModule("node:worker_threads");
-const lzma = require(workerData.lzmaPath);
-const expected = workerData.expected;
-const alone = Buffer.from(workerData.alone);
-const UNKNOWN_SIZE = 0xffffffffffffffffn;
-// The LZMA-Alone size field follows the properties; the host names its offset.
-const SIZE_OFFSET = workerData.sizeOffset;
-
-const decode = (sizeField) => {
-  alone.writeBigUInt64LE(sizeField, SIZE_OFFSET);
-  // Node Buffer pools: allocUnsafe slices cannot be transferred safely.
-  const output = Buffer.allocUnsafeSlow(expected);
-  let written = 0;
-  let position = 0;
-  lzma.decompressFile(
-    {
-      readByte() {
-        if (position >= alone.length)
-          throw { kind: "malformed", message: "Truncated Unity LZMA stream" };
-        return alone[position++];
-      },
-    },
-    {
-      writeByte(byte) {
-        if (written >= expected)
-          throw {
-            kind: "malformed",
-            message: "LZMA decoded length exceeds its declaration",
-          };
-        output[written++] = byte;
-      },
-    },
+(async () => {
+  const lzma = require(workerData.lzmaPath);
+  const { decodeLzma1KnownSize } = await import(workerData.lzma1Url);
+  const alone = Buffer.from(workerData.alone);
+  const result = decodeLzma1KnownSize(
+    lzma,
+    alone,
+    workerData.dictionaryBytes,
+    workerData.expected,
   );
-  if (written !== expected)
-    throw {
-      kind: "malformed",
-      message: "LZMA decoded length disagrees with its declaration",
-    };
-  return { output, position };
-};
-
-try {
-  let result = decode(BigInt(expected));
-  if (result.position !== alone.length) {
-    result = decode(UNKNOWN_SIZE);
-    if (result.position !== alone.length)
-      throw {
-        kind: "malformed",
-        message: "Unity LZMA stream has trailing bytes",
-      };
-  }
-  parentPort.postMessage({ ok: true, buffer: result.output.buffer }, [
-    result.output.buffer,
-  ]);
-} catch (cause) {
-  if (cause && typeof cause === "object" && "kind" in cause && "message" in cause) {
-    parentPort.postMessage({
-      ok: false,
-      kind: cause.kind,
-      message: cause.message,
-    });
-  } else {
-    parentPort.postMessage({
-      ok: false,
-      kind: "malformed",
-      message:
-        cause instanceof Error
-          ? cause.message
-          : "Unity LZMA block does not decode",
-    });
-  }
-}
+  if (result.ok)
+    parentPort.postMessage(
+      { ok: true, buffer: result.output.buffer, byteLength: result.output.length },
+      [result.output.buffer],
+    );
+  else
+    parentPort.postMessage({ ok: false, kind: result.kind, message: result.message });
+})();
 `;
 
 /**
- * lzma-purejs allocates its whole window from the declared dictionary. A valid
- * match distance is always below the bytes already produced, so a window of
- * the declared output length decodes every valid stream exactly as the
- * declared dictionary would, and still refuses a distance beyond either. The
- * LZMA SDK promotes dictionaries below 4 KiB, and so does this window.
+ * The shared LZMA1 owner, loaded by the worker thread. Development runs load
+ * its source (Node strips its types; it imports no repository modules).
  */
-const decoderWindowBytes = (
-  dictionaryBytes: number,
-  expected: number,
-): number =>
-  Math.max(LZMA_MIN_DICTIONARY_BYTES, Math.min(dictionaryBytes, expected));
-
-const synthesizeAloneHeader = (
-  input: Buffer,
-  expected: number,
-  dictionaryBytes: number,
-): Buffer => {
-  // Non-pooled backing ArrayBuffer so it can be transferred to the worker
-  // directly without copying the encoded stream a second time.
-  const alone = Buffer.allocUnsafeSlow(input.length + LZMA_ALONE_SIZE_BYTES);
-  input.copy(alone, 0, 0, LZMA_PROPS_BYTES);
-  alone.writeBigUInt64LE(BigInt(expected), LZMA_PROPS_BYTES);
-  input.copy(alone, LZMA_PROPS_BYTES + LZMA_ALONE_SIZE_BYTES, LZMA_PROPS_BYTES);
-  alone.writeUInt32LE(
-    decoderWindowBytes(dictionaryBytes, expected),
-    LZMA_DICTIONARY_OFFSET,
-  );
-  return alone;
-};
+const LZMA1_MODULE_URL = new URL(
+  import.meta.url.endsWith(".ts") ? "./Lzma1.ts" : "./Lzma1.js",
+  import.meta.url,
+).href;
 
 type DecodeOutcome =
   | { readonly ok: true; readonly value: Buffer }
@@ -149,9 +73,11 @@ type DecodeOutcome =
 /** The decoder's own verdict about the block, as the worker reported it. */
 const replyOutcome = (message: WorkerReply): DecodeOutcome =>
   message.ok
-    ? { ok: true, value: Buffer.from(message.buffer) }
+    ? { ok: true, value: Buffer.from(message.buffer, 0, message.byteLength) }
     : {
         ok: false,
+        // The format already admitted the declared size, so every verdict,
+        // including output that overruns that declaration, is malformed.
         cause: new BinaryFormatFailure("malformed", message.message),
       };
 
@@ -175,6 +101,7 @@ const workerRuntimeFailure = (
 
 const decodeAloneInWorker = async (
   alone: Buffer,
+  dictionaryBytes: number,
   expected: number,
   signal?: AbortSignal,
 ): Promise<Buffer> => {
@@ -190,9 +117,10 @@ const decodeAloneInWorker = async (
       eval: true,
       workerData: {
         lzmaPath,
+        lzma1Url: LZMA1_MODULE_URL,
         alone: transferable,
+        dictionaryBytes,
         expected,
-        sizeOffset: LZMA_PROPS_BYTES,
       },
       transferList: [transferable],
     });
@@ -273,9 +201,8 @@ const decodeAloneInWorker = async (
 
 /**
  * UnityFS LZMA blocks: five property bytes plus the raw stream, with no size
- * field. The caller's declared uncompressed length becomes the LZMA-Alone size
- * so lzma-purejs can finish without an end marker; a valid optional end marker
- * is still accepted.
+ * field. The block table's uncompressed length is the declared size; a
+ * stream may end there or with an end marker (see `decodeLzma1KnownSize`).
  */
 export const decodeUnityLzmaBlock = async (
   input: Buffer,
@@ -294,19 +221,19 @@ export const decodeUnityLzmaBlock = async (
       "LZMA decoded length exceeds the object budget",
     );
   assertArtifactReadActive(signal);
-  if (input.length < LZMA_PROPS_BYTES + LZMA_RANGE_CODER_INIT_BYTES)
-    return rejectLzma("Truncated Unity LZMA block");
-  if (input[0]! >= LZMA_PROPERTIES_LIMIT)
-    return rejectLzma("Unity LZMA properties are out of range");
-  // The dictionary only sizes the decoder window, which is bounded by the
-  // declared output; a large dictionary on a small block is valid LZMA.
-  const dictionaryBytes = new BinaryReader(input, true, "Unity LZMA").u32(
-    LZMA_DICTIONARY_OFFSET,
+  // UnityFS stores the five properties bytes and the coded stream, with the
+  // size in its block table; the shared owner validates the header once here
+  // so a malformed block never starts a worker, and again where it decodes.
+  const alone = lzma1AloneFromRaw(input, BigInt(expected));
+  const header = readLzma1AloneHeader(alone);
+  if (!header.ok) return rejectLzma(`Unity LZMA block: ${header.message}`);
+  const leadIn = checkLzma1RangeCoderLeadIn(alone);
+  if (leadIn !== undefined)
+    return rejectLzma(`Unity LZMA block: ${leadIn.message}`);
+  return await decodeAloneInWorker(
+    alone,
+    header.dictionaryBytes,
+    expected,
+    signal,
   );
-  // Range coder state starts with a mandatory zero byte after the properties.
-  if (input[LZMA_PROPS_BYTES]! !== 0)
-    return rejectLzma("Unity LZMA range coder header is invalid");
-
-  const alone = synthesizeAloneHeader(input, expected, dictionaryBytes);
-  return await decodeAloneInWorker(alone, expected, signal);
 };

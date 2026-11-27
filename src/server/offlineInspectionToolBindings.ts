@@ -40,6 +40,7 @@ import type { SqliteDatabaseService } from "../application/sqlite/SqliteDatabase
 import type { V8CodeCacheService } from "../application/v8CodeCache/V8CodeCacheService.js";
 import type { VsixPackageService } from "../application/vsix/VsixPackageService.js";
 import type { WasmArtifactService } from "../application/wasm/WasmArtifactService.js";
+import type { YaraMatchesService } from "../application/yara/YaraMatchesService.js";
 import { compareWasmInterfaces } from "../application/wasm/WasmInterfaceComparisonService.js";
 import { ok } from "../domain/result.js";
 import type { ContractToolBindings } from "./contractToolBindings.js";
@@ -240,6 +241,12 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
       summary: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<OciImageLayoutService>,
+  yaraMatches: ((service) => ({
+    inspect_yara_matches: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<YaraMatchesService>,
   pythonPyc: ((service) => ({
     inspect_python_pyc: {
       admission: "application",
