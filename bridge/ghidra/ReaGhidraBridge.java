@@ -535,8 +535,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
     /**
      * Read frames while the handler works. This is the bridge's only second
      * thread: it never touches the Program or the writer. It cancels the
-     * monitor of the request a `cancel` frame names and queues every other
-     * frame in arrival order, so requests still run one at a time.
+     * monitor of the request a `cancel` frame names, disposes read-ahead for
+     * an `abandon_decompile_read_ahead` frame, and queues every other frame
+     * in arrival order, so requests still run one at a time.
      */
     private void readRequests(
             SessionDescriptor descriptor,
@@ -564,6 +565,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
                         // A request that already answered has no monitor left.
                         TaskMonitor active = requestMonitors.get(requireInteger(request.params, "request_id"));
                         if (active != null) active.cancel();
+                        continue;
+                    }
+                    if (request.method.equals("abandon_decompile_read_ahead")) {
+                        requireKeys(request.params, Set.of());
+                        // Not queued behind the handler: a slow analysis
+                        // request must not keep a cancelled workflow's
+                        // workers running. This waits for those workers and
+                        // does not call Program APIs.
+                        disposeDecompileAhead();
                         continue;
                     }
                 }
@@ -717,16 +727,6 @@ public final class ReaGhidraBridge extends HeadlessScript {
             case "procedure_callees" -> procedureCalls(request.params, false);
             case "procedure_callers" -> procedureCalls(request.params, true);
             case "procedure_info" -> procedureInfo(request.params);
-            case "abandon_decompile_read_ahead" -> {
-                // The carrying request has already returned. The workflow
-                // stopped while committing, journaling, or between reads, so
-                // no procedure_pseudo_code monitor is left to cancel.
-                requireKeys(request.params, Set.of());
-                disposeDecompileAhead();
-                JsonObject abandoned = new JsonObject();
-                abandoned.addProperty("abandoned", true);
-                yield abandoned;
-            }
             case "procedure_pseudo_code" -> {
                 try {
                     decompileAhead(request.decompileReadAhead());

@@ -48,8 +48,6 @@ export interface GhidraRequestOptions {
    * A request removed while it is still queued never runs it.
    */
   readonly onAdmitted?: () => void;
-  /** Client-only generation for a read-ahead abandon; the bridge does not see it. */
-  readonly readAheadGeneration?: number;
 }
 
 /** Bridge ceilings copied from the settings when one request was admitted. */

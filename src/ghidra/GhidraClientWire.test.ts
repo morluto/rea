@@ -296,6 +296,21 @@ it("writes one authenticated cancel frame for an interrupted request and keeps a
   await expect(request).resolves.toEqual(ok({ answered: true }));
 });
 
+it("writes an abandon frame without registering a reply", () => {
+  const { wire, writes, pending } = harness(limit(8_192));
+  wire.abandonReadAhead();
+  expect(writes.map((line) => JSON.parse(line) as JsonValue)).toEqual([
+    {
+      id: 1,
+      token: "b".repeat(64),
+      method: "abandon_decompile_read_ahead",
+      params: {},
+    },
+  ]);
+  expect(writes[0]?.endsWith("\n")).toBe(true);
+  expect(pending.size).toBe(0);
+});
+
 it("writes no cancel frame once the interrupted request has settled", async () => {
   const { wire, writes, pending } = harness(limit(8_192));
   const interrupt = new AbortController();

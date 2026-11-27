@@ -289,11 +289,6 @@ export class GhidraClient {
     });
     this.#requestQueue = new GhidraRequestQueue(
       async (method, parameters, requestOptions) => {
-        if (
-          method === "abandon_decompile_read_ahead" &&
-          !this.#readAheadCancellation.owns(requestOptions.readAheadGeneration)
-        )
-          return ok({ abandoned: false });
         const owner = this.#process;
         const checkpoint = owner?.checkpointOutput();
         const token = this.#token;
@@ -649,21 +644,13 @@ export class GhidraClient {
    * the caller's signal: that signal is already aborted, and the queue would
    * otherwise refuse the cleanup.
    */
-  async #abandonDecompileReadAhead(generation: number): Promise<void> {
-    if (!this.isReady()) return;
-    const abandoned = await this.#enqueue(
-      "abandon_decompile_read_ahead",
-      {},
-      { readAheadGeneration: generation },
-    );
-    if (!abandoned.ok)
-      this.#logger.warn(
-        {
-          method: "abandon_decompile_read_ahead",
-          kind: abandoned.error.kind,
-        },
-        "Ghidra read-ahead abandonment failed",
-      );
+  #abandonDecompileReadAhead(generation: number): Promise<void> {
+    if (!this.isReady() || !this.#readAheadCancellation.owns(generation))
+      return Promise.resolve();
+    // Written beside the FIFO, like cancel. A slow analysis request must
+    // not keep a cancelled workflow's workers running.
+    this.#wire.abandonReadAhead();
+    return Promise.resolve();
   }
 
   /** Read the private immutable source for format parsers that require captured bytes. */
