@@ -3,6 +3,7 @@ import {
   MAX_XML_PLIST_PROBE_BYTES,
 } from "../../domain/apple/appleArchiveFormat.js";
 import { recognizeBoundedArtifactFormat } from "../../domain/artifactFormatRecognition.js";
+import { ANDROID_SUPER_RECOGNITION_BYTES } from "../../domain/firmware/androidSuperImage.js";
 import { DFUSE_SUFFIX_BYTES } from "../../domain/firmware/dfuse.js";
 import { computeBlockEntropy } from "../../domain/native/byteEntropy.js";
 import {
@@ -31,12 +32,12 @@ const hasXmlPlistSignature = (bytes: Buffer): boolean => {
 
 const recognizeLeadingFormat = (bytes: Buffer): PeOverlayLeadingFormat => {
   const format = recognizeBoundedArtifactFormat({
-    prefix: bytes.subarray(0, PE_OVERLAY_ENTROPY_WINDOW_BYTES),
+    prefix: bytes.subarray(0, ANDROID_SUPER_RECOGNITION_BYTES),
     fileSize: bytes.length,
     suffix: bytes.subarray(Math.max(0, bytes.length - DFUSE_SUFFIX_BYTES)),
     xmlPlistSignature: hasXmlPlistSignature(bytes),
   });
-  // The overlay samples 4 KiB. ISO 9660 recognition requires a sector 16 probe.
+  // ISO 9660 requires a sector 16 probe beyond the recognition prefix.
   return format === "iso9660" ? "unrecognized" : (format ?? "unrecognized");
 };
 
