@@ -197,6 +197,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         "define_native_data_types",
         "set_address_name",
         "set_addresses_names",
+        "set_comment",
+        "set_inline_comment",
         "inspect_native_load_image",
         "read_bytes",
         "search_bytes",
@@ -204,6 +206,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         "ping",
         "shutdown",
         "address_name",
+        "comment",
+        "inline_comment",
         "list_documents",
         "list_names",
         "list_procedures",
@@ -728,6 +732,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             case "search_bytes" -> searchMemoryBytes(request.params, descriptor);
             case "address_to_file_offset" -> addressToFileOffset(request.params);
             case "address_name" -> addressName(request.params);
+            case "comment" -> addressComment(request.params, CommentType.PRE);
+            case "inline_comment" -> addressComment(request.params, CommentType.EOL);
             case "list_documents" -> listDocuments(request.params);
             case "list_segments" -> listSegments(request.params);
             case "procedure_address" -> procedureAddress(request.params);
@@ -768,6 +774,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 yield request.method.equals("set_address_name")
                     ? setAddressName(request.params) : setAddressesNames(request.params);
             }
+            case "set_comment", "set_inline_comment" -> {
+                if (!descriptor.transport.equals("unix-socket"))
+                    throw new RequestFailure("method_unavailable", "Windows P0 does not admit database mutation");
+                yield setAddressComment(request.params,
+                    request.method.equals("set_comment") ? CommentType.PRE : CommentType.EOL);
+            }
             case "annotate_native_function" -> {
                 if (!descriptor.transport.equals("unix-socket"))
                     throw new RequestFailure("method_unavailable", "Windows P0 does not admit database mutation");
@@ -787,7 +799,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private static boolean isMutatingOperation(String method) {
         return method.equals("annotate_native_function") || method.equals("define_native_data_types") ||
-            method.equals("set_address_name") || method.equals("set_addresses_names");
+            method.equals("set_address_name") || method.equals("set_addresses_names") ||
+            method.equals("set_comment") || method.equals("set_inline_comment");
     }
 
     /** Internal lifecycle request: the destination is inside this owned runtime. */
@@ -3881,6 +3894,51 @@ public final class ReaGhidraBridge extends HeadlessScript {
         Address address = requireAddress(params, "address");
         Symbol symbol = currentProgram.getSymbolTable().getPrimarySymbol(address);
         return symbol == null ? JsonNull.INSTANCE : GSON.toJsonTree(symbol.getName(true));
+    }
+
+    /**
+     * The comment Ghidra holds at one mapped address: a regular comment is its
+     * PRE comment and an inline comment its EOL comment, as in
+     * annotate_native_function. Null when none is set.
+     */
+    private JsonElement addressComment(JsonObject params, CommentType type) {
+        requireKeys(params, Set.of("document", "address"));
+        requireDocument(params);
+        Address address = requireAddress(params, "address");
+        if (!currentProgram.getMemory().contains(address))
+            throw new RequestFailure("invalid_request", "Address is not mapped: " + canonicalAddress(address));
+        String comment = currentProgram.getListing().getComment(type, address);
+        return comment == null ? JsonNull.INSTANCE : GSON.toJsonTree(comment);
+    }
+
+    /**
+     * Set or clear one comment at a mapped address in the session database and
+     * report whether the readback equals the request. An unmapped address or
+     * unrepresentable text is refused before any change; a mismatched readback
+     * rolls the edit back.
+     */
+    private JsonElement setAddressComment(JsonObject params, CommentType type) throws Exception {
+        requireKeys(params, Set.of("document", "address", "comment"));
+        requireDocument(params);
+        Address address = requireAddress(params, "address");
+        if (!currentProgram.getMemory().contains(address))
+            throw new RequestFailure("invalid_request", "Address is not mapped: " + canonicalAddress(address));
+        String requested = requireText(params, "comment");
+        validateAnnotationText(requested, "comment");
+        String expected = requested.isEmpty() ? null : requested;
+        int transaction = currentProgram.startTransaction("REA address comment");
+        boolean commit = false;
+        try {
+            currentProgram.getListing().setComment(address, type, expected);
+            monitor.checkCancelled();
+            // Pseudocode renders comments, so cached decompilations are stale.
+            invalidateSymbolAndDecompilerCaches();
+            commit = java.util.Objects.equals(expected, currentProgram.getListing().getComment(type, address));
+            return GSON.toJsonTree(commit);
+        }
+        finally {
+            currentProgram.endTransaction(transaction, commit);
+        }
     }
 
     // Analyst naming: a function entry renames the function; another mapped

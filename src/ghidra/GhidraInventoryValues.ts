@@ -44,6 +44,12 @@ export const GHIDRA_NAMING_OPERATIONS = [
 
 type GhidraNamingOperation = (typeof GHIDRA_NAMING_OPERATIONS)[number];
 
+/** Inventory operations that write analyst comments into the session database. */
+export const GHIDRA_COMMENT_WRITE_OPERATIONS = [
+  "set_comment",
+  "set_inline_comment",
+] as const satisfies readonly GhidraInventoryOperation[];
+
 /** One direct inventory operation implemented by the packaged Java bridge. */
 export type GhidraInventoryOperation =
   (typeof GHIDRA_INVENTORY_OPERATIONS)[number];
@@ -95,6 +101,9 @@ const inputSchemas = {
     address: explicitAddress,
   }),
   address_name: z.object({ document, address: explicitAddress }).strict(),
+  // Ghidra has no cursor, so a comment read names its address.
+  comment: z.object({ document, address: explicitAddress }).strict(),
+  inline_comment: z.object({ document, address: explicitAddress }).strict(),
   list_documents: z.object({}).strict(),
   list_names: z.object({ document, address: filteredAddress }).strict(),
   list_procedures: z.object({ document }).strict(),
@@ -106,6 +115,12 @@ const inputSchemas = {
     .strict(),
   search_procedures: z.object(searchInput).strict(),
   search_strings: z.object(searchInput).strict(),
+  set_comment: z
+    .object({ document, address: explicitAddress, comment: z.string() })
+    .strict(),
+  set_inline_comment: z
+    .object({ document, address: explicitAddress, comment: z.string() })
+    .strict(),
   set_address_name: z
     .object({ document, address: explicitAddress, name: z.string().min(1) })
     .strict(),
@@ -347,6 +362,10 @@ const resultSchemas = {
     file_offset: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
   }),
   address_name: z.string().nullable(),
+  comment: z.string().nullable(),
+  inline_comment: z.string().nullable(),
+  set_comment: z.boolean(),
+  set_inline_comment: z.boolean(),
   list_documents: z.array(z.string().min(1)).length(1),
   list_names: z.array(symbolItem),
   list_procedures: z.array(procedureItem),

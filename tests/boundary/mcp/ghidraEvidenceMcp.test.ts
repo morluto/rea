@@ -486,6 +486,66 @@ it("routes address naming to Ghidra with compact results and retained failure re
   }
 });
 
+it("routes comments at arbitrary addresses to Ghidra and refuses malformed replies", async () => {
+  const { harness, requests, bridge, call } = await connectNamingMcp(
+    "ghidra-address-comments",
+  );
+  try {
+    // A write inside a function body, not at its entry.
+    bridge.output = true;
+    const written = await call("set_comment", {
+      address: "0x1004",
+      comment: "Evidence ev_1\r\nsecond line",
+    });
+    expect(written.isError).not.toBe(true);
+    expect(written.structuredContent).toMatchObject({
+      normalized_result: true,
+    });
+    expect(requests.at(-1)).toEqual({
+      document: null,
+      address: "0x1004",
+      comment: "Evidence ev_1\r\nsecond line",
+    });
+    bridge.output = "Evidence ev_1\r\nsecond line";
+    const read = await call("comment", { address: "0x1004" });
+    expect(read.isError).not.toBe(true);
+    expect(read.structuredContent).toMatchObject({
+      normalized_result: "Evidence ev_1\r\nsecond line",
+    });
+    // An inline comment at data, and an absent one, which reads as null.
+    bridge.output = false;
+    const mismatch = await call("set_inline_comment", {
+      address: "0x2000",
+      comment: "table",
+    });
+    expect(mismatch.structuredContent).toMatchObject({
+      normalized_result: false,
+    });
+    bridge.output = null;
+    const absent = await call("inline_comment", { address: "0x2000" });
+    expect(absent.structuredContent).toMatchObject({ normalized_result: null });
+    // Ghidra has no cursor, so a read names its address before the bridge.
+    const sent = requests.length;
+    const cursor = await call("comment", {});
+    expect(cursor.isError).toBe(true);
+    expect(requests).toHaveLength(sent);
+    for (const [tool, reply] of [
+      ["set_comment", "true"],
+      ["set_inline_comment", null],
+      ["comment", 7],
+    ] as const) {
+      bridge.output = reply;
+      const refused = await call(tool, {
+        address: "0x1004",
+        ...(tool.startsWith("set_") ? { comment: "note" } : {}),
+      });
+      expect(refused.isError).toBe(true);
+    }
+  } finally {
+    await harness.close();
+  }
+});
+
 it("retains one large contested destination in linear Evidence", async () => {
   const { harness, bridge, call } = await connectNamingMcp(
     "ghidra-large-naming-conflict",

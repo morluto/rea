@@ -1288,8 +1288,10 @@ probe is requested before that padding rule applies.
 On Linux and macOS, `annotate_native_function` also edits a function name and/or
 entry comments atomically and returns refreshed analysis, and `set_address_name`
 and `set_addresses_names` name a function entry or any other mapped address
-(creating or renaming its primary label) with per-address success results. These
-session metadata edits leave executable bytes unchanged and are discarded on close. GUI controls
+(creating or renaming its primary label) with per-address success results.
+`set_comment` and `set_inline_comment` write Ghidra's PRE and EOL comments at any
+mapped address, inside or outside a function, and `comment` and `inline_comment`
+read them back. These session metadata edits leave executable bytes unchanged and are discarded on close. GUI controls
 require Hopper; Windows P0 remains read-only.
 
 Windows P0 admits native x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs,
@@ -1768,7 +1770,10 @@ Run `npm run verify:ghidra:checkpoints` with your existing Ghidra/JDK installati
 to verify fresh CLI/MCP processes, name/comment/type preservation, competing
 sessions, corruption refusal and explicit recovery. `npm run verify:ghidra:type-edits`
 verifies caller-defined types and function signatures, their refusals and
-their restoration from a checkpoint in a new process. Lifecycle fixtures cover
+their restoration from a checkpoint in a new process.
+`npm run verify:ghidra:address-comments` writes, reads, clears and refuses
+comments inside a function and at data, and checks that they are discarded on
+close. Lifecycle fixtures cover
 save failure/retry and cancellation during checkpoint finalization separately.
 
 ### Reuse an existing Ghidra project

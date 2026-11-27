@@ -557,3 +557,63 @@ it.each([null, { keys: [] }])(
     });
   },
 );
+
+describe("Ghidra address comment operations", () => {
+  it.each(["comment", "inline_comment"] as const)(
+    "%s requires an explicit address, since Ghidra has no cursor",
+    (operation) => {
+      expect(
+        parseGhidraInventoryInput(operation, { address: "0x1004" }),
+      ).toMatchObject({
+        ok: true,
+        value: { document: null, address: "0x1004" },
+        namingRequest: null,
+      });
+      expect(parseGhidraInventoryInput(operation, {})).toMatchObject({
+        ok: false,
+      });
+      expect(
+        parseGhidraInventoryInput(operation, {
+          address: "0x1004",
+          comment: "x",
+        }),
+      ).toMatchObject({ ok: false });
+    },
+  );
+
+  it.each(["set_comment", "set_inline_comment"] as const)(
+    "%s admits an empty comment as a clear and refuses non-text",
+    (operation) => {
+      expect(
+        parseGhidraInventoryInput(operation, {
+          address: "0x1004",
+          comment: "",
+        }),
+      ).toMatchObject({
+        ok: true,
+        value: { document: null, address: "0x1004", comment: "" },
+      });
+      for (const comment of [undefined, 7, null])
+        expect(
+          parseGhidraInventoryInput(operation, {
+            address: "0x1004",
+            ...(comment === undefined ? {} : { comment }),
+          }),
+        ).toMatchObject({ ok: false });
+    },
+  );
+
+  it.each([
+    ["comment", "note", true],
+    ["comment", null, true],
+    ["inline_comment", 7, false],
+    ["set_comment", true, true],
+    ["set_inline_comment", false, true],
+    ["set_comment", "true", false],
+    ["set_inline_comment", null, false],
+  ] as const)("parses a %s reply %j: %s", (operation, reply, accepted) => {
+    expect(parseGhidraInventoryResult(operation, reply, null).ok).toBe(
+      accepted,
+    );
+  });
+});

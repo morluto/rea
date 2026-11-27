@@ -1,8 +1,8 @@
 # Ghidra provider semantics
 
 REA imports one target into an ephemeral Ghidra database. Linux/macOS support
-read-only analysis and atomic function-name/entry-comment edits; Windows P0 is
-read-only. GUI controls and writes to caller-selected source databases are unavailable.
+read-only analysis, atomic function-name/entry-comment edits, and comments at any
+mapped address; Windows P0 is read-only. GUI controls and writes to caller-selected source databases are unavailable.
 Executable bytes remain unchanged.
 
 An opt-in [owned Program checkpoint](../getting-started/installation.md#automatically-checkpoint-an-owned-ghidra-program)

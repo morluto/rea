@@ -137,6 +137,8 @@ const FLOW_INDEPENDENT_OPERATIONS: ReadonlySet<string> = new Set([
   "read_bytes",
   "address_to_file_offset",
   "address_name",
+  "comment",
+  "inline_comment",
   "list_documents",
   "list_names",
   "list_segments",
@@ -144,6 +146,8 @@ const FLOW_INDEPENDENT_OPERATIONS: ReadonlySet<string> = new Set([
   "search_strings",
   "set_address_name",
   "set_addresses_names",
+  "set_comment",
+  "set_inline_comment",
   "inspect_native_data_type",
   "define_native_data_types",
 ]);

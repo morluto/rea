@@ -29,10 +29,11 @@ describe("Ghidra MCP capability routing", () => {
       const availableNames = (await mcp.listTools()).tools.map(
         ({ name }) => name,
       );
-      expect(availableNames).toContain("set_comment");
+      // Bookmarks are Hopper navigation metadata; Ghidra declares none.
+      expect(availableNames).toContain("set_bookmark");
       const denied = await mcp.callTool({
-        name: "set_comment",
-        arguments: { address: "0x1000", comment: "must not mutate" },
+        name: "set_bookmark",
+        arguments: { address: "0x1000", name: "must not mutate" },
       });
       expect(denied.isError).toBe(true);
       expect(parseMcpToolError(denied)).toMatchObject({
@@ -41,7 +42,7 @@ describe("Ghidra MCP capability routing", () => {
           category: "unsupported_provider",
         },
       });
-      expect(calls).not.toContain("set_comment");
+      expect(calls).not.toContain("set_bookmark");
 
       const status = await mcp.callTool({
         name: "binary_session",
@@ -73,7 +74,13 @@ describe("Ghidra MCP capability routing", () => {
             name: "find_xrefs_to_name",
             available: true,
           }),
-          expect.objectContaining({ name: "set_comment", available: false }),
+          expect.objectContaining({ name: "set_bookmark", available: false }),
+          // Comments are session metadata Ghidra writes at any mapped address.
+          expect.objectContaining({ name: "set_comment", available: true }),
+          expect.objectContaining({
+            name: "set_inline_comment",
+            available: true,
+          }),
         ]),
       );
     } finally {

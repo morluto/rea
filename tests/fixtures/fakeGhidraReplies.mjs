@@ -32,6 +32,8 @@ const MUTATING_METHODS = [
   "define_native_data_types",
   "set_address_name",
   "set_addresses_names",
+  "set_comment",
+  "set_inline_comment",
 ];
 
 /** Every method the fake's handshake advertises on a writable bridge. */
@@ -44,6 +46,8 @@ export const FAKE_GHIDRA_CAPABILITIES = Object.freeze([
   "search_bytes",
   "address_to_file_offset",
   "address_name",
+  "comment",
+  "inline_comment",
   "list_documents",
   "list_names",
   "list_procedures",
@@ -55,6 +59,8 @@ export const FAKE_GHIDRA_CAPABILITIES = Object.freeze([
   "search_strings",
   "set_address_name",
   "set_addresses_names",
+  "set_comment",
+  "set_inline_comment",
   "annotate_native_function",
   "define_native_data_types",
   "inspect_native_data_type",
@@ -265,6 +271,10 @@ export const FAKE_GHIDRA_INVENTORY_REPLIES = Object.freeze({
   }),
   search_bytes: searchBytesReply,
   address_name: () => "fixture_main",
+  comment: () => "fixture comment",
+  inline_comment: () => null,
+  set_comment: () => true,
+  set_inline_comment: () => true,
   list_documents: () => ["fixture"],
   list_names: () => [nameItem()],
   list_procedures: () => [procedureItem()],
