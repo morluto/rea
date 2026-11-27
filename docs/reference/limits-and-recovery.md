@@ -91,7 +91,7 @@ selected device. It reports `total_processes` and `truncated`. Moving to another
 page runs a fresh discovery on that device.
 
 `inspect_gpu_code_objects` accepts per-call budgets `max_object_bytes` (default
-and maximum 128 MiB), `max_work_bytes` (default 512 MiB, up to 1 GiB),
+and maximum 128 MiB), `max_work_bytes` (default and maximum 512 MiB),
 `max_report_bytes` (default and maximum 16 MiB), `max_metadata_bytes`
 (default and maximum 8 MiB), `max_structure_bytes` (default 16 MiB, up to
 512 MiB), `max_parser_entries` (default and maximum 65,536),

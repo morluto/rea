@@ -215,16 +215,19 @@ export const nextGpuContainerOffset = async (
 ): Promise<number> => {
   const maxChunk = Math.max(
     1,
-    source.maxObjectBytes ?? DEFAULT_GPU_OBJECT_BYTES,
+    Math.min(
+      CONTAINER_SCAN_CHUNK_BYTES,
+      source.maxObjectBytes ?? DEFAULT_GPU_OBJECT_BYTES,
+    ),
   );
-  let width = 64;
+  let width = Math.min(64, maxChunk);
   let scannedSinceYield = 0;
   for (let position = start; position < source.size;) {
-    const chunk = Math.min(width, source.size - position);
+    const chunk = Math.min(width, maxChunk, source.size - position);
     const bytes =
       source.readBounded !== undefined
-        ? await source.readBounded(position, chunk, CONTAINER_SCAN_CHUNK_BYTES)
-        : await source.read(position, Math.min(chunk, maxChunk));
+        ? await source.readBounded(position, chunk, maxChunk)
+        : await source.read(position, chunk);
     const index = bytes.findIndex((byte) => byte !== 0);
     if (index >= 0) return position + index;
     position += bytes.length;
@@ -233,7 +236,7 @@ export const nextGpuContainerOffset = async (
       scannedSinceYield = 0;
       await yieldArtifactRead(signal);
     }
-    width = CONTAINER_SCAN_CHUNK_BYTES;
+    width = maxChunk;
   }
   return source.size;
 };

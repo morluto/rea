@@ -15,10 +15,12 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import {
   gpuCodeObjectsPartialSchema,
   gpuCodeObjectsSchema,
+  inspectGpuCodeObjectsInputSchema,
   type GpuCodeObjectsInput,
 } from "../../../src/domain/gpu/gpuCodeObjects.js";
 import { GpuCodeObjectsProvider } from "../../../src/gpu/GpuCodeObjectsProvider.js";
 import { GpuInventory } from "../../../src/gpu/GpuInventory.js";
+import { nextGpuContainerOffset } from "../../../src/gpu/GpuSource.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   cudaFixture,
@@ -2313,7 +2315,35 @@ it("enforces per-call GPU budgets and recovers when raised", async () => {
 });
 
 it("respects max_object_bytes during container scanning and full-file digesting", async () => {
-  // Trailing NUL bytes past a HIP bundle exceed max_object_bytes when scanned in 64 KiB chunks.
+  // Trailing NUL bytes past a HIP bundle must be scanned in chunks <= max_object_bytes
+  // on both readBounded and read fallback paths.
+  const paddedSourceBytes = Buffer.concat([
+    Buffer.alloc(2048),
+    Buffer.from("CCOB"),
+  ]);
+  const boundedCalls: Array<{ size: number; limit: number }> = [];
+  const nextOffset = await nextGpuContainerOffset(
+    {
+      size: paddedSourceBytes.length,
+      containerId: null,
+      maxObjectBytes: 512,
+      async read(offset, size) {
+        return paddedSourceBytes.subarray(offset, offset + size);
+      },
+      async readBounded(offset, size, limit) {
+        boundedCalls.push({ size, limit });
+        return paddedSourceBytes.subarray(offset, offset + size);
+      },
+    },
+    0,
+  );
+  expect(nextOffset).toBe(2048);
+  expect(boundedCalls.length).toBeGreaterThan(1);
+  for (const call of boundedCalls) {
+    expect(call.size).toBeLessThanOrEqual(512);
+    expect(call.limit).toBeLessThanOrEqual(512);
+  }
+
   const smallBundle = hipFixture(Buffer.from("x"), "host-x86_64");
   const paddedBundle = Buffer.concat([smallBundle, Buffer.alloc(2048)]);
   const scanned = await inspect(paddedBundle, {
@@ -2434,6 +2464,85 @@ it("keeps corrupt CCOB v1 recovery distinct from max_object_bytes window truncat
   });
   if (!raisedV1.ok) throw raisedV1.error;
   expect(raisedV1.value.objects[0]?.inspection).toBe("complete");
+
+  // Multi-frame Zstandard CCOB v1 cut at the exact frame boundary or inside the
+  // next frame's 4-byte magic reports capacity (max_object_bytes) instead of
+  // publishing a short extent as malformed corruption, and refills a cached window.
+  const multiFrameBundle = hipFixture(
+    Buffer.from("multi-frame-zstd-payload".repeat(32)),
+    "host-x86_64",
+  );
+  const splitAt = Math.floor(multiFrameBundle.length / 2);
+  const frame1 = zstdCompressSync(multiFrameBundle.subarray(0, splitAt));
+  const frame2 = zstdCompressSync(multiFrameBundle.subarray(splitAt));
+  const twoFrames = Buffer.concat([frame1, frame2]);
+  const zstdHeader = Buffer.from(
+    ccobFixture(1, "zstd", multiFrameBundle).subarray(0, 20),
+  );
+  const multiFrameV1 = Buffer.concat([zstdHeader, twoFrames]);
+  for (const extra of [0, 1, 2, 3]) {
+    const budget = frame1.length + extra;
+    expect(budget).toBeLessThan(twoFrames.length);
+    const cut = await inspect(multiFrameV1, {
+      analysis: "inventory",
+      max_object_bytes: budget,
+    });
+    if (!cut.ok) throw cut.error;
+    expect(cut.value.objects).toHaveLength(1);
+    expect(cut.value.objects[0]).toMatchObject({
+      kind: "hip-bundle",
+      inspection: "capacity",
+      limitations: expect.arrayContaining([
+        expect.stringContaining("(parameter: max_object_bytes)"),
+      ]),
+    });
+  }
+  const fullMultiFrame = await inspect(multiFrameV1, {
+    analysis: "inventory",
+    max_object_bytes: multiFrameBundle.length + 64,
+  });
+  if (!fullMultiFrame.ok) throw fullMultiFrame.error;
+  expect(fullMultiFrame.value.objects[0]?.inspection).toBe("complete");
+
+  // When a sibling's cached legacy window ends right between frame1 and frame2
+  // while max_object_bytes admits the full sibling, refill succeeds cleanly.
+  const prefixBundle = hipFixture(
+    Buffer.from("p".repeat(multiFrameBundle.length)),
+    "host-x86_64",
+  );
+  const prefixStored = deflateSync(prefixBundle, { level: 0 });
+  const prefixHeader = Buffer.from(
+    ccobFixture(1, "zlib", prefixBundle).subarray(0, 20),
+  );
+  const prefixV1 = Buffer.concat([prefixHeader, prefixStored]);
+  const cachedWindowCut = prefixStored.length + 20 + frame1.length;
+  expect(cachedWindowCut).toBeGreaterThanOrEqual(multiFrameBundle.length);
+  expect(cachedWindowCut).toBeGreaterThanOrEqual(twoFrames.length);
+  const twoSiblings = Buffer.concat([prefixV1, multiFrameV1]);
+  const refilledSiblings = await inspect(twoSiblings, {
+    analysis: "inventory",
+    max_object_bytes: cachedWindowCut,
+  });
+  if (!refilledSiblings.ok) throw refilledSiblings.error;
+  expect(
+    refilledSiblings.value.objects
+      .filter((o) => o.kind === "hip-bundle")
+      .map((o) => o.inspection),
+  ).toEqual(["complete", "complete"]);
+
+  // max_work_bytes stays capped at main's 512 MiB heap ceiling.
+  const overWorkMax = inspectGpuCodeObjectsInputSchema.safeParse({
+    path: "/tmp/sample.ptx",
+    analysis: "inventory",
+    max_work_bytes: 512 * 1024 * 1024 + 1,
+  });
+  expect(overWorkMax.success).toBe(false);
+  const atWorkMax = inspectGpuCodeObjectsInputSchema.safeParse({
+    path: "/tmp/sample.ptx",
+    analysis: "inventory",
+    max_work_bytes: 512 * 1024 * 1024,
+  });
+  expect(atWorkMax.success).toBe(true);
 });
 
 it("applies max_structure_bytes independently of max_object_bytes and covers PE, CUBIN, and report baseline", async () => {

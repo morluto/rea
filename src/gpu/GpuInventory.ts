@@ -30,6 +30,7 @@ import {
   projectZstandardFrameAllowance,
   ZstandardFrameAllowanceError,
 } from "../domain/compression/zstandardFrameAllowance.js";
+import { hasIncompleteZstandardMagicPrefix } from "../domain/compression/zstandardFrameWire.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { createHash } from "node:crypto";
 import { scheduler } from "node:timers/promises";
@@ -181,7 +182,7 @@ export class GpuInventory {
         throw new BinaryResourceFailure(
           "structure",
           maxWorkBytes,
-          `GPU reads/decoding exceed the ${String(maxWorkBytes)}-byte per-inspection work budget`,
+          `GPU reads/decoding exceed ${formatGpuByteBudget(maxWorkBytes)} per inspection`,
           GPU_WORK_BYTES_LIMIT,
           "bytes",
         );
@@ -825,20 +826,43 @@ export class GpuInventory {
             const decoded = Number(declaredDecodedSize);
             const available = encoded.length;
             const compression = row.compression;
-            const completed = await decodeGpuPayloadStream(
+            const ccobWindowLimit = (): BinaryResourceFailure =>
+              new BinaryResourceFailure(
+                "structure",
+                this.#budgets.maxObjectBytes,
+                `Legacy CCOB v1 compressed payload exceeds the ${String(this.#budgets.maxObjectBytes)}-byte object budget`,
+                GPU_OBJECT_BYTES_LIMIT,
+                "bytes",
+              );
+            const decodeRefilledWindow = async (): Promise<{
+              buffer: Buffer;
+              consumedBytes: number;
+            }> => {
+              // Retire the previous window before allocating its replacement.
+              encoded = undefined;
+              const refilled = await readWindow();
+              encoded = refilled;
+              return decodeGpuPayloadStream(
+                refilled,
+                compression,
+                decoded,
+                this.signal,
+              ).catch((refillCause: unknown) => {
+                if (
+                  isTruncatedGpuPayloadFailure(refillCause) &&
+                  total - width > this.#budgets.maxObjectBytes
+                )
+                  throw ccobWindowLimit();
+                throw refillCause;
+              });
+            };
+            let refilled = false;
+            let completed = await decodeGpuPayloadStream(
               encoded,
               compression,
               decoded,
               this.signal,
             ).catch(async (cause: unknown) => {
-              const ccobWindowLimit = (): BinaryResourceFailure =>
-                new BinaryResourceFailure(
-                  "structure",
-                  this.#budgets.maxObjectBytes,
-                  `Legacy CCOB v1 compressed payload exceeds the ${String(this.#budgets.maxObjectBytes)}-byte object budget`,
-                  GPU_OBJECT_BYTES_LIMIT,
-                  "bytes",
-                );
               // A cached window may end inside this sibling. Refill once
               // before treating that incomplete view as a truncated stream.
               if (
@@ -846,21 +870,8 @@ export class GpuInventory {
                 cached &&
                 available < inputSize
               ) {
-                // Retire the previous window before allocating its replacement.
-                encoded = undefined;
-                return decodeGpuPayloadStream(
-                  await readWindow(),
-                  compression,
-                  decoded,
-                  this.signal,
-                ).catch((refillCause: unknown) => {
-                  if (
-                    isTruncatedGpuPayloadFailure(refillCause) &&
-                    total - width > this.#budgets.maxObjectBytes
-                  )
-                    throw ccobWindowLimit();
-                  throw refillCause;
-                });
+                refilled = true;
+                return decodeRefilledWindow();
               }
               if (
                 isTruncatedGpuPayloadFailure(cause) &&
@@ -869,6 +880,29 @@ export class GpuInventory {
                 throw ccobWindowLimit();
               throw cause;
             });
+            // Multi-frame Zstandard payloads cut cleanly between frames or inside
+            // the next frame's 4-byte magic return success for the completed prefix
+            // instead of throwing truncation. Check for an incomplete window before
+            // publishing the short extent.
+            const cutAtFrameBoundary = (): boolean =>
+              compression === "zstd" &&
+              completed.buffer.length < decoded &&
+              encoded !== undefined &&
+              hasIncompleteZstandardMagicPrefix(
+                encoded,
+                completed.consumedBytes,
+              );
+            if (cutAtFrameBoundary()) {
+              if (!refilled && cached && available < inputSize) {
+                refilled = true;
+                completed = await decodeRefilledWindow();
+              }
+              if (
+                cutAtFrameBoundary() &&
+                total - width > this.#budgets.maxObjectBytes
+              )
+                throw ccobWindowLimit();
+            }
             total = width + completed.consumedBytes;
             extentKnown = true;
             this.#encodedExtent(row, completed.consumedBytes);

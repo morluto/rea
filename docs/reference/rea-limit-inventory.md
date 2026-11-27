@@ -251,12 +251,12 @@ output and capture).
 
 Additional `inspect_gpu_code_objects` per-call parameters (heap-bound allowances keep their existing ceilings):
 
-| Operation                  | Parameter            |   Default | Floor |    Maximum | Owner                                     |
-| -------------------------- | -------------------- | --------: | ----: | ---------: | ----------------------------------------- |
-| `inspect_gpu_code_objects` | `max_object_bytes`   | 134217728 |     1 |  134217728 | `src/domain/gpu/gpuCodeObjectsBudgets.ts` |
-| `inspect_gpu_code_objects` | `max_work_bytes`     | 536870912 |     1 | 1073741824 | `src/domain/gpu/gpuCodeObjectsBudgets.ts` |
-| `inspect_gpu_code_objects` | `max_report_bytes`   |  16777216 |     1 |   16777216 | `src/domain/gpu/gpuCodeObjectsBudgets.ts` |
-| `inspect_gpu_code_objects` | `max_metadata_bytes` |   8388608 |     1 |    8388608 | `src/domain/gpu/gpuCodeObjectsBudgets.ts` |
-| `inspect_gpu_code_objects` | `max_parser_entries` |     65536 |     1 |      65536 | `src/domain/gpu/gpuCodeObjectsBudgets.ts` |
-| `inspect_gpu_code_objects` | `max_parser_visits`  |    262144 |     1 |     262144 | `src/domain/gpu/gpuCodeObjectsBudgets.ts` |
-| `inspect_gpu_code_objects` | `max_token_bytes`    |     65536 |     1 |      65536 | `src/domain/gpu/gpuCodeObjectsBudgets.ts` |
+| Operation                  | Parameter            |   Default | Floor |   Maximum | Owner                                     |
+| -------------------------- | -------------------- | --------: | ----: | --------: | ----------------------------------------- |
+| `inspect_gpu_code_objects` | `max_object_bytes`   | 134217728 |     1 | 134217728 | `src/domain/gpu/gpuCodeObjectsBudgets.ts` |
+| `inspect_gpu_code_objects` | `max_work_bytes`     | 536870912 |     1 | 536870912 | `src/domain/gpu/gpuCodeObjectsBudgets.ts` |
+| `inspect_gpu_code_objects` | `max_report_bytes`   |  16777216 |     1 |  16777216 | `src/domain/gpu/gpuCodeObjectsBudgets.ts` |
+| `inspect_gpu_code_objects` | `max_metadata_bytes` |   8388608 |     1 |   8388608 | `src/domain/gpu/gpuCodeObjectsBudgets.ts` |
+| `inspect_gpu_code_objects` | `max_parser_entries` |     65536 |     1 |     65536 | `src/domain/gpu/gpuCodeObjectsBudgets.ts` |
+| `inspect_gpu_code_objects` | `max_parser_visits`  |    262144 |     1 |    262144 | `src/domain/gpu/gpuCodeObjectsBudgets.ts` |
+| `inspect_gpu_code_objects` | `max_token_bytes`    |     65536 |     1 |     65536 | `src/domain/gpu/gpuCodeObjectsBudgets.ts` |

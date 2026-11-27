@@ -254,7 +254,7 @@ selected payloads. `bytes_read` includes hashing and later descriptor reads.
 | ---------------------------------------------------------------- | ------- | ----------------------------------- |
 | Active inspections                                               | 1       | Fixed (`measuredExhaustion`)        |
 | Each input or output buffer                                      | 128 MiB | `max_object_bytes` (1..128 MiB)     |
-| Payload input, decoded output and AMD note reads, per inspection | 512 MiB | `max_work_bytes` (1..1 GiB)         |
+| Payload input, decoded output and AMD note reads, per inspection | 512 MiB | `max_work_bytes` (1..512 MiB)       |
 | Retained facts, including selected PTX and Clang directories     | 16 MiB  | `max_report_bytes` (1..16 MiB)      |
 | Native tables; decoded section names (each)                      | 16 MiB  | `max_structure_bytes` (64..512 MiB) |
 | AMDGPU ELF note source bytes                                     | 8 MiB   | `max_metadata_bytes` (1..8 MiB)     |

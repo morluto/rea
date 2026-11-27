@@ -34,7 +34,7 @@ const GPU_CODE_OBJECTS_BUDGETS = {
   },
   max_work_bytes: {
     minimum: 1,
-    maximum: 1024 * 1024 * 1024,
+    maximum: DEFAULT_GPU_WORK_BYTES,
     default_value: DEFAULT_GPU_WORK_BYTES,
     unit: "bytes",
   },

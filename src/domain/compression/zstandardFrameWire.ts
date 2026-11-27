@@ -1,6 +1,8 @@
 const ZSTD_MAGIC = 0xfd2fb528;
+const ZSTD_MAGIC_BYTES = [0x28, 0xb5, 0x2f, 0xfd] as const;
 const SKIPPABLE_MAGIC_MIN = 0x184d2a50;
 const SKIPPABLE_MAGIC_MAX = 0x184d2a5f;
+const SKIPPABLE_MAGIC_REST = [0x2a, 0x4d, 0x18] as const;
 export const ZSTANDARD_MAGIC_BYTES = 4;
 
 export type ZstandardFrameKind = "zstd" | "skippable";
@@ -41,6 +43,32 @@ export const zstandardFrameKind = (
   if (magic >= SKIPPABLE_MAGIC_MIN && magic <= SKIPPABLE_MAGIC_MAX)
     return "skippable";
   return undefined;
+};
+
+/**
+ * True when the unread suffix after `offset` is shorter than a 4-byte frame
+ * magic and is either empty (exact frame boundary) or a valid prefix of a
+ * Zstandard or skippable frame magic.
+ */
+export const hasIncompleteZstandardMagicPrefix = (
+  bytes: Uint8Array,
+  offset: number,
+): boolean => {
+  const remaining = bytes.length - offset;
+  if (remaining < 0 || remaining >= ZSTANDARD_MAGIC_BYTES) return false;
+  if (remaining === 0) return true;
+  let matchesZstd = true;
+  for (let index = 0; index < remaining; index += 1)
+    if (bytes[offset + index] !== ZSTD_MAGIC_BYTES[index]) {
+      matchesZstd = false;
+      break;
+    }
+  if (matchesZstd) return true;
+  const first = bytes[offset]!;
+  if (first < 0x50 || first > 0x5f) return false;
+  for (let index = 1; index < remaining; index += 1)
+    if (bytes[offset + index] !== SKIPPABLE_MAGIC_REST[index - 1]) return false;
+  return true;
 };
 
 /**
