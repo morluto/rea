@@ -39,6 +39,20 @@ describe("Ghidra read-ahead cancellation", () => {
     expect(abandoned).toEqual([1]);
   });
 
+  it("does not let an older request restore its watch", () => {
+    const { abandoned, cancellation } = watcher();
+    const carrying = new AbortController();
+    const queued = new AbortController();
+    cancellation.takeOwnership(carrying.signal);
+    cancellation.takeOwnership(queued.signal);
+    cancellation.watch(carrying.signal);
+    carrying.abort();
+    expect(abandoned).toEqual([]);
+    cancellation.watch(queued.signal);
+    queued.abort();
+    expect(abandoned).toEqual([1]);
+  });
+
   it("replaces the owner only when another signal carries read-ahead", () => {
     const { abandoned, cancellation } = watcher();
     const previous = new AbortController();

@@ -6,6 +6,7 @@
  * Another request on a different signal leaves the watch in place.
  */
 export class GhidraReadAheadCancellation {
+  #owner: AbortSignal | undefined;
   #signal: AbortSignal | undefined;
   #onAbort: (() => void) | undefined;
   #sending = false;
@@ -16,16 +17,24 @@ export class GhidraReadAheadCancellation {
    * A request that carries read-ahead is about to run. The same signal keeps
    * its watch. A different signal becomes the owner, because the bridge has
    * one worker pool and disposing it would stop the new window. A request
-   * that does not carry read-ahead must not call this.
+   * that does not carry read-ahead must not call this. A later `watch` from
+   * an older request cannot take the owner back.
    */
   takeOwnership(signal: AbortSignal | undefined): void {
-    if (signal === undefined || signal === this.#signal) return;
-    this.#drop();
+    if (signal === undefined) return;
+    this.#owner = signal;
+    if (signal !== this.#signal) this.#drop();
   }
 
-  /** The latest read-ahead request has settled under `signal`. */
+  /**
+   * The read-ahead request for `signal` has settled. Arms that signal only
+   * when it is still the owner. The queue can already have accepted a newer
+   * read-ahead before this request's `finally` runs.
+   */
   watch(signal: AbortSignal | undefined): void {
     if (signal === undefined) return;
+    if (this.#owner !== undefined && signal !== this.#owner) return;
+    this.#owner = signal;
     if (signal === this.#signal && this.#onAbort !== undefined) {
       if (signal.aborted) this.#onAbort();
       return;
@@ -43,6 +52,7 @@ export class GhidraReadAheadCancellation {
 
   /** The session can no longer accept a bridge request. */
   stop(): void {
+    this.#owner = undefined;
     this.#drop();
   }
 
