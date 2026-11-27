@@ -15,7 +15,7 @@ import type { PlaywrightTrace } from "./playwrightTrace/playwrightTrace.js";
 import type { ErlangBeam } from "./erlang/beam.js";
 import type { ApiContract } from "./apiContract/apiContract.js";
 import type { GraphqlContract } from "./apiContract/graphqlContract.js";
-import type { SavedAnalysisSnapshotPartialObservation } from "./savedAnalysisSnapshot.js";
+import type { CloseOutcomePartialObservation } from "./engineCloseReport.js";
 import type { AnalysisLimit } from "./analysisSettings.js";
 import type { JsonValue } from "./jsonValue.js";
 import type { AnalysisCleanupRetry } from "./analysisErrorRecovery.js";
@@ -753,7 +753,7 @@ export type AnalysisPartialObservation =
   | ApiContract
   | GraphqlContract
   | PlaywrightTrace
-  | SavedAnalysisSnapshotPartialObservation
+  | CloseOutcomePartialObservation
   | WebArtifactAcquisition
   | WebTraceObservation
   | CutterBridgeDiscovery

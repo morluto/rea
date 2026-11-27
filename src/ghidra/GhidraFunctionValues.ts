@@ -13,7 +13,11 @@ import {
   nativeFunctionAnnotationsInputSchema,
   nativeFunctionAnnotationsSchema,
 } from "../domain/native/nativeFunctionAnnotations.js";
-import { nativeDataTypeSchema } from "../domain/native/nativeDataType.js";
+import {
+  nativeDataTypeDefinitionsInputSchema,
+  nativeDataTypeDefinitionsSchema,
+  nativeDataTypeSchema,
+} from "../domain/native/nativeDataType.js";
 import {
   nativeInstructionSchema,
   nativeCallTargetsSchema,
@@ -74,6 +78,7 @@ const directProcedure = { document, procedure };
 
 const inputSchemas = {
   annotate_native_function: nativeFunctionAnnotationsInputSchema,
+  define_native_data_types: nativeDataTypeDefinitionsInputSchema,
   inspect_native_data_type: z
     .object({
       document,
@@ -352,6 +357,7 @@ const resultSchemas = {
   procedure_pseudo_code: z.string().nullable(),
   read_function_instructions: ghidraFunctionInstructionWindow,
   inspect_native_instruction: ghidraInstruction,
+  define_native_data_types: nativeDataTypeDefinitionsSchema,
   inspect_native_data_type: nativeDataTypeSchema,
   resolve_native_call_targets: nativeCallTargetsSchema,
   procedure_references: procedureReferences,

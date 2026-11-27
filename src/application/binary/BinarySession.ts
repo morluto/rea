@@ -14,10 +14,7 @@ import {
 } from "../EvidenceBundleFiles.js";
 import type { ResetInvestigationReceipt } from "../../domain/investigationLifecycle.js";
 
-import {
-  retainSavedAnalysisSnapshot,
-  type SavedAnalysisSnapshot,
-} from "../../domain/savedAnalysisSnapshot.js";
+import type { SavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
 
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
@@ -93,6 +90,11 @@ import {
   commitExecutionProfile,
   prepareSessionExecution,
 } from "./BinarySessionExecution.js";
+import {
+  retainCloseOutcome,
+  type ClosedWithSnapshot,
+  type EngineCloseReport,
+} from "../../domain/engineCloseReport.js";
 import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
 import { bundleExecutableProvenance } from "../../domain/apple/bundleExecutableProvenance.js";
 import {
@@ -277,6 +279,11 @@ export class BinarySession
       if (!resolved.ok) return resolved;
       if (isAborted(options.signal))
         return err(cancelledBy("open_bundle_resources", options.signal));
+      const unreported = this.#refuseUnreportedRelease(
+        "open_bundle_resources",
+        { active: true },
+      );
+      if (unreported !== undefined) return err(unreported);
       const pendingClosed = await this.#retryPendingCleanup();
       if (!pendingClosed.ok) return pendingClosed;
       const pendingResourcesClosed =
@@ -623,6 +630,10 @@ export class BinarySession
     await this.#drainCalls(admittedThrough);
     if (isAborted(options.signal))
       return err(cancelledBy("open_binary", options.signal));
+    const unreported = this.#refuseUnreportedRelease("open_binary", {
+      active: false,
+    });
+    if (unreported !== undefined) return err(unreported);
     const pendingClosed = await this.#retryPendingCleanup();
     if (!pendingClosed.ok) return pendingClosed;
     const pendingResourcesClosed =
@@ -639,6 +650,11 @@ export class BinarySession
       );
       if (fastPath !== undefined) return fastPath;
     }
+    // A live retained engine stays bound above; replacing one releases it.
+    const replacing = this.#refuseUnreportedRelease("open_binary", {
+      active: true,
+    });
+    if (replacing !== undefined) return err(replacing);
     const previous = this.#active;
     this.#active = undefined;
     if (previous !== undefined) {
@@ -826,6 +842,10 @@ export class BinarySession
         this.#externalMutationCleanupFailure = undefined;
       }
 
+      const unreported = this.#refuseUnreportedRelease(operationName, {
+        active: true,
+      });
+      if (unreported !== undefined) return err(unreported);
       const pendingCleanup = await this.#retryPendingCleanup();
       if (!pendingCleanup.ok)
         return err(
@@ -914,7 +934,7 @@ export class BinarySession
       readonly retainProviderDocuments?: boolean;
       readonly cleanupRetry?: AnalysisCleanupRetry;
     } = {},
-  ): Promise<Result<null, AnalysisError>> {
+  ): Promise<Result<EngineCloseReport | null, AnalysisError>> {
     return this.#serialize(async (admittedThrough) => {
       await this.#drainCalls(admittedThrough);
       return this.#offerCleanupRetry(
@@ -931,7 +951,7 @@ export class BinarySession
     options: Pick<ExecutionOptions, "progress"> & {
       readonly cleanupRetry?: AnalysisCleanupRetry;
     } = {},
-  ): Promise<Result<SavedAnalysisSnapshot, AnalysisError>> {
+  ): Promise<Result<ClosedWithSnapshot, AnalysisError>> {
     return this.#serialize(async (admittedThrough) => {
       await this.#drainCalls(admittedThrough);
       const snapshot = this.exportAnalysisSnapshot();
@@ -955,8 +975,8 @@ export class BinarySession
         options.cleanupRetry,
       );
       return closed.ok
-        ? ok(receipt)
-        : err(retainSavedAnalysisSnapshot(closed.error, receipt));
+        ? ok(closed.value === null ? receipt : { ...receipt, ...closed.value })
+        : err(retainCloseOutcome(closed.error, { saved_snapshot: receipt }));
     });
   }
 
@@ -969,9 +989,11 @@ export class BinarySession
     this.beginShutdown();
     return this.#serialize(async (admittedThrough) => {
       await this.#drainCalls(admittedThrough);
+      // Disposal ends the process; no caller remains to read a close report.
       const closed = await this.#closeActive(options);
-      if (closed.ok) this.disposeInvestigationRecords();
-      return closed;
+      if (!closed.ok) return closed;
+      this.disposeInvestigationRecords();
+      return ok(null);
     });
   }
 
@@ -1004,6 +1026,10 @@ export class BinarySession
         return adapterResources;
       if (this.#externalMutationCleanupFailure?.cleanupIncomplete === true)
         return err(this.#externalMutationCleanupFailure);
+      const unreported = this.#refuseUnreportedRelease("reset_investigation", {
+        active: false,
+      });
+      if (unreported !== undefined) return err(unreported);
       const pending = await this.#retryPendingCleanup();
       if (!pending.ok) return pending;
       const bundles = await this.#retryPendingBundleResourceCleanup();
@@ -1055,10 +1081,10 @@ export class BinarySession
   }
 
   /** Offer the caller's retry only while this session retains the failed cleanup. */
-  #offerCleanupRetry(
-    closed: Result<null, AnalysisError>,
+  #offerCleanupRetry<Value>(
+    closed: Result<Value, AnalysisError>,
     retry: AnalysisCleanupRetry | undefined,
-  ): Result<null, AnalysisError> {
+  ): Result<Value, AnalysisError> {
     this.#lastCloseCleanupFailure = undefined;
     if (
       !closed.ok &&
@@ -1094,12 +1120,39 @@ export class BinarySession
     );
   }
 
+  /**
+   * Only close_binary reports engine state released unsaved, so another
+   * transition that would release it refuses instead of dropping the report.
+   * `active` includes the bound engine for transitions that replace it.
+   */
+  #refuseUnreportedRelease(
+    operation: string,
+    { active }: { readonly active: boolean },
+  ): AnalysisError | undefined {
+    const report =
+      this.#pendingCleanup?.run.client.unsavedCloseReport?.() ??
+      (active ? (this.#active?.client.unsavedCloseReport?.() ?? null) : null);
+    if (report === null) return undefined;
+    return new AnalysisCapabilityUnavailableError(
+      this.#pendingCleanup?.run.route.identity.id ??
+        this.#active?.route.identity.id ??
+        "rea",
+      operation,
+      "this session holds Program edits whose checkpoint save was refused, and this call would release them without reporting it",
+      {
+        userMessage: `Another REA session saved this target's checkpoint at ${JSON.stringify(report.checkpoint.directory)} first, so this session's Program edits cannot be saved; ${operation} would discard them.`,
+        remediationAction:
+          "Call close_binary first: it discards those edits and reports it. Then repeat this call, and reapply the edits to the current checkpoint if you still need them.",
+      },
+    );
+  }
+
   async #closeActive(
     options: Pick<ExecutionOptions, "progress"> & {
       readonly retainProviderDocuments?: boolean;
     },
     onCleanupFailure?: (failure: AnalysisError) => void,
-  ): Promise<Result<null, AnalysisError>> {
+  ): Promise<Result<EngineCloseReport | null, AnalysisError>> {
     const previous = this.#active;
     const previousResources = this.#activeBundleResources;
     this.#active = undefined;
@@ -1149,17 +1202,20 @@ export class BinarySession
           "close_binary",
         );
       }
-    if (!closed.ok && resourceFailure !== undefined) {
-      return err(
-        analysisErrorWithCloseRejections(
-          closed.error,
-          resourceFailure,
-          "close_binary",
-        ),
-      );
-    }
-    if (!closed.ok) return closed;
-    return resourceFailure === undefined ? ok(null) : err(resourceFailure);
+    if (resourceFailure === undefined) return closed;
+    // A released engine's report stays with the close that released it.
+    return err(
+      retainCloseOutcome(
+        closed.ok
+          ? resourceFailure
+          : analysisErrorWithCloseRejections(
+              closed.error,
+              resourceFailure,
+              "close_binary",
+            ),
+        closed,
+      ),
+    );
   }
 
   async #retryPendingBundleResourceCleanup(
@@ -1201,7 +1257,7 @@ export class BinarySession
       readonly retainDocument?: boolean;
       readonly onCleanupFailure?: (failure: AnalysisError) => void;
     } = {},
-  ): Promise<Result<null, AnalysisError>> {
+  ): Promise<Result<EngineCloseReport | null, AnalysisError>> {
     this.#pendingCleanup = {
       run,
       retainDocument: options.retainDocument === true,
@@ -1218,7 +1274,7 @@ export class BinarySession
     progress?: ExecutionOptions["progress"],
     retainDocument?: boolean,
     onCleanupFailure?: (failure: AnalysisError) => void,
-  ): Promise<Result<null, AnalysisError>> {
+  ): Promise<Result<EngineCloseReport | null, AnalysisError>> {
     let pending = this.#pendingCleanup;
     if (pending === undefined) return ok(null);
     if (retainDocument !== undefined) {
@@ -1526,7 +1582,13 @@ export class BinarySession
       unboundOperationError: (operation, route) =>
         this.#providerRouter.unboundOperationError(operation, route),
       lookupSnapshot: (target, profile, operation, parameters) =>
-        this.lookupSnapshot(target, profile, operation, parameters),
+        this.lookupSnapshot(
+          target,
+          profile,
+          operation,
+          parameters,
+          options?.snapshotContext,
+        ),
     });
     if (!prepared.ok) return prepared;
     const { active, capability, profile, cacheable, cached } = prepared.value;
@@ -1728,7 +1790,13 @@ export class BinarySession
         !active.nativeSourceAdmitted)
     )
       return undefined;
-    return this.lookupSnapshot(active.target, profile, name, arguments_);
+    return this.lookupSnapshot(
+      active.target,
+      profile,
+      name,
+      arguments_,
+      options?.snapshotContext,
+    );
   }
 
   /**

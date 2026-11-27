@@ -679,13 +679,11 @@ const SERVICE_TOOL_BINDINGS = {
             await reportOperationEnd(progress, "close_binary", closed.ok);
             return closed;
           }
-          const closing = close(
-            () =>
-              session.closeWithSnapshot(snapshotPath, input.overwrite, {
-                progress,
-                cleanupRetry: CLOSE_RETRY,
-              }),
-            (receipt) => receipt,
+          const closing = close(() =>
+            session.closeWithSnapshot(snapshotPath, input.overwrite, {
+              progress,
+              cleanupRetry: CLOSE_RETRY,
+            }),
           );
           await reportOperationStart(
             progress,

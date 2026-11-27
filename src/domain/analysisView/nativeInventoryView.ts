@@ -25,7 +25,7 @@ import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { pickFields } from "./selectViewRows.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -107,11 +107,7 @@ export const projectNativeInventoryView = (
     source_provider: parent.provider ?? null,
     source_analysis_profile_digest: parent.analysisProfile?.digest ?? null,
     source_parameters: jsonValueSchema.parse(parent.parameters ?? null),
-    limitations: boundedViewMessages(
-      parent.limitations,
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent),
     unknowns: [
       "Counts and paging describe the retained provider-reported rows, not complete discovery of every program object. Missing matches do not establish absence outside that observation.",
       ...(parent.artifact == null

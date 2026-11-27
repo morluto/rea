@@ -12,7 +12,7 @@ import {
   type AnalysisViewParent,
 } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -25,7 +25,7 @@ import {
   analysisTextPage,
   analysisTextPageItemSchema,
 } from "./analysisViewText.js";
-import { selectViewRows } from "./selectViewRows.js";
+import { selectViewRows, filterSet } from "./selectViewRows.js";
 
 export const WEB_EXECUTION_OPERATION = "observe_web_execution" as const;
 
@@ -147,9 +147,6 @@ type Source = WebExecutionObservation["sources"][number];
 const executed = (row: { readonly ranges: readonly { count: number }[] }) =>
   row.ranges.some((range) => range.count > 0);
 
-const selected = (ids: readonly string[] | undefined) =>
-  ids === undefined ? undefined : new Set(ids);
-
 /**
  * One page of function rows in coverage order, with the total that match.
  * Only returned rows are built, so a small page of a large capture stays small.
@@ -158,7 +155,7 @@ const selectFunctionRows = (
   report: WebExecutionObservation,
   view: Extract<WebExecutionView, { collection: "functions" }>,
 ): { rows: FunctionRow[]; total: number } => {
-  const ids = selected(view.script_ids);
+  const ids = filterSet(view.script_ids);
   const rows: FunctionRow[] = [];
   let total = 0;
   for (const script of report.coverage.scripts) {
@@ -304,11 +301,7 @@ export const projectWebExecutionView = (
     parent_digest: parent.evidenceId.slice(3),
     artifact: parent.artifact ?? null,
     target_url: report.target.initial_url,
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...report.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, report.limitations),
     unknowns: [
       "Execution outside the armed window, in workers, or caused by UI actions remains unknown.",
     ],
@@ -341,7 +334,7 @@ export const projectWebExecutionView = (
       return page(view, rows.rows, rows.total);
     }
     case "requests": {
-      const methods = selected(view.methods);
+      const methods = filterSet(view.methods);
       const rows = selectViewRows(
         report.requests,
         view,
@@ -351,7 +344,7 @@ export const projectWebExecutionView = (
       return page(view, rows.rows, rows.total);
     }
     case "sources": {
-      const ids = selected(view.script_ids);
+      const ids = filterSet(view.script_ids);
       const rows = selectViewRows(
         report.sources,
         view,

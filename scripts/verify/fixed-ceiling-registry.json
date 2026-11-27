@@ -199,16 +199,20 @@
       "reason": "Bounds Ghidra's own Ghidra/application.properties, a short key=value installation descriptor of the bring-your-own provider (about 1 KiB); no analysis input passes through it, and a larger file is not a Ghidra installation REA can drive."
     }
   },
+  "src/ghidra/GhidraSessionErrorProjection.ts": {
+    "\"The Ghidra C type depth allowance\"": {
+      "class": "representation",
+      "reason": "Ghidra 12.2 stores, names and compares a data type recursively through its pointer, array, typedef and member chain; measured on Ghidra 12.2, 1024 levels resolve and 2048 exhaust the JVM stack inside addDataType while its database lock is held, leaving that lock held and the Program unusable. No caller value can raise the stack, so the bound is a quarter of the last measured safe depth."
+    }
+  },
   "src/gpu/GpuCodeObjectsProvider.ts": {
-    "\"The GPU object allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "The 128 MiB GPU object read allowance is a resource policy without a control."
+    "\"The GPU nesting allowance\"": {
+      "class": "representation",
+      "reason": "Bounds recursive GPU container nesting (8 levels in GpuInventory.ts) and AMDGPU MessagePack value nesting (32 levels in AmdGpuMetadata.ts) to prevent unbounded call-stack recursion."
     },
-    "\"The GPU parser allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "AMDGPU metadata, HIP bundle, CUDA and PTX decode allowances (8 MiB to 512 MiB, visit and token counts) are resource policies without a control."
+    "\"The GPU parser syntax allowance\"": {
+      "class": "representation",
+      "reason": "Fallback fixed parser syntax ceiling (such as 128 tokens per PTX parameter declaration) so unmapped parser BinaryResourceFailure values stay inside the Result error contract."
     }
   },
   "src/ida/IdaMcpConnection.ts": {

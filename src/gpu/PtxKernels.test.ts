@@ -1,5 +1,9 @@
 import { expect, it } from "vitest";
-import { readPtxKernels, readPtxTarget } from "./PtxKernels.js";
+import {
+  createPtxVersionScanner,
+  readPtxKernels,
+  readPtxTarget,
+} from "./PtxKernels.js";
 it("recognizes directives outside comments and strings and preserves UTF-8 byte coordinates", () => {
   expect(readPtxTarget('".version 8.8\n.target sm_80\n"').recognized).toBe(
     false,
@@ -277,4 +281,36 @@ it.each([
 it("does not label unrelated malformed quoted text as a recognized PTX artifact", () => {
   expect(readPtxTarget('unrelated "unterminated').recognized).toBe(false);
   expect(readPtxTarget("/* unrelated unterminated").recognized).toBe(false);
+});
+
+it("does not preempt non-PTX recognition with max_token_bytes but enforces it after .version", () => {
+  expect(
+    readPtxTarget(
+      "this_is_plain_non_gpu_text_with_a_long_identifier_token_123",
+      16,
+    ).recognized,
+  ).toBe(false);
+  expect(() =>
+    readPtxTarget(
+      ".version 8.8\n.target sm_80\n.visible .entry very_long_kernel_name_exceeding_sixteen() { ret; }\n",
+      16,
+    ),
+  ).toThrow("PTX token exceeds the string budget");
+
+  // Long leading-zero version numbers (> 32 bytes) must agree between the
+  // incremental scanner and readPtxTarget, and header tokens remain bounded by max_token_bytes.
+  const longZeroVersion = `.version ${"0".repeat(40)}8.${"0".repeat(40)}0\n.target sm_80\n`;
+  const scanner = createPtxVersionScanner();
+  expect(scanner.feed(Buffer.from(longZeroVersion))).toBe("yes");
+  expect(readPtxTarget(longZeroVersion)).toMatchObject({
+    recognized: true,
+    target: "sm_80",
+  });
+  expect(() => readPtxTarget(".version 8.8\n.target sm_80\n", 7)).toThrow(
+    "PTX token exceeds the string budget",
+  );
+  const overDefaultZeroVersion = `.version ${"0".repeat(70_000)}8.0\n.target sm_80\n`;
+  expect(() => readPtxTarget(overDefaultZeroVersion)).toThrow(
+    "PTX token exceeds the string budget",
+  );
 });

@@ -1,3 +1,4 @@
+import { retainCloseOutcome } from "../domain/engineCloseReport.js";
 import {
   projectSessionError,
   type GhidraProjection,
@@ -9,6 +10,7 @@ import {
   GHIDRA_LITERAL_CANDIDATES_LIMITATION,
 } from "./GhidraLiteralSearch.js";
 import { ghidraCheckpointSelectionSchema } from "./GhidraCheckpoint.js";
+import { DEFAULT_GHIDRA_CANCEL_GRACE } from "../config/ghidraCancelGrace.js";
 import { ghidraProjectHistoryEvidence } from "./GhidraProjectHistory.js";
 import type { Evidence, EvidenceLocation } from "../domain/evidence.js";
 import { ghidraProjectCommitmentSchema } from "./GhidraProjectSnapshot.js";
@@ -173,6 +175,7 @@ export type GhidraProviderClientFactory = (
       | "callToolIfReady"
       | "checkpointRestore"
       | "operationHealthSnapshot"
+      | "unsavedCloseReport"
       | "runtimeLineage"
       | "readTargetSnapshot"
       | "readTargetSnapshotRanges"
@@ -675,8 +678,31 @@ export const createGhidraProviderClient = (input: {
     () => config.ghidraStartupTimeoutMs,
   );
   if (!startupTimeout.ok) return startupTimeout;
+  // Every session applies the cancel grace, so an invalid launch value
+  // refuses the session instead of running on the default.
+  const cancelGraceSetting = config.ghidraCancelGrace;
+  if (cancelGraceSetting !== undefined && !cancelGraceSetting.ok)
+    return cancelGraceSetting;
+  const cancelGrace = cancelGraceSetting?.value ?? DEFAULT_GHIDRA_CANCEL_GRACE;
+  // Only a checkpointed session applies the save wait, so only it refuses an
+  // invalid launch value.
+  const checkpointSaveWait = config.ghidraCheckpointSaveWait;
+  if (
+    checkpoint.data !== undefined &&
+    checkpointSaveWait !== undefined &&
+    !checkpointSaveWait.ok
+  )
+    return checkpointSaveWait;
   const client = clientFactory({
-    ...(checkpoint.data === undefined ? {} : { checkpoint: checkpoint.data }),
+    cancelGrace,
+    ...(checkpoint.data === undefined
+      ? {}
+      : {
+          checkpoint: checkpoint.data,
+          ...(checkpointSaveWait?.ok === true
+            ? { checkpointSaveWait: checkpointSaveWait.value }
+            : {}),
+        }),
     startupTimeoutMs: startupTimeout.value,
     readStartupTimeoutMs: () => config.ghidraStartupTimeoutMs,
     bridgeMaxRequestBytes: config.bridgeMaxRequestBytes,
@@ -1056,7 +1082,7 @@ export const createGhidraProviderClient = (input: {
           }),
       analysisProfile: committedProfile,
       ...sessionScopedLimitations(
-        ghidraSessionCommonLimitations(projection.source),
+        ghidraSessionCommonLimitations(projection.source, cancelGrace),
         [
           ...ghidraOperationLimitations(operation, projection.source),
           ...(observation.limitations ?? []),
@@ -1157,7 +1183,7 @@ export const createGhidraProviderClient = (input: {
           createAnalysisExecution(started.value, committedProfile.provider, {
             analysisProfile: committedProfile,
             ...sessionScopedLimitations(
-              ghidraHealthLimitations(projection.source),
+              ghidraHealthLimitations(projection.source, cancelGrace),
               [],
               sessionLimitations(operation),
             ),
@@ -1211,6 +1237,10 @@ export const createGhidraProviderClient = (input: {
       if (!started.ok) return started;
       const called = await client.callTool(operation, input.value, {
         ...operationLimits,
+        ...(operation === "procedure_pseudo_code" &&
+        options?.upcomingDecompiles !== undefined
+          ? { decompileReadAhead: options.upcomingDecompiles }
+          : {}),
         ...(options?.signal === undefined ? {} : { signal: options.signal }),
         ...(options?.progress === undefined
           ? {}
@@ -1356,6 +1386,7 @@ export const createGhidraProviderClient = (input: {
       return inventoryExecution(operation, called);
     },
     operationHealthSnapshot: () => client.operationHealthSnapshot?.(),
+    unsavedCloseReport: () => client.unsavedCloseReport?.() ?? null,
     runtimeLineageSnapshots: () => {
       const observation = client.runtimeLineage?.() ?? null;
       return observation === null
@@ -1367,9 +1398,14 @@ export const createGhidraProviderClient = (input: {
       const closed = await client.close();
       const retained = nativeAotOwner?.cleanupFailure;
       if (retained === undefined) return closed;
-      return closed.ok
-        ? err(retained)
-        : err(analysisErrorWithCleanupDependencies(closed.error, retained));
+      return err(
+        retainCloseOutcome(
+          closed.ok
+            ? retained
+            : analysisErrorWithCleanupDependencies(closed.error, retained),
+          closed,
+        ),
+      );
     },
   });
 };

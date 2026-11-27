@@ -5,6 +5,7 @@ import { androidClassViewRequestSchema } from "../android/androidClassQuery.js";
 import { evidenceSubjectTarget } from "../evidence.js";
 import { boundedList } from "../boundedList.js";
 import { err, ok, type Result } from "../result.js";
+import { filterSet } from "./selectViewRows.js";
 import {
   analysisViewInputError,
   invalidAnalysisViewSubject,
@@ -14,7 +15,7 @@ import {
   type AnalysisViewParent,
 } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -136,7 +137,7 @@ const nameFilter = (
   prefixes: readonly string[] | undefined,
 ) => {
   if (names === undefined && prefixes === undefined) return undefined;
-  const exact = names === undefined ? undefined : new Set(names);
+  const exact = filterSet(names);
   return (name: string) =>
     (exact === undefined || exact.has(name)) &&
     (prefixes === undefined ||
@@ -284,11 +285,7 @@ export const projectAndroidClassView = (
     parent_operation: INSPECT_ANDROID_CLASS_OPERATION,
     parent_digest: parent.evidenceId.slice(3),
     artifact: { path: subject.path, sha256: subject.sha256 },
-    limitations: boundedViewMessages(
-      parent.limitations,
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent),
     unknowns: [
       "Static class and method analysis does not establish runtime behavior or APK authenticity.",
     ],

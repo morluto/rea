@@ -16,7 +16,7 @@ import {
 import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { selectViewRows } from "./selectViewRows.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -342,11 +342,7 @@ export const projectUefiFirmwareView = (
         parentArtifactPath(parent),
       sha256: r.flash_image.sha256,
     },
-    limitations: boundedViewMessages(
-      [...parent.limitations, ...r.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent, r.limitations),
     unknowns: [
       "Page exhaustion covers retained rows only; volumes, files and sections beyond the parser's depth, volume or file limits remain unmapped.",
     ],
