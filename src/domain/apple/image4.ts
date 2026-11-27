@@ -1539,6 +1539,13 @@ const consumeManifest = async (
     unknownTag(value, notes);
     return;
   }
+  // A named manifest entry is a universal SEQUENCE { name, body }, after any
+  // PRIVATE wrapper. A context-, application- or other-tagged value that
+  // happens to start with a name is unsupported structure, not an entry.
+  if (!isSequence(value)) {
+    unknownTag(value, notes);
+    return;
+  }
   const { name } = named;
   // MANB, MANP and IM4R each hold their contents after the name. A name with
   // nothing after it is a missing body, not a confirmed-empty one.

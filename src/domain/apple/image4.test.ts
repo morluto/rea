@@ -1215,3 +1215,33 @@ it("reports a MANB, MANP or IM4R entry with no body after its name", async () =>
   expect(restore.facts.restore_info?.properties_present).toEqual([]);
   expect(restore.limitations.join("\n")).toContain("IM4R entry");
 });
+
+it("reports a manifest value that names itself but is not an entry SEQUENCE", async () => {
+  const contextTagged = tlv(
+    0xa3,
+    Buffer.concat([ia5("MANP"), derSet(property("CHIP", integer(0x1234)))]),
+  );
+  const result = await image4(
+    sequence(
+      ia5("IM4M"),
+      integer(0),
+      derSet(
+        privateTagged(
+          "MANB",
+          sequence(
+            ia5("MANB"),
+            derSet(
+              contextTagged,
+              manifestObject("ibot", property("DGST", octet(SAMPLE_DIGEST))),
+            ),
+          ),
+        ),
+      ),
+      octet(SAMPLE_SIGNATURE),
+      sequence(octet(SAMPLE_CERT)),
+    ),
+  );
+  expect(result.facts.manifest?.properties).toEqual([]);
+  expect(result.facts.manifest?.objects[0]?.name).toBe("ibot");
+  expect(result.limitations.join("\n")).toContain("Unknown Image4 tag 0xa3");
+});
