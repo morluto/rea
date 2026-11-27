@@ -249,6 +249,7 @@ const readMachoImageCore = (
   return {
     format: "macho",
     macho_cpu_type: table.identity.cpuType,
+    macho_file_type: table.fileType,
     macho_segments: segmentDeclarations,
     macho_chained_fixups: chainedFixups,
     architecture: names.get(cpu) ?? `macho-cpu-${cpu}`,

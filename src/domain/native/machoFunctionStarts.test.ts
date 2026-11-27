@@ -28,6 +28,7 @@ const counters = {
   out_of_text: 0,
   missing_text_anchor: 0,
   text_not_at_header: 0,
+  unterminated_starts: 0,
   trailing_nonzero: 0,
   data_trailing_bytes: 0,
   section_crossings: 0,

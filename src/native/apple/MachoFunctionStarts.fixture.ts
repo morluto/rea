@@ -57,6 +57,12 @@ export interface MachoFunctionStartsImageOptions {
   readonly omitLinkedit?: boolean;
   /** __TEXT filesize. Default equals its vmsize, so the segment covers its file bytes. */
   readonly textFileSize?: number;
+  /** __TEXT segment `flags`, such as SG_HIGHVM (0x1). Default 0. */
+  readonly textFlags?: number;
+  /** `mach_header.filetype`. Default MH_EXECUTE (2). */
+  readonly fileType?: number;
+  /** `sectname` of the code section. Default `__text`; "" writes all zeros. */
+  readonly textSectionName?: string;
   /** Segments appended after __LINKEDIT, such as one aliasing __TEXT file bytes. */
   readonly extraSegments?: readonly {
     readonly name: string;
@@ -135,6 +141,7 @@ const segment64 = (
   fileSize: number,
   protection: number,
   sections: readonly Buffer[],
+  flags = 0,
 ): Buffer => {
   const bytes = Buffer.alloc(72 + sections.length * 80);
   bytes.writeUInt32LE(0x19, 0);
@@ -147,6 +154,7 @@ const segment64 = (
   bytes.writeUInt32LE(protection, 56);
   bytes.writeUInt32LE(protection, 60);
   bytes.writeUInt32LE(sections.length, 64);
+  bytes.writeUInt32LE(flags, 68);
   for (const [index, section] of sections.entries())
     section.copy(bytes, 72 + index * 80);
   return bytes;
@@ -234,24 +242,33 @@ export const machoFunctionStartsImage = (
   const commands: Buffer[] = [];
   if (options.omitText !== true) {
     commands.push(
-      segment64("__TEXT", MACHO_TEXT_BASE, TEXT_VM_SIZE, 0, textFileSize, 5, [
-        section64(
-          "__text",
-          "__TEXT",
-          MACHO_TEXT_BASE + 0x1000n,
-          0x800,
-          0x1000,
-          0x80000400,
-        ),
-        section64(
-          "__literal",
-          "__TEXT",
-          MACHO_TEXT_BASE + 0x1800n,
-          0x800,
-          0x1800,
-          0,
-        ),
-      ]),
+      segment64(
+        "__TEXT",
+        MACHO_TEXT_BASE,
+        TEXT_VM_SIZE,
+        0,
+        textFileSize,
+        5,
+        [
+          section64(
+            options.textSectionName ?? "__text",
+            "__TEXT",
+            MACHO_TEXT_BASE + 0x1000n,
+            0x800,
+            0x1000,
+            0x80000400,
+          ),
+          section64(
+            "__literal",
+            "__TEXT",
+            MACHO_TEXT_BASE + 0x1800n,
+            0x800,
+            0x1800,
+            0,
+          ),
+        ],
+        options.textFlags ?? 0,
+      ),
     );
   }
   if (options.omitLinkedit !== true) {
@@ -323,7 +340,7 @@ export const machoFunctionStartsImage = (
   file.writeUInt32LE(0xfeedfacf, 0);
   file.writeUInt32LE(cpu.type, 4);
   file.writeUInt32LE(cpu.subtype, 8);
-  file.writeUInt32LE(2, 12);
+  file.writeUInt32LE(options.fileType ?? 2, 12);
   file.writeUInt32LE(commands.length, 16);
   file.writeUInt32LE(commandBytes.length, 20);
   commandBytes.copy(file, 32);

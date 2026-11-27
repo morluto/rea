@@ -71,6 +71,7 @@ const quiet = {
   out_of_text: 0,
   missing_text_anchor: 0,
   text_not_at_header: 0,
+  unterminated_starts: 0,
   trailing_nonzero: 0,
   data_trailing_bytes: 0,
   section_crossings: 0,
@@ -612,11 +613,57 @@ it("refuses a table above max_entries before returning a page", async () => {
   ).rejects.toMatchObject({
     name: "BinaryResourceFailure",
     maximum_bytes: 5,
-    failure: { limit: { name: "entries", required: 6, maximum: 5 } },
+    failure: { limit: { name: "entries", maximum: 5 } },
   });
   await expect(
     parse(arm64FunctionStartsImage(), { max_entries: 5 }),
   ).rejects.toBeInstanceOf(BinaryResourceFailure);
+});
+
+it("bounds decoding work by max_entries, not only the result", async () => {
+  // 4000 starts and 4000 data entries; max_entries 10 must refuse without
+  // examining either table in full. A data table larger than the allowance is
+  // refused from its byte count alone, and the start walk stops at the
+  // remaining allowance. Neither case measured the full total.
+  const image = machoFunctionStartsImage({
+    starts: { deltas: [0x1000n, ...Array.from({ length: 3999 }, () => 1n)] },
+  });
+  const startsOnly = await parse(image, { max_entries: 10, limit: 0 }).then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  expect(startsOnly).toBeInstanceOf(BinaryResourceFailure);
+  expect(
+    (startsOnly as BinaryResourceFailure).failure.limit,
+  ).not.toHaveProperty("required");
+  const many = Array.from({ length: 64 }, (_, index) => ({
+    offset: 0x1000 + index * 4,
+    length: 4,
+    kind: 1,
+  }));
+  const dataOnly = await parse(
+    machoFunctionStartsImage({ data: { entries: many } }),
+    { max_entries: 10, limit: 0 },
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  expect(dataOnly).toMatchObject({
+    name: "BinaryResourceFailure",
+    failure: { limit: { name: "entries", maximum: 10 } },
+  });
+  // At the allowance exactly, both tables still decode.
+  const fits = await parse(
+    machoFunctionStartsImage({
+      starts: { deltas: [0x1000n, 4n] },
+      data: { entries: many.slice(0, 8) },
+    }),
+    { max_entries: 10, limit: 0 },
+  );
+  expect(fits.coverage).toMatchObject({
+    total_starts: 2,
+    total_data_in_code: 8,
+  });
 });
 
 it("does not let a wrapped start own later data-in-code entries", async () => {
@@ -730,17 +777,18 @@ it("assigns each data-in-code entry the greatest start at or before it", async (
   expect(before.data_in_code_entries[0]?.owner).toBeNull();
 });
 
-it("leaves a data-in-code offset unmapped when segments alias it to different addresses", async () => {
+it("leaves data-in-code unmapped when the mach_header address is ambiguous", async () => {
+  // Offsets are relative to the mach_header's address. A second segment maps
+  // file offset 0 at another address, so that base is unknown.
   const result = await parse(
     machoFunctionStartsImage({
-      starts: { deltas: ARM64_DELTAS },
       data: { entries: [{ offset: 0x1080, length: 4, kind: 1 }] },
       extraSegments: [
         {
           name: "__ALIAS",
           address: 0x200000000n,
           memorySize: 0x1000,
-          fileOffset: 0x1000,
+          fileOffset: 0,
           fileSize: 0x1000,
           protection: 1,
         },
@@ -755,6 +803,106 @@ it("leaves a data-in-code offset unmapped when segments alias it to different ad
     unmapped_data: 1,
   });
   expect(result.limitations).toContain(TEXT.unmapped);
+});
+
+it("reads data-in-code offsets as header-relative addresses, not file offsets", async () => {
+  // ld64 writes an entry's address minus the mach_header address. A segment
+  // whose file bytes sit elsewhere therefore does not move the entry; the
+  // reverse file mapping would have reported 0x100002080.
+  const linked = await parse(
+    machoFunctionStartsImage({
+      data: { entries: [{ offset: 0x2000, length: 4, kind: 1 }] },
+      textFileSize: 0x2000,
+      extraSegments: [
+        {
+          name: "__CONST",
+          address: MACHO_TEXT_BASE + 0x4000n,
+          memorySize: 0x1000,
+          fileOffset: 0x2000,
+          fileSize: 0x1000,
+          protection: 1,
+        },
+      ],
+    }),
+  );
+  expect(linked.data_in_code_entries[0]).toMatchObject({
+    offset: 0x2000,
+    vmaddr: hex(MACHO_TEXT_BASE + 0x2000n),
+  });
+
+  // MH_OBJECT does not map its header, so the offset is the address itself.
+  // A clang object places the code section at VM 0x0 and file offset 0x148.
+  const object = await parse(
+    machoFunctionStartsImage({
+      fileType: 1,
+      omitText: true,
+      omitLinkedit: true,
+      extraSegments: [
+        {
+          name: "",
+          address: 0n,
+          memorySize: 0x400,
+          fileOffset: 0x148,
+          fileSize: 0x400,
+          protection: 7,
+        },
+      ],
+      data: { entries: [{ offset: 0x204, length: 4, kind: 1 }] },
+    }),
+  );
+  expect(object.data_in_code_entries[0]).toMatchObject({
+    offset: 0x204,
+    vmaddr: "0x204",
+  });
+  expect(object.data_in_code_entries[0]!.issues).not.toContain("unmapped");
+});
+
+it("keeps an empty section name instead of rejecting the report", async () => {
+  const report = machoFunctionStartsSchema.parse(
+    await parse(
+      machoFunctionStartsImage({
+        textSectionName: "",
+        starts: { deltas: [0x1000n] },
+        data: { entries: [{ offset: 0x1080, length: 4, kind: 1 }] },
+      }),
+    ),
+  );
+  expect(report.starts[0]!.section).toBe("");
+  expect(report.data_in_code_entries[0]!.section).toBe("");
+});
+
+it("reports a list without its zero terminator as cut off", async () => {
+  const report = await parse(
+    machoFunctionStartsImage({
+      starts: { deltas: [0x1000n, 0x100n], terminator: false },
+    }),
+  );
+  expect(report.coverage).toMatchObject({
+    status: "partial",
+    total_starts: 2,
+    unterminated_starts: 1,
+    uleb_truncated: 0,
+  });
+  expect(report.limitations).toContain(TEXT.unterminated);
+  const terminated = await parse(arm64FunctionStartsImage());
+  expect(terminated.coverage.unterminated_starts).toBe(0);
+});
+
+it("disputes the delta base when SG_HIGHVM moves the mach_header", async () => {
+  // SG_HIGHVM maps the file bytes at the top of the segment, so the header
+  // sits at vmaddr + (vmsize - filesize), not at the __TEXT vmaddr.
+  const report = await parse(
+    machoFunctionStartsImage({
+      textFlags: 0x1,
+      textFileSize: 0x3000,
+      starts: { deltas: [0x1000n] },
+    }),
+  );
+  expect(report.coverage).toMatchObject({
+    status: "partial",
+    text_not_at_header: 1,
+  });
+  expect(report.limitations).toContain(TEXT.textNotAtHeader);
 });
 
 it("stops decoding data-in-code entries when the read is cancelled", async () => {

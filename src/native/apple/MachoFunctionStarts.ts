@@ -53,6 +53,8 @@ const addressMask = (bits: 32 | 64): bigint => (1n << BigInt(bits)) - 1n;
 const CPU_TYPE_ARM = 12;
 /** VM_PROT_EXECUTE (<mach/vm_prot.h>). */
 const VM_PROT_EXECUTE = 4;
+/** MH_OBJECT (<mach-o/loader.h>): a relocatable object, whose header is not mapped. */
+const MH_OBJECT = 1;
 const NO_ISSUES: MachoFunctionStart["issues"] = Object.freeze([]) as never;
 
 const hex = (value: bigint): string => `0x${value.toString(16)}`;
@@ -86,6 +88,10 @@ interface WalkResult {
   readonly wrapped: boolean;
   readonly outOfText: boolean;
   readonly trailingNonzero: boolean;
+  /** The bytes ended after a complete delta, before any zero terminator. */
+  readonly unterminated: boolean;
+  /** `stopAt` was reached, so `count` is a lower bound. */
+  readonly stopped: boolean;
 }
 
 const absentCommand = {
@@ -243,11 +249,16 @@ const walkStarts = async (
     readonly executable: IntervalIndex<boolean>;
     readonly thumbTagged: boolean;
     readonly addressLimit: bigint;
+    /** Stop after this many starts; the caller refuses a larger table. */
+    readonly stopAt: number;
   },
   signal: AbortSignal | undefined,
   visit: (start: StartVisit) => void,
 ): Promise<WalkResult> => {
-  const { bytes, textBase, executable, thumbTagged, addressLimit } = table;
+  const { bytes, textBase, executable, thumbTagged, addressLimit, stopAt } =
+    table;
+  let terminated = false;
+  let stopped = false;
   let offset = 0;
   let previous: bigint = textBase;
   let count = 0;
@@ -269,6 +280,7 @@ const walkStarts = async (
     }
     offset = read.next;
     if (read.value === 0n) {
+      terminated = true;
       for (let index = offset; index < bytes.length; index += 1) {
         if (bytes[index] !== 0) {
           trailingNonzero = true;
@@ -295,6 +307,11 @@ const walkStarts = async (
         issues.push("out_of_text");
       }
     }
+    if (count >= stopAt) {
+      stopped = true;
+      count += 1;
+      break;
+    }
     visit({ index: count, address, thumb, issues });
     count += 1;
     if (didWrap || outside) break;
@@ -307,21 +324,33 @@ const walkStarts = async (
     wrapped,
     outOfText,
     trailingNonzero,
+    unterminated:
+      bytes.length > 0 &&
+      !terminated &&
+      !stopped &&
+      !truncated &&
+      !overflow &&
+      !wrapped &&
+      !outOfText,
+    stopped,
   };
 };
 
 /**
- * Map a slice file offset onto the VM address of the shared image's
- * file-backed mappings. Like the shared VM-to-file index, mappings that cover
- * the offset with different translations are ambiguous, so the offset maps to
- * no address instead of the first segment that covers it.
+ * The VM address the mach_header is mapped at. ld64 writes each
+ * data-in-code offset as an address minus this one, and dyld documents the
+ * offset as a delta from the mach_header. A relocatable object does not map
+ * its header, so its offsets are addresses (base 0). Otherwise the header is
+ * file offset 0, translated through the shared file mappings; an unmapped or
+ * ambiguously mapped header leaves the base unknown.
  */
-const fileOffsetAddress = (
-  index: IntervalIndex<bigint | null>,
-  offset: number,
+const machHeaderAddress = (
+  fileType: number,
+  mappings: IntervalIndex<bigint | null>,
 ): bigint | null => {
-  const delta = lookupInterval(index, BigInt(offset));
-  return delta === undefined || delta === null ? null : BigInt(offset) + delta;
+  if (fileType === MH_OBJECT) return 0n;
+  const delta = lookupInterval(mappings, 0n);
+  return delta === undefined || delta === null ? null : delta;
 };
 
 /** A data-in-code entry on the returned page, before its owner is resolved. */
@@ -336,7 +365,8 @@ type PagedDataInCode = Omit<MachoDataInCode, "owner"> & {
 const decodeData = async (
   bytes: Buffer,
   littleEndian: boolean,
-  mappings: IntervalIndex<bigint | null>,
+  headerAddress: bigint | null,
+  segments: IntervalIndex<boolean>,
   sections: IntervalIndex<SectionSpan | null>,
   page: { readonly from: number; readonly to: number },
   signal: AbortSignal | undefined,
@@ -364,7 +394,12 @@ const decodeData = async (
     const at = index * DATA_ENTRY_BYTES;
     const offset = reader.u32(at);
     const length = reader.u16(at + 4);
-    const vmaddr = fileOffsetAddress(mappings, offset);
+    const candidate =
+      headerAddress === null ? null : headerAddress + BigInt(offset);
+    const vmaddr =
+      candidate !== null && lookupInterval(segments, candidate) === true
+        ? candidate
+        : null;
     const outOfOrder = previous !== null && offset <= previous;
     previous = offset;
     const span = vmaddr === null ? null : smallestSection(sections, vmaddr);
@@ -465,17 +500,25 @@ const nextOffset = (
 ): number | null =>
   included && offset + returned < total ? offset + returned : null;
 
-const requireEntryBudget = (count: number, maximum: number): void => {
-  if (count <= maximum) return;
-  throw new BinaryResourceFailure(
+/**
+ * Refuse a table pair above `max_entries`. `required` is the measured total
+ * when both tables were counted, and absent when decoding stopped at the
+ * allowance, which only shows the total is larger.
+ */
+const entryBudgetFailure = (
+  maximum: number,
+  required: number | undefined,
+): BinaryResourceFailure =>
+  new BinaryResourceFailure(
     "structure",
     maximum,
-    `Mach-O function starts and data-in-code entries total ${String(count)}, above max_entries (${String(maximum)})`,
+    required === undefined
+      ? `Mach-O function starts and data-in-code entries exceed max_entries (${String(maximum)})`
+      : `Mach-O function starts and data-in-code entries total ${String(required)}, above max_entries (${String(maximum)})`,
     MACHO_FUNCTION_STARTS_ENTRY_LIMIT,
     "entries",
-    count,
+    required,
   );
-};
 
 /** Decode one selected slice's function starts and data-in-code entries. */
 export const parseMachoFunctionStartsFromHandle = async (
@@ -572,25 +615,44 @@ export const parseMachoFunctionStartsFromHandle = async (
     text === undefined
       ? 1
       : 0;
+  const headerAddress = machHeaderAddress(
+    image.macho_file_type,
+    indexFileOffsets(image.mappings),
+  );
   // ld64 and llvm-objdump take the deltas from the __TEXT vmaddr, and dyld
-  // from the mach_header address. They agree only when __TEXT maps file
-  // offset 0, so otherwise the base is reported as disputed.
+  // from the mach_header address. Where the header is not mapped at that
+  // vmaddr (it lives elsewhere, SG_HIGHVM shifts it, or it is unmapped), the
+  // two disagree and the base is reported as disputed.
   const textNotAtHeader =
     missingText === 0 &&
     text !== undefined &&
     startsTable.declared > 0 &&
-    (text.file_offset !== 0n || text.file_size === 0n)
+    headerAddress !== text.address
       ? 1
       : 0;
   const includeStarts = input.kind !== "data";
   const includeData = input.kind !== "starts";
   const sectionIndex = indexSmallestSections(sections);
+  // The entry allowance bounds decoding work, not only the result: a data
+  // table counted from its bytes is refused before any entry is examined,
+  // and the start walk stops once the combined count would exceed it.
+  const dataCount = Math.floor(dataTable.bytes.length / DATA_ENTRY_BYTES);
+  if (dataCount > input.max_entries)
+    throw entryBudgetFailure(input.max_entries, undefined);
   // Every entry is checked and counted, but result objects are built only for
   // the requested page of each table.
   const data = await decodeData(
     dataTable.bytes,
     littleEndian,
-    indexFileOffsets(image.mappings),
+    headerAddress,
+    indexCoveredRanges(
+      image.macho_segments
+        .filter((segment) => segment.name !== "__PAGEZERO")
+        .map((segment) => ({
+          address: segment.address,
+          size: segment.memory_size,
+        })),
+    ),
     sectionIndex,
     pageRange(includeData, input.offset, input.limit),
     signal,
@@ -608,6 +670,8 @@ export const parseMachoFunctionStartsFromHandle = async (
           wrapped: false,
           outOfText: false,
           trailingNonzero: false,
+          unterminated: false,
+          stopped: false,
         }
       : await walkStarts(
           {
@@ -616,6 +680,7 @@ export const parseMachoFunctionStartsFromHandle = async (
             executable,
             thumbTagged,
             addressLimit: addressMask(image.bits),
+            stopAt: input.max_entries - data.count,
           },
           signal,
           (start) => {
@@ -632,7 +697,7 @@ export const parseMachoFunctionStartsFromHandle = async (
             });
           },
         );
-  requireEntryBudget(decoded.count + data.count, input.max_entries);
+  if (decoded.stopped) throw entryBudgetFailure(input.max_entries, undefined);
   const resolvedOwners = owners.finish();
   const dataPage: MachoDataInCode[] = data.page.map(
     ({ address: _address, ...entry }, slot) => ({
@@ -654,6 +719,7 @@ export const parseMachoFunctionStartsFromHandle = async (
     out_of_text: decoded.outOfText ? 1 : 0,
     missing_text_anchor: missingText,
     text_not_at_header: textNotAtHeader,
+    unterminated_starts: decoded.unterminated ? 1 : 0,
     trailing_nonzero: decoded.trailingNonzero ? 1 : 0,
     data_trailing_bytes: dataTable.bytes.length % DATA_ENTRY_BYTES,
     section_crossings: data.crossings,
@@ -678,6 +744,7 @@ export const parseMachoFunctionStartsFromHandle = async (
     ...(decoded.outOfText ? [TEXT.outOfText] : []),
     ...(missingText === 1 ? [TEXT.missingText] : []),
     ...(textNotAtHeader === 1 ? [TEXT.textNotAtHeader] : []),
+    ...(decoded.unterminated ? [TEXT.unterminated] : []),
     ...(decoded.trailingNonzero ? [TEXT.trailing] : []),
     ...(startsTable.pastFile > 0 ? [TEXT.startsPastFile] : []),
     ...(dataTable.pastFile > 0 ? [TEXT.dataPastFile] : []),

@@ -31,8 +31,14 @@ paths must be absolute.
   from that tagged value. `vmaddr` clears that bit, as LLDB does, and `thumb`
   records whether it was set. Other architectures omit `thumb`.
 - Each start names the section that contains it, such as `__text`.
-- Each data-in-code entry has the `data_in_code_entry` file `offset` from the
-  slice `mach_header`, its VM address, `length`, and `kind`:
+- Each data-in-code entry has its `data_in_code_entry` `offset`, its VM
+  address, `length`, and `kind`. ld64 writes the offset as the entry's address
+  minus the `mach_header` address, and dyld documents it as a delta from the
+  `mach_header`, so the VM address is that header address plus the offset. A
+  relocatable object (`MH_OBJECT`) does not map its header, so its offset is
+  the address itself. An entry whose header address is unknown or ambiguous,
+  or whose address is outside every segment, has no VM address and counts as
+  unmapped. The kinds are:
   - `DICE_KIND_DATA`
   - `JUMP_TABLE8`
   - `JUMP_TABLE16`
@@ -45,8 +51,9 @@ paths must be absolute.
   counts duplicate commands, commands whose `cmdsize` is not 16, tables outside
   `__LINKEDIT`, commands that extend past the file, truncated or overflowing
   ULEB128, wrapped addresses, addresses outside every executable segment, a
-  missing `__TEXT` anchor, a `__TEXT` that does not map the `mach_header` at
-  file offset 0, nonzero bytes after the terminator, a data tail
+  missing `__TEXT` anchor, a `mach_header` not mapped at the `__TEXT` vmaddr,
+  a list that ends without its zero terminator, nonzero bytes after the
+  terminator, a data tail
   shorter than 8 bytes, entries that leave their section, offsets that are not
   strictly increasing, offsets outside every segment, and zero lengths. Any of
   those counters makes `coverage.status` `partial`.
@@ -79,9 +86,12 @@ target failure. `architecture` on a thin image is refused. A universal file
 without `architecture` is refused.
 
 `max_entries` (default 2,097,152, at most 16,777,216; CLI `--max-entries`)
-bounds decoded starts plus complete data-in-code entries. A larger pair of
-tables is refused with `details.limit`. `required_value` is that combined
-count, and the call returns no partial report.
+bounds decoded starts plus complete data-in-code entries, and bounds the
+decoding work as well as the result. A data table larger than the allowance
+is refused from its byte count before any entry is examined, and the start
+walk stops once the combined count would pass it. The refusal carries
+`details.limit` without `required_value`, because decoding stopped before
+the total was measured. The call returns no partial report.
 
 The default [read allowance](../../reference/limits-and-recovery.md#static-reader-read-allowance)
 is 64 MiB (`max_file_bytes`, floor 64 bytes, ceiling 512 MiB). The identity

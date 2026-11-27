@@ -30,7 +30,7 @@ const inspect = async (bytes: Buffer, input: Record<string, unknown> = {}) => {
 };
 
 describe("Mach-O function starts provider", () => {
-  it("refuses max_entries with the decoded entry count", async () => {
+  it("refuses max_entries at the allowance without claiming a total", async () => {
     const refused = await inspect(arm64FunctionStartsImage(), {
       max_entries: 5,
     });
@@ -42,9 +42,12 @@ describe("Mach-O function starts provider", () => {
         parameter: "max_entries",
         effective_value: 5,
         default_value: 2_097_152,
-        required_value: 6,
       },
     });
+    // Decoding stopped at the allowance, so the total was not measured.
+    expect(
+      (refused.error as { readonly limit?: object }).limit,
+    ).not.toHaveProperty("required_value");
   });
 
   it("rejects architecture on a thin image and a universal file without one", async () => {

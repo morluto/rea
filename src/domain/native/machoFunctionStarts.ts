@@ -55,7 +55,7 @@ export const MACHO_FUNCTION_STARTS_LIMITATIONS = {
     "A function start is outside every executable segment; later deltas were not decoded.",
   missingText: "LC_FUNCTION_STARTS has no __TEXT segment to anchor its deltas.",
   textNotAtHeader:
-    "__TEXT does not map the mach_header at file offset 0. Starts are anchored on its vmaddr, as llvm-objdump does; dyld adds the deltas to the mach_header address, which may differ here.",
+    "The mach_header is not mapped at the __TEXT vmaddr. Starts are anchored on that vmaddr, as llvm-objdump does; dyld adds the deltas to the mach_header address, which differs here or is unknown.",
   trailing: "Bytes after the LC_FUNCTION_STARTS terminator are not zero.",
   startsPastFile:
     "LC_FUNCTION_STARTS extends past the file; only in-file bytes were decoded.",
@@ -67,7 +67,9 @@ export const MACHO_FUNCTION_STARTS_LIMITATIONS = {
   unsorted: "data-in-code offsets are not strictly increasing.",
   zeroLength: "A data-in-code entry has length 0.",
   unmapped:
-    "A data-in-code offset is not inside a segment, or overlapping segments map it to different addresses.",
+    "A data-in-code entry has no VM address: the mach_header address its offset is relative to is unknown, or the address is outside every segment.",
+  unterminated:
+    "LC_FUNCTION_STARTS ends without its zero terminator; the list may be cut off.",
 } as const;
 
 /** `max_entries` of `inspect_macho_function_starts`: decoded starts plus data-in-code entries. */
@@ -167,6 +169,9 @@ const dataIssueSchema = z.enum([
   "out_of_order",
 ]);
 
+/** An observed section name, which may be empty (an all-zero `sectname`). */
+const sectionNameSchema = z.string().nullable();
+
 export const machoFunctionStartSchema = z.strictObject({
   index: uint,
   /** Code address. On 32-bit ARM the Thumb tag in bit 0 is cleared here. */
@@ -176,7 +181,7 @@ export const machoFunctionStartSchema = z.strictObject({
    * Other architectures omit it, because their starts carry no ISA tag.
    */
   thumb: z.boolean().optional(),
-  section: z.string().min(1).nullable(),
+  section: sectionNameSchema,
   issues: z.array(startIssueSchema),
 });
 export type MachoFunctionStart = z.infer<typeof machoFunctionStartSchema>;
@@ -188,12 +193,16 @@ const ownerSchema = z.strictObject({
 
 export const machoDataInCodeSchema = z.strictObject({
   index: uint,
-  /** `data_in_code_entry.offset`: file offset from this slice's mach_header. */
+  /**
+   * `data_in_code_entry.offset`, relative to the mach_header's address: ld64
+   * writes the entry's address minus that address. For MH_OBJECT, whose
+   * header is not mapped, it is the address itself.
+   */
   offset: uint,
   vmaddr: hexAddress.nullable(),
   length: z.number().int().min(0).max(0xffff),
   kind: z.union([z.enum(DICE_KINDS), z.number().int().min(0).max(0xffff)]),
-  section: z.string().min(1).nullable(),
+  section: sectionNameSchema,
   /** Greatest decoded start at or before `vmaddr`, or null when none applies. */
   owner: ownerSchema.nullable(),
   issues: z.array(dataIssueSchema),
@@ -238,6 +247,8 @@ export const machoFunctionStartsSchema = z.strictObject({
     missing_text_anchor: uint,
     /** 1 when __TEXT does not map file offset 0, so the delta base is disputed. */
     text_not_at_header: uint,
+    /** 1 when the table ends after a delta without its zero terminator. */
+    unterminated_starts: uint,
     trailing_nonzero: uint,
     data_trailing_bytes: uint,
     section_crossings: uint,
@@ -276,6 +287,7 @@ export const machoFunctionStartsHasIssues = (
     coverage.out_of_text +
     coverage.missing_text_anchor +
     coverage.text_not_at_header +
+    coverage.unterminated_starts +
     coverage.trailing_nonzero +
     coverage.data_trailing_bytes +
     coverage.section_crossings +

@@ -300,6 +300,8 @@ export type BinaryContainer = BinaryContainerFacts &
     | {
         readonly format: "macho";
         readonly macho_cpu_type: number;
+        /** `mach_header.filetype`, such as MH_OBJECT (1) or MH_EXECUTE (2). */
+        readonly macho_file_type: number;
         /**
          * Every LC_SEGMENT/LC_SEGMENT_64 in declaration order, including
          * segments with no file bytes. `load_regions` holds only the
