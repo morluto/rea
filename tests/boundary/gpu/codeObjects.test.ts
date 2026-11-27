@@ -2455,7 +2455,9 @@ it("keeps corrupt CCOB v1 recovery distinct from max_object_bytes window truncat
     kind: "hip-bundle",
     inspection: "capacity",
     limitations: expect.arrayContaining([
-      expect.stringContaining("(parameter: max_object_bytes)"),
+      expect.stringContaining(
+        `Legacy CCOB v1 compressed payload exceeds the ${String(smallBundle.length)}-byte object budget (parameter: max_object_bytes)`,
+      ),
     ]),
   });
   const raisedV1 = await inspect(validV1, {
@@ -2465,24 +2467,32 @@ it("keeps corrupt CCOB v1 recovery distinct from max_object_bytes window truncat
   if (!raisedV1.ok) throw raisedV1.error;
   expect(raisedV1.value.objects[0]?.inspection).toBe("complete");
 
-  // Multi-frame Zstandard CCOB v1 cut at the exact frame boundary or inside the
-  // next frame's 4-byte magic reports capacity (max_object_bytes) instead of
-  // publishing a short extent as malformed corruption, and refills a cached window.
-  const multiFrameBundle = hipFixture(
-    Buffer.from("multi-frame-zstd-payload".repeat(32)),
-    "host-x86_64",
-  );
-  const splitAt = Math.floor(multiFrameBundle.length / 2);
-  const frame1 = zstdCompressSync(multiFrameBundle.subarray(0, splitAt));
-  const frame2 = zstdCompressSync(multiFrameBundle.subarray(splitAt));
-  const twoFrames = Buffer.concat([frame1, frame2]);
+  // Multi-frame Zstandard CCOB v1 whose declared decoded size fits every cut
+  // budget (so #budgetWork admits it and execution reaches cutAtFrameBoundary):
+  // cutting at the exact frame boundary or inside the next frame's 4-byte magic
+  // must report ccobWindowLimit() capacity instead of publishing a short extent
+  // as malformed corruption, and must refill a cached legacy window cleanly.
+  const splitAt = Math.floor(smallBundle.length / 2);
+  const prefixChunkFrames: Buffer[] = [];
+  for (let offset = 0; offset < splitAt; offset += 4) {
+    prefixChunkFrames.push(
+      zstdCompressSync(
+        smallBundle.subarray(offset, Math.min(splitAt, offset + 4)),
+      ),
+    );
+  }
+  const prefixFrames = Buffer.concat(prefixChunkFrames);
+  const finalFrame = zstdCompressSync(smallBundle.subarray(splitAt));
+  const multiFrames = Buffer.concat([prefixFrames, finalFrame]);
+  expect(prefixFrames.length).toBeGreaterThanOrEqual(smallBundle.length);
   const zstdHeader = Buffer.from(
-    ccobFixture(1, "zstd", multiFrameBundle).subarray(0, 20),
+    ccobFixture(1, "zstd", smallBundle).subarray(0, 20),
   );
-  const multiFrameV1 = Buffer.concat([zstdHeader, twoFrames]);
+  const multiFrameV1 = Buffer.concat([zstdHeader, multiFrames]);
   for (const extra of [0, 1, 2, 3]) {
-    const budget = frame1.length + extra;
-    expect(budget).toBeLessThan(twoFrames.length);
+    const budget = prefixFrames.length + extra;
+    expect(smallBundle.length).toBeLessThanOrEqual(budget);
+    expect(budget).toBeLessThan(multiFrames.length);
     const cut = await inspect(multiFrameV1, {
       analysis: "inventory",
       max_object_bytes: budget,
@@ -2493,21 +2503,23 @@ it("keeps corrupt CCOB v1 recovery distinct from max_object_bytes window truncat
       kind: "hip-bundle",
       inspection: "capacity",
       limitations: expect.arrayContaining([
-        expect.stringContaining("(parameter: max_object_bytes)"),
+        expect.stringContaining(
+          `Legacy CCOB v1 compressed payload exceeds the ${String(budget)}-byte object budget (parameter: max_object_bytes)`,
+        ),
       ]),
     });
   }
   const fullMultiFrame = await inspect(multiFrameV1, {
     analysis: "inventory",
-    max_object_bytes: multiFrameBundle.length + 64,
+    max_object_bytes: multiFrames.length + 64,
   });
   if (!fullMultiFrame.ok) throw fullMultiFrame.error;
   expect(fullMultiFrame.value.objects[0]?.inspection).toBe("complete");
 
-  // When a sibling's cached legacy window ends right between frame1 and frame2
-  // while max_object_bytes admits the full sibling, refill succeeds cleanly.
+  // When a sibling's cached legacy window ends right between prefixFrames and
+  // finalFrame while max_object_bytes admits the full sibling, refill succeeds.
   const prefixBundle = hipFixture(
-    Buffer.from("p".repeat(multiFrameBundle.length)),
+    Buffer.from("p".repeat(smallBundle.length)),
     "host-x86_64",
   );
   const prefixStored = deflateSync(prefixBundle, { level: 0 });
@@ -2515,9 +2527,9 @@ it("keeps corrupt CCOB v1 recovery distinct from max_object_bytes window truncat
     ccobFixture(1, "zlib", prefixBundle).subarray(0, 20),
   );
   const prefixV1 = Buffer.concat([prefixHeader, prefixStored]);
-  const cachedWindowCut = prefixStored.length + 20 + frame1.length;
-  expect(cachedWindowCut).toBeGreaterThanOrEqual(multiFrameBundle.length);
-  expect(cachedWindowCut).toBeGreaterThanOrEqual(twoFrames.length);
+  const cachedWindowCut = prefixStored.length + 20 + prefixFrames.length;
+  expect(cachedWindowCut).toBeGreaterThanOrEqual(smallBundle.length);
+  expect(cachedWindowCut).toBeGreaterThanOrEqual(multiFrames.length);
   const twoSiblings = Buffer.concat([prefixV1, multiFrameV1]);
   const refilledSiblings = await inspect(twoSiblings, {
     analysis: "inventory",
