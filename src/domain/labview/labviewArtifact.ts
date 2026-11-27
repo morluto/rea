@@ -41,6 +41,16 @@ export const labviewBlockSchema = z.strictObject({
 export const labviewPresenceSchema = z.enum(["present", "absent", "unknown"]);
 export type LabviewArtifactPresence = z.infer<typeof labviewPresenceSchema>;
 
+/** Whether a `vers` record was read, absent, or present but undecodable. */
+export const labviewVersionCoverageSchema = z.enum([
+  "observed",
+  "absent",
+  "unknown",
+]);
+export type LabviewArtifactVersionCoverage = z.infer<
+  typeof labviewVersionCoverageSchema
+>;
+
 /** One static RSRC observation: container facts and the block inventory. */
 export const labviewArtifactSchema = z.strictObject({
   artifact: z.strictObject({
@@ -66,8 +76,10 @@ export const labviewArtifactSchema = z.strictObject({
     /** Bytes declared for the container's info section. */
     info_bytes: count,
   }),
-  /** LabVIEW version recorded by the container's vers block; null when absent. */
+  /** LabVIEW version recorded by the container's `vers` block; null when not read. */
   labview_version: z.string().nullable(),
+  /** Whether that version was read, absent, or present but undecodable. */
+  version_coverage: labviewVersionCoverageSchema,
   /** Whether a block-diagram heap block (BDH*) is present. */
   block_diagram: labviewPresenceSchema,
   /** Whether a front-panel heap block (FPH*) is present. */

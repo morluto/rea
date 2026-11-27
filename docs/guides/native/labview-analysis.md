@@ -28,8 +28,11 @@ SHA-256, then reports:
   data and info ranges. Those offsets are relative to the container; add
   `container.file_offset` — where the container starts in the selected file, 0
   for a direct RSRC file — to map them onto the artifact;
-- the LabVIEW version recorded by the container's `vers` block, when present,
-  read from the section content only;
+- the LabVIEW version recorded by the container's `vers` block, decoded from
+  the packed four-byte field at the start of that record (two decimal major
+  digits, then minor), with `version_coverage` saying whether it was
+  `observed`, has no `vers` record (`absent`), or has one that could not be
+  decoded (`unknown`);
 - whether a block-diagram heap (`BDH*`) and a front-panel heap (`FPH*`) are
   present, absent from the inspected container, or unknown because content the
   reader did not examine could still hold one;

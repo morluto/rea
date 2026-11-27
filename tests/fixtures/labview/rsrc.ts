@@ -82,14 +82,31 @@ export const buildLabviewRsrc = (blocks: readonly BlockFixture[]): Buffer => {
   return Buffer.concat([header(), data, header(), listHeader, blockInfo]);
 };
 
-export const labviewZlibSection = (text: string): Buffer => {
-  const encoded = deflateSync(Buffer.from(text, "latin1"));
-  return Buffer.concat([u32(Buffer.byteLength(text, "latin1")), encoded]);
+export const labviewZlibSection = (content: string | Buffer): Buffer => {
+  const bytes =
+    typeof content === "string" ? Buffer.from(content, "latin1") : content;
+  const encoded = deflateSync(bytes);
+  return Buffer.concat([u32(bytes.length), encoded]);
 };
 
-export const labviewVersionSection = (): Buffer => {
-  const bytes = Buffer.alloc(12);
-  bytes.write("11.0", 0, 4, "latin1");
+/**
+ * The packed LabVIEW `vers` record: a four-byte version word (two decimal
+ * major digits, then minor, bugfix, stage and a four-digit build), a
+ * two-byte language, and two empty Pascal strings.
+ */
+export const labviewVersionSection = (version = "11.0"): Buffer => {
+  const [majorText = "0", minorText = "0"] = version.split(".");
+  const major = Number(majorText);
+  const minor = Number(minorText);
+  const word =
+    (((major / 10) & 0x0f) << 28) |
+    ((major % 10) << 24) |
+    ((minor & 0x0f) << 20);
+  const bytes = Buffer.alloc(8);
+  bytes.writeUInt32BE(word >>> 0, 0);
+  bytes.writeUInt16BE(0, 4);
+  bytes.writeUInt8(0, 6);
+  bytes.writeUInt8(0, 7);
   return bytes;
 };
 

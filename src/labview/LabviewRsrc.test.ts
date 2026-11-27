@@ -59,17 +59,19 @@ describe("parseLabviewRsrc", () => {
   });
 
   it("reads the version from a zlib-coded vers section", () => {
+    const record = labviewVersionSection("11.0");
     const parsed = parseLabviewRsrc(
       buildLabviewRsrc([
-        { ident: "vers", sections: [labviewZlibSection("11.0")] },
+        { ident: "vers", sections: [labviewZlibSection(record)] },
       ]),
     );
     if (!parsed.ok) throw new Error(parsed.failure.message);
     expect(parsed.value.blocks[0]?.sections[0]).toMatchObject({
       coding: "zlib",
-      decodedBytes: 4,
+      decodedBytes: record.length,
     });
     expect(parsed.value.labviewVersion).toBe("11.0");
+    expect(parsed.value.versionCoverage).toBe("observed");
   });
 
   it("reports where an embedded container starts in the selected file", async () => {
@@ -165,15 +167,26 @@ describe("parseLabviewRsrc", () => {
     });
   });
 
-  it("finds no version in a long digit-only section without rescanning", () => {
-    // The bounded single-pass scan must not backtrack over the digit run.
+  it("reports an undecodable vers record as unknown rather than absent", () => {
+    const corrupted = labviewZlibSection(labviewVersionSection("11.0"));
+    // Inflating to one byte less than declared fails the classification.
+    corrupted.writeUInt32BE(corrupted.readUInt32BE(0) + 1, 0);
     const parsed = parseLabviewRsrc(
-      buildLabviewRsrc([
-        { ident: "vers", sections: [Buffer.alloc(200_000, 0x30)] },
-      ]),
+      buildLabviewRsrc([{ ident: "vers", sections: [corrupted] }]),
+    );
+    if (!parsed.ok) throw new Error(parsed.failure.message);
+    expect(parsed.value.blocks[0]?.sections[0]?.coding).toBe("unknown");
+    expect(parsed.value.labviewVersion).toBeNull();
+    expect(parsed.value.versionCoverage).toBe("unknown");
+  });
+
+  it("reports version coverage absent when the container has no vers record", () => {
+    const parsed = parseLabviewRsrc(
+      buildLabviewRsrc([{ ident: "DFDS", sections: [Buffer.from("x")] }]),
     );
     if (!parsed.ok) throw new Error(parsed.failure.message);
     expect(parsed.value.labviewVersion).toBeNull();
+    expect(parsed.value.versionCoverage).toBe("absent");
   });
 
   it("fails a truncated or non-RSRC container instead of returning a partial inventory", () => {

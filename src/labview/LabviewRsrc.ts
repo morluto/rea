@@ -44,6 +44,9 @@ export interface LabviewBlock {
 
 export type LabviewPresence = "present" | "absent" | "unknown";
 
+/** Whether a `vers` record was read, absent, or present but undecodable. */
+export type LabviewVersionCoverage = "observed" | "absent" | "unknown";
+
 export interface LabviewRsrc {
   readonly formatVersion: number;
   readonly fileType: string;
@@ -53,6 +56,7 @@ export interface LabviewRsrc {
   readonly infoOffset: number;
   readonly infoBytes: number;
   readonly labviewVersion: string | null;
+  readonly versionCoverage: LabviewVersionCoverage;
   readonly blockDiagram: LabviewPresence;
   readonly frontPanel: LabviewPresence;
   readonly blocks: readonly LabviewBlock[];
@@ -178,43 +182,28 @@ const sectionName = (
   return reader.range(at + 1, length, "section name").toString("latin1");
 };
 
-/** Bytes of a `vers` section searched for a version; the value is at its start. */
-const MAX_VERSION_SCAN_BYTES = 64 * 1024;
-
-const isDecimalDigit = (code: number): boolean => code >= 0x30 && code <= 0x39;
-
 /**
- * The first `major.minor` decimal pair in one bounded, single pass. A regex
- * backtracks over a long digit run (quadratic on a digit-only section), so this
- * scan advances once per byte and never revisits them.
+ * The LabVIEW version packed into the first four bytes of a `vers` record:
+ * two decimal major digits, then minor, bugfix, stage, and a four-digit build.
  */
-const firstVersion = (section: Uint8Array): string | null => {
-  const text = Buffer.from(
-    section.subarray(0, MAX_VERSION_SCAN_BYTES),
-  ).toString("latin1");
-  for (let index = 0; index < text.length; index += 1) {
-    if (!isDecimalDigit(text.charCodeAt(index))) continue;
-    let majorEnd = index;
-    while (majorEnd < text.length && isDecimalDigit(text.charCodeAt(majorEnd)))
-      majorEnd += 1;
-    if (text.charCodeAt(majorEnd) !== 0x2e) {
-      index = majorEnd - 1;
-      continue;
-    }
-    let minorEnd = majorEnd + 1;
-    const minorStart = minorEnd;
-    while (minorEnd < text.length && isDecimalDigit(text.charCodeAt(minorEnd)))
-      minorEnd += 1;
-    if (minorEnd > minorStart) return text.slice(index, minorEnd);
-    index = majorEnd;
-  }
-  return null;
+const decodeVersion = (content: Uint8Array): string | null => {
+  if (content.length < 4) return null;
+  const word =
+    ((((content[0] ?? 0) << 24) |
+      ((content[1] ?? 0) << 16) |
+      ((content[2] ?? 0) << 8) |
+      (content[3] ?? 0)) >>>
+      0) >>>
+    0;
+  const major = ((word >>> 28) & 0x0f) * 10 + ((word >>> 24) & 0x0f);
+  const minor = (word >>> 20) & 0x0f;
+  return `${String(major)}.${String(minor)}`;
 };
 
-/** The LabVIEW version recorded by a vers section, or null when none is legible. */
+/** The LabVIEW version recorded by the first decodable `vers` record. */
 const versionOf = (sections: readonly Uint8Array[]): string | null => {
   for (const section of sections) {
-    const version = firstVersion(section);
+    const version = decodeVersion(section);
     if (version !== null) return version;
   }
   return null;
@@ -303,6 +292,7 @@ export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
 
     const blocks: LabviewBlock[] = [];
     const versionSections: Uint8Array[] = [];
+    let sawVersionSection = false;
     const budget: DecodeBudget = {
       decodedRemaining: MAX_DECODED_BYTES,
       inputRemaining: MAX_COMPRESSED_BYTES,
@@ -376,11 +366,11 @@ export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
         // Only content this reader actually read can report a version: a
         // failed or skipped decode leaves compressed bytes that can contain
         // digit-like binary values.
-        if (
-          identifier === "vers" &&
-          (decoded.coding === "none" || decoded.coding === "zlib")
-        )
-          versionSections.push(decoded.decoded ?? stored);
+        if (identifier === "vers") {
+          sawVersionSection = true;
+          if (decoded.coding === "none" || decoded.coding === "zlib")
+            versionSections.push(decoded.decoded ?? stored);
+        }
         sections.push({
           index: declaredIndex,
           name: sectionName(reader, nameBase, nameOffset, listEnd),
@@ -392,6 +382,7 @@ export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
       blocks.push({ identifier, sections });
     }
 
+    const labviewVersion = versionOf(versionSections);
     const hasPrefix = (prefix: string): boolean =>
       blocks.some(({ identifier }) => identifier.startsWith(prefix));
     return {
@@ -404,7 +395,13 @@ export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
         dataBytes,
         infoOffset,
         infoBytes,
-        labviewVersion: versionOf(versionSections),
+        labviewVersion,
+        versionCoverage:
+          labviewVersion !== null
+            ? "observed"
+            : sawVersionSection
+              ? "unknown"
+              : "absent",
         // Whether a heap exists is decided by the caller, which also knows
         // what it did not examine.
         blockDiagram: hasPrefix("BDH") ? "present" : "absent",

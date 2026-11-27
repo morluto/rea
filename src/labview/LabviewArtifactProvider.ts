@@ -250,6 +250,11 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
         : [
             "Part of the PE resource tree could not be examined, so heap presence is unknown for that content.",
           ]),
+      ...(value.versionCoverage === "unknown"
+        ? [
+            "The container has a vers section whose content could not be decoded, so the version is unknown rather than absent.",
+          ]
+        : []),
       ...(hasProgramTree
         ? [
             "The inspected container carries an embedded program tree (LVzp) that this reader does not decode.",
@@ -293,6 +298,7 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
         info_bytes: value.infoBytes,
       },
       labview_version: value.labviewVersion,
+      version_coverage: value.versionCoverage,
       block_diagram: blockDiagram,
       front_panel: frontPanel,
       blocks: value.blocks.map((block) => ({

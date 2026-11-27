@@ -51,6 +51,7 @@ cliTest(
         creator: "LBVW",
       });
       expect(report.labview_version).toBe("11.0");
+      expect(report.version_coverage).toBe("observed");
       expect(report.blocks.map(({ identifier }) => identifier)).toEqual([
         "vers",
         "DFDS",
