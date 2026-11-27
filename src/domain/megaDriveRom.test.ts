@@ -185,6 +185,18 @@ it("flags ROM and RAM ranges that disagree with the image", () => {
   expect(ram.limitations.join("\n")).toContain("before RAM start");
   expect(ram.limitations.join("\n")).not.toContain("64 KiB work RAM");
 
+  // RAM endpoints with different top-byte aliases order on the bus: this is
+  // the 0xFF0000-0xFFFFFF work RAM. The declared values are kept.
+  const aliasedRam = decoded(
+    megaDriveRom({ ramStart: 0xe0ff_0000, ramEnd: 0x00ff_ffff }),
+  );
+  expect(aliasedRam.limitations.join("\n")).not.toContain("before RAM start");
+  expect(aliasedRam.limitations.join("\n")).not.toContain("64 KiB work RAM");
+  expect(aliasedRam.metadata.ram).toEqual({
+    start: 0xe0ff_0000,
+    end: 0x00ff_ffff,
+  });
+
   const oversizedRam = decoded(
     megaDriveRom({ ramStart: 0, ramEnd: 0xffff_ffff }),
   );
@@ -221,7 +233,8 @@ it("flags ROM and RAM ranges that disagree with the image", () => {
   const wrappedRam = decoded(
     megaDriveRom({ ramStart: 0x00ff_0000, ramEnd: 0x0100_0000 }),
   );
-  expect(wrappedRam.limitations.join("\n")).toContain("64 KiB work RAM");
+  // 0x01000000 drives bus address 0x000000, below the start.
+  expect(wrappedRam.limitations.join("\n")).toContain("before RAM start");
 
   const wrongRam = decoded(megaDriveRom({ ramStart: 0, ramEnd: 0xffff }));
   expect(wrongRam.complete).toBe(false);
@@ -290,6 +303,19 @@ it("structures a known external RAM descriptor and reports an unknown type", () 
     }),
   );
   expect(backwards.limitations.join("\n")).toContain("External RAM end");
+
+  // Endpoints that alias through different top bytes are ordered on the
+  // 68000's 24-bit bus, as the cartridge sees them.
+  const aliased = decoded(
+    megaDriveRom({
+      externalRam: megaDriveExternalRam(0xf8, 0xff20_0000, 0x0020_ffff),
+    }),
+  );
+  expect(aliased.limitations.join("\n")).not.toContain("External RAM end");
+  expect(aliased.metadata.external_ram).toMatchObject({
+    start: 0xff20_0000,
+    end: 0x0020_ffff,
+  });
 });
 
 it("classifies region letters, one hex digit and other text", () => {

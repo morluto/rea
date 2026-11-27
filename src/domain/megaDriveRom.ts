@@ -120,15 +120,26 @@ const WORK_RAM_MIRROR_END = 0x00ff_ffff;
 const busAddress = (declared: number): number =>
   (declared & M68000_ADDRESS_MASK) >>> 0;
 
+/**
+ * Whether a declared range is in order on the bus. Every header range is
+ * ordered by this, so endpoints that alias through different top bytes,
+ * such as `0xE0FF0000`-`0x00FFFFFF`, compare as the addresses the 68000
+ * drives.
+ */
+const busOrdered = (start: number, end: number): boolean =>
+  busAddress(end) >= busAddress(start);
+
 /** Whether `[start, end]` is an ordered bus range that `outer` contains. */
 const busRangeWithin = (
   start: number,
   end: number,
   outer: { readonly start: number; readonly end: number },
 ): boolean => {
-  const from = busAddress(start);
-  const to = busAddress(end);
-  return to >= from && from >= outer.start && to <= outer.end;
+  return (
+    busOrdered(start, end) &&
+    busAddress(start) >= outer.start &&
+    busAddress(end) <= outer.end
+  );
 };
 
 /** At most 64 KiB inside the work-RAM mirror, on the 24-bit bus. */
@@ -590,7 +601,7 @@ const parseMegaDriveImage = (
   // window use the bus addresses; metadata keeps the declared values.
   const romBusStart = busAddress(romStart);
   const romBusEnd = busAddress(romEnd);
-  const romOrdered = romBusEnd >= romBusStart;
+  const romOrdered = busOrdered(romStart, romEnd);
   if (!romOrdered)
     note(
       `Declared ROM end 0x${romEnd.toString(16)} is before ROM start 0x${romStart.toString(16)}.`,
@@ -611,7 +622,7 @@ const parseMegaDriveImage = (
     note(
       `Declared ROM start is 0x${romStart.toString(16)}; file offset 0 is mapped at that address, and the checksum still sums image offset 0x200.`,
     );
-  if (ramEnd < ramStart)
+  if (!busOrdered(ramStart, ramEnd))
     note(
       `Declared RAM end 0x${ramEnd.toString(16)} is before RAM start 0x${ramStart.toString(16)}.`,
     );
@@ -635,7 +646,7 @@ const parseMegaDriveImage = (
     note(
       `External RAM type byte 0x${externalType.toString(16)} is not a known access and battery value.`,
     );
-  if (externalPresent && externalEnd < externalStart)
+  if (externalPresent && !busOrdered(externalStart, externalEnd))
     note(
       `External RAM end 0x${externalEnd.toString(16)} is before its start 0x${externalStart.toString(16)}.`,
     );
