@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { unescapeJsonPointerToken } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import { collapseWhitespace, isTimestamp } from "./appTask.js";
@@ -301,9 +302,7 @@ const selectorGroups = (tokens: Iterable<string>) => {
     const values = JSON.stringify(conditions.map(({ value }) => value));
     const group = groups.get(fields) ?? { conditions, wanted: new Map() };
     groups.set(fields, group);
-    const spellings = group.wanted.get(values);
-    if (spellings === undefined) group.wanted.set(values, [token]);
-    else spellings.push(token);
+    appendToMapList(group.wanted, values, token);
   }
   return groups.values();
 };

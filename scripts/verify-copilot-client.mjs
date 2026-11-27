@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { verifyClientSetup } from "./verify/clients/setup.mjs";
+import { verifyClientSetupAndReadSkillBody } from "./verify/clients/setup.mjs";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
@@ -13,7 +13,8 @@ import { advertisedInputJsonSchema } from "../dist/contracts/toolSchemaMetadata.
 import { advertiseTool } from "../dist/contracts/advertisedTool.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
-import { publishClientReceipt } from "./verify/clients/receipt.mjs";
+import { readClientVersion } from "./verify/clients/version.mjs";
+import { receiptContext, publishReceipt } from "./verify/clients/receipt.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import {
   CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
@@ -102,13 +103,7 @@ await withVerifierCleanup(async () => {
       REA_PROCESS_RUN_ID: verifier.run_id,
     };
     try {
-      clientVersion = (
-        await commands.exec(command, ["--version"], {
-          env: environment,
-          timeout: 30_000,
-          stdin: "pipe",
-        })
-      ).stdout.trim();
+      clientVersion = await readClientVersion(commands, command, environment);
     } catch (cause) {
       throw new Error(
         `Copilot CLI preflight failed for ${command}; install Copilot CLI or set REA_VERIFY_COPILOT_COMMAND. ${String(cause)}`,
@@ -254,7 +249,7 @@ await withVerifierCleanup(async () => {
       2,
     );
     await writeFile(configPath, original);
-    await verifyClientSetup({
+    expectedSkillBody = await verifyClientSetupAndReadSkillBody({
       client: "copilot_cli",
       commands,
       runtimeRoot,
@@ -268,22 +263,6 @@ await withVerifierCleanup(async () => {
         assert(configured.includes("unrelated-server"));
       },
     });
-    const installedSkill = await readFile(
-      join(skillDirectory, "SKILL.md"),
-      "utf8",
-    );
-    assert(installedSkill.includes("name: reverse-engineer-anything"));
-    const skillLines = installedSkill.split("\n");
-    const headerEnd = skillLines.indexOf("---", 1);
-    assert(
-      skillLines[0] === "---" && headerEnd > 0,
-      "Installed skill must have its authored frontmatter",
-    );
-    expectedSkillBody = skillLines
-      .slice(headerEnd + 1)
-      .join("\n")
-      .trim();
-    assert(expectedSkillBody.length > 0);
     for (const [name, args] of [
       ["mcp-list", ["mcp", "list"]],
       ["skill-add", ["skill", "add", skillDirectory]],
@@ -366,20 +345,14 @@ await withVerifierCleanup(async () => {
 }, [
   async () => {
     const lineage = await completeVerifierRun(verifier);
-    const receipt = {
+    await publishReceipt({
       client: "Copilot CLI",
       clientVersion,
       mode,
       model,
       wireModel,
       passed,
-      artifacts: lab,
-      runtimeRoot,
-      host: {
-        platform: process.platform,
-        architecture: process.arch,
-        node: process.versions.node,
-      },
+      ...receiptContext(lab, runtimeRoot),
       modelFixture:
         "loopback OpenAI completions/SSE, synthetic usage, requested one-million-token BYOK prompt capacity; effective capacity unknown; no live provider claim",
       skillDiscovery:
@@ -398,7 +371,6 @@ await withVerifierCleanup(async () => {
       probes: fixture?.probes,
       fixtureFailure: fixture?.failure,
       verifier: lineage,
-    };
-    await publishClientReceipt(lab, receipt);
+    });
   },
 ]);

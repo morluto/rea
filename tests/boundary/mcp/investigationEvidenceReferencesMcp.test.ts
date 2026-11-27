@@ -2,8 +2,7 @@ import {
   fileIdentity,
   fileSubjectDisplay,
 } from "../../fixtures/evidenceSubject.js";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";

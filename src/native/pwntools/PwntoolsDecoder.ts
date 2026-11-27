@@ -16,7 +16,7 @@ import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
   bindArtifactFileCleanup,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   completedStableArtifact,
   readStableArtifact,
   ArtifactResourceScope,
@@ -518,11 +518,9 @@ export class PwntoolsDecoder<
           if (cleanup !== undefined) bindArtifactFileCleanup(cause, cleanup);
           const primary =
             cause.reason === "cancelled"
-              ? cancelledBy(
-                  OPERATION,
-                  carriedReason(artifactFileCancellationCause(cause)),
-                  { capturedOutput },
-                )
+              ? artifactFileCancellationError(OPERATION, cause, {
+                  capturedOutput,
+                })
               : (cleanup ??
                 new AnalysisOutputError(OPERATION, cause.message, {
                   cause,
@@ -545,17 +543,13 @@ export class PwntoolsDecoder<
           cause instanceof ArtifactReaderFailure &&
           cause.reason === "cancelled"
         ) {
-          const error = cancelledBy(
-            OPERATION,
-            carriedReason(artifactFileCancellationCause(cause)),
-            {
-              capturedOutput,
-              ...(cause instanceof ArtifactReaderFailure &&
-              cause.cleanup !== undefined
-                ? { cleanup: cause.cleanup }
-                : {}),
-            },
-          );
+          const error = artifactFileCancellationError(OPERATION, cause, {
+            capturedOutput,
+            ...(cause instanceof ArtifactReaderFailure &&
+            cause.cleanup !== undefined
+              ? { cleanup: cause.cleanup }
+              : {}),
+          });
           bindArtifactFileCleanup(cause, error);
           throw error;
         }
@@ -594,6 +588,7 @@ export class PwntoolsDecoder<
             reply.reported_limits ?? null,
             {
               capturedOutput,
+              measuredExhaustion: true,
               remediationAction: `Review reported limits and available host memory; allocation failure alone does not prove exhaustion. ${pwntoolsBudgetRecovery(producerLimits)}`,
             },
           );

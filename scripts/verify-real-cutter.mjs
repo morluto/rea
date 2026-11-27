@@ -1,16 +1,18 @@
 #!/usr/bin/env node
 
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import {
   closeVerifierResources,
   withVerifierCleanup,
 } from "./lib/verifier-cleanup.mjs";
 import assert from "node:assert/strict";
 import { createPackageVerifierCommands } from "./lib/verify-package-commands.mjs";
-import { createHash, randomUUID } from "node:crypto";
-import { access, constants, readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { access, constants, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 const cli = resolve("scripts/rea.mjs");
 const runCli = async (...arguments_) => {
@@ -83,9 +85,7 @@ await withVerifierCleanup(async () => {
     "Open a disposable local binary in Cutter before running this smoke test.",
   );
   const artifactPath = session.current_file;
-  const artifactDigest = createHash("sha256")
-    .update(await readFile(artifactPath))
-    .digest("hex");
+  const artifactDigest = await sha256File(artifactPath);
 
   const inspection = await runCli(
     "cutter-command",
@@ -111,10 +111,12 @@ await withVerifierCleanup(async () => {
       providerEnvironment: process.env,
     },
   );
-  const mcpClient = new Client({
-    name: "rea-cutter-upstream-smoke",
-    version: "1",
-  });
+  const mcpClient = completeEvidenceClient(
+    new Client({
+      name: "rea-cutter-upstream-smoke",
+      version: "1",
+    }),
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const mcpOwner = {
@@ -201,9 +203,7 @@ await withVerifierCleanup(async () => {
     String(recovered.raw_result).includes(annotation),
     "The saved project did not preserve the analysis comment after reopening.",
   );
-  const finalArtifactDigest = createHash("sha256")
-    .update(await readFile(artifactPath))
-    .digest("hex");
+  const finalArtifactDigest = await sha256File(artifactPath);
   assert.equal(
     finalArtifactDigest,
     artifactDigest,

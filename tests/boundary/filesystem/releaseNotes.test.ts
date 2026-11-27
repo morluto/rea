@@ -664,6 +664,22 @@ it("checks the live merged PR and exact Git snapshot before either publication r
       },
     }),
   );
+  for (const selector of [[], ["--pr", "1399"]]) {
+    const manual = await f.invoke([
+      "publication",
+      "--repository",
+      "fixture/rea",
+      "--source",
+      source,
+      "--target-branch",
+      "release/6.4.0",
+      ...selector,
+    ]);
+    expect(JSON.parse(manual.stdout)).toMatchObject({
+      status: "verified",
+      version: "6.4.0",
+    });
+  }
   await expect(f.invoke(branchArgs)).rejects.toMatchObject({
     stderr: expect.stringContaining(
       "Expected exactly one merged Release Please PR",

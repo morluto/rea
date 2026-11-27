@@ -805,6 +805,7 @@ export const parseKernelModuleFromHandle = async (
     source,
     "inspect_kernel_module",
     () => yieldArtifactRead(signal),
+    { structureBytes: input.max_structure_bytes },
   );
   const facts = headerFacts(image);
   if (facts.type !== 1) return notApplicable(artifact, facts);

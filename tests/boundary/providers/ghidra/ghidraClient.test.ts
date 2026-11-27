@@ -10,6 +10,7 @@ import {
 } from "../../../../src/domain/analysisErrorCore.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
+import { sha256 as digest } from "../../../support/sha256.js";
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import {
@@ -462,8 +463,6 @@ it("hashes snapshot section ranges in the same pass as the whole-file digest", a
     await client.close();
   });
   const bytes = readFileSync(fixturePath);
-  const digest = (chunk: Buffer): string =>
-    createHash("sha256").update(chunk).digest("hex");
   const result = await client.hashTargetSnapshotRanges([
     { start: 0, end: 4 },
     { start: 4, end: bytes.length },

@@ -18,6 +18,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join, parse, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { verifyWindowsProtocolInput } from "./lib/windows-protocol-input.mjs";
 import { verifyWindowsJobMemoryLimit } from "./lib/windows-job-memory-limit.mjs";
 import { verifyVolumeRootAppendLease } from "./lib/windows-volume-root-append-lease.mjs";
@@ -32,6 +33,9 @@ if (process.platform !== "win32")
     "Windows native conformance requires a real Windows x64 host.",
   );
 const packageRoot = resolve(process.argv[2] ?? ".");
+const { quoteWindowsProcessArgument: quote } = await import(
+  pathToFileURL(join(packageRoot, "dist/windows/WindowsOwnedProcess.js"))
+);
 const { requireWindowsNativeAuthority } = await import(
   pathToFileURL(join(packageRoot, "dist/windows/WindowsNativeLoader.js"))
 );
@@ -141,8 +145,6 @@ assert.doesNotMatch(
 const environment = Object.entries(process.env)
   .filter(([, value]) => value !== undefined)
   .map(([key, value]) => `${key}=${value}`);
-const quote = (value) =>
-  `"${value.replace(/(\\*)"/gu, '$1$1\\"').replace(/(\\+)$/u, "$1$1")}"`;
 const delay = () => new Promise((resolve) => setTimeout(resolve, 25));
 const exists = (path) =>
   access(path).then(
@@ -412,12 +414,7 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
       await assert.rejects(rejected, /Runtime snapshot is still pending/u);
       const completed = await accepted;
       assert.equal(completed.source.requestedPath, requestedSource);
-      assert.equal(
-        completed.sha256,
-        createHash("sha256")
-          .update(await readFile(source))
-          .digest("hex"),
-      );
+      assert.equal(completed.sha256, await sha256File(source));
       assert.equal(
         await exists(join(snapshotOwner.observation.path, "rejected.bin")),
         false,
@@ -570,12 +567,7 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
         /pending/u,
       );
       const snapshot = await pending;
-      assert.equal(
-        snapshot.sha256,
-        createHash("sha256")
-          .update(await readFile(source))
-          .digest("hex"),
-      );
+      assert.equal(snapshot.sha256, await sha256File(source));
       assert.equal(snapshot.source.requestedPath, source);
       await assert.rejects(
         writeFile(join(runtime.path, "inputs", "target.bin"), "replace"),

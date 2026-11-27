@@ -17,6 +17,7 @@ import type {
   AnalysisError,
 } from "../domain/analysisErrorBase.js";
 import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
@@ -136,9 +137,10 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
             active_inspections: this.#active.size,
             max_concurrent_inspections:
               SQLITE_DATABASE_LIMITS.concurrentInspections,
-            input_bytes_per_inspection: SQLITE_DATABASE_LIMITS.inputBytes,
           },
           {
+            // Occupied slots are measured capacity, not a request over a budget.
+            measuredExhaustion: true,
             remediationAction: `The concurrent SQLite inspection allowance is ${String(SQLITE_DATABASE_LIMITS.concurrentInspections)}. This release has no runtime override. Waiting for an active inspection to finish can free a slot. worker_timeout_ms does not raise it. Retry after an active SQLite inspection completes.`,
           },
         ),
@@ -287,6 +289,8 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
         root.path,
         this.#artifactResources,
         options?.signal,
+        undefined,
+        input.producer_limits?.input_bytes,
       );
       phase = "worker";
       const completed = await executeSqliteDatabaseWorker({
@@ -355,6 +359,16 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
       result = err(failure);
     }
     if (root !== undefined && processOwner !== undefined) {
+      // This branch keeps the worker instead of finalizing through runOwned;
+      // retain a late caller cancellation as runOwned would.
+      const signal = options?.signal;
+      const withLateCancellation = (failure: AnalysisError): AnalysisError =>
+        signal?.aborted === true
+          ? analysisErrorWithCancellation(
+              failure,
+              cancelledBy(operation, signal),
+            )
+          : failure;
       const ownership = processOwner.launch.ownership;
       const rootRelease = new AnalysisCleanupRelease();
       const rootFailure = rootRelease.bind(sqliteRootFailure(root));
@@ -410,11 +424,11 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
               },
         );
         failure.bindCleanupDependencies([processFailure, rootFailure]);
-        return err(failure);
+        return err(withLateCancellation(failure));
       }
       if (!result.ok) {
         result.error.bindCleanupDependencies([processFailure, rootFailure]);
-        return result;
+        return err(withLateCancellation(result.error));
       }
       const failure = sqliteCleanupFailure(
         [
@@ -429,7 +443,7 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
         retainedOutput,
       );
       failure.bindCleanupDependencies([processFailure, rootFailure]);
-      return err(failure);
+      return err(withLateCancellation(failure));
     }
     const finalized = await runOwned(async () => result, {
       providerId: SQLITE_PROVIDER_IDENTITY.id,

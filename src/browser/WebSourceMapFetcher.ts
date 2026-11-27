@@ -13,7 +13,10 @@ import {
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { isUrlLikeModuleSpecifier } from "../domain/webBundleAnalyzerAst.js";
-import { unwrapJavaScriptExpression } from "../domain/javascript/javascriptAstValues.js";
+import {
+  stringValue,
+  unwrapJavaScriptExpression,
+} from "../domain/javascript/javascriptAstValues.js";
 import { analyzeParsedJavaScriptReferences } from "../domain/javascript/javascriptSemanticAnalysis.js";
 import { traverseJavaScriptAst } from "../domain/javascript/javascriptSemanticTraversal.js";
 import {
@@ -24,7 +27,6 @@ import {
   semanticStaticModuleSource,
   semanticImportEqualsSpecifier,
 } from "../domain/javascript/javascriptModuleDeclaration.js";
-import { stringValue } from "../domain/javascript/javascriptStaticAnalysisHelpers.js";
 import type {
   AnalyzeWebBundleInput,
   WebSourceMapItem,

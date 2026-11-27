@@ -199,10 +199,22 @@ it.each(["before command", "during command"] as const)(
         );
       const result = await client.execute("list_architectures", {});
       if (result.ok) throw new Error("Expected target identity refusal");
-      expect(result.error).toMatchObject({
-        _tag: "AnalysisArtifactChangedError",
-        operation: "list_architectures",
-      });
+      // A target replaced before the command no longer matches the admitted
+      // digest, which only reopening clears; one replaced during the command
+      // changed under the read.
+      expect(result.error).toMatchObject(
+        phase === "before command"
+          ? {
+              _tag: "ArtifactOperationError",
+              operation: "list_architectures",
+              reason: "integrity",
+              integrityCheck: "admitted-identity",
+            }
+          : {
+              _tag: "AnalysisArtifactChangedError",
+              operation: "list_architectures",
+            },
+      );
       expect(capture).toHaveBeenCalledTimes(phase === "before command" ? 0 : 1);
     } finally {
       await client.close();

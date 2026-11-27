@@ -428,7 +428,8 @@ tree semantics, vulnerability scanning, emulation or hardware runtime capture.
 - Default staging budget: **256 MiB** and **10,000 entries**, configurable using
   `max_output_bytes` / `max_output_files` (CLI `--max-output-bytes` /
   `--max-output-files`). Exceeding either selected staging budget returns a
-  nonretryable resource constraint naming the selected limit. Depth defaults to
+  nonretryable resource constraint whose `details.limit` names the field, its
+  effective value, range and default. Depth defaults to
   3, allowed range 1–10.
 
 Staging budgets are polled and rechecked after exit; short-lived overshoot is
@@ -482,7 +483,8 @@ REA_FIRMWARE_VERIFY_GHIDRA=1 npm run verify:firmware
 `REA_FIRMWARE_TEST_ENTRYPOINT` can select an isolated installed npm package's
 `scripts/rea.mjs` to verify the packaged CLI/MCP workflow. Real coverage here is
 generated gzip/USTAR/ext4 with a Linux x64 ELF child; SquashFS, UBIFS, proprietary
-firmware, other hosts and architectures remain unverified.
+firmware, other hosts and architectures remain unverified. UBI volume containers
+have a native reader; see [Inspect UBI images](#inspect-ubi-images).
 
 ## Inspect ESP images
 
@@ -519,6 +521,14 @@ file for its address regions, declared start address and record facts, then
 portable and requires no external tool. See
 [Intel HEX and S-record images](../../hex-records.md).
 
+## Inspect uClinux bFLT flat executables
+
+`inspect-artifact` / `extract-artifact` recognize a uClinux flat executable by
+its `bFLT` magic and report the 64-byte header without running it or applying
+its relocations. Text, data and the relocation table are extractable; gzip and
+gzdata bodies are inflated under `artifact_limits.expanded_bytes`. The header
+does not name a CPU. See [uClinux bFLT flat executables](../../bflt-executables.md).
+
 ## Inspect U-Boot legacy uImages
 
 `inspect-artifact` / `extract-artifact` recognize a legacy uImage by its
@@ -541,6 +551,25 @@ verifying signatures. Full payloads can reconstruct REPLACE, ZERO and
 REPLACE_ZSTD partition images; delta operations stay inventoried and refuse
 extraction. See [Android OTA update payloads](android-ota-payload.md)
 for header facts, operation types, limits and verification scope.
+
+## Expand Android sparse images
+
+`inspect-artifact` / `extract-artifact` recognize an Android sparse image
+(`0xED26FF3A`) by magic, record its header and chunk counts, and expand it to
+one `image.raw` child offline. RAW chunks are copied, FILL chunks repeated and
+DONT_CARE chunks written as zeros; stored checksums are not verified. The
+expanded child is classified again, so a sparse-wrapped boot image continues
+to the Android boot image reader. See [Android sparse images](android-sparse-image.md).
+
+## Inspect UBI images
+
+`inspect-artifact` / `extract-artifact` recognize a UBI image or NAND dump by
+its `UBI#` erase-counter header and inventory the eraseblock layout and volume
+table without mounting anything. Each volume is reassembled from its logical
+eraseblocks into `volumes/<name>`; a volume with a missing logical eraseblock
+is inventoried and refuses extraction. UBIFS and SquashFS contents inside a
+volume are not decoded. See [UBI images](ubi-images.md) for layout facts,
+volume table checks, reassembly rules and verification scope.
 
 ## Inspect UF2 and DfuSe images
 
@@ -571,3 +600,24 @@ zstd are recorded from leading magic and left compressed. An AVB footer is
 reported with its sizes and is not verified. `ANDROID!` does not say whether
 the file was boot, init_boot, or recovery. Extract `dtb` and pass that file
 to `inspect-devicetree`. See [Android boot images](../../android-boot-image.md).
+
+## Inspect Android vbmeta images
+
+`inspect-artifact` / `extract-artifact` recognize a standalone `vbmeta.img`
+by the `AVB0` magic at offset 0. The root records the header, rollback index,
+flags, release string, and each property, hashtree, hash, kernel command-line,
+and chain-partition descriptor. Unknown descriptor tags are retained. The
+authentication block, public key, and public key metadata are extractable
+children. Signatures and digests are recorded and not verified. See
+[Android Verified Boot vbmeta images](android-vbmeta.md).
+
+## Inspect Qualcomm MBN images
+
+`inspect-artifact` / `extract-artifact` recognize a legacy Qualcomm MBN boot
+image by its header and payload sizes, with pointer checks for version 3.
+The headers are 40 bytes for v3 and v5, and 48 for v6. Inventory lists the
+header, code, signature, certificate-chain and v6 metadata regions. An ELF image whose program
+headers declare a Qualcomm hash segment is inventoried as `qualcomm-mbn` with its hash
+table and per program header hash offsets, while binary target resolution
+still reads it as ELF. Signatures and certificates are located, not verified,
+and hashes are not recomputed. See [Qualcomm MBN images](qualcomm-mbn-images.md).

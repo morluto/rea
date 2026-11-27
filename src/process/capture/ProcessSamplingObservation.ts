@@ -1,3 +1,4 @@
+import { systemCodeFromError } from "../../kernel/reportedSystemCode.js";
 import {
   isProcessInspectionFailure,
   processInspectionCancellations,
@@ -152,12 +153,7 @@ export const readSamplingSource = async <T>(
       cause.availability === "absent"
     )
       return err({ kind: "process-exited" });
-    const systemCode =
-      cause instanceof Error &&
-      "code" in cause &&
-      typeof cause.code === "string"
-        ? cause.code
-        : undefined;
+    const systemCode = systemCodeFromError(cause);
     const reason =
       cause instanceof Error
         ? `${cause.name}: ${cause.message}`

@@ -1,14 +1,8 @@
-import {
-  bridgeCandidateCoverageSchema,
-  projectCartesianCandidates,
-} from "../bridgeCandidateProjection.js";
+import { bridgeCandidateCoverageSchema } from "../bridgeCandidateProjection.js";
 import { z } from "zod";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 
-import {
-  hasCompleteInventoryCoverage,
-  type ParsedInventorySet,
-} from "../artifactInventoryEvidence.js";
+import type { ParsedInventorySet } from "../artifactInventoryEvidence.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { nativeRuntimeConvention } from "../nativeConvention.js";
@@ -17,7 +11,9 @@ import {
   projectedComponentSchema,
   projectedInventoryEntries,
   projectedFileComponents,
+  projectManagedNativeCandidates,
   projectionCoverage,
+  projectionCoverageSchema,
   projectionEvidenceIdSchema,
   unavailableComponentSchema,
   type ProjectedInventoryEntry,
@@ -58,11 +54,7 @@ export const harmonyApplicationProjectionResultSchema = z.strictObject({
     ] as const),
   ),
   bridge_candidate_coverage: bridgeCandidateCoverageSchema,
-  coverage: z.strictObject({
-    status: z.enum(["complete-within-inventory", "partial"]),
-    // Count completeness is separate from the declared coverage status.
-    inventory_complete: z.boolean(),
-  }),
+  coverage: projectionCoverageSchema,
   limitations: z.array(z.string()),
 });
 
@@ -111,16 +103,20 @@ export const projectHarmonyInventory = (
     ...Object.values(classified).flat(),
     ...children,
   ]);
-  const bridgeProjection = bridgeCandidates(
+  const bridgeProjection = projectManagedNativeCandidates(
     classified.bytecode,
     classified.native_libraries,
+    napiBasis,
+  );
+  const { coverage, sourceLimitations, bridgeLimitations } = projectionCoverage(
+    inventory,
+    bridgeProjection.coverage,
+    unavailable.length,
   );
   const limitations = [
     ...unresolved,
     ...inventory.limitations,
-    ...(!hasCompleteInventoryCoverage(inventory, "container-entries")
-      ? ["Source inventory coverage is partial; absence is unknown."]
-      : []),
+    ...sourceLimitations,
     ...(unavailable.length > 0
       ? [
           "Some inventoried files or slices have no authenticated content identity. Their paths and limitations are retained in unavailable_components; component and runtime absence is unknown.",
@@ -139,11 +135,7 @@ export const projectHarmonyInventory = (
         ]
       : []),
     "HarmonyOS .har shared libraries are not identified by this projection; the .har suffix also names HTTP Archive JSON, so that classification requires verified ZIP bytes.",
-    ...(bridgeProjection.coverage.status === "partial"
-      ? [
-          `Bridge candidate pairs exceeded the projection safety budget; ${bridgeProjection.coverage.omitted_candidates} hypotheses are omitted. Component arrays still include every component from the supplied inventory pages.`,
-        ]
-      : []),
+    ...bridgeLimitations,
   ];
   const withoutId = {
     root_sha256: inventory.manifest.root_sha256,
@@ -161,11 +153,7 @@ export const projectHarmonyInventory = (
     runtime_families: runtimeFamilies(all, classified),
     bridge_candidates: bridgeProjection.candidates,
     bridge_candidate_coverage: bridgeProjection.coverage,
-    coverage: projectionCoverage(
-      inventory,
-      bridgeProjection.coverage.status === "complete" &&
-        unavailable.length === 0,
-    ),
+    coverage,
     limitations,
   };
   return ok(
@@ -276,20 +264,6 @@ const runtimeFamilies = (
     if (convention !== null) families.add(convention);
   }
   return [...families].sort(compareUnicodeCodePoints);
-};
-
-const bridgeCandidates = (
-  managed: readonly Component[],
-  native: readonly Component[],
-) => {
-  return projectCartesianCandidates({
-    groups: [{ left: managed, right: native }],
-    createCandidate: (managed_path, target) => ({
-      managed_path,
-      native_path: target.path,
-      basis: napiBasis(target.path),
-    }),
-  });
 };
 
 const napiBasis = (

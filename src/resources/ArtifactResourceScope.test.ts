@@ -52,6 +52,51 @@ it("waits for admitted operations and shares concurrent close", async () => {
   }
 });
 
+it("does not report an owner released during drain after that drain attempt failed", async () => {
+  const scope = new ArtifactResourceScope();
+  let owner1Attempt = 0;
+  const owner1Failure = new Error("owner-1 still busy");
+  const owner1 = {
+    kind: "lease" as const,
+    resource: "owner-1",
+    lease: {
+      async release() {
+        owner1Attempt += 1;
+        if (owner1Attempt < 3) throw owner1Failure;
+      },
+    },
+  };
+  const owner2Gate = phaseGate();
+  const owner2 = {
+    kind: "lease" as const,
+    resource: "owner-2",
+    lease: {
+      async release() {
+        await owner2Gate.hold();
+      },
+    },
+  };
+  expect(await scope.release(owner1)).toMatchObject({
+    kind: "failed",
+    cause: owner1Failure,
+  });
+  scope.retain(owner2);
+
+  const closing = scope.close();
+  try {
+    await owner2Gate.reached(closing, "drain owner2");
+    expect(owner1Attempt).toBe(2);
+    expect(await scope.release(owner1)).toEqual({ kind: "released" });
+    expect(owner1Attempt).toBe(3);
+    owner2Gate.release();
+    await expect(closing).resolves.toBeUndefined();
+    expect(scope.cleanupResources).toEqual([]);
+  } finally {
+    owner2Gate.release();
+    await closing;
+  }
+});
+
 it("stops a close hook even when retained cleanup is still failing", async () => {
   const scope = new ArtifactResourceScope();
   let releases = 0;

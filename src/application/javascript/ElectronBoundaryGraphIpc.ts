@@ -1,3 +1,4 @@
+import { appendToMapList } from "../../domain/appendToMapList.js";
 import {
   compareJavaScriptSourcePoints,
   javascriptSourceRangeKey,
@@ -376,9 +377,7 @@ const addValidationObservations = (state: IpcGraphState): void => {
   const handlersByPath = new Map<string, ElectronIpcRecord[]>();
   for (const record of state.records) {
     if (record.finding.handler_location === null) continue;
-    const list = handlersByPath.get(record.file.path);
-    if (list === undefined) handlersByPath.set(record.file.path, [record]);
-    else list.push(record);
+    appendToMapList(handlersByPath, record.file.path, record);
   }
   for (const analyzed of state.context.analysis.files) {
     const { file, javascript } = analyzed;

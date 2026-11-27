@@ -27,6 +27,7 @@ const tableGaps = () =>
 
 const fixtureRegistrars = new Map([
   ["cliFixture.js", "cliTest"],
+  ["fileInspection.js", "fileInspectionTest"],
   ["mcpFixture.js", "mcpTest"],
   ["workspaceCliFixture.js", "workspaceCliTest"],
 ]);

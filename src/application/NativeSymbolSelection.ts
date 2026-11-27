@@ -1,3 +1,4 @@
+import { carrySessionExecutionProvenance } from "./binary/SessionEvidenceReuse.js";
 import { permitsCapabilityFallback } from "./CapabilityFallback.js";
 import {
   listNamesFact,
@@ -299,13 +300,16 @@ const answeredByAddress = (
 ): Result<AnalysisExecution, AnalysisError> => {
   if (!answered.ok || resolution.address === selector) return answered;
   const { evidenceId: _resolvedEvidenceId, ...execution } = answered.value;
-  const resolvedExecution: AnalysisExecution = {
-    ...execution,
-    limitations: [
-      `REA resolved ${JSON.stringify(selector)} to ${resolution.name === selector ? "" : `${resolution.name} at `}${resolution.address} (${resolution.match}) and the provider answered by that address.`,
-      ...execution.limitations,
-    ],
-  };
+  const resolvedExecution: AnalysisExecution = carrySessionExecutionProvenance(
+    answered.value,
+    {
+      ...execution,
+      limitations: [
+        `REA resolved ${JSON.stringify(selector)} to ${resolution.name === selector ? "" : `${resolution.name} at `}${resolution.address} (${resolution.match}) and the provider answered by that address.`,
+        ...execution.limitations,
+      ],
+    },
+  );
   return analysis.retainResolvedExecution === undefined
     ? ok(resolvedExecution)
     : analysis.retainResolvedExecution(

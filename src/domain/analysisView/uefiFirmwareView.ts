@@ -1,3 +1,5 @@
+import { exactNames, indexedRow, pageLimit } from "./uefiViewSelection.js";
+import { namedCounts } from "./analysisViewCounts.js";
 import { z } from "zod";
 import { boundedList } from "../boundedList.js";
 import { evidenceSubjectTarget } from "../evidence.js";
@@ -42,14 +44,8 @@ const sourceIndex = {
 };
 const page = {
   offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().max(256).default(32),
+  limit: pageLimit(32),
 };
-const exactNames = <Schema extends z.ZodType>(schema: Schema, what: string) =>
-  z
-    .array(schema)
-    .min(1)
-    .optional()
-    .describe(`Exact ${what}; any listed value matches`);
 
 const pagedCollection = <Name extends string>(collection: Name) =>
   z.strictObject({
@@ -75,12 +71,7 @@ export const uefiFirmwareViewRequestSchema = z.discriminatedUnion(
         .optional()
         .describe("Exact logical_path of the owning firmware volume"),
       offset: page.offset,
-      limit: z
-        .int()
-        .positive()
-        .max(256)
-        .default(16)
-        .describe("File rows carry their section lists"),
+      limit: pageLimit(16).describe("File rows carry their section lists"),
     }),
     z.strictObject({
       kind: z.literal("uefi-firmware"),
@@ -169,12 +160,6 @@ type Summary = z.output<typeof uefiFirmwareSummarySchema>;
 
 const readReport = createAnalysisViewResultReader(inspection);
 
-const tallied = <Name>(names: Iterable<Name>) => {
-  const counts = new Map<Name, number>();
-  for (const name of names) counts.set(name, (counts.get(name) ?? 0) + 1);
-  return [...counts].map(([name, n]) => ({ name, count: n }));
-};
-
 interface FileEntry {
   readonly volume: string;
   readonly file: UefiFfsFileRecord;
@@ -233,11 +218,11 @@ const firmwareIndex = (r: UefiInspectResult): FirmwareIndex => {
 const firmwareSummary = (r: UefiInspectResult, index: FirmwareIndex): Summary =>
   (index.summary ??= {
     ...index.context,
-    file_types: tallied(index.files.map(({ file }) => file.type_name)),
-    section_types: tallied(
+    file_types: namedCounts(index.files.map(({ file }) => file.type_name)),
+    section_types: namedCounts(
       index.sections.map(({ section }) => section.type_name),
     ),
-    volume_depths: tallied(r.firmware_volumes.map((v) => v.depth))
+    volume_depths: namedCounts(r.firmware_volumes.map((v) => v.depth))
       .sort((a, b) => a.name - b.name)
       .map(({ name, count: n }) => ({ depth: name, count: n })),
   });
@@ -289,11 +274,6 @@ const fileRowOf = ({ volume, file }: FileEntry, index: number) => {
     source_index: index,
   };
 };
-const indexedRow = <Row extends object>(row: Row, source_index: number) => ({
-  ...row,
-  source_index,
-});
-
 const selectedRows = (
   view: UefiFirmwareView,
   r: UefiInspectResult,

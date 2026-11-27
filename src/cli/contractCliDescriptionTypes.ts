@@ -1,3 +1,4 @@
+import type { CliDeliveryDetail } from "./analysisEvidenceDeliveryOptions.js";
 import type { z } from "zod";
 
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -25,6 +26,8 @@ export interface ProjectedContract<Name extends string = string> {
    * recorded; without it the CLI renders no result controls.
    */
   readonly outputSchema?: z.ZodType;
+  /** Whether a rerun reproduces the result; see `ToolEffects.idempotent`. */
+  readonly effects?: { readonly idempotent: boolean };
 }
 
 /** A contract whose whole input a CLI command takes as one JSON document. */
@@ -431,10 +434,17 @@ export interface CliOnlyOption {
 
 /** The Evidence delivery a command invocation selected. */
 export interface CliEvidenceDeliveryChoice {
-  readonly detail: "complete" | "summary";
+  /** Undefined leaves delivery to the agent result budget. */
+  readonly detail: CliDeliveryDetail;
   readonly evidenceOutput: string | undefined;
   /** The admitted view, for a projection with `viewDelivery`. */
   readonly view?: AnalysisViewRequest;
+  /**
+   * Whether rerunning the operation reproduces its result, so an over-budget
+   * summary the cache cannot keep may point at a rerun; false for a
+   * non-idempotent contract such as an extraction that creates its output.
+   */
+  readonly rerunRecoversResult: boolean;
 }
 
 /** The named option of a positional selector. */

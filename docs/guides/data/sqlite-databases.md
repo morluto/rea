@@ -54,9 +54,13 @@ reported. If a virtual table cannot be resolved, possible backing tables have
 ordinary tables remain selectable. Schema inventory does not execute views,
 triggers or arbitrary SQL.
 
-The exact table name `sqlite_schema` is also a supported read-only row source.
-SQLite's [`table_list`](https://www.sqlite.org/pragma.html#pragma_table_list)
-and `table_xinfo` pragmas establish its row-source type and columns. The
+The schema catalog is also a supported read-only row source. SQLite's
+[`table_list`](https://www.sqlite.org/pragma.html#pragma_table_list) and
+`table_xinfo` pragmas establish its row-source type and columns. Both the
+canonical `sqlite_schema` spelling and the documented `sqlite_master` alias
+resolve to it; the alias is the only alternative SQLite recognizes in every
+schema, so the TEMP-only `sqlite_temp_schema` and `sqlite_temp_master`
+spellings are not accepted for a non-TEMP database. The
 [schema catalog](https://www.sqlite.org/schematab.html) has no self-entry for
 `sqlite_schema`, so REA does not invent a declaration, SQL statement or root
 page for it in `schema.tables`.
@@ -142,7 +146,10 @@ and cleanup. Additional requests receive a typed capacity error before reading
 files or creating workers; retry after an active inspection finishes. This
 bounds simultaneous input buffering and private snapshot/worker counts.
 
-The database and WAL together are limited to 256 MiB. SQLite values/records,
+The database and WAL together are limited to `producer_limits.input_bytes`,
+default 2 GiB (CLI `--producer-limits '{"input_bytes":4294967296}'`). The
+snapshot is copied to private disk, so raising it costs disk, not memory, and
+applies on the next call without restart. SQLite values/records,
 SQL statements and the complete worker JSON reply each have a 16 MiB limit.
 Schema names count by their returned JSON text, including escaping, for UTF-8,
 UTF-16le and UTF-16be databases. Internal raw-byte lookup keys do not consume
@@ -175,12 +182,14 @@ override these byte and resource limits. Resource-limit failures do not return
 an incomplete schema as successful complete evidence.
 
 If the combined database and WAL exceed the snapshot budget, the refusal is a
-`resource_constraint` and reports both the configured byte limit and the exact
-observed combined size as a decimal string. The remediation directs callers to
-create a smaller consistent offline snapshot containing only relevant data
-through the application's supported export workflow. A generic backup or copy
-does not guarantee a smaller result; REA does not truncate or modify the
-selected source.
+`resource_constraint` and reports both the effective byte limit and the exact
+observed combined size as a decimal string. `details.limit` names
+`producer_limits.input_bytes` with its effective value and default; raise it to
+at least the observed size on the next call. Alternatively, create a smaller
+consistent offline snapshot containing only relevant data through the
+application's supported export workflow. A generic backup or copy does not
+guarantee a smaller result; REA does not truncate or modify the selected
+source.
 
 On hosts that cannot address the derived WAL or rollback-journal path for a
 long selected database name, REA reports that the SQLite capability is
