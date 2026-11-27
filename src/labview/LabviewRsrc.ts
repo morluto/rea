@@ -9,7 +9,8 @@ import {
 } from "../domain/parseFailure.js";
 
 const FORMAT = "labview-rsrc";
-const RSRC_MAGIC = "RSRC\r\n";
+/** The six-byte RSRC container magic (pylabview `RSRCHeader`). */
+export const RSRC_MAGIC = "RSRC\r\n";
 const HEADER_BYTES = 32;
 const LIST_HEADER_BYTES = 20;
 const BLOCK_HEADER_BYTES = 12;
@@ -62,7 +63,17 @@ export interface LabviewRsrc {
   readonly blockDiagram: LabviewPresence;
   readonly frontPanel: LabviewPresence;
   readonly blocks: readonly LabviewBlock[];
+  /** Recognized zlib sections left undecoded, counted by reason. */
+  readonly decodeOmissions: Readonly<
+    Partial<Record<LabviewDecodeOmission, number>>
+  >;
 }
+
+/** The fixed per-container decode allowances, named for recovery text. */
+export const LABVIEW_DECODE_ALLOWANCES = {
+  compressed_allowance: MAX_COMPRESSED_BYTES,
+  decoded_allowance: MAX_DECODED_BYTES,
+} as const;
 
 export type LabviewParseResult =
   | { readonly ok: true; readonly value: LabviewRsrc }
@@ -78,17 +89,35 @@ const limit = (name: string, maximum: number, required?: number): LimitRef => ({
   ...(required === undefined ? {} : { required }),
 });
 
+/** RFC 1950 section 2.2: CM 8 is deflate, CINFO 7 is a 32 KiB window. */
+const ZLIB_DEFLATE_METHOD = 8;
+const ZLIB_MAX_WINDOW_INFO = 7;
+/** RFC 1950 FLG bit 5: a preset dictionary identifier follows the header. */
+const ZLIB_FDICT = 0x20;
+
 /**
  * zlib's two-byte header, checked by its format rule rather than by a list of
- * pairs: the low nibble of CMF is the deflate method, CMF/FLG as a big-endian
- * word is a multiple of 31, and FDICT is unsupported here. This admits every
- * level Node produces, including the `78 5e` pair of level 3.
+ * pairs: the low nibble of CMF is the deflate method and CMF/FLG as a
+ * big-endian word is a multiple of 31. This admits every level Node produces,
+ * including the `78 5e` pair of level 3. A header that also sets FDICT is
+ * still zlib; only its dictionary is unavailable to this reader.
  */
-const zlibHeaderValid = (cmf: number, flg: number): boolean =>
-  (cmf & 0x0f) === 8 &&
-  cmf >> 4 <= 7 &&
-  ((cmf << 8) | flg) % 31 === 0 &&
-  (flg & 0x20) === 0;
+const zlibHeader = (
+  cmf: number,
+  flg: number,
+): { readonly presetDictionary: boolean } | undefined =>
+  (cmf & 0x0f) === ZLIB_DEFLATE_METHOD &&
+  cmf >> 4 <= ZLIB_MAX_WINDOW_INFO &&
+  ((cmf << 8) | flg) % 31 === 0
+    ? { presetDictionary: (flg & ZLIB_FDICT) !== 0 }
+    : undefined;
+
+/** Why a recognized zlib section was not decoded. */
+export type LabviewDecodeOmission =
+  | "preset_dictionary"
+  | "compressed_allowance"
+  | "decoded_allowance"
+  | "inflate_failed";
 
 interface DecodeBudget {
   decodedRemaining: number;
@@ -97,6 +126,8 @@ interface DecodeBudget {
 
 interface SectionDecoding {
   readonly coding: LabviewCoding;
+  /** Set when a recognized zlib section was not decoded, with the reason. */
+  readonly omission?: LabviewDecodeOmission;
   readonly decodedBytes: number | null;
   /** The decoded payload, kept only for blocks whose content is read back. */
   readonly decoded: Buffer | undefined;
@@ -116,11 +147,12 @@ const decodeSection = (
 ): SectionDecoding => {
   const cached = cache.get(cacheKey);
   if (cached !== undefined) return cached;
-  const unknown: SectionDecoding = {
+  const unknown = (omission: LabviewDecodeOmission): SectionDecoding => ({
     coding: "unknown",
+    omission,
     decodedBytes: null,
     decoded: undefined,
-  };
+  });
   const result = (): SectionDecoding => {
     // LVzp (the embedded program tree) is XOR-coded, not compressed, and this
     // reader inventories it without materializing its payload.
@@ -130,13 +162,18 @@ const decodeSection = (
       return { coding: "none", decodedBytes: null, decoded: undefined };
     const head = new BinaryReader(stored, false, FORMAT);
     const declared = head.u32(0);
-    if (!zlibHeaderValid(head.u8(4), head.u8(5)))
+    const zlib = zlibHeader(head.u8(4), head.u8(5));
+    if (zlib === undefined)
       return { coding: "none", decodedBytes: null, decoded: undefined };
+    // Recognized zlib whose dictionary is not in the container: the stored
+    // bytes are compressed, so they are neither raw content nor decodable.
+    if (zlib.presetDictionary) return unknown("preset_dictionary");
     // Charge both the compressed input and the declared output: a stream with
     // a tiny declared length can still make the inflater traverse megabytes,
     // and several section records may point at the same stored bytes.
-    if (stored.length > budget.inputRemaining) return unknown;
-    if (declared > budget.decodedRemaining) return unknown;
+    if (stored.length > budget.inputRemaining)
+      return unknown("compressed_allowance");
+    if (declared > budget.decodedRemaining) return unknown("decoded_allowance");
     budget.inputRemaining -= stored.length;
     budget.decodedRemaining -= declared;
     try {
@@ -144,14 +181,14 @@ const decodeSection = (
         // Bound the allocation by the declared length, not by the input size.
         maxOutputLength: Math.max(1, declared),
       });
-      if (decoded.length !== declared) return unknown;
+      if (decoded.length !== declared) return unknown("inflate_failed");
       return {
         coding: "zlib",
         decodedBytes: decoded.length,
         decoded: blockIdentifier === "vers" ? decoded : undefined,
       };
     } catch {
-      return unknown;
+      return unknown("inflate_failed");
     }
   };
   const value = result();
@@ -227,7 +264,8 @@ export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
   try {
     if (
       bytes.length < HEADER_BYTES ||
-      reader.range(0, 6, "RSRC magic").toString("latin1") !== RSRC_MAGIC
+      reader.range(0, RSRC_MAGIC.length, "RSRC magic").toString("latin1") !==
+        RSRC_MAGIC
     )
       throw malformedInput(FORMAT, "not an RSRC container", { offset: 0 });
     const formatVersion = reader.u16(6);
@@ -304,6 +342,7 @@ export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
       inputRemaining: MAX_COMPRESSED_BYTES,
     };
     const decodedSections = new Map<string, SectionDecoding>();
+    const decodeOmissions: Partial<Record<LabviewDecodeOmission, number>> = {};
     // First pass: validate every block's start table and locate the one name
     // list that all section-name offsets address, after every start table.
     let totalSections = 0;
@@ -389,6 +428,9 @@ export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
           `${identifier}:${String(sectionOffset)}`,
           decodedSections,
         );
+        if (decoded.omission !== undefined)
+          decodeOmissions[decoded.omission] =
+            (decodeOmissions[decoded.omission] ?? 0) + 1;
         // Only content this reader actually read can report a version: a
         // failed or skipped decode leaves compressed bytes that can contain
         // digit-like binary values.
@@ -439,6 +481,7 @@ export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
         frontPanel,
         programTree,
         blocks,
+        decodeOmissions,
       },
     };
   } catch (cause) {

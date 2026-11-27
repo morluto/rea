@@ -55,12 +55,12 @@ blocks a source `.vi` carries.
 
 A section is reported with one coding:
 
-| Coding    | Meaning                                                                                             |
-| --------- | --------------------------------------------------------------------------------------------------- |
-| `none`    | Stored bytes are the section content                                                                |
-| `zlib`    | A four-byte big-endian length followed by a zlib stream                                             |
-| `xor`     | A LabVIEW XOR-coded block, such as the embedded program tree (`LVzp`)                               |
-| `unknown` | A zlib section that did not decode to its declared length, or one the decode budget did not attempt |
+| Coding    | Meaning                                                                                                                                                      |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `none`    | Stored bytes are the section content                                                                                                                         |
+| `zlib`    | A four-byte big-endian length followed by a zlib stream                                                                                                      |
+| `xor`     | A LabVIEW XOR-coded block, such as the embedded program tree (`LVzp`)                                                                                        |
+| `unknown` | A zlib section that did not decode to its declared length, declares a preset dictionary (FDICT), or was not attempted because a decode allowance was reached |
 
 Only zlib-coded sections are decoded, and only to establish their decoded byte
 count. No section payload is returned; use another tool to extract content once
@@ -86,8 +86,11 @@ the inventory identifies a block.
   inventory. The reader accepts complete artifacts up to 256 MiB. A container
   that exceeds the block, total-section, or directory-walk allowance fails with
   `resource_constraint` rather than returning a partial inventory or a silently
-  truncated scan. A section whose decode would exceed the container's
-  decoded-byte budget is reported with coding `unknown` and is not decoded; the
-  inventory continues.
+  truncated scan. A section whose decode would exceed the container's fixed
+  64 MiB compressed-input or 64 MiB decoded-output allowance is reported with
+  coding `unknown` and is not decoded, and a limitation names the allowance
+  that stopped it (this release has no override). The inventory continues.
+  A PE whose RCDATA resource branch could not be read is refused with that
+  reason rather than reported as carrying no embedded container.
 - Reading a file establishes no runtime behavior. The selected program is never
   executed, installed, or modified.

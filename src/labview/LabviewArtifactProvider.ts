@@ -34,12 +34,44 @@ import {
   findEmbeddedRsrcContainers,
   type EmbeddedRsrc,
 } from "./LabviewPeContainer.js";
-import { parseLabviewRsrc, type LabviewPresence } from "./LabviewRsrc.js";
+import {
+  LABVIEW_DECODE_ALLOWANCES,
+  type LabviewDecodeOmission,
+  type LabviewPresence,
+  parseLabviewRsrc,
+  RSRC_MAGIC,
+} from "./LabviewRsrc.js";
 
 const OPERATION = "inspect_labview_artifact";
 /** Caller-selected complete artifact bound; this reader never truncates a container. */
 const MAX_BYTES = 256 * 1024 * 1024;
-const RSRC_MAGIC = "RSRC\r\n";
+/**
+ * One limitation per reason a recognized zlib section stayed undecoded, so a
+ * capacity omission is distinguishable from damaged or unsupported bytes.
+ */
+const decodeOmissionLimitations = (
+  omissions: Readonly<Partial<Record<LabviewDecodeOmission, number>>>,
+): string[] =>
+  (Object.entries(omissions) as [LabviewDecodeOmission, number][]).map(
+    ([reason, count]) => {
+      const sections =
+        count === 1 ? "1 zlib section" : `${String(count)} zlib sections`;
+      const verb = count === 1 ? "was" : "were";
+      const declares = count === 1 ? "declares" : "declare";
+      const carries = count === 1 ? "carries" : "carry";
+      const does = count === 1 ? "does" : "do";
+      switch (reason) {
+        case "preset_dictionary":
+          return `${sections} ${declares} a zlib preset dictionary (FDICT) that the container does not supply, so ${count === 1 ? "it was" : "they were"} not decoded.`;
+        case "compressed_allowance":
+        case "decoded_allowance":
+          return `${sections} ${verb} not decoded because the container reached its fixed ${String(LABVIEW_DECODE_ALLOWANCES[reason])}-byte ${reason === "compressed_allowance" ? "compressed-input" : "decoded-output"} allowance. This release has no override; the stored bytes are inventoried but not decoded.`;
+        case "inflate_failed":
+          return `${sections} ${carries} a zlib header but ${does} not inflate to the declared length, so ${count === 1 ? "it was" : "they were"} not decoded.`;
+      }
+    },
+  );
+
 /** Release-fixed input ceiling, stated so the refusal keeps its recovery. */
 const INPUT_ALLOWANCE = {
   kind: "input",
@@ -195,7 +227,9 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
     const bytes = snapshot.bytes;
     let containers: readonly EmbeddedRsrc[];
     let coverage = true;
-    if (bytes.subarray(0, 6).toString("latin1") === RSRC_MAGIC) {
+    if (
+      bytes.subarray(0, RSRC_MAGIC.length).toString("latin1") === RSRC_MAGIC
+    ) {
       containers = [{ offset: 0, bytes }];
     } else {
       const scan = findEmbeddedRsrcContainers(bytes);
@@ -207,7 +241,9 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
       return err(
         withIdentity(
           inputFailure(
-            "The selected file is not a LabVIEW RSRC container and carries no embedded RSRC resource.",
+            coverage
+              ? "The selected file is not a LabVIEW RSRC container and carries no embedded RSRC resource."
+              : "No embedded RSRC container was located, but part of the PE resource tree could not be read, so one may still be present. The tree is malformed or points outside the file-backed resource span.",
           ),
         ),
       );
@@ -263,6 +299,7 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
         : [
             "Part of the PE resource tree could not be examined, so heap presence is unknown for that content.",
           ]),
+      ...decodeOmissionLimitations(value.decodeOmissions),
       ...(value.versionCoverage === "unknown"
         ? [
             "The container has a vers section whose content could not be decoded, so the version is unknown rather than absent.",

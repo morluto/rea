@@ -10,10 +10,10 @@ import {
 } from "../domain/pe/peResourceTreeFacts.js";
 import { readPeResourceLayout } from "../domain/pe/peResourceLayout.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
+import { RSRC_MAGIC } from "./LabviewRsrc.js";
 import { decodeLimit, ParseFailureError } from "../domain/parseFailure.js";
 
 const FORMAT = "pe-rsrc";
-const RSRC_MAGIC = "RSRC\r\n";
 /** Directory visits one scan may spend; a repeated offset adds no visit. */
 const MAX_DIRECTORY_VISITS = 1024;
 /** Entry records one directory may declare. */

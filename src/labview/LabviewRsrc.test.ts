@@ -1,3 +1,4 @@
+import { deflateSync } from "node:zlib";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -105,6 +106,48 @@ describe("parseLabviewRsrc", () => {
       expect(scan.containers).toHaveLength(expected);
     },
   );
+
+  it("reports the fixed decode allowance in the public limitations", async () => {
+    const stored = Buffer.concat([
+      Buffer.from([0x04, 0x00, 0x00, 0x01]),
+      deflateSync(Buffer.from("x")),
+    ]);
+    const root = await createTestTempDirectory("rea-labview-allowance-");
+    const path = join(root, "fixture.vi");
+    await writeFile(
+      path,
+      buildLabviewRsrc([{ ident: "DFDS", sections: [stored] }]),
+    );
+    const provider = new LabviewArtifactProvider();
+    const result = await provider.inspect({ path });
+    await provider.close();
+    if (!result.ok) throw result.error;
+    expect(result.value.limitations).toContain(
+      "1 zlib section was not decoded because the container reached its fixed 67108864-byte decoded-output allowance. This release has no override; the stored bytes are inventoried but not decoded.",
+    );
+  });
+
+  it("does not call an unreadable RCDATA branch an absent container", async () => {
+    const fixture = peResourceFixture(true, [
+      { type: 10, name: 1, language: 1033, payload: labviewContainer() },
+    ]);
+    // The RCDATA type entry now names a subdirectory far outside the span.
+    fixture.bytes.writeUInt32LE(0xfffffff0, fixture.entryOffsets[0]! + 4);
+    const scan = findEmbeddedRsrcContainers(fixture.bytes);
+    if (!scan.ok) throw scan.failure;
+    expect(scan).toMatchObject({ containers: [], complete: false });
+    const root = await createTestTempDirectory("rea-labview-pe-unread-");
+    const path = join(root, "fixture.exe");
+    await writeFile(path, fixture.bytes);
+    const provider = new LabviewArtifactProvider();
+    const result = await provider.inspect({ path });
+    await provider.close();
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(JSON.stringify(result.error)).toContain(
+      "part of the PE resource tree could not be read",
+    );
+  });
 
   it("reports where an embedded container starts in the selected file", async () => {
     const bytes = peResourceFixture(true, [
@@ -261,6 +304,37 @@ describe("parseLabviewRsrc", () => {
     if (!parsed.ok) throw new Error(parsed.failure.message);
     expect(parsed.value.labviewVersion).toBeNull();
     expect(parsed.value.versionCoverage).toBe("unknown");
+  });
+
+  it("treats a preset-dictionary zlib vers section as undecodable zlib", () => {
+    // Declared length 8, then RFC 1950 header 78 bb (FDICT set, FCHECK
+    // valid) and a dictionary id. The length prefix must not read as 0.0.
+    const stored = Buffer.from([
+      0, 0, 0, 8, 0x78, 0xbb, 0x12, 0x34, 0x56, 0x78, 0x03, 0x00,
+    ]);
+    const parsed = parseLabviewRsrc(
+      buildLabviewRsrc([{ ident: "vers", sections: [stored] }]),
+    );
+    if (!parsed.ok) throw new Error(parsed.failure.message);
+    expect(parsed.value.blocks[0]?.sections[0]?.coding).toBe("unknown");
+    expect(parsed.value.labviewVersion).toBeNull();
+    expect(parsed.value.versionCoverage).toBe("unknown");
+    expect(parsed.value.decodeOmissions).toEqual({ preset_dictionary: 1 });
+  });
+
+  it("names the decode allowance that stopped a section", () => {
+    // A valid zlib header whose declared output exceeds the 64 MiB decoded
+    // allowance is refused before any allocation.
+    const stored = Buffer.concat([
+      Buffer.from([0x04, 0x00, 0x00, 0x01]),
+      deflateSync(Buffer.from("x")),
+    ]);
+    const parsed = parseLabviewRsrc(
+      buildLabviewRsrc([{ ident: "DFDS", sections: [stored] }]),
+    );
+    if (!parsed.ok) throw new Error(parsed.failure.message);
+    expect(parsed.value.blocks[0]?.sections[0]?.coding).toBe("unknown");
+    expect(parsed.value.decodeOmissions).toEqual({ decoded_allowance: 1 });
   });
 
   it("reports a damaged-only vers record as unknown", () => {
