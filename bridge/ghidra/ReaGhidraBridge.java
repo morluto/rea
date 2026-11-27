@@ -2932,6 +2932,42 @@ public final class ReaGhidraBridge extends HeadlessScript {
             type instanceof ghidra.program.model.data.Enum;
     }
 
+    /**
+     * Composites with no defined components, keyed by identity to the length
+     * they had before parsing. Ghidra's parser fills such a composite in place
+     * when storeDataType is false, and that object is the definition it returns.
+     */
+    private Map<DataType, Integer> emptyCompositeLengths() {
+        Map<DataType, Integer> lengths = new IdentityHashMap<>();
+        Iterator<DataType> all = currentProgram.getDataTypeManager().getAllDataTypes();
+        while (all.hasNext()) {
+            DataType type = all.next();
+            if (type instanceof ghidra.program.model.data.Composite composite &&
+                    composite.getNumDefinedComponents() == 0)
+                lengths.put(type, composite.getLength());
+        }
+        return lengths;
+    }
+
+    /** A filled empty composite is a replacement of a database type, so the call stores nothing. */
+    private void requireUnfilledComposites(Map<DataType, Integer> before) {
+        DataTypeManager types = currentProgram.getDataTypeManager();
+        Set<String> replaced = new TreeSet<>();
+        for (Map.Entry<DataType, Integer> entry : before.entrySet()) {
+            DataType type = entry.getKey();
+            if (!(type instanceof ghidra.program.model.data.Composite composite) || !types.contains(type)) {
+                replaced.add(type.getPathName());
+                continue;
+            }
+            if (composite.getNumDefinedComponents() != 0 || composite.getLength() != entry.getValue())
+                replaced.add(composite.getPathName());
+        }
+        if (replaced.isEmpty()) return;
+        throw new RequestFailure("data_type_conflict",
+            "Parsing would replace an empty type already in the database: " + String.join(", ", replaced) +
+            "; nothing was changed");
+    }
+
     private JsonObject defineNativeDataTypes(JsonObject params) throws Exception {
         if (!Set.of("declarations", "declarations_max_utf16").containsAll(params.keySet()) || !params.has("declarations"))
             throw new RequestFailure("invalid_request", "Bridge request fields are invalid");
@@ -2944,9 +2980,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
         int transaction = currentProgram.startTransaction("REA data type definitions");
         boolean commit = false;
         try {
+            // An empty composite is filled in place by the parser. Remember those
+            // shapes so a fill is not later mistaken for an unchanged definition.
+            Map<DataType, Integer> emptyComposites = emptyCompositeLengths();
             ParsedCallerC parsedDeclarations =
                 // Declarations admit no parentheses (see admitCallerC), so no nesting bound applies.
                 parseCallerC(declarations, "declarations", true, code, lengthBound, MAX_C_PARENTHESIS_DEPTH);
+            requireUnfilledComposites(emptyComposites);
             CParser parser = parsedDeclarations.parser();
             if (!parser.getFunctions().isEmpty())
                 throw new RequestFailure(code, "declarations must not declare functions or function-pointer members: " +

@@ -1543,7 +1543,8 @@ definitions and stores all of them or none in the category
 `source: "caller-defined"`; they are the caller's assertions about layout, not
 observations of the target. A name the database already holds in any category
 is refused and never replaced; repeating an equivalent caller definition
-reports `unchanged`. Ghidra keeps a struct, union or enum tag in a different
+reports `unchanged`. Ghidra fills an existing empty composite in place while
+parsing, and that replacement is rolled back with the rest of a refused call. Ghidra keeps a struct, union or enum tag in a different
 map from a typedef and stores one type per name. When the declarations give
 that name to definitions that are not equivalent, such as
 `struct item { int x; }; typedef int item;`, the call is refused with

@@ -616,6 +616,31 @@ struct rea_after { char c; int i; };`;
           await typeStatus(first, "/rea_caller_defined/rea_sibling"),
           "unavailable",
         );
+        // A different layout under an existing caller-defined name stores nothing.
+        const redefined = requireMcpToolError(
+          await first.raw("define_native_data_types", {
+            declarations: "struct session { long changed; };",
+          }),
+        );
+        assert.equal(redefined.code, "invalid_request");
+        assert.equal(redefined.retryable, false);
+        assert.equal(
+          redefined.details?.diagnostics?.remote_code,
+          "data_type_conflict",
+        );
+        assert.deepEqual(
+          redefined.details?.issues?.map((issue) => ({
+            path: issue.path,
+            reason: issue.reason,
+          })),
+          [{ path: ["declarations"], reason: "invalid_value" }],
+        );
+        const kept = await first.call("inspect_native_data_type", {
+          type: sessionType,
+        });
+        assert.equal(kept.size_bytes, 56);
+        assert.equal(kept.fields[0].name, "id");
+        assert.equal(kept.fields[0].offset_bytes, 0);
         const builtin = await first.refused(
           "define_native_data_types",
           { declarations: "struct rea_other { int a; }; typedef long uint;" },
