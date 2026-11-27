@@ -590,28 +590,31 @@ const parseVsixManifestDocument = (
     );
     return empty;
   }
-  const metadata = xmlFirstChildNamed(root, "Metadata");
-  const identityElement =
+  const namespace = root.namespaceURI ?? "";
+  const metadata = xmlFirstChildNamed(root, "Metadata", namespace);
+  const metadataChild = (name: string) =>
     metadata === undefined
       ? undefined
-      : xmlFirstChildNamed(metadata, "Identity");
-  const properties =
-    metadata === undefined
-      ? undefined
-      : xmlFirstChildNamed(metadata, "Properties");
+      : xmlFirstChildNamed(metadata, name, namespace);
+  const identityElement = metadataChild("Identity");
+  const properties = metadataChild("Properties");
   const propertyById = new Map<string, string>();
   if (properties !== undefined)
-    for (const property of xmlChildrenNamed(properties, "Property")) {
+    for (const property of xmlChildrenNamed(
+      properties,
+      "Property",
+      namespace,
+    )) {
       const id = xmlTrimmedAttribute(property, "Id");
       const value = xmlTrimmedAttribute(property, "Value");
       if (id !== null && value !== null && !propertyById.has(id))
         propertyById.set(id, value);
     }
-  const assetsElement = xmlFirstChildNamed(root, "Assets");
+  const assetsElement = xmlFirstChildNamed(root, "Assets", namespace);
   const assets: VsixPackage["assets"] =
     assetsElement === undefined
       ? []
-      : xmlChildrenNamed(assetsElement, "Asset").map((asset) => {
+      : xmlChildrenNamed(assetsElement, "Asset", namespace).map((asset) => {
           const path = xmlTrimmedAttribute(asset, "Path");
           const logical = path === null ? null : vsixPackageLogicalPath(path);
           return {
@@ -621,10 +624,10 @@ const parseVsixManifestDocument = (
               logical === null ? null : presentPaths.has(logical.toLowerCase()),
           };
         });
-  const displayName =
-    metadata === undefined ? null : xmlFirstChildNamed(metadata, "DisplayName");
-  const description =
-    metadata === undefined ? null : xmlFirstChildNamed(metadata, "Description");
+  const metadataText = (name: string) => {
+    const element = metadataChild(name);
+    return element === undefined ? null : xmlTrimmedDirectText(element);
+  };
   return {
     identity:
       identityElement === undefined
@@ -637,10 +640,8 @@ const parseVsixManifestDocument = (
               identityElement,
               "TargetPlatform",
             ),
-            display_name:
-              displayName == null ? null : xmlTrimmedDirectText(displayName),
-            description:
-              description == null ? null : xmlTrimmedDirectText(description),
+            display_name: metadataText("DisplayName"),
+            description: metadataText("Description"),
           },
     engine: propertyById.get("Microsoft.VisualStudio.Code.Engine") ?? null,
     extensionDependencies: splitCsv(
