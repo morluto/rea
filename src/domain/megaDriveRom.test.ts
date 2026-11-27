@@ -44,6 +44,13 @@ const withoutLayout = (rom: MegaDriveRom) => {
 it("reports the same header facts for a plain image and its SMD dump", () => {
   const plain = megaDriveRom({ imageBytes: MEGA_DRIVE_SMD_BLOCK_BYTES });
   const smd = interleaveMegaDriveSmd(plain);
+  // Pin the fixture to the published layout rather than to this decoder:
+  // each 16 KiB block stores the odd image bytes in its first 8 KiB and the
+  // even ones in its second (Genesis Plus GX deinterleave_block). "SEGA" at
+  // image 0x100 is therefore E, A at file 512 + 0x80 and S, G at
+  // 512 + 0x2000 + 0x80.
+  expect([...smd.subarray(512 + 0x80, 512 + 0x82)]).toEqual([0x45, 0x41]);
+  expect([...smd.subarray(512 + 0x2080, 512 + 0x2082)]).toEqual([0x53, 0x47]);
   const plainRom = decoded(plain);
   const smdRom = decoded(smd);
 

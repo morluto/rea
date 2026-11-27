@@ -25,9 +25,56 @@ const VECTOR_BYTES = 0x100;
 const HEADER_BYTES = 0x100;
 const MIN_IMAGE_BYTES = VECTOR_BYTES + HEADER_BYTES;
 const CHECKSUM_START = 0x200;
-const SYSTEM_OFFSET = 0x100;
 const SEGA = [0x53, 0x45, 0x47, 0x41] as const;
+
+/**
+ * Header text fields, as image offset and byte length. The layout is the
+ * one in SGDK's `rom_head.c` and Genesis Plus GX's `getrominfo`. SGDK
+ * declares 0x180 as one 14-byte serial; this reader keeps the common split
+ * into a 12-byte serial and a 2-byte revision at 0x18C, and both keep their
+ * raw bytes.
+ */
+const TEXT_FIELDS = {
+  system: { offset: 0x100, length: 16, label: "system type" },
+  copyright: { offset: 0x110, length: 16, label: "copyright" },
+  domesticTitle: { offset: 0x120, length: 48, label: "domestic title" },
+  overseasTitle: { offset: 0x150, length: 48, label: "overseas title" },
+  serial: { offset: 0x180, length: 12, label: "serial" },
+  revision: { offset: 0x18c, length: 2, label: "revision" },
+  deviceSupport: { offset: 0x190, length: 16, label: "device support" },
+  modem: { offset: 0x1bc, length: 12, label: "modem" },
+  memo: { offset: 0x1c8, length: 40, label: "memo" },
+  region: { offset: 0x1f0, length: 16, label: "region" },
+} as const;
+
+type TextFieldName = keyof typeof TEXT_FIELDS;
+
+/** Big-endian header words and longwords, as image offsets. */
+const CHECKSUM_OFFSET = 0x18e;
+const ROM_START_OFFSET = 0x1a0;
+const ROM_END_OFFSET = 0x1a4;
+const RAM_START_OFFSET = 0x1a8;
+const RAM_END_OFFSET = 0x1ac;
+
+/**
+ * External (backup) RAM block: the `RA` marker, a type byte, then start and
+ * end longwords, as in SGDK's `rom_head.c` and Genesis Plus GX's
+ * `sram_init`. Offsets inside the block.
+ */
+const EXTERNAL_RAM = {
+  offset: 0x1b0,
+  length: 12,
+  marker: [0x52, 0x41],
+  typeOffset: 2,
+  startOffset: 4,
+  endOffset: 8,
+} as const;
+
+const SYSTEM_OFFSET = TEXT_FIELDS.system.offset;
+
+/** SMD copier header: the `AA BB` identification bytes at offset 8. */
 const SMD_MARK_OFFSET = 8;
+const SMD_MARK = [0xaa, 0xbb] as const;
 /** Copier header byte 2. This bit means more split parts follow. */
 const SMD_SPLIT_FOLLOWS = 0x40;
 
@@ -127,13 +174,20 @@ const hasSegaAt = (bytes: Uint8Array, offset: number): boolean =>
   offset + SEGA.length <= bytes.length &&
   SEGA.every((byte, index) => bytes[offset + index] === byte);
 
+/**
+ * Where an SMD block keeps each half of its 16 KiB: the odd image bytes
+ * first, then the even ones. Recognition and de-interleaving both use this.
+ */
+const SMD_ODD_HALF = 0;
+const SMD_EVEN_HALF = MEGA_DRIVE_SMD_BLOCK_BYTES / 2;
+
 /** SMD file offset of one linear-image byte, for the bytes a prefix can see. */
 const smdSegaFileOffset = (imageOffset: number): number => {
   const block = Math.floor(imageOffset / MEGA_DRIVE_SMD_BLOCK_BYTES);
   const within = imageOffset % MEGA_DRIVE_SMD_BLOCK_BYTES;
   const pair = Math.floor(within / 2);
   const odd = (within & 1) === 1;
-  const blockOffset = odd ? pair : MEGA_DRIVE_SMD_BLOCK_BYTES / 2 + pair;
+  const blockOffset = (odd ? SMD_ODD_HALF : SMD_EVEN_HALF) + pair;
   return (
     MEGA_DRIVE_SMD_HEADER_BYTES +
     block * MEGA_DRIVE_SMD_BLOCK_BYTES +
@@ -234,7 +288,10 @@ const ceilingBeforeHeader = (
 
 const plausibleSmd = (prefix: Uint8Array, fileSize: number): boolean => {
   if (prefix.length < SMD_MARK_OFFSET + 2) return false;
-  if (prefix[SMD_MARK_OFFSET] !== 0xaa || prefix[SMD_MARK_OFFSET + 1] !== 0xbb)
+  if (
+    prefix[SMD_MARK_OFFSET] !== SMD_MARK[0] ||
+    prefix[SMD_MARK_OFFSET + 1] !== SMD_MARK[1]
+  )
     return false;
   const blocks = smdBlockCount(fileSize);
   if (blocks === undefined) return false;
@@ -382,14 +439,14 @@ const deinterleaveSmd = (file: Uint8Array): Uint8Array | undefined => {
   const blocks = smdBlockCount(file.length);
   if (blocks === undefined) return undefined;
   const image = new Uint8Array(blocks * MEGA_DRIVE_SMD_BLOCK_BYTES);
-  const half = MEGA_DRIVE_SMD_BLOCK_BYTES / 2;
+  const pairs = MEGA_DRIVE_SMD_BLOCK_BYTES / 2;
   for (let block = 0; block < blocks; block += 1) {
     const src =
       MEGA_DRIVE_SMD_HEADER_BYTES + block * MEGA_DRIVE_SMD_BLOCK_BYTES;
     const dst = block * MEGA_DRIVE_SMD_BLOCK_BYTES;
-    for (let index = 0; index < half; index += 1) {
-      image[dst + index * 2] = file[src + half + index] ?? 0;
-      image[dst + index * 2 + 1] = file[src + index] ?? 0;
+    for (let pair = 0; pair < pairs; pair += 1) {
+      image[dst + pair * 2] = file[src + SMD_EVEN_HALF + pair] ?? 0;
+      image[dst + pair * 2 + 1] = file[src + SMD_ODD_HALF + pair] ?? 0;
     }
   }
   return image;
@@ -421,20 +478,20 @@ const parseMegaDriveImage = (
   const note = (message: string): void => {
     limitations.push(message);
   };
-  const readText = (
-    offset: number,
-    length: number,
-    field: string,
-  ): MegaDriveRomMetadata["system"] => {
-    const decoded = textField(image.subarray(offset, offset + length));
+  const fieldBytes = (name: TextFieldName): Uint8Array => {
+    const { offset, length } = TEXT_FIELDS[name];
+    return image.subarray(offset, offset + length);
+  };
+  const readText = (name: TextFieldName): MegaDriveRomMetadata["system"] => {
+    const decoded = textField(fieldBytes(name));
     if (decoded.unprintable)
       note(
-        `The ${field} field contains bytes outside printable ASCII; raw_hex keeps them and text shows ? for each one.`,
+        `The ${TEXT_FIELDS[name].label} field contains bytes outside printable ASCII; raw_hex keeps them and text shows ? for each one.`,
       );
     return { text: decoded.text, raw_hex: decoded.raw_hex };
   };
 
-  const system = readText(SYSTEM_OFFSET, 16, "system type");
+  const system = readText("system");
   let systemKind: MegaDriveRomMetadata["system_kind"];
   if (system.text.includes("32X")) {
     systemKind = "32x";
@@ -446,19 +503,19 @@ const parseMegaDriveImage = (
   else if (system.text === "SEGA MEGA DRIVE") systemKind = "mega-drive";
   else systemKind = "other";
 
-  const copyright = readText(0x110, 16, "copyright");
-  const domesticTitle = readText(0x120, 48, "domestic title");
-  const overseasTitle = readText(0x150, 48, "overseas title");
-  const serial = readText(0x180, 12, "serial");
-  const revision = readText(0x18c, 2, "revision");
-  const deviceSupport = readText(0x190, 16, "device support");
-  const devices = deviceLetters(image.subarray(0x190, 0x1a0));
+  const copyright = readText("copyright");
+  const domesticTitle = readText("domesticTitle");
+  const overseasTitle = readText("overseasTitle");
+  const serial = readText("serial");
+  const revision = readText("revision");
+  const deviceSupport = readText("deviceSupport");
+  const devices = deviceLetters(fieldBytes("deviceSupport"));
   if (devices.unknown.length > 0)
     note(
       `Device support includes characters outside the known set (${devices.unknown}).`,
     );
 
-  const region = readText(0x1f0, 16, "region");
+  const region = readText("region");
   const regionCharacters: string[] = [];
   for (let index = 0; index < region.text.length; index += 1)
     regionCharacters.push(region.text.charAt(index));
@@ -483,12 +540,12 @@ const parseMegaDriveImage = (
     regionMask = Number.parseInt(region.text, 16);
   } else regionStyle = "other";
 
-  const modem = readText(0x1bc, 12, "modem");
-  const memo = readText(0x1c8, 40, "memo");
-  const romStart = u32(image, 0x1a0);
-  const romEnd = u32(image, 0x1a4);
-  const ramStart = u32(image, 0x1a8);
-  const ramEnd = u32(image, 0x1ac);
+  const modem = readText("modem");
+  const memo = readText("memo");
+  const romStart = u32(image, ROM_START_OFFSET);
+  const romEnd = u32(image, ROM_END_OFFSET);
+  const ramStart = u32(image, RAM_START_OFFSET);
+  const ramEnd = u32(image, RAM_END_OFFSET);
   const romOrdered = romEnd >= romStart;
   if (!romOrdered)
     note(
@@ -523,12 +580,17 @@ const parseMegaDriveImage = (
       `Declared RAM range 0x${ramStart.toString(16)}-0x${ramEnd.toString(16)} is outside the 64 KiB work-RAM window 0x${WORK_RAM_START.toString(16)}-0x${WORK_RAM_END.toString(16)} on the 68000's 24-bit address bus.`,
     );
 
-  const externalRaw = image.subarray(0x1b0, 0x1bc);
-  const externalPresent = externalRaw[0] === 0x52 && externalRaw[1] === 0x41;
-  const externalType = externalRaw[2] ?? 0;
+  const externalRaw = image.subarray(
+    EXTERNAL_RAM.offset,
+    EXTERNAL_RAM.offset + EXTERNAL_RAM.length,
+  );
+  const externalPresent =
+    externalRaw[0] === EXTERNAL_RAM.marker[0] &&
+    externalRaw[1] === EXTERNAL_RAM.marker[1];
+  const externalType = externalRaw[EXTERNAL_RAM.typeOffset] ?? 0;
   const knownExternal = EXTERNAL_RAM_TYPES[externalType];
-  const externalStart = u32(externalRaw, 4);
-  const externalEnd = u32(externalRaw, 8);
+  const externalStart = u32(externalRaw, EXTERNAL_RAM.startOffset);
+  const externalEnd = u32(externalRaw, EXTERNAL_RAM.endOffset);
   if (externalPresent && knownExternal === undefined)
     note(
       `External RAM type byte 0x${externalType.toString(16)} is not a known access and battery value.`,
@@ -547,7 +609,7 @@ const parseMegaDriveImage = (
     note(
       `Declared ROM end 0x${romEnd.toString(16)} is past the image; the checksum sums the ${String(summed.summedBytes)} bytes present from 0x200.`,
     );
-  const declaredChecksum = u16(image, 0x18e);
+  const declaredChecksum = u16(image, CHECKSUM_OFFSET);
   if (declaredChecksum !== summed.computed)
     note(
       `Declared checksum 0x${declaredChecksum.toString(16)} does not match the computed word sum 0x${summed.computed.toString(16)}.`,
@@ -684,8 +746,7 @@ export const decodeMegaDriveRom = (
       message: "SMD blocks do not fill the file",
     });
   return parseMegaDriveImage(image, "smd", {
-    blocks:
-      (bytes.length - MEGA_DRIVE_SMD_HEADER_BYTES) / MEGA_DRIVE_SMD_BLOCK_BYTES,
+    blocks: image.length / MEGA_DRIVE_SMD_BLOCK_BYTES,
     splitFlag: bytes[2] ?? 0,
   });
 };
