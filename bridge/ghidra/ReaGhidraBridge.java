@@ -4675,11 +4675,6 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (function.isExternal() || function.getBody().isEmpty()) {
             return null;
         }
-        // DecompInterface returns an empty result, not a cancelled one, for a
-        // monitor cancelled before it starts.
-        if (monitor.isCancelled()) {
-            throw new RequestFailure("decompile_cancelled", "Ghidra decompilation was cancelled");
-        }
         DecompileResults results = decompiler.decompileFunction(
             function,
             decompileTimeoutSeconds,
