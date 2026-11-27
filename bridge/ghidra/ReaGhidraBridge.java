@@ -1509,8 +1509,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         Function function = resolveProcedure(selector);
         Set<Function> observed = callers
-            ? function.getCallingFunctions(monitor)
-            : function.getCalledFunctions(monitor);
+            ? callingFunctions(function)
+            : calledFunctions(function);
         List<Function> ordered = new ArrayList<>(observed);
         ordered.sort(Comparator.comparing(Function::getEntryPoint));
         JsonArray result = new JsonArray();
@@ -1530,6 +1530,56 @@ public final class ReaGhidraBridge extends HeadlessScript {
             function, currentProgram.getListing().getInstructions(function.getBody(), true), observed, false, null
         );
         return callRelationshipObservation(result, calls);
+    }
+
+    // Ghidra records a thunk's transfer to its target (for example an ELF PLT
+    // entry) as a jump, so getCallingFunctions omits callers that reach a
+    // function through its thunks. Those callers are callers of the function.
+    private Set<Function> callingFunctions(Function function) throws Exception {
+        Set<Function> result = new HashSet<>(function.getCallingFunctions(monitor));
+        Set<Function> thunks = thunkFunctions(function);
+        for (Function thunk : thunks) {
+            monitor.checkCancelled();
+            result.addAll(thunk.getCallingFunctions(monitor));
+        }
+        result.removeAll(thunks);
+        return result;
+    }
+
+    /** The thunks, direct or chained, whose callers callingFunctions reports for this function. */
+    private Set<Function> thunkFunctions(Function function) throws Exception {
+        Set<Function> result = new HashSet<>();
+        Address[] thunks = function.getFunctionThunkAddresses(true);
+        if (thunks == null) return result;
+        for (Address address : thunks) {
+            monitor.checkCancelled();
+            Function thunk = currentProgram.getFunctionManager().getFunctionAt(address);
+            if (thunk != null) result.add(thunk);
+        }
+        return result;
+    }
+
+    // getCallingFunctions counts only calls to a thunk's entry, which
+    // callingFunctions folds in. A call into a thunk's body elsewhere stays
+    // unrepresented and counts against the function's caller coverage.
+    private int unrepresentedThunkCalls(Function function, Set<Function> callers)
+            throws Exception {
+        int[] omitted = { 0 };
+        for (Function thunk : thunkFunctions(function)) {
+            visitReferences(thunk, "incoming", reference -> {
+                if (unrepresentedCaller(function, reference, callers)) omitted[0]++;
+            });
+        }
+        return omitted[0];
+    }
+
+    // A thunk's only outgoing transfer is to its target, which Ghidra models
+    // as a jump rather than a call; report the target so traversal continues.
+    private Set<Function> calledFunctions(Function function) throws Exception {
+        Set<Function> result = new HashSet<>(function.getCalledFunctions(monitor));
+        Function target = function.isThunk() ? function.getThunkedFunction(false) : null;
+        if (target != null) result.add(target);
+        return result;
     }
 
     private JsonObject procedureInfo(JsonObject params) throws Exception {
@@ -2062,9 +2112,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
         JsonArray incoming = referenceEdges(incomingReferences, resolvedFunctions, procedureIdentities);
         JsonArray outgoing = referenceEdges(outgoingReferences, resolvedFunctions, procedureIdentities);
         JsonArray comments = comments(function);
-        Set<Function> callerFunctions = function.getCallingFunctions(monitor);
+        Set<Function> callerFunctions = callingFunctions(function);
         JsonArray callers = procedureIdentities(callerFunctions);
-        Set<Function> calleeFunctions = function.getCalledFunctions(monitor);
+        Set<Function> calleeFunctions = calledFunctions(function);
         JsonArray callees = procedureIdentities(calleeFunctions);
         JsonArray referencedStrings = referencedStrings(outgoingReferences);
         JsonArray referencedNames = referencedNames(outgoingReferences);
@@ -2132,6 +2182,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
         limitations.add(
             "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
         );
+        limitations.add(
+            "Callers include procedures that reach this function through a Ghidra thunk such as an ELF PLT entry; the thunk's own transfer appears in incoming references."
+        );
         if (swift && aarch64) {
             limitations.add(
                 "Swift String literals are decoded from constant register pairs at calls, returns and paired stores. Literals stored one word at a time, chosen by conditional selects, or built at runtime are not reported; candidate pairs at unresolved jumps are retained as unknown omissions."
@@ -2167,8 +2220,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
         int missingCallers = 0;
         for (Reference reference : bodyIncoming) {
             monitor.checkCancelled();
-            if (unrepresentedCaller(reference, callerFunctions)) missingCallers++;
+            if (unrepresentedCaller(function, reference, callerFunctions)) missingCallers++;
         }
+        missingCallers += unrepresentedThunkCalls(function, callerFunctions);
         return new FunctionAnalysisObservation(result, calls.limitations(),
             callRelationshipCoverage(calls, missingCallers), decompilerFailure != null);
     }
@@ -4815,7 +4869,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (missingCallers != null && missingCallers > 0) directions.add("callers");
         String callerLimitation = missingCallers != null && missingCallers > 0
             ? "Ghidra's caller inventory omits sources of " + missingCallers +
-                " call reference(s) into this function's body." : null;
+                " call reference(s) into this function's body or its thunks." : null;
         if ((calls != null && omitted == null) || (calls == null && missingCallers == null)) {
             coverage.addProperty("status", "unknown");
             String reason = calls == null ? "No call inventory was examined."
@@ -4877,6 +4931,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
         diagnostics.add(
             "Only resolved Ghidra call references are returned; unresolved computed or indirect calls remain unknown, while function classifications distinguish thunks and externals."
         );
+        diagnostics.add(
+            "Callers include procedures that reach the function through a Ghidra thunk such as an ELF PLT entry, without listing the thunk itself; a thunk's callees include the function it transfers to."
+        );
         coverage.add("diagnostics", diagnostics);
         return coverage;
     }
@@ -4899,9 +4956,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
             " every possible target, so additional callees remain unknown.";
     }
 
-    private boolean unrepresentedCaller(Reference reference, Set<Function> callers) {
+    private boolean unrepresentedCaller(
+            Function function, Reference reference, Set<Function> callers) {
         if (!reference.getReferenceType().isCall()) return false;
         Function caller = functionAtOrContaining(reference.getFromAddress());
+        // A thunk of this function is represented by its own callers, which
+        // callingFunctions reports in its place.
+        if (caller != null && caller.isThunk() &&
+                function.equals(caller.getThunkedFunction(true))) return false;
         return caller == null || !callers.contains(caller);
     }
 
@@ -4909,9 +4971,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throws Exception {
         int[] omitted = { 0 };
         visitReferences(function, "incoming", reference -> {
-            if (unrepresentedCaller(reference, callers)) omitted[0]++;
+            if (unrepresentedCaller(function, reference, callers)) omitted[0]++;
         });
-        return omitted[0];
+        return omitted[0] + unrepresentedThunkCalls(function, callers);
     }
 
     private List<String> functionBoundaryLimitations(

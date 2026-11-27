@@ -113,6 +113,16 @@ no-overwrite CLI delivery. It checks the target and project files for changes.
   permissions must remain unchanged. `npm run
   verify:ghidra:loader-relocation` requires Linux, BYO Ghidra/JDK with its
   native decompiler, and a C compiler; the fixture is never executed.
+- `shared-thunks.c` builds an ELF `-fPIC` shared library whose exported entry
+  calls an exported leaf through a PLT thunk named after the leaf.
+  `npm run verify:ghidra:thunk-calls` checks, through MCP and the CLI, that the
+  leaf's callers include the entry rather than the thunk and that the thunk's
+  callees include the leaf. `ReaThunkCallCoverageProbe.java` then moves the
+  entry's call reference from the thunk's entry into its body, where Ghidra's
+  caller getter does not look, and requires the production bridge to report
+  partial caller coverage for the leaf. It requires Linux, a C compiler and
+  BYO Ghidra 12.2 (other builds are refused) with JDK 25+. Fixture code is
+  never executed.
 
 `scripts/verify-real-ghidra.mjs` uses `cc`, `clang`, and `lld-link` by default;
 `REA_CC`, `REA_CLANG`, and `REA_LLD_LINK` can select alternate commands. The
