@@ -2863,7 +2863,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
      * depth, because Ghidra resolves that reference without recursing.
      */
     private static void requireBoundedTypeDepth(DataType root, String name, String field) {
-        Map<DataType, Integer> depths = new IdentityHashMap<>();
+        // The whole chain is measured, so the reported depth is the one compared with the limit.
+        int depth = measuredTypeDepth(root, new IdentityHashMap<>());
+        if (depth > MAX_C_TYPE_DEPTH)
+            throw new RequestFailure("type_depth_limit", field + " defines " + name + ", chained " + depth +
+                " levels deep through pointers, arrays, typedefs, members or existing database types");
+    }
+
+    private static int measuredTypeDepth(DataType root, Map<DataType, Integer> depths) {
         Set<DataType> open = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
         ArrayDeque<DataType> stack = new ArrayDeque<>();
         stack.push(root);
@@ -2890,11 +2897,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             open.remove(type);
             stack.pop();
         }
-        // The whole chain is measured, so the reported depth is the one compared with the limit.
-        int depth = depths.get(root);
-        if (depth > MAX_C_TYPE_DEPTH)
-            throw new RequestFailure("type_depth_limit", field + " defines " + name + ", chained " + depth +
-                " levels deep through pointers, arrays, typedefs, members or existing database types");
+        return depths.get(root);
     }
 
     private static List<DataType> cTypeChildren(DataType type) {
@@ -2916,6 +2919,337 @@ public final class ReaGhidraBridge extends HeadlessScript {
             return children;
         }
         return List.of();
+    }
+
+    /**
+     * Refuse an over-deep caller type before Ghidra's parser walks it. The
+     * parser recurses over a declarator's pointer and array chain, so on a
+     * JVM whose stack it exhausts (measured on Ghidra 12.2 under WSL2) the
+     * post-parse bound in requireBoundedTypeDepth never runs and the failure
+     * surfaces unclassified. This pass measures the same chain from the
+     * admitted tokens: each pointer, array, typedef, bit-field, function and
+     * composite level adds one, a base name resolves through types defined
+     * earlier in the text and then the database, and a reference back into a
+     * composite still being measured adds no depth, as in the post-parse
+     * walk. A forward reference to a type defined later in the text reads as
+     * the empty composite the parser invents for it; that definition is
+     * measured on its own, and the post-parse walk remains the authority for
+     * chains through database types a definition fills in place.
+     */
+    private void requireBoundedCallerCTypeDepth(String text, String field, boolean declarations, String code) {
+        CTokenizer tokenizer = new CTokenizer(text, field, code);
+        List<CToken> tokens = new ArrayList<>();
+        for (CToken token = tokenizer.next(false); token != null; token = tokenizer.next(false)) {
+            if (token.is("#")) {
+                while (tokenizer.next(true) != null) { }
+                continue;
+            }
+            tokens.add(token);
+        }
+        try {
+            CallerCTypeDepths depths = new CallerCTypeDepths(tokens, field, currentProgram.getDataTypeManager());
+            if (declarations) depths.measureDefinitions();
+            else depths.measureSignature();
+        } catch (CallerCTypeDepths.Unmeasured unmeasured) {
+            // Admission admitted a shape this pass does not measure; the
+            // post-parse walk in requireBoundedTypeDepth remains the bound.
+        }
+    }
+
+    /** Measures caller C type chains from admitted tokens; see requireBoundedCallerCTypeDepth. */
+    private static final class CallerCTypeDepths {
+        /** The admitted text holds a shape this pass does not measure. */
+        private static final class Unmeasured extends RuntimeException { }
+
+        private record Declarator(String name, int depth) { }
+
+        private static final Set<String> BUILTIN_SPECIFIERS = Set.of(
+            "void", "char", "short", "int", "long", "float", "double", "signed", "unsigned", "_Bool");
+
+        private final List<CToken> tokens;
+        private final String field;
+        private final DataTypeManager types;
+        private final Map<String, Integer> defined = new HashMap<>();
+        private final Map<DataType, Integer> databaseDepths = new IdentityHashMap<>();
+        private final Set<String> measuring = new HashSet<>();
+        /** The tag the last specifiers defined with a body, if any. */
+        private String specifierTag;
+        private int index;
+
+        CallerCTypeDepths(List<CToken> tokens, String field, DataTypeManager types) {
+            this.tokens = tokens;
+            this.field = field;
+            this.types = types;
+        }
+
+        private boolean at(String text) {
+            return index < tokens.size() && tokens.get(index).is(text);
+        }
+
+        private CToken next() {
+            if (index >= tokens.size()) throw new Unmeasured();
+            return tokens.get(index++);
+        }
+
+        private void expect(String text) {
+            if (!at(text)) throw new Unmeasured();
+            index++;
+        }
+
+        private String identifier() {
+            CToken token = next();
+            if (!token.isIdentifier()) throw new Unmeasured();
+            return token.text();
+        }
+
+        private void refuse(String name, int depth) {
+            if (depth > MAX_C_TYPE_DEPTH)
+                throw new RequestFailure("type_depth_limit", field + " defines " + name + ", chained " + depth +
+                    " levels deep through pointers, arrays, typedefs, members or existing database types");
+        }
+
+        private void record(String name, int depth) {
+            if (name == null) return;
+            refuse(name, depth);
+            defined.put(name, depth);
+        }
+
+        private int resolve(String name) {
+            if (measuring.contains(name)) return 0;
+            Integer depth = defined.get(name);
+            if (depth != null) return depth;
+            List<DataType> found = new ArrayList<>();
+            types.findDataTypes(name, found);
+            int deepest = 1;
+            for (DataType type : found) deepest = Math.max(deepest, measuredTypeDepth(type, databaseDepths));
+            return deepest;
+        }
+
+        void measureDefinitions() {
+            while (index < tokens.size()) {
+                if (at(";")) index++;
+                else if (at("typedef")) measureTypedef();
+                else if (at("struct") || at("union") || at("enum")) measureTagDefinition();
+                else throw new Unmeasured();
+            }
+        }
+
+        private void measureTypedef() {
+            expect("typedef");
+            int base = measureSpecifiers();
+            while (true) {
+                Declarator declarator = measureDeclarator(base);
+                // A typedef of its own struct or enum is that tag, recorded once.
+                int depth = declarator.depth() == base && declarator.name() != null &&
+                        declarator.name().equals(specifierTag) ? base : 1 + declarator.depth();
+                record(declarator.name(), depth);
+                if (!at(",")) break;
+                index++;
+            }
+            expect(";");
+        }
+
+        private void measureTagDefinition() {
+            boolean enumeration = at("enum");
+            index++;
+            String name = identifier();
+            int depth = 1;
+            if (at("{")) {
+                index++;
+                if (enumeration) skipBody();
+                else depth = measureCompositeBody(name);
+                expect("}");
+            }
+            record(name, depth);
+            expect(";");
+        }
+
+        private int measureCompositeBody(String name) {
+            if (name != null) measuring.add(name);
+            int deepest = 0;
+            while (!at("}")) deepest = Math.max(deepest, measureMember());
+            if (name != null) measuring.remove(name);
+            return 1 + deepest;
+        }
+
+        private int measureMember() {
+            int base = measureSpecifiers();
+            if (at(":")) {
+                index++;
+                skipBitFieldWidth();
+                expect(";");
+                return 1 + base;
+            }
+            int deepest = 0;
+            while (true) {
+                deepest = Math.max(deepest, measureDeclarator(base).depth());
+                if (!at(",")) break;
+                index++;
+            }
+            expect(";");
+            return deepest;
+        }
+
+        private int measureSpecifiers() {
+            specifierTag = null;
+            int base = -1;
+            while (index < tokens.size()) {
+                CToken token = tokens.get(index);
+                String text = token.text();
+                if (text.equals("struct") || text.equals("union")) {
+                    index++;
+                    String name = index < tokens.size() && tokens.get(index).isIdentifier() ? identifier() : null;
+                    if (at("{")) {
+                        index++;
+                        int depth = measureCompositeBody(name);
+                        expect("}");
+                        record(name, depth);
+                        specifierTag = name;
+                        return depth;
+                    }
+                    if (name == null) throw new Unmeasured();
+                    return resolve(name);
+                }
+                if (text.equals("enum")) {
+                    index++;
+                    String name = index < tokens.size() && tokens.get(index).isIdentifier() ? identifier() : null;
+                    if (at("{")) {
+                        index++;
+                        skipBody();
+                        expect("}");
+                        record(name, 1);
+                        specifierTag = name;
+                    }
+                    return 1;
+                }
+                if (BUILTIN_SPECIFIERS.contains(text) || text.matches("__int(?:8|16|32|64)|_*signed_*")) {
+                    base = 1;
+                    index++;
+                    continue;
+                }
+                UnappliedCToken unapplied = unappliedC(text);
+                if ((unapplied != null && !unapplied.refused()) || text.equals("_Noreturn") ||
+                        C_CALLING_CONVENTION.matcher(text).matches()) {
+                    index++;
+                    continue;
+                }
+                if (token.isIdentifier() && base < 0) {
+                    index++;
+                    return resolve(text);
+                }
+                break;
+            }
+            if (base < 0) throw new Unmeasured();
+            return base;
+        }
+
+        private Declarator measureDeclarator(int base) {
+            int stars = measureStars();
+            while (index < tokens.size() && C_CALLING_CONVENTION.matcher(tokens.get(index).text()).matches()) index++;
+            if (at("(")) {
+                index++;
+                int innerStars = measureStars();
+                if (innerStars == 0) throw new Unmeasured();
+                String name = identifier();
+                int arrays = measureArrays();
+                expect(")");
+                expect("(");
+                int parameters = measureParameters();
+                return new Declarator(name, innerStars + arrays + 1 + Math.max(stars + base, parameters));
+            }
+            String name = index < tokens.size() && tokens.get(index).isIdentifier() ? identifier() : null;
+            int arrays = measureArrays();
+            if (at(":")) {
+                index++;
+                skipBitFieldWidth();
+                return new Declarator(name, 1 + base);
+            }
+            return new Declarator(name, stars + arrays + base);
+        }
+
+        private int measureStars() {
+            int stars = 0;
+            while (index < tokens.size()) {
+                String text = tokens.get(index).text();
+                if (text.equals("*")) {
+                    stars++;
+                    index++;
+                    continue;
+                }
+                UnappliedCToken unapplied = unappliedC(text);
+                if (unapplied != null && !unapplied.refused()) {
+                    index++;
+                    continue;
+                }
+                break;
+            }
+            return stars;
+        }
+
+        private int measureArrays() {
+            int arrays = 0;
+            while (at("[")) {
+                arrays++;
+                int nesting = 0;
+                do {
+                    String text = next().text();
+                    if (text.equals("[")) nesting++;
+                    else if (text.equals("]")) nesting--;
+                } while (nesting > 0);
+            }
+            return arrays;
+        }
+
+        /** Consume a parameter list through its closing parenthesis; return its deepest parameter. */
+        private int measureParameters() {
+            int deepest = 0;
+            if (at(")")) {
+                index++;
+                return deepest;
+            }
+            if (at("void") && index + 1 < tokens.size() && tokens.get(index + 1).is(")")) {
+                index += 2;
+                return deepest;
+            }
+            while (true) {
+                if (at(".")) {
+                    while (at(".")) index++;
+                } else {
+                    int base = measureSpecifiers();
+                    deepest = Math.max(deepest, measureDeclarator(base).depth());
+                }
+                if (at(",")) {
+                    index++;
+                    continue;
+                }
+                expect(")");
+                return deepest;
+            }
+        }
+
+        void measureSignature() {
+            int base = measureSpecifiers();
+            int stars = measureStars();
+            while (index < tokens.size() && C_CALLING_CONVENTION.matcher(tokens.get(index).text()).matches()) index++;
+            String name = identifier();
+            expect("(");
+            int parameters = measureParameters();
+            refuse(name, 1 + Math.max(stars + base, parameters));
+        }
+
+        private void skipBody() {
+            int nesting = 1;
+            while (nesting > 0) {
+                String text = next().text();
+                if (text.equals("{")) nesting++;
+                else if (text.equals("}")) nesting--;
+            }
+            index--;
+        }
+
+        private void skipBitFieldWidth() {
+            while (!at(",") && !at(";")) next();
+        }
     }
 
     /** The caller's per-call bound, or its default; the contract owns the range. */
@@ -2952,6 +3286,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new RequestFailure(declarations ? "declarations_length_limit" : "signature_length_limit",
                 field + " has " + text.length() + " UTF-16 code units", null, text.length());
         AdmittedCallerC admitted = admitCallerC(text, field, declarations, code, maxParenthesisDepth);
+        requireBoundedCallerCTypeDepth(text, field, declarations, code);
         DataTypeManager types = currentProgram.getDataTypeManager();
         CParser parser = new CParser(types, false, new DataTypeManager[] { types });
         try {
