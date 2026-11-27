@@ -1908,6 +1908,7 @@
 * **apple:** run the bundle executable provenance regression on macOS ([5d136df](https://github.com/morluto/rea/commit/5d136df3ce720385a7cb33137bf77962733c08aa))
 * **apple:** run the macOS lane when a pull request changes a macOS-gated test ([3280b1a](https://github.com/morluto/rea/commit/3280b1a66963aaa27d516c19f0cd55df62713955))
 * compare frozen selections with observed test failures ([#14301](https://github.com/morluto/rea/issues/14301)) ([54f6fd4](https://github.com/morluto/rea/commit/54f6fd4f907caef76127c7e377ef181c0b5a4a82))
+* **deps:** update the CodeQL action to 4.39.5 ([#14926](https://github.com/morluto/rea/issues/14926)) ([1d05636](https://github.com/morluto/rea/commit/1d056364b1cf19517b453f7bfa060e88294d00c7))
 * **deps:** upgrade Pages, artifact transfers and cache actions together ([#8128](https://github.com/morluto/rea/issues/8128)) ([d957d43](https://github.com/morluto/rea/commit/d957d43ec196a498dc1c9540edbbad809f471e52))
 * **deps:** upgrade setup-node to 7.1.0 and preserve explicit npm cache policy ([#8133](https://github.com/morluto/rea/issues/8133)) ([3075064](https://github.com/morluto/rea/commit/3075064d692b06668900eb4c1805d88df22dcf96))
 * fit the binary layout toolchain download into three attempts ([f781e31](https://github.com/morluto/rea/commit/f781e310916e3d93d5fa0671132b9ce29fcf1c51))
