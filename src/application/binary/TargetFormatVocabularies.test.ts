@@ -176,6 +176,7 @@ const TARGETS: TargetFixtures = {
   devicetree: { ...artifact, format: "devicetree" },
   "esp-nvs": { ...artifact, format: "esp-nvs" },
   deb: { ...artifact, format: "deb" },
+  "labview-rsrc": { ...artifact, format: "labview-rsrc" },
 };
 
 const provider = { id: "fixture", name: "Fixture", version: "1" } as const;

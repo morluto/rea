@@ -270,6 +270,18 @@
       "reason": "Kuna's buffered function-text allowance is a resource policy."
     }
   },
+  "src/labview/LabviewArtifactProvider.ts": {
+    "INPUT_ALLOWANCE": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "The selected-artifact input ceiling for this native format reader is a resource policy; no per-call control exists yet."
+    },
+    "allowanceName(limit.name)": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "The RSRC block, total-section, directory-walk, directory-entry and embedded-container allowances are structural resource policies of one read; no per-call control exists yet."
+    }
+  },
   "src/native/LldbCallTracer.ts": {
     "\"The combined LLDB result representation ceiling\"": {
       "class": "representation",

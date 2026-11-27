@@ -67,6 +67,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   devicetree: "artifact",
   "esp-nvs": "artifact",
   deb: "artifact",
+  "labview-rsrc": "artifact",
   "source-map": "artifact",
 } as const;
 

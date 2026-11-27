@@ -13,6 +13,7 @@ import type { ElfNotesService } from "../application/binaryDiagnostics/ElfNotesS
 import type { ElfUnwindRangesService } from "../application/binaryDiagnostics/ElfUnwindRangesService.js";
 import type { KernelBuildConfigService } from "../application/binaryDiagnostics/KernelBuildConfigService.js";
 import type { KernelModuleService } from "../application/binaryDiagnostics/KernelModuleService.js";
+import type { LabviewArtifactService } from "../application/labview/LabviewArtifactService.js";
 import type { NativeExportsService } from "../application/binaryDiagnostics/NativeExportsService.js";
 import type { NativeInitializersService } from "../application/binaryDiagnostics/NativeInitializersService.js";
 import type { PeCertificatesService } from "../application/binaryDiagnostics/PeCertificatesService.js";
@@ -69,6 +70,12 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
       run: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<PeResourcesService>,
+  labviewArtifact: ((service) => ({
+    inspect_labview_artifact: {
+      admission: "application",
+      summary: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<LabviewArtifactService>,
   nativeExports: ((service) => ({
     inspect_native_exports: {
       admission: "application",

@@ -52,6 +52,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [PE overlay](guides/native/pe-overlay.md)
 - [Match native functions across builds](native-function-matching.md)
 - [Rust binary dependency metadata](rust-binaries.md)
+- [LabVIEW RSRC containers](guides/native/labview-analysis.md)
 - [Static CUDA and HIP code objects](gpu-code-objects.md)
 
 ## JavaScript and Electron

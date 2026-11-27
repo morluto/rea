@@ -1,3 +1,4 @@
+import { LABVIEW_RSRC_MAGIC } from "./labview/labviewArtifact.js";
 import type { ArtifactFormatId } from "./artifactGraph.js";
 import { hasAndroidBootImageMagic } from "./androidBootImageFormat.js";
 import { hasAndroidDtboMagic } from "./firmware/androidDtboFormat.js";
@@ -113,6 +114,7 @@ export const STANDALONE_ARTIFACT_FORMATS = [
   "devicetree",
   "esp-nvs",
   "deb",
+  "labview-rsrc",
 ] as const;
 
 export type StandaloneArtifactFormat =
@@ -191,6 +193,12 @@ const megaDriveLayout = (
  * target resolution both walk it, so the same bytes reach the same verdict;
  * each route decides only what a refusal or a missing input means for it.
  */
+/** A LabVIEW RSRC container starts with its own six-byte magic. */
+const hasLabviewRsrcHeader = (prefix: Buffer): boolean =>
+  prefix.length >= LABVIEW_RSRC_MAGIC.length &&
+  prefix.subarray(0, LABVIEW_RSRC_MAGIC.length).toString("latin1") ===
+    LABVIEW_RSRC_MAGIC;
+
 export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
   [
     ({ prefix, fileSize }) => {
@@ -356,6 +364,7 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
       return { state: "recognized", format: "devicetree" };
     },
     // Binary plists, including keyed archives, often use other extensions.
+    when("labview-rsrc", hasLabviewRsrcHeader),
     when("plist", hasBinaryPlistSignature),
     // A plain image: SEGA at 0x100. The SMD layout was decided before the
     // ESP image above.

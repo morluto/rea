@@ -665,6 +665,7 @@ const NON_ZIP_FORMATS = {
   devicetree: described("devicetree", plain),
   "esp-nvs": described("esp-nvs", plain),
   deb: described("deb", plain),
+  "labview-rsrc": described("labview-rsrc", plain),
   entitlements: described("entitlements", plain),
   directory: container("directory", {
     absentInventory: "unavailable",

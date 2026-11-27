@@ -135,6 +135,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "devicetree",
   "esp-nvs",
   "deb",
+  "labview-rsrc",
   "unknown",
 ] as const;
 
@@ -195,6 +196,7 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "devicetree",
   "esp-nvs",
   "deb",
+  "labview-rsrc",
   "directory",
   "file",
   "unknown",
