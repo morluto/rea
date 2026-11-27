@@ -33,7 +33,7 @@ import {
   findEmbeddedRsrcContainers,
   type EmbeddedRsrc,
 } from "./LabviewPeContainer.js";
-import { parseLabviewRsrc } from "./LabviewRsrc.js";
+import { parseLabviewRsrc, type LabviewPresence } from "./LabviewRsrc.js";
 
 const OPERATION = "inspect_labview_artifact";
 /** Caller-selected complete artifact bound; this reader never truncates a container. */
@@ -211,15 +211,8 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
     }
     const value = parsed.value;
 
-    // Derive every block fact once: one container can carry thousands of blocks.
-    let hasBlockDiagram = false;
-    let hasFrontPanel = false;
-    let hasProgramTree = false;
-    for (const { identifier } of value.blocks) {
-      if (identifier.startsWith("BDH")) hasBlockDiagram = true;
-      else if (identifier.startsWith("FPH")) hasFrontPanel = true;
-      if (identifier === "LVzp") hasProgramTree = true;
-    }
+    // The parser owns these block facts; this layer decides only whether an
+    // unobserved heap can be called absent.
     // A container that carries an embedded program tree, or a file whose other
     // containers were not examined, cannot establish that a heap is absent.
     // A direct RSRC file's content does not say whether it is a VI, a control,
@@ -227,11 +220,14 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
     // there either; the caller's spelling is not evidence of format.
     const directContainer = chosen.offset === 0;
     const unexamined =
-      containers.length > 1 || directContainer || !coverage || hasProgramTree;
-    const presence = (present: boolean): LabviewArtifactPresence =>
-      present ? "present" : unexamined ? "unknown" : "absent";
-    const blockDiagram = presence(hasBlockDiagram);
-    const frontPanel = presence(hasFrontPanel);
+      containers.length > 1 ||
+      directContainer ||
+      !coverage ||
+      value.programTree;
+    const presence = (observed: LabviewPresence): LabviewArtifactPresence =>
+      observed === "present" ? "present" : unexamined ? "unknown" : "absent";
+    const blockDiagram = presence(value.blockDiagram);
+    const frontPanel = presence(value.frontPanel);
 
     const limitations = [
       "Stored section bytes are inventoried; only zlib-coded sections are decoded, and no section payload is returned.",
@@ -255,7 +251,7 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
             "The container has a vers section whose content could not be decoded, so the version is unknown rather than absent.",
           ]
         : []),
-      ...(hasProgramTree
+      ...(value.programTree
         ? [
             "The inspected container carries an embedded program tree (LVzp) that this reader does not decode.",
           ]

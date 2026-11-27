@@ -74,6 +74,15 @@ describe("parseLabviewRsrc", () => {
     expect(parsed.value.versionCoverage).toBe("observed");
   });
 
+  it("ignores an RSRC payload outside the RCDATA resource type", () => {
+    const bytes = peResourceFixture(true, [
+      { type: 11, name: 1, language: 1033, payload: labviewContainer() },
+    ]).bytes;
+    const scan = findEmbeddedRsrcContainers(bytes);
+    if (!scan.ok) throw scan.failure;
+    expect(scan.containers).toHaveLength(0);
+  });
+
   it("reports where an embedded container starts in the selected file", async () => {
     const bytes = peResourceFixture(true, [
       { type: 10, name: 1, language: 1033, payload: labviewContainer() },
@@ -176,6 +185,27 @@ describe("parseLabviewRsrc", () => {
     );
     if (!parsed.ok) throw new Error(parsed.failure.message);
     expect(parsed.value.blocks[0]?.sections[0]?.coding).toBe("unknown");
+    expect(parsed.value.labviewVersion).toBeNull();
+    expect(parsed.value.versionCoverage).toBe("unknown");
+  });
+
+  it("rejects a packed version whose digits are not decimal", () => {
+    const damaged = Buffer.alloc(8, 0xff);
+    const valid = labviewVersionSection("11.0");
+    const parsed = parseLabviewRsrc(
+      buildLabviewRsrc([{ ident: "vers", sections: [damaged, valid] }]),
+    );
+    if (!parsed.ok) throw new Error(parsed.failure.message);
+    // The damaged record is not a version; the next record still is.
+    expect(parsed.value.labviewVersion).toBe("11.0");
+    expect(parsed.value.versionCoverage).toBe("observed");
+  });
+
+  it("reports a damaged-only vers record as unknown", () => {
+    const parsed = parseLabviewRsrc(
+      buildLabviewRsrc([{ ident: "vers", sections: [Buffer.alloc(8, 0xff)] }]),
+    );
+    if (!parsed.ok) throw new Error(parsed.failure.message);
     expect(parsed.value.labviewVersion).toBeNull();
     expect(parsed.value.versionCoverage).toBe("unknown");
   });

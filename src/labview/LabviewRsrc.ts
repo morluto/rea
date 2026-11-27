@@ -57,6 +57,8 @@ export interface LabviewRsrc {
   readonly infoBytes: number;
   readonly labviewVersion: string | null;
   readonly versionCoverage: LabviewVersionCoverage;
+  /** Whether the container carries an embedded program tree (`LVzp`). */
+  readonly programTree: boolean;
   readonly blockDiagram: LabviewPresence;
   readonly frontPanel: LabviewPresence;
   readonly blocks: readonly LabviewBlock[];
@@ -195,9 +197,22 @@ const decodeVersion = (content: Uint8Array): string | null => {
       (content[3] ?? 0)) >>>
       0) >>>
     0;
-  const major = ((word >>> 28) & 0x0f) * 10 + ((word >>> 24) & 0x0f);
+  const majorHigh = (word >>> 28) & 0x0f;
+  const majorLow = (word >>> 24) & 0x0f;
   const minor = (word >>> 20) & 0x0f;
-  return `${String(major)}.${String(minor)}`;
+  const bugfix = (word >>> 16) & 0x0f;
+  // The format packs decimal digits; any A-F nibble is a damaged record.
+  const digits = [
+    majorHigh,
+    majorLow,
+    minor,
+    bugfix,
+    (word >>> 8) & 0x0f,
+    (word >>> 4) & 0x0f,
+    word & 0x0f,
+  ];
+  if (digits.some((digit) => digit > 9)) return null;
+  return `${String(majorHigh * 10 + majorLow)}.${String(minor)}`;
 };
 
 /** The LabVIEW version recorded by the first decodable `vers` record. */
@@ -383,8 +398,15 @@ export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
     }
 
     const labviewVersion = versionOf(versionSections);
-    const hasPrefix = (prefix: string): boolean =>
-      blocks.some(({ identifier }) => identifier.startsWith(prefix));
+    // One pass derives every block fact the caller and report need.
+    let blockDiagram: LabviewPresence = "absent";
+    let frontPanel: LabviewPresence = "absent";
+    let programTree = false;
+    for (const { identifier } of blocks) {
+      if (identifier.startsWith("BDH")) blockDiagram = "present";
+      else if (identifier.startsWith("FPH")) frontPanel = "present";
+      if (identifier === "LVzp") programTree = true;
+    }
     return {
       ok: true,
       value: {
@@ -402,10 +424,9 @@ export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
             : sawVersionSection
               ? "unknown"
               : "absent",
-        // Whether a heap exists is decided by the caller, which also knows
-        // what it did not examine.
-        blockDiagram: hasPrefix("BDH") ? "present" : "absent",
-        frontPanel: hasPrefix("FPH") ? "present" : "absent",
+        blockDiagram,
+        frontPanel,
+        programTree,
         blocks,
       },
     };

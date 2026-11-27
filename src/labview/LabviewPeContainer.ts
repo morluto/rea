@@ -92,11 +92,7 @@ export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
     }
   };
 
-  const visit = (
-    relativeOffset: number,
-    depth: number,
-    typeId: number | undefined,
-  ): void => {
+  const visit = (relativeOffset: number, depth: number): void => {
     if (depth > 3) {
       complete = false;
       return;
@@ -166,17 +162,16 @@ export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
         reader.range(at, PE_RESOURCE_ENTRY_BYTES, "resource entry"),
       );
       if (target.kind === "directory") {
-        // Depth 0 holds the resource types; deeper levels keep the type.
-        const nextType =
-          depth === 0
-            ? identity.kind === "id"
-              ? identity.id
-              : undefined
-            : typeId;
-        visit(target.offset, depth + 1, nextType);
+        // Depth 0 holds the resource types; only LabVIEW's RCDATA subtree is
+        // relevant, so other types are neither walked nor charged.
+        if (
+          depth === 0 &&
+          (identity.kind !== "id" || identity.id !== RT_RCDATA)
+        )
+          continue;
+        visit(target.offset, depth + 1);
         continue;
       }
-      if (typeId !== RT_RCDATA) continue;
       const dataEntry = metadataOffset(
         target.offset,
         PE_RESOURCE_DATA_ENTRY_BYTES,
@@ -224,7 +219,7 @@ export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
   };
 
   try {
-    visit(0, 0, undefined);
+    visit(0, 0);
   } catch (cause) {
     if (
       cause instanceof ParseFailureError &&
