@@ -368,6 +368,8 @@
 * **doctor:** report startup timeouts independently of launcher discovery ([#13420](https://github.com/morluto/rea/issues/13420)) ([255a585](https://github.com/morluto/rea/commit/255a585c0a06975d0855f169f5e80663b642658d))
 * **domain:** keep worker, SQLite, and sealing invariants owned ([#14770](https://github.com/morluto/rea/issues/14770)) ([9e3a2bb](https://github.com/morluto/rea/commit/9e3a2bbc09872eba06fc4bd09b0547762d385e06))
 * **domain:** make partial count switches exhaustive for typed lint ([#14048](https://github.com/morluto/rea/issues/14048)) ([4298507](https://github.com/morluto/rea/commit/42985076ac43814d3cf60a8b97687240980304d0))
+* **dotnet:** retain validated bundle entries across enumerations ([f43cacb](https://github.com/morluto/rea/commit/f43cacb61b16d2d8128088480f4140ee0c8d7a5c))
+* **dotnet:** reuse validated bundle entries across enumerations ([#14885](https://github.com/morluto/rea/issues/14885)) ([f43cacb](https://github.com/morluto/rea/commit/f43cacb61b16d2d8128088480f4140ee0c8d7a5c))
 * **dwarf:** bound PE COFF section-name decoding with max_structure_bytes ([#14787](https://github.com/morluto/rea/issues/14787)) ([d97b796](https://github.com/morluto/rea/commit/d97b79607677d15a1588e358c2b2e887bf6fb793))
 * **dwarf:** reject PE long section names when PointerToSymbolTable is zero ([#13889](https://github.com/morluto/rea/issues/13889)) ([a46bc22](https://github.com/morluto/rea/commit/a46bc22117928c04e2aefee04d629597b3393378))
 * **electron:** preserve inspection frame identity and diagnostics ([#13232](https://github.com/morluto/rea/issues/13232)) ([04d399d](https://github.com/morluto/rea/commit/04d399d67539fa9fbf07a2ce6d93b058808c7101))
