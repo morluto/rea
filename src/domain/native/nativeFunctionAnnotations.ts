@@ -50,7 +50,7 @@ export const nativeFunctionAnnotationsSchema = z
         .string()
         .min(1)
         .describe(
-          "Formal prototype after the edit, in the form the signature field accepts",
+          "Formal prototype after the edit. The signature field accepts it back when its function and type names are C identifiers",
         ),
       signature_source: z
         .string()

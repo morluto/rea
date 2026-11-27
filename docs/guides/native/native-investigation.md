@@ -1497,7 +1497,8 @@ await call("annotate_native_function", {
 function name is a placeholder; `name` renames the function. The prototype is
 applied in the same transaction as the name and comments with Ghidra's
 `USER_DEFINED` source and Ghidra-assigned parameter storage.
-`annotations.signature` is the applied prototype in a form `signature` accepts,
+`annotations.signature` is the applied prototype, which `signature` accepts
+back when its function and type names are C identifiers,
 `annotations.signature_source` is `user_defined` for a caller-authored
 prototype rather than `default`, `analysis` or `imported`, and
 `annotations.calling_convention` is the convention that storage follows. When

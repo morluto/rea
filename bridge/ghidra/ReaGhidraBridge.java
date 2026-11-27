@@ -1837,7 +1837,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         value.addProperty("name", procedureName(function));
         value.addProperty("comment", currentProgram.getListing().getComment(CommentType.PRE, entry));
         value.addProperty("inline_comment", currentProgram.getListing().getComment(CommentType.EOL, entry));
-        // The formal prototype omits storage-derived parameters and reparses as a signature edit.
+        // The formal prototype omits storage-derived parameters. It reparses as a
+        // signature edit when its function and type names are C identifiers.
         value.addProperty("signature", function.getSignature(true).getPrototypeString(false));
         value.addProperty("signature_source", normalizedSource(function.getSignatureSource()));
         value.addProperty("calling_convention", function.getCallingConventionName());
@@ -2079,7 +2080,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private static final Pattern PRAGMA_PACK = Pattern.compile("#\\s*pragma\\s+pack\\s*\\([^()]*\\)");
 
     /** Parse caller C text against the type database without storing anything in it. */
-    private CParser parseCallerC(String text, String field, boolean declarations, String code) {
+    private CParser parseCallerC(String text, String parsed, String field, boolean declarations, String code) {
         validateAnnotationText(text, field);
         int maximum = declarations ? cParserLimits.declarationsUtf16() : cParserLimits.signatureUtf16();
         if (text.length() > maximum)
@@ -2089,7 +2090,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         DataTypeManager types = currentProgram.getDataTypeManager();
         CParser parser = new CParser(types, false, new DataTypeManager[] { types });
         try {
-            parser.parse(text);
+            parser.parse(parsed);
         }
         catch (ghidra.app.util.cparser.C.ParseException | ghidra.app.util.cparser.C.TokenMgrError rejected) {
             throw new RequestFailure(code, "Ghidra's C parser rejected " + field + ": " + cParserReason(rejected.getMessage()));
@@ -2140,7 +2141,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (function.isThunk())
             throw new RequestFailure(code, "Function at " + entry + " is a thunk; its prototype belongs to the function it forwards to");
         String stripped = text.strip();
-        CParser parser = parseCallerC(stripped.endsWith(";") ? stripped : stripped + ";", "signature", false, code);
+        // The parser needs a terminated declaration; the bounds apply to the caller's text.
+        CParser parser = parseCallerC(text, stripped.endsWith(";") ? stripped : stripped + ";", "signature", false, code);
         // The parser invents an empty composite for an undefined struct, union or enum tag.
         Set<String> undefined = new TreeSet<>(parser.getComposites().keySet());
         undefined.addAll(parser.getEnums().keySet());
@@ -2204,7 +2206,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private JsonObject defineNativeDataTypes(JsonObject params) throws Exception {
         requireKeys(params, Set.of("declarations"));
         String code = "invalid_type_declarations";
-        CParser parser = parseCallerC(requireText(params, "declarations"), "declarations", true, code);
+        String declarations = requireText(params, "declarations");
+        CParser parser = parseCallerC(declarations, declarations, "declarations", true, code);
         if (!parser.getFunctions().isEmpty())
             throw new RequestFailure(code, "declarations must not declare functions or function-pointer members: " +
                 String.join(", ", new TreeSet<>(parser.getFunctions().keySet())));

@@ -254,6 +254,24 @@ int main(void) { struct session one = { 1, "one", 16, 1.5, 0 }; return (int)rea_
             },
           },
         );
+        // Parentheses inside comments are not nesting, and comments cannot hide it.
+        await first.overLimit(
+          "annotate_native_function",
+          {
+            ...rejected,
+            signature: `int total(int a[${"( /*)*/".repeat(8)}1${")".repeat(8)}])`,
+          },
+          {
+            source: "default",
+            limit: {
+              environment: "REA_GHIDRA_C_MAX_PARENTHESIS_DEPTH",
+              effective_value: 8,
+              minimum: 1,
+              maximum: 12,
+              default_value: 8,
+            },
+          },
+        );
         // Each is accepted by Ghidra's parser and applied differently or not at all.
         for (const [refusedSignature, reason] of [
           ["double total(int a, int a)", /repeats parameter name a/u],
@@ -748,6 +766,18 @@ typedef struct { volatile int k; } rea_unnamed_t;`,
           await typeStatus(bounded, "/rea_caller_defined/rea_bounded"),
           "unavailable",
         );
+        // A prototype of exactly the admitted length, without the semicolon
+        // the parser needs, is applied.
+        const exact = "double total(struct session *s, unsigned mask)".replace(
+          ")",
+          `${" ".repeat(64 - 46)})`,
+        );
+        assert.equal(exact.length, 64);
+        const fitted = await bounded.call("annotate_native_function", {
+          procedure,
+          signature: exact,
+        });
+        assert.equal(fitted.annotations.signature_source, "user_defined");
         // Text within the lowered bounds is still applied.
         const within = await bounded.call("define_native_data_types", {
           declarations: "struct rea_small { int a[(2)]; };",
