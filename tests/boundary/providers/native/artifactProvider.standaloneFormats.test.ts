@@ -4,11 +4,16 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
+import { bfltFile } from "../../../../src/domain/bfltExecutable.fixture.js";
 import { windowsShortcutBytes } from "../../../fixtures/binaryDiagnostics/windowsShortcut.js";
 import { createSqliteDatabaseFixture } from "../../../fixtures/sqlite/database.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { buildFv } from "../../../fixtures/uefiImage.js";
 import { createDirectAnalysis } from "../../../../src/composition/directAnalysis.js";
+import {
+  arArchive,
+  debPackageFixture,
+} from "../../../../src/deb/DebPackage.fixture.js";
 import { artifactInspectionResultSchema } from "../../../../src/domain/artifactInspection.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
 
@@ -122,6 +127,12 @@ it.each([
     format: "sqlite",
     operation: "inspect_sqlite_database",
   },
+  {
+    name: "a Debian package",
+    create: writeBytes("hello.deb", () => debPackageFixture()),
+    format: "deb",
+    operation: "inspect_deb_package",
+  },
 ])(
   "inventories $name and routes it to $operation",
   async ({ create, format, operation }) => {
@@ -147,4 +158,49 @@ it("keeps bytes that only resemble a pyc frame unsupported", async () => {
       projectCliAnalysisResult,
     ),
   ).resolves.toMatchObject({ code: "target_unavailable" });
+});
+
+it("keeps a plain ar archive that is not a Debian package unsupported", async () => {
+  const directory = await createTestTempDirectory("rea-standalone-format-");
+  const path = join(directory, "libhello.a");
+  await writeFile(
+    path,
+    arArchive([{ name: "hello.o", data: Buffer.from("object") }]),
+  );
+
+  await expect(
+    runProviderAnalysis(path, "inspect_artifact", {}).then(
+      projectCliAnalysisResult,
+    ),
+  ).resolves.toMatchObject({ code: "target_unavailable" });
+});
+
+it("routes a bFLT executable's text segment to open_binary", async () => {
+  const directory = await createTestTempDirectory("rea-standalone-format-");
+  const path = await writeBytes("app.flt", () =>
+    bfltFile({ text: Buffer.alloc(16), entry: 0x44 }),
+  )(directory);
+  const evidence = parseEvidence(
+    await runProviderAnalysis(path, "inspect_artifact", {}).then(
+      projectCliAnalysisResult,
+    ),
+  );
+  const inspection = artifactInspectionResultSchema.parse(
+    evidence.normalized_result,
+  );
+
+  expect(inspection.subject.root_format).toBe("bflt");
+  expect(inspection.next_probes).toEqual([
+    expect.objectContaining({
+      operation: "open_binary",
+      authority: "native-analysis-provider",
+      rationale: expect.stringMatching(
+        /text\.bin[\s\S]*raw-binary[\s\S]*0x44/u,
+      ),
+    }),
+  ]);
+  expect(inspection.next_probes[0]?.rationale).toContain("base_address");
+  expect(inspection.next_probes[0]?.rationale).toMatch(
+    /bFLT header, not code/u,
+  );
 });

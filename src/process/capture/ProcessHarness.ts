@@ -1063,10 +1063,11 @@ const runProcessScenario = async (
       ...(progress === undefined ? {} : { onLiveProgress: reportRunning }),
     });
     if (exit.unobserved === true) {
-      observations.finalization = {
-        state: "available",
-        value: exit.finalization,
-      };
+      if (exit.finalization !== undefined)
+        observations.finalization = {
+          state: "available",
+          value: exit.finalization,
+        };
       observations.exit = {
         state: "unavailable",
         reason: `The captured process exit was not observed because the finalization SIGKILL could not be delivered (initiating reason: ${exit.reason}).`,

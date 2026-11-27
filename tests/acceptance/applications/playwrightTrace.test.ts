@@ -127,11 +127,12 @@ cliTest(
         {
           path: "./resources/x",
           logical_path: "resources/x",
-          limitations: [expect.stringContaining("leading current-directory")],
+          limitations: [],
         },
       ],
       coverage: { total: 1, exhausted: true },
-      source_coverage: { interpretation: "partial" },
+      // A normalized member name keeps its recorded path and is fully read.
+      source_coverage: { interpretation: "scoped" },
     });
     const { members, streams, events, summary } = playwrightTraceSchema.parse(
       parent.normalized_result,

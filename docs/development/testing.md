@@ -171,7 +171,7 @@ artifact names end in `-attempt-N`, where `N` is the workflow run attempt.
 Task-graph recording runs `check:ci:fast:tasks` and `check:ci:deep:tasks`
 without the artifacts lock, so it can record hashes while `check:pr` or
 `check:test` already holds that lock. The CI jobs still run the locked
-`check:ci:fast` and `check:ci:deep` commands.
+`check:ci:fast` and `check:ci:deep:job` commands.
 Use `npm run lint:details` or `npm run jscpd:details` for all console diagnostics.
 Both duplicate commands scan production and test code using the limit in
 [`.jscpd.json`](https://github.com/morluto/rea/blob/main/.jscpd.json).
@@ -275,6 +275,8 @@ Routine iterations and rebases need focused regressions and relevant checks.
 Follow the [contributor checks](https://github.com/morluto/rea/blob/main/CONTRIBUTING.md#development-feedback-and-pr-verification)
 before handing off a PR. Use `check:pr` for broad changes or CI diagnosis.
 Architecture guards run in `check`, `check:fast`, and `check:ci:deep`.
+In CI, the required fast static job runs the guards before installing
+dependencies, including on full runs.
 The standalone test-discovery check runs in `check:ci:deep`.
 
 Vitest projects use up to two workers, bounded by host parallelism. GitHub

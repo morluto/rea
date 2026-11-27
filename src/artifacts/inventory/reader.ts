@@ -67,7 +67,7 @@ export const inventoryCoverage = (
       ],
     };
   const absent = artifactFormatDescriptor(format)?.absentInventory ?? "root";
-  // dmg and pkg reach here only after classifyRootFormat matched their bytes.
+  // dmg reaches here only after classifyRootFormat matched its bytes.
   if (absent === "platform")
     return {
       coverage: { scope: "container-entries", status: "unknown" },
