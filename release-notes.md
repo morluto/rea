@@ -423,6 +423,7 @@
 * **functions:** preserve proven referenced string membership changes ([#13421](https://github.com/morluto/rea/issues/13421)) ([afbbfff](https://github.com/morluto/rea/commit/afbbfff561a9d83689e49f61a5192b98bbfe5c07))
 * **gdb:** report console stream records by size in the command summary ([f48edea](https://github.com/morluto/rea/commit/f48edeaaecb0db0d367926407c1355e9664fbe75))
 * **ghidra:** admit recordless legacy MIPS32 carves missing section tables ([#4532](https://github.com/morluto/rea/issues/4532)) ([fe4e466](https://github.com/morluto/rea/commit/fe4e466ef97efdb9941414561a8c75beb0f04867))
+* **ghidra:** admit recordless MIPS32 executables that declare o32 ([#14423](https://github.com/morluto/rea/issues/14423)) ([580c944](https://github.com/morluto/rea/commit/580c944a24c4d0922051cfa0724ee8d5c60f67e3))
 * **ghidra:** cancel an active request without closing the session ([#14857](https://github.com/morluto/rea/issues/14857)) ([1aa301e](https://github.com/morluto/rea/commit/1aa301e149c558ad46cc5f78adcda50d234d0065))
 * **ghidra:** expose NativeAOT opt-out recovery ([#12923](https://github.com/morluto/rea/issues/12923)) ([753b7e9](https://github.com/morluto/rea/commit/753b7e908c5ab91508cbda7b954aaa8138822712))
 * **ghidra:** forget an elapsed startup only after close settles ([ae2bbe0](https://github.com/morluto/rea/commit/ae2bbe056158eac51aaf0d6ff12d1c2eddc1e5f5))
