@@ -45,8 +45,11 @@ export const riffXma2MetadataSchema = z.strictObject({
   avg_bytes_per_sec: uint32,
   block_align: uint16,
   bits_per_sample: uint16,
-  /** Extra fmt bytes after WAVEFORMATEX; XMA2 declares 34. */
-  fmt_extra_bytes: uint16,
+  /**
+   * WAVEFORMATEX cbSize; XMA2 declares 34. Null when the fmt chunk is shorter
+   * than WAVEFORMATEX and so holds no cbSize.
+   */
+  fmt_extra_bytes: uint16.nullable(),
   /** XMA2WAVEFORMATEX fields after WAVEFORMATEX, when the fmt holds them. */
   xma2: z
     .strictObject({
@@ -68,9 +71,9 @@ export const riffXma2MetadataSchema = z.strictObject({
 export type RiffXma2Metadata = z.infer<typeof riffXma2MetadataSchema>;
 
 /**
- * Bink 2 leading fields named by the issue: magic revision, frame count,
- * dimensions, frame rate and the frame-offset table extent. Other header
- * words stay unnamed.
+ * Bink 2 header fields at the offsets FFmpeg's demuxer reads, the audio
+ * track tables and the frame-offset table extent. The word at offset 16 and
+ * the revision `i`..`k` word after the track count stay unnamed.
  */
 export const bink2MetadataSchema = z.strictObject({
   kind: z.literal("bink2"),
@@ -79,12 +82,32 @@ export const bink2MetadataSchema = z.strictObject({
   /** Printable form of the revision byte when it is, otherwise null. */
   revision_char: z.string().nullable(),
   frame_count: uint32,
+  largest_frame_size: uint32,
   width: uint32,
   height: uint32,
   fps_numerator: uint32,
   fps_denominator: uint32,
-  frame_offset_table_offset: offset,
-  frame_offset_table_bytes: offset,
+  /** Raw video flags word at offset 36. */
+  video_flags: uint32,
+  audio_track_count: uint32,
+  /**
+   * Declared audio tracks in table order; null when the revision is unknown
+   * and the tables could not be located.
+   */
+  audio_tracks: z
+    .array(
+      z.strictObject({
+        max_decoded_size: uint32,
+        sample_rate: uint16,
+        /** Raw track flags as declared; not decoded. */
+        flags: uint16,
+        track_id: uint32,
+      }),
+    )
+    .nullable(),
+  /** Null when the revision is unknown and the table could not be located. */
+  frame_offset_table_offset: offset.nullable(),
+  frame_offset_table_bytes: offset.nullable(),
   /** File size the header stores at offset 4, as declared. */
   declared_size_field: uint32,
   extent_check: extentCheck,

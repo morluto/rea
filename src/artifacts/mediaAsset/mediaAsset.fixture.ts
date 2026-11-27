@@ -41,12 +41,13 @@ const oggCrc = (page: Buffer): number => {
   return crc >>> 0;
 };
 
-const oggPage = (
+export const oggPage = (
   sequence: number,
   granule: bigint,
   data: Buffer,
   flags: number,
   segmentSizes?: readonly number[],
+  serial = 0x1234,
 ): Buffer => {
   const segments =
     segmentSizes === undefined ? [data.length] : [...segmentSizes];
@@ -56,7 +57,7 @@ const oggPage = (
     Buffer.from("OggS", "latin1"),
     Buffer.from([0, flags]),
     i64(granule),
-    u32(0x1234),
+    u32(serial),
     u32(sequence),
     u32(0),
     Buffer.from([segments.length, ...segments]),
@@ -65,6 +66,26 @@ const oggPage = (
   page.writeUInt32LE(oggCrc(page), 22);
   return page;
 };
+
+/** An OpusHead packet: version 1, stereo, pre-skip 312, 48 kHz, gain 0. */
+export const opusHeadPacket = (): Buffer =>
+  Buffer.concat([
+    Buffer.from("OpusHead", "latin1"),
+    Buffer.from([1, 2]),
+    u16(312),
+    u32(48_000),
+    i16(0),
+    Buffer.from([0]),
+  ]);
+
+/** An OpusTags packet with the given vendor bytes and no comments. */
+export const opusTagsPacket = (vendor: Buffer): Buffer =>
+  Buffer.concat([
+    Buffer.from("OpusTags", "latin1"),
+    u32(vendor.length),
+    vendor,
+    u32(0),
+  ]);
 
 /** Ogg Opus: OpusHead, OpusTags and one audio page (issue #14155 fixture). */
 export const oggOpusFixture = (): Buffer => {
@@ -153,23 +174,49 @@ export const riffXma2Fixture = (dataBytes = 4096): Buffer => {
   return Buffer.concat([Buffer.from("RIFF", "latin1"), u32(body.length), body]);
 };
 
+/** One declared Bink audio track. */
+export interface Bink2FixtureTrack {
+  readonly maxDecodedSize: number;
+  readonly sampleRate: number;
+  readonly flags: number;
+  readonly trackId: number;
+}
+
 /**
- * Bink 2 style header: KB2 + revision through flags (44 bytes), then the
- * frame-offset table of `frames + 1` little-endian words, then opaque frames.
+ * Bink 2 header in the layout FFmpeg's demuxer reads (libavformat/bink.c):
+ * signature, size - 8, frame count, largest frame size, an unnamed word,
+ * width, height, fps numerator and denominator, video flags, audio track
+ * count; one extra word for revisions `i`..`k`; per-track max decoded sizes,
+ * (sample rate, flags) pairs and IDs; then `frames + 1` frame offsets and
+ * opaque frames.
  */
-export const bink2Fixture = (frames = 10): Buffer => {
+export const bink2Fixture = (
+  frames = 10,
+  options: {
+    readonly revision?: string;
+    readonly tracks?: readonly Bink2FixtureTrack[];
+  } = {},
+): Buffer => {
+  const revision = options.revision ?? "j";
+  const tracks = options.tracks ?? [];
   const header = Buffer.concat([
-    Buffer.from("KB2j", "latin1"),
-    u32(0),
+    Buffer.from(`KB2${revision}`, "latin1"),
     u32(0),
     u32(frames),
-    u32(1000),
-    u32(1),
+    u32(0x40),
+    u32(0),
     u32(1280),
     u32(720),
     u32(30),
     u32(1),
-    u32(0),
+    u32(0x0000_0010),
+    u32(tracks.length),
+    ...("ijk".includes(revision) ? [u32(0)] : []),
+    ...tracks.map((track) => u32(track.maxDecodedSize)),
+    ...tracks.map((track) =>
+      Buffer.concat([u16(track.sampleRate), u16(track.flags)]),
+    ),
+    ...tracks.map((track) => u32(track.trackId)),
   ]);
   const table = Buffer.concat(
     Array.from({ length: frames + 1 }, (_, index) => u32(0x100 + index * 0x40)),

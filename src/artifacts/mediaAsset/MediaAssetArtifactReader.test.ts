@@ -15,6 +15,9 @@ import {
 import {
   bink2Fixture,
   oggOpusFixture,
+  oggPage,
+  opusHeadPacket,
+  opusTagsPacket,
   oggOpusSpannedTagsFixture,
   riffXma2Fixture,
   vulkanPipelineCacheFixture,
@@ -160,8 +163,59 @@ describe("Ogg Opus headers", () => {
       parseFailure: {
         kind: "truncated",
         format: "ogg-opus",
+        extent: {
+          availableBytes: firstHeader + declaredPayload - 1,
+          requiredBytes: firstHeader + declaredPayload,
+        },
       },
     });
+  });
+
+  it("reads OpusTags from the OpusHead stream across another stream's pages", async () => {
+    const bytes = Buffer.concat([
+      oggPage(0, 0n, opusHeadPacket(), 2),
+      oggPage(0, 0n, Buffer.from("other-stream-header"), 2, undefined, 0x9999),
+      oggPage(1, 0n, opusTagsPacket(Buffer.from("enc")), 0),
+      oggPage(2, 960n, Buffer.from([0xfc, 1, 2]), 4),
+    ]);
+    const result = await read("ogg-opus", bytes);
+    expect(result.metadata).toMatchObject({
+      vendor: "enc",
+      serials: [0x1234, 0x9999, 0x1234],
+      pages_read: 3,
+    });
+    expect(
+      result.coverage[0]?.limitations.some((line) =>
+        line.includes("belong to other logical streams"),
+      ),
+    ).toBe(true);
+  });
+
+  it("reports an OpusTags vendor that is not UTF-8 instead of dropping it silently", async () => {
+    const bytes = Buffer.concat([
+      oggPage(0, 0n, opusHeadPacket(), 2),
+      oggPage(1, 0n, opusTagsPacket(Buffer.from([0xff, 0xfe])), 0),
+    ]);
+    const result = await read("ogg-opus", bytes);
+    expect(result.metadata).toMatchObject({ vendor: null });
+    expect(
+      result.coverage[0]?.limitations.some((line) =>
+        line.includes("not valid UTF-8"),
+      ),
+    ).toBe(true);
+  });
+
+  it("reports an OpusHead page without the beginning-of-stream flag", async () => {
+    const bytes = Buffer.concat([
+      oggPage(0, 0n, opusHeadPacket(), 0),
+      oggPage(1, 0n, opusTagsPacket(Buffer.from("enc")), 0),
+    ]);
+    const result = await read("ogg-opus", bytes);
+    expect(
+      result.coverage[0]?.limitations.some((line) =>
+        line.includes("beginning-of-stream flag"),
+      ),
+    ).toBe(true);
   });
 });
 
@@ -293,15 +347,92 @@ describe("RIFF XMA2 headers", () => {
   });
 });
 
+describe("RIFF chunk framing", () => {
+  const riff = (chunks: readonly Buffer[]): Buffer => {
+    const body = Buffer.concat([Buffer.from("WAVE", "latin1"), ...chunks]);
+    const size = Buffer.alloc(4);
+    size.writeUInt32LE(body.length, 0);
+    return Buffer.concat([Buffer.from("RIFF", "latin1"), size, body]);
+  };
+  const chunk = (id: string, payload: Buffer): Buffer => {
+    const size = Buffer.alloc(4);
+    size.writeUInt32LE(payload.length, 0);
+    return Buffer.concat([Buffer.from(id, "latin1"), size, payload]);
+  };
+  const fmt = (): Buffer => riffXma2Fixture().subarray(12, 12 + 8 + 52);
+
+  it("keeps an odd final chunk whose pad byte is omitted at the form end", async () => {
+    const bytes = riff([fmt(), chunk("data", Buffer.from([1, 2, 3]))]);
+    const result = await read("riff-xma2", bytes);
+    expect(result.metadata).toMatchObject({ extent_check: "consistent" });
+    expect(result.contents.get("chunks/1.data")).toEqual(
+      Buffer.from([1, 2, 3]),
+    );
+    expect(
+      result.coverage[0]?.limitations.some((line) =>
+        line.includes("without its pad byte"),
+      ),
+    ).toBe(true);
+  });
+
+  it("names a chunk with a non-alphanumeric FourCC by index, keeping its ID", async () => {
+    const bytes = riff([fmt(), chunk("../x", Buffer.from([7, 7]))]);
+    const result = await read("riff-xma2", bytes);
+    expect(result.entries.map((entry) => entry.path)).toEqual([
+      "chunks/0.fmt",
+      "chunks/1.bin",
+    ]);
+    expect(result.metadata).toMatchObject({
+      chunks: [{ id: "fmt " }, { id: "../x" }],
+    });
+  });
+});
+
 describe("Bink 2 headers", () => {
+  it("reads header words at the offsets FFmpeg's Bink demuxer uses", async () => {
+    // Known-answer header written field by field at absolute offsets, so it
+    // does not share the fixture builder's field order.
+    const bytes = Buffer.alloc(48 + 3 * 4 + 0x20);
+    bytes.write("KB2j", 0, "latin1");
+    bytes.writeUInt32LE(bytes.length - 8, 4);
+    bytes.writeUInt32LE(2, 8); // frame count
+    bytes.writeUInt32LE(0x11, 12); // largest frame size
+    bytes.writeUInt32LE(0xdead_beef, 16); // unnamed word
+    bytes.writeUInt32LE(640, 20); // width
+    bytes.writeUInt32LE(360, 24); // height
+    bytes.writeUInt32LE(24_000, 28); // fps numerator
+    bytes.writeUInt32LE(1001, 32); // fps denominator
+    bytes.writeUInt32LE(0x10, 36); // video flags
+    bytes.writeUInt32LE(0, 40); // audio tracks
+    bytes.writeUInt32LE(0xffff_ffff, 44); // revision j extra word
+    const result = await read("bink2", bytes);
+    expect(result.metadata).toMatchObject({
+      frame_count: 2,
+      largest_frame_size: 0x11,
+      width: 640,
+      height: 360,
+      fps_numerator: 24_000,
+      fps_denominator: 1001,
+      video_flags: 0x10,
+      audio_track_count: 0,
+      audio_tracks: [],
+      frame_offset_table_offset: 48,
+      frame_offset_table_bytes: 12,
+    });
+    expect(regions(result.entries)).toEqual([
+      { path: "frame-offsets.bin", byteOffset: 48, declaredSize: 12 },
+      { path: "frames.bin", byteOffset: 60, declaredSize: 0x20 },
+    ]);
+  });
+
   it("reports revision, frames, dimensions, fps and the offset table", async () => {
     const bytes = bink2Fixture(10);
     const tableBytes = 44;
-    const tableOffset = 44;
+    const tableOffset = 48;
     const framesOffset = tableOffset + tableBytes;
     const expectedTable = bytes.subarray(tableOffset, framesOffset);
     const expectedFrames = bytes.subarray(framesOffset);
-    expect(bytes.length).toBe(44 + tableBytes + 10 * 0x40);
+    expect(bytes.length).toBe(48 + tableBytes + 10 * 0x40);
     const result = await read("bink2", bytes);
     expect(result.metadata).toMatchObject({
       kind: "bink2",
@@ -333,6 +464,77 @@ describe("Bink 2 headers", () => {
     expect(result.coverage).toEqual([{ status: "complete", limitations: [] }]);
   });
 
+  it("places the frame-offset table after the audio track tables", async () => {
+    const tracks = [
+      { maxDecodedSize: 4096, sampleRate: 48_000, flags: 0x3000, trackId: 7 },
+      { maxDecodedSize: 2048, sampleRate: 22_050, flags: 0x1000, trackId: 9 },
+    ];
+    // Revision h has no extra word: 44 + 12 * 2 tracks.
+    const bytes = bink2Fixture(3, { revision: "h", tracks });
+    const result = await read("bink2", bytes);
+    expect(result.metadata).toMatchObject({
+      audio_track_count: 2,
+      audio_tracks: [
+        {
+          max_decoded_size: 4096,
+          sample_rate: 48_000,
+          flags: 0x3000,
+          track_id: 7,
+        },
+        {
+          max_decoded_size: 2048,
+          sample_rate: 22_050,
+          flags: 0x1000,
+          track_id: 9,
+        },
+      ],
+      frame_offset_table_offset: 68,
+      frame_offset_table_bytes: 16,
+      extent_check: "consistent",
+    });
+    expect(result.contents.get("frame-offsets.bin")).toEqual(
+      bytes.subarray(68, 84),
+    );
+  });
+
+  it("does not place tables for an unknown revision", async () => {
+    const result = await read("bink2", bink2Fixture(3, { revision: "z" }));
+    expect(result.metadata).toMatchObject({
+      revision_char: "z",
+      frame_count: 3,
+      audio_tracks: null,
+      frame_offset_table_offset: null,
+      frame_offset_table_bytes: null,
+    });
+    expect(result.entries).toEqual([]);
+    expect(result.coverage[0]?.status).toBe("unknown");
+    expect(result.coverage[0]?.limitations[0]).toContain(
+      "is not a revision FFmpeg's Bink demuxer reads",
+    );
+  });
+
+  it("does not place tables when reference readers disagree about video flags", async () => {
+    const bytes = bink2Fixture(3);
+    bytes.writeUInt32LE(0x0000_0004, 36);
+    const result = await read("bink2", bytes);
+    expect(result.metadata).toMatchObject({
+      video_flags: 4,
+      frame_offset_table_offset: null,
+    });
+    expect(result.entries).toEqual([]);
+    expect(result.coverage[0]?.limitations[0]).toContain(
+      "reference readers disagree",
+    );
+  });
+
+  it("refuses more audio tracks than Bink demuxers accept", async () => {
+    const bytes = bink2Fixture(1);
+    bytes.writeUInt32LE(257, 40);
+    await expect(read("bink2", bytes)).rejects.toMatchObject({
+      parseFailure: { kind: "malformed", format: "bink2", offset: 40 },
+    });
+  });
+
   it("reports a truncated frame-offset table without inventing frame bytes", async () => {
     const result = await read("bink2", bink2Fixture(10).subarray(0, 60));
     expect(result.metadata).toMatchObject({
@@ -344,9 +546,11 @@ describe("Bink 2 headers", () => {
   });
 
   it("reports a cut-off Bink 2 header as truncated rather than malformed", async () => {
-    await expect(
-      read("bink2", Buffer.from("KB2j\0\0\0\0", "latin1")),
-    ).rejects.toMatchObject({
+    const cut = Buffer.from("KB2j\0\0\0\0", "latin1");
+    expect(
+      recognizeArtifactFormat({ prefix: cut, fileSize: cut.length }),
+    ).toMatchObject({ state: "recognized", format: "bink2" });
+    await expect(read("bink2", cut)).rejects.toMatchObject({
       parseFailure: {
         kind: "truncated",
         format: "bink2",

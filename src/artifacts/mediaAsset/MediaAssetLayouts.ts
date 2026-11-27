@@ -61,8 +61,14 @@ const MAX_RIFF_CHUNKS = 256;
  * metadata field representation bound, not a decode of comment payloads.
  */
 const MAX_VENDOR_BYTES = 4096;
-/** Fmt fields read for WAVEFORMATEX plus XMA2WAVEFORMATEX extras. */
+/**
+ * `sizeof(XMA2WAVEFORMATEX)` in the public xma2defs.h: an 18-byte
+ * WAVEFORMATEX whose cbSize is 34, followed by the XMA2 fields.
+ */
 const XMA2_FMT_READ_BYTES = 52;
+const XMA2WAVEFORMATEX_EXTRA_BYTES = 34;
+/** WAVEFORMATEX through cbSize. */
+const WAVEFORMATEX_BYTES = 18;
 
 /**
  * Keep regions that fit the file and name each one that does not. A region
@@ -112,12 +118,35 @@ const malformed = (
 
 const OPUS_TAGS = Buffer.from("OpusTags", "latin1");
 
+/** The first `limit` bytes of a packet split across page payloads. */
+const packetPrefix = (parts: readonly Buffer[], limit: number): Buffer => {
+  const kept: Buffer[] = [];
+  let length = 0;
+  for (const part of parts) {
+    if (length >= limit) break;
+    const take = part.subarray(0, limit - length);
+    kept.push(take);
+    length += take.length;
+  }
+  return Buffer.concat(kept, length);
+};
+
 /** True when the page's last lacing value is 255, so its packet continues. */
 const pagePacketContinues = (bytes: Buffer, at: number): boolean => {
   const segments = bytes[at + 26]!;
   if (segments === 0) return false;
   return bytes[at + 27 + segments - 1] === 255;
 };
+
+/** RFC 3533 header_type bits. */
+const OGG_CONTINUED_PACKET = 0x01;
+const OGG_BEGINNING_OF_STREAM = 0x02;
+
+/** A page that ends past the file, with the end it declares when known. */
+interface OggPageCutOff {
+  readonly kind: "truncated";
+  readonly requiredEnd: number;
+}
 
 /** One Ogg page's capture header and segment payload extent. */
 const readOggPage = (
@@ -135,9 +164,10 @@ const readOggPage = (
       readonly packet: Buffer;
       readonly continues: boolean;
     }
-  | "truncated"
+  | OggPageCutOff
   | "malformed" => {
-  if (at + 27 > bytes.length || at + 27 > fileSize) return "truncated";
+  const available = Math.min(bytes.length, fileSize);
+  if (at + 27 > available) return { kind: "truncated", requiredEnd: at + 27 };
   if (bytes.toString("latin1", at, at + 4) !== "OggS") return "malformed";
   if (bytes[at + 4] !== 0) return "malformed";
   const headerType = bytes[at + 5]!;
@@ -146,14 +176,15 @@ const readOggPage = (
   const serial = fields.u32(at + 14);
   const sequence = fields.u32(at + 18);
   const segments = bytes[at + 26]!;
-  if (at + 27 + segments > bytes.length) return "truncated";
+  if (at + 27 + segments > available)
+    return { kind: "truncated", requiredEnd: at + 27 + segments };
   let packetBytes = 0;
   for (let index = 0; index < segments; index++)
     packetBytes += bytes[at + 27 + index]!;
   const headerLength = 27 + segments;
   const length = headerLength + packetBytes;
-  if (at + length > fileSize) return "truncated";
-  if (at + length > bytes.length) return "truncated";
+  if (at + length > available)
+    return { kind: "truncated", requiredEnd: at + length };
   return {
     sequence,
     serial,
@@ -186,15 +217,20 @@ export const oggOpusLayout = async (
   const pages: {
     sequence: number;
     serial: number;
+    headerType: number;
     offset: number;
     length: number;
     packet: Buffer;
     continues: boolean;
   }[] = [];
+  /** Pages of the Opus stream that carry the OpusTags packet, in order. */
+  const tagsPages: (typeof pages)[number][] = [];
+  const limitations: string[] = [];
   let at = 0;
-  let truncated = false;
+  let cutOff: OggPageCutOff | undefined;
   let tagsPacketOpen = false;
   let tagsComplete = false;
+  let otherStreamPages = 0;
   while (at < fileSize && pages.length < MAX_OGG_PAGES) {
     await ensure(Math.min(at + 27 + 255 + 65_536, fileSize));
     const page = readOggPage(buffer, at, fileSize);
@@ -206,12 +242,22 @@ export const oggOpusLayout = async (
           : "Ogg page capture pattern is missing or version is not 0",
         at,
       );
-    if (page === "truncated") {
-      truncated = true;
+    if ("kind" in page) {
+      cutOff = page;
       break;
     }
 
     if (pages.length === 0) {
+      pages.push(page);
+      at = page.offset + page.length;
+      continue;
+    }
+
+    // RFC 3533 multiplexing: pages of other logical streams may sit between
+    // the Opus stream's header pages. opusfile skips them while it waits for
+    // OpusTags from the OpusHead serial; they are listed as pages here.
+    if (page.serial !== pages[0]!.serial) {
+      otherStreamPages += 1;
       pages.push(page);
       at = page.offset + page.length;
       continue;
@@ -224,6 +270,7 @@ export const oggOpusLayout = async (
       ) {
         tagsPacketOpen = true;
         pages.push(page);
+        tagsPages.push(page);
         at = page.offset + page.length;
         if (!page.continues) {
           tagsComplete = true;
@@ -231,11 +278,19 @@ export const oggOpusLayout = async (
         }
         continue;
       }
-      // No comment header; this page begins the opaque audio stream.
+      // RFC 7845 section 3 requires OpusTags as the stream's second packet.
+      limitations.push(
+        `The Opus stream's second packet, on the page at offset ${String(page.offset)}, is not OpusTags; no comment header was read.`,
+      );
       break;
     }
 
+    if ((page.headerType & OGG_CONTINUED_PACKET) === 0)
+      limitations.push(
+        `The OpusTags packet continues onto the page at offset ${String(page.offset)}, but that page does not set the continued-packet flag.`,
+      );
     pages.push(page);
+    tagsPages.push(page);
     at = page.offset + page.length;
     if (!page.continues) {
       tagsComplete = true;
@@ -244,13 +299,22 @@ export const oggOpusLayout = async (
   }
 
   if (pages.length === 0) {
-    if (truncated)
+    if (cutOff !== undefined)
       throw truncatedInput("ogg-opus", "the first Ogg page is cut off", {
         offset: 0,
-        extent: { availableBytes: fileSize, requiredBytes: fileSize + 1 },
+        extent: { availableBytes: fileSize, requiredBytes: cutOff.requiredEnd },
       });
     throw malformed("ogg-opus", "no Ogg pages were read", 0);
   }
+  let truncated = cutOff !== undefined;
+  if ((pages[0]!.headerType & OGG_BEGINNING_OF_STREAM) === 0)
+    limitations.push(
+      "The OpusHead page does not set the beginning-of-stream flag that RFC 7845 requires.",
+    );
+  if (otherStreamPages > 0)
+    limitations.push(
+      `${String(otherStreamPages)} examined page(s) belong to other logical streams; they are listed as pages and not interpreted.`,
+    );
 
   if (tagsPacketOpen && !tagsComplete && !truncated && at >= fileSize)
     // A finished page still declared packet continuation past EOF.
@@ -278,35 +342,40 @@ export const oggOpusLayout = async (
   const mappingFamily = head.u8(18);
 
   let vendor: string | null = null;
-  const limitations: string[] = [];
-  const tagsPages = tagsPacketOpen ? pages.slice(1) : [];
   if (tagsPages.length > 0) {
-    const tagsPacket = Buffer.concat(tagsPages.map((page) => page.packet));
-    if (
-      tagsPacket.length >= 12 &&
-      tagsPacket.subarray(0, 8).equals(OPUS_TAGS)
-    ) {
-      const vendorLength = new BinaryReader(tagsPacket, true, "ogg-opus").u32(
+    // Only the packet prefix that holds the vendor is assembled; comment
+    // payloads, which may be large pictures, stay in their page regions.
+    const tagsPrefix = packetPrefix(
+      tagsPages.map((page) => page.packet),
+      12 + MAX_VENDOR_BYTES,
+    );
+    if (tagsPrefix.length < 12)
+      limitations.push(
+        "The OpusTags packet ends before its vendor length; the vendor was not read.",
+      );
+    else {
+      const vendorLength = new BinaryReader(tagsPrefix, true, "ogg-opus").u32(
         8,
       );
-      if (
-        Number.isSafeInteger(vendorLength) &&
-        tagsPacket.length >= 12 + vendorLength
-      ) {
-        if (vendorLength > MAX_VENDOR_BYTES)
-          limitations.push(
-            `The OpusTags vendor string declares ${String(vendorLength)} bytes; only the first ${String(MAX_VENDOR_BYTES)} would be retained as a root fact, so the vendor fact was omitted. Raise is unavailable: this is a fixed metadata-field bound.`,
+      if (vendorLength > MAX_VENDOR_BYTES)
+        limitations.push(
+          `The OpusTags vendor string declares ${String(vendorLength)} bytes, above the ${String(MAX_VENDOR_BYTES)}-byte vendor fact bound; the vendor fact was omitted and its bytes stay in the comment page regions.`,
+        );
+      else if (tagsPrefix.length < 12 + vendorLength)
+        limitations.push(
+          `The OpusTags vendor string declares ${String(vendorLength)} bytes, but only ${String(tagsPrefix.length - 12)} were examined; the vendor was not read.`,
+        );
+      else
+        try {
+          vendor = decodeStrictUtf8(
+            tagsPrefix.subarray(12, 12 + vendorLength),
+            "preserve",
           );
-        else
-          try {
-            vendor = decodeStrictUtf8(
-              tagsPacket.subarray(12, 12 + vendorLength),
-              "preserve",
-            );
-          } catch {
-            vendor = null;
-          }
-      }
+        } catch {
+          limitations.push(
+            "The OpusTags vendor string is not valid UTF-8, which RFC 7845 requires; the vendor fact was omitted.",
+          );
+        }
     }
   }
 
@@ -381,6 +450,20 @@ export const oggOpusLayout = async (
   };
 };
 
+/**
+ * A FourCC is four arbitrary bytes. Entry paths use it only when it is
+ * alphanumeric after trailing spaces, so a crafted ID cannot add separators,
+ * dot segments or control characters; the exact ID stays in `chunks[].id`.
+ */
+const chunkFileSuffix = (id: string): string => {
+  const trimmed = id.replace(/ +$/u, "");
+  return /^[A-Za-z0-9]{1,4}$/u.test(trimmed) ? trimmed : "bin";
+};
+
+/** A FourCC for messages, with non-printable bytes escaped. */
+const chunkLabel = (id: string): string =>
+  JSON.stringify(id).slice(1, -1) || "chunk";
+
 /** RIFF WAVE XMA2: chunk table and declared fmt / XMA2 fields. */
 export const riffXma2Layout = async (
   header: Buffer,
@@ -454,11 +537,21 @@ export const riffXma2Layout = async (
     const alignedEnd = payloadEnd + (size & 1);
     const chunk = { id, offset: dataAt, length: size };
     chunks.push(chunk);
-    if (payloadEnd > containerEnd || alignedEnd > containerEnd) {
+    if (payloadEnd <= containerEnd && alignedEnd > containerEnd) {
+      // Writers commonly omit the pad byte after an odd-sized final chunk.
+      // The chunk's own bytes are all present, so it stays listed.
+      completeChunks.push(chunk);
+      limitations.push(
+        `RIFF chunk ${chunkLabel(id)} at offset ${String(at)} has an odd size and ends at the RIFF form end ${String(containerEnd)} without its pad byte.`,
+      );
+      at = payloadEnd;
+      break;
+    }
+    if (payloadEnd > containerEnd) {
       stopped = true;
       incompleteFraming = true;
       limitations.push(
-        `RIFF chunk ${id.trimEnd() || "chunk"} at offset ${String(at)} declares ${String(size)} byte(s) extending past the RIFF form end at ${String(containerEnd)}; its declared range is kept in metadata but omitted from extractable regions.`,
+        `RIFF chunk ${chunkLabel(id)} at offset ${String(at)} declares ${String(size)} byte(s) extending past the RIFF form end at ${String(containerEnd)}; its declared range is kept in metadata but omitted from extractable regions.`,
       );
       break;
     }
@@ -473,9 +566,16 @@ export const riffXma2Layout = async (
     );
   }
 
-  const fmt = chunks.find((chunk) => chunk.id === "fmt ");
-  if (fmt === undefined)
-    throw malformed("riff-xma2", "WAVE fmt chunk is missing", 12);
+  // Recognition claims only a WAVE whose first chunk is `fmt `; this is that
+  // chunk. Like FFmpeg's wavdec, a later fmt chunk is not interpreted.
+  const fmt = chunks[0];
+  if (fmt?.id !== "fmt ")
+    throw malformed("riff-xma2", "the first WAVE chunk is not fmt", 12);
+  const laterFmt = chunks.slice(1).filter((chunk) => chunk.id === "fmt ");
+  if (laterFmt.length > 0)
+    limitations.push(
+      `${String(laterFmt.length)} further fmt chunk(s) follow the first; only the first was interpreted.`,
+    );
   const fmtRead = Math.min(fmt.length, XMA2_FMT_READ_BYTES);
   if (fmt.offset + fmtRead > fileSize)
     throw truncatedInput("riff-xma2", "WAVE fmt chunk is cut off", {
@@ -519,9 +619,19 @@ export const riffXma2Layout = async (
   const avgBytesPerSec = fmtFields.u32(8);
   const blockAlign = fmtFields.u16(12);
   const bitsPerSample = fmtFields.u16(14);
-  const extraBytes = fmtRead >= 18 ? fmtFields.u16(16) : 0;
+  // A 16-byte PCMWAVEFORMAT-style fmt has no cbSize: unknown, not zero.
+  const extraBytes =
+    fmtRead >= WAVEFORMATEX_BYTES ? fmtFields.u16(16) : null;
+  const hasXma2Fields =
+    fmtRead >= XMA2_FMT_READ_BYTES &&
+    extraBytes !== null &&
+    extraBytes >= XMA2WAVEFORMATEX_EXTRA_BYTES;
+  if (!hasXma2Fields)
+    limitations.push(
+      `The fmt chunk declares tag 0x166 but holds ${String(fmt.length)} byte(s), not the ${String(XMA2_FMT_READ_BYTES)}-byte XMA2WAVEFORMATEX; the XMA2 fields were not read.`,
+    );
   const xma2 =
-    fmtRead >= 52 && extraBytes >= 34
+    hasXma2Fields
       ? {
           num_streams: fmtFields.u16(18),
           channel_mask: fmtFields.u32(20),
@@ -538,7 +648,7 @@ export const riffXma2Layout = async (
       : null;
 
   const regions: MediaAssetRegion[] = completeChunks.map((chunk, index) => ({
-    path: `chunks/${String(index)}.${chunk.id.trimEnd() || "chunk"}`,
+    path: `chunks/${String(index)}.${chunkFileSuffix(chunk.id)}`,
     role: "riff-chunk" as const,
     index,
     offset: chunk.offset,
@@ -581,19 +691,44 @@ export const riffXma2Layout = async (
   };
 };
 
-/** Bink 2: revision, leading frame fields and the frame-offset table. */
+/**
+ * The fixed Bink header through the audio track count. Layout as read by
+ * FFmpeg's demuxer (libavformat/bink.c `read_header`): signature, file size
+ * minus 8, frame count, largest frame size, an unnamed word, width, height,
+ * frame-rate numerator and denominator, video flags, audio track count.
+ */
+const BINK2_FIXED_HEADER_BYTES = 44;
+/**
+ * Revisions FFmpeg's probe accepts for `KB2`. Revisions `i`, `j` and `k`
+ * carry one further word after the audio track count; for any other byte the
+ * position of the tables that follow is unknown.
+ */
+const BINK2_KNOWN_REVISIONS = new Set("adfghijk");
+const BINK2_EXTRA_WORD_REVISIONS = new Set("ijk");
+/**
+ * Audio track count FFmpeg rejects above as an invalid header
+ * (`BINK_MAX_AUDIO_TRACKS`); each track adds 12 table bytes.
+ */
+const BINK_MAX_AUDIO_TRACKS = 256;
+/**
+ * Video flag bits after which vgmstream (src/meta/bik.c) reads further header
+ * words (6 or 12 16-bit values) before the audio tables, and FFmpeg reads
+ * none. The references disagree, so the table position stays unknown.
+ */
+const BINK2_UNSETTLED_VIDEO_FLAGS = 0x0000_0004 | 0x0001_0000;
+
+/** Bink 2: header fields, audio track tables and the frame-offset table. */
 export const bink2Layout = (
   header: Buffer,
   fileSize: number,
 ): MediaAssetLayout<Bink2Metadata> => {
-  if (header.length < 44)
-    throw truncatedInput("bink2", "Bink 2 header is cut off", {
+  const cutOff = (requiredBytes: number, what: string) =>
+    truncatedInput("bink2", what, {
       offset: 0,
-      extent: {
-        availableBytes: header.length,
-        requiredBytes: 44,
-      },
+      extent: { availableBytes: header.length, requiredBytes },
     });
+  if (header.length < BINK2_FIXED_HEADER_BYTES)
+    throw cutOff(BINK2_FIXED_HEADER_BYTES, "Bink 2 header is cut off");
   if (header.toString("latin1", 0, 3) !== "KB2")
     throw malformed("bink2", "Bink 2 magic is missing", 0);
   const fields = new BinaryReader(header, true, "bink2");
@@ -601,19 +736,87 @@ export const bink2Layout = (
   const revisionChar =
     revision >= 0x20 && revision <= 0x7e ? String.fromCharCode(revision) : null;
   const declaredSizeField = fields.u32(4);
-  const frameCount = fields.u32(12);
-  const width = fields.u32(24);
-  const height = fields.u32(28);
-  const fpsNumerator = fields.u32(32);
-  const fpsDenominator = fields.u32(36);
-  // Frame-offset table length must stay a safe byte count; that is a
-  // representation bound, not an inventory policy. Valid counts are listed.
-  if (!Number.isSafeInteger(frameCount) || frameCount < 0)
-    throw malformed("bink2", "Bink 2 frame count is not a safe table size", 12);
-  const tableOffset = 44;
+  const frameCount = fields.u32(8);
+  const largestFrameSize = fields.u32(12);
+  const width = fields.u32(20);
+  const height = fields.u32(24);
+  const fpsNumerator = fields.u32(28);
+  const fpsDenominator = fields.u32(32);
+  const videoFlags = fields.u32(36);
+  const audioTrackCount = fields.u32(40);
+  if (audioTrackCount > BINK_MAX_AUDIO_TRACKS)
+    throw malformed(
+      "bink2",
+      `Bink header declares ${String(audioTrackCount)} audio tracks; Bink demuxers accept at most ${String(BINK_MAX_AUDIO_TRACKS)}`,
+      40,
+    );
+  // The size field stores the file size minus 8.
+  const declaredEnd = declaredSizeField + 8;
+  const known =
+    revisionChar !== null && BINK2_KNOWN_REVISIONS.has(revisionChar);
+  const unplaced = !known
+    ? `Bink 2 revision byte 0x${revision.toString(16).padStart(2, "0")} is not a revision FFmpeg's Bink demuxer reads; the audio track and frame-offset tables after offset ${String(BINK2_FIXED_HEADER_BYTES)} were not located.`
+    : (videoFlags & BINK2_UNSETTLED_VIDEO_FLAGS) !== 0
+      ? `Bink 2 video flags 0x${videoFlags.toString(16)} set a bit after which reference readers disagree about further header words; the audio track and frame-offset tables after offset ${String(BINK2_FIXED_HEADER_BYTES)} were not located.`
+      : undefined;
+  const metadataBase = {
+    kind: "bink2" as const,
+    revision,
+    revision_char: revisionChar,
+    frame_count: frameCount,
+    largest_frame_size: largestFrameSize,
+    width,
+    height,
+    fps_numerator: fpsNumerator,
+    fps_denominator: fpsDenominator,
+    video_flags: videoFlags,
+    audio_track_count: audioTrackCount,
+    declared_size_field: declaredSizeField,
+  };
+  if (unplaced !== undefined) {
+    // Without the revision's layout the track and frame tables cannot be
+    // placed; nothing after the fixed header is listed or interpreted.
+    const fitted = fitRegions("bink2", [], fileSize, declaredEnd);
+    return {
+      metadata: {
+        ...metadataBase,
+        audio_tracks: null,
+        frame_offset_table_offset: null,
+        frame_offset_table_bytes: null,
+        extent_check: fitted.extent,
+      },
+      regions: [],
+      limitations: [
+        unplaced,
+        ...fitted.limitations.filter(
+          (line) => !line.includes("follow the last declared"),
+        ),
+      ],
+      regionsExamined: "unknown",
+    };
+  }
+  const tracksOffset =
+    BINK2_FIXED_HEADER_BYTES +
+    (revisionChar !== null && BINK2_EXTRA_WORD_REVISIONS.has(revisionChar)
+      ? 4
+      : 0);
+  // Per track: max decoded size words, then (sample rate, flags) pairs, then
+  // track IDs, each as one 32-bit word per track.
+  const tracksEnd = tracksOffset + 12 * audioTrackCount;
+  if (header.length < tracksEnd)
+    throw cutOff(tracksEnd, "Bink 2 audio track tables are cut off");
+  const audioTracks = Array.from({ length: audioTrackCount }, (_, index) => {
+    const pair = tracksOffset + 4 * audioTrackCount + 4 * index;
+    return {
+      max_decoded_size: fields.u32(tracksOffset + 4 * index),
+      sample_rate: fields.u16(pair),
+      flags: fields.u16(pair + 2),
+      track_id: fields.u32(tracksOffset + 8 * audioTrackCount + 4 * index),
+    };
+  });
+  const tableOffset = tracksEnd;
+  // frame_count + 1 offsets; a u32 count keeps this a safe integer.
   const tableBytes = (frameCount + 1) * 4;
-  if (!Number.isSafeInteger(tableBytes) || tableBytes < 0)
-    throw malformed("bink2", "Bink 2 frame-offset table size is not safe", 12);
   const framesOffset = tableOffset + tableBytes;
   const regions: MediaAssetRegion[] = [
     {
@@ -632,22 +835,13 @@ export const bink2Layout = (
       offset: framesOffset,
       length: fileSize - framesOffset,
     });
-  // The size field stores fileSize - 8 in the usual layout.
-  const declaredEnd = declaredSizeField + 8;
   const fitted = fitRegions("bink2", regions, fileSize, declaredEnd);
   return {
     metadata: {
-      kind: "bink2",
-      revision,
-      revision_char: revisionChar,
-      frame_count: frameCount,
-      width,
-      height,
-      fps_numerator: fpsNumerator,
-      fps_denominator: fpsDenominator,
+      ...metadataBase,
+      audio_tracks: audioTracks,
       frame_offset_table_offset: tableOffset,
       frame_offset_table_bytes: tableBytes,
-      declared_size_field: declaredSizeField,
       extent_check: fitted.extent,
     },
     regions: fitted.regions,

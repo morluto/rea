@@ -86,9 +86,20 @@ export const hasRiffXma2Header = (prefix: Uint8Array): boolean => {
   return leU16(prefix, 20) === WAVE_FORMAT_XMA2;
 };
 
-/** `KB2` plus a revision byte and enough bytes for the leading fields. */
-export const hasBink2Header = (prefix: Uint8Array): boolean =>
-  startsWith(prefix, BINK2_MAGIC) && prefix.length >= 44;
+/**
+ * `KB2` plus a lowercase revision letter, the signature form Bink 2 files
+ * use. A shorter-than-header file is still claimed so that inspection can
+ * report it as truncated instead of unrecognized.
+ */
+export const hasBink2Header = (prefix: Uint8Array): boolean => {
+  const revision = prefix[3];
+  return (
+    startsWith(prefix, BINK2_MAGIC) &&
+    revision !== undefined &&
+    revision >= 0x61 &&
+    revision <= 0x7a
+  );
+};
 
 /**
  * `VkPipelineCacheHeaderVersionOne`: header size 32 and version 1. There is
