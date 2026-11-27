@@ -1,19 +1,25 @@
 const ZSTD_MAGIC = 0xfd2fb528;
+const ZSTD_MAGIC_BYTES = [0x28, 0xb5, 0x2f, 0xfd] as const;
 const SKIPPABLE_MAGIC_MIN = 0x184d2a50;
 const SKIPPABLE_MAGIC_MAX = 0x184d2a5f;
+const SKIPPABLE_MAGIC_REST = [0x2a, 0x4d, 0x18] as const;
 export const ZSTANDARD_MAGIC_BYTES = 4;
 
 export type ZstandardFrameKind = "zstd" | "skippable";
 
-type Truncation =
-  | "truncated_frame_header"
-  | "truncated_block"
-  | "truncated_checksum";
+export const ZSTANDARD_TRUNCATION_REASONS = [
+  "truncated_frame_header",
+  "truncated_block",
+  "truncated_checksum",
+] as const;
+
+export type ZstandardTruncationReason =
+  (typeof ZSTANDARD_TRUNCATION_REASONS)[number];
 
 export interface ZstandardFrameRead {
   readonly length: number;
   readonly inspect: boolean;
-  readonly eof: Truncation;
+  readonly eof: ZstandardTruncationReason;
   readonly failureOffset: number;
 }
 
@@ -27,16 +33,50 @@ const u24 = (bytes: Uint8Array, offset: number): number =>
 const u32 = (bytes: Uint8Array, offset: number): number =>
   (u24(bytes, offset) | ((bytes[offset + 3] ?? 0) << 24)) >>> 0;
 
+export type ZstandardFrameMagicStatus =
+  | ZstandardFrameKind
+  | "incomplete"
+  | "none";
+
+/**
+ * Inspect the next 4-byte Zstandard or skippable frame magic at `offset`,
+ * distinguishing a complete frame magic, an incomplete 0-3 byte magic prefix
+ * that could continue with more input, and a definite non-frame byte sequence.
+ */
+export const zstandardFrameMagicStatus = (
+  bytes: Uint8Array,
+  offset: number,
+): ZstandardFrameMagicStatus => {
+  const remaining = bytes.length - offset;
+  if (remaining <= 0) return "incomplete";
+  if (remaining >= ZSTANDARD_MAGIC_BYTES) {
+    const magic = u32(bytes, offset);
+    if (magic === ZSTD_MAGIC) return "zstd";
+    if (magic >= SKIPPABLE_MAGIC_MIN && magic <= SKIPPABLE_MAGIC_MAX)
+      return "skippable";
+    return "none";
+  }
+  let matchesZstd = true;
+  for (let index = 0; index < remaining; index += 1)
+    if (bytes[offset + index] !== ZSTD_MAGIC_BYTES[index]) {
+      matchesZstd = false;
+      break;
+    }
+  if (matchesZstd) return "incomplete";
+  const first = bytes[offset]!;
+  if (first < 0x50 || first > 0x5f) return "none";
+  for (let index = 1; index < remaining; index += 1)
+    if (bytes[offset + index] !== SKIPPABLE_MAGIC_REST[index - 1])
+      return "none";
+  return "incomplete";
+};
+
 export const zstandardFrameKind = (
   bytes: Uint8Array,
   offset: number,
 ): ZstandardFrameKind | undefined => {
-  if (bytes.length - offset < ZSTANDARD_MAGIC_BYTES) return undefined;
-  const magic = u32(bytes, offset);
-  if (magic === ZSTD_MAGIC) return "zstd";
-  if (magic >= SKIPPABLE_MAGIC_MIN && magic <= SKIPPABLE_MAGIC_MAX)
-    return "skippable";
-  return undefined;
+  const status = zstandardFrameMagicStatus(bytes, offset);
+  return status === "zstd" || status === "skippable" ? status : undefined;
 };
 
 /**

@@ -51,6 +51,38 @@ export const registerGpuCommands = (cli: CliInstance, logger: Logger): void => {
         targets: {
           description: "JSON array of exact target declarations to decode",
         },
+        max_object_bytes: {
+          description:
+            "Maximum bytes per GPU object read or decoded buffer (default and maximum 134217728)",
+        },
+        max_work_bytes: {
+          description:
+            "Maximum aggregate payload input, decoded output, native-section, and AMDGPU note/structure bytes per inspection (default and maximum 536870912)",
+        },
+        max_report_bytes: {
+          description:
+            "Maximum bytes for retained GPU report facts, PTX text, Clang directories, and CUDA temporary indexes (default and maximum 16777216)",
+        },
+        max_metadata_bytes: {
+          description:
+            "Maximum AMDGPU ELF note and MessagePack metadata bytes (default and maximum 8388608)",
+        },
+        max_structure_bytes: {
+          description:
+            "Maximum bytes of one native ELF/PE section table or decoded section names (default 16777216, up to 536870912)",
+        },
+        max_parser_entries: {
+          description:
+            "Maximum entries per Clang bundle directory, PTX kernel/parameter list, or AMDGPU container (default and maximum 65536)",
+        },
+        max_parser_visits: {
+          description:
+            "Maximum aggregate CUDA record/symbol visits or AMDGPU MessagePack values per code object (default and maximum 262144)",
+        },
+        max_token_bytes: {
+          description:
+            "Maximum bytes per Clang bundle ID, PTX token, or AMDGPU MessagePack scalar (default and maximum 65536)",
+        },
         view: {
           description:
             "JSON GPU object/kernel/PTX page selection; requires --detail summary and --evidence_output",
