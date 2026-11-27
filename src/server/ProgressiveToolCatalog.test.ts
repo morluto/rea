@@ -1,7 +1,10 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { DISCOVER_TOOLS } from "../contracts/catalog/catalogDiscovery.js";
+import {
+  DISCOVER_TOOLS,
+  DISCOVERY_REFRESH_GUIDANCE,
+} from "../contracts/catalog/catalogDiscovery.js";
 import { EvidenceMcpServerCore } from "./EvidenceMcpServerCore.js";
 import { ToolResultDelivery } from "./ToolResultDelivery.js";
 import { parseMcpToolError } from "../../tests/fixtures/mcpToolError.js";
@@ -91,7 +94,7 @@ const connect = async (
   client.setNotificationHandler("notifications/tools/list_changed", changed);
   const discover = (args: Record<string, unknown>) =>
     client.callTool({ name: "discover_tools", arguments: args });
-  return { client, changed, discover, forbidden, bulkNames };
+  return { server, client, changed, discover, forbidden, bulkNames };
 };
 
 it("bounds both discovery refusals, then loads the same inventory in fitting pages", async () => {
@@ -214,6 +217,10 @@ it("accepts its own advertised name like an already-loaded tool", async () => {
   );
   const self = await f.discover({ names: ["discover_tools"] });
   expect(self.isError).not.toBe(true);
+  expect(advertised?.description).toContain(DISCOVERY_REFRESH_GUIDANCE);
+  expect(
+    DISCOVER_TOOLS.outputSchema.parse(self.structuredContent).next_step,
+  ).toContain(DISCOVERY_REFRESH_GUIDANCE);
   expect(self.structuredContent).toMatchObject({
     inventory_count: 4,
     loaded_count: 2,
@@ -274,6 +281,109 @@ it("ranks name matches ahead of description-only matches and caches projected in
     firstPage.tools[0]?.input_schema,
   );
   expect(repeatPage.loaded_count).toBe(5);
+});
+
+it("points unknown tool calls to discover_tools and only suggests currently advertised tools", async () => {
+  const f = await connect();
+  const callUnknown = async (name: string): Promise<string> => {
+    try {
+      await f.client.callTool({ name, arguments: {} });
+    } catch (error) {
+      expect(error).toMatchObject({ code: -32602 });
+      return error instanceof Error ? error.message : String(error);
+    }
+    throw new Error(`expected unknown tool call ${name} to fail`);
+  };
+
+  // Cold tools (alpha_sqlite, beta_sqlite) and excluded tools are disabled and
+  // must not be leaked; remediation points to discover_tools instead of tools/list.
+  const coldNoMatch = await callUnknown("unknown_decompile");
+  expect(coldNoMatch).toContain(
+    "Call discover_tools to find and load an in-scope tool, then retry; do not repeat the unknown tool name.",
+  );
+  expect(coldNoMatch).not.toContain("alpha_sqlite");
+  expect(coldNoMatch).not.toContain("excluded_sqlite");
+  expect(coldNoMatch).not.toContain("tools/list");
+
+  const coldSqliteQuery = await callUnknown("alpha-sqlite");
+  expect(coldSqliteQuery).toContain("call discover_tools");
+  expect(coldSqliteQuery).not.toContain("alpha_sqlite");
+  expect(coldSqliteQuery).not.toContain("excluded_sqlite");
+  expect(coldSqliteQuery).not.toContain("tools/list");
+
+  // Hot advertised tools and discover_tools itself are suggested when close.
+  const hotQuery = await callUnknown("binary-session");
+  expect(hotQuery).toContain("Closest advertised tool: binary_session.");
+  expect(hotQuery).toContain("call discover_tools");
+
+  const discoveryAlias = await callUnknown("discover-tools");
+  expect(discoveryAlias).toContain("Closest advertised tool: discover_tools.");
+  expect(discoveryAlias).toContain("call discover_tools");
+
+  // After loading alpha_sqlite through discover_tools, it becomes eligible for
+  // suggestions, while unloaded beta_sqlite and excluded_sqlite remain hidden.
+  expect((await f.discover({ names: ["alpha_sqlite"] })).isError).not.toBe(
+    true,
+  );
+  const loadedQuery = await callUnknown("alpha-sqlite");
+  expect(loadedQuery).toContain("Closest advertised tool: alpha_sqlite.");
+  expect(loadedQuery).not.toContain("beta_sqlite");
+  expect(loadedQuery).not.toContain("excluded_sqlite");
+
+  // Calling an unloaded tool directly names the discover_tools call that loads it.
+  await expect(
+    f.client.callTool({ name: "beta_sqlite", arguments: {} }),
+  ).rejects.toThrow("not loaded on this connection");
+
+  // Reconnecting the server resets cold visibility, so a later session does
+  // not receive suggestions for tools loaded only in the previous session.
+  await f.client.close();
+  await f.server.close();
+  const [nextClientTransport, nextServerTransport] =
+    InMemoryTransport.createLinkedPair();
+  const nextClient = new Client({ name: "catalog-client-2", version: "1" });
+  cleanup.push(
+    () => nextClient.close(),
+    () => f.server.close(),
+  );
+  await f.server.connect(nextServerTransport);
+  await nextClient.connect(nextClientTransport);
+  let reconnectMessage = "";
+  try {
+    await nextClient.callTool({ name: "alpha-sqlite", arguments: {} });
+  } catch (error) {
+    expect(error).toMatchObject({ code: -32602 });
+    reconnectMessage = error instanceof Error ? error.message : String(error);
+  }
+  expect(reconnectMessage).toContain("call discover_tools");
+  expect(reconnectMessage).not.toContain("alpha_sqlite");
+});
+
+it("tells a caller that names an unloaded in-scope tool the one call that loads it", async () => {
+  const f = await connect();
+  const fail = async (name: string): Promise<string> => {
+    try {
+      await f.client.callTool({ name, arguments: {} });
+    } catch (error) {
+      expect(error).toMatchObject({ code: -32602 });
+      return error instanceof Error ? error.message : String(error);
+    }
+    throw new Error(`expected ${name} to fail`);
+  };
+
+  const unloaded = await fail("alpha_sqlite");
+  expect(unloaded).toContain(
+    'MCP tool alpha_sqlite is in scope but not loaded on this connection. Call discover_tools with names: ["alpha_sqlite"] to load it',
+  );
+  // A tool the caller excluded from this server stays the SDK's refusal.
+  const excluded = await fail("excluded_sqlite");
+  expect(excluded).toContain("disabled");
+  expect(excluded).not.toContain("discover_tools");
+
+  await f.discover({ names: ["alpha_sqlite"] });
+  await expect(
+    f.client.callTool({ name: "alpha_sqlite", arguments: {} }),
+  ).resolves.toBeDefined();
 });
 
 it("returns ranked matches for multi-word task queries when not every word appears (#11707)", async () => {

@@ -21,6 +21,10 @@ import {
   withOwnedRegularFile,
 } from "../../filesystem/OwnedRegularFile.js";
 import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
+import {
+  AbortedWait,
+  waitForAbortable,
+} from "../../process/AbortablePromise.js";
 import { isRecord } from "../../kernel/isRecord.js";
 
 /** Why a named file or download could not be read, or a call was cancelled: a category naming neither the uri nor the content. */
@@ -195,16 +199,6 @@ const readStateFile = async (
   }
 };
 
-/** An abort settles the race directly, before any later read or response. */
-const whenAborted = (signal: AbortSignal): Promise<undefined> =>
-  new Promise((resolve) => {
-    if (signal.aborted) resolve(undefined);
-    else
-      signal.addEventListener("abort", () => resolve(undefined), {
-        once: true,
-      });
-  });
-
 /** What ends a download: its time limit or the caller's cancellation; `failure` names which, or a network failure when neither did. */
 interface DownloadBounds {
   readonly signal: AbortSignal;
@@ -258,24 +252,23 @@ const readCapped = async (
 ): Promise<Result<Buffer, RpcError>> => {
   if (body === null) return ok(Buffer.alloc(0));
   const reader = body.getReader();
-  const aborted = whenAborted(bounds.signal);
   const chunks: Uint8Array[] = [];
   let total = 0;
   let mustCancel = true;
   try {
     for (;;) {
-      let result: ReadableStreamReadResult<Uint8Array> | undefined;
+      if (bounds.signal.aborted) return err(fetchFailed(bounds.failure()));
+      let result: ReadableStreamReadResult<Uint8Array> | AbortedWait;
       try {
-        result = bounds.signal.aborted
-          ? undefined
-          : await Promise.race([aborted, reader.read()]);
+        result = await waitForAbortable(reader.read(), bounds.signal);
       } catch (cause: unknown) {
         // A rejected read already ended the stream. An error handling a
         // fulfilled chunk below can still leave the stream open.
         mustCancel = false;
         throw cause;
       }
-      if (result === undefined) return err(fetchFailed(bounds.failure()));
+      if (result instanceof AbortedWait)
+        return err(fetchFailed(bounds.failure()));
       if (result.done) {
         mustCancel = false;
         return ok(Buffer.concat(chunks, total));
@@ -305,13 +298,13 @@ const downloadState = async (
   const fetching = Promise.resolve().then(() =>
     intake.fetchState(url, bounds.signal),
   );
-  let response: Response | undefined;
+  let response: Response | AbortedWait;
   try {
-    response = await Promise.race([whenAborted(bounds.signal), fetching]);
+    response = await waitForAbortable(fetching, bounds.signal);
   } catch {
     return err(fetchFailed(bounds.failure()));
   }
-  if (response === undefined) {
+  if (response instanceof AbortedWait) {
     // A response that arrives after the download ended is released unread.
     void fetching
       .then(

@@ -16,6 +16,14 @@ import {
 /** XML 1.0 literal line endings; Unicode separators remain source characters. */
 export const XML_LINE_ENDING = /\r\n?|\n/gu;
 
+/** Decode textual true/false after the caller applies its format's whitespace policy. */
+export const parseTrueFalseText = (value: string | null): boolean | null => {
+  const folded = value?.toLowerCase();
+  if (folded === "true") return true;
+  if (folded === "false") return false;
+  return null;
+};
+
 /** Match an XML element node regardless of namespace. */
 export const isXmlElement = (node: Node | null): node is Element =>
   node !== null && node.nodeType === 1;
@@ -60,6 +68,26 @@ export const xmlFirstChildNamed = (
   namespace?: string,
 ): Element | undefined =>
   iterateXmlChildElements(element, local, namespace).next().value;
+
+/** Read a qualified attribute, trimming its value and treating blank text as absent. */
+export const xmlTrimmedAttribute = (
+  element: Element,
+  name: string,
+): string | null => element.getAttribute(name)?.trim() || null;
+
+/** Join direct text and CDATA in order, excluding descendants, then trim once. */
+export const xmlTrimmedDirectText = (element: Element): string | null => {
+  const parts: string[] = [];
+  for (
+    let child = element.firstChild;
+    child !== null;
+    child = child.nextSibling
+  ) {
+    if (child.nodeType === 3 || child.nodeType === 4)
+      parts.push(child.nodeValue ?? "");
+  }
+  return parts.join("").trim() || null;
+};
 
 const XML_FORMAT = "xml";
 

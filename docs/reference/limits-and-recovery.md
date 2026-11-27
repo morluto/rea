@@ -108,8 +108,12 @@ their per-call budgets (`max_file_bytes`, entry, depth and decoded-byte budgets,
 `inspect_devicetree` bounds its estimated decoded representation with
 `max_decoded_bytes` (default 32 MiB, at most 256 MiB).
 `inspect_elf_dependencies`, `inspect_elf_unwind_ranges`, `inspect_apple_ips`,
-`inspect_dwarf_units`, `inspect_native_initializers`, `inspect_pe_resources`
-(`max_entries`) and `inspect_erlang_beam` report it too. The per-page symbol-name text allowance of `inspect_elf_unwind_ranges` is a fixed allowance (`details.refusal.kind` `fixed_ceiling`); its `narrowing` asks for a smaller page `limit` or paging with `offset`. `inspect_erlang_beam` accepts `max_table_rows` (export,
+`inspect_dwarf_units`, `inspect_native_initializers`, `inspect_pe_overlay`,
+`inspect_pe_resources` (`max_entries`), `inspect_api_contract` (`max_file_bytes`),
+`compare_wasm_interfaces` (`max_interface_bytes`),
+`trace_web_source_location` (`source_map_limits.*`),
+`inspect_v8_code_cache` (`max_file_bytes`, `max_strings`) and
+`inspect_erlang_beam` report it too. The per-page symbol-name text allowance of `inspect_elf_unwind_ranges` is a fixed allowance (`details.refusal.kind` `fixed_ceiling`); its `narrowing` asks for a smaller page `limit` or paging with `offset`. `inspect_erlang_beam` accepts `max_table_rows` (export,
 import and lambda rows combined; default 65,536, at most 1,048,576).
 
 ### Native table structure budget
@@ -130,7 +134,9 @@ commands keep the Mach-O command reader's own limit, and the PE headers it reads
 are bounded by the PE format.
 
 For `inspect_native_exports` it also bounds the ELF dynamic, symbol and version
-tables located through PT_DYNAMIC.
+tables located through PT_DYNAMIC. For `inspect_native_initializers` it also
+bounds Android APS2 packed relocation tables (both compressed input bytes and
+equivalent unpacked REL/RELA work).
 
 `inspect_go_binary` and `inspect_rust_binary` accept it for their ELF directory
 and Mach-O load commands. The IL2CPP reader reads the same tables with the 16
@@ -462,9 +468,10 @@ not, the work is never refused or truncated:
     owns, never a symbolic link; files are created exclusively as `0600` by
     the Evidence bundle writer.
   - **Key and lifetime:** each file is named by the SHA-256 of the complete
-    record's exact JSON, so it covers every input and caller choice the
-    record holds, including caller paths the Evidence ID leaves out. A
-    repeat run reuses the file and never rewrites it. A repeat run, or a
+    bundle's canonical JSON, including captured source records and caller
+    paths that semantic Evidence IDs leave out. The separate
+    `record_sha256` receipt still hashes only the complete parent record.
+    A repeat with the same bundle reuses the file and never rewrites it. A repeat run, or a
     `rea inspect-analysis-view` read of the file, renews its age. Each
     retention removes records unused for 7 days, then the least recently
     used until the cache fits `delivery.cli_retained_evidence_bytes`
@@ -485,7 +492,10 @@ not, the work is never refused or truncated:
     and `retained` (`["--evidence_output", "<new-bundle-path>"]`). The
     analysis never fails because of retention. A save that published the
     file but then failed (staging cleanup or cancellation) reports that
-    failure and its cleanup state, as `--evidence_output` does. Caller inputs are never
+    failure and its cleanup state, as `--evidence_output` does; unfinished
+    staging cleanup before commit likewise reports `cleanup_incomplete` with
+    its remaining resources, and an oversized bundle whose post-write removal
+    fails keeps its receipt, paging cursor, and `retention_failure`. Caller inputs are never
     echoed, since they can carry access credentials; the note names both.
 
 A failure's own facts (code, `failure_kind`, retry, recovery and limits)
@@ -498,8 +508,14 @@ view, and `details.partial_observation_delivery` carries the same delivery
 facts as a successful result. On MCP the session retains the complete
 partial Evidence, `next` pages it, and a `resource_link` to it follows
 the error text when one read can deliver it. On the CLI, `--evidence_output`
-publishes it and `next` names the bundle. Without `--evidence_output`,
-nothing is written and `rerun` names the arguments to add.
+publishes it and `next` names the bundle. Without `--evidence_output`, it is
+retained in the same private cache as a successful over-budget result
+(`retained: "cache-file"`), with `details.diagnostics.evidence_bundle`
+reporting its `path`, `bytes`, and `record_sha256` and `next` paging that
+file. When retention is off (`--no-retain` or
+`REA_CLI_RETAINED_EVIDENCE_BYTES=0`) or fails, nothing is written and `rerun`
+names the arguments to add (with `retention_failure` when a write failed);
+cancelled failures do not write to the cache.
 
 Recovery: pass `detail: "complete"` (CLI `--detail complete`) for everything
 inline on one call, or raise the setting for the runtime with
@@ -734,19 +750,27 @@ editable setting or active worker telemetry.
 ## Artifact reader admission
 
 `inspect_artifact` and `extract_artifact` accept `bun`, `dotnet_bundle`,
-`node_sea`, `godot`, `iso9660`, `deno`, `wxapkg` and `tar` groups in
-`artifact_limits`. Their controls apply when recognition
-or inventory encounters that format; supplying
-a policy does not assert the format is present. Unsupported keys are rejected.
-Each group follows one domain-owned default policy. See [.NET bundles](../dotnet-bundles.md),
-[Node SEA](../node-sea.md), [Godot PCK](../godot-pck.md) and
+`node_sea`, `godot`, `iso9660`, `deno`, `wxapkg`, `tar` and
+`android_sparse_image` and `android_vbmeta` groups in `artifact_limits`. Their controls apply when
+recognition or inventory encounters that format. Supplying a policy does not
+assert the format is present. Unsupported keys are rejected. Each group follows
+one domain-owned default policy. See [.NET bundles](../dotnet-bundles.md),
+[Node SEA](../node-sea.md), [Godot PCK](../godot-pck.md),
 [Bun standalone](../bun-standalone.md), [Deno compile](../deno-standalone.md),
-[wxapkg](../wxapkg.md) and [tar](../tar-archives.md) for format semantics.
+[wxapkg](../wxapkg.md), [tar](../tar-archives.md) and
+[Android sparse images](../guides/firmware/android-sparse-image.md) and
+[Android vbmeta](../guides/firmware/android-vbmeta.md) for format semantics.
 
 `artifact_limits.expanded_bytes` selects aggregate plaintext work for ZIP, Bun,
-SEA, PCK, ISO 9660, Deno, wxapkg and tar readers, including repeated readable logical occurrences. Omission
-retains each archive's encoded-size-derived default. The .NET bundle group's
-own `expanded_bytes` controls its independently enforced bundle expansion.
+SEA, PCK, ISO 9660, Deno, wxapkg, tar, macOS flat `.pkg` (including
+`Scripts`/`Payload` cpio archive decoding and scaled cpio member and path-byte
+allowances, plus `Distribution`/`PackageInfo` metadata decoding and scaled
+metadata record and XML-node allowances) and Android sparse image readers, NSO
+segment decompression, and bFLT gzip decompression (which is also capped at a
+fixed 128 MiB in-memory inflation ceiling), including repeated readable logical
+occurrences. Omission retains each archive's encoded-size-derived default. The
+.NET bundle group's own `expanded_bytes` controls its independently enforced
+bundle expansion.
 
 `artifact.member_count` (launch seed `REA_ARTIFACT_MEMBER_COUNT`, default
 100,000, range 1 to 2,147,483,647) is the session default for the per-call

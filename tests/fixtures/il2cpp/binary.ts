@@ -668,7 +668,7 @@ export const createElfFixture = (
       relocation.kind,
     ]);
   const symbols = dynamicSymbols(options.symbolSize, options.symbolDefinition);
-  const hash = Buffer.alloc(options.symbolDefinition === undefined ? 0 : 20);
+  const hash = Buffer.alloc(symbols.length === 0 ? 0 : 20);
   if (hash.length !== 0)
     [1, 2, 1, 0, 0].forEach((value, index) =>
       hash.writeUInt32LE(value, index * 4),

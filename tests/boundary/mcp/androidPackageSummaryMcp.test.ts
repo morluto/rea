@@ -349,8 +349,15 @@ it.skipIf(process.platform === "win32")(
     expect(view.artifact.sha256).not.toBe(report.engine.artifact_sha256);
     expect(receipt.evidence_id).not.toBe(parent.evidence_id);
     expect(receipt.evidence_links).toEqual([parent.evidence_id]);
-    const { manifest, ...declarations } = report;
+    const { manifest, components, ...declarations } = report;
     expect(view.summary).toMatchObject(declarations);
+    // Component rows page through the components view; the summary counts them.
+    const { items, ...componentFacts } = components;
+    expect(view.summary.components).toMatchObject({
+      ...componentFacts,
+      matching_components: items.length,
+    });
+    expect(view.summary.components).not.toHaveProperty("items");
     expect(view.summary.manifest).toEqual({
       status: manifest.status,
       reported_total_bytes: manifest.reported_total_bytes,

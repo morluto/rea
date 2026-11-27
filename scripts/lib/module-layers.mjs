@@ -57,6 +57,7 @@ export const UNIT_LAYERS = Object.freeze(
       "canonicalize",
       "captures",
       "cutter",
+      "deb",
       "desktop",
       "dotnet",
       "electron",
@@ -80,7 +81,9 @@ export const UNIT_LAYERS = Object.freeze(
       "model",
       "native",
       "nuget",
+      "vsix",
       "objdump",
+      "oci",
       "pcap",
       "python",
       "reference",
@@ -267,6 +270,7 @@ export const ENTRY_FILES = Object.freeze(
         "CutterBridgeService.ts",
         "CutterProviderIdentity.ts",
       ],
+      deb: ["DebPackageProvider.ts", "DebPackageProviderIdentity.ts"],
       desktop: [
         "AgentEnvComputer.ts",
         "AgentEnvProviderIdentity.ts",
@@ -368,6 +372,7 @@ export const ENTRY_FILES = Object.freeze(
         "pe/PeImportsProvider.ts",
         "pe/PeLoadConfigProvider.ts",
         "pe/PeUnwindRangesProvider.ts",
+        "pe/PeOverlayProvider.ts",
         "pe/PeResourcesProvider.ts",
         "pwntools/PwntoolsDecoder.ts",
         "pwntools/PwntoolsLayoutProvider.ts",
@@ -376,7 +381,9 @@ export const ENTRY_FILES = Object.freeze(
         "windows/WindowsShortcutProvider.ts",
       ],
       nuget: ["NugetNupkgProvider.ts", "NugetNupkgProviderIdentity.ts"],
+      vsix: ["VsixPackageProvider.ts", "VsixPackageProviderIdentity.ts"],
       objdump: ["ObjdumpCommand.ts", "ObjdumpProviderIdentity.ts"],
+      oci: ["OciImageLayoutProvider.ts", "OciImageLayoutProviderIdentity.ts"],
       pcap: [
         "PcapConfiguration.ts",
         "PcapProvider.ts",
@@ -442,6 +449,13 @@ export const PROVIDER_DEPENDENCIES = Object.freeze([
     // limitations) instead of parsing the archive index a second time.
     reason:
       "the antidote canonicalizer reads the ASAR inventory with the artifacts provider's listing reader",
+  }),
+  Object.freeze({
+    from: "artifacts",
+    to: "native",
+    files: Object.freeze(["pe/PeUnsignedDigest.ts"]),
+    reason:
+      "ASAR inventory explains PE Authenticode signed-after-packing integrity mismatches",
   }),
   Object.freeze({
     from: "artifacts",

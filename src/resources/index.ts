@@ -149,8 +149,10 @@ export {
   DestinationCaseCollisionFailure,
   DestinationPathUnrepresentableFailure,
   annotateEnglishUnicodeCaseCollisions,
+  currentDirectoryPrefixLimitation,
   hasDestinationPath,
   normalizeArtifactPath,
+  withoutCurrentDirectoryPrefix,
 } from "./ArtifactPaths.js";
 export { SafeOutputTree } from "./SafeOutputTree.js";
 export {
