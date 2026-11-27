@@ -268,6 +268,7 @@
 * **ci:** clear stale static diagnostic context before recording ([#14713](https://github.com/morluto/rea/issues/14713)) ([2a4c8cc](https://github.com/morluto/rea/commit/2a4c8ccfba945b051d8aeddcf305cf9158e3c84b))
 * **ci:** close static-check cache gaps and prune stale settings ([#14017](https://github.com/morluto/rea/issues/14017)) ([5817ebb](https://github.com/morluto/rea/commit/5817ebb288612f5aa364398ec1d5e70006888203))
 * **ci:** fall back to Ubuntu Azure archive in recorded-crash container ([#14061](https://github.com/morluto/rea/issues/14061)) ([d02be92](https://github.com/morluto/rea/commit/d02be9207e3060c882273b526a5d7acb2522c781))
+* **ci:** fall back when a changed test fixture has no traced consumer ([#14709](https://github.com/morluto/rea/issues/14709)) ([48adc9d](https://github.com/morluto/rea/commit/48adc9df0bddcb9f3c27eb48db7bec183fe01820))
 * **ci:** include the cache retention helper dependency ([#14689](https://github.com/morluto/rea/issues/14689)) ([8d302d2](https://github.com/morluto/rea/commit/8d302d2dade726f720520fa1addaaabfda6212e5))
 * **ci:** keep equal-duration shard allocation from leaving jobs empty ([#14257](https://github.com/morluto/rea/issues/14257)) ([5aef49a](https://github.com/morluto/rea/commit/5aef49a421bf6ccefc5f55dbf1b032c77dba49a8))
 * **ci:** keep static diagnostics for each workflow attempt ([#14360](https://github.com/morluto/rea/issues/14360)) ([d15068e](https://github.com/morluto/rea/commit/d15068e2b441354291ea45b6a7fe4fa574e736f0))
