@@ -60,6 +60,7 @@ import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactRead
 import { AndroidSparseImageArtifactReader } from "./AndroidSparseImageArtifactReader.js";
 import { UbiImageArtifactReader } from "./UbiImageArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
+import { AmigaHunkArtifactReader } from "./AmigaHunkArtifactReader.js";
 import { BfltArtifactReader } from "./BfltArtifactReader.js";
 import { SwitchExecutableArtifactReader } from "./SwitchExecutableArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
@@ -657,6 +658,16 @@ const NON_ZIP_FORMATS = {
       "DfuSe inventory lists each target element as one region at its declared address. It does not establish CPU, byte order, memory map, or an entry point; an alternate setting selects a device memory, not an address space REA can interpret.",
     createReader: (path, options) =>
       new DfuSeArtifactReader(path, sourceOf(options)),
+  }),
+  "amiga-hunk": container("amiga-hunk", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Amiga Hunk inventory lists hunks, memory flags, relocation counts, symbol names and debug presence, and serves each stored code and data hunk at its file range. Relocations are not applied, the executable is not run, and the container does not name a CPU.",
+    createReader: (path, options) =>
+      new AmigaHunkArtifactReader(path, sourceOf(options)),
   }),
   bflt: container("bflt", {
     roleContainer: true,

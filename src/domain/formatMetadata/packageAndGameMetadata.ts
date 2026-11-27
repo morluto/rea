@@ -419,3 +419,82 @@ export const switchExecutableEntryMetadataSchema = z.strictObject({
 export type SwitchExecutableEntryMetadata = z.infer<
   typeof switchExecutableEntryMetadataSchema
 >;
+
+const amigaHunkMemorySchema = z.enum(["any", "chip", "fast", "extended"]);
+
+const amigaHunkLimitationSchema = z.strictObject({
+  kind: z.enum([
+    "unknown-block",
+    "truncated",
+    "missing-end",
+    "size-mismatch",
+    "relocation-target",
+    "relocation-offset",
+    "trailing-bytes",
+    "header",
+    "missing-body",
+  ]),
+  offset: offset,
+  detail: z.string(),
+});
+
+/**
+ * One AmigaOS hunk. `type` is null when the walk stopped before that hunk's
+ * body. Relocation offsets are counted, not retained or applied.
+ */
+const amigaHunkRecordSchema = z.strictObject({
+  index: uint32,
+  /** Object-file unit index; hunk numbers restart in each unit. Null in a load file. */
+  unit: uint32.nullable(),
+  type: z.enum(["code", "data", "bss"]).nullable(),
+  memory: amigaHunkMemorySchema,
+  /** Raw memory-flags longword when `memory` is `extended`; otherwise null. */
+  extended_flags: uint32.nullable(),
+  declared_longwords: uint32,
+  stored_longwords: uint32.nullable(),
+  stored_bytes: offset.nullable(),
+  file_offset: offset.nullable(),
+  name: z.string().nullable(),
+  relocations: z.array(
+    z.strictObject({
+      kind: z.enum(["reloc32", "reloc32short", "drel32"]),
+      target_hunk: uint32,
+      count: uint32,
+    }),
+  ),
+  symbols: z.array(z.strictObject({ name: z.string(), offset: uint32 })),
+  debug: z.boolean(),
+  debug_longwords: uint32,
+});
+
+/**
+ * Amiga Hunk load file (`HUNK_HEADER`) or object file (`HUNK_UNIT`). Facts are
+ * the file's own big-endian longwords. Relocations are not applied.
+ */
+export const amigaHunkMetadataSchema = z.strictObject({
+  kind: z.literal("amiga-hunk"),
+  file_kind: z.enum(["load", "object"]),
+  resident_libraries: z.array(z.string()),
+  table_size: uint32.nullable(),
+  first_hunk: uint32.nullable(),
+  last_hunk: uint32.nullable(),
+  hunks: z.array(amigaHunkRecordSchema),
+  units: z.array(
+    z.strictObject({ index: uint32, name: z.string(), offset: offset }),
+  ),
+  limitations: z.array(amigaHunkLimitationSchema),
+});
+export type AmigaHunkMetadata = z.infer<typeof amigaHunkMetadataSchema>;
+
+/** One stored code or data hunk from a load file. Object files produce no entries. */
+export const amigaHunkEntryMetadataSchema = z.strictObject({
+  kind: z.literal("amiga-hunk-entry"),
+  hunk: uint32,
+  role: z.enum(["code", "data"]),
+  memory: amigaHunkMemorySchema,
+  declared_bytes: offset,
+  stored_bytes: offset,
+});
+export type AmigaHunkEntryMetadata = z.infer<
+  typeof amigaHunkEntryMetadataSchema
+>;

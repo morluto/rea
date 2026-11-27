@@ -28,6 +28,9 @@ import { ESP8266_REFUSAL } from "./firmware/espImage.js";
 import { twoVolumeUbiImage } from "./firmware/ubiImage.fixture.js";
 import { buildIso9660Image } from "./iso9660/iso9660.fixture.js";
 import { ISO9660_DESCRIPTOR_OFFSET } from "./iso9660/iso9660Structures.js";
+import { amigaLoadFile, amigaObjectFile } from "./amigaHunk.fixture.js";
+
+const AMIGA_CODE = Buffer.from([0x4e, 0x75, 0x00, 0x00]);
 
 /** A classic iNES header declaring one 16 KiB PRG bank, with no bank bytes. */
 const headerOnlyInes = (): Buffer => {
@@ -387,6 +390,32 @@ it("recognizes a Debian package ar archive whose first member is debian-binary",
     state: "recognized",
     format: "deb",
   });
+});
+
+it("recognizes Amiga Hunk load and object files from header structure", () => {
+  expect(
+    recognize(amigaLoadFile({ hunks: [{ type: "code", bytes: AMIGA_CODE }] })),
+  ).toMatchObject({ state: "recognized", format: "amiga-hunk" });
+  expect(
+    recognize(
+      amigaObjectFile([
+        { name: "obj.o", hunks: [{ type: "code", bytes: AMIGA_CODE }] },
+      ]),
+    ),
+  ).toMatchObject({ state: "recognized", format: "amiga-hunk" });
+});
+
+it("does not claim a bare Amiga Hunk magic without a plausible header", () => {
+  const words = (...values: number[]): Buffer => {
+    const bytes = Buffer.alloc(values.length * 4);
+    values.forEach((value, index) => bytes.writeUInt32BE(value, index * 4));
+    return bytes;
+  };
+  expect(recognize(words(0x3f3))).toBeUndefined();
+  // table size 1 does not cover last hunk 1
+  expect(recognize(words(0x3f3, 0, 1, 0, 1, 2, 2))).toBeUndefined();
+  // a unit name followed by a word that is not a hunk block
+  expect(recognize(words(0x3e7, 1, 0x41424344, 0xdeadbeef))).toBeUndefined();
 });
 
 it("does not recognize a plain ar archive that is not a Debian package", () => {

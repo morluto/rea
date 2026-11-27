@@ -560,6 +560,12 @@ JSON values stop at `MAX_JSON_DEPTH` (1000) in
 "JSON value exceeds maximum nesting depth of 1000. This release has no runtime
 override."
 
+Amiga Hunk inventory stops at fixed allowances: 64 MiB for the file, 1024
+hunks (and 1024 object units), 65536 relocations in one hunk, 65536 relocation records (distinct kind and target pairs) across the file (a separate relocation-record allowance), and 65536 bytes of resident-library,
+hunk, symbol and object-file unit names. A larger table is a fixed ceiling, not a partial
+inventory. This release has no runtime override. See
+[Amiga Hunk executables](../guides/native/amiga-hunk-executables.md).
+
 ## Typed refusals
 
 A producer that refuses a request types the refusal instead of leaving
@@ -768,7 +774,8 @@ allowances, plus `Distribution`/`PackageInfo` metadata decoding and scaled
 metadata record and XML-node allowances) and Android sparse image readers, NSO
 segment decompression, and bFLT gzip decompression (which is also capped at a
 fixed 128 MiB in-memory inflation ceiling), including repeated readable logical
-occurrences. Omission retains each archive's encoded-size-derived default. The
+occurrences. Amiga Hunk does not use `artifact_limits.expanded_bytes`; its
+entries are stored ranges of the admitted file. Omission retains each archive's encoded-size-derived default. The
 .NET bundle group's own `expanded_bytes` controls its independently enforced
 bundle expansion.
 

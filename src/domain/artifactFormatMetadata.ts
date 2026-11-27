@@ -23,6 +23,8 @@ import {
   tarEntryMetadataSchema,
   switchExecutableMetadataSchema,
   switchExecutableEntryMetadataSchema,
+  amigaHunkMetadataSchema,
+  amigaHunkEntryMetadataSchema,
 } from "./formatMetadata/packageAndGameMetadata.js";
 import {
   bfltMetadataSchema,
@@ -79,6 +81,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   tarEntryMetadataSchema,
   switchExecutableMetadataSchema,
   switchExecutableEntryMetadataSchema,
+  amigaHunkMetadataSchema,
+  amigaHunkEntryMetadataSchema,
   pyInstallerMetadataSchema,
   pyInstallerEntryMetadataSchema,
   dotnetBundleEntryMetadataSchema,
@@ -386,6 +390,14 @@ const declarationsByKind: {
   "bflt-segment": {
     notCompared:
       "Its segment name is in its path and its offset and length are layout; content comparison covers its bytes.",
+  },
+  "amiga-hunk": {
+    notCompared:
+      "Its fields come from the file's own hunk header and blocks, which content comparison covers.",
+  },
+  "amiga-hunk-entry": {
+    notCompared:
+      "Its hunk number and role are in its path and its offset and length are layout; content comparison covers its bytes.",
   },
   "esp-flash-image": {
     notCompared:

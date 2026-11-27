@@ -519,6 +519,17 @@ rea extract-artifact ./busybox.bflt --json
 See [uClinux bFLT flat executables](../bflt-executables.md) for header facts,
 segments, gzip and gzdata bodies, and the limitations kept beside the facts.
 
+Inventory and extract an AmigaOS Hunk load file or object file:
+
+```sh
+rea inspect-artifact ./program.hunk --json
+rea extract-artifact ./program.hunk --json
+```
+
+See [Amiga Hunk executables](../guides/native/amiga-hunk-executables.md) for
+hunk memory flags, relocation counts, and opening an extracted code hunk as
+raw big-endian m68k.
+
 Inventory and extract a Nintendo DS ROM's CPU binaries, overlays, and files:
 
 ```sh

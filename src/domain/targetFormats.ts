@@ -45,6 +45,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   "esp-image": "archive",
   uf2: "archive",
   dfuse: "archive",
+  "amiga-hunk": "archive",
   bflt: "archive",
   "esp-flash-image": "archive",
   fit: "archive",

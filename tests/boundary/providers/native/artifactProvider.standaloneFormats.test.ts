@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
+import { amigaLoadFile } from "../../../../src/domain/amigaHunk.fixture.js";
 import { bfltFile } from "../../../../src/domain/bfltExecutable.fixture.js";
 import { windowsShortcutBytes } from "../../../fixtures/binaryDiagnostics/windowsShortcut.js";
 import { createSqliteDatabaseFixture } from "../../../fixtures/sqlite/database.js";
@@ -173,6 +174,21 @@ it("keeps a plain ar archive that is not a Debian package unsupported", async ()
       projectCliAnalysisResult,
     ),
   ).resolves.toMatchObject({ code: "target_unavailable" });
+});
+
+it("inventories an Amiga Hunk load file without a follow-up probe", async () => {
+  const directory = await createTestTempDirectory("rea-standalone-format-");
+  const path = await writeBytes("program.hunk", () =>
+    amigaLoadFile({
+      hunks: [{ type: "code", bytes: Buffer.from([0x4e, 0x75, 0x00, 0x00]) }],
+    }),
+  )(directory);
+
+  expect(await inspect(path)).toEqual({
+    format: "amiga-hunk",
+    subject: "amiga-hunk",
+    probes: [],
+  });
 });
 
 it("routes a bFLT executable's text segment to open_binary", async () => {

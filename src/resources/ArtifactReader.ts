@@ -280,6 +280,7 @@ export interface ArtifactReader {
     | "esp-image"
     | "uf2"
     | "dfuse"
+    | "amiga-hunk"
     | "bflt"
     | "esp-flash-image"
     | "fit"
