@@ -239,6 +239,13 @@ export const PE_LOAD_CONFIG_PROVIDER = Object.freeze({
   version: "1",
 } as const);
 
+/** Provider identity for bytes appended after a PE image. */
+export const PE_OVERLAY_PROVIDER = Object.freeze({
+  id: "rea-pe-overlay",
+  name: "REA PE overlay parser",
+  version: "1",
+} as const);
+
 /** Provider identity for the read-only release exposure audit. */
 export const RELEASE_EXPOSURE_PROVIDER = Object.freeze({
   id: "rea-release-exposure",
