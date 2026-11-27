@@ -1,3 +1,4 @@
+import { appendToMapList } from "../domain/appendToMapList.js";
 import type { CdpCommandResult } from "./protocol/CdpCommands.js";
 import type {
   SnapshotDocumentNodes,
@@ -152,9 +153,7 @@ const resolveXmlElements = (
     if (parent === undefined) continue;
     if (parent < 0) pending.push({ node });
     else {
-      const siblings = children.get(parent);
-      if (siblings === undefined) children.set(parent, [node]);
-      else siblings.push(node);
+      appendToMapList(children, parent, node);
     }
   }
   const bindings = new Map<string, string>();

@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { JavaScriptApplicationGraph } from "./javascriptApplicationGraph.js";
@@ -53,9 +54,7 @@ const buildFeatureGraphIndex = (
   const nodesByKind = new Map<ApplicationNode["kind"], ApplicationNode[]>();
   for (const node of graph.nodes) {
     nodesById.set(node.node_id, node);
-    const bucket = nodesByKind.get(node.kind);
-    if (bucket === undefined) nodesByKind.set(node.kind, [node]);
-    else bucket.push(node);
+    appendToMapList(nodesByKind, node.kind, node);
   }
   const adjacencyCache: Partial<
     Record<
@@ -85,13 +84,13 @@ export const buildFeatureAdjacency = (
   const adjacency = new Map<string, FeatureAdjacencyEntry[]>();
   for (const edge of edges) {
     if (direction !== "incoming")
-      addAdjacency(adjacency, edge.source_node_id, {
+      appendToMapList(adjacency, edge.source_node_id, {
         edge,
         nextNodeId: edge.target_node_id,
         ascends: false,
       });
     if (direction !== "outgoing")
-      addAdjacency(adjacency, edge.target_node_id, {
+      appendToMapList(adjacency, edge.target_node_id, {
         edge,
         nextNodeId: edge.source_node_id,
         ascends: direction === "both" && edge.relation === "contains",
@@ -105,14 +104,4 @@ export const buildFeatureAdjacency = (
           compareUnicodeCodePoints(left.nextNodeId, right.nextNodeId),
       );
   return adjacency;
-};
-
-const addAdjacency = (
-  adjacency: Map<string, FeatureAdjacencyEntry[]>,
-  nodeId: string,
-  entry: FeatureAdjacencyEntry,
-): void => {
-  const entries = adjacency.get(nodeId);
-  if (entries === undefined) adjacency.set(nodeId, [entry]);
-  else entries.push(entry);
 };

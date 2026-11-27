@@ -48,20 +48,37 @@ const openEndedPattern = (minimum: number): string => {
  * it never rejects a token the parser admits.
  */
 export const decimalTokenPattern = (domain: z.ZodNumber): string => {
-  const schema = z.toJSONSchema(domain);
-  const minimum = Math.max(
-    0,
-    Math.ceil(schema.minimum ?? 0),
-    typeof schema.exclusiveMinimum === "number"
-      ? Math.floor(schema.exclusiveMinimum) + 1
-      : 0,
-  );
-  const maximum = Math.min(
-    Math.floor(schema.maximum ?? Infinity),
-    typeof schema.exclusiveMaximum === "number"
-      ? Math.ceil(schema.exclusiveMaximum) - 1
-      : Infinity,
-  );
+  let minimum =
+    domain.minValue !== null && domain.minValue > 0
+      ? Math.ceil(domain.minValue)
+      : 0;
+  let maximum =
+    domain.maxValue !== null && domain.maxValue < Infinity
+      ? Math.floor(domain.maxValue)
+      : Infinity;
+  for (const check of domain._zod.def.checks ?? []) {
+    const def = check._zod.def as {
+      readonly check?: string;
+      readonly value?: unknown;
+      readonly inclusive?: boolean;
+    };
+    if (typeof def.value !== "number") continue;
+    if (def.check === "greater_than") {
+      minimum = Math.max(
+        minimum,
+        def.inclusive === false
+          ? Math.floor(def.value) + 1
+          : Math.ceil(def.value),
+      );
+    } else if (def.check === "less_than") {
+      maximum = Math.min(
+        maximum,
+        def.inclusive === false
+          ? Math.ceil(def.value) - 1
+          : Math.floor(def.value),
+      );
+    }
+  }
   // Non-integer floors and ceilings have no safe-integer range to publish.
   if (!Number.isSafeInteger(minimum)) return "^[0-9]+$";
   if (maximum === Infinity) return openEndedPattern(minimum);

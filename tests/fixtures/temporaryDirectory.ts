@@ -1,4 +1,4 @@
-import { mkdtemp, realpath } from "node:fs/promises";
+import { mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -31,6 +31,17 @@ export const createTestTempDirectory = async (
     await removeTestWorkspace(canonicalDirectory);
   });
   return canonicalDirectory;
+};
+
+/** Write a single fixture in a fresh directory owned by the current test. */
+export const createTestTempFile = async (
+  prefix: string,
+  name: string,
+  contents: Uint8Array | string,
+): Promise<string> => {
+  const path = join(await createTestTempDirectory(prefix), name);
+  await writeFile(path, contents);
+  return path;
 };
 
 /**

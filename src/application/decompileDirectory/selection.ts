@@ -197,15 +197,3 @@ const compareParsedProcedureAddresses = (
   if (leftCoordinate.offset > rightCoordinate.offset) return 1;
   return 0;
 };
-
-/** Numeric order within an address space; unparsed addresses sort last. */
-export const compareProcedureAddresses = (
-  left: string,
-  right: string,
-): number =>
-  compareParsedProcedureAddresses(
-    left,
-    addressCoordinate(left),
-    right,
-    addressCoordinate(right),
-  );

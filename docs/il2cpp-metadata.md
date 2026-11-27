@@ -22,8 +22,7 @@ each method to its code address. See [Native method addresses](#native-method-ad
 
 ## MCP
 
-MCP defaults to a compact summary and retains the complete decoded Evidence in
-the session. MCP requires an absolute filesystem path:
+MCP requires an absolute filesystem path:
 
 ```json
 {
@@ -34,8 +33,8 @@ the session. MCP requires an absolute filesystem path:
 }
 ```
 
-The summary retains the complete decoded Evidence in the session and returns a
-linked `inspect_analysis_view` overview: artifact identity, metadata version,
+MCP defaults to a compact summary. It retains the complete decoded Evidence in
+the session and returns a linked `inspect_analysis_view` overview: artifact identity, metadata version,
 index widths and `counts` (`sections`, `images`, `types`, `methods`,
 `nested_types`, `fields`, `properties`, `events`, `parameters` and
 `string_literals`) without rows. Use `normalized_result.parent_evidence_id` to page
@@ -136,21 +135,18 @@ budget.
 rea inspect-il2cpp-metadata /absolute/path/global-metadata.dat --json
 ```
 
-The CLI defaults to complete Evidence. For compact delivery, explicitly preserve
-the full Evidence in a new file:
+The CLI defaults to complete Evidence. Compact delivery requires
+`--evidence_output`, which never overwrites an existing file. The saved bundle
+preserves every decoded row; query it offline by the returned
+`parent_evidence_id`, without the original file:
 
 ```bash
 rea inspect-il2cpp-metadata /absolute/path/global-metadata.dat \
-  --detail summary --evidence_output /tmp/metadata-evidence.json --json
-jq -c '{source: {kind: "inline", evidence: .records[0]}, view: {kind: "il2cpp-metadata", collection: "methods", indices: [9785], fields: ["name", "declaring_type"]}}' \
-  /tmp/metadata-evidence.json > /tmp/metadata-query.json
-rea inspect-analysis-view /tmp/metadata-query.json --json
+  --detail summary --evidence_output metadata-evidence.json --json
+rea inspect-analysis-view --evidence-bundle metadata-evidence.json \
+  '{"source":{"kind":"retained-evidence","evidence_id":"<parent_evidence_id>"},"view":{"kind":"il2cpp-metadata","collection":"methods","indices":[9785],"fields":["name","declaring_type"]}}' \
+  --json
 ```
-
-Use the exported Evidence with the CLI's inline Evidence source format described
-in [CLI and Evidence](getting-started/cli.md#run-a-command). Compact delivery requires
-`--evidence_output`; existing files are never overwritten. The full export
-preserves every decoded row for subsequent queries without the original file.
 
 `--binary PATH` links method addresses, `--architecture arm64|amd64` selects
 exactly one slice of a universal Mach-O and `--generic-instances` adds generic
@@ -160,8 +156,8 @@ identity. Slices are selected as for the other native inspectors: a CPU family
 with one slice is read by its family name, and when several slices share a
 family the value must name one slice's subtype exactly, so `arm64` reads the
 `arm64` slice beside an `arm64e` one. Selection problems are invalid
-`binary_architecture` requests, and a damaged FAT table is an invalid
-`binary_path`. `arm64e` is not a `binary_architecture` value: when the
+`binary_architecture` requests, and a damaged FAT table or slice is a
+malformed target at the binary's path (see [failures](#failures)). `arm64e` is not a `binary_architecture` value: when the
 intended slice is the only arm64e slice among several arm64-family slices, use
 `lipo -info` to enumerate exact subtypes on macOS, extract the slice into a
 separate file, for example `lipo universal -thin arm64e -output thin-arm64e`,
@@ -251,12 +247,31 @@ same virtual address and file bytes contributes one record. Distinct virtual
 record addresses remain distinct candidates, and conflicting file mappings
 remain malformed.
 
-Module records establish names through their declared NUL-terminated string pointers. NUL/0xFF padding, spaces, Unicode and suffix-shared storage are supported. A pointer to a longer string does not match just its suffix; a pointer directly into a shared suffix may name it. Exact reversed UTF-8 matching avoids rescanning the file for every name and retains duplicate-name owners until module records resolve them. A contributor investigated a Linux
-`GameAssembly.so` from Unity 2023.2.13f1 whose static registration was not located. When no static pair is resolved on x86-64 or arm64, the reader searches executable ranges for bytes consistent with a reference to a module-array candidate: RIP-relative LEA/MOV on x86-64, an adjacent `adrp`/`add` pair on arm64. Exactly one referenced array candidate must remain. `code_gen_modules_field` is then `null`, and Evidence is **inferred**: instruction boundaries, the absence of a static registration elsewhere, and runtime use were not verified. The module records and slots themselves remain file observations. Static-table associations are **derived**. Otherwise the result is `code-registration-not-found`. Cpp2IL's StrippedCodeRegSupport plugin also recovers the module list of an inlined CodeRegistration from the module names; this fallback additionally requires the exact located module set and a single code reference. A Unity 2022.3.62f3 macOS Master build checked by a contributor keeps neither registration symbol; its type table is then inferred as described below.
+Module records establish names through their declared NUL-terminated string
+pointers. NUL/0xFF padding, spaces, Unicode and suffix-shared storage are
+supported. A pointer to a longer string does not match just its suffix; a
+pointer directly into a shared suffix may name it. Exact reversed UTF-8 matching
+avoids rescanning the file for every name and retains duplicate-name owners
+until module records resolve them.
+
+A static registration is not always found: contributors checked a Linux
+`GameAssembly.so` from Unity 2023.2.13f1 where it was not located, and a Unity
+2022.3.62f3 macOS Master build that keeps neither registration symbol. When no static pair is resolved on x86-64 or arm64, the reader
+searches executable ranges for bytes consistent with a reference to a
+module-array candidate: RIP-relative LEA/MOV on x86-64, or an adjacent
+`adrp`/`add` pair on arm64. Exactly one referenced array candidate must remain,
+and it must contain exactly the located module set. `code_gen_modules_field` is
+then `null` and Evidence is **inferred**: instruction boundaries, the absence of
+a static registration elsewhere, and runtime use were not verified. The module
+records and slots remain file observations, and static-table associations are
+**derived**. Otherwise the result is `code-registration-not-found`. Cpp2IL's
+StrippedCodeRegSupport plugin similarly recovers an inlined CodeRegistration's
+module list from module names. The Master build's type table is then inferred
+as described below.
 
 The binary/metadata pair is caller-selected. Name/count/token agreement is structural evidence, not a cryptographic same-build proof. File-offset locations refer to the primary metadata artifact; linked virtual addresses refer to `binary.artifact`. Both SHA-256 identities remain available in compact native pages as `artifact` and `binary_source`.
 
-Contributor-reported verification (not all rerun by the follow-up): macOS arm64 and x86_64 slices from Unity 2021.3.45f2, 2022.3.30f1, 2022.3.62f3 and
+Contributor-reported verification, not all rerun by maintainers: macOS arm64 and x86_64 slices from Unity 2021.3.45f2, 2022.3.30f1, 2022.3.62f3 and
 6000.0.84f1 against dSYM symbols; Android arm64 and x86-64 from 2022.3.62f3
 against `libil2cpp.sym.so`; Windows x64 from 2023.2.13f1 (metadata version 29,
 the MIT-licensed game Between Two Worlds 1.0.5, `GameAssembly.dll` SHA-256
@@ -278,6 +293,12 @@ The result adds:
   `code_gen_modules_field` (the address of `codeGenModulesCount`, or `null` as
   described above), `code_gen_modules_array` (the module pointer array) and
   `code_gen_modules` (`image`, record `address`, `method_pointer_count`);
+  Compact summaries omit `code_gen_modules` and keep its count in
+  `counts.code_gen_modules`; query `collection: "code_gen_modules"` with batch
+  `image_indices` or source `indices`, `fields` and pagination. A module row's
+  `index` is its retained position and `image` joins the image collection.
+  Scalar registration facts and both source identities stay inline, and complete
+  Evidence retains the full table.
 - `method_addresses`: one row per method index with `state`, `address` and
   `rva` (address minus `image_base`), both hexadecimal strings. `state` is
   `code` when the module slot holds an unambiguously mapped executable address, `no-body` when an observed slot is zero,
@@ -440,26 +461,48 @@ reported: versions 27.0 to 27.2 share that header number but place the
 Il2CppType byref flag in different bits, so a rendered name could gain or lose
 `&` without warning.
 
-The builds checked are listed after the module search rules above.
-
 | Reason                                  | Category    | Meaning                                                                                                      |
 | --------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------ |
 | `unsupported-container`                 | unsupported | Not a 64-bit little-endian Mach-O, PE or ELF image (ELF: AArch64 or x86-64 with dynamic section).            |
 | `unsupported-pointer-encoding`          | unsupported | Mach-O chained fixups or Android packed (APS2) ELF relocations; pointers not decoded.                        |
-| `malformed-container`                   | input error | The container headers are damaged.                                                                           |
-| `code-gen-modules-not-found`            | input error | An image has no module record; often a binary from a different build.                                        |
-| `ambiguous-code-gen-module`             | input error | More than one module record matches an image.                                                                |
-| `code-registration-not-found`           | input error | No unique module table or executable-byte array candidate was resolved.                                      |
-| `invalid-method-token`                  | input error | A token is outside its module's method-pointer rows, or a MethodDef row is reused within one image.          |
-| `invalid-method-pointer`                | input error | A slot is unavailable or its nonzero address lacks unambiguous executable file coverage.                     |
-| `metadata-registration-not-found`       | input error | No single MetadataRegistration or code-loaded type-table candidate was resolved.                             |
-| `invalid-type`                          | input error | A type index or `Il2CppType` record is out of range, unmapped or malformed.                                  |
+| `malformed-container`                   | malformed   | The container headers are damaged.                                                                           |
+| `code-gen-modules-not-found`            | conflict    | An image has no module record; often a binary from a different build.                                        |
+| `ambiguous-code-gen-module`             | conflict    | More than one module record matches an image.                                                                |
+| `code-registration-not-found`           | conflict    | No unique module table or executable-byte array candidate was resolved.                                      |
+| `invalid-method-token`                  | conflict    | A metadata MethodDef row is past its module's method-pointer rows.                                           |
+| `invalid-method-pointer`                | conflict    | A slot is unavailable or its nonzero address lacks unambiguous executable file coverage.                     |
+| `metadata-registration-not-found`       | conflict    | No single MetadataRegistration or code-loaded type-table candidate was resolved.                             |
+| `invalid-type`                          | conflict    | A type index or `Il2CppType` record is out of range, unmapped or malformed.                                  |
 | `unsupported-type-kind`                 | unsupported | A valid type kind has no implemented rendering.                                                              |
 | `generic-methods-unsupported`           | unsupported | Generic instances were requested for metadata version 24 or 39, or a build lacks either static registration. |
-| `generic-method-registration-not-found` | input error | No CodeRegistration layout bounds every genericMethodTable row, or the generic tables are unreadable.        |
-| `ambiguous-generic-method-registration` | input error | More than one CodeRegistration layout bounds every genericMethodTable row.                                   |
+| `generic-method-registration-not-found` | conflict    | No CodeRegistration layout bounds every genericMethodTable row, or the generic tables are unreadable.        |
+| `ambiguous-generic-method-registration` | conflict    | More than one CodeRegistration layout bounds every genericMethodTable row.                                   |
 
-Format failures name `binary_path` and slice-selection failures name `binary_architecture`; capacity refusals remain typed resource errors whose `reported_limits` name the exceeded budget (`boundary`, the capacity reason) and its `maximum`, with `details.refusal.unit` naming the unit the budget counts (`"entries"`, `"bytes"` or `"frames"`). Failed linking preserves the metadata source identity, validated counts, selected binary path/architecture and its SHA-256 when observed, plus prior producer observations. It never publishes an incomplete native table as complete. The binary input is bounded to 1 GiB. The virtual-pointer index has the same 1 GiB estimated representation allowance, reserving 2 KiB per distinct virtual destination before insertion for retained Maps and finish-time lookup storage. Repeated declarations of one destination share that reservation. This conservative allocation accounting is separate from actual process RSS and the report allowance; exhaustion returns a typed `native-index-capacity` refusal before another destination is retained.
+Each category says which selected file is at fault:
+
+- **unsupported**: an `unsupported_target` refusal whose `details.path` is
+  `binary_path`. The binary's form is outside coverage.
+- **malformed**: an `unsupported_target` refusal with `details.failure_kind`
+  `malformed` or `truncated`, whose `details.path` is `binary_path`. The
+  binary's own bytes are damaged. A damaged universal Mach-O container,
+  including a slice that ends inside its header or disagrees with its FAT
+  table entry, is reported the same way with `details.format` `macho`.
+- **conflict**: both files parsed but do not agree. They may come from
+  different builds, either file may be damaged, or the binary's registration
+  layout may be outside coverage; nothing establishes which. The refusal has
+  code `input_conflict`, `details.failure_kind` `conflict`, `retry`
+  `after_change` and no `recovery`. `details.inputs` lists both files as
+  `{ field, path }`: `path` for the metadata and `binary_path` for the binary
+  (`binary` in the CLI, after its `--binary` option). `details.path` names
+  the metadata. Neither file is called malformed; select a pair from the same
+  build. See [target failures](reference/target-failures.md).
+
+A token that is not a MethodDef row, or a row reused within one image, is
+the metadata's own fault, so linking refuses it as malformed metadata with
+`invalid-method-definition-token` (see [failures](#failures)), not
+as a conflict. Rows may repeat across images, since each image numbers its own.
+
+Slice-selection failures name `binary_architecture`: an architecture the universal file does not hold, an ambiguous one, or one given for a thin file. A metadata failure found while linking names the metadata's path, not the binary's. Capacity refusals remain typed resource errors whose `reported_limits` name the exceeded budget (`boundary`, the capacity reason) and its `maximum`, with `details.refusal.unit` naming the unit the budget counts (`"entries"`, `"bytes"` or `"frames"`). Failed linking preserves the metadata source identity, validated counts, selected binary path/architecture and its SHA-256 when observed, plus prior producer observations. It never publishes an incomplete native table as complete. The binary input is bounded to 1 GiB. The ELF virtual-pointer index has its own per-call allowance, `max_native_index_bytes` (CLI `--max-native-index-bytes`, needs `binary_path`), which defaults to 1 GiB of estimated representation and reserves 2 KiB per distinct virtual destination before insertion for retained Maps and finish-time lookup storage. The default admits 524,288 destinations; a build with more, such as the Unity 6 arm64 `libil2cpp.so` with 559,802 relocations in [#14175](https://github.com/morluto/rea/issues/14175), needs a larger value on the next call. Repeated declarations of one destination share that reservation. This conservative allocation accounting is separate from actual process RSS, host memory and the report allowance; exhaustion returns a typed `native-index-capacity` refusal before another destination is retained, with `reported_limits.boundary` `virtual-pointer-index-bytes` and `details.limit` naming `max_native_index_bytes`, its effective value, its default and its range (1 to `Number.MAX_SAFE_INTEGER`).
 
 Scans yield cooperatively in bounded batches. Name-address retention and reverse-trie construction are each limited to 65,536 entries/nodes and fallback module-array candidates to 64 (`native-index-capacity`); exceeding capacity does not prove absence. Rendered type text has a 64 MiB UTF-8 cache-workspace guard, separate from the 64 MiB encoded-report admission, and 64 nested rendering frames (`native-type-text-capacity` / `type-nesting-capacity`). Genuine cycles are malformed; unsupported type kinds are explicit coverage failures. Native row/text admission runs before allocation or retention. Unused generic parameter names are read on demand from the same stable metadata snapshot. There is no cross-inspection file cache; validated immutable Evidence is reused for session views.
 
@@ -519,22 +562,26 @@ A file whose magic is not `0xFAB11BAF` fails as an unsupported target with
 A version other than 24, 27, 29, 31 or 39 fails as an unsupported target with
 `unsupported-version`.
 
-Damaged metadata returns an input error (`invalid_format`) whose
-message names one reason:
+Damaged metadata is refused as a malformed target: an `unsupported_target`
+refusal whose `details.path` is the metadata file, `details.format` is
+`il2cpp-metadata`, `details.failure_kind` is `truncated` for
+`truncated-header` and `malformed` otherwise, and `details.reason` names one
+reason. The request is not at fault, so no input recovery is offered:
 
-| Reason                    | Meaning                                                                                                          |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `truncated-header`        | The file is shorter than the header.                                                                             |
-| `unexpected-header-size`  | `stringLiterals.offset` is not the header size: 264 bytes for version 24, 256 for 27, 29 and 31, 380 for 39.     |
-| `section-out-of-bounds`   | A section extends beyond the file, or a non-empty section starts inside the header.                              |
-| `section-overlap`         | Two sections overlap. Zero-size sections are exempt and gaps are allowed.                                        |
-| `record-size-mismatch`    | A section size does not divide into its records, or the record size differs from the one the index widths imply. |
-| `type-index-width`        | The record used to derive the type index width implies no 1, 2 or 4 byte width.                                  |
-| `index-out-of-range`      | A serialized index or range points outside its target collection.                                                |
-| `nested-type-conflict`    | A type is listed as nested in two types, in itself, or in a cycle of declaring types.                            |
-| `declaring-type-mismatch` | A method inside a type's method range names a different type, or a method lies outside its type's range.         |
-| `image-range-overlap`     | Two images claim the same type definitions.                                                                      |
-| `invalid-string`          | A name index is outside the strings section, its string is unterminated, or it is not valid UTF-8.               |
+| Reason                            | Meaning                                                                                                                                    |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `truncated-header`                | The file is shorter than the header.                                                                                                       |
+| `unexpected-header-size`          | `stringLiterals.offset` is not the header size: 264 bytes for version 24, 256 for 27, 29 and 31, 380 for 39.                               |
+| `section-out-of-bounds`           | A section extends beyond the file, or a non-empty section starts inside the header.                                                        |
+| `section-overlap`                 | Two sections overlap. Zero-size sections are exempt and gaps are allowed.                                                                  |
+| `record-size-mismatch`            | A section size does not divide into its records, or the record size differs from the one the index widths imply.                           |
+| `type-index-width`                | The record used to derive the type index width implies no 1, 2 or 4 byte width.                                                            |
+| `index-out-of-range`              | A serialized index or range points outside its target collection.                                                                          |
+| `nested-type-conflict`            | A type is listed as nested in two types, in itself, or in a cycle of declaring types.                                                      |
+| `declaring-type-mismatch`         | A method inside a type's method range names a different type, or a method lies outside its type's range.                                   |
+| `image-range-overlap`             | Two images claim the same type definitions.                                                                                                |
+| `invalid-string`                  | A name index is outside the strings section, its string is unterminated, or it is not valid UTF-8.                                         |
+| `invalid-method-definition-token` | Read only when linking a binary: a method an image owns has no nonzero MethodDef token, or two methods in one image share a MethodDef row. |
 
 Record extents are checked for the decoded images, types, methods, fields,
 properties, events, parameters, string literals, nested types, generic
@@ -588,7 +635,7 @@ were compiled into the native binary or how they behave at runtime.
 `verify:pcap`, because no real game metadata ships with the repository. Normal
 inspection does not need it.
 
-The follow-up was checked against the public Cpp2IL
+Metadata inventory was checked against the public Cpp2IL
 [`Simple_2022_3_35` sample](https://github.com/SamboyCoding/Cpp2IL/tree/b5ad444b82267cb1e4b88b8b373c008105bdea52/TestFiles/Simple_2022_3_35):
 version 31, 1,892,268 bytes, SHA-256
 `2441635a7c234a1a34deccc6a9906d6f5abcbdab078a38b2bf488a52a4962c48`.
@@ -596,10 +643,3 @@ An independent byte-layout oracle matched all 36 images, 2,468 types and 12,409
 methods. Corresponding managed DLLs independently matched names and ownership
 for 35 images, 2,463 types and 12,406 methods; the generated image has no matching
 DLL. This does not establish real-producer coverage for versions 29 or 39.
-
-Compact native summaries omit the `binary.code_gen_modules` table and keep its
-count in `counts.code_gen_modules`. Query `collection: "code_gen_modules"`
-with batch `image_indices` or source `indices`, selected `fields` and pagination.
-Module row `index` is its retained collection position; `image` joins the
-metadata image collection. Scalar registration facts and both source identities
-remain inline. Complete Evidence retains the original full table.

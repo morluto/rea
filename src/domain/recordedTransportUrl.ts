@@ -203,13 +203,18 @@ export const redactRecordedTransportUrl = (
   readonly url_credentials_redacted: boolean;
 } => {
   if (value === null) return { url: null, url_credentials_redacted: false };
-  const { credentials } = parseRecordedTransportUrl(value);
+  // Interpret leading padding for credentials while keeping it in the observation.
+  const candidate = value.trimStart();
+  const { credentials } = parseRecordedTransportUrl(candidate);
   if (credentials === null)
     return { url: value, url_credentials_redacted: false };
   if (credentials === "ambiguous")
     return { url: null, url_credentials_redacted: true };
+  const padding = value.length - candidate.length;
   return {
-    url: value.slice(0, credentials.start) + value.slice(credentials.end),
+    url:
+      value.slice(0, padding + credentials.start) +
+      value.slice(padding + credentials.end),
     url_credentials_redacted: true,
   };
 };

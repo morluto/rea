@@ -1,6 +1,5 @@
 import { z } from "zod";
 
-import { inspectAnalysisView } from "../application/analysisView/AnalysisViewService.js";
 import { ArtifactResourceScope } from "../resources/index.js";
 import { ANALYSIS_VIEW_PROVIDER } from "../domain/investigationProviders.js";
 import { inspectEvidenceBundleCommand } from "../application/EvidenceBundleCommands.js";
@@ -19,8 +18,30 @@ import { registerCliCommand } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { cliPublicationInvocation } from "./cliEvidencePublication.js";
+import { renewRetainedEvidence } from "./cliEvidenceRetention.js";
+
+/** The Evidence files a successful view read: its file source and bundle. */
+const renewReadRetainedEvidence = async (
+  document: unknown,
+  bundlePath: string | undefined,
+): Promise<void> => {
+  const { retention } = cliPublicationInvocation();
+  const source =
+    typeof document === "object" && document !== null
+      ? (document as { readonly source?: unknown }).source
+      : undefined;
+  const sourcePath =
+    typeof source === "object" &&
+    source !== null &&
+    (source as { readonly kind?: unknown }).kind === "evidence-file"
+      ? (source as { readonly path?: unknown }).path
+      : undefined;
+  for (const path of [sourcePath, bundlePath])
+    if (typeof path === "string") await renewRetainedEvidence(path, retention);
+};
 import { contractNamed } from "./contractCliDescription.js";
-import { registerContractDocumentCommand } from "./contractCommand.js";
+import { registerContractDocumentCommand } from "./contractDocumentCommand.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { jsonInputArgument } from "./jsonInputArgument.js";
 
@@ -101,19 +122,24 @@ export const registerAnalysisViewCommands = (
       const resources = new ArtifactResourceScope();
       const bundlePath = cliOptions.evidenceBundle;
       const result = await finishAnalysisCommand(
-        () =>
-          inspectAnalysisView(document, undefined, {
+        async () => {
+          const { inspectAnalysisView } =
+            await import("../application/analysisView/AnalysisViewService.js");
+          return inspectAnalysisView(document, undefined, {
             signal,
             resources,
             ...(bundlePath === undefined
               ? {}
               : { evidenceBundlePath: bundlePath }),
-          }),
+          });
+        },
         resources,
         ANALYSIS_VIEW_PROVIDER.id,
         operation,
         signal,
       );
+      // Reading a retained record renews its age in the private cache.
+      if (result.ok) await renewReadRetainedEvidence(document, bundlePath);
       // Preserve the inline command's existing error label without copying
       // the authenticated completed Evidence or its partial observation.
       return result.ok

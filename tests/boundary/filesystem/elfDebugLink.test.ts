@@ -1,13 +1,21 @@
 import * as zlib from "node:zlib";
-import { createHash } from "node:crypto";
+import { sha256 as sha256Of } from "../../support/sha256.js";
 import { mkdir, open, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { scheduler } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
-import { createElfDebugLinkService } from "../../../src/composition/binaryDiagnostics.js";
+import {
+  primaryAnalysisError,
+  resolvedAnalysisError,
+} from "../../../src/domain/analysisErrorBase.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { createElfDebugLinkService } from "../../../src/composition/binaryDiagnostics/elfDebugLink.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
 import {
   ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION,
+  ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION,
+  ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
   ELF_DEBUG_LINK_CANDIDATE_PREFIX_LIMITATION,
   ELF_DEBUG_LINK_CANDIDATE_UNREADABLE_LIMITATION,
   ELF_DEBUG_LINK_CANNOT_VERIFY_LIMITATION,
@@ -25,7 +33,12 @@ import {
   FIXTURE_BUILD_ID_HEX,
   FIXTURE_DEBUG_NAME,
 } from "../../../src/native/elf/ElfDebugLink.fixture.js";
+import {
+  expectRetainedDescriptor,
+  withDescriptorCloseFailure,
+} from "../../fixtures/descriptorCloseFailure.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expectFileSelectionErrors } from "../../support/expectFileSelectionErrors.js";
 import { elfFrameAllowanceFixture } from "../../fixtures/binaryDiagnostics/elfFrameAllowance.js";
 
 vi.mock(import("node:zlib"), { spy: true });
@@ -60,37 +73,19 @@ it("inflates section names once per artifact while preserving build-ID compariso
 });
 
 describe("ELF debug-link stable filesystem boundary", () => {
-  it("reports non-file and malformed ELF selections as caller input errors", async () => {
+  it("reports non-file and missing selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-elf-debug-link-files-");
     const path = join(root, "prog");
     const alias = join(root, "alias");
-    const malformed = join(root, "malformed");
     await writeFile(path, elfDebugLinkFixture());
-    await writeFile(malformed, Buffer.from("not an elf"));
     await symlink(path, alias);
     const service = createElfDebugLinkService();
     try {
-      for (const [candidate, reason] of [
-        [root, "invalid_format"],
-        [alias, "invalid_format"],
-        [malformed, "invalid_format"],
-        [join(root, "missing"), "invalid_value"],
-        [join(path, "child"), "invalid_value"],
-      ] as const) {
-        const result = await service.inspect({ path: candidate });
-        if (result.ok) throw new Error("Expected file acquisition failure");
-        expect(result.error).toMatchObject({
-          _tag: "AnalysisInputError",
-          operation: "inspect_elf_debug_link",
-          issues: [
-            {
-              path: ["path"],
-              reason,
-              message: expect.any(String),
-            },
-          ],
-        });
-      }
+      await expectFileSelectionErrors(service, "inspect_elf_debug_link", {
+        root,
+        alias,
+        path,
+      });
     } finally {
       await service.close();
     }
@@ -113,7 +108,7 @@ describe("ELF debug-link stable filesystem boundary", () => {
       const report = elfDebugLinkSchema.parse(missing.value.normalized_result);
       expect(report.artifact).toEqual({
         path,
-        sha256: createHash("sha256").update(image).digest("hex"),
+        sha256: sha256Of(image),
         bytes: image.length,
       });
       expect(report.debuglink).toMatchObject({
@@ -150,23 +145,15 @@ describe("ELF debug-link stable filesystem boundary", () => {
           reason: "candidate_unreadable",
         },
       });
-      const linked = await service.inspect({ path, candidate_path: alias });
-      const relative = await service.inspect({
-        path,
-        candidate_path: "prog.debug",
-      });
-      if (linked.ok)
-        throw new Error("Expected a symlinked candidate rejection");
-      expect(linked.error).toMatchObject({
-        _tag: "AnalysisInputError",
-        issues: [{ path: ["candidate_path"], reason: "invalid_format" }],
-      });
-      if (relative.ok)
-        throw new Error("Expected a relative candidate rejection");
-      expect(relative.error).toMatchObject({
-        _tag: "AnalysisInputError",
-        issues: [{ path: ["candidate_path"], reason: "invalid_format" }],
-      });
+      for (const candidate_path of [alias, "prog.debug"]) {
+        const refusal = await service.inspect({ path, candidate_path });
+        if (refusal.ok)
+          throw new Error(`Expected refusal for ${candidate_path}`);
+        expect(refusal.error).toMatchObject({
+          _tag: "AnalysisInputError",
+          issues: [{ path: ["candidate_path"], reason: "invalid_format" }],
+        });
+      }
     } finally {
       await service.close();
     }
@@ -185,11 +172,34 @@ describe("ELF debug-link stable filesystem boundary", () => {
       const tooSmall = await service.inspect({ path, max_file_bytes: 64 });
       if (tooSmall.ok) throw new Error("Expected resource budget failure");
       expect(tooSmall.error._tag).toBe("AnalysisResourceConstraintError");
+      expect(projectAnalysisError(tooSmall.error).details).toMatchObject({
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 64,
+          minimum: 64,
+          maximum: 536870912,
+          default_value: 67108864,
+        },
+      });
       const tooMany = await service.inspect({ path, max_entries: 1 });
       if (tooMany.ok) throw new Error("Expected entry budget failure");
       if (!(tooMany.error instanceof AnalysisResourceConstraintError))
         throw new Error("Expected entry budget failure");
-      expect(tooMany.error.remediationAction).toContain("smaller image");
+      expect(projectAnalysisError(tooMany.error).remediation.action).toBe(
+        "inspect_elf_debug_link reached its max_entries budget of 1. Pass a larger max_entries on the next inspect_elf_debug_link call (range 1..256), then retry.",
+      );
+      expect(tooMany.error.limit).toEqual({
+        control_kind: "parameter",
+        parameter: "max_entries",
+        effective_value: 1,
+        unit: "count",
+        minimum: 1,
+        maximum: 256,
+        default_value: 128,
+        applies_at: "next_call",
+      });
+      expect((await service.inspect({ path, max_entries: 2 })).ok).toBe(true);
       const cancelled = await service.inspect(
         { path },
         { signal: AbortSignal.abort() },
@@ -234,53 +244,277 @@ it("does not open a conventional lookup path when no candidate is selected", asy
   }
 });
 
-describe("ELF debug-link streamed candidate boundary", () => {
-  it("retains streamed candidate identity when cancellation stops ELF comparison", async () => {
+it.each(["comparison", "descriptor close", "failed descriptor close"] as const)(
+  "retains streamed candidate Evidence when cancelled during %s",
+  async (stage) => {
     const root = await createTestTempDirectory(
       "rea-elf-debug-link-cancel-candidate-",
     );
     const path = join(root, "prog");
     const candidatePath = join(root, "prog.debug");
-    const candidate = elfFrameAllowanceFixture();
-    await writeFile(path, elfDebugLinkFixture());
+    const candidateFixture = elfFrameAllowanceFixture();
+    const image = elfDebugLinkFixture();
+    const closing = stage !== "comparison";
+    const closeFailed = stage === "failed descriptor close";
+    const candidate = closing
+      ? Buffer.concat([candidateFixture, Buffer.alloc(160_000)])
+      : candidateFixture;
+    const parameters = {
+      path,
+      candidate_path: candidatePath,
+      ...(closing ? { max_file_bytes: image.length } : {}),
+    };
+    await writeFile(path, image);
     await writeFile(candidatePath, candidate);
     const service = createElfDebugLinkService();
     const controller = new AbortController();
-    const reason = new Error("stop while decoding candidate names");
+    const reason = new Error(`stop during the candidate ${stage}`);
     const yieldToEventLoop = scheduler.yield.bind(scheduler);
-    const pause = vi
-      .spyOn(scheduler, "yield")
-      .mockImplementationOnce(async () => {
+    const pause = vi.spyOn(scheduler, "yield");
+    const openFile = vi.mocked(open);
+    if (stage === "comparison") {
+      pause.mockImplementationOnce(async () => {
         await yieldToEventLoop();
         controller.abort(reason);
       });
+    } else {
+      const real =
+        await vi.importActual<typeof import("node:fs/promises")>(
+          "node:fs/promises",
+        );
+      openFile.mockImplementation(async (...args) => {
+        const handle = await real.open(...args);
+        if (args[0] === candidatePath) {
+          const close = handle.close.bind(handle);
+          vi.spyOn(handle, "close").mockImplementationOnce(async () => {
+            if (!closeFailed) await close();
+            controller.abort(reason);
+            if (closeFailed)
+              throw new Error("candidate descriptor not released");
+          });
+        }
+        return handle;
+      });
+    }
     try {
-      const result = await service.inspect(
-        { path, candidate_path: candidatePath },
-        { signal: controller.signal },
-      );
+      const result = await service.inspect(parameters, {
+        signal: controller.signal,
+      });
       if (result.ok)
         throw new Error("Expected candidate comparison cancellation");
-      expect(result.error).toMatchObject({
-        _tag: "AnalysisCancelledError",
-        cause: reason,
-        partialObservation: {
-          build_id: { status: "observed", hex: FIXTURE_BUILD_ID_HEX },
-          candidate: {
-            path: candidatePath,
-            sha256: createHash("sha256").update(candidate).digest("hex"),
-            bytes: candidate.length,
-            debug_info: "unknown",
-            symtab: "unknown",
-          },
-          verification: null,
+      const primary = primaryAnalysisError(result.error);
+      expect(primary._tag).toBe("AnalysisCancelledError");
+      expect(primary.cause).toBe(reason);
+      expect(result.error.cleanupIncomplete).toBe(closeFailed);
+      expect(result.error.cleanupResources).toEqual(
+        closeFailed ? [candidatePath] : [],
+      );
+      const evidence = parseEvidence(result.error.partialObservation);
+      expect(evidence.parameters).toEqual(parameters);
+      expect(evidence.subject).toMatchObject({
+        identity: {
+          kind: "file",
+          format: "elf",
+          sha256: sha256Of(image),
         },
+        local_path: path,
       });
+      expect(evidence.locations.slice(0, 2)).toEqual([
+        { kind: "artifact-path", path },
+        { kind: "artifact-path", path: candidatePath },
+      ]);
+      const report = elfDebugLinkSchema.parse(evidence.normalized_result);
+      expect(report.build_id).toMatchObject({
+        status: "observed",
+        hex: FIXTURE_BUILD_ID_HEX,
+      });
+      expect(report.candidate).toEqual({
+        path: candidatePath,
+        sha256: sha256Of(candidate),
+        bytes: candidate.length,
+        format: null,
+        byte_order: null,
+        debug_info: "unknown",
+        symtab: "unknown",
+      });
+      expect(report.verification).toBeNull();
+      expect(report.limitations).toContain(
+        ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION,
+      );
+      if (closeFailed) {
+        await service.close();
+        expect(result.error.cleanupIncomplete).toBe(false);
+        expect(result.error.cleanupResources).toEqual([]);
+        expect(resolvedAnalysisError(result.error)).toBe(primary);
+        expect(parseEvidence(primary.partialObservation)).toEqual(evidence);
+      }
     } finally {
       pause.mockRestore();
+      openFile.mockReset();
       await service.close();
     }
+  },
+);
+it.each([
+  "image close failure",
+  "cancellation during image close",
+  "candidate close failure",
+] as const)("retains completed ELF Evidence after %s", async (stage) => {
+  const root = await createTestTempDirectory(
+    "rea-elf-debug-link-finalization-",
+  );
+  const path = join(root, "prog");
+  const candidatePath = join(root, "prog.debug");
+  const candidate = elfDebugCandidateFixture();
+  const crc = zlib.crc32(candidate);
+  const image = elfDebugLinkFixture({
+    debuglink: debuglinkSection(FIXTURE_DEBUG_NAME, crc, true),
   });
+  await writeFile(path, image);
+  await writeFile(candidatePath, candidate);
+
+  const service = createElfDebugLinkService();
+  const controller = new AbortController();
+  const cancelAtClose = stage === "cancellation during image close";
+  const candidateCompleted = stage === "candidate close failure";
+  const reason = new Error(stage);
+  const cleanup: Parameters<typeof withDescriptorCloseFailure>[1] = {
+    path: candidateCompleted ? candidatePath : path,
+    denied: !cancelAtClose,
+    handles: [],
+  };
+  const openFile = vi.mocked(open);
+  const real =
+    await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises",
+    );
+  const injected = withDescriptorCloseFailure(real, cleanup);
+  openFile.mockImplementation(async (...args) => {
+    const handle = await injected.open(...args);
+    if (cancelAtClose && args[0] === path) {
+      const close = handle.close.bind(handle);
+      vi.spyOn(handle, "close").mockImplementationOnce(async () => {
+        await close();
+        controller.abort(reason);
+      });
+    }
+    return handle;
+  });
+  const parameters = cancelAtClose
+    ? { path }
+    : { path, candidate_path: candidatePath };
+  try {
+    const result = await service.inspect(parameters, {
+      signal: controller.signal,
+    });
+    if (result.ok)
+      throw new Error("Expected ELF descriptor finalization failure");
+    const primary = primaryAnalysisError(result.error);
+    if (cancelAtClose) {
+      expect(primary._tag).toBe("AnalysisCancelledError");
+      expect(primary.cause).toBe(reason);
+      expect(result.error.cleanupResources).toEqual([]);
+    } else {
+      expectRetainedDescriptor(result, cleanup, "inspect_elf_debug_link");
+    }
+    expect(
+      openFile.mock.calls.some(([selected]) => selected === candidatePath),
+    ).toBe(candidateCompleted);
+
+    const evidence = parseEvidence(result.error.partialObservation);
+    expect(evidence.parameters).toEqual(parameters);
+    const report = elfDebugLinkSchema.parse(evidence.normalized_result);
+    expect(report).toMatchObject({
+      artifact: { path, bytes: image.length, sha256: sha256Of(image) },
+      debuglink: {
+        status: "present",
+        crc32_hex: crc.toString(16).padStart(8, "0"),
+      },
+      build_id: { status: "observed", hex: FIXTURE_BUILD_ID_HEX },
+      candidate: candidateCompleted
+        ? {
+            path: candidatePath,
+            bytes: candidate.length,
+            format: "elf64",
+            sha256: sha256Of(candidate),
+          }
+        : null,
+      verification: candidateCompleted
+        ? {
+            status: "matches",
+            crc32: { status: "match" },
+            build_id: { status: "match" },
+          }
+        : null,
+    });
+    expect(
+      report.limitations.includes(
+        ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
+      ),
+    ).toBe(!cancelAtClose && !candidateCompleted);
+    cleanup.denied = false;
+    await service.close();
+    expect(cleanup.handles[0]?.fd).toBe(-1);
+    expect(result.error.cleanupResources).toEqual([]);
+    expect(resolvedAnalysisError(result.error)).toBe(primary);
+    expect(parseEvidence(primary.partialObservation)).toEqual(evidence);
+  } finally {
+    cleanup.denied = false;
+    openFile.mockReset();
+    await service.close();
+  }
+});
+
+it("does not promote parsed linkage when the image changes before final verification", async () => {
+  const root = await createTestTempDirectory(
+    "rea-elf-debug-link-final-identity-",
+  );
+  const path = join(root, "prog");
+  const image = elfDebugLinkFixture({ debugdata: Buffer.alloc(8192) });
+  const namesOffset = image.indexOf(Buffer.from("\0.note.gnu.build-id\0"));
+  expect(namesOffset).toBeGreaterThan(4096);
+  await writeFile(path, image);
+
+  const service = createElfDebugLinkService();
+  const openFile = vi.mocked(open);
+  const real =
+    await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises",
+    );
+  let changed = false;
+  openFile.mockImplementation(async (...args) => {
+    const handle = await real.open(...args);
+    if (args[0] === path) {
+      const read = handle.read.bind(handle);
+      vi.spyOn(handle, "read").mockImplementation(async (...range) => {
+        const result = await read(...range);
+        if (!changed && range.at(3) === namesOffset && result.bytesRead > 0) {
+          await real.appendFile(path, Buffer.of(0));
+          changed = true;
+        }
+        return result;
+      });
+    }
+    return handle;
+  });
+  try {
+    const result = await service.inspect({ path });
+    expect(changed).toBe(true);
+    if (result.ok)
+      throw new Error("Expected the final identity check to refuse the image");
+    expect(projectAnalysisError(result.error).code).toBe("artifact_changed");
+    expect(result.error.partialObservation).toMatchObject({
+      path,
+      bytes: image.length,
+      sha256: sha256Of(image),
+    });
+  } finally {
+    openFile.mockReset();
+    await service.close();
+  }
+});
+
+describe("ELF debug-link streamed candidate boundary", () => {
   it("matches the known CRC32 of a non-ELF candidate", async () => {
     const root = await createTestTempDirectory("rea-elf-debug-link-crc32-");
     const path = join(root, "prog");

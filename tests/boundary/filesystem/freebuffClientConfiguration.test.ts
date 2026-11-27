@@ -28,8 +28,8 @@ import {
 import {
   runUninstall,
   systemUninstallHost,
-  type UninstallFileSystem,
 } from "../../../src/application/Uninstall.js";
+import type { UninstallFileSystem } from "../../../src/application/UninstallShared.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 

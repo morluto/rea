@@ -1,3 +1,4 @@
+import { appendToMapList } from "./appendToMapList.js";
 import {
   canBorrowParsedJsonSnapshot,
   isImmutableJsonSnapshot,
@@ -23,7 +24,13 @@ import {
   artifactManifestId,
   occurrenceIdForLocation,
 } from "./artifactIdentity.js";
-import { evidenceFileTarget, type Evidence } from "./evidence.js";
+import {
+  evidenceFileTarget,
+  evidenceTargetIdentity,
+  type Evidence,
+  type EvidenceSubjectTarget,
+} from "./evidence.js";
+import { unknownTarget, type UnknownTargetIdentity } from "./targetIdentity.js";
 import { z } from "zod";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
 import { readEvidence, safeParseEvidence } from "./evidenceValidation.js";
@@ -37,6 +44,8 @@ import {
 export interface InventorySet {
   readonly effectiveLimits?: ArtifactInventoryResult["effective_limits"];
   readonly manifest: ArtifactInventoryResult["manifest"];
+  /** A directory root's tree digest, shared by every page. */
+  readonly rootDigest?: ArtifactInventoryResult["root_digest"];
   readonly nodes: readonly ArtifactNode[];
   readonly occurrences: readonly ArtifactOccurrence[];
   readonly edges: readonly ArtifactInventoryResult["edges"][number][];
@@ -229,7 +238,7 @@ const parseInspectionInventoryPayload = (
     throw new ArtifactInventoryValidationError(
       "Artifact inspection requires inventory substeps",
     );
-  validateInspectionSubject(subject, inspection, firstPage.manifest);
+  validateInspectionSubject(subject, inspection, firstPage);
   return {
     inspection,
     pages: substeps.map(({ page }) => page),
@@ -241,8 +250,9 @@ const parseInspectionInventoryPayload = (
 const validateInspectionSubject = (
   subject: Evidence["subject"] | undefined,
   inspection: ArtifactInspectionResult,
-  manifest: ArtifactInventoryResult["manifest"],
+  inventory: InventoryRoot,
 ): void => {
+  const { manifest } = inventory;
   if (
     inspection.subject.manifest_id !== manifest.manifest_id ||
     inspection.subject.root_artifact_id !== manifest.root_artifact_id ||
@@ -252,7 +262,7 @@ const validateInspectionSubject = (
     throw new ArtifactInventoryValidationError(
       "Artifact inspection subject does not match its inventory manifest",
     );
-  if (!subjectMatchesInventoryRoot(subject, manifest))
+  if (!subjectMatchesInventoryRoot(subject, inventory))
     throw new ArtifactInventoryValidationError(
       "Artifact inspection Evidence subject does not match its root manifest",
     );
@@ -276,7 +286,7 @@ const parseInventoryPage = (
     : isImmutableJsonSnapshot(input)
       ? freezeJsonSnapshot(parsed)
       : parsed;
-  validateArtifactInventorySubject(subject, inventory.manifest);
+  validateArtifactInventorySubject(subject, inventory);
   validateInventoryPage(inventory);
   return inventory;
 };
@@ -297,10 +307,61 @@ const parseInventoryEvidencePage = (
   }
 };
 
+/** What an inventory's root names: a file, a directory, or an explicit unknown. */
+export type ArtifactInventorySubject =
+  | EvidenceSubjectTarget
+  | UnknownTargetIdentity;
+
+/**
+ * The subject an inventory root names when the caller selected `path`. A
+ * directory with a complete tree digest is that directory; a partial walk
+ * has no identity, so its subject is an explicit unknown rather than a
+ * digest of only the members it reached. Every other root is the file with
+ * the root's digest.
+ */
+export const artifactInventorySubject = (
+  path: string,
+  inventory: InventoryRoot,
+): ArtifactInventorySubject => {
+  const { manifest, root_digest: tree } = inventory;
+  if (tree === undefined)
+    return {
+      path,
+      sha256: manifest.root_sha256,
+      format: manifest.root_format,
+    };
+  return tree.status === "complete"
+    ? {
+        path,
+        sha256: tree.sha256,
+        format: "directory",
+        tree: { algorithm: tree.algorithm, version: tree.version },
+      }
+    : unknownTarget("not-observed");
+};
+
+/**
+ * Whether a subject is the one `artifactInventorySubject` gives this root,
+ * ignoring display facts and a file's selection or architecture.
+ */
 const subjectMatchesInventoryRoot = (
   subject: Evidence["subject"] | undefined,
-  manifest: ArtifactInventoryResult["manifest"],
+  inventory: InventoryRoot,
 ): boolean => {
+  const { manifest, root_digest: tree } = inventory;
+  if (tree !== undefined) {
+    const identity = evidenceTargetIdentity({ subject });
+    if (manifest.root_format !== "directory") return false;
+    if (tree.status === "partial")
+      return identity?.kind === "unknown" && identity.reason === "not-observed";
+    return (
+      identity?.kind === "directory" &&
+      identity.algorithm === tree.algorithm &&
+      identity.version === tree.version &&
+      identity.sha256 === tree.sha256 &&
+      tree.sha256 === manifest.root_sha256
+    );
+  }
   const target = evidenceFileTarget({ subject });
   return (
     target !== undefined &&
@@ -309,12 +370,18 @@ const subjectMatchesInventoryRoot = (
   );
 };
 
+/** The root facts an inventory subject is named by and checked against. */
+export interface InventoryRoot {
+  readonly manifest: ArtifactInventoryResult["manifest"];
+  readonly root_digest?: ArtifactInventoryResult["root_digest"] | undefined;
+}
+
 /** Both inventory carriers require the same authenticated root identity. */
 export const validateArtifactInventorySubject = (
   subject: Evidence["subject"] | undefined,
-  manifest: ArtifactInventoryResult["manifest"],
+  inventory: InventoryRoot,
 ): void => {
-  if (!subjectMatchesInventoryRoot(subject, manifest))
+  if (!subjectMatchesInventoryRoot(subject, inventory))
     throw new ArtifactInventoryValidationError(
       "Artifact inventory Evidence subject does not match its root digest",
     );
@@ -407,7 +474,11 @@ const assembleInventoryResults = (
       throw new ArtifactInventoryCompositionError(
         "Artifact inventory pages do not share one accepted reader policy",
       );
-    if (canonicalJson(page.manifest, "Artifact inventory") !== manifestJson)
+    if (
+      canonicalJson(page.manifest, "Artifact inventory") !== manifestJson ||
+      canonicalJson(page.root_digest ?? null, "Artifact root digest") !==
+        canonicalJson(first.root_digest ?? null, "Artifact root digest")
+    )
       throw new ArtifactInventoryCompositionError(
         "Artifact inventory pages do not share one manifest",
       );
@@ -501,6 +572,9 @@ const orderedInventory = (
   ].sort(compareUnicodeCodePoints);
   return {
     manifest: first.manifest,
+    ...(first.root_digest === undefined
+      ? {}
+      : { rootDigest: first.root_digest }),
     ...(first.effective_limits === undefined
       ? {}
       : { effectiveLimits: first.effective_limits }),
@@ -523,9 +597,7 @@ const orderOccurrences = (
 ): ArtifactOccurrence[] => {
   const groups = new Map<string, ArtifactOccurrence[]>();
   for (const occurrence of occurrences) {
-    const group = groups.get(occurrence.logical_path);
-    if (group === undefined) groups.set(occurrence.logical_path, [occurrence]);
-    else group.push(occurrence);
+    appendToMapList(groups, occurrence.logical_path, occurrence);
   }
   return [...groups]
     .sort(([left], [right]) => compareUnicodeCodePoints(left, right))

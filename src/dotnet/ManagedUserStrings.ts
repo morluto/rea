@@ -1,3 +1,4 @@
+import { isManagedUserStringLoad } from "../domain/managed/managedMemberInstructionFacts.js";
 import {
   admitManagedProjection,
   managedDecodeBudget,
@@ -65,7 +66,7 @@ export const parseUserStrings = (
     // Only ldstr loads a literal; a malformed ldtoken can carry a 0x70 token.
     for (const { tokenInstructions } of methods)
       for (const { opcode, reference } of tokenInstructions)
-        if (opcode === "ldstr" && !tokens.has(reference.raw)) {
+        if (isManagedUserStringLoad(opcode) && !tokens.has(reference.raw)) {
           budget.admitTransient(USER_STRING_TOKEN_BYTES, null);
           tokens.set(reference.raw, reference);
         }

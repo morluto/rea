@@ -16,11 +16,58 @@ import {
 /** XML 1.0 literal line endings; Unicode separators remain source characters. */
 export const XML_LINE_ENDING = /\r\n?|\n/gu;
 
+/** Decode textual true/false after the caller applies its format's whitespace policy. */
+export const parseTrueFalseText = (value: string | null): boolean | null => {
+  const folded = value?.toLowerCase();
+  if (folded === "true") return true;
+  if (folded === "false") return false;
+  return null;
+};
+
+/** Match an XML element node regardless of namespace. */
+export const isXmlElement = (node: Node | null): node is Element =>
+  node !== null && node.nodeType === 1;
+
 /** Match an element in no namespace, including under an explicit empty default. */
 export const isUnqualifiedXmlElement = (node: Node | null): node is Element =>
-  node !== null &&
-  node.nodeType === 1 &&
-  (node as Element).namespaceURI === null;
+  isXmlElement(node) && node.namespaceURI === null;
+
+/** Direct child elements in document order. An empty namespace selects unqualified elements. */
+export function* iterateXmlChildElements(
+  element: Element,
+  local?: string,
+  namespace?: string,
+): Generator<Element, undefined> {
+  for (
+    let child = element.firstChild;
+    child !== null;
+    child = child.nextSibling
+  ) {
+    if (
+      isXmlElement(child) &&
+      (local === undefined || child.localName === local) &&
+      (namespace === undefined || (child.namespaceURI ?? "") === namespace)
+    )
+      yield child;
+  }
+}
+
+export const xmlChildElements = (element: Element): Element[] => [
+  ...iterateXmlChildElements(element),
+];
+
+export const xmlChildrenNamed = (
+  element: Element,
+  local: string,
+  namespace?: string,
+): Element[] => [...iterateXmlChildElements(element, local, namespace)];
+
+export const xmlFirstChildNamed = (
+  element: Element,
+  local: string,
+  namespace?: string,
+): Element | undefined =>
+  iterateXmlChildElements(element, local, namespace).next().value;
 
 const XML_FORMAT = "xml";
 

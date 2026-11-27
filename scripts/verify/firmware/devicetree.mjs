@@ -4,6 +4,7 @@ import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
 import { VerifierFixture } from "../../lib/verifier-fixture.mjs";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { completeEvidenceCliArguments } from "../../lib/complete-evidence.mjs";
 
 // Optional verification tool only; the runtime inspector never starts dtc.
 const dtc = process.env.REA_DTC_PATH ?? "dtc";
@@ -50,9 +51,11 @@ await withVerifierCleanup(async () => {
   const evidence = JSON.parse(
     await exec(process.execPath, [
       "scripts/rea.mjs",
-      "inspect-devicetree",
-      blob,
-      "--json",
+      ...(await completeEvidenceCliArguments([
+        "inspect-devicetree",
+        blob,
+        "--json",
+      ])),
     ]),
   );
   const report = evidence.normalized_result;

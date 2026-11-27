@@ -3,8 +3,19 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { Tool, ServerContext } from "@modelcontextprotocol/server";
 import { afterEach, expect, it, vi } from "vitest";
 import { z } from "zod";
+import { DISCOVER_TOOLS } from "../contracts/catalog/catalogDiscovery.js";
+import { presentAdvertisedOutputSchema } from "../contracts/compactOutputSchema.js";
+import { COMPACT_OUTPUT_SCHEMA_PRESENTATION } from "../contracts/mcpSchemaPresentation.js";
+import { isRecord } from "../kernel/isRecord.js";
 import type { RecordedMcpCatalog } from "../recordedMcpCatalog.js";
 import { DeferredEvidenceMcpServer } from "./DeferredEvidenceMcpServer.js";
+import { OwnerCancellation } from "../domain/analysisErrorCore.js";
+import { waitFor } from "../../tests/support/testWait.js";
+import {
+  DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
+  parseMcpToolsListPageBudget,
+  type McpToolsListPageBudget,
+} from "../config/mcpToolsListPageBudget.js";
 import { ToolResultDelivery } from "./ToolResultDelivery.js";
 import { promptArgumentsSchema } from "./promptArguments.js";
 import {
@@ -79,10 +90,13 @@ const fixture = async (
     readonly invalidOutput?: boolean;
     readonly failAfterTool?: boolean;
     readonly maximumInputElements?: number;
+    readonly toolsListPageBudget?: McpToolsListPageBudget;
     readonly evidenceReferenceAlternative?: boolean;
     readonly progressive?: boolean;
     readonly unionOutput?: boolean;
     readonly mode?: "legacy" | "auto";
+    readonly outputProfile?: "compact";
+    readonly compactOutputSchema?: Record<string, unknown>;
   } = {},
 ) => {
   const calls = vi.fn<(n: number, context: ServerContext) => void>();
@@ -97,6 +111,9 @@ const fixture = async (
       ...tool,
       outputSchema: z.toJSONSchema(canonicalOutput),
     })),
+    ...(options.compactOutputSchema === undefined
+      ? {}
+      : { compactOutputSchemas: { fixture: options.compactOutputSchema } }),
   };
   const server = new DeferredEvidenceMcpServer(
     options.evidenceReferenceAlternative
@@ -108,7 +125,7 @@ const fixture = async (
       target.ownRuntimeCleanup(async () => {
         closed();
         if (options.failClose?.()) throw new Error("cleanup denied");
-        await target.closePartialRuntime();
+        await target.closeRuntimeHooks();
       });
       await options.startup?.hold();
       if (options.failLoad) throw new Error("PRIVATE startup cause");
@@ -154,7 +171,13 @@ const fixture = async (
         );
       });
     },
-    { maximumInputElements: options.maximumInputElements },
+    {
+      maximumInputElements: options.maximumInputElements,
+      toolsListPageBudget: options.toolsListPageBudget,
+      ...(options.outputProfile === undefined
+        ? {}
+        : { outputProfile: options.outputProfile }),
+    },
   );
   const client = new Client(
     { name: "deferred-fixture-client", version: "1" },
@@ -180,6 +203,51 @@ const fixture = async (
     loads: () => loads,
   };
 };
+
+it("compacts live discovery output and serves the recorded compact schema", async () => {
+  const budget = parseMcpToolsListPageBudget("524288");
+  if (!budget.ok) throw budget.error;
+  const recordedOutput = {
+    type: "object",
+    properties: {
+      n: { type: "integer", description: "recorded nested guidance" },
+    },
+    required: ["n"],
+    additionalProperties: false,
+  };
+  const canonical = DISCOVER_TOOLS.outputSchema["~standard"].jsonSchema.output({
+    target: "draft-2020-12",
+  });
+  if (!isRecord(canonical)) throw new Error("discover_tools output schema");
+  expect(canonical.type).toBe("object");
+  const f = await fixture({
+    progressive: true,
+    outputProfile: "compact",
+    compactOutputSchema: recordedOutput,
+    toolsListPageBudget: budget.value,
+  });
+  expect(f.server.toolsListPageBudget.bytes).toBe(524288);
+  const discovery = (await f.client.listTools()).tools.find(
+    (tool) => tool.name === "discover_tools",
+  );
+  expect(discovery?.outputSchema).toEqual(
+    presentAdvertisedOutputSchema(
+      canonical,
+      COMPACT_OUTPUT_SCHEMA_PRESENTATION,
+    ),
+  );
+  expect(discovery?.outputSchema).not.toEqual(canonical);
+  const loaded = await f.client.callTool({
+    name: "discover_tools",
+    arguments: { names: ["fixture"] },
+  });
+  expect(loaded.isError).not.toBe(true);
+  expect(f.loads()).toBe(0);
+  expect(
+    (await f.client.listTools()).tools.find((tool) => tool.name === "fixture")
+      ?.outputSchema,
+  ).toEqual(recordedOutput);
+});
 
 it("loads cold definitions without initializing analysis and preserves canonical validation and identity", async () => {
   const f = await fixture({ progressive: true });
@@ -219,6 +287,18 @@ it("loads cold definitions without initializing analysis and preserves canonical
   expect(
     (await independent.client.listTools()).tools.map(({ name }) => name),
   ).toEqual(["discover_tools"]);
+});
+
+it("honors a selected tools/list page budget instead of the default", async () => {
+  const parsed = parseMcpToolsListPageBudget("524288");
+  if (!parsed.ok) throw parsed.error;
+  const selected = await fixture({ toolsListPageBudget: parsed.value });
+  expect(selected.server.toolsListPageBudget.bytes).toBe(524288);
+  expect(selected.server.toolsListPageBudget.source).toBe("setting");
+  const baseline = await fixture();
+  expect(baseline.server.toolsListPageBudget).toEqual(
+    DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
+  );
 });
 
 it("refuses excess input before loading a deferred runtime, then admits a valid call", async () => {
@@ -491,6 +571,27 @@ it("joins late initialization during close and prevents target execution", async
   }
 });
 
+it("cancels in-flight initialization when the server closes", async () => {
+  const startupSignals: AbortSignal[] = [];
+  const server = new DeferredEvidenceMcpServer(
+    catalog,
+    new ToolResultDelivery(1024 * 1024),
+    async (_target, signal) => {
+      startupSignals.push(signal);
+      // Startup that only ends when cancelled: close must not wait it out.
+      await new Promise<void>((resolve) => {
+        signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+    },
+  );
+  const loading = server.ensureRuntime();
+  await waitFor(() => expect(startupSignals).toHaveLength(1));
+  await server.close();
+  await loading;
+  expect(startupSignals[0]?.aborted).toBe(true);
+  expect(startupSignals[0]?.reason).toBe(OwnerCancellation.ownerClosed);
+});
+
 it("retains failed cleanup for retry without loading a replacement runtime", async () => {
   let denied = true;
   const f = await fixture({ failClose: () => denied });
@@ -560,4 +661,18 @@ it("keeps one accepted settings snapshot through a deferred handler while the ne
   expect((await pending).isError).not.toBe(true);
   await f.client.callTool({ name: "fixture", arguments: {} });
   expect(seen).toEqual([undefined, 33554432]);
+});
+
+it("suggests advertised deferred tools for an unknown tool call without loading the runtime", async () => {
+  const f = await fixture();
+  let message = "";
+  try {
+    await f.client.callTool({ name: "fixture-call", arguments: {} });
+  } catch (error) {
+    expect(error).toMatchObject({ code: -32602 });
+    message = error instanceof Error ? error.message : String(error);
+  }
+  expect(message).toContain("Closest advertised tool: fixture.");
+  expect(f.loads()).toBe(0);
+  expect(f.calls).not.toHaveBeenCalled();
 });

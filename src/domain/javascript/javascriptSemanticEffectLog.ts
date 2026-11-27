@@ -45,6 +45,7 @@ import {
   type JavaScriptSemanticMemberEffect,
   type JavaScriptSemanticReferenceEffectsAtSite,
 } from "./javascriptSemanticState.js";
+import { semanticConsumerMemo } from "./javascriptSemanticConsumer.js";
 
 export const indexSemanticOpaqueEffects = (
   candidates: readonly {
@@ -414,17 +415,14 @@ type MemberWrite = JavaScriptSemanticBindingState["memberWrites"][number];
 
 /** Matching effects per queried path; the effect lists only grow, so their
  * lengths tell when a retained selection is stale. */
-const ambientPathSelections = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  {
-    writes: number;
-    escapes: number;
-    readonly byPath: Map<
-      string,
-      { readonly writes: AmbientEffect[]; readonly escapes: AmbientEffect[] }
-    >;
-  }
->();
+const ambientPathSelections = semanticConsumerMemo<{
+  writes: number;
+  escapes: number;
+  readonly byPath: Map<
+    string,
+    { readonly writes: AmbientEffect[]; readonly escapes: AmbientEffect[] }
+  >;
+}>();
 
 const ambientPathEffects = (
   state: JavaScriptSemanticAnalysisState,

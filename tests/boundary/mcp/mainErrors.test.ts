@@ -10,8 +10,8 @@ import {
   MCP_CONNECTION_START_FAILED,
   mcpHttpListenFailed,
   MCP_SHUTDOWN_FAILED,
-  SERVER_START_FAILED,
 } from "../../../src/main/messages.js";
+import { SERVER_START_FAILED } from "../../../src/server/serverStartFailure.js";
 import type { McpServeOptions } from "../../../src/main/types.js";
 import {
   StreamableHttpHostAllowlistError,
@@ -100,6 +100,16 @@ describe("MCP runtime errors", () => {
     {
       name: "a broken pipe",
       cause: Object.assign(new Error("SECRET broken pipe"), { code: "EPIPE" }),
+      message: MCP_CONNECTION_LOST,
+    },
+    {
+      name: "a broken pipe whose reported code changes on a second read",
+      get cause() {
+        const codes = ["EPIPE", "EIO"];
+        return Object.defineProperty(new Error("SECRET broken pipe"), "code", {
+          get: () => codes.shift(),
+        });
+      },
       message: MCP_CONNECTION_LOST,
     },
     ...notConnectedCases,

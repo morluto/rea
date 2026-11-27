@@ -1,3 +1,4 @@
+import { systemCodeFromError } from "../kernel/reportedSystemCode.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import type { Hash } from "node:crypto";
 import { constants } from "node:fs";
@@ -74,10 +75,11 @@ export const copyGhidraRegularFile = async (
     readonly signal?: AbortSignal | undefined;
     readonly buffer?: Buffer | undefined;
     readonly hash?: Hash | undefined;
+    readonly sync?: boolean | undefined;
     readonly onOpenedSource?: ((initialSize: number) => void) | undefined;
   } = {},
 ): Promise<void> => {
-  const { signal, hash, onOpenedSource } = options;
+  const { signal, hash, sync, onOpenedSource } = options;
   const scratch =
     options.buffer ?? Buffer.allocUnsafe(STREAM_COPY_BUFFER_BYTES);
   await withArtifactRegularFile(
@@ -130,6 +132,10 @@ export const copyGhidraRegularFile = async (
           assertArtifactReadActive(signal);
           if (!sameRegularFileState(initial, await srcHandle.stat()))
             throw new RegularFileChangedError(sourcePath);
+          if (sync) {
+            assertArtifactReadActive(signal);
+            await dest.sync();
+          }
         },
       );
     },
@@ -217,12 +223,7 @@ export const ghidraFileDialect = (
       primary instanceof GhidraAdmissionError ? primary : undefined;
     const reason = admission?.code ?? errorMessage(primary);
     const systemCode =
-      admission === undefined &&
-      primary instanceof Error &&
-      "code" in primary &&
-      typeof primary.code === "string"
-        ? primary.code
-        : undefined;
+      admission === undefined ? systemCodeFromError(primary) : undefined;
     return new ProviderAdapterError("ghidra", operation, {
       ...details,
       cause,

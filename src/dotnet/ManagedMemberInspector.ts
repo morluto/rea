@@ -1,3 +1,4 @@
+import { isManagedUserStringLoad } from "../domain/managed/managedMemberInstructionFacts.js";
 import {
   admitManagedProjection,
   managedDecodeBudget,
@@ -135,6 +136,16 @@ const readMemberLayout = (
   return { layout, memberLists };
 };
 
+/** ECMA-335 MemberRef table number. */
+const MEMBER_REF_TABLE = 0x0a;
+
+/** The spelling a type_names selector matches against an ExportedType row. */
+const exportedTypeName = (type: {
+  readonly namespace: string;
+  readonly name: string;
+}): string =>
+  type.namespace.length === 0 ? type.name : `${type.namespace}.${type.name}`;
+
 const selectTypes = (
   types: readonly DecodedTypeDefinition[],
   typeNames: readonly string[] | undefined,
@@ -262,7 +273,7 @@ export const inspectManagedMembersBytes = (
       ...(selection === null
         ? []
         : [
-            "Types, fields, methods, call edges, field accesses, and user strings cover only the selected declaring types; coverage describes that selection. Edge targets outside it keep their names but are not described.",
+            "Types, fields, methods, member references, call edges, field accesses, and user strings cover only the selected declaring types; coverage describes that selection. Member references are the MemberRef rows the selected method bodies use, and exported types are the ExportedType rows whose full name was selected. Edge targets outside the selection keep their names but are not described.",
           ]),
       ...(unreadableNames === 0
         ? []
@@ -325,6 +336,15 @@ export const inspectManagedMembersBytes = (
       declarationTypeName,
     });
     appendManagedParseIssues(issues, memberRefs.issues);
+    const memberRefKinds = new Map<string, "field" | "method">();
+    for (let index = 0; index < memberRefs.refs.length; index += 1) {
+      const memberRef = memberRefs.refs[index]!;
+      if (
+        memberRef.signature.kind === "field" ||
+        memberRef.signature.kind === "method"
+      )
+        memberRefKinds.set(memberRef.token, memberRef.signature.kind);
+    }
     const methods = parseMethods({
       bytes,
       layout,
@@ -333,14 +353,7 @@ export const inspectManagedMembersBytes = (
       signatureTypeName,
       displayTypeName,
       declarationTypeName,
-      memberRefKinds: new Map(
-        memberRefs.refs.flatMap((memberRef) =>
-          memberRef.signature.kind === "field" ||
-          memberRef.signature.kind === "method"
-            ? [[memberRef.token, memberRef.signature.kind] as const]
-            : [],
-        ),
-      ),
+      memberRefKinds,
       memberLists,
       selected,
       methodOffset,
@@ -361,11 +374,17 @@ export const inspectManagedMembersBytes = (
       reference.table === 4
         ? !fields.core.has(reference.token)
         : reference.table === 6 && !methods.core.has(reference.token);
+    // A selection narrows MemberRef rows to those its method bodies use,
+    // directly or as the generic method a MethodSpec instantiates.
+    const usedMemberRefs = selected === null ? null : new Set<string>();
     // Unscoped inspection already read every core. Selected members also
     // retain their cores; only missing edge targets need the recovery pass.
     if (selected !== null)
       for (const { tokenInstructions } of methods.methods)
-        for (const { reference } of tokenInstructions) {
+        for (const { opcode, reference } of tokenInstructions) {
+          if (isManagedUserStringLoad(opcode)) continue;
+          if (reference.table === MEMBER_REF_TABLE)
+            usedMemberRefs?.add(reference.token);
           if (needsCore(reference)) referenced.set(reference.token, reference);
           else if (
             reference.table === 0x2b &&
@@ -380,11 +399,27 @@ export const inspectManagedMembersBytes = (
             if (
               generic !== undefined &&
               generic.kind === "valid" &&
+              generic.table === MEMBER_REF_TABLE
+            )
+              usedMemberRefs?.add(generic.token);
+            if (
+              generic !== undefined &&
+              generic.kind === "valid" &&
               needsCore(generic)
             )
               referenced.set(generic.token, generic);
           }
         }
+    const selectedMemberRefs =
+      usedMemberRefs === null
+        ? memberRefs.refs
+        : memberRefs.refs.filter((ref) => usedMemberRefs.has(ref.token));
+    const selectedExportedTypes =
+      selection === null || exportedTypes.exportedTypes === null
+        ? exportedTypes.exportedTypes
+        : exportedTypes.exportedTypes.filter((type) =>
+            selection.type_names.includes(exportedTypeName(type)),
+          );
     const referencedCores = readReferencedMemberCores(
       bytes,
       layout,
@@ -433,14 +468,15 @@ export const inspectManagedMembersBytes = (
     );
     appendManagedParseIssues(issues, targets.issues);
     const incompleteMembers =
-      [...fields.fields, ...memberRefs.refs].some(
+      fields.fields.some(
+        (member) => member.signature.parse_status !== "decoded",
+      ) ||
+      selectedMemberRefs.some(
         (member) => member.signature.parse_status !== "decoded",
       ) ||
       resolvedMethods.some(
-        (method) => method.signature.parse_status !== "decoded",
-      ) ||
-      resolvedMethods.some(
         (method) =>
+          method.signature.parse_status !== "decoded" ||
           method.body.status === "partial" ||
           method.body.status === "malformed",
       );
@@ -460,10 +496,10 @@ export const inspectManagedMembersBytes = (
         types,
         signature_resolution: "type-names-v2",
         nesting_read: parsedTypes.nesting.complete,
-        exported_types: exportedTypes.exportedTypes,
+        exported_types: selectedExportedTypes,
         fields: fields.fields,
         methods: resolvedMethods,
-        member_refs: memberRefs.refs,
+        member_refs: selectedMemberRefs,
         call_edges: related.callEdges,
         field_accesses: related.fieldAccesses,
         user_strings: null,

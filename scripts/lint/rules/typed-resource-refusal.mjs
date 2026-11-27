@@ -1,18 +1,10 @@
-import { readFileSync } from "node:fs";
-import { relative } from "node:path";
-import { fileURLToPath } from "node:url";
+import { countedFindings, readBaseline } from "./counted-findings.mjs";
 
-const root = fileURLToPath(new URL("../../../", import.meta.url));
 /**
  * Files that predate the rule, with their count of untyped constructions. A
  * count may only shrink: the rule reports a file above or below its entry.
  */
-const baseline = JSON.parse(
-  readFileSync(
-    new URL("./typed-resource-refusal-baseline.json", import.meta.url),
-    "utf8",
-  ),
-);
+const baseline = readBaseline("./typed-resource-refusal-baseline.json");
 
 /** Option keys that type a resource constraint's recovery. */
 const TYPED_KEYS = new Set([
@@ -58,11 +50,7 @@ export default {
     },
   },
   create(context) {
-    const filename = relative(
-      root,
-      context.physicalFilename ?? context.filename,
-    ).replaceAll("\\", "/");
-    const untyped = [];
+    const findings = countedFindings(context, baseline, "untyped");
     return {
       NewExpression(node) {
         if (
@@ -70,23 +58,9 @@ export default {
           node.callee.name !== "AnalysisResourceConstraintError"
         )
           return;
-        if (!isTyped(node.arguments[4])) untyped.push(node);
+        if (!isTyped(node.arguments[4])) findings.add(node);
       },
-      "Program:exit"(program) {
-        const allowed = baseline[filename] ?? 0;
-        if (untyped.length > allowed)
-          for (const node of untyped)
-            context.report({ node, messageId: "untyped" });
-        else if (untyped.length < allowed)
-          context.report({
-            node: program,
-            messageId: "stale",
-            data: {
-              allowed: String(allowed),
-              actual: String(untyped.length),
-            },
-          });
-      },
+      "Program:exit": findings.report,
     };
   },
 };

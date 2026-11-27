@@ -357,7 +357,7 @@ const responseIdentitySchema = z.object({
   representation: z.literal("fetch-response-body-bytes"),
 });
 
-const sourceMapSchema = z.union([
+const sourceMapSchema = z.discriminatedUnion("status", [
   z.object({
     ...sourceMapContextShape,
     ...parsedSourceMapShape,
