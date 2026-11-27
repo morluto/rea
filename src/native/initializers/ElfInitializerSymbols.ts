@@ -549,12 +549,15 @@ export const sectionRelocations = async (
   const wordBigInt = BigInt(word);
   const reader = new BinaryReader(input.bytes, input.little, "elf");
   let complete = true;
-  const skip = (section: NativeSection): void => {
+  const skip = (section: NativeSection): boolean => {
     if (
       (input.relocatable && targetSection(section) === undefined) ||
       wantedBy(section).length > 0
-    )
+    ) {
       complete = false;
+      return true;
+    }
+    return false;
   };
   // One budget across every header, so many headers over one range cannot multiply the work.
   let budget = SECTION_RELOCATION_RECORD_SCAN;
@@ -590,6 +593,17 @@ export const sectionRelocations = async (
   for (const [position, section] of input.sections.entries()) {
     const encoding = applicable(input, section);
     if (encoding === null) continue;
+    // MIPS n64 does not use the generic ELF64 r_info word: r_sym is a
+    // separate 32-bit field followed by r_ssym and three relocation types.
+    // In little endian, treating it as generic r_info can read r_sym=0 as
+    // R_NONE and incorrectly certify the stored initializer word as raw.
+    if (input.machine === 8 && input.bits === 64 && section.size > 0n) {
+      if (skip(section))
+        input.notes.add(
+          "MIPS64 section relocation records use an unsupported compound encoding; affected initializer values are unresolved.",
+        );
+      continue;
+    }
     if (!section.file_backed || section.compressed) {
       if (section.compressed)
         input.notes.add(

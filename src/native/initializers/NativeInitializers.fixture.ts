@@ -395,6 +395,40 @@ export const elfRelocatableCtors = (): Buffer => {
   return file;
 };
 
+/** MIPS64 little-endian RELA: its symbol word precedes four one-byte type fields. */
+export const elfMips64RelocatableInitializer = (relocated = true): Buffer => {
+  const file = Buffer.alloc(0x4c0);
+  const names = cStringTable([
+    ".text",
+    ".init_array",
+    ".rela.init_array",
+    ".symtab",
+    ".strtab",
+    ".shstrtab",
+  ]);
+  elfIdent(file, 64, 1, 8);
+  file.writeUInt32LE(0x60000000, 48); // EF_MIPS_ARCH_64, n64 ABI.
+  file.writeBigUInt64LE(0x300n, 40);
+  file.writeUInt16LE(64, 52);
+  file.writeUInt16LE(64, 58);
+  file.writeUInt16LE(7, 60);
+  file.writeUInt16LE(6, 62);
+  file.writeBigUInt64LE(0xfeedn, 0x88); // Stored word is not the RELA value.
+  file[0x9f] = 18; // r_sym=0, r_ssym/type3/type2=0, r_type=R_MIPS_64.
+  file.writeBigInt64LE(0x1234n, 0xa0);
+  sym64(file, 0xd8, 0, 3, 1, 0); // Local .text section symbol after STN_UNDEF.
+  names.bytes.copy(file, 0x110);
+  const name = (index: number): number => names.offsets[index] ?? 0;
+  shdr64(file, 1, 0x300, name(0), 1, 6, 0, 0x80, 8);
+  shdr64(file, 2, 0x300, name(1), 14, 3, 0, 0x88, 8);
+  if (relocated)
+    shdr64(file, 3, 0x300, name(2), 4, 0x40, 0, 0x90, 24, 4, 24, 2);
+  shdr64(file, 4, 0x300, name(3), 2, 0, 0, 0xc0, 48, 5, 24, 2);
+  shdr64(file, 5, 0x300, name(4), 3, 0, 0, 0x100, 2);
+  shdr64(file, 6, 0x300, name(5), 3, 0, 0, 0x110, names.bytes.length);
+  return file;
+};
+
 const name16 = (text: string): Buffer => {
   const bytes = Buffer.alloc(16);
   bytes.write(text, 0, "utf8");
