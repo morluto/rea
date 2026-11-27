@@ -68,9 +68,7 @@ describe("arsc per-call artifact_limits", () => {
     try {
       await expect(list(reader)).rejects.toMatchObject({
         reason: "limit",
-        message: expect.stringContaining(
-          "artifact_limits.arsc.output_bytes",
-        ),
+        message: expect.stringContaining("artifact_limits.arsc.output_bytes"),
       });
     } finally {
       await reader.close();
