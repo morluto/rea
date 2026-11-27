@@ -85,6 +85,7 @@ export const providerRemoteEffects = {
   writesFilesystem: true,
   accessesNetwork: true,
 };
+
 export const providerNetworkEvidenceEffects = providerEffects(
   evidenceEffects,
   providerRemoteEffects,
