@@ -582,6 +582,8 @@ export const documentationSections = [
         text: "Sega Mega Drive ROMs",
         source: "guides/firmware/mega-drive-roms.md",
         route: "/mega-drive-roms",
+      },
+      {
         text: "Nintendo 64 ROMs",
         source: "guides/firmware/n64-roms.md",
         route: "/n64-roms",

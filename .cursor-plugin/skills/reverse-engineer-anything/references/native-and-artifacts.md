@@ -1124,6 +1124,7 @@ vectors, and analysis at `entry_point` `0x0` starts on the vector table.
 Windows Ghidra P0 does not admit `m68k`. The image ceiling is 8 MiB, and an
 SMD dump is at most 512 blocks; this release has no runtime override. See
 [Sega Mega Drive ROMs](https://github.com/morluto/rea/blob/main/docs/guides/firmware/mega-drive-roms.md).
+
 Nintendo 64 ROMs (`n64-rom`) are detected from the first word in z64
 (`80 37 12 40`), v64 (`37 80 40 12`) or n64 (`40 12 37 80`) order, plus a
 plausible boot address, and use the same inspection and extraction workflows.
