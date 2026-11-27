@@ -200,6 +200,10 @@ commit authors and co-authors on `main`. Profiles appear in descending commit
 order, with ties sorted by username. The website and README avatar grid use the
 same snapshot. Usernames and profile links work without images or JavaScript.
 
+The README displays the saved avatar image; it does not query GitHub when
+opened. To include a newly merged contributor, refresh from a `main` revision
+containing their attributed commit and commit the generated files listed below.
+
 Refresh the snapshot with GitHub CLI available, then regenerate the marked
 `website:contributors` region from `templates/contributors.html.tmpl`:
 
