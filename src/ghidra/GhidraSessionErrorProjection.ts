@@ -33,6 +33,7 @@ import {
 } from "../domain/providerOperationHealth.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import { GhidraCheckpointBusyError } from "./GhidraCheckpoint.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { GhidraLaunchError } from "./GhidraLauncher.js";
 import type { GhidraSessionSource } from "./GhidraProviderCapabilities.js";
@@ -116,6 +117,19 @@ const projectPrimarySessionError = (
   if (failure.configurationFailure !== undefined)
     return failure.configurationFailure;
   if (failure.kind === "checkpoint") {
+    if (failure.cause instanceof GhidraCheckpointBusyError)
+      return new AnalysisCapabilityUnavailableError(
+        "ghidra",
+        operation,
+        failure.cause.message,
+        {
+          ...context,
+          retryable: true,
+          userMessage: `${failure.cause.message}. One session at a time opens a target through a checkpoint directory.`,
+          remediationAction:
+            "Wait for that session to close the target, or close it, then repeat this call unchanged. To analyze the same target concurrently, start this process without REA_GHIDRA_CHECKPOINT_DIR; it then uses a private ephemeral import.",
+        },
+      );
     if (failure.cause instanceof AnalysisError)
       return analysisClientFailureForOperation(
         failure.cause,
