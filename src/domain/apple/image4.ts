@@ -36,6 +36,18 @@ export const IMAGE4_MAX_INTEGER_BYTES = 16;
  * a parse strategy, not a refusal.
  */
 export const IMAGE4_MAX_NESTED_BYTES = 256 * 1024;
+/**
+ * Largest primitive value read when it is walked on its own. Nothing larger
+ * is ever decoded (text, scalars and keybags are all smaller), so a bigger
+ * primitive stays a range and its bytes are not loaded. A parse strategy.
+ */
+export const IMAGE4_MAX_DECODED_PRIMITIVE_BYTES = IMAGE4_MAX_STRING_BYTES;
+/**
+ * Encoded bytes tree-parsed and kept in memory for one inspection. Past this,
+ * values are walked by header only: structure is still checked, but their
+ * bytes are not retained. A parse strategy, not a refusal.
+ */
+export const IMAGE4_MAX_RETAINED_BYTES = 8 * 1024 * 1024;
 
 export const IMAGE4_DER_DEPTH_LIMIT = "image4_der_depth";
 export const IMAGE4_DER_ELEMENTS_LIMIT = "image4_der_elements";
@@ -290,7 +302,15 @@ type DerValue =
       readonly end: number;
     }
   | { readonly kind: "span"; readonly header: TlvHeader }
-  | { readonly kind: "stopped"; readonly offset: number };
+  /**
+   * A value whose extent could not be bounded. Its identifier is still known,
+   * so a slot it occupies keeps its role; its content was not examined.
+   */
+  | {
+      readonly kind: "stopped";
+      readonly offset: number;
+      readonly header: TlvHeader;
+    };
 
 const readExact = async (
   source: Image4ByteSource,
@@ -475,6 +495,8 @@ const noteStructure = (node: Asn1BerNode, notes: Notes, base: number): void => {
 
 class Walk {
   readonly #elements = new Budget(IMAGE4_MAX_ELEMENTS);
+  /** Encoded bytes this walk may load and retain as parsed trees. */
+  readonly #retained = new Budget(IMAGE4_MAX_RETAINED_BYTES);
   /** Children of a header-walked value, read and charged exactly once. */
   readonly #spanChildren = new WeakMap<TlvHeader, DerValue[]>();
 
@@ -504,12 +526,12 @@ class Walk {
     const header = await readHeader(this.source, offset, limit);
     if (header.indefinite) {
       const span = limit - offset;
-      if (span > IMAGE4_MAX_NESTED_BYTES) {
+      if (span > IMAGE4_MAX_NESTED_BYTES || !this.#retain(span)) {
         this.notes.add(
           `Image4 value at offset ${offset} uses indefinite length and is not bounded within ${IMAGE4_MAX_NESTED_BYTES} bytes.`,
         );
         this.charge(1);
-        return { kind: "stopped", offset };
+        return { kind: "stopped", offset, header };
       }
       return this.adopt(
         await readExact(this.source, offset, span),
@@ -522,7 +544,13 @@ class Walk {
         `Image4 value at offset ${offset} uses a non-minimal length.`,
       );
     const encoded = header.end - header.start;
-    if (encoded <= IMAGE4_MAX_NESTED_BYTES)
+    // Load a value only when its bytes may be decoded and fit what this walk
+    // retains; otherwise walk it by header so memory stays bounded.
+    const opaque =
+      !header.constructed &&
+      header.contentEnd - header.contentStart >
+        IMAGE4_MAX_DECODED_PRIMITIVE_BYTES;
+    if (encoded <= IMAGE4_MAX_NESTED_BYTES && !opaque && this.#retain(encoded))
       return this.adopt(
         await readExact(this.source, offset, encoded),
         offset,
@@ -540,6 +568,11 @@ class Walk {
     // meaning, so its structure, depth and element count are always checked.
     if (header.constructed) await this.childrenOf(span, depth);
     return span;
+  }
+
+  /** Reserve `bytes` of retained tree before loading them. */
+  #retain(bytes: number): boolean {
+    return this.#retained.tryCharge(bytes);
   }
 
   /**
@@ -569,6 +602,10 @@ class Walk {
       );
       if (child.kind === "stopped") {
         children.push(child);
+        if (child.header.contentStart < value.header.contentEnd)
+          this.notes.add(
+            `Image4 values after offset ${child.offset} in the value at offset ${value.header.start} were not examined.`,
+          );
         break;
       }
       const end = endOf(child);
@@ -597,16 +634,14 @@ const fileOffset = (value: DerValue): number => {
 };
 
 /** First identifier octet, for diagnostics only. Never compare it to a type. */
-const rawTagOf = (value: DerValue): number | undefined => {
+const rawTagOf = (value: DerValue): number => {
   if (value.kind === "node") return value.node.tag;
-  if (value.kind === "span") return value.header.tag;
-  return undefined;
+  return value.header.tag;
 };
 
-const tagClassOf = (value: DerValue): Asn1TagClass | undefined => {
+const tagClassOf = (value: DerValue): Asn1TagClass => {
   if (value.kind === "node") return value.node.tagClass;
-  if (value.kind === "span") return value.header.tagClass;
-  return undefined;
+  return value.header.tagClass;
 };
 
 /** Universal tag numbers Image4 uses. The constructed bit is separate. */
@@ -663,24 +698,20 @@ const isConstructedString = (
   tagClass === "universal" &&
   (STRING_TAGS.has(tagNumber) || tagNumber === UNIVERSAL.octetString);
 
-const tagNumberOf = (value: DerValue): number | undefined => {
+const tagNumberOf = (value: DerValue): number => {
   if (value.kind === "node") return value.node.tagNumber;
-  if (value.kind === "span") return value.header.tagNumber;
-  return undefined;
+  return value.header.tagNumber;
 };
 
-const isPrivateTagged = (value: DerValue): boolean => {
-  if (value.kind === "node")
-    return value.node.tagClass === "private" && value.node.constructed;
-  if (value.kind === "span")
-    return value.header.tagClass === "private" && value.header.constructed;
-  return false;
-};
+/** A readable private-tagged entry; a stopped one cannot be unwrapped. */
+const isPrivateTagged = (value: DerValue): boolean =>
+  value.kind !== "stopped" &&
+  tagClassOf(value) === "private" &&
+  isConstructed(value);
 
 const isConstructed = (value: DerValue): boolean => {
   if (value.kind === "node") return value.node.constructed;
-  if (value.kind === "span") return value.header.constructed;
-  return false;
+  return value.header.constructed;
 };
 
 const contentRange = (
@@ -941,6 +972,13 @@ const takeProperties = async (
   counter: PropertyCounter,
   into: Image4Property[],
 ): Promise<void> => {
+  // A property body is a SET of properties (img4tool builds a SET); a
+  // SEQUENCE is tolerated. Anything else is unsupported structure, reported
+  // rather than read as an empty property set.
+  if (value.kind === "stopped" || (!isSet(value) && !isSequence(value))) {
+    unknownTag(value, notes);
+    return;
+  }
   const kids = await walk.childrenOf(value, depth);
   for (const kid of kids) {
     const attempt = await tryProperty(kid, walk, depth + 1, notes, counter);
@@ -1044,7 +1082,7 @@ const asKeybag = async (
   }
   if (value.kind !== "node") {
     notes.add(
-      `Image4 keybag at offset ${offset} is larger than ${IMAGE4_MAX_NESTED_BYTES} bytes and was not decoded.`,
+      `Image4 keybag at offset ${offset} is larger than ${IMAGE4_MAX_DECODED_PRIMITIVE_BYTES} bytes and was not decoded.`,
     );
     return "unrecognized";
   }
@@ -1212,9 +1250,16 @@ const buildPayload = async (
   const extras: DerValue[] = [];
   let payloadValue: DerValue | undefined;
   let unsupportedPayload = false;
-  if (slot !== undefined && slot.kind !== "stopped") {
+  if (slot !== undefined) {
     index += 1;
-    if (isPrimitive(slot, UNIVERSAL.octetString)) payloadValue = slot;
+    if (slot.kind === "stopped") {
+      // The payload slot is occupied but its extent is unknown: keep the slot
+      // and expose nothing rather than letting a later field take its place.
+      unsupportedPayload = true;
+      notes.add(
+        `Image4 payload at offset ${slot.offset} was not bounded; its bytes are not exposed.`,
+      );
+    } else if (isPrimitive(slot, UNIVERSAL.octetString)) payloadValue = slot;
     else if (universalTag(slot) === UNIVERSAL.octetString) {
       unsupportedPayload = true;
       notes.add(
@@ -1222,10 +1267,8 @@ const buildPayload = async (
       );
     } else extras.push(slot);
   }
-  for (const kid of kids.slice(index)) {
-    if (kid.kind === "stopped") break;
-    extras.push(kid);
-  }
+  // A stopped value still occupies its slot; childrenOf ends the list there.
+  for (const kid of kids.slice(index)) extras.push(kid);
   const type = ia5Text(typeValue, notes) ?? "";
   // Absent or undecodable text is unknown (null), never an empty string.
   const description = ia5Text(descriptionValue, notes) ?? null;
@@ -1391,6 +1434,30 @@ const parseManifestKids = async (
   };
 };
 
+/**
+ * How a manifest or restore value names itself. An entry is a SEQUENCE whose
+ * first field is a string; when that string cannot be read the entry is
+ * still an entry, so its value is never walked as further entries.
+ */
+type EntryName =
+  | { readonly kind: "named"; readonly name: string }
+  | { readonly kind: "unreadable" }
+  | { readonly kind: "container" };
+
+const entryName = (kids: readonly DerValue[], notes: Notes): EntryName => {
+  const first = kids[0];
+  if (first === undefined || !STRING_TAGS.has(universalTag(first) ?? -1))
+    return { kind: "container" };
+  const name = ia5Text(first, notes);
+  return name === undefined ? { kind: "unreadable" } : { kind: "named", name };
+};
+
+const unreadableEntry = (value: DerValue, notes: Notes): void => {
+  notes.add(
+    `Image4 entry at offset ${fileOffset(value)} has a name that could not be read; its value was not decoded.`,
+  );
+};
+
 const consumeManifest = async (
   value: DerValue,
   walk: Walk,
@@ -1400,7 +1467,10 @@ const consumeManifest = async (
   properties: Image4Property[],
   objects: Image4ObjectFacts[],
 ): Promise<void> => {
-  if (value.kind === "stopped") return;
+  if (value.kind === "stopped") {
+    unknownTag(value, notes);
+    return;
+  }
   if (isPrivateTagged(value)) {
     const inner = await unwrapPrivate(value, walk, depth, notes);
     if (inner !== value) {
@@ -1417,8 +1487,12 @@ const consumeManifest = async (
     }
   }
   const kids = await walk.childrenOf(value, depth);
-  const name = ia5Text(kids[0], notes);
-  if (name === undefined) {
+  const named = entryName(kids, notes);
+  if (named.kind === "unreadable") {
+    unreadableEntry(value, notes);
+    return;
+  }
+  if (named.kind === "container") {
     if (isSequence(value) || isSet(value)) {
       for (const kid of kids)
         await consumeManifest(
@@ -1435,6 +1509,7 @@ const consumeManifest = async (
     unknownTag(value, notes);
     return;
   }
+  const { name } = named;
   if (name === "MANB") {
     for (const kid of kids.slice(1))
       await consumeManifest(
@@ -1484,7 +1559,10 @@ const collectRestoreNames = async (
   counter: PropertyCounter,
   names: string[],
 ): Promise<void> => {
-  if (value.kind === "stopped") return;
+  if (value.kind === "stopped") {
+    unknownTag(value, walk.notes);
+    return;
+  }
   if (isPrivateTagged(value)) {
     const inner = await unwrapPrivate(value, walk, depth, walk.notes);
     if (inner !== value) {
@@ -1493,14 +1571,29 @@ const collectRestoreNames = async (
     }
   }
   const kids = await walk.childrenOf(value, depth);
-  const name = ia5Text(kids[0], walk.notes);
-  if (
-    name !== undefined &&
-    name !== "IM4R" &&
-    name.length > 0 &&
-    kids.length >= 2 &&
-    isSequence(value)
-  ) {
+  const named = entryName(kids, walk.notes);
+  // An entry whose name cannot be read stays one unknown entry: its value is
+  // redacted and is never walked for further names.
+  if (named.kind === "unreadable") {
+    unreadableEntry(value, walk.notes);
+    return;
+  }
+  if (named.kind === "container") {
+    if (isSequence(value) || isSet(value)) {
+      for (const kid of kids)
+        await collectRestoreNames(kid, walk, depth + 1, counter, names);
+      return;
+    }
+    unknownTag(value, walk.notes);
+    return;
+  }
+  const { name } = named;
+  if (name === "IM4R") {
+    for (const kid of kids.slice(1))
+      await collectRestoreNames(kid, walk, depth + 1, counter, names);
+    return;
+  }
+  if (name.length > 0 && kids.length >= 2 && isSequence(value)) {
     // Only the name is reported; restore values stay redacted. Fields after
     // the value are noted by position without exposing them.
     if (kids.length > 2)
@@ -1511,17 +1604,7 @@ const collectRestoreNames = async (
     names.push(name);
     return;
   }
-  if (name === undefined && (isSequence(value) || isSet(value))) {
-    for (const kid of kids)
-      await collectRestoreNames(kid, walk, depth + 1, counter, names);
-    return;
-  }
-  if (name === "IM4R") {
-    for (const kid of kids.slice(1))
-      await collectRestoreNames(kid, walk, depth + 1, counter, names);
-    return;
-  }
-  // An entry this reader does not recognize: name its tag and position only.
+  // A named value this reader does not recognize: tag and position only.
   unknownTag(value, walk.notes);
 };
 
@@ -1606,12 +1689,16 @@ const img4Slots = async (
   let index = 1;
   let payloadKids: readonly DerValue[] | undefined;
   const payloadSlot = kids[index];
-  if (isSequence(payloadSlot)) {
-    const inner = await walk.childrenOf(payloadSlot, 1);
-    if (ia5Text(inner[0], notes) === "IM4P") {
-      payloadKids = inner;
-      index += 1;
-    }
+  // The payload slot is consumed whatever it holds, so an unsupported value
+  // there does not hide the manifest and restore slots after it. Only a
+  // context-tagged value means the payload slot is empty.
+  if (payloadSlot !== undefined && contextNumber(payloadSlot) === undefined) {
+    index += 1;
+    const inner = isSequence(payloadSlot)
+      ? await walk.childrenOf(payloadSlot, 1)
+      : [];
+    if (ia5Text(inner[0], notes) === "IM4P") payloadKids = inner;
+    else unknownTag(payloadSlot, notes);
   }
   let manifest: Img4Slots["manifest"];
   if (contextNumber(kids[index]) === 0) {

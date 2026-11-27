@@ -10,6 +10,7 @@ import {
   IMAGE4_MAX_NESTED_BYTES,
   IMAGE4_MAX_OCTET_HEX_BYTES,
   IMAGE4_MAX_PROPERTIES,
+  IMAGE4_MAX_RETAINED_BYTES,
   IMAGE4_MAX_STRING_BYTES,
   IMAGE4_PROPERTIES_LIMIT,
   IMAGE4_STRING_BYTES_LIMIT,
@@ -926,4 +927,133 @@ it("notes a manifest version the references do not describe", async () => {
   expect(result.limitations.join("\n")).toContain(
     "manifest version 1 is not 0",
   );
+});
+
+it("keeps an unreadable restore entry redacted instead of walking its value", async () => {
+  const unreadable = tlv(0x16, Buffer.from([0x42, 0x80, 0x43, 0x4e]));
+  const entry = sequence(
+    unreadable,
+    sequence(ia5("private-nonce"), octet(SAMPLE_NONCE)),
+  );
+  const result = await image4(
+    img4(im4p(), im4m(), sequence(ia5("IM4R"), derSet(entry))),
+  );
+  expect(result.facts.restore_info?.properties_present).toEqual([]);
+  expect(JSON.stringify(result)).not.toContain("private-nonce");
+  expect(result.limitations.join("\n")).toContain("could not be read");
+});
+
+it("does not load or retain opaque bytes it never decodes", async () => {
+  // Large OCTET STRINGs are ranged, never read.
+  const largeOctets = Array.from({ length: 8 }, () =>
+    octet(Buffer.alloc(IMAGE4_MAX_NESTED_BYTES - 64)),
+  );
+  let read = 0;
+  const ranged = await image4(
+    manifestWithCertificates(sequence(...largeOctets)),
+    (length) => {
+      read += length;
+    },
+  );
+  expect(ranged.facts.manifest?.certificate_chain_size).toBeGreaterThan(
+    IMAGE4_MAX_NESTED_BYTES,
+  );
+  expect(read).toBeLessThan(IMAGE4_MAX_NESTED_BYTES);
+
+  // Small constructed values are tree-parsed only up to the retained budget.
+  const wrapped = Array.from(
+    { length: Math.ceil(IMAGE4_MAX_RETAINED_BYTES / (64 * 1024)) + 8 },
+    () => sequence(octet(Buffer.alloc(64 * 1024))),
+  );
+  read = 0;
+  const bounded = await image4(
+    manifestWithCertificates(sequence(...wrapped)),
+    (length) => {
+      read += length;
+    },
+  );
+  expect(bounded.facts.manifest).not.toBeNull();
+  expect(read).toBeLessThan(
+    IMAGE4_MAX_RETAINED_BYTES + IMAGE4_MAX_NESTED_BYTES,
+  );
+});
+
+it("keeps a stopped keybag in its slot so the payload stays encrypted", async () => {
+  // A definite IM4P whose keybag is an indefinite constructed OCTET STRING
+  // with more than the nested parse left in the parent.
+  const indefiniteKeybag = Buffer.concat([
+    Buffer.from([0x24, 0x80]),
+    octet(Buffer.from("kbag")),
+    Buffer.from([0x00, 0x00]),
+  ]);
+  const bytes = sequence(
+    ia5("IM4P"),
+    ia5("krnl"),
+    ia5("Kernelcache"),
+    octet(SAMPLE_PAYLOAD),
+    indefiniteKeybag,
+    octet(Buffer.alloc(IMAGE4_MAX_NESTED_BYTES + 16)),
+  );
+  const result = await image4(bytes);
+  expect(result.facts.payload).toMatchObject({
+    encrypted: true,
+    keybag_count: null,
+    keybag_types: null,
+  });
+  expect(result.entries[0]).toMatchObject({ path: "payload", encrypted: true });
+  expect(result.limitations.join("\n")).toContain("indefinite length");
+  expect(result.limitations.join("\n")).toContain("were not examined");
+});
+
+it("reports a manifest property body that is not a property set", async () => {
+  const body = derSet(
+    privateTagged(
+      "MANB",
+      sequence(
+        ia5("MANB"),
+        privateTagged("MANP", sequence(ia5("MANP"), integer(5))),
+        manifestObject("ibot", property("DGST", octet(SAMPLE_DIGEST))),
+      ),
+    ),
+  );
+  const result = await image4(
+    sequence(
+      ia5("IM4M"),
+      integer(0),
+      body,
+      octet(SAMPLE_SIGNATURE),
+      sequence(octet(SAMPLE_CERT)),
+    ),
+  );
+  expect(result.facts.manifest?.properties).toEqual([]);
+  expect(result.facts.manifest?.objects[0]?.digest_hex).toBe(
+    SAMPLE_DIGEST.toString("hex"),
+  );
+  expect(result.limitations.join("\n")).toContain("Unknown Image4 tag 0x02");
+});
+
+it("applies the string allowance only to text it retains", async () => {
+  const unknownText = ia5("A".repeat(IMAGE4_MAX_STRING_BYTES + 1));
+  const large = await image4(
+    im4p({
+      payload: Buffer.alloc(IMAGE4_MAX_NESTED_BYTES + 16),
+      extra: [unknownText],
+    }),
+  );
+  expect(large.facts.payload).not.toBeNull();
+  expect(large.limitations.join("\n")).toContain("Unknown Image4 tag 0x16");
+});
+
+it("keeps IMG4 manifest and restore slots after an unsupported payload value", async () => {
+  const result = await image4(
+    sequence(ia5("IMG4"), integer(1), explicit(0, im4m()), explicit(1, im4r())),
+  );
+  expect(result.facts.payload).toBeNull();
+  expect(result.facts.manifest).not.toBeNull();
+  expect(result.facts.restore_info?.properties_present).toEqual(["BNCN"]);
+  expect(result.entries.map((entry) => entry.path)).toEqual([
+    "manifest.der",
+    "restore-info.der",
+  ]);
+  expect(result.limitations.join("\n")).toContain("Unknown Image4 tag 0x02");
 });

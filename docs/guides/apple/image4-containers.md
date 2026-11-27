@@ -124,4 +124,9 @@ payload octet string counts as one element and is not loaded to measure it.
 The property allowance bounds retained manifest rows. The string allowance
 bounds one IA5String, UTF8String or PrintableString retained as text.
 Nested values wider than 256 KiB are walked by header instead of loaded
-whole. That cap is a parse strategy, not one of the four refusals.
+whole. A primitive value larger than 4096 bytes is never loaded, because
+nothing that large is decoded, and at most 8 MiB of the file is loaded as
+parsed trees for one inspection; past that, values are still walked and
+checked by header. These caps are parse strategies, not refusals. A value
+whose end cannot be found keeps its field's role: a keybag stays present, so
+the payload stays encrypted, and the values after it are a limitation.
