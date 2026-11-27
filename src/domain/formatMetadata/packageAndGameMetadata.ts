@@ -492,9 +492,11 @@ export const megaDriveRomMetadataSchema = z.strictObject({
   region_characters: z.array(z.string().length(1)).max(16),
   /**
    * `letters` is the classic J/U/E/A/B set. `hex` is one hex digit and sets
-   * `region_mask`. `empty` is only padding. Anything else is `other`.
+   * `region_mask`. `ambiguous` is a single `A`, `B` or `E`, which is both a
+   * letter and a hex digit: `region_characters` and `region_mask` hold both
+   * readings. `empty` is only padding. Anything else is `other`.
    */
-  region_style: z.enum(["letters", "hex", "empty", "other"]),
+  region_style: z.enum(["letters", "hex", "ambiguous", "empty", "other"]),
   region_mask: uint8.nullable(),
   modem: megaDriveTextSchema,
   memo: megaDriveTextSchema,

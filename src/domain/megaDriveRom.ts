@@ -55,6 +55,14 @@ const REGION_LETTERS = new Set(["J", "U", "E", "A", "B"]);
 const WORK_RAM_START = 0x00ff_0000;
 const WORK_RAM_END = 0x00ff_ffff;
 
+/**
+ * The address the 68000 drives for a declared longword. Its bus has 24
+ * address lines, so the top byte is ignored: SGDK headers declare work RAM
+ * as `0xE0FF0000`-`0xE0FFFFFF`, the same window as `0x00FF0000`-`0x00FFFFFF`.
+ * Metadata keeps the declared values; only the window check uses this.
+ */
+const busAddress = (declared: number): number => declared & 0x00ff_ffff;
+
 const EXTERNAL_RAM_TYPES: Readonly<
   Record<
     number,
@@ -454,12 +462,23 @@ const parseMegaDriveImage = (
   const regionCharacters: string[] = [];
   for (let index = 0; index < region.text.length; index += 1)
     regionCharacters.push(region.text.charAt(index));
+  const lettersOnly =
+    region.text.length > 0 &&
+    regionCharacters.every((char) => REGION_LETTERS.has(char));
+  const hexDigit = /^[0-9A-Fa-f]$/u.test(region.text);
   let regionStyle: MegaDriveRomMetadata["region_style"];
   let regionMask: number | null = null;
   if (region.text.length === 0) regionStyle = "empty";
-  else if (regionCharacters.every((char) => REGION_LETTERS.has(char)))
-    regionStyle = "letters";
-  else if (/^[0-9A-Fa-f]$/u.test(region.text)) {
+  else if (lettersOnly && hexDigit) {
+    // `A`, `B` and `E` are both a classic region letter and a one-digit
+    // mask, and the header does not say which form it uses.
+    regionStyle = "ambiguous";
+    regionMask = Number.parseInt(region.text, 16);
+    note(
+      `The region field ${region.text} reads either as the classic region letter ${region.text} or as the region mask 0x${regionMask.toString(16)}; the header does not say which form it uses.`,
+    );
+  } else if (lettersOnly) regionStyle = "letters";
+  else if (hexDigit) {
     regionStyle = "hex";
     regionMask = Number.parseInt(region.text, 16);
   } else regionStyle = "other";
@@ -495,9 +514,13 @@ const parseMegaDriveImage = (
     note(
       `Declared RAM end 0x${ramEnd.toString(16)} is before RAM start 0x${ramStart.toString(16)}.`,
     );
-  else if (ramStart < WORK_RAM_START || ramEnd > WORK_RAM_END)
+  else if (
+    busAddress(ramStart) < WORK_RAM_START ||
+    busAddress(ramEnd) > WORK_RAM_END ||
+    busAddress(ramEnd) < busAddress(ramStart)
+  )
     note(
-      `Declared RAM range 0x${ramStart.toString(16)}-0x${ramEnd.toString(16)} is outside the 64 KiB work-RAM window 0x${WORK_RAM_START.toString(16)}-0x${WORK_RAM_END.toString(16)}.`,
+      `Declared RAM range 0x${ramStart.toString(16)}-0x${ramEnd.toString(16)} is outside the 64 KiB work-RAM window 0x${WORK_RAM_START.toString(16)}-0x${WORK_RAM_END.toString(16)} on the 68000's 24-bit address bus.`,
     );
 
   const externalRaw = image.subarray(0x1b0, 0x1bc);

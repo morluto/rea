@@ -185,6 +185,21 @@ it("flags ROM and RAM ranges that disagree with the image", () => {
   expect(oversizedRam.limitations.join("\n")).toContain("work-RAM window");
   expect(oversizedRam.metadata.ram).toEqual({ start: 0, end: 0xffff_ffff });
 
+  // SGDK declares work RAM with a nonzero top byte, which the 68000's 24-bit
+  // bus ignores; the declared values are kept as written.
+  const sgdkRam = decoded(
+    megaDriveRom({ ramStart: 0xe0ff_0000, ramEnd: 0xe0ff_ffff }),
+  );
+  expect(sgdkRam.limitations.join("\n")).not.toContain("work-RAM window");
+  expect(sgdkRam.metadata.ram).toEqual({
+    start: 0xe0ff_0000,
+    end: 0xe0ff_ffff,
+  });
+  const wrappedRam = decoded(
+    megaDriveRom({ ramStart: 0x00ff_0000, ramEnd: 0x0100_0000 }),
+  );
+  expect(wrappedRam.limitations.join("\n")).toContain("work-RAM window");
+
   const wrongRam = decoded(megaDriveRom({ ramStart: 0, ramEnd: 0xffff }));
   expect(wrongRam.complete).toBe(false);
   expect(wrongRam.limitations.join("\n")).toContain("work-RAM window");
@@ -255,10 +270,33 @@ it("structures a known external RAM descriptor and reports an unknown type", () 
 });
 
 it("classifies region letters, one hex digit and other text", () => {
-  expect(decoded(megaDriveRom({ regions: "A" })).metadata).toMatchObject({
+  expect(decoded(megaDriveRom({ regions: "JA" })).metadata).toMatchObject({
     region_style: "letters",
     region_mask: null,
-    region_characters: ["A"],
+    region_characters: ["J", "A"],
+  });
+  // A, B and E are both a classic letter and a one-digit mask (Genesis Plus
+  // GX reads a lone E as Europe and a lone A or B as a mask), so a lone one
+  // keeps both readings and is not reported as decoded.
+  for (const [letter, mask] of [
+    ["A", 0xa],
+    ["B", 0xb],
+    ["E", 0xe],
+  ] as const) {
+    const ambiguous = decoded(megaDriveRom({ regions: letter }));
+    expect(ambiguous.metadata).toMatchObject({
+      region_style: "ambiguous",
+      region_mask: mask,
+      region_characters: [letter],
+    });
+    expect(ambiguous.complete).toBe(false);
+    expect(ambiguous.limitations.join("\n")).toContain(
+      `reads either as the classic region letter ${letter}`,
+    );
+  }
+  expect(decoded(megaDriveRom({ regions: "U" })).metadata).toMatchObject({
+    region_style: "letters",
+    region_mask: null,
   });
   expect(decoded(megaDriveRom({ regions: "F" })).metadata).toMatchObject({
     region_style: "hex",
