@@ -191,14 +191,14 @@ export const reassembleNvsV2Blobs = async (
     const ch = chunks[i]!;
     const claimed =
       claimedChunks.get(ch.nsIndex)?.get(ch.keyId)?.has(ch.chunkIndex) === true;
+    const winner = bestByNsKey
+      .get(ch.nsIndex)
+      ?.get(ch.keyId)
+      ?.get(ch.chunkIndex);
     // The copy a recovered blob used is part of that blob. An older copy of
     // the same chunk, which an interrupted page move leaves, is reported as a
-    // superseded copy rather than dropped or counted as a missing chunk.
-    if (
-      claimed &&
-      bestByNsKey.get(ch.nsIndex)?.get(ch.keyId)?.get(ch.chunkIndex) === ch
-    )
-      continue;
+    // superseded copy only when the newer replacement passed payload CRC.
+    if (claimed && winner === ch) continue;
     out.push({
       page_index: ch.pageIndex,
       entry_index: ch.entryIndex,
@@ -214,7 +214,7 @@ export const reassembleNvsV2Blobs = async (
       crc_valid: ch.crcValid,
       // A copy is its own whole chunk; an orphan's blob lacks its index.
       completeness: entryCompleteness(ch.crcValid, claimed),
-      superseded: claimed,
+      superseded: claimed && winner?.crcValid === true,
     });
   }
   return out;
