@@ -100,6 +100,10 @@ export const CLI_COMMAND_REGISTRATIONS = {
     () => import("./pythonPycCommands.js"),
     "registerPythonPycCommands",
   ),
+  debPackage: cliRegistrar(
+    () => import("./debPackageCommands.js"),
+    "registerDebPackageCommands",
+  ),
   nugetNupkg: cliRegistrar(
     () => import("./nugetNupkgCommands.js"),
     "registerNugetNupkgCommands",
@@ -111,6 +115,10 @@ export const CLI_COMMAND_REGISTRATIONS = {
   ociImageLayout: cliRegistrar(
     () => import("./ociImageLayoutCommands.js"),
     "registerOciImageLayoutCommands",
+  ),
+  yara: cliRegistrarWithEnvironment(
+    () => import("./yaraCommands.js"),
+    "registerYaraCommands",
   ),
   erlang: cliRegistrar(
     () => import("./erlangCommands.js"),
@@ -312,9 +320,11 @@ const CLI_FAMILY_REGISTRATIONS: {
     "gpu",
     "rust",
     "pythonPyc",
+    "debPackage",
     "nugetNupkg",
     "vsixPackage",
     "ociImageLayout",
+    "yara",
     "erlang",
     "v8CodeCache",
     "mavenGradleMetadata",

@@ -24,7 +24,8 @@ jobs:
   mutation:
     name: Mutation sweep (${{ matrix.suite }})
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # The complete reverse-tools sweep hit the previous 60-minute job limit.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       max-parallel: 2
@@ -43,6 +44,8 @@ jobs:
       - name: Cache npm package downloads
         uses: ./.github/actions/npm-cache
       - run: npm ci
+      - name: Require mutation targets in the checker projects
+        run: npm run verify:mutation-targets
       - name: Reuse portable build outputs across runs
         uses: ./.github/actions/portable-build-cache
       - run: npm run test:prepare

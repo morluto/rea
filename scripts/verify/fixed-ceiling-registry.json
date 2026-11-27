@@ -65,10 +65,23 @@
       "reason": "Projects the boot-image parser's own named ceiling (`ceiling.name`); the value is declared by that parser."
     }
   },
+  "src/artifacts/AuditdLogArtifactReader.ts": {
+    "\"The auditd log file-size ceiling\"": {
+      "class": "pending",
+      "issue": 11345,
+      "reason": "The 4 GiB auditd log admission is a resource policy; issue #11345 tracks giving it a control as the reader grows past step 1."
+    }
+  },
   "src/artifacts/AndroidSparseImageArtifactReader.ts": {
     "ceiling.name": {
       "class": "forwarding",
       "reason": "Projects the sparse-image parser's own named ceiling (`ceiling.name`); the value is declared by that parser."
+    }
+  },
+  "src/artifacts/N64RomArtifactReader.ts": {
+    "\"The Nintendo 64 ROM size allowance\"": {
+      "class": "format",
+      "reason": "Retail cartridge masks stop at 64 MiB (512 Mbit). A larger file is refused before its bytes are swapped. This release has no runtime override, and artifact_limits.expanded_bytes does not raise it."
     }
   },
   "src/artifacts/NdsRomArtifactReader.ts": {
@@ -79,6 +92,13 @@
     "\"The Nintendo DS ROM expanded path allowance\"": {
       "class": "representation",
       "reason": "Bounds aggregate UTF-8 bytes of expanded FNT member paths (16 MiB) before allocation so 61,440 files under deep prefixes cannot expand an 8 MiB FNT into gigabytes of retained path strings."
+    }
+  },
+  "src/artifacts/UbiImageArtifactReader.ts": {
+    "`The ${parserLimit.name} allowance`": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "UBI eraseblock size and count allowances are resource policies; the static payload CRC budget is derived from the admitted image length."
     }
   },
   "src/artifacts/WxapkgArtifactReader.ts": {
@@ -128,6 +148,12 @@
     "\"The Playwright trace ZIP expansion allowance (derived from the archive size)\"": {
       "class": "derived",
       "reason": "The ZIP reader's plaintext-work budget is derived from the admitted trace archive's own size, which trace_limits.archive_bytes bounds."
+    }
+  },
+  "src/deb/DebPackageProvider.ts": {
+    "DEB_PACKAGE_FIXED_ALLOWANCES[cause.allowance]": {
+      "class": "forwarding",
+      "reason": "Reports the Debian parser's named ar name, tar extension, relationship alternative, Zstandard window, or XZ dictionary allowance using the parser's maximum."
     }
   },
   "src/domain/analysisErrorCore.ts": {
@@ -186,16 +212,20 @@
       "reason": "Bounds Ghidra's own Ghidra/application.properties, a short key=value installation descriptor of the bring-your-own provider (about 1 KiB); no analysis input passes through it, and a larger file is not a Ghidra installation REA can drive."
     }
   },
+  "src/ghidra/GhidraSessionErrorProjection.ts": {
+    "\"The Ghidra C type depth allowance\"": {
+      "class": "representation",
+      "reason": "Ghidra 12.2 stores, names and compares a data type recursively through its pointer, array, typedef and member chain; measured on Ghidra 12.2, 1024 levels resolve and 2048 exhaust the JVM stack inside addDataType while its database lock is held, leaving that lock held and the Program unusable. No caller value can raise the stack, so the bound is a quarter of the last measured safe depth."
+    }
+  },
   "src/gpu/GpuCodeObjectsProvider.ts": {
-    "\"The GPU object allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "The 128 MiB GPU object read allowance is a resource policy without a control."
+    "\"The GPU nesting allowance\"": {
+      "class": "representation",
+      "reason": "Bounds recursive GPU container nesting (8 levels in GpuInventory.ts) and AMDGPU MessagePack value nesting (32 levels in AmdGpuMetadata.ts) to prevent unbounded call-stack recursion."
     },
-    "\"The GPU parser allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "AMDGPU metadata, HIP bundle, CUDA and PTX decode allowances (8 MiB to 512 MiB, visit and token counts) are resource policies without a control."
+    "\"The GPU parser syntax allowance\"": {
+      "class": "representation",
+      "reason": "Fallback fixed parser syntax ceiling (such as 128 tokens per PTX parameter declaration) so unmapped parser BinaryResourceFailure values stay inside the Result error contract."
     }
   },
   "src/ida/IdaMcpConnection.ts": {
@@ -353,7 +383,7 @@
   "src/resources/artifactReadBudget.ts": {
     "ceiling.name": {
       "class": "forwarding",
-      "reason": "Relays the whole-file identity ceiling its caller names: 4 GiB minus one byte for PE-only readers, whose file offsets are 32-bit (format), and the 512 MiB artifact-size bound of the hardening and exports result schemas. max_file_bytes, a per-call parameter with details.limit, bounds what the readers read."
+      "reason": "Relays the whole-file identity ceiling its caller names: 4 GiB minus one byte for the PE-only readers and the Mach-O function-starts reader, whose file offsets (PE fields, LC_FUNCTION_STARTS and LC_DATA_IN_CODE dataoff, FAT32 slice offsets) are 32-bit (format), and the 512 MiB artifact-size bound of the hardening and exports result schemas. max_file_bytes, a per-call parameter with details.limit, bounds what the readers read."
     }
   },
   "src/sqlite/SqliteDatabaseFailures.ts": {

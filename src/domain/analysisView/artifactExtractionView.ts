@@ -25,7 +25,7 @@ import {
   type AnalysisViewParent,
 } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -38,6 +38,7 @@ import {
   compileInventoryPathGlob,
   inventoryPathGlobSchema,
 } from "./inventoryPathGlob.js";
+import { filterSet, pickFields } from "./selectViewRows.js";
 
 export const EXTRACT_ARTIFACT_OPERATION = "extract_artifact" as const;
 
@@ -197,28 +198,14 @@ const summarize = (
   };
 };
 
-const pick = (
-  row: Extracted,
-  fields: ReadonlySet<keyof Extracted> | undefined,
-): Partial<Extracted> => {
-  if (fields === undefined) return row;
-  const picked: Partial<Record<keyof Extracted, unknown>> = {};
-  for (const field of fields) picked[field] = row[field];
-  return picked as Partial<Extracted>;
-};
-
 /** Exact selectors intersect; an empty selector matches nothing. */
 const artifactMatcher = (
   view: Extract<ExtractionView, { collection: "artifacts" }>,
 ) => {
   const selectors = [view.relative_paths, view.path_globs, view.artifact_ids];
   if (selectors.every((selector) => selector === undefined)) return undefined;
-  const paths =
-    view.relative_paths === undefined
-      ? undefined
-      : new Set(view.relative_paths);
-  const ids =
-    view.artifact_ids === undefined ? undefined : new Set(view.artifact_ids);
+  const paths = filterSet(view.relative_paths);
+  const ids = filterSet(view.artifact_ids);
   const globs = view.path_globs?.map(compileInventoryPathGlob);
   return (row: Extracted) =>
     (paths === undefined || paths.has(row.relative_path)) &&
@@ -233,7 +220,7 @@ const collectionPage = (
   owner: ByteBoundedPageOwner,
 ) => {
   if (view.collection === "artifacts") {
-    const fields = view.fields === undefined ? undefined : new Set(view.fields);
+    const fields = filterSet(view.fields);
     return selectByteBoundedViewRows(
       extraction.artifacts,
       view,
@@ -241,7 +228,7 @@ const collectionPage = (
         matches: artifactMatcher(view),
         project: (row, index): z.output<typeof extractedArtifactRowSchema> => ({
           index,
-          ...pick(row, fields),
+          ...(fields === undefined ? row : pickFields(row, fields)),
         }),
       },
       owner,
@@ -295,11 +282,7 @@ export const projectArtifactExtractionView = (
     parent_operation: EXTRACT_ARTIFACT_OPERATION,
     parent_digest: parent.evidenceId.slice(3),
     artifact: { path: subject.path, sha256: subject.sha256 },
-    limitations: boundedViewMessages(
-      [...parent.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent),
     unknowns: [
       "Written files reflect the extraction when it ran; later changes under output_root are not observed.",
     ],

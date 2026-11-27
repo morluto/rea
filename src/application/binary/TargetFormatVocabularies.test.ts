@@ -124,6 +124,7 @@ const TARGETS: TargetFixtures = {
   asar: { ...archive, format: "asar" },
   ines: { ...archive, format: "ines" },
   nds: { ...archive, format: "nds" },
+  "n64-rom": { ...archive, format: "n64-rom" },
   "godot-pck": { ...archive, format: "godot-pck" },
   unityfs: { ...archive, format: "unityfs" },
   wxapkg: { ...archive, format: "wxapkg" },
@@ -136,11 +137,13 @@ const TARGETS: TargetFixtures = {
   nso: { ...archive, format: "nso" },
   nro: { ...archive, format: "nro" },
   "android-boot-image": { ...archive, format: "android-boot-image" },
+  "android-dtbo": { ...archive, format: "android-dtbo" },
   iso9660: { ...archive, format: "iso9660" },
   "qualcomm-mbn": { ...archive, format: "qualcomm-mbn" },
   "android-ota-payload": { ...archive, format: "android-ota-payload" },
   "android-vbmeta": { ...archive, format: "android-vbmeta" },
   "android-sparse-image": { ...archive, format: "android-sparse-image" },
+  "ubi-image": { ...archive, format: "ubi-image" },
   uf2: { ...archive, format: "uf2" },
   dfuse: { ...archive, format: "dfuse" },
   bflt: { ...archive, format: "bflt" },
@@ -157,6 +160,7 @@ const TARGETS: TargetFixtures = {
   fit: { ...archive, format: "fit" },
   "windows-prefetch": { ...archive, format: "windows-prefetch" },
   "ntfs-mft": { ...archive, format: "ntfs-mft" },
+  "auditd-log": { ...archive, format: "auditd-log" },
   plist: { ...artifact, format: "plist" },
   javascript: { ...artifact, format: "javascript" },
   "source-map": { ...artifact, format: "source-map" },
@@ -165,6 +169,8 @@ const TARGETS: TargetFixtures = {
   "windows-shortcut": { ...artifact, format: "windows-shortcut" },
   "python-pyc": { ...artifact, format: "python-pyc" },
   devicetree: { ...artifact, format: "devicetree" },
+  "esp-nvs": { ...artifact, format: "esp-nvs" },
+  deb: { ...artifact, format: "deb" },
 };
 
 const provider = { id: "fixture", name: "Fixture", version: "1" } as const;

@@ -1,10 +1,7 @@
 import { z } from "zod";
 
 import { androidResultSchemas } from "../android/androidAnalysis.js";
-import {
-  androidReferenceFieldSchema,
-  androidReferencesViewSchema,
-} from "../android/androidReferencesQuery.js";
+import { androidReferencesViewSchema } from "../android/androidReferencesQuery.js";
 import { evidenceSubjectTarget } from "../evidence.js";
 import { boundedList } from "../boundedList.js";
 import type { JsonValue } from "../jsonValue.js";
@@ -14,6 +11,7 @@ import {
   selectByteBoundedViewRows,
   type ByteBoundedPageOwner,
 } from "./byteBoundedViewRows.js";
+import { filterSet, pickFields } from "./selectViewRows.js";
 import {
   analysisViewInputError,
   invalidAnalysisViewSubject,
@@ -23,7 +21,7 @@ import {
   type AnalysisViewParent,
 } from "./analysisViewParent.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -166,9 +164,9 @@ const topClassGroups = (trace: Trace): readonly TopClassGroup[] => {
 
 /** Exact filters shared by both facets; undefined fields match everything. */
 const filtersOf = (view: ReferencesView) => ({
-  kinds: view.kinds === undefined ? undefined : new Set(view.kinds),
-  packages: view.packages === undefined ? undefined : new Set(view.packages),
-  tops: view.top_classes === undefined ? undefined : new Set(view.top_classes),
+  kinds: filterSet(view.kinds),
+  packages: filterSet(view.packages),
+  tops: filterSet(view.top_classes),
 });
 
 const matcher = (view: ReferencesView) => {
@@ -190,16 +188,6 @@ const groupCount = (
   let count = 0;
   for (const [kind, n] of group.kinds) if (kinds.has(kind)) count += n;
   return count;
-};
-
-const pick = (
-  row: Reference,
-  fields: ReadonlySet<z.output<typeof androidReferenceFieldSchema>> | undefined,
-): Partial<Reference> => {
-  if (fields === undefined) return row;
-  const picked: Partial<Record<keyof Reference, unknown>> = {};
-  for (const field of fields) if (field in row) picked[field] = row[field];
-  return picked as Partial<Reference>;
 };
 
 /** One page of distinct top classes, counted by the selected kinds. */
@@ -246,7 +234,7 @@ const referencesPage = (
   view: Extract<ReferencesView, { facet: "references" }>,
   owner: ByteBoundedPageOwner,
 ) => {
-  const fields = view.fields === undefined ? undefined : new Set(view.fields);
+  const fields = filterSet(view.fields);
   const page = selectByteBoundedViewRows(
     references,
     view,
@@ -254,7 +242,7 @@ const referencesPage = (
       matches: matcher(view),
       project: (row, index): z.output<typeof androidReferenceRowSchema> => ({
         index,
-        ...pick(row, fields),
+        ...(fields === undefined ? row : pickFields(row, fields)),
       }),
     },
     owner,
@@ -304,11 +292,7 @@ export const projectAndroidReferencesView = (
     parent_operation: TRACE_ANDROID_REFERENCES_OPERATION,
     parent_digest: parent.evidenceId.slice(3),
     artifact: { path: subject.path, sha256: subject.sha256 },
-    limitations: boundedViewMessages(
-      [...parent.limitations],
-      parent.evidenceId,
-      "limitations",
-    ),
+    limitations: boundedViewLimitations(parent),
     unknowns: [
       "Static using nodes do not establish runtime calls, reflection or dynamic dispatch.",
     ],

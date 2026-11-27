@@ -48,9 +48,11 @@ import { createIl2cppMetadataService } from "./il2cpp.js";
 import { createElectronFuseService } from "./electronFuses.js";
 import { createReleaseExposureService } from "./releaseExposure.js";
 import { createPythonPycService } from "./pythonPyc.js";
+import { createDebPackageService } from "./debPackage.js";
 import { createNugetNupkgService } from "./nugetNupkg.js";
 import { createVsixPackageService } from "./vsixPackage.js";
 import { createOciImageLayoutService } from "./ociImageLayout.js";
+import { createYaraMatchesService } from "./yara.js";
 import { createWebNetworkCaptureService } from "./webNetworkCaptures.js";
 import { createWebSourceLocationService } from "./webSourceLocations.js";
 import { createWebModuleTraceService } from "./webModules.js";
@@ -82,6 +84,7 @@ import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHo
 import { pcapCaptureHostSupported } from "../domain/pcap/pcapAnalysis.js";
 import { createPeLoadConfigService } from "./binaryDiagnostics/peLoadConfig.js";
 import { createPeUnwindRangesService } from "./binaryDiagnostics/peUnwindRanges.js";
+import { createMachoFunctionStartsService } from "./binaryDiagnostics/machoFunctionStarts.js";
 import { createPeOverlayService } from "./binaryDiagnostics/peOverlay.js";
 import { createBinaryHardeningService } from "./binaryDiagnostics/binaryHardening.js";
 import { createPeCertificatesService } from "./binaryDiagnostics/peCertificates.js";
@@ -92,6 +95,7 @@ import { createWindowsShortcutService } from "./binaryDiagnostics/windowsShortcu
 import { createRecordedCrashService } from "./binaryDiagnostics/recordedCrash.js";
 import { createBinaryLayoutService } from "./binaryDiagnostics/binaryLayout.js";
 import { createDevicetreeService } from "./binaryDiagnostics/devicetree.js";
+import { createEspNvsService } from "./binaryDiagnostics/espNvs.js";
 import { createElfNotesService } from "./binaryDiagnostics/elfNotes.js";
 import { createDwarfUnitsService } from "./binaryDiagnostics/dwarfUnits.js";
 import { createElfDebugLinkService } from "./binaryDiagnostics/elfDebugLink.js";
@@ -114,9 +118,11 @@ import type { GoBinaryService } from "../application/go/GoBinaryService.js";
 import type { ElectronFuseService } from "../application/electron/ElectronFuseService.js";
 import type { RustBinaryService } from "../application/rust/RustBinaryService.js";
 import type { PythonPycService } from "../application/python/PythonPycService.js";
+import type { DebPackageService } from "../application/deb/DebPackageService.js";
 import type { NugetNupkgService } from "../application/nuget/NugetNupkgService.js";
 import type { VsixPackageService } from "../application/vsix/VsixPackageService.js";
 import type { OciImageLayoutService } from "../application/oci/OciImageLayoutService.js";
+import type { YaraMatchesService } from "../application/yara/YaraMatchesService.js";
 import type { BeamService } from "../application/erlang/BeamService.js";
 import type { V8CodeCacheService } from "../application/v8CodeCache/V8CodeCacheService.js";
 import type { MavenGradleMetadataService } from "../application/java/MavenGradleMetadataService.js";
@@ -153,9 +159,11 @@ export interface CapabilityServiceOptions {
   readonly il2cppMetadata?: Il2cppMetadataService;
   readonly rustBinary?: RustBinaryService;
   readonly pythonPyc?: PythonPycService;
+  readonly debPackage?: DebPackageService;
   readonly nugetNupkg?: NugetNupkgService;
   readonly vsixPackage?: VsixPackageService;
   readonly ociImageLayout?: OciImageLayoutService;
+  readonly yaraMatches?: YaraMatchesService;
   readonly erlangBeam?: BeamService;
   readonly v8CodeCache?: V8CodeCacheService;
   readonly mavenGradleMetadata?: MavenGradleMetadataService;
@@ -404,6 +412,7 @@ const modules = {
   peResources: service(() => createPeResourcesService()),
   nativeExports: service(() => createNativeExportsService()),
   devicetree: service(() => createDevicetreeService()),
+  espNvs: service(() => createEspNvsService()),
   elfNotes: service(() => createElfNotesService()),
   dwarfUnits: service(() => createDwarfUnitsService()),
   elfDebugLink: service(() => createElfDebugLinkService()),
@@ -416,6 +425,7 @@ const modules = {
   peLoadConfig: service(() => createPeLoadConfigService()),
   peOverlay: service(() => createPeOverlayService()),
   peUnwindRanges: service(() => createPeUnwindRangesService()),
+  machoFunctionStarts: service(() => createMachoFunctionStartsService()),
   binaryHardening: service(() => createBinaryHardeningService()),
   peCertificates: service(() => createPeCertificatesService()),
   peImports: service(() => createPeImportsService()),
@@ -429,6 +439,9 @@ const modules = {
   pythonPyc: service(
     ({ options }) => options.pythonPyc ?? createPythonPycService(),
   ),
+  debPackage: service(
+    ({ options }) => options.debPackage ?? createDebPackageService(),
+  ),
   nugetNupkg: service(
     ({ options }) => options.nugetNupkg ?? createNugetNupkgService(),
   ),
@@ -437,6 +450,11 @@ const modules = {
   ),
   ociImageLayout: service(
     ({ options }) => options.ociImageLayout ?? createOciImageLayoutService(),
+  ),
+  yaraMatches: service(
+    ({ environment, options, platform, settings }) =>
+      options.yaraMatches ??
+      createYaraMatchesService(environment, settings, platform),
   ),
   webNetworkCapture: service(
     ({ environment, options, settings }) =>

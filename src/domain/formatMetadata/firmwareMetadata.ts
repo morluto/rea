@@ -551,6 +551,84 @@ export const uImageEntryMetadataSchema = z.strictObject({
 });
 export type UImageEntryMetadata = z.infer<typeof uImageEntryMetadataSchema>;
 
+/** One UBI volume table record and how its logical eraseblocks map. */
+const ubiVolumeFacts = {
+  id: z.number().int().min(0).max(127),
+  name: z.string(),
+  /** The stored name bytes when UTF-8 decoding replaced invalid sequences. */
+  name_bytes_hex: z
+    .string()
+    .regex(/^(?:[0-9a-f]{2}){1,127}$/u)
+    .nullable(),
+  type: z.enum(["dynamic", "static"]),
+  reserved_pebs: uint32,
+  alignment: uint32,
+  data_pad: uint32,
+  update_marker: z.boolean(),
+  flags: z.number().int().min(0).max(255),
+  autoresize: z.boolean(),
+  usable_leb_size: uint32,
+  used_ebs: uint32.nullable(),
+  mapped_leb_count: uint32,
+  stale_leb_copy_count: uint32,
+  missing_leb_count: uint32,
+  first_missing_leb: uint32.nullable(),
+  data_bytes: offset.nullable(),
+  extractable: z.boolean(),
+};
+
+/**
+ * UBI erase-counter header layout, eraseblock counts and the volume table.
+ * Header CRCs are verified; LEB data CRCs are not.
+ */
+export const ubiImageMetadataSchema = z.strictObject({
+  kind: z.literal("ubi-image"),
+  magic: z.literal("UBI#"),
+  version: z.literal(1),
+  peb_size: offset,
+  leb_size: offset,
+  vid_header_offset: uint32,
+  data_offset: uint32,
+  image_seq: uint32,
+  peb_count: uint32,
+  mapped_peb_count: uint32,
+  free_peb_count: uint32,
+  erased_peb_count: uint32,
+  corrupt_peb_count: uint32,
+  layout_peb_count: uint32,
+  stale_leb_copy_count: uint32,
+  ignored_leb_count: uint32,
+  min_erase_counter: offset.nullable(),
+  max_erase_counter: offset.nullable(),
+  volume_table_slots: z.number().int().min(0).max(128),
+  volume_table_copies_found: z.number().int().min(0).max(2),
+  volume_table_copies_valid: z.number().int().min(0).max(2),
+  volume_table_copies_agree: z.boolean().nullable(),
+  volume_table_source_leb: z.union([z.literal(0), z.literal(1)]),
+  data_crc_verified: z.literal(false),
+  volumes: z.array(z.strictObject({ ...ubiVolumeFacts, path: z.string() })),
+});
+export type UbiImageMetadata = z.infer<typeof ubiImageMetadataSchema>;
+
+/** One reassembled volume; its bytes come from many PEBs, not one file range. */
+export const ubiVolumeMetadataSchema = z.strictObject({
+  kind: z.literal("ubi-volume"),
+  ...ubiVolumeFacts,
+  /**
+   * Where each chosen LEB's data sits in the image, in LEB order, so saved
+   * Evidence can cite the PEB bytes behind the volume. Empty when refused.
+   */
+  source_ranges: z.array(
+    z.strictObject({
+      lnum: uint32,
+      peb: uint32,
+      offset,
+      length: uint32,
+    }),
+  ),
+});
+export type UbiVolumeMetadata = z.infer<typeof ubiVolumeMetadataSchema>;
+
 /**
  * uClinux bFLT flat header facts (all fields big-endian). Header offsets count
  * from the start of the file. Revision 4 relocation entries count from the

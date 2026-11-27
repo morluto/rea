@@ -5,6 +5,7 @@ import type { AppleIpsService } from "../application/binaryDiagnostics/AppleIpsS
 import type { BinaryHardeningService } from "../application/binaryDiagnostics/BinaryHardeningService.js";
 import type { ByteEntropyService } from "../application/binaryDiagnostics/ByteEntropyService.js";
 import type { DevicetreeService } from "../application/binaryDiagnostics/DevicetreeService.js";
+import type { EspNvsService } from "../application/binaryDiagnostics/EspNvsService.js";
 import type { DwarfUnitsService } from "../application/binaryDiagnostics/DwarfUnitsService.js";
 import type { ElfDebugLinkService } from "../application/binaryDiagnostics/ElfDebugLinkService.js";
 import type { ElfDependenciesService } from "../application/binaryDiagnostics/ElfDependenciesService.js";
@@ -17,11 +18,13 @@ import type { NativeInitializersService } from "../application/binaryDiagnostics
 import type { PeCertificatesService } from "../application/binaryDiagnostics/PeCertificatesService.js";
 import type { PeImportsService } from "../application/binaryDiagnostics/PeImportsService.js";
 import type { PeLoadConfigService } from "../application/binaryDiagnostics/PeLoadConfigService.js";
+import type { MachoFunctionStartsService } from "../application/binaryDiagnostics/MachoFunctionStartsService.js";
 import type { PeUnwindRangesService } from "../application/binaryDiagnostics/PeUnwindRangesService.js";
 import type { PeOverlayService } from "../application/binaryDiagnostics/PeOverlayService.js";
 import type { PeResourcesService } from "../application/binaryDiagnostics/PeResourcesService.js";
 import type { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
 import type { WindowsShortcutService } from "../application/binaryDiagnostics/WindowsShortcutService.js";
+import type { DebPackageService } from "../application/deb/DebPackageService.js";
 import type { BeamService } from "../application/erlang/BeamService.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
 import type { GoBinaryService } from "../application/go/GoBinaryService.js";
@@ -39,6 +42,7 @@ import type { SqliteDatabaseService } from "../application/sqlite/SqliteDatabase
 import type { V8CodeCacheService } from "../application/v8CodeCache/V8CodeCacheService.js";
 import type { VsixPackageService } from "../application/vsix/VsixPackageService.js";
 import type { WasmArtifactService } from "../application/wasm/WasmArtifactService.js";
+import type { YaraMatchesService } from "../application/yara/YaraMatchesService.js";
 import { compareWasmInterfaces } from "../application/wasm/WasmInterfaceComparisonService.js";
 import { ok } from "../domain/result.js";
 import type { ContractToolBindings } from "./contractToolBindings.js";
@@ -131,6 +135,12 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
       run: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<PeUnwindRangesService>,
+  machoFunctionStarts: ((service) => ({
+    inspect_macho_function_starts: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<MachoFunctionStartsService>,
   peOverlay: ((service) => ({
     inspect_pe_overlay: {
       admission: "application",
@@ -221,6 +231,12 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
       summary: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<NugetNupkgService>,
+  debPackage: ((service) => ({
+    inspect_deb_package: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<DebPackageService>,
   vsixPackage: ((service) => ({
     inspect_vsix_package: {
       admission: "application",
@@ -233,6 +249,12 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
       summary: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<OciImageLayoutService>,
+  yaraMatches: ((service) => ({
+    inspect_yara_matches: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<YaraMatchesService>,
   pythonPyc: ((service) => ({
     inspect_python_pyc: {
       admission: "application",
@@ -303,4 +325,10 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
       summary: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<ElfDependenciesService>,
+  espNvs: ((service, retention) => ({
+    inspect_esp_nvs: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options, retention),
+    },
+  })) satisfies Bind<EspNvsService>,
 } as const;

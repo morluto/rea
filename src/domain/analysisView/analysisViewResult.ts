@@ -67,6 +67,11 @@ import {
   devicetreeViewRequestSchema,
 } from "./devicetreeView.js";
 import {
+  espNvsPageContextSchema,
+  espNvsViewItemsSchema,
+  espNvsViewRequestSchema,
+} from "./espNvsView.js";
+import {
   elfDependenciesSummarySchema,
   elfDependenciesViewItemsSchema,
   elfDependenciesViewRequestSchema,
@@ -223,6 +228,7 @@ import {
 import { dartAotSummaryViewResultSchema } from "./summarySchemas/dartAotSummarySchema.js";
 import { desktopApplicationSummaryViewResultSchema } from "./summarySchemas/desktopApplicationSummarySchema.js";
 import { devicetreeSummaryViewResultSchema } from "./summarySchemas/devicetreeSummarySchema.js";
+import { espNvsSummaryViewResultSchema } from "./summarySchemas/espNvsSummarySchema.js";
 import {
   uefiExtractionPageViewResultSchema,
   uefiExtractionSummaryViewResultSchema,
@@ -274,6 +280,7 @@ import { nativeLoadImageSummaryViewResultSchema } from "./summarySchemas/nativeL
 import { nativeObservationSummaryViewResultSchemas } from "./summarySchemas/nativeObservationSummarySchemas.js";
 import { nativeProcedureReferencesSummaryViewResultSchema } from "./summarySchemas/nativeProcedureReferencesSummarySchema.js";
 import { nativeValueTraceSummaryViewResultSchema } from "./summarySchemas/nativeValueTraceSummarySchema.js";
+import { debPackageSummaryViewResultSchema } from "./summarySchemas/debPackageSummarySchema.js";
 import { nugetNupkgSummaryViewResultSchema } from "./summarySchemas/nugetNupkgSummarySchema.js";
 import { objdumpSummaryViewResultSchema } from "./summarySchemas/objdumpSummarySchema.js";
 import { ociImageLayoutSummaryViewResultSchema } from "./summarySchemas/ociImageLayoutSummarySchema.js";
@@ -347,8 +354,10 @@ export {
   byteEntropyPageViewResultSchema,
   byteEntropySummaryViewResultSchema,
   dartAotSummaryViewResultSchema,
+  debPackageSummaryViewResultSchema,
   desktopApplicationSummaryViewResultSchema,
   devicetreeSummaryViewResultSchema,
+  espNvsSummaryViewResultSchema,
   elfDependenciesSummaryViewResultSchema,
   endpointComparisonPageViewResultSchema,
   endpointComparisonSummaryViewResultSchema,
@@ -421,11 +430,13 @@ const viewResultBase = {
   parent_operation: z.enum([
     "trace_web_source_location",
     "inspect_python_pyc",
+    "inspect_deb_package",
     "inspect_nuget_nupkg",
     "inspect_vsix_package",
     "inspect_oci_image_layout",
     "inspect_erlang_beam",
     "inspect_devicetree",
+    "inspect_esp_nvs",
     "inspect_byte_entropy",
     "inspect_native_exports",
     "inspect_elf_dependencies",
@@ -787,9 +798,11 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     nativeValueTraceSummaryViewResultSchema,
     erlangBeamSummaryViewResultSchema,
     devicetreeSummaryViewResultSchema,
+    espNvsSummaryViewResultSchema,
     uefiFirmwareSummaryViewResultSchema,
     uefiExtractionSummaryViewResultSchema,
     pythonPycSummaryViewResultSchema,
+    debPackageSummaryViewResultSchema,
     nativeExportsSummaryViewResultSchema,
     elfDependenciesSummaryViewResultSchema,
     byteEntropySummaryViewResultSchema,
@@ -849,6 +862,14 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: devicetreeViewRequestSchema,
     devicetree: devicetreePageContextSchema,
     items: devicetreeViewItemsSchema,
+  }),
+  z.strictObject({
+    ...viewResultBase,
+    kind: z.literal("esp-nvs"),
+    parent_operation: z.literal("inspect_esp_nvs"),
+    view: espNvsViewRequestSchema,
+    nvs: espNvsPageContextSchema,
+    items: espNvsViewItemsSchema,
   }),
   uefiFirmwarePageViewResultSchema,
   uefiExtractionPageViewResultSchema,

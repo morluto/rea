@@ -46,6 +46,8 @@ const PATH_SCOPES = {
     "scripts/run-python-tests.py",
   ],
   packet_capture: [
+    UBUNTU_ARCHIVE_ACTION,
+    ".github/actions/host-apt-packages/action.{yml,yaml}",
     "tests/boundary/captures/**",
     "tests/boundary/cli/captureCleanup.test.ts",
     "tests/boundary/mcp/packetCaptureMcp.test.ts",
@@ -95,6 +97,7 @@ const PATH_SCOPES = {
     "src/application/reverse/**",
     "src/application/binary/BinarySession.ts",
     "src/cutter/**",
+    "src/domain/analysisResourceLimits.ts",
     "src/gdb/**",
     "src/frida/frida-bindings.d.ts",
     "src/objdump/**",
@@ -148,6 +151,7 @@ const PATH_SCOPES = {
     "stryker.semantics.config.mjs",
     "tsconfig.reverse-tools-mutation.json",
     "scripts/prepare-reverse-tools-mutation.mjs",
+    "scripts/verify/mutation-target-tsconfig.mjs",
     "scripts/lib/reverse-tools-mutation-targets.mjs",
   ],
   // Apple artifact CLI/MCP lane on macOS, including its focused regressions.
@@ -160,6 +164,8 @@ const PATH_SCOPES = {
     "tests/boundary/filesystem/inesCancellation.test.ts",
     "src/artifacts/NdsRomArtifactReader*.ts",
     "src/domain/ndsRom*.ts",
+    "src/artifacts/N64RomArtifactReader*.ts",
+    "src/domain/n64Rom*.ts",
     "src/hopper/BridgeLauncher.ts",
     "src/hopper/HopperErrors.ts",
     "tests/boundary/providers/hopper/hopperMacLaunchArguments.test.ts",

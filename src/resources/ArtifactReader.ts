@@ -252,6 +252,7 @@ export interface ArtifactReader {
     | "asar"
     | "ines"
     | "nds"
+    | "n64-rom"
     | "godot-pck"
     | "unityfs"
     | "wxapkg"
@@ -264,9 +265,11 @@ export interface ArtifactReader {
     | "nso"
     | "nro"
     | "android-boot-image"
+    | "android-dtbo"
     | "android-ota-payload"
     | "android-vbmeta"
     | "android-sparse-image"
+    | "ubi-image"
     | "iso9660"
     | "uefi"
     | "pyinstaller"
@@ -285,6 +288,8 @@ export interface ArtifactReader {
     | "windows-prefetch"
     | "qualcomm-mbn"
     | "ntfs-mft"
+    | "auditd-log"
+    | "pkg"
     | "file";
   entries(
     signal?: AbortSignal,

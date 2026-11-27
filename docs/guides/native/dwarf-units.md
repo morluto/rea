@@ -19,9 +19,14 @@ requires an absolute filesystem path:
 }
 ```
 
-A universal Mach-O needs `architecture` (`x86`, `x86_64`, `arm`, or `arm64`).
-The same value is rejected for every other image. A `.dSYM` bundle is not
-opened. Pass the DWARF file inside the bundle.
+A universal Mach-O needs `architecture` (`x86`, `x86_64`, `arm`, `arm64`,
+`arm64e`, or `arm64e.x1`). A CPU family with one slice is selected by its family
+name; `arm64e` and `arm64e.x1` each read only a slice of that subtype, as
+`lipo -thin` does. When several slices share the family, `arm64` reads the
+`arm64` (or `arm64v8`) slice and `x86_64` the canonical `x86_64` slice, and a
+value that matches no slice or several is refused. The same value is rejected
+for every other image. A `.dSYM` bundle is not opened. Pass the DWARF file
+inside the bundle.
 
 ## Observations
 

@@ -1,8 +1,8 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, matchesGlob } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -14,20 +14,10 @@ import {
 } from "../../../scripts/lib/docs-facts.mjs";
 
 const root = fileURLToPath(new URL("../../..", import.meta.url));
-const temporaryRoots: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    temporaryRoots
-      .splice(0)
-      .map((path) => rm(path, { recursive: true, force: true })),
-  );
-});
 
 describe("literal tool counts", () => {
   it("refuses catalog-size restatements in living prose only", async () => {
     const directory = await createTestTempDirectory("rea-tool-count-facts-");
-    temporaryRoots.push(directory);
     const write = async (path: string, content: string) => {
       await mkdir(dirname(join(directory, path)), { recursive: true });
       await writeFile(join(directory, path), content);
@@ -88,7 +78,6 @@ describe("literal tool counts", () => {
 describe("translated README facts", () => {
   it("keeps translated readmes linked to canonical setup and tool details", async () => {
     const directory = await createTestTempDirectory("rea-readme-facts-");
-    temporaryRoots.push(directory);
     const translatedPath = join(directory, "docs/readme/README_zh.md");
     const links = [
       "[Agents](docs/getting-started/installation.md#supported-agents)",

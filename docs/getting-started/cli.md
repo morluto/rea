@@ -387,6 +387,19 @@ rea extract-artifact ./firmware.bin --json
 See [U-Boot uImage](../uimage.md) for verified CRCs, physical component ranges,
 unknown names, resource limits and retained views. Compressed bytes stay stored.
 
+Inspect a macOS flat installer package without `pkgutil` or installer
+execution:
+
+```sh
+rea inspect-artifact installer.pkg --detail summary --evidence_output evidence.json --json
+rea extract-artifact installer.pkg --json
+```
+
+The portable XAR reader reports header and TOC facts, Distribution/PackageInfo
+fields, gzip cpio Scripts and Payload members, and named refusals for pbzx
+payloads or truncated archives. XAR signatures are not verified. See
+[macOS flat installer packages](../macos-pkg.md).
+
 Inspect an Android A/B OTA `payload.bin` (CrAU v2) without applying the update:
 
 ```sh
@@ -407,6 +420,16 @@ rea extract-artifact ./system.img --json
 
 See [Android sparse images](../guides/firmware/android-sparse-image.md) for chunk
 facts, DONT_CARE handling, unverified checksums and the expansion allowance.
+
+Inventory the volumes of a UBI image or NAND dump and reassemble each one:
+
+```sh
+rea inspect-artifact ./nand.ubi --detail summary --evidence_output nand.json --json
+rea extract-artifact ./nand.ubi --json
+```
+
+See [UBI images](../guides/firmware/ubi-images.md) for eraseblock layout, the volume
+table, LEB reassembly and missing-LEB refusals.
 
 `inspect-artifact` and `extract-artifact` also read ZIP members compressed with
 Zstandard (standard method 93). They retain the shared ZIP CRC, declared-size,
@@ -466,6 +489,9 @@ See [Android Verified Boot vbmeta images](../guides/firmware/android-vbmeta.md)
 for the header, descriptors, stored public key, and the fact that nothing is
 verified.
 
+Standalone `dtbo.img` partition tables (`0xd7b7ab1e`) can also be inspected
+and extracted with `inspect-artifact` and `extract-artifact`; see [Android DTBO partition images](../android-dtbo.md).
+
 Inventory and extract an ISO 9660 disc image without mounting it:
 
 ```sh
@@ -505,6 +531,17 @@ rea extract-artifact ./game.nds --json
 
 See [Nintendo DS ROMs](../guides/firmware/nds-roms.md) for header detection, member paths,
 checksum and range limitations, and what is not decoded.
+
+Inventory and extract a Nintendo 64 ROM. z64, v64 and n64 dumps all yield a
+big-endian `program.z64`:
+
+```sh
+rea inspect-artifact ./game.z64 --detail summary --json
+rea extract-artifact ./game.z64 --json
+```
+
+See [Nintendo 64 ROMs](../guides/firmware/n64-roms.md) for byte order, the
+cartridge header, the CIC variant, the CRC pair and the fixed 64 MiB ceiling.
 
 Inventory and extract a Qualcomm MBN boot image or an ELF image with a hash segment:
 
@@ -668,6 +705,18 @@ reported present, absent, or incomplete and is not decoded. A missing unwind tab
 observed absence of those declarations. See
 [ELF unwind function ranges](../guides/native/elf-unwind-ranges.md).
 
+List Mach-O function starts and data-in-code entries without executing the
+image:
+
+```bash
+rea inspect-macho-function-starts /absolute/path/to/program --json
+```
+
+The workflow reports `LC_FUNCTION_STARTS` VM addresses and `LC_DATA_IN_CODE`
+entries (offset, length, kind, and the owning start). Universal Mach-O files
+need `--architecture`. Counts cover every entry. See
+[Mach-O function starts and data in code](../guides/native/macho-function-starts.md).
+
 Inspect an Apple `.ips` crash report without executing a target:
 
 ```bash
@@ -721,6 +770,18 @@ rea inspect-python-pyc /absolute/path/to/module.pyc --json
 The workflow reports the pinned CPython version for the magic, PEP 552 hash or
 mtime/size fields, nested function names, and bytecode SHA-256. Bytecode is
 not decompiled. See [CPython pyc inspection](../python-pyc.md).
+
+Inspect a local Debian `.deb` without installing it or running maintainer
+scripts:
+
+```bash
+rea inspect-deb-package /absolute/path/to/hello_2.03-1_all.deb --json
+```
+
+The workflow reports the ar members, control identity and parsed
+relationships, which maintainer scripts are present, and a bounded data.tar
+inventory. gzip, zstd, xz, and uncompressed members are decoded; bzip2 and
+lzma are unsupported. See [Debian package inspection](../deb-package.md).
 
 Inspect an Erlang BEAM file without executing bytecode:
 
@@ -781,6 +842,19 @@ and streamed digest verification of present referenced blobs. Missing blobs,
 digest mismatches, and similar defects are findings. Env values are kept
 unless `--no-include-env-values` is selected. Directory form only. See
 [OCI image layouts](../guides/artifacts/oci-image-layout.md).
+
+Scan a local file with YARA rule files you supply, using the installed `yara`
+command:
+
+```bash
+rea inspect-yara-matches /absolute/path/to/sample.bin \
+  --rule_paths /absolute/path/to/packers.yar --json
+```
+
+The workflow reports matching rules with tags, metadata and string match
+offsets, bound to the SHA-256 of the file and of each rule file. Set
+`REA_YARA_COMMAND` when `yara` is not on `PATH`. A rule that does not compile
+is an input error naming its file. See [YARA rule matches](../guides/native/yara-matches.md).
 
 Complete `rea decompile --json` Evidence can be saved and inspected through
 `inspect-analysis-view` with an inline source and

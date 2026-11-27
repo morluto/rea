@@ -1243,6 +1243,15 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     },
   },
+  "rea-deb-package": inProcess(
+    covered(
+      test(
+        "tests/acceptance/debPackageCli.test.ts",
+        "inspects a fixture .deb without installing it or running maintainer scripts",
+      ),
+    ),
+    typedFailures("tests/boundary/filesystem/debPackage.test.ts"),
+  ),
   "rea-devicetree": inProcess(
     covered(
       test(
@@ -1351,6 +1360,20 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     ),
     typedFailures("tests/boundary/filesystem/erlangBeam.test.ts"),
+  ),
+  "rea-esp-nvs": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/espNvsMcpCli.test.ts",
+        "decodes an NVS slice inside a flash dump with CLI and advertised MCP parity",
+      ),
+    ),
+    covered(
+      test(
+        "src/application/binaryDiagnostics/EspNvsService.test.ts",
+        "honors cancellation before reading and retains completed Evidence on late cancellation",
+      ),
+    ),
   ),
   "rea-harmony-application": inProcess(
     covered(
@@ -1557,6 +1580,15 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     ),
     typedFailures("src/native/pe/PeUnwindRangesProvider.test.ts"),
+  ),
+  "rea-macho-function-starts": inProcess(
+    covered(
+      test(
+        "tests/acceptance/machoFunctionStartsCli.test.ts",
+        "reads Mach-O function starts identically over CLI and MCP",
+      ),
+    ),
+    typedFailures("src/native/apple/MachoFunctionStartsProvider.test.ts"),
   ),
   "rea-playwright-browser-scenario": {
     ownership: "process",
@@ -2216,6 +2248,42 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         test(
           "tests/boundary/javascript-recovery/wakaruIntegration.test.ts",
           "retains a setup-failed publication tree for provider cleanup retry",
+        ),
+      ),
+    },
+  },
+  "yara.command": {
+    ownership: "process",
+    stages: {
+      launch: covered(
+        test(
+          "tests/boundary/providers/yaraMatchesProvider.test.ts",
+          "reports a missing yara command as unavailable with remediation",
+        ),
+      ),
+      handshake: ONE_SHOT,
+      operation: covered(
+        test(
+          "tests/boundary/providers/yaraMatchesProvider.test.ts",
+          "binds matches to the file and rule digests and passes argv without a shell",
+        ),
+      ),
+      cancel: covered(
+        test(
+          "tests/boundary/providers/yaraMatchesProvider.test.ts",
+          "cancels a running scan and leaves nothing to clean up",
+        ),
+      ),
+      cleanup: covered(
+        test(
+          "tests/boundary/providers/yaraMatchesProvider.test.ts",
+          "retains a failed process cleanup and retries it before the next scan",
+        ),
+      ),
+      retry: covered(
+        test(
+          "tests/boundary/providers/yaraMatchesProvider.test.ts",
+          "retains a failed process cleanup and retries it before the next scan",
         ),
       ),
     },
