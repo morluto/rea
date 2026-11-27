@@ -11,6 +11,10 @@ import {
   MAXIMUM_GHIDRA_TYPE_DECLARATIONS_MAX_UTF16,
   MINIMUM_GHIDRA_C_TEXT_UTF16,
 } from "../domain/analysisResourceLimits.js";
+import {
+  ghidraCheckpointSaveWaitLimit,
+  ghidraCheckpointSaveWaitRecovery,
+} from "../config/ghidraCheckpointSaveWait.js";
 import { z } from "zod";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
@@ -110,13 +114,17 @@ export const projectSessionError = (
     request,
     entryHint,
   );
-  return failure.cleanupFailure === undefined
-    ? primary
-    : analysisErrorWithCleanupDependencies(
-        primary,
-        failure.cleanupFailure,
-        operation,
-      );
+  const projected =
+    failure.cleanupFailure === undefined
+      ? primary
+      : analysisErrorWithCleanupDependencies(
+          primary,
+          failure.cleanupFailure,
+          operation,
+        );
+  for (const secondary of failure.secondaryFailures)
+    projected.retainSecondaryFailure(secondary);
+  return projected;
 };
 
 const projectPrimarySessionError = (
@@ -147,9 +155,11 @@ const projectPrimarySessionError = (
         {
           ...context,
           retryable: true,
-          userMessage: `${failure.cause.message}. One session at a time opens a target through a checkpoint directory.`,
-          remediationAction:
-            "Wait for that session to close the target, or close it, then repeat this call unchanged. If that session saved Program edits when it closed, the repeated call reports that the checkpoint changed; then reopen the target to restore the saved checkpoint. To analyze the same target concurrently, start this process without REA_GHIDRA_CHECKPOINT_DIR; it then uses a private ephemeral import.",
+          userMessage: `${failure.cause.message}. Sessions share a checkpointed target; one at a time saves it.`,
+          remediationAction: ghidraCheckpointSaveWaitRecovery(
+            failure.cause.wait,
+          ),
+          limit: ghidraCheckpointSaveWaitLimit(failure.cause.wait),
         },
       );
     // The session's committed profile names the generation it selected, so

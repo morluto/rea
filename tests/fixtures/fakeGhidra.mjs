@@ -222,7 +222,8 @@ const handleRequest = (socket, server, request, state) => {
     }
     // A tool that never answers, so a caller is still active during close.
     if (
-      state.mode === "checkpoint_hold_close_hang_tool" &&
+      (state.mode === "checkpoint_hold_close_hang_tool" ||
+        state.mode === "checkpoint_hang_tool") &&
       request.method === "list_documents"
     )
       return;

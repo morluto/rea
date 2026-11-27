@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process";
-import { createConnection, Server } from "node:net";
+import { createConnection, createServer, Server } from "node:net";
 import { promisify } from "node:util";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 
+import { sha256Hex } from "../kernel/sha256Hex.js";
 import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { HopperStartError } from "../hopper/HopperErrors.js";
@@ -552,5 +553,69 @@ describe.skipIf(process.platform === "win32")(
         expect(release).toHaveBeenCalledTimes(2);
       },
     );
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "an owner that accepts and does not answer",
+  () => {
+    const silentOwner = async () => {
+      const directory = await createTestTempDirectory("rea-silent-owner-");
+      const identity = { test: "silent-owner" };
+      const socketPath = join(
+        directory,
+        `${sha256Hex(JSON.stringify(identity)).slice(0, 32)}.sock`,
+      );
+      const server = createServer((socket) => {
+        socket.resume();
+      });
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(socketPath, () => resolve());
+      });
+      onTestFinished(
+        () =>
+          new Promise<void>((resolve) => {
+            server.close(() => resolve());
+          }),
+      );
+      return { directory, identity };
+    };
+
+    it("stops when the caller budget is shorter than the owner-response timeout", async () => {
+      const { directory, identity } = await silentOwner();
+      const started = performance.now();
+      const reasons: string[] = [];
+      await expect(
+        acquireOwnedLease({
+          identity,
+          directory,
+          runId: "contender",
+          probe: { timeoutMs: 40 },
+          failure: (reason) => {
+            if (reason.kind === "owner_unverified") reasons.push(reason.reason);
+            return new Error(reason.kind);
+          },
+        }),
+      ).rejects.toThrow("owner_unverified");
+      expect(performance.now() - started).toBeLessThan(220);
+      expect(reasons).toEqual(["owner response timed out"]);
+    });
+
+    it("stops when the caller aborts the probe", async () => {
+      const { directory, identity } = await silentOwner();
+      const controller = new AbortController();
+      const started = performance.now();
+      const pending = acquireOwnedLease({
+        identity,
+        directory,
+        runId: "contender",
+        probe: { signal: controller.signal },
+        failure: (reason) => new Error(reason.kind),
+      });
+      setTimeout(() => controller.abort(), 30);
+      await expect(pending).rejects.toThrow("owner_unverified");
+      expect(performance.now() - started).toBeLessThan(220);
+    });
   },
 );

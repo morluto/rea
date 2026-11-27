@@ -53,6 +53,14 @@ export const NUMERIC_LIMIT_REGISTRY = [
       "Parsed once when REA starts and fixed for each Ghidra session when its request queue is constructed. It bounds how long a cancelled read may take to answer before that session is closed, so a session keeps the grace it opened with.",
   },
   {
+    name: "REA_GHIDRA_CHECKPOINT_SAVE_WAIT_MS",
+    update_mode: "restart",
+    policy: "restart-only",
+    read: "startup",
+    reason:
+      "Parsed once when REA starts and fixed for each Ghidra session when its checkpoint owner is constructed. It bounds how long a close waits on another session's save, so a session keeps the bound it opened with.",
+  },
+  {
     name: "REA_HOPPER_DEMO_DIALOG_TIMEOUT_MS",
     update_mode: "restart",
     policy: "restart-only",

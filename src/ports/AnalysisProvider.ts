@@ -15,6 +15,7 @@ import type { AnalysisCapabilityUnavailableError } from "../domain/analysisError
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
+import type { EngineCloseReport } from "../domain/engineCloseReport.js";
 import type {
   Evidence,
   EvidenceAuthority,
@@ -305,14 +306,22 @@ export interface AnalysisClient extends AnalysisOperationPort {
   reuseReadiness?(): "ready" | "blocked" | "unknown";
   /** Current operational health for the active provider bridge. */
   operationHealthSnapshot?(): ProviderOperationHealth | undefined;
-  /** Close owned resources and retain failed cleanup for a later retry. */
+  /**
+   * What closing now would report as engine state released unsaved, without
+   * closing. Only a close reports it, so other transitions refuse to release it.
+   */
+  unsavedCloseReport?(): EngineCloseReport | null;
+  /**
+   * Close owned resources and retain failed cleanup for a later retry. A
+   * report names engine state the close released without persisting it.
+   */
   close(
     options?: Pick<ExecutionOptions, "progress"> & {
       readonly retainDocument?: boolean;
       /** Report each owned cleanup failure as soon as its owner observes it. */
       readonly onCleanupFailure?: (failure: AnalysisError) => void;
     },
-  ): Promise<Result<null, AnalysisError>>;
+  ): Promise<Result<EngineCloseReport | null, AnalysisError>>;
 }
 
 /** Per-client identity allocated before any provider side effect starts. */

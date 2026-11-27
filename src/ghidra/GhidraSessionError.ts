@@ -11,6 +11,10 @@ import type { GhidraDiagnosticsScope } from "./GhidraDiagnostics.js";
 import { isGhidraByteSearchCursorMismatch } from "./GhidraByteSearchCursorFailure.js";
 import { ghidraFileOffsetOutcome } from "./GhidraFileOffsetFailure.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
+import {
+  GhidraCheckpointBusyError,
+  GhidraCheckpointSupersededError,
+} from "./GhidraCheckpoint.js";
 import { GhidraLaunchSupportError } from "./GhidraJavaLaunch.js";
 import {
   GhidraLaunchError,
@@ -73,6 +77,8 @@ export class GhidraSessionError extends Error {
   readonly configurationFailure: ConfigurationError | undefined;
   readonly partialObservation: AnalysisPartialObservation | undefined;
   readonly concurrentCancellation: { readonly reason: unknown } | undefined;
+  /** Read failures that do not own cleanup, kept beside the primary outcome. */
+  #secondaryFailures: AnalysisError[] = [];
 
   constructor(
     readonly kind: GhidraSessionFailureKind,
@@ -90,6 +96,17 @@ export class GhidraSessionError extends Error {
     this.configurationFailure = options.configurationFailure;
     this.partialObservation = options.partialObservation;
     this.concurrentCancellation = options.concurrentCancellation;
+  }
+
+  /** Failures recorded beside this outcome that do not own its cleanup. */
+  get secondaryFailures(): readonly AnalysisError[] {
+    return [...this.#secondaryFailures];
+  }
+
+  /** Keep a non-cleanup fact, such as a manifest read that opened no handle. */
+  retainSecondaryFailure(failure: AnalysisError): this {
+    this.#secondaryFailures.push(failure);
+    return this;
   }
 
   /** Refresh diagnostics without discarding owned failure or cleanup facts. */
@@ -147,7 +164,7 @@ export class GhidraSessionError extends Error {
     partialObservation = this.partialObservation,
     concurrentCancellation = this.concurrentCancellation,
   ): GhidraSessionError {
-    return new GhidraSessionError(this.kind, message, diagnostics, {
+    const copied = new GhidraSessionError(this.kind, message, diagnostics, {
       ...(Object.hasOwn(this, "cause") ? { cause: this.cause } : {}),
       ...(this.cancellation === undefined
         ? {}
@@ -163,6 +180,12 @@ export class GhidraSessionError extends Error {
         ? {}
         : { concurrentCancellation }),
     });
+    // A diagnostic refresh is not a new failure. Secondary facts recorded
+    // on this error, such as a manifest read that failed without owning
+    // cleanup, stay with the copy.
+    for (const secondary of this.secondaryFailures)
+      copied.retainSecondaryFailure(secondary);
+    return copied;
   }
 }
 
@@ -260,6 +283,27 @@ export const isGhidraInputFailureCode = (code: string | undefined): boolean =>
   code === "ambiguous";
 
 /** Bind session-failure construction to its causal diagnostic scope. */
+/**
+ * Ghidra lifecycle errors that carry a cleanup failure beside their own
+ * outcome. Every consumer of a raw cause recognizes carriers here, so one
+ * carrier type cannot be read by one consumer and missed by another.
+ */
+const GHIDRA_CLEANUP_CARRIERS = [
+  DarwinProcessOwnershipInspectionError,
+  GhidraLaunchError,
+  GhidraCheckpointSupersededError,
+  GhidraCheckpointBusyError,
+] as const;
+
+export type GhidraCleanupCarrier = InstanceType<
+  (typeof GHIDRA_CLEANUP_CARRIERS)[number]
+>;
+
+export const isGhidraCleanupCarrier = (
+  cause: unknown,
+): cause is GhidraCleanupCarrier =>
+  GHIDRA_CLEANUP_CARRIERS.some((carrier) => cause instanceof carrier);
+
 export const bindGhidraSessionFailure =
   (
     diagnostics: (
@@ -299,13 +343,11 @@ export const bindGhidraSessionFailure =
       ...(cause === undefined ? {} : { cause }),
       ...options,
     });
-    const cleanup =
-      cause instanceof DarwinProcessOwnershipInspectionError ||
-      cause instanceof GhidraLaunchError
-        ? cause.cleanupFailure
-        : cause instanceof AnalysisError && cause.cleanupIncomplete
-          ? cause
-          : undefined;
+    const cleanup = isGhidraCleanupCarrier(cause)
+      ? cause.cleanupFailure
+      : cause instanceof AnalysisError && cause.cleanupIncomplete
+        ? cause
+        : undefined;
     return cleanup === undefined
       ? failure
       : failure.withCleanupFailure(cleanup);

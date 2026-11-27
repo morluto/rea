@@ -2,6 +2,7 @@ import type { Logger } from "pino";
 import type { GhidraCheckpointSelection } from "./GhidraCheckpoint.js";
 import type { BridgeMaxRequestBytes } from "../config/bridgeMaxRequestBytes.js";
 import type { GhidraCancelGrace } from "../config/ghidraCancelGrace.js";
+import type { GhidraCheckpointSaveWait } from "../config/ghidraCheckpointSaveWait.js";
 import type { BridgeMaxReplyBytes } from "../config/bridgeMaxReplyBytes.js";
 import type { Result } from "../domain/result.js";
 import type { LinuxCgroupMemoryState } from "../process/LinuxCgroupMemory.js";
@@ -74,6 +75,8 @@ export interface GhidraClientOptions {
   readonly targetSha256: string;
   readonly existingProject?: boolean;
   readonly checkpoint?: GhidraCheckpointSelection;
+  /** Bound on a checkpoint save's wait for another session; absent keeps the default. */
+  readonly checkpointSaveWait?: GhidraCheckpointSaveWait;
   /** Installation host shared by runtime allocation and snapshot admission. */
   readonly platform?: NodeJS.Platform;
   readonly transport?: GhidraTransportKind;

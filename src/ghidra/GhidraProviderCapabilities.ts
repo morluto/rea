@@ -81,7 +81,7 @@ export const ghidraHealthLimitations = (
     : source === "owned-checkpoint"
       ? [
           "Ghidra Program checkpoint mode is enabled (REA_GHIDRA_CHECKPOINT_DIR). Opening the same target/profile automatically restores saved analysis, names, comments and types; no separate save or restore tool is needed. Restored analysis is retained state, not a fresh discovery.",
-          "REA saves initial completed analysis and metadata changes on normal close (close_binary in MCP). A failed save retains the live session for close retry. Cancellation or process failure can lose changes after the last successful save; unfinished initial auto-analysis is not resumable.",
+          "REA saves initial completed analysis and metadata changes on normal close (close_binary in MCP). A failed save retains the live session for close retry. Sessions can share a target; a save is refused when another session saved first, and its edits must be reapplied after reopening. Cancellation or process failure can lose changes after the last successful save; unfinished initial auto-analysis is not resumable.",
           "The live project is a temporary working copy. Checkpoints persist in REA_GHIDRA_CHECKPOINT_DIR; source executables and caller-selected source projects are not modified.",
         ]
       : healthLimitations(cancelGrace);

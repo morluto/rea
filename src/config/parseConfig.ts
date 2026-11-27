@@ -21,6 +21,10 @@ import {
   inspectGhidraCancelGrace,
   parseGhidraCancelGrace,
 } from "./ghidraCancelGrace.js";
+import {
+  inspectGhidraCheckpointSaveWait,
+  parseGhidraCheckpointSaveWait,
+} from "./ghidraCheckpointSaveWait.js";
 import { hopperCallerScanBudgetFromEnvironment } from "./hopperCallerScanBudget.js";
 import { DEFAULT_REGEX_MATCHING_DEADLINE } from "./regexMatchingDeadline.js";
 import { DEFAULT_REGEX_WORKER_HEAP_REQUEST } from "./regexWorkerHeapRequest.js";
@@ -57,6 +61,7 @@ export const inspectNativeAnalysisConfiguration = (
     ...(parsed.ok ? [] : parsed.error.settings),
     ...inspectAnalysisSettingSeeds(nativeAnalysisEnvironment(environment)),
     ...inspectGhidraCancelGrace(environment),
+    ...inspectGhidraCheckpointSaveWait(environment),
   ];
   const configuredTimeout = environment.REA_HOPPER_STARTUP_TIMEOUT_MS;
   if (configuredTimeout === undefined) return { issues };
@@ -161,6 +166,9 @@ export const parseConfig = (
     ...(env.REA_GHIDRA_CHECKPOINT_DIR === undefined
       ? {}
       : { ghidraCheckpointDirectory: env.REA_GHIDRA_CHECKPOINT_DIR }),
+    ghidraCheckpointSaveWait: parseGhidraCheckpointSaveWait(
+      environment.REA_GHIDRA_CHECKPOINT_SAVE_WAIT_MS,
+    ),
     ghidraJavaHome: env.JAVA_HOME,
     ghidraStartupTimeoutMs: ghidraStartup ?? DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
     ghidraCancelGrace: parseGhidraCancelGrace(

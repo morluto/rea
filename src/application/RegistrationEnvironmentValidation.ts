@@ -1,5 +1,6 @@
 import { inspectAnalysisSettingSeeds } from "../config/analysisSettings.js";
 import { inspectGhidraCancelGrace } from "../config/ghidraCancelGrace.js";
+import { inspectGhidraCheckpointSaveWait } from "../config/ghidraCheckpointSaveWait.js";
 import {
   parseEnvironment,
   parseEnvironmentValues,
@@ -39,6 +40,7 @@ export const validateRegistrationEnvironment = (
   const seedIssues = [
     ...inspectAnalysisSettingSeeds(runtimeEnvironment, unresolvedSettings),
     ...inspectGhidraCancelGrace(runtimeEnvironment, unresolvedSettings),
+    ...inspectGhidraCheckpointSaveWait(runtimeEnvironment, unresolvedSettings),
   ];
   if (seedIssues.length > 0)
     return err(
