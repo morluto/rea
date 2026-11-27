@@ -483,7 +483,8 @@ REA_FIRMWARE_VERIFY_GHIDRA=1 npm run verify:firmware
 `REA_FIRMWARE_TEST_ENTRYPOINT` can select an isolated installed npm package's
 `scripts/rea.mjs` to verify the packaged CLI/MCP workflow. Real coverage here is
 generated gzip/USTAR/ext4 with a Linux x64 ELF child; SquashFS, UBIFS, proprietary
-firmware, other hosts and architectures remain unverified.
+firmware, other hosts and architectures remain unverified. UBI volume containers
+have a native reader; see [Inspect UBI images](#inspect-ubi-images).
 
 ## Inspect ESP images
 
@@ -560,6 +561,16 @@ DONT_CARE chunks written as zeros; stored checksums are not verified. The
 expanded child is classified again, so a sparse-wrapped boot image continues
 to the Android boot image reader. See [Android sparse images](android-sparse-image.md).
 
+## Inspect UBI images
+
+`inspect-artifact` / `extract-artifact` recognize a UBI image or NAND dump by
+its `UBI#` erase-counter header and inventory the eraseblock layout and volume
+table without mounting anything. Each volume is reassembled from its logical
+eraseblocks into `volumes/<name>`; a volume with a missing logical eraseblock
+is inventoried and refuses extraction. UBIFS and SquashFS contents inside a
+volume are not decoded. See [UBI images](ubi-images.md) for layout facts,
+volume table checks, reassembly rules and verification scope.
+
 ## Inspect UF2 and DfuSe images
 
 Use `inspect-artifact` / `inspect_artifact` on a UF2 file for each familyID's
@@ -599,3 +610,14 @@ and chain-partition descriptor. Unknown descriptor tags are retained. The
 authentication block, public key, and public key metadata are extractable
 children. Signatures and digests are recorded and not verified. See
 [Android Verified Boot vbmeta images](android-vbmeta.md).
+
+## Inspect Qualcomm MBN images
+
+`inspect-artifact` / `extract-artifact` recognize a legacy Qualcomm MBN boot
+image by its header and payload sizes, with pointer checks for version 3.
+The headers are 40 bytes for v3 and v5, and 48 for v6. Inventory lists the
+header, code, signature, certificate-chain and v6 metadata regions. An ELF image whose program
+headers declare a Qualcomm hash segment is inventoried as `qualcomm-mbn` with its hash
+table and per program header hash offsets, while binary target resolution
+still reads it as ELF. Signatures and certificates are located, not verified,
+and hashes are not recomputed. See [Qualcomm MBN images](qualcomm-mbn-images.md).

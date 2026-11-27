@@ -8,6 +8,7 @@ import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
 import { ANDROID_OTA_PAYLOAD_LIMITATIONS } from "../domain/firmware/androidOtaPayload.js";
 import { ANDROID_SPARSE_IMAGE_LIMITATIONS } from "../domain/firmware/androidSparseImage.js";
 import { ESP_IMAGE_LIMITATIONS } from "../domain/firmware/espImageFacts.js";
+import { UBI_IMAGE_LIMITATIONS } from "../domain/firmware/ubiImage.js";
 import {
   ZIP_PACKAGE_FORMATS,
   type ZipPackageFormat,
@@ -43,8 +44,10 @@ import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
 import { InesArtifactReader } from "./InesArtifactReader.js";
 import { NdsRomArtifactReader } from "./NdsRomArtifactReader.js";
 import { Iso9660ArtifactReader } from "./Iso9660ArtifactReader.js";
+import { QualcommMbnArtifactReader } from "./QualcommMbnArtifactReader.js";
 import { HexRecordArtifactReader } from "./HexRecordArtifactReader.js";
 import { MachOSliceArtifactReader } from "./MachOSliceArtifactReader.js";
+import { MacosPkgArtifactReader } from "./MacosPkgArtifactReader.js";
 import { NativeDmgArtifactReader } from "./NativeDmgArtifactReader.js";
 import type { NodeSeaAdmission } from "./nodeSea/NodeSeaAdmission.js";
 import { NodeSeaArtifactReader } from "./NodeSeaArtifactReader.js";
@@ -56,6 +59,7 @@ import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
 import { AuditdLogArtifactReader } from "./AuditdLogArtifactReader.js";
 import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactReader.js";
 import { AndroidSparseImageArtifactReader } from "./AndroidSparseImageArtifactReader.js";
+import { UbiImageArtifactReader } from "./UbiImageArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { BfltArtifactReader } from "./BfltArtifactReader.js";
 import { SwitchExecutableArtifactReader } from "./SwitchExecutableArtifactReader.js";
@@ -332,7 +336,20 @@ const NON_ZIP_FORMATS = {
     createReader: (path, options) =>
       new NativeDmgArtifactReader(path, options.environment),
   }),
-  pkg: container("pkg", { absentInventory: "platform" }),
+  pkg: container("pkg", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "macOS flat installer inventory reads the XAR header, zlib TOC, Distribution/PackageInfo, gzip cpio Scripts and gzip cpio Payload members. XAR signatures are not verified. pbzx/xz payloads, Bom contents and installer JavaScript are not decoded or executed.",
+    createReader: (path, options) =>
+      new MacosPkgArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+      ),
+  }),
   asar: container("asar", {
     retainClassifiedSource: true,
     extractable: true,
@@ -510,6 +527,15 @@ const NON_ZIP_FORMATS = {
         options.readerLimits?.expanded_bytes,
       ),
   }),
+  "ubi-image": container("ubi-image", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation: UBI_IMAGE_LIMITATIONS.inventoryScope,
+    createReader: (path, options) =>
+      new UbiImageArtifactReader(path, sourceOf(options)),
+  }),
   iso9660: container("iso9660", {
     roleContainer: true,
     retainClassifiedSource: true,
@@ -563,6 +589,7 @@ const NON_ZIP_FORMATS = {
   "windows-shortcut": described("windows-shortcut", plain),
   "python-pyc": described("python-pyc", plain),
   devicetree: described("devicetree", plain),
+  deb: described("deb", plain),
   entitlements: described("entitlements", plain),
   directory: container("directory", {
     absentInventory: "unavailable",
@@ -674,6 +701,16 @@ const NON_ZIP_FORMATS = {
       "FIT inventory reports each /images node's stored bytes and its declared type, architecture, OS, compression, load and entry. Image data is not decompressed or decrypted, signatures are not verified, nothing is executed, and load and entry addresses are declarations.",
     createReader: (path, options) =>
       new FitArtifactReader(path, sourceOf(options), options.integrity),
+  }),
+  "qualcomm-mbn": container("qualcomm-mbn", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Qualcomm MBN inventory reports the header fields (40 bytes for v3 and v5, 48 for v6) and the stored code, signature, certificate-chain and metadata ranges. For an ELF image whose program headers declare a Qualcomm hash segment it decodes the hash-segment header, hash count and per-program-header hash positions, listing the first 64 positions inline. Signatures and certificates are located, not verified; hashes are not recomputed and nothing is executed. Ranges outside the file or the ELF hash segment are reported as limitations and omitted from inventory.",
+    createReader: (path, options) =>
+      new QualcommMbnArtifactReader(path, sourceOf(options)),
   }),
   "ntfs-mft": described("ntfs-mft", {
     ...plain,

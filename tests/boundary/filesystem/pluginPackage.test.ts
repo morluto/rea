@@ -1,6 +1,9 @@
 import { expect, it } from "vitest";
 
-import { pluginPackageMetadata } from "../../../scripts/lib/plugin-package.mjs";
+import {
+  pluginPackageMetadata,
+  pluginPlatformPackages,
+} from "../../../scripts/lib/plugin-package.mjs";
 
 const fixture = () => ({
   manifest: {
@@ -92,4 +95,119 @@ it("refuses a stale lock before producing a release artifact", () => {
   expect(() => pluginPackageMetadata(manifest, lock)).toThrow(
     "matching v3 package lock",
   );
+});
+
+const platformLock = () => ({
+  name: "rea-agents",
+  version: "6.8.0",
+  lockfileVersion: 3,
+  packages: {
+    "": { name: "rea-agents", version: "6.8.0" } as Record<string, unknown>,
+    "node_modules/pty": {
+      version: "1.0.0",
+      optionalDependencies: { "pty-darwin-arm64": "1.0.0" },
+    } as Record<string, unknown>,
+    "node_modules/pty-darwin-arm64": {
+      version: "1.0.0",
+      integrity: "pty digest",
+      os: ["darwin"],
+      cpu: ["arm64"],
+      optional: true,
+    } as Record<string, unknown>,
+    "node_modules/xz": {
+      version: "2.0.0",
+      optionalDependencies: {
+        "xz-win32-x64": "2.0.0",
+        "xz-linux-x64": "2.0.0",
+        "xz-freebsd-x64": "2.0.0",
+        "xz-wasm32": "2.0.0",
+      },
+    } as Record<string, unknown>,
+    "node_modules/xz-win32-x64": {
+      version: "2.0.0",
+      integrity: "win digest",
+      os: ["win32"],
+      cpu: ["x64"],
+      optional: true,
+    } as Record<string, unknown>,
+    // A development copy of another version is hoisted; the runtime one nests.
+    "node_modules/xz/node_modules/xz-linux-x64": {
+      version: "2.0.0",
+      integrity: "linux digest",
+      os: ["linux"],
+      cpu: ["x64"],
+      optional: true,
+    } as Record<string, unknown>,
+    "node_modules/xz-freebsd-x64": {
+      version: "2.0.0",
+      integrity: "bsd digest",
+      os: ["freebsd"],
+      cpu: ["x64"],
+      optional: true,
+    } as Record<string, unknown>,
+    "node_modules/xz-wasm32": {
+      version: "2.0.0",
+      integrity: "wasm digest",
+      cpu: ["wasm32"],
+      optional: true,
+    } as Record<string, unknown>,
+  },
+});
+
+it("bundles supported-host binaries of every runtime native dependency, not only the PTY", () => {
+  expect(pluginPlatformPackages(platformLock())).toEqual([
+    {
+      name: "pty-darwin-arm64",
+      path: "node_modules/pty-darwin-arm64",
+      version: "1.0.0",
+      integrity: "pty digest",
+    },
+    {
+      name: "xz-win32-x64",
+      path: "node_modules/xz-win32-x64",
+      version: "2.0.0",
+      integrity: "win digest",
+    },
+    {
+      name: "xz-linux-x64",
+      path: "node_modules/xz/node_modules/xz-linux-x64",
+      version: "2.0.0",
+      integrity: "linux digest",
+    },
+  ]);
+});
+
+it("refuses a supported-host binary the lock cannot pin", () => {
+  const lock = platformLock();
+  delete lock.packages["node_modules/xz-win32-x64"].integrity;
+  expect(() => pluginPlatformPackages(lock)).toThrow(
+    "Plugin platform dependency is not locked: xz-win32-x64",
+  );
+  delete (lock.packages as Record<string, unknown>)[
+    "node_modules/xz-win32-x64"
+  ];
+  expect(() => pluginPlatformPackages(lock)).toThrow(
+    "Plugin platform dependency is not locked: xz-win32-x64",
+  );
+});
+
+it("covers the locked XZ decoder for macOS and Windows plugin hosts", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const lock = JSON.parse(await readFile("package-lock.json", "utf8"));
+  const manifest = JSON.parse(await readFile("package.json", "utf8"));
+  const names = pluginPlatformPackages(
+    pluginPackageMetadata(manifest, lock).shrinkwrap,
+  ).map(({ name }) => name);
+  expect(names).toEqual(
+    expect.arrayContaining([
+      "@lydell/node-pty-darwin-arm64",
+      "@lydell/node-pty-win32-x64",
+      "@napi-rs/lzma-darwin-arm64",
+      "@napi-rs/lzma-darwin-x64",
+      "@napi-rs/lzma-linux-x64-gnu",
+      "@napi-rs/lzma-win32-arm64-msvc",
+      "@napi-rs/lzma-win32-x64-msvc",
+    ]),
+  );
+  expect(names).not.toContain("@napi-rs/lzma-wasm32-wasi");
 });

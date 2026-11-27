@@ -53,6 +53,7 @@ For runtime instrumentation, see the [Frida guide](guides/runtime/frida-instrume
   [choose a provider](README.md#provider-setup-and-formats) for your host and target.
 - [Analyze JavaScript or Electron artifacts](guides/javascript/javascript-artifact-reconstruction.md)
   or [relate static findings to runtime observations](guides/javascript/javascript-runtime-reconciliation.md).
+- [Inspect a macOS flat installer package](macos-pkg.md) for XAR contents, installer metadata, and payload members.
 - [Observe a website with CDP](guides/web/browser-observation.md) or
   [inspect an existing network capture](guides/web/web-network-captures.md).
 - [Build an agent environment from a recording](agent-environments-quickstart.md)
@@ -61,6 +62,8 @@ For runtime instrumentation, see the [Frida guide](guides/runtime/frida-instrume
   [look up MCP result and session contracts](reference/mcp-contracts.md).
 - [Inspect an Android vbmeta image](guides/firmware/android-vbmeta.md) for the
   partitions Verified Boot names, and the key and digest recorded for each.
+- [Report a PE overlay](guides/native/pe-overlay.md) to see where a Windows image ends on
+  disk and what follows it.
 
 Browse the [documentation directory](README.md) for formats, provider
 prerequisites, and contributor references.

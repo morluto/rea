@@ -5,6 +5,7 @@ import { projectWebPageView } from "./webPageView.js";
 import { projectWebExecutionView } from "./webExecutionView.js";
 import { projectApktoolResourcesView } from "./apktoolResourcesView.js";
 import { projectAndroidReferencesView } from "./androidReferencesView.js";
+import { projectArtifactExtractionView } from "./artifactExtractionView.js";
 import { projectApiContractView } from "./apiContractView.js";
 import {
   isNativeObservationOperation,
@@ -22,7 +23,9 @@ import { projectApkSignatureView } from "./apkSignatureView.js";
 import { byteEntropySchema } from "../native/byteEntropy.js";
 import { projectErlangBeamView } from "./erlangBeamView.js";
 import { projectPythonPycView } from "./pythonPycView.js";
+import { projectDebPackageView } from "./debPackageView.js";
 import { projectNugetNupkgView } from "./nugetNupkgView.js";
+import { projectVsixPackageView } from "./vsixPackageView.js";
 import { projectOciImageLayoutView } from "./ociImageLayoutView.js";
 import { projectNativeExportsView } from "./nativeExportsView.js";
 import { projectElfDependenciesView } from "./elfDependenciesView.js";
@@ -212,7 +215,9 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_elf_dependencies", projectElfDependenciesView),
   retain("inspect_native_load_image", projectNativeLoadImageView),
   retain("inspect_python_pyc", projectPythonPycView),
+  retain("inspect_deb_package", projectDebPackageView),
   retain("inspect_nuget_nupkg", projectNugetNupkgView),
+  retain("inspect_vsix_package", projectVsixPackageView),
   retain("inspect_oci_image_layout", projectOciImageLayoutView),
   retain("frida_session_status", projectFridaSessionStatusView),
   retain("gdb_console", projectCommandObservationView),
@@ -256,6 +261,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("observe_web_execution", projectWebExecutionView),
   retain("decode_android_resources", projectApktoolResourcesView),
   retain("trace_android_references", projectAndroidReferencesView),
+  retain("extract_artifact", projectArtifactExtractionView),
   retain("trace_web_source_location", projectWebSourceLocationView),
 ]);
 

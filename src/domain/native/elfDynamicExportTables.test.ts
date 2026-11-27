@@ -9,15 +9,32 @@ import {
   BinaryFormatFailure,
   BinaryResourceFailure,
 } from "../binaryContainer.js";
-import { parseNativeExports } from "./nativeExportParser.js";
+import {
+  parseNativeExports,
+  parseNativeExportsFromHandle,
+} from "./nativeExportParser.js";
+
+const artifact = {
+  path: "/fixture/libsectionless.so",
+  sha256: "a".repeat(64),
+} as const;
 
 const parse = (bytes: Buffer) =>
   nativeExportsSchema.parse(
-    parseNativeExports(bytes, {
-      path: "/fixture/libsectionless.so",
-      sha256: "a".repeat(64),
-      bytes: bytes.length,
-    }),
+    parseNativeExports(bytes, { ...artifact, bytes: bytes.length }),
+  );
+
+const parseFromHandle = async (bytes: Buffer) =>
+  nativeExportsSchema.parse(
+    await parseNativeExportsFromHandle(
+      {
+        size: bytes.length,
+        readRange: async (offset, length) =>
+          Buffer.from(bytes.subarray(offset, offset + length)),
+      },
+      { ...artifact, bytes: bytes.length },
+      async () => {},
+    ),
   );
 
 describe("ELF exports declared by PT_DYNAMIC", () => {
@@ -25,6 +42,8 @@ describe("ELF exports declared by PT_DYNAMIC", () => {
     { bits: 32, little: false, hash: "sysv" },
     { bits: 64, little: true, hash: "gnu" },
     { bits: 64, little: false, hash: "both" },
+    { bits: 64, little: false, hash: "both", machine: 22 },
+    { bits: 64, little: true, hash: "sysv", machine: 0x9026 },
   ] as const)(
     "enumerates $bits-bit exports with $hash hashes without section headers",
     (encoding) => {
@@ -42,6 +61,31 @@ describe("ELF exports declared by PT_DYNAMIC", () => {
       });
     },
   );
+
+  it.each([
+    { bits: 64, little: false, hash: "both", machine: 22 },
+    { bits: 64, little: true, hash: "sysv", machine: 0x9026 },
+  ] as const)(
+    "reads eight-byte $hash hash entries for machine $machine from a file handle",
+    async (encoding) => {
+      const bytes = elfDynamicExportsImage(encoding);
+      expect(await parseFromHandle(bytes)).toEqual(parse(bytes));
+    },
+  );
+
+  it("rejects an eight-byte DT_HASH header crossing the end of a load mapping from a file handle", async () => {
+    const bytes = elfDynamicExportsImage({
+      bits: 64,
+      little: true,
+      hash: "sysv",
+      machine: 0x9026,
+    });
+    // DT_HASH is the fifth dynamic entry; only nbucket fits before the mapping ends.
+    bytes.writeBigUInt64LE(0x107f8n, 0x400 + 4 * 16 + 8);
+    bytes.writeBigUInt64LE(1n, 0x7f8);
+    expect(() => parse(bytes)).toThrow(BinaryFormatFailure);
+    await expect(parseFromHandle(bytes)).rejects.toThrow(BinaryFormatFailure);
+  });
 
   it("uses PT_DYNAMIC when a section directory remains without SHT_DYNSYM", () => {
     const bytes = elfDynamicExportsImage();

@@ -173,6 +173,13 @@ export const createBlockEntropyCalculator = (fileCounts: Float64Array) => {
   };
 };
 
+/** Entropy of one standalone sample, without a whole-file census. */
+export const computeBlockEntropy = (bytes: Uint8Array): number => {
+  const counts = wholeFileByteCounts();
+  countByteValues(bytes, counts);
+  return entropyFromCounts(counts, bytes.length);
+};
+
 /** Merge only adjacent classified blocks, using the reported rounded entropy. */
 export const mergeEntropyRuns = (
   blocks: readonly ByteEntropy["blocks"][number][],

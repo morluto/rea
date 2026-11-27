@@ -387,6 +387,19 @@ rea extract-artifact ./firmware.bin --json
 See [U-Boot uImage](../uimage.md) for verified CRCs, physical component ranges,
 unknown names, resource limits and retained views. Compressed bytes stay stored.
 
+Inspect a macOS flat installer package without `pkgutil` or installer
+execution:
+
+```sh
+rea inspect-artifact installer.pkg --detail summary --evidence_output evidence.json --json
+rea extract-artifact installer.pkg --json
+```
+
+The portable XAR reader reports header and TOC facts, Distribution/PackageInfo
+fields, gzip cpio Scripts and Payload members, and named refusals for pbzx
+payloads or truncated archives. XAR signatures are not verified. See
+[macOS flat installer packages](../macos-pkg.md).
+
 Inspect an Android A/B OTA `payload.bin` (CrAU v2) without applying the update:
 
 ```sh
@@ -407,6 +420,16 @@ rea extract-artifact ./system.img --json
 
 See [Android sparse images](../guides/firmware/android-sparse-image.md) for chunk
 facts, DONT_CARE handling, unverified checksums and the expansion allowance.
+
+Inventory the volumes of a UBI image or NAND dump and reassemble each one:
+
+```sh
+rea inspect-artifact ./nand.ubi --detail summary --evidence_output nand.json --json
+rea extract-artifact ./nand.ubi --json
+```
+
+See [UBI images](../guides/firmware/ubi-images.md) for eraseblock layout, the volume
+table, LEB reassembly and missing-LEB refusals.
 
 `inspect-artifact` and `extract-artifact` also read ZIP members compressed with
 Zstandard (standard method 93). They retain the shared ZIP CRC, declared-size,
@@ -505,6 +528,16 @@ rea extract-artifact ./game.nds --json
 
 See [Nintendo DS ROMs](../guides/firmware/nds-roms.md) for header detection, member paths,
 checksum and range limitations, and what is not decoded.
+
+Inventory and extract a Qualcomm MBN boot image or an ELF image with a hash segment:
+
+```sh
+rea inspect-artifact ./sbl1.mbn --json
+rea extract-artifact ./sbl1.mbn --json
+```
+
+See [Qualcomm MBN images](../guides/firmware/qualcomm-mbn-images.md) for header
+recognition, regions, hash segments and what is not verified.
 
 Inspect local model declarations without loading weights:
 
@@ -712,6 +745,18 @@ The workflow reports the pinned CPython version for the magic, PEP 552 hash or
 mtime/size fields, nested function names, and bytecode SHA-256. Bytecode is
 not decompiled. See [CPython pyc inspection](../python-pyc.md).
 
+Inspect a local Debian `.deb` without installing it or running maintainer
+scripts:
+
+```bash
+rea inspect-deb-package /absolute/path/to/hello_2.03-1_all.deb --json
+```
+
+The workflow reports the ar members, control identity and parsed
+relationships, which maintainer scripts are present, and a bounded data.tar
+inventory. gzip, zstd, xz, and uncompressed members are decoded; bzip2 and
+lzma are unsupported. See [Debian package inspection](../deb-package.md).
+
 Inspect an Erlang BEAM file without executing bytecode:
 
 ```bash
@@ -745,6 +790,19 @@ The workflow reports package identity, license and repository fields as present,
 dependency groups with version ranges, and a ZIP contents inventory with
 path-derived folder roles. Missing or malformed `.nuspec` members still return
 the inventory with limitations. See [NuGet packages](../guides/managed/nuget-nupkg.md).
+
+Inspect a VS Code `.vsix` without installing the extension or contacting a
+marketplace:
+
+```bash
+rea inspect-vsix-package /absolute/path/to/demo.hello-1.2.3.vsix --json
+```
+
+The workflow reports identity from `extension.vsixmanifest` and
+`extension/package.json`, engine range, activation events, a contributes
+summary, hashed native/wasm/executable members, and a ZIP contents inventory.
+Missing or malformed manifests still return the inventory with limitations.
+See [VS Code extension packages](../guides/managed/vsix-package.md).
 
 Inspect an OCI image-layout directory without unpacking a tar, decompressing
 layers, or contacting a registry:
@@ -1850,6 +1908,16 @@ rea inspect-pe-load-config /absolute/path/to/application.exe --json
 Reports TLS callbacks and size-covered load-config fields without execution.
 Use `--max-callbacks` and `--max-file-bytes` to set read budgets. See
 [PE TLS and load configuration](../pe-load-config.md).
+
+### PE overlay
+
+```sh
+rea inspect-pe-overlay /absolute/path/to/application.exe --json
+```
+
+Reports where the PE image ends on disk and the bytes appended after it. A
+certificate table inside that span is split from the other ranges. Use
+`--max-file-bytes` to set the read budget. See [PE overlay](../guides/native/pe-overlay.md).
 
 ### Binary hardening
 
