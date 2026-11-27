@@ -233,6 +233,12 @@ export const PE_UNWIND_RANGES_PROVIDER = Object.freeze({
   version: "1",
 } as const);
 
+export const MACHO_FUNCTION_STARTS_PROVIDER = Object.freeze({
+  id: "rea-macho-function-starts",
+  name: "REA Mach-O function-start parser",
+  version: "1",
+} as const);
+
 export const PE_LOAD_CONFIG_PROVIDER = Object.freeze({
   id: "rea-pe-load-config",
   name: "REA PE TLS/load-config parser",

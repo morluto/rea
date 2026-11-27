@@ -129,6 +129,11 @@ export const documentationSections = [
         route: "/elf-unwind-ranges",
       },
       {
+        text: "Mach-O function starts",
+        source: "guides/native/macho-function-starts.md",
+        route: "/macho-function-starts",
+      },
+      {
         text: "Linux kernel build config",
         source: "guides/native/kernel-build-config.md",
         route: "/kernel-build-config",

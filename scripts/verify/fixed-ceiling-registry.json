@@ -383,7 +383,7 @@
   "src/resources/artifactReadBudget.ts": {
     "ceiling.name": {
       "class": "forwarding",
-      "reason": "Relays the whole-file identity ceiling its caller names: 4 GiB minus one byte for PE-only readers, whose file offsets are 32-bit (format), and the 512 MiB artifact-size bound of the hardening and exports result schemas. max_file_bytes, a per-call parameter with details.limit, bounds what the readers read."
+      "reason": "Relays the whole-file identity ceiling its caller names: 4 GiB minus one byte for the PE-only readers and the Mach-O function-starts reader, whose file offsets (PE fields, LC_FUNCTION_STARTS and LC_DATA_IN_CODE dataoff, FAT32 slice offsets) are 32-bit (format), and the 512 MiB artifact-size bound of the hardening and exports result schemas. max_file_bytes, a per-call parameter with details.limit, bounds what the readers read."
     }
   },
   "src/sqlite/SqliteDatabaseFailures.ts": {

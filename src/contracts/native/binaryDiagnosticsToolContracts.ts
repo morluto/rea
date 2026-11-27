@@ -15,6 +15,10 @@ import {
   inspectPeUnwindRangesInputSchema,
 } from "../../domain/native/peUnwindRanges.js";
 import {
+  inspectMachoFunctionStartsInputSchema,
+  machoFunctionStartsSchema,
+} from "../../domain/native/machoFunctionStarts.js";
+import {
   binaryHardeningSchema,
   inspectBinaryHardeningInputSchema,
 } from "../../domain/native/binaryHardening.js";
@@ -297,6 +301,27 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
       {
         title: "Count primary x64 function entries and chained fragments",
         input: { path: "/artifacts/program.exe", limit: 0 },
+      },
+    ],
+  },
+  {
+    name: "inspect_macho_function_starts",
+    availability: "standalone",
+    cli: true,
+    ...toolContractMetadata("inspect_macho_function_starts", evidenceEffects),
+    kind: "native-provider",
+    description:
+      "Decode LC_FUNCTION_STARTS and LC_DATA_IN_CODE for one thin Mach-O or one selected universal slice: paged function-start VM addresses and data-in-code entries (offset, length, kind, owning start). Counts cover every entry. Duplicate commands, tables outside __LINKEDIT, truncated ULEB128, non-monotonic or out-of-text addresses, and data-in-code entries that leave their section are limitations. A missing command is observed absence. No execution or disassembler. A universal file requires architecture. A table larger than max_entries fails without partial success.",
+    inputSchema: inspectMachoFunctionStartsInputSchema,
+    outputSchema: evidenceResultOf(machoFunctionStartsSchema),
+    examples: [
+      {
+        title: "List Mach-O function starts and data-in-code entries",
+        input: { path: "/artifacts/program" },
+      },
+      {
+        title: "Count starts in one universal slice",
+        input: { path: "/artifacts/program", architecture: "arm64", limit: 0 },
       },
     ],
   },

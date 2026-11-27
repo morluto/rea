@@ -1567,6 +1567,15 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
     typedFailures("src/native/pe/PeUnwindRangesProvider.test.ts"),
   ),
+  "rea-macho-function-starts": inProcess(
+    covered(
+      test(
+        "tests/acceptance/machoFunctionStartsCli.test.ts",
+        "reads Mach-O function starts identically over CLI and MCP",
+      ),
+    ),
+    typedFailures("src/native/apple/MachoFunctionStartsProvider.test.ts"),
+  ),
   "rea-playwright-browser-scenario": {
     ownership: "process",
     stages: {
