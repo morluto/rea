@@ -392,7 +392,9 @@ function* xmlPreflightTokens(source: XmlCodeUnits): Generator<{
         if (emptySubsetEnd === undefined) {
           internalSubset = true;
           if (indexOfCodeUnit(source, 0x3e, end + 1) >= 0) break;
-        } else end = emptySubsetEnd;
+          return;
+        }
+        end = emptySubsetEnd;
       }
     }
     if (end === source.length) return;

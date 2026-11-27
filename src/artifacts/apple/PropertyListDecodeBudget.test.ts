@@ -295,3 +295,28 @@ it("scans oversized XML declarations from bytes without TextDecoder allocation a
   expect(okParsed.ok).toBe(true);
   expect(decodeSpy).toHaveBeenCalledTimes(1);
 });
+
+it("handles an unterminated DOCTYPE with many opening brackets in linear time", () => {
+  const unterminated = Buffer.from(`<!DOCTYPE plist [${"[".repeat(100_000)}`);
+  const started = performance.now();
+  const budgetRefused = parsePlistXmlSource(unterminated, 1);
+  const elapsedMs = performance.now() - started;
+  expect(budgetRefused.ok).toBe(false);
+  if (!budgetRefused.ok) {
+    if (!(budgetRefused.error instanceof AnalysisResourceConstraintError))
+      throw new Error("Expected AnalysisResourceConstraintError");
+    expect(
+      projectAnalysisError(budgetRefused.error).details?.limit,
+    ).toMatchObject({
+      parameter: "max_decoded_bytes",
+      effective_value: 1,
+    });
+  }
+  expect(elapsedMs).toBeLessThan(2000);
+
+  const malformed = parsePlistXmlSource(unterminated, 64 * 1024 * 1024);
+  expect(malformed.ok).toBe(false);
+  if (!malformed.ok) {
+    expect(malformed.error).not.toBeInstanceOf(AnalysisResourceConstraintError);
+  }
+});
