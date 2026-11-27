@@ -3,15 +3,15 @@ import { join } from "node:path";
 
 import { expect, it, onTestFinished } from "vitest";
 
-import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
-} from "../../domain/analysisErrorCore.js";
-import { analysisErrorRefusal } from "../../domain/analysisErrorRefusal.js";
-import { EVTX_ARCHIVE_BUDGETS } from "../../domain/evtxArchive/evtxArchiveQuery.js";
-import { inspectEvtxArchiveEvidence } from "./EvtxArchiveService.js";
+} from "../../../src/domain/analysisErrorCore.js";
+import { analysisErrorRefusal } from "../../../src/domain/analysisErrorRefusal.js";
+import { EVTX_ARCHIVE_BUDGETS } from "../../../src/domain/evtxArchive/evtxArchiveQuery.js";
+import { inspectEvtxArchiveEvidence } from "../../../src/application/evtxArchive/EvtxArchiveService.js";
 
 it("reports the selected path and cause when it cannot resolve the event log", async () => {
   const root = await createTestTempDirectory("rea-evtx-missing-");
