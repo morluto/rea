@@ -1688,8 +1688,14 @@ reopen the target and reapply them. That close succeeds with
 `result.checkpoint` set to `{"status": "discarded", "reason": "superseded",
 "directory": ...}`, alongside the snapshot receipt when `snapshot_path` was
 given, so the discard is recorded rather than silent. Only the close that
-releases the edits reports it. To avoid the refusal, make edits to one target
-from one session at a time.
+releases the edits reports it. If a later cleanup step of that close fails,
+the close reports `cleanup_incomplete` with the same object in
+`details.partial_observation.checkpoint`, and its retry returns no second
+report. Until that close, `open_binary` of another target, opening app
+resources, `reset_investigation` and external mutations refuse with
+`capability_unavailable` instead of releasing the edits unreported; call
+`close_binary` first. To avoid the refusal, make edits to one target from one
+session at a time.
 
 Two related refusals are not configuration faults and leave the checkpoint
 intact. A session whose selected checkpoint was replaced before its Ghidra

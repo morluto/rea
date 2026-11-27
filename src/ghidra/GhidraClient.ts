@@ -34,7 +34,10 @@ import {
 } from "../domain/providerOperationHealth.js";
 import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { EngineCloseReport } from "../domain/engineCloseReport.js";
+import {
+  retainCloseOutcome,
+  type EngineCloseReport,
+} from "../domain/engineCloseReport.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
 import {
@@ -196,6 +199,11 @@ export class GhidraClient {
   #checkpointRestore: GhidraPackedProgram | undefined;
   /** A refused save can never succeed later, so the next close discards the edits. */
   #checkpointSaveRefused = false;
+  /**
+   * Set when the JVM holding edits whose save was refused has stopped, until
+   * the close that stopped it reports the discard with its outcome.
+   */
+  #releasedUnsaved: EngineCloseReport | undefined;
   /** Reported by every cleanup failure until a close releases everything. */
   #cleanupRelease = new AnalysisCleanupRelease();
   #targetAdmission: JsonValue | undefined;
@@ -931,32 +939,50 @@ export class GhidraClient {
 
   /** Stop the owned process group and remove all project/runtime artifacts. */
   async close(): Promise<Result<EngineCloseReport | null, AnalysisError>> {
-    // A refusal survives a failed cleanup, so the close that finally
-    // releases the Program reports the discard; a retry after it has none.
-    const checkpoint = this.#checkpointSaveRefused
-      ? this.#checkpoint
-      : undefined;
+    // The close that stops the JVM reports the discard once, whether a later
+    // cleanup step fails or not; a close that fails before keeps the refusal.
     try {
       await this.#requestClose(false);
-      return ok(
-        checkpoint === undefined
-          ? null
-          : {
-              checkpoint: {
-                status: "discarded",
-                reason: "superseded",
-                directory: checkpoint.selection.directory,
-              },
-            },
-      );
+      return ok(this.#takeReleasedUnsaved());
     } catch (cause: unknown) {
-      return err(this.#cleanupError(cause));
+      return err(
+        retainCloseOutcome(
+          this.#cleanupError(cause),
+          this.#takeReleasedUnsaved(),
+        ),
+      );
     } finally {
       // Closing is the caller's explicit retry: the next start imports again.
       // Cleared after close settles, since a startup it waited for may have
       // recorded its elapsed deadline meanwhile.
       this.#elapsedStartup = undefined;
     }
+  }
+
+  #takeReleasedUnsaved(): EngineCloseReport | null {
+    const report = this.#releasedUnsaved ?? null;
+    this.#releasedUnsaved = undefined;
+    return report;
+  }
+
+  #discardReport(): EngineCloseReport | null {
+    return this.#checkpoint === undefined
+      ? null
+      : {
+          checkpoint: {
+            status: "discarded",
+            reason: "superseded",
+            directory: this.#checkpoint.selection.directory,
+          },
+        };
+  }
+
+  /** What closing now reports as released unsaved, without closing. */
+  unsavedCloseReport(): EngineCloseReport | null {
+    return (
+      this.#releasedUnsaved ??
+      (this.#checkpointSaveRefused ? this.#discardReport() : null)
+    );
   }
 
   /** Verified source after startup: null for initial checkpointed analysis; undefined if disabled or unconfirmed. */
@@ -1339,9 +1365,15 @@ export class GhidraClient {
             : undefined;
       // A save by another session after admission removes the packed file
       // this launch was restoring; report that instead of the missing file.
+      // Only a failed restore can be explained that way: any other launch
+      // failure keeps its own cause, output and diagnostics.
       const superseded =
         packedProgram === undefined ||
-        producerFailure instanceof AnalysisCancelledError
+        producerFailure instanceof AnalysisCancelledError ||
+        !(
+          launched.error instanceof GhidraLaunchError &&
+          launched.error.checkpointRestoreFailed
+        )
           ? undefined
           : await this.#checkpoint
               ?.supersededRestore(deadline.signal)
@@ -1703,6 +1735,11 @@ export class GhidraClient {
             `Ghidra process cleanup was incomplete: ${stopped.reason}`,
           );
         }
+      }
+      // The JVM holding the edits has stopped: they are released now.
+      if (this.#checkpointSaveRefused) {
+        this.#releasedUnsaved = this.#discardReport() ?? undefined;
+        this.#checkpointSaveRefused = false;
       }
       this.#lastDiagnostics = this.#diagnostics();
       this.#process = undefined;

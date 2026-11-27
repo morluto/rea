@@ -3,7 +3,14 @@ import { afterEach, expect, it, vi } from "vitest";
 import { waitFor } from "../../../support/testWait.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { createHash, randomUUID } from "node:crypto";
-import { access, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 
 import { join } from "node:path";
 import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
@@ -403,6 +410,48 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "reports released-unsaved edits on the close whose later cleanup fails, and not again on its retry",
+  async () => {
+    const f = await fixture();
+    expect((await f.client.start()).ok).toBe(true);
+    const launcher = fixtureLauncher();
+    const stale = await peer(f, launcher);
+    expect((await stale.client.start()).ok).toBe(true);
+    expect((await rename(f.client)).ok).toBe(true);
+    expect((await rename(stale.client)).ok).toBe(true);
+    expect((await f.client.close()).ok).toBe(true);
+    expect((await stale.client.close()).ok).toBe(false);
+    expect(stale.client.unsavedCloseReport()).toMatchObject({
+      checkpoint: { status: "discarded" },
+    });
+    // The JVM stops, releasing the edits, and then the runtime root cannot
+    // be removed: that failure is the close that released them.
+    const runtimeRoot = launcher.runtimeRoots[0] ?? "";
+    await chmod(runtimeRoot, 0o500);
+    try {
+      const failed = await stale.client.close();
+      if (failed.ok) throw new Error("the runtime root removal succeeded");
+      expect(projectAnalysisError(failed.error)).toMatchObject({
+        code: "cleanup_incomplete",
+        details: {
+          partial_observation: {
+            checkpoint: {
+              status: "discarded",
+              reason: "superseded",
+              directory: f.selection.directory,
+            },
+          },
+        },
+      });
+      expect(stale.client.unsavedCloseReport()).toBeNull();
+    } finally {
+      await chmod(runtimeRoot, 0o700);
+    }
+    expect(await stale.client.close()).toEqual({ ok: true, value: null });
+  },
+);
+
 it.skipIf(process.platform === "win32")(
   "reports an initial analysis superseded by another session's edits as a reopen, not as lost edits",
   async () => {
@@ -512,6 +561,7 @@ it.skipIf(process.platform === "win32")(
         return err(
           new GhidraLaunchError(
             "Ghidra checkpoint changed before its private import; reopen the target.",
+            { checkpointRestoreFailed: true },
           ),
         );
       },
@@ -528,6 +578,39 @@ it.skipIf(process.platform === "win32")(
     expect(reopened.client.checkpointRestore()?.sha256).toBe(
       createHash("sha256").update("edited by another session").digest("hex"),
     );
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "keeps a launch failure after a restored copy even when another session saved meanwhile",
+  async () => {
+    const f = await fixture();
+    expect((await f.client.start()).ok).toBe(true);
+    expect((await f.client.close()).ok).toBe(true);
+    // The private copy succeeded; a later launch stage fails while another
+    // session publishes. That failure is not a superseded restore.
+    const launcher: GhidraLauncher = {
+      launch: async () => {
+        const writer = new GhidraCheckpoint(
+          stale.selection,
+          new ArtifactResourceScope(),
+        );
+        await writer.admit("writer");
+        const edited = join(f.root, "edited.gzf");
+        await writeFile(edited, "edited by another session");
+        await writer.publish(edited);
+        return err(new GhidraLaunchError("controlled JVM start failure"));
+      },
+    };
+    const stale = await peer(f, launcher);
+    const started = await stale.client.start();
+    if (started.ok) throw new Error("the failed launch succeeded");
+    expect(started.error.kind).toBe("start");
+    expect(started.error.message).toContain("controlled JVM start failure");
+    expect(started.error.cause).not.toBeInstanceOf(
+      GhidraCheckpointSupersededError,
+    );
+    expect((await stale.client.close()).ok).toBe(true);
   },
 );
 

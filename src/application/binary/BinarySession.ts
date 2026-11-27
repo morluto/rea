@@ -14,10 +14,7 @@ import {
 } from "../EvidenceBundleFiles.js";
 import type { ResetInvestigationReceipt } from "../../domain/investigationLifecycle.js";
 
-import {
-  retainSavedAnalysisSnapshot,
-  type SavedAnalysisSnapshot,
-} from "../../domain/savedAnalysisSnapshot.js";
+import type { SavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
 
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
@@ -93,9 +90,10 @@ import {
   commitExecutionProfile,
   prepareSessionExecution,
 } from "./BinarySessionExecution.js";
-import type {
-  ClosedWithSnapshot,
-  EngineCloseReport,
+import {
+  retainCloseOutcome,
+  type ClosedWithSnapshot,
+  type EngineCloseReport,
 } from "../../domain/engineCloseReport.js";
 import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
 import { bundleExecutableProvenance } from "../../domain/apple/bundleExecutableProvenance.js";
@@ -281,6 +279,11 @@ export class BinarySession
       if (!resolved.ok) return resolved;
       if (isAborted(options.signal))
         return err(cancelledBy("open_bundle_resources", options.signal));
+      const unreported = this.#refuseUnreportedRelease(
+        "open_bundle_resources",
+        { active: true },
+      );
+      if (unreported !== undefined) return err(unreported);
       const pendingClosed = await this.#retryPendingCleanup();
       if (!pendingClosed.ok) return pendingClosed;
       const pendingResourcesClosed =
@@ -627,6 +630,10 @@ export class BinarySession
     await this.#drainCalls(admittedThrough);
     if (isAborted(options.signal))
       return err(cancelledBy("open_binary", options.signal));
+    const unreported = this.#refuseUnreportedRelease("open_binary", {
+      active: false,
+    });
+    if (unreported !== undefined) return err(unreported);
     const pendingClosed = await this.#retryPendingCleanup();
     if (!pendingClosed.ok) return pendingClosed;
     const pendingResourcesClosed =
@@ -643,6 +650,11 @@ export class BinarySession
       );
       if (fastPath !== undefined) return fastPath;
     }
+    // A live retained engine stays bound above; replacing one releases it.
+    const replacing = this.#refuseUnreportedRelease("open_binary", {
+      active: true,
+    });
+    if (replacing !== undefined) return err(replacing);
     const previous = this.#active;
     this.#active = undefined;
     if (previous !== undefined) {
@@ -830,6 +842,10 @@ export class BinarySession
         this.#externalMutationCleanupFailure = undefined;
       }
 
+      const unreported = this.#refuseUnreportedRelease(operationName, {
+        active: true,
+      });
+      if (unreported !== undefined) return err(unreported);
       const pendingCleanup = await this.#retryPendingCleanup();
       if (!pendingCleanup.ok)
         return err(
@@ -960,7 +976,7 @@ export class BinarySession
       );
       return closed.ok
         ? ok(closed.value === null ? receipt : { ...receipt, ...closed.value })
-        : err(retainSavedAnalysisSnapshot(closed.error, receipt));
+        : err(retainCloseOutcome(closed.error, { saved_snapshot: receipt }));
     });
   }
 
@@ -1010,6 +1026,10 @@ export class BinarySession
         return adapterResources;
       if (this.#externalMutationCleanupFailure?.cleanupIncomplete === true)
         return err(this.#externalMutationCleanupFailure);
+      const unreported = this.#refuseUnreportedRelease("reset_investigation", {
+        active: false,
+      });
+      if (unreported !== undefined) return err(unreported);
       const pending = await this.#retryPendingCleanup();
       if (!pending.ok) return pending;
       const bundles = await this.#retryPendingBundleResourceCleanup();
@@ -1100,6 +1120,33 @@ export class BinarySession
     );
   }
 
+  /**
+   * Only close_binary reports engine state released unsaved, so another
+   * transition that would release it refuses instead of dropping the report.
+   * `active` includes the bound engine for transitions that replace it.
+   */
+  #refuseUnreportedRelease(
+    operation: string,
+    { active }: { readonly active: boolean },
+  ): AnalysisError | undefined {
+    const report =
+      this.#pendingCleanup?.run.client.unsavedCloseReport?.() ??
+      (active ? (this.#active?.client.unsavedCloseReport?.() ?? null) : null);
+    if (report === null) return undefined;
+    return new AnalysisCapabilityUnavailableError(
+      this.#pendingCleanup?.run.route.identity.id ??
+        this.#active?.route.identity.id ??
+        "rea",
+      operation,
+      "this session holds Program edits whose checkpoint save was refused, and this call would release them without reporting it",
+      {
+        userMessage: `Another REA session saved this target's checkpoint at ${JSON.stringify(report.checkpoint.directory)} first, so this session's Program edits cannot be saved; ${operation} would discard them.`,
+        remediationAction:
+          "Call close_binary first: it discards those edits and reports it. Then repeat this call, and reapply the edits to the current checkpoint if you still need them.",
+      },
+    );
+  }
+
   async #closeActive(
     options: Pick<ExecutionOptions, "progress"> & {
       readonly retainProviderDocuments?: boolean;
@@ -1155,17 +1202,20 @@ export class BinarySession
           "close_binary",
         );
       }
-    if (!closed.ok && resourceFailure !== undefined) {
-      return err(
-        analysisErrorWithCloseRejections(
-          closed.error,
-          resourceFailure,
-          "close_binary",
-        ),
-      );
-    }
-    if (!closed.ok) return closed;
-    return resourceFailure === undefined ? closed : err(resourceFailure);
+    if (resourceFailure === undefined) return closed;
+    // A released engine's report stays with the close that released it.
+    return err(
+      retainCloseOutcome(
+        closed.ok
+          ? resourceFailure
+          : analysisErrorWithCloseRejections(
+              closed.error,
+              resourceFailure,
+              "close_binary",
+            ),
+        closed,
+      ),
+    );
   }
 
   async #retryPendingBundleResourceCleanup(

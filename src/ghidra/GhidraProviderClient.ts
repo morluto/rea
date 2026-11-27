@@ -173,6 +173,7 @@ export type GhidraProviderClientFactory = (
       | "callToolIfReady"
       | "checkpointRestore"
       | "operationHealthSnapshot"
+      | "unsavedCloseReport"
       | "runtimeLineage"
       | "readTargetSnapshot"
       | "readTargetSnapshotRanges"
@@ -1372,6 +1373,7 @@ export const createGhidraProviderClient = (input: {
       return inventoryExecution(operation, called);
     },
     operationHealthSnapshot: () => client.operationHealthSnapshot?.(),
+    unsavedCloseReport: () => client.unsavedCloseReport?.() ?? null,
     runtimeLineageSnapshots: () => {
       const observation = client.runtimeLineage?.() ?? null;
       return observation === null

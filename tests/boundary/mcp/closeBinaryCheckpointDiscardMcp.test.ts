@@ -1,7 +1,8 @@
 import { dirname, join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { expect, it } from "vitest";
+import type { CallToolResult } from "@modelcontextprotocol/client";
+import { expect, it, vi } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import type { EngineCloseReport } from "../../../src/domain/engineCloseReport.js";
@@ -14,6 +15,8 @@ import {
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { ProcessCaptureResourceScope } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 
 const discarded: EngineCloseReport = {
   checkpoint: {
@@ -33,6 +36,7 @@ const discardingProvider = (): AnalysisProvider => {
       let reported = false;
       return {
         ...client,
+        unsavedCloseReport: () => (reported ? null : discarded),
         close: () => {
           const report = reported ? null : discarded;
           reported = true;
@@ -101,5 +105,82 @@ it("keeps an ordinary close result null", async () => {
     expect(closed.structuredContent).toEqual({ result: null });
   } finally {
     await Promise.allSettled([client.close(), server.close(), session.close()]);
+  }
+});
+
+const connected = async (provider: AnalysisProvider) => {
+  const targets = await createBinarySessionTargets();
+  const session = createTestBinarySession(provider);
+  const server = createServer({ kind: "session", session });
+  const client = new Client(
+    { name: "close-binary-discard-paths", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const call = async (name: string, arguments_: Record<string, unknown>) =>
+    (await client.callTool({ name, arguments: arguments_ })) as CallToolResult;
+  return {
+    targets,
+    call,
+    dispose: () =>
+      Promise.allSettled([client.close(), server.close(), session.close()]),
+  };
+};
+
+it("refuses to replace a session whose edits would be released unsaved, until close_binary reports it", async () => {
+  const { targets, call, dispose } = await connected(discardingProvider());
+  const [first, second] = targets;
+  try {
+    expect((await call("open_binary", { path: first })).isError).not.toBe(true);
+    expect(
+      (await call("address_name", { address: "0x1000" })).isError,
+    ).not.toBe(true);
+    const refused = await call("open_binary", { path: second });
+    expect(refused.isError).toBe(true);
+    expect(parseMcpToolError(refused).error).toMatchObject({
+      code: "capability_unavailable",
+      remediation: {
+        action: expect.stringMatching(/^Call close_binary first/),
+      },
+    });
+    // The refused open kept the session and its engine.
+    expect(
+      (await call("address_name", { address: "0x1000" })).isError,
+    ).not.toBe(true);
+    const closed = await call("close_binary", {});
+    expect(
+      toolContract("close_binary").outputSchema.parse(closed.structuredContent)
+        .result,
+    ).toEqual(discarded);
+    expect((await call("open_binary", { path: second })).isError).not.toBe(
+      true,
+    );
+  } finally {
+    await dispose();
+  }
+});
+
+it("reports released edits on a close whose process-capture cleanup fails", async () => {
+  const { targets, call, dispose } = await connected(discardingProvider());
+  const cleanup = vi
+    .spyOn(ProcessCaptureResourceScope.prototype, "retryCleanup")
+    .mockRejectedValueOnce(new Error("Process cleanup failed"));
+  try {
+    await call("open_binary", { path: targets[0] });
+    await call("address_name", { address: "0x1000" });
+    const failed = await call("close_binary", {});
+    expect(failed.isError).toBe(true);
+    expect(
+      parseMcpToolError(failed).error.details?.partial_observation,
+    ).toEqual(discarded);
+    cleanup.mockRestore();
+    const retried = await call("close_binary", {});
+    expect(retried.structuredContent).toEqual({ result: null });
+  } finally {
+    cleanup.mockRestore();
+    await dispose();
   }
 });

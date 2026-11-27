@@ -2,9 +2,9 @@ import type { Logger } from "pino";
 
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import {
-  retainSavedAnalysisSnapshot,
-  type SavedAnalysisSnapshot,
-} from "../domain/savedAnalysisSnapshot.js";
+  retainCloseOutcome,
+  type CloseValue,
+} from "../domain/engineCloseReport.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
@@ -50,16 +50,16 @@ const retainedProcessCleanup = (error: AnalysisError): AnalysisError =>
 /**
  * Close the session together with the process-capture resources it owns.
  * Both settle; a failed resource cleanup is kept for the next close_binary,
- * and a saved snapshot stays reported when only the resources failed.
+ * and what the session close completed (a saved snapshot, engine state
+ * released unsaved) stays reported when only the resources failed.
  */
 export const closeWithProcessResources =
   ({
     logger,
     closeProcessResources,
   }: Pick<SessionLifecycleOptions, "logger" | "closeProcessResources">) =>
-  async <Value>(
+  async <Value extends CloseValue>(
     closeSession: () => Promise<Result<Value, AnalysisError>>,
-    savedSnapshot?: (value: Value) => SavedAnalysisSnapshot,
   ): Promise<Result<Value, AnalysisError>> => {
     const [sessionClose, resourceClose] = await Promise.allSettled([
       closeResult(closeSession),
@@ -85,9 +85,9 @@ export const closeWithProcessResources =
     const resources = resourceClose.value;
     if (!closed.ok) {
       if (resources.ok) return closed;
-      const combined = analysisErrorWithCleanupDependencies(
-        closed.error,
-        resources.error,
+      const combined = retainCloseOutcome(
+        analysisErrorWithCleanupDependencies(closed.error, resources.error),
+        closed,
       );
       // The session offers a retry only after retiring its target; a failed
       // save keeps that target open and needs its own recovery first.
@@ -98,11 +98,9 @@ export const closeWithProcessResources =
       );
     }
     if (resources.ok) return closed;
-    const retained = retainedProcessCleanup(resources.error);
+    // The session closed: its snapshot and released-engine facts stay true.
     return err(
-      savedSnapshot === undefined
-        ? retained
-        : retainSavedAnalysisSnapshot(retained, savedSnapshot(closed.value)),
+      retainCloseOutcome(retainedProcessCleanup(resources.error), closed),
     );
   };
 

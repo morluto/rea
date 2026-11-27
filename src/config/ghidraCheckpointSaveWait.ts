@@ -111,7 +111,7 @@ export const ghidraCheckpointSaveWaitFacts = (
 export const ghidraCheckpointSaveWaitRecovery = (
   wait: GhidraCheckpointSaveWait,
 ): string =>
-  `Wait for that session's save to finish, then repeat this call unchanged. This session waited its whole save wait: ${ghidraCheckpointSaveWaitFacts(wait)}. ${
+  `Wait for that session's save to finish, then repeat this call unchanged. If that save changes the checkpoint first, the repeated call reports that this session's checkpoint was superseded and names the next step, normally reopening the target. This session waited its whole save wait: ${ghidraCheckpointSaveWaitFacts(wait)}. ${
     wait.waitMs < MAXIMUM_GHIDRA_CHECKPOINT_SAVE_WAIT_MS
       ? `To wait longer within one call, set ${GHIDRA_CHECKPOINT_SAVE_WAIT_SETTING} in the environment that starts REA and restart REA`
       : `${GHIDRA_CHECKPOINT_SAVE_WAIT_SETTING} is already at its maximum`

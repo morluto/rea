@@ -296,6 +296,11 @@ export interface AnalysisClient extends AnalysisOperationPort {
   /** Current operational health for the active provider bridge. */
   operationHealthSnapshot?(): ProviderOperationHealth | undefined;
   /**
+   * What closing now would report as engine state released unsaved, without
+   * closing. Only a close reports it, so other transitions refuse to release it.
+   */
+  unsavedCloseReport?(): EngineCloseReport | null;
+  /**
    * Close owned resources and retain failed cleanup for a later retry. A
    * report names engine state the close released without persisting it.
    */
